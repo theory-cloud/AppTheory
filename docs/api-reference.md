@@ -453,7 +453,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>840 exported top-level symbols</summary>
+<summary>852 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins
@@ -463,72 +463,69 @@ AppTheoryErrorFromAppError, AsAppTheoryError, AssertError, AssertHasTools, Asser
 AtomicRateLimiter, AuthContext, AuthHook, AuthorizationCodeRecord, AuthorizationCodeStore
 AuthorizationServerMetadata, AuthorizationServerMetadataHandler, AuthorizeOptions, AuthPrincipal
 AWSLambdaMicroVMProvider, AWSLambdaMicroVMProviderID, AWSLambdaMicroVMProviderOption, BaseName
-BearerTokenClaims, BearerTokenClaimsFromContext, BearerTokenClaimsValidator
-BearerTokenFromHeaders, BearerTokenRecord, BearerTokenValidationOptions, BearerTokenValidator
-Binary, BindConfig, BodyStream, BuiltInLoggingProfileNames, CacheControlISR, CacheControlSSG
-CacheControlSSR, Call, CallToolRequest, CanonicalizeIssuerURL, CanonicalResourceURL
-CapabilityConfig, CaptureBodyStream, ClaudeDynamicClientRegistrationPolicy, ClaudePublicClient
-Client, ClientIP, Clock, CloudWatchLogsSubscription, CloudWatchLogsSubscriptionData
-CloudWatchLogsSubscriptionLogEvent, CloudWatchLogsSubscriptionOptions
-CloudWatchLogsSubscriptionSummary, CodeInternalError, CodeInvalidParams, CodeInvalidRequest
-CodeMethodNotFound, CodeParseError, CodeServerError, Command, CommandAuthToken, CommandCreate
-CommandGet, CommandLegacyShellToken, CommandList, CommandResume, CommandRun, CommandSession
-CommandShellAuthToken, CommandShellToken, CommandStart, CommandStatus, CommandStop
-CommandSuspend, CommandTerminate, CompleteIdempotencyRecordInput, Completion, CompletionArgument
-CompletionContext, CompletionHook, CompletionRef, CompletionRequest, CompletionResult, Config
-Connection, ContentBlock, Context, ContextKeyBearerClaims, ContextKeyBearerToken, ContractKind
-ContractName, ContractVersion, ContractVersionM16, Controller, ControllerAuthContract
-ControllerAuthDefaultDeny, ControllerCommandContract, ControllerContract
-ControllerEnvelopeContract, ControllerOption, ControllerRequest, ControllerResponse, CORSConfig
-CreatedJSON, CreateIdempotencyRecordInput, CreateJobInput, CreateSessionInput, CreateTaskResult
-DCRResult, DecodeCloudWatchLogsSubscription, DecodeLoggingProfileJSON, DecodeLoggingProfileYAML
-DefaultCapabilityConfig, DefaultConfig, DefaultControllerContract
-DefaultEnvironmentErrorNotifications, DefaultEventBusConfig, DefaultLifecycleContract
-DefaultLoggingProfile, DefaultOperationContract, DefaultProviderStateMappings
-DefaultRealLifecycleContract, DefaultSessionProviderID, DefaultSessionRegistryContract
-DefaultSessionRegistryTableName, DeleteInput, Discovery, DynamicClientRegistrationPolicy
-DynamicClientRegistrationRequest, DynamicClientRegistrationResponse, DynamoDBEventBus
-DynamoDBStreamEvent, DynamoDBStreamEventOptions, DynamoDBStreamHandler
+BearerTokenClaims, BearerTokenClaimsFromContext, BearerTokenClaimsValidator, BearerTokenFromHeaders
+BearerTokenRecord, BearerTokenValidationOptions, BearerTokenValidator, Binary, BindConfig
+BodyStream, BuiltInLoggingProfileNames, CacheControlISR, CacheControlSSG, CacheControlSSR, Call
+CallToolRequest, CanonicalizeIssuerURL, CanonicalResourceURL, CapabilityConfig, CaptureBodyStream
+ClaudeDynamicClientRegistrationPolicy, ClaudePublicClient, Client, ClientIP, Clock
+CloudWatchLogsSubscription, CloudWatchLogsSubscriptionData, CloudWatchLogsSubscriptionLogEvent
+CloudWatchLogsSubscriptionOptions, CloudWatchLogsSubscriptionSummary, CodeInternalError
+CodeInvalidParams, CodeInvalidRequest, CodeMethodNotFound, CodeParseError, CodeServerError, Command
+CommandAuthToken, CommandCreate, CommandGet, CommandInvoke, CommandLegacyShellToken, CommandList
+CommandResume, CommandRun, CommandSession, CommandShellAuthToken, CommandShellToken, CommandStart
+CommandStatus, CommandStop, CommandSuspend, CommandTerminate, CompleteIdempotencyRecordInput
+Completion, CompletionArgument, CompletionContext, CompletionHook, CompletionRef, CompletionRequest
+CompletionResult, Config, Connection, ContentBlock, Context, ContextKeyBearerClaims
+ContextKeyBearerToken, ContractKind, ContractName, ContractVersion, ContractVersionM16, Controller
+ControllerAuthContract, ControllerAuthDefaultDeny, ControllerCommandContract, ControllerContract
+ControllerDeploymentDefaults, ControllerEnvelopeContract, ControllerInvokeRequest, ControllerOption
+ControllerRequest, ControllerResponse, CORSConfig, CreatedJSON, CreateIdempotencyRecordInput
+CreateJobInput, CreateSessionInput, CreateTaskResult, DCRResult, DecodeCloudWatchLogsSubscription
+DecodeLoggingProfileJSON, DecodeLoggingProfileYAML, DefaultCapabilityConfig, DefaultConfig
+DefaultControllerContract, DefaultEnvironmentErrorNotifications, DefaultEventBusConfig
+DefaultLifecycleContract, DefaultLoggingProfile, DefaultOperationContract
+DefaultProviderStateMappings, DefaultRealLifecycleContract, DefaultSessionProviderID
+DefaultSessionRegistryContract, DefaultSessionRegistryTableName, DeleteInput, Discovery
+DynamicClientRegistrationPolicy, DynamicClientRegistrationRequest, DynamicClientRegistrationResponse
+DynamoDBEventBus, DynamoDBStreamEvent, DynamoDBStreamEventOptions, DynamoDBStreamHandler
 DynamoDBStreamRecordOptions, DynamoDBStreamRecordSummary, DynamoJobLedger, DynamoRateLimiter
 DynamoSessionStore, DynamoStreamStore, DynamoTaskStore, EMFMetricSink, EMFMetricSinkOption
-EncodeLoggingProfileEvent, EncodeLoggingProfileEventWithSanitizer, Env, EnvExecutionRoleArn
-EnvironmentErrorNotificationsOptions, EnvJobsTableName, EnvSessionRegistryTableName
-ErrAuthorizationCodeExpired, ErrAuthorizationCodeNotFound, ErrBearerTokenExpired
-ErrBearerTokenInsufficientScope, ErrBearerTokenInvalidAudience, ErrEventNotFound
-ErrInvalidAuthorizationHeader, ErrInvalidBearerToken, ErrInvalidEncryptionConfig
-ErrInvalidGetLimit, ErrInvalidObjectRef, ErrInvalidStoreConfig, ErrInvalidURL
-ErrMissingBearerToken, ErrObjectNotFound, ErrObjectTooLarge, Error
-ErrorCodeControllerCommandFailed, ErrorCodeControllerIncomplete, ErrorCodeForbiddenField
-ErrorCodeInvalidContract, ErrorCodeInvalidControllerRequest, ErrorCodeInvalidLifecycleEvent
-ErrorCodeLifecycleBypass, ErrorCodeLifecycleHookFailed, ErrorCodeLifecycleIncomplete
-ErrorCodeOperationContractIncomplete, ErrorCodeProviderOperationFailed
-ErrorCodeProviderOperationUnsupported, ErrorCodeProviderRequestInvalid
-ErrorCodeProviderStateMappingIncomplete, ErrorCodeRawSDKEscapeHatch
+EncodeLoggingProfileEvent, EncodeLoggingProfileEventWithSanitizer, Env
+EnvEgressNetworkConnectorRefs, EnvExecutionRoleArn, EnvImageRef, EnvIngressNetworkConnectorRefs
+EnvironmentErrorNotificationsOptions, EnvJobsTableName, EnvNetworkConnectorRefs
+EnvSessionRegistryTableName, ErrAuthorizationCodeExpired, ErrAuthorizationCodeNotFound
+ErrBearerTokenExpired, ErrBearerTokenInsufficientScope, ErrBearerTokenInvalidAudience
+ErrEventNotFound, ErrInvalidAuthorizationHeader, ErrInvalidBearerToken, ErrInvalidEncryptionConfig
+ErrInvalidGetLimit, ErrInvalidObjectRef, ErrInvalidStoreConfig, ErrInvalidURL, ErrMissingBearerToken
+ErrObjectNotFound, ErrObjectTooLarge, Error, ErrorCodeControllerCommandFailed
+ErrorCodeControllerIncomplete, ErrorCodeForbiddenField, ErrorCodeInvalidContract
+ErrorCodeInvalidControllerRequest, ErrorCodeInvalidLifecycleEvent, ErrorCodeLifecycleBypass
+ErrorCodeLifecycleHookFailed, ErrorCodeLifecycleIncomplete, ErrorCodeOperationContractIncomplete
+ErrorCodeProviderOperationFailed, ErrorCodeProviderOperationUnsupported
+ErrorCodeProviderRequestInvalid, ErrorCodeProviderStateMappingIncomplete, ErrorCodeRawSDKEscapeHatch
 ErrorCodeRealLifecycleIncomplete, ErrorCodeRouteContractIncomplete
-ErrorCodeSessionRegistryIncomplete, ErrorCodeTenantBindingViolation
-ErrorCodeTokenSafetyViolation, ErrorCodeUnauthenticatedController, ErrorEnvelope
-ErrorEnvelopeFromError, ErrorNotifier, ErrorType, ErrorTypeConflict, ErrorTypeInternal
-ErrorTypeInvalidInput, ErrorTypeNotFound, ErrorTypeRateLimit, ErrRefreshTokenExpired
-ErrRefreshTokenNotFound, ErrSessionNotFound, ErrStreamEventTooLarge, ErrStreamNotFound
-ErrTaskNotFound, ErrTaskTerminal, EscapeHatches, ETag, Event, EventBridgeEvent
+ErrorCodeSessionRegistryIncomplete, ErrorCodeTenantBindingViolation, ErrorCodeTokenSafetyViolation
+ErrorCodeUnauthenticatedController, ErrorEnvelope, ErrorEnvelopeFromError, ErrorNotifier, ErrorType
+ErrorTypeConflict, ErrorTypeInternal, ErrorTypeInvalidInput, ErrorTypeNotFound, ErrorTypeRateLimit
+ErrRefreshTokenExpired, ErrRefreshTokenNotFound, ErrSessionNotFound, ErrStreamEventTooLarge
+ErrStreamNotFound, ErrTaskNotFound, ErrTaskTerminal, EscapeHatches, ETag, Event, EventBridgeEvent
 EventBridgeEventOptions, EventBridgeHandler, EventBridgePattern, EventBridgeRule
-EventBridgeScheduledWorkloadResultSummary, EventBridgeScheduledWorkloadSummary
-EventBridgeSelector, EventBridgeWorkloadEnvelope, EventBus, EventBusConfig, EventContext
-EventHandler, EventMiddleware, EventQuery, Factory, FakeClient, FakeProvider, FakeSNSClient
-FakeStore, FakeStreamerClient, FixedWindowStrategy, FullyRedact, GenerateOpenAPI
-GenerateOpenAPIJSON, GetDayWindow, GetFixedWindow, GetHourWindow, GetInput, GetMinuteWindow
-GetOutput, GetPromptRequest, Handler, HookFailure, HookPrepareImage, HookReadiness, HookReady
-HookResume, HookRun, HooksFromEMFMetricSink, HooksFromLogger, HooksFromLoggerAndEMFMetricSink
-HooksFromProfileLogger, HookStart, HookStop, HookSuspend, HookTeardown, HookTerminate
-HookValidate, HTML, HTMLStream, HTTPErrorFormat, HTTPErrorFormatFlatLegacy
-HTTPErrorFormatNested, HTTPEventOptions, Icon, IdempotencyCreateOutcome
-IdempotencyOutcomeAlreadyCompleted, IdempotencyOutcomeAlreadyInProgress
-IdempotencyOutcomeCreated, IdempotencyStatus, IdempotencyStatusCompleted
-IdempotencyStatusInProgress, IdentifierKey, IdGenerator, IDGenerator, InitializeRequest
-InitialSessionListenerBudgetOptions, InspectSemaphoreInput, IsLambda, IsTerminalState, JobLedger
-JobLock, JobLockSortKey, JobMeta, JobMetaSortKey, JobPartitionKey, JobRecord, JobRecordSortKey
-JobRequest, JobRequestSortKey, JobStatus, JobStatusCanceled, JobStatusFailed, JobStatusPending
-JobStatusRunning, JobStatusSucceeded, JSON, KindControllerSession, KindLifecycle
+EventBridgeScheduledWorkloadResultSummary, EventBridgeScheduledWorkloadSummary, EventBridgeSelector
+EventBridgeWorkloadEnvelope, EventBus, EventBusConfig, EventContext, EventHandler, EventMiddleware
+EventQuery, Factory, FakeClient, FakeProvider, FakeSNSClient, FakeStore, FakeStreamerClient
+FixedWindowStrategy, FullyRedact, GenerateOpenAPI, GenerateOpenAPIJSON, GetDayWindow, GetFixedWindow
+GetHourWindow, GetInput, GetMinuteWindow, GetOutput, GetPromptRequest, Handler, HookFailure
+HookPrepareImage, HookReadiness, HookReady, HookResume, HookRun, HooksFromEMFMetricSink
+HooksFromLogger, HooksFromLoggerAndEMFMetricSink, HooksFromProfileLogger, HookStart, HookStop
+HookSuspend, HookTeardown, HookTerminate, HookValidate, HTML, HTMLStream, HTTPErrorFormat
+HTTPErrorFormatFlatLegacy, HTTPErrorFormatNested, HTTPEventOptions, Icon, IdempotencyCreateOutcome
+IdempotencyOutcomeAlreadyCompleted, IdempotencyOutcomeAlreadyInProgress, IdempotencyOutcomeCreated
+IdempotencyStatus, IdempotencyStatusCompleted, IdempotencyStatusInProgress, IdentifierKey
+IDGenerator, IdGenerator, InitializeRequest, InitialSessionListenerBudgetOptions
+InspectSemaphoreInput, IsLambda, IsTerminalState, JobLedger, JobLock, JobLockSortKey, JobMeta
+JobMetaSortKey, JobPartitionKey, JobRecord, JobRecordSortKey, JobRequest, JobRequestSortKey
+JobStatus, JobStatusCanceled, JobStatusFailed, JobStatusPending, JobStatusRunning
+JobStatusSucceeded, JSON, KindControllerSession, KindLifecycle
 KinesisCloudWatchLogsSubscriptionRecord, KinesisCloudWatchLogsSubscriptionRecordOptions
 KinesisEvent, KinesisEventOptions, KinesisHandler, KinesisJSONRecord, KinesisJSONRecordOptions
 KinesisJSONRecordSummary, KinesisPutRecordsFailure, KinesisPutRecordsFailureReport
@@ -537,118 +534,115 @@ LambdaFunctionURLRequest, LifecycleAdapter, LifecycleContract, LifecycleEvent, L
 LifecycleHook, LifecycleHookSpec, LifecycleOption, LifecycleResult, LifecycleState
 LifecycleTransition, Limit, LimitDecision, Limits, ListPromptsRequest, ListResourcesRequest
 ListToolsRequest, LogEntry, Logger, LoggerConfig, LoggerFactory, LoggerStats, LoggingLevel
-LoggingLevelAlert, LoggingLevelCritical, LoggingLevelDebug, LoggingLevelEmergency
-LoggingLevelError, LoggingLevelHook, LoggingLevelInfo, LoggingLevelNotice, LoggingLevelRequest
-LoggingLevelWarning, LoggingProfileAlertingHints, LoggingProfileCatalog
-LoggingProfileCloudWatchJSON, LoggingProfileConfig, LoggingProfileEncoding
-LoggingProfileEnrichment, LoggingProfileError, LoggingProfileErrorCapture, LoggingProfileEvent
-LoggingProfileJobContext, LoggingProfileLegacy, LoggingProfileLocalDev
-LoggingProfilePayTheoryAlertV1, LoggingProfileRequestContext, LoggingProfileSanitization
-LoggingProfileSchemaVersion, LoggingProfileValidationError, LoggingProfileValidationErrors
-LogRecord, ManualClock, ManualIDGenerator, MapProviderState, MarshalResponse, MaskCardNumber
-MaskCompletelyFunc, MaskFirstLast, MaskFirstLast4, MaskTokenLastFour, MatchesIfNoneMatch
-MemoryAuthorizationCodeStore, MemoryEventBus, MemoryRefreshTokenStore, MemorySessionRegistry
-MemorySessionStore, MemorySessionStoreOption, MemoryStreamStore, MemoryStreamStoreOption
-MemoryTaskStore, MetricRecord, Middleware, MultiWindowStrategy, MustJSON, MustSSEResponse, New
-NewAppTheoryError, NewAuthorizationServerMetadata, NewAWSLambdaMicroVMProvider
-NewClaudePublicClient, NewClient, NewController, NewDynamoDBEventBus, NewDynamoJobLedger
-NewDynamoRateLimiter, NewDynamoSessionStore, NewDynamoStreamStore, NewDynamoTaskStore
-NewEMFMetricSink, NewError, NewErrorEnvelope, NewErrorResponse, NewEvent, NewFakeClient
-NewFakeClientWithTime, NewFakeProvider, NewFakeProviderWithTime, NewFakeSNSClient
-NewFakeStreamerClient, NewFixedWindowStrategy, NewJobLock, NewJobMeta, NewJobRecord
-NewJobRequest, NewKinesisJSONRecord, NewLifecycleAdapter, NewManualClock, NewManualIDGenerator
-NewMemoryAuthorizationCodeStore, NewMemoryBearerTokenValidator, NewMemoryEventBus
-NewMemoryRefreshTokenStore, NewMemorySessionRegistry, NewMemorySessionStore
+LoggingLevelAlert, LoggingLevelCritical, LoggingLevelDebug, LoggingLevelEmergency, LoggingLevelError
+LoggingLevelHook, LoggingLevelInfo, LoggingLevelNotice, LoggingLevelRequest, LoggingLevelWarning
+LoggingProfileAlertingHints, LoggingProfileCatalog, LoggingProfileCloudWatchJSON
+LoggingProfileConfig, LoggingProfileEncoding, LoggingProfileEnrichment, LoggingProfileError
+LoggingProfileErrorCapture, LoggingProfileEvent, LoggingProfileJobContext, LoggingProfileLegacy
+LoggingProfileLocalDev, LoggingProfilePayTheoryAlertV1, LoggingProfileRequestContext
+LoggingProfileSanitization, LoggingProfileSchemaVersion, LoggingProfileValidationError
+LoggingProfileValidationErrors, LogRecord, ManualClock, ManualIDGenerator, MapProviderState
+MarshalResponse, MaskCardNumber, MaskCompletelyFunc, MaskFirstLast, MaskFirstLast4
+MaskTokenLastFour, MatchesIfNoneMatch, MemoryAuthorizationCodeStore, MemoryEventBus
+MemoryRefreshTokenStore, MemorySessionRegistry, MemorySessionStore, MemorySessionStoreOption
+MemoryStreamStore, MemoryStreamStoreOption, MemoryTaskStore, MetricRecord, Middleware
+MultiWindowStrategy, MustJSON, MustSSEResponse, New, NewAppTheoryError
+NewAuthorizationServerMetadata, NewAWSLambdaMicroVMProvider, NewClaudePublicClient, NewClient
+NewController, NewDynamoDBEventBus, NewDynamoJobLedger, NewDynamoRateLimiter, NewDynamoSessionStore
+NewDynamoStreamStore, NewDynamoTaskStore, NewEMFMetricSink, NewError, NewErrorEnvelope
+NewErrorResponse, NewEvent, NewFakeClient, NewFakeClientWithTime, NewFakeProvider
+NewFakeProviderWithTime, NewFakeSNSClient, NewFakeStreamerClient, NewFixedWindowStrategy, NewJobLock
+NewJobMeta, NewJobRecord, NewJobRequest, NewKinesisJSONRecord, NewLifecycleAdapter, NewManualClock
+NewManualIDGenerator, NewMemoryAuthorizationCodeStore, NewMemoryBearerTokenValidator
+NewMemoryEventBus, NewMemoryRefreshTokenStore, NewMemorySessionRegistry, NewMemorySessionStore
 NewMemoryStreamStore, NewMemoryTaskStore, NewMultiWindowStrategy, NewNoOpLogger, NewOpaqueToken
 NewPKCECodeVerifier, NewPolicySanitizer, NewProfileLogger, NewPromptRegistry
-NewProtectedResourceMetadata, NewRealController, NewReconstructingSessionRegistry
-NewRegistryClient, NewResourceRegistry, NewResultResponse, NewS3Store, NewSemaphoreLease
-NewServer, NewSlidingWindowStrategy, NewSNSNotifier, NewStore, NewTableTheorySessionRegistry
-NewTestLogger, NewToolRegistry, NewWithTime, NewZapLogger, NewZapLoggerFactory, NoContent
+NewProtectedResourceMetadata, NewRealController, NewReconstructingSessionRegistry, NewRegistryClient
+NewResourceRegistry, NewResultResponse, NewS3Store, NewSemaphoreLease, NewServer
+NewSlidingWindowStrategy, NewSNSNotifier, NewStore, NewTableTheorySessionRegistry, NewTestLogger
+NewToolRegistry, NewWithTime, NewZapLogger, NewZapLoggerFactory, NoContent
 NormalizeDynamoDBStreamRecord, NormalizeEventBridgeScheduledWorkload
 NormalizeEventBridgeWorkloadEnvelope, NormalizeStage, ObjectRef, ObservabilityHooks
 OpenAPIFieldSpec, OpenAPIRequestSpec, OpenAPIResponseSpec, OpenAPIRouteSpec, OpenAPISpec
 OpenAPIValidationRule, Operation, OperationAuthToken, OperationContract, OperationDelete
-OperationGet, OperationHTTPRouteContract, OperationLegacyShellToken, OperationList, OperationPut
-OperationResume, OperationRun, OperationShellAuthToken, OperationShellToken, OperationSuspend
-OperationTerminate, Option, OptionalAuth, Options, OriginalHost, OriginalURI, OriginURL
-OriginValidator, ParseBatchRequest, ParseObjectRef, ParseRequest, ParseResponse, PartialMask
-PaymentXMLPatterns, PKCEChallengeS256, PKCEVerifyS256, Policy, PolicyAction, PolicyAllow
-PolicyDecision, PolicyFromEnv, PolicyFromText, PolicyFullyRedact, PolicyHook, PolicyPartialMask
-PolicyRule, PrincipalAuthHook, ProfileLogger, ProfileLoggerOption, PromptArgument, PromptDef
-PromptHandler, PromptMessage, PromptRegistry, PromptResult, ProtectedResourceMetadata
+OperationGet, OperationHTTPRouteContract, OperationInvoke, OperationLegacyShellToken, OperationList
+OperationPut, OperationResume, OperationRun, OperationShellAuthToken, OperationShellToken
+OperationSuspend, OperationTerminate, Option, OptionalAuth, Options, OriginalHost, OriginalURI
+OriginURL, OriginValidator, ParseBatchRequest, ParseObjectRef, ParseRequest, ParseResponse
+PartialMask, PaymentXMLPatterns, PKCEChallengeS256, PKCEVerifyS256, Policy, PolicyAction
+PolicyAllow, PolicyDecision, PolicyFromEnv, PolicyFromText, PolicyFullyRedact, PolicyHook
+PolicyPartialMask, PolicyRule, PrincipalAuthHook, ProfileLogger, ProfileLoggerOption, PromptArgument
+PromptDef, PromptHandler, PromptMessage, PromptRegistry, PromptResult, ProtectedResourceMetadata
 ProtectedResourceMetadataHandler, ProtectedResourceMetadataURLForRequest
-ProtectedResourceWWWAuthenticate, Provider, ProviderCall, ProviderIdlePolicy, ProviderListInput
-ProviderListOutput, ProviderPortScope, ProviderRunInput, ProviderSession, ProviderSessionBinding
-ProviderSessionInput, ProviderStateMapping, ProviderToken, ProviderTokenInput, PutInput
-RandomIDGenerator, RandomIdGenerator, RapidConnectXMLPatterns, RateLimitConfig
-RateLimitDecisionKey, RateLimitEntry, RateLimiter, RateLimitKey, RateLimitMiddleware
-RateLimitStrategy, RateLimitWindow, RawJSON, ReadResourceRequest, ReadSSEMessage, RealClock
-ReconstructingSessionRegistry, ReconstructSessionRecord, RecordStatus, RecordStatusFailed
-RecordStatusPending, RecordStatusProcessing, RecordStatusSkipped, RecordStatusSucceeded
-RefreshLeaseInput, RefreshSemaphoreSlotInput, RefreshTokenRecord, RefreshTokenStore
-RegisterControllerRoutes, RegisterMicroVMControllerRoutes, RegistryClient, RegistryClientOption
-RelatedTaskMetadata, ReleaseLeaseInput, ReleaseSemaphoreSlotInput
-ReportKinesisPutRecordsFailures, Request, RequireAnyScope, RequireAuth
-RequireBearerTokenMiddleware, RequireBearerTokenOptions, RequiredForbiddenOperationFields
-RequiredOperations, RequireEventBridgeWorkloadEnvelope, RequireScope, ResourceContent
-ResourceDef, ResourceHandler, ResourceMetadataURLFromMcpEndpoint, ResourceName, ResourceRegistry
-ResourceSubscription, ResourceSubscriptionHook, ResourceTemplateDef, Response
-RFC9728ResourceMetadataURL, RouteOption, RPCError, S3EncryptionBucketDefault, S3EncryptionConfig
-S3EncryptionKMS, S3EncryptionMode, S3EncryptionS3Managed, S3StoreConfig, SafeError
-SafeJSONForHTML, SanitizationType, SanitizeFields, SanitizeFieldValue, SanitizeJSON
-SanitizeJSONValue, SanitizeLogString, SanitizerFunc, SanitizeXML, ScrubFreeText
-SemaphoreInspection, SemaphoreLease, SemaphorePartitionKey, SemaphoreSlotSortKey
-SensitiveFields, Server, ServerOption, Session, SessionCommandInput, SessionKey
-SessionListInput, SessionQueryInput, SessionReconstructionHook, SessionReconstructionOption
+ProtectedResourceWWWAuthenticate, Provider, ProviderCall, ProviderIdlePolicy, ProviderInvokeInput
+ProviderInvokeOutput, ProviderListInput, ProviderListOutput, ProviderPortScope, ProviderRunInput
+ProviderSession, ProviderSessionBinding, ProviderSessionInput, ProviderStateMapping, ProviderToken
+ProviderTokenInput, PutInput, RandomIDGenerator, RandomIdGenerator, RapidConnectXMLPatterns
+RateLimitConfig, RateLimitDecisionKey, RateLimitEntry, RateLimiter, RateLimitKey
+RateLimitMiddleware, RateLimitStrategy, RateLimitWindow, RawJSON, ReadResourceRequest
+ReadSSEMessage, RealClock, ReconstructingSessionRegistry, ReconstructSessionRecord, RecordStatus
+RecordStatusFailed, RecordStatusPending, RecordStatusProcessing, RecordStatusSkipped
+RecordStatusSucceeded, RefreshLeaseInput, RefreshSemaphoreSlotInput, RefreshTokenRecord
+RefreshTokenStore, RegisterControllerRoutes, RegisterMicroVMControllerRoutes, RegistryClient
+RegistryClientOption, RelatedTaskMetadata, ReleaseLeaseInput, ReleaseSemaphoreSlotInput
+ReportKinesisPutRecordsFailures, Request, RequireAnyScope, RequireAuth, RequireBearerTokenMiddleware
+RequireBearerTokenOptions, RequiredForbiddenOperationFields, RequiredOperations
+RequireEventBridgeWorkloadEnvelope, RequireScope, ResourceContent, ResourceDef, ResourceHandler
+ResourceMetadataURLFromMcpEndpoint, ResourceName, ResourceRegistry, ResourceSubscription
+ResourceSubscriptionHook, ResourceTemplateDef, Response, RFC9728ResourceMetadataURL, RouteOption
+RPCError, S3EncryptionBucketDefault, S3EncryptionConfig, S3EncryptionKMS, S3EncryptionMode
+S3EncryptionS3Managed, S3StoreConfig, SafeError, SafeJSONForHTML, SanitizationType, SanitizeFields
+SanitizeFieldValue, SanitizeJSON, SanitizeJSONValue, SanitizeLogString, SanitizerFunc, SanitizeXML
+ScrubFreeText, SemaphoreInspection, SemaphoreLease, SemaphorePartitionKey, SemaphoreSlotSortKey
+SensitiveFields, Server, ServerOption, Session, SessionCommandInput, SessionKey, SessionListInput
+SessionQueryInput, SessionReconstructionHook, SessionReconstructionOption
 SessionReconstructionRequest, SessionRecord, SessionRecordFromRegistryRecord
 SessionRecordToRegistryRecord, SessionRegistry, SessionRegistryContract, SessionRegistryLister
-SessionRegistryPartitionKey, SessionRegistryRecord, SessionRegistrySortKey
-SessionRegistryTableName, SessionSpec, SessionStatus, SessionStore, SessionTokenMetadata
-SessionTokenMetadataFromProviderToken, SetLogger, SlidingWindowStrategy, SNSEvent
-SNSEventOptions, SNSHandler, SNSNotifierOptions, SNSPublishCall, SNSRecordOptions
-SourceProvenance, SpanRecord, SQSEvent, SQSEventOptions, SQSHandler, SQSMessageOptions, SSEEvent
-SSEMessage, SSEResponse, SSEStreamResponse, StateFailed, StateImagePrepared, StateImagePreparing
-StateReadinessProbing, StateReady, StateRequested, StateResuming, StateRunning, StateStarted
-StateStarting, StateStopped, StateStopping, StateSuspended, StateSuspending, StateTearingDown
-StateTerminated, StateTerminating, StateValidated, StateValidating, StepFunctionsTaskToken
-StepFunctionsTaskTokenEvent, StepFunctionsTaskTokenEventOptions, Store, Stream, StreamBytes
-StreamChunk, StreamerCall, StreamError, StreamEvent, StreamingToolHandler, StreamResult
-StreamStore, StructuredLogger, TableTheorySessionRegistry, Task, TaskListRequest, TaskListResult
-TaskLookup, TaskMetadata, TaskRecord, TaskRuntimeOptions, TaskStatus, TaskStatusCanceled
-TaskStatusCompleted, TaskStatusFailed, TaskStatusInputRequired, TaskStatusWorking, TaskStore
-TaskSupport, TaskSupportForbidden, TaskSupportOptional, TaskSupportRequired, TenantBindingRule
-TestLogger, Text, Tier, TierP0, TierP1, TierP2, TimeoutConfig, TimeoutMiddleware, TimeWindow
-TokenIssuanceContract, TokenResponse, ToolAnnotations, ToolDef, ToolExecution, ToolHandler
-ToolLifecycleFinish, ToolLifecycleOptions, ToolLifecycleOutcome
-ToolLifecycleOutcomeContextCanceled, ToolLifecycleOutcomeHandledError
-ToolLifecycleOutcomeInvalidParams, ToolLifecycleOutcomePanic, ToolLifecycleOutcomeSuccess
-ToolLifecycleOutcomeTimeout, ToolLifecycleOutcomeUnhandledError, ToolLifecycleStart
-ToolLifecycleTelemetry, ToolRegistry, ToolResult, TransitionJobStatusInput
+SessionRegistryPartitionKey, SessionRegistryRecord, SessionRegistrySortKey, SessionRegistryTableName
+SessionSpec, SessionStatus, SessionStore, SessionTokenMetadata
+SessionTokenMetadataFromProviderToken, SetLogger, SlidingWindowStrategy, SNSEvent, SNSEventOptions
+SNSHandler, SNSNotifierOptions, SNSPublishCall, SNSRecordOptions, SourceProvenance, SpanRecord
+SQSEvent, SQSEventOptions, SQSHandler, SQSMessageOptions, SSEEvent, SSEMessage, SSEResponse
+SSEStreamResponse, StateFailed, StateImagePrepared, StateImagePreparing, StateReadinessProbing
+StateReady, StateRequested, StateResuming, StateRunning, StateStarted, StateStarting, StateStopped
+StateStopping, StateSuspended, StateSuspending, StateTearingDown, StateTerminated, StateTerminating
+StateValidated, StateValidating, StepFunctionsTaskToken, StepFunctionsTaskTokenEvent
+StepFunctionsTaskTokenEventOptions, Store, Stream, StreamBytes, StreamChunk, StreamerCall
+StreamError, StreamEvent, StreamingToolHandler, StreamResult, StreamStore, StructuredLogger
+TableTheorySessionRegistry, Task, TaskListRequest, TaskListResult, TaskLookup, TaskMetadata
+TaskRecord, TaskRuntimeOptions, TaskStatus, TaskStatusCanceled, TaskStatusCompleted
+TaskStatusFailed, TaskStatusInputRequired, TaskStatusWorking, TaskStore, TaskSupport
+TaskSupportForbidden, TaskSupportOptional, TaskSupportRequired, TenantBindingRule, TestLogger, Text
+Tier, TierP0, TierP1, TierP2, TimeoutConfig, TimeoutMiddleware, TimeWindow, TokenIssuanceContract
+TokenResponse, ToolAnnotations, ToolDef, ToolExecution, ToolHandler, ToolLifecycleFinish
+ToolLifecycleOptions, ToolLifecycleOutcome, ToolLifecycleOutcomeContextCanceled
+ToolLifecycleOutcomeHandledError, ToolLifecycleOutcomeInvalidParams, ToolLifecycleOutcomePanic
+ToolLifecycleOutcomeSuccess, ToolLifecycleOutcomeTimeout, ToolLifecycleOutcomeUnhandledError
+ToolLifecycleStart, ToolLifecycleTelemetry, ToolRegistry, ToolResult, TransitionJobStatusInput
 UpsertRecordStatusInput, UsageStats, UsageWindow, ValidateControllerContract
 ValidateDynamicClientRegistrationRequest, ValidateEscapeHatches, ValidateLifecycleContract
 ValidateLoggingProfile, ValidateOperationContract, ValidatePKCECodeVerifier
-ValidateProviderListInput, ValidateProviderRunInput, ValidateProviderSession
-ValidateProviderSessionInput, ValidateProviderToken, ValidateProviderTokenInput
-ValidateRealLifecycleContract, ValidateSessionRecord, ValidateSessionRegistryContract
-ValidateSessionRegistryRecord, ValidateSessionStatus, ValidateSessionTokenMetadata
-ValidationFieldError, ValidationRuleEnum, ValidationRuleMax, ValidationRuleMaxLength
-ValidationRuleMin, ValidationRuleMinLength, ValidationRulePattern, ValidationRuleRequired, Vary
-WebSocketClientFactory, WebSocketContext, WebSocketEvent, WebSocketEventOptions
-WebSocketHandler, WindowConfig, WindowLimit, WithAPI, WithAuthHook, WithAuthPrincipalHook
-WithAWSConfig, WithAWSLambdaMicroVMClock, WithAWSLambdaMicroVMRegion, WithCapabilityConfig
-WithClock, WithCompletionHooks, WithControllerClock, WithControllerExecutionRoleArn
-WithControllerID, WithControllerIDGenerator, WithControllerProviderID, WithControllerSessionTTL
-WithCORS, WithEMFClock, WithEMFNamespace, WithEMFService, WithEMFWriter
-WithEnvironmentErrorNotifications, WithErrorNotifier, WithHTTPErrorFormat, WithIdentifier
-WithIDGenerator, WithInitialSessionListenerBudget, WithLegacyHTTPErrorShape
-WithLifecycleContract, WithLifecycleHandler, WithLimits, WithLogger, WithLoggingLevelHook
-WithObservability, WithOriginValidator, WithPolicyHook, WithProfileClock, WithProfileEnvironment
-WithProfileSanitizer, WithProfileWriter, WithRegistryClientTTL, WithResourceSubscriptionHooks
-WithSanitizer, WithServerIDGenerator, WithSessionReconstructionClock
-WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamIDGenerator, WithStreamStore
-WithTaskRuntime, WithTier, WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger
-WrapError, XMLSanitizationPattern
+ValidateProviderInvokeInput, ValidateProviderListInput, ValidateProviderRunInput
+ValidateProviderSession, ValidateProviderSessionInput, ValidateProviderToken
+ValidateProviderTokenInput, ValidateRealLifecycleContract, ValidateSessionRecord
+ValidateSessionRegistryContract, ValidateSessionRegistryRecord, ValidateSessionStatus
+ValidateSessionTokenMetadata, ValidationFieldError, ValidationRuleEnum, ValidationRuleMax
+ValidationRuleMaxLength, ValidationRuleMin, ValidationRuleMinLength, ValidationRulePattern
+ValidationRuleRequired, Vary, WebSocketClientFactory, WebSocketContext, WebSocketEvent
+WebSocketEventOptions, WebSocketHandler, WindowConfig, WindowLimit, WithAPI, WithAuthHook
+WithAuthPrincipalHook, WithAWSConfig, WithAWSLambdaMicroVMClock, WithAWSLambdaMicroVMRegion
+WithCapabilityConfig, WithClock, WithCompletionHooks, WithControllerClock
+WithControllerDeploymentDefaults, WithControllerExecutionRoleArn, WithControllerID
+WithControllerIDGenerator, WithControllerProviderID, WithControllerSessionTTL, WithCORS
+WithEMFClock, WithEMFNamespace, WithEMFService, WithEMFWriter, WithEnvironmentErrorNotifications
+WithErrorNotifier, WithHTTPErrorFormat, WithIdentifier, WithIDGenerator
+WithInitialSessionListenerBudget, WithLegacyHTTPErrorShape, WithLifecycleContract
+WithLifecycleHandler, WithLimits, WithLogger, WithLoggingLevelHook, WithObservability
+WithOriginValidator, WithPolicyHook, WithProfileClock, WithProfileEnvironment, WithProfileSanitizer
+WithProfileWriter, WithRegistryClientTTL, WithResourceSubscriptionHooks, WithSanitizer
+WithServerIDGenerator, WithSessionReconstructionClock, WithSessionReconstructionStaleAfter
+WithSessionStore, WithStreamIDGenerator, WithStreamStore, WithTaskRuntime, WithTier
+WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
 ```
 
 </details>
