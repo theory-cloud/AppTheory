@@ -1,0 +1,206 @@
+{
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>"
+    }
+  },
+  "Resources": {
+    "Fn9270CBC0": {
+      "DependsOn": [
+        "FnServiceRoleDefaultPolicyC6A839BF",
+        "FnServiceRoleB9001A96"
+      ],
+      "Properties": {
+        "Code": {
+          "ZipFile": "exports.handler = async () => ({ statusCode: 200, body: 'ok' });"
+        },
+        "Environment": {
+          "Variables": {
+            "APPTHEORY_EMBEDDING_DIMENSIONS": "3",
+            "APPTHEORY_EMBEDDING_MODEL_ID": "amazon.titan-embed-text-v2:0",
+            "APPTHEORY_EMBEDDING_NORMALIZE": "true",
+            "APPTHEORY_EMBEDDING_PROVIDER": "bedrock",
+            "APPTHEORY_VECTOR_BUCKET_NAME": "apptheory-vectors",
+            "APPTHEORY_VECTOR_DIMENSION": "3",
+            "APPTHEORY_VECTOR_INDEX_ARN": {
+              "Fn::GetAtt": [
+                "VectorIndexE51A1BE4",
+                "IndexArn"
+              ]
+            },
+            "APPTHEORY_VECTOR_INDEX_NAME": "semantic"
+          }
+        },
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "FnServiceRoleB9001A96",
+            "Arn"
+          ]
+        },
+        "Runtime": "nodejs24.x"
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "FnServiceRoleB9001A96": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+              ]
+            ]
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "FnServiceRoleDefaultPolicyC6A839BF": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "s3vectors:GetVectorBucket",
+                "s3vectors:GetIndex",
+                "s3vectors:QueryVectors"
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "VectorIndexVectorBucket40689F17",
+                    "VectorBucketArn"
+                  ]
+                },
+                {
+                  "Fn::GetAtt": [
+                    "VectorIndexE51A1BE4",
+                    "IndexArn"
+                  ]
+                }
+              ]
+            },
+            {
+              "Action": [
+                "s3vectors:GetVectorBucket",
+                "s3vectors:GetIndex",
+                "s3vectors:PutVectors",
+                "s3vectors:DeleteVectors"
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "VectorIndexVectorBucket40689F17",
+                    "VectorBucketArn"
+                  ]
+                },
+                {
+                  "Fn::GetAtt": [
+                    "VectorIndexE51A1BE4",
+                    "IndexArn"
+                  ]
+                }
+              ]
+            },
+            {
+              "Action": "bedrock:InvokeModel",
+              "Effect": "Allow",
+              "Resource": "*"
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "PolicyName": "FnServiceRoleDefaultPolicyC6A839BF",
+        "Roles": [
+          {
+            "Ref": "FnServiceRoleB9001A96"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Policy"
+    },
+    "VectorIndexE51A1BE4": {
+      "DeletionPolicy": "Retain",
+      "DependsOn": [
+        "VectorIndexVectorBucket40689F17"
+      ],
+      "Properties": {
+        "DataType": "float32",
+        "Dimension": 3,
+        "DistanceMetric": "cosine",
+        "EncryptionConfiguration": {
+          "SseType": "AES256"
+        },
+        "IndexName": "semantic",
+        "MetadataConfiguration": {
+          "NonFilterableMetadataKeys": [
+            "content"
+          ]
+        },
+        "VectorBucketName": "apptheory-vectors"
+      },
+      "Type": "AWS::S3Vectors::Index",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "VectorIndexVectorBucket40689F17": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "EncryptionConfiguration": {
+          "SseType": "AES256"
+        },
+        "VectorBucketName": "apptheory-vectors"
+      },
+      "Type": "AWS::S3Vectors::VectorBucket",
+      "UpdateReplacePolicy": "Retain"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}

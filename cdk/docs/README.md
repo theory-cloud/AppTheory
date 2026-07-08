@@ -33,6 +33,7 @@
 - [EventBus Table](./eventbus-table.md) — durable EventBus DynamoDB table with binding guidance for publish and replay flows.
 - [HTTP Ingestion Endpoint](./http-ingestion-endpoint.md) — authenticated server-to-server ingestion endpoint with Lambda request authorizer.
 - [S3 Ingest Front Door](./s3-ingest.md) — secure bucket + optional EventBridge/SQS notifications for import workloads.
+- [S3 Vector Index](./vector-index.md) — S3 Vectors bucket/index plus Bedrock embedding env/grants.
 - [CodeBuild Job Runner (Import Pipeline)](./codebuild-job-runner.md) — batch job runner for transforms/decrypt/backfills.
 - [Jobs Table (Import Pipeline)](./jobs-table.md) — opinionated DynamoDB table for job ledgers (schema + GSIs + TTL).
 - [Lambda Role Helper](./lambda-role.md) — Lambda execution roles (baseline + X-Ray + KMS + custom statements).
@@ -70,7 +71,8 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
   guardrails.
 - MCP deployment: `AppTheoryMcpServer`, `AppTheoryRemoteMcpServer`, and `AppTheoryMcpProtectedResource`.
 - Event and ingestion surfaces: `AppTheoryQueue`, `AppTheoryEventBridgeBus`, `AppTheoryKinesisStream`,
-  `AppTheoryCloudWatchLogsDestination`, `AppTheoryS3Ingest`, and `AppTheoryHttpIngestionEndpoint`.
+  `AppTheoryCloudWatchLogsDestination`, `AppTheoryS3Ingest`, `AppTheoryVectorIndex`, and
+  `AppTheoryHttpIngestionEndpoint`.
 - Job and data foundations: `AppTheoryJobsTable`, `AppTheoryEventBusTable`, `AppTheoryDynamoTable`, and
   `AppTheoryLambdaRole`.
 - MicroVM and frontend delivery: `AppTheoryMicrovmController`, `AppTheoryMicrovmImage`,

@@ -428,6 +428,7 @@ includes:
 - `AppTheoryMcpProtectedResource`
 - `AppTheoryJobsTable`
 - `AppTheoryS3Ingest`
+- `AppTheoryVectorIndex`
 - `AppTheoryCodeBuildJobRunner`
 - `AppTheoryKinesisStream`
 - `AppTheoryKinesisStreamMapping`
@@ -442,6 +443,7 @@ Start with:
 - [CDK API Reference](./cdk/api-reference.md)
 - [Kinesis + CloudWatch Logs](./cdk/kinesis-cloudwatch-logs.md)
 - [CDK Import Pipeline Guides](./cdk/import-pipeline.md)
+- [S3 Vector Index](./cdk/vector-index.md)
 - [Lambda MicroVM CDK Constructs](./cdk/lambda-microvm.md)
 
 Package-local docs remain available under `ts/docs/`, `py/docs/`, and `cdk/docs/` for language-specific examples, but

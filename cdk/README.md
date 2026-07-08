@@ -44,6 +44,7 @@ The inventory below is generated from `cdk/lib/index.ts` exports. Run `./scripts
 - `AppTheoryRestApi` — exported from `cdk/lib/rest-api.ts`.
 - `AppTheoryRestApiRouter` — exported from `cdk/lib/rest-api-router.ts`.
 - `AppTheoryS3Ingest` — exported from `cdk/lib/s3-ingest.ts`.
+- `AppTheoryVectorIndex` — exported from `cdk/lib/vector-index.ts`.
 - `AppTheoryWebSocketApi` — exported from `cdk/lib/websocket-api.ts`.
 - `AppTheorySsrSite` — exported from `cdk/lib/ssr-site.ts`.
 - `AppTheoryPathRoutedFrontend` — exported from `cdk/lib/path-routed-frontend.ts`.
