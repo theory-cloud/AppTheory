@@ -344,22 +344,24 @@ Guide: [Object Store Helper](./features/object-store.md)
 The corrective M16 MicroVM surface is fixture-backed across Go, TypeScript, and Python. It is a constrained AppTheory
 primitive, not a raw AWS SDK escape hatch. The `v1.14.0` / M15 foundation should not be cited as complete live MicroVM
 support; the canonical real operation vocabulary is `run`, `get`, `list`, `suspend`, `resume`, `terminate`,
-`auth-token`, and `shell-auth-token`.
+`invoke`, `auth-token`, and `shell-auth-token`.
 
 - Go: `runtime/microvm` exports lifecycle adapters, real controller routes, constrained provider adapters, safe session
-  records, TableTheory session registry helpers, and test fakes.
+  records, token-hidden workload invocation, TableTheory session registry helpers, and test fakes.
 - TypeScript: `MicroVMLifecycleAdapter`, `MicroVMRealController`, `TableTheoryMicroVMSessionRegistry`,
   `createAWSLambdaMicroVMProvider`, `createRealMicroVMController`, and related validators.
 - Python: `MicroVMLifecycleAdapter`, `MicroVMRealController`, `TableTheoryMicroVMSessionRegistry`,
   `create_aws_lambda_microvm_provider`, `create_real_microvm_controller`, and related validators.
 - CDK: `AppTheoryMicrovmNetworkConnector`, `AppTheoryMicrovmImage`, and `AppTheoryMicrovmController` wire typed
-  connector references, protected routes, IAM grants, and the durable session table.
+  connector references, endpoint-dispatched no-hook images, protected routes, IAM grants, token-hidden workload invoke,
+  and the durable session table.
 - Conformance: `examples/microvm-conformance` is the AppTheory-owned harness for a consumer-provided EqualToAI/Host lab.
 
-The golden path requires sanitized lifecycle events, protected controller routes, sanitized token metadata, and the
-TableTheory/DynamoDB-style session registry with `pk`, `sk`, and `ttl`. It does not provide live AWS proof,
-EqualToAI/Host application proof, customer workload readiness, generalized account vending, unauthenticated controllers,
-raw SDK access, or raw lifecycle hook bypasses.
+The golden path requires sanitized lifecycle events, protected controller routes, sanitized token metadata, token-hidden
+workload invocation through `/microvms/{session_id}/invoke`, and the TableTheory/DynamoDB-style session registry with
+`pk`, `sk`, and `ttl`. It does not provide EqualToAI/Host application proof, customer workload readiness, generalized
+account vending, unauthenticated controllers, raw SDK access, provider auth-token exposure, or raw lifecycle hook
+bypasses.
 
 Guide: [AWS Lambda MicroVM Golden Path](./features/lambda-microvm-contract-foundation.md)
 CDK guide: [Lambda MicroVM CDK Constructs](./cdk/lambda-microvm.md)

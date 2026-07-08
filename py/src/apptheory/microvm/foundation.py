@@ -12,6 +12,10 @@ from typing import Any, Literal, cast
 MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm"
 MICROVM_CONTRACT_VERSION = "m15.microvm/v1"
 MICROVM_ENV_EXECUTION_ROLE_ARN = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN"
+MICROVM_ENV_IMAGE_REF = "APPTHEORY_MICROVM_IMAGE_REF"
+MICROVM_ENV_NETWORK_CONNECTOR_REFS = "APPTHEORY_MICROVM_NETWORK_CONNECTOR_REFS"
+MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS = "APPTHEORY_MICROVM_INGRESS_NETWORK_CONNECTOR_REFS"
+MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS = "APPTHEORY_MICROVM_EGRESS_NETWORK_CONNECTOR_REFS"
 
 MICROVM_ERROR_INVALID_CONTRACT = "m15.microvm.invalid_contract"
 MICROVM_ERROR_RAW_SDK_ESCAPE_HATCH = "m15.microvm.raw_sdk_escape_hatch"
@@ -58,6 +62,7 @@ OPERATION_LIST = "list"
 OPERATION_SUSPEND = "suspend"
 OPERATION_RESUME = "resume"
 OPERATION_TERMINATE = "terminate"
+OPERATION_INVOKE = "invoke"
 OPERATION_AUTH_TOKEN = "auth-token"  # noqa: S105
 OPERATION_SHELL_AUTH_TOKEN = "shell-auth-token"  # noqa: S105
 OPERATION_SHELL_TOKEN = OPERATION_SHELL_AUTH_TOKEN
@@ -853,6 +858,7 @@ def _required_operations() -> list[str]:
         OPERATION_SUSPEND,
         OPERATION_RESUME,
         OPERATION_TERMINATE,
+        OPERATION_INVOKE,
         OPERATION_AUTH_TOKEN,
         OPERATION_SHELL_TOKEN,
     ]
@@ -946,6 +952,15 @@ def _required_operation_route(operation: str) -> dict[str, Any]:
             "/microvms/{session_id}",
             ["tenant_id", "namespace", "session_id"],
             ["session_id", "state", "provider_state", "registry_version"],
+            False,
+        )
+    if operation == OPERATION_INVOKE:
+        return _operation_route(
+            operation,
+            "ANY",
+            "/microvms/{session_id}/invoke/{proxy+}",
+            ["tenant_id", "namespace", "session_id", "method", "path", "port"],
+            ["status", "headers", "body"],
             False,
         )
     if operation == OPERATION_AUTH_TOKEN:
@@ -1518,7 +1533,11 @@ __all__ = [
     "MICROVM_CONTRACT_NAME",
     "MICROVM_CONTRACT_VERSION",
     "MICROVM_CONTRACT_VERSION_M16",
+    "MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS",
     "MICROVM_ENV_EXECUTION_ROLE_ARN",
+    "MICROVM_ENV_IMAGE_REF",
+    "MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS",
+    "MICROVM_ENV_NETWORK_CONNECTOR_REFS",
     "MICROVM_ERROR_FORBIDDEN_FIELD",
     "MICROVM_ERROR_INVALID_CONTRACT",
     "MICROVM_ERROR_INVALID_LIFECYCLE_EVENT",
@@ -1538,6 +1557,7 @@ __all__ = [
     "MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER",
     "OPERATION_AUTH_TOKEN",
     "OPERATION_GET",
+    "OPERATION_INVOKE",
     "OPERATION_LEGACY_SHELL_TOKEN",
     "OPERATION_LIST",
     "OPERATION_RESUME",

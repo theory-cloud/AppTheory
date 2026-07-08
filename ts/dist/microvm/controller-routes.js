@@ -3,7 +3,7 @@ import { MICROVM_ERROR_CONTROLLER_COMMAND_FAILED, MICROVM_ERROR_CONTROLLER_INCOM
 import { safeError } from "./errors.js";
 import { controllerErrorResponse, normalizeMicroVMControllerRequest, } from "./controller.js";
 import { normalizeMicroVMCommand } from "./controller-contract.js";
-import { normalizeStringArray } from "./provider.js";
+import { normalizeMicroVMProviderInvokePath, normalizeStringArray, sanitizeMicroVMProviderInvokeHeaders, } from "./provider.js";
 export function registerMicroVMControllerRoutes(app, controller) {
     if (!app) {
         throw new Error("apptheory: microvm controller route registration requires an app");
@@ -53,6 +53,14 @@ export function registerMicroVMControllerRoutes(app, controller) {
     for (const route of routes) {
         app.handleStrict(route.method, route.path, microVMControllerRouteHandler(controller, route.command), { authRequired: true });
     }
+    for (const method of microVMControllerInvokeMethods()) {
+        for (const path of [
+            "/microvms/{session_id}/invoke",
+            "/microvms/{session_id}/invoke/{proxy+}",
+        ]) {
+            app.handleStrict(method, path, microVMControllerInvokeRouteHandler(controller), { authRequired: true });
+        }
+    }
     return app;
 }
 export function registerControllerRoutes(app, controller) {
@@ -76,6 +84,27 @@ export function microVMControllerRouteHandler(controller, command) {
         }
         const response = await controller.handle(parsed);
         return microVMControllerHTTPResponse(response);
+    };
+}
+export function microVMControllerInvokeRouteHandler(controller) {
+    return async (ctx) => {
+        const parsed = microVMControllerInvokeRequestFromHTTP(ctx);
+        if (parsed instanceof MicroVMSafeError) {
+            return microVMControllerHTTPResponse(controllerErrorResponse(microVMInvokeErrorRequest(ctx), parsed));
+        }
+        if (typeof controller.invoke !== "function") {
+            return microVMControllerHTTPResponse(controllerErrorResponse(microVMInvokeRequestEnvelope(parsed), safeError(MICROVM_ERROR_CONTROLLER_INCOMPLETE, "apptheory: microvm controller route registration requires an invoke-capable controller", parsed.request_id)));
+        }
+        try {
+            const output = await controller.invoke(parsed);
+            return microVMControllerInvokeHTTPResponse(output);
+        }
+        catch (err) {
+            const safe = err instanceof MicroVMSafeError
+                ? err
+                : safeError(MICROVM_ERROR_CONTROLLER_COMMAND_FAILED, "apptheory: microvm controller command failed", parsed.request_id);
+            return microVMControllerHTTPResponse(controllerErrorResponse(microVMInvokeRequestEnvelope(parsed), safe));
+        }
     };
 }
 export function microVMControllerRequestFromHTTP(ctx, command) {
@@ -131,6 +160,41 @@ export function microVMControllerRequestFromHTTP(ctx, command) {
         request.idle_policy = idlePolicy;
     return normalizeMicroVMControllerRequest(request);
 }
+export function microVMControllerInvokeRequestFromHTTP(ctx) {
+    if (!ctx) {
+        return safeError(MICROVM_ERROR_INVALID_CONTROLLER_REQUEST, "apptheory: microvm controller route context is missing", "");
+    }
+    const ctxTenant = String(ctx.tenantId ?? "").trim();
+    const queryTenant = firstQueryValue(ctx.request.query, "tenant_id");
+    if (ctxTenant && queryTenant && queryTenant !== ctxTenant) {
+        return safeError(MICROVM_ERROR_TENANT_BINDING_VIOLATION, "apptheory: microvm controller route tenant binding mismatch", ctx.requestId);
+    }
+    const namespace = firstHeaderValueFromMap(ctx.request.headers, "x-namespace-id") ||
+        firstQueryValue(ctx.request.query, "namespace");
+    const proxyPath = String(ctx.param("proxy") ?? "").trim() || "/";
+    return {
+        request_id: String(ctx.requestId ?? "").trim(),
+        tenant_id: ctxTenant || queryTenant,
+        namespace,
+        auth_context: {
+            subject: String(ctx.authIdentity ?? "").trim(),
+            tenant_id: ctxTenant,
+            namespace,
+        },
+        session_id: String(ctx.param("session_id") ?? "").trim(),
+        method: String(ctx.request.method ?? "")
+            .trim()
+            .toUpperCase(),
+        path: normalizeMicroVMProviderInvokePath(proxyPath),
+        query: cloneInvokeQuery(ctx.request.query),
+        headers: sanitizeMicroVMProviderInvokeHeaders(ctx.request.headers),
+        body: ctx.request.body
+            ? new Uint8Array(ctx.request.body)
+            : new Uint8Array(),
+        port: positiveIntFromString(firstHeaderValueFromMap(ctx.request.headers, "x-apptheory-microvm-port")) || 8080,
+        ttl_seconds: positiveIntFromString(firstHeaderValueFromMap(ctx.request.headers, "x-apptheory-microvm-token-ttl")) || 60,
+    };
+}
 export function microVMControllerRoutePayload(ctx) {
     if ((ctx.request.body?.length ?? 0) === 0)
         return {};
@@ -150,6 +214,15 @@ export function microVMControllerRoutePayload(ctx) {
 export function microVMControllerHTTPResponse(response) {
     return jsonResponse(microVMControllerHTTPStatus(response.error), serializableMicroVMControllerResponse(response));
 }
+export function microVMControllerInvokeHTTPResponse(output) {
+    return {
+        status: Math.trunc(Number(output.status) || 502),
+        headers: sanitizeMicroVMProviderInvokeHeaders(output.headers ?? {}),
+        cookies: [],
+        body: output.body ? new Uint8Array(output.body) : new Uint8Array(),
+        isBase64: output.is_base64 === true,
+    };
+}
 export function microVMControllerHTTPStatus(err) {
     if (!err || !err.code)
         return 200;
@@ -168,6 +241,41 @@ export function microVMControllerHTTPStatus(err) {
         default:
             return 400;
     }
+}
+function microVMControllerInvokeMethods() {
+    return ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"];
+}
+function microVMInvokeRequestEnvelope(request) {
+    return {
+        command: MicroVMCommand.Invoke,
+        request_id: request.request_id,
+        tenant_id: request.tenant_id,
+        namespace: request.namespace,
+        auth_context: request.auth_context,
+        session_id: request.session_id,
+    };
+}
+function microVMInvokeErrorRequest(ctx) {
+    return {
+        command: MicroVMCommand.Invoke,
+        request_id: String(ctx?.requestId ?? "").trim(),
+        tenant_id: String(ctx?.tenantId ?? "").trim(),
+        namespace: "",
+        auth_context: {
+            subject: String(ctx?.authIdentity ?? "").trim(),
+            tenant_id: String(ctx?.tenantId ?? "").trim(),
+        },
+    };
+}
+function cloneInvokeQuery(query) {
+    const out = {};
+    for (const [rawKey, rawValues] of Object.entries(query ?? {})) {
+        const key = String(rawKey ?? "").trim();
+        if (!key || key === "tenant_id" || key === "namespace")
+            continue;
+        out[key] = (rawValues ?? []).map((value) => String(value ?? "").trim());
+    }
+    return out;
 }
 export function serializableMicroVMControllerResponse(response) {
     const out = { ...response };

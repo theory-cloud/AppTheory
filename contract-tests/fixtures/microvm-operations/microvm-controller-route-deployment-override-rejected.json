@@ -1,0 +1,50 @@
+{
+  "id": "m16_microvm_controller_route_deployment_override_rejected",
+  "tier": "m16",
+  "name": "M16 MicroVM run route rejects deployment-pinned image overrides",
+  "setup": {
+    "microvm_controller_route": {
+      "authenticated": true,
+      "tenant_id": "tenant-1",
+      "namespace": "namespace-1",
+      "session_id": "fixture-session",
+      "deployment_defaults": {
+        "image_ref": "image-ref",
+        "ingress_network_connector_refs": ["ingress-ref", "shell-ingress-ref"],
+        "egress_network_connector_refs": ["network-ref"]
+      }
+    }
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/microvms",
+      "headers": {
+        "content-type": ["application/json"],
+        "x-tenant-id": ["tenant-1"],
+        "x-namespace-id": ["namespace-1"],
+        "x-request-id": ["req-m16-route-deployment-override-rejected"]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"namespace\":\"namespace-1\",\"image_ref\":\"other-image-ref\",\"network_connector_ref\":\"network-ref\",\"session_spec\":{\"metadata\":{\"safe\":\"ok\"}}}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "microvm_controller_route": {
+      "status": 400,
+      "command": "run",
+      "tenant_id": "tenant-1",
+      "namespace": "namespace-1",
+      "error_code": "m15.microvm.invalid_controller_request",
+      "forbidden_body_substrings": [
+        "token_value",
+        "bearer_token",
+        "x-aws-proxy-auth",
+        "session_token_plaintext"
+      ]
+    }
+  }
+}

@@ -1,6 +1,6 @@
 ---
 title: Lambda MicroVM CDK Constructs
-description: The AppTheory CDK golden path for corrective M16 AWS Lambda MicroVM network, image, protected controller, and session-registry wiring.
+description: The AppTheory CDK golden path for corrective M16 AWS Lambda MicroVM network, image, protected controller, invoke, and session-registry wiring.
 ---
 
 # Lambda MicroVM CDK Constructs
@@ -14,7 +14,7 @@ Use these constructs together:
 - `AppTheoryMicrovmNetworkConnector` or typed connector references for caller-owned and AWS-managed connector wiring;
 - `AppTheoryMicrovmImage` for the `AWS::Lambda::MicrovmImage` resource and hook configuration;
 - `AppTheoryMicrovmController` for protected real controller routes, the controller Lambda, IAM grants, fail-closed
-  environment wiring, and the durable session registry table.
+  environment wiring, token-hidden workload invocation, and the durable session registry table.
 
 This is the single AppTheory deployment path for MicroVM applications. Do not drop to raw CDK resources or raw AWS SDK
 calls to bypass controller auth, lifecycle validation, registry shape, token safety, or network-boundary requirements.
@@ -35,8 +35,10 @@ calls to bypass controller auth, lifecycle validation, registry shape, token saf
 6. Use `examples/microvm-conformance` for consumer proof. Local dry-run proves harness readiness only; live proof requires
    a consumer-provided EqualToAI/Host lab deployment and configuration.
 
-The synth-only reference stack lives at `examples/cdk/microvm-controller`. It demonstrates construct wiring without live
-AWS lookups or deployment.
+The runnable reference stack lives at `examples/cdk/microvm-controller`. It demonstrates construct wiring,
+endpoint-dispatched no-hook image builds, and Go/TypeScript/Python workload invocation through the AppTheory controller.
+Synthesis does not perform live AWS lookups; deployment requires a bootstrapped account in a region where Lambda
+MicroVMs are available.
 
 ## Network connector boundary
 
@@ -76,20 +78,24 @@ invent hidden connectors.
 | `buildRoleArn` | yes | Caller-provided IAM build role ARN. |
 | `codeArtifact.uri` | yes | Artifact URI, such as an S3 path or ECR image URI. |
 | `egressNetworkConnectors` | yes | One to ten egress connector references. |
-| `hooks` | yes | Hook enablement for image-build and runtime MicroVM hooks. |
+| `hooks` | yes | Hook configuration object. Use `{}` for endpoint-dispatched no-hook images. |
 | `logging` | yes | Exactly one of CloudWatch logging or `disabled: true`. |
 | `resources` | yes | Exactly one resource entry; `minimumMemoryInMiB` is required. |
 | `additionalOsCapabilities` | no | Defaults to `[ALL]`. |
 | `cpuConfigurations` | no | Defaults to ARM64; AppTheory does not broaden this into arbitrary architectures. |
 
-Hook fields on the image construct configure AWS resource integration:
+For the AppTheory endpoint-dispatched workload path, pass `hooks: {}`. AppTheory then synthesizes `Hooks: {}` so AWS
+builds the image without AWS-invoked lifecycle hooks; runtime HTTP traffic is delivered through the MicroVM endpoint and
+proxied by the controller `invoke` route.
+
+When AWS hook integration is intentionally configured, hook fields on the image construct are:
 
 - `hooks.microvmImageHooks.ready` and `hooks.microvmImageHooks.validate` for image-build hooks;
 - `hooks.microvmHooks.resume`, `run`, `suspend`, and `terminate` for runtime MicroVM hooks;
 - timeout fields alongside each hook when the AWS resource should enforce a hook timeout.
 
 Application lifecycle behavior still belongs to AppTheory runtime lifecycle adapters. The image construct is not a raw
-lifecycle hook bypass.
+lifecycle hook bypass, and hook configuration is not the workload HTTP access path.
 
 ## Controller deployment
 
@@ -125,8 +131,15 @@ Controller routes are fixed:
 | `POST` | `/microvms/{session_id}/suspend` | `suspend` |
 | `POST` | `/microvms/{session_id}/resume` | `resume` |
 | `DELETE` | `/microvms/{session_id}` | `terminate` |
+| `ANY` | `/microvms/{session_id}/invoke` | `invoke` |
+| `ANY` | `/microvms/{session_id}/invoke/{proxy+}` | `invoke` |
 | `POST` | `/microvms/{session_id}/auth-token` | `auth-token` |
 | `POST` | `/microvms/{session_id}/shell-auth-token` | `shell-auth-token` |
+
+The invoke routes are the single AppTheory path for ordinary workload HTTP access. Callers use the same controller
+authorizer plus tenant and namespace headers, optionally pass `X-AppTheory-MicroVM-Port` (the example workloads use
+`8080`), and receive the workload's sanitized HTTP response. The controller mints the provider auth token internally and
+does not expose `X-aws-proxy-auth`, provider bearer credentials, raw AWS SDK clients, or plaintext tokens to callers.
 
 `shell-auth-token` is canonical. Runtime route helpers may accept `shell-token` as a compatibility alias, but the CDK
 construct and conformance harness do not use it as a canonical route.
@@ -138,8 +151,8 @@ The construct sets these controller environment variables:
 | `APPTHEORY_MICROVM_CONTRACT_NAME` | `apptheory.lambda_microvm` |
 | `APPTHEORY_MICROVM_CONTRACT_VERSION` | `m16.microvm/v1` |
 | `APPTHEORY_MICROVM_CONTROLLER_ENDPOINT` | Synthesized `/microvms` base endpoint. |
-| `APPTHEORY_MICROVM_CONTROLLER_OPERATIONS` | Comma-separated canonical operations. |
-| `APPTHEORY_MICROVM_CONTROLLER_ROUTES` | Comma-separated canonical method/path pairs. |
+| `APPTHEORY_MICROVM_CONTROLLER_OPERATIONS` | Comma-separated canonical operations, including `invoke`. |
+| `APPTHEORY_MICROVM_CONTROLLER_ROUTES` | Comma-separated canonical method/path pairs, including root/proxy invoke routes. |
 | `APPTHEORY_MICROVM_CONTROLLER_AUTH_REQUIRED` | Always `true`. |
 | `APPTHEORY_MICROVM_CONTROLLER_AUTH_DEFAULT` | Always `deny`. |
 | `APPTHEORY_MICROVM_SESSION_REGISTRY_TABLE` | Durable session table name. |
@@ -193,9 +206,10 @@ model can tolerate cached decisions.
 
 ## Evidence boundary and non-goals
 
-The CDK docs and examples demonstrate repo-local wiring for the AppTheory construct surface. They do not prove live AWS
-deployment, EqualToAI/Host application behavior, customer workload readiness, cloud mutation, account vending, VPC
-creation, or that unauthenticated controllers are acceptable.
+The CDK docs and examples demonstrate repo-local wiring for the AppTheory construct surface. The reference example has
+been live-smoked in `us-east-1` with Go, TypeScript, and Python workloads through the AppTheory invoke route. That does
+not prove EqualToAI/Host application behavior, customer workload readiness, arbitrary cloud mutation, account vending,
+VPC creation, or that unauthenticated controllers are acceptable.
 
 AppTheory intentionally does not add:
 

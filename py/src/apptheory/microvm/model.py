@@ -34,6 +34,7 @@ COMMAND_LIST = "list"
 COMMAND_SUSPEND = "suspend"
 COMMAND_RESUME = "resume"
 COMMAND_TERMINATE = "terminate"
+COMMAND_INVOKE = "invoke"
 COMMAND_AUTH_TOKEN = "auth-token"  # noqa: S105
 COMMAND_SHELL_AUTH_TOKEN = "shell-auth-token"  # noqa: S105
 COMMAND_SHELL_TOKEN = COMMAND_SHELL_AUTH_TOKEN
@@ -51,6 +52,7 @@ MicroVMCommand = Literal[
     "suspend",
     "resume",
     "terminate",
+    "invoke",
     "auth-token",
     "shell-auth-token",
 ]
@@ -220,6 +222,31 @@ class MicroVMProviderTokenInput:
 
 
 @dataclass(slots=True)
+class MicroVMProviderInvokeInput:
+    request_id: str
+    tenant_id: str
+    namespace: str
+    auth_context: MicroVMAuthContext
+    binding: MicroVMProviderSessionBinding
+    endpoint: str
+    method: str
+    path: str
+    query: dict[str, list[str]] = field(default_factory=dict)
+    headers: dict[str, list[str]] = field(default_factory=dict)
+    body: bytes = b""
+    port: int = 0
+    ttl_seconds: int = 0
+
+
+@dataclass(slots=True)
+class MicroVMProviderInvokeOutput:
+    status: int
+    headers: dict[str, list[str]] = field(default_factory=dict)
+    body: bytes = b""
+    is_base64: bool = False
+
+
+@dataclass(slots=True)
 class MicroVMProviderSession:
     tenant_id: str
     namespace: str
@@ -228,6 +255,7 @@ class MicroVMProviderSession:
     state: str
     provider_state: str
     terminal: bool = False
+    endpoint: str = ""
     image_ref: str = ""
     image_version: str = ""
     started_at: float = 0.0
@@ -281,6 +309,30 @@ class MicroVMControllerRequest:
     ttl_seconds: int = 0
     allowed_port_scope: list[MicroVMProviderPortScope] = field(default_factory=list)
     max_results: int = 0
+
+
+@dataclass(slots=True)
+class MicroVMControllerInvokeRequest:
+    request_id: str
+    tenant_id: str
+    namespace: str
+    auth_context: MicroVMAuthContext
+    session_id: str
+    method: str
+    path: str
+    query: dict[str, list[str]] = field(default_factory=dict)
+    headers: dict[str, list[str]] = field(default_factory=dict)
+    body: bytes = b""
+    port: int = 0
+    ttl_seconds: int = 0
+
+
+@dataclass(slots=True)
+class MicroVMControllerDeploymentDefaults:
+    image_ref: str = ""
+    network_connector_ref: str = ""
+    ingress_network_connector_refs: list[str] = field(default_factory=list)
+    egress_network_connector_refs: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -496,6 +548,7 @@ __all__ = [
     "COMMAND_AUTH_TOKEN",
     "COMMAND_CREATE",
     "COMMAND_GET",
+    "COMMAND_INVOKE",
     "COMMAND_LEGACY_SHELL_TOKEN",
     "COMMAND_LIST",
     "COMMAND_RESUME",
@@ -525,12 +578,16 @@ __all__ = [
     "MicroVMControllerAuthContract",
     "MicroVMControllerCommandContract",
     "MicroVMControllerContract",
+    "MicroVMControllerDeploymentDefaults",
     "MicroVMControllerEnvelopeContract",
+    "MicroVMControllerInvokeRequest",
     "MicroVMControllerRequest",
     "MicroVMControllerResponse",
     "MicroVMCreateSessionInput",
     "MicroVMProviderCall",
     "MicroVMProviderIdlePolicy",
+    "MicroVMProviderInvokeInput",
+    "MicroVMProviderInvokeOutput",
     "MicroVMProviderListInput",
     "MicroVMProviderListOutput",
     "MicroVMProviderPortScope",

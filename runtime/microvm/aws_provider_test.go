@@ -26,18 +26,19 @@ func TestAWSLambdaMicroVMProviderMapsOfficialSDKOperations(t *testing.T) {
 	require.Equal(t, "provider-1", run.ProviderMicroVMID)
 	require.Equal(t, StateRunning, run.State)
 	require.Equal(t, "running", run.ProviderState)
+	require.Equal(t, "https://provider-1.microvm.example.test", run.Endpoint)
 	require.Equal(t, "image-ref", aws.ToString(api.runInput.ImageIdentifier))
 	require.Equal(t, "req-run", aws.ToString(api.runInput.ClientToken))
 	require.Equal(t, "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole", aws.ToString(api.runInput.ExecutionRoleArn))
 	require.Equal(t, []string{"egress-ref", "network-ref"}, api.runInput.EgressNetworkConnectors)
 	require.Equal(t, []string{"ingress-ref"}, api.runInput.IngressNetworkConnectors)
-	require.NotNil(t, api.runInput.RunHookPayload)
-	require.NotContains(t, aws.ToString(api.runInput.RunHookPayload), "raw_lifecycle_hook_payload")
+	require.Nil(t, api.runInput.RunHookPayload, "endpoint-dispatched MicroVM images must not receive AWS run-hook payloads")
 
 	binding := run.Binding()
 	got, err := provider.Get(context.Background(), validProviderSessionInput("req-get", binding))
 	require.NoError(t, err)
 	require.Equal(t, binding, got.Binding())
+	require.Equal(t, "https://provider-1.microvm.example.test", got.Endpoint)
 
 	list, err := provider.List(context.Background(), ProviderListInput{
 		RequestID:     "req-list",
@@ -310,7 +311,7 @@ func TestAWSLambdaMicroVMProviderErrorBranchesAndHelpers(t *testing.T) {
 
 	_, err = sessionFromRunOutput(validProviderRunInput(), nil)
 	requireSafeError(t, err, ErrorCodeProviderOperationFailed)
-	_, err = sessionFromProviderState(binding, "unknown", "image-ref", "1", time.Unix(800, 0).UTC(), time.Time{})
+	_, err = sessionFromProviderState(binding, "unknown", "https://provider-1.microvm.example.test", "image-ref", "1", time.Unix(800, 0).UTC(), time.Time{})
 	requireSafeError(t, err, ErrorCodeProviderStateMappingIncomplete)
 	_, err = sessionFromGetOutput("req-empty", binding, nil)
 	requireSafeError(t, err, ErrorCodeProviderOperationFailed)
@@ -373,6 +374,7 @@ func (api *recordingLambdaMicroVMAPI) RunMicrovm(_ context.Context, input *lambd
 	api.state = lambdatypes.MicrovmStateRunning
 	return &lambdamicrovms.RunMicrovmOutput{
 		MicrovmId:                aws.String("provider-1"),
+		Endpoint:                 aws.String("https://provider-1.microvm.example.test"),
 		ImageArn:                 aws.String(aws.ToString(input.ImageIdentifier)),
 		ImageVersion:             aws.String("1"),
 		MaximumDurationInSeconds: aws.Int32(300),
@@ -389,6 +391,7 @@ func (api *recordingLambdaMicroVMAPI) GetMicrovm(_ context.Context, input *lambd
 	}
 	out := &lambdamicrovms.GetMicrovmOutput{
 		MicrovmId:                aws.String(aws.ToString(input.MicrovmIdentifier)),
+		Endpoint:                 aws.String("https://provider-1.microvm.example.test"),
 		ImageArn:                 aws.String("image-ref"),
 		ImageVersion:             aws.String("1"),
 		MaximumDurationInSeconds: aws.Int32(300),

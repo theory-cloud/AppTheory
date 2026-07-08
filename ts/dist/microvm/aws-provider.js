@@ -1,8 +1,8 @@
 import { CreateMicrovmAuthTokenCommand, CreateMicrovmShellAuthTokenCommand, GetMicrovmCommand, LambdaMicrovmsClient, ListMicrovmsCommand, ResumeMicrovmCommand, RunMicrovmCommand, SuspendMicrovmCommand, TerminateMicrovmCommand, } from "@aws-sdk/client-lambda-microvms";
-import { MICROVM_ERROR_CONTROLLER_INCOMPLETE, MICROVM_ERROR_TOKEN_SAFETY_VIOLATION, MICROVM_ERROR_TENANT_BINDING_VIOLATION, MicroVMOperation, } from "./model.js";
+import { MICROVM_ERROR_CONTROLLER_INCOMPLETE, MICROVM_ERROR_PROVIDER_REQUEST_INVALID, MICROVM_ERROR_TOKEN_SAFETY_VIOLATION, MICROVM_ERROR_TENANT_BINDING_VIOLATION, MicroVMOperation, } from "./model.js";
 import { safeError } from "./errors.js";
 import { mapMicroVMProviderState, normalizeMicroVMProviderState, } from "./operation-contract.js";
-import { asMicroVMProviderSafeError, defaultProviderTokenTTLSeconds, microVMProviderTokenMetadata, providerEgressConnectorRefs, safeMicroVMRunHookPayload, validateMicroVMProviderListInputInternal, validateMicroVMProviderRunInputInternal, validateMicroVMProviderSessionInputInternal, validateMicroVMProviderTokenInputInternal, validateMicroVMProviderSession, } from "./provider.js";
+import { asMicroVMProviderSafeError, defaultProviderTokenTTLSeconds, microVMProviderTokenMetadata, maxProviderInvokeBodyBytes, providerEgressConnectorRefs, providerInvokePortHeader, providerInvokeResponseIsBase64, providerInvokeURL, sanitizeMicroVMProviderInvokeHeaders, validateMicroVMProviderListInputInternal, validateMicroVMProviderInvokeInputInternal, validateMicroVMProviderRunInputInternal, validateMicroVMProviderSessionInputInternal, validateMicroVMProviderTokenInputInternal, validateMicroVMProviderSession, } from "./provider.js";
 import { validDate } from "./time.js";
 export async function createAWSLambdaMicroVMClient(_options = {}) {
     throw safeError(MICROVM_ERROR_CONTROLLER_INCOMPLETE, "apptheory: microvm legacy AWS session client is unsupported by the official Lambda MicroVM SDK", "");
@@ -21,7 +21,6 @@ export class AWSLambdaMicroVMProvider {
             const commandInput = {
                 clientToken: normalized.request_id,
                 imageIdentifier: normalized.image_ref,
-                runHookPayload: safeMicroVMRunHookPayload(normalized),
             };
             const egress = providerEgressConnectorRefs(normalized);
             if (egress.length > 0)
@@ -98,6 +97,58 @@ export class AWSLambdaMicroVMProvider {
             await this.client.send(new TerminateMicrovmCommand({ microvmIdentifier: providerID }));
         });
     }
+    async invoke(input) {
+        const normalized = validateMicroVMProviderInvokeInputInternal(input);
+        try {
+            const invokePort = normalized.port ?? 8080;
+            const tokenOutput = await this.client.send(new CreateMicrovmAuthTokenCommand({
+                allowedPorts: awsMicroVMPortScopes([{ port: invokePort }]),
+                expirationInMinutes: providerExpirationMinutes(normalized.ttl_seconds ?? defaultProviderTokenTTLSeconds),
+                microvmIdentifier: normalized.binding.provider_microvm_id,
+            }));
+            const authToken = microVMAuthHeaderValue(tokenOutput);
+            if (!authToken) {
+                throw safeError(MICROVM_ERROR_TOKEN_SAFETY_VIOLATION, "apptheory: microvm provider returned incomplete token metadata", normalized.request_id);
+            }
+            const target = providerInvokeURL(normalized.endpoint, normalized.path, normalized.query);
+            if (!target) {
+                throw safeError(MICROVM_ERROR_PROVIDER_REQUEST_INVALID, "apptheory: microvm invoke endpoint is invalid", normalized.request_id);
+            }
+            const headers = new Headers();
+            for (const [name, values] of Object.entries(sanitizeMicroVMProviderInvokeHeaders(normalized.headers ?? {}))) {
+                for (const value of values)
+                    headers.append(name, value);
+            }
+            headers.set("X-aws-proxy-auth", authToken);
+            headers.set("X-aws-proxy-port", providerInvokePortHeader(invokePort));
+            const init = {
+                method: normalized.method,
+                headers,
+            };
+            if (normalized.method !== "GET" && normalized.method !== "HEAD") {
+                init.body = normalized.body ?? new Uint8Array();
+            }
+            const response = await fetch(target, init);
+            const body = new Uint8Array(await response.arrayBuffer());
+            if (body.byteLength > maxProviderInvokeBodyBytes) {
+                throw safeError(MICROVM_ERROR_PROVIDER_REQUEST_INVALID, "apptheory: microvm invoke response is too large", normalized.request_id);
+            }
+            const responseHeaders = {};
+            response.headers.forEach((value, name) => {
+                responseHeaders[name] = [...(responseHeaders[name] ?? []), value];
+            });
+            const sanitized = sanitizeMicroVMProviderInvokeHeaders(responseHeaders);
+            return {
+                status: response.status,
+                headers: sanitized,
+                body,
+                is_base64: providerInvokeResponseIsBase64(sanitized),
+            };
+        }
+        catch (err) {
+            throw asMicroVMProviderSafeError(err, normalized.request_id);
+        }
+    }
     async createAuthToken(input) {
         const normalized = validateMicroVMProviderTokenInputInternal(MicroVMOperation.AuthToken, input);
         try {
@@ -157,14 +208,14 @@ export function microVMProviderSessionFromRunOutput(input, output) {
         session_id: input.session_id,
         provider_microvm_id: stringField(output, "microvmId"),
     };
-    return microVMProviderSessionFromProviderState(binding, stringField(output, "state"), stringField(output, "imageArn") || input.image_ref, stringField(output, "imageVersion") || input.image_version || "", dateField(output, "startedAt"), dateField(output, "terminatedAt"));
+    return microVMProviderSessionFromProviderState(binding, stringField(output, "state"), stringField(output, "endpoint"), stringField(output, "imageArn") || input.image_ref, stringField(output, "imageVersion") || input.image_version || "", dateField(output, "startedAt"), dateField(output, "terminatedAt"));
 }
 export function microVMProviderSessionFromGetOutput(requestID, binding, output) {
     const providerID = stringField(output, "microvmId");
     if (providerID && providerID !== binding.provider_microvm_id) {
         throw safeError(MICROVM_ERROR_TENANT_BINDING_VIOLATION, "apptheory: microvm provider returned mismatched session binding", requestID);
     }
-    return microVMProviderSessionFromProviderState(binding, stringField(output, "state"), stringField(output, "imageArn"), stringField(output, "imageVersion"), dateField(output, "startedAt"), dateField(output, "terminatedAt"));
+    return microVMProviderSessionFromProviderState(binding, stringField(output, "state"), stringField(output, "endpoint"), stringField(output, "imageArn"), stringField(output, "imageVersion"), dateField(output, "startedAt"), dateField(output, "terminatedAt"));
 }
 export function microVMProviderListOutputFromSDK(input, output) {
     const bindings = new Map();
@@ -177,11 +228,11 @@ export function microVMProviderListOutputFromSDK(input, output) {
         const binding = bindings.get(providerID);
         if (!binding)
             continue;
-        sessions.push(microVMProviderSessionFromProviderState(binding, stringField(item, "state"), stringField(item, "imageArn"), stringField(item, "imageVersion"), dateField(item, "startedAt"), null));
+        sessions.push(microVMProviderSessionFromProviderState(binding, stringField(item, "state"), "", stringField(item, "imageArn"), stringField(item, "imageVersion"), dateField(item, "startedAt"), null));
     }
     return { sessions };
 }
-export function microVMProviderSessionFromProviderState(binding, providerState, imageRef, imageVersion, startedAt, terminatedAt) {
+export function microVMProviderSessionFromProviderState(binding, providerState, endpoint, imageRef, imageVersion, startedAt, terminatedAt) {
     const mapped = mapMicroVMProviderState(providerState);
     const session = {
         tenant_id: binding.tenant_id,
@@ -192,6 +243,9 @@ export function microVMProviderSessionFromProviderState(binding, providerState, 
         provider_state: normalizeMicroVMProviderState(providerState),
         terminal: mapped.terminal,
     };
+    const cleanEndpoint = String(endpoint ?? "").trim();
+    if (cleanEndpoint)
+        session.endpoint = cleanEndpoint;
     const cleanImageRef = String(imageRef ?? "").trim();
     if (cleanImageRef)
         session.image_ref = cleanImageRef;
@@ -230,6 +284,14 @@ export function ensureMicroVMProviderTokenResult(output, requestID) {
         Object.keys(authToken).length === 0) {
         throw safeError(MICROVM_ERROR_TOKEN_SAFETY_VIOLATION, "apptheory: microvm provider returned incomplete token metadata", requestID);
     }
+}
+function microVMAuthHeaderValue(output) {
+    const authToken = asRecord(output)["authToken"];
+    if (!authToken || typeof authToken !== "object" || Array.isArray(authToken)) {
+        return "";
+    }
+    const record = authToken;
+    return String(record["X-aws-proxy-auth"] ?? record["x-aws-proxy-auth"] ?? "").trim();
 }
 export function providerExpirationMinutes(ttlSeconds) {
     return Math.ceil(ttlSeconds / 60);

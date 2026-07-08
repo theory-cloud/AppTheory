@@ -158,13 +158,30 @@ export function requestFromAPIGatewayV2(event) {
         : queryFromSingle(event.queryStringParameters);
     return {
         method: String(event.requestContext?.http?.method ?? ""),
-        path: String(event.rawPath ?? event.requestContext?.http?.path ?? "/"),
+        path: normalizeAPIGatewayV2StagePath(event.rawPath, event.requestContext?.http?.path, event.requestContext?.stage),
         query,
         headers,
         body: toBuffer(String(event.body ?? "")),
         isBase64: Boolean(event.isBase64Encoded),
         sourceProvenance: sourceProvenanceFromProviderRequestContext("apigw-v2", event.requestContext?.http?.sourceIp),
     };
+}
+function normalizeAPIGatewayV2StagePath(rawPath, requestContextHTTPPath, stageValue) {
+    const path = String(rawPath ?? requestContextHTTPPath ?? "/");
+    const stage = String(stageValue ?? "")
+        .trim()
+        .replace(/^\/+|\/+$/g, "");
+    if (!stage || stage === "$default") {
+        return path;
+    }
+    const prefix = `/${stage}`;
+    if (path === prefix) {
+        return "/";
+    }
+    if (path.startsWith(`${prefix}/`)) {
+        return path.slice(prefix.length);
+    }
+    return path;
 }
 export function requestFromLambdaFunctionURL(event) {
     const cookies = Array.isArray(event.cookies)

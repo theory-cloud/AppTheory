@@ -121,17 +121,17 @@ decisions:
     question: "How should I wire AWS Lambda MicroVM support?"
     decision_tree:
       - condition: "You need first-class Lambda MicroVM lifecycle and controller support."
-        check: "Can you use the AppTheory lifecycle adapter, constrained real provider/controller, durable session registry, typed CDK constructs, and conformance harness together?"
+        check: "Can you use the AppTheory lifecycle adapter, constrained real provider/controller, protected invoke route, durable session registry, typed CDK constructs, and conformance harness together?"
         if_yes:
           choice: "Use the corrective M16 MicroVM golden path"
-          reason: "M16 evidence covers fixture-backed real operations, provider adapters, protected controller routes, CDK wiring, and local conformance harness readiness for the single AppTheory path."
+          reason: "M16 evidence covers fixture-backed real operations, provider adapters, protected controller routes, token-hidden workload invoke, CDK wiring, and local conformance harness readiness for the single AppTheory path."
           example: |
             AppTheoryMicrovmNetworkConnector -> AppTheoryMicrovmImage -> AppTheoryMicrovmController
             MicroVMRealController + TableTheoryMicroVMSessionRegistry
-            operations: run/get/list/suspend/resume/terminate/auth-token/shell-auth-token
+            operations: run/get/list/suspend/resume/terminate/invoke/auth-token/shell-auth-token
         if_no:
           choice: "Grow the AppTheory contract before shipping"
-          reason: "Raw SDK calls, raw lifecycle hook bypasses, unauthenticated controllers, ad-hoc registries, or non-canonical operation names fragment the contract."
+          reason: "Raw SDK calls, direct provider proxy-auth exposure, raw lifecycle hook bypasses, unauthenticated controllers, ad-hoc registries, or non-canonical operation names fragment the contract."
           example: |
             TODO: add fixtures and cross-runtime parity before adding a new MicroVM capability.
       - condition: "You are reviewing v1.14.0/M15 MicroVM wording."

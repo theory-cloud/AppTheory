@@ -20,12 +20,12 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/middleware-timeout-sse/` — M12 middleware ctx bag, timeout, naming, and SSE streaming extensions
 - `contract-tests/fixtures/edge-streaming-html/` — M14 streaming, catch-all routing, HTML/cache/CloudFront helpers, and Step Functions helpers
 - `contract-tests/fixtures/microvm-foundation/` — M15 Lambda MicroVM validation-only lifecycle/controller/session vocabulary
-- `contract-tests/fixtures/microvm-operations/` — M16 real Lambda MicroVM operation, route, provider-state, tenant, and token-safety contracts
+- `contract-tests/fixtures/microvm-operations/` — M16 real Lambda MicroVM operation, route, invoke, provider-state, tenant, and token-safety contracts
 - `contract-tests/fixtures/mcp/` — SP09 MCP protocol, registry, session, Streamable HTTP, resumable SSE, and task-store contracts
 - `contract-tests/fixtures/oauth/` — SP12 OAuth protected-resource metadata, bearer validation, dynamic client registration, and PKCE contracts
 - `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
 
-Each fixture is a single JSON object. The current corpus contains 216 behavior fixtures plus the internal schema file. <!-- apptheory-fixture-count: 216 -->
+Each fixture is a single JSON object. The current corpus contains 220 behavior fixtures plus the internal schema file. <!-- apptheory-fixture-count: 220 -->
 
 ## Schema gate
 

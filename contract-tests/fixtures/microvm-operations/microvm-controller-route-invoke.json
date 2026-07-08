@@ -1,0 +1,50 @@
+{
+  "id": "m16_microvm_controller_route_invoke",
+  "tier": "m16",
+  "name": "M16 canonical MicroVM invoke route proxies through AppTheory without exposing provider tokens",
+  "setup": {
+    "microvm_controller_route": {
+      "authenticated": true,
+      "seed_session": true,
+      "tenant_id": "tenant-1",
+      "namespace": "namespace-1",
+      "session_id": "fixture-session"
+    }
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/microvms/fixture-session/invoke/hello",
+      "query": {
+        "name": ["apptheory"]
+      },
+      "headers": {
+        "x-tenant-id": ["tenant-1"],
+        "x-namespace-id": ["namespace-1"],
+        "x-request-id": ["req-m16-route-invoke"],
+        "x-apptheory-microvm-port": ["8080"]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "microvm_controller_route": {
+      "status": 200,
+      "body_contains": [
+        "fake-microvm",
+        "\"method\":\"GET\"",
+        "\"path\":\"/hello\""
+      ],
+      "forbidden_body_substrings": [
+        "token_value",
+        "bearer_token",
+        "x-aws-proxy-auth",
+        "session_token_plaintext"
+      ]
+    }
+  }
+}

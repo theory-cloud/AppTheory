@@ -104,6 +104,160 @@
       },
       "Type": "AWS::ApiGatewayV2::Api"
     },
+    "ControllerApiANYmicrovmssessionidinvoke9BFDB4EB": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "ControllerApi211C54BA"
+        },
+        "AuthorizationType": "CUSTOM",
+        "AuthorizerId": {
+          "Ref": "ControllerApiAuthorizer3125927A"
+        },
+        "RouteKey": "ANY /microvms/{session_id}/invoke",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "ControllerApiANYmicrovmssessionidinvokeInvokeMicrovmRootDE3C78C5"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "ControllerApiANYmicrovmssessionidinvokeInvokeMicrovmRootDE3C78C5": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "ControllerApi211C54BA"
+        },
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": {
+          "Fn::GetAtt": [
+            "ControllerControllerFunctionA2C4220A",
+            "Arn"
+          ]
+        },
+        "PayloadFormatVersion": "2.0"
+      },
+      "Type": "AWS::ApiGatewayV2::Integration"
+    },
+    "ControllerApiANYmicrovmssessionidinvokeInvokeMicrovmRootPermissionABAB4146": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "ControllerControllerFunctionA2C4220A",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "ControllerApi211C54BA"
+              },
+              "/*/*/microvms/{session_id}/invoke"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "ControllerApiANYmicrovmssessionidinvokeproxyBB074B1A": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "ControllerApi211C54BA"
+        },
+        "AuthorizationType": "CUSTOM",
+        "AuthorizerId": {
+          "Ref": "ControllerApiAuthorizer3125927A"
+        },
+        "RouteKey": "ANY /microvms/{session_id}/invoke/{proxy+}",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "ControllerApiANYmicrovmssessionidinvokeproxyInvokeMicrovmProxy3DA0A07D"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "ControllerApiANYmicrovmssessionidinvokeproxyInvokeMicrovmProxy3DA0A07D": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "ControllerApi211C54BA"
+        },
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": {
+          "Fn::GetAtt": [
+            "ControllerControllerFunctionA2C4220A",
+            "Arn"
+          ]
+        },
+        "PayloadFormatVersion": "2.0"
+      },
+      "Type": "AWS::ApiGatewayV2::Integration"
+    },
+    "ControllerApiANYmicrovmssessionidinvokeproxyInvokeMicrovmProxyPermissionB8A7CA64": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "ControllerControllerFunctionA2C4220A",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "ControllerApi211C54BA"
+              },
+              "/*/*/microvms/{session_id}/invoke/{proxy+}"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
     "ControllerApiAuthorizer3125927A": {
       "Properties": {
         "ApiId": {
@@ -831,8 +985,8 @@
                 ]
               ]
             },
-            "APPTHEORY_MICROVM_CONTROLLER_OPERATIONS": "run,get,list,suspend,resume,terminate,auth-token,shell-auth-token",
-            "APPTHEORY_MICROVM_CONTROLLER_ROUTES": "POST /microvms,GET /microvms,GET /microvms/{session_id},POST /microvms/{session_id}/suspend,POST /microvms/{session_id}/resume,DELETE /microvms/{session_id},POST /microvms/{session_id}/auth-token,POST /microvms/{session_id}/shell-auth-token",
+            "APPTHEORY_MICROVM_CONTROLLER_OPERATIONS": "run,get,list,suspend,resume,terminate,invoke,auth-token,shell-auth-token",
+            "APPTHEORY_MICROVM_CONTROLLER_ROUTES": "POST /microvms,GET /microvms,GET /microvms/{session_id},POST /microvms/{session_id}/suspend,POST /microvms/{session_id}/resume,DELETE /microvms/{session_id},ANY /microvms/{session_id}/invoke,ANY /microvms/{session_id}/invoke/{proxy+},POST /microvms/{session_id}/auth-token,POST /microvms/{session_id}/shell-auth-token",
             "APPTHEORY_MICROVM_EGRESS_NETWORK_CONNECTOR_REFS": {
               "Ref": "ConnectorNetworkConnectorB4F2FB5F"
             },
@@ -974,26 +1128,7 @@
                 "lambda:TerminateMicrovm"
               ],
               "Effect": "Allow",
-              "Resource": {
-                "Fn::Join": [
-                  "",
-                  [
-                    "arn:",
-                    {
-                      "Ref": "AWS::Partition"
-                    },
-                    ":lambda:",
-                    {
-                      "Ref": "AWS::Region"
-                    },
-                    ":",
-                    {
-                      "Ref": "AWS::AccountId"
-                    },
-                    ":microvm:*"
-                  ]
-                ]
-              },
+              "Resource": "*",
               "Sid": "AppTheoryMicrovmControlPlane"
             },
             {

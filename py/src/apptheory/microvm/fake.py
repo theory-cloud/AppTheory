@@ -183,6 +183,7 @@ class FakeMicroVMProvider:
             state=STATE_RUNNING,
             provider_state="running",
             terminal=False,
+            endpoint=f"https://microvm-{self._next:06d}.example.test",
             image_ref=normalized.image_ref,
             image_version=normalized.image_version,
             started_at=self._now,
@@ -225,6 +226,34 @@ class FakeMicroVMProvider:
 
     def create_shell_token(self, input_: MicroVMProviderTokenInput | dict[str, Any]) -> MicroVMProviderToken:
         return self._token(OPERATION_SHELL_TOKEN, input_)
+
+    def invoke(self, input_: MicroVMProviderInvokeInput | dict[str, Any]) -> MicroVMProviderInvokeOutput:
+        normalized = _validate_provider_invoke_input(input_)
+        self._record(
+            OPERATION_INVOKE,
+            normalized.request_id,
+            normalized.tenant_id,
+            normalized.namespace,
+            normalized.binding.session_id,
+        )
+        if err := self._configured_error(OPERATION_INVOKE, normalized.request_id):
+            raise err
+        self._bound_session(normalized.request_id, normalized.binding)
+        body = jsonlib.dumps(
+            {
+                "runtime": "fake-microvm",
+                "method": normalized.method,
+                "path": normalized.path,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return MicroVMProviderInvokeOutput(
+            status=200,
+            headers={"content-type": ["application/json; charset=utf-8"]},
+            body=body,
+            is_base64=False,
+        )
 
     def _lookup(self, operation: str, input_: MicroVMProviderSessionInput | dict[str, Any]) -> MicroVMProviderSession:
         normalized = _validate_provider_session_input(operation, input_)

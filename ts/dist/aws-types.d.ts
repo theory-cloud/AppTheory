@@ -7,6 +7,7 @@ export interface APIGatewayV2HTTPRequest {
     headers?: Record<string, string>;
     queryStringParameters?: Record<string, string>;
     requestContext: {
+        stage?: string;
         http: {
             method: string;
             path?: string;

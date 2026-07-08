@@ -1,6 +1,10 @@
 export const MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm";
 export const MICROVM_CONTRACT_VERSION = "m15.microvm/v1";
 export const MICROVM_ENV_EXECUTION_ROLE_ARN = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN";
+export const MICROVM_ENV_IMAGE_REF = "APPTHEORY_MICROVM_IMAGE_REF";
+export const MICROVM_ENV_NETWORK_CONNECTOR_REFS = "APPTHEORY_MICROVM_NETWORK_CONNECTOR_REFS";
+export const MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS = "APPTHEORY_MICROVM_INGRESS_NETWORK_CONNECTOR_REFS";
+export const MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS = "APPTHEORY_MICROVM_EGRESS_NETWORK_CONNECTOR_REFS";
 export const MICROVM_ERROR_INVALID_CONTRACT = "m15.microvm.invalid_contract";
 export const MICROVM_ERROR_RAW_SDK_ESCAPE_HATCH = "m15.microvm.raw_sdk_escape_hatch";
 export const MICROVM_ERROR_LIFECYCLE_BYPASS = "m15.microvm.lifecycle_bypass";
@@ -56,6 +60,7 @@ export const MicroVMOperation = {
     Suspend: "suspend",
     Resume: "resume",
     Terminate: "terminate",
+    Invoke: "invoke",
     AuthToken: "auth-token",
     ShellAuthToken: "shell-auth-token",
     ShellToken: "shell-auth-token",
@@ -108,6 +113,7 @@ export const MicroVMCommand = {
     Suspend: "suspend",
     Resume: "resume",
     Terminate: "terminate",
+    Invoke: "invoke",
     AuthToken: "auth-token",
     ShellAuthToken: "shell-auth-token",
     ShellToken: "shell-auth-token",

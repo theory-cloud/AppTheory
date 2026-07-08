@@ -19,6 +19,7 @@
           "suspend",
           "resume",
           "terminate",
+          "invoke",
           "auth-token",
           "shell-auth-token"
         ],
@@ -217,6 +218,43 @@
               "state",
               "provider_state",
               "registry_version"
+            ],
+            "forbidden_fields": [
+              "authorization",
+              "aws_access_key_id",
+              "aws_secret_access_key",
+              "aws_session_token",
+              "bearer_token",
+              "plaintext_token",
+              "provider_secret",
+              "raw_aws_credentials",
+              "raw_lifecycle_hook_payload",
+              "raw_sdk_client",
+              "session_token_plaintext",
+              "token_value",
+              "x-amz-security-token"
+            ]
+          },
+          {
+            "operation": "invoke",
+            "method": "ANY",
+            "path": "/microvms/{session_id}/invoke/{proxy+}",
+            "auth_required": true,
+            "default_auth": "deny",
+            "tenant_bound": true,
+            "recovery": false,
+            "request_fields": [
+              "tenant_id",
+              "namespace",
+              "session_id",
+              "method",
+              "path",
+              "port"
+            ],
+            "response_fields": [
+              "status",
+              "headers",
+              "body"
             ],
             "forbidden_fields": [
               "authorization",

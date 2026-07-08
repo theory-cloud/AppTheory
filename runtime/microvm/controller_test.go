@@ -485,6 +485,42 @@ func TestRealControllerCarriesExecutionRoleFromEnvironment(t *testing.T) {
 	require.Equal(t, "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole", provider.lastRunExecutionRoleArn)
 }
 
+func TestRealControllerAppliesDeploymentPinnedDefaults(t *testing.T) {
+	now := time.Unix(1500, 0).UTC()
+	t.Setenv(EnvImageRef, "env-image-ref")
+	t.Setenv(EnvIngressNetworkConnectorRefs, "ingress-ref,shell-ingress-ref")
+	t.Setenv(EnvEgressNetworkConnectorRefs, "egress-ref")
+	provider := newRealControllerProvider(now)
+	controller, err := NewRealController(
+		provider,
+		NewMemorySessionRegistry(),
+		WithControllerClock(fixedControllerClock{now: now}),
+		WithControllerIDGenerator(fixedControllerIDs{id: "session-defaults"}),
+	)
+	require.NoError(t, err)
+
+	request := validRealControllerRequest(CommandRun, "req-defaults", "")
+	request.ImageRef = ""
+	request.NetworkConnectorRef = ""
+	request.IngressNetworkConnectorRefs = nil
+	request.EgressNetworkConnectorRefs = nil
+	run, err := controller.Handle(context.Background(), request)
+	require.NoError(t, err)
+	require.Nil(t, run.Error)
+	require.Equal(t, "env-image-ref", provider.lastRunInput.ImageRef)
+	require.Equal(t, "egress-ref", provider.lastRunInput.NetworkConnectorRef)
+	require.Equal(t, []string{"ingress-ref", "shell-ingress-ref"}, provider.lastRunInput.IngressNetworkConnectorRefs)
+	require.Equal(t, []string{"egress-ref"}, provider.lastRunInput.EgressNetworkConnectorRefs)
+
+	override := validRealControllerRequest(CommandRun, "req-defaults-override", "")
+	override.ImageRef = "other-image-ref"
+	override.NetworkConnectorRef = "egress-ref"
+	rejected, err := controller.Handle(context.Background(), override)
+	require.Error(t, err)
+	require.NotNil(t, rejected.Error)
+	require.Equal(t, ErrorCodeInvalidControllerRequest, rejected.Error.Code)
+}
+
 func TestRealControllerRoutesEnforceAuthAndBindings(t *testing.T) {
 	now := time.Unix(2000, 0).UTC()
 	registry := NewMemorySessionRegistry()
@@ -980,6 +1016,7 @@ type realControllerProvider struct {
 	next                    int64
 	tokens                  int64
 	lastRunExecutionRoleArn string
+	lastRunInput            ProviderRunInput
 	sessions                map[SessionKey]ProviderSession
 }
 
@@ -992,6 +1029,7 @@ func (p *realControllerProvider) Run(_ context.Context, input ProviderRunInput) 
 		return ProviderSession{}, err
 	}
 	p.lastRunExecutionRoleArn = input.ExecutionRoleArn
+	p.lastRunInput = input
 	p.next++
 	session := ProviderSession{
 		TenantID:          input.TenantID,
@@ -1000,6 +1038,7 @@ func (p *realControllerProvider) Run(_ context.Context, input ProviderRunInput) 
 		ProviderMicroVMID: "microvm-000001",
 		State:             StateRunning,
 		ProviderState:     "running",
+		Endpoint:          "https://microvm-000001.example.test",
 		ImageRef:          input.ImageRef,
 		ImageVersion:      input.ImageVersion,
 		StartedAt:         p.now,
@@ -1049,6 +1088,20 @@ func (p *realControllerProvider) Terminate(_ context.Context, input ProviderSess
 		return ProviderSession{}, err
 	}
 	return p.transition(input.Binding, "terminated", input.RequestID)
+}
+
+func (p *realControllerProvider) Invoke(_ context.Context, input ProviderInvokeInput) (ProviderInvokeOutput, error) {
+	if err := ValidateProviderInvokeInput(input); err != nil {
+		return ProviderInvokeOutput{}, err
+	}
+	if _, err := p.bound(input.Binding, input.RequestID); err != nil {
+		return ProviderInvokeOutput{}, err
+	}
+	return ProviderInvokeOutput{
+		Status:  200,
+		Headers: map[string][]string{"content-type": {"application/json"}},
+		Body:    []byte(`{"runtime":"fake-microvm","path":"` + input.Path + `"}`),
+	}, nil
 }
 
 func (p *realControllerProvider) CreateAuthToken(_ context.Context, input ProviderTokenInput) (ProviderToken, error) {

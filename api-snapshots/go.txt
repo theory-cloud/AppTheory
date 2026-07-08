@@ -3052,6 +3052,8 @@ const CommandCreate Command = "create"
 
 const CommandGet Command = "get"
 
+const CommandInvoke Command = "invoke"
+
 const CommandLegacyShellToken Command = "shell-token"
 
 const CommandList Command = "list"
@@ -3088,7 +3090,15 @@ const DefaultSessionProviderID = "apptheory.microvm.registry"
 
 const DefaultSessionRegistryTableName = "apptheory-microvm-sessions"
 
+const EnvEgressNetworkConnectorRefs = "APPTHEORY_MICROVM_EGRESS_NETWORK_CONNECTOR_REFS"
+
 const EnvExecutionRoleArn = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN"
+
+const EnvImageRef = "APPTHEORY_MICROVM_IMAGE_REF"
+
+const EnvIngressNetworkConnectorRefs = "APPTHEORY_MICROVM_INGRESS_NETWORK_CONNECTOR_REFS"
+
+const EnvNetworkConnectorRefs = "APPTHEORY_MICROVM_NETWORK_CONNECTOR_REFS"
 
 const EnvSessionRegistryTableName = "APPTHEORY_MICROVM_SESSION_REGISTRY_TABLE"
 
@@ -3165,6 +3175,8 @@ const KindLifecycle ContractKind = "lifecycle"
 const OperationAuthToken Operation = "auth-token"
 
 const OperationGet Operation = "get"
+
+const OperationInvoke Operation = "invoke"
 
 const OperationLegacyShellToken Operation = "shell-token"
 
@@ -3258,6 +3270,7 @@ type Controller struct {
 	controllerID     string
 	providerID       string
 	executionRoleArn string
+	deployment       ControllerDeploymentDefaults
 	clock            Clock
 	ids              IDGenerator
 	ttl              time.Duration
@@ -3282,10 +3295,32 @@ type ControllerContract struct {
 	Commands []ControllerCommandContract `json:"commands"`
 }
 
+type ControllerDeploymentDefaults struct {
+	ImageRef                    string   `json:"image_ref,omitempty"`
+	NetworkConnectorRef         string   `json:"network_connector_ref,omitempty"`
+	IngressNetworkConnectorRefs []string `json:"ingress_network_connector_refs,omitempty"`
+	EgressNetworkConnectorRefs  []string `json:"egress_network_connector_refs,omitempty"`
+}
+
 type ControllerEnvelopeContract struct {
 	RequiredFields  []string `json:"required_fields"`
 	SafeErrorFields []string `json:"safe_error_fields"`
 	ForbiddenFields []string `json:"forbidden_fields"`
+}
+
+type ControllerInvokeRequest struct {
+	RequestID   string              `json:"request_id"`
+	TenantID    string              `json:"tenant_id"`
+	Namespace   string              `json:"namespace"`
+	AuthContext AuthContext         `json:"auth_context"`
+	SessionID   string              `json:"session_id"`
+	Method      string              `json:"method"`
+	Path        string              `json:"path"`
+	Query       map[string][]string `json:"query,omitempty"`
+	Headers     map[string][]string `json:"headers,omitempty"`
+	Body        []byte              `json:"body,omitempty"`
+	Port        int32               `json:"port,omitempty"`
+	TTLSeconds  int32               `json:"ttl_seconds,omitempty"`
 }
 
 type ControllerOption func(*Controller)
@@ -3449,6 +3484,7 @@ type Provider interface {
 	Suspend(context.Context, ProviderSessionInput) (ProviderSession, error)
 	Resume(context.Context, ProviderSessionInput) (ProviderSession, error)
 	Terminate(context.Context, ProviderSessionInput) (ProviderSession, error)
+	Invoke(context.Context, ProviderInvokeInput) (ProviderInvokeOutput, error)
 	CreateAuthToken(context.Context, ProviderTokenInput) (ProviderToken, error)
 	CreateShellToken(context.Context, ProviderTokenInput) (ProviderToken, error)
 }
@@ -3457,6 +3493,29 @@ type ProviderIdlePolicy struct {
 	AutoResumeEnabled        bool  `json:"auto_resume_enabled"`
 	MaxIdleDurationSeconds   int32 `json:"max_idle_duration_seconds"`
 	SuspendedDurationSeconds int32 `json:"suspended_duration_seconds"`
+}
+
+type ProviderInvokeInput struct {
+	RequestID   string                 `json:"request_id"`
+	TenantID    string                 `json:"tenant_id"`
+	Namespace   string                 `json:"namespace"`
+	AuthContext AuthContext            `json:"auth_context"`
+	Binding     ProviderSessionBinding `json:"binding"`
+	Endpoint    string                 `json:"endpoint"`
+	Method      string                 `json:"method"`
+	Path        string                 `json:"path"`
+	Query       map[string][]string    `json:"query,omitempty"`
+	Headers     map[string][]string    `json:"headers,omitempty"`
+	Body        []byte                 `json:"body,omitempty"`
+	Port        int32                  `json:"port,omitempty"`
+	TTLSeconds  int32                  `json:"ttl_seconds,omitempty"`
+}
+
+type ProviderInvokeOutput struct {
+	Status   int                 `json:"status"`
+	Headers  map[string][]string `json:"headers,omitempty"`
+	Body     []byte              `json:"body,omitempty"`
+	IsBase64 bool                `json:"is_base64,omitempty"`
 }
 
 type ProviderListInput struct {
@@ -3506,6 +3565,7 @@ type ProviderSession struct {
 	ProviderMicroVMID string         `json:"provider_microvm_id"`
 	State             LifecycleState `json:"state"`
 	ProviderState     string         `json:"provider_state"`
+	Endpoint          string         `json:"endpoint,omitempty"`
 	ImageRef          string         `json:"image_ref,omitempty"`
 	ImageVersion      string         `json:"image_version,omitempty"`
 	StartedAt         time.Time      `json:"started_at,omitempty"`
@@ -3676,6 +3736,7 @@ type SessionRegistryLister interface {
 }
 
 type SessionRegistryRecord struct {
+	_                           struct{}               `theorydb:"naming:snake_case"`
 	PK                          string                 `theorydb:"pk,attr:pk" json:"pk"`
 	SK                          string                 `theorydb:"sk,attr:sk" json:"sk"`
 	TenantID                    string                 `theorydb:"attr:tenant_id" json:"tenant_id"`
@@ -3824,6 +3885,8 @@ func ValidateLifecycleContract(LifecycleContract) error
 
 func ValidateOperationContract(OperationContract) error
 
+func ValidateProviderInvokeInput(ProviderInvokeInput) error
+
 func ValidateProviderListInput(ProviderListInput) error
 
 func ValidateProviderRunInput(ProviderRunInput) error
@@ -3854,6 +3917,8 @@ func WithAWSLambdaMicroVMRegion(string) AWSLambdaMicroVMProviderOption
 
 func WithControllerClock(Clock) ControllerOption
 
+func WithControllerDeploymentDefaults(ControllerDeploymentDefaults) ControllerOption
+
 func WithControllerExecutionRoleArn(string) ControllerOption
 
 func WithControllerID(string) ControllerOption
@@ -3880,6 +3945,8 @@ func (*AWSLambdaMicroVMProvider) CreateShellToken(context.Context, ProviderToken
 
 func (*AWSLambdaMicroVMProvider) Get(context.Context, ProviderSessionInput) (ProviderSession, error)
 
+func (*AWSLambdaMicroVMProvider) Invoke(context.Context, ProviderInvokeInput) (ProviderInvokeOutput, error)
+
 func (*AWSLambdaMicroVMProvider) List(context.Context, ProviderListInput) (ProviderListOutput, error)
 
 func (*AWSLambdaMicroVMProvider) Resume(context.Context, ProviderSessionInput) (ProviderSession, error)
@@ -3891,6 +3958,8 @@ func (*AWSLambdaMicroVMProvider) Suspend(context.Context, ProviderSessionInput) 
 func (*AWSLambdaMicroVMProvider) Terminate(context.Context, ProviderSessionInput) (ProviderSession, error)
 
 func (*Controller) Handle(context.Context, ControllerRequest) (ControllerResponse, error)
+
+func (*Controller) Invoke(context.Context, ControllerInvokeRequest) (ProviderInvokeOutput, error)
 
 func (*LifecycleAdapter) Handle(context.Context, LifecycleEvent) (LifecycleResult, error)
 
@@ -4591,6 +4660,8 @@ func (*FakeProvider) CreateAuthToken(context.Context, runtimemicrovm.ProviderTok
 func (*FakeProvider) CreateShellToken(context.Context, runtimemicrovm.ProviderTokenInput) (runtimemicrovm.ProviderToken, error)
 
 func (*FakeProvider) Get(context.Context, runtimemicrovm.ProviderSessionInput) (runtimemicrovm.ProviderSession, error)
+
+func (*FakeProvider) Invoke(context.Context, runtimemicrovm.ProviderInvokeInput) (runtimemicrovm.ProviderInvokeOutput, error)
 
 func (*FakeProvider) List(context.Context, runtimemicrovm.ProviderListInput) (runtimemicrovm.ProviderListOutput, error)
 

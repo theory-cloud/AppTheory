@@ -1,7 +1,12 @@
 import type { Model } from "@theory-cloud/tabletheory-ts";
+import type { Headers, Query } from "../types.js";
 export declare const MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm";
 export declare const MICROVM_CONTRACT_VERSION = "m15.microvm/v1";
 export declare const MICROVM_ENV_EXECUTION_ROLE_ARN = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN";
+export declare const MICROVM_ENV_IMAGE_REF = "APPTHEORY_MICROVM_IMAGE_REF";
+export declare const MICROVM_ENV_NETWORK_CONNECTOR_REFS = "APPTHEORY_MICROVM_NETWORK_CONNECTOR_REFS";
+export declare const MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS = "APPTHEORY_MICROVM_INGRESS_NETWORK_CONNECTOR_REFS";
+export declare const MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS = "APPTHEORY_MICROVM_EGRESS_NETWORK_CONNECTOR_REFS";
 export declare const MICROVM_ERROR_INVALID_CONTRACT = "m15.microvm.invalid_contract";
 export declare const MICROVM_ERROR_RAW_SDK_ESCAPE_HATCH = "m15.microvm.raw_sdk_escape_hatch";
 export declare const MICROVM_ERROR_LIFECYCLE_BYPASS = "m15.microvm.lifecycle_bypass";
@@ -99,6 +104,7 @@ export declare const MicroVMOperation: {
     readonly Suspend: "suspend";
     readonly Resume: "resume";
     readonly Terminate: "terminate";
+    readonly Invoke: "invoke";
     readonly AuthToken: "auth-token";
     readonly ShellAuthToken: "shell-auth-token";
     readonly ShellToken: "shell-auth-token";
@@ -234,6 +240,27 @@ export interface MicroVMProviderTokenInput {
     ttl_seconds?: number;
     allowed_port_scope?: MicroVMProviderPortScope[];
 }
+export interface MicroVMProviderInvokeInput {
+    request_id: string;
+    tenant_id: string;
+    namespace: string;
+    auth_context: MicroVMAuthContext;
+    binding: MicroVMProviderSessionBinding;
+    endpoint: string;
+    method: string;
+    path: string;
+    query?: Query;
+    headers?: Headers;
+    body?: Uint8Array;
+    port?: number;
+    ttl_seconds?: number;
+}
+export interface MicroVMProviderInvokeOutput {
+    status: number;
+    headers?: Headers;
+    body?: Uint8Array;
+    is_base64?: boolean;
+}
 export interface MicroVMProviderSession {
     tenant_id: string;
     namespace: string;
@@ -241,6 +268,7 @@ export interface MicroVMProviderSession {
     provider_microvm_id: string;
     state: MicroVMRealLifecycleState | string;
     provider_state: string;
+    endpoint?: string;
     image_ref?: string;
     image_version?: string;
     started_at?: Date;
@@ -276,6 +304,7 @@ export interface MicroVMProvider {
     suspend(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
     resume(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
     terminate(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
+    invoke(input: MicroVMProviderInvokeInput): Promise<MicroVMProviderInvokeOutput>;
     createAuthToken(input: MicroVMProviderTokenInput): Promise<MicroVMProviderToken>;
     createShellToken(input: MicroVMProviderTokenInput): Promise<MicroVMProviderToken>;
 }
@@ -307,6 +336,7 @@ export declare const MicroVMCommand: {
     readonly Suspend: "suspend";
     readonly Resume: "resume";
     readonly Terminate: "terminate";
+    readonly Invoke: "invoke";
     readonly AuthToken: "auth-token";
     readonly ShellAuthToken: "shell-auth-token";
     readonly ShellToken: "shell-auth-token";
@@ -368,6 +398,26 @@ export interface MicroVMControllerRequest {
     ttl_seconds?: number;
     allowed_port_scope?: MicroVMProviderPortScope[];
     max_results?: number;
+}
+export interface MicroVMControllerInvokeRequest {
+    request_id: string;
+    tenant_id: string;
+    namespace: string;
+    auth_context: MicroVMAuthContext;
+    session_id: string;
+    method: string;
+    path: string;
+    query?: Query;
+    headers?: Headers;
+    body?: Uint8Array;
+    port?: number;
+    ttl_seconds?: number;
+}
+export interface MicroVMControllerDeploymentDefaults {
+    image_ref?: string;
+    network_connector_ref?: string;
+    ingress_network_connector_refs?: string[];
+    egress_network_connector_refs?: string[];
 }
 export interface MicroVMControllerResponse {
     command: MicroVMCommandName | string;
@@ -577,6 +627,7 @@ export interface MicroVMControllerOptions {
     ttl_ms?: number;
     provider_id?: string;
     execution_role_arn?: string;
+    deployment_defaults?: MicroVMControllerDeploymentDefaults;
 }
 export interface MicroVMClientCall {
     command: MicroVMCommandName | string;
@@ -590,5 +641,6 @@ export interface AWSLambdaMicroVMClientOptions {
 }
 export interface MicroVMControllerRouteTarget {
     handle: (request: MicroVMControllerRequest) => MicroVMControllerResponse | Promise<MicroVMControllerResponse>;
+    invoke?: (request: MicroVMControllerInvokeRequest) => MicroVMProviderInvokeOutput | Promise<MicroVMProviderInvokeOutput>;
 }
 //# sourceMappingURL=model.d.ts.map

@@ -1,0 +1,55 @@
+{
+  "id": "p0.adapter.apigw_v2.stage_prefix_stripping",
+  "tier": "p0",
+  "name": "APIGW v2: explicit stage prefix is stripped before routing",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/echo", "handler": "echo_request" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/echo",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    },
+    "aws_event": {
+      "source": "apigw_v2",
+      "event": {
+        "version": "2.0",
+        "routeKey": "GET /echo",
+        "rawPath": "/demo/echo",
+        "rawQueryString": "",
+        "cookies": [],
+        "headers": {},
+        "queryStringParameters": null,
+        "requestContext": {
+          "stage": "demo",
+          "http": { "method": "GET", "path": "/demo/echo" }
+        },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "method": "GET",
+        "path": "/echo",
+        "query": {},
+        "headers": {},
+        "cookies": {},
+        "body_b64": "",
+        "is_base64": false
+      },
+      "is_base64": false
+    }
+  }
+}

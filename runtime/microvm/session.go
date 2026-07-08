@@ -305,7 +305,7 @@ func validCommand(command Command) bool {
 	command = normalizeCommand(command)
 	switch command {
 	case CommandCreate, CommandStart, CommandStop, CommandStatus, CommandSession,
-		CommandRun, CommandGet, CommandList, CommandSuspend, CommandResume, CommandTerminate, CommandAuthToken, CommandShellAuthToken:
+		CommandRun, CommandGet, CommandList, CommandSuspend, CommandResume, CommandTerminate, CommandInvoke, CommandAuthToken, CommandShellAuthToken:
 		return true
 	default:
 		return false

@@ -103,6 +103,7 @@ func (p *FakeProvider) Run(_ context.Context, input runtimemicrovm.ProviderRunIn
 		ProviderMicroVMID: fmt.Sprintf("microvm-%06d", p.next),
 		State:             runtimemicrovm.StateRunning,
 		ProviderState:     "running",
+		Endpoint:          fmt.Sprintf("https://microvm-%06d.example.test", p.next),
 		ImageRef:          strings.TrimSpace(input.ImageRef),
 		ImageVersion:      strings.TrimSpace(input.ImageVersion),
 		StartedAt:         p.now,
@@ -163,6 +164,27 @@ func (p *FakeProvider) Resume(_ context.Context, input runtimemicrovm.ProviderSe
 // Terminate marks a fake provider session terminated.
 func (p *FakeProvider) Terminate(_ context.Context, input runtimemicrovm.ProviderSessionInput) (runtimemicrovm.ProviderSession, error) {
 	return p.transition(runtimemicrovm.OperationTerminate, input, "terminated", p.now, p.now)
+}
+
+// Invoke returns a deterministic fake workload HTTP response.
+func (p *FakeProvider) Invoke(_ context.Context, input runtimemicrovm.ProviderInvokeInput) (runtimemicrovm.ProviderInvokeOutput, error) {
+	if err := runtimemicrovm.ValidateProviderInvokeInput(input); err != nil {
+		return runtimemicrovm.ProviderInvokeOutput{}, err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.record(runtimemicrovm.OperationInvoke, input.RequestID, input.TenantID, input.Namespace, input.Binding.SessionID)
+	if err := p.configuredError(runtimemicrovm.OperationInvoke, input.RequestID); err != nil {
+		return runtimemicrovm.ProviderInvokeOutput{}, err
+	}
+	if _, err := p.boundSession(input.RequestID, input.Binding); err != nil {
+		return runtimemicrovm.ProviderInvokeOutput{}, err
+	}
+	return runtimemicrovm.ProviderInvokeOutput{
+		Status:  200,
+		Headers: map[string][]string{"content-type": {"application/json"}},
+		Body:    []byte(fmt.Sprintf(`{"runtime":"fake-microvm","method":%q,"path":%q}`, input.Method, input.Path)),
+	}, nil
 }
 
 // CreateAuthToken returns sanitized deterministic auth-token metadata.

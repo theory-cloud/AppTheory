@@ -165,7 +165,11 @@ MICROVM_CONTRACT_VERSION	const
 MICROVM_CONTRACT_VERSION_M16	const
 MICROVM_CONTROLLER_AUTH_DEFAULT_DENY	const
 MICROVM_DEFAULT_SESSION_PROVIDER_ID	const
+MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS	const
 MICROVM_ENV_EXECUTION_ROLE_ARN	const
+MICROVM_ENV_IMAGE_REF	const
+MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS	const
+MICROVM_ENV_NETWORK_CONNECTOR_REFS	const
 MICROVM_ERROR_CONTROLLER_COMMAND_FAILED	const
 MICROVM_ERROR_CONTROLLER_INCOMPLETE	const
 MICROVM_ERROR_FORBIDDEN_FIELD	const
@@ -262,7 +266,9 @@ MicroVMController	class
 MicroVMControllerAuthContract	interface
 MicroVMControllerCommandContract	interface
 MicroVMControllerContract	interface
+MicroVMControllerDeploymentDefaults	interface
 MicroVMControllerEnvelopeContract	interface
+MicroVMControllerInvokeRequest	interface
 MicroVMControllerOptions	interface
 MicroVMControllerRequest	interface
 MicroVMControllerResponse	interface
@@ -288,6 +294,8 @@ MicroVMOperationName	type
 MicroVMProvider	interface
 MicroVMProviderCall	interface
 MicroVMProviderIdlePolicy	interface
+MicroVMProviderInvokeInput	interface
+MicroVMProviderInvokeOutput	interface
 MicroVMProviderListInput	interface
 MicroVMProviderListOutput	interface
 MicroVMProviderPortScope	interface
