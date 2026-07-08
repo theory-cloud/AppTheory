@@ -3,126 +3,102 @@ import * as path from "node:path";
 
 import {
   AppTheoryMicrovmController,
-  AppTheoryMicrovmHookMode,
   AppTheoryMicrovmImage,
   AppTheoryMicrovmNetworkConnector,
-  AppTheoryMicrovmNetworkProtocol,
 } from "@theory-cloud/apptheory-cdk";
 import * as cdk from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
+import * as assets from "aws-cdk-lib/aws-s3-assets";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
-import * as ec2 from "aws-cdk-lib/aws-ec2";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import type { Construct } from "constructs";
 
+export type MicrovmExampleLanguage = "go" | "ts" | "py";
+
 /**
- * Runnable local example for the first-class AppTheory Lambda MicroVM deployment path.
+ * Runnable example for the first-class AppTheory Lambda MicroVM deployment path.
  *
- * The VPC/subnet/security group are imported placeholders so `cdk synth` does not
- * perform live AWS lookups. The controller package is a Go AppTheory handler that
- * uses the canonical route adapter, a constrained deterministic provider fake, and
- * an in-memory registry/reconstruction hook for local proof only.
+ * The stack uses AWS-managed HTTP ingress, shell ingress, and internet egress
+ * connector references, an explicit no-hook MicroVM image, a real AppTheory
+ * MicroVM controller, and a TableTheory-shaped session registry. Select the
+ * in-MicroVM workload with `-c microvmLanguage=go|ts|py`; the default is Go.
  */
 export class MicrovmControllerStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
-    const vpc = ec2.Vpc.fromVpcAttributes(this, "CallerProvidedVpc", {
-      vpcId: "vpc-0a11c0de123456789",
-      availabilityZones: ["us-east-1a"],
-      privateSubnetIds: ["subnet-0a11c0de123456789"],
+    const language = normalizeLanguage(this.node.tryGetContext("microvmLanguage"));
+    const repoRoot = path.resolve(__dirname, "../../../..");
+    const workloadAsset = new assets.Asset(this, "MicrovmWorkloadAsset", {
+      path: path.join(repoRoot, "examples/cdk/microvm-controller/workloads", language),
     });
-    const privateSubnet = ec2.Subnet.fromSubnetAttributes(this, "CallerPrivateSubnet", {
-      subnetId: "subnet-0a11c0de123456789",
-      availabilityZone: "us-east-1a",
+    const buildRole = new iam.Role(this, "MicrovmImageBuildRole", {
+      assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
+      description: "Build role Lambda assumes to read the MicroVM code artifact and write build logs",
     });
-    const egressSecurityGroup = ec2.SecurityGroup.fromSecurityGroupId(
-      this,
-      "CallerMicrovmEgressSecurityGroup",
-      "sg-0a11c0de123456789",
-      { mutable: false },
+    buildRole.assumeRolePolicy?.addStatements(
+      new iam.PolicyStatement({
+        actions: ["sts:TagSession"],
+        principals: [new iam.ServicePrincipal("lambda.amazonaws.com")],
+      }),
+    );
+    workloadAsset.grantRead(buildRole);
+    buildRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+        resources: [this.formatArn({ service: "logs", resource: "*" })],
+      }),
     );
 
-    const egressConnector = new AppTheoryMicrovmNetworkConnector(this, "MicrovmEgressConnector", {
-      vpc,
-      subnets: [privateSubnet],
-      securityGroups: [egressSecurityGroup],
-      connectorName: "apptheory_microvm_demo_egress",
-      networkProtocol: AppTheoryMicrovmNetworkProtocol.IPV4,
-      tags: {
-        Example: "MicrovmController",
-        NetworkBoundary: "CallerProvidedVpc",
-      },
-    });
-    const ingressConnector = AppTheoryMicrovmNetworkConnector.allIngress(this, "MicrovmIngressConnector");
-    const shellIngressConnector = AppTheoryMicrovmNetworkConnector.shellIngress(this, "MicrovmShellIngressConnector");
+    const egressConnector = AppTheoryMicrovmNetworkConnector.internetEgress(this, "MicrovmInternetEgress");
+    const ingressConnector = AppTheoryMicrovmNetworkConnector.httpIngress(this, "MicrovmHttpIngress");
+    const shellIngressConnector = AppTheoryMicrovmNetworkConnector.shellIngress(this, "MicrovmShellIngress");
 
     const microvmImage = new AppTheoryMicrovmImage(this, "MicrovmImage", {
-      name: "apptheory_microvm_demo",
-      description: "Local AppTheory MicroVM controller example image",
-      baseImageArn: this.formatArn({
-        service: "lambda",
-        resource: "microvm-image",
-        resourceName: "base/apptheory-al2023",
-        arnFormat: cdk.ArnFormat.SLASH_RESOURCE_NAME,
-      }),
-      baseImageVersion: "1",
-      buildRoleArn: this.formatArn({
-        service: "iam",
-        region: "",
-        resource: "role",
-        resourceName: "apptheory-microvm-image-build-demo",
-      }),
+      name: `apptheory_microvm_${language}_demo`,
+      description: `AppTheory ${languageName(language)} MicroVM example image`,
+      baseImageArn: `arn:${cdk.Aws.PARTITION}:lambda:${cdk.Aws.REGION}:aws:microvm-image:al2023-1`,
+      baseImageVersion: "0",
+      buildRoleArn: buildRole.roleArn,
       codeArtifact: {
-        uri: "s3://apptheory-example-artifacts/microvm/controller-demo.tar",
+        uri: workloadAsset.s3ObjectUrl,
       },
       egressNetworkConnectors: [egressConnector],
-      hooks: {
-        port: 8080,
-        microvmImageHooks: {
-          ready: AppTheoryMicrovmHookMode.ENABLED,
-          readyTimeoutInSeconds: 120,
-          validate: AppTheoryMicrovmHookMode.ENABLED,
-          validateTimeoutInSeconds: 300,
-        },
-        microvmHooks: {
-          run: AppTheoryMicrovmHookMode.ENABLED,
-          runTimeoutInSeconds: 30,
-          suspend: AppTheoryMicrovmHookMode.ENABLED,
-          suspendTimeoutInSeconds: 30,
-          resume: AppTheoryMicrovmHookMode.ENABLED,
-          resumeTimeoutInSeconds: 30,
-          terminate: AppTheoryMicrovmHookMode.ENABLED,
-          terminateTimeoutInSeconds: 30,
+      hooks: {},
+      logging: {
+        cloudWatch: {
+          logGroup: `/aws/lambda/microvms/apptheory-microvm-${language}-demo`,
         },
       },
-      logging: { disabled: true },
       resources: [{ minimumMemoryInMiB: 2048 }],
       environmentVariables: [
-        { key: "APPTHEORY_MICROVM_EXAMPLE", value: "controller-demo" },
+        { key: "APPTHEORY_MICROVM_EXAMPLE_LANGUAGE", value: language },
       ],
       tags: {
         Example: "MicrovmController",
+        Language: language,
       },
     });
 
     const demoOnlyAuthorizer = new lambda.Function(this, "DemoOnlyTokenAuthorizer", {
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: "index.handler",
-      description: "Demo-only Lambda authorizer for the local MicroVM controller example",
+      description: "Demo-only Lambda authorizer for the MicroVM controller example",
       code: lambda.Code.fromInline(demoOnlyAuthorizerSource()),
     });
 
     const controller = new AppTheoryMicrovmController(this, "MicrovmController", {
-      apiName: "apptheory-microvm-controller-demo",
+      apiName: `apptheory-microvm-${language}-controller-demo`,
       controller: {
         runtime: lambda.Runtime.PROVIDED_AL2023,
         handler: "bootstrap",
         architecture: lambda.Architecture.ARM_64,
-        description: "Runnable local AppTheory MicroVM controller using the canonical Go runtime path",
-        code: goControllerCode(),
+        description: `AppTheory MicroVM controller for the ${languageName(language)} workload example`,
+        code: goControllerCode(repoRoot),
         environment: {
-          APPTHEORY_DEMO_PURPOSE: "local-microvm-controller-runtime",
+          APPTHEORY_DEMO_PURPOSE: "live-microvm-controller-runtime",
+          APPTHEORY_MICROVM_EXAMPLE_PROVIDER: "aws",
         },
       },
       authorizer: demoOnlyAuthorizer,
@@ -148,6 +124,27 @@ export class MicrovmControllerStack extends cdk.Stack {
     new cdk.CfnOutput(this, "MicrovmControllerEndpoint", {
       value: controller.endpoint,
     });
+    new cdk.CfnOutput(this, "MicrovmExampleLanguage", {
+      value: language,
+    });
+    new cdk.CfnOutput(this, "MicrovmImageRef", {
+      value: microvmImage.microvmImageArn,
+    });
+    new cdk.CfnOutput(this, "MicrovmIngressConnectorRef", {
+      value: ingressConnector.networkConnectorArn,
+    });
+    new cdk.CfnOutput(this, "MicrovmEgressConnectorRef", {
+      value: egressConnector.networkConnectorArn,
+    });
+    new cdk.CfnOutput(this, "MicrovmAuthTokenRoute", {
+      value: "POST /microvms/{session_id}/auth-token",
+    });
+    new cdk.CfnOutput(this, "MicrovmInvokeRoute", {
+      value: "ANY /microvms/{session_id}/invoke/{proxy+}",
+    });
+    new cdk.CfnOutput(this, "MicrovmInvokePortHeader", {
+      value: "X-AppTheory-MicroVM-Port: 8080",
+    });
     new cdk.CfnOutput(this, "MicrovmSessionRegistryTable", {
       value: controller.sessionTable.tableName,
       description: "TableTheory-shaped MicroVM session registry: pk/sk keys with ttl expiration",
@@ -169,8 +166,7 @@ function demoOnlyAuthorizerSource(): string {
 };`;
 }
 
-function goControllerCode(): lambda.Code {
-  const repoRoot = path.resolve(__dirname, "../../../..");
+function goControllerCode(repoRoot: string): lambda.Code {
   const controllerPackage = "./examples/cdk/microvm-controller/controller";
 
   return lambda.Code.fromAsset(path.join(repoRoot, "examples/cdk/microvm-controller/controller"), {
@@ -228,5 +224,24 @@ function assertTableTheorySessionRegistry(table: dynamodb.Table): void {
 
   if (!hasPartitionKey || !hasSortKey || !hasTtl) {
     throw new Error("MicroVM session registry must keep the TableTheory pk/sk/ttl shape");
+  }
+}
+
+function normalizeLanguage(value: unknown): MicrovmExampleLanguage {
+  const normalized = String(value ?? "go").trim().toLowerCase();
+  if (normalized === "go" || normalized === "ts" || normalized === "py") {
+    return normalized;
+  }
+  throw new Error("microvmLanguage context must be go, ts, or py");
+}
+
+function languageName(language: MicrovmExampleLanguage): string {
+  switch (language) {
+    case "go":
+      return "Go";
+    case "ts":
+      return "TypeScript";
+    case "py":
+      return "Python";
   }
 }

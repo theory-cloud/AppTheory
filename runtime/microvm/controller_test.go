@@ -467,6 +467,105 @@ func TestRealControllerCommandsAndTokenSafety(t *testing.T) {
 	require.Equal(t, StateTerminated, terminated.State)
 }
 
+func TestRealControllerInvokeAndRoutesProxyWorkload(t *testing.T) {
+	now := time.Unix(1250, 0).UTC()
+	registry := NewMemorySessionRegistry()
+	provider := newRealControllerProvider(now)
+	controller, err := NewRealController(
+		provider,
+		registry,
+		WithControllerClock(fixedControllerClock{now: now}),
+		WithControllerIDGenerator(fixedControllerIDs{id: "session-invoke"}),
+	)
+	require.NoError(t, err)
+
+	run, err := controller.Handle(context.Background(), validRealControllerRequest(CommandRun, "req-invoke-run", ""))
+	require.NoError(t, err)
+	output, err := controller.Invoke(context.Background(), ControllerInvokeRequest{
+		RequestID:   "req-direct-invoke",
+		TenantID:    "tenant-1",
+		Namespace:   "namespace-1",
+		AuthContext: AuthContext{Subject: "subject-1", TenantID: "tenant-1", Namespace: "namespace-1"},
+		SessionID:   run.SessionID,
+		Method:      "get",
+		Path:        "direct",
+		Headers:     map[string][]string{"Authorization": {"Bearer caller"}, "X-Workload": {" yes "}},
+		Port:        8081,
+		TTLSeconds:  30,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 200, output.Status)
+	require.Contains(t, string(output.Body), `"path":"/direct"`)
+	require.Equal(t, int32(8081), provider.lastInvokeInput.Port)
+	require.Equal(t, int32(30), provider.lastInvokeInput.TTLSeconds)
+	require.NotContains(t, provider.lastInvokeInput.Headers, "authorization")
+	require.Equal(t, []string{"yes"}, provider.lastInvokeInput.Headers["x-workload"])
+
+	app := apptheory.New(
+		apptheory.WithTier(apptheory.TierP1),
+		apptheory.WithClock(fixedControllerClock{now: now}),
+		apptheory.WithIDGenerator(fixedControllerIDs{id: "req-route-invoke"}),
+		apptheory.WithAuthHook(func(*apptheory.Context) (string, error) {
+			return "subject-1", nil
+		}),
+	)
+	_, err = RegisterControllerRoutes(app, controller)
+	require.NoError(t, err)
+
+	resp := app.Serve(context.Background(), apptheory.Request{
+		Method: "POST",
+		Path:   "/microvms/session-invoke/invoke/hello",
+		Query:  map[string][]string{"namespace": {"namespace-1"}, "tenant_id": {"tenant-1"}, "name": {"apptheory"}},
+		Headers: map[string][]string{
+			"authorization":                 {"Bearer caller"},
+			"x-aws-proxy-auth":              {"caller-token"},
+			"x-tenant-id":                   {"tenant-1"},
+			"x-namespace-id":                {"namespace-1"},
+			"x-request-id":                  {"req-http-invoke"},
+			"x-apptheory-microvm-port":      {"9090"},
+			"x-apptheory-microvm-token-ttl": {"45"},
+			"x-workload":                    {" route "},
+			"content-type":                  {"application/json"},
+		},
+		Body: []byte(`{"ok":true}`),
+	})
+	require.Equal(t, 200, resp.Status)
+	require.Contains(t, string(resp.Body), `"path":"/hello"`)
+	require.Equal(t, "/hello", provider.lastInvokeInput.Path)
+	require.Equal(t, map[string][]string{"name": {"apptheory"}}, provider.lastInvokeInput.Query)
+	require.Equal(t, int32(9090), provider.lastInvokeInput.Port)
+	require.Equal(t, int32(45), provider.lastInvokeInput.TTLSeconds)
+	require.NotContains(t, provider.lastInvokeInput.Headers, "authorization")
+	require.NotContains(t, provider.lastInvokeInput.Headers, "x-aws-proxy-auth")
+	require.NotContains(t, provider.lastInvokeInput.Headers, "x-tenant-id")
+	require.Equal(t, []string{"route"}, provider.lastInvokeInput.Headers["x-workload"])
+
+	root := app.Serve(context.Background(), apptheory.Request{
+		Method: "GET",
+		Path:   "/microvms/session-invoke/invoke",
+		Headers: map[string][]string{
+			"x-tenant-id":    {"tenant-1"},
+			"x-namespace-id": {"namespace-1"},
+			"x-request-id":   {"req-http-invoke-root"},
+		},
+	})
+	require.Equal(t, 200, root.Status)
+	require.Contains(t, string(root.Body), `"path":"/"`)
+
+	mismatch := app.Serve(context.Background(), apptheory.Request{
+		Method: "GET",
+		Path:   "/microvms/session-invoke/invoke/hello",
+		Query:  map[string][]string{"tenant_id": {"tenant-2"}},
+		Headers: map[string][]string{
+			"x-tenant-id":    {"tenant-1"},
+			"x-namespace-id": {"namespace-1"},
+			"x-request-id":   {"req-http-invoke-mismatch"},
+		},
+	})
+	require.Equal(t, 403, mismatch.Status)
+	require.Contains(t, string(mismatch.Body), ErrorCodeTenantBindingViolation)
+}
+
 func TestRealControllerCarriesExecutionRoleFromEnvironment(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	t.Setenv(EnvExecutionRoleArn, "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole")
@@ -483,6 +582,42 @@ func TestRealControllerCarriesExecutionRoleFromEnvironment(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, run.Error)
 	require.Equal(t, "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole", provider.lastRunExecutionRoleArn)
+}
+
+func TestRealControllerAppliesDeploymentPinnedDefaults(t *testing.T) {
+	now := time.Unix(1500, 0).UTC()
+	t.Setenv(EnvImageRef, "env-image-ref")
+	t.Setenv(EnvIngressNetworkConnectorRefs, "ingress-ref,shell-ingress-ref")
+	t.Setenv(EnvEgressNetworkConnectorRefs, "egress-ref")
+	provider := newRealControllerProvider(now)
+	controller, err := NewRealController(
+		provider,
+		NewMemorySessionRegistry(),
+		WithControllerClock(fixedControllerClock{now: now}),
+		WithControllerIDGenerator(fixedControllerIDs{id: "session-defaults"}),
+	)
+	require.NoError(t, err)
+
+	request := validRealControllerRequest(CommandRun, "req-defaults", "")
+	request.ImageRef = ""
+	request.NetworkConnectorRef = ""
+	request.IngressNetworkConnectorRefs = nil
+	request.EgressNetworkConnectorRefs = nil
+	run, err := controller.Handle(context.Background(), request)
+	require.NoError(t, err)
+	require.Nil(t, run.Error)
+	require.Equal(t, "env-image-ref", provider.lastRunInput.ImageRef)
+	require.Equal(t, "egress-ref", provider.lastRunInput.NetworkConnectorRef)
+	require.Equal(t, []string{"ingress-ref", "shell-ingress-ref"}, provider.lastRunInput.IngressNetworkConnectorRefs)
+	require.Equal(t, []string{"egress-ref"}, provider.lastRunInput.EgressNetworkConnectorRefs)
+
+	override := validRealControllerRequest(CommandRun, "req-defaults-override", "")
+	override.ImageRef = "other-image-ref"
+	override.NetworkConnectorRef = "egress-ref"
+	rejected, err := controller.Handle(context.Background(), override)
+	require.Error(t, err)
+	require.NotNil(t, rejected.Error)
+	require.Equal(t, ErrorCodeInvalidControllerRequest, rejected.Error.Code)
 }
 
 func TestRealControllerRoutesEnforceAuthAndBindings(t *testing.T) {
@@ -980,6 +1115,8 @@ type realControllerProvider struct {
 	next                    int64
 	tokens                  int64
 	lastRunExecutionRoleArn string
+	lastRunInput            ProviderRunInput
+	lastInvokeInput         ProviderInvokeInput
 	sessions                map[SessionKey]ProviderSession
 }
 
@@ -992,6 +1129,7 @@ func (p *realControllerProvider) Run(_ context.Context, input ProviderRunInput) 
 		return ProviderSession{}, err
 	}
 	p.lastRunExecutionRoleArn = input.ExecutionRoleArn
+	p.lastRunInput = input
 	p.next++
 	session := ProviderSession{
 		TenantID:          input.TenantID,
@@ -1000,6 +1138,7 @@ func (p *realControllerProvider) Run(_ context.Context, input ProviderRunInput) 
 		ProviderMicroVMID: "microvm-000001",
 		State:             StateRunning,
 		ProviderState:     "running",
+		Endpoint:          "https://microvm-000001.example.test",
 		ImageRef:          input.ImageRef,
 		ImageVersion:      input.ImageVersion,
 		StartedAt:         p.now,
@@ -1049,6 +1188,21 @@ func (p *realControllerProvider) Terminate(_ context.Context, input ProviderSess
 		return ProviderSession{}, err
 	}
 	return p.transition(input.Binding, "terminated", input.RequestID)
+}
+
+func (p *realControllerProvider) Invoke(_ context.Context, input ProviderInvokeInput) (ProviderInvokeOutput, error) {
+	if err := ValidateProviderInvokeInput(input); err != nil {
+		return ProviderInvokeOutput{}, err
+	}
+	p.lastInvokeInput = input
+	if _, err := p.bound(input.Binding, input.RequestID); err != nil {
+		return ProviderInvokeOutput{}, err
+	}
+	return ProviderInvokeOutput{
+		Status:  200,
+		Headers: map[string][]string{"content-type": {"application/json"}},
+		Body:    []byte(`{"runtime":"fake-microvm","path":"` + input.Path + `"}`),
+	}, nil
 }
 
 func (p *realControllerProvider) CreateAuthToken(_ context.Context, input ProviderTokenInput) (ProviderToken, error) {

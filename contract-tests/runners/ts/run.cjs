@@ -1672,6 +1672,7 @@ async function compareMicroVMControllerRouteFixture(fixture) {
   const controller = runtime.createRealMicroVMController(provider, registry, {
     ids: { newID: () => setup.session_id },
     clock: { now: () => new Date(now.valueOf()) },
+    deployment_defaults: setup.deployment_defaults,
   });
   if (setup.seed_session) {
     const seeded = await controller.handle(
@@ -1876,7 +1877,29 @@ function normalizeMicroVMControllerRouteSetup(setup) {
     namespace: String(setup.namespace ?? "namespace-1").trim() || "namespace-1",
     session_id:
       String(setup.session_id ?? "fixture-session").trim() || "fixture-session",
+    deployment_defaults: normalizeMicroVMDeploymentDefaults(
+      setup.deployment_defaults ?? {},
+    ),
   };
+}
+
+function normalizeMicroVMDeploymentDefaults(defaults) {
+  return {
+    image_ref: String(defaults.image_ref ?? "").trim(),
+    network_connector_ref: String(defaults.network_connector_ref ?? "").trim(),
+    ingress_network_connector_refs: stringList(
+      defaults.ingress_network_connector_refs ?? [],
+    ),
+    egress_network_connector_refs: stringList(
+      defaults.egress_network_connector_refs ?? [],
+    ),
+  };
+}
+
+function stringList(values) {
+  return Array.isArray(values)
+    ? values.map((value) => String(value ?? "").trim()).filter(Boolean)
+    : [];
 }
 
 function microVMControllerRouteRunRequest(runtime, setup) {
@@ -1905,6 +1928,14 @@ function compareMicroVMControllerRouteExpected(expected, actual, body) {
     };
   }
   const bodyText = Buffer.from(actual.body ?? Buffer.alloc(0)).toString("utf8");
+  for (const required of expected.body_contains ?? []) {
+    if (required && !bodyText.includes(String(required))) {
+      return {
+        ok: false,
+        reason: `microvm_controller_route body missing substring ${JSON.stringify(required)}`,
+      };
+    }
+  }
   for (const forbidden of expected.forbidden_body_substrings ?? []) {
     if (forbidden && bodyText.includes(String(forbidden))) {
       return {

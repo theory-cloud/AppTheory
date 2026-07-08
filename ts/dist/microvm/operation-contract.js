@@ -563,6 +563,7 @@ export function requiredMicroVMOperations() {
         MicroVMOperation.Suspend,
         MicroVMOperation.Resume,
         MicroVMOperation.Terminate,
+        MicroVMOperation.Invoke,
         MicroVMOperation.AuthToken,
         MicroVMOperation.ShellToken,
     ];
@@ -648,6 +649,8 @@ export function requiredMicroVMOperationRoute(operation) {
             return microVMOperationRoute(operation, "POST", "/microvms/{session_id}/resume", ["tenant_id", "namespace", "session_id"], ["session_id", "state", "provider_state", "registry_version"], false);
         case MicroVMOperation.Terminate:
             return microVMOperationRoute(operation, "DELETE", "/microvms/{session_id}", ["tenant_id", "namespace", "session_id"], ["session_id", "state", "provider_state", "registry_version"], false);
+        case MicroVMOperation.Invoke:
+            return microVMOperationRoute(operation, "ANY", "/microvms/{session_id}/invoke/{proxy+}", ["tenant_id", "namespace", "session_id", "method", "path", "port"], ["status", "headers", "body"], false);
         case MicroVMOperation.AuthToken:
             return microVMOperationRoute(operation, "POST", "/microvms/{session_id}/auth-token", ["tenant_id", "namespace", "session_id"], ["token_id", "token_type", "expires_at", "scope"], false);
         case MicroVMOperation.ShellToken:

@@ -1,5 +1,5 @@
 import { type CreateMicrovmAuthTokenCommandInput } from "@aws-sdk/client-lambda-microvms";
-import { type AWSLambdaMicroVMClientOptions, type AWSLambdaMicroVMProviderOptions, type MicroVMClient, type MicroVMProvider, type MicroVMProviderListInput, type MicroVMProviderListOutput, type MicroVMProviderPortScope, type MicroVMProviderRunInput, type MicroVMProviderSession, type MicroVMProviderSessionBinding, type MicroVMProviderSessionInput, type MicroVMProviderToken, type MicroVMProviderTokenInput } from "./model.js";
+import { type AWSLambdaMicroVMClientOptions, type AWSLambdaMicroVMProviderOptions, type MicroVMClient, type MicroVMProvider, type MicroVMProviderListInput, type MicroVMProviderListOutput, type MicroVMProviderInvokeInput, type MicroVMProviderInvokeOutput, type MicroVMProviderPortScope, type MicroVMProviderRunInput, type MicroVMProviderSession, type MicroVMProviderSessionBinding, type MicroVMProviderSessionInput, type MicroVMProviderToken, type MicroVMProviderTokenInput } from "./model.js";
 export declare function createAWSLambdaMicroVMClient(_options?: AWSLambdaMicroVMClientOptions): Promise<MicroVMClient>;
 export declare class AWSLambdaMicroVMProvider implements MicroVMProvider {
     private readonly client;
@@ -11,6 +11,7 @@ export declare class AWSLambdaMicroVMProvider implements MicroVMProvider {
     suspend(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
     resume(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
     terminate(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
+    invoke(input: MicroVMProviderInvokeInput): Promise<MicroVMProviderInvokeOutput>;
     createAuthToken(input: MicroVMProviderTokenInput): Promise<MicroVMProviderToken>;
     createShellToken(input: MicroVMProviderTokenInput): Promise<MicroVMProviderToken>;
     private runStateChangingOperation;
@@ -20,7 +21,7 @@ export declare function createAWSLambdaMicroVMProvider(options?: AWSLambdaMicroV
 export declare function microVMProviderSessionFromRunOutput(input: MicroVMProviderRunInput, output: unknown): MicroVMProviderSession;
 export declare function microVMProviderSessionFromGetOutput(requestID: string, binding: MicroVMProviderSessionBinding, output: unknown): MicroVMProviderSession;
 export declare function microVMProviderListOutputFromSDK(input: MicroVMProviderListInput, output: unknown): MicroVMProviderListOutput;
-export declare function microVMProviderSessionFromProviderState(binding: MicroVMProviderSessionBinding, providerState: string, imageRef: string, imageVersion: string, startedAt: Date | null, terminatedAt: Date | null): MicroVMProviderSession;
+export declare function microVMProviderSessionFromProviderState(binding: MicroVMProviderSessionBinding, providerState: string, endpoint: string, imageRef: string, imageVersion: string, startedAt: Date | null, terminatedAt: Date | null): MicroVMProviderSession;
 export declare function awsMicroVMPortScopes(scopes: MicroVMProviderPortScope[]): NonNullable<CreateMicrovmAuthTokenCommandInput["allowedPorts"]>;
 export declare function ensureMicroVMProviderTokenResult(output: unknown, requestID: string): void;
 export declare function providerExpirationMinutes(ttlSeconds: number): number;

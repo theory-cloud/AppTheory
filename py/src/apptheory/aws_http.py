@@ -337,7 +337,11 @@ def _request_from_http_event(event: dict[str, Any]) -> Request:
 
     request_context_http = (event.get("requestContext") or {}).get("http") or {}
     method = str(request_context_http.get("method") or "")
-    raw_path = str(event.get("rawPath") or request_context_http.get("path") or "/")
+    raw_path = _normalize_apigateway_v2_stage_path(
+        event.get("rawPath"),
+        request_context_http.get("path"),
+        (event.get("requestContext") or {}).get("stage"),
+    )
 
     return Request(
         method=method,
@@ -347,6 +351,19 @@ def _request_from_http_event(event: dict[str, Any]) -> Request:
         body=str(event.get("body") or ""),
         is_base64=bool(event.get("isBase64Encoded")),
     )
+
+
+def _normalize_apigateway_v2_stage_path(raw_path_value: Any, request_context_http_path: Any, stage_value: Any) -> str:
+    raw_path = str(raw_path_value or request_context_http_path or "/")
+    stage = str(stage_value or "").strip().strip("/")
+    if not stage or stage == "$default":
+        return raw_path
+    prefix = "/" + stage
+    if raw_path == prefix:
+        return "/"
+    if raw_path.startswith(prefix + "/"):
+        return raw_path[len(prefix) :]
+    return raw_path
 
 
 def _headers_from_single(headers: dict[str, Any] | None, *, ignore_cookie_header: bool) -> dict[str, list[str]]:

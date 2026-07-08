@@ -212,8 +212,8 @@ class MicroVMLifecycleTests(unittest.TestCase):
             status_metadata={"status": "healthy"},
             token_metadata=[
                 app.MicroVMSessionTokenMetadata(
-                    token_id="auth-token-metadata",
-                    token_type="auth",
+                    token_id="auth-token-metadata",  # noqa: S106 - metadata id, not a secret token value.
+                    token_type="auth",  # noqa: S106 - metadata type label, not a secret token value.
                     expires_at=901.0,
                     scope=["ports:443"],
                 )
@@ -767,8 +767,8 @@ class MicroVMLifecycleTests(unittest.TestCase):
         bad = app.microvm_session_record_to_registry_record(record)
         bad.token_metadata = [
             app.MicroVMSessionTokenMetadata(
-                token_id="token_value",
-                token_type="auth",
+                token_id="token_value",  # noqa: S106 - invalid metadata sentinel, not a secret token value.
+                token_type="auth",  # noqa: S106 - metadata type label, not a secret token value.
                 expires_at=901.0,
                 scope=["ports:443"],
             )
@@ -1086,6 +1086,11 @@ class MicroVMLifecycleTests(unittest.TestCase):
             [name for name, _payload in stub.calls],
         )
         self.assertEqual("image-ref", stub.calls[0][1]["imageIdentifier"])
+        self.assertNotIn(
+            "runHookPayload",
+            stub.calls[0][1],
+            "endpoint-dispatched MicroVM images must not receive AWS run-hook payloads",
+        )
         self.assertEqual([{"port": 443}], stub.calls[-2][1]["allowedPorts"])
 
     def test_provider_validation_fail_closed(self) -> None:
@@ -1361,6 +1366,77 @@ class MicroVMLifecycleTests(unittest.TestCase):
         self.assertIsNone(run.error)
         self.assertEqual(role_arn, provider.execution_role_arn)
 
+    def test_real_controller_applies_deployment_pinned_defaults(self) -> None:
+        base_provider = app.create_fake_microvm_provider(now=1.0)
+
+        class RecordingProvider:
+            run_input: object | None = None
+
+            def run(self, input_: object) -> object:
+                self.run_input = input_
+                return base_provider.run(input_)
+
+            def __getattr__(self, name: str) -> object:
+                return getattr(base_provider, name)
+
+        provider = RecordingProvider()
+        with patch.dict(
+            os.environ,
+            {
+                app.MICROVM_ENV_IMAGE_REF: "env-image-ref",
+                app.MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS: "ingress-ref,shell-ingress-ref",
+                app.MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS: "egress-ref",
+            },
+        ):
+            controller = app.create_real_microvm_controller(
+                provider,
+                app.create_memory_microvm_session_registry(),
+                id_generator=lambda: "session-defaults",
+                clock=lambda: 10.0,
+            )
+            run = controller.handle(
+                self._controller_request(
+                    session_id="",
+                    image_ref="",
+                    network_connector_ref="",
+                    ingress_network_connector_refs=[],
+                    egress_network_connector_refs=[],
+                )
+            )
+        self.assertIsNone(run.error)
+        run_input = provider.run_input
+        if run_input is None:
+            self.fail("provider run input must be captured")
+        self.assertEqual("env-image-ref", run_input.image_ref)
+        self.assertEqual("egress-ref", run_input.network_connector_ref)
+        self.assertEqual(["ingress-ref", "shell-ingress-ref"], run_input.ingress_network_connector_refs)
+        self.assertEqual(["egress-ref"], run_input.egress_network_connector_refs)
+
+        with patch.dict(
+            os.environ,
+            {
+                app.MICROVM_ENV_IMAGE_REF: "env-image-ref",
+                app.MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS: "ingress-ref,shell-ingress-ref",
+                app.MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS: "egress-ref",
+            },
+        ):
+            controller = app.create_real_microvm_controller(
+                provider,
+                app.create_memory_microvm_session_registry(),
+                id_generator=lambda: "session-defaults-override",
+                clock=lambda: 10.0,
+            )
+            override = controller.handle(
+                self._controller_request(
+                    request_id="req-defaults-override",
+                    session_id="",
+                    image_ref="other-image-ref",
+                    network_connector_ref="egress-ref",
+                )
+            )
+        self.assertIsNotNone(override.error)
+        self.assertEqual(app.MICROVM_ERROR_INVALID_CONTROLLER_REQUEST, override.error.code)
+
     def test_real_controller_route_adapter_enforces_auth_and_tenant_binding(self) -> None:
         provider = app.create_fake_microvm_provider(now=1.0)
         registry = app.create_memory_microvm_session_registry()
@@ -1518,6 +1594,7 @@ class MicroVMRealContractTests(unittest.TestCase):
                 microvm_mod.OPERATION_SUSPEND,
                 microvm_mod.OPERATION_RESUME,
                 microvm_mod.OPERATION_TERMINATE,
+                microvm_mod.OPERATION_INVOKE,
                 microvm_mod.OPERATION_AUTH_TOKEN,
                 microvm_mod.OPERATION_SHELL_TOKEN,
             ],

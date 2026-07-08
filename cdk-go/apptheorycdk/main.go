@@ -769,6 +769,7 @@ func init() {
 		map[string]interface{}{
 			"ALL_INGRESS":     AppTheoryMicrovmManagedNetworkConnector_ALL_INGRESS,
 			"NO_INGRESS":      AppTheoryMicrovmManagedNetworkConnector_NO_INGRESS,
+			"HTTP_INGRESS":    AppTheoryMicrovmManagedNetworkConnector_HTTP_INGRESS,
 			"INTERNET_EGRESS": AppTheoryMicrovmManagedNetworkConnector_INTERNET_EGRESS,
 			"SHELL_INGRESS":   AppTheoryMicrovmManagedNetworkConnector_SHELL_INGRESS,
 		},

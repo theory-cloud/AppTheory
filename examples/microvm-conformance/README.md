@@ -4,12 +4,17 @@ This harness is the AppTheory-owned validation surface for an external consumer,
 
 It proves the AppTheory framework contract that can be observed from outside the deployment:
 
-- canonical controller vocabulary and routes: `run`, `get`, `list`, `suspend`, `resume`, `terminate`, `auth-token`, and `shell-auth-token`;
+- canonical control-plane and token routes: `run`, `get`, `list`, `suspend`, `resume`, `terminate`, `auth-token`, and `shell-auth-token`;
 - fail-closed missing/invalid auth and safe tenant/namespace negative checks;
 - tenant/namespace-bound list and get behavior, without treating AppTheory as product business truth;
 - sanitized token metadata only for `auth-token` and `shell-auth-token` responses;
 - cleanup by exercising `terminate` and requiring post-terminate terminal-or-denied behavior;
 - token/secret no-leak scanning across responses plus supplied registry-record and log artifacts.
+
+The canonical M16 controller vocabulary also includes workload `invoke`. This harness has not yet grown a consumer
+workload probe for `invoke`; AppTheory covers that route with shared contract fixtures and the
+`examples/cdk/microvm-controller` live example. Do not cite this conformance harness alone as EqualToAI/Host workload
+invoke proof until it adds an external workload assertion.
 
 `shell-auth-token` is canonical. `shell-token` is not used as a canonical route or command by this harness.
 

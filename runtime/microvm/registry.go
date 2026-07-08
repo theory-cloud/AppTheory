@@ -24,6 +24,7 @@ const (
 // PK and SK are derived from tenant_id/namespace/session_id. ValidateSessionRegistryRecord fails closed
 // if those keys do not match the bound tenant/session identity or if metadata contains forbidden fields.
 type SessionRegistryRecord struct {
+	_                           struct{}               `theorydb:"naming:snake_case"`
 	PK                          string                 `theorydb:"pk,attr:pk" json:"pk"`
 	SK                          string                 `theorydb:"sk,attr:sk" json:"sk"`
 	TenantID                    string                 `theorydb:"attr:tenant_id" json:"tenant_id"`

@@ -45,6 +45,10 @@ export declare enum AppTheoryMicrovmManagedNetworkConnector {
      */
     NO_INGRESS = "NO_INGRESS",
     /**
+     * Enable AWS-managed HTTP ingress without broad ALL_INGRESS.
+     */
+    HTTP_INGRESS = "HTTP_INGRESS",
+    /**
      * Enable AWS-managed public internet egress for a MicroVM.
      */
     INTERNET_EGRESS = "INTERNET_EGRESS",
@@ -162,6 +166,10 @@ export declare class AppTheoryMicrovmNetworkConnector extends Construct implemen
      * Reference the AWS-managed NO_INGRESS connector.
      */
     static noIngress(scope: Construct, id: string): IAppTheoryMicrovmNetworkConnector;
+    /**
+     * Reference the AWS-managed HTTP_INGRESS connector.
+     */
+    static httpIngress(scope: Construct, id: string): IAppTheoryMicrovmNetworkConnector;
     /**
      * Reference the AWS-managed INTERNET_EGRESS connector.
      */

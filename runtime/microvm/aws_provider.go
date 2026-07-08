@@ -2,8 +2,9 @@ package microvm
 
 import (
 	"context"
-	"encoding/json"
+	"io"
 	"math"
+	"net/http"
 	"strings"
 	"time"
 
@@ -113,7 +114,6 @@ func (p *AWSLambdaMicroVMProvider) Run(ctx context.Context, input ProviderRunInp
 		IngressNetworkConnectors: input.IngressNetworkConnectorRefs,
 		IdlePolicy:               awsIdlePolicy(input.IdlePolicy),
 		MaximumDurationInSeconds: optionalInt32(input.MaximumDurationSeconds),
-		RunHookPayload:           safeRunHookPayload(input),
 	})
 	if err != nil {
 		return ProviderSession{}, sanitizeProviderError(err, input.RequestID)
@@ -183,6 +183,72 @@ func (p *AWSLambdaMicroVMProvider) Terminate(ctx context.Context, input Provider
 		_, err := api.TerminateMicrovm(ctx, &lambdamicrovms.TerminateMicrovmInput{MicrovmIdentifier: aws.String(providerID)})
 		return err
 	})
+}
+
+// Invoke mints an internal auth token and proxies one HTTP request to a MicroVM endpoint.
+func (p *AWSLambdaMicroVMProvider) Invoke(ctx context.Context, input ProviderInvokeInput) (ProviderInvokeOutput, error) {
+	input, err := validateProviderInvokeInput(input)
+	if err != nil {
+		return ProviderInvokeOutput{}, err
+	}
+	api, err := p.requireAPI(input.RequestID)
+	if err != nil {
+		return ProviderInvokeOutput{}, err
+	}
+	ctx = ctxOrBackground(ctx)
+	token, err := api.CreateMicrovmAuthToken(ctx, &lambdamicrovms.CreateMicrovmAuthTokenInput{
+		MicrovmIdentifier:   aws.String(input.Binding.ProviderMicroVMID),
+		ExpirationInMinutes: aws.Int32(providerExpirationMinutes(input.TTLSeconds)),
+		AllowedPorts:        awsPortScopes([]ProviderPortScope{{Port: input.Port}}),
+	})
+	if err != nil {
+		return ProviderInvokeOutput{}, sanitizeProviderError(err, input.RequestID)
+	}
+	authHeader := strings.TrimSpace(token.AuthToken["X-aws-proxy-auth"])
+	if authHeader == "" {
+		authHeader = strings.TrimSpace(token.AuthToken["x-aws-proxy-auth"])
+	}
+	if authHeader == "" {
+		return ProviderInvokeOutput{}, safeError(ErrorCodeTokenSafetyViolation, "apptheory: microvm provider returned incomplete token metadata", input.RequestID)
+	}
+	targetURL, err := providerInvokeURL(input.Endpoint, input.Path, input.Query)
+	if err != nil {
+		return ProviderInvokeOutput{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, input.Method, targetURL, providerInvokeBodyReader(input.Body))
+	if err != nil {
+		return ProviderInvokeOutput{}, safeError(ErrorCodeProviderRequestInvalid, "apptheory: microvm invoke request is invalid", input.RequestID)
+	}
+	for name, values := range input.Headers {
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
+	}
+	req.Header.Set("X-aws-proxy-auth", authHeader)
+	req.Header.Set("X-aws-proxy-port", providerInvokePortHeader(input.Port))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ProviderInvokeOutput{}, sanitizeProviderError(err, input.RequestID)
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			_ = closeErr
+		}
+	}()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxProviderInvokeBodyBytes+1))
+	if err != nil {
+		return ProviderInvokeOutput{}, sanitizeProviderError(err, input.RequestID)
+	}
+	if len(body) > maxProviderInvokeBodyBytes {
+		return ProviderInvokeOutput{}, safeError(ErrorCodeProviderRequestInvalid, "apptheory: microvm invoke response is too large", input.RequestID)
+	}
+	headers := sanitizeProviderInvokeResponseHeaders(resp.Header)
+	return ProviderInvokeOutput{
+		Status:   resp.StatusCode,
+		Headers:  headers,
+		Body:     body,
+		IsBase64: providerInvokeResponseIsBase64(headers),
+	}, nil
 }
 
 // CreateAuthToken maps a safe AppTheory auth-token request to the official AWS token operation.
@@ -287,7 +353,15 @@ func sessionFromRunOutput(input ProviderRunInput, out *lambdamicrovms.RunMicrovm
 		SessionID:         input.SessionID,
 		ProviderMicroVMID: aws.ToString(out.MicrovmId),
 	}
-	return sessionFromProviderState(binding, string(out.State), aws.ToString(out.ImageArn), aws.ToString(out.ImageVersion), timeFromPtr(out.StartedAt), timeFromPtr(out.TerminatedAt))
+	return sessionFromProviderState(
+		binding,
+		string(out.State),
+		aws.ToString(out.Endpoint),
+		aws.ToString(out.ImageArn),
+		aws.ToString(out.ImageVersion),
+		timeFromPtr(out.StartedAt),
+		timeFromPtr(out.TerminatedAt),
+	)
 }
 
 func sessionFromGetOutput(requestID string, binding ProviderSessionBinding, out *lambdamicrovms.GetMicrovmOutput) (ProviderSession, error) {
@@ -298,7 +372,15 @@ func sessionFromGetOutput(requestID string, binding ProviderSessionBinding, out 
 	if providerID != "" && providerID != binding.ProviderMicroVMID {
 		return ProviderSession{}, safeError(ErrorCodeTenantBindingViolation, "apptheory: microvm provider returned mismatched session binding", requestID)
 	}
-	return sessionFromProviderState(binding, string(out.State), aws.ToString(out.ImageArn), aws.ToString(out.ImageVersion), timeFromPtr(out.StartedAt), timeFromPtr(out.TerminatedAt))
+	return sessionFromProviderState(
+		binding,
+		string(out.State),
+		aws.ToString(out.Endpoint),
+		aws.ToString(out.ImageArn),
+		aws.ToString(out.ImageVersion),
+		timeFromPtr(out.StartedAt),
+		timeFromPtr(out.TerminatedAt),
+	)
 }
 
 func listOutputFromSDK(input ProviderListInput, out *lambdamicrovms.ListMicrovmsOutput) (ProviderListOutput, error) {
@@ -316,7 +398,7 @@ func listOutputFromSDK(input ProviderListInput, out *lambdamicrovms.ListMicrovms
 		if !ok {
 			continue
 		}
-		session, err := sessionFromProviderState(binding, string(item.State), aws.ToString(item.ImageArn), aws.ToString(item.ImageVersion), timeFromPtr(item.StartedAt), time.Time{})
+		session, err := sessionFromProviderState(binding, string(item.State), "", aws.ToString(item.ImageArn), aws.ToString(item.ImageVersion), timeFromPtr(item.StartedAt), time.Time{})
 		if err != nil {
 			return ProviderListOutput{}, err
 		}
@@ -361,21 +443,23 @@ func providerEgressConnectors(input ProviderRunInput) []string {
 	if input.NetworkConnectorRef != "" {
 		connectors = append(connectors, input.NetworkConnectorRef)
 	}
-	return normalizeStringSlice(connectors)
+	return dedupeStrings(normalizeStringSlice(connectors))
 }
 
-func safeRunHookPayload(input ProviderRunInput) *string {
-	payload := map[string]string{
-		"request_id": input.RequestID,
-		"tenant_id":  input.TenantID,
-		"namespace":  input.Namespace,
-		"session_id": input.SessionID,
-	}
-	data, err := json.Marshal(payload)
-	if err != nil {
+func dedupeStrings(values []string) []string {
+	if len(values) == 0 {
 		return nil
 	}
-	return aws.String(string(data))
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func optionalString(value string) *string {

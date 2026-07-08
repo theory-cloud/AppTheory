@@ -16,6 +16,10 @@ func validateAppTheoryMicrovmNetworkConnector_FromNetworkConnectorArnParameters(
 	return nil
 }
 
+func validateAppTheoryMicrovmNetworkConnector_HttpIngressParameters(scope constructs.Construct, id *string) error {
+	return nil
+}
+
 func validateAppTheoryMicrovmNetworkConnector_InternetEgressParameters(scope constructs.Construct, id *string) error {
 	return nil
 }

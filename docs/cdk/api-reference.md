@@ -60,7 +60,8 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - Use `AppTheoryJobsTable`, `AppTheoryS3Ingest`, and `AppTheoryCodeBuildJobRunner` for import pipelines
 - Use `AppTheoryMicrovmNetworkConnector`, `AppTheoryMicrovmImage`, and `AppTheoryMicrovmController` together for the
   corrective M16 AWS Lambda MicroVM golden path. The controller requires an authorizer, explicit ingress/egress/shell
-  connector references, and fails closed when omitted.
+  connector references, endpoint-dispatched no-hook image wiring for the live example path, token-hidden invoke routes,
+  and fails closed when omitted.
 
 Event workload wiring:
 

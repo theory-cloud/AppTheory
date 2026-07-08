@@ -1551,6 +1551,7 @@ def compare_microvm_controller_route_fixture(
         registry,
         id_generator=lambda: setup["session_id"],
         clock=lambda: 1_700_000_000.0,
+        deployment_defaults=setup["deployment_defaults"],
     )
     if setup["seed_session"]:
         seeded = controller.handle(microvm_controller_route_run_request(runtime, setup))
@@ -1738,7 +1739,29 @@ def normalize_microvm_controller_route_setup(setup: dict[str, Any]) -> dict[str,
         "tenant_id": tenant_id,
         "namespace": namespace,
         "session_id": session_id,
+        "deployment_defaults": normalize_microvm_deployment_defaults(
+            setup.get("deployment_defaults") or {}
+        ),
     }
+
+
+def normalize_microvm_deployment_defaults(setup: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "image_ref": str(setup.get("image_ref") or "").strip(),
+        "network_connector_ref": str(setup.get("network_connector_ref") or "").strip(),
+        "ingress_network_connector_refs": _string_list(
+            setup.get("ingress_network_connector_refs") or []
+        ),
+        "egress_network_connector_refs": _string_list(
+            setup.get("egress_network_connector_refs") or []
+        ),
+    }
+
+
+def _string_list(values: Any) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    return [trimmed for value in values if (trimmed := str(value or "").strip())]
 
 
 def microvm_controller_route_run_request(
@@ -1771,6 +1794,13 @@ def compare_microvm_controller_route_expected(
             {},
         )
     text = actual.body.decode("utf-8")
+    for required in expected.get("body_contains") or []:
+        if required and str(required) not in text:
+            return (
+                False,
+                f"microvm_controller_route body missing substring {required!r}",
+                {},
+            )
     for forbidden in expected.get("forbidden_body_substrings") or []:
         if forbidden and str(forbidden) in text:
             return (
@@ -3438,7 +3468,9 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
             Nested: dict[str, Any] = runtime.body("nested")
 
         return runtime.bind_handler(
-            runtime.BindConfig(model=BindStrictNestedRequest, body=True, strict_json=True),
+            runtime.BindConfig(
+                model=BindStrictNestedRequest, body=True, strict_json=True
+            ),
             lambda _ctx, req: {"profile_name": req.Profile},
         )
 
@@ -3460,7 +3492,9 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
             Name: str = runtime.body("name")
 
         return runtime.bind_handler(
-            runtime.BindConfig(model=BindStrictNameRequest, body=True, strict_json=True),
+            runtime.BindConfig(
+                model=BindStrictNameRequest, body=True, strict_json=True
+            ),
             lambda _ctx, req: {"name": req.Name},
         )
 
@@ -3581,7 +3615,9 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
             count: Any = runtime.body("count", validate=[runtime.required()])
             active: Any = runtime.body("active", validate=[runtime.required()])
             name: Any = runtime.body("name", validate=[runtime.required()])
-            tags: list[Any] = runtime.body("tags", validate=[runtime.required()], array=True)
+            tags: list[Any] = runtime.body(
+                "tags", validate=[runtime.required()], array=True
+            )
             meta: Any = runtime.body("meta", validate=[runtime.required()])
 
         return runtime.bind_handler(
@@ -5985,7 +6021,9 @@ def main() -> int:
                 if "error" in reason:
                     print(f"  got.error: {redacted_diagnostic()}", file=sys.stderr)
                 else:
-                    print(f"  got.output_json: {redacted_diagnostic()}", file=sys.stderr)
+                    print(
+                        f"  got.output_json: {redacted_diagnostic()}", file=sys.stderr
+                    )
         elif (
             "logging_profile_catalog" in expect_obj
             or "profile_validation_errors" in expect_obj
@@ -6033,7 +6071,8 @@ def main() -> int:
                 file=sys.stderr,
             )
             print(
-                f"  got.microvm_execution_role: {redacted_diagnostic()}", file=sys.stderr
+                f"  got.microvm_execution_role: {redacted_diagnostic()}",
+                file=sys.stderr,
             )
         elif "mcp" in expect_obj:
             print(f"  expected.mcp.step: {redacted_diagnostic()}", file=sys.stderr)
