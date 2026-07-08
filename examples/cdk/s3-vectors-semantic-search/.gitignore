@@ -1,2 +1,4 @@
 cdk.out/
 node_modules/
+
+cdk.outputs.json
