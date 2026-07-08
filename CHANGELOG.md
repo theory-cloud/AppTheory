@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.17.0](https://github.com/theory-cloud/AppTheory/compare/v1.16.1...v1.17.0) (2026-07-08)
+
+
+### Features
+
+* **cdk:** add S3 vector index construct ([046d712](https://github.com/theory-cloud/AppTheory/commit/046d7127a48312a6daa8ccc364cd691f78b2c36c))
+* **examples:** add S3 Vectors semantic search app ([50f44bd](https://github.com/theory-cloud/AppTheory/commit/50f44bd5eae838cb0976a8c8243e14c233e3da58))
+* **microvm:** add controller invoke path ([79109f9](https://github.com/theory-cloud/AppTheory/commit/79109f935afc9e966a784269edbce4613cfc53df))
+* **microvm:** add controller invoke path ([55b4721](https://github.com/theory-cloud/AppTheory/commit/55b4721d2a867a4015e2184f84a7505bcbefe0eb))
+* **vectorstore:** add S3 Vectors semantic helpers ([f556490](https://github.com/theory-cloud/AppTheory/commit/f556490c59789f56231761b9574e39d86961fcd4))
+* **vectorstore:** add semantic vector primitives ([307ef81](https://github.com/theory-cloud/AppTheory/commit/307ef813ee9781e30bae0017cd8d97246eee3d71))
+
+
+### Bug Fixes
+
+* **cdk:** grant vector metadata reads for queries ([811e223](https://github.com/theory-cloud/AppTheory/commit/811e223de2449468fd4176e749620ae143f0db0a))
+* **cdk:** refresh synth hashes for Go pin ([46ee135](https://github.com/theory-cloud/AppTheory/commit/46ee135af83e09a1ee3373d118a914fbf57c02b7))
+* **cdk:** use valid generated vector bucket names ([b375fda](https://github.com/theory-cloud/AppTheory/commit/b375fda67ac36aaa06146efb01b0b5b9bb42cd84))
+* **deps:** update Go and TableTheory pins ([17308c1](https://github.com/theory-cloud/AppTheory/commit/17308c160592f505dfc73d8b9f08079d3e2a5cf6))
+* **deps:** update Go and TableTheory pins ([f1d0bb9](https://github.com/theory-cloud/AppTheory/commit/f1d0bb9e6e834e224c1df7aa667418e19bd875f4))
+* **examples:** allow isolated S3 Vectors live stacks ([b6368ee](https://github.com/theory-cloud/AppTheory/commit/b6368eeb336c6ee4ec3bc2620e92a8f0f49e53fb))
+* **release:** track S3 Vectors example lockfile ([7a2cd8b](https://github.com/theory-cloud/AppTheory/commit/7a2cd8b351c701290ded5f6ee0de7b9c21d0d1bc))
+* **ts:** avoid regex in stage path normalization ([cafd96c](https://github.com/theory-cloud/AppTheory/commit/cafd96cdd07ffc295ffaa751a2a2237f893c96cb))
+* **vectorstore:** close S3 vector gate gaps ([19e2f4a](https://github.com/theory-cloud/AppTheory/commit/19e2f4a27aa74b30093dedceaaf74cf0c76d1c97))
+
 ## [1.17.0-rc](https://github.com/theory-cloud/AppTheory/compare/v1.16.1...v1.17.0-rc) (2026-07-08)
 
 
