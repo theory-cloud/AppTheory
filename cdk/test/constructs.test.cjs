@@ -1131,6 +1131,31 @@ test("AppTheoryVectorIndex (bucket/index/env/grants) synthesizes expected templa
   }
 });
 
+test("AppTheoryVectorIndex generated bucket names are usable by indexes", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryVectorIndex(stack, "VectorIndex", {
+    indexName: "semantic",
+    dimension: 3,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const bucket = Object.values(template.Resources ?? {}).find(
+    (resource) => resource.Type === "AWS::S3Vectors::VectorBucket",
+  );
+  const index = Object.values(template.Resources ?? {}).find(
+    (resource) => resource.Type === "AWS::S3Vectors::Index",
+  );
+  assert.ok(bucket, "expected vector bucket resource");
+  assert.ok(index, "expected vector index resource");
+  const bucketName = bucket.Properties?.VectorBucketName;
+  assert.equal(typeof bucketName, "string");
+  assert.ok(bucketName.length >= 3 && bucketName.length <= 63, `invalid bucket name length: ${bucketName}`);
+  assert.match(bucketName, /^[a-z0-9][a-z0-9-]*[a-z0-9]$/);
+  assert.equal(index.Properties?.VectorBucketName, bucketName);
+});
+
 test("AppTheoryVectorIndex fails closed for invalid bucket/index props", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");

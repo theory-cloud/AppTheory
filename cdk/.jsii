@@ -25312,7 +25312,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 208
+            "line": 209
           },
           "name": "bindEnvironment",
           "parameters": [
@@ -25337,7 +25337,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 220
+            "line": 221
           },
           "name": "bindTitanEmbeddingEnvironment",
           "parameters": [
@@ -25362,7 +25362,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 280
+            "line": 281
           },
           "name": "grantBedrockInvokeModel",
           "parameters": [
@@ -25392,7 +25392,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 261
+            "line": 262
           },
           "name": "grantManage",
           "parameters": [
@@ -25415,7 +25415,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 228
+            "line": 229
           },
           "name": "grantQuery",
           "parameters": [
@@ -25438,7 +25438,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 239
+            "line": 240
           },
           "name": "grantReadVectors",
           "parameters": [
@@ -25461,7 +25461,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 250
+            "line": 251
           },
           "name": "grantWriteVectors",
           "parameters": [
@@ -26997,5 +26997,5 @@
     }
   },
   "version": "1.16.1",
-  "fingerprint": "b0MhlEVAA3RLMuu2A/w2CmMuMiKVpAY/YbLSi0Mj1mM="
+  "fingerprint": "/u4BcOpSC5uxcRzkv4hm9y3XkYz9oufnH5EJW27QiYA="
 }

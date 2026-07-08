@@ -1,4 +1,4 @@
-import { Aws, RemovalPolicy } from "aws-cdk-lib";
+import { Aws, Names, RemovalPolicy } from "aws-cdk-lib";
 import * as iam from "aws-cdk-lib/aws-iam";
 import type * as kms from "aws-cdk-lib/aws-kms";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
@@ -158,12 +158,13 @@ export class AppTheoryVectorIndex extends Construct {
       : { sseType: "AES256" };
 
     if (createVectorBucket) {
+      const vectorBucketName = props.vectorBucketName ?? generatedVectorBucketName(this);
       this.vectorBucket = new s3vectors.CfnVectorBucket(this, "VectorBucket", {
-        vectorBucketName: props.vectorBucketName,
+        vectorBucketName,
         encryptionConfiguration,
       });
       this.vectorBucket.applyRemovalPolicy(removalPolicy);
-      this.vectorBucketName = props.vectorBucketName ?? this.vectorBucket.ref;
+      this.vectorBucketName = vectorBucketName;
       this.vectorBucketArn = this.vectorBucket.attrVectorBucketArn;
     } else {
       this.vectorBucketName = String(props.existingVectorBucketName).trim();
@@ -300,4 +301,9 @@ function normalizeKeys(values: string[]): string[] {
 
 function vectorBucketArnForName(vectorBucketName: string): string {
   return `arn:${Aws.PARTITION}:s3vectors:${Aws.REGION}:${Aws.ACCOUNT_ID}:bucket/${vectorBucketName}`;
+}
+
+function generatedVectorBucketName(scope: Construct): string {
+  const uniqueName = Names.uniqueResourceName(scope, { maxLength: 63, separator: "-" }).toLowerCase();
+  return uniqueName.replace(/[^a-z0-9-]/g, "-").replace(/^-+/, "a").replace(/-+$/, "0");
 }
