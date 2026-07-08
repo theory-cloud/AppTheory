@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	tableerrors "github.com/theory-cloud/tabletheory/pkg/errors"
-	tablemocks "github.com/theory-cloud/tabletheory/pkg/mocks"
+	tableerrors "github.com/theory-cloud/tabletheory/v2/pkg/errors"
+	tablemocks "github.com/theory-cloud/tabletheory/v2/pkg/mocks"
 )
 
 func TestNewEvent_SetsDefaultsAndKeys(t *testing.T) {
