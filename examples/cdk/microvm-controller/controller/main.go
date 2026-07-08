@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 	"github.com/theory-cloud/apptheory/runtime/microvm"
+	"github.com/theory-cloud/tabletheory/v2"
 )
 
 const (
@@ -92,6 +94,10 @@ func withRegistry(registry microvm.SessionRegistry) appOption {
 }
 
 func buildApp(options ...appOption) (*apptheory.App, error) {
+	if len(options) == 0 && strings.EqualFold(strings.TrimSpace(os.Getenv("APPTHEORY_MICROVM_EXAMPLE_PROVIDER")), "aws") {
+		return buildAWSApp(context.Background())
+	}
+
 	now := time.Date(2026, 6, 25, 8, 0, 0, 0, time.UTC)
 	opts := appOptions{
 		clock:    clock{now: now},
@@ -136,6 +142,37 @@ func buildApp(options ...appOption) (*apptheory.App, error) {
 	app := apptheory.New(
 		apptheory.WithTier(apptheory.TierP1),
 		apptheory.WithClock(opts.clock),
+		apptheory.WithAuthHook(localAuthHook),
+	)
+	if _, err := microvm.RegisterControllerRoutes(app, controller); err != nil {
+		return nil, err
+	}
+	return app, nil
+}
+
+func buildAWSApp(ctx context.Context) (*apptheory.App, error) {
+	db, err := tabletheory.NewLambdaOptimized()
+	if err != nil {
+		return nil, fmt.Errorf("tabletheory init: %w", err)
+	}
+	registry, err := microvm.NewTableTheorySessionRegistry(db)
+	if err != nil {
+		return nil, err
+	}
+	provider, err := microvm.NewAWSLambdaMicroVMProvider(ctx)
+	if err != nil {
+		return nil, err
+	}
+	controller, err := microvm.NewRealController(
+		provider,
+		registry,
+		microvm.WithControllerSessionTTL(time.Hour),
+	)
+	if err != nil {
+		return nil, err
+	}
+	app := apptheory.New(
+		apptheory.WithTier(apptheory.TierP1),
 		apptheory.WithAuthHook(localAuthHook),
 	)
 	if _, err := microvm.RegisterControllerRoutes(app, controller); err != nil {
@@ -194,6 +231,7 @@ func (p *localProvider) Run(_ context.Context, input microvm.ProviderRunInput) (
 		ProviderMicroVMID: stableProviderMicroVMID(input.SessionID),
 		State:             microvm.StateRunning,
 		ProviderState:     "running",
+		Endpoint:          fmt.Sprintf("https://%s.example.test", stableProviderMicroVMID(input.SessionID)),
 		ImageRef:          input.ImageRef,
 		ImageVersion:      input.ImageVersion,
 		StartedAt:         now,
@@ -277,6 +315,28 @@ func (p *localProvider) CreateShellToken(_ context.Context, input microvm.Provid
 		return microvm.ProviderToken{}, err
 	}
 	return p.token(input, "shell", []string{"shell"}), nil
+}
+
+func (p *localProvider) Invoke(_ context.Context, input microvm.ProviderInvokeInput) (microvm.ProviderInvokeOutput, error) {
+	if err := microvm.ValidateProviderInvokeInput(input); err != nil {
+		return microvm.ProviderInvokeOutput{}, err
+	}
+	if _, err := p.bound(input.Binding, input.RequestID); err != nil {
+		return microvm.ProviderInvokeOutput{}, err
+	}
+	body, err := json.Marshal(map[string]string{
+		"runtime": "local-microvm",
+		"method":  input.Method,
+		"path":    input.Path,
+	})
+	if err != nil {
+		return microvm.ProviderInvokeOutput{}, err
+	}
+	return microvm.ProviderInvokeOutput{
+		Status:  200,
+		Headers: map[string][]string{"content-type": {"application/json; charset=utf-8"}},
+		Body:    body,
+	}, nil
 }
 
 func (p *localProvider) bound(binding microvm.ProviderSessionBinding, requestID string) (microvm.ProviderSession, error) {

@@ -19,6 +19,7 @@ export function validateMicroVMProviderSession(session) {
         throw safeError(MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE, "apptheory: microvm provider session state mapping mismatch", "");
     }
     if (forbiddenMicroVMFieldName(normalized.provider_microvm_id) ||
+        forbiddenMicroVMFieldName(normalized.endpoint ?? "") ||
         forbiddenMicroVMFieldName(normalized.image_ref ?? "") ||
         forbiddenMicroVMFieldName(normalized.image_version ?? "")) {
         throw safeError(MICROVM_ERROR_FORBIDDEN_FIELD, "apptheory: microvm provider session exposes forbidden field", "");
@@ -35,6 +36,9 @@ export function validateMicroVMProviderListInput(input) {
 }
 export function validateMicroVMProviderTokenInput(operation, input) {
     validateMicroVMProviderTokenInputInternal(operation, input);
+}
+export function validateMicroVMProviderInvokeInput(input) {
+    validateMicroVMProviderInvokeInputInternal(input);
 }
 export function validateMicroVMProviderToken(token) {
     const normalized = normalizeMicroVMProviderToken(token);
@@ -62,6 +66,9 @@ export function validateMicroVMProviderToken(token) {
 export const defaultProviderTokenTTLSeconds = 900;
 export const minProviderTokenTTLSeconds = 1;
 export const maxProviderTokenTTLSeconds = 900;
+export const defaultProviderInvokePort = 8080;
+export const defaultProviderInvokeTTLSeconds = 60;
+export const maxProviderInvokeBodyBytes = 6 * 1024 * 1024;
 export function validateMicroVMProviderRunInputInternal(input) {
     const normalized = normalizeMicroVMProviderRunInput(input);
     validateMicroVMProviderOperation(MicroVMOperation.Run, normalized.request_id);
@@ -152,6 +159,38 @@ export function validateMicroVMProviderTokenInputInternal(operation, input) {
     for (const scope of normalized.allowed_port_scope ?? []) {
         validateMicroVMProviderPortScope(scope, normalized.request_id);
     }
+    return normalized;
+}
+export function validateMicroVMProviderInvokeInputInternal(input) {
+    const normalized = normalizeMicroVMProviderInvokeInput(input);
+    validateMicroVMProviderOperation(MicroVMOperation.Invoke, normalized.request_id);
+    if (!normalized.request_id) {
+        throw safeError(MICROVM_ERROR_PROVIDER_REQUEST_INVALID, "apptheory: microvm provider request_id is required", "");
+    }
+    validateMicroVMProviderAccess(normalized.request_id, normalized.tenant_id, normalized.namespace, normalized.auth_context);
+    normalized.binding = validateMicroVMProviderBinding(normalized.request_id, normalized.tenant_id, normalized.namespace, normalized.binding);
+    if (!providerInvokeMethods().has(normalized.method)) {
+        throw safeError(MICROVM_ERROR_PROVIDER_REQUEST_INVALID, "apptheory: microvm invoke method is unsupported", normalized.request_id);
+    }
+    if (!normalized.endpoint ||
+        forbiddenMicroVMFieldName(normalized.endpoint) ||
+        !providerInvokeURL(normalized.endpoint, normalized.path, normalized.query)) {
+        throw safeError(MICROVM_ERROR_PROVIDER_REQUEST_INVALID, "apptheory: microvm invoke endpoint is invalid", normalized.request_id);
+    }
+    if (!normalized.path || normalized.path.includes("\0")) {
+        throw safeError(MICROVM_ERROR_PROVIDER_REQUEST_INVALID, "apptheory: microvm invoke path is invalid", normalized.request_id);
+    }
+    if ((normalized.port ?? 0) <= 0 || (normalized.port ?? 0) > 65535) {
+        throw safeError(MICROVM_ERROR_TOKEN_SAFETY_VIOLATION, "apptheory: microvm invoke port is invalid", normalized.request_id);
+    }
+    if ((normalized.ttl_seconds ?? 0) < minProviderTokenTTLSeconds ||
+        (normalized.ttl_seconds ?? 0) > maxProviderTokenTTLSeconds) {
+        throw safeError(MICROVM_ERROR_TOKEN_SAFETY_VIOLATION, "apptheory: microvm invoke token ttl exceeds contract bounds", normalized.request_id);
+    }
+    if ((normalized.body?.byteLength ?? 0) > maxProviderInvokeBodyBytes) {
+        throw safeError(MICROVM_ERROR_PROVIDER_REQUEST_INVALID, "apptheory: microvm invoke body is too large", normalized.request_id);
+    }
+    normalized.headers = sanitizeMicroVMProviderInvokeHeaders(normalized.headers ?? {});
     return normalized;
 }
 export function validateMicroVMProviderOperation(operation, requestID) {
@@ -328,6 +367,30 @@ export function normalizeMicroVMProviderTokenInput(input) {
         out.allowed_port_scope = scopes;
     return out;
 }
+export function normalizeMicroVMProviderInvokeInput(input) {
+    const out = {
+        request_id: String(input.request_id ?? "").trim(),
+        tenant_id: String(input.tenant_id ?? "").trim(),
+        namespace: String(input.namespace ?? "").trim(),
+        auth_context: normalizeMicroVMAuthContext(input.auth_context ?? {}),
+        binding: normalizeMicroVMProviderBinding(input.binding ?? {}),
+        endpoint: String(input.endpoint ?? "").trim(),
+        method: String(input.method ?? "")
+            .trim()
+            .toUpperCase(),
+        path: normalizeMicroVMProviderInvokePath(input.path ?? "/"),
+        query: cloneMicroVMQuery(input.query ?? {}),
+        headers: sanitizeMicroVMProviderInvokeHeaders(input.headers ?? {}),
+        body: input.body ? new Uint8Array(input.body) : new Uint8Array(),
+        port: Math.trunc(Number(input.port ?? defaultProviderInvokePort) || 0),
+        ttl_seconds: Math.trunc(Number(input.ttl_seconds ?? defaultProviderInvokeTTLSeconds) || 0),
+    };
+    if (out.port === 0)
+        out.port = defaultProviderInvokePort;
+    if (out.ttl_seconds === 0)
+        out.ttl_seconds = defaultProviderInvokeTTLSeconds;
+    return out;
+}
 export function normalizeMicroVMProviderBinding(binding) {
     const out = {
         tenant_id: String(binding.tenant_id ?? "").trim(),
@@ -350,6 +413,9 @@ export function normalizeMicroVMProviderSession(session) {
         provider_state: normalizeMicroVMProviderState(session.provider_state),
         terminal: session.terminal === true,
     };
+    const endpoint = String(session.endpoint ?? "").trim();
+    if (endpoint)
+        out.endpoint = endpoint;
     const imageRef = String(session.image_ref ?? "").trim();
     if (imageRef)
         out.image_ref = imageRef;
@@ -388,14 +454,115 @@ export function cloneMicroVMProviderToken(token) {
 export function normalizeStringArray(values) {
     return values.map((value) => String(value ?? "").trim()).filter(Boolean);
 }
+export function normalizeMicroVMProviderInvokePath(path) {
+    const value = String(path ?? "").trim();
+    if (!value)
+        return "/";
+    return value.startsWith("/") ? value : `/${value}`;
+}
+export function sanitizeMicroVMProviderInvokeHeaders(headers) {
+    const out = {};
+    for (const [rawName, rawValues] of Object.entries(headers ?? {})) {
+        const name = String(rawName ?? "")
+            .trim()
+            .toLowerCase();
+        if (!name || providerInvokeForbiddenHeaders().has(name))
+            continue;
+        const values = normalizeStringArray((rawValues ?? []).map((value) => String(value ?? ""))).filter((value) => !forbiddenMicroVMFieldName(value));
+        if (values.length > 0)
+            out[name] = values;
+    }
+    return out;
+}
+export function providerInvokeURL(endpoint, path, query = {}) {
+    const raw = String(endpoint ?? "").trim();
+    if (!raw)
+        return "";
+    let parsed;
+    try {
+        parsed = new URL(raw.startsWith("http://") || raw.startsWith("https://")
+            ? raw
+            : `https://${raw}`);
+    }
+    catch {
+        return "";
+    }
+    if (!parsed.host)
+        return "";
+    parsed.protocol = "https:";
+    parsed.pathname = normalizeMicroVMProviderInvokePath(path);
+    parsed.search = "";
+    const params = new URLSearchParams();
+    for (const key of Object.keys(query ?? {}).sort()) {
+        for (const value of query[key] ?? []) {
+            params.append(key, String(value ?? "").trim());
+        }
+    }
+    parsed.search = params.toString();
+    return parsed.toString();
+}
+export function providerInvokePortHeader(port) {
+    const normalized = Math.trunc(Number(port) || defaultProviderInvokePort);
+    return String(normalized > 0 ? normalized : defaultProviderInvokePort);
+}
+export function providerInvokeResponseIsBase64(headers) {
+    const contentType = String(headers["content-type"]?.[0] ?? "").toLowerCase();
+    if (!contentType)
+        return false;
+    return ![
+        "text/",
+        "application/json",
+        "application/xml",
+        "application/javascript",
+        "application/problem+json",
+    ].some((prefix) => contentType.startsWith(prefix));
+}
+function cloneMicroVMQuery(query) {
+    const out = {};
+    for (const [rawKey, rawValues] of Object.entries(query ?? {})) {
+        const key = String(rawKey ?? "").trim();
+        if (!key)
+            continue;
+        out[key] = (rawValues ?? []).map((value) => String(value ?? "").trim());
+    }
+    return out;
+}
+function providerInvokeMethods() {
+    return new Set(["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]);
+}
+function providerInvokeForbiddenHeaders() {
+    return new Set([
+        "authorization",
+        "connection",
+        "content-length",
+        "host",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "x-amz-security-token",
+        "x-apptheory-microvm-port",
+        "x-apptheory-microvm-token-ttl",
+        "x-aws-proxy-auth",
+        "x-aws-proxy-port",
+        "x-namespace-id",
+        "x-tenant-id",
+    ]);
+}
 export function microVMProviderSessionKeyString(tenantID, namespace, sessionID) {
     return `${String(tenantID ?? "").trim()}\u0000${String(namespace ?? "").trim()}\u0000${String(sessionID ?? "").trim()}`;
 }
 export function providerEgressConnectorRefs(input) {
-    return normalizeStringArray([
+    return uniqueStringArray([
         ...(input.egress_network_connector_refs ?? []),
         input.network_connector_ref ?? "",
     ]);
+}
+function uniqueStringArray(values) {
+    return [...new Set(normalizeStringArray(values))];
 }
 export function safeMicroVMRunHookPayload(input) {
     return JSON.stringify({

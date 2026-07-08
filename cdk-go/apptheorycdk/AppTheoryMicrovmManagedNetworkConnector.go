@@ -8,6 +8,8 @@ const (
 	AppTheoryMicrovmManagedNetworkConnector_ALL_INGRESS AppTheoryMicrovmManagedNetworkConnector = "ALL_INGRESS"
 	// Explicitly disable inbound HTTPS connectivity for a MicroVM.
 	AppTheoryMicrovmManagedNetworkConnector_NO_INGRESS AppTheoryMicrovmManagedNetworkConnector = "NO_INGRESS"
+	// Enable AWS-managed HTTP ingress without broad ALL_INGRESS.
+	AppTheoryMicrovmManagedNetworkConnector_HTTP_INGRESS AppTheoryMicrovmManagedNetworkConnector = "HTTP_INGRESS"
 	// Enable AWS-managed public internet egress for a MicroVM.
 	AppTheoryMicrovmManagedNetworkConnector_INTERNET_EGRESS AppTheoryMicrovmManagedNetworkConnector = "INTERNET_EGRESS"
 	// Enable shell ingress required by CreateMicrovmShellAuthToken.

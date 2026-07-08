@@ -15,6 +15,8 @@ import (
 	storetest "github.com/theory-cloud/apptheory/testkit/objectstore"
 )
 
+const fixtureBackendFake = "fake"
+
 type FixtureObjectStoreSetup struct {
 	Backend string `json:"backend,omitempty"`
 }
@@ -39,9 +41,9 @@ type FixtureObjectStoreStep struct {
 func runFixtureObjectStore(f Fixture) error {
 	backend := strings.TrimSpace(f.Setup.ObjectStore.Backend)
 	if backend == "" {
-		backend = "fake"
+		backend = fixtureBackendFake
 	}
-	if backend != "fake" {
+	if backend != fixtureBackendFake {
 		return fmt.Errorf("objectstore fixture backend %q is unsupported", backend)
 	}
 	if len(f.Input.ObjectStore.Steps) == 0 {

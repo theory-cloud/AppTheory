@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 import {
   MICROVM_DEFAULT_SESSION_PROVIDER_ID,
   MICROVM_ERROR_TENANT_BINDING_VIOLATION,
@@ -15,6 +17,8 @@ import {
   type MicroVMOperationName,
   type MicroVMProvider,
   type MicroVMProviderCall,
+  type MicroVMProviderInvokeInput,
+  type MicroVMProviderInvokeOutput,
   type MicroVMProviderListInput,
   type MicroVMProviderListOutput,
   type MicroVMProviderRunInput,
@@ -51,6 +55,7 @@ import {
   validateMicroVMProviderSession,
   validateMicroVMProviderToken,
   validateMicroVMProviderListInputInternal,
+  validateMicroVMProviderInvokeInputInternal,
   validateMicroVMProviderRunInputInternal,
   validateMicroVMProviderSessionInputInternal,
   validateMicroVMProviderTokenInputInternal,
@@ -325,6 +330,7 @@ export class FakeMicroVMProvider implements MicroVMProvider {
       provider_microvm_id: `microvm-${String(this.next).padStart(6, "0")}`,
       state: MicroVMRealState.Running,
       provider_state: "running",
+      endpoint: `https://microvm-${String(this.next).padStart(6, "0")}.example.test`,
       image_ref: normalized.image_ref,
       terminal: false,
       registry_version: this.next,
@@ -390,6 +396,37 @@ export class FakeMicroVMProvider implements MicroVMProvider {
     input: MicroVMProviderSessionInput,
   ): Promise<MicroVMProviderSession> {
     return this.transition(MicroVMOperation.Terminate, input, "terminated");
+  }
+
+  async invoke(
+    input: MicroVMProviderInvokeInput,
+  ): Promise<MicroVMProviderInvokeOutput> {
+    const normalized = validateMicroVMProviderInvokeInputInternal(input);
+    this.recordCall(
+      MicroVMOperation.Invoke,
+      normalized.request_id,
+      normalized.tenant_id,
+      normalized.namespace,
+      normalized.binding.session_id,
+    );
+    const configured = this.configuredError(
+      MicroVMOperation.Invoke,
+      normalized.request_id,
+    );
+    if (configured) throw configured;
+    this.boundSession(normalized.request_id, normalized.binding);
+    return {
+      status: 200,
+      headers: { "content-type": ["application/json"] },
+      body: Buffer.from(
+        JSON.stringify({
+          runtime: "fake-microvm",
+          method: normalized.method,
+          path: normalized.path,
+        }),
+      ),
+      is_base64: false,
+    };
   }
 
   async createAuthToken(

@@ -31,6 +31,7 @@ type FixtureSetup struct {
 	MCP                  FixtureMCPSetup                  `json:"mcp,omitempty"`
 	OAuth                FixtureOAuthSetup                `json:"oauth,omitempty"`
 	ObjectStore          FixtureObjectStoreSetup          `json:"objectstore,omitempty"`
+	VectorStore          FixtureVectorStoreSetup          `json:"vectorstore,omitempty"`
 	WebSockets           []FixtureWebSocketRoute          `json:"websockets,omitempty"`
 	SQS                  []FixtureSQSRoute                `json:"sqs,omitempty"`
 	Kinesis              []FixtureKinesisRoute            `json:"kinesis,omitempty"`
@@ -96,6 +97,7 @@ type FixtureInput struct {
 	MCP                   *FixtureMCPInput        `json:"mcp,omitempty"`
 	OAuth                 *FixtureOAuthInput      `json:"oauth,omitempty"`
 	ObjectStore           FixtureObjectStoreInput `json:"objectstore,omitempty"`
+	VectorStore           FixtureVectorStoreInput `json:"vectorstore,omitempty"`
 }
 
 type FixtureAWSEvent struct {
@@ -326,11 +328,19 @@ type FixtureMicroVMLifecycleAdapter struct {
 }
 
 type FixtureMicroVMRouteSetup struct {
-	Authenticated bool   `json:"authenticated,omitempty"`
-	SeedSession   bool   `json:"seed_session,omitempty"`
-	TenantID      string `json:"tenant_id,omitempty"`
-	Namespace     string `json:"namespace,omitempty"`
-	SessionID     string `json:"session_id,omitempty"`
+	Authenticated      bool                             `json:"authenticated,omitempty"`
+	SeedSession        bool                             `json:"seed_session,omitempty"`
+	TenantID           string                           `json:"tenant_id,omitempty"`
+	Namespace          string                           `json:"namespace,omitempty"`
+	SessionID          string                           `json:"session_id,omitempty"`
+	DeploymentDefaults FixtureMicroVMDeploymentDefaults `json:"deployment_defaults,omitempty"`
+}
+
+type FixtureMicroVMDeploymentDefaults struct {
+	ImageRef                    string   `json:"image_ref,omitempty"`
+	NetworkConnectorRef         string   `json:"network_connector_ref,omitempty"`
+	IngressNetworkConnectorRefs []string `json:"ingress_network_connector_refs,omitempty"`
+	EgressNetworkConnectorRefs  []string `json:"egress_network_connector_refs,omitempty"`
 }
 
 type FixtureMicroVMExecutionRoleSetup struct {
@@ -350,6 +360,7 @@ type FixtureMicroVMControllerRoute struct {
 	TokenType                  string   `json:"token_type,omitempty"`
 	Scope                      []string `json:"scope,omitempty"`
 	ErrorCode                  string   `json:"error_code,omitempty"`
+	BodyContains               []string `json:"body_contains,omitempty"`
 	ForbiddenBodySubstrings    []string `json:"forbidden_body_substrings,omitempty"`
 	RegistryTokenMetadataCount *int     `json:"registry_token_metadata_count,omitempty"`
 }

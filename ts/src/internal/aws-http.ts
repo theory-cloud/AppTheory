@@ -233,7 +233,11 @@ export function requestFromAPIGatewayV2(
 
   return {
     method: String(event.requestContext?.http?.method ?? ""),
-    path: String(event.rawPath ?? event.requestContext?.http?.path ?? "/"),
+    path: normalizeAPIGatewayV2StagePath(
+      event.rawPath,
+      event.requestContext?.http?.path,
+      event.requestContext?.stage,
+    ),
     query,
     headers,
     body: toBuffer(String(event.body ?? "")),
@@ -243,6 +247,39 @@ export function requestFromAPIGatewayV2(
       event.requestContext?.http?.sourceIp,
     ),
   };
+}
+
+function normalizeAPIGatewayV2StagePath(
+  rawPath: unknown,
+  requestContextHTTPPath: unknown,
+  stageValue: unknown,
+): string {
+  const path = String(rawPath ?? requestContextHTTPPath ?? "/");
+  const stage = trimStageSlashes(String(stageValue ?? ""));
+  if (!stage || stage === "$default") {
+    return path;
+  }
+  const prefix = `/${stage}`;
+  if (path === prefix) {
+    return "/";
+  }
+  if (path.startsWith(`${prefix}/`)) {
+    return path.slice(prefix.length);
+  }
+  return path;
+}
+
+function trimStageSlashes(value: string): string {
+  const trimmed = value.trim();
+  let start = 0;
+  let end = trimmed.length;
+  while (start < end && trimmed.charCodeAt(start) === 47) {
+    start += 1;
+  }
+  while (end > start && trimmed.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return trimmed.slice(start, end);
 }
 
 export function requestFromLambdaFunctionURL(

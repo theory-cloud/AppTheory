@@ -1,0 +1,135 @@
+{
+  "id": "vectorstore.fake-put-query-delete",
+  "tier": "vectorstore",
+  "name": "Fake vector store put, filtered query, get, and delete semantics",
+  "setup": {
+    "vectorstore": {
+      "backend": "fake",
+      "dimension": 3,
+      "required_metadata_keys": ["tenant", "namespace"]
+    }
+  },
+  "input": {
+    "vectorstore": {
+      "steps": [
+        {
+          "name": "put records",
+          "operation": "put",
+          "records": [
+            {
+              "key": "doc-a#0001",
+              "data": [0, 0, 0],
+              "metadata": { "tenant": "t1", "namespace": "docs", "topic": ["payments", "cards"] }
+            },
+            {
+              "key": "doc-b#0001",
+              "data": [1, 1, 1],
+              "metadata": { "tenant": "t1", "namespace": "docs", "topic": ["payments"] }
+            },
+            {
+              "key": "doc-c#0001",
+              "data": [9, 9, 9],
+              "metadata": { "tenant": "t2", "namespace": "docs", "topic": ["payments"] }
+            }
+          ]
+        },
+        {
+          "name": "query tenant namespace",
+          "operation": "query",
+          "vector": [0, 0, 0],
+          "top_k": 5,
+          "filter": { "tenant": "t1", "namespace": "docs", "topic": "payments" },
+          "return_metadata": true
+        },
+        {
+          "name": "get one",
+          "operation": "get",
+          "keys": ["doc-a#0001"],
+          "return_metadata": true
+        },
+        {
+          "name": "delete one",
+          "operation": "delete",
+          "keys": ["doc-a#0001"]
+        },
+        {
+          "name": "query after delete",
+          "operation": "query",
+          "vector": [0, 0, 0],
+          "top_k": 5,
+          "filter": { "tenant": "t1", "namespace": "docs" },
+          "return_metadata": false
+        }
+      ]
+    }
+  },
+  "expect": {
+    "output_json": {
+      "steps": [
+        { "name": "put records", "operation": "put", "ok": true },
+        {
+          "name": "query tenant namespace",
+          "operation": "query",
+          "hits": [
+            {
+              "key": "doc-a#0001",
+              "distance": 0,
+              "metadata": { "namespace": "docs", "tenant": "t1", "topic": ["payments", "cards"] }
+            },
+            {
+              "key": "doc-b#0001",
+              "distance": 3,
+              "metadata": { "namespace": "docs", "tenant": "t1", "topic": ["payments"] }
+            }
+          ],
+          "ok": true
+        },
+        {
+          "name": "get one",
+          "operation": "get",
+          "records": [
+            {
+              "key": "doc-a#0001",
+              "data": [0, 0, 0],
+              "metadata": { "namespace": "docs", "tenant": "t1", "topic": ["payments", "cards"] }
+            }
+          ],
+          "ok": true
+        },
+        { "name": "delete one", "operation": "delete", "ok": true },
+        {
+          "name": "query after delete",
+          "operation": "query",
+          "hits": [ { "key": "doc-b#0001", "distance": 3 } ],
+          "ok": true
+        }
+      ],
+      "calls": [
+        {
+          "operation": "PutVectors",
+          "records": [
+            { "key": "doc-a#0001", "data": [0, 0, 0], "metadata": { "namespace": "docs", "tenant": "t1", "topic": ["payments", "cards"] } },
+            { "key": "doc-b#0001", "data": [1, 1, 1], "metadata": { "namespace": "docs", "tenant": "t1", "topic": ["payments"] } },
+            { "key": "doc-c#0001", "data": [9, 9, 9], "metadata": { "namespace": "docs", "tenant": "t2", "topic": ["payments"] } }
+          ]
+        },
+        {
+          "operation": "QueryVectors",
+          "vector": [0, 0, 0],
+          "top_k": 5,
+          "filter": { "namespace": "docs", "tenant": "t1", "topic": "payments" },
+          "return_metadata": true
+        },
+        { "operation": "GetVectors", "keys": ["doc-a#0001"], "return_metadata": true },
+        { "operation": "DeleteVectors", "keys": ["doc-a#0001"] },
+        {
+          "operation": "QueryVectors",
+          "vector": [0, 0, 0],
+          "top_k": 5,
+          "filter": { "namespace": "docs", "tenant": "t1" }
+        }
+      ],
+      "embedder_calls": []
+    }
+  }
+}

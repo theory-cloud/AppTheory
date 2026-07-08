@@ -1,4 +1,4 @@
-import { MicroVMSafeError, type MicroVMAuthContext, type MicroVMClient, type MicroVMCommandName, type MicroVMControllerOptions, type MicroVMControllerRequest, type MicroVMControllerResponse, type MicroVMControllerRouteTarget, type MicroVMLifecycleState, type MicroVMOperationName, type MicroVMProvider, type MicroVMProviderIdlePolicy, type MicroVMProviderPortScope, type MicroVMProviderSession, type MicroVMProviderSessionBinding, type MicroVMProviderToken, type MicroVMSessionQueryInput, type MicroVMSessionRecord, type MicroVMSessionRegistry, type MicroVMSessionSpec, type MicroVMSessionStatus } from "./model.js";
+import { MicroVMSafeError, type MicroVMAuthContext, type MicroVMClient, type MicroVMCommandName, type MicroVMControllerDeploymentDefaults, type MicroVMControllerInvokeRequest, type MicroVMControllerOptions, type MicroVMControllerRequest, type MicroVMControllerResponse, type MicroVMControllerRouteTarget, type MicroVMLifecycleState, type MicroVMOperationName, type MicroVMProvider, type MicroVMProviderIdlePolicy, type MicroVMProviderPortScope, type MicroVMProviderInvokeOutput, type MicroVMProviderSession, type MicroVMProviderSessionBinding, type MicroVMProviderToken, type MicroVMSessionQueryInput, type MicroVMSessionRecord, type MicroVMSessionRegistry, type MicroVMSessionSpec, type MicroVMSessionStatus } from "./model.js";
 export declare class MicroVMController {
     private readonly client;
     private readonly controllerID;
@@ -18,12 +18,16 @@ export declare class MicroVMRealController implements MicroVMControllerRouteTarg
     private readonly controllerID;
     private readonly providerID;
     private readonly executionRoleArn;
+    private readonly deploymentDefaults;
     private readonly clock;
     private readonly ids;
     private readonly ttlMs;
     constructor(provider: MicroVMProvider, registry: MicroVMSessionRegistry, options?: MicroVMControllerOptions);
     handle(request: MicroVMControllerRequest): Promise<MicroVMControllerResponse>;
+    invoke(request: MicroVMControllerInvokeRequest): Promise<MicroVMProviderInvokeOutput>;
     private handleRun;
+    private applyDeploymentDefaults;
+    private deploymentOverrideError;
     private handleSession;
     private handleList;
     private handleToken;
@@ -60,7 +64,24 @@ export type NormalizedMicroVMControllerRequest = {
     allowed_port_scope: MicroVMProviderPortScope[];
     max_results: number;
 };
+export type NormalizedMicroVMControllerInvokeRequest = {
+    request_id: string;
+    tenant_id: string;
+    namespace: string;
+    auth_context: MicroVMAuthContext;
+    session_id: string;
+    method: string;
+    path: string;
+    query: Record<string, string[]>;
+    headers: Record<string, string[]>;
+    body: Uint8Array;
+    port: number;
+    ttl_seconds: number;
+};
 export declare function normalizeMicroVMControllerRequest(request: MicroVMControllerRequest): NormalizedMicroVMControllerRequest;
+export declare function normalizeMicroVMControllerInvokeRequest(request: MicroVMControllerInvokeRequest): NormalizedMicroVMControllerInvokeRequest;
+export declare function normalizeMicroVMControllerDeploymentDefaults(defaults?: MicroVMControllerDeploymentDefaults): Required<MicroVMControllerDeploymentDefaults>;
+export declare function environmentMicroVMControllerDeploymentDefaults(): Required<MicroVMControllerDeploymentDefaults>;
 export declare function normalizeMicroVMAuthContext(auth: Partial<MicroVMAuthContext>): MicroVMAuthContext;
 export declare function cloneMicroVMSessionSpec(spec: MicroVMSessionSpec): MicroVMSessionSpec;
 export declare function controllerQueryInput(request: NormalizedMicroVMControllerRequest): MicroVMSessionQueryInput;

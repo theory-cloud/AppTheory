@@ -17,6 +17,7 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryMcpProtectedResource`: `/.well-known/oauth-protected-resource` metadata route
 - `AppTheoryJobsTable`: opinionated DynamoDB jobs ledger table
 - `AppTheoryS3Ingest`: secure S3 ingest front door with optional notifications
+- `AppTheoryVectorIndex`: S3 vector bucket/index plus vectorstore and Bedrock embedding env/grants
 - `AppTheoryCodeBuildJobRunner`: batch-step runner for import pipelines
 - `AppTheoryEventBridgeBus`: custom EventBridge bus with explicit cross-account publish allowlist
 - `AppTheoryEventBridgeRuleTarget`: EventBridge rule or schedule to Lambda target
@@ -58,9 +59,11 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - Use `AppTheoryRemoteMcpServer` plus `AppTheoryMcpProtectedResource` for Claude Remote MCP
 - Use `AppTheorySsrSite` when you need the canonical FaceTheory-first SSR/SSG/ISR deployment story
 - Use `AppTheoryJobsTable`, `AppTheoryS3Ingest`, and `AppTheoryCodeBuildJobRunner` for import pipelines
+- Use `AppTheoryVectorIndex` when an import pipeline or MCP tool needs S3 Vectors semantic recall
 - Use `AppTheoryMicrovmNetworkConnector`, `AppTheoryMicrovmImage`, and `AppTheoryMicrovmController` together for the
   corrective M16 AWS Lambda MicroVM golden path. The controller requires an authorizer, explicit ingress/egress/shell
-  connector references, and fails closed when omitted.
+  connector references, endpoint-dispatched no-hook image wiring for the live example path, token-hidden invoke routes,
+  and fails closed when omitted.
 
 Event workload wiring:
 

@@ -1,6 +1,6 @@
 ---
 title: AWS Lambda MicroVM Golden Path
-description: The corrective M16 AppTheory path for fixture-backed Lambda MicroVM lifecycle, provider, controller, registry, CDK, and consumer conformance support.
+description: The corrective M16 AppTheory path for fixture-backed Lambda MicroVM lifecycle, token-hidden invoke, provider, controller, registry, CDK, and consumer conformance support.
 ---
 
 # AWS Lambda MicroVM Golden Path
@@ -8,33 +8,37 @@ description: The corrective M16 AppTheory path for fixture-backed Lambda MicroVM
 AppTheory's Lambda MicroVM support is an evidence-bounded framework path, not a shortcut around the runtime contract.
 The `v1.14.0` / M15 line established a fixture-backed foundation, but it must not be described as complete live
 first-class MicroVM support. The corrective M16 line is the canonical AppTheory path for real Lambda MicroVM operation
-vocabulary, protected controller routes, provider adapters, durable registry state, CDK wiring, and consumer conformance
-harness proof.
+vocabulary, protected controller routes, token-hidden workload invocation, provider adapters, durable registry state, CDK
+wiring, and consumer conformance harness proof.
 
 The contract name is `apptheory.lambda_microvm`; the corrective fixture version is `m16.microvm/v1`. Corrective
 fixtures live under `contract-tests/fixtures/microvm-operations/` and are validated by the Go, TypeScript, and Python contract runners.
 The earlier M15 fixtures remain part of the compatibility history, but the real operation vocabulary below is canonical
 for new docs, routes, conformance harnesses, and reviews.
 
-This page is repository-local documentation for the integration line. It is not stable release evidence, live AWS proof,
-EqualToAI/Host application proof, customer workload readiness, or release-train execution evidence.
+This page is repository-local documentation for the integration line. The current example path has been live-smoked in
+`us-east-1` with Go, TypeScript, and Python MicroVM workloads through the AppTheory controller invoke route. That is
+example-path proof for this repository, not stable release evidence, EqualToAI/Host application proof, customer workload
+readiness, or release-train execution evidence.
 
 ## What AppTheory proves
 
 AppTheory can prove the framework surface locally:
 
-- shared M16 fixtures for the real operation contract, route auth, tenant binding, lifecycle bypass denial, raw SDK
-  denial, and token no-leak denial;
+- shared M16 fixtures for the real operation contract, route auth, tenant binding, protected invoke routing, lifecycle
+  bypass denial, raw SDK denial, and token no-leak denial;
 - Go, TypeScript, and Python runtime primitives for sanitized lifecycle adapters, constrained MicroVM controllers,
-  provider adapters, fake clients, provider-aware session records, and durable registry adapters;
+  provider adapters, token-hidden workload invocation, fake clients, provider-aware session records, and durable registry
+  adapters;
 - CDK constructs for typed ingress, egress, and shell-ingress connector references, MicroVM images, protected controller
-  deployment, IAM grants, and fail-closed environment wiring;
-- a runnable controller example and an AppTheory-owned consumer conformance harness that can be run in local dry-run mode.
+  deployment, IAM grants, endpoint-dispatched no-hook images, and fail-closed environment wiring;
+- a runnable controller example with Go, TypeScript, and Python in-MicroVM workloads, plus an AppTheory-owned consumer
+  conformance harness that can be run in local dry-run mode.
 
-That evidence does **not** claim live AWS deployment success, cloud mutation proof, customer workload proof, generalized
-account vending, or proof that unauthenticated controllers are acceptable. Live application proof belongs to a
-consumer-provided EqualToAI/Host lab run of the conformance harness with real lab configuration and supplied registry/log
-artifacts. Until that external run exists, the acceptable claim is local AppTheory corrective prep and gate proof only.
+That evidence does **not** claim arbitrary cloud mutation proof, customer workload proof, generalized account vending, or
+proof that unauthenticated controllers are acceptable. Live application proof belongs to a consumer-provided
+EqualToAI/Host lab run of the conformance harness with real lab configuration and supplied registry/log artifacts. Until
+that external run exists, the acceptable claim is AppTheory example-path proof plus local corrective gate proof.
 
 ## Golden path
 
@@ -44,12 +48,12 @@ Use these pieces together. Do not replace one piece with an ad-hoc implementatio
    values and return through the adapter's safe result/error envelope. They do not receive raw AWS hook payloads and they
    do not get raw SDK clients.
 2. **Use the constrained provider surface.** Runtime code calls AppTheory `Run`, `Get`, `List`, `Suspend`, `Resume`,
-   `Terminate`, `CreateAuthToken`, and `CreateShellToken` provider methods through AppTheory request/response structs.
-   Raw credentials, raw AWS SDK clients, bearer tokens, provider payloads, and plaintext session tokens are not part of
-   the provider interface.
+   `Terminate`, `Invoke`, `CreateAuthToken`, and `CreateShellToken` provider methods through AppTheory request/response
+   structs. Raw credentials, raw AWS SDK clients, bearer tokens, provider payloads, and plaintext session tokens are not
+   part of the provider interface.
 3. **Expose the controller through the fixed AppTheory routes.** Controller routes are protected, tenant-bound, and backed
    by the durable session registry. The canonical route/command names are `run`, `get`, `list`, `suspend`, `resume`,
-   `terminate`, `auth-token`, and `shell-auth-token`.
+   `terminate`, `invoke`, `auth-token`, and `shell-auth-token`.
 4. **Deploy through AppTheory CDK constructs.** The deployment path is `AppTheoryMicrovmNetworkConnector` or typed
    connector references, `AppTheoryMicrovmImage`, and `AppTheoryMicrovmController`. The controller requires explicit
    ingress, egress, and shell-ingress connector references; AppTheory does not hide connector defaults.
@@ -77,7 +81,11 @@ The event shape stays intentionally small: `request_id`, `tenant_id`, `namespace
 safe string metadata. The adapter fails closed for missing handlers, malformed events, unsupported transitions,
 forbidden metadata, or explicit `raw_lifecycle_hook_bypass` requests.
 
-The CDK image construct also exposes AWS Lambda MicroVM hook **configuration** fields:
+The CDK image construct exposes AWS Lambda MicroVM hook **configuration** fields, but the live AppTheory workload path is
+endpoint-dispatched HTTP with no AWS-invoked hooks. For that path, pass `hooks: {}` to `AppTheoryMicrovmImage`; AppTheory
+synthesizes `Hooks: {}` and traffic is delivered through the MicroVM endpoint.
+
+When hook configuration is needed, the available fields are:
 
 | CDK hook group | Fields | Boundary |
 | --- | --- | --- |
@@ -85,7 +93,8 @@ The CDK image construct also exposes AWS Lambda MicroVM hook **configuration** f
 | `microvmHooks` | `resume`, `run`, `suspend`, `terminate` | Enables or disables runtime MicroVM hook integration for the image resource. |
 
 Those CDK fields configure the AWS resource. Application behavior still goes through the AppTheory runtime lifecycle
-adapter and its sanitized event/result contract.
+adapter and its sanitized event/result contract. Do not use hook configuration as a back door around the controller
+invoke route.
 
 ## Real controller routes
 
@@ -99,12 +108,30 @@ adapter and its sanitized event/result contract.
 | `suspend` | `POST` | `/microvms/{session_id}/suspend` | `tenant_id`, `namespace`, `session_id` | Updated state, provider state, registry version. |
 | `resume` | `POST` | `/microvms/{session_id}/resume` | `tenant_id`, `namespace`, `session_id` | Updated state, provider state, registry version. |
 | `terminate` | `DELETE` | `/microvms/{session_id}` | `tenant_id`, `namespace`, `session_id` | Terminal-or-denied state, provider state, registry version. |
+| `invoke` | `ANY` | `/microvms/{session_id}/invoke` and `/microvms/{session_id}/invoke/{proxy+}` | `tenant_id`, `namespace`, `session_id`, optional `X-AppTheory-MicroVM-Port` | Proxied workload status, sanitized headers, body bytes, and base64 flag. |
 | `auth-token` | `POST` | `/microvms/{session_id}/auth-token` | `tenant_id`, `namespace`, `session_id`, optional port scope | Sanitized `token_id`, `token_type`, `expires_at`, and `scope` only. |
 | `shell-auth-token` | `POST` | `/microvms/{session_id}/shell-auth-token` | `tenant_id`, `namespace`, `session_id` | Sanitized `token_id`, `token_type`, `expires_at`, and `scope` only. |
 
 `auth-token` and `shell-auth-token` responses must never expose provider token values, bearer credentials, raw AWS
 credentials, or plaintext session tokens. `shell-auth-token` is canonical. `shell-token` may appear in API snapshots or
 runtime compatibility aliases for earlier corrective callers, but it is not the canonical route or command.
+
+`invoke` is the only AppTheory path for ordinary HTTP traffic into a running MicroVM workload. The caller sends normal
+controller auth, tenant, and namespace headers to AppTheory. The controller reads the tenant-bound session endpoint from
+the durable registry, mints the provider auth token internally, forwards the request to the MicroVM endpoint, and returns
+only a sanitized HTTP response. `X-aws-proxy-auth`, bearer credentials, AWS SDK clients, raw provider token values, and
+session tokens never cross the controller boundary.
+
+The optional caller control headers are intentionally small:
+
+| Header | Meaning |
+| --- | --- |
+| `X-AppTheory-MicroVM-Port` | Workload port to invoke. The example workloads listen on `8080`. |
+| `X-AppTheory-MicroVM-Token-TTL` | Short auth-token TTL for the provider proxy request. |
+
+Controller invoke removes hop-by-hop headers, AppTheory tenant/namespace control headers, provider proxy auth headers,
+and `Authorization` before forwarding to the MicroVM workload. Query parameters reserved for AppTheory control are also
+not forwarded.
 
 The MicroVM execution role is deployment-owned, not caller-owned. When the CDK construct is configured with
 `executionRole`, it sets `APPTHEORY_MICROVM_EXECUTION_ROLE_ARN`; the real controller reads that environment value and
@@ -178,7 +205,7 @@ an ad-hoc DynamoDB schema, raw SDK calls, or per-controller private storage.
 
 AppTheory does not provide or prove:
 
-- live AWS deployment success;
+- live AWS behavior beyond the verified AppTheory example path;
 - EqualToAI/Host application proof without a consumer-run live harness;
 - cloud mutation receipts or customer workload execution;
 - generalized account vending, VPC vending, or network mutation outside caller-provided VPC/subnet/security-group

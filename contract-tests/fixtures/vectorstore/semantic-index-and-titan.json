@@ -1,0 +1,97 @@
+{
+  "id": "vectorstore.semantic-index-and-titan",
+  "tier": "vectorstore",
+  "name": "Semantic index composes explicit embeddings and Titan request shape",
+  "setup": {
+    "vectorstore": {
+      "backend": "fake",
+      "dimension": 3,
+      "required_metadata_keys": ["tenant", "namespace", "generation"],
+      "embeddings": {
+        "alpha document": [0, 0, 0],
+        "beta document": [2, 0, 0],
+        "alpha query": [0, 0, 0]
+      },
+      "default_embedding": [0.25, 0.5, 0.75],
+      "titan": { "embedding": [0.25, 0.5, 0.75] }
+    }
+  },
+  "input": {
+    "vectorstore": {
+      "steps": [
+        {
+          "name": "semantic put",
+          "operation": "semantic_put",
+          "records": [
+            { "key": "alpha#0001", "text": "alpha document", "metadata": { "tenant": "t1", "namespace": "docs", "generation": "v1" } },
+            { "key": "beta#0001", "text": "beta document", "metadata": { "tenant": "t1", "namespace": "docs", "generation": "v1" } }
+          ]
+        },
+        {
+          "name": "semantic query",
+          "operation": "semantic_query",
+          "text": "alpha query",
+          "top_k": 1,
+          "filter": { "tenant": "t1", "namespace": "docs", "generation": "v1" },
+          "return_metadata": true
+        },
+        {
+          "name": "titan embed",
+          "operation": "titan_embed",
+          "text": "hello semantic world",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "dimensions": 3,
+          "normalize": true
+        }
+      ]
+    }
+  },
+  "expect": {
+    "output_json": {
+      "steps": [
+        { "name": "semantic put", "operation": "semantic_put", "ok": true },
+        {
+          "name": "semantic query",
+          "operation": "semantic_query",
+          "hits": [
+            { "key": "alpha#0001", "distance": 0, "metadata": { "generation": "v1", "namespace": "docs", "tenant": "t1" } }
+          ],
+          "ok": true
+        },
+        {
+          "name": "titan embed",
+          "operation": "titan_embed",
+          "vector": [0.25, 0.5, 0.75],
+          "requests": [
+            {
+              "accept": "application/json",
+              "content_type": "application/json",
+              "dimensions": 3,
+              "inputText": "hello semantic world",
+              "model_id": "amazon.titan-embed-text-v2:0",
+              "normalize": true
+            }
+          ],
+          "ok": true
+        }
+      ],
+      "calls": [
+        {
+          "operation": "PutVectors",
+          "records": [
+            { "key": "alpha#0001", "data": [0, 0, 0], "metadata": { "generation": "v1", "namespace": "docs", "tenant": "t1" } },
+            { "key": "beta#0001", "data": [2, 0, 0], "metadata": { "generation": "v1", "namespace": "docs", "tenant": "t1" } }
+          ]
+        },
+        {
+          "operation": "QueryVectors",
+          "vector": [0, 0, 0],
+          "top_k": 1,
+          "filter": { "generation": "v1", "namespace": "docs", "tenant": "t1" },
+          "return_metadata": true
+        }
+      ],
+      "embedder_calls": ["alpha document", "beta document", "alpha query"]
+    }
+  }
+}

@@ -243,6 +243,7 @@ FIXTURE_DOMAIN_TIERS = {
     "mcp": "mcp",
     "oauth": "oauth",
     "objectstore": "objectstore",
+    "vectorstore": "vectorstore",
     "errors": "p0",
     "routing": "p0",
     "binding": "p0",

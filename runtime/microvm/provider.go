@@ -38,6 +38,7 @@ type Provider interface {
 	Suspend(context.Context, ProviderSessionInput) (ProviderSession, error)
 	Resume(context.Context, ProviderSessionInput) (ProviderSession, error)
 	Terminate(context.Context, ProviderSessionInput) (ProviderSession, error)
+	Invoke(context.Context, ProviderInvokeInput) (ProviderInvokeOutput, error)
 	CreateAuthToken(context.Context, ProviderTokenInput) (ProviderToken, error)
 	CreateShellToken(context.Context, ProviderTokenInput) (ProviderToken, error)
 }
@@ -119,6 +120,31 @@ type ProviderTokenInput struct {
 	AllowedPortScope []ProviderPortScope    `json:"allowed_port_scope,omitempty"`
 }
 
+// ProviderInvokeInput is the safe AppTheory request for endpoint-dispatched MicroVM HTTP invocation.
+type ProviderInvokeInput struct {
+	RequestID   string                 `json:"request_id"`
+	TenantID    string                 `json:"tenant_id"`
+	Namespace   string                 `json:"namespace"`
+	AuthContext AuthContext            `json:"auth_context"`
+	Binding     ProviderSessionBinding `json:"binding"`
+	Endpoint    string                 `json:"endpoint"`
+	Method      string                 `json:"method"`
+	Path        string                 `json:"path"`
+	Query       map[string][]string    `json:"query,omitempty"`
+	Headers     map[string][]string    `json:"headers,omitempty"`
+	Body        []byte                 `json:"body,omitempty"`
+	Port        int32                  `json:"port,omitempty"`
+	TTLSeconds  int32                  `json:"ttl_seconds,omitempty"`
+}
+
+// ProviderInvokeOutput is a sanitized HTTP response from a MicroVM workload.
+type ProviderInvokeOutput struct {
+	Status   int                 `json:"status"`
+	Headers  map[string][]string `json:"headers,omitempty"`
+	Body     []byte              `json:"body,omitempty"`
+	IsBase64 bool                `json:"is_base64,omitempty"`
+}
+
 // ProviderSession is the sanitized provider session shape emitted by AppTheory.
 type ProviderSession struct {
 	TenantID          string         `json:"tenant_id"`
@@ -127,6 +153,7 @@ type ProviderSession struct {
 	ProviderMicroVMID string         `json:"provider_microvm_id"`
 	State             LifecycleState `json:"state"`
 	ProviderState     string         `json:"provider_state"`
+	Endpoint          string         `json:"endpoint,omitempty"`
 	ImageRef          string         `json:"image_ref,omitempty"`
 	ImageVersion      string         `json:"image_version,omitempty"`
 	StartedAt         time.Time      `json:"started_at,omitempty"`
@@ -203,7 +230,7 @@ func ValidateProviderSession(session ProviderSession) error {
 	if session.State != state || session.Terminal != terminal {
 		return safeError(ErrorCodeProviderStateMappingIncomplete, "apptheory: microvm provider session state mapping mismatch", "")
 	}
-	if forbiddenFieldName(session.ProviderMicroVMID) || forbiddenFieldName(session.ImageRef) || forbiddenFieldName(session.ImageVersion) {
+	if forbiddenFieldName(session.ProviderMicroVMID) || forbiddenFieldName(session.Endpoint) || forbiddenFieldName(session.ImageRef) || forbiddenFieldName(session.ImageVersion) {
 		return safeError(ErrorCodeForbiddenField, "apptheory: microvm provider session exposes forbidden field", "")
 	}
 	return nil
@@ -230,6 +257,12 @@ func ValidateProviderListInput(input ProviderListInput) error {
 // ValidateProviderTokenInput validates a safe AppTheory token provider request.
 func ValidateProviderTokenInput(operation Operation, input ProviderTokenInput) error {
 	_, err := validateProviderTokenInput(operation, input)
+	return err
+}
+
+// ValidateProviderInvokeInput validates a safe AppTheory MicroVM invoke request.
+func ValidateProviderInvokeInput(input ProviderInvokeInput) error {
+	_, err := validateProviderInvokeInput(input)
 	return err
 }
 
@@ -544,6 +577,7 @@ func normalizeProviderSession(session ProviderSession) ProviderSession {
 	session.ProviderMicroVMID = strings.TrimSpace(session.ProviderMicroVMID)
 	session.State = LifecycleState(strings.TrimSpace(string(session.State)))
 	session.ProviderState = normalizeProviderState(session.ProviderState)
+	session.Endpoint = strings.TrimSpace(session.Endpoint)
 	session.ImageRef = strings.TrimSpace(session.ImageRef)
 	session.ImageVersion = strings.TrimSpace(session.ImageVersion)
 	return session
@@ -574,7 +608,7 @@ func normalizeStringSlice(values []string) []string {
 	return out
 }
 
-func sessionFromProviderState(binding ProviderSessionBinding, providerState string, imageRef string, imageVersion string, startedAt time.Time, terminatedAt time.Time) (ProviderSession, error) {
+func sessionFromProviderState(binding ProviderSessionBinding, providerState string, endpoint string, imageRef string, imageVersion string, startedAt time.Time, terminatedAt time.Time) (ProviderSession, error) {
 	state, terminal, err := MapProviderState(providerState)
 	if err != nil {
 		return ProviderSession{}, err
@@ -586,6 +620,7 @@ func sessionFromProviderState(binding ProviderSessionBinding, providerState stri
 		ProviderMicroVMID: binding.ProviderMicroVMID,
 		State:             state,
 		ProviderState:     normalizeProviderState(providerState),
+		Endpoint:          strings.TrimSpace(endpoint),
 		ImageRef:          strings.TrimSpace(imageRef),
 		ImageVersion:      strings.TrimSpace(imageVersion),
 		StartedAt:         startedAt,

@@ -1,8 +1,12 @@
 import {
   MICROVM_AWS_LAMBDA_PROVIDER_ID,
+  MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS,
   MICROVM_ERROR_CONTROLLER_COMMAND_FAILED,
   MICROVM_ERROR_CONTROLLER_INCOMPLETE,
   MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+  MICROVM_ENV_IMAGE_REF,
+  MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS,
+  MICROVM_ENV_NETWORK_CONNECTOR_REFS,
   MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
   MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER,
   MicroVMCommand,
@@ -14,6 +18,8 @@ import {
   type MicroVMClock,
   type MicroVMClient,
   type MicroVMCommandName,
+  type MicroVMControllerDeploymentDefaults,
+  type MicroVMControllerInvokeRequest,
   type MicroVMControllerOptions,
   type MicroVMControllerRequest,
   type MicroVMControllerResponse,
@@ -24,6 +30,7 @@ import {
   type MicroVMProvider,
   type MicroVMProviderIdlePolicy,
   type MicroVMProviderPortScope,
+  type MicroVMProviderInvokeOutput,
   type MicroVMProviderRunInput,
   type MicroVMProviderSession,
   type MicroVMProviderSessionBinding,
@@ -51,8 +58,11 @@ import {
   environmentMicroVMExecutionRoleArn,
   microVMProviderSessionKeyString,
   normalizeMicroVMExecutionRoleArn,
+  normalizeMicroVMProviderInvokeInput,
+  normalizeMicroVMProviderInvokePath,
   normalizeMicroVMProviderSession,
   normalizeMicroVMProviderToken,
+  sanitizeMicroVMProviderInvokeHeaders,
   normalizeStringArray,
   validateMicroVMExecutionRoleArn,
   validateMicroVMProviderSession,
@@ -244,6 +254,7 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
   private readonly controllerID: string;
   private readonly providerID: string;
   private readonly executionRoleArn: string;
+  private readonly deploymentDefaults: Required<MicroVMControllerDeploymentDefaults>;
   private readonly clock: MicroVMClock;
   private readonly ids: MicroVMIDGenerator;
   private readonly ttlMs: number;
@@ -289,6 +300,10 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
         "",
       );
     }
+    this.deploymentDefaults = normalizeMicroVMControllerDeploymentDefaults(
+      options.deployment_defaults ??
+        environmentMicroVMControllerDeploymentDefaults(),
+    );
     this.clock = options.clock ?? { now: () => new Date() };
     this.ids = options.ids ?? { newID: () => randomMicroVMSessionID() };
     const ttlMs = Math.trunc(Number(options.ttl_ms) || 0);
@@ -298,7 +313,12 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
   async handle(
     request: MicroVMControllerRequest,
   ): Promise<MicroVMControllerResponse> {
-    const normalized = normalizeMicroVMControllerRequest(request);
+    const requestEnvelope = normalizeMicroVMControllerRequest(request);
+    const deploymentOverrideErr = this.deploymentOverrideError(requestEnvelope);
+    if (deploymentOverrideErr) {
+      return controllerErrorResponse(requestEnvelope, deploymentOverrideErr);
+    }
+    const normalized = this.applyDeploymentDefaults(requestEnvelope);
     const validationErr = validateMicroVMRealControllerRequest(normalized);
     if (validationErr) {
       return controllerErrorResponse(normalized, validationErr);
@@ -356,6 +376,52 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
     }
   }
 
+  async invoke(
+    request: MicroVMControllerInvokeRequest,
+  ): Promise<MicroVMProviderInvokeOutput> {
+    const normalized = normalizeMicroVMControllerInvokeRequest(request);
+    const envelope = normalizeMicroVMControllerRequest({
+      command: MicroVMCommand.Invoke,
+      request_id: normalized.request_id,
+      tenant_id: normalized.tenant_id,
+      namespace: normalized.namespace,
+      auth_context: normalized.auth_context,
+      session_id: normalized.session_id,
+    });
+    const validationErr = validateMicroVMRealControllerRequest(envelope);
+    if (validationErr) throw validationErr;
+    const record = await this.registry.get({
+      tenant_id: normalized.tenant_id,
+      namespace: normalized.namespace,
+      session_id: normalized.session_id,
+    });
+    validateMicroVMSessionRecord(record);
+    if (!String(record.endpoint ?? "").trim()) {
+      throw safeError(
+        MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+        "apptheory: microvm invoke requires a session endpoint",
+        normalized.request_id,
+      );
+    }
+    return await this.provider.invoke(
+      normalizeMicroVMProviderInvokeInput({
+        request_id: normalized.request_id,
+        tenant_id: normalized.tenant_id,
+        namespace: normalized.namespace,
+        auth_context: normalized.auth_context,
+        binding: microVMProviderBindingFromRecord(record),
+        endpoint: record.endpoint ?? "",
+        method: normalized.method,
+        path: normalized.path,
+        query: normalized.query,
+        headers: sanitizeMicroVMProviderInvokeHeaders(normalized.headers ?? {}),
+        body: normalized.body,
+        port: normalized.port,
+        ttl_seconds: normalized.ttl_seconds,
+      }),
+    );
+  }
+
   private async handleRun(
     request: NormalizedMicroVMControllerRequest,
   ): Promise<MicroVMControllerResponse> {
@@ -409,6 +475,90 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
         asMicroVMSafeError(err, requestWithSession.request_id),
       );
     }
+  }
+
+  private applyDeploymentDefaults(
+    request: NormalizedMicroVMControllerRequest,
+  ): NormalizedMicroVMControllerRequest {
+    const defaults = this.deploymentDefaults;
+    const out: NormalizedMicroVMControllerRequest = {
+      ...request,
+      image_ref: request.image_ref || defaults.image_ref,
+      ingress_network_connector_refs:
+        request.ingress_network_connector_refs.length > 0
+          ? [...request.ingress_network_connector_refs]
+          : [...defaults.ingress_network_connector_refs],
+      egress_network_connector_refs:
+        request.egress_network_connector_refs.length > 0
+          ? [...request.egress_network_connector_refs]
+          : [...defaults.egress_network_connector_refs],
+      network_connector_ref:
+        request.network_connector_ref || defaults.network_connector_ref,
+    };
+    if (
+      !out.network_connector_ref &&
+      out.egress_network_connector_refs.length
+    ) {
+      out.network_connector_ref = out.egress_network_connector_refs[0] ?? "";
+    }
+    return normalizeMicroVMControllerRequest(out);
+  }
+
+  private deploymentOverrideError(
+    request: NormalizedMicroVMControllerRequest,
+  ): MicroVMSafeError | undefined {
+    const defaults = this.deploymentDefaults;
+    if (
+      defaults.image_ref &&
+      request.image_ref &&
+      request.image_ref !== defaults.image_ref
+    ) {
+      return safeError(
+        MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+        "apptheory: microvm deployment-pinned image_ref mismatch",
+        request.request_id,
+      );
+    }
+    if (
+      defaults.network_connector_ref &&
+      request.network_connector_ref &&
+      request.network_connector_ref !== defaults.network_connector_ref
+    ) {
+      return safeError(
+        MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+        "apptheory: microvm deployment-pinned network_connector_ref mismatch",
+        request.request_id,
+      );
+    }
+    if (
+      defaults.ingress_network_connector_refs.length > 0 &&
+      request.ingress_network_connector_refs.length > 0 &&
+      !equalStringArrays(
+        request.ingress_network_connector_refs,
+        defaults.ingress_network_connector_refs,
+      )
+    ) {
+      return safeError(
+        MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+        "apptheory: microvm deployment-pinned ingress_network_connector_refs mismatch",
+        request.request_id,
+      );
+    }
+    if (
+      defaults.egress_network_connector_refs.length > 0 &&
+      request.egress_network_connector_refs.length > 0 &&
+      !equalStringArrays(
+        request.egress_network_connector_refs,
+        defaults.egress_network_connector_refs,
+      )
+    ) {
+      return safeError(
+        MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+        "apptheory: microvm deployment-pinned egress_network_connector_refs mismatch",
+        request.request_id,
+      );
+    }
+    return undefined;
   }
 
   private async handleSession(
@@ -611,7 +761,7 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
         request.command,
         session.state,
       ),
-      endpoint: current?.endpoint ?? "",
+      endpoint: session.endpoint || current?.endpoint || "",
       microvm_id: current?.microvm_id ?? "",
       provider_id: current?.provider_id || this.providerID,
       provider_microvm_id: session.provider_microvm_id,
@@ -844,6 +994,7 @@ export function validateMicroVMRealControllerRequest(
     case MicroVMCommand.Suspend:
     case MicroVMCommand.Resume:
     case MicroVMCommand.Terminate:
+    case MicroVMCommand.Invoke:
     case MicroVMCommand.AuthToken:
     case MicroVMCommand.ShellAuthToken:
       if (!normalized.session_id) {
@@ -879,6 +1030,8 @@ export function microVMCommandFromOperation(
       return MicroVMCommand.Resume;
     case MicroVMOperation.Terminate:
       return MicroVMCommand.Terminate;
+    case MicroVMOperation.Invoke:
+      return MicroVMCommand.Invoke;
     case MicroVMOperation.AuthToken:
       return MicroVMCommand.AuthToken;
     case MicroVMOperation.ShellAuthToken:
@@ -945,6 +1098,7 @@ export function microVMProviderSessionFromRegistryRecord(
     registry_version: normalized.generation,
     terminal,
   };
+  if (normalized.endpoint) session.endpoint = normalized.endpoint;
   if (normalized.image_ref) session.image_ref = normalized.image_ref;
   if (normalized.image_version)
     session.image_version = normalized.image_version;
@@ -964,7 +1118,7 @@ export function responseFromMicroVMProviderSession(
   session: MicroVMProviderSession,
 ): MicroVMControllerResponse {
   const normalized = normalizeMicroVMProviderSession(session);
-  return {
+  const response: MicroVMControllerResponse = {
     command: request.command,
     request_id: request.request_id,
     tenant_id: normalized.tenant_id,
@@ -981,6 +1135,8 @@ export function responseFromMicroVMProviderSession(
     last_action: request.command,
     registry_version: normalized.registry_version ?? 0,
   };
+  if (normalized.endpoint) response.endpoint = normalized.endpoint;
+  return response;
 }
 
 export function responseFromMicroVMProviderToken(
@@ -1035,6 +1191,21 @@ export type NormalizedMicroVMControllerRequest = {
   max_results: number;
 };
 
+export type NormalizedMicroVMControllerInvokeRequest = {
+  request_id: string;
+  tenant_id: string;
+  namespace: string;
+  auth_context: MicroVMAuthContext;
+  session_id: string;
+  method: string;
+  path: string;
+  query: Record<string, string[]>;
+  headers: Record<string, string[]>;
+  body: Uint8Array;
+  port: number;
+  ttl_seconds: number;
+};
+
 export function normalizeMicroVMControllerRequest(
   request: MicroVMControllerRequest,
 ): NormalizedMicroVMControllerRequest {
@@ -1072,6 +1243,89 @@ export function normalizeMicroVMControllerRequest(
         Number(request.idle_policy.suspended_duration_seconds) || 0,
       ),
     };
+  }
+  return out;
+}
+
+export function normalizeMicroVMControllerInvokeRequest(
+  request: MicroVMControllerInvokeRequest,
+): NormalizedMicroVMControllerInvokeRequest {
+  return {
+    request_id: String(request.request_id ?? "").trim(),
+    tenant_id: String(request.tenant_id ?? "").trim(),
+    namespace: String(request.namespace ?? "").trim(),
+    auth_context: normalizeMicroVMAuthContext(request.auth_context ?? {}),
+    session_id: String(request.session_id ?? "").trim(),
+    method: String(request.method ?? "")
+      .trim()
+      .toUpperCase(),
+    path: normalizeMicroVMProviderInvokePath(request.path ?? "/"),
+    query: cloneControllerInvokeQuery(request.query ?? {}),
+    headers: sanitizeMicroVMProviderInvokeHeaders(request.headers ?? {}),
+    body: request.body ? new Uint8Array(request.body) : new Uint8Array(),
+    port: Math.trunc(Number(request.port ?? 8080) || 0) || 8080,
+    ttl_seconds: Math.trunc(Number(request.ttl_seconds ?? 60) || 0) || 60,
+  };
+}
+
+export function normalizeMicroVMControllerDeploymentDefaults(
+  defaults: MicroVMControllerDeploymentDefaults = {},
+): Required<MicroVMControllerDeploymentDefaults> {
+  const egress = normalizeStringArray(
+    defaults.egress_network_connector_refs ?? [],
+  );
+  const out: Required<MicroVMControllerDeploymentDefaults> = {
+    image_ref: String(defaults.image_ref ?? "").trim(),
+    network_connector_ref: String(defaults.network_connector_ref ?? "").trim(),
+    ingress_network_connector_refs: normalizeStringArray(
+      defaults.ingress_network_connector_refs ?? [],
+    ),
+    egress_network_connector_refs: egress,
+  };
+  if (!out.network_connector_ref && out.egress_network_connector_refs.length) {
+    out.network_connector_ref = out.egress_network_connector_refs[0] ?? "";
+  }
+  return out;
+}
+
+export function environmentMicroVMControllerDeploymentDefaults(): Required<MicroVMControllerDeploymentDefaults> {
+  const legacy = splitMicroVMControllerDeploymentRefs(
+    process.env?.[MICROVM_ENV_NETWORK_CONNECTOR_REFS] ?? "",
+  );
+  const configuredEgress = splitMicroVMControllerDeploymentRefs(
+    process.env?.[MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS] ?? "",
+  );
+  const egress = configuredEgress.length > 0 ? configuredEgress : legacy;
+  return normalizeMicroVMControllerDeploymentDefaults({
+    image_ref: process.env?.[MICROVM_ENV_IMAGE_REF] ?? "",
+    network_connector_ref: legacy[0] ?? "",
+    ingress_network_connector_refs: splitMicroVMControllerDeploymentRefs(
+      process.env?.[MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS] ?? "",
+    ),
+    egress_network_connector_refs: egress,
+  });
+}
+
+function splitMicroVMControllerDeploymentRefs(value: string): string[] {
+  return normalizeStringArray(String(value ?? "").split(","));
+}
+
+function equalStringArrays(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function cloneControllerInvokeQuery(
+  query: Record<string, string[] | undefined>,
+): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const [rawKey, rawValues] of Object.entries(query ?? {})) {
+    const key = String(rawKey ?? "").trim();
+    if (!key) continue;
+    out[key] = (rawValues ?? []).map((value) => String(value ?? "").trim());
   }
   return out;
 }

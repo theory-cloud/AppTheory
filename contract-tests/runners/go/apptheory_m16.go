@@ -291,6 +291,7 @@ func newMicroVMRouteFixtureRuntime(setup FixtureMicroVMRouteSetup) (microVMRoute
 		registry,
 		runtimemicrovm.WithControllerClock(microVMRouteFixtureClock{now: now}),
 		runtimemicrovm.WithControllerIDGenerator(microVMRouteFixtureIDs{id: setup.SessionID}),
+		runtimemicrovm.WithControllerDeploymentDefaults(runtimeMicroVMDeploymentDefaults(setup.DeploymentDefaults)),
 	)
 	if controllerErr != nil {
 		return microVMRouteFixtureRuntime{}, fmt.Errorf("setup microvm controller: %w", controllerErr)
@@ -443,6 +444,11 @@ func compareMicroVMRouteResponse(expected FixtureMicroVMControllerRoute, actual 
 	}
 
 	bodyText := string(actual.Body)
+	for _, required := range expected.BodyContains {
+		if required != "" && !strings.Contains(bodyText, required) {
+			return nil, fmt.Errorf("microvm_controller_route body missing substring %q", required)
+		}
+	}
 	for _, forbidden := range expected.ForbiddenBodySubstrings {
 		if forbidden != "" && strings.Contains(bodyText, forbidden) {
 			return nil, fmt.Errorf("microvm_controller_route body contains forbidden substring %q", forbidden)
@@ -531,7 +537,39 @@ func normalizeMicroVMRouteSetup(setup FixtureMicroVMRouteSetup) FixtureMicroVMRo
 	if setup.SessionID == "" {
 		setup.SessionID = defaultMicroVMFixtureSessionID
 	}
+	setup.DeploymentDefaults = normalizeMicroVMDeploymentDefaults(setup.DeploymentDefaults)
 	return setup
+}
+
+func normalizeMicroVMDeploymentDefaults(defaults FixtureMicroVMDeploymentDefaults) FixtureMicroVMDeploymentDefaults {
+	defaults.ImageRef = strings.TrimSpace(defaults.ImageRef)
+	defaults.NetworkConnectorRef = strings.TrimSpace(defaults.NetworkConnectorRef)
+	defaults.IngressNetworkConnectorRefs = normalizeStringFixtureSlice(defaults.IngressNetworkConnectorRefs)
+	defaults.EgressNetworkConnectorRefs = normalizeStringFixtureSlice(defaults.EgressNetworkConnectorRefs)
+	return defaults
+}
+
+func runtimeMicroVMDeploymentDefaults(defaults FixtureMicroVMDeploymentDefaults) runtimemicrovm.ControllerDeploymentDefaults {
+	return runtimemicrovm.ControllerDeploymentDefaults{
+		ImageRef:                    defaults.ImageRef,
+		NetworkConnectorRef:         defaults.NetworkConnectorRef,
+		IngressNetworkConnectorRefs: append([]string(nil), defaults.IngressNetworkConnectorRefs...),
+		EgressNetworkConnectorRefs:  append([]string(nil), defaults.EgressNetworkConnectorRefs...),
+	}
+}
+
+func normalizeStringFixtureSlice(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func microVMRouteFixtureRunRequest(setup FixtureMicroVMRouteSetup) runtimemicrovm.ControllerRequest {
@@ -623,6 +661,7 @@ func (p *microVMRouteFixtureProvider) Run(_ context.Context, input runtimemicrov
 		ProviderMicroVMID: fmt.Sprintf("microvm-%06d", p.next),
 		State:             runtimemicrovm.StateRunning,
 		ProviderState:     "running",
+		Endpoint:          fmt.Sprintf("https://microvm-%06d.example.test", p.next),
 		ImageRef:          input.ImageRef,
 		ImageVersion:      input.ImageVersion,
 		StartedAt:         p.now,
@@ -678,6 +717,34 @@ func (p *microVMRouteFixtureProvider) CreateAuthToken(_ context.Context, input r
 
 func (p *microVMRouteFixtureProvider) CreateShellToken(_ context.Context, input runtimemicrovm.ProviderTokenInput) (runtimemicrovm.ProviderToken, error) {
 	return p.token(runtimemicrovm.OperationShellAuthToken, input)
+}
+
+func (p *microVMRouteFixtureProvider) Invoke(_ context.Context, input runtimemicrovm.ProviderInvokeInput) (runtimemicrovm.ProviderInvokeOutput, error) {
+	if err := runtimemicrovm.ValidateProviderInvokeInput(input); err != nil {
+		return runtimemicrovm.ProviderInvokeOutput{}, err
+	}
+	if _, lookupErr := p.lookup(runtimemicrovm.OperationGet, runtimemicrovm.ProviderSessionInput{
+		RequestID:   input.RequestID,
+		TenantID:    input.TenantID,
+		Namespace:   input.Namespace,
+		AuthContext: input.AuthContext,
+		Binding:     input.Binding,
+	}); lookupErr != nil {
+		return runtimemicrovm.ProviderInvokeOutput{}, lookupErr
+	}
+	body, marshalErr := json.Marshal(map[string]string{
+		"runtime": "fake-microvm",
+		"method":  input.Method,
+		"path":    input.Path,
+	})
+	if marshalErr != nil {
+		return runtimemicrovm.ProviderInvokeOutput{}, marshalErr
+	}
+	return runtimemicrovm.ProviderInvokeOutput{
+		Status:  200,
+		Headers: map[string][]string{"content-type": {"application/json; charset=utf-8"}},
+		Body:    body,
+	}, nil
 }
 
 func (p *microVMRouteFixtureProvider) lookup(operation runtimemicrovm.Operation, input runtimemicrovm.ProviderSessionInput) (runtimemicrovm.ProviderSession, error) {

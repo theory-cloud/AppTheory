@@ -1,4 +1,4 @@
-import { MicroVMSafeError, type MicroVMClient, type MicroVMClientCall, type MicroVMCreateSessionInput, type MicroVMOperationName, type MicroVMProvider, type MicroVMProviderCall, type MicroVMProviderListInput, type MicroVMProviderListOutput, type MicroVMProviderRunInput, type MicroVMProviderSession, type MicroVMProviderSessionInput, type MicroVMProviderToken, type MicroVMProviderTokenInput, type MicroVMSessionCommandInput, type MicroVMSessionQueryInput, type MicroVMSessionRecord, type MicroVMSessionStatus } from "./model.js";
+import { MicroVMSafeError, type MicroVMClient, type MicroVMClientCall, type MicroVMCreateSessionInput, type MicroVMOperationName, type MicroVMProvider, type MicroVMProviderCall, type MicroVMProviderInvokeInput, type MicroVMProviderInvokeOutput, type MicroVMProviderListInput, type MicroVMProviderListOutput, type MicroVMProviderRunInput, type MicroVMProviderSession, type MicroVMProviderSessionInput, type MicroVMProviderToken, type MicroVMProviderTokenInput, type MicroVMSessionCommandInput, type MicroVMSessionQueryInput, type MicroVMSessionRecord, type MicroVMSessionStatus } from "./model.js";
 export declare class FakeMicroVMClient implements MicroVMClient {
     private currentTime;
     private readonly sessions;
@@ -33,6 +33,7 @@ export declare class FakeMicroVMProvider implements MicroVMProvider {
     suspend(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
     resume(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
     terminate(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
+    invoke(input: MicroVMProviderInvokeInput): Promise<MicroVMProviderInvokeOutput>;
     createAuthToken(input: MicroVMProviderTokenInput): Promise<MicroVMProviderToken>;
     createShellToken(input: MicroVMProviderTokenInput): Promise<MicroVMProviderToken>;
     private lookup;

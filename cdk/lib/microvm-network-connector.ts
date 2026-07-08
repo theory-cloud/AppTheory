@@ -53,6 +53,11 @@ export enum AppTheoryMicrovmManagedNetworkConnector {
   NO_INGRESS = "NO_INGRESS",
 
   /**
+   * Enable AWS-managed HTTP ingress without broad ALL_INGRESS.
+   */
+  HTTP_INGRESS = "HTTP_INGRESS",
+
+  /**
    * Enable AWS-managed public internet egress for a MicroVM.
    */
   INTERNET_EGRESS = "INTERNET_EGRESS",
@@ -213,6 +218,17 @@ export class AppTheoryMicrovmNetworkConnector extends Construct implements IAppT
       scope,
       id,
       AppTheoryMicrovmManagedNetworkConnector.NO_INGRESS,
+    );
+  }
+
+  /**
+   * Reference the AWS-managed HTTP_INGRESS connector.
+   */
+  public static httpIngress(scope: Construct, id: string): IAppTheoryMicrovmNetworkConnector {
+    return AppTheoryMicrovmNetworkConnectorReference.awsManaged(
+      scope,
+      id,
+      AppTheoryMicrovmManagedNetworkConnector.HTTP_INGRESS,
     );
   }
 
@@ -523,13 +539,15 @@ function normalizeManagedConnector(
       return AppTheoryMicrovmManagedNetworkConnector.ALL_INGRESS;
     case AppTheoryMicrovmManagedNetworkConnector.NO_INGRESS:
       return AppTheoryMicrovmManagedNetworkConnector.NO_INGRESS;
+    case AppTheoryMicrovmManagedNetworkConnector.HTTP_INGRESS:
+      return AppTheoryMicrovmManagedNetworkConnector.HTTP_INGRESS;
     case AppTheoryMicrovmManagedNetworkConnector.INTERNET_EGRESS:
       return AppTheoryMicrovmManagedNetworkConnector.INTERNET_EGRESS;
     case AppTheoryMicrovmManagedNetworkConnector.SHELL_INGRESS:
       return AppTheoryMicrovmManagedNetworkConnector.SHELL_INGRESS;
     default:
       throw new Error(
-        "AppTheoryMicrovmNetworkConnectorReference: managed connector must be ALL_INGRESS, NO_INGRESS, INTERNET_EGRESS, or SHELL_INGRESS",
+        "AppTheoryMicrovmNetworkConnectorReference: managed connector must be ALL_INGRESS, NO_INGRESS, HTTP_INGRESS, INTERNET_EGRESS, or SHELL_INGRESS",
       );
   }
 }

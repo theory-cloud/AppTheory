@@ -1,4 +1,4 @@
-import { ArnFormat, Duration, RemovalPolicy, Stack, Token } from "aws-cdk-lib";
+import { Duration, RemovalPolicy, Token } from "aws-cdk-lib";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Authorizers from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
@@ -26,6 +26,7 @@ const CONTROLLER_OPERATIONS = [
   "suspend",
   "resume",
   "terminate",
+  "invoke",
   "auth-token",
   "shell-auth-token",
 ];
@@ -36,6 +37,8 @@ const CONTROLLER_ROUTE_DEFINITIONS: Array<{ id: string; method: apigwv2.HttpMeth
   { id: "SuspendMicrovm", method: apigwv2.HttpMethod.POST, path: "/microvms/{session_id}/suspend" },
   { id: "ResumeMicrovm", method: apigwv2.HttpMethod.POST, path: "/microvms/{session_id}/resume" },
   { id: "TerminateMicrovm", method: apigwv2.HttpMethod.DELETE, path: "/microvms/{session_id}" },
+  { id: "InvokeMicrovmRoot", method: apigwv2.HttpMethod.ANY, path: "/microvms/{session_id}/invoke" },
+  { id: "InvokeMicrovmProxy", method: apigwv2.HttpMethod.ANY, path: "/microvms/{session_id}/invoke/{proxy+}" },
   { id: "CreateMicrovmAuthToken", method: apigwv2.HttpMethod.POST, path: "/microvms/{session_id}/auth-token" },
   {
     id: "CreateMicrovmShellAuthToken",
@@ -524,13 +527,6 @@ export class AppTheoryMicrovmController extends Construct {
   }
 
   private grantMicrovmControlPlane(props: AppTheoryMicrovmControllerProps): void {
-    const microvmInstanceArn = Stack.of(this).formatArn({
-      service: "lambda",
-      resource: "microvm",
-      resourceName: "*",
-      arnFormat: ArnFormat.COLON_RESOURCE_NAME,
-    });
-
     this.controllerFunction.addToRolePolicy(
       new iam.PolicyStatement({
         sid: "AppTheoryMicrovmControlPlane",
@@ -543,7 +539,12 @@ export class AppTheoryMicrovmController extends Construct {
           "lambda:SuspendMicrovm",
           "lambda:TerminateMicrovm",
         ],
-        resources: [microvmInstanceArn],
+        // Lambda MicroVM control-plane operations are currently permission-only
+        // actions. AppTheory constrains which image/connectors/role may be used
+        // through typed construct props, fail-closed controller env, and scoped
+        // iam:PassRole rather than pretending the service supports per-MicroVM
+        // resource ARNs for these actions.
+        resources: ["*"],
       }),
     );
 

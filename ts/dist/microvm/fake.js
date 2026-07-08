@@ -1,8 +1,9 @@
+import { Buffer } from "node:buffer";
 import { MICROVM_DEFAULT_SESSION_PROVIDER_ID, MICROVM_ERROR_TENANT_BINDING_VIOLATION, MICROVM_ERROR_PROVIDER_OPERATION_FAILED, MicroVMCommand, MicroVMOperation, MicroVMRealState, MicroVMState, } from "./model.js";
 import { safeError } from "./errors.js";
 import { mapMicroVMProviderState, normalizeMicroVMOperation, normalizeMicroVMProviderState, isRequiredMicroVMOperation, } from "./operation-contract.js";
 import { cloneMicroVMSessionRecord, microVMSessionRecordKey, microVMSessionKeyString, validateMicroVMSessionRecord, } from "./session.js";
-import { cloneMicroVMProviderSession, cloneMicroVMProviderToken, defaultProviderTokenTTLSeconds, fakeMicroVMProviderError, microVMProviderTokenScope, microVMProviderSessionKeyString, validateMicroVMProviderSession, validateMicroVMProviderToken, validateMicroVMProviderListInputInternal, validateMicroVMProviderRunInputInternal, validateMicroVMProviderSessionInputInternal, validateMicroVMProviderTokenInputInternal, } from "./provider.js";
+import { cloneMicroVMProviderSession, cloneMicroVMProviderToken, defaultProviderTokenTTLSeconds, fakeMicroVMProviderError, microVMProviderTokenScope, microVMProviderSessionKeyString, validateMicroVMProviderSession, validateMicroVMProviderToken, validateMicroVMProviderListInputInternal, validateMicroVMProviderInvokeInputInternal, validateMicroVMProviderRunInputInternal, validateMicroVMProviderSessionInputInternal, validateMicroVMProviderTokenInputInternal, } from "./provider.js";
 import { cloneStringMap } from "./safety.js";
 import { coalesceMicroVMTime, validDate } from "./time.js";
 export class FakeMicroVMClient {
@@ -171,6 +172,7 @@ export class FakeMicroVMProvider {
             provider_microvm_id: `microvm-${String(this.next).padStart(6, "0")}`,
             state: MicroVMRealState.Running,
             provider_state: "running",
+            endpoint: `https://microvm-${String(this.next).padStart(6, "0")}.example.test`,
             image_ref: normalized.image_ref,
             terminal: false,
             registry_version: this.next,
@@ -210,6 +212,24 @@ export class FakeMicroVMProvider {
     }
     async terminate(input) {
         return this.transition(MicroVMOperation.Terminate, input, "terminated");
+    }
+    async invoke(input) {
+        const normalized = validateMicroVMProviderInvokeInputInternal(input);
+        this.recordCall(MicroVMOperation.Invoke, normalized.request_id, normalized.tenant_id, normalized.namespace, normalized.binding.session_id);
+        const configured = this.configuredError(MicroVMOperation.Invoke, normalized.request_id);
+        if (configured)
+            throw configured;
+        this.boundSession(normalized.request_id, normalized.binding);
+        return {
+            status: 200,
+            headers: { "content-type": ["application/json"] },
+            body: Buffer.from(JSON.stringify({
+                runtime: "fake-microvm",
+                method: normalized.method,
+                path: normalized.path,
+            })),
+            is_base64: false,
+        };
     }
     async createAuthToken(input) {
         return this.token(MicroVMOperation.AuthToken, input);

@@ -1,0 +1,51 @@
+{
+  "id": "m16_microvm_controller_route_deployment_defaults",
+  "tier": "m16",
+  "name": "M16 MicroVM run route uses deployment-pinned image and connector defaults",
+  "setup": {
+    "microvm_controller_route": {
+      "authenticated": true,
+      "tenant_id": "tenant-1",
+      "namespace": "namespace-1",
+      "session_id": "fixture-session",
+      "deployment_defaults": {
+        "image_ref": "image-ref",
+        "ingress_network_connector_refs": ["ingress-ref", "shell-ingress-ref"],
+        "egress_network_connector_refs": ["network-ref"]
+      }
+    }
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/microvms",
+      "headers": {
+        "content-type": ["application/json"],
+        "x-tenant-id": ["tenant-1"],
+        "x-namespace-id": ["namespace-1"],
+        "x-request-id": ["req-m16-route-deployment-defaults"]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"namespace\":\"namespace-1\",\"session_spec\":{\"metadata\":{\"safe\":\"ok\"}}}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "microvm_controller_route": {
+      "status": 200,
+      "command": "run",
+      "tenant_id": "tenant-1",
+      "namespace": "namespace-1",
+      "session_id": "fixture-session",
+      "state": "running",
+      "forbidden_body_substrings": [
+        "token_value",
+        "bearer_token",
+        "x-aws-proxy-auth",
+        "session_token_plaintext"
+      ]
+    }
+  }
+}

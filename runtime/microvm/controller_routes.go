@@ -43,6 +43,18 @@ func RegisterControllerRoutes(app *apptheory.App, controller *Controller) (*appt
 			return app, err
 		}
 	}
+	for _, method := range controllerInvokeMethods() {
+		for _, path := range []string{"/microvms/{session_id}/invoke", "/microvms/{session_id}/invoke/{proxy+}"} {
+			if _, err := app.HandleStrict( //nolint:staticcheck // RegisterControllerRoutes preserves its error-returning API.
+				method,
+				path,
+				controllerInvokeRouteHandler(controller),
+				apptheory.RequireAuth(),
+			); err != nil {
+				return app, err
+			}
+		}
+	}
 	return app, nil
 }
 
@@ -80,6 +92,35 @@ func controllerRouteHandler(controller *Controller, command Command) apptheory.H
 			response = controllerErrorResponse(request, safe)
 		}
 		return controllerHTTPResponse(response), nil
+	}
+}
+
+func controllerInvokeRouteHandler(controller *Controller) apptheory.Handler {
+	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		request, safe := controllerInvokeRequestFromHTTP(ctx)
+		if safe.Code != "" {
+			return controllerHTTPResponse(controllerErrorResponse(ControllerRequest{
+				Command:     CommandInvoke,
+				RequestID:   request.RequestID,
+				TenantID:    request.TenantID,
+				Namespace:   request.Namespace,
+				AuthContext: request.AuthContext,
+				SessionID:   request.SessionID,
+			}, safe)), nil
+		}
+		output, err := controller.Invoke(ctx.Context(), request)
+		if err != nil {
+			safe := asSafeError(err, request.RequestID)
+			return controllerHTTPResponse(controllerErrorResponse(ControllerRequest{
+				Command:     CommandInvoke,
+				RequestID:   request.RequestID,
+				TenantID:    request.TenantID,
+				Namespace:   request.Namespace,
+				AuthContext: request.AuthContext,
+				SessionID:   request.SessionID,
+			}, safe)), nil
+		}
+		return controllerInvokeHTTPResponse(output), nil
 	}
 }
 
@@ -140,12 +181,70 @@ func controllerRequestFromHTTP(ctx *apptheory.Context, command Command) (Control
 	return request, SafeError{}
 }
 
+func controllerInvokeRequestFromHTTP(ctx *apptheory.Context) (ControllerInvokeRequest, SafeError) {
+	request := ControllerInvokeRequest{}
+	if ctx == nil {
+		err := safeError(ErrorCodeInvalidControllerRequest, "apptheory: microvm controller route context is missing", "")
+		return request, err
+	}
+	if ctx.TenantID != "" && strings.TrimSpace(ctx.Query("tenant_id")) != "" && strings.TrimSpace(ctx.Query("tenant_id")) != strings.TrimSpace(ctx.TenantID) {
+		request.RequestID = strings.TrimSpace(ctx.RequestID)
+		err := safeError(ErrorCodeTenantBindingViolation, "apptheory: microvm controller route tenant binding mismatch", request.RequestID)
+		return request, err
+	}
+	sessionID := strings.TrimSpace(ctx.Param("session_id"))
+	proxyPath := strings.TrimSpace(ctx.Param("proxy"))
+	if proxyPath == "" {
+		proxyPath = "/"
+	}
+	namespace := defaultString(ctx.Header("x-namespace-id"), ctx.Query("namespace"))
+	request = ControllerInvokeRequest{
+		RequestID:   strings.TrimSpace(ctx.RequestID),
+		TenantID:    strings.TrimSpace(ctx.TenantID),
+		Namespace:   namespace,
+		AuthContext: AuthContext{Subject: strings.TrimSpace(ctx.AuthIdentity), TenantID: strings.TrimSpace(ctx.TenantID), Namespace: namespace},
+		SessionID:   sessionID,
+		Method:      ctx.Request.Method,
+		Path:        proxyPath,
+		Query:       cloneInvokeQueryValues(ctx.Request.Query),
+		Headers:     sanitizeProviderInvokeHeaders(ctx.Request.Headers),
+		Body:        append([]byte(nil), ctx.Request.Body...),
+		Port:        firstPositiveInt32(parseInt32(ctx.Header("x-apptheory-microvm-port")), defaultProviderInvokePort),
+		TTLSeconds:  firstPositiveInt32(parseInt32(ctx.Header("x-apptheory-microvm-token-ttl")), defaultProviderInvokeTTLSeconds),
+	}
+	return normalizeControllerInvokeRequest(request), SafeError{}
+}
+
 func controllerHTTPResponse(response ControllerResponse) *apptheory.Response {
 	status := controllerHTTPStatus(response.Error)
 	out, err := apptheory.JSON(status, response)
 	if err != nil {
 		return apptheory.Text(500, "internal error")
 	}
+	return out
+}
+
+func controllerInvokeHTTPResponse(output ProviderInvokeOutput) *apptheory.Response {
+	status := output.Status
+	if status == 0 {
+		status = 502
+	}
+	return &apptheory.Response{
+		Status:   status,
+		Headers:  sanitizeProviderInvokeHeaders(output.Headers),
+		Body:     append([]byte(nil), output.Body...),
+		IsBase64: output.IsBase64,
+	}
+}
+
+func controllerInvokeMethods() []string {
+	return []string{"DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"}
+}
+
+func cloneInvokeQueryValues(query map[string][]string) map[string][]string {
+	out := cloneQueryValues(query)
+	delete(out, "tenant_id")
+	delete(out, "namespace")
 	return out
 }
 

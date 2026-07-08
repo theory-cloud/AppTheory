@@ -148,6 +148,7 @@ class MicroVMRealController:
         id_generator: Callable[[], str] | None = None,
         ttl_seconds: int = 3600,
         execution_role_arn: str | None = None,
+        deployment_defaults: MicroVMControllerDeploymentDefaults | dict[str, Any] | None = None,
     ) -> None:
         if provider is None:
             raise _safe_error(
@@ -178,9 +179,16 @@ class MicroVMRealController:
         self._clock = clock or time.time
         self._ids = id_generator or _random_microvm_session_id
         self._ttl_seconds = int(ttl_seconds or 0) if int(ttl_seconds or 0) > 0 else 3600
+        self._deployment_defaults = _normalize_deployment_defaults(
+            _environment_deployment_defaults() if deployment_defaults is None else deployment_defaults
+        )
 
     def handle(self, request: MicroVMControllerRequest | dict[str, Any]) -> MicroVMControllerResponse:
-        normalized = _normalize_controller_request(request)
+        request_envelope = _normalize_controller_request(request)
+        deployment_override_err = self._deployment_override_error(request_envelope)
+        if deployment_override_err:
+            return _controller_error_response(request_envelope, deployment_override_err)
+        normalized = self._apply_deployment_defaults(request_envelope)
         validation_err = _validate_real_controller_request(normalized)
         if validation_err:
             return _controller_error_response(normalized, validation_err)
@@ -197,6 +205,13 @@ class MicroVMRealController:
                 return self._handle_session(normalized, OPERATION_RESUME, self._provider.resume)
             case "terminate":
                 return self._handle_session(normalized, OPERATION_TERMINATE, self._provider.terminate)
+            case "invoke":
+                err = _safe_error(
+                    MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+                    "apptheory: microvm invoke requires the invoke route",
+                    normalized.request_id,
+                )
+                return _controller_error_response(normalized, err)
             case "auth-token":
                 return self._handle_token(normalized, OPERATION_AUTH_TOKEN, self._provider.create_auth_token)
             case "shell-auth-token":
@@ -208,6 +223,61 @@ class MicroVMRealController:
                     normalized.request_id,
                 )
                 return _controller_error_response(normalized, err)
+
+    def _apply_deployment_defaults(self, request: MicroVMControllerRequest) -> MicroVMControllerRequest:
+        defaults = self._deployment_defaults
+        out = _normalize_controller_request(request)
+        if not out.image_ref:
+            out.image_ref = defaults.image_ref
+        if not out.ingress_network_connector_refs:
+            out.ingress_network_connector_refs = list(defaults.ingress_network_connector_refs)
+        if not out.egress_network_connector_refs:
+            out.egress_network_connector_refs = list(defaults.egress_network_connector_refs)
+        if not out.network_connector_ref:
+            out.network_connector_ref = defaults.network_connector_ref
+        if not out.network_connector_ref and out.egress_network_connector_refs:
+            out.network_connector_ref = out.egress_network_connector_refs[0]
+        return _normalize_controller_request(out)
+
+    def _deployment_override_error(self, request: MicroVMControllerRequest) -> MicroVMSafeError | None:
+        defaults = self._deployment_defaults
+        if defaults.image_ref and request.image_ref and request.image_ref != defaults.image_ref:
+            return _safe_error(
+                MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+                "apptheory: microvm deployment-pinned image_ref mismatch",
+                request.request_id,
+            )
+        if (
+            defaults.network_connector_ref
+            and request.network_connector_ref
+            and request.network_connector_ref != defaults.network_connector_ref
+        ):
+            return _safe_error(
+                MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+                "apptheory: microvm deployment-pinned network_connector_ref mismatch",
+                request.request_id,
+            )
+        if (
+            defaults.ingress_network_connector_refs
+            and request.ingress_network_connector_refs
+            and request.ingress_network_connector_refs != defaults.ingress_network_connector_refs
+        ):
+            return _safe_error(
+                MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+                "apptheory: microvm deployment-pinned ingress_network_connector_refs mismatch",
+                request.request_id,
+            )
+        if (
+            defaults.egress_network_connector_refs
+            and request.egress_network_connector_refs
+            and request.egress_network_connector_refs != defaults.egress_network_connector_refs
+        ):
+            return _safe_error(
+                MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+                "apptheory: microvm deployment-pinned egress_network_connector_refs mismatch",
+                request.request_id,
+            )
+        return None
 
     def _handle_run(self, request: MicroVMControllerRequest) -> MicroVMControllerResponse:
         session_id = str(request.session_id or "").strip() or str(self._ids() or "").strip()
@@ -365,6 +435,48 @@ class MicroVMRealController:
         except Exception as exc:  # noqa: BLE001
             return _controller_error_response(request, _as_safe_error(exc, request.request_id))
 
+    def invoke(self, request: MicroVMControllerInvokeRequest | dict[str, Any]) -> MicroVMProviderInvokeOutput:
+        normalized = _normalize_controller_invoke_request(request)
+        envelope = MicroVMControllerRequest(
+            command=COMMAND_INVOKE,
+            request_id=normalized.request_id,
+            tenant_id=normalized.tenant_id,
+            namespace=normalized.namespace,
+            auth_context=normalized.auth_context,
+            session_id=normalized.session_id,
+        )
+        validation_err = _validate_real_controller_request(envelope)
+        if validation_err:
+            raise validation_err
+        try:
+            record = self._registry.get((normalized.tenant_id, normalized.namespace, normalized.session_id))
+            validate_microvm_session_record(record)
+            if not str(record.endpoint or "").strip():
+                raise _safe_error(
+                    MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+                    "apptheory: microvm invoke requires a session endpoint",
+                    normalized.request_id,
+                )
+            return self._provider.invoke(
+                MicroVMProviderInvokeInput(
+                    request_id=normalized.request_id,
+                    tenant_id=normalized.tenant_id,
+                    namespace=normalized.namespace,
+                    auth_context=normalized.auth_context,
+                    binding=_provider_binding_from_record(record),
+                    endpoint=record.endpoint,
+                    method=normalized.method,
+                    path=normalized.path,
+                    query=_clone_query_values(normalized.query),
+                    headers=_sanitize_provider_invoke_headers(normalized.headers),
+                    body=bytes(normalized.body),
+                    port=normalized.port,
+                    ttl_seconds=normalized.ttl_seconds,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise _as_safe_error(exc, normalized.request_id) from None
+
     def _put_provider_session(
         self,
         request: MicroVMControllerRequest,
@@ -392,7 +504,7 @@ class MicroVMRealController:
             session_id=session.session_id,
             state=session.state,
             desired_state=_desired_state_for_real_command(request.command, session.state),
-            endpoint=current.endpoint if current is not None else "",
+            endpoint=session.endpoint or (current.endpoint if current is not None else ""),
             microvm_id=current.microvm_id if current is not None else "",
             provider_id=(current.provider_id if current is not None and current.provider_id else self._provider_id),
             provider_microvm_id=session.provider_microvm_id,
@@ -459,6 +571,9 @@ def register_microvm_controller_routes(app: Any, controller: Any) -> Any:
     ]
     for method, path, command in routes:
         app.handle_strict(method, path, _microvm_controller_route_handler(controller, command), auth_required=True)
+    for method in _microvm_controller_invoke_methods():
+        for path in ["/microvms/{session_id}/invoke", "/microvms/{session_id}/invoke/{proxy+}"]:
+            app.handle_strict(method, path, _microvm_controller_invoke_route_handler(controller), auth_required=True)
     return app
 
 
@@ -586,6 +701,7 @@ def _validate_real_controller_request(request: MicroVMControllerRequest) -> Micr
         COMMAND_SUSPEND,
         COMMAND_RESUME,
         COMMAND_TERMINATE,
+        COMMAND_INVOKE,
         COMMAND_AUTH_TOKEN,
         COMMAND_SHELL_AUTH_TOKEN,
     }:
@@ -603,6 +719,91 @@ def _validate_real_controller_request(request: MicroVMControllerRequest) -> Micr
     )
 
 
+def _environment_deployment_defaults() -> MicroVMControllerDeploymentDefaults:
+    legacy = _split_deployment_refs(os.environ.get(MICROVM_ENV_NETWORK_CONNECTOR_REFS, ""))
+    egress = _split_deployment_refs(os.environ.get(MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS, "")) or legacy
+    return _normalize_deployment_defaults(
+        MicroVMControllerDeploymentDefaults(
+            image_ref=os.environ.get(MICROVM_ENV_IMAGE_REF, ""),
+            network_connector_ref=legacy[0] if legacy else "",
+            ingress_network_connector_refs=_split_deployment_refs(
+                os.environ.get(MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS, "")
+            ),
+            egress_network_connector_refs=egress,
+        )
+    )
+
+
+def _normalize_deployment_defaults(
+    defaults: MicroVMControllerDeploymentDefaults | dict[str, Any] | None,
+) -> MicroVMControllerDeploymentDefaults:
+    if isinstance(defaults, MicroVMControllerDeploymentDefaults):
+        out = MicroVMControllerDeploymentDefaults(
+            image_ref=str(defaults.image_ref or "").strip(),
+            network_connector_ref=str(defaults.network_connector_ref or "").strip(),
+            ingress_network_connector_refs=_normalize_string_list(defaults.ingress_network_connector_refs),
+            egress_network_connector_refs=_normalize_string_list(defaults.egress_network_connector_refs),
+        )
+    else:
+        raw = defaults if isinstance(defaults, dict) else {}
+        out = MicroVMControllerDeploymentDefaults(
+            image_ref=str(raw.get("image_ref", "") or "").strip(),
+            network_connector_ref=str(raw.get("network_connector_ref", "") or "").strip(),
+            ingress_network_connector_refs=_normalize_string_list(raw.get("ingress_network_connector_refs") or []),
+            egress_network_connector_refs=_normalize_string_list(raw.get("egress_network_connector_refs") or []),
+        )
+    if not out.network_connector_ref and out.egress_network_connector_refs:
+        out.network_connector_ref = out.egress_network_connector_refs[0]
+    return out
+
+
+def _normalize_controller_invoke_request(
+    request: MicroVMControllerInvokeRequest | dict[str, Any],
+) -> MicroVMControllerInvokeRequest:
+    if isinstance(request, MicroVMControllerInvokeRequest):
+        out = MicroVMControllerInvokeRequest(
+            request_id=str(request.request_id or "").strip(),
+            tenant_id=str(request.tenant_id or "").strip(),
+            namespace=str(request.namespace or "").strip(),
+            auth_context=_normalize_auth_context(request.auth_context),
+            session_id=str(request.session_id or "").strip(),
+            method=str(request.method or "").strip().upper(),
+            path=_normalize_provider_invoke_path(request.path),
+            query=_clone_query_values(request.query),
+            headers=_sanitize_provider_invoke_headers(request.headers),
+            body=_coerce_body_bytes(request.body),
+            port=int(request.port or 0),
+            ttl_seconds=int(request.ttl_seconds or 0),
+        )
+    else:
+        raw = cast(dict[str, Any], request) if isinstance(request, dict) else {}
+        out = MicroVMControllerInvokeRequest(
+            request_id=str(raw.get("request_id", "") or "").strip(),
+            tenant_id=str(raw.get("tenant_id", "") or "").strip(),
+            namespace=str(raw.get("namespace", "") or "").strip(),
+            auth_context=_normalize_auth_context(raw.get("auth_context") or {}),
+            session_id=str(raw.get("session_id", "") or "").strip(),
+            method=str(raw.get("method", "") or "").strip().upper(),
+            path=_normalize_provider_invoke_path(str(raw.get("path", "") or "")),
+            query=_clone_query_values(raw.get("query") if isinstance(raw.get("query"), dict) else {}),
+            headers=_sanitize_provider_invoke_headers(
+                cast(dict[str, Any], raw.get("headers")) if isinstance(raw.get("headers"), dict) else {}
+            ),
+            body=_coerce_body_bytes(raw.get("body", b"")),
+            port=int(raw.get("port", 0) or 0),
+            ttl_seconds=int(raw.get("ttl_seconds", 0) or 0),
+        )
+    if out.port == 0:
+        out.port = _DEFAULT_PROVIDER_INVOKE_PORT
+    if out.ttl_seconds == 0:
+        out.ttl_seconds = _DEFAULT_PROVIDER_INVOKE_TOKEN_TTL_SECONDS
+    return out
+
+
+def _split_deployment_refs(value: str) -> list[str]:
+    return _normalize_string_list(str(value or "").split(","))
+
+
 def _command_from_operation(operation: str) -> str:
     match _normalize_operation(operation):
         case "run":
@@ -617,6 +818,8 @@ def _command_from_operation(operation: str) -> str:
             return COMMAND_RESUME
         case "terminate":
             return COMMAND_TERMINATE
+        case "invoke":
+            return COMMAND_INVOKE
         case "auth-token":
             return COMMAND_AUTH_TOKEN
         case "shell-auth-token":
@@ -665,6 +868,7 @@ def _provider_session_from_record(record: MicroVMSessionRecord) -> MicroVMProvid
             provider_microvm_id=normalized.provider_microvm_id,
             state=state,
             provider_state=normalized.provider_state,
+            endpoint=normalized.endpoint,
             image_ref=normalized.image_ref,
             image_version=normalized.image_version,
             started_at=normalized.provider_started_at,
@@ -688,6 +892,7 @@ def _response_from_provider_session(
         state=normalized.state,
         desired_state=_desired_state_for_real_command(request.command, normalized.state),
         lifecycle_state=normalized.state,
+        endpoint=normalized.endpoint,
         provider_microvm_id=normalized.provider_microvm_id,
         provider_state=normalized.provider_state,
         last_action=request.command,
@@ -733,6 +938,47 @@ def _microvm_controller_route_handler(controller: Any, command: str) -> Callable
         else:
             response = controller.handle(request_or_error)
         return response_json(_controller_http_status(response.error), _controller_response_to_dict(response))
+
+    return handler
+
+
+def _microvm_controller_invoke_route_handler(controller: Any) -> Callable[[Any], Any]:
+    def handler(ctx: Any) -> Any:
+        from apptheory.response import json as response_json
+
+        request_or_error = _controller_invoke_request_from_http(ctx)
+        if isinstance(request_or_error, MicroVMSafeError):
+            request = MicroVMControllerRequest(
+                command=COMMAND_INVOKE,
+                request_id=str(getattr(ctx, "request_id", "") or "").strip(),
+                tenant_id=str(getattr(ctx, "tenant_id", "") or "").strip(),
+                namespace="",
+                auth_context=MicroVMAuthContext(
+                    subject=str(getattr(ctx, "auth_identity", "") or "").strip(),
+                    tenant_id=str(getattr(ctx, "tenant_id", "") or "").strip(),
+                ),
+            )
+            response = _controller_error_response(request, request_or_error)
+            return response_json(_controller_http_status(response.error), _controller_response_to_dict(response))
+
+        invoke = getattr(controller, "invoke", None)
+        if not callable(invoke):
+            safe = _safe_error(
+                MICROVM_ERROR_CONTROLLER_INCOMPLETE,
+                "apptheory: microvm controller invoke route requires a provider-backed controller",
+                request_or_error.request_id,
+            )
+            response = _controller_error_response(_invoke_request_envelope(request_or_error), safe)
+            return response_json(_controller_http_status(response.error), _controller_response_to_dict(response))
+
+        try:
+            output = cast(MicroVMProviderInvokeOutput, invoke(request_or_error))
+        except Exception as exc:  # noqa: BLE001
+            safe = _as_safe_error(exc, request_or_error.request_id)
+            response = _controller_error_response(_invoke_request_envelope(request_or_error), safe)
+            return response_json(_controller_http_status(response.error), _controller_response_to_dict(response))
+
+        return _controller_invoke_http_response(output)
 
     return handler
 
@@ -807,6 +1053,52 @@ def _controller_request_from_http(ctx: Any, command: str) -> MicroVMControllerRe
     return _normalize_controller_request(request)
 
 
+def _controller_invoke_request_from_http(ctx: Any) -> MicroVMControllerInvokeRequest | MicroVMSafeError:
+    if ctx is None:
+        return _safe_error(
+            MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+            "apptheory: microvm controller route context is missing",
+            "",
+        )
+    request_id = str(getattr(ctx, "request_id", "") or "").strip()
+    request_obj = getattr(ctx, "request", None)
+    query = getattr(request_obj, "query", {}) or {}
+    headers = getattr(request_obj, "headers", {}) or {}
+    ctx_tenant = str(getattr(ctx, "tenant_id", "") or "").strip()
+    query_tenant = _first_query_value(query, "tenant_id")
+    if ctx_tenant and query_tenant and query_tenant != ctx_tenant:
+        return _safe_error(
+            MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+            "apptheory: microvm controller route tenant binding mismatch",
+            request_id,
+        )
+    session_id = str(ctx.param("session_id") if callable(getattr(ctx, "param", None)) else "").strip()
+    proxy_path = str(ctx.param("proxy") if callable(getattr(ctx, "param", None)) else "").strip()
+    if not proxy_path:
+        proxy_path = "/"
+    namespace = _first_header_value(headers, "x-namespace-id") or _first_query_value(query, "namespace")
+    request = MicroVMControllerInvokeRequest(
+        request_id=request_id,
+        tenant_id=ctx_tenant,
+        namespace=namespace,
+        auth_context=MicroVMAuthContext(
+            subject=str(getattr(ctx, "auth_identity", "") or "").strip(),
+            tenant_id=ctx_tenant,
+            namespace=namespace,
+        ),
+        session_id=session_id,
+        method=str(getattr(request_obj, "method", "") or "").strip().upper(),
+        path=proxy_path,
+        query=_clone_invoke_query_values(query),
+        headers=_sanitize_provider_invoke_headers(headers),
+        body=_coerce_body_bytes(getattr(request_obj, "body", b"") or b""),
+        port=_positive_int(_first_header_value(headers, "x-apptheory-microvm-port")) or _DEFAULT_PROVIDER_INVOKE_PORT,
+        ttl_seconds=_positive_int(_first_header_value(headers, "x-apptheory-microvm-token-ttl"))
+        or _DEFAULT_PROVIDER_INVOKE_TOKEN_TTL_SECONDS,
+    )
+    return _normalize_controller_invoke_request(request)
+
+
 def _controller_route_payload(ctx: Any) -> dict[str, Any] | MicroVMSafeError:
     body = getattr(getattr(ctx, "request", None), "body", b"") or b""
     if not body:
@@ -826,6 +1118,43 @@ def _controller_route_payload(ctx: Any) -> dict[str, Any] | MicroVMSafeError:
             str(getattr(ctx, "request_id", "") or "").strip(),
         )
     return parsed
+
+
+def _invoke_request_envelope(request: MicroVMControllerInvokeRequest) -> MicroVMControllerRequest:
+    return MicroVMControllerRequest(
+        command=COMMAND_INVOKE,
+        request_id=request.request_id,
+        tenant_id=request.tenant_id,
+        namespace=request.namespace,
+        auth_context=request.auth_context,
+        session_id=request.session_id,
+    )
+
+
+def _controller_invoke_http_response(output: MicroVMProviderInvokeOutput) -> Any:
+    from apptheory.response import Response, normalize_response
+
+    status = int(output.status or 0) or 502
+    return normalize_response(
+        Response(
+            status=status,
+            headers=_sanitize_provider_invoke_headers(output.headers),
+            cookies=[],
+            body=bytes(output.body),
+            is_base64=bool(output.is_base64),
+        )
+    )
+
+
+def _microvm_controller_invoke_methods() -> list[str]:
+    return ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+
+
+def _clone_invoke_query_values(query: dict[str, Any]) -> dict[str, list[str]]:
+    out = _clone_query_values(query)
+    out.pop("tenant_id", None)
+    out.pop("namespace", None)
+    return out
 
 
 def _controller_http_status(error: MicroVMSafeError | None) -> int:
@@ -930,15 +1259,22 @@ def _positive_int(value: object) -> int:
 __all__ = [
     "MicroVMController",
     "MicroVMRealController",
+    "_clone_invoke_query_values",
     "_command_from_operation",
     "_controller_http_status",
+    "_controller_invoke_http_response",
+    "_controller_invoke_request_from_http",
     "_controller_request_from_http",
     "_controller_response_to_dict",
     "_controller_route_payload",
     "_desired_state_for_real_command",
     "_first_header_value",
     "_first_query_value",
+    "_invoke_request_envelope",
+    "_microvm_controller_invoke_methods",
+    "_microvm_controller_invoke_route_handler",
     "_microvm_controller_route_handler",
+    "_normalize_controller_invoke_request",
     "_positive_int",
     "_provider_binding_from_record",
     "_provider_session_from_record",

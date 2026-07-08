@@ -28,6 +28,7 @@ export * from "./queue-processor";
 export * from "./rest-api";
 export * from "./rest-api-router";
 export * from "./s3-ingest";
+export * from "./vector-index";
 export * from "./websocket-api";
 export * from "./ssr-site";
 export * from "./path-routed-frontend";
