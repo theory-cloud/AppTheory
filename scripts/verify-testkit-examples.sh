@@ -20,6 +20,7 @@ fi
 node examples/testkit/ts.mjs
 node examples/testkit/ts-streaming.mjs
 go test ./examples/cdk/hello-world/handlers/go
+go test ./examples/cdk/s3-vectors-semantic-search/handler
 node examples/cdk/hello-world/handlers/ts/handler.test.mjs
 python3 examples/cdk/hello-world/handlers/py/handler_test.py
 node --check examples/mcp/tools-only-ts/server.mjs

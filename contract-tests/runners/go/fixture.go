@@ -31,6 +31,7 @@ type FixtureSetup struct {
 	MCP                  FixtureMCPSetup                  `json:"mcp,omitempty"`
 	OAuth                FixtureOAuthSetup                `json:"oauth,omitempty"`
 	ObjectStore          FixtureObjectStoreSetup          `json:"objectstore,omitempty"`
+	VectorStore          FixtureVectorStoreSetup          `json:"vectorstore,omitempty"`
 	WebSockets           []FixtureWebSocketRoute          `json:"websockets,omitempty"`
 	SQS                  []FixtureSQSRoute                `json:"sqs,omitempty"`
 	Kinesis              []FixtureKinesisRoute            `json:"kinesis,omitempty"`
@@ -96,6 +97,7 @@ type FixtureInput struct {
 	MCP                   *FixtureMCPInput        `json:"mcp,omitempty"`
 	OAuth                 *FixtureOAuthInput      `json:"oauth,omitempty"`
 	ObjectStore           FixtureObjectStoreInput `json:"objectstore,omitempty"`
+	VectorStore           FixtureVectorStoreInput `json:"vectorstore,omitempty"`
 }
 
 type FixtureAWSEvent struct {

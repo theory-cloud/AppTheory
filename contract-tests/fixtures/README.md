@@ -24,8 +24,9 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/mcp/` — SP09 MCP protocol, registry, session, Streamable HTTP, resumable SSE, and task-store contracts
 - `contract-tests/fixtures/oauth/` — SP12 OAuth protected-resource metadata, bearer validation, dynamic client registration, and PKCE contracts
 - `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
+- `contract-tests/fixtures/vectorstore/` — SP14 semantic vector-store, Bedrock Titan embedding, metadata filter, and deterministic fake behavior
 
-Each fixture is a single JSON object. The current corpus contains 220 behavior fixtures plus the internal schema file. <!-- apptheory-fixture-count: 220 -->
+Each fixture is a single JSON object. The current corpus contains 223 behavior fixtures plus the internal schema file. <!-- apptheory-fixture-count: 223 -->
 
 ## Schema gate
 
@@ -37,8 +38,8 @@ while provider/runtime payload objects remain open so behavior-specific contract
 
 ## Common shape
 
-- `id` (string): stable identifier (use `p0.*`, `p1.*`, `p2.*`, `m1.*`, `m2.*`, `m3.*`, `m12.*`, `m14.*`, `m15.*`, `m16.*`, `mcp.*`, `oauth.*`, or `objectstore.*` prefixes).
-- `tier` (string): `p0` / `p1` / `p2` / `m1` / `m2` / `m3` / `m12` / `m14` / `m15` / `m16` / `mcp` / `oauth` / `objectstore`.
+- `id` (string): stable identifier (use `p0.*`, `p1.*`, `p2.*`, `m1.*`, `m2.*`, `m3.*`, `m12.*`, `m14.*`, `m15.*`, `m16.*`, `mcp.*`, `oauth.*`, `objectstore.*`, or `vectorstore.*` prefixes).
+- `tier` (string): `p0` / `p1` / `p2` / `m1` / `m2` / `m3` / `m12` / `m14` / `m15` / `m16` / `mcp` / `oauth` / `objectstore` / `vectorstore`.
 - `name` (string): short human-friendly name.
 - `setup.routes` (array): route table for the fixture runner.
   - `method` (string): HTTP method (e.g. `GET`).
@@ -116,6 +117,26 @@ Objectstore fixtures pin AppTheory's deliberately narrow object-store contract. 
 - `list`, `presign`, and `multipart`: forbidden operations that must return `objectstore.unsupported_operation`; they are not alternate supported capabilities.
 
 Expected objectstore results live in `expect.output_json` so every runtime compares the same canonical step outputs and fake call log.
+
+
+## SP14 vectorstore fixtures
+
+Vectorstore fixtures pin AppTheory's narrow semantic recall contract. They run only against deterministic fakes and fake
+Bedrock runtimes; they never call AWS, live S3 vector buckets, Bedrock credentials, or product-specific chunking code. The
+supported path is explicit vector Put/Get/Delete/Query, Bedrock Titan embedding request shaping, and semantic indexing over
+already-chunked text.
+
+`setup.vectorstore.backend` is `fake`. `input.vectorstore.steps` drives ordered operations:
+
+- `put`: writes one batch of keyed float vectors with metadata and required-metadata validation.
+- `query`: runs deterministic squared-distance matching with exact metadata filters and a bounded `top_k`.
+- `get` and `delete`: exercise keyed read/delete without adding listing or raw SDK escape hatches.
+- `semantic_put` and `semantic_query`: compose an explicit embedder with a vector store over caller-provided chunks.
+- `titan_embed`: verifies the Bedrock Titan Text Embeddings V2 request body and dimension validation against a fake
+  runtime.
+
+Expected vectorstore results live in `expect.output_json` so every runtime compares the same canonical step outputs, fake
+call log, and embedder call log.
 
 ## SP12 OAuth fixtures
 

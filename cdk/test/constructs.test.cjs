@@ -1096,6 +1096,98 @@ test("AppTheoryS3Ingest (SQS notifications + filters) synthesizes expected templ
   }
 });
 
+
+test("AppTheoryVectorIndex (bucket/index/env/grants) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const vectorIndex = new apptheory.AppTheoryVectorIndex(stack, "VectorIndex", {
+    vectorBucketName: "apptheory-vectors",
+    indexName: "semantic",
+    dimension: 3,
+    nonFilterableMetadataKeys: ["content", "content", "  "],
+  });
+
+  vectorIndex.bindEnvironment(fn, { includeEmbedding: true });
+  vectorIndex.grantQuery(fn);
+  vectorIndex.grantWriteVectors(fn);
+  vectorIndex.grantBedrockInvokeModel(fn);
+
+  assert.equal(vectorIndex.vectorBucketName, "apptheory-vectors");
+  assert.equal(vectorIndex.indexName, "semantic");
+  assert.equal(vectorIndex.dimension, 3);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("vector-index-basic", template);
+  } else {
+    expectSnapshot("vector-index-basic", template);
+  }
+});
+
+test("AppTheoryVectorIndex generated bucket names are usable by indexes", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryVectorIndex(stack, "VectorIndex", {
+    indexName: "semantic",
+    dimension: 3,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const bucket = Object.values(template.Resources ?? {}).find(
+    (resource) => resource.Type === "AWS::S3Vectors::VectorBucket",
+  );
+  const index = Object.values(template.Resources ?? {}).find(
+    (resource) => resource.Type === "AWS::S3Vectors::Index",
+  );
+  assert.ok(bucket, "expected vector bucket resource");
+  assert.ok(index, "expected vector index resource");
+  const bucketName = bucket.Properties?.VectorBucketName;
+  assert.equal(typeof bucketName, "string");
+  assert.ok(bucketName.length >= 3 && bucketName.length <= 63, `invalid bucket name length: ${bucketName}`);
+  assert.match(bucketName, /^[a-z0-9][a-z0-9-]*[a-z0-9]$/);
+  assert.equal(index.Properties?.VectorBucketName, bucketName);
+});
+
+test("AppTheoryVectorIndex fails closed for invalid bucket/index props", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryVectorIndex(stack, "MissingIndex", {
+        dimension: 3,
+      }),
+    /requires indexName/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryVectorIndex(stack, "BadDimension", {
+        indexName: "semantic",
+        dimension: 0,
+      }),
+    /requires positive integer dimension/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryVectorIndex(stack, "MissingExisting", {
+        createVectorBucket: false,
+        indexName: "semantic",
+        dimension: 3,
+      }),
+    /requires existingVectorBucketName/,
+  );
+});
+
 test("AppTheoryKinesisStream (on-demand) synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");

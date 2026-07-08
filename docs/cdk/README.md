@@ -19,6 +19,7 @@ patterns and treat `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts` as the 
 - [Claude Remote MCP + Streaming](./mcp-server-remote-mcp.md)
 - [MCP Protected Resource Metadata](./mcp-protected-resource.md)
 - [Import Pipeline Constructs](./import-pipeline.md)
+- [S3 Vector Index](./vector-index.md)
 - [Kinesis + CloudWatch Logs](./kinesis-cloudwatch-logs.md)
 - [Lambda MicroVM CDK Constructs](./lambda-microvm.md)
 
@@ -32,6 +33,7 @@ These pages cover the canonical user-facing CDK patterns for:
 - response streaming and SSE
 - MCP and OAuth discovery endpoints
 - import-pipeline infrastructure primitives
+- S3 Vectors semantic recall infrastructure
 - EventBridge bus and rule-target transport primitives
 - Kinesis stream, stream mapping, and CloudWatch Logs destination transport primitives
 - Lambda MicroVM network connector, image, protected controller, and durable session-registry wiring
