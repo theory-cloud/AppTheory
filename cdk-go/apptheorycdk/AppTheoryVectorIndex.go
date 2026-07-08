@@ -35,7 +35,7 @@ type AppTheoryVectorIndex interface {
 	GrantBedrockInvokeModel(grantee awsiam.IGrantable, modelResourceArn *string) awsiam.Grant
 	// Grant read, query, write, and management permissions.
 	GrantManage(grantee awsiam.IGrantable) awsiam.Grant
-	// Grant QueryVectors permissions.
+	// Grant QueryVectors permissions, including metadata/filter reads.
 	GrantQuery(grantee awsiam.IGrantable) awsiam.Grant
 	// Grant Get/List vector permissions without query or write.
 	GrantReadVectors(grantee awsiam.IGrantable) awsiam.Grant

@@ -25362,7 +25362,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 274
+            "line": 280
           },
           "name": "grantBedrockInvokeModel",
           "parameters": [
@@ -25392,7 +25392,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 255
+            "line": 261
           },
           "name": "grantManage",
           "parameters": [
@@ -25411,7 +25411,7 @@
         },
         {
           "docs": {
-            "summary": "Grant QueryVectors permissions."
+            "summary": "Grant QueryVectors permissions, including metadata/filter reads."
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
@@ -25438,7 +25438,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 233
+            "line": 239
           },
           "name": "grantReadVectors",
           "parameters": [
@@ -25461,7 +25461,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 244
+            "line": 250
           },
           "name": "grantWriteVectors",
           "parameters": [
@@ -26997,5 +26997,5 @@
     }
   },
   "version": "1.16.1",
-  "fingerprint": "G4xk9B4TRxiDy7W5WuCmSJyg4Tqk0oeMJ5/gJVE5u2A="
+  "fingerprint": "b0MhlEVAA3RLMuu2A/w2CmMuMiKVpAY/YbLSi0Mj1mM="
 }

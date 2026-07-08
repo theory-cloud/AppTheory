@@ -224,9 +224,15 @@ export class AppTheoryVectorIndex extends Construct {
     fn.addEnvironment("APPTHEORY_EMBEDDING_NORMALIZE", String(options.embeddingNormalize ?? true));
   }
 
-  /** Grant QueryVectors permissions. */
+  /** Grant QueryVectors permissions, including metadata/filter reads. */
   public grantQuery(grantee: iam.IGrantable): iam.Grant {
-    return this.grant(grantee, "s3vectors:GetVectorBucket", "s3vectors:GetIndex", "s3vectors:QueryVectors");
+    return this.grant(
+      grantee,
+      "s3vectors:GetVectorBucket",
+      "s3vectors:GetIndex",
+      "s3vectors:GetVectors",
+      "s3vectors:QueryVectors",
+    );
   }
 
   /** Grant Get/List vector permissions without query or write. */

@@ -110,7 +110,7 @@ export declare class AppTheoryVectorIndex extends Construct {
     bindEnvironment(fn: lambda.Function, options?: AppTheoryVectorIndexBindOptions): void;
     /** Bind canonical Bedrock Titan embedding environment variables. */
     bindTitanEmbeddingEnvironment(fn: lambda.Function, options?: AppTheoryVectorIndexBindOptions): void;
-    /** Grant QueryVectors permissions. */
+    /** Grant QueryVectors permissions, including metadata/filter reads. */
     grantQuery(grantee: iam.IGrantable): iam.Grant;
     /** Grant Get/List vector permissions without query or write. */
     grantReadVectors(grantee: iam.IGrantable): iam.Grant;

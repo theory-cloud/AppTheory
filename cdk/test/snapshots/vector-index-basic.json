@@ -83,6 +83,7 @@
               "Action": [
                 "s3vectors:GetVectorBucket",
                 "s3vectors:GetIndex",
+                "s3vectors:GetVectors",
                 "s3vectors:QueryVectors"
               ],
               "Effect": "Allow",

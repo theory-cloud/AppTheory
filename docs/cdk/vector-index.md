@@ -36,7 +36,7 @@ vectors.grantBedrockInvokeModel(api);
 
 ## Grants
 
-- `grantQuery`: `GetVectorBucket`, `GetIndex`, `QueryVectors`
+- `grantQuery`: `GetVectorBucket`, `GetIndex`, `GetVectors`, `QueryVectors`
 - `grantReadVectors`: `GetVectorBucket`, `GetIndex`, `GetVectors`, `ListVectors`
 - `grantWriteVectors`: `GetVectorBucket`, `GetIndex`, `PutVectors`, `DeleteVectors`
 - `grantManage`: read/query/write plus index and bucket management actions
