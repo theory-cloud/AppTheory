@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "apptheory"
-version = "1.17.1-rc"
+version = "1.17.1"
 requires-python = ">=3.12"
 description = "AppTheory — multi-language serverless application framework (Python package)"
 readme = "README.md"
