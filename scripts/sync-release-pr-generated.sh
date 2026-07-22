@@ -5,10 +5,13 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 artifact_sync_commit_message="chore(release): sync generated release artifacts"
+artifact_sync_commit_body="[skip ci]"
 
 default_required_checks() {
   cat <<'EOF'
 Version alignment
+Release train promotion gate
+Release/security gates
 Go (test + vet)
 TypeScript (npm pack)
 Python (build wheel + sdist)
@@ -682,7 +685,10 @@ dispatch_required_checks() {
   local dispatch_args=(workflow run "${required_check_workflow}" --ref "${release_branch}")
 
   if [[ "${required_check_workflow}" == "ci.yml" ]]; then
-    dispatch_args+=(--raw-field run_full_rubric=false)
+    dispatch_args+=(
+      --raw-field run_full_rubric=false
+      --raw-field release_pr_number="${pr_number}"
+    )
   fi
 
   echo "sync-release-pr-generated: dispatching ${required_check_workflow} for ${release_branch} with full rubric disabled"
@@ -835,6 +841,7 @@ build_release_artifact_sync_commit_payload() {
     EXPECTED_HEAD_OID="${expected_head}" \
     REPOSITORY_NAME_WITH_OWNER="${repo}" \
     ARTIFACT_SYNC_COMMIT_MESSAGE="${artifact_sync_commit_message}" \
+    ARTIFACT_SYNC_COMMIT_BODY="${artifact_sync_commit_body}" \
     PAYLOAD_FILE="${payload_file}" \
     SUMMARY_FILE="${summary_file}" \
     python3 - <<'PY'
@@ -910,6 +917,7 @@ mutation CreateReleaseArtifactSyncCommit($input: CreateCommitOnBranchInput!) {
             },
             "message": {
                 "headline": os.environ["ARTIFACT_SYNC_COMMIT_MESSAGE"],
+                "body": os.environ["ARTIFACT_SYNC_COMMIT_BODY"],
             },
             "fileChanges": {
                 "additions": additions,
@@ -1079,7 +1087,7 @@ verify_head_locally_signed() {
 commit_release_artifact_sync_locally() {
   require_existing_local_signing_config
   git add .release-please-manifest.premain.json cdk/.jsii cdk/lib cdk-go/apptheorycdk
-  if ! git commit -m "${artifact_sync_commit_message}"; then
+  if ! git commit -m "${artifact_sync_commit_message}" -m "${artifact_sync_commit_body}"; then
     echo "sync-release-pr-generated: FAIL (normal local git commit failed; no CI signing fallback exists)" >&2
     exit 1
   fi
@@ -1146,10 +1154,10 @@ else
 fi
 
 wait_for_pr_head "${synced_head}"
-# After the generated-artifact head is visible, rely only on independent PR
-# checks for protected required contexts. Bot-authored release PR updates can be
-# suppressed by GitHub's recursive workflow guard, so explicitly dispatch CI on
-# the release branch instead of self-attesting protected statuses from mutable
+# After the generated-artifact head is visible, rely only on independently
+# dispatched checks for protected required contexts. Automation commits suppress
+# their pull_request events, so explicitly dispatch CI with the exact PR number
+# and release head instead of self-attesting protected statuses from mutable
 # release-branch code.
 ensure_release_pr_is_draft "before waiting for independent required checks"
 require_pr_head "${synced_head}" "before dispatching independent required checks"

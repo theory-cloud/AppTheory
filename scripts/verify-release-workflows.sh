@@ -399,6 +399,26 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
+    'release_pr_number:\n        description: "Generated release PR number for head-bound release checks"',
+    "generated release CI dispatch must identify the exact release PR",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "github.event_name == 'workflow_dispatch' && inputs.release_pr_number != ''",
+    "release promotion verification must run inside generated release CI dispatches",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "permissions:\n  contents: read\n  pull-requests: read",
+    "head-bound release CI dispatch must have read-only pull request metadata access",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    'if [[ "${PR_HEAD_REF}" != "${DISPATCH_HEAD_REF}" || "${PR_HEAD_SHA}" != "${DISPATCH_HEAD_SHA}" ]]; then',
+    "release promotion dispatch must bind the requested PR to the dispatched branch and SHA",
+)
+require_contains(
+    ".github/workflows/ci.yml",
     "if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')",
     "full rubric must run only on staging PRs and opted-in manual dispatch",
 )
@@ -620,14 +640,19 @@ require_not_contains(
 require_order(
     "scripts/run-release-please-pr.sh",
     "draft_lock_existing_open_release_pr_before_refresh",
-    'npx "${args[@]}"',
+    "bash scripts/invoke-release-please-pr.sh",
     "release-please PR generation may draft-lock already-open PRs but must still invoke release-please",
 )
 require_order(
     "scripts/run-release-please-pr.sh",
-    'npx "${args[@]}"',
+    "bash scripts/invoke-release-please-pr.sh",
     'if use_existing_open_release_pr "release-please exited ${release_please_status} after creating or finding a release PR"; then',
     "release-please PR generation must recover when stale release-please state errors after a valid PR exists",
+)
+require_not_contains(
+    "scripts/run-release-please-pr.sh",
+    "--token",
+    "release-please credentials must never be forwarded through npm or shell process arguments",
 )
 require_contains(
     "scripts/run-release-please-pr.sh",
@@ -708,6 +733,16 @@ require_contains(
     "--raw-field run_full_rubric=false",
     "automated release PR CI dispatch must disable the full rubric",
 )
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    '--raw-field release_pr_number="${pr_number}"',
+    "automated release PR CI dispatch must bind checks to the exact release PR",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "Release train promotion gate\nRelease/security gates",
+    "release PR sync must wait for promotion and release/security checks in the single dispatched run",
+)
 require_not_contains(
     "scripts/sync-release-pr-generated.sh",
     "Rubric (full gate set)",
@@ -735,8 +770,28 @@ require_contains(
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
-    'git commit -m "${artifact_sync_commit_message}"',
+    'artifact_sync_commit_body="[skip ci]"',
+    "generated artifact commits must suppress redundant pull_request CI events",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    '"body": os.environ["ARTIFACT_SYNC_COMMIT_BODY"]',
+    "GitHub-created generated artifact commits must carry the automatic-event suppression marker",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    'git commit -m "${artifact_sync_commit_message}" -m "${artifact_sync_commit_body}"',
     "local signed release PR sync fallback must use normal local git commit signing configuration",
+)
+require_contains(
+    "scripts/invoke-release-please-pr.mjs",
+    '`${options.message}\\n\\n[skip ci]`',
+    "release-please commits must suppress redundant pull_request CI events",
+)
+require_contains(
+    "docs/release-process.md",
+    "one explicit `workflow_dispatch` CI run",
+    "release runbook must document the single-trigger generated release PR contract",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
@@ -1018,6 +1073,7 @@ subprocess.run(["bash", "scripts/verify-branch-version-sync.sh", "--self-test"],
 subprocess.run(["bash", "scripts/verify-release-pr-postcondition.sh", "--self-test"], check=True)
 subprocess.run(["bash", "scripts/verify-release-publish-postcondition.sh", "--self-test"], check=True)
 subprocess.run(["bash", "scripts/sync-release-pr-generated.sh", "--self-test"], check=True)
+subprocess.run(["bash", "scripts/verify-release-please-token-safety.sh"], check=True)
 
 print("release-workflows: PASS")
 PY

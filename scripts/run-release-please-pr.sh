@@ -70,8 +70,18 @@ if [[ -z "${RELEASE_PLEASE_TOKEN:-}" ]]; then
   exit 1
 fi
 
+if [[ -z "${GITHUB_REPOSITORY:-}" ]]; then
+  echo "release-please-pr: FAIL (GITHUB_REPOSITORY is required)" >&2
+  exit 1
+fi
+
 if ! command -v gh >/dev/null 2>&1; then
   echo "release-please-pr: FAIL (gh not found)" >&2
+  exit 1
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "release-please-pr: FAIL (npm not found)" >&2
   exit 1
 fi
 
@@ -140,24 +150,13 @@ draft_lock_existing_open_release_pr_before_refresh() {
 
 draft_lock_existing_open_release_pr_before_refresh
 
-args=(
-  -y
-  release-please@17.1.3
-  release-pr
-  --token "${RELEASE_PLEASE_TOKEN}"
-  --repo-url "${GITHUB_REPOSITORY}"
-  --target-branch "${target_branch}"
-  --config-file "${config_file}"
-  --manifest-file "${manifest_file}"
-  --draft-pull-request
-)
-
-if [[ -n "${release_as}" ]]; then
-  args+=(--release-as "${release_as}")
-fi
-
 set +e
-npx "${args[@]}"
+RELEASE_PLEASE_REPO_URL="${GITHUB_REPOSITORY}" \
+  RELEASE_PLEASE_TARGET_BRANCH="${target_branch}" \
+  RELEASE_PLEASE_CONFIG_FILE="${config_file}" \
+  RELEASE_PLEASE_MANIFEST_FILE="${manifest_file}" \
+  RELEASE_PLEASE_RELEASE_AS="${release_as}" \
+  bash scripts/invoke-release-please-pr.sh
 release_please_status=$?
 set -e
 
