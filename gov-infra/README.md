@@ -20,9 +20,11 @@ Notes:
 - `SEC-3` (supply-chain) may materialize Node dependencies with scripts disabled and scan `node_modules` lifecycle hooks,
   plus lightweight scans of `go.mod` and Python dependency files. Use the allowlist only with justification:
   `gov-infra/planning/apptheory-supply-chain-allowlist.txt`.
-- `SEC-2` vulnerability exceptions are not a general allowlist. AWS CDK now publishes an official tarball with
-  `brace-expansion>=5.0.6`; CDK lockfile vulnerability findings must fail closed instead of relying on the former
-  bundled-dependency exception.
+- `SEC-2` vulnerability exceptions are not a general allowlist. The current AWS CDK `2.261.0` tarball bundles
+  `brace-expansion@5.0.6`, which cannot be replaced by npm and is affected by `GHSA-3jxr-9vmj-r5cp`. The verifier keeps
+  that exact build-tool-only finding visible through a narrow exception that expires on **2026-08-05**; any advisory,
+  package graph, version, path, or expiry drift fails closed. Remove the exception as soon as AWS CDK bundles
+  `brace-expansion>=5.0.7`.
 
 ## What’s In Here
 

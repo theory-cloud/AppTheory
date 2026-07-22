@@ -56,7 +56,7 @@ class AppTheoryKinesisStream extends constructs_1.Construct {
 }
 exports.AppTheoryKinesisStream = AppTheoryKinesisStream;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryKinesisStream[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryKinesisStream", version: "1.17.0-rc" };
+AppTheoryKinesisStream[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryKinesisStream", version: "1.17.0" };
 function streamProps(props) {
     const mode = props.mode ?? kinesis.StreamMode.ON_DEMAND;
     const encryption = props.encryption ?? kinesis.StreamEncryption.MANAGED;

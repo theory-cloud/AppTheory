@@ -775,46 +775,7 @@ osv_scan_lockfile() {
   fi
 
   set +e
-  OSV_REPORT="${tmp_report}" node <<'NODE'
-const fs = require("fs");
-
-function fail(message) {
-  console.error(message);
-  process.exit(1);
-}
-
-let report;
-try {
-  report = JSON.parse(fs.readFileSync(process.env.OSV_REPORT, "utf8"));
-} catch (err) {
-  fail(`osv-scanner: FAIL (could not parse ${process.env.OSV_REPORT}: ${err.message})`);
-}
-
-const unexpected = [];
-for (const result of report.results ?? []) {
-  for (const pkg of result.packages ?? []) {
-    for (const vuln of pkg.vulnerabilities ?? []) {
-      unexpected.push({
-        id: vuln.id ?? "<unknown>",
-        packageName: pkg?.package?.name ?? "<unknown>",
-        version: pkg?.package?.version ?? "<unknown>",
-        source: result?.source?.path ?? "<unknown>",
-      });
-    }
-  }
-}
-
-if (unexpected.length === 0) {
-  fail("osv-scanner: FAIL (scanner returned nonzero without vulnerabilities in report)");
-}
-
-for (const vuln of unexpected) {
-  console.error(
-    `osv-scanner: vulnerability ${vuln.id} in ${vuln.packageName}@${vuln.version} from ${vuln.source}`,
-  );
-}
-process.exit(1);
-NODE
+  node scripts/check-visible-aws-cdk-finding.mjs osv "${tmp_report}" "${lf}"
   local filter_status=$?
   set -e
   rm -f "${tmp_report}"

@@ -88,6 +88,10 @@ For npm lockfiles, run `npm install` after Renovate updates the release URL so `
 integrity. For Python, keep the wheel URL in `requirements.txt` or `pyproject.toml` and verify the downloaded release
 asset before installing it in production bootstrap.
 
+The TypeScript package's `.npmrc` sets npm's `allow-remote` policy to `root`. This is the narrow permission required for
+the integrity-pinned TableTheory GitHub Release tarball: transitive dependencies remain unable to introduce remote URL
+fetches.
+
 ## Dependabot notes
 
 Dependabot remains useful for ordinary registry dependencies such as `aws-cdk-lib`, `constructs`, or application-only
@@ -113,3 +117,9 @@ passed `npm audit` with zero vulnerabilities. The removal rationale was:
 - `flatted` / `js-yaml`: upstream-selected lint-tool transitive versions remain audit-clean; local pins were redundant.
 - `yaml`: the TableTheory release asset now resolves `yaml@2.9.0`; AppTheory should not override TableTheory's
   transitive dependency unless a current advisory or contract gate requires it.
+
+AWS CDK `2.261.0` currently bundles `brace-expansion@5.0.6` inside its published tarball. That copy is affected by
+`GHSA-3jxr-9vmj-r5cp`, and `npm audit fix` cannot replace a bundled dependency. AppTheory therefore carries a visible,
+exact-match exception in its CDK npm-audit and GovTheory OSV gates through **2026-08-05**. The exception applies only to
+the fixed-input CDK synthesis toolchain, not shipped Lambda assets, and fails closed if the advisory, package path,
+AWS CDK version, bundled graph, or expiry changes. Remove it as soon as AWS CDK bundles `brace-expansion>=5.0.7`.
