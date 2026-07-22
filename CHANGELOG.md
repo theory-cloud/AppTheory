@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.17.1-rc](https://github.com/theory-cloud/AppTheory/compare/v1.17.0...v1.17.1-rc) (2026-07-22)
+
+
+### Bug Fixes
+
+* **deps:** update TableTheory to v2.0.4 ([85903f0](https://github.com/theory-cloud/AppTheory/commit/85903f0a03d5574259be6f07713fb26dde6cedca))
+* **deps:** update TableTheory to v2.0.4 ([3965e9c](https://github.com/theory-cloud/AppTheory/commit/3965e9c05233cbf9f2e516916c8d818dfd734c99))
+* **release:** bind dispatched checks to release PR ([9953978](https://github.com/theory-cloud/AppTheory/commit/99539787171a568426f89fd3dacba5a4b3e92a54))
+* **release:** harden token and CI trigger boundaries ([5cc99a7](https://github.com/theory-cloud/AppTheory/commit/5cc99a7426eae1acf745b10e7c20fb53350ccaa8))
+* **release:** harden token and CI trigger boundaries ([97846d0](https://github.com/theory-cloud/AppTheory/commit/97846d0ded118e04c5ca64b49b7ba5fdc068bdc1))
+
 ## [1.17.0](https://github.com/theory-cloud/AppTheory/compare/v1.16.1...v1.17.0) (2026-07-08)
 
 
