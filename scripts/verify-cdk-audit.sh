@@ -33,40 +33,9 @@ if [[ "${audit_status}" -eq 0 ]]; then
   exit 0
 fi
 
-# Fail closed: any npm audit finding in the CDK package is a rubric failure.
-# AWS CDK now publishes a tarball with brace-expansion >=5.0.6, so the former
-# bundled brace-expansion exception must not remain as a fallback path.
-AUDIT_REPORT="${tmp_report}" node <<'NODE'
-const fs = require("fs");
-
-function fail(message) {
-  console.error(message);
-  process.exit(1);
-}
-
-let report;
-try {
-  report = JSON.parse(fs.readFileSync(process.env.AUDIT_REPORT, "utf8"));
-} catch (err) {
-  fail(`cdk-audit: FAIL (npm audit did not produce parseable JSON: ${err.message})`);
-}
-
-const vulnerabilities = Object.values(report.vulnerabilities ?? {});
-if (vulnerabilities.length === 0) {
-  fail("cdk-audit: FAIL (npm audit failed without vulnerabilities in report)");
-}
-
-for (const vuln of vulnerabilities) {
-  const nodes = Array.isArray(vuln.nodes) ? vuln.nodes.join(", ") : "<unknown nodes>";
-  const via = (vuln.via ?? [])
-    .map((entry) => (entry && typeof entry === "object" ? entry.url || entry.title || entry.name : entry))
-    .filter(Boolean)
-    .join(", ");
-  console.error(
-    `cdk-audit: vulnerability ${vuln.name ?? "<unknown>"} (${vuln.severity ?? "unknown"}) at ${nodes}${via ? ` via ${via}` : ""}`,
-  );
-}
-process.exit(1);
-NODE
+# Fail closed with one intentionally narrow, visible exception for an upstream
+# AWS CDK bundled dependency. The shared checker pins the advisory, dependency
+# graph, lockfile path, expiry, and scanner-specific report shape.
+node scripts/check-visible-aws-cdk-finding.mjs npm "${tmp_report}" cdk/package-lock.json
 
 echo "cdk-audit: PASS"
