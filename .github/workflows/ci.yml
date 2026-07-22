@@ -15,14 +15,20 @@ on:
         required: false
         type: boolean
         default: true
+      release_pr_number:
+        description: "Generated release PR number for head-bound release checks"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   release-train-promotion:
     name: Release train promotion gate
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.release_pr_number != '')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout trusted release gate code
@@ -36,6 +42,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_PR_NUMBER: ${{ inputs.release_pr_number }}
+          DISPATCH_HEAD_REF: ${{ github.ref_name }}
+          DISPATCH_HEAD_SHA: ${{ github.sha }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
@@ -43,6 +53,32 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ ! "${DISPATCH_PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+              echo "release-train-promotion: FAIL (workflow_dispatch requires a numeric release_pr_number)" >&2
+              exit 1
+            fi
+
+            pr_line="$(
+              gh api "repos/${GITHUB_REPOSITORY}/pulls/${DISPATCH_PR_NUMBER}" \
+                --jq '[.state, .base.ref, .head.ref, .head.repo.full_name, .head.sha, .title] | @tsv'
+            )"
+            IFS=$'\t' read -r pr_state PR_BASE_REF PR_HEAD_REF PR_HEAD_REPOSITORY PR_HEAD_SHA PR_TITLE <<<"${pr_line}"
+
+            if [[ "${pr_state}" != "open" ]]; then
+              echo "release-train-promotion: FAIL (release PR #${DISPATCH_PR_NUMBER} is ${pr_state:-unknown})" >&2
+              exit 1
+            fi
+            if [[ "${PR_HEAD_REPOSITORY}" != "${GITHUB_REPOSITORY}" ]]; then
+              echo "release-train-promotion: FAIL (release PR head repository ${PR_HEAD_REPOSITORY} != ${GITHUB_REPOSITORY})" >&2
+              exit 1
+            fi
+            if [[ "${PR_HEAD_REF}" != "${DISPATCH_HEAD_REF}" || "${PR_HEAD_SHA}" != "${DISPATCH_HEAD_SHA}" ]]; then
+              echo "release-train-promotion: FAIL (dispatched ref ${DISPATCH_HEAD_REF}@${DISPATCH_HEAD_SHA} != PR head ${PR_HEAD_REF}@${PR_HEAD_SHA})" >&2
+              exit 1
+            fi
+          fi
 
           base_ref_args=()
           pr_title_args=()

@@ -27,7 +27,32 @@ Upgrade policy is maintained separately from the generated changelog. When a min
 
 The full rubric runs only for PRs targeting `staging` and optional manual `workflow_dispatch` CI runs. Manual CI dispatch defaults to running the rubric; generated release-PR artifact sync dispatches CI with the full rubric disabled and waits only for release hygiene/build checks. The standalone `Verify deterministic builds` CI job also runs only for PRs targeting `staging`; generated release PR sync must not require or wait for that skipped context. `premain` and `main` run release hygiene, branch version sync, release-branch provenance, package build, and publish postcondition checks; they must not run the full rubric or deterministic-build job on release publish paths.
 
+Generated release PRs have one CI trigger. Release Please version commits and generated-artifact sync commits carry
+`[skip ci]` in the commit body so their automation-originated `pull_request` `opened` and `synchronize` events do
+not create stale or duplicate CI runs. After the final generated-artifact head is visible and signature-verified,
+the sync workflow starts one explicit `workflow_dispatch` CI run for that exact head, waits for every required
+context (including the release-train promotion and release/security gates), rechecks that the head is unchanged,
+and only then marks the PR ready. The dispatch carries the exact release PR number; the promotion gate loads that
+PR through GitHub's API and fails unless its repository, branch, and SHA match the dispatched ref. The skip marker
+does not bypass validation: it suppresses only automatic `push`/`pull_request` triggers; the explicit CI dispatch
+remains required and fails closed.
+
 Skipped full-rubric and deterministic-build contexts are not release/security proof. The `Release/security gates` CI job is unconditional and branch-protection-compatible; it verifies release supply-chain wiring, release branch signature history, Release Please provenance self-tests, CI rubric enforcement, workflow invariants, and deterministic release-cycle fixtures even when the full rubric is intentionally skipped.
+
+### Release credential boundary
+
+Release Please credentials are environment-only secrets. They must never be placed in shell, npm, Node, or
+operating-system process arguments. `scripts/run-release-please-pr.sh` is the only supported Release Please CLI
+entry point. Its transport stages the pinned `release-please@17.1.3` package in an npm process from which
+`RELEASE_PLEASE_TOKEN`, `GH_TOKEN`, and `GITHUB_TOKEN` have all been removed. Only after npm exits does the
+launcher provide `RELEASE_PLEASE_TOKEN` to the Release Please parser in-process; ambient GitHub credentials are
+removed from that process as well. The package staging step also disables lifecycle scripts and fails closed if
+any GitHub credential reaches the npm boundary.
+
+Do not replace this path with `npx`, `npm exec`, or a direct `release-please --token ...` invocation. npm can log
+its command arguments, and operating-system process arguments are observable outside the invoking process. Run
+`bash scripts/verify-release-please-token-safety.sh` to exercise the sentinel regression test. The release
+workflow verifier runs that test automatically.
 
 Generated release PR artifact sync commits on both `release-please--branches--premain` and
 `release-please--branches--main` are product release-automation commits. CI is not a signing key holder
