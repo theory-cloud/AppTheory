@@ -10,6 +10,8 @@ artifact_sync_commit_body="[skip ci]"
 default_required_checks() {
   cat <<'EOF'
 Version alignment
+Release train promotion gate
+Release/security gates
 Go (test + vet)
 TypeScript (npm pack)
 Python (build wheel + sdist)
@@ -683,7 +685,10 @@ dispatch_required_checks() {
   local dispatch_args=(workflow run "${required_check_workflow}" --ref "${release_branch}")
 
   if [[ "${required_check_workflow}" == "ci.yml" ]]; then
-    dispatch_args+=(--raw-field run_full_rubric=false)
+    dispatch_args+=(
+      --raw-field run_full_rubric=false
+      --raw-field release_pr_number="${pr_number}"
+    )
   fi
 
   echo "sync-release-pr-generated: dispatching ${required_check_workflow} for ${release_branch} with full rubric disabled"
@@ -1149,10 +1154,10 @@ else
 fi
 
 wait_for_pr_head "${synced_head}"
-# After the generated-artifact head is visible, rely only on independent PR
-# checks for protected required contexts. Bot-authored release PR updates can be
-# suppressed by GitHub's recursive workflow guard, so explicitly dispatch CI on
-# the release branch instead of self-attesting protected statuses from mutable
+# After the generated-artifact head is visible, rely only on independently
+# dispatched checks for protected required contexts. Automation commits suppress
+# their pull_request events, so explicitly dispatch CI with the exact PR number
+# and release head instead of self-attesting protected statuses from mutable
 # release-branch code.
 ensure_release_pr_is_draft "before waiting for independent required checks"
 require_pr_head "${synced_head}" "before dispatching independent required checks"

@@ -31,9 +31,11 @@ Generated release PRs have one CI trigger. Release Please version commits and ge
 `[skip ci]` in the commit body so their automation-originated `pull_request` `opened` and `synchronize` events do
 not create stale or duplicate CI runs. After the final generated-artifact head is visible and signature-verified,
 the sync workflow starts one explicit `workflow_dispatch` CI run for that exact head, waits for every required
-context, rechecks that the head is unchanged, and only then marks the PR ready. The skip marker does not bypass
-validation: it suppresses only automatic `push`/`pull_request` triggers; the explicit CI dispatch remains required
-and fails closed.
+context (including the release-train promotion and release/security gates), rechecks that the head is unchanged,
+and only then marks the PR ready. The dispatch carries the exact release PR number; the promotion gate loads that
+PR through GitHub's API and fails unless its repository, branch, and SHA match the dispatched ref. The skip marker
+does not bypass validation: it suppresses only automatic `push`/`pull_request` triggers; the explicit CI dispatch
+remains required and fails closed.
 
 Skipped full-rubric and deterministic-build contexts are not release/security proof. The `Release/security gates` CI job is unconditional and branch-protection-compatible; it verifies release supply-chain wiring, release branch signature history, Release Please provenance self-tests, CI rubric enforcement, workflow invariants, and deterministic release-cycle fixtures even when the full rubric is intentionally skipped.
 
