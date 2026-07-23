@@ -99,7 +99,7 @@ class AppTheoryFunction extends constructs_1.Construct {
 }
 exports.AppTheoryFunction = AppTheoryFunction;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryFunction[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryFunction", version: "1.17.0" };
+AppTheoryFunction[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryFunction", version: "1.17.1" };
 function deploymentConfigFor(scope, options) {
     const type = options.trafficShiftType ?? AppTheoryLambdaTrafficShiftType.CANARY;
     switch (type) {

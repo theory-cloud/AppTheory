@@ -137,7 +137,7 @@ class AppTheoryVectorIndex extends constructs_1.Construct {
 }
 exports.AppTheoryVectorIndex = AppTheoryVectorIndex;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryVectorIndex[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryVectorIndex", version: "1.17.0" };
+AppTheoryVectorIndex[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryVectorIndex", version: "1.17.1" };
 function normalizeKeys(values) {
     return Array.from(new Set(values.map((value) => String(value).trim()).filter((value) => value.length > 0)));
 }
