@@ -9,7 +9,7 @@ This guide explains how to expose an **MCP (Model Context Protocol)** server fro
 
 AppTheory provides two building blocks:
 
-- **Runtime (Go):** `github.com/theory-cloud/apptheory/runtime/mcp` — an MCP JSON-RPC handler (`initialize`, `tools/*`, plus optional `resources/*` and `prompts/*`), registries, sessions, and optional SSE progress streaming.
+- **Runtime (Go):** `github.com/theory-cloud/apptheory/v2/runtime/mcp` — an MCP JSON-RPC handler (`initialize`, `tools/*`, plus optional `resources/*` and `prompts/*`), registries, sessions, and optional SSE progress streaming.
 - **CDK (TypeScript/Python):** `AppTheoryMcpServer` — an API Gateway v2 HTTP API with `POST /mcp` → Lambda, optional session table, optional custom domain, and optional stage logging/throttling.
 
 For the full MCP method surface (including `resources/*` and `prompts/*`), see `docs/integrations/mcp.md`.
@@ -52,8 +52,8 @@ import (
   "github.com/aws/aws-lambda-go/events"
   "github.com/aws/aws-lambda-go/lambda"
 
-  apptheory "github.com/theory-cloud/apptheory/runtime"
-  "github.com/theory-cloud/apptheory/runtime/mcp"
+  apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+  "github.com/theory-cloud/apptheory/v2/runtime/mcp"
 )
 
 func serviceVersion() string {
@@ -183,7 +183,7 @@ For persistent session storage, use the DynamoDB-backed store:
 import (
   "os"
 
-  "github.com/theory-cloud/apptheory/runtime/mcp"
+  "github.com/theory-cloud/apptheory/v2/runtime/mcp"
   "github.com/theory-cloud/tabletheory/v2"
   "github.com/theory-cloud/tabletheory/v2/pkg/session"
 )
@@ -286,8 +286,8 @@ import (
   "context"
   "testing"
 
-  mcptest "github.com/theory-cloud/apptheory/testkit/mcp"
-  "github.com/theory-cloud/apptheory/testkit"
+  mcptest "github.com/theory-cloud/apptheory/v2/testkit/mcp"
+  "github.com/theory-cloud/apptheory/v2/testkit"
 )
 
 func TestMcpServer(t *testing.T) {

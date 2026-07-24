@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	mcpruntime "github.com/theory-cloud/apptheory/runtime/mcp"
-	"github.com/theory-cloud/apptheory/testkit"
-	mcptest "github.com/theory-cloud/apptheory/testkit/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v2/testkit"
+	mcptest "github.com/theory-cloud/apptheory/v2/testkit/mcp"
 )
 
 func TestResumableSSEExample(t *testing.T) {

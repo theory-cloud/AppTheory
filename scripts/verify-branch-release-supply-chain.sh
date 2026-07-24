@@ -27,6 +27,11 @@ required_files=(
   "scripts/verify-release-publish-postcondition.sh"
   "scripts/verify-release-branch-signatures.sh"
   "scripts/publish-release-assets.sh"
+  "scripts/render-release-artifact-sync-plan.py"
+  "scripts/sync-release-pr-generated.sh"
+  "scripts/update-cdk-generated.sh"
+  "scripts/verify-cdk-go-major-version.sh"
+  "scripts/verify-cdk-go.sh"
 )
 
 for f in "${required_files[@]}"; do
@@ -292,6 +297,31 @@ if [[ -f ".github/workflows/release-pr.yml" ]]; then
     failures=$((failures + 1))
   }
 fi
+
+for module_artifact in "cdk-go/go.mod" "cdk-go/go.sum" "cdk-go/apptheorycdk"; do
+  grep -Fq "${module_artifact}" "scripts/sync-release-pr-generated.sh" || {
+    echo "branch-release: generated artifact sync must include ${module_artifact}"
+    failures=$((failures + 1))
+  }
+  grep -Fq "${module_artifact}" "scripts/render-release-artifact-sync-plan.py" || {
+    echo "branch-release: GitHub artifact plan must include ${module_artifact}"
+    failures=$((failures + 1))
+  }
+done
+
+grep -Fq "scripts/render-release-artifact-sync-plan.py" "scripts/sync-release-pr-generated.sh" || {
+  echo "branch-release: generated artifact sync must use the shared GitHub commit plan renderer"
+  failures=$((failures + 1))
+}
+grep -Fq "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v2" \
+  "scripts/verify-cdk-go-major-version.sh" || {
+  echo "branch-release: synthetic CDK Go verifier must pin the canonical v2 module"
+  failures=$((failures + 1))
+}
+grep -Fq "bash ./scripts/verify-cdk-go-major-version.sh" "scripts/verify-cdk-go-drift.sh" || {
+  echo "branch-release: CDK Go drift gate must exercise the synthetic next-major layout"
+  failures=$((failures + 1))
+}
 
 for cfg in "release-please-config.premain.json" "release-please-config.json"; do
   if [[ ! -f "${cfg}" ]]; then

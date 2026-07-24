@@ -15,10 +15,15 @@ if [[ "${1:-}" == "--self-test" ]]; then
     local fixture_dir="$1"
 
     mkdir -p "${fixture_dir}/scripts" "${fixture_dir}/ts" "${fixture_dir}/cdk" \
-      "${fixture_dir}/cdk-go" "${fixture_dir}/py" "${fixture_dir}/examples/cdk"
+      "${fixture_dir}/cdk-go/apptheorycdk" "${fixture_dir}/py" "${fixture_dir}/examples/cdk"
     cp VERSION go.mod .release-please-manifest.json .release-please-manifest.premain.json \
       release-please-config.json release-please-config.premain.json "${fixture_dir}/"
-    cp cdk-go/go.mod "${fixture_dir}/cdk-go/"
+    if [[ -f "cdk-go/go.mod" ]]; then
+      cp cdk-go/go.mod "${fixture_dir}/cdk-go/"
+    fi
+    if [[ -f "cdk-go/apptheorycdk/go.mod" ]]; then
+      cp cdk-go/apptheorycdk/go.mod "${fixture_dir}/cdk-go/apptheorycdk/"
+    fi
     cp scripts/read-version.sh scripts/verify-version-alignment.sh "${fixture_dir}/scripts/"
     cp ts/package.json ts/package-lock.json "${fixture_dir}/ts/"
     cp cdk/package.json cdk/package-lock.json cdk/.jsii "${fixture_dir}/cdk/"
@@ -77,6 +82,31 @@ text, count = re.subn(r'(?m)^version = "[^"]+"', f'version = "{version}"', text,
 if count != 1:
     raise SystemExit("could not update py/pyproject.toml version")
 pyproject.write_text(text, encoding="utf-8")
+
+version_major = int(version.split(".", 1)[0])
+legacy_path = root / "cdk-go" / "go.mod"
+canonical_path = root / "cdk-go" / "apptheorycdk" / "go.mod"
+source_path = canonical_path if canonical_path.is_file() else legacy_path
+module_text = source_path.read_text(encoding="utf-8")
+expected_cdk_module = "github.com/theory-cloud/apptheory/cdk-go"
+target_path = legacy_path
+stale_path = canonical_path
+if version_major >= 2:
+    expected_cdk_module += f"/apptheorycdk/v{version_major}"
+    target_path = canonical_path
+    stale_path = legacy_path
+module_text, count = re.subn(
+    r"(?m)^module\s+\S+$",
+    f"module {expected_cdk_module}",
+    module_text,
+    count=1,
+)
+if count != 1:
+    raise SystemExit("could not update synthetic cdk-go module declaration")
+target_path.parent.mkdir(parents=True, exist_ok=True)
+target_path.write_text(module_text, encoding="utf-8")
+if stale_path.exists():
+    stale_path.unlink()
 PY
   }
 
@@ -134,12 +164,72 @@ PY
   write_version_state "${stable_manifest_skew_dir}" "1.16.0" "1.15.2" "1.16.0"
   run_self_test_case "stable manifest skew" "${stable_manifest_skew_dir}" 1 ".release-please-manifest.json"
 
+  released_v2_dir="${tmp_dir}/released-v2"
+  copy_fixture "${released_v2_dir}"
+  write_version_state "${released_v2_dir}" "2.0.0-rc" "1.17.1" "2.0.0-rc"
+  run_self_test_case "released v2 module" "${released_v2_dir}" 0 \
+    "go module state released-major (github.com/theory-cloud/apptheory/v2; VERSION 2.0.0-rc)"
+
+  legacy_cdk_in_v2_dir="${tmp_dir}/legacy-cdk-in-v2"
+  copy_fixture "${legacy_cdk_in_v2_dir}"
+  write_version_state "${legacy_cdk_in_v2_dir}" "2.0.0-rc" "1.17.1" "2.0.0-rc"
+  cp \
+    "${legacy_cdk_in_v2_dir}/cdk-go/apptheorycdk/go.mod" \
+    "${legacy_cdk_in_v2_dir}/cdk-go/go.mod"
+  run_self_test_case "legacy CDK module retained in v2" "${legacy_cdk_in_v2_dir}" 1 \
+    "must not retain legacy cdk-go/go.mod or cdk-go/go.sum"
+
+  nested_cdk_in_v1_dir="${tmp_dir}/nested-cdk-in-v1"
+  copy_fixture "${nested_cdk_in_v1_dir}"
+  cp \
+    "${nested_cdk_in_v1_dir}/cdk-go/go.mod" \
+    "${nested_cdk_in_v1_dir}/cdk-go/apptheorycdk/go.mod"
+  run_self_test_case "nested CDK module introduced in v1" "${nested_cdk_in_v1_dir}" 1 \
+    "must not use cdk-go/apptheorycdk/go.mod"
+
+  wrong_module_dir="${tmp_dir}/wrong-module"
+  copy_fixture "${wrong_module_dir}"
+  python3 - "${wrong_module_dir}/go.mod" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(
+    text.replace(
+        "module github.com/theory-cloud/apptheory/v2\n",
+        "module github.com/theory-cloud/apptheory\n",
+        1,
+    ),
+    encoding="utf-8",
+)
+PY
+  run_self_test_case "unsuffixed root module" "${wrong_module_dir}" 1 \
+    "go.mod module 'github.com/theory-cloud/apptheory' != 'github.com/theory-cloud/apptheory/v2'"
+
+  wrong_module_major_dir="${tmp_dir}/wrong-module-major"
+  copy_fixture "${wrong_module_major_dir}"
+  write_version_state "${wrong_module_major_dir}" "3.0.0" "3.0.0" "3.0.0"
+  run_self_test_case "unsupported VERSION major" "${wrong_module_major_dir}" 1 \
+    "VERSION major 3 is incompatible with Go module major 2"
+
+  stale_import_dir="${tmp_dir}/stale-import"
+  copy_fixture "${stale_import_dir}"
+  mkdir -p "${stale_import_dir}/runtime"
+  cat > "${stale_import_dir}/runtime/stale.go" <<'GO'
+package runtime
+
+import "github.com/theory-cloud/apptheory/testkit"
+GO
+  run_self_test_case "unsuffixed active import" "${stale_import_dir}" 1 \
+    "runtime/stale.go:3: unsuffixed root module reference"
+
   echo "version-alignment-self-test: PASS"
   exit 0
 fi
 
-expected_module="github.com/theory-cloud/apptheory"
-expected_cdk_go_module="github.com/theory-cloud/apptheory/cdk-go"
+expected_module="github.com/theory-cloud/apptheory/v2"
+expected_module_major=2
 
 if [[ ! -f "VERSION" ]]; then
   echo "version-alignment: FAIL (missing VERSION)"
@@ -157,6 +247,19 @@ if [[ ! "${expected_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc(\.[0-9]+)?)?$ ]]; t
   exit 1
 fi
 
+expected_version_major="${expected_version%%.*}"
+if (( expected_version_major == expected_module_major )); then
+  go_module_state="released-major"
+elif (( expected_version_major + 1 == expected_module_major )); then
+  # Release Please owns VERSION. During an approved major-version migration,
+  # staging carries the next major's semantic import path before the generated
+  # release PR advances VERSION and the language package manifests.
+  go_module_state="staged-next-major"
+else
+  echo "version-alignment: FAIL (VERSION major ${expected_version_major} is incompatible with Go module major ${expected_module_major})"
+  exit 1
+fi
+
 if [[ ! -f "go.mod" ]]; then
   echo "version-alignment: FAIL (missing go.mod)"
   exit 1
@@ -167,15 +270,110 @@ if [[ "${observed_module}" != "${expected_module}" ]]; then
   echo "version-alignment: FAIL (go.mod module '${observed_module}' != '${expected_module}')"
   exit 1
 fi
+echo "version-alignment: go module state ${go_module_state} (${expected_module}; VERSION ${expected_version})"
 
-if [[ ! -f "cdk-go/go.mod" ]]; then
-  echo "version-alignment: FAIL (missing cdk-go/go.mod)"
+python3 - <<'PY'
+import sys
+from pathlib import Path
+
+root_module = "github.com/theory-cloud/apptheory"
+allowed_suffixes = ("/v2", "/cdk-go")
+skip_parts = {
+    ".git",
+    ".jekyll-cache",
+    "_site",
+    "cdk.out",
+    "dist",
+    "node_modules",
+}
+candidate_paths = {
+    Path(".golangci-v2.yml"),
+    Path("README.md"),
+    Path("api-snapshots/go.txt"),
+    Path("go.mod"),
+    Path("scripts/verify-scaffold-examples.sh"),
+}
+for root in (
+    Path("cmd"),
+    Path("contract-tests/runners/go"),
+    Path("docs"),
+    Path("examples"),
+    Path("pkg"),
+    Path("runtime"),
+    Path("scripts/tools/api_snapshots/go"),
+    Path("templates/apptheory-init/go"),
+    Path("testkit"),
+):
+    if not root.exists():
+        continue
+    for path in root.rglob("*"):
+        if not path.is_file() or skip_parts.intersection(path.parts):
+            continue
+        if path.parts[:3] == ("docs", "development", "planning"):
+            continue
+        candidate_paths.add(path)
+
+errors: list[str] = []
+boundary = set("/@=`\"' \t\r\n)")
+for path in sorted(candidate_paths):
+    if not path.exists():
+        continue
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        continue
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        offset = 0
+        while True:
+            index = line.find(root_module, offset)
+            if index < 0:
+                break
+            suffix = line[index + len(root_module):]
+            allowed = any(
+                suffix.startswith(prefix)
+                and (
+                    len(suffix) == len(prefix)
+                    or suffix[len(prefix)] in boundary
+                )
+                for prefix in allowed_suffixes
+            )
+            if not allowed and (not suffix or suffix[0] in boundary):
+                errors.append(f"{path}:{line_number}: unsuffixed root module reference")
+            offset = index + len(root_module)
+
+if errors:
+    print("version-alignment: FAIL (Go semantic import version hygiene)", file=sys.stderr)
+    for error in errors:
+        print(f"- {error}", file=sys.stderr)
+    sys.exit(1)
+PY
+
+legacy_cdk_go_mod="cdk-go/go.mod"
+canonical_cdk_go_mod="cdk-go/apptheorycdk/go.mod"
+if (( expected_version_major == 1 )); then
+  expected_cdk_go_mod="${legacy_cdk_go_mod}"
+  expected_cdk_go_module="github.com/theory-cloud/apptheory/cdk-go"
+  if [[ -f "${canonical_cdk_go_mod}" ]]; then
+    echo "version-alignment: FAIL (VERSION ${expected_version} must not use ${canonical_cdk_go_mod})"
+    exit 1
+  fi
+else
+  expected_cdk_go_mod="${canonical_cdk_go_mod}"
+  expected_cdk_go_module="github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v${expected_version_major}"
+  if [[ -f "${legacy_cdk_go_mod}" || -f "cdk-go/go.sum" ]]; then
+    echo "version-alignment: FAIL (VERSION ${expected_version} must not retain legacy cdk-go/go.mod or cdk-go/go.sum)"
+    exit 1
+  fi
+fi
+
+if [[ ! -f "${expected_cdk_go_mod}" ]]; then
+  echo "version-alignment: FAIL (missing ${expected_cdk_go_mod})"
   exit 1
 fi
 
-observed_cdk_go_module="$(awk '/^module[[:space:]]+/{print $2; exit}' cdk-go/go.mod || true)"
+observed_cdk_go_module="$(awk '/^module[[:space:]]+/{print $2; exit}' "${expected_cdk_go_mod}" || true)"
 if [[ "${observed_cdk_go_module}" != "${expected_cdk_go_module}" ]]; then
-  echo "version-alignment: FAIL (cdk-go/go.mod module '${observed_cdk_go_module}' != '${expected_cdk_go_module}')"
+  echo "version-alignment: FAIL (${expected_cdk_go_mod} module '${observed_cdk_go_module}' != '${expected_cdk_go_module}')"
   exit 1
 fi
 

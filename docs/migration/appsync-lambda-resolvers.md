@@ -89,7 +89,7 @@ import (
 	"context"
 	"encoding/json"
 
-	apptheory "github.com/theory-cloud/apptheory/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 )
 
 var app = apptheory.New()

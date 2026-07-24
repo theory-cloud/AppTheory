@@ -96,7 +96,7 @@ Go CDK code uses the generated bindings from the same release tag:
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
 	"github.com/aws/jsii-runtime-go"
-	apptheorycdk "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk"
+	apptheorycdk "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v2"
 )
 
 subscription := apptheorycdk.NewAppTheoryCloudWatchLogsSubscription(

@@ -7,7 +7,7 @@ import (
 
 	"pgregory.net/rapid"
 
-	apptheory "github.com/theory-cloud/apptheory/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 )
 
 // Feature: cloud-mcp-gateway, Property 9: Session Store Round-Trip

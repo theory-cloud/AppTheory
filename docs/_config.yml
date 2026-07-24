@@ -133,7 +133,7 @@ tabletheory:
   runtimes:
     - id: go
       label: Go
-      install: "go get github.com/theory-cloud/apptheory@v1.14.0"
+      install: "go get github.com/theory-cloud/apptheory/v2@v2.0.0-rc"
       docs_path: runtimes/go
     - id: ts
       label: TypeScript

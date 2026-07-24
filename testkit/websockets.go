@@ -8,8 +8,8 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	"github.com/theory-cloud/apptheory/pkg/streamer"
-	apptheory "github.com/theory-cloud/apptheory/runtime"
+	"github.com/theory-cloud/apptheory/v2/pkg/streamer"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 )
 
 type WebSocketEventOptions struct {

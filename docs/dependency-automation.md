@@ -26,8 +26,8 @@ Put this in `renovate.json` (or merge the same fields into your existing Renovat
         "/(^|/)(package\\.json|package-lock\\.json|requirements\\.txt|pyproject\\.toml|go\\.mod)$/"
       ],
       "matchStrings": [
-        "github\\.com/theory-cloud/AppTheory/releases/download/v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc\\.\\d+)?)",
-        "github\\.com/theory-cloud/apptheory\\s+v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc\\.\\d+)?)"
+        "github\\.com/theory-cloud/AppTheory/releases/download/v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc(?:\\.\\d+)?)?)",
+        "github\\.com/theory-cloud/apptheory/v2\\s+v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc(?:\\.\\d+)?)?)"
       ],
       "depNameTemplate": "theory-cloud/AppTheory",
       "datasourceTemplate": "github-releases",
@@ -61,11 +61,11 @@ Put this in `renovate.json` (or merge the same fields into your existing Renovat
 This config intentionally matches both direct release assets and Go module requirements:
 
 ```text
-github.com/theory-cloud/apptheory v1.15.2
-https://github.com/theory-cloud/AppTheory/releases/download/v1.15.2/theory-cloud-apptheory-1.15.2.tgz
-https://github.com/theory-cloud/AppTheory/releases/download/v1.15.2/theory-cloud-apptheory-cdk-1.15.2.tgz
-https://github.com/theory-cloud/AppTheory/releases/download/v1.15.2/apptheory-1.15.2-py3-none-any.whl
-https://github.com/theory-cloud/AppTheory/releases/download/v1.15.2/apptheory_cdk-1.15.2-py3-none-any.whl
+github.com/theory-cloud/apptheory/v2 v2.0.0-rc
+https://github.com/theory-cloud/AppTheory/releases/download/v2.0.0-rc/theory-cloud-apptheory-2.0.0-rc.tgz
+https://github.com/theory-cloud/AppTheory/releases/download/v2.0.0-rc/theory-cloud-apptheory-cdk-2.0.0-rc.tgz
+https://github.com/theory-cloud/AppTheory/releases/download/v2.0.0-rc/apptheory-2.0.0rc0-py3-none-any.whl
+https://github.com/theory-cloud/AppTheory/releases/download/v2.0.0-rc/apptheory_cdk-2.0.0rc0-py3-none-any.whl
 ```
 
 When Renovate opens a bump PR, keep AppTheory's runtime package, CDK package, and generated lockfiles in the same PR.
@@ -78,10 +78,11 @@ Renovate can move URLs, but it cannot prove that your downloaded release assets 
 checksum verification step from the install docs in your CI or bootstrap script:
 
 ```bash
-VERSION=1.15.2
+VERSION=2.0.0-rc
 TAG="v${VERSION}"
+PYTHON_VERSION="${VERSION/-rc/rc0}"
 gh release download "${TAG}" --repo theory-cloud/AppTheory --pattern "SHA256SUMS.txt" --clobber
-grep -E " (theory-cloud-apptheory-${VERSION}\\.tgz|apptheory-${VERSION}-py3-none-any\\.whl)$" SHA256SUMS.txt | sha256sum -c -
+grep -E " (theory-cloud-apptheory-${VERSION}\\.tgz|apptheory-${PYTHON_VERSION}-py3-none-any\\.whl)$" SHA256SUMS.txt | sha256sum -c -
 ```
 
 For npm lockfiles, run `npm install` after Renovate updates the release URL so `package-lock.json` records the new

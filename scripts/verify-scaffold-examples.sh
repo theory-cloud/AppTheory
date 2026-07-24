@@ -5,6 +5,24 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 repo_root="$PWD"
 version="$(./scripts/read-version.sh)"
+go_version="${version}"
+
+root_module="$(awk '/^module[[:space:]]+/{print $2; exit}' go.mod)"
+version_major="${version%%.*}"
+if [[ "${root_module}" =~ /v([2-9][0-9]*)$ ]]; then
+  go_module_major="${BASH_REMATCH[1]}"
+else
+  go_module_major=1
+fi
+if (( version_major + 1 == go_module_major )); then
+  # Release Please still owns the checked-in VERSION while staging prepares
+  # the next major semantic import path. Give the synthetic Go scaffold a
+  # valid next-major prerelease pin until the generated release PR catches up.
+  go_version="${go_module_major}.0.0-rc"
+elif (( version_major != go_module_major )); then
+  echo "scaffold: FAIL (VERSION major ${version_major} is incompatible with Go module major ${go_module_major})" >&2
+  exit 1
+fi
 
 for cmd in go node npm python3; do
   if ! command -v "${cmd}" >/dev/null 2>&1; then
@@ -44,8 +62,9 @@ PY
 
 assert_release_pins() {
   local dir="$1"
-  if ! grep -R "https://github.com/theory-cloud/AppTheory/releases/download/v${version}" "${dir}" >/dev/null; then
-    echo "scaffold: FAIL (${dir} does not contain pinned AppTheory release asset URLs for v${version})" >&2
+  local expected_version="${2:-${version}}"
+  if ! grep -R "https://github.com/theory-cloud/AppTheory/releases/download/v${expected_version}" "${dir}" >/dev/null; then
+    echo "scaffold: FAIL (${dir} does not contain pinned AppTheory release asset URLs for v${expected_version})" >&2
     exit 1
   fi
   if grep -R "__APP_\|__APPTHEORY_" "${dir}" >/dev/null; then
@@ -61,11 +80,11 @@ synth_project() {
 
 # Go scaffold.
 go_dir="${work_root}/hello-go"
-go run ./cmd/apptheory-init --lang=go "${go_dir}" >/dev/null
-assert_release_pins "${go_dir}"
+go run ./cmd/apptheory-init --lang=go --version="${go_version}" "${go_dir}" >/dev/null
+assert_release_pins "${go_dir}" "${go_version}"
 (
   cd "${go_dir}"
-  go mod edit -replace github.com/theory-cloud/apptheory="${repo_root}"
+  go mod edit -replace github.com/theory-cloud/apptheory/v2="${repo_root}"
   go mod tidy
   go test ./...
   patch_package_json package.json

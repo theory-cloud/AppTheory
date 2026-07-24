@@ -12,9 +12,9 @@ import (
 	ubzap "go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/theory-cloud/apptheory/pkg/observability"
-	"github.com/theory-cloud/apptheory/pkg/sanitization"
-	apptheory "github.com/theory-cloud/apptheory/runtime"
+	"github.com/theory-cloud/apptheory/v2/pkg/observability"
+	"github.com/theory-cloud/apptheory/v2/pkg/sanitization"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 )
 
 const (
