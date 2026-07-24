@@ -720,6 +720,7 @@ for forbidden in (
     for path in (
         ".github/workflows/prerelease-pr.yml",
         ".github/workflows/release-pr.yml",
+        "scripts/render-release-artifact-sync-plan.py",
         "scripts/sync-release-pr-generated.sh",
         "docs/release-process.md",
     ):
@@ -774,9 +775,14 @@ require_contains(
     "generated artifact commits must suppress redundant pull_request CI events",
 )
 require_contains(
-    "scripts/sync-release-pr-generated.sh",
-    '"body": os.environ["ARTIFACT_SYNC_COMMIT_BODY"]',
+    "scripts/render-release-artifact-sync-plan.py",
+    '"body": args.body',
     "GitHub-created generated artifact commits must carry the automatic-event suppression marker",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    '--body "${artifact_sync_commit_body}"',
+    "release PR sync must pass the automatic-event suppression marker into the GitHub commit plan",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
@@ -794,9 +800,14 @@ require_contains(
     "release runbook must document the single-trigger generated release PR contract",
 )
 require_contains(
-    "scripts/sync-release-pr-generated.sh",
+    "scripts/render-release-artifact-sync-plan.py",
     "createCommitOnBranch",
     "CI release PR sync must create generated artifact commits through GitHub server-side verified automation",
+)
+require_contains(
+    "scripts/render-release-artifact-sync-plan.py",
+    '"--no-renames"',
+    "GitHub artifact plans must represent module-root moves as explicit additions and deletions",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
@@ -804,9 +815,14 @@ require_contains(
     "release PR sync self-test must prove CI selects the GitHub-verified API mode",
 )
 require_contains(
-    "scripts/sync-release-pr-generated.sh",
-    '"expectedHeadOid": os.environ["EXPECTED_HEAD_OID"]',
+    "scripts/render-release-artifact-sync-plan.py",
+    '"expectedHeadOid": args.expected_head',
     "GitHub API generated artifact sync must use optimistic expectedHeadOid concurrency",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "scripts/render-release-artifact-sync-plan.py",
+    "release PR sync must use the shared fail-closed artifact plan renderer",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
@@ -962,9 +978,22 @@ require_order_after(
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
-    "git add .release-please-manifest.premain.json cdk/.jsii cdk/lib cdk-go/apptheorycdk",
+    "git add -A",
     "stable release PR sync must commit the premain manifest reset with generated release artifacts",
 )
+for generated_path in (
+    ".release-please-manifest.premain.json",
+    "cdk/.jsii",
+    "cdk/lib",
+    "cdk-go/go.mod",
+    "cdk-go/go.sum",
+    "cdk-go/apptheorycdk",
+):
+    require_contains(
+        "scripts/sync-release-pr-generated.sh",
+        generated_path,
+        f"release PR sync must include {generated_path} in the generated artifact transaction",
+    )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
     "bash scripts/verify-cdk-go.sh",
