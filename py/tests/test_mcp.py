@@ -11,7 +11,11 @@ from apptheory import (
     MCP_CODE_SERVER_ERROR,
     MCP_HEADER_PROTOCOL_VERSION,
     MCP_HEADER_SESSION_ID,
+    MCP_PROTOCOL_SHAPE_2025_11_25,
+    MCP_PROTOCOL_SHAPE_2026_07_28,
+    MCP_PROTOCOL_SHAPE_UNKNOWN,
     MCP_PROTOCOL_VERSION,
+    MCP_PROTOCOL_VERSION_2026_07_28,
     MCP_PROTOCOL_VERSION_LEGACY,
     DynamoMcpStreamStore,
     DynamoMcpTaskStore,
@@ -45,6 +49,7 @@ from apptheory import (
     MemoryMcpTaskStore,
     create_mcp_server,
     create_mcp_test_harness,
+    detect_mcp_protocol_version,
     sequence_mcp_id_generator,
 )
 
@@ -101,6 +106,42 @@ class _FakeTheoryTable:
 
 
 class McpRuntimeTests(unittest.TestCase):
+    def test_protocol_version_detection_honors_header_precedence_and_request_metadata(self) -> None:
+        request_2026 = {
+            "jsonrpc": "2.0",
+            "id": "shape",
+            "method": "ping",
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
+                }
+            },
+        }
+
+        self.assertEqual(detect_mcp_protocol_version({}, request_2026), MCP_PROTOCOL_SHAPE_2026_07_28)
+        self.assertEqual(
+            detect_mcp_protocol_version(
+                {"MCP-Protocol-Version": [MCP_PROTOCOL_VERSION]},
+                request_2026,
+            ),
+            MCP_PROTOCOL_SHAPE_2025_11_25,
+        )
+        self.assertEqual(
+            detect_mcp_protocol_version(
+                {MCP_HEADER_PROTOCOL_VERSION: ["2099-01-01"]},
+                request_2026,
+            ),
+            MCP_PROTOCOL_SHAPE_UNKNOWN,
+        )
+        self.assertEqual(
+            detect_mcp_protocol_version({}, json.dumps(request_2026)),
+            MCP_PROTOCOL_SHAPE_2026_07_28,
+        )
+        self.assertEqual(
+            detect_mcp_protocol_version({}, {"jsonrpc": "2.0", "method": "ping"}),
+            MCP_PROTOCOL_SHAPE_UNKNOWN,
+        )
+
     def test_tools_only_harness(self) -> None:
         server = create_mcp_server("PyMCP", "test", {"id_generator": sequence_mcp_id_generator(["sess-1"])})
         server.registry().register_tool(

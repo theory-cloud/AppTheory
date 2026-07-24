@@ -2,8 +2,12 @@ import { Buffer } from "node:buffer";
 import { defineModel, } from "@theory-cloud/tabletheory-ts";
 import { RandomIdGenerator } from "../ids.js";
 export const MCP_PROTOCOL_VERSION = "2025-11-25";
+export const MCP_PROTOCOL_VERSION_2026_07_28 = "2026-07-28";
 export const MCP_PROTOCOL_VERSION_PRIOR = "2025-06-18";
 export const MCP_PROTOCOL_VERSION_LEGACY = "2025-03-26";
+export const MCP_PROTOCOL_SHAPE_2025_11_25 = MCP_PROTOCOL_VERSION;
+export const MCP_PROTOCOL_SHAPE_2026_07_28 = MCP_PROTOCOL_VERSION_2026_07_28;
+export const MCP_PROTOCOL_SHAPE_UNKNOWN = "unknown";
 export const MCP_HEADER_PROTOCOL_VERSION = "mcp-protocol-version";
 export const MCP_HEADER_SESSION_ID = "mcp-session-id";
 export const MCP_HEADER_LAST_EVENT_ID = "last-event-id";
@@ -16,6 +20,7 @@ const DEFAULT_TASK_LIST_LIMIT = 100;
 const MAX_TASK_LIST_LIMIT = 500;
 const RELATED_TASK_METADATA_KEY = "io.modelcontextprotocol/related-task";
 const MODEL_IMMEDIATE_RESPONSE_METADATA_KEY = "io.modelcontextprotocol/model-immediate-response";
+const PROTOCOL_VERSION_METADATA_KEY = "io.modelcontextprotocol/protocolVersion";
 const TASK_CANCELED_MESSAGE = "task canceled";
 const DEFAULT_TASK_TABLE_NAME = "mcp-tasks";
 const DEFAULT_STREAM_TABLE_NAME = "mcp-streams";
@@ -25,6 +30,28 @@ export const MCP_CODE_METHOD_NOT_FOUND = -32601;
 export const MCP_CODE_INVALID_PARAMS = -32602;
 export const MCP_CODE_INTERNAL_ERROR = -32603;
 export const MCP_CODE_SERVER_ERROR = -32000;
+/**
+ * Detects the MCP transport shape for one request.
+ *
+ * MCP-Protocol-Version takes precedence when present. Otherwise the detector
+ * reads io.modelcontextprotocol/protocolVersion from params._meta.
+ */
+export function detectMcpProtocolVersion(headers, request) {
+    const headerVersion = firstHeader(headers, MCP_HEADER_PROTOCOL_VERSION).trim();
+    if (headerVersion) {
+        return protocolShapeForVersion(headerVersion);
+    }
+    const record = protocolRequestRecord(request);
+    if (!record) {
+        return MCP_PROTOCOL_SHAPE_UNKNOWN;
+    }
+    const params = isRecord(record["params"]) ? record["params"] : null;
+    const meta = params && isRecord(params["_meta"]) ? params["_meta"] : null;
+    const metaVersion = typeof meta?.[PROTOCOL_VERSION_METADATA_KEY] === "string"
+        ? String(meta[PROTOCOL_VERSION_METADATA_KEY]).trim()
+        : "";
+    return protocolShapeForVersion(metaVersion);
+}
 export class McpSessionNotFoundError extends Error {
     constructor(message = "session not found") {
         super(message);
@@ -1455,6 +1482,30 @@ function positiveInteger(value, fallback) {
         return Math.floor(n);
     }
     return fallback;
+}
+function protocolShapeForVersion(value) {
+    if (value === MCP_PROTOCOL_VERSION) {
+        return MCP_PROTOCOL_SHAPE_2025_11_25;
+    }
+    if (value === MCP_PROTOCOL_VERSION_2026_07_28) {
+        return MCP_PROTOCOL_SHAPE_2026_07_28;
+    }
+    return MCP_PROTOCOL_SHAPE_UNKNOWN;
+}
+function protocolRequestRecord(request) {
+    let value = request;
+    if (value instanceof Uint8Array) {
+        value = Buffer.from(value).toString("utf8");
+    }
+    if (typeof value === "string") {
+        try {
+            value = JSON.parse(value);
+        }
+        catch {
+            return null;
+        }
+    }
+    return isRecord(value) ? value : null;
 }
 function isSupportedProtocolVersion(value) {
     return (value === MCP_PROTOCOL_VERSION ||

@@ -16,8 +16,11 @@ import (
 	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 )
 
-// protocolVersion is the latest MCP protocol version supported by this server.
+// protocolVersion is the latest session-ful MCP protocol version supported by this server.
 const protocolVersion = "2025-11-25"
+
+// ProtocolVersion20260728 is the stateless MCP protocol version.
+const ProtocolVersion20260728 = "2026-07-28"
 
 const (
 	protocolVersionPrior  = "2025-06-18"

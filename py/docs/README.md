@@ -71,7 +71,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>614 exported top-level symbols</summary>
+<summary>620 exported top-level symbols</summary>
 
 ```text
 App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest
@@ -90,6 +90,7 @@ create_aws_lambda_microvm_provider, create_emf_metric_sink, create_fake_microvm_
 create_fake_websocket_client_factory, create_kinesis_json_record, create_mcp_server, create_mcp_test_harness, create_memory_microvm_session_registry, create_microvm_controller
 create_microvm_lifecycle_adapter, create_microvm_registry_client, create_real_microvm_controller, create_reconstructing_microvm_session_registry, create_s3_object_store, create_s3_vector_store
 create_tabletheory_microvm_session_registry, create_test_env, decode_cloudwatch_logs_subscription, decode_logging_profile_json, default_config, default_jobs_config
+detect_mcp_protocol_version
 DEFAULT_JOBS_TABLE_NAME, default_logging_profile, default_mcp_stream_model, default_mcp_task_model, default_microvm_controller_contract, default_microvm_lifecycle_contract
 default_microvm_operation_contract, default_microvm_provider_state_mappings, default_microvm_real_lifecycle_contract, default_microvm_session_registry_contract, DEFAULT_STREAM_TABLE_NAME, DEFAULT_TASK_TABLE_NAME
 DefaultEmbeddingDimensions, DefaultQueryTopK, DefaultTitanEmbedTextModelId, DeleteVectorsInput, DynamicClientRegistrationPolicy, DynamicClientRegistrationRequest
@@ -115,9 +116,10 @@ LoggingProfileError, LoggingProfileErrorCapture, LoggingProfileEvent, LoggingPro
 LoggingProfileSanitizer, LoggingProfileValidationError, ManualClock, ManualIdGenerator, map_microvm_provider_state, mask_first_last
 mask_first_last4, matches_if_none_match, max_length, max_value, MaxPutDeleteBatchSize, MaxQueryTopK
 MCP_CODE_INTERNAL_ERROR, MCP_CODE_INVALID_PARAMS, MCP_CODE_INVALID_REQUEST, MCP_CODE_METHOD_NOT_FOUND, MCP_CODE_PARSE_ERROR, MCP_CODE_SERVER_ERROR
-MCP_HEADER_LAST_EVENT_ID, MCP_HEADER_PROTOCOL_VERSION, MCP_HEADER_SESSION_ID, MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_LEGACY, MCP_PROTOCOL_VERSION_PRIOR
+MCP_HEADER_LAST_EVENT_ID, MCP_HEADER_PROTOCOL_VERSION, MCP_HEADER_SESSION_ID, MCP_PROTOCOL_SHAPE_2025_11_25, MCP_PROTOCOL_SHAPE_2026_07_28, MCP_PROTOCOL_SHAPE_UNKNOWN
+MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_2026_07_28, MCP_PROTOCOL_VERSION_LEGACY, MCP_PROTOCOL_VERSION_PRIOR
 McpContentBlock, McpEventNotFoundError, McpJSONRecord, McpJSONValue, McpPromptArgument, McpPromptDef
-McpPromptHandler, McpPromptMessage, McpPromptRegistry, McpPromptResult, McpRequestID, McpResourceContent
+McpPromptHandler, McpPromptMessage, McpPromptRegistry, McpPromptResult, McpProtocolShape, McpRequestID, McpResourceContent
 McpResourceContext, McpResourceDef, McpResourceHandler, McpResourceRegistry, McpResourceTemplateDef, McpRPCError
 McpRPCRequest, McpRPCResponse, McpServer, McpServerOptions, McpSession, McpSessionNotFoundError
 McpSessionStore, McpSSEEvent, McpStreamEvent, McpStreamingToolHandler, McpStreamNotFoundError, McpStreamStore

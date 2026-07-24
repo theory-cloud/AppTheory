@@ -7,7 +7,11 @@ import {
   MCP_HEADER_LAST_EVENT_ID,
   MCP_HEADER_PROTOCOL_VERSION,
   MCP_HEADER_SESSION_ID,
+  MCP_PROTOCOL_SHAPE_2025_11_25,
+  MCP_PROTOCOL_SHAPE_2026_07_28,
+  MCP_PROTOCOL_SHAPE_UNKNOWN,
   MCP_PROTOCOL_VERSION,
+  MCP_PROTOCOL_VERSION_2026_07_28,
   MCP_PROTOCOL_VERSION_LEGACY,
   DynamoMcpStreamStore,
   DynamoMcpTaskStore,
@@ -27,6 +31,7 @@ import {
   createMcpTestHarness,
   defaultMcpStreamModel,
   defaultMcpTaskModel,
+  detectMcpProtocolVersion,
   fixedIdGenerator,
   parseMcpTestSSEFrames,
   sequenceIdGenerator,
@@ -71,6 +76,31 @@ async function initialize(server, id = "init", protocolVersion = MCP_PROTOCOL_VE
 function rpc(id, method, params = {}) {
   return { jsonrpc: "2.0", id, method, params };
 }
+
+test("detectMcpProtocolVersion gives the header precedence over request _meta", () => {
+  const request2026 = {
+    jsonrpc: "2.0",
+    id: "version",
+    method: "ping",
+    params: {
+      _meta: {
+        "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
+      },
+    },
+  };
+
+  assert.equal(detectMcpProtocolVersion({}, request2026), MCP_PROTOCOL_SHAPE_2026_07_28);
+  assert.equal(
+    detectMcpProtocolVersion({ "MCP-Protocol-Version": [MCP_PROTOCOL_VERSION] }, request2026),
+    MCP_PROTOCOL_SHAPE_2025_11_25,
+  );
+  assert.equal(
+    detectMcpProtocolVersion({ [MCP_HEADER_PROTOCOL_VERSION]: ["2099-01-01"] }, request2026),
+    MCP_PROTOCOL_SHAPE_UNKNOWN,
+  );
+  assert.equal(detectMcpProtocolVersion({}, JSON.stringify(request2026)), MCP_PROTOCOL_SHAPE_2026_07_28);
+  assert.equal(detectMcpProtocolVersion({}, { jsonrpc: "2.0", method: "ping" }), MCP_PROTOCOL_SHAPE_UNKNOWN);
+});
 
 function fakeDb() {
   const items = new Map();

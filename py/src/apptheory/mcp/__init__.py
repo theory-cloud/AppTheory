@@ -19,8 +19,14 @@ from apptheory.ids import IdGenerator, RealIdGenerator
 from apptheory.response import Response
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
+MCP_PROTOCOL_VERSION_2026_07_28 = "2026-07-28"
 MCP_PROTOCOL_VERSION_PRIOR = "2025-06-18"
 MCP_PROTOCOL_VERSION_LEGACY = "2025-03-26"
+
+MCP_PROTOCOL_SHAPE_2025_11_25 = MCP_PROTOCOL_VERSION
+MCP_PROTOCOL_SHAPE_2026_07_28 = MCP_PROTOCOL_VERSION_2026_07_28
+MCP_PROTOCOL_SHAPE_UNKNOWN = "unknown"
+McpProtocolShape = Literal["2025-11-25", "2026-07-28", "unknown"]
 
 MCP_HEADER_PROTOCOL_VERSION = "mcp-protocol-version"
 MCP_HEADER_SESSION_ID = "mcp-session-id"
@@ -42,6 +48,7 @@ DEFAULT_TASK_LIST_LIMIT = 100
 MAX_TASK_LIST_LIMIT = 500
 RELATED_TASK_METADATA_KEY = "io.modelcontextprotocol/related-task"
 MODEL_IMMEDIATE_RESPONSE_METADATA_KEY = "io.modelcontextprotocol/model-immediate-response"
+PROTOCOL_VERSION_METADATA_KEY = "io.modelcontextprotocol/protocolVersion"
 TASK_CANCELED_MESSAGE = "task canceled"
 DEFAULT_TASK_TABLE_NAME = "mcp-tasks"
 DEFAULT_STREAM_TABLE_NAME = "mcp-streams"
@@ -53,6 +60,27 @@ McpJSONValue = str | int | float | bool | None | list[Any] | dict[str, Any]
 McpJSONRecord = dict[str, McpJSONValue]
 
 T = TypeVar("T")
+
+
+def detect_mcp_protocol_version(
+    headers: Mapping[str, Any] | None,
+    request: Mapping[str, Any] | bytes | bytearray | str | None,
+) -> McpProtocolShape:
+    """Detect the MCP transport shape for one request.
+
+    MCP-Protocol-Version takes precedence when present. Otherwise the detector
+    reads io.modelcontextprotocol/protocolVersion from params._meta.
+    """
+
+    header_version = _first_header(dict(headers or {}), MCP_HEADER_PROTOCOL_VERSION).strip()
+    if header_version:
+        return _protocol_shape_for_version(header_version)
+
+    record = _protocol_request_record(request)
+    params = record.get("params") if record is not None else None
+    meta = params.get("_meta") if isinstance(params, Mapping) else None
+    meta_version = meta.get(PROTOCOL_VERSION_METADATA_KEY) if isinstance(meta, Mapping) else None
+    return _protocol_shape_for_version(str(meta_version).strip() if isinstance(meta_version, str) else "")
 
 
 @dataclass(slots=True)
@@ -1543,6 +1571,31 @@ def _positive_integer(value: Any, fallback: int) -> int:
     return n if n > 0 else fallback
 
 
+def _protocol_shape_for_version(value: str) -> McpProtocolShape:
+    if value == MCP_PROTOCOL_VERSION:
+        return MCP_PROTOCOL_SHAPE_2025_11_25
+    if value == MCP_PROTOCOL_VERSION_2026_07_28:
+        return MCP_PROTOCOL_SHAPE_2026_07_28
+    return MCP_PROTOCOL_SHAPE_UNKNOWN
+
+
+def _protocol_request_record(
+    request: Mapping[str, Any] | bytes | bytearray | str | None,
+) -> dict[str, Any] | None:
+    value: Any = request
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            value = bytes(value).decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    if isinstance(value, str):
+        try:
+            value = jsonlib.loads(value)
+        except (TypeError, ValueError):
+            return None
+    return dict(value) if isinstance(value, Mapping) else None
+
+
 def _is_supported_protocol_version(value: str) -> bool:
     return value in {MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_PRIOR, MCP_PROTOCOL_VERSION_LEGACY}
 
@@ -2340,7 +2393,11 @@ __all__ = [
     "MCP_HEADER_LAST_EVENT_ID",
     "MCP_HEADER_PROTOCOL_VERSION",
     "MCP_HEADER_SESSION_ID",
+    "MCP_PROTOCOL_SHAPE_2025_11_25",
+    "MCP_PROTOCOL_SHAPE_2026_07_28",
+    "MCP_PROTOCOL_SHAPE_UNKNOWN",
     "MCP_PROTOCOL_VERSION",
+    "MCP_PROTOCOL_VERSION_2026_07_28",
     "MCP_PROTOCOL_VERSION_LEGACY",
     "MCP_PROTOCOL_VERSION_PRIOR",
     "DynamoMcpStreamStore",
@@ -2355,6 +2412,7 @@ __all__ = [
     "McpPromptMessage",
     "McpPromptRegistry",
     "McpPromptResult",
+    "McpProtocolShape",
     "McpRPCError",
     "McpRPCRequest",
     "McpRPCResponse",
@@ -2398,4 +2456,5 @@ __all__ = [
     "create_mcp_server",
     "default_mcp_stream_model",
     "default_mcp_task_model",
+    "detect_mcp_protocol_version",
 ]
