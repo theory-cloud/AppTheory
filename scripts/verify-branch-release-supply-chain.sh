@@ -27,6 +27,9 @@ required_files=(
   "scripts/verify-release-publish-postcondition.sh"
   "scripts/verify-release-branch-signatures.sh"
   "scripts/publish-release-assets.sh"
+  "scripts/go-module-release-contract.sh"
+  "scripts/publish-go-module-tags.sh"
+  "scripts/verify-go-module-tags.sh"
   "scripts/render-release-artifact-sync-plan.py"
   "scripts/sync-release-pr-generated.sh"
   "scripts/update-cdk-generated.sh"
@@ -305,6 +308,39 @@ for module_artifact in "cdk-go/go.mod" "cdk-go/go.sum" "cdk-go/apptheorycdk"; do
   }
   grep -Fq "${module_artifact}" "scripts/render-release-artifact-sync-plan.py" || {
     echo "branch-release: GitHub artifact plan must include ${module_artifact}"
+    failures=$((failures + 1))
+  }
+done
+
+for module_script in \
+  "scripts/publish-go-module-tags.sh" \
+  "scripts/verify-go-module-tags.sh"
+do
+  grep -Fq "${module_script}" "scripts/publish-release-assets.sh" || {
+    echo "branch-release: release asset publisher must invoke ${module_script}"
+    failures=$((failures + 1))
+  }
+done
+
+grep -Fq "cdk-go/apptheorycdk/" "scripts/go-module-release-contract.sh" || {
+  echo "branch-release: Go module release contract must derive the nested CDK tag prefix"
+  failures=$((failures + 1))
+}
+grep -Fq "GOPROXY=direct" "scripts/verify-go-module-tags.sh" || {
+  echo "branch-release: Go module postcondition must use exact direct VCS resolution"
+  failures=$((failures + 1))
+}
+if grep -Eq 'git (push --force|push -f|tag -f|push --delete)' "scripts/publish-go-module-tags.sh"; then
+  echo "branch-release: Go module tag publisher must never move or delete refs"
+  failures=$((failures + 1))
+fi
+for workflow in ".github/workflows/prerelease.yml" ".github/workflows/release.yml"; do
+  grep -Fq "prepublish" "${workflow}" || {
+    echo "branch-release: ${workflow} must run the prepublish release postcondition"
+    failures=$((failures + 1))
+  }
+  grep -Fq "complete" "${workflow}" || {
+    echo "branch-release: ${workflow} must run the complete Go module postcondition"
     failures=$((failures + 1))
   }
 done

@@ -4,6 +4,30 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+if [[ "${1:-}" == "--self-test" ]]; then
+  temporary="$(mktemp -d)"
+  RELEASE_NOTES_OUTPUT_DIR="${temporary}" \
+    bash scripts/render-release-notes.sh "v2.0.0-rc.1" >/dev/null
+  notes="${temporary}/RELEASE_NOTES.md"
+  grep -Fq \
+    'go get github.com/theory-cloud/apptheory/v2@v2.0.0-rc.1' \
+    "${notes}"
+  grep -Fq \
+    'go get github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v2@v2.0.0-rc.1' \
+    "${notes}"
+  grep -Fq \
+    'cdk-go/apptheorycdk/v2.0.0-rc.1` targets the same immutable commit as `v2.0.0-rc.1' \
+    "${notes}"
+  if grep -Fq 'go get github.com/theory-cloud/apptheory@v2.0.0-rc.1' "${notes}"; then
+    echo "release-notes self-test: FAIL (v2 notes contain the legacy root module)" >&2
+    rm -rf "${temporary}"
+    exit 1
+  fi
+  rm -rf "${temporary}"
+  echo "release-notes self-test: PASS (v2 root + nested CDK commands)"
+  exit 0
+fi
+
 tag="${1:-${GITHUB_REF_NAME:-}}"
 if [[ -z "${tag}" ]]; then
   echo "release-notes: FAIL (missing tag name)"
@@ -11,6 +35,27 @@ if [[ -z "${tag}" ]]; then
 fi
 
 version="${tag#v}"
+if [[ ! "${version}" =~ ^([0-9]+)\.[0-9]+\.[0-9]+(-rc(\.[0-9]+)?)?$ ]]; then
+  echo "release-notes: FAIL (unsupported tag ${tag})"
+  exit 1
+fi
+major="${BASH_REMATCH[1]}"
+
+go_runtime_module="github.com/theory-cloud/apptheory"
+go_cdk_module="github.com/theory-cloud/apptheory/cdk-go/apptheorycdk"
+go_cdk_lines="- CDK bindings: import \`${go_cdk_module}\` (legacy v1 tags predate the independently tagged CDK module)."
+if (( major >= 2 )); then
+  go_runtime_module+="/v${major}"
+  go_cdk_module+="/v${major}"
+  go_cdk_lines="$(
+    cat <<EOF
+- CDK: \`go get ${go_cdk_module}@${tag}\`
+- CDK import: \`${go_cdk_module}\`
+- Tag provenance: \`cdk-go/apptheorycdk/${tag}\` targets the same immutable commit as \`${tag}\`.
+EOF
+  )"
+fi
+
 python_version="${version}"
 if [[ "${python_version}" == *"-rc."* ]]; then
   # `X.Y.Z-rc.N` -> `X.Y.ZrcN` (PEP 440 normalized wheel/sdist version)
@@ -23,10 +68,11 @@ fi
 repo="theory-cloud/AppTheory"
 repo_url="https://github.com/${repo}"
 docs_base="${repo_url}/blob/${tag}"
+output_dir="${RELEASE_NOTES_OUTPUT_DIR:-dist}"
 
-mkdir -p dist
+mkdir -p "${output_dir}"
 
-cat > dist/RELEASE_NOTES.md <<EOF
+cat >"${output_dir}/RELEASE_NOTES.md" <<EOF
 # AppTheory ${tag}
 
 ## Highlights
@@ -43,8 +89,8 @@ cat > dist/RELEASE_NOTES.md <<EOF
 
 Go:
 
-- \`go get github.com/theory-cloud/apptheory@${tag}\`
-- CDK bindings: import \`github.com/theory-cloud/apptheory/cdk-go/apptheorycdk\` (included in the same module/tag).
+- Runtime: \`go get ${go_runtime_module}@${tag}\`
+${go_cdk_lines}
 
 TypeScript:
 
@@ -78,4 +124,4 @@ Checksums:
 - \`sha256sum -c SHA256SUMS.txt\`
 EOF
 
-echo "release-notes: PASS (dist/RELEASE_NOTES.md)"
+echo "release-notes: PASS (${output_dir}/RELEASE_NOTES.md)"

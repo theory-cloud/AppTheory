@@ -1,0 +1,24 @@
+{
+  "case": "invalid-go-module-resolution",
+  "coverage": ["go_module_tags"],
+  "expected": {
+    "valid": false,
+    "diagnostic_codes": ["publisher:go-module-resolution-unverified"]
+  },
+  "events": [
+    {
+      "kind": "publisher",
+      "source": "premain",
+      "tag": "v2.0.0-rc",
+      "releaseCommit": "P2",
+      "nestedModuleTag": "cdk-go/apptheorycdk/v2.0.0-rc",
+      "rootModuleTagTarget": "P2",
+      "nestedModuleTagTarget": "P2",
+      "tagsCreatedWithoutOverwrite": true,
+      "exactModuleResolutionVerified": false,
+      "modulesVerifiedBeforePublication": true,
+      "serialized": true,
+      "assetsVerified": true
+    }
+  ]
+}

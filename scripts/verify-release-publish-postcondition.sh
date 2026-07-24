@@ -269,6 +269,52 @@ require_created_tag() {
   fi
 }
 
+run_go_module_verifier() {
+  scripts/verify-go-module-tags.sh "$1" "$2"
+}
+
+verify_go_module_postcondition() {
+  local release_tag
+  local major
+  local source_commit
+
+  if [[ "${phase}" != "complete" ]]; then
+    return 0
+  fi
+
+  release_tag="${tag_name:-${expected_tag}}"
+  if [[ ! "${release_tag}" =~ ^v([0-9]+)\.[0-9]+\.[0-9]+(-rc(\.[0-9]+)?)?$ ]]; then
+    echo \
+      "release-publish-postcondition: FAIL (cannot derive Go module contract from ${release_tag})" \
+      >&2
+    return 1
+  fi
+  major="${BASH_REMATCH[1]}"
+  if (( major < 2 )); then
+    echo \
+      "release-publish-postcondition: SKIP (${release_tag} predates the v2 Go module tag contract)"
+    return 0
+  fi
+
+  fetch_base_branch_and_tags "${channel_base_branch}" || {
+    echo \
+      "release-publish-postcondition: FAIL (could not fetch ${channel_base_branch} and module tags)" \
+      >&2
+    return 1
+  }
+  source_commit="$(git rev-parse --verify "${release_tag}^{commit}" 2>/dev/null || true)"
+  if [[ ! "${source_commit}" =~ ^[0-9a-f]{40}$ ]]; then
+    echo \
+      "release-publish-postcondition: FAIL (${release_tag} is not a local immutable commit tag)" \
+      >&2
+    return 1
+  fi
+
+  run_go_module_verifier "${release_tag}" "${source_commit}" || return 1
+  echo \
+    "release-publish-postcondition: PASS (${release_tag} root + nested Go modules resolve at ${source_commit})"
+}
+
 commit_self_test_change() {
   local subject="$1"
   local path="$2"
@@ -380,20 +426,87 @@ self_test_prerelease_already_published_noop() {
   rm -rf "${tmp}"
 }
 
+self_test_complete_go_module_postcondition() {
+  local tmp
+  local source_commit
+  local calls
+
+  tmp="$(mktemp -d)"
+  (
+    cd "${tmp}"
+    git init -q
+    git checkout -q -b main
+    commit_self_test_change "chore: seed v2 module postcondition" "self-test.txt" "v2"
+    source_commit="$(git rev-parse HEAD)"
+    git update-ref refs/tags/v2.0.0 "${source_commit}"
+
+    expected_tag="v2.0.0"
+    tag_name="v2.0.0"
+    channel_base_branch="main"
+    calls="${tmp}/calls.txt"
+
+    fetch_base_branch_and_tags() {
+      return 0
+    }
+    run_go_module_verifier() {
+      printf '%s %s\n' "$1" "$2" >>"${calls}"
+    }
+
+    phase="prepublish"
+    verify_go_module_postcondition
+    if [[ -e "${calls}" ]]; then
+      echo \
+        "release-publish-postcondition: FAIL (prepublish phase ran the external Go resolver)" \
+        >&2
+      return 1
+    fi
+
+    phase="complete"
+    verify_go_module_postcondition >/dev/null
+    grep -Fxq "v2.0.0 ${source_commit}" "${calls}" || {
+      echo \
+        "release-publish-postcondition: FAIL (complete phase did not prove the exact Go module tag)" \
+        >&2
+      return 1
+    }
+  )
+  rm -rf "${tmp}"
+  echo \
+    "release-publish-postcondition: PASS (self-test complete phase proves exact Go module resolution)"
+}
+
 if [[ "${1:-}" == "--self-test" ]]; then
   self_test_stable_already_published_noop
   self_test_prerelease_already_published_noop
+  self_test_complete_go_module_postcondition
   exit $?
 fi
 
 channel="${1:-}"
 release_created="${2:-}"
 tag_name="${3:-}"
+phase="${4:-prepublish}"
 
 case "${channel}" in
-  prerelease|stable) ;;
+  prerelease)
+    channel_base_branch="premain"
+    ;;
+  stable)
+    channel_base_branch="main"
+    ;;
   *)
-    echo "release-publish-postcondition: FAIL (usage: $0 prerelease|stable <release_created> <tag_name>)" >&2
+    echo \
+      "release-publish-postcondition: FAIL (usage: $0 prerelease|stable <release_created> <tag_name> prepublish|complete)" \
+      >&2
+    exit 1
+    ;;
+esac
+case "${phase}" in
+  prepublish|complete) ;;
+  *)
+    echo \
+      "release-publish-postcondition: FAIL (phase must be prepublish or complete; got ${phase})" \
+      >&2
     exit 1
     ;;
 esac
@@ -404,6 +517,7 @@ case "${channel}" in
   prerelease)
     if is_rc_tag "${expected_tag}"; then
       require_created_tag "RC" || exit 1
+      verify_go_module_postcondition || exit 1
       if [[ "${release_created}" != "true" ]]; then
         exit 0
       fi
@@ -433,6 +547,7 @@ case "${channel}" in
     fi
 
     require_created_tag "stable" || exit 1
+    verify_go_module_postcondition || exit 1
     if [[ "${release_created}" != "true" ]]; then
       exit 0
     fi
