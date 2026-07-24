@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.0.0-rc](https://github.com/theory-cloud/AppTheory/compare/v1.17.1...v2.0.0-rc) (2026-07-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cdk:** Structural IAppTheoryMicrovmImage references must now include logging; CloudWatch logging requires AppTheoryMicrovmController.executionRole with CloudWatch Logs permissions, while disabled logging remains role-optional.
+* **microvm:** MicroVM provider runs and real controllers now require an explicit CloudWatch-or-disabled logging configuration; CloudWatch logging also requires an execution role.
+
+### Features
+
+* **cdk:** propagate MicroVM runtime logging ([0e8c99c](https://github.com/theory-cloud/AppTheory/commit/0e8c99c8998c0d4efbfefe0827476bacf827d25f))
+* **microvm:** require explicit runtime logging ([e7c7c50](https://github.com/theory-cloud/AppTheory/commit/e7c7c5047127cf7ddfce8f6ca9ecca5ae50e2b02))
+
+
+### Bug Fixes
+
+* **deps:** update TableTheory to v2.0.5 ([0224dd7](https://github.com/theory-cloud/AppTheory/commit/0224dd7f65acbee1700315b568d525b699f4bc9d))
+
 ## [1.17.1](https://github.com/theory-cloud/AppTheory/compare/v1.17.0...v1.17.1) (2026-07-22)
 
 
