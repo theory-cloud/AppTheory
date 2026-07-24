@@ -17608,7 +17608,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/microvm-controller.ts",
-          "line": 338
+          "line": 340
         },
         "parameters": [
           {
@@ -17634,7 +17634,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 302
+        "line": 304
       },
       "name": "AppTheoryMicrovmController",
       "properties": [
@@ -17645,7 +17645,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 306
+            "line": 308
           },
           "name": "api",
           "type": {
@@ -17659,7 +17659,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 321
+            "line": 323
           },
           "name": "controllerFunction",
           "type": {
@@ -17673,7 +17673,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 331
+            "line": 333
           },
           "name": "endpoint",
           "type": {
@@ -17687,7 +17687,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 316
+            "line": 318
           },
           "name": "routeAuthorizer",
           "type": {
@@ -17701,7 +17701,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 326
+            "line": 328
           },
           "name": "sessionTable",
           "type": {
@@ -17715,7 +17715,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 311
+            "line": 313
           },
           "name": "stage",
           "type": {
@@ -17729,7 +17729,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 336
+            "line": 338
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -17754,7 +17754,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 131
+        "line": 133
       },
       "name": "AppTheoryMicrovmControllerFunctionProps",
       "symbolId": "lib/microvm-controller:AppTheoryMicrovmControllerFunctionProps"
@@ -17769,7 +17769,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 136
+        "line": 138
       },
       "name": "AppTheoryMicrovmControllerProps",
       "properties": [
@@ -17782,7 +17782,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 151
+            "line": 153
           },
           "name": "authorizer",
           "type": {
@@ -17798,7 +17798,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 143
+            "line": 145
           },
           "name": "controller",
           "type": {
@@ -17814,7 +17814,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 172
+            "line": 174
           },
           "name": "egressNetworkConnectors",
           "type": {
@@ -17835,7 +17835,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 165
+            "line": 167
           },
           "name": "ingressNetworkConnectors",
           "type": {
@@ -17855,7 +17855,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 156
+            "line": 158
           },
           "name": "microvmImage",
           "type": {
@@ -17871,7 +17871,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 181
+            "line": 183
           },
           "name": "shellIngressNetworkConnector",
           "type": {
@@ -17887,7 +17887,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 198
+            "line": 200
           },
           "name": "apiName",
           "optional": true,
@@ -17905,7 +17905,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 291
+            "line": 293
           },
           "name": "authorizerCacheTtl",
           "optional": true,
@@ -17922,7 +17922,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 275
+            "line": 277
           },
           "name": "authorizerHeaderName",
           "optional": true,
@@ -17939,7 +17939,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 282
+            "line": 284
           },
           "name": "authorizerName",
           "optional": true,
@@ -17956,7 +17956,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 240
+            "line": 242
           },
           "name": "enableSessionTablePointInTimeRecovery",
           "optional": true,
@@ -17974,7 +17974,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 191
+            "line": 193
           },
           "name": "executionRole",
           "optional": true,
@@ -17991,7 +17991,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 219
+            "line": 221
           },
           "name": "sessionTableBillingMode",
           "optional": true,
@@ -18008,7 +18008,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 233
+            "line": 235
           },
           "name": "sessionTableDeletionProtection",
           "optional": true,
@@ -18025,7 +18025,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 247
+            "line": 249
           },
           "name": "sessionTableEncryption",
           "optional": true,
@@ -18042,7 +18042,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 254
+            "line": 256
           },
           "name": "sessionTableEncryptionKey",
           "optional": true,
@@ -18059,7 +18059,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 212
+            "line": 214
           },
           "name": "sessionTableName",
           "optional": true,
@@ -18076,7 +18076,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 261
+            "line": 263
           },
           "name": "sessionTableReadCapacity",
           "optional": true,
@@ -18093,7 +18093,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 226
+            "line": 228
           },
           "name": "sessionTableRemovalPolicy",
           "optional": true,
@@ -18110,7 +18110,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 268
+            "line": 270
           },
           "name": "sessionTableWriteCapacity",
           "optional": true,
@@ -18127,7 +18127,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 205
+            "line": 207
           },
           "name": "stage",
           "optional": true,
@@ -18148,7 +18148,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 85
+        "line": 87
       },
       "name": "AppTheoryMicrovmControllerStageOptions",
       "properties": [
@@ -18161,7 +18161,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 98
+            "line": 100
           },
           "name": "accessLogging",
           "optional": true,
@@ -18179,7 +18179,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 106
+            "line": 108
           },
           "name": "accessLogRetention",
           "optional": true,
@@ -18196,7 +18196,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 91
+            "line": 93
           },
           "name": "stageName",
           "optional": true,
@@ -18213,7 +18213,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 120
+            "line": 122
           },
           "name": "throttlingBurstLimit",
           "optional": true,
@@ -18230,7 +18230,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 113
+            "line": 115
           },
           "name": "throttlingRateLimit",
           "optional": true,
@@ -18250,7 +18250,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 39
+        "line": 47
       },
       "members": [
         {
@@ -18280,7 +18280,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/microvm-image.ts",
-          "line": 362
+          "line": 375
         },
         "parameters": [
           {
@@ -18309,7 +18309,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 321
+        "line": 329
       },
       "name": "AppTheoryMicrovmImage",
       "properties": [
@@ -18320,7 +18320,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 355
+            "line": 368
           },
           "name": "createdAt",
           "type": {
@@ -18334,7 +18334,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 345
+            "line": 358
           },
           "name": "latestActiveImageVersion",
           "type": {
@@ -18348,11 +18348,26 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 350
+            "line": 363
           },
           "name": "latestFailedImageVersion",
           "type": {
             "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The normalized deployment-owned runtime logging posture for this image."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 348
+          },
+          "name": "logging",
+          "overrides": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmImage",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageLogging"
           }
         },
         {
@@ -18362,7 +18377,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 325
+            "line": 333
           },
           "name": "microvmImage",
           "type": {
@@ -18376,7 +18391,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 335
+            "line": 343
           },
           "name": "microvmImageArn",
           "overrides": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmImage",
@@ -18391,7 +18406,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 330
+            "line": 338
           },
           "name": "microvmImageName",
           "type": {
@@ -18405,7 +18420,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 340
+            "line": 353
           },
           "name": "microvmImageState",
           "type": {
@@ -18419,7 +18434,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 360
+            "line": 373
           },
           "name": "updatedAt",
           "type": {
@@ -18439,7 +18454,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 91
+        "line": 99
       },
       "name": "AppTheoryMicrovmImageBuildHooks",
       "properties": [
@@ -18451,7 +18466,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 95
+            "line": 103
           },
           "name": "ready",
           "optional": true,
@@ -18467,7 +18482,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 100
+            "line": 108
           },
           "name": "readyTimeoutInSeconds",
           "optional": true,
@@ -18483,7 +18498,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 105
+            "line": 113
           },
           "name": "validate",
           "optional": true,
@@ -18499,7 +18514,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 110
+            "line": 118
           },
           "name": "validateTimeoutInSeconds",
           "optional": true,
@@ -18520,7 +18535,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 181
+        "line": 189
       },
       "name": "AppTheoryMicrovmImageCloudWatchLogging",
       "properties": [
@@ -18532,7 +18547,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 185
+            "line": 193
           },
           "name": "logGroup",
           "optional": true,
@@ -18548,7 +18563,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 190
+            "line": 198
           },
           "name": "logStream",
           "optional": true,
@@ -18569,7 +18584,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 54
+        "line": 62
       },
       "name": "AppTheoryMicrovmImageCodeArtifact",
       "properties": [
@@ -18581,7 +18596,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 58
+            "line": 66
           },
           "name": "uri",
           "type": {
@@ -18600,7 +18615,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 29
+        "line": 37
       },
       "members": [
         {
@@ -18623,7 +18638,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 64
+        "line": 72
       },
       "name": "AppTheoryMicrovmImageCpuConfiguration",
       "properties": [
@@ -18636,7 +18651,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 70
+            "line": 78
           },
           "name": "architecture",
           "optional": true,
@@ -18657,7 +18672,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 76
+        "line": 84
       },
       "name": "AppTheoryMicrovmImageEnvironmentVariable",
       "properties": [
@@ -18669,7 +18684,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 80
+            "line": 88
           },
           "name": "key",
           "type": {
@@ -18684,7 +18699,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 85
+            "line": 93
           },
           "name": "value",
           "type": {
@@ -18704,7 +18719,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 161
+        "line": 169
       },
       "name": "AppTheoryMicrovmImageHooks",
       "properties": [
@@ -18716,7 +18731,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 165
+            "line": 173
           },
           "name": "microvmHooks",
           "optional": true,
@@ -18732,7 +18747,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 170
+            "line": 178
           },
           "name": "microvmImageHooks",
           "optional": true,
@@ -18748,7 +18763,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 175
+            "line": 183
           },
           "name": "port",
           "optional": true,
@@ -18769,7 +18784,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 196
+        "line": 204
       },
       "name": "AppTheoryMicrovmImageLogging",
       "properties": [
@@ -18781,7 +18796,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 200
+            "line": 208
           },
           "name": "cloudWatch",
           "optional": true,
@@ -18797,7 +18812,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 205
+            "line": 213
           },
           "name": "disabled",
           "optional": true,
@@ -18817,7 +18832,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 19
+        "line": 27
       },
       "members": [
         {
@@ -18840,7 +18855,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 221
+        "line": 229
       },
       "name": "AppTheoryMicrovmImageProps",
       "properties": [
@@ -18852,7 +18867,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 235
+            "line": 243
           },
           "name": "baseImageArn",
           "type": {
@@ -18867,7 +18882,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 240
+            "line": 248
           },
           "name": "baseImageVersion",
           "type": {
@@ -18882,7 +18897,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 245
+            "line": 253
           },
           "name": "buildRoleArn",
           "type": {
@@ -18897,7 +18912,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 250
+            "line": 258
           },
           "name": "codeArtifact",
           "type": {
@@ -18912,7 +18927,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 230
+            "line": 238
           },
           "name": "description",
           "type": {
@@ -18928,7 +18943,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 258
+            "line": 266
           },
           "name": "egressNetworkConnectors",
           "type": {
@@ -18949,7 +18964,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 269
+            "line": 277
           },
           "name": "hooks",
           "type": {
@@ -18965,7 +18980,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 276
+            "line": 284
           },
           "name": "logging",
           "type": {
@@ -18980,7 +18995,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 225
+            "line": 233
           },
           "name": "name",
           "type": {
@@ -18996,7 +19011,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 283
+            "line": 291
           },
           "name": "resources",
           "type": {
@@ -19017,7 +19032,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 290
+            "line": 298
           },
           "name": "additionalOsCapabilities",
           "optional": true,
@@ -19039,7 +19054,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 297
+            "line": 305
           },
           "name": "cpuConfigurations",
           "optional": true,
@@ -19061,7 +19076,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 304
+            "line": 312
           },
           "name": "environmentVariables",
           "optional": true,
@@ -19082,7 +19097,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 309
+            "line": 317
           },
           "name": "tags",
           "optional": true,
@@ -19108,7 +19123,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 211
+        "line": 219
       },
       "name": "AppTheoryMicrovmImageResources",
       "properties": [
@@ -19120,7 +19135,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 215
+            "line": 223
           },
           "name": "minimumMemoryInMiB",
           "type": {
@@ -20023,7 +20038,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 116
+        "line": 124
       },
       "name": "AppTheoryMicrovmRuntimeHooks",
       "properties": [
@@ -20035,7 +20050,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 120
+            "line": 128
           },
           "name": "resume",
           "optional": true,
@@ -20051,7 +20066,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 125
+            "line": 133
           },
           "name": "resumeTimeoutInSeconds",
           "optional": true,
@@ -20067,7 +20082,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 130
+            "line": 138
           },
           "name": "run",
           "optional": true,
@@ -20083,7 +20098,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 135
+            "line": 143
           },
           "name": "runTimeoutInSeconds",
           "optional": true,
@@ -20099,7 +20114,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 140
+            "line": 148
           },
           "name": "suspend",
           "optional": true,
@@ -20115,7 +20130,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 145
+            "line": 153
           },
           "name": "suspendTimeoutInSeconds",
           "optional": true,
@@ -20131,7 +20146,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 150
+            "line": 158
           },
           "name": "terminate",
           "optional": true,
@@ -20147,7 +20162,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 155
+            "line": 163
           },
           "name": "terminateTimeoutInSeconds",
           "optional": true,
@@ -26517,6 +26532,22 @@
         {
           "abstract": true,
           "docs": {
+            "remarks": "Controllers propagate this exact CloudWatch-or-disabled choice to every\n`RunMicrovm` request.",
+            "summary": "The normalized deployment-owned runtime logging posture for this image."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 21
+          },
+          "name": "logging",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageLogging"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
             "summary": "The ARN of the MicroVM image."
           },
           "immutable": true,
@@ -26997,5 +27028,5 @@
     }
   },
   "version": "1.17.1",
-  "fingerprint": "k7sf+5if/jgUJjim/8cKhtz2U2Js31E5t1Rj0Flzbf0="
+  "fingerprint": "MgCmOQcOKWTF/4lwTuJPhK3jz/IDFOVnGgsPFWbrF6k="
 }

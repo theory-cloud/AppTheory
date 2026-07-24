@@ -5,9 +5,10 @@ description: The AppTheory CDK golden path for corrective M16 AWS Lambda MicroVM
 
 # Lambda MicroVM CDK Constructs
 
-AppTheory's MicroVM CDK surface is the deployment side of the corrective M16 MicroVM contract. The `v1.14.0` / M15
-foundation should not be cited as complete live MicroVM support; new controller docs, examples, and conformance proof use
-`m16.microvm/v1` and the real operation vocabulary.
+AppTheory's MicroVM CDK surface is the deployment side of the corrective M16 MicroVM contract. AppTheory 2.0 adds one
+required deployment-owned runtime logging posture to that path. The `v1.14.0` / M15 foundation should not be cited as
+complete live MicroVM support; new controller docs, examples, and conformance proof use `m16.microvm/v1`, the real
+operation vocabulary, and explicit CloudWatch-or-disabled logging.
 
 Use these constructs together:
 
@@ -97,6 +98,38 @@ When AWS hook integration is intentionally configured, hook fields on the image 
 Application lifecycle behavior still belongs to AppTheory runtime lifecycle adapters. The image construct is not a raw
 lifecycle hook bypass, and hook configuration is not the workload HTTP access path.
 
+## Explicit runtime logging
+
+`AppTheoryMicrovmImage.logging` is both the image logging configuration and the normalized posture the controller
+propagates to every `RunMicrovm` request. Specify exactly one:
+
+```ts
+logging: {
+  cloudWatch: {
+    logGroup: "/aws/lambda/microvms/my-service",
+    logStream: "runtime",
+  },
+}
+```
+
+or:
+
+```ts
+logging: { disabled: true }
+```
+
+Omitted logging, both members, and `disabled: false` fail closed. CloudWatch mode also requires
+`AppTheoryMicrovmController.executionRole`; disabled mode remains role-optional.
+
+For CloudWatch mode, the caller-owned MicroVM execution role must trust Lambda for `sts:AssumeRole`, allow
+`sts:TagSession`, and allow `logs:CreateLogGroup`, `logs:CreateLogStream`, and `logs:PutLogEvents`. This is not the image
+build role or the controller Lambda role. AppTheory grants pass-role access but deliberately does not inspect or mutate
+arbitrary role policies.
+
+Imported or structural `IAppTheoryMicrovmImage` references must include the same normalized `logging` property. See the
+[AppTheory 2.0 MicroVM runtime logging migration](../migration/microvm-runtime-logging-v2.md) for examples and failure
+modes.
+
 ## Controller deployment
 
 `AppTheoryMicrovmController` provisions:
@@ -120,6 +153,7 @@ Required props:
 | `ingressNetworkConnectors` | yes | Ingress connector references the controller may pass to Lambda MicroVMs. |
 | `egressNetworkConnectors` | yes | Egress connector references the controller may pass to Lambda MicroVMs. |
 | `shellIngressNetworkConnector` | yes | Shell-ingress connector required for `shell-auth-token` support. |
+| `executionRole` | for CloudWatch logging | MicroVM execution role. CloudWatch logging fails synthesis when this is omitted. |
 
 Controller routes are fixed:
 
@@ -162,13 +196,15 @@ The construct sets these controller environment variables:
 | `APPTHEORY_MICROVM_EGRESS_NETWORK_CONNECTOR_REFS` | Permitted egress connector references. |
 | `APPTHEORY_MICROVM_SHELL_INGRESS_NETWORK_CONNECTOR_REF` | Required shell-ingress connector reference. |
 | `APPTHEORY_MICROVM_EXECUTION_ROLE_ARN` | Present only when an execution role is supplied; the real runtime controller reads it and passes it to provider `RunMicrovm` as the MicroVM execution role. |
+| `APPTHEORY_MICROVM_LOGGING` | Required canonical JSON logging union copied from `microvmImage.logging`; either `cloud_watch` or `disabled`. |
 
 Reserved environment variables cannot be overridden through `controller.environment`.
 
-When `executionRole` is supplied, controller handlers should stay on the AppTheory MicroVM golden path: construct the
-real controller through `NewRealController` / `createRealMicroVMController` / `create_real_microvm_controller` and use the
-official provider adapter. Those controllers consume `APPTHEORY_MICROVM_EXECUTION_ROLE_ARN` automatically. Do not accept
-caller-provided role ARNs over the HTTP route and do not fork the AWS SDK provider only to set `ExecutionRoleArn`.
+Controller handlers should stay on the AppTheory MicroVM golden path: construct the real controller through
+`NewRealController` / `createRealMicroVMController` / `create_real_microvm_controller` and use the official provider
+adapter. Those controllers consume `APPTHEORY_MICROVM_EXECUTION_ROLE_ARN` and `APPTHEORY_MICROVM_LOGGING` automatically.
+Do not accept caller-provided role ARNs or logging over the HTTP route, and do not fork the AWS SDK provider only to set
+`ExecutionRoleArn` or `Logging`.
 
 ## Session table shape
 
@@ -207,9 +243,12 @@ model can tolerate cached decisions.
 ## Evidence boundary and non-goals
 
 The CDK docs and examples demonstrate repo-local wiring for the AppTheory construct surface. The reference example has
-been live-smoked in `us-east-1` with Go, TypeScript, and Python workloads through the AppTheory invoke route. That does
-not prove EqualToAI/Host application behavior, customer workload readiness, arbitrary cloud mutation, account vending,
-VPC creation, or that unauthenticated controllers are acceptable.
+been live-smoked in `us-east-1` with Go, TypeScript, and Python workloads through the AppTheory invoke route. Factory
+EqualToAI separately confirmed in a controlled lesser-host A/B that an omitted per-run AWS logging union produced no
+stream/events while explicit CloudWatch logging delivered guest output. That causation evidence does not prove
+EqualToAI/Host application behavior after this change, customer workload readiness, arbitrary cloud mutation, account
+vending, VPC creation, or that unauthenticated controllers are acceptable. Factory owns the external post-change
+acceptance run; AppTheory's repository gates do not deploy AWS resources.
 
 AppTheory intentionally does not add:
 

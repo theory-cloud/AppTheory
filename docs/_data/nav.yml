@@ -69,6 +69,7 @@ groups:
     items:
       - { id: mig-from-lift,          title: From Lift,               url: /migration/from-lift/,                          icon: arrow-right }
       - { id: mig-v1-security,        title: v1 Security Migration,   url: /migration/v1-security/,                        icon: shield-check }
+      - { id: mig-microvm-v2,         title: MicroVM Logging v2,      url: /migration/microvm-runtime-logging-v2/,          icon: activity, tag: new }
       - { id: mig-appsync,            title: AppSync Resolvers,       url: /migration/appsync-lambda-resolvers/,           icon: git-branch }
 
   - label: Guides
@@ -122,6 +123,7 @@ order:
   - cdk-appsync
   - mig-from-lift
   - mig-v1-security
+  - mig-microvm-v2
   - mig-appsync
   - testing-guide
   - troubleshooting
@@ -172,6 +174,7 @@ url_to_id:
   /cdk/appsync-lambda-resolvers/:               cdk-appsync
   /migration/from-lift/:                        mig-from-lift
   /migration/v1-security/:                      mig-v1-security
+  /migration/microvm-runtime-logging-v2/:        mig-microvm-v2
   /migration/appsync-lambda-resolvers/:         mig-appsync
   /testing-guide/:                              testing-guide
   /troubleshooting/:                            troubleshooting

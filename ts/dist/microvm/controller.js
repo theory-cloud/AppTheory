@@ -2,7 +2,7 @@ import { MICROVM_AWS_LAMBDA_PROVIDER_ID, MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_RE
 import { safeError } from "./errors.js";
 import { normalizeMicroVMCommand } from "./controller-contract.js";
 import { mapMicroVMProviderState, normalizeMicroVMOperation, normalizeMicroVMRealLifecycleState, requiredMicroVMRealLifecycleStates, } from "./operation-contract.js";
-import { cloneMicroVMProviderSession, environmentMicroVMExecutionRoleArn, microVMProviderSessionKeyString, normalizeMicroVMExecutionRoleArn, normalizeMicroVMProviderInvokeInput, normalizeMicroVMProviderInvokePath, normalizeMicroVMProviderSession, normalizeMicroVMProviderToken, sanitizeMicroVMProviderInvokeHeaders, normalizeStringArray, validateMicroVMExecutionRoleArn, validateMicroVMProviderSession, validateMicroVMProviderToken, } from "./provider.js";
+import { cloneMicroVMProviderSession, environmentMicroVMProviderLogging, environmentMicroVMExecutionRoleArn, microVMProviderSessionKeyString, normalizeMicroVMExecutionRoleArn, normalizeMicroVMProviderInvokeInput, normalizeMicroVMProviderLogging, normalizeMicroVMProviderInvokePath, normalizeMicroVMProviderSession, normalizeMicroVMProviderToken, sanitizeMicroVMProviderInvokeHeaders, normalizeStringArray, validateMicroVMExecutionRoleArn, validateMicroVMProviderLogging, validateMicroVMProviderSession, validateMicroVMProviderToken, } from "./provider.js";
 import { cloneMicroVMSessionTokenMetadataList, microVMSessionTokenMetadataFromProviderToken, normalizeMicroVMSessionRecord, normalizeMicroVMSessionStatus, validateMicroVMSessionRecord, validateMicroVMSessionStatus, } from "./session.js";
 import { cloneStringMap, validateSafeMicroVMFieldValue, validateSafeMicroVMMetadata, } from "./safety.js";
 import { cloneMicroVMDate, randomMicroVMSessionID, validDate } from "./time.js";
@@ -122,6 +122,7 @@ export class MicroVMRealController {
     controllerID;
     providerID;
     executionRoleArn;
+    logging;
     deploymentDefaults;
     clock;
     ids;
@@ -146,6 +147,12 @@ export class MicroVMRealController {
         if (executionRoleErr) {
             throw safeError(MICROVM_ERROR_INVALID_CONTROLLER_REQUEST, "apptheory: microvm execution role arn is invalid", "");
         }
+        const configuredLogging = options.logging ?? environmentMicroVMProviderLogging();
+        const loggingErr = validateMicroVMProviderLogging(configuredLogging, this.executionRoleArn, "");
+        if (loggingErr) {
+            throw safeError(MICROVM_ERROR_INVALID_CONTROLLER_REQUEST, "apptheory: microvm runtime logging configuration is invalid", "");
+        }
+        this.logging = normalizeMicroVMProviderLogging(configuredLogging);
         this.deploymentDefaults = normalizeMicroVMControllerDeploymentDefaults(options.deployment_defaults ??
             environmentMicroVMControllerDeploymentDefaults());
         this.clock = options.clock ?? { now: () => new Date() };
@@ -252,6 +259,7 @@ export class MicroVMRealController {
                 ],
                 session_spec: cloneMicroVMSessionSpec(requestWithSession.session_spec),
                 maximum_duration_seconds: requestWithSession.maximum_duration_seconds,
+                logging: normalizeMicroVMProviderLogging(this.logging),
             };
             if (this.executionRoleArn) {
                 input.execution_role_arn = this.executionRoleArn;

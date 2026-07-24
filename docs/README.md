@@ -8,7 +8,7 @@
 | **Core Guides** | [Core Patterns](./core-patterns.md) &#124; [Testing](./testing-guide.md) &#124; [Troubleshooting](./troubleshooting.md) &#124; [Operations](./guides/operations.md) |
 | **MCP** | [Integration Guide](./integrations/mcp.md) &#124; [Remote MCP](./integrations/remote-mcp.md) &#124; [Examples](../examples/mcp/) |
 | **CDK** | [CDK Guide](./cdk/README.md) &#124; [CDK Examples](../examples/cdk/) |
-| **Migration** | [From Lift](./migration/from-lift.md) &#124; [Migration Guide](./migration-guide.md) |
+| **Migration** | [From Lift](./migration/from-lift.md) &#124; [MicroVM Logging v2](./migration/microvm-runtime-logging-v2.md) &#124; [Migration Guide](./migration-guide.md) |
 
 ---
 
@@ -57,6 +57,7 @@ These pages are versioned with the docs contract, but they are not part of the i
 
 - [Migration Procedures](./migration/from-lift.md) and related files under `docs/migration/**`
   `docs/migration-guide.md` is the canonical migration overview; `docs/migration/**` contains procedures and must not add a second `README.md` or `index.md` entrypoint.
+- [AppTheory 2.0 MicroVM Runtime Logging](./migration/microvm-runtime-logging-v2.md)
 - [AppSync Lambda Resolver Recipe](./migration/appsync-lambda-resolvers.md)
 - [CDK Guides](./cdk/README.md) and related files under `docs/cdk/**`
 - [Feature Guides](./features/README.md) and related files under `docs/features/**`

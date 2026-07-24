@@ -150,6 +150,7 @@ func fakeRunInput(requestID, sessionID, imageRef string) runtimemicrovm.Provider
 		ImageRef:            imageRef,
 		NetworkConnectorRef: "network-ref",
 		SessionSpec:         runtimemicrovm.SessionSpec{Metadata: map[string]string{"purpose": "test"}},
+		Logging:             runtimemicrovm.ProviderLogging{Disabled: true},
 	}
 }
 

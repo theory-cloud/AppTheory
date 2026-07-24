@@ -22,6 +22,10 @@ func TestAWSLambdaMicroVMProviderMapsOfficialSDKOperations(t *testing.T) {
 
 	runInput := validProviderRunInput()
 	runInput.ExecutionRoleArn = "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole"
+	runInput.Logging = ProviderLogging{CloudWatch: &ProviderCloudWatchLogging{
+		LogGroup:  "/aws/lambda/microvm/apptheory",
+		LogStream: "runtime",
+	}}
 	run, err := provider.Run(context.Background(), runInput)
 	require.NoError(t, err)
 	require.Equal(t, "provider-1", run.ProviderMicroVMID)
@@ -31,6 +35,10 @@ func TestAWSLambdaMicroVMProviderMapsOfficialSDKOperations(t *testing.T) {
 	require.Equal(t, "image-ref", aws.ToString(api.runInput.ImageIdentifier))
 	require.Equal(t, "req-run", aws.ToString(api.runInput.ClientToken))
 	require.Equal(t, "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole", aws.ToString(api.runInput.ExecutionRoleArn))
+	cloudWatchLogging, ok := api.runInput.Logging.(*lambdatypes.LoggingMemberCloudWatch)
+	require.True(t, ok)
+	require.Equal(t, "/aws/lambda/microvm/apptheory", aws.ToString(cloudWatchLogging.Value.LogGroup))
+	require.Equal(t, "runtime", aws.ToString(cloudWatchLogging.Value.LogStream))
 	require.Equal(t, []string{"egress-ref", "network-ref"}, api.runInput.EgressNetworkConnectors)
 	require.Equal(t, []string{"ingress-ref"}, api.runInput.IngressNetworkConnectors)
 	require.Nil(t, api.runInput.RunHookPayload, "endpoint-dispatched MicroVM images must not receive AWS run-hook payloads")
@@ -91,6 +99,17 @@ func TestAWSLambdaMicroVMProviderMapsOfficialSDKOperations(t *testing.T) {
 		"CreateMicrovmAuthToken",
 		"CreateMicrovmShellAuthToken",
 	})
+}
+
+func TestAWSLambdaMicroVMProviderMapsDisabledLoggingUnion(t *testing.T) {
+	now := time.Unix(525, 0).UTC()
+	api := newRecordingLambdaMicroVMAPI(now)
+	provider := &AWSLambdaMicroVMProvider{api: api, clock: providerClock{now: now}}
+
+	_, err := provider.Run(context.Background(), validProviderRunInput())
+	require.NoError(t, err)
+	_, ok := api.runInput.Logging.(*lambdatypes.LoggingMemberDisabled)
+	require.True(t, ok)
 }
 
 func TestAWSLambdaMicroVMProviderInvokeMintsInternalTokenAndSanitizes(t *testing.T) {
@@ -366,6 +385,22 @@ func TestProviderValidationBranches(t *testing.T) {
 	requireSafeError(t, ValidateProviderRunInput(badRun), ErrorCodeProviderRequestInvalid)
 	badRun = run
 	badRun.MaximumDurationSeconds = -1
+	requireSafeError(t, ValidateProviderRunInput(badRun), ErrorCodeProviderRequestInvalid)
+	badRun = run
+	badRun.Logging = ProviderLogging{}
+	requireSafeError(t, ValidateProviderRunInput(badRun), ErrorCodeProviderRequestInvalid)
+	badRun = run
+	badRun.Logging = ProviderLogging{Disabled: true, CloudWatch: &ProviderCloudWatchLogging{}}
+	requireSafeError(t, ValidateProviderRunInput(badRun), ErrorCodeProviderRequestInvalid)
+	badRun = run
+	badRun.Logging = ProviderLogging{CloudWatch: &ProviderCloudWatchLogging{}}
+	requireSafeError(t, ValidateProviderRunInput(badRun), ErrorCodeProviderRequestInvalid)
+	badRun.ExecutionRoleArn = "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole"
+	require.NoError(t, ValidateProviderRunInput(badRun))
+	badRun.Logging.CloudWatch.LogGroup = "invalid group"
+	requireSafeError(t, ValidateProviderRunInput(badRun), ErrorCodeProviderRequestInvalid)
+	badRun.Logging.CloudWatch.LogGroup = ""
+	badRun.Logging.CloudWatch.LogStream = "invalid:stream"
 	requireSafeError(t, ValidateProviderRunInput(badRun), ErrorCodeProviderRequestInvalid)
 
 	binding := ProviderSessionBinding{TenantID: "tenant-1", Namespace: "namespace-1", SessionID: "session-1", ProviderMicroVMID: "provider-1"}
@@ -652,6 +687,7 @@ func validProviderRunInput() ProviderRunInput {
 			SuspendedDurationSeconds: 120,
 		},
 		MaximumDurationSeconds: 300,
+		Logging:                ProviderLogging{Disabled: true},
 	}
 }
 

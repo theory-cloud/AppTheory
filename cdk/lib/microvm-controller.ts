@@ -9,7 +9,7 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
 
-import type { IAppTheoryMicrovmImage } from "./microvm-image";
+import type { AppTheoryMicrovmImageLogging, IAppTheoryMicrovmImage } from "./microvm-image";
 import {
   AppTheoryMicrovmNetworkConnectorKind,
   type IAppTheoryMicrovmNetworkConnector,
@@ -61,6 +61,7 @@ const ENV_INGRESS_NETWORK_CONNECTOR_REFS = "APPTHEORY_MICROVM_INGRESS_NETWORK_CO
 const ENV_EGRESS_NETWORK_CONNECTOR_REFS = "APPTHEORY_MICROVM_EGRESS_NETWORK_CONNECTOR_REFS";
 const ENV_SHELL_INGRESS_NETWORK_CONNECTOR_REF = "APPTHEORY_MICROVM_SHELL_INGRESS_NETWORK_CONNECTOR_REF";
 const ENV_EXECUTION_ROLE_ARN = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN";
+const ENV_LOGGING = "APPTHEORY_MICROVM_LOGGING";
 
 const RESERVED_ENV_KEYS = [
   ENV_CONTRACT_NAME,
@@ -77,6 +78,7 @@ const RESERVED_ENV_KEYS = [
   ENV_EGRESS_NETWORK_CONNECTOR_REFS,
   ENV_SHELL_INGRESS_NETWORK_CONNECTOR_REF,
   ENV_EXECUTION_ROLE_ARN,
+  ENV_LOGGING,
 ];
 
 /**
@@ -363,6 +365,7 @@ export class AppTheoryMicrovmController extends Construct {
     );
     const allIngressConnectorArns = dedupeConnectorArns([...ingressConnectorArns, shellIngressConnectorArn]);
     assertNoDuplicates([...allIngressConnectorArns, ...egressConnectorArns], "controller networkConnectorArn");
+    const loggingEnvironment = controllerLoggingEnvironment(props.microvmImage.logging, props.executionRole);
     const authorizerHeaderName = normalizeHeaderName(props.authorizerHeaderName ?? "Authorization");
     const stageOpts = props.stage ?? {};
     const stageName = normalizeStageName(stageOpts.stageName ?? "$default");
@@ -390,6 +393,7 @@ export class AppTheoryMicrovmController extends Construct {
       allIngressConnectorArns,
       egressConnectorArns,
       shellIngressConnectorArn,
+      loggingEnvironment,
     );
     this.sessionTable.grantReadWriteData(this.controllerFunction);
     this.grantMicrovmControlPlane(props);
@@ -494,6 +498,7 @@ export class AppTheoryMicrovmController extends Construct {
     ingressConnectorArns: string[],
     egressConnectorArns: string[],
     shellIngressConnectorArn: string,
+    loggingEnvironment: string,
   ): lambda.Function {
     const controllerProps = props.controller;
     const environment = buildControllerEnvironment(
@@ -512,6 +517,7 @@ export class AppTheoryMicrovmController extends Construct {
         [ENV_INGRESS_NETWORK_CONNECTOR_REFS]: ingressConnectorArns.join(","),
         [ENV_EGRESS_NETWORK_CONNECTOR_REFS]: egressConnectorArns.join(","),
         [ENV_SHELL_INGRESS_NETWORK_CONNECTOR_REF]: shellIngressConnectorArn,
+        [ENV_LOGGING]: loggingEnvironment,
         ...(props.executionRole ? { [ENV_EXECUTION_ROLE_ARN]: props.executionRole.roleArn } : {}),
       },
     );
@@ -617,6 +623,68 @@ function normalizeNoWhitespaceString(value: string | undefined, propName: string
   }
   if (!Token.isUnresolved(value) && normalized.length > maxLength) {
     throw new Error(`AppTheoryMicrovmController: ${propName} must be at most ${maxLength} characters`);
+  }
+  return normalized;
+}
+
+function controllerLoggingEnvironment(
+  logging: AppTheoryMicrovmImageLogging | undefined,
+  executionRole: iam.IRole | undefined,
+): string {
+  if (logging === undefined || logging === null) {
+    throw new Error("AppTheoryMicrovmController requires props.microvmImage.logging");
+  }
+  const hasCloudWatch = logging.cloudWatch !== undefined && logging.cloudWatch !== null;
+  const hasDisabled = logging.disabled !== undefined;
+  if (hasCloudWatch === hasDisabled) {
+    throw new Error(
+      "AppTheoryMicrovmController: props.microvmImage.logging must specify exactly one of cloudWatch or disabled",
+    );
+  }
+  if (hasDisabled) {
+    if (logging.disabled !== true) {
+      throw new Error(
+        "AppTheoryMicrovmController: props.microvmImage.logging.disabled must be true when provided",
+      );
+    }
+    return JSON.stringify({ disabled: true });
+  }
+  if (!executionRole) {
+    throw new Error(
+      "AppTheoryMicrovmController requires props.executionRole when props.microvmImage.logging.cloudWatch is configured",
+    );
+  }
+
+  const cloudWatch = logging.cloudWatch;
+  if (!cloudWatch) {
+    throw new Error("AppTheoryMicrovmController requires props.microvmImage.logging.cloudWatch");
+  }
+  const normalized: Record<string, string> = {};
+  if (cloudWatch.logGroup !== undefined) {
+    normalized.log_group = normalizeControllerLogGroup(cloudWatch.logGroup);
+  }
+  if (cloudWatch.logStream !== undefined) {
+    normalized.log_stream = normalizeControllerLogStream(cloudWatch.logStream);
+  }
+  return JSON.stringify({ cloud_watch: normalized });
+}
+
+function normalizeControllerLogGroup(value: string): string {
+  const normalized = normalizeRequiredString(value, "microvmImage.logging.cloudWatch.logGroup");
+  if (!Token.isUnresolved(value) && !/^[a-zA-Z0-9_\-/.#]{1,512}$/.test(normalized)) {
+    throw new Error(
+      "AppTheoryMicrovmController: props.microvmImage.logging.cloudWatch.logGroup is outside the CloudWatch Logs pattern",
+    );
+  }
+  return normalized;
+}
+
+function normalizeControllerLogStream(value: string): string {
+  const normalized = normalizeRequiredString(value, "microvmImage.logging.cloudWatch.logStream");
+  if (!Token.isUnresolved(value) && (!/^[^:*]*$/.test(normalized) || normalized.length > 512)) {
+    throw new Error(
+      "AppTheoryMicrovmController: props.microvmImage.logging.cloudWatch.logStream is outside the CloudWatch Logs pattern",
+    );
   }
   return normalized;
 }

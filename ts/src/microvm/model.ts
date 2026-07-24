@@ -8,6 +8,8 @@ export const MICROVM_CONTRACT_VERSION = "m15.microvm/v1";
 export const MICROVM_ENV_EXECUTION_ROLE_ARN =
   "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN";
 
+export const MICROVM_ENV_LOGGING = "APPTHEORY_MICROVM_LOGGING";
+
 export const MICROVM_ENV_IMAGE_REF = "APPTHEORY_MICROVM_IMAGE_REF";
 
 export const MICROVM_ENV_NETWORK_CONNECTOR_REFS =
@@ -271,6 +273,16 @@ export interface MicroVMProviderIdlePolicy {
   suspended_duration_seconds: number;
 }
 
+export interface MicroVMProviderCloudWatchLogging {
+  log_group?: string;
+  log_stream?: string;
+}
+
+export interface MicroVMProviderLogging {
+  cloud_watch?: MicroVMProviderCloudWatchLogging;
+  disabled?: boolean;
+}
+
 export interface MicroVMProviderRunInput {
   request_id: string;
   tenant_id: string;
@@ -286,6 +298,7 @@ export interface MicroVMProviderRunInput {
   idle_policy?: MicroVMProviderIdlePolicy;
   maximum_duration_seconds?: number;
   execution_role_arn?: string;
+  logging: MicroVMProviderLogging;
 }
 
 export interface MicroVMProviderSessionBinding {
@@ -795,6 +808,7 @@ export interface MicroVMControllerOptions {
   ttl_ms?: number;
   provider_id?: string;
   execution_role_arn?: string;
+  logging?: MicroVMProviderLogging;
   deployment_defaults?: MicroVMControllerDeploymentDefaults;
 }
 

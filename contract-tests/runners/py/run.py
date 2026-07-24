@@ -1316,6 +1316,8 @@ def compare_microvm_real_contract_fixture(
         return compare_microvm_controller_route_fixture(fixture)
     if "microvm_execution_role" in (fixture.get("expect") or {}):
         return compare_microvm_execution_role_fixture(fixture)
+    if "microvm_runtime_logging" in (fixture.get("expect") or {}):
+        return compare_microvm_runtime_logging_fixture(fixture)
 
     actual = validate_microvm_real_contract_fixture(
         (fixture.get("setup") or {}).get("microvm_contract")
@@ -1552,6 +1554,7 @@ def compare_microvm_controller_route_fixture(
         id_generator=lambda: setup["session_id"],
         clock=lambda: 1_700_000_000.0,
         deployment_defaults=setup["deployment_defaults"],
+        logging={"disabled": True},
     )
     if setup["seed_session"]:
         seeded = controller.handle(microvm_controller_route_run_request(runtime, setup))
@@ -1666,6 +1669,7 @@ def run_microvm_execution_role_fixture(
             registry,
             id_generator=lambda: setup["session_id"],
             clock=lambda: 1_700_000_000.0,
+            logging={"disabled": True},
         )
         response = controller.handle(
             microvm_controller_route_run_request(runtime, setup)
@@ -1725,6 +1729,138 @@ def normalize_microvm_execution_role_setup(setup: dict[str, Any]) -> dict[str, A
         "session_id": session_id,
         "execution_role_arn": str(setup.get("execution_role_arn") or "").strip(),
     }
+
+
+def compare_microvm_runtime_logging_fixture(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, dict[str, Any], dict[str, Any], _DummyEffectsApp]:
+    runtime = _load_apptheory_runtime()
+    setup = (fixture.get("setup") or {}).get("microvm_runtime_logging") or {}
+    cases = setup.get("cases") if isinstance(setup.get("cases"), list) else []
+    expected = (fixture.get("expect") or {}).get("microvm_runtime_logging") or {}
+    actual = {
+        "cases": [
+            run_microvm_runtime_logging_case(
+                runtime, case if isinstance(case, dict) else {}, index
+            )
+            for index, case in enumerate(cases)
+        ]
+    }
+    if actual == expected:
+        return True, "", actual, expected, _DummyEffectsApp()
+    return (
+        False,
+        "microvm_runtime_logging mismatch",
+        actual,
+        expected,
+        _DummyEffectsApp(),
+    )
+
+
+def run_microvm_runtime_logging_case(
+    runtime: Any, fixture_case: dict[str, Any], index: int
+) -> dict[str, Any]:
+    logging_env = "APPTHEORY_MICROVM_LOGGING"
+    role_env = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN"
+    previous_logging = os.environ.get(logging_env)
+    previous_role = os.environ.get(role_env)
+    if "logging" in fixture_case:
+        os.environ[logging_env] = json.dumps(
+            fixture_case["logging"], separators=(",", ":")
+        )
+    else:
+        os.environ.pop(logging_env, None)
+    execution_role_arn = str(fixture_case.get("execution_role_arn") or "").strip()
+    if execution_role_arn:
+        os.environ[role_env] = execution_role_arn
+    else:
+        os.environ.pop(role_env, None)
+    name = str(fixture_case.get("name") or "")
+    try:
+        base_provider = runtime.create_fake_microvm_provider(now=1_700_000_000.0)
+        provider = _RuntimeLoggingRecordingProvider(base_provider)
+        session_id = f"logging-session-{index + 1}"
+        controller = runtime.create_real_microvm_controller(
+            provider,
+            runtime.create_memory_microvm_session_registry(),
+            id_generator=lambda: session_id,
+            clock=lambda: 1_700_000_000.0,
+        )
+        response = controller.handle(
+            microvm_controller_route_run_request(
+                runtime,
+                {
+                    "tenant_id": "tenant-1",
+                    "namespace": "namespace-1",
+                    "session_id": session_id,
+                },
+            )
+        )
+        if getattr(response, "error", None):
+            return {
+                "name": name,
+                "valid": False,
+                "error_code": str(response.error.code or ""),
+                "error_message": str(response.error.message or ""),
+            }
+        return {
+            "name": name,
+            "valid": True,
+            "session_id": str(response.session_id or ""),
+            "state": str(response.state or ""),
+            "provider_logging": provider.logging,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "name": name,
+            "valid": False,
+            "error_code": str(getattr(exc, "code", "")),
+            "error_message": str(getattr(exc, "message", str(exc))),
+        }
+    finally:
+        if previous_logging is None:
+            os.environ.pop(logging_env, None)
+        else:
+            os.environ[logging_env] = previous_logging
+        if previous_role is None:
+            os.environ.pop(role_env, None)
+        else:
+            os.environ[role_env] = previous_role
+
+
+class _RuntimeLoggingRecordingProvider:
+    def __init__(self, base_provider: Any) -> None:
+        self._base_provider = base_provider
+        self.logging: dict[str, Any] = {}
+
+    def run(self, input_: Any) -> Any:
+        logging = getattr(input_, "logging", None)
+        cloud_watch = getattr(logging, "cloud_watch", None)
+        if cloud_watch is not None:
+            self.logging = {
+                "cloud_watch": {
+                    **(
+                        {"log_group": str(getattr(cloud_watch, "log_group", "") or "")}
+                        if getattr(cloud_watch, "log_group", "")
+                        else {}
+                    ),
+                    **(
+                        {
+                            "log_stream": str(
+                                getattr(cloud_watch, "log_stream", "") or ""
+                            )
+                        }
+                        if getattr(cloud_watch, "log_stream", "")
+                        else {}
+                    ),
+                }
+            }
+        else:
+            self.logging = {"disabled": bool(getattr(logging, "disabled", False))}
+        return self._base_provider.run(input_)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._base_provider, name)
 
 
 def normalize_microvm_controller_route_setup(setup: dict[str, Any]) -> dict[str, Any]:

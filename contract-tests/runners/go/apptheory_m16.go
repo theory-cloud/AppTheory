@@ -41,6 +41,9 @@ func runFixtureM16(f Fixture) error {
 	if f.Expect.MicroVMExecutionRole != nil {
 		return compareMicroVMExecutionRoleFixtureM16(f)
 	}
+	if f.Expect.MicroVMRuntimeLogging != nil {
+		return compareMicroVMRuntimeLoggingFixtureM16(f)
+	}
 
 	actual := validateMicroVMContractFixtureM16(f.Setup.MicroVMContract)
 	expected := f.Expect.MicroVMContractValidation
@@ -289,6 +292,7 @@ func newMicroVMRouteFixtureRuntime(setup FixtureMicroVMRouteSetup) (microVMRoute
 	controller, controllerErr := runtimemicrovm.NewRealController(
 		provider,
 		registry,
+		runtimemicrovm.WithControllerLogging(runtimemicrovm.ProviderLogging{Disabled: true}),
 		runtimemicrovm.WithControllerClock(microVMRouteFixtureClock{now: now}),
 		runtimemicrovm.WithControllerIDGenerator(microVMRouteFixtureIDs{id: setup.SessionID}),
 		runtimemicrovm.WithControllerDeploymentDefaults(runtimeMicroVMDeploymentDefaults(setup.DeploymentDefaults)),
@@ -347,6 +351,7 @@ func runMicroVMExecutionRoleFixtureM16(setup FixtureMicroVMExecutionRoleSetup) F
 	controller, err := runtimemicrovm.NewRealController(
 		provider,
 		registry,
+		runtimemicrovm.WithControllerLogging(runtimemicrovm.ProviderLogging{Disabled: true}),
 		runtimemicrovm.WithControllerClock(microVMRouteFixtureClock{now: now}),
 		runtimemicrovm.WithControllerIDGenerator(microVMRouteFixtureIDs{id: setup.SessionID}),
 	)
@@ -436,6 +441,111 @@ func restoreMicroVMFixtureEnv(key string, previous string, hadPrevious bool) {
 	if err := os.Unsetenv(key); err != nil {
 		panic(err)
 	}
+}
+
+func compareMicroVMRuntimeLoggingFixtureM16(f Fixture) error {
+	expected := f.Expect.MicroVMRuntimeLogging
+	if expected == nil {
+		return fmt.Errorf("fixture missing expect.microvm_runtime_logging")
+	}
+	actual := runMicroVMRuntimeLoggingFixtureM16(f.Setup.MicroVMRuntimeLogging)
+	if !reflect.DeepEqual(*expected, actual) {
+		return fmt.Errorf("microvm_runtime_logging mismatch: expected %+v, got %+v", *expected, actual)
+	}
+	return nil
+}
+
+func runMicroVMRuntimeLoggingFixtureM16(setup FixtureMicroVMRuntimeLoggingSetup) FixtureMicroVMRuntimeLogging {
+	out := FixtureMicroVMRuntimeLogging{Cases: make([]FixtureMicroVMRuntimeLoggingCase, 0, len(setup.Cases))}
+	for index, fixtureCase := range setup.Cases {
+		out.Cases = append(out.Cases, runMicroVMRuntimeLoggingCaseM16(index, fixtureCase))
+	}
+	return out
+}
+
+func runMicroVMRuntimeLoggingCaseM16(index int, fixtureCase FixtureMicroVMRuntimeLoggingCaseSetup) FixtureMicroVMRuntimeLoggingCase {
+	loggingPrevious, hadLogging := os.LookupEnv(runtimemicrovm.EnvLogging)
+	rolePrevious, hadRole := os.LookupEnv(runtimemicrovm.EnvExecutionRoleArn)
+	defer restoreMicroVMFixtureEnv(runtimemicrovm.EnvLogging, loggingPrevious, hadLogging)
+	defer restoreMicroVMFixtureEnv(runtimemicrovm.EnvExecutionRoleArn, rolePrevious, hadRole)
+
+	loggingJSON := strings.TrimSpace(string(fixtureCase.Logging))
+	if err := setMicroVMFixtureEnv(runtimemicrovm.EnvLogging, loggingJSON); err != nil {
+		return microVMRuntimeLoggingFromError(fixtureCase.Name, err)
+	}
+	if err := setMicroVMFixtureEnv(runtimemicrovm.EnvExecutionRoleArn, fixtureCase.ExecutionRoleArn); err != nil {
+		return microVMRuntimeLoggingFromError(fixtureCase.Name, err)
+	}
+
+	now := time.Unix(1700000000, 0).UTC()
+	provider := &microVMRuntimeLoggingFixtureProvider{
+		microVMRouteFixtureProvider: newMicroVMRouteFixtureProvider(now),
+	}
+	sessionID := fmt.Sprintf("logging-session-%d", index+1)
+	controller, err := runtimemicrovm.NewRealController(
+		provider,
+		runtimemicrovm.NewMemorySessionRegistry(),
+		runtimemicrovm.WithControllerClock(microVMRouteFixtureClock{now: now}),
+		runtimemicrovm.WithControllerIDGenerator(microVMRouteFixtureIDs{id: sessionID}),
+	)
+	if err != nil {
+		return microVMRuntimeLoggingFromError(fixtureCase.Name, err)
+	}
+	response, err := controller.Handle(
+		context.Background(),
+		microVMRouteFixtureRunRequest(FixtureMicroVMRouteSetup{
+			TenantID:  "tenant-1",
+			Namespace: "namespace-1",
+			SessionID: sessionID,
+		}),
+	)
+	if err != nil {
+		return microVMRuntimeLoggingFromError(fixtureCase.Name, err)
+	}
+	return FixtureMicroVMRuntimeLoggingCase{
+		Name:            fixtureCase.Name,
+		Valid:           true,
+		SessionID:       response.SessionID,
+		State:           string(response.State),
+		ProviderLogging: fixtureProviderLogging(provider.lastRunLogging),
+	}
+}
+
+func microVMRuntimeLoggingFromError(name string, err error) FixtureMicroVMRuntimeLoggingCase {
+	var safe runtimemicrovm.SafeError
+	if errors.As(err, &safe) {
+		return FixtureMicroVMRuntimeLoggingCase{
+			Name:         name,
+			Valid:        false,
+			ErrorCode:    safe.Code,
+			ErrorMessage: safe.Message,
+		}
+	}
+	return FixtureMicroVMRuntimeLoggingCase{Name: name, Valid: false, ErrorMessage: err.Error()}
+}
+
+func fixtureProviderLogging(logging runtimemicrovm.ProviderLogging) *FixtureMicroVMProviderLogging {
+	out := &FixtureMicroVMProviderLogging{Disabled: logging.Disabled}
+	if logging.CloudWatch != nil {
+		out.CloudWatch = &FixtureMicroVMProviderCloudWatchLogging{
+			LogGroup:  logging.CloudWatch.LogGroup,
+			LogStream: logging.CloudWatch.LogStream,
+		}
+	}
+	return out
+}
+
+type microVMRuntimeLoggingFixtureProvider struct {
+	*microVMRouteFixtureProvider
+	lastRunLogging runtimemicrovm.ProviderLogging
+}
+
+func (p *microVMRuntimeLoggingFixtureProvider) Run(
+	ctx context.Context,
+	input runtimemicrovm.ProviderRunInput,
+) (runtimemicrovm.ProviderSession, error) {
+	p.lastRunLogging = input.Logging
+	return p.microVMRouteFixtureProvider.Run(ctx, input)
 }
 
 func compareMicroVMRouteResponse(expected FixtureMicroVMControllerRoute, actual apptheory.Response) (map[string]any, error) {

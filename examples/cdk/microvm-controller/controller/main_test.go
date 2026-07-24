@@ -134,6 +134,7 @@ func TestLocalProductReconstructionHookRestoresProviderState(t *testing.T) {
 		AuthContext:         microvm.AuthContext{Subject: "subject-1", TenantID: "tenant-1", Namespace: "namespace-1"},
 		ImageRef:            "local-image",
 		NetworkConnectorRef: "local-egress",
+		Logging:             microvm.ProviderLogging{Disabled: true},
 	})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)

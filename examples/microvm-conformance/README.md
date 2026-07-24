@@ -7,6 +7,8 @@ It proves the AppTheory framework contract that can be observed from outside the
 - canonical control-plane and token routes: `run`, `get`, `list`, `suspend`, `resume`, `terminate`, `auth-token`, and `shell-auth-token`;
 - fail-closed missing/invalid auth and safe tenant/namespace negative checks;
 - tenant/namespace-bound list and get behavior, without treating AppTheory as product business truth;
+- controller-run behavior that remains deployment-owned; an HTTP request does not select a MicroVM image logging
+  destination;
 - sanitized token metadata only for `auth-token` and `shell-auth-token` responses;
 - cleanup by exercising `terminate` and requiring post-terminate terminal-or-denied behavior;
 - token/secret no-leak scanning across responses plus supplied registry-record and log artifacts.
@@ -20,11 +22,18 @@ invoke proof until it adds an external workload assertion.
 
 ## Proof boundary
 
-A local dry-run proves only that the harness, assertions, fixture transport, and leak scanner are ready. It does **not** prove live AWS Lambda MicroVM operation, mutate AWS, validate EqualToAI/Host infrastructure, or certify customer workload/platform readiness.
+A local dry-run proves only that the harness, assertions, fixture transport, and leak scanner are ready. It does **not**
+prove live AWS Lambda MicroVM operation, mutate AWS, validate EqualToAI/Host infrastructure, prove CloudWatch runtime-log
+delivery, or certify customer workload/platform readiness.
 
 Live proof exists only when EqualToAI/Host runs this harness against its deployed lab controller with real lab configuration and supplies any registry/log artifacts it wants included in the no-leak boundary.
 
 The registry checks are intentionally bounded: AppTheory verifies observable tenant/namespace binding in controller responses and supplied registry-record-like JSON artifacts. Product-owned reconstruction truth remains outside AppTheory.
+
+Factory EqualToAI separately completed a controlled lesser-host A/B that held the image version, execution role,
+connector, duration, and destination constant: omitted per-run AWS logging produced no stream/events, while explicit
+CloudWatch logging delivered guest output. That established the cause of the AppTheory 2.0 contract change. It is not a
+post-change conformance result. Factory owns the external acceptance rerun after the AppTheory milestone is ready.
 
 ## Configuration
 
@@ -36,6 +45,9 @@ Required fields:
 - `auth_token_env`: environment variable that contains the lab bearer token.
 - `tenant_id` and `namespace`: the tenant/namespace the lab token should be bound to.
 - `run.image_ref` and `run.network_connector_ref`: lab MicroVM image and connector references.
+
+There is no logging field in the harness run request. AppTheory 2.0 pins CloudWatch-or-disabled logging in the
+deployment, and the controller must reject any attempt to make it caller-controlled.
 
 Optional scanner fields:
 
@@ -81,7 +93,9 @@ python3 scripts/microvm_conformance.py run --config /path/to/equaltoai-host.lab.
 
 The harness does not print the token or response bodies. On a leak, it reports the artifact and finding type with the value suppressed.
 
-A passing live run means the supplied lab deployment satisfied the externally observable AppTheory conformance boundary at the time of the run. It is not a general AWS account audit and not a customer readiness claim.
+A passing live run means the supplied lab deployment satisfied the externally observable AppTheory conformance boundary
+at the time of the run. Runtime-log delivery remains a separate Factory acceptance observation unless the run includes
+and verifies those artifacts. It is not a general AWS account audit and not a customer readiness claim.
 
 ## Token leak scanner only
 
