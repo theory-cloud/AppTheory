@@ -18,6 +18,7 @@ from typing import Any
 
 REQUIRED_COVERAGE = {
     "happy_path": "happy path",
+    "go_module_tags": "root and nested Go module tag closure",
     "publish_recovery_race": "publish/recovery race",
     "stale_release_please_pr": "stale Release Please PR state",
     "promotion_drift": "promotion drift",
@@ -169,6 +170,7 @@ def validate_release_pr(event: dict[str, Any], diags: list[Diagnostic]) -> None:
 def validate_publisher(event: dict[str, Any], diags: list[Diagnostic]) -> None:
     tag = event.get("tag")
     source = event.get("source")
+    release_commit = event.get("releaseCommit")
     if source == "premain":
         if not isinstance(tag, str) or "-rc" not in tag:
             add(diags, "publisher:wrong-prerelease-tag", "premain publisher must use an rc tag")
@@ -182,6 +184,46 @@ def validate_publisher(event: dict[str, Any], diags: list[Diagnostic]) -> None:
         add(diags, "publisher:not-serialized", "release publishers must share the non-cancelling release-publisher queue")
     if event.get("assetsVerified") is not True:
         add(diags, "publisher:assets-not-verified", "release publisher must verify source-built assets before publication or skip")
+
+    expected_nested_tag = f"cdk-go/apptheorycdk/{tag}" if isinstance(tag, str) else None
+    if event.get("nestedModuleTag") != expected_nested_tag:
+        add(
+            diags,
+            "publisher:wrong-nested-module-tag",
+            f"nested Go module tag must be {expected_nested_tag!r}",
+        )
+    if not isinstance(release_commit, str) or not release_commit:
+        add(diags, "publisher:missing-release-commit", "publisher must pin one immutable release commit")
+    if event.get("rootModuleTagTarget") != release_commit:
+        add(
+            diags,
+            "publisher:root-module-target-mismatch",
+            "root Go tag must target the immutable release commit",
+        )
+    if event.get("nestedModuleTagTarget") != release_commit:
+        add(
+            diags,
+            "publisher:nested-module-target-mismatch",
+            "nested CDK Go tag must target the same immutable release commit",
+        )
+    if event.get("tagsCreatedWithoutOverwrite") is not True:
+        add(
+            diags,
+            "publisher:mutable-module-tags",
+            "Go module tags must be create-only and must reject conflicting refs",
+        )
+    if event.get("exactModuleResolutionVerified") is not True:
+        add(
+            diags,
+            "publisher:go-module-resolution-unverified",
+            "publisher must prove exact-version root and CDK Go module resolution",
+        )
+    if event.get("modulesVerifiedBeforePublication") is not True:
+        add(
+            diags,
+            "publisher:module-verification-after-publication",
+            "Go module tags and resolution must be proved before publication completes",
+        )
 
 
 def validate_publisher_race(event: dict[str, Any], diags: list[Diagnostic]) -> None:
