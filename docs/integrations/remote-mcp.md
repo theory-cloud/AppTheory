@@ -8,7 +8,8 @@ render_with_liquid: false
 This guide is for building **Claude Custom Connectors** using **Remote MCP** on top of AppTheory.
 
 Locked decisions:
-- **Transport:** MCP **Streamable HTTP** only (`POST/GET/DELETE /mcp` on one path)
+- **Transport:** one MCP **Streamable HTTP** path; session-ful 2025-11-25 uses `POST/GET/DELETE /mcp`, while stateless
+  2026-07-28 uses `POST /mcp`
 - **AWS edge for streaming:** API Gateway **REST API v1** + Lambda **response streaming**
 - **Auth (day‑1):** OAuth + DCR (public clients) compatible with MCP auth `2025-06-18`
 
@@ -55,8 +56,13 @@ func buildApp() *apptheory.App {
 ```
 
 Important behaviors for Claude compatibility:
-- `initialize` returns `Mcp-Session-Id` and must negotiate `protocolVersion` (`2025-11-25`).
-- `notifications/initialized` must return `202 Accepted` with no body.
+- AppTheory dual-serves the session-ful `2025-11-25` and final stateless `2026-07-28` shapes on the same handler.
+- For `2025-11-25`, `initialize` returns `Mcp-Session-Id`, later requests carry that session id, and
+  `notifications/initialized` returns `202 Accepted` with no body.
+- For `2026-07-28`, each POST identifies the protocol with `Mcp-Protocol-Version: 2026-07-28` or
+  `params._meta["io.modelcontextprotocol/protocolVersion"]`; the header takes precedence when both are present.
+- `2026-07-28` clients do not initialize and never send or receive `Mcp-Session-Id`; `DELETE /mcp` is not routed for
+  that shape. GET/subscriptions/listen support is intentionally outside this milestone.
 - `POST /mcp` requires `Content-Type: application/json` and `Accept: application/json, text/event-stream`.
 - `GET /mcp` requires `Accept: text/event-stream`.
 - `tools/call` may stream with SSE when the target tool is registered for streaming and the client advertises SSE.
@@ -82,6 +88,8 @@ Important behaviors for Claude compatibility:
   unknown or already-completed request ids.
 - MCP tasks are opt-in. AppTheory advertises `tasks` only for protocol `2025-11-25` sessions when
   `mcp.WithTaskRuntime(...)` supplies a store and at least one registered tool declares task support.
+- The stateless shape does not expose task methods or task-augmented `tools/call`; session-ful task behavior is
+  unchanged.
 - Task records are session-scoped. Products must bind the MCP session to the same principal, tenant, actor route, and
   entitlement policy used by OAuth validation before exposing task-capable tools.
 

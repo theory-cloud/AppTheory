@@ -142,6 +142,60 @@ class McpRuntimeTests(unittest.TestCase):
             MCP_PROTOCOL_SHAPE_UNKNOWN,
         )
 
+    def test_2026_07_28_requests_stay_stateless(self) -> None:
+        server = create_mcp_server(
+            "PyMCP",
+            "test",
+            {"id_generator": sequence_mcp_id_generator(["sess-after-stateless"])},
+        )
+        headers = _post_headers()
+        headers[MCP_HEADER_PROTOCOL_VERSION] = [MCP_PROTOCOL_VERSION_2026_07_28]
+
+        ping = server.serve(
+            {
+                "method": "POST",
+                "headers": headers,
+                "body": json.dumps({"jsonrpc": "2.0", "id": "ping", "method": "ping"}),
+            }
+        )
+        self.assertEqual(ping.status, 200)
+        self.assertNotIn(MCP_HEADER_SESSION_ID, ping.headers)
+        self.assertEqual(_response_json(ping), {"jsonrpc": "2.0", "id": "ping", "result": {}})
+
+        initialize = server.serve(
+            {
+                "method": "POST",
+                "headers": headers,
+                "body": json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "init",
+                        "method": "initialize",
+                        "params": {"protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28},
+                    }
+                ),
+            }
+        )
+        self.assertNotIn(MCP_HEADER_SESSION_ID, initialize.headers)
+        self.assertEqual(_response_json(initialize)["error"]["code"], MCP_CODE_METHOD_NOT_FOUND)
+
+        deleted = server.serve(
+            {
+                "method": "DELETE",
+                "headers": {MCP_HEADER_PROTOCOL_VERSION: [MCP_PROTOCOL_VERSION_2026_07_28]},
+            }
+        )
+        self.assertEqual(deleted.status, 405)
+
+        legacy = server.serve(
+            {
+                "method": "POST",
+                "headers": _post_headers(),
+                "body": json.dumps({"jsonrpc": "2.0", "id": "legacy", "method": "initialize"}),
+            }
+        )
+        self.assertEqual(legacy.headers[MCP_HEADER_SESSION_ID], ["sess-after-stateless"])
+
     def test_tools_only_harness(self) -> None:
         server = create_mcp_server("PyMCP", "test", {"id_generator": sequence_mcp_id_generator(["sess-1"])})
         server.registry().register_tool(

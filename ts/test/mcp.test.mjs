@@ -102,6 +102,43 @@ test("detectMcpProtocolVersion gives the header precedence over request _meta", 
   assert.equal(detectMcpProtocolVersion({}, { jsonrpc: "2.0", method: "ping" }), MCP_PROTOCOL_SHAPE_UNKNOWN);
 });
 
+test("mcp 2026-07-28 requests stay stateless", async () => {
+  let generatedIds = 0;
+  const server = createMcpServer("MCP", "test", {
+    idGenerator: {
+      newId() {
+        generatedIds += 1;
+        return `unexpected-${generatedIds}`;
+      },
+    },
+  });
+
+  const ping = await post(
+    server,
+    rpc("ping", "ping"),
+    { [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28] },
+  );
+  assert.equal(ping.status, 200);
+  assert.equal(sessionHeader(ping), "");
+  assert.deepEqual(await json(ping), { jsonrpc: "2.0", id: "ping", result: {} });
+  assert.equal(generatedIds, 0);
+
+  const initialize = await post(
+    server,
+    rpc("init", "initialize", { protocolVersion: MCP_PROTOCOL_VERSION_2026_07_28 }),
+    { [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28] },
+  );
+  assert.equal(sessionHeader(initialize), "");
+  assert.equal((await json(initialize)).error.code, MCP_CODE_METHOD_NOT_FOUND);
+  assert.equal(generatedIds, 0);
+
+  const deleted = await server.serve({
+    method: "DELETE",
+    headers: { [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28] },
+  });
+  assert.equal(deleted.status, 405);
+});
+
 function fakeDb() {
   const items = new Map();
   const registered = [];

@@ -760,7 +760,7 @@ export class McpServer {
             return this.handleGet(headers);
         }
         if (normalizedMethod === "DELETE") {
-            return this.handleDelete(headers);
+            return this.handleDelete(headers, body);
         }
         return jsonBytesResponse(405, { error: "method not allowed" });
     }
@@ -780,22 +780,26 @@ export class McpServer {
         catch (err) {
             return this.marshalSingleResponse(newErrorResponse(null, MCP_CODE_PARSE_ERROR, `Parse error: ${errorMessage(err)}`));
         }
+        const shape = detectMcpProtocolVersion(headers, body);
         if (Object.prototype.hasOwnProperty.call(raw, "method")) {
-            return this.handlePostRequest(headers, body);
+            return this.handlePostRequest(headers, body, shape);
         }
         if (Object.prototype.hasOwnProperty.call(raw, "result") ||
             Object.prototype.hasOwnProperty.call(raw, "error")) {
-            return this.handlePostResponse(headers, body);
+            return this.handlePostResponse(headers, body, shape);
         }
         return badRequest("invalid JSON-RPC message");
     }
-    async handlePostRequest(headers, body) {
+    async handlePostRequest(headers, body, shape) {
         let request;
         try {
             request = parseRequest(body);
         }
         catch (err) {
             return this.marshalSingleResponse(newErrorResponse(null, MCP_CODE_PARSE_ERROR, `Parse error: ${errorMessage(err)}`));
+        }
+        if (shape === MCP_PROTOCOL_SHAPE_2026_07_28) {
+            return this.handleStatelessPostRequest(request);
         }
         if (request.method === "initialize") {
             return this.handleInitializeHTTP(request);
@@ -819,12 +823,22 @@ export class McpServer {
         }
         return this.handleRequestHTTP(sessionId, session, request, headers);
     }
-    async handlePostResponse(headers, body) {
+    async handleStatelessPostRequest(request) {
+        if (!request.idPresent) {
+            return emptyResponse(202);
+        }
+        const response = await this.dispatch(request, MCP_PROTOCOL_VERSION_2026_07_28, "");
+        return this.marshalSingleResponse(response);
+    }
+    async handlePostResponse(headers, body, shape) {
         try {
             parseResponse(body);
         }
         catch {
             return badRequest("invalid JSON-RPC response");
+        }
+        if (shape === MCP_PROTOCOL_SHAPE_2026_07_28) {
+            return emptyResponse(202);
         }
         const sessionResult = await this.requireSession(headers);
         if (sessionResult.response) {
@@ -879,10 +893,13 @@ export class McpServer {
             return internalServerError();
         }
     }
-    async handleDelete(headers) {
+    async handleDelete(headers, body) {
         const originResponse = this.validateOrigin(headers);
         if (originResponse) {
             return originResponse;
+        }
+        if (detectMcpProtocolVersion(headers, body) === MCP_PROTOCOL_SHAPE_2026_07_28) {
+            return jsonBytesResponse(405, { error: "method not allowed" });
         }
         const sessionId = firstHeader(headers, MCP_HEADER_SESSION_ID);
         if (!sessionId) {
@@ -935,6 +952,10 @@ export class McpServer {
     }
     async dispatch(request, protocolVersion, sessionId) {
         if (!methodAllowedForProtocol(protocolVersion, request.method)) {
+            return newErrorResponse(request.id, MCP_CODE_METHOD_NOT_FOUND, `Method not found: ${request.method}`);
+        }
+        if (protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28 &&
+            statelessRequestRequiresSession(request)) {
             return newErrorResponse(request.id, MCP_CODE_METHOD_NOT_FOUND, `Method not found: ${request.method}`);
         }
         if (isTaskMethod(request.method)) {
@@ -1528,6 +1549,20 @@ function sessionProtocolVersion(session) {
         : MCP_PROTOCOL_VERSION_LEGACY;
 }
 function methodAllowedForProtocol(protocolVersion, method) {
+    if (protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28) {
+        return new Set([
+            "ping",
+            "tools/list",
+            "tools/call",
+            "resources/list",
+            "resources/read",
+            "resources/templates/list",
+            "logging/setLevel",
+            "completion/complete",
+            "prompts/list",
+            "prompts/get",
+        ]).has(method);
+    }
     if (!isSupportedProtocolVersion(protocolVersion)) {
         return false;
     }
@@ -1559,6 +1594,10 @@ function isTaskMethod(method) {
         "tasks/list",
         "tasks/cancel",
     ]).has(method);
+}
+function statelessRequestRequiresSession(request) {
+    return (request.method === "tools/call" &&
+        Object.prototype.hasOwnProperty.call(paramsRecord(request.params), "task"));
 }
 function parseRequest(body) {
     const raw = parseJsonObject(body);

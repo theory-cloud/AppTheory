@@ -1,0 +1,138 @@
+{
+  "id": "mcp.stateless.header_precedence_delete",
+  "tier": "mcp",
+  "name": "MCP protocol header precedence selects request shape and excludes stateless DELETE",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      }
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "stateless_header_overrides_session_metadata",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"header-stateless\",\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2025-11-25\"}}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "session_header_overrides_stateless_metadata",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"header-session\",\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "stateless_delete_not_routed",
+          "request": {
+            "method": "DELETE",
+            "path": "/mcp",
+            "headers": {
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": ""
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "header-stateless",
+            "result": {}
+          },
+          "is_base64": false
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "error": "missing Mcp-Session-Id"
+          },
+          "is_base64": false
+        },
+        {
+          "status": 405,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "error": "method not allowed"
+          },
+          "is_base64": false
+        }
+      ]
+    }
+  }
+}

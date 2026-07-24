@@ -366,6 +366,7 @@ export declare class McpServer {
     private handle;
     private handlePost;
     private handlePostRequest;
+    private handleStatelessPostRequest;
     private handlePostResponse;
     private handleGet;
     private handleDelete;

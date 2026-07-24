@@ -1253,7 +1253,7 @@ export class McpServer {
       return this.handleGet(headers);
     }
     if (normalizedMethod === "DELETE") {
-      return this.handleDelete(headers);
+      return this.handleDelete(headers, body);
     }
     return jsonBytesResponse(405, { error: "method not allowed" });
   }
@@ -1284,14 +1284,15 @@ export class McpServer {
       );
     }
 
+    const shape = detectMcpProtocolVersion(headers, body);
     if (Object.prototype.hasOwnProperty.call(raw, "method")) {
-      return this.handlePostRequest(headers, body);
+      return this.handlePostRequest(headers, body, shape);
     }
     if (
       Object.prototype.hasOwnProperty.call(raw, "result") ||
       Object.prototype.hasOwnProperty.call(raw, "error")
     ) {
-      return this.handlePostResponse(headers, body);
+      return this.handlePostResponse(headers, body, shape);
     }
     return badRequest("invalid JSON-RPC message");
   }
@@ -1299,6 +1300,7 @@ export class McpServer {
   private async handlePostRequest(
     headers: Headers,
     body: Uint8Array,
+    shape: McpProtocolShape,
   ): Promise<Response> {
     let request: ParsedRPCRequest;
     try {
@@ -1311,6 +1313,10 @@ export class McpServer {
           `Parse error: ${errorMessage(err)}`,
         ),
       );
+    }
+
+    if (shape === MCP_PROTOCOL_SHAPE_2026_07_28) {
+      return this.handleStatelessPostRequest(request);
     }
 
     if (request.method === "initialize") {
@@ -1338,14 +1344,32 @@ export class McpServer {
     return this.handleRequestHTTP(sessionId, session, request, headers);
   }
 
+  private async handleStatelessPostRequest(
+    request: ParsedRPCRequest,
+  ): Promise<Response> {
+    if (!request.idPresent) {
+      return emptyResponse(202);
+    }
+    const response = await this.dispatch(
+      request,
+      MCP_PROTOCOL_VERSION_2026_07_28,
+      "",
+    );
+    return this.marshalSingleResponse(response);
+  }
+
   private async handlePostResponse(
     headers: Headers,
     body: Uint8Array,
+    shape: McpProtocolShape,
   ): Promise<Response> {
     try {
       parseResponse(body);
     } catch {
       return badRequest("invalid JSON-RPC response");
+    }
+    if (shape === MCP_PROTOCOL_SHAPE_2026_07_28) {
+      return emptyResponse(202);
     }
     const sessionResult = await this.requireSession(headers);
     if (sessionResult.response) {
@@ -1417,10 +1441,18 @@ export class McpServer {
     }
   }
 
-  private async handleDelete(headers: Headers): Promise<Response> {
+  private async handleDelete(
+    headers: Headers,
+    body: Uint8Array,
+  ): Promise<Response> {
     const originResponse = this.validateOrigin(headers);
     if (originResponse) {
       return originResponse;
+    }
+    if (
+      detectMcpProtocolVersion(headers, body) === MCP_PROTOCOL_SHAPE_2026_07_28
+    ) {
+      return jsonBytesResponse(405, { error: "method not allowed" });
     }
     const sessionId = firstHeader(headers, MCP_HEADER_SESSION_ID);
     if (!sessionId) {
@@ -1492,6 +1524,16 @@ export class McpServer {
     sessionId: string,
   ): Promise<McpRPCResponse> {
     if (!methodAllowedForProtocol(protocolVersion, request.method)) {
+      return newErrorResponse(
+        request.id,
+        MCP_CODE_METHOD_NOT_FOUND,
+        `Method not found: ${request.method}`,
+      );
+    }
+    if (
+      protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28 &&
+      statelessRequestRequiresSession(request)
+    ) {
       return newErrorResponse(
         request.id,
         MCP_CODE_METHOD_NOT_FOUND,
@@ -2285,6 +2327,20 @@ function methodAllowedForProtocol(
   protocolVersion: string,
   method: string,
 ): boolean {
+  if (protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28) {
+    return new Set([
+      "ping",
+      "tools/list",
+      "tools/call",
+      "resources/list",
+      "resources/read",
+      "resources/templates/list",
+      "logging/setLevel",
+      "completion/complete",
+      "prompts/list",
+      "prompts/get",
+    ]).has(method);
+  }
   if (!isSupportedProtocolVersion(protocolVersion)) {
     return false;
   }
@@ -2317,6 +2373,13 @@ function isTaskMethod(method: string): boolean {
     "tasks/list",
     "tasks/cancel",
   ]).has(method);
+}
+
+function statelessRequestRequiresSession(request: ParsedRPCRequest): boolean {
+  return (
+    request.method === "tools/call" &&
+    Object.prototype.hasOwnProperty.call(paramsRecord(request.params), "task")
+  );
 }
 
 function parseRequest(body: Uint8Array): ParsedRPCRequest {
