@@ -372,7 +372,9 @@ support; the canonical real operation vocabulary is `run`, `get`, `list`, `suspe
 `invoke`, `auth-token`, and `shell-auth-token`.
 
 - Go: `runtime/microvm` exports lifecycle adapters, real controller routes, constrained provider adapters, safe session
-  records, token-hidden workload invocation, TableTheory session registry helpers, and test fakes.
+  records, token-hidden workload invocation, TableTheory session registry helpers, and test fakes. Runtime logging is
+  represented by `ProviderLogging` / `ProviderCloudWatchLogging`, configured with `WithControllerLogging`, and read
+  from `EnvLogging` by deployed real controllers.
 - TypeScript: `MicroVMLifecycleAdapter`, `MicroVMRealController`, `TableTheoryMicroVMSessionRegistry`,
   `createAWSLambdaMicroVMProvider`, `createRealMicroVMController`, and related validators.
 - Python: `MicroVMLifecycleAdapter`, `MicroVMRealController`, `TableTheoryMicroVMSessionRegistry`,
@@ -480,7 +482,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>902 exported top-level symbols</summary>
+<summary>906 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins
@@ -517,7 +519,7 @@ DynamoDBStreamEvent, DynamoDBStreamEventOptions, DynamoDBStreamHandler, DynamoDB
 DynamoJobLedger, DynamoRateLimiter, DynamoSessionStore, DynamoStreamStore, DynamoTaskStore
 Embedder, EmbeddingErrorCode, EMFMetricSink, EMFMetricSinkOption, EncodeLoggingProfileEvent
 EncodeLoggingProfileEventWithSanitizer, Env, EnvEgressNetworkConnectorRefs, EnvEmbeddingDimensions, EnvEmbeddingModelID
-EnvEmbeddingNormalize, EnvEmbeddingProvider, EnvExecutionRoleArn, EnvImageRef, EnvIngressNetworkConnectorRefs
+EnvEmbeddingNormalize, EnvEmbeddingProvider, EnvExecutionRoleArn, EnvImageRef, EnvIngressNetworkConnectorRefs, EnvLogging
 EnvironmentErrorNotificationsOptions, EnvJobsTableName, EnvNetworkConnectorRefs, EnvSessionRegistryTableName, EnvVectorBucketName
 EnvVectorDimension, EnvVectorIndexARN, EnvVectorIndexName, ErrAuthorizationCodeExpired, ErrAuthorizationCodeNotFound
 ErrBearerTokenExpired, ErrBearerTokenInsufficientScope, ErrBearerTokenInvalidAudience, ErrDimensionMismatch, ErrEmbeddingFailed
@@ -598,8 +600,8 @@ PolicyFromEnv, PolicyFromText, PolicyFullyRedact, PolicyHook, PolicyPartialMask
 PolicyRule, PrincipalAuthHook, ProfileLogger, ProfileLoggerOption, PromptArgument
 PromptDef, PromptHandler, PromptMessage, PromptRegistry, PromptResult
 ProtectedResourceMetadata, ProtectedResourceMetadataHandler, ProtectedResourceMetadataURLForRequest, ProtectedResourceWWWAuthenticate, Provider
-ProviderCall, ProviderIdlePolicy, ProviderInvokeInput, ProviderInvokeOutput, ProviderListInput
-ProviderListOutput, ProviderPortScope, ProviderRunInput, ProviderSession, ProviderSessionBinding
+ProviderCall, ProviderCloudWatchLogging, ProviderIdlePolicy, ProviderInvokeInput, ProviderInvokeOutput, ProviderListInput
+ProviderListOutput, ProviderLogging, ProviderPortScope, ProviderRunInput, ProviderSession, ProviderSessionBinding
 ProviderSessionInput, ProviderStateMapping, ProviderToken, ProviderTokenInput, PutInput
 QueryHit, QueryInput, RandomIDGenerator, RandomIdGenerator, RapidConnectXMLPatterns
 RateLimitConfig, RateLimitDecisionKey, RateLimitEntry, RateLimiter, RateLimitKey
@@ -654,7 +656,7 @@ ValidationRulePattern, ValidationRuleRequired, Vary, VectorRecord, WebSocketClie
 WebSocketContext, WebSocketEvent, WebSocketEventOptions, WebSocketHandler, WindowConfig
 WindowLimit, WithAPI, WithAuthHook, WithAuthPrincipalHook, WithAWSConfig
 WithAWSLambdaMicroVMClock, WithAWSLambdaMicroVMRegion, WithCapabilityConfig, WithClock, WithCompletionHooks
-WithControllerClock, WithControllerDeploymentDefaults, WithControllerExecutionRoleArn, WithControllerID, WithControllerIDGenerator
+WithControllerClock, WithControllerDeploymentDefaults, WithControllerExecutionRoleArn, WithControllerID, WithControllerIDGenerator, WithControllerLogging
 WithControllerProviderID, WithControllerSessionTTL, WithCORS, WithEMFClock, WithEMFNamespace
 WithEMFService, WithEMFWriter, WithEnvironmentErrorNotifications, WithErrorNotifier, WithHTTPErrorFormat
 WithIdentifier, WithIDGenerator, WithInitialSessionListenerBudget, WithLegacyHTTPErrorShape, WithLifecycleContract

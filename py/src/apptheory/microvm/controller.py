@@ -148,6 +148,7 @@ class MicroVMRealController:
         id_generator: Callable[[], str] | None = None,
         ttl_seconds: int = 3600,
         execution_role_arn: str | None = None,
+        logging: MicroVMProviderLogging | dict[str, Any] | None = None,
         deployment_defaults: MicroVMControllerDeploymentDefaults | dict[str, Any] | None = None,
     ) -> None:
         if provider is None:
@@ -176,6 +177,16 @@ class MicroVMRealController:
                 "apptheory: microvm execution role arn is invalid",
                 "",
             )
+        try:
+            configured_logging = _environment_provider_logging() if logging is None else logging
+            self._logging = _normalize_provider_logging(configured_logging)
+            _validate_provider_logging(self._logging, self._execution_role_arn, "")
+        except Exception:  # noqa: BLE001
+            raise _safe_error(
+                MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+                "apptheory: microvm runtime logging configuration is invalid",
+                "",
+            ) from None
         self._clock = clock or time.time
         self._ids = id_generator or _random_microvm_session_id
         self._ttl_seconds = int(ttl_seconds or 0) if int(ttl_seconds or 0) > 0 else 3600
@@ -306,6 +317,7 @@ class MicroVMRealController:
                     idle_policy=request.idle_policy,
                     maximum_duration_seconds=request.maximum_duration_seconds,
                     execution_role_arn=self._execution_role_arn,
+                    logging=_normalize_provider_logging(self._logging),
                 )
             )
             validate_microvm_provider_session(session)
@@ -732,6 +744,17 @@ def _environment_deployment_defaults() -> MicroVMControllerDeploymentDefaults:
             egress_network_connector_refs=egress,
         )
     )
+
+
+def _environment_provider_logging() -> MicroVMProviderLogging | dict[str, Any]:
+    raw = str(os.environ.get(MICROVM_ENV_LOGGING, "") or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = jsonlib.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _normalize_deployment_defaults(

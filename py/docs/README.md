@@ -62,7 +62,8 @@ operator-facing API guidance. Keep these human-authored groups current when the 
   `EnvEmbeddingDimensions`, `EnvEmbeddingNormalize`,
   `PutVectorsInput`, `GetVectorsInput`, `DeleteVectorsInput`, `QueryVectorsInput`, `SemanticIndexConfig`,
   `normalize_top_k`, `validate_dimension`, `validate_vector`, and `validate_required_metadata`.
-- MicroVM and generated contract helpers: `MicroVMController`, provider/session validators, and `generate_openapi`.
+- MicroVM and generated contract helpers: `MicroVMController`, `MicroVMProviderLogging`,
+  `MicroVMProviderCloudWatchLogging`, `MICROVM_ENV_LOGGING`, provider/session validators, and `generate_openapi`.
 
 <!-- apptheory-api-docs:py:start -->
 ## Python snapshot coverage index
@@ -70,7 +71,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>611 exported top-level symbols</summary>
+<summary>614 exported top-level symbols</summary>
 
 ```text
 App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest
@@ -125,7 +126,7 @@ McpTaskRecord, McpTaskRuntimeOptions, McpTaskStatus, McpTaskStore, McpTaskSuppor
 McpTestHarness, McpTestResult, McpTestSSEFrame, McpToolContext, McpToolDef, McpToolExecution
 McpToolHandler, McpToolRegistry, McpToolResult, MemoryMcpSessionStore, MemoryMcpStreamStore, MemoryMcpTaskStore
 MemoryMicroVMSessionRegistry, MICROVM_AWS_LAMBDA_PROVIDER_ID, MICROVM_CONTRACT_NAME, MICROVM_CONTRACT_VERSION, MICROVM_CONTRACT_VERSION_M16, MICROVM_CONTROLLER_AUTH_DEFAULT_DENY
-MICROVM_DEFAULT_SESSION_PROVIDER_ID, MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS, MICROVM_ENV_EXECUTION_ROLE_ARN, MICROVM_ENV_IMAGE_REF, MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS, MICROVM_ENV_NETWORK_CONNECTOR_REFS
+MICROVM_DEFAULT_SESSION_PROVIDER_ID, MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS, MICROVM_ENV_EXECUTION_ROLE_ARN, MICROVM_ENV_IMAGE_REF, MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS, MICROVM_ENV_LOGGING, MICROVM_ENV_NETWORK_CONNECTOR_REFS
 MICROVM_ERROR_CONTROLLER_COMMAND_FAILED, MICROVM_ERROR_CONTROLLER_INCOMPLETE, MICROVM_ERROR_FORBIDDEN_FIELD, MICROVM_ERROR_INVALID_CONTRACT, MICROVM_ERROR_INVALID_CONTROLLER_REQUEST, MICROVM_ERROR_INVALID_LIFECYCLE_EVENT
 MICROVM_ERROR_LIFECYCLE_BYPASS, MICROVM_ERROR_LIFECYCLE_HOOK_FAILED, MICROVM_ERROR_LIFECYCLE_INCOMPLETE, MICROVM_ERROR_OPERATION_CONTRACT_INCOMPLETE, MICROVM_ERROR_PROVIDER_OPERATION_FAILED, MICROVM_ERROR_PROVIDER_OPERATION_UNSUPPORTED
 MICROVM_ERROR_PROVIDER_REQUEST_INVALID, MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE, MICROVM_ERROR_RAW_SDK_ESCAPE_HATCH, MICROVM_ERROR_REAL_LIFECYCLE_INCOMPLETE, MICROVM_ERROR_ROUTE_CONTRACT_INCOMPLETE, MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE
@@ -135,8 +136,8 @@ microvm_session_registry_table_name, microvm_session_token_metadata_from_provide
 MicroVMControllerAuthContract, MicroVMControllerCommandContract, MicroVMControllerContract, MicroVMControllerDeploymentDefaults, MicroVMControllerEnvelopeContract, MicroVMControllerInvokeRequest
 MicroVMControllerRequest, MicroVMControllerResponse, MicroVMCreateSessionInput, MicroVMEscapeHatches, MicroVMLifecycleAdapter, MicroVMLifecycleContract
 MicroVMLifecycleEvent, MicroVMLifecycleHandler, MicroVMLifecycleHook, MicroVMLifecycleHookSpec, MicroVMLifecycleResult, MicroVMLifecycleState
-MicroVMLifecycleTransition, MicroVMProviderCall, MicroVMProviderIdlePolicy, MicroVMProviderInvokeInput, MicroVMProviderInvokeOutput, MicroVMProviderListInput
-MicroVMProviderListOutput, MicroVMProviderPortScope, MicroVMProviderRunInput, MicroVMProviderSession, MicroVMProviderSessionBinding, MicroVMProviderSessionInput
+MicroVMLifecycleTransition, MicroVMProviderCall, MicroVMProviderCloudWatchLogging, MicroVMProviderIdlePolicy, MicroVMProviderInvokeInput, MicroVMProviderInvokeOutput, MicroVMProviderListInput
+MicroVMProviderListOutput, MicroVMProviderLogging, MicroVMProviderPortScope, MicroVMProviderRunInput, MicroVMProviderSession, MicroVMProviderSessionBinding, MicroVMProviderSessionInput
 MicroVMProviderToken, MicroVMProviderTokenInput, MicroVMRealController, MicroVMRegistryClient, MicroVMSafeError, MicroVMSessionCommandInput
 MicroVMSessionListInput, MicroVMSessionQueryInput, MicroVMSessionReconstructionHook, MicroVMSessionReconstructionRequest, MicroVMSessionRecord, MicroVMSessionRegistryContract
 MicroVMSessionRegistryRecord, MicroVMSessionSpec, MicroVMSessionStatus, MicroVMSessionTokenMetadata, min_length, min_value

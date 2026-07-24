@@ -1412,6 +1412,9 @@ async function compareMicroVMRealContractFixture(fixture) {
   if (fixture.expect?.microvm_execution_role) {
     return await compareMicroVMExecutionRoleFixture(fixture);
   }
+  if (fixture.expect?.microvm_runtime_logging) {
+    return await compareMicroVMRuntimeLoggingFixture(fixture);
+  }
 
   const runtime = await loadAppTheoryRuntime();
   const actual = validateMicroVMRealContractFixture(
@@ -1673,6 +1676,7 @@ async function compareMicroVMControllerRouteFixture(fixture) {
     ids: { newID: () => setup.session_id },
     clock: { now: () => new Date(now.valueOf()) },
     deployment_defaults: setup.deployment_defaults,
+    logging: { disabled: true },
   });
   if (setup.seed_session) {
     const seeded = await controller.handle(
@@ -1825,6 +1829,7 @@ async function runMicroVMExecutionRoleFixture(runtime, setup) {
     const controller = runtime.createRealMicroVMController(provider, registry, {
       ids: { newID: () => setup.session_id },
       clock: { now: () => new Date(now.valueOf()) },
+      logging: { disabled: true },
     });
     const response = await controller.handle(
       microVMControllerRouteRunRequest(runtime, setup),
@@ -1867,6 +1872,117 @@ function normalizeMicroVMExecutionRoleSetup(setup) {
       "fixture-session",
     execution_role_arn: String(setup.execution_role_arn ?? "").trim(),
   };
+}
+
+async function compareMicroVMRuntimeLoggingFixture(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const cases = Array.isArray(fixture.setup?.microvm_runtime_logging?.cases)
+    ? fixture.setup.microvm_runtime_logging.cases
+    : [];
+  const expected = fixture.expect?.microvm_runtime_logging ?? {};
+  const actual = {
+    cases: [],
+  };
+  for (let index = 0; index < cases.length; index += 1) {
+    actual.cases.push(
+      await runMicroVMRuntimeLoggingCase(runtime, cases[index] ?? {}, index),
+    );
+  }
+  if (deepEqual(actual, expected)) return { ok: true };
+  return {
+    ok: false,
+    reason: "microvm_runtime_logging mismatch",
+    actual_microvm_runtime_logging: actual,
+    expected_microvm_runtime_logging: expected,
+  };
+}
+
+async function runMicroVMRuntimeLoggingCase(runtime, fixtureCase, index) {
+  const loggingEnv = "APPTHEORY_MICROVM_LOGGING";
+  const roleEnv = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN";
+  const previousLogging = process.env[loggingEnv];
+  const previousRole = process.env[roleEnv];
+  if (Object.prototype.hasOwnProperty.call(fixtureCase, "logging")) {
+    process.env[loggingEnv] = JSON.stringify(fixtureCase.logging);
+  } else {
+    delete process.env[loggingEnv];
+  }
+  const executionRoleArn = String(
+    fixtureCase.execution_role_arn ?? "",
+  ).trim();
+  if (executionRoleArn) {
+    process.env[roleEnv] = executionRoleArn;
+  } else {
+    delete process.env[roleEnv];
+  }
+  const name = String(fixtureCase.name ?? "");
+  try {
+    const now = new Date("2023-11-14T22:13:20.000Z");
+    const baseProvider = runtime.createFakeMicroVMProvider(now);
+    let providerLogging = null;
+    const provider = {
+      run: async (input) => {
+        providerLogging = JSON.parse(JSON.stringify(input?.logging ?? {}));
+        return await baseProvider.run(input);
+      },
+      get: (input) => baseProvider.get(input),
+      list: (input) => baseProvider.list(input),
+      suspend: (input) => baseProvider.suspend(input),
+      resume: (input) => baseProvider.resume(input),
+      terminate: (input) => baseProvider.terminate(input),
+      createAuthToken: (input) => baseProvider.createAuthToken(input),
+      createShellToken: (input) => baseProvider.createShellToken(input),
+    };
+    const sessionID = `logging-session-${index + 1}`;
+    const controller = runtime.createRealMicroVMController(
+      provider,
+      runtime.createMemoryMicroVMSessionRegistry(),
+      {
+        ids: { newID: () => sessionID },
+        clock: { now: () => new Date(now.valueOf()) },
+      },
+    );
+    const response = await controller.handle(
+      microVMControllerRouteRunRequest(runtime, {
+        tenant_id: "tenant-1",
+        namespace: "namespace-1",
+        session_id: sessionID,
+      }),
+    );
+    if (response?.error) {
+      return {
+        name,
+        valid: false,
+        error_code: String(response.error.code ?? ""),
+        error_message: String(response.error.message ?? ""),
+      };
+    }
+    return {
+      name,
+      valid: true,
+      session_id: String(response.session_id ?? ""),
+      state: String(response.state ?? ""),
+      provider_logging: providerLogging,
+    };
+  } catch (err) {
+    return {
+      name,
+      valid: false,
+      error_code: String(err?.code ?? ""),
+      error_message: String(err?.message ?? String(err)),
+    };
+  } finally {
+    if (previousLogging === undefined) {
+      delete process.env[loggingEnv];
+    } else {
+      process.env[loggingEnv] = previousLogging;
+    }
+    if (previousRole === undefined) {
+      delete process.env[roleEnv];
+    } else {
+      process.env[roleEnv] = previousRole;
+    }
+  }
 }
 
 function normalizeMicroVMControllerRouteSetup(setup) {

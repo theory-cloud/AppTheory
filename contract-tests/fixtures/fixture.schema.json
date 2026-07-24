@@ -89,6 +89,7 @@
         "microvm_contract": { "type": "object", "additionalProperties": true },
         "microvm_controller_route": { "type": "object", "additionalProperties": true },
         "microvm_execution_role": { "type": "object", "additionalProperties": true },
+        "microvm_runtime_logging": { "type": "object", "additionalProperties": true },
         "mcp": { "$ref": "#/$defs/mcpSetup" },
         "oauth": { "$ref": "#/$defs/oauthSetup" },
         "objectstore": { "$ref": "#/$defs/objectstoreSetup" },
@@ -530,6 +531,7 @@
         "microvm_lifecycle_adapter": { "type": "object", "additionalProperties": true },
         "microvm_controller_route": { "type": "object", "additionalProperties": true },
         "microvm_execution_role": { "type": "object", "additionalProperties": true },
+        "microvm_runtime_logging": { "type": "object", "additionalProperties": true },
         "mcp": { "$ref": "#/$defs/mcpExpect" },
         "oauth": { "$ref": "#/$defs/oauthExpect" }
       }

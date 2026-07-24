@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json as jsonlib
 import os
+import re
 import time
 import urllib.parse
 from collections.abc import Callable, Iterable
@@ -831,6 +832,7 @@ def _validate_provider_run_input(input_: MicroVMProviderRunInput | dict[str, Any
     )
     if err := _validate_execution_role_arn(normalized.execution_role_arn, normalized.request_id):
         raise err
+    _validate_provider_logging(normalized.logging, normalized.execution_role_arn, normalized.request_id)
     if normalized.idle_policy is not None and (
         normalized.idle_policy.max_idle_duration_seconds <= 0 or normalized.idle_policy.suspended_duration_seconds <= 0
     ):
@@ -1102,6 +1104,92 @@ def _validate_safe_connector_refs(request_id: str, refs: list[str]) -> None:
             )
 
 
+def _validate_provider_logging(
+    logging: MicroVMProviderLogging,
+    execution_role_arn: str,
+    request_id: str,
+) -> None:
+    has_cloud_watch = logging.cloud_watch is not None
+    has_disabled = logging.disabled is not None
+    if has_cloud_watch == has_disabled or (has_disabled and logging.disabled is not True):
+        raise _safe_error(
+            MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+            "apptheory: microvm provider logging must specify exactly one of cloud_watch or disabled",
+            request_id,
+        )
+    if has_disabled:
+        return
+    if not _normalize_execution_role_arn(execution_role_arn):
+        raise _safe_error(
+            MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+            "apptheory: microvm provider cloudwatch logging requires execution_role_arn",
+            request_id,
+        )
+    cloud_watch = logging.cloud_watch or MicroVMProviderCloudWatchLogging()
+    if cloud_watch.log_group and re.fullmatch(r"[a-zA-Z0-9_\-/.#]{1,512}", cloud_watch.log_group) is None:
+        raise _safe_error(
+            MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+            "apptheory: microvm provider cloudwatch log_group is invalid",
+            request_id,
+        )
+    if cloud_watch.log_stream and (
+        len(cloud_watch.log_stream) > 512 or ":" in cloud_watch.log_stream or "*" in cloud_watch.log_stream
+    ):
+        raise _safe_error(
+            MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+            "apptheory: microvm provider cloudwatch log_stream is invalid",
+            request_id,
+        )
+
+
+def _normalize_provider_logging(
+    value: MicroVMProviderLogging | dict[str, Any] | None,
+) -> MicroVMProviderLogging:
+    if isinstance(value, MicroVMProviderLogging):
+        cloud_watch = value.cloud_watch
+        if cloud_watch is not None and not isinstance(cloud_watch, MicroVMProviderCloudWatchLogging):
+            raise _safe_error(
+                MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+                "apptheory: microvm provider cloudwatch logging is invalid",
+                "",
+            )
+        return MicroVMProviderLogging(
+            cloud_watch=(
+                MicroVMProviderCloudWatchLogging(
+                    log_group=str(cloud_watch.log_group or "").strip(),
+                    log_stream=str(cloud_watch.log_stream or "").strip(),
+                )
+                if cloud_watch is not None
+                else None
+            ),
+            disabled=value.disabled,
+        )
+    raw = value if isinstance(value, dict) else {}
+    if set(raw) - {"cloud_watch", "disabled"}:
+        raise _safe_error(
+            MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+            "apptheory: microvm provider logging contains an unknown field",
+            "",
+        )
+    cloud_watch: MicroVMProviderCloudWatchLogging | None = None
+    if "cloud_watch" in raw:
+        cloud_watch_raw = raw.get("cloud_watch")
+        if not isinstance(cloud_watch_raw, dict) or set(cloud_watch_raw) - {"log_group", "log_stream"}:
+            raise _safe_error(
+                MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+                "apptheory: microvm provider cloudwatch logging is invalid",
+                "",
+            )
+        cloud_watch = MicroVMProviderCloudWatchLogging(
+            log_group=str(cloud_watch_raw.get("log_group", "") or "").strip(),
+            log_stream=str(cloud_watch_raw.get("log_stream", "") or "").strip(),
+        )
+    disabled: bool | None = None
+    if "disabled" in raw:
+        disabled = raw.get("disabled") if isinstance(raw.get("disabled"), bool) else False
+    return MicroVMProviderLogging(cloud_watch=cloud_watch, disabled=disabled)
+
+
 def _normalize_provider_run_input(value: MicroVMProviderRunInput | dict[str, Any]) -> MicroVMProviderRunInput:
     if isinstance(value, MicroVMProviderRunInput):
         return MicroVMProviderRunInput(
@@ -1111,6 +1199,7 @@ def _normalize_provider_run_input(value: MicroVMProviderRunInput | dict[str, Any
             session_id=str(value.session_id or "").strip(),
             auth_context=_normalize_auth_context(value.auth_context),
             image_ref=str(value.image_ref or "").strip(),
+            logging=_normalize_provider_logging(value.logging),
             image_version=str(value.image_version or "").strip(),
             network_connector_ref=str(value.network_connector_ref or "").strip(),
             ingress_network_connector_refs=_normalize_string_list(value.ingress_network_connector_refs),
@@ -1128,6 +1217,7 @@ def _normalize_provider_run_input(value: MicroVMProviderRunInput | dict[str, Any
         session_id=str(raw.get("session_id", "") or "").strip(),
         auth_context=_normalize_auth_context(raw.get("auth_context") or {}),
         image_ref=str(raw.get("image_ref", "") or "").strip(),
+        logging=_normalize_provider_logging(raw.get("logging")),
         image_version=str(raw.get("image_version", "") or "").strip(),
         network_connector_ref=str(raw.get("network_connector_ref", "") or "").strip(),
         ingress_network_connector_refs=_normalize_string_list(raw.get("ingress_network_connector_refs") or []),
@@ -1765,6 +1855,7 @@ __all__ = [
     "_normalize_provider_invoke_input",
     "_normalize_provider_invoke_path",
     "_normalize_provider_list_input",
+    "_normalize_provider_logging",
     "_normalize_provider_port_scope",
     "_normalize_provider_run_input",
     "_normalize_provider_session",
@@ -1815,6 +1906,7 @@ __all__ = [
     "_validate_provider_binding",
     "_validate_provider_invoke_input",
     "_validate_provider_list_input",
+    "_validate_provider_logging",
     "_validate_provider_operation",
     "_validate_provider_port_scope",
     "_validate_provider_run_input",

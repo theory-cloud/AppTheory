@@ -130,6 +130,7 @@ func buildApp(options ...appOption) (*apptheory.App, error) {
 	controller, err := microvm.NewRealController(
 		opts.provider,
 		registry,
+		microvm.WithControllerLogging(microvm.ProviderLogging{Disabled: true}),
 		microvm.WithControllerClock(opts.clock),
 		microvm.WithControllerIDGenerator(opts.ids),
 		microvm.WithControllerProviderID(localProviderID),

@@ -3,6 +3,7 @@ import type { Headers, Query } from "../types.js";
 export declare const MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm";
 export declare const MICROVM_CONTRACT_VERSION = "m15.microvm/v1";
 export declare const MICROVM_ENV_EXECUTION_ROLE_ARN = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN";
+export declare const MICROVM_ENV_LOGGING = "APPTHEORY_MICROVM_LOGGING";
 export declare const MICROVM_ENV_IMAGE_REF = "APPTHEORY_MICROVM_IMAGE_REF";
 export declare const MICROVM_ENV_NETWORK_CONNECTOR_REFS = "APPTHEORY_MICROVM_NETWORK_CONNECTOR_REFS";
 export declare const MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS = "APPTHEORY_MICROVM_INGRESS_NETWORK_CONNECTOR_REFS";
@@ -185,6 +186,14 @@ export interface MicroVMProviderIdlePolicy {
     max_idle_duration_seconds: number;
     suspended_duration_seconds: number;
 }
+export interface MicroVMProviderCloudWatchLogging {
+    log_group?: string;
+    log_stream?: string;
+}
+export interface MicroVMProviderLogging {
+    cloud_watch?: MicroVMProviderCloudWatchLogging;
+    disabled?: boolean;
+}
 export interface MicroVMProviderRunInput {
     request_id: string;
     tenant_id: string;
@@ -200,6 +209,7 @@ export interface MicroVMProviderRunInput {
     idle_policy?: MicroVMProviderIdlePolicy;
     maximum_duration_seconds?: number;
     execution_role_arn?: string;
+    logging: MicroVMProviderLogging;
 }
 export interface MicroVMProviderSessionBinding {
     tenant_id: string;
@@ -627,6 +637,7 @@ export interface MicroVMControllerOptions {
     ttl_ms?: number;
     provider_id?: string;
     execution_role_arn?: string;
+    logging?: MicroVMProviderLogging;
     deployment_defaults?: MicroVMControllerDeploymentDefaults;
 }
 export interface MicroVMClientCall {
