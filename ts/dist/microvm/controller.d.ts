@@ -18,6 +18,7 @@ export declare class MicroVMRealController implements MicroVMControllerRouteTarg
     private readonly controllerID;
     private readonly providerID;
     private readonly executionRoleArn;
+    private readonly logging;
     private readonly deploymentDefaults;
     private readonly clock;
     private readonly ids;

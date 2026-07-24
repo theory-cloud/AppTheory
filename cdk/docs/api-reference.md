@@ -99,7 +99,9 @@ Package-local guide: `cdk/docs/microvm-network-connector.md`.
 
 `AppTheoryMicrovmImage` creates the CloudFormation `AWS::Lambda::MicrovmImage` resource for Lambda MicroVM images.
 It requires caller-provided code artifact URI, base image ARN/version, build role ARN, hook configuration, logging
-configuration, one resources entry, and one to ten `AppTheoryMicrovmNetworkConnector` references.
+configuration, one resources entry, and one to ten `AppTheoryMicrovmNetworkConnector` references. The normalized
+CloudWatch-or-disabled posture is exposed through `IAppTheoryMicrovmImage.logging` so controllers propagate the
+deployment choice instead of inferring a runtime default.
 
 ```ts
 new AppTheoryMicrovmImage(this, "MicrovmImage", {
@@ -120,10 +122,11 @@ Package-local guide: `cdk/docs/microvm-image.md`.
 
 ## Lambda MicroVM controller
 
-`AppTheoryMicrovmController` creates the protected HTTP API route set for the M15 MicroVM controller contract, the
+`AppTheoryMicrovmController` creates the protected HTTP API route set for the M16 MicroVM controller contract, the
 controller Lambda from caller-supplied Lambda packaging props, and the durable session registry table using the
 canonical TableTheory `pk`/`sk` + `ttl` shape. It requires a Lambda request authorizer; unauthenticated routes are not
-synthesized.
+synthesized. The construct serializes the image logging posture into the reserved
+`APPTHEORY_MICROVM_LOGGING` environment value and requires `executionRole` whenever that posture is CloudWatch.
 
 ```ts
 new AppTheoryMicrovmController(this, "MicrovmController", {

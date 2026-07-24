@@ -25,6 +25,8 @@ type AppTheoryMicrovmImage interface {
 	LatestActiveImageVersion() *string
 	// The latest failed image version, if any.
 	LatestFailedImageVersion() *string
+	// The normalized deployment-owned runtime logging posture for this image.
+	Logging() *AppTheoryMicrovmImageLogging
 	// The underlying CloudFormation MicroVM image resource.
 	MicrovmImage() awscdk.CfnResource
 	// The ARN of the MicroVM image.
@@ -81,6 +83,16 @@ func (j *jsiiProxy_AppTheoryMicrovmImage) LatestFailedImageVersion() *string {
 	_jsii_.Get(
 		j,
 		"latestFailedImageVersion",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryMicrovmImage) Logging() *AppTheoryMicrovmImageLogging {
+	var returns *AppTheoryMicrovmImageLogging
+	_jsii_.Get(
+		j,
+		"logging",
 		&returns,
 	)
 	return returns

@@ -155,6 +155,18 @@ class MicroVMProviderIdlePolicy:
 
 
 @dataclass(slots=True)
+class MicroVMProviderCloudWatchLogging:
+    log_group: str = ""
+    log_stream: str = ""
+
+
+@dataclass(slots=True)
+class MicroVMProviderLogging:
+    cloud_watch: MicroVMProviderCloudWatchLogging | None = None
+    disabled: bool | None = None
+
+
+@dataclass(slots=True)
 class MicroVMProviderRunInput:
     request_id: str
     tenant_id: str
@@ -162,6 +174,7 @@ class MicroVMProviderRunInput:
     session_id: str
     auth_context: MicroVMAuthContext
     image_ref: str
+    logging: MicroVMProviderLogging
     image_version: str = ""
     network_connector_ref: str = ""
     ingress_network_connector_refs: list[str] = field(default_factory=list)
@@ -585,11 +598,13 @@ __all__ = [
     "MicroVMControllerResponse",
     "MicroVMCreateSessionInput",
     "MicroVMProviderCall",
+    "MicroVMProviderCloudWatchLogging",
     "MicroVMProviderIdlePolicy",
     "MicroVMProviderInvokeInput",
     "MicroVMProviderInvokeOutput",
     "MicroVMProviderListInput",
     "MicroVMProviderListOutput",
+    "MicroVMProviderLogging",
     "MicroVMProviderPortScope",
     "MicroVMProviderRunInput",
     "MicroVMProviderSession",

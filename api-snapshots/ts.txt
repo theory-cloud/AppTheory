@@ -186,6 +186,7 @@ MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS	const
 MICROVM_ENV_EXECUTION_ROLE_ARN	const
 MICROVM_ENV_IMAGE_REF	const
 MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS	const
+MICROVM_ENV_LOGGING	const
 MICROVM_ENV_NETWORK_CONNECTOR_REFS	const
 MICROVM_ERROR_CONTROLLER_COMMAND_FAILED	const
 MICROVM_ERROR_CONTROLLER_INCOMPLETE	const
@@ -312,11 +313,13 @@ MicroVMOperationHTTPRouteContract	interface
 MicroVMOperationName	type
 MicroVMProvider	interface
 MicroVMProviderCall	interface
+MicroVMProviderCloudWatchLogging	interface
 MicroVMProviderIdlePolicy	interface
 MicroVMProviderInvokeInput	interface
 MicroVMProviderInvokeOutput	interface
 MicroVMProviderListInput	interface
 MicroVMProviderListOutput	interface
+MicroVMProviderLogging	interface
 MicroVMProviderPortScope	interface
 MicroVMProviderRunInput	interface
 MicroVMProviderSession	interface

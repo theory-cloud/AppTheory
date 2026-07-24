@@ -3332,6 +3332,8 @@ const EnvImageRef = "APPTHEORY_MICROVM_IMAGE_REF"
 
 const EnvIngressNetworkConnectorRefs = "APPTHEORY_MICROVM_INGRESS_NETWORK_CONNECTOR_REFS"
 
+const EnvLogging = "APPTHEORY_MICROVM_LOGGING"
+
 const EnvNetworkConnectorRefs = "APPTHEORY_MICROVM_NETWORK_CONNECTOR_REFS"
 
 const EnvSessionRegistryTableName = "APPTHEORY_MICROVM_SESSION_REGISTRY_TABLE"
@@ -3498,16 +3500,18 @@ type Command string
 type ContractKind string
 
 type Controller struct {
-	client           Client
-	provider         Provider
-	registry         SessionRegistry
-	controllerID     string
-	providerID       string
-	executionRoleArn string
-	deployment       ControllerDeploymentDefaults
-	clock            Clock
-	ids              IDGenerator
-	ttl              time.Duration
+	client            Client
+	provider          Provider
+	registry          SessionRegistry
+	controllerID      string
+	providerID        string
+	executionRoleArn  string
+	logging           ProviderLogging
+	loggingConfigured bool
+	deployment        ControllerDeploymentDefaults
+	clock             Clock
+	ids               IDGenerator
+	ttl               time.Duration
 }
 
 type ControllerAuthContract struct {
@@ -3723,6 +3727,11 @@ type Provider interface {
 	CreateShellToken(context.Context, ProviderTokenInput) (ProviderToken, error)
 }
 
+type ProviderCloudWatchLogging struct {
+	LogGroup  string `json:"log_group,omitempty"`
+	LogStream string `json:"log_stream,omitempty"`
+}
+
 type ProviderIdlePolicy struct {
 	AutoResumeEnabled        bool  `json:"auto_resume_enabled"`
 	MaxIdleDurationSeconds   int32 `json:"max_idle_duration_seconds"`
@@ -3768,6 +3777,11 @@ type ProviderListOutput struct {
 	RecoveryCursor string            `json:"recovery_cursor,omitempty"`
 }
 
+type ProviderLogging struct {
+	CloudWatch *ProviderCloudWatchLogging `json:"cloud_watch,omitempty"`
+	Disabled   bool                       `json:"disabled,omitempty"`
+}
+
 type ProviderPortScope struct {
 	AllPorts  bool  `json:"all_ports,omitempty"`
 	Port      int32 `json:"port,omitempty"`
@@ -3790,6 +3804,7 @@ type ProviderRunInput struct {
 	IdlePolicy                  *ProviderIdlePolicy `json:"idle_policy,omitempty"`
 	MaximumDurationSeconds      int32               `json:"maximum_duration_seconds,omitempty"`
 	ExecutionRoleArn            string              `json:"execution_role_arn,omitempty"`
+	Logging                     ProviderLogging     `json:"logging"`
 }
 
 type ProviderSession struct {
@@ -4158,6 +4173,8 @@ func WithControllerExecutionRoleArn(string) ControllerOption
 func WithControllerID(string) ControllerOption
 
 func WithControllerIDGenerator(IDGenerator) ControllerOption
+
+func WithControllerLogging(ProviderLogging) ControllerOption
 
 func WithControllerProviderID(string) ControllerOption
 

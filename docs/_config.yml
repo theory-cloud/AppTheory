@@ -164,7 +164,7 @@ tabletheory:
       cta: See event workloads
   stats:
     - label: Contract fixtures
-      value: "223" # apptheory-fixture-count
+      value: "224" # apptheory-fixture-count
       sub: Go, TypeScript, and Python execute all shared fixtures
     - label: Runtimes
       value: "3"

@@ -292,6 +292,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
                 "suspended_duration_seconds": 120,
             },
             "maximum_duration_seconds": 600,
+            "logging": {"disabled": True},
         }
         session_dict: dict[str, object] = {
             "request_id": "req-get-dict",
@@ -893,6 +894,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
             session_id="session-1",
             auth_context=app.MicroVMAuthContext(subject="subject-1", tenant_id="tenant-1", namespace="namespace-1"),
             image_ref="image-ref",
+            logging=app.MicroVMProviderLogging(disabled=True),
             image_version="1",
             network_connector_ref="egress-default",
             ingress_network_connector_refs=["ingress-1"],
@@ -1086,6 +1088,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
             [name for name, _payload in stub.calls],
         )
         self.assertEqual("image-ref", stub.calls[0][1]["imageIdentifier"])
+        self.assertEqual({"disabled": {}}, stub.calls[0][1]["logging"])
         self.assertNotIn(
             "runHookPayload",
             stub.calls[0][1],
@@ -1181,6 +1184,28 @@ class MicroVMLifecycleTests(unittest.TestCase):
         for invalid in invalid_run_cases:
             with self.assertRaises(app.MicroVMSafeError):
                 app.validate_microvm_provider_run_input(invalid)
+        missing_logging = dict(run_dict)
+        missing_logging.pop("logging")
+        for invalid_logging in [
+            missing_logging,
+            {**run_dict, "logging": {"disabled": True, "cloud_watch": {}}},
+            {**run_dict, "logging": {"cloud_watch": {}}},
+            {**run_dict, "logging": {"disabled": False}},
+        ]:
+            with self.assertRaises(app.MicroVMSafeError):
+                app.validate_microvm_provider_run_input(invalid_logging)
+        app.validate_microvm_provider_run_input(
+            {
+                **run_dict,
+                "execution_role_arn": "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole",
+                "logging": {
+                    "cloud_watch": {
+                        "log_group": "/aws/lambda/microvm/apptheory",
+                        "log_stream": "runtime",
+                    }
+                },
+            }
+        )
         with self.assertRaises(app.MicroVMSafeError):
             app.validate_microvm_provider_session_input("not-real", session_dict)
         with self.assertRaises(app.MicroVMSafeError):
@@ -1266,6 +1291,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
             id_generator=lambda: "session-1",
             clock=lambda: 10.0,
             ttl_seconds=60,
+            logging={"disabled": True},
         )
         run = controller.handle(self._controller_request())
         self.assertIsNone(run.error)
@@ -1346,16 +1372,31 @@ class MicroVMLifecycleTests(unittest.TestCase):
 
         class RecordingProvider:
             execution_role_arn = ""
+            logging: object | None = None
 
             def run(self, input_: object) -> object:
                 self.execution_role_arn = str(getattr(input_, "execution_role_arn", "") or "")
+                self.logging = getattr(input_, "logging", None)
                 return base_provider.run(input_)
 
             def __getattr__(self, name: str) -> object:
                 return getattr(base_provider, name)
 
         provider = RecordingProvider()
-        with patch.dict(os.environ, {app.MICROVM_ENV_EXECUTION_ROLE_ARN: role_arn}):
+        with patch.dict(
+            os.environ,
+            {
+                app.MICROVM_ENV_EXECUTION_ROLE_ARN: role_arn,
+                app.MICROVM_ENV_LOGGING: json.dumps(
+                    {
+                        "cloud_watch": {
+                            "log_group": "/aws/lambda/microvm/apptheory",
+                            "log_stream": "runtime",
+                        }
+                    }
+                ),
+            },
+        ):
             controller = app.create_real_microvm_controller(
                 provider,
                 app.create_memory_microvm_session_registry(),
@@ -1365,6 +1406,15 @@ class MicroVMLifecycleTests(unittest.TestCase):
             run = controller.handle(self._controller_request())
         self.assertIsNone(run.error)
         self.assertEqual(role_arn, provider.execution_role_arn)
+        self.assertEqual(
+            app.MicroVMProviderLogging(
+                cloud_watch=app.MicroVMProviderCloudWatchLogging(
+                    log_group="/aws/lambda/microvm/apptheory",
+                    log_stream="runtime",
+                )
+            ),
+            provider.logging,
+        )
 
     def test_real_controller_applies_deployment_pinned_defaults(self) -> None:
         base_provider = app.create_fake_microvm_provider(now=1.0)
@@ -1393,6 +1443,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
                 app.create_memory_microvm_session_registry(),
                 id_generator=lambda: "session-defaults",
                 clock=lambda: 10.0,
+                logging={"disabled": True},
             )
             run = controller.handle(
                 self._controller_request(
@@ -1425,6 +1476,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
                 app.create_memory_microvm_session_registry(),
                 id_generator=lambda: "session-defaults-override",
                 clock=lambda: 10.0,
+                logging={"disabled": True},
             )
             override = controller.handle(
                 self._controller_request(
@@ -1445,6 +1497,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
             registry,
             id_generator=lambda: "route-session",
             clock=lambda: 10.0,
+            logging={"disabled": True},
         )
         runtime = app.create_app(tier="p1", auth_hook=lambda ctx: f"identity:{ctx.tenant_id}")
         app.register_microvm_controller_routes(runtime, controller)
@@ -1520,7 +1573,18 @@ class MicroVMLifecycleTests(unittest.TestCase):
         with patch.dict(sys.modules, _fake_lambda_microvm_sdk_modules(self, clients, required_operations)):
             official = app.create_aws_lambda_microvm_provider(region_name="us-west-2", clock=lambda: -5.0)
             role_arn = "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole"
-            official_run = official.run({**run_dict, "execution_role_arn": role_arn})
+            official_run = official.run(
+                {
+                    **run_dict,
+                    "execution_role_arn": role_arn,
+                    "logging": {
+                        "cloud_watch": {
+                            "log_group": "/aws/lambda/microvm/apptheory",
+                            "log_stream": "runtime",
+                        }
+                    },
+                }
+            )
             official_binding = {**binding_dict, "provider_microvm_id": official_run.provider_microvm_id}
             official_session = {**session_dict, "binding": official_binding}
             self.assertEqual("session-1", official.get(official_session).session_id)
@@ -1540,6 +1604,15 @@ class MicroVMLifecycleTests(unittest.TestCase):
                 {"imageIdentifier": "image-ref", "imageVersion": "1", "maxResults": 5}, clients[0].calls[2][1]
             )
             self.assertEqual(role_arn, clients[0].calls[0][1]["executionRoleArn"])
+            self.assertEqual(
+                {
+                    "cloudWatch": {
+                        "logGroup": "/aws/lambda/microvm/apptheory",
+                        "logStream": "runtime",
+                    }
+                },
+                clients[0].calls[0][1]["logging"],
+            )
             self.assertEqual(
                 [{"allPorts": {}}, {"range": {"startPort": 8080, "endPort": 8081}}],
                 clients[0].calls[-2][1]["allowedPorts"],

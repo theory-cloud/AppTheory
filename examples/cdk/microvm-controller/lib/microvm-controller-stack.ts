@@ -54,6 +54,23 @@ export class MicrovmControllerStack extends cdk.Stack {
     const egressConnector = AppTheoryMicrovmNetworkConnector.internetEgress(this, "MicrovmInternetEgress");
     const ingressConnector = AppTheoryMicrovmNetworkConnector.httpIngress(this, "MicrovmHttpIngress");
     const shellIngressConnector = AppTheoryMicrovmNetworkConnector.shellIngress(this, "MicrovmShellIngress");
+    const runtimeLogGroup = `/aws/lambda/microvms/apptheory-microvm-${language}-demo`;
+    const executionRole = new iam.Role(this, "MicrovmExecutionRole", {
+      assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
+      description: "Runtime role Lambda assumes for the AppTheory MicroVM example",
+    });
+    executionRole.assumeRolePolicy?.addStatements(
+      new iam.PolicyStatement({
+        actions: ["sts:TagSession"],
+        principals: [new iam.ServicePrincipal("lambda.amazonaws.com")],
+      }),
+    );
+    executionRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+        resources: [this.formatArn({ service: "logs", resource: "*" })],
+      }),
+    );
 
     const microvmImage = new AppTheoryMicrovmImage(this, "MicrovmImage", {
       name: `apptheory_microvm_${language}_demo`,
@@ -68,7 +85,7 @@ export class MicrovmControllerStack extends cdk.Stack {
       hooks: {},
       logging: {
         cloudWatch: {
-          logGroup: `/aws/lambda/microvms/apptheory-microvm-${language}-demo`,
+          logGroup: runtimeLogGroup,
         },
       },
       resources: [{ minimumMemoryInMiB: 2048 }],
@@ -109,6 +126,7 @@ export class MicrovmControllerStack extends cdk.Stack {
       ingressNetworkConnectors: [ingressConnector],
       egressNetworkConnectors: [egressConnector],
       shellIngressNetworkConnector: shellIngressConnector,
+      executionRole,
       sessionTableRemovalPolicy: cdk.RemovalPolicy.RETAIN,
       sessionTableDeletionProtection: true,
       enableSessionTablePointInTimeRecovery: true,

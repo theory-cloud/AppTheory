@@ -412,6 +412,7 @@ func TestRealControllerCommandsAndTokenSafety(t *testing.T) {
 	controller, err := NewRealController(
 		provider,
 		registry,
+		withDisabledControllerLogging(),
 		WithControllerClock(fixedControllerClock{now: now}),
 		WithControllerIDGenerator(fixedControllerIDs{id: "session-1"}),
 	)
@@ -474,6 +475,7 @@ func TestRealControllerInvokeAndRoutesProxyWorkload(t *testing.T) {
 	controller, err := NewRealController(
 		provider,
 		registry,
+		withDisabledControllerLogging(),
 		WithControllerClock(fixedControllerClock{now: now}),
 		WithControllerIDGenerator(fixedControllerIDs{id: "session-invoke"}),
 	)
@@ -569,6 +571,7 @@ func TestRealControllerInvokeAndRoutesProxyWorkload(t *testing.T) {
 func TestRealControllerCarriesExecutionRoleFromEnvironment(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	t.Setenv(EnvExecutionRoleArn, "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole")
+	t.Setenv(EnvLogging, `{"cloud_watch":{"log_group":"/aws/lambda/microvm/apptheory","log_stream":"runtime"}}`)
 	provider := newRealControllerProvider(now)
 	controller, err := NewRealController(
 		provider,
@@ -582,6 +585,16 @@ func TestRealControllerCarriesExecutionRoleFromEnvironment(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, run.Error)
 	require.Equal(t, "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole", provider.lastRunExecutionRoleArn)
+	require.Equal(t, ProviderLogging{CloudWatch: &ProviderCloudWatchLogging{
+		LogGroup:  "/aws/lambda/microvm/apptheory",
+		LogStream: "runtime",
+	}}, provider.lastRunInput.Logging)
+}
+
+func TestRealControllerRequiresExplicitRuntimeLogging(t *testing.T) {
+	t.Setenv(EnvLogging, "")
+	_, err := NewRealController(newRealControllerProvider(time.Unix(1000, 0).UTC()), NewMemorySessionRegistry())
+	requireSafeError(t, err, ErrorCodeInvalidControllerRequest)
 }
 
 func TestRealControllerAppliesDeploymentPinnedDefaults(t *testing.T) {
@@ -593,6 +606,7 @@ func TestRealControllerAppliesDeploymentPinnedDefaults(t *testing.T) {
 	controller, err := NewRealController(
 		provider,
 		NewMemorySessionRegistry(),
+		withDisabledControllerLogging(),
 		WithControllerClock(fixedControllerClock{now: now}),
 		WithControllerIDGenerator(fixedControllerIDs{id: "session-defaults"}),
 	)
@@ -627,6 +641,7 @@ func TestRealControllerRoutesEnforceAuthAndBindings(t *testing.T) {
 	controller, err := NewRealController(
 		provider,
 		registry,
+		withDisabledControllerLogging(),
 		WithControllerClock(fixedControllerClock{now: now}),
 		WithControllerIDGenerator(fixedControllerIDs{id: "session-route"}),
 	)
@@ -702,6 +717,7 @@ func TestRealControllerOptionsAndFailureBranches(t *testing.T) {
 	controller, err := NewRealController(
 		provider,
 		registry,
+		withDisabledControllerLogging(),
 		WithControllerClock(fixedControllerClock{now: now}),
 		WithControllerIDGenerator(fixedControllerIDs{id: "session-options"}),
 		WithControllerProviderID("custom-provider"),
@@ -767,7 +783,11 @@ func TestRealControllerOptionsAndFailureBranches(t *testing.T) {
 
 func TestRealControllerListRequiresTenantBoundRegistryLister(t *testing.T) {
 	now := time.Unix(4000, 0).UTC()
-	controller, err := NewRealController(newRealControllerProvider(now), noListSessionRegistry{})
+	controller, err := NewRealController(
+		newRealControllerProvider(now),
+		noListSessionRegistry{},
+		withDisabledControllerLogging(),
+	)
 	require.NoError(t, err)
 
 	result, err := controller.Handle(context.Background(), validRealControllerRequest(CommandList, "req-list-no-lister", ""))
@@ -817,6 +837,7 @@ func TestRealControllerRoutesCoverCanonicalAliasesAndSafeStatuses(t *testing.T) 
 	controller, err := NewRealController(
 		newRealControllerProvider(now),
 		registry,
+		withDisabledControllerLogging(),
 		WithControllerClock(fixedControllerClock{now: now}),
 		WithControllerIDGenerator(fixedControllerIDs{id: "session-route-alias"}),
 	)
@@ -965,6 +986,7 @@ func TestRealControllerProviderFailureBranches(t *testing.T) {
 	emptyIDController, err := NewRealController(
 		newRealControllerProvider(now),
 		NewMemorySessionRegistry(),
+		withDisabledControllerLogging(),
 		WithControllerClock(fixedControllerClock{now: now}),
 		WithControllerIDGenerator(fixedControllerIDs{}),
 	)
@@ -976,6 +998,7 @@ func TestRealControllerProviderFailureBranches(t *testing.T) {
 	runErrController, err := NewRealController(
 		errorRunProvider{realControllerProvider: newRealControllerProvider(now)},
 		NewMemorySessionRegistry(),
+		withDisabledControllerLogging(),
 		WithControllerClock(fixedControllerClock{now: now}),
 		WithControllerIDGenerator(fixedControllerIDs{id: "session-run-err"}),
 	)
@@ -988,6 +1011,7 @@ func TestRealControllerProviderFailureBranches(t *testing.T) {
 	invalidRunController, err := NewRealController(
 		invalidRunProvider{realControllerProvider: newRealControllerProvider(now)},
 		NewMemorySessionRegistry(),
+		withDisabledControllerLogging(),
 		WithControllerClock(fixedControllerClock{now: now}),
 		WithControllerIDGenerator(fixedControllerIDs{id: "session-invalid-run"}),
 	)
@@ -1002,6 +1026,7 @@ func TestRealControllerProviderFailureBranches(t *testing.T) {
 	sessionErrController, err := NewRealController(
 		errorGetProvider{realControllerProvider: newRealControllerProvider(now)},
 		registry,
+		withDisabledControllerLogging(),
 		WithControllerClock(fixedControllerClock{now: now}),
 	)
 	require.NoError(t, err)
@@ -1012,6 +1037,7 @@ func TestRealControllerProviderFailureBranches(t *testing.T) {
 	listErrController, err := NewRealController(
 		errorListProvider{realControllerProvider: newRealControllerProvider(now)},
 		registry,
+		withDisabledControllerLogging(),
 		WithControllerClock(fixedControllerClock{now: now}),
 	)
 	require.NoError(t, err)
@@ -1022,6 +1048,7 @@ func TestRealControllerProviderFailureBranches(t *testing.T) {
 	tokenErrController, err := NewRealController(
 		invalidTokenProvider{realControllerProvider: newRealControllerProvider(now)},
 		registry,
+		withDisabledControllerLogging(),
 		WithControllerClock(fixedControllerClock{now: now}),
 	)
 	require.NoError(t, err)
@@ -1118,6 +1145,10 @@ type realControllerProvider struct {
 	lastRunInput            ProviderRunInput
 	lastInvokeInput         ProviderInvokeInput
 	sessions                map[SessionKey]ProviderSession
+}
+
+func withDisabledControllerLogging() ControllerOption {
+	return WithControllerLogging(ProviderLogging{Disabled: true})
 }
 
 func newRealControllerProvider(now time.Time) *realControllerProvider {

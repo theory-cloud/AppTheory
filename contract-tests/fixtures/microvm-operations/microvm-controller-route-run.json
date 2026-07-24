@@ -22,7 +22,7 @@
       },
       "body": {
         "encoding": "utf8",
-        "value": "{\"namespace\":\"namespace-1\",\"image_ref\":\"image-ref\",\"image_version\":\"1\",\"network_connector_ref\":\"network-ref\",\"session_spec\":{\"metadata\":{\"safe\":\"ok\"}}}"
+        "value": "{\"namespace\":\"namespace-1\",\"image_ref\":\"image-ref\",\"image_version\":\"1\",\"network_connector_ref\":\"network-ref\",\"session_spec\":{\"metadata\":{\"safe\":\"ok\"}},\"logging\":{\"cloud_watch\":{\"log_group\":\"caller-must-not-control\"}}}"
       },
       "is_base64": false
     }

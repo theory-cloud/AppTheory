@@ -10,6 +10,8 @@ Official AWS reference: <https://docs.aws.amazon.com/AWSCloudFormation/latest/Te
 
 - Caller supplies the code artifact URI, base image ARN/version, and build role ARN.
 - Egress is wired through `AppTheoryMicrovmNetworkConnector` references; AppTheory does not create a VPC here.
+- The required normalized `logging` posture is exposed on `IAppTheoryMicrovmImage` so
+  `AppTheoryMicrovmController` can propagate the same choice to every runtime `RunMicrovm` call.
 - The construct is deployment-only; runtime MicroVM lifecycle and controller behavior remain in the AppTheory runtime
   contract.
 - No live AWS mutation happens during construct tests or synthesis.
@@ -21,6 +23,7 @@ import {
   AppTheoryMicrovmHookMode,
   AppTheoryMicrovmImage,
   AppTheoryMicrovmNetworkConnector,
+  IAppTheoryMicrovmImage,
 } from "@theory-cloud/apptheory-cdk";
 
 const connector = new AppTheoryMicrovmNetworkConnector(this, "MicrovmEgress", {
@@ -71,7 +74,9 @@ image.microvmImageArn;
 
 ## Logging
 
-`logging` is fail-closed: specify exactly one of `cloudWatch` or `disabled: true`.
+`logging` is fail-closed: specify exactly one of `cloudWatch` or `disabled: true`. It is not only a
+CloudFormation image property; it is the deployment-owned runtime posture exposed through `IAppTheoryMicrovmImage` and
+copied by `AppTheoryMicrovmController` into the reserved `APPTHEORY_MICROVM_LOGGING` value.
 
 ```ts
 new AppTheoryMicrovmImage(this, "MicrovmImage", {
@@ -79,6 +84,23 @@ new AppTheoryMicrovmImage(this, "MicrovmImage", {
   logging: { disabled: true },
 });
 ```
+
+CloudWatch mode requires the consuming controller to receive `executionRole`. The MicroVM execution role must trust
+Lambda for `sts:AssumeRole`, allow `sts:TagSession`, and allow `logs:CreateLogGroup`, `logs:CreateLogStream`, and
+`logs:PutLogEvents`. It is separate from `buildRoleArn`.
+
+Imported/structural references also carry the posture:
+
+```ts
+const importedImage: IAppTheoryMicrovmImage = {
+  microvmImageArn: importedImageArn,
+  logging: { disabled: true },
+};
+```
+
+Omitted logging, both members, and `disabled: false` are invalid. HTTP `run` callers cannot override the image's
+deployment-owned choice. See the canonical
+[AppTheory 2.0 migration guide](../../docs/migration/microvm-runtime-logging-v2.md).
 
 ## Defaults and validation
 

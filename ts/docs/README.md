@@ -67,7 +67,8 @@ operator-facing API guidance. Keep these human-authored groups current when the 
   `EnvEmbeddingDimensions`, `EnvEmbeddingNormalize`, `PutVectorsInput`, `GetVectorsInput`, `DeleteVectorsInput`,
   `QueryVectorsInput`, `S3VectorStoreConfig`, `SemanticIndexConfig`, `cloneVector`, `cloneMetadata`,
   `normalizeTopK`, `validateDimension`, `validateVector`, and `validateRequiredMetadata`.
-- MicroVM and generated contract helpers: `MicroVMController`, provider/session validators, and `generateOpenAPI`.
+- MicroVM and generated contract helpers: `MicroVMController`, `MicroVMProviderLogging`,
+  `MicroVMProviderCloudWatchLogging`, `MICROVM_ENV_LOGGING`, provider/session validators, and `generateOpenAPI`.
 
 <!-- apptheory-api-docs:ts:start -->
 ## TypeScript snapshot coverage index
@@ -75,7 +76,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>669 exported top-level symbols</summary>
+<summary>672 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, ALBTargetGroupResponse
@@ -164,7 +165,7 @@ McpToolHandler, McpToolRegistry, McpToolResult, MemoryMcpSessionStore
 MemoryMcpStreamStore, MemoryMcpTaskStore, MemoryMicroVMSessionRegistry, MetricRecord
 MICROVM_AWS_LAMBDA_PROVIDER_ID, MICROVM_CONTRACT_NAME, MICROVM_CONTRACT_VERSION, MICROVM_CONTRACT_VERSION_M16
 MICROVM_CONTROLLER_AUTH_DEFAULT_DENY, MICROVM_DEFAULT_SESSION_PROVIDER_ID, MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS, MICROVM_ENV_EXECUTION_ROLE_ARN
-MICROVM_ENV_IMAGE_REF, MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS, MICROVM_ENV_NETWORK_CONNECTOR_REFS, MICROVM_ERROR_CONTROLLER_COMMAND_FAILED
+MICROVM_ENV_IMAGE_REF, MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS, MICROVM_ENV_LOGGING, MICROVM_ENV_NETWORK_CONNECTOR_REFS, MICROVM_ERROR_CONTROLLER_COMMAND_FAILED
 MICROVM_ERROR_CONTROLLER_INCOMPLETE, MICROVM_ERROR_FORBIDDEN_FIELD, MICROVM_ERROR_INVALID_CONTRACT, MICROVM_ERROR_INVALID_CONTROLLER_REQUEST
 MICROVM_ERROR_INVALID_LIFECYCLE_EVENT, MICROVM_ERROR_LIFECYCLE_BYPASS, MICROVM_ERROR_LIFECYCLE_HOOK_FAILED, MICROVM_ERROR_LIFECYCLE_INCOMPLETE
 MICROVM_ERROR_OPERATION_CONTRACT_INCOMPLETE, MICROVM_ERROR_PROVIDER_OPERATION_FAILED, MICROVM_ERROR_PROVIDER_OPERATION_UNSUPPORTED, MICROVM_ERROR_PROVIDER_REQUEST_INVALID
@@ -180,8 +181,8 @@ MicroVMIDGenerator, MicroVMLifecycleAdapter, MicroVMLifecycleAdapterOptions, Mic
 MicroVMLifecycleEvent, MicroVMLifecycleHandler, MicroVMLifecycleHook, MicroVMLifecycleHookSpec
 MicroVMLifecycleResult, MicroVMLifecycleState, MicroVMLifecycleTransition, MicroVMOperation
 MicroVMOperationContract, MicroVMOperationHTTPRouteContract, MicroVMOperationName, MicroVMProvider
-MicroVMProviderCall, MicroVMProviderIdlePolicy, MicroVMProviderInvokeInput, MicroVMProviderInvokeOutput
-MicroVMProviderListInput, MicroVMProviderListOutput, MicroVMProviderPortScope, MicroVMProviderRunInput
+MicroVMProviderCall, MicroVMProviderCloudWatchLogging, MicroVMProviderIdlePolicy, MicroVMProviderInvokeInput, MicroVMProviderInvokeOutput
+MicroVMProviderListInput, MicroVMProviderListOutput, MicroVMProviderLogging, MicroVMProviderPortScope, MicroVMProviderRunInput
 MicroVMProviderSession, MicroVMProviderSessionBinding, MicroVMProviderSessionInput, MicroVMProviderStateMapping
 MicroVMProviderToken, MicroVMProviderTokenInput, MicroVMRealController, MicroVMRealHook
 MicroVMRealLifecycleHook, MicroVMRealLifecycleState, MicroVMRealState, MicroVMRegistryClient
