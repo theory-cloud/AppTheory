@@ -26,7 +26,7 @@
     "@aws-sdk/client-lambda-microvms": "^3.1075.0",
     "@aws-sdk/client-s3": "^3.1015.0",
     "@aws-sdk/client-s3vectors": "^3.1081.0",
-    "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v2.0.4/theory-cloud-tabletheory-ts-2.0.4.tgz#sha512-j5dSJUaJNBKIKPeq3+bK82+AtFP0pXVUAC5U+leZkjo1ygS6Ice5iRW2Vsq6140tRlGAZyE8T2mqxU4+LGRVHA=="
+    "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v2.0.5/theory-cloud-tabletheory-ts-2.0.5.tgz#sha512-lEAEPPLGERgfgN9PE+5qOWCiDLnUgVHOEpfzBP+cmiI0ca6/S3om8IRnfsSXIzWly8mRUmaCpbSMk0Sdtk7M4Q=="
   },
   "files": [
     "dist",
