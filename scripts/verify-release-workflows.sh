@@ -213,14 +213,45 @@ require_contains(
 )
 require_contains(
     ".github/workflows/prerelease.yml",
-    "Recover existing draft prerelease assets",
-    "prerelease reruns must recover draft releases left by a failed first attempt",
+    "Recover or verify existing prerelease",
+    "prerelease reruns must recover drafts and verify already-published immutable releases",
 )
 require_contains(
     ".github/workflows/release.yml",
-    "Recover existing draft release assets",
-    "stable reruns must recover draft releases left by a failed first attempt",
+    "Recover or verify existing stable release",
+    "stable reruns must recover drafts and verify already-published immutable releases",
 )
+for workflow, channel, closure_step in (
+    (".github/workflows/prerelease.yml", "prerelease", "Verify prerelease publication closure"),
+    (".github/workflows/release.yml", "stable", "Verify stable publication closure"),
+):
+    require_not_contains(
+        workflow,
+        "--json isDraft",
+        "release reruns must verify already-published releases instead of skipping non-drafts",
+    )
+    require_contains(
+        workflow,
+        f'scripts/verify-release-publish-postcondition.sh {channel} "${{RELEASE_CREATED}}" "${{TAG_NAME}}" prepublish',
+        "release workflows must validate Release Please output before the publisher mutates tag state",
+    )
+    require_contains(
+        workflow,
+        f'scripts/verify-release-publish-postcondition.sh {channel} "${{RELEASE_CREATED}}" "${{TAG_NAME}}" complete',
+        "release workflows must prove Go module publication closure after the publisher",
+    )
+    require_order(
+        workflow,
+        "prepublish",
+        closure_step,
+        "release workflows must run the prepublish gate before the complete publication postcondition",
+    )
+    require_order(
+        workflow,
+        'scripts/publish-release-assets.sh "${TAG_NAME}"',
+        closure_step,
+        "release workflows must finish the serialized publisher before the complete postcondition",
+    )
 for workflow in (".github/workflows/prerelease.yml", ".github/workflows/release.yml"):
     require_contains(
         workflow,
@@ -241,6 +272,16 @@ require_contains(
     "scripts/diagnose-release-state.sh",
     "release-diagnostics: tag=",
     "release diagnostics must print the active tag state",
+)
+require_contains(
+    "scripts/diagnose-release-state.sh",
+    "go-module-tag=",
+    "release diagnostics must report nested Go module tag state",
+)
+require_contains(
+    "scripts/diagnose-release-state.sh",
+    "cut a new version",
+    "release diagnostics must refuse repair by moving a conflicting immutable module tag",
 )
 require_contains(
     "scripts/diagnose-release-state.sh",
@@ -302,6 +343,79 @@ require_order(
     "scripts/generate-checksums.sh",
     'gh release upload "${tag}"',
     "release asset publisher must checksum artifacts before upload",
+)
+require_order_after(
+    "scripts/publish-release-assets.sh",
+    "scripts/generate-checksums.sh",
+    "collect_release_assets asset_paths",
+    "publish_and_verify_go_modules",
+    "release asset publisher must finish deterministic source builds before creating module tags",
+)
+require_order(
+    "scripts/publish-release-assets.sh",
+    "scripts/publish-go-module-tags.sh",
+    "scripts/verify-go-module-tags.sh",
+    "release asset publisher must create immutable module tags before exact resolution",
+)
+require_order_after(
+    "scripts/publish-release-assets.sh",
+    "collect_release_assets asset_paths",
+    "publish_and_verify_go_modules",
+    'gh release upload "${tag}"',
+    "release asset publisher must prove Go modules before uploading draft assets",
+)
+require_order_after(
+    "scripts/publish-release-assets.sh",
+    "collect_release_assets asset_paths",
+    "publish_and_verify_go_modules",
+    'gh release edit "${tag}" --target "${source_commit}" --draft=false',
+    "release asset publisher must prove Go modules before publication becomes visible",
+)
+for path in (
+    "scripts/go-module-release-contract.sh",
+    "scripts/publish-go-module-tags.sh",
+    "scripts/verify-go-module-tags.sh",
+):
+    require_contains(
+        "scripts/verify-branch-release-supply-chain.sh",
+        path,
+        f"release supply-chain verifier must require {path}",
+    )
+for forbidden in (
+    "git push --force",
+    "git push -f",
+    "git tag -f",
+    "git push --delete",
+):
+    require_not_contains(
+        "scripts/publish-go-module-tags.sh",
+        forbidden,
+        "Go module tag publisher must never move or delete an existing tag",
+    )
+require_contains(
+    "scripts/publish-go-module-tags.sh",
+    "refs are immutable",
+    "Go module tag publisher must fail closed on a conflicting existing ref",
+)
+require_contains(
+    "scripts/publish-go-module-tags.sh",
+    "concurrently created",
+    "Go module tag publisher must safely accept a same-SHA create race",
+)
+require_contains(
+    "scripts/verify-go-module-tags.sh",
+    "GOPROXY=direct",
+    "Go module postcondition must bypass stale proxy state and resolve the exact Git refs",
+)
+require_contains(
+    "scripts/verify-go-module-tags.sh",
+    'origin.get("Hash")',
+    "Go module postcondition must prove the resolved commit hash",
+)
+require_contains(
+    "scripts/verify-go-module-tags.sh",
+    'origin.get("Ref")',
+    "Go module postcondition must prove the root or nested tag ref",
 )
 require_contains(
     "scripts/publish-release-assets.sh",
@@ -605,6 +719,7 @@ require_contains(
 )
 for coverage in (
     "happy_path",
+    "go_module_tags",
     "publish_recovery_race",
     "stale_release_please_pr",
     "promotion_drift",
@@ -675,6 +790,18 @@ require_order(
     "Verify branch version sync (release preflight)",
     "Verify release workflow invariants (release preflight)",
     "prerelease creation must fail closed on stale branch release state before release workflow checks",
+)
+require_order(
+    ".github/workflows/prerelease.yml",
+    "actions/setup-go",
+    "Verify release workflow invariants (release preflight)",
+    "prerelease workflow checks must use the pinned Go toolchain for module probe self-tests",
+)
+require_order(
+    ".github/workflows/release.yml",
+    "actions/setup-go",
+    "Verify release workflow invariants (stable release preflight)",
+    "stable workflow checks must use the pinned Go toolchain for module probe self-tests",
 )
 require_contains(
     ".github/workflows/prerelease-pr.yml",
@@ -1101,6 +1228,10 @@ for forbidden in (
 subprocess.run(["bash", "scripts/verify-branch-version-sync.sh", "--self-test"], check=True)
 subprocess.run(["bash", "scripts/verify-release-pr-postcondition.sh", "--self-test"], check=True)
 subprocess.run(["bash", "scripts/verify-release-publish-postcondition.sh", "--self-test"], check=True)
+subprocess.run(["bash", "scripts/publish-go-module-tags.sh", "--self-test"], check=True)
+subprocess.run(["bash", "scripts/verify-go-module-tags.sh", "--self-test"], check=True)
+subprocess.run(["bash", "scripts/render-release-notes.sh", "--self-test"], check=True)
+subprocess.run(["bash", "scripts/diagnose-release-state.sh", "--self-test"], check=True)
 subprocess.run(["bash", "scripts/sync-release-pr-generated.sh", "--self-test"], check=True)
 subprocess.run(["bash", "scripts/verify-release-please-token-safety.sh"], check=True)
 
