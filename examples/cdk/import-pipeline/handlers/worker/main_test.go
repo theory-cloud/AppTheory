@@ -8,7 +8,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	"github.com/theory-cloud/apptheory/pkg/jobs"
+	"github.com/theory-cloud/apptheory/v2/pkg/jobs"
 )
 
 type fakeWorkerLedger struct {

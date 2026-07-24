@@ -12,7 +12,7 @@ The Go runtime is the most complete implementation of the AppTheory contract and
 The Go toolchain resolves modules from the immutable git tag — no registry is involved beyond Go's standard proxy.
 
 ```bash
-go get github.com/theory-cloud/apptheory@v1.14.0
+go get github.com/theory-cloud/apptheory/v2@v2.0.0-rc
 ```
 
 Pin a specific release tag from the [releases page](https://github.com/theory-cloud/AppTheory/releases). AppTheory does not publish to the npm or PyPI registries; the Go module is the only language artifact that ships through Go's normal toolchain path.
@@ -21,14 +21,14 @@ Module layout (see `api-snapshots/go.txt` for the exact exported surface):
 
 | Package | Purpose |
 | --- | --- |
-| `github.com/theory-cloud/apptheory/runtime` | Core runtime: `apptheory.New`, `Context`, `Request`, `Response`, route registration, middleware. |
-| `github.com/theory-cloud/apptheory/runtime/mcp` | MCP Streamable HTTP transport, sessions, resumable SSE. |
-| `github.com/theory-cloud/apptheory/runtime/oauth` | OAuth protected-resource metadata, PKCE, DCR, token-store helpers. |
-| `github.com/theory-cloud/apptheory/testkit` | Deterministic test environment (clock, ID queue, event builders). |
-| `github.com/theory-cloud/apptheory/testkit/mcp` | In-process MCP client for unit tests. |
-| `github.com/theory-cloud/apptheory/pkg/limited` | DynamoDB-backed cross-instance rate limiter. |
-| `github.com/theory-cloud/apptheory/pkg/jobs` | Jobs-ledger primitives. |
-| `github.com/theory-cloud/apptheory/pkg/sanitization` | Safe logging helpers. |
+| `github.com/theory-cloud/apptheory/v2/runtime` | Core runtime: `apptheory.New`, `Context`, `Request`, `Response`, route registration, middleware. |
+| `github.com/theory-cloud/apptheory/v2/runtime/mcp` | MCP Streamable HTTP transport, sessions, resumable SSE. |
+| `github.com/theory-cloud/apptheory/v2/runtime/oauth` | OAuth protected-resource metadata, PKCE, DCR, token-store helpers. |
+| `github.com/theory-cloud/apptheory/v2/testkit` | Deterministic test environment (clock, ID queue, event builders). |
+| `github.com/theory-cloud/apptheory/v2/testkit/mcp` | In-process MCP client for unit tests. |
+| `github.com/theory-cloud/apptheory/v2/pkg/limited` | DynamoDB-backed cross-instance rate limiter. |
+| `github.com/theory-cloud/apptheory/v2/pkg/jobs` | Jobs-ledger primitives. |
+| `github.com/theory-cloud/apptheory/v2/pkg/sanitization` | Safe logging helpers. |
 
 ## Minimal app
 
@@ -40,7 +40,7 @@ import (
     "encoding/json"
 
     "github.com/aws/aws-lambda-go/lambda"
-    apptheory "github.com/theory-cloud/apptheory/runtime"
+    apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 )
 
 func main() {
@@ -129,8 +129,8 @@ import (
     "context"
     "encoding/json"
 
-    apptheory "github.com/theory-cloud/apptheory/runtime"
-    "github.com/theory-cloud/apptheory/runtime/mcp"
+    apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+    "github.com/theory-cloud/apptheory/v2/runtime/mcp"
 )
 
 srv := mcp.NewServer("example", "1.0.0")

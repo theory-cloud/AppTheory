@@ -134,11 +134,55 @@ PY
   write_version_state "${stable_manifest_skew_dir}" "1.16.0" "1.15.2" "1.16.0"
   run_self_test_case "stable manifest skew" "${stable_manifest_skew_dir}" 1 ".release-please-manifest.json"
 
+  released_v2_dir="${tmp_dir}/released-v2"
+  copy_fixture "${released_v2_dir}"
+  write_version_state "${released_v2_dir}" "2.0.0-rc" "1.17.1" "2.0.0-rc"
+  run_self_test_case "released v2 module" "${released_v2_dir}" 0 \
+    "go module state released-major (github.com/theory-cloud/apptheory/v2; VERSION 2.0.0-rc)"
+
+  wrong_module_dir="${tmp_dir}/wrong-module"
+  copy_fixture "${wrong_module_dir}"
+  python3 - "${wrong_module_dir}/go.mod" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(
+    text.replace(
+        "module github.com/theory-cloud/apptheory/v2\n",
+        "module github.com/theory-cloud/apptheory\n",
+        1,
+    ),
+    encoding="utf-8",
+)
+PY
+  run_self_test_case "unsuffixed root module" "${wrong_module_dir}" 1 \
+    "go.mod module 'github.com/theory-cloud/apptheory' != 'github.com/theory-cloud/apptheory/v2'"
+
+  wrong_module_major_dir="${tmp_dir}/wrong-module-major"
+  copy_fixture "${wrong_module_major_dir}"
+  write_version_state "${wrong_module_major_dir}" "3.0.0" "3.0.0" "3.0.0"
+  run_self_test_case "unsupported VERSION major" "${wrong_module_major_dir}" 1 \
+    "VERSION major 3 is incompatible with Go module major 2"
+
+  stale_import_dir="${tmp_dir}/stale-import"
+  copy_fixture "${stale_import_dir}"
+  mkdir -p "${stale_import_dir}/runtime"
+  cat > "${stale_import_dir}/runtime/stale.go" <<'GO'
+package runtime
+
+import "github.com/theory-cloud/apptheory/testkit"
+GO
+  run_self_test_case "unsuffixed active import" "${stale_import_dir}" 1 \
+    "runtime/stale.go:3: unsuffixed root module reference"
+
   echo "version-alignment-self-test: PASS"
   exit 0
 fi
 
-expected_module="github.com/theory-cloud/apptheory"
+expected_module="github.com/theory-cloud/apptheory/v2"
+expected_module_major=2
 expected_cdk_go_module="github.com/theory-cloud/apptheory/cdk-go"
 
 if [[ ! -f "VERSION" ]]; then
@@ -157,6 +201,19 @@ if [[ ! "${expected_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc(\.[0-9]+)?)?$ ]]; t
   exit 1
 fi
 
+expected_version_major="${expected_version%%.*}"
+if (( expected_version_major == expected_module_major )); then
+  go_module_state="released-major"
+elif (( expected_version_major + 1 == expected_module_major )); then
+  # Release Please owns VERSION. During an approved major-version migration,
+  # staging carries the next major's semantic import path before the generated
+  # release PR advances VERSION and the language package manifests.
+  go_module_state="staged-next-major"
+else
+  echo "version-alignment: FAIL (VERSION major ${expected_version_major} is incompatible with Go module major ${expected_module_major})"
+  exit 1
+fi
+
 if [[ ! -f "go.mod" ]]; then
   echo "version-alignment: FAIL (missing go.mod)"
   exit 1
@@ -167,6 +224,83 @@ if [[ "${observed_module}" != "${expected_module}" ]]; then
   echo "version-alignment: FAIL (go.mod module '${observed_module}' != '${expected_module}')"
   exit 1
 fi
+echo "version-alignment: go module state ${go_module_state} (${expected_module}; VERSION ${expected_version})"
+
+python3 - <<'PY'
+import sys
+from pathlib import Path
+
+root_module = "github.com/theory-cloud/apptheory"
+allowed_suffixes = ("/v2", "/cdk-go")
+skip_parts = {
+    ".git",
+    ".jekyll-cache",
+    "_site",
+    "cdk.out",
+    "dist",
+    "node_modules",
+}
+candidate_paths = {
+    Path(".golangci-v2.yml"),
+    Path("README.md"),
+    Path("api-snapshots/go.txt"),
+    Path("go.mod"),
+    Path("scripts/verify-scaffold-examples.sh"),
+}
+for root in (
+    Path("cmd"),
+    Path("contract-tests/runners/go"),
+    Path("docs"),
+    Path("examples"),
+    Path("pkg"),
+    Path("runtime"),
+    Path("scripts/tools/api_snapshots/go"),
+    Path("templates/apptheory-init/go"),
+    Path("testkit"),
+):
+    if not root.exists():
+        continue
+    for path in root.rglob("*"):
+        if not path.is_file() or skip_parts.intersection(path.parts):
+            continue
+        if path.parts[:3] == ("docs", "development", "planning"):
+            continue
+        candidate_paths.add(path)
+
+errors: list[str] = []
+boundary = set("/@=`\"' \t\r\n)")
+for path in sorted(candidate_paths):
+    if not path.exists():
+        continue
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        continue
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        offset = 0
+        while True:
+            index = line.find(root_module, offset)
+            if index < 0:
+                break
+            suffix = line[index + len(root_module):]
+            allowed = any(
+                suffix.startswith(prefix)
+                and (
+                    len(suffix) == len(prefix)
+                    or suffix[len(prefix)] in boundary
+                )
+                for prefix in allowed_suffixes
+            )
+            if not allowed and (not suffix or suffix[0] in boundary):
+                errors.append(f"{path}:{line_number}: unsuffixed root module reference")
+            offset = index + len(root_module)
+
+if errors:
+    print("version-alignment: FAIL (Go semantic import version hygiene)", file=sys.stderr)
+    for error in errors:
+        print(f"- {error}", file=sys.stderr)
+    sys.exit(1)
+PY
 
 if [[ ! -f "cdk-go/go.mod" ]]; then
   echo "version-alignment: FAIL (missing cdk-go/go.mod)"

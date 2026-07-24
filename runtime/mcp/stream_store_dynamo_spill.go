@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/theory-cloud/apptheory/pkg/objectstore"
+	"github.com/theory-cloud/apptheory/v2/pkg/objectstore"
 )
 
 const (

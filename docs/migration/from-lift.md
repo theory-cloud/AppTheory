@@ -41,12 +41,12 @@ sequence mechanically.
 Core import root:
 
 - Lift: `github.com/pay-theory/lift/...`
-- AppTheory: `github.com/theory-cloud/apptheory/runtime`
+- AppTheory: `github.com/theory-cloud/apptheory/v2/runtime`
 
 Rate limiting:
 
 - Lift historically: `github.com/pay-theory/limited`
-- AppTheory: `github.com/theory-cloud/apptheory/pkg/limited` (+ `pkg/limited/middleware`)
+- AppTheory: `github.com/theory-cloud/apptheory/v2/pkg/limited` (+ `pkg/limited/middleware`)
 
 Data (DynamoDB):
 
@@ -132,8 +132,8 @@ Tenant:
 
 AppTheory ports the `limited` feature set in-repo:
 
-- Package: `github.com/theory-cloud/apptheory/pkg/limited`
-- net/http middleware: `github.com/theory-cloud/apptheory/pkg/limited/middleware`
+- Package: `github.com/theory-cloud/apptheory/v2/pkg/limited`
+- net/http middleware: `github.com/theory-cloud/apptheory/v2/pkg/limited/middleware`
 
 Backing store:
 
@@ -148,7 +148,7 @@ Reference example:
 AppTheory ports the Lift EventBus surface needed by Autheory:
 
 - Lift: `github.com/pay-theory/lift/pkg/services`
-- AppTheory: `github.com/theory-cloud/apptheory/pkg/services`
+- AppTheory: `github.com/theory-cloud/apptheory/v2/pkg/services`
 
 Key mapping:
 
@@ -456,7 +456,7 @@ they are intentionally omitted from this user-facing guide.
 Available now:
 
 - `./scripts/migrate-from-lift-go.sh`:
-  - Scope: rewrites `github.com/pay-theory/limited` → `github.com/theory-cloud/apptheory/pkg/limited` (and subpackages)
+  - Scope: rewrites `github.com/pay-theory/limited` → `github.com/theory-cloud/apptheory/v2/pkg/limited` (and subpackages)
   - Safe by default: dry-run prints unified diffs
 - `cmd/lift-migrate`:
   - Programmatic import rewriting tool (used by the script above)

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"sync"
 
-	apptheory "github.com/theory-cloud/apptheory/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 )
 
 // StreamEvent is a single server->client JSON-RPC message framed as an SSE event.

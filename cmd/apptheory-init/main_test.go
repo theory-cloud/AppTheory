@@ -24,6 +24,21 @@ func TestScaffoldTypeScriptProject(t *testing.T) {
 	}
 }
 
+func TestScaffoldGoProjectUsesV2Module(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "hello-go")
+	if err := run([]string{"--lang=go", "--version=2.0.0-rc", target}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	goMod := readFile(t, filepath.Join(target, "go.mod"))
+	if !strings.Contains(goMod, "require github.com/theory-cloud/apptheory/v2 v2.0.0-rc") {
+		t.Fatalf("go.mod does not pin the AppTheory v2 module: %s", goMod)
+	}
+	legacyModule := "github.com/theory-cloud/" + "apptheory v"
+	if strings.Contains(goMod, legacyModule) {
+		t.Fatalf("go.mod contains the legacy unsuffixed module: %s", goMod)
+	}
+}
+
 func TestScaffoldRefusesNonEmptyTarget(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "hello-app")
 	if err := os.MkdirAll(target, 0o750); err != nil {

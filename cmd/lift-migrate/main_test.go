@@ -13,12 +13,12 @@ func TestMapImport(t *testing.T) {
 	t.Parallel()
 
 	got, ok := mapImport("github.com/pay-theory/limited")
-	if !ok || got != "github.com/theory-cloud/apptheory/pkg/limited" {
+	if !ok || got != "github.com/theory-cloud/apptheory/v2/pkg/limited" {
 		t.Fatalf("mapImport base: got %q ok=%v", got, ok)
 	}
 
 	got, ok = mapImport("github.com/pay-theory/limited/strategies")
-	if !ok || got != "github.com/theory-cloud/apptheory/pkg/limited/strategies" {
+	if !ok || got != "github.com/theory-cloud/apptheory/v2/pkg/limited/strategies" {
 		t.Fatalf("mapImport prefix: got %q ok=%v", got, ok)
 	}
 
@@ -58,7 +58,7 @@ func f() {}
 	if !changed {
 		t.Fatalf("expected rewriteGoFile to report changed=true")
 	}
-	if !strings.Contains(string(out), `github.com/theory-cloud/apptheory/pkg/limited/strategies`) {
+	if !strings.Contains(string(out), `github.com/theory-cloud/apptheory/v2/pkg/limited/strategies`) {
 		t.Fatalf("expected import to be rewritten, got:\n%s", string(out))
 	}
 
@@ -113,7 +113,7 @@ func f() {}
 	if err != nil {
 		t.Fatalf("read updated a.go: %v", err)
 	}
-	if !strings.Contains(string(updated), `github.com/theory-cloud/apptheory/pkg/limited/strategies`) {
+	if !strings.Contains(string(updated), `github.com/theory-cloud/apptheory/v2/pkg/limited/strategies`) {
 		t.Fatalf("expected updated file to contain rewritten import, got:\n%s", string(updated))
 	}
 }
@@ -248,7 +248,7 @@ func f() {}
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if !strings.Contains(string(updated), "github.com/theory-cloud/apptheory/pkg/limited/strategies") {
+	if !strings.Contains(string(updated), "github.com/theory-cloud/apptheory/v2/pkg/limited/strategies") {
 		t.Fatalf("expected file to be updated, got:\n%s", string(updated))
 	}
 }

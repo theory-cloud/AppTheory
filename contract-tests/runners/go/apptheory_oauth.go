@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/runtime"
-	"github.com/theory-cloud/apptheory/runtime/oauth"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+	"github.com/theory-cloud/apptheory/v2/runtime/oauth"
 )
 
 type oauthFixtureState struct {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 )
 
 // ContextKeyBearerToken is set on apptheory.Context by RequireBearerTokenMiddleware.
