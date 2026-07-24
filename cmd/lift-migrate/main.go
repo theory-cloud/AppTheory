@@ -244,7 +244,7 @@ func rewriteGoFile(filename string, src []byte) ([]byte, bool, error) {
 
 func mapImport(oldPath string) (string, bool) {
 	const oldBase = "github.com/pay-theory/limited"
-	const newBase = "github.com/theory-cloud/apptheory/pkg/limited"
+	const newBase = "github.com/theory-cloud/apptheory/v2/pkg/limited"
 
 	if oldPath == oldBase {
 		return newBase, true

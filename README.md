@@ -54,22 +54,23 @@ AppTheory is the runtime layer of the [Theory Cloud](THEORY_CLOUD.md) stack — 
 AppTheory is distributed exclusively through immutable **[GitHub Releases](https://github.com/theory-cloud/AppTheory/releases)** — no PyPI, no npm. The single distribution path keeps versions aligned across all three runtimes. Pin the release you are consuming and verify downloaded assets before installing them:
 
 ```bash
-VERSION=1.14.0
+VERSION=2.0.0-rc
 TAG="v${VERSION}"
 REPO="theory-cloud/AppTheory"
+PYTHON_VERSION="${VERSION/-rc/rc0}"
 
 # Go resolves the immutable git tag.
-go get "github.com/theory-cloud/apptheory@${TAG}"
+go get "github.com/theory-cloud/apptheory/v2@${TAG}"
 
 # TypeScript and Python install from verified GitHub Release assets.
 gh release download "${TAG}" --repo "${REPO}" \
   --pattern "theory-cloud-apptheory-${VERSION}.tgz" \
-  --pattern "apptheory-${VERSION}-py3-none-any.whl" \
+  --pattern "apptheory-${PYTHON_VERSION}-py3-none-any.whl" \
   --pattern "SHA256SUMS.txt" \
   --clobber
-grep -E " (theory-cloud-apptheory-${VERSION}\.tgz|apptheory-${VERSION}-py3-none-any\.whl)$" SHA256SUMS.txt | sha256sum -c -
+grep -E " (theory-cloud-apptheory-${VERSION}\.tgz|apptheory-${PYTHON_VERSION}-py3-none-any\.whl)$" SHA256SUMS.txt | sha256sum -c -
 npm install "./theory-cloud-apptheory-${VERSION}.tgz"
-python -m pip install "./apptheory-${VERSION}-py3-none-any.whl"
+python -m pip install "./apptheory-${PYTHON_VERSION}-py3-none-any.whl"
 ```
 
 ## At a glance
@@ -192,7 +193,7 @@ import (
     "encoding/json"
 
     "github.com/aws/aws-lambda-go/lambda"
-    apptheory "github.com/theory-cloud/apptheory/runtime"
+    apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 )
 
 func main() {

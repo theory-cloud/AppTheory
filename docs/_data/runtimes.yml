@@ -7,7 +7,7 @@
 - id: go
   label: Go
   icon: go-mark
-  install: "go get github.com/theory-cloud/apptheory@v1.14.0"
+  install: "go get github.com/theory-cloud/apptheory/v2@v2.0.0-rc"
   lang: go
   snippet: |
     package main
@@ -17,7 +17,7 @@
         "encoding/json"
 
         "github.com/aws/aws-lambda-go/lambda"
-        apptheory "github.com/theory-cloud/apptheory/runtime"
+        apptheory "github.com/theory-cloud/apptheory/v2/runtime"
     )
 
     func main() {

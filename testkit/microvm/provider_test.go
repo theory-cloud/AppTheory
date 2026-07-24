@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	runtimemicrovm "github.com/theory-cloud/apptheory/runtime/microvm"
+	runtimemicrovm "github.com/theory-cloud/apptheory/v2/runtime/microvm"
 )
 
 func TestFakeProviderCoversAllM16Operations(t *testing.T) {

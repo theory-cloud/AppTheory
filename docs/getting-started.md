@@ -36,19 +36,20 @@ go mod download
 AppTheory release artifacts are also published via GitHub Releases. Pin and verify the release you consume:
 
 ```bash
-VERSION=1.14.0
+VERSION=2.0.0-rc
 TAG="v${VERSION}"
 REPO="theory-cloud/AppTheory"
+PYTHON_VERSION="${VERSION/-rc/rc0}"
 
-go get "github.com/theory-cloud/apptheory@${TAG}"
+go get "github.com/theory-cloud/apptheory/v2@${TAG}"
 gh release download "${TAG}" --repo "${REPO}" \
   --pattern "theory-cloud-apptheory-${VERSION}.tgz" \
-  --pattern "apptheory-${VERSION}-py3-none-any.whl" \
+  --pattern "apptheory-${PYTHON_VERSION}-py3-none-any.whl" \
   --pattern "SHA256SUMS.txt" \
   --clobber
-grep -E " (theory-cloud-apptheory-${VERSION}\.tgz|apptheory-${VERSION}-py3-none-any\.whl)$" SHA256SUMS.txt | sha256sum -c -
+grep -E " (theory-cloud-apptheory-${VERSION}\.tgz|apptheory-${PYTHON_VERSION}-py3-none-any\.whl)$" SHA256SUMS.txt | sha256sum -c -
 npm install "./theory-cloud-apptheory-${VERSION}.tgz"
-python -m pip install "./apptheory-${VERSION}-py3-none-any.whl"
+python -m pip install "./apptheory-${PYTHON_VERSION}-py3-none-any.whl"
 ```
 
 ## First deterministic local invocation
@@ -64,8 +65,8 @@ package mysvc
 import (
 	"context"
 
-	apptheory "github.com/theory-cloud/apptheory/runtime"
-	"github.com/theory-cloud/apptheory/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+	"github.com/theory-cloud/apptheory/v2/testkit"
 )
 
 func Example() {

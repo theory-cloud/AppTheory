@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/theory-cloud/apptheory/pkg/sanitization"
+	"github.com/theory-cloud/apptheory/v2/pkg/sanitization"
 )
 
 type SanitizerFunc func(key string, value any) any
