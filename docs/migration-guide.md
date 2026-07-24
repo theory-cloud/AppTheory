@@ -14,6 +14,7 @@ Start here:
 - `docs/migration/from-lift.md`
 - `docs/migration/appsync-lambda-resolvers.md`
 - `docs/migration/g4-representative-migration.md`
+- `docs/migration/microvm-runtime-logging-v2.md`
 - `docs/api-reference.md`
 - `docs/testing-guide.md`
 
@@ -38,6 +39,16 @@ AppSync note:
 - Standard AppSync direct Lambda resolver events are supported without request mapping template changes.
 - Resolver metadata is available through `AsAppSync()`, `asAppSync()`, and `as_appsync()`.
 - See `docs/migration/appsync-lambda-resolvers.md` for wiring and route-shaping details.
+
+## AppTheory 2.0 Lambda MicroVM logging
+
+AppTheory 2.0 requires every real MicroVM run to carry one deployment-owned logging posture: CloudWatch or explicit
+disabled logging. Omission no longer means "use an image default."
+
+MicroVM deployments must migrate the image logging prop, controller execution role when CloudWatch is selected, imported
+image references, and any direct real-controller/provider tests together. Follow
+[AppTheory 2.0 MicroVM Runtime Logging](./migration/microvm-runtime-logging-v2.md) for the complete checklist and failure
+modes.
 
 ## Migration commands
 
