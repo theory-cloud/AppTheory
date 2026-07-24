@@ -9,6 +9,13 @@ export interface IAppTheoryMicrovmImage {
      * The ARN of the MicroVM image.
      */
     readonly microvmImageArn: string;
+    /**
+     * The normalized deployment-owned runtime logging posture for this image.
+     *
+     * Controllers propagate this exact CloudWatch-or-disabled choice to every
+     * `RunMicrovm` request.
+     */
+    readonly logging: AppTheoryMicrovmImageLogging;
 }
 /**
  * Additional OS capabilities supported by Lambda MicroVM images.
@@ -286,6 +293,10 @@ export declare class AppTheoryMicrovmImage extends Construct implements IAppTheo
      * The ARN of the MicroVM image.
      */
     readonly microvmImageArn: string;
+    /**
+     * The normalized deployment-owned runtime logging posture for this image.
+     */
+    readonly logging: AppTheoryMicrovmImageLogging;
     /**
      * The current image state.
      */
