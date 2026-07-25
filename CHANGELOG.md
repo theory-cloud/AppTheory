@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.0.1-rc](https://github.com/theory-cloud/AppTheory/compare/v2.0.0...v2.0.1-rc) (2026-07-25)
+
+
+### Bug Fixes
+
+* **mcp:** add modern cacheable result policy ([8a5ae7e](https://github.com/theory-cloud/AppTheory/commit/8a5ae7e3e75e70125104ae50e12eebeda7ceb319))
+* **mcp:** address conformance review findings ([3bb99cf](https://github.com/theory-cloud/AppTheory/commit/3bb99cf8cc45b8ff90e650c729f352ef549041ff))
+* **mcp:** align modern discovery capabilities ([5afff6c](https://github.com/theory-cloud/AppTheory/commit/5afff6c32e8878db195cb06b5cf6027909cf75b0))
+* **mcp:** align modern response semantics ([8388234](https://github.com/theory-cloud/AppTheory/commit/838823481bc482ec4dc82cb04562fe17c0ddd84e))
+* **mcp:** close 2026-07-28 conformance gaps ([38f8e9c](https://github.com/theory-cloud/AppTheory/commit/38f8e9c8b2bbbb8db7f7994ae9075086d7f950a1))
+* **mcp:** close conformance rubric regressions ([fae4ca5](https://github.com/theory-cloud/AppTheory/commit/fae4ca526c74a16e2144c152a82ff3355bacc58d))
+* **mcp:** enforce modern request transport contract ([8f74822](https://github.com/theory-cloud/AppTheory/commit/8f7482254e40139566ac0fceaf0dd42f4cbe6251))
+
 ## [2.0.0](https://github.com/theory-cloud/AppTheory/compare/v1.17.1...v2.0.0) (2026-07-25)
 
 
