@@ -1,4 +1,4 @@
-// Purpose: validate the one visible, expiring vulnerability exception for an
+// Purpose: validate the visible, expiring vulnerability exceptions for one
 // upstream dependency bundled inside the published aws-cdk-lib tarball.
 import fs from "node:fs";
 
@@ -38,13 +38,24 @@ function sameStringSet(actual, expected) {
 const report = readJson(reportPath, "scanner report");
 const lock = readJson(lockfilePath, "lockfile");
 const exception = {
-  advisoryId: "GHSA-3jxr-9vmj-r5cp",
-  advisoryUrl: "https://github.com/advisories/GHSA-3jxr-9vmj-r5cp",
-  affectedRange: ">=3.0.0 <5.0.7",
-  alias: "CVE-2026-13149",
+  advisories: [
+    {
+      advisoryId: "GHSA-3jxr-9vmj-r5cp",
+      advisoryUrl: "https://github.com/advisories/GHSA-3jxr-9vmj-r5cp",
+      affectedRange: ">=3.0.0 <5.0.7",
+      alias: "CVE-2026-13149",
+      fixedVersions: ["1.1.16", "2.1.2", "5.0.7"],
+    },
+    {
+      advisoryId: "GHSA-mh99-v99m-4gvg",
+      advisoryUrl: "https://github.com/advisories/GHSA-mh99-v99m-4gvg",
+      affectedRange: "<=5.0.7",
+      alias: "CVE-2026-14257",
+      fixedVersions: ["5.0.8"],
+    },
+  ],
   cdkVersion: "2.261.0",
   expiresOn: "2026-08-05",
-  fixedVersion: "5.0.7",
   lockfile: normalizePath(lockfilePath),
   minimatchVersion: "10.2.5",
   packageName: "brace-expansion",
@@ -84,20 +95,21 @@ if (!lockfileMatchesException()) {
   fail(`lockfile graph no longer matches the reviewed ${exception.packageName} exception`);
 }
 
-function hasFixedVersion(vuln) {
+function fixedVersions(vuln) {
+  const versions = [];
   for (const affected of vuln.affected ?? []) {
     if (affected?.package?.ecosystem !== "npm" || affected.package.name !== exception.packageName) {
       continue;
     }
     for (const range of affected.ranges ?? []) {
       for (const event of range.events ?? []) {
-        if (event?.fixed === exception.fixedVersion) {
-          return true;
+        if (event?.fixed) {
+          versions.push(String(event.fixed));
         }
       }
     }
   }
-  return false;
+  return [...new Set(versions)];
 }
 
 function expectedOsvDependencyGroups() {
@@ -121,10 +133,20 @@ function matchesNpmFinding(vuln) {
     vuln.name === exception.packageName &&
     vuln.severity === "high" &&
     vuln.isDirect === false &&
+    vuln.range === "<=5.0.7" &&
     Array.isArray(vuln.nodes) &&
     sameStringSet(vuln.nodes, [exception.packagePath]) &&
-    sameStringSet(viaUrls, [exception.advisoryUrl]) &&
-    sameStringSet(viaRanges, [exception.affectedRange])
+    Array.isArray(vuln.effects) &&
+    vuln.effects.length === 0 &&
+    viaObjects.length === exception.advisories.length &&
+    sameStringSet(
+      viaUrls,
+      exception.advisories.map((advisory) => advisory.advisoryUrl),
+    ) &&
+    sameStringSet(
+      viaRanges,
+      exception.advisories.map((advisory) => advisory.affectedRange),
+    )
   );
 }
 
@@ -151,7 +173,7 @@ function verifyNpmReport() {
   }
 }
 
-function matchesOsvFinding(result, pkg, vuln) {
+function matchesOsvFinding(result, pkg, vuln, advisory) {
   const sourcePath = normalizePath(result?.source?.path);
   const packageInfo = pkg?.package ?? {};
   const aliases = (vuln.aliases ?? []).map(String);
@@ -163,20 +185,23 @@ function matchesOsvFinding(result, pkg, vuln) {
     packageInfo.name === exception.packageName &&
     packageInfo.version === exception.packageVersion &&
     sameStringSet(dependencyGroups, expectedOsvDependencyGroups()) &&
-    vuln.id === exception.advisoryId &&
-    aliases.includes(exception.alias) &&
-    hasFixedVersion(vuln)
+    vuln.id === advisory.advisoryId &&
+    sameStringSet(aliases, [advisory.alias]) &&
+    sameStringSet(fixedVersions(vuln), advisory.fixedVersions)
   );
 }
 
 function verifyOsvReport() {
   const unexpected = [];
-  let visibleCount = 0;
+  const visibleCounts = new Map(exception.advisories.map((advisory) => [advisory.advisoryId, 0]));
   for (const result of report.results ?? []) {
     for (const pkg of result.packages ?? []) {
       for (const vuln of pkg.vulnerabilities ?? []) {
-        if (matchesOsvFinding(result, pkg, vuln)) {
-          visibleCount += 1;
+        const advisory = exception.advisories.find((candidate) =>
+          matchesOsvFinding(result, pkg, vuln, candidate),
+        );
+        if (advisory) {
+          visibleCounts.set(advisory.advisoryId, visibleCounts.get(advisory.advisoryId) + 1);
         } else {
           unexpected.push({
             id: vuln.id ?? "<unknown>",
@@ -189,13 +214,19 @@ function verifyOsvReport() {
     }
   }
 
-  if (unexpected.length > 0 || visibleCount !== 1) {
+  const incorrectCounts = [...visibleCounts].filter(([, count]) => count !== 1);
+  if (unexpected.length > 0 || incorrectCounts.length > 0) {
     for (const vuln of unexpected) {
       console.error(
         `osv-scanner: unexpected vulnerability ${vuln.id} in ${vuln.packageName}@${vuln.version} from ${vuln.source}`,
       );
     }
-    fail(`expected exactly one visible AWS CDK bundled finding, matched ${visibleCount}`);
+    for (const [advisoryId, count] of incorrectCounts) {
+      console.error(
+        `osv-scanner: expected exactly one visible AWS CDK bundled ${advisoryId} finding, matched ${count}`,
+      );
+    }
+    fail("visible AWS CDK bundled findings did not match the reviewed exception set");
   }
 }
 
@@ -205,6 +236,34 @@ if (mode === "npm") {
   verifyOsvReport();
 }
 
-console.error(
-  `${mode}-scanner: WARN (visible upstream AWS CDK bundle finding ${exception.advisoryId} / ${exception.alias} in ${exception.lockfile}; expires ${exception.expiresOn}; remove when aws-cdk-lib bundles >=${exception.fixedVersion})`,
-);
+for (const advisory of exception.advisories) {
+  console.error(
+    `${mode}-scanner: WARN ${JSON.stringify({
+      recordType: "reviewed-vulnerability-exception",
+      exceptionId: "aws-cdk-lib-bundled-brace-expansion",
+      advisoryId: advisory.advisoryId,
+      advisoryUrl: advisory.advisoryUrl,
+      affectedRange: advisory.affectedRange,
+      alias: advisory.alias,
+      fixedVersions: advisory.fixedVersions,
+      expiresOn: exception.expiresOn,
+      lockfile: exception.lockfile,
+      package: {
+        name: exception.packageName,
+        path: exception.packagePath,
+        version: exception.packageVersion,
+      },
+      provenance: {
+        awsCdkLib: {
+          path: "node_modules/aws-cdk-lib",
+          version: exception.cdkVersion,
+        },
+        minimatch: {
+          dependencyRange: "^5.0.5",
+          path: "node_modules/aws-cdk-lib/node_modules/minimatch",
+          version: exception.minimatchVersion,
+        },
+      },
+    })}`,
+  );
+}

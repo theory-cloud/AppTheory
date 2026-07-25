@@ -1,0 +1,113 @@
+{
+  "id": "mcp.stateless.batch_rejected",
+  "tier": "mcp",
+  "name": "MCP 2026-07-28 batches are rejected without entering the session transport",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      },
+      "id_sequence": [
+        "forbidden-batch-session"
+      ]
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "batch_metadata_cannot_initialize_session",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "[{\"jsonrpc\":\"2.0\",\"id\":\"batch-meta\",\"method\":\"initialize\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}}]"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "batch_header_remains_rejected",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "[{\"jsonrpc\":\"2.0\",\"id\":\"batch-header\",\"method\":\"initialize\"}]"
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": null,
+            "error": {
+              "code": -32700,
+              "message": "Parse error: invalid JSON object"
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": null,
+            "error": {
+              "code": -32700,
+              "message": "Parse error: invalid JSON object"
+            }
+          },
+          "is_base64": false
+        }
+      ]
+    }
+  }
+}

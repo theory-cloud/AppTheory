@@ -2,12 +2,12 @@ package apptheorycdk
 
 import (
 	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
-	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/jsii"
+	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v2/jsii"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
 	"github.com/aws/constructs-go/constructs/v10"
-	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
+	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v2/internal"
 )
 
 // A Claude-first Remote MCP server construct that provisions: - API Gateway REST API v1 - Streaming-enabled Lambda proxy integrations for `/mcp` (POST/GET) using   Lambda response streaming (`/response-streaming-invocations`) - Optional DynamoDB tables for sessions, streams, and task runtime state.

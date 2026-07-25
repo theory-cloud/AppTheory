@@ -1,6 +1,6 @@
 ---
 title: AWS Lambda MicroVM Golden Path
-description: The corrective M16 AppTheory path for fixture-backed Lambda MicroVM lifecycle, token-hidden invoke, provider, controller, registry, CDK, and consumer conformance support.
+description: The corrective M16 AppTheory path for fixture-backed Lambda MicroVM lifecycle, explicit runtime logging, token-hidden invoke, provider, controller, registry, CDK, and consumer conformance support.
 ---
 
 # AWS Lambda MicroVM Golden Path
@@ -17,16 +17,17 @@ The earlier M15 fixtures remain part of the compatibility history, but the real 
 for new docs, routes, conformance harnesses, and reviews.
 
 This page is repository-local documentation for the integration line. The current example path has been live-smoked in
-`us-east-1` with Go, TypeScript, and Python MicroVM workloads through the AppTheory controller invoke route. That is
-example-path proof for this repository, not stable release evidence, EqualToAI/Host application proof, customer workload
-readiness, or release-train execution evidence.
+`us-east-1` with Go, TypeScript, and Python MicroVM workloads through the AppTheory controller invoke route. Factory
+EqualToAI also ran a controlled lesser-host logging A/B that established the causal difference between omitted and
+explicit per-run logging. Those are bounded example and root-cause proofs, not stable release evidence, post-change
+EqualToAI/Host application proof, customer workload readiness, or release-train execution evidence.
 
 ## What AppTheory proves
 
 AppTheory can prove the framework surface locally:
 
-- shared M16 fixtures for the real operation contract, route auth, tenant binding, protected invoke routing, lifecycle
-  bypass denial, raw SDK denial, and token no-leak denial;
+- shared M16 fixtures for the real operation contract, deployment-owned CloudWatch-or-disabled runtime logging, route
+  auth, tenant binding, protected invoke routing, lifecycle bypass denial, raw SDK denial, and token no-leak denial;
 - Go, TypeScript, and Python runtime primitives for sanitized lifecycle adapters, constrained MicroVM controllers,
   provider adapters, token-hidden workload invocation, fake clients, provider-aware session records, and durable registry
   adapters;
@@ -36,9 +37,10 @@ AppTheory can prove the framework surface locally:
   conformance harness that can be run in local dry-run mode.
 
 That evidence does **not** claim arbitrary cloud mutation proof, customer workload proof, generalized account vending, or
-proof that unauthenticated controllers are acceptable. Live application proof belongs to a consumer-provided
-EqualToAI/Host lab run of the conformance harness with real lab configuration and supplied registry/log artifacts. Until
-that external run exists, the acceptable claim is AppTheory example-path proof plus local corrective gate proof.
+proof that unauthenticated controllers are acceptable. Post-change live application proof belongs to a consumer-provided
+EqualToAI/Host lab run with real lab configuration and supplied registry/log artifacts. Until Factory completes that
+acceptance run, the acceptable claim is AppTheory example-path proof, the pre-change controlled logging A/B, and local
+corrective gate proof.
 
 ## Golden path
 
@@ -57,9 +59,11 @@ Use these pieces together. Do not replace one piece with an ad-hoc implementatio
 4. **Deploy through AppTheory CDK constructs.** The deployment path is `AppTheoryMicrovmNetworkConnector` or typed
    connector references, `AppTheoryMicrovmImage`, and `AppTheoryMicrovmController`. The controller requires explicit
    ingress, egress, and shell-ingress connector references; AppTheory does not hide connector defaults.
-5. **Persist controller state through the durable session registry.** Controller and session routes use the canonical
+5. **Choose runtime logging at deployment.** Every image declares exactly one CloudWatch-or-disabled posture. The
+   controller propagates it to every run, and product HTTP requests cannot override it.
+6. **Persist controller state through the durable session registry.** Controller and session routes use the canonical
    TableTheory/DynamoDB-shaped registry instead of route-local memory, ad-hoc tables, or raw SDK calls.
-6. **Use the conformance harness for consumer proof.** Local dry-run proves the harness is ready. Live EqualToAI/Host
+7. **Use the conformance harness for consumer proof.** Local dry-run proves the harness is ready. Live EqualToAI/Host
    proof exists only when the consumer runs it against a deployed lab controller.
 
 ## Real lifecycle hooks
@@ -138,6 +142,31 @@ The MicroVM execution role is deployment-owned, not caller-owned. When the CDK c
 passes it through the constrained provider request to AWS `RunMicrovm.ExecutionRoleArn`. Product HTTP requests should
 not choose role ARNs, and consumers must not fork the provider or drop to raw SDK calls to add the field.
 
+## Deployment-owned runtime logging
+
+AppTheory 2.0 requires every real controller to carry exactly one logging member on every provider run:
+
+| Posture | Deployment shape | Execution role |
+| --- | --- | --- |
+| CloudWatch | `logging: { cloudWatch: { logGroup?, logStream? } }` | Required |
+| Disabled | `logging: { disabled: true }` | Optional for logging |
+
+`AppTheoryMicrovmImage` normalizes the selected posture. `AppTheoryMicrovmController` copies it into the reserved
+`APPTHEORY_MICROVM_LOGGING` environment value, and the real Go, TypeScript, and Python controllers pass it through the
+constrained provider surface to the official AWS SDK. Logging omission is invalid; there is no image-inheritance
+fallback.
+
+For CloudWatch mode, the MicroVM execution role must trust `lambda.amazonaws.com` for `sts:AssumeRole`, allow
+`sts:TagSession`, and allow `logs:CreateLogGroup`, `logs:CreateLogStream`, and `logs:PutLogEvents`. AppTheory grants the
+controller `iam:PassRole` for the supplied role but does not inspect or mutate caller-owned policies. Operators remain
+responsible for those permissions.
+
+The HTTP `run` envelope does not own logging. If a caller sends a logging-shaped field, it cannot replace the
+deployment-pinned posture. This prevents per-tenant requests from redirecting guest output or disabling logs.
+
+See [AppTheory 2.0 MicroVM Runtime Logging](../migration/microvm-runtime-logging-v2.md) for imported-image, direct
+controller test, and failure-mode migration details.
+
 ## Authentication posture
 
 Controller routes are **protected and fail closed by default**:
@@ -194,6 +223,9 @@ an ad-hoc DynamoDB schema, raw SDK calls, or per-controller private storage.
 
 ## Compatibility and version boundary
 
+- AppTheory 2.0 is the release boundary that makes explicit per-run logging mandatory. The `m16.microvm/v1` fixture
+  version remains the canonical real-operation contract identifier; release and fixture versions serve different
+  purposes.
 - `m16.microvm/v1` is the canonical corrective contract version for real MicroVM operations.
 - `m15.microvm/v1` and the synthetic `create`, `start`, `stop`, `status`, and `session` vocabulary were foundation and
   compatibility surfaces, not complete live support.
@@ -222,6 +254,7 @@ Do not add a private escape hatch.
 ## Related docs and examples
 
 - [MicroVM CDK constructs](../cdk/lambda-microvm.md)
+- [AppTheory 2.0 MicroVM runtime logging migration](../migration/microvm-runtime-logging-v2.md)
 - [Contract fixtures](../reference/contract-fixtures.md)
 - `examples/cdk/microvm-controller`
 - `examples/microvm-conformance`

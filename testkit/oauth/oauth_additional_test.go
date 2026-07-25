@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	oauthruntime "github.com/theory-cloud/apptheory/runtime/oauth"
+	oauthruntime "github.com/theory-cloud/apptheory/v2/runtime/oauth"
 )
 
 type readErrCloser struct{}

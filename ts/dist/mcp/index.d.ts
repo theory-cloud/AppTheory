@@ -3,17 +3,31 @@ import type { Handler } from "../context.js";
 import { type IdGenerator } from "../ids.js";
 import type { Headers, Response } from "../types.js";
 export declare const MCP_PROTOCOL_VERSION = "2025-11-25";
+export declare const MCP_PROTOCOL_VERSION_2026_07_28 = "2026-07-28";
 export declare const MCP_PROTOCOL_VERSION_PRIOR = "2025-06-18";
 export declare const MCP_PROTOCOL_VERSION_LEGACY = "2025-03-26";
+export declare const MCP_PROTOCOL_SHAPE_2025_11_25 = "2025-11-25";
+export declare const MCP_PROTOCOL_SHAPE_2026_07_28 = "2026-07-28";
+export declare const MCP_PROTOCOL_SHAPE_UNKNOWN = "unknown";
+export declare const MCP_RESULT_TYPE_COMPLETE = "complete";
+export declare const MCP_RESULT_TYPE_INPUT_REQUIRED = "input_required";
+export type McpProtocolShape = typeof MCP_PROTOCOL_SHAPE_2025_11_25 | typeof MCP_PROTOCOL_SHAPE_2026_07_28 | typeof MCP_PROTOCOL_SHAPE_UNKNOWN;
+export type McpResultType = typeof MCP_RESULT_TYPE_COMPLETE | typeof MCP_RESULT_TYPE_INPUT_REQUIRED;
 export declare const MCP_HEADER_PROTOCOL_VERSION = "mcp-protocol-version";
 export declare const MCP_HEADER_SESSION_ID = "mcp-session-id";
+export declare const MCP_HEADER_METHOD = "mcp-method";
+export declare const MCP_HEADER_NAME = "mcp-name";
 export declare const MCP_HEADER_LAST_EVENT_ID = "last-event-id";
+declare const SERVER_INFO_METADATA_KEY = "io.modelcontextprotocol/serverInfo";
 export declare const MCP_CODE_PARSE_ERROR = -32700;
 export declare const MCP_CODE_INVALID_REQUEST = -32600;
 export declare const MCP_CODE_METHOD_NOT_FOUND = -32601;
 export declare const MCP_CODE_INVALID_PARAMS = -32602;
 export declare const MCP_CODE_INTERNAL_ERROR = -32603;
 export declare const MCP_CODE_SERVER_ERROR = -32000;
+export declare const MCP_CODE_HEADER_MISMATCH = -32020;
+export declare const MCP_CODE_MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
+export declare const MCP_CODE_UNSUPPORTED_PROTOCOL_VERSION = -32022;
 export type McpRequestID = string | number | boolean | null;
 export type McpJSONValue = string | number | boolean | null | McpJSONValue[] | {
     [key: string]: McpJSONValue;
@@ -36,6 +50,31 @@ export interface McpRPCRequest {
     method: string;
     params?: unknown;
 }
+/**
+ * Detects the MCP transport shape for one request.
+ *
+ * MCP-Protocol-Version takes precedence when present. Otherwise the detector
+ * reads io.modelcontextprotocol/protocolVersion from params._meta.
+ */
+export declare function detectMcpProtocolVersion(headers: Headers, request: unknown): McpProtocolShape;
+/**
+ * Detects the MCP transport shape for one already-parsed JSON-RPC message.
+ *
+ * MCP-Protocol-Version takes precedence when present. Otherwise the detector
+ * reads io.modelcontextprotocol/protocolVersion from params._meta.
+ */
+export declare function detectMcpProtocolVersionForMessage(headers: Headers, message: unknown): McpProtocolShape;
+export interface McpServerIdentity {
+    name: string;
+    version: string;
+}
+export interface McpDiscoverResult {
+    supportedVersions: string[];
+    capabilities: Record<string, unknown>;
+    _meta: {
+        [SERVER_INFO_METADATA_KEY]: McpServerIdentity;
+    };
+}
 export interface McpContentBlock {
     type: string;
     text?: string;
@@ -48,10 +87,23 @@ export interface McpContentBlock {
     size?: number;
     resource?: McpResourceContent;
 }
+export interface McpInputRequest {
+    method: string;
+    params?: unknown;
+}
+export interface McpInputRequiredResult {
+    resultType: typeof MCP_RESULT_TYPE_INPUT_REQUIRED;
+    inputRequests?: Record<string, McpInputRequest>;
+    requestState?: string;
+    _meta?: Record<string, unknown>;
+}
 export interface McpToolResult {
     content: McpContentBlock[];
     isError?: boolean;
     structuredContent?: Record<string, unknown>;
+    resultType?: McpResultType;
+    inputRequests?: Record<string, McpInputRequest>;
+    requestState?: string;
 }
 export interface McpToolExecution {
     taskSupport?: McpTaskSupport;
@@ -73,6 +125,8 @@ export interface McpToolContext {
     sessionId: string;
     requestId: unknown;
     method: string;
+    inputResponses?: Record<string, unknown>;
+    requestState?: string;
 }
 export interface McpResourceDef {
     uri: string;
@@ -354,6 +408,7 @@ export declare class McpServer {
     private handle;
     private handlePost;
     private handlePostRequest;
+    private handleStatelessPostRequest;
     private handlePostResponse;
     private handleGet;
     private handleDelete;
@@ -363,6 +418,7 @@ export declare class McpServer {
     private dispatch;
     private dispatchTaskMethod;
     private handleInitialize;
+    private handleDiscover;
     private initializeCapabilities;
     private handleToolsCall;
     private handleResourcesRead;
@@ -389,4 +445,5 @@ export declare class McpServer {
 export declare function createMcpServer(name: string, version: string, options?: McpServerOptions): McpServer;
 export declare function defaultMcpTaskModel(tableName?: string): Model;
 export declare function defaultMcpStreamModel(tableName?: string): Model;
+export {};
 //# sourceMappingURL=index.d.ts.map

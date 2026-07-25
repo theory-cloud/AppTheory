@@ -11,6 +11,14 @@ export interface IAppTheoryMicrovmImage {
    * The ARN of the MicroVM image.
    */
   readonly microvmImageArn: string;
+
+  /**
+   * The normalized deployment-owned runtime logging posture for this image.
+   *
+   * Controllers propagate this exact CloudWatch-or-disabled choice to every
+   * `RunMicrovm` request.
+   */
+  readonly logging: AppTheoryMicrovmImageLogging;
 }
 
 /**
@@ -335,6 +343,11 @@ export class AppTheoryMicrovmImage extends Construct implements IAppTheoryMicrov
   public readonly microvmImageArn: string;
 
   /**
+   * The normalized deployment-owned runtime logging posture for this image.
+   */
+  public readonly logging: AppTheoryMicrovmImageLogging;
+
+  /**
    * The current image state.
    */
   public readonly microvmImageState: string;
@@ -374,7 +387,7 @@ export class AppTheoryMicrovmImage extends Construct implements IAppTheoryMicrov
     const codeArtifact = renderCodeArtifact(props.codeArtifact);
     const egressNetworkConnectors = normalizeConnectorReferences(props.egressNetworkConnectors);
     const hooks = renderHooks(props.hooks);
-    const logging = renderLogging(props.logging);
+    const logging = normalizeLogging(props.logging);
     const resources = renderResources(props.resources);
     const additionalOsCapabilities = normalizeAdditionalOsCapabilities(props.additionalOsCapabilities);
     const cpuConfigurations = renderCpuConfigurations(props.cpuConfigurations);
@@ -393,7 +406,7 @@ export class AppTheoryMicrovmImage extends Construct implements IAppTheoryMicrov
         EgressNetworkConnectors: egressNetworkConnectors,
         EnvironmentVariables: environmentVariables,
         Hooks: hooks,
-        Logging: logging,
+        Logging: renderLogging(logging),
         Name: name,
         Resources: resources,
         Tags: renderTags(props.tags),
@@ -402,6 +415,7 @@ export class AppTheoryMicrovmImage extends Construct implements IAppTheoryMicrov
 
     this.microvmImageName = this.microvmImage.ref;
     this.microvmImageArn = this.microvmImage.getAtt("ImageArn").toString();
+    this.logging = logging;
     this.microvmImageState = this.microvmImage.getAtt("State").toString();
     this.latestActiveImageVersion = this.microvmImage.getAtt("LatestActiveImageVersion").toString();
     this.latestFailedImageVersion = this.microvmImage.getAtt("LatestFailedImageVersion").toString();
@@ -704,7 +718,7 @@ function setOptionalInteger(
   target[key] = normalizeIntegerInRange(value, propName, min, max);
 }
 
-function renderLogging(logging: AppTheoryMicrovmImageLogging | undefined): Record<string, unknown> {
+function normalizeLogging(logging: AppTheoryMicrovmImageLogging | undefined): AppTheoryMicrovmImageLogging {
   if (logging === undefined || logging === null) {
     throw new Error("AppTheoryMicrovmImage requires props.logging");
   }
@@ -717,23 +731,33 @@ function renderLogging(logging: AppTheoryMicrovmImageLogging | undefined): Recor
     if (logging.disabled !== true) {
       throw new Error("AppTheoryMicrovmImage: logging.disabled must be true when provided");
     }
-    return { Disabled: true };
+    return { disabled: true };
   }
-  return { CloudWatch: renderCloudWatchLogging(logging.cloudWatch) };
+  return { cloudWatch: normalizeCloudWatchLogging(logging.cloudWatch) };
 }
 
-function renderCloudWatchLogging(logging: AppTheoryMicrovmImageCloudWatchLogging | undefined): Record<string, string> {
+function normalizeCloudWatchLogging(
+  logging: AppTheoryMicrovmImageCloudWatchLogging | undefined,
+): AppTheoryMicrovmImageCloudWatchLogging {
   if (logging === undefined || logging === null) {
     throw new Error("AppTheoryMicrovmImage requires props.logging.cloudWatch");
   }
-  const rendered: Record<string, string> = {};
-  if (logging.logGroup !== undefined) {
-    rendered.LogGroup = normalizeLogGroup(logging.logGroup);
+  return {
+    ...(logging.logGroup !== undefined ? { logGroup: normalizeLogGroup(logging.logGroup) } : {}),
+    ...(logging.logStream !== undefined ? { logStream: normalizeLogStream(logging.logStream) } : {}),
+  };
+}
+
+function renderLogging(logging: AppTheoryMicrovmImageLogging): Record<string, unknown> {
+  if (logging.cloudWatch) {
+    return {
+      CloudWatch: {
+        ...(logging.cloudWatch.logGroup !== undefined ? { LogGroup: logging.cloudWatch.logGroup } : {}),
+        ...(logging.cloudWatch.logStream !== undefined ? { LogStream: logging.cloudWatch.logStream } : {}),
+      },
+    };
   }
-  if (logging.logStream !== undefined) {
-    rendered.LogStream = normalizeLogStream(logging.logStream);
-  }
-  return rendered;
+  return { Disabled: true };
 }
 
 function normalizeLogGroup(value: string): string {

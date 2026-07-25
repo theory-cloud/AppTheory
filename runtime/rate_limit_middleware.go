@@ -7,7 +7,7 @@ import (
 	"encoding/hex"
 	"strings"
 
-	"github.com/theory-cloud/apptheory/pkg/limited"
+	"github.com/theory-cloud/apptheory/v2/pkg/limited"
 )
 
 // RateLimitDecisionKey is the Context key used by RateLimitMiddleware to store the last LimitDecision.

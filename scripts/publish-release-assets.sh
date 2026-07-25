@@ -65,6 +65,40 @@ collect_release_assets() {
   done
 }
 
+release_major() {
+  local release_tag="$1"
+
+  if [[ ! "${release_tag}" =~ ^v([0-9]+)\.[0-9]+\.[0-9]+(-rc(\.[0-9]+)?)?$ ]]; then
+    echo "release-assets: FAIL (unsupported release tag '${release_tag}')" >&2
+    return 1
+  fi
+  printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+publish_and_verify_go_modules() {
+  local major
+
+  major="$(release_major "${tag}")" || return 1
+  if (( major < 2 )); then
+    echo "release-assets: SKIP (${tag} predates the v2 Go module tag transaction)"
+    return 0
+  fi
+
+  scripts/publish-go-module-tags.sh "${tag}" "${source_commit}"
+  scripts/verify-go-module-tags.sh "${tag}" "${source_commit}"
+}
+
+verify_go_modules() {
+  local major
+
+  major="$(release_major "${tag}")" || return 1
+  if (( major < 2 )); then
+    return 0
+  fi
+
+  scripts/verify-go-module-tags.sh "${tag}" "${source_commit}"
+}
+
 assert_release_target_matches_source() {
   local current_target="$1"
   local resolved_target=""
@@ -205,6 +239,10 @@ scripts/render-release-notes.sh "${tag}"
 asset_paths=()
 collect_release_assets asset_paths
 
+# Create-only root and nested Go tags are committed before any draft release
+# becomes public. Exact direct resolution is part of the same transaction.
+publish_and_verify_go_modules
+
 is_draft="$(release_is_draft)"
 if [[ "${is_draft}" != "true" ]]; then
   verify_published_release_assets
@@ -251,5 +289,6 @@ gh release edit "${tag}" --target "${source_commit}" --draft=false "${prerelease
 
 git fetch "${remote}" tag "${tag}" --force
 scripts/verify-release-branch.sh "${tag}"
+verify_go_modules
 
 echo "release-assets: PASS (${tag} source=${source_commit})"

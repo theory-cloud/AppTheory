@@ -10,7 +10,7 @@ import (
 
 	"pgregory.net/rapid"
 
-	apptheory "github.com/theory-cloud/apptheory/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 )
 
 // newTestServer creates an MCP server with a single echo tool for testing.

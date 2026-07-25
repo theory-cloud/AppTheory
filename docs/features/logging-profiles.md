@@ -89,8 +89,8 @@ package main
 import (
 	"log"
 
-	"github.com/theory-cloud/apptheory/pkg/observability"
-	apptheory "github.com/theory-cloud/apptheory/runtime"
+	"github.com/theory-cloud/apptheory/v2/pkg/observability"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 )
 
 func buildApp() *apptheory.App {

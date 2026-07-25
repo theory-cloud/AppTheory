@@ -36,6 +36,7 @@ These pages cover the canonical user-facing CDK patterns for:
 - S3 Vectors semantic recall infrastructure
 - EventBridge bus and rule-target transport primitives
 - Kinesis stream, stream mapping, and CloudWatch Logs destination transport primitives
-- Lambda MicroVM network connector, image, protected controller, and durable session-registry wiring
+- Lambda MicroVM network connector, image, explicit runtime logging, protected controller, and durable session-registry
+  wiring
 
 Package-local authoring docs may still exist outside `docs/cdk/`, but canonical external guidance lives here.

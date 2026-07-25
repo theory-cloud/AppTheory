@@ -157,16 +157,25 @@ patterns:
 
   lambda_microvm_golden_path:
     name: "Use the AppTheory MicroVM golden path end to end"
-    problem: "MicroVM lifecycle, workload invoke, provider, controller, network, token, and session-state behavior drifts when teams hand-roll pieces around the framework."
-    solution: "Use AppTheory lifecycle adapters, the constrained real MicroVM provider/controller, the token-hidden invoke route, the TableTheory-shaped session registry, typed AppTheory CDK connector/image/controller constructs, and the AppTheory conformance harness together. Controller routes stay authorizer-protected and fail closed by default; EqualToAI/Host proof requires a consumer-run live harness."
+    problem: "MicroVM lifecycle, logging, workload invoke, provider, controller, network, token, and session-state behavior drifts when teams hand-roll pieces around the framework."
+    solution: "Use AppTheory lifecycle adapters, explicit deployment-owned CloudWatch-or-disabled runtime logging, the constrained real MicroVM provider/controller, the token-hidden invoke route, the TableTheory-shaped session registry, typed AppTheory CDK connector/image/controller constructs, and the AppTheory conformance harness together. Controller routes stay authorizer-protected and fail closed by default; EqualToAI/Host proof requires a consumer-run live harness."
     correct_example: |
       # CORRECT: compose the blessed AppTheory surfaces.
       AppTheoryMicrovmNetworkConnector -> AppTheoryMicrovmImage -> AppTheoryMicrovmController
+      image.logging -> controller APPTHEORY_MICROVM_LOGGING -> every provider Run request
       controller handler -> MicroVMRealController + TableTheoryMicroVMSessionRegistry
       workload HTTP -> /microvms/{session_id}/invoke/{proxy+}
       lifecycle handlers -> MicroVMLifecycleAdapter
       conformance -> examples/microvm-conformance against a consumer-provided lab
     anti_patterns:
+      - name: "Implicit or caller-controlled MicroVM runtime logging"
+        why: "AppTheory 2.0 requires one deployment-owned CloudWatch-or-disabled member on every run; omission and HTTP overrides are not fallback behavior."
+        incorrect_example: |
+          # INCORRECT
+          POST /microvms { "logging": { "cloud_watch": { "log_group": "caller-choice" } } }
+        consequences:
+          - "Dark guest stdout/stderr when AWS receives no per-run logging union"
+          - "Caller-controlled log redirection or disabling"
       - name: "Raw MicroVM control plane calls"
         why: "Raw SDK clients bypass AppTheory's constrained real operation envelope, sanitized errors, tenant binding, token safety, and registry validation."
         incorrect_example: |

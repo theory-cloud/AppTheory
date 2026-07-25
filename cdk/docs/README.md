@@ -18,6 +18,8 @@
 - [Testing Guide](./testing-guide.md) — how to run CDK tests and synth checks.
 - [Troubleshooting](./troubleshooting.md) — common synth/deploy failures.
 - [Migration Guide](./migration-guide.md) — moving from ad-hoc CDK stacks.
+- [AppTheory 2.0 MicroVM Logging Migration](../../docs/migration/microvm-runtime-logging-v2.md) — required
+  CloudWatch-or-disabled runtime logging and execution-role changes.
 - [Canonical CDK Guides](../../docs/cdk/README.md) — canonical external navigation root for AppTheory CDK operators.
 
 ### 🧭 Guides (copy/paste patterns)
@@ -38,8 +40,8 @@
 - [Jobs Table (Import Pipeline)](./jobs-table.md) — opinionated DynamoDB table for job ledgers (schema + GSIs + TTL).
 - [Lambda Role Helper](./lambda-role.md) — Lambda execution roles (baseline + X-Ray + KMS + custom statements).
 - [MicroVM Network Connector](./microvm-network-connector.md) — Lambda MicroVM VPC egress connector with caller-owned VPC/subnet/security-group context.
-- [MicroVM Image](./microvm-image.md) — Lambda MicroVM image resource with code artifact, base image, hooks, logging, resources, environment variables, and connector references.
-- [MicroVM Controller](./microvm-controller.md) — protected controller HTTP API, controller Lambda, and durable session registry table.
+- [MicroVM Image](./microvm-image.md) — Lambda MicroVM image resource with code artifact, base image, hooks, required runtime logging posture, resources, environment variables, and connector references.
+- [MicroVM Controller](./microvm-controller.md) — protected controller HTTP API, deployment-owned logging propagation, controller Lambda, and durable session registry table.
 - [CloudFront Path-Routed Frontend Distribution](./path-routed-frontend.md) — multi-SPA routing behind one stage domain.
 - [Media CDN Pattern](./media-cdn.md) — S3 + CloudFront distribution for media subdomains (optional private media).
 - [Canonical FaceTheory-First SSR Site](../../docs/cdk/ssr-site.md) — operator guide for `AppTheorySsrSite`.

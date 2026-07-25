@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 
-	"github.com/theory-cloud/apptheory/pkg/jobs"
+	"github.com/theory-cloud/apptheory/v2/pkg/jobs"
 )
 
 type fakeIngestLedger struct {

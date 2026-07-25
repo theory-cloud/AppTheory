@@ -11,7 +11,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	"github.com/theory-cloud/apptheory/pkg/streamer"
+	"github.com/theory-cloud/apptheory/v2/pkg/streamer"
 )
 
 type WebSocketHandler func(*Context) (*Response, error)

@@ -27,4 +27,6 @@ if [[ -n "${drift_status}" ]]; then
   exit 1
 fi
 
-echo "cdk-go-drift: PASS"
+bash ./scripts/verify-cdk-go-major-version.sh
+
+echo "cdk-go-drift: PASS (current + synthetic next major)"

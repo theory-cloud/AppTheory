@@ -20,27 +20,28 @@ type Fixture struct {
 }
 
 type FixtureSetup struct {
-	Limits               FixtureLimits                    `json:"limits,omitempty"`
-	HTTPErrorFormat      string                           `json:"http_error_format,omitempty"`
-	Routes               []FixtureRoute                   `json:"routes,omitempty"`
-	Middlewares          []string                         `json:"middlewares,omitempty"`
-	CORS                 FixtureCORSConfig                `json:"cors,omitempty"`
-	Environment          map[string]string                `json:"environment,omitempty"`
-	LoggingProfile       json.RawMessage                  `json:"logging_profile,omitempty"`
-	OpenAPI              json.RawMessage                  `json:"openapi,omitempty"`
-	MCP                  FixtureMCPSetup                  `json:"mcp,omitempty"`
-	OAuth                FixtureOAuthSetup                `json:"oauth,omitempty"`
-	ObjectStore          FixtureObjectStoreSetup          `json:"objectstore,omitempty"`
-	VectorStore          FixtureVectorStoreSetup          `json:"vectorstore,omitempty"`
-	WebSockets           []FixtureWebSocketRoute          `json:"websockets,omitempty"`
-	SQS                  []FixtureSQSRoute                `json:"sqs,omitempty"`
-	Kinesis              []FixtureKinesisRoute            `json:"kinesis,omitempty"`
-	SNS                  []FixtureSNSRoute                `json:"sns,omitempty"`
-	EventBridge          []FixtureEventBridgeRoute        `json:"eventbridge,omitempty"`
-	DynamoDB             []FixtureDynamoDBRoute           `json:"dynamodb,omitempty"`
-	MicroVMContract      json.RawMessage                  `json:"microvm_contract,omitempty"`
-	MicroVMRoute         FixtureMicroVMRouteSetup         `json:"microvm_controller_route,omitempty"`
-	MicroVMExecutionRole FixtureMicroVMExecutionRoleSetup `json:"microvm_execution_role,omitempty"`
+	Limits                FixtureLimits                     `json:"limits,omitempty"`
+	HTTPErrorFormat       string                            `json:"http_error_format,omitempty"`
+	Routes                []FixtureRoute                    `json:"routes,omitempty"`
+	Middlewares           []string                          `json:"middlewares,omitempty"`
+	CORS                  FixtureCORSConfig                 `json:"cors,omitempty"`
+	Environment           map[string]string                 `json:"environment,omitempty"`
+	LoggingProfile        json.RawMessage                   `json:"logging_profile,omitempty"`
+	OpenAPI               json.RawMessage                   `json:"openapi,omitempty"`
+	MCP                   FixtureMCPSetup                   `json:"mcp,omitempty"`
+	OAuth                 FixtureOAuthSetup                 `json:"oauth,omitempty"`
+	ObjectStore           FixtureObjectStoreSetup           `json:"objectstore,omitempty"`
+	VectorStore           FixtureVectorStoreSetup           `json:"vectorstore,omitempty"`
+	WebSockets            []FixtureWebSocketRoute           `json:"websockets,omitempty"`
+	SQS                   []FixtureSQSRoute                 `json:"sqs,omitempty"`
+	Kinesis               []FixtureKinesisRoute             `json:"kinesis,omitempty"`
+	SNS                   []FixtureSNSRoute                 `json:"sns,omitempty"`
+	EventBridge           []FixtureEventBridgeRoute         `json:"eventbridge,omitempty"`
+	DynamoDB              []FixtureDynamoDBRoute            `json:"dynamodb,omitempty"`
+	MicroVMContract       json.RawMessage                   `json:"microvm_contract,omitempty"`
+	MicroVMRoute          FixtureMicroVMRouteSetup          `json:"microvm_controller_route,omitempty"`
+	MicroVMExecutionRole  FixtureMicroVMExecutionRoleSetup  `json:"microvm_execution_role,omitempty"`
+	MicroVMRuntimeLogging FixtureMicroVMRuntimeLoggingSetup `json:"microvm_runtime_logging,omitempty"`
 }
 
 type FixtureCORSConfig struct {
@@ -136,6 +137,7 @@ type FixtureExpect struct {
 	MicroVMLifecycleAdapter    *FixtureMicroVMLifecycleAdapter    `json:"microvm_lifecycle_adapter,omitempty"`
 	MicroVMControllerRoute     *FixtureMicroVMControllerRoute     `json:"microvm_controller_route,omitempty"`
 	MicroVMExecutionRole       *FixtureMicroVMExecutionRole       `json:"microvm_execution_role,omitempty"`
+	MicroVMRuntimeLogging      *FixtureMicroVMRuntimeLogging      `json:"microvm_runtime_logging,omitempty"`
 	MCP                        *FixtureMCPExpect                  `json:"mcp,omitempty"`
 	OAuth                      *FixtureOAuthExpect                `json:"oauth,omitempty"`
 }
@@ -280,7 +282,14 @@ type FixtureMCPTaskRuntime struct {
 }
 
 type FixtureMCPInput struct {
-	Steps []FixtureMCPStep `json:"steps"`
+	Detections []FixtureMCPProtocolDetection `json:"detections,omitempty"`
+	Steps      []FixtureMCPStep              `json:"steps"`
+}
+
+type FixtureMCPProtocolDetection struct {
+	Name    string              `json:"name"`
+	Headers map[string][]string `json:"headers"`
+	Message json.RawMessage     `json:"message"`
 }
 
 type FixtureMCPStep struct {
@@ -290,7 +299,13 @@ type FixtureMCPStep struct {
 }
 
 type FixtureMCPExpect struct {
-	Steps []FixtureMCPExpectedStep `json:"steps"`
+	Detections []FixtureMCPExpectedProtocolDetection `json:"detections,omitempty"`
+	Steps      []FixtureMCPExpectedStep              `json:"steps"`
+}
+
+type FixtureMCPExpectedProtocolDetection struct {
+	Name  string `json:"name"`
+	Shape string `json:"shape"`
 }
 
 type FixtureMCPExpectedStep struct {
@@ -372,6 +387,40 @@ type FixtureMicroVMExecutionRole struct {
 	ProviderExecutionRoleArn string `json:"provider_execution_role_arn,omitempty"`
 	ErrorCode                string `json:"error_code,omitempty"`
 	ErrorMessage             string `json:"error_message,omitempty"`
+}
+
+type FixtureMicroVMRuntimeLoggingSetup struct {
+	Cases []FixtureMicroVMRuntimeLoggingCaseSetup `json:"cases,omitempty"`
+}
+
+type FixtureMicroVMRuntimeLoggingCaseSetup struct {
+	Name             string          `json:"name"`
+	Logging          json.RawMessage `json:"logging,omitempty"`
+	ExecutionRoleArn string          `json:"execution_role_arn,omitempty"`
+}
+
+type FixtureMicroVMRuntimeLogging struct {
+	Cases []FixtureMicroVMRuntimeLoggingCase `json:"cases"`
+}
+
+type FixtureMicroVMRuntimeLoggingCase struct {
+	Name            string                         `json:"name"`
+	Valid           bool                           `json:"valid"`
+	SessionID       string                         `json:"session_id,omitempty"`
+	State           string                         `json:"state,omitempty"`
+	ProviderLogging *FixtureMicroVMProviderLogging `json:"provider_logging,omitempty"`
+	ErrorCode       string                         `json:"error_code,omitempty"`
+	ErrorMessage    string                         `json:"error_message,omitempty"`
+}
+
+type FixtureMicroVMProviderLogging struct {
+	CloudWatch *FixtureMicroVMProviderCloudWatchLogging `json:"cloud_watch,omitempty"`
+	Disabled   bool                                     `json:"disabled,omitempty"`
+}
+
+type FixtureMicroVMProviderCloudWatchLogging struct {
+	LogGroup  string `json:"log_group,omitempty"`
+	LogStream string `json:"log_stream,omitempty"`
 }
 
 type FixtureError struct {

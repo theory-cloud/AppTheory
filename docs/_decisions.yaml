@@ -121,12 +121,13 @@ decisions:
     question: "How should I wire AWS Lambda MicroVM support?"
     decision_tree:
       - condition: "You need first-class Lambda MicroVM lifecycle and controller support."
-        check: "Can you use the AppTheory lifecycle adapter, constrained real provider/controller, protected invoke route, durable session registry, typed CDK constructs, and conformance harness together?"
+        check: "Can you use the AppTheory lifecycle adapter, explicit deployment-owned runtime logging, constrained real provider/controller, protected invoke route, durable session registry, typed CDK constructs, and conformance harness together?"
         if_yes:
           choice: "Use the corrective M16 MicroVM golden path"
-          reason: "M16 evidence covers fixture-backed real operations, provider adapters, protected controller routes, token-hidden workload invoke, CDK wiring, and local conformance harness readiness for the single AppTheory path."
+          reason: "M16 evidence covers fixture-backed real operations, AppTheory 2.0 CloudWatch-or-disabled logging, provider adapters, protected controller routes, token-hidden workload invoke, CDK wiring, and local conformance harness readiness for the single AppTheory path."
           example: |
             AppTheoryMicrovmNetworkConnector -> AppTheoryMicrovmImage -> AppTheoryMicrovmController
+            logging: cloudWatch + executionRole, or disabled: true
             MicroVMRealController + TableTheoryMicroVMSessionRegistry
             operations: run/get/list/suspend/resume/terminate/invoke/auth-token/shell-auth-token
         if_no:

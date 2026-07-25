@@ -1026,6 +1026,7 @@
                 ]
               ]
             },
+            "APPTHEORY_MICROVM_LOGGING": "{\"cloud_watch\":{\"log_group\":\"/aws/lambda/microvm/apptheory\",\"log_stream\":\"image-build\"}}",
             "APPTHEORY_MICROVM_NETWORK_CONNECTOR_REFS": {
               "Ref": "ConnectorNetworkConnectorB4F2FB5F"
             },

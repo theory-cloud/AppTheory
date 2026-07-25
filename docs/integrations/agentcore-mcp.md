@@ -9,7 +9,9 @@ This guide explains how to expose an **MCP (Model Context Protocol)** server fro
 
 AppTheory provides two building blocks:
 
-- **Runtime (Go):** `github.com/theory-cloud/apptheory/runtime/mcp` — an MCP JSON-RPC handler (`initialize`, `tools/*`, plus optional `resources/*` and `prompts/*`), registries, sessions, and optional SSE progress streaming.
+- **Runtime (Go):** `github.com/theory-cloud/apptheory/v2/runtime/mcp` — a dual-version MCP JSON-RPC handler
+  (`server/discover`, `initialize`, `tools/*`, plus optional `resources/*` and `prompts/*`), registries, sessions, and
+  optional SSE progress streaming.
 - **CDK (TypeScript/Python):** `AppTheoryMcpServer` — an API Gateway v2 HTTP API with `POST /mcp` → Lambda, optional session table, optional custom domain, and optional stage logging/throttling.
 
 For the full MCP method surface (including `resources/*` and `prompts/*`), see `docs/integrations/mcp.md`.
@@ -30,9 +32,10 @@ Key details:
 
 - The MCP endpoint is **`POST /mcp`**.
 - The payload is **JSON-RPC 2.0** (`jsonrpc: "2.0"`) with an `id`, `method`, and optional `params`.
-- Session state is tracked via the **`Mcp-Session-Id`** header (issued on the `initialize` response).
-- Follow-up calls should also send **`MCP-Protocol-Version`** matching the negotiated `initialize` result.
-- MCP errors are returned as JSON-RPC errors (HTTP status is still `200`).
+- Existing `2025-11-25` clients initialize and track session state with **`Mcp-Session-Id`**.
+- Final `2026-07-28` clients use stateless POST requests and do not initialize or send a session id.
+- Ordinary MCP method errors use JSON-RPC errors with HTTP `200`; modern routing/version/capability validation uses a
+  JSON-RPC error with HTTP `400`.
 
 ---
 
@@ -52,8 +55,8 @@ import (
   "github.com/aws/aws-lambda-go/events"
   "github.com/aws/aws-lambda-go/lambda"
 
-  apptheory "github.com/theory-cloud/apptheory/runtime"
-  "github.com/theory-cloud/apptheory/runtime/mcp"
+  apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+  "github.com/theory-cloud/apptheory/v2/runtime/mcp"
 )
 
 func serviceVersion() string {
@@ -112,11 +115,22 @@ See: `docs/cdk/mcp-server-agentcore.md`.
 
 AppTheory’s MCP server implements these JSON-RPC methods:
 
+- `server/discover`
 - `initialize`
 - `tools/list`
 - `tools/call`
 
 AgentCore typically uses only the tools surface. AppTheory also supports additional MCP methods for non-AgentCore clients (`resources/*`, `prompts/*`) — see `docs/integrations/mcp.md`.
+
+AppTheory serves two protocol shapes through the same `POST /mcp` route:
+
+| Protocol | Client behavior |
+| --- | --- |
+| `2025-11-25` | Call `initialize`, retain `Mcp-Session-Id`, and use the established session-ful response contract |
+| `2026-07-28` | Call `server/discover`, send stateless requests with modern routing headers, and read `resultType` |
+
+Existing AgentCore integrations do not need to migrate to the stateless shape. If an AgentCore client adds
+`2026-07-28`, follow `docs/migration/mcp-2026-07-28.md`; do not add a second Lambda handler or deployment mode.
 
 ### Example: initialize
 
@@ -124,6 +138,7 @@ AgentCore typically uses only the tools surface. AppTheory also supports additio
 curl -sS -i \
   -X POST "https://YOUR_ENDPOINT/mcp" \
   -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"agentcore","version":"unknown"}}}'
 ```
 
@@ -137,6 +152,7 @@ curl -sS -i \
 curl -sS \
   -X POST "https://YOUR_ENDPOINT/mcp" \
   -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
   -H "mcp-session-id: ${MCP_SESSION_ID}" \
   -H 'mcp-protocol-version: 2025-11-25' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
@@ -148,6 +164,7 @@ curl -sS \
 curl -sS \
   -X POST "https://YOUR_ENDPOINT/mcp" \
   -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
   -H "mcp-session-id: ${MCP_SESSION_ID}" \
   -H 'mcp-protocol-version: 2025-11-25' \
   -d '{
@@ -161,11 +178,41 @@ curl -sS \
   }'
 ```
 
+### Example: stateless discovery
+
+The modern shape does not call `initialize`:
+
+```bash
+curl -sS \
+  -X POST "https://YOUR_ENDPOINT/mcp" \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -H 'mcp-protocol-version: 2026-07-28' \
+  -H 'mcp-method: server/discover' \
+  -d '{
+    "jsonrpc":"2.0",
+    "id":"discover",
+    "method":"server/discover",
+    "params":{
+      "_meta":{
+        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities":{}
+      }
+    }
+  }'
+```
+
+For every `2026-07-28` request or notification, `Mcp-Method` must match the JSON-RPC method. `tools/call` also needs
+`Mcp-Name` equal to `params.name`. Successful results carry `resultType: "complete"` or
+`resultType: "input_required"`. AppTheory returns `-32020` for routing/header mismatches, `-32021` for a missing
+capability needed by multi-round input, and `-32022` for an unsupported version. The discover advertisement excludes
+subscriptions/listen.
+
 ---
 
-## Sessions (stateless HTTP with a session header)
+## `2025-11-25` sessions
 
-MCP calls are plain HTTP requests. AppTheory adds a lightweight session mechanism:
+The established session-ful shape uses a lightweight session mechanism:
 
 - `initialize` issues **`mcp-session-id`**.
 - After initialization, clients must send **`mcp-session-id`** on follow-up requests.
@@ -183,7 +230,7 @@ For persistent session storage, use the DynamoDB-backed store:
 import (
   "os"
 
-  "github.com/theory-cloud/apptheory/runtime/mcp"
+  "github.com/theory-cloud/apptheory/v2/runtime/mcp"
   "github.com/theory-cloud/tabletheory/v2"
   "github.com/theory-cloud/tabletheory/v2/pkg/session"
 )
@@ -214,7 +261,8 @@ Notes:
 
 ## Streaming progress (SSE) for long-running tools
 
-If the client sets `Accept: text/event-stream` on a `tools/call`, AppTheory formats the response as SSE:
+For a session-ful streaming tool, AppTheory formats the response as SSE. The `2026-07-28` stateless shape always buffers
+tool results and does not expose GET/listen/subscriptions:
 
 - every SSE frame is `event: message`
 - intermediate progress is emitted as JSON-RPC `notifications/progress`
@@ -286,8 +334,8 @@ import (
   "context"
   "testing"
 
-  mcptest "github.com/theory-cloud/apptheory/testkit/mcp"
-  "github.com/theory-cloud/apptheory/testkit"
+  mcptest "github.com/theory-cloud/apptheory/v2/testkit/mcp"
+  "github.com/theory-cloud/apptheory/v2/testkit"
 )
 
 func TestMcpServer(t *testing.T) {
@@ -321,7 +369,8 @@ server successfully.
 
 - `jsonrpc` must be `"2.0"`.
 - `id` is required.
-- `method` must be one of `initialize`, `tools/list`, `tools/call`.
+- for the tools-only surface, `method` must be one of `server/discover`, `initialize`, `tools/list`, or `tools/call`
+- a `2026-07-28` request must include matching `Mcp-Method` and, for `tools/call`, matching `Mcp-Name`
 
 ### “tool not found”
 

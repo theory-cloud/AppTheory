@@ -94,6 +94,20 @@ export class AWSLambdaMicroVMProvider implements MicroVMProvider {
       if (normalized.execution_role_arn) {
         commandInput.executionRoleArn = normalized.execution_role_arn;
       }
+      if (normalized.logging.cloud_watch) {
+        commandInput.logging = {
+          cloudWatch: {
+            ...(normalized.logging.cloud_watch.log_group
+              ? { logGroup: normalized.logging.cloud_watch.log_group }
+              : {}),
+            ...(normalized.logging.cloud_watch.log_stream
+              ? { logStream: normalized.logging.cloud_watch.log_stream }
+              : {}),
+          },
+        };
+      } else {
+        commandInput.logging = { disabled: {} };
+      }
       if ((normalized.ingress_network_connector_refs ?? []).length > 0) {
         commandInput.ingressNetworkConnectors = [
           ...(normalized.ingress_network_connector_refs ?? []),

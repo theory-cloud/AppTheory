@@ -33,6 +33,15 @@ class AWSLambdaMicroVMProvider:
                 payload["egressNetworkConnectors"] = egress
             if normalized.execution_role_arn:
                 payload["executionRoleArn"] = normalized.execution_role_arn
+            if normalized.logging.cloud_watch is not None:
+                cloud_watch: dict[str, str] = {}
+                if normalized.logging.cloud_watch.log_group:
+                    cloud_watch["logGroup"] = normalized.logging.cloud_watch.log_group
+                if normalized.logging.cloud_watch.log_stream:
+                    cloud_watch["logStream"] = normalized.logging.cloud_watch.log_stream
+                payload["logging"] = {"cloudWatch": cloud_watch}
+            else:
+                payload["logging"] = {"disabled": {}}
             if normalized.ingress_network_connector_refs:
                 payload["ingressNetworkConnectors"] = list(normalized.ingress_network_connector_refs)
             if normalized.image_version:

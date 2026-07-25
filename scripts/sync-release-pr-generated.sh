@@ -305,7 +305,9 @@ run_signed_sync_mode_self_test() {
 
 run_sync_secret_material_self_test() {
   local script_text
+  local plan_text
   script_text="$(cat scripts/sync-release-pr-generated.sh)"
+  plan_text="$(cat scripts/render-release-artifact-sync-plan.py)"
 
   local forbidden_private_key="PRIVATE""_KEY"
   local forbidden_release_sync_gpg="RELEASE_ARTIFACT_SYNC_""GPG"
@@ -324,13 +326,13 @@ run_sync_secret_material_self_test() {
     "${forbidden_commit_signing}" \
     "${forbidden_commit_dash_s}"
   do
-    if [[ "${script_text}" == *"${forbidden}"* ]]; then
+    if [[ "${script_text}${plan_text}" == *"${forbidden}"* ]]; then
       echo "sync-release-pr-generated self-test: FAIL (script contains forbidden signing material/config pattern)" >&2
       exit 1
     fi
   done
 
-  if [[ "${script_text}" != *"createCommitOnBranch"* ]]; then
+  if [[ "${plan_text}" != *"createCommitOnBranch"* ]]; then
     echo "sync-release-pr-generated self-test: FAIL (CI artifact sync must use createCommitOnBranch)" >&2
     exit 1
   fi
@@ -342,10 +344,64 @@ run_sync_secret_material_self_test() {
   echo "sync-release-pr-generated self-test: PASS signing-material-policy"
 }
 
+run_artifact_plan_self_test() {
+  local repo_root
+  local fixture_dir
+  local baseline_root
+  local worktree_root
+  local payload_file
+  local summary_file
+  repo_root="${PWD}"
+  fixture_dir="$(mktemp -d)"
+  baseline_root="${fixture_dir}/baseline"
+  worktree_root="${fixture_dir}/worktree"
+  payload_file="${fixture_dir}/payload.json"
+  summary_file="${fixture_dir}/summary.json"
+
+  mkdir -p \
+    "${baseline_root}/cdk-go" \
+    "${worktree_root}/cdk-go/apptheorycdk"
+  printf '%s\n' "module github.com/theory-cloud/apptheory/cdk-go" >"${baseline_root}/cdk-go/go.mod"
+  printf '%s\n' "legacy sum" >"${baseline_root}/cdk-go/go.sum"
+  printf '%s\n' "module github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v2" \
+    >"${worktree_root}/cdk-go/apptheorycdk/go.mod"
+  printf '%s\n' "canonical sum" >"${worktree_root}/cdk-go/apptheorycdk/go.sum"
+
+  (
+    cd "${worktree_root}"
+    python3 "${repo_root}/scripts/render-release-artifact-sync-plan.py" \
+      --branch release-please--branches--premain \
+      --expected-head 0000000000000000000000000000000000000000 \
+      --repository theory-cloud/AppTheory \
+      --message "${artifact_sync_commit_message}" \
+      --body "${artifact_sync_commit_body}" \
+      --mode self-test \
+      --payload-file "${payload_file}" \
+      --summary-file "${summary_file}" \
+      --baseline-root "${baseline_root}"
+  )
+
+  python3 - "${summary_file}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if summary.get("additionCount") != 2 or summary.get("deletionCount") != 2:
+    raise SystemExit(
+        "sync-release-pr-generated self-test: FAIL "
+        f"(major-version plan counts: {summary.get('additionCount')}/{summary.get('deletionCount')})"
+    )
+PY
+  rm -rf "${fixture_dir}"
+  echo "sync-release-pr-generated self-test: PASS major-version-artifact-plan"
+}
+
 if [[ "${1:-}" == "--self-test" ]]; then
   run_required_check_classifier_self_test
   run_signed_sync_mode_self_test
   run_sync_secret_material_self_test
+  run_artifact_plan_self_test
   exit 0
 fi
 
@@ -804,7 +860,12 @@ require_only_release_artifact_changes() {
 import subprocess
 import sys
 
-allowed_exact = {".release-please-manifest.premain.json", "cdk/.jsii"}
+allowed_exact = {
+    ".release-please-manifest.premain.json",
+    "cdk/.jsii",
+    "cdk-go/go.mod",
+    "cdk-go/go.sum",
+}
 allowed_prefixes = ("cdk/lib/", "cdk-go/apptheorycdk/")
 
 raw = subprocess.check_output(
@@ -812,15 +873,25 @@ raw = subprocess.check_output(
 )
 records = [record for record in raw.decode("utf-8", "surrogateescape").split("\0") if record]
 unexpected: list[str] = []
-for record in records:
+index = 0
+while index < len(records):
+    record = records[index]
+    index += 1
     if len(record) < 4:
         continue
+    status = record[:2]
     path = record[3:]
-    if " -> " in path:
-        path = path.split(" -> ", 1)[1]
-    if path in allowed_exact or path.startswith(allowed_prefixes):
-        continue
-    unexpected.append(path)
+    paths = [path]
+    if "R" in status or "C" in status:
+        if index >= len(records):
+            unexpected.append(f"{path} (missing rename/copy source)")
+            continue
+        paths.append(records[index])
+        index += 1
+    for candidate in paths:
+        if candidate in allowed_exact or candidate.startswith(allowed_prefixes):
+            continue
+        unexpected.append(candidate)
 
 if unexpected:
     print("sync-release-pr-generated: FAIL (artifact sync produced changes outside the release artifact allowlist)", file=sys.stderr)
@@ -837,100 +908,15 @@ build_release_artifact_sync_commit_payload() {
   local payload_file="$4"
   local summary_file="$5"
 
-  RELEASE_BRANCH="${branch}" \
-    EXPECTED_HEAD_OID="${expected_head}" \
-    REPOSITORY_NAME_WITH_OWNER="${repo}" \
-    ARTIFACT_SYNC_COMMIT_MESSAGE="${artifact_sync_commit_message}" \
-    ARTIFACT_SYNC_COMMIT_BODY="${artifact_sync_commit_body}" \
-    PAYLOAD_FILE="${payload_file}" \
-    SUMMARY_FILE="${summary_file}" \
-    python3 - <<'PY'
-import base64
-import json
-import os
-import subprocess
-import sys
-from pathlib import Path
-
-PATHS = [
-    ".release-please-manifest.premain.json",
-    "cdk/.jsii",
-    "cdk/lib",
-    "cdk-go/apptheorycdk",
-]
-
-
-def zlines(args: list[str]) -> list[str]:
-    raw = subprocess.check_output(args)
-    return [item for item in raw.decode("utf-8", "surrogateescape").split("\0") if item]
-
-
-tracked_additions = zlines(["git", "diff", "--name-only", "-z", "--diff-filter=ACMRT", "HEAD", "--", *PATHS])
-tracked_deletions = zlines(["git", "diff", "--name-only", "-z", "--diff-filter=D", "HEAD", "--", *PATHS])
-untracked_additions = zlines(["git", "ls-files", "--others", "--exclude-standard", "-z", "--", *PATHS])
-
-addition_paths = sorted(set(tracked_additions + untracked_additions))
-deletion_paths = sorted(set(tracked_deletions) - set(addition_paths))
-
-additions = []
-for path in addition_paths:
-    file_path = Path(path)
-    if not file_path.is_file():
-        print(f"sync-release-pr-generated: FAIL (planned addition is not a file: {path})", file=sys.stderr)
-        sys.exit(1)
-    additions.append(
-        {
-            "path": path,
-            "contents": base64.b64encode(file_path.read_bytes()).decode("ascii"),
-        }
-    )
-
-deletions = [{"path": path} for path in deletion_paths]
-
-summary = {
-    "mode": os.environ.get("ARTIFACT_SYNC_MODE", ""),
-    "branch": os.environ["RELEASE_BRANCH"],
-    "expectedHeadOid": os.environ["EXPECTED_HEAD_OID"],
-    "message": os.environ["ARTIFACT_SYNC_COMMIT_MESSAGE"],
-    "additionCount": len(additions),
-    "deletionCount": len(deletions),
-    "additions": addition_paths,
-    "deletions": deletion_paths,
-}
-
-payload = {
-    "query": """
-mutation CreateReleaseArtifactSyncCommit($input: CreateCommitOnBranchInput!) {
-  createCommitOnBranch(input: $input) {
-    commit {
-      oid
-      url
-    }
-  }
-}
-""",
-    "variables": {
-        "input": {
-            "branch": {
-                "repositoryNameWithOwner": os.environ["REPOSITORY_NAME_WITH_OWNER"],
-                "branchName": os.environ["RELEASE_BRANCH"],
-            },
-            "message": {
-                "headline": os.environ["ARTIFACT_SYNC_COMMIT_MESSAGE"],
-                "body": os.environ["ARTIFACT_SYNC_COMMIT_BODY"],
-            },
-            "fileChanges": {
-                "additions": additions,
-                "deletions": deletions,
-            },
-            "expectedHeadOid": os.environ["EXPECTED_HEAD_OID"],
-        },
-    },
-}
-
-Path(os.environ["PAYLOAD_FILE"]).write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-Path(os.environ["SUMMARY_FILE"]).write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
+  python3 scripts/render-release-artifact-sync-plan.py \
+    --branch "${branch}" \
+    --expected-head "${expected_head}" \
+    --repository "${repo}" \
+    --message "${artifact_sync_commit_message}" \
+    --body "${artifact_sync_commit_body}" \
+    --mode "${ARTIFACT_SYNC_MODE:-}" \
+    --payload-file "${payload_file}" \
+    --summary-file "${summary_file}"
 }
 
 print_release_artifact_sync_plan() {
@@ -1086,7 +1072,13 @@ verify_head_locally_signed() {
 
 commit_release_artifact_sync_locally() {
   require_existing_local_signing_config
-  git add .release-please-manifest.premain.json cdk/.jsii cdk/lib cdk-go/apptheorycdk
+  git add -A \
+    .release-please-manifest.premain.json \
+    cdk/.jsii \
+    cdk/lib \
+    cdk-go/go.mod \
+    cdk-go/go.sum \
+    cdk-go/apptheorycdk
   if ! git commit -m "${artifact_sync_commit_message}" -m "${artifact_sync_commit_body}"; then
     echo "sync-release-pr-generated: FAIL (normal local git commit failed; no CI signing fallback exists)" >&2
     exit 1
@@ -1114,7 +1106,15 @@ sync_stable_release_premain_manifest
 scripts/update-cdk-generated.sh >/dev/null
 
 changed=false
-artifact_status="$(git status --porcelain=v1 --untracked-files=all -- .release-please-manifest.premain.json cdk/.jsii cdk/lib cdk-go/apptheorycdk)"
+artifact_status="$(
+  git status --porcelain=v1 --untracked-files=all -- \
+    .release-please-manifest.premain.json \
+    cdk/.jsii \
+    cdk/lib \
+    cdk-go/go.mod \
+    cdk-go/go.sum \
+    cdk-go/apptheorycdk
+)"
 if [[ -n "${artifact_status}" ]]; then
   changed=true
   require_only_release_artifact_changes

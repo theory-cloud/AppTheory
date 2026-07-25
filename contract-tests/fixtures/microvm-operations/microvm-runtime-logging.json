@@ -1,0 +1,90 @@
+{
+  "id": "m16.microvm.runtime_logging",
+  "tier": "m16",
+  "name": "M16 MicroVM runtime logging is explicit, deployment-owned, and fail closed",
+  "setup": {
+    "microvm_runtime_logging": {
+      "cases": [
+        {
+          "name": "cloudwatch",
+          "execution_role_arn": "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole",
+          "logging": {
+            "cloud_watch": {
+              "log_group": "/aws/lambda/microvm/apptheory",
+              "log_stream": "runtime"
+            }
+          }
+        },
+        {
+          "name": "disabled",
+          "logging": {
+            "disabled": true
+          }
+        },
+        {
+          "name": "missing"
+        },
+        {
+          "name": "both",
+          "execution_role_arn": "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole",
+          "logging": {
+            "cloud_watch": {},
+            "disabled": true
+          }
+        },
+        {
+          "name": "cloudwatch_without_execution_role",
+          "logging": {
+            "cloud_watch": {}
+          }
+        }
+      ]
+    }
+  },
+  "input": {},
+  "expect": {
+    "microvm_runtime_logging": {
+      "cases": [
+        {
+          "name": "cloudwatch",
+          "valid": true,
+          "session_id": "logging-session-1",
+          "state": "running",
+          "provider_logging": {
+            "cloud_watch": {
+              "log_group": "/aws/lambda/microvm/apptheory",
+              "log_stream": "runtime"
+            }
+          }
+        },
+        {
+          "name": "disabled",
+          "valid": true,
+          "session_id": "logging-session-2",
+          "state": "running",
+          "provider_logging": {
+            "disabled": true
+          }
+        },
+        {
+          "name": "missing",
+          "valid": false,
+          "error_code": "m15.microvm.invalid_controller_request",
+          "error_message": "apptheory: microvm runtime logging configuration is invalid"
+        },
+        {
+          "name": "both",
+          "valid": false,
+          "error_code": "m15.microvm.invalid_controller_request",
+          "error_message": "apptheory: microvm runtime logging configuration is invalid"
+        },
+        {
+          "name": "cloudwatch_without_execution_role",
+          "valid": false,
+          "error_code": "m15.microvm.invalid_controller_request",
+          "error_message": "apptheory: microvm runtime logging configuration is invalid"
+        }
+      ]
+    }
+  }
+}

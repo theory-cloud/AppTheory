@@ -79,12 +79,13 @@ concepts:
       - code_artifact_uri
       - base_image_version
       - lifecycle_hooks
-      - logging_configuration
+      - required_normalized_runtime_logging_configuration
       - resource_requirements
       - environment_variables
       - network_connector_references
     related_docs:
       - cdk/docs/microvm-image.md
+      - docs/migration/microvm-runtime-logging-v2.md
 
   microvm_controller:
     type: construct
@@ -94,6 +95,9 @@ concepts:
       - controller_lambda_packaging_surface
       - tabletheory_shaped_session_registry_table
       - microvm_image_scoped_iam_grants
+      - deployment_owned_runtime_logging_propagation
+      - cloudwatch_execution_role_coupling
       - fail_closed_auth_environment
     related_docs:
       - cdk/docs/microvm-controller.md
+      - docs/migration/microvm-runtime-logging-v2.md

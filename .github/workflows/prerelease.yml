@@ -32,15 +32,15 @@ jobs:
       - name: Verify release supply chain (release preflight)
         run: bash scripts/verify-branch-release-supply-chain.sh
 
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: "1.26.5"
+
       - name: Verify release workflow invariants (release preflight)
         run: bash scripts/verify-release-workflows.sh
 
       - name: Set SOURCE_DATE_EPOCH (release preflight)
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
-
-      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
-        with:
-          go-version: "1.26.5"
 
       - name: Install golangci-lint (pinned) (release preflight)
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0
@@ -69,7 +69,7 @@ jobs:
         env:
           RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
           TAG_NAME: ${{ steps.release.outputs.tag_name }}
-        run: scripts/verify-release-publish-postcondition.sh prerelease "${RELEASE_CREATED}" "${TAG_NAME}"
+        run: scripts/verify-release-publish-postcondition.sh prerelease "${RELEASE_CREATED}" "${TAG_NAME}" prepublish
 
       - name: Build, upload, and publish prerelease assets
         if: steps.release.outputs.release_created == 'true'
@@ -78,7 +78,7 @@ jobs:
           TAG_NAME: ${{ steps.release.outputs.tag_name }}
         run: scripts/publish-release-assets.sh "${TAG_NAME}"
 
-      - name: Recover existing draft prerelease assets
+      - name: Recover or verify existing prerelease
         if: steps.release.outputs.release_created != 'true'
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
@@ -89,13 +89,18 @@ jobs:
             exit 0
           fi
 
-          is_draft="$(gh release view "${TAG_NAME}" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
-          if [[ "${is_draft}" != "true" ]]; then
-            echo "release-assets: SKIP (${TAG_NAME} has no draft release to recover)"
+          if ! gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            echo "release-assets: SKIP (${TAG_NAME} has no release to recover or verify)"
             exit 0
           fi
 
           scripts/publish-release-assets.sh "${TAG_NAME}"
+
+      - name: Verify prerelease publication closure
+        env:
+          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
+          TAG_NAME: ${{ steps.release.outputs.tag_name }}
+        run: scripts/verify-release-publish-postcondition.sh prerelease "${RELEASE_CREATED}" "${TAG_NAME}" complete
 
       - name: Diagnose failed prerelease state (read-only)
         if: failure()

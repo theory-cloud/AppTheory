@@ -1,0 +1,171 @@
+{
+  "id": "mcp.version_detection.parsed_message",
+  "tier": "mcp",
+  "name": "MCP parsed-message protocol detection has one cross-runtime contract",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      }
+    }
+  },
+  "input": {
+    "mcp": {
+      "detections": [
+        {
+          "name": "header_precedes_parsed_metadata",
+          "headers": {
+            "mcp-protocol-version": [
+              "2025-11-25"
+            ]
+          },
+          "message": {
+            "params": {
+              "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+              }
+            }
+          }
+        },
+        {
+          "name": "parsed_modern_metadata",
+          "headers": {},
+          "message": {
+            "jsonrpc": "2.0",
+            "method": "ping",
+            "params": {
+              "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+              }
+            }
+          }
+        },
+        {
+          "name": "parsed_session_ful_metadata",
+          "headers": {},
+          "message": {
+            "jsonrpc": "2.0",
+            "method": "ping",
+            "params": {
+              "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2025-11-25"
+              }
+            }
+          }
+        },
+        {
+          "name": "unknown_header_does_not_fall_back",
+          "headers": {
+            "mcp-protocol-version": [
+              "2099-01-01"
+            ]
+          },
+          "message": {
+            "params": {
+              "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+              }
+            }
+          }
+        },
+        {
+          "name": "non_string_metadata_is_unknown",
+          "headers": {},
+          "message": {
+            "params": {
+              "_meta": {
+                "io.modelcontextprotocol/protocolVersion": 20260728
+              }
+            }
+          }
+        },
+        {
+          "name": "parsed_scalar_is_unknown",
+          "headers": {},
+          "message": "not-an-object"
+        }
+      ],
+      "steps": [
+        {
+          "name": "fixture_transport_anchor",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "ping"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"anchor\",\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}}"
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "detections": [
+        {
+          "name": "header_precedes_parsed_metadata",
+          "shape": "2025-11-25"
+        },
+        {
+          "name": "parsed_modern_metadata",
+          "shape": "2026-07-28"
+        },
+        {
+          "name": "parsed_session_ful_metadata",
+          "shape": "2025-11-25"
+        },
+        {
+          "name": "unknown_header_does_not_fall_back",
+          "shape": "unknown"
+        },
+        {
+          "name": "non_string_metadata_is_unknown",
+          "shape": "unknown"
+        },
+        {
+          "name": "parsed_scalar_is_unknown",
+          "shape": "unknown"
+        }
+      ],
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "anchor",
+            "result": {
+              "resultType": "complete"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

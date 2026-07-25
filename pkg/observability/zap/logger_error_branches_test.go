@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theory-cloud/apptheory/pkg/observability"
+	"github.com/theory-cloud/apptheory/v2/pkg/observability"
 )
 
 type flakyNotifier struct {

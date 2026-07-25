@@ -31,6 +31,7 @@ import {
   type MicroVMProviderIdlePolicy,
   type MicroVMProviderPortScope,
   type MicroVMProviderInvokeOutput,
+  type MicroVMProviderLogging,
   type MicroVMProviderRunInput,
   type MicroVMProviderSession,
   type MicroVMProviderSessionBinding,
@@ -55,16 +56,19 @@ import {
 } from "./operation-contract.js";
 import {
   cloneMicroVMProviderSession,
+  environmentMicroVMProviderLogging,
   environmentMicroVMExecutionRoleArn,
   microVMProviderSessionKeyString,
   normalizeMicroVMExecutionRoleArn,
   normalizeMicroVMProviderInvokeInput,
+  normalizeMicroVMProviderLogging,
   normalizeMicroVMProviderInvokePath,
   normalizeMicroVMProviderSession,
   normalizeMicroVMProviderToken,
   sanitizeMicroVMProviderInvokeHeaders,
   normalizeStringArray,
   validateMicroVMExecutionRoleArn,
+  validateMicroVMProviderLogging,
   validateMicroVMProviderSession,
   validateMicroVMProviderToken,
 } from "./provider.js";
@@ -254,6 +258,7 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
   private readonly controllerID: string;
   private readonly providerID: string;
   private readonly executionRoleArn: string;
+  private readonly logging: MicroVMProviderLogging;
   private readonly deploymentDefaults: Required<MicroVMControllerDeploymentDefaults>;
   private readonly clock: MicroVMClock;
   private readonly ids: MicroVMIDGenerator;
@@ -300,6 +305,21 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
         "",
       );
     }
+    const configuredLogging =
+      options.logging ?? environmentMicroVMProviderLogging();
+    const loggingErr = validateMicroVMProviderLogging(
+      configuredLogging,
+      this.executionRoleArn,
+      "",
+    );
+    if (loggingErr) {
+      throw safeError(
+        MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+        "apptheory: microvm runtime logging configuration is invalid",
+        "",
+      );
+    }
+    this.logging = normalizeMicroVMProviderLogging(configuredLogging);
     this.deploymentDefaults = normalizeMicroVMControllerDeploymentDefaults(
       options.deployment_defaults ??
         environmentMicroVMControllerDeploymentDefaults(),
@@ -455,6 +475,7 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
         ],
         session_spec: cloneMicroVMSessionSpec(requestWithSession.session_spec),
         maximum_duration_seconds: requestWithSession.maximum_duration_seconds,
+        logging: normalizeMicroVMProviderLogging(this.logging),
       };
       if (this.executionRoleArn) {
         input.execution_role_arn = this.executionRoleArn;

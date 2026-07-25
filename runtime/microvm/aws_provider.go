@@ -113,12 +113,25 @@ func (p *AWSLambdaMicroVMProvider) Run(ctx context.Context, input ProviderRunInp
 		ImageVersion:             optionalString(input.ImageVersion),
 		IngressNetworkConnectors: input.IngressNetworkConnectorRefs,
 		IdlePolicy:               awsIdlePolicy(input.IdlePolicy),
+		Logging:                  awsLogging(input.Logging),
 		MaximumDurationInSeconds: optionalInt32(input.MaximumDurationSeconds),
 	})
 	if err != nil {
 		return ProviderSession{}, sanitizeProviderError(err, input.RequestID)
 	}
 	return sessionFromRunOutput(input, out)
+}
+
+func awsLogging(logging ProviderLogging) lambdatypes.Logging {
+	if logging.CloudWatch != nil {
+		return &lambdatypes.LoggingMemberCloudWatch{
+			Value: lambdatypes.CloudWatchLogging{
+				LogGroup:  optionalString(logging.CloudWatch.LogGroup),
+				LogStream: optionalString(logging.CloudWatch.LogStream),
+			},
+		}
+	}
+	return &lambdatypes.LoggingMemberDisabled{Value: lambdatypes.LoggingDisabled{}}
 }
 
 // Get maps a safe AppTheory get request to the official AWS GetMicrovm operation.

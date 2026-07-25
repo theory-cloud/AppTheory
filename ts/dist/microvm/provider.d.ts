@@ -1,4 +1,4 @@
-import { MicroVMSafeError, type MicroVMAuthContext, type MicroVMProviderListInput, type MicroVMProviderInvokeInput, type MicroVMOperationName, type MicroVMProviderPortScope, type MicroVMProviderRunInput, type MicroVMProviderSession, type MicroVMProviderSessionBinding, type MicroVMProviderSessionInput, type MicroVMProviderToken, type MicroVMProviderTokenInput } from "./model.js";
+import { MicroVMSafeError, type MicroVMAuthContext, type MicroVMProviderListInput, type MicroVMProviderInvokeInput, type MicroVMProviderLogging, type MicroVMOperationName, type MicroVMProviderPortScope, type MicroVMProviderRunInput, type MicroVMProviderSession, type MicroVMProviderSessionBinding, type MicroVMProviderSessionInput, type MicroVMProviderToken, type MicroVMProviderTokenInput } from "./model.js";
 export declare function validateMicroVMProviderSession(session: MicroVMProviderSession): void;
 export declare function validateMicroVMProviderRunInput(input: MicroVMProviderRunInput): void;
 export declare function validateMicroVMProviderSessionInput(operation: MicroVMOperationName | string, input: MicroVMProviderSessionInput): void;
@@ -25,6 +25,9 @@ export declare function validateSafeMicroVMConnectorRefs(requestID: string, refs
 export declare function validateMicroVMExecutionRoleArn(value: string, requestID: string): MicroVMSafeError | null;
 export declare function normalizeMicroVMExecutionRoleArn(value: string): string;
 export declare function environmentMicroVMExecutionRoleArn(): string;
+export declare function validateMicroVMProviderLogging(logging: MicroVMProviderLogging, executionRoleArn: string, requestID: string): MicroVMSafeError | null;
+export declare function normalizeMicroVMProviderLogging(value: MicroVMProviderLogging | null | undefined): MicroVMProviderLogging;
+export declare function environmentMicroVMProviderLogging(): MicroVMProviderLogging;
 export declare function normalizeMicroVMProviderRunInput(input: MicroVMProviderRunInput): MicroVMProviderRunInput;
 export declare function normalizeMicroVMProviderSessionInput(input: MicroVMProviderSessionInput): MicroVMProviderSessionInput;
 export declare function normalizeMicroVMProviderListInput(input: MicroVMProviderListInput): MicroVMProviderListInput;

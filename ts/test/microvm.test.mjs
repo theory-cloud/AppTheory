@@ -33,6 +33,7 @@ import {
   MICROVM_DEFAULT_SESSION_PROVIDER_ID,
   MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS,
   MICROVM_ENV_EXECUTION_ROLE_ARN,
+  MICROVM_ENV_LOGGING,
   MICROVM_ENV_IMAGE_REF,
   MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS,
   MICROVM_SESSION_REGISTRY_TABLE_ENV,
@@ -176,6 +177,7 @@ function providerRunInput(overrides = {}) {
       suspended_duration_seconds: 120,
     },
     maximum_duration_seconds: 600,
+    logging: { disabled: true },
     ...overrides,
   };
 }
@@ -1134,6 +1136,29 @@ test("microvm provider validation and fake cover M16 real operations", async () 
     () => validateMicroVMProviderRunInput(providerRunInput({ request_id: "" })),
     (err) => err?.code === MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
   );
+  for (const logging of [
+    {},
+    { disabled: false },
+    { disabled: true, cloud_watch: {} },
+    { cloud_watch: {} },
+  ]) {
+    assert.throws(
+      () => validateMicroVMProviderRunInput(providerRunInput({ logging })),
+      (err) => err?.code === MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+    );
+  }
+  validateMicroVMProviderRunInput(
+    providerRunInput({
+      execution_role_arn:
+        "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole",
+      logging: {
+        cloud_watch: {
+          log_group: "/aws/lambda/microvm/apptheory",
+          log_stream: "runtime",
+        },
+      },
+    }),
+  );
 
   const fake = createFakeMicroVMProvider(new Date(0));
   const run = await fake.run(providerRunInput());
@@ -1227,6 +1252,7 @@ test("microvm real controller uses canonical commands and stores only token meta
     ids: { newID: () => "session-1" },
     clock: { now: () => new Date(1000) },
     ttl_ms: 60_000,
+    logging: { disabled: true },
   });
 
   const run = await controller.handle(controllerRequest());
@@ -1342,13 +1368,22 @@ test("microvm real controller uses canonical commands and stores only token meta
 test("microvm real controller carries execution role from environment", async () => {
   const roleArn = "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole";
   const previous = process.env[MICROVM_ENV_EXECUTION_ROLE_ARN];
+  const previousLogging = process.env[MICROVM_ENV_LOGGING];
   process.env[MICROVM_ENV_EXECUTION_ROLE_ARN] = roleArn;
+  process.env[MICROVM_ENV_LOGGING] = JSON.stringify({
+    cloud_watch: {
+      log_group: "/aws/lambda/microvm/apptheory",
+      log_stream: "runtime",
+    },
+  });
   try {
     const baseProvider = createFakeMicroVMProvider(new Date(0));
     let recordedExecutionRoleArn = "";
+    let recordedLogging;
     const provider = {
       run: async (input) => {
         recordedExecutionRoleArn = String(input.execution_role_arn ?? "");
+        recordedLogging = input.logging;
         return await baseProvider.run(input);
       },
       get: (input) => baseProvider.get(input),
@@ -1370,11 +1405,43 @@ test("microvm real controller carries execution role from environment", async ()
     const run = await controller.handle(controllerRequest());
     assert.equal(run.error, undefined);
     assert.equal(recordedExecutionRoleArn, roleArn);
+    assert.deepEqual(recordedLogging, {
+      cloud_watch: {
+        log_group: "/aws/lambda/microvm/apptheory",
+        log_stream: "runtime",
+      },
+    });
   } finally {
     if (previous === undefined) {
       delete process.env[MICROVM_ENV_EXECUTION_ROLE_ARN];
     } else {
       process.env[MICROVM_ENV_EXECUTION_ROLE_ARN] = previous;
+    }
+    if (previousLogging === undefined) {
+      delete process.env[MICROVM_ENV_LOGGING];
+    } else {
+      process.env[MICROVM_ENV_LOGGING] = previousLogging;
+    }
+  }
+});
+
+test("microvm real controller requires explicit runtime logging", () => {
+  const previous = process.env[MICROVM_ENV_LOGGING];
+  delete process.env[MICROVM_ENV_LOGGING];
+  try {
+    assert.throws(
+      () =>
+        createRealMicroVMController(
+          createFakeMicroVMProvider(new Date(0)),
+          createMemoryMicroVMSessionRegistry(),
+        ),
+      (err) => err?.code === MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env[MICROVM_ENV_LOGGING];
+    } else {
+      process.env[MICROVM_ENV_LOGGING] = previous;
     }
   }
 });
@@ -1411,6 +1478,7 @@ test("microvm real controller applies deployment-pinned defaults", async () => {
       {
         ids: { newID: () => "session-defaults" },
         clock: { now: () => new Date(1000) },
+        logging: { disabled: true },
       },
     );
     const run = await controller.handle(
@@ -1464,6 +1532,7 @@ test("microvm controller route adapter enforces auth and tenant binding", async 
   const controller = createRealMicroVMController(provider, registry, {
     ids: { newID: () => "route-session" },
     clock: { now: () => new Date(1000) },
+    logging: { disabled: true },
   });
   const app = createApp({
     tier: "p1",
@@ -1594,8 +1663,20 @@ test("microvm AWS provider uses official command classes and sanitizes tokens", 
       session_id: "session-1",
       execution_role_arn:
         "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole",
+      logging: {
+        cloud_watch: {
+          log_group: "/aws/lambda/microvm/apptheory",
+          log_stream: "runtime",
+        },
+      },
     }),
   );
+  assert.deepEqual(sent[0].input.logging, {
+    cloudWatch: {
+      logGroup: "/aws/lambda/microvm/apptheory",
+      logStream: "runtime",
+    },
+  });
   const binding = {
     tenant_id: "tenant-1",
     namespace: "namespace-1",
@@ -1647,6 +1728,13 @@ test("microvm AWS provider uses official command classes and sanitizes tokens", 
     "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole",
   );
   assert.deepEqual(sent.at(-2).input.allowedPorts, [{ port: 443 }]);
+  await provider.run(
+    providerRunInput({
+      request_id: "req-run-disabled",
+      session_id: "session-disabled",
+    }),
+  );
+  assert.deepEqual(sent.at(-1).input.logging, { disabled: {} });
 });
 
 test("microvm real M16 operation contract validates route, token, and tenant safety", () => {

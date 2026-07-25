@@ -697,6 +697,7 @@ func init() {
 			_jsii_.MemberProperty{JsiiProperty: "createdAt", GoGetter: "CreatedAt"},
 			_jsii_.MemberProperty{JsiiProperty: "latestActiveImageVersion", GoGetter: "LatestActiveImageVersion"},
 			_jsii_.MemberProperty{JsiiProperty: "latestFailedImageVersion", GoGetter: "LatestFailedImageVersion"},
+			_jsii_.MemberProperty{JsiiProperty: "logging", GoGetter: "Logging"},
 			_jsii_.MemberProperty{JsiiProperty: "microvmImage", GoGetter: "MicrovmImage"},
 			_jsii_.MemberProperty{JsiiProperty: "microvmImageArn", GoGetter: "MicrovmImageArn"},
 			_jsii_.MemberProperty{JsiiProperty: "microvmImageName", GoGetter: "MicrovmImageName"},
@@ -1210,6 +1211,7 @@ func init() {
 		"@theory-cloud/apptheory-cdk.IAppTheoryMicrovmImage",
 		reflect.TypeOf((*IAppTheoryMicrovmImage)(nil)).Elem(),
 		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "logging", GoGetter: "Logging"},
 			_jsii_.MemberProperty{JsiiProperty: "microvmImageArn", GoGetter: "MicrovmImageArn"},
 		},
 		func() interface{} {

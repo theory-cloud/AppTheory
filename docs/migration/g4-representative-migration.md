@@ -14,8 +14,8 @@ Representative service example:
 ## What worked well
 
 - The `pay-theory/limited` API maps cleanly to AppTheory’s port:
-  - `github.com/theory-cloud/apptheory/pkg/limited`
-  - `github.com/theory-cloud/apptheory/pkg/limited/middleware`
+  - `github.com/theory-cloud/apptheory/v2/pkg/limited`
+  - `github.com/theory-cloud/apptheory/v2/pkg/limited/middleware`
 - Import rewrites can be automated safely with a small Go-aware helper:
   - `scripts/migrate-from-lift-go.sh` (dry-run by default; prints diffs)
 

@@ -15,8 +15,8 @@ import (
 
 	"github.com/aws/aws-lambda-go/lambda"
 
-	apptheory "github.com/theory-cloud/apptheory/runtime"
-	"github.com/theory-cloud/apptheory/runtime/microvm"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+	"github.com/theory-cloud/apptheory/v2/runtime/microvm"
 	"github.com/theory-cloud/tabletheory/v2"
 )
 
@@ -130,6 +130,7 @@ func buildApp(options ...appOption) (*apptheory.App, error) {
 	controller, err := microvm.NewRealController(
 		opts.provider,
 		registry,
+		microvm.WithControllerLogging(microvm.ProviderLogging{Disabled: true}),
 		microvm.WithControllerClock(opts.clock),
 		microvm.WithControllerIDGenerator(opts.ids),
 		microvm.WithControllerProviderID(localProviderID),

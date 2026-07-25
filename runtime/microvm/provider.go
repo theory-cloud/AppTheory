@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -25,6 +26,8 @@ const (
 	minProviderTokenTTLSeconds     = int32(1)
 	maxProviderTokenTTLSeconds     = int32(900)
 )
+
+var providerLogGroupPattern = regexp.MustCompile(`^[a-zA-Z0-9_\-/.#]{1,512}$`)
 
 // Provider is the constrained M16 real MicroVM provider surface.
 //
@@ -50,6 +53,20 @@ type ProviderIdlePolicy struct {
 	SuspendedDurationSeconds int32 `json:"suspended_duration_seconds"`
 }
 
+// ProviderCloudWatchLogging is the safe AppTheory representation of CloudWatch runtime logging.
+type ProviderCloudWatchLogging struct {
+	LogGroup  string `json:"log_group,omitempty"`
+	LogStream string `json:"log_stream,omitempty"`
+}
+
+// ProviderLogging is the deployment-owned runtime logging union.
+//
+// Exactly one of CloudWatch or Disabled must be configured for every provider run.
+type ProviderLogging struct {
+	CloudWatch *ProviderCloudWatchLogging `json:"cloud_watch,omitempty"`
+	Disabled   bool                       `json:"disabled,omitempty"`
+}
+
 // ProviderRunInput is the safe AppTheory request for the real run operation.
 type ProviderRunInput struct {
 	RequestID                   string              `json:"request_id"`
@@ -66,6 +83,7 @@ type ProviderRunInput struct {
 	IdlePolicy                  *ProviderIdlePolicy `json:"idle_policy,omitempty"`
 	MaximumDurationSeconds      int32               `json:"maximum_duration_seconds,omitempty"`
 	ExecutionRoleArn            string              `json:"execution_role_arn,omitempty"`
+	Logging                     ProviderLogging     `json:"logging"`
 }
 
 // ProviderSessionBinding binds an AppTheory session to a provider MicroVM identifier.
@@ -309,6 +327,9 @@ func validateProviderRunInput(input ProviderRunInput) (ProviderRunInput, error) 
 	if err := validateExecutionRoleArn(input.ExecutionRoleArn, input.RequestID); err != nil {
 		return ProviderRunInput{}, err
 	}
+	if err := validateProviderLogging(input.Logging, input.ExecutionRoleArn, input.RequestID); err != nil {
+		return ProviderRunInput{}, err
+	}
 	if err := validateProviderIdlePolicy(input.RequestID, input.IdlePolicy); err != nil {
 		return ProviderRunInput{}, err
 	}
@@ -342,6 +363,44 @@ func validateProviderRunSafeFields(input ProviderRunInput) error {
 		if err := validateSafeConnectorRefs(input.RequestID, []string{input.NetworkConnectorRef}); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateProviderLogging(logging ProviderLogging, executionRoleArn string, requestID string) error {
+	hasCloudWatch := logging.CloudWatch != nil
+	hasDisabled := logging.Disabled
+	if hasCloudWatch == hasDisabled {
+		return safeError(
+			ErrorCodeProviderRequestInvalid,
+			"apptheory: microvm provider logging must specify exactly one of cloud_watch or disabled",
+			requestID,
+		)
+	}
+	if hasDisabled {
+		return nil
+	}
+	if strings.TrimSpace(executionRoleArn) == "" {
+		return safeError(
+			ErrorCodeProviderRequestInvalid,
+			"apptheory: microvm provider cloudwatch logging requires execution_role_arn",
+			requestID,
+		)
+	}
+	if logging.CloudWatch.LogGroup != "" && !providerLogGroupPattern.MatchString(logging.CloudWatch.LogGroup) {
+		return safeError(
+			ErrorCodeProviderRequestInvalid,
+			"apptheory: microvm provider cloudwatch log_group is invalid",
+			requestID,
+		)
+	}
+	if logging.CloudWatch.LogStream != "" &&
+		(len(logging.CloudWatch.LogStream) > 512 || strings.ContainsAny(logging.CloudWatch.LogStream, ":*")) {
+		return safeError(
+			ErrorCodeProviderRequestInvalid,
+			"apptheory: microvm provider cloudwatch log_stream is invalid",
+			requestID,
+		)
 	}
 	return nil
 }
@@ -513,7 +572,19 @@ func normalizeProviderRunInput(input ProviderRunInput) ProviderRunInput {
 	input.EgressNetworkConnectorRefs = normalizeStringSlice(input.EgressNetworkConnectorRefs)
 	input.SessionSpec.Metadata = cloneStringMap(input.SessionSpec.Metadata)
 	input.ExecutionRoleArn = strings.TrimSpace(input.ExecutionRoleArn)
+	input.Logging = normalizeProviderLogging(input.Logging)
 	return input
+}
+
+func normalizeProviderLogging(logging ProviderLogging) ProviderLogging {
+	out := ProviderLogging{Disabled: logging.Disabled}
+	if logging.CloudWatch != nil {
+		out.CloudWatch = &ProviderCloudWatchLogging{
+			LogGroup:  strings.TrimSpace(logging.CloudWatch.LogGroup),
+			LogStream: strings.TrimSpace(logging.CloudWatch.LogStream),
+		}
+	}
+	return out
 }
 
 func normalizeProviderSessionInput(input ProviderSessionInput) ProviderSessionInput {

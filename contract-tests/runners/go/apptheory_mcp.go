@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/runtime"
-	"github.com/theory-cloud/apptheory/runtime/mcp"
+	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+	"github.com/theory-cloud/apptheory/v2/runtime/mcp"
 )
 
 func runFixtureMCP(f Fixture) error {
@@ -26,6 +26,32 @@ func runFixtureMCP(f Fixture) error {
 	}
 	if len(f.Input.MCP.Steps) != len(f.Expect.MCP.Steps) {
 		return fmt.Errorf("mcp steps length: expected %d, got %d", len(f.Expect.MCP.Steps), len(f.Input.MCP.Steps))
+	}
+	if len(f.Input.MCP.Detections) != len(f.Expect.MCP.Detections) {
+		return fmt.Errorf(
+			"mcp detections length: expected %d, got %d",
+			len(f.Expect.MCP.Detections),
+			len(f.Input.MCP.Detections),
+		)
+	}
+	for i, detection := range f.Input.MCP.Detections {
+		var message any
+		if err := json.Unmarshal(detection.Message, &message); err != nil {
+			return fmt.Errorf("detection %s: parse message: %w", detection.Name, err)
+		}
+		expected := f.Expect.MCP.Detections[i]
+		if detection.Name != expected.Name {
+			return fmt.Errorf("detection %d name: expected %q, got %q", i, expected.Name, detection.Name)
+		}
+		actual := mcp.DetectProtocolVersionForMessage(detection.Headers, message)
+		if string(actual) != expected.Shape {
+			return fmt.Errorf(
+				"detection %s shape: expected %q, got %q",
+				detection.Name,
+				expected.Shape,
+				actual,
+			)
+		}
 	}
 
 	server, err := newFixtureMCPServer(f.Setup.MCP)
@@ -233,6 +259,40 @@ func fixtureMCPToolHandler(name string) (mcp.ToolHandler, error) {
 			return &mcp.ToolResult{
 				Content:           []mcp.ContentBlock{{Type: "text", Text: message}},
 				StructuredContent: map[string]any{"message": message},
+			}, nil
+		}, nil
+	case "input_required":
+		return func(ctx context.Context, args json.RawMessage) (*mcp.ToolResult, error) {
+			message, err := mcpFixtureMessageArg(args)
+			if err != nil {
+				return nil, err
+			}
+			input := mcp.ToolInputFromContext(ctx)
+			if input.RequestState == "confirm-"+message {
+				if _, ok := input.InputResponses["confirmation"]; ok {
+					return &mcp.ToolResult{
+						Content: []mcp.ContentBlock{{Type: "text", Text: "confirmed " + message}},
+					}, nil
+				}
+			}
+			return &mcp.ToolResult{
+				ResultType: mcp.ResultTypeInputRequired,
+				InputRequests: map[string]mcp.InputRequest{
+					"confirmation": {
+						Method: "elicitation/create",
+						Params: map[string]any{
+							"message": "Confirm " + message,
+							"requestedSchema": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"confirmed": map[string]any{"type": "boolean"},
+								},
+								"required": []string{"confirmed"},
+							},
+						},
+					},
+				},
+				RequestState: "confirm-" + message,
 			}, nil
 		}, nil
 	default:

@@ -5068,7 +5068,18 @@ test("AppTheoryMicrovmImage synthesizes expected template", () => {
   const stack = new cdk.Stack(app, "TestStack");
   const connector = importedMicrovmConnector(stack);
 
-  const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+  const image = new apptheory.AppTheoryMicrovmImage(
+    stack,
+    "Image",
+    microvmImageProps(connector, {
+      logging: {
+        cloudWatch: {
+          logGroup: " /aws/lambda/microvm/apptheory ",
+          logStream: " image-build ",
+        },
+      },
+    }),
+  );
 
   assert.ok(image.microvmImageName, "Should expose the image Ref token");
   assert.ok(image.microvmImageArn, "Should expose the image ARN token");
@@ -5077,6 +5088,12 @@ test("AppTheoryMicrovmImage synthesizes expected template", () => {
   assert.ok(image.latestFailedImageVersion, "Should expose the latest failed image version token");
   assert.ok(image.createdAt, "Should expose the created timestamp token");
   assert.ok(image.updatedAt, "Should expose the updated timestamp token");
+  assert.deepEqual(image.logging, {
+    cloudWatch: {
+      logGroup: "/aws/lambda/microvm/apptheory",
+      logStream: "image-build",
+    },
+  });
 
   const template = assertions.Template.fromStack(stack).toJSON();
   const images = resourcesOfType(template, "AWS::Lambda::MicrovmImage");
@@ -5108,7 +5125,7 @@ test("AppTheoryMicrovmImage supports disabled logging", () => {
   const stack = new cdk.Stack(app, "TestStack");
   const connector = importedMicrovmConnector(stack);
 
-  new apptheory.AppTheoryMicrovmImage(
+  const image = new apptheory.AppTheoryMicrovmImage(
     stack,
     "Image",
     microvmImageProps(connector, {
@@ -5123,6 +5140,7 @@ test("AppTheoryMicrovmImage supports disabled logging", () => {
   assert.equal(images.length, 1, "Should synthesize one Lambda MicroVM image");
   assert.deepEqual(images[0].Properties.Logging, { Disabled: true });
   assert.deepEqual(images[0].Properties.EnvironmentVariables, []);
+  assert.deepEqual(image.logging, { disabled: true });
 });
 
 test("AppTheoryMicrovmImage supports endpoint-dispatched no-hook images", () => {
@@ -5304,11 +5322,18 @@ function microvmAuthorizer(stack) {
   });
 }
 
-function microvmControllerNetworkProps(stack, egressConnector) {
+function microvmControllerNetworkProps(stack, egressConnector, options = {}) {
   return {
     ingressNetworkConnectors: [apptheory.AppTheoryMicrovmNetworkConnector.allIngress(stack, "ControllerIngress")],
     egressNetworkConnectors: [egressConnector],
     shellIngressNetworkConnector: apptheory.AppTheoryMicrovmNetworkConnector.shellIngress(stack, "ControllerShellIngress"),
+    ...(options.executionRole === false
+      ? {}
+      : {
+          executionRole: new iam.Role(stack, "ControllerExecutionRole", {
+            assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
+          }),
+        }),
   };
 }
 
@@ -5405,6 +5430,10 @@ test("AppTheoryMicrovmController synthesizes protected controller deployment", (
   assert.ok(renderedString(env.APPTHEORY_MICROVM_INGRESS_NETWORK_CONNECTOR_REFS).includes("SHELL_INGRESS"));
   assert.ok(renderedString(env.APPTHEORY_MICROVM_SHELL_INGRESS_NETWORK_CONNECTOR_REF).includes("SHELL_INGRESS"));
   assert.ok(renderedString(env.APPTHEORY_MICROVM_EXECUTION_ROLE_ARN).includes("MicrovmExecutionRole"));
+  assert.equal(
+    env.APPTHEORY_MICROVM_LOGGING,
+    '{"cloud_watch":{"log_group":"/aws/lambda/microvm/apptheory","log_stream":"image-build"}}',
+  );
 
   const policyActions = iamPolicyActions(template);
   assert.ok(policyActions.includes("dynamodb:PutItem"));
@@ -5456,6 +5485,32 @@ test("AppTheoryMicrovmController synthesizes protected controller deployment", (
   } else {
     expectSnapshot("microvm-controller", template);
   }
+});
+
+test("AppTheoryMicrovmController preserves explicit disabled runtime logging without an execution role", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "DisabledRuntimeLoggingStack");
+  const connector = importedMicrovmConnector(stack);
+
+  new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+    controller: microvmControllerLambdaProps(),
+    authorizer: microvmAuthorizer(stack),
+    microvmImage: {
+      microvmImageArn: "arn:aws:lambda:us-east-1:123456789012:microvm-image/imported",
+      logging: { disabled: true },
+    },
+    ...microvmControllerNetworkProps(stack, connector, { executionRole: false }),
+  });
+
+  const functions = resourcesOfType(assertions.Template.fromStack(stack).toJSON(), "AWS::Lambda::Function");
+  const controllerFunction = functions.find((resource) => {
+    const env = resource.Properties?.Environment?.Variables ?? {};
+    return env.APPTHEORY_MICROVM_CONTRACT_NAME === "apptheory.lambda_microvm";
+  });
+  assert.ok(controllerFunction, "Should synthesize the controller Lambda");
+  const env = controllerFunction.Properties.Environment.Variables;
+  assert.equal(env.APPTHEORY_MICROVM_LOGGING, '{"disabled":true}');
+  assert.equal(env.APPTHEORY_MICROVM_EXECUTION_ROLE_ARN, undefined);
 });
 
 test("AppTheoryMicrovmController fails closed on invalid props", () => {
@@ -5581,6 +5636,39 @@ test("AppTheoryMicrovmController fails closed on invalid props", () => {
   }
 
   {
+    const stack = new cdk.Stack(app, "CloudWatchWithoutExecutionRoleStack");
+    const connector = importedMicrovmConnector(stack);
+    const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+          controller: microvmControllerLambdaProps(),
+          authorizer: microvmAuthorizer(stack),
+          microvmImage: image,
+          ...microvmControllerNetworkProps(stack, connector, { executionRole: false }),
+        }),
+      /requires props\.executionRole when props\.microvmImage\.logging\.cloudWatch is configured/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "StructuralImageWithoutLoggingStack");
+    const connector = importedMicrovmConnector(stack);
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+          controller: microvmControllerLambdaProps(),
+          authorizer: microvmAuthorizer(stack),
+          microvmImage: {
+            microvmImageArn: "arn:aws:lambda:us-east-1:123456789012:microvm-image/imported",
+          },
+          ...microvmControllerNetworkProps(stack, connector, { executionRole: false }),
+        }),
+      /requires props\.microvmImage\.logging/,
+    );
+  }
+
+  {
     const stack = new cdk.Stack(app, "ReservedEnvStack");
     const connector = importedMicrovmConnector(stack);
     const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
@@ -5597,6 +5685,26 @@ test("AppTheoryMicrovmController fails closed on invalid props", () => {
           ...microvmControllerNetworkProps(stack, connector),
         }),
       /cannot override reserved APPTHEORY_MICROVM_CONTROLLER_AUTH_DEFAULT/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "ReservedLoggingEnvStack");
+    const connector = importedMicrovmConnector(stack);
+    const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+          controller: microvmControllerLambdaProps({
+            environment: {
+              APPTHEORY_MICROVM_LOGGING: '{"disabled":true}',
+            },
+          }),
+          authorizer: microvmAuthorizer(stack),
+          microvmImage: image,
+          ...microvmControllerNetworkProps(stack, connector),
+        }),
+      /cannot override reserved APPTHEORY_MICROVM_LOGGING/,
     );
   }
 

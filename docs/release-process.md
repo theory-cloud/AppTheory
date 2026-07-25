@@ -109,6 +109,9 @@ evidence, and do not claim CI can sign generated sync commits by holding private
   generated head. Record the RC PR URL and check output in the promotion notes.
 - Merge the release-candidate PR only after generated artifacts are in sync and all required checks are green.
 - The prerelease publisher creates immutable assets for the `vX.Y.Z-rc.N` GitHub Release.
+- For v2+, the same serialized publisher creates the root `vX.Y.Z-rc.N` tag and nested
+  `cdk-go/apptheorycdk/vX.Y.Z-rc.N` Go module tag only when absent, proves both target the exact RC commit, and
+  resolves both modules at the exact version through direct VCS lookup before the draft release becomes public.
 
 ### 3. Promote `premain` to `main`
 
@@ -123,6 +126,9 @@ evidence, and do not claim CI can sign generated sync commits by holding private
 - Merge the stable release PR only after required checks pass.
 - The stable publisher creates immutable assets for the `vX.Y.Z` GitHub Release.
   `main` owns stable releases only; RC-shaped stable PR titles, versions, or tags are rejected.
+- For v2+, stable publication applies the same create-only two-tag transaction:
+  `vX.Y.Z` and `cdk-go/apptheorycdk/vX.Y.Z` must target the exact same stable release commit. Any conflicting
+  existing ref fails closed; neither tag is moved, deleted, or recreated.
 
 ### 4. Back-merge `main` to `staging`
 
@@ -144,6 +150,8 @@ Do not use any of these actions to recover a release lane:
 - Manually marking protected checks successful or weakening workflow permissions so a release PR can self-attest.
 - Running a stable release from `staging` or a prerelease from `main`.
 - Creating manual tags or GitHub Releases instead of letting the generated Release Please PR merge publish the expected tag.
+- Moving, deleting, force-updating, or manually repairing either the root release tag or the nested
+  `cdk-go/apptheorycdk/vX.Y.Z[-rc[.N]]` Go module tag.
 - Adding CI-held private signing material so workflow runners can manufacture generated release-artifact sync commits.
 
 Published GitHub Releases are immutable. If a published release is wrong, the recovery is a new version moving through the normal cycle, not mutation of the old release.
@@ -164,7 +172,13 @@ When the release lane is blocked, recover by preserving evidence and re-entering
 
 2. Classify the blocker.
    - Draft GitHub Release with missing or partial assets: rerun the same publisher workflow; the publisher replaces draft assets safely and verifies branch provenance before publication.
-   - Published GitHub Release already exists: rerun the publisher only to verify immutable assets match the source build; do not upload or edit assets.
+   - Root or nested Go tag missing after a partial publisher run: rerun the same serialized publisher. It creates
+     only the absent ref at the already-verified release commit, retains any same-commit ref, and then proves exact
+     root/CDK module resolution.
+   - Root or nested Go tag points at another commit: do not retag. Preserve the conflicting evidence and cut a new
+     version through the normal train.
+   - Published GitHub Release already exists: rerun the publisher only to verify immutable assets and both Go module
+     refs match the source build; do not upload or edit assets.
    - Stale Release Please PR: regenerate or sync Release Please state from the current branch baseline; do not merge the stale PR.
    - Generated artifact sync pending: keep the release PR draft and rerun the release PR sync workflow so it can
      create the GitHub-verified generated artifact commit and prove the signature range. Use the local signed
@@ -179,6 +193,8 @@ When the release lane is blocked, recover by preserving evidence and re-entering
    ```bash
    bash scripts/verify-release-state.sh --self-test
    bash scripts/verify-release-train-promotion.sh --self-test
+   bash scripts/publish-go-module-tags.sh --self-test
+   bash scripts/verify-go-module-tags.sh --self-test
    bash scripts/verify-release-workflows.sh
    bash scripts/verify-ci-rubric-enforced.sh
    bash scripts/verify-release-branch-signatures.sh
@@ -205,8 +221,8 @@ git verify-commit HEAD
 ```
 
 The script starts from a clean checkout, fetches the release PR branch, regenerates only release artifact files,
-stages only `.release-please-manifest.premain.json`, `cdk/.jsii`, `cdk/lib`, and `cdk-go/apptheorycdk`, then
-runs plain `git commit -m "chore(release): sync generated release artifacts"`. It does not set
+stages only `.release-please-manifest.premain.json`, `cdk/.jsii`, `cdk/lib`, `cdk-go/go.mod`, `cdk-go/go.sum`, and
+`cdk-go/apptheorycdk`, then runs plain `git commit -m "chore(release): sync generated release artifacts"`. It does not set
 `user.signingkey`, replace the signing program, import keys, or add passphrases. If the normal local signing
 configuration does not produce a locally trusted-good signature, the script fails before pushing and reports the
 signature status.

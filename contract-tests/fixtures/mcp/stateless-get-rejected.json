@@ -1,0 +1,61 @@
+{
+  "id": "mcp.stateless.get_rejected",
+  "tier": "mcp",
+  "name": "MCP 2026-07-28 GET is rejected before session validation",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      }
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "modern_get_method_not_allowed",
+          "request": {
+            "method": "GET",
+            "path": "/mcp",
+            "headers": {
+              "accept": [
+                "text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": ""
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 405,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "error": "method not allowed"
+          }
+        }
+      ]
+    }
+  }
+}

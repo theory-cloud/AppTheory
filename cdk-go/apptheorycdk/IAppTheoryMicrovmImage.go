@@ -6,6 +6,11 @@ import (
 
 // Reference to a Lambda MicroVM image usable by MicroVM controller constructs.
 type IAppTheoryMicrovmImage interface {
+	// The normalized deployment-owned runtime logging posture for this image.
+	//
+	// Controllers propagate this exact CloudWatch-or-disabled choice to every
+	// `RunMicrovm` request.
+	Logging() *AppTheoryMicrovmImageLogging
 	// The ARN of the MicroVM image.
 	MicrovmImageArn() *string
 }
@@ -13,6 +18,16 @@ type IAppTheoryMicrovmImage interface {
 // The jsii proxy for IAppTheoryMicrovmImage
 type jsiiProxy_IAppTheoryMicrovmImage struct {
 	_ byte // padding
+}
+
+func (j *jsiiProxy_IAppTheoryMicrovmImage) Logging() *AppTheoryMicrovmImageLogging {
+	var returns *AppTheoryMicrovmImageLogging
+	_jsii_.Get(
+		j,
+		"logging",
+		&returns,
+	)
+	return returns
 }
 
 func (j *jsiiProxy_IAppTheoryMicrovmImage) MicrovmImageArn() *string {

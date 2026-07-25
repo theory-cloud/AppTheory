@@ -10,8 +10,8 @@ import (
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 
-	"github.com/theory-cloud/apptheory/pkg/observability"
-	"github.com/theory-cloud/apptheory/pkg/sanitization"
+	"github.com/theory-cloud/apptheory/v2/pkg/observability"
+	"github.com/theory-cloud/apptheory/v2/pkg/sanitization"
 )
 
 type syncErrorWriter struct{}

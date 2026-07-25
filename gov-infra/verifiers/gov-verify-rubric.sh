@@ -753,10 +753,22 @@ gov_cmd_sast() {
   scripts/verify-go-lint.sh
 }
 
+check_visible_ts_brace_finding() {
+  local report_path="$1"
+  local lockfile_path="$2"
+
+  node scripts/check-visible-ts-brace-finding.mjs "${report_path}" "${lockfile_path}"
+}
+
 osv_scan_lockfile() {
   local lf="$1"
+  local exception_kind=""
 
-  if ! grep -Fq '"node_modules/aws-cdk-lib/node_modules/brace-expansion"' "${lf}"; then
+  if [[ "${lf}" == "ts/package-lock.json" ]]; then
+    exception_kind="ts"
+  elif grep -Fq '"node_modules/aws-cdk-lib/node_modules/brace-expansion"' "${lf}"; then
+    exception_kind="aws-cdk"
+  else
     osv-scanner scan --lockfile="${lf}"
     return $?
   fi
@@ -769,16 +781,21 @@ osv_scan_lockfile() {
   local scan_status=$?
   set -e
 
-  if [[ "${scan_status}" -eq 0 ]]; then
-    rm -f "${tmp_report}"
-    return 0
-  fi
-
   set +e
-  node scripts/check-visible-aws-cdk-finding.mjs osv "${tmp_report}" "${lf}"
+  if [[ "${exception_kind}" == "ts" ]]; then
+    check_visible_ts_brace_finding "${tmp_report}" "${lf}"
+  else
+    node scripts/check-visible-aws-cdk-finding.mjs osv "${tmp_report}" "${lf}"
+  fi
   local filter_status=$?
   set -e
   rm -f "${tmp_report}"
+
+  if [[ "${scan_status}" -eq 0 && "${filter_status}" -eq 0 ]]; then
+    echo "FAIL: vulnerability exception checker accepted an empty scanner report" >&2
+    return 1
+  fi
+
   return "${filter_status}"
 }
 

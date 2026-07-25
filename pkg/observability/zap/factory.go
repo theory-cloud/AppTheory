@@ -1,6 +1,6 @@
 package zap
 
-import "github.com/theory-cloud/apptheory/pkg/observability"
+import "github.com/theory-cloud/apptheory/v2/pkg/observability"
 
 type Factory struct {
 	options []Option

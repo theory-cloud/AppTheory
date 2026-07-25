@@ -26,8 +26,8 @@ Put this in `renovate.json` (or merge the same fields into your existing Renovat
         "/(^|/)(package\\.json|package-lock\\.json|requirements\\.txt|pyproject\\.toml|go\\.mod)$/"
       ],
       "matchStrings": [
-        "github\\.com/theory-cloud/AppTheory/releases/download/v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc\\.\\d+)?)",
-        "github\\.com/theory-cloud/apptheory\\s+v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc\\.\\d+)?)"
+        "github\\.com/theory-cloud/AppTheory/releases/download/v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc(?:\\.\\d+)?)?)",
+        "github\\.com/theory-cloud/apptheory/v2\\s+v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc(?:\\.\\d+)?)?)"
       ],
       "depNameTemplate": "theory-cloud/AppTheory",
       "datasourceTemplate": "github-releases",
@@ -61,11 +61,11 @@ Put this in `renovate.json` (or merge the same fields into your existing Renovat
 This config intentionally matches both direct release assets and Go module requirements:
 
 ```text
-github.com/theory-cloud/apptheory v1.15.2
-https://github.com/theory-cloud/AppTheory/releases/download/v1.15.2/theory-cloud-apptheory-1.15.2.tgz
-https://github.com/theory-cloud/AppTheory/releases/download/v1.15.2/theory-cloud-apptheory-cdk-1.15.2.tgz
-https://github.com/theory-cloud/AppTheory/releases/download/v1.15.2/apptheory-1.15.2-py3-none-any.whl
-https://github.com/theory-cloud/AppTheory/releases/download/v1.15.2/apptheory_cdk-1.15.2-py3-none-any.whl
+github.com/theory-cloud/apptheory/v2 v2.0.0-rc
+https://github.com/theory-cloud/AppTheory/releases/download/v2.0.0-rc/theory-cloud-apptheory-2.0.0-rc.tgz
+https://github.com/theory-cloud/AppTheory/releases/download/v2.0.0-rc/theory-cloud-apptheory-cdk-2.0.0-rc.tgz
+https://github.com/theory-cloud/AppTheory/releases/download/v2.0.0-rc/apptheory-2.0.0rc0-py3-none-any.whl
+https://github.com/theory-cloud/AppTheory/releases/download/v2.0.0-rc/apptheory_cdk-2.0.0rc0-py3-none-any.whl
 ```
 
 When Renovate opens a bump PR, keep AppTheory's runtime package, CDK package, and generated lockfiles in the same PR.
@@ -78,10 +78,11 @@ Renovate can move URLs, but it cannot prove that your downloaded release assets 
 checksum verification step from the install docs in your CI or bootstrap script:
 
 ```bash
-VERSION=1.15.2
+VERSION=2.0.0-rc
 TAG="v${VERSION}"
+PYTHON_VERSION="${VERSION/-rc/rc0}"
 gh release download "${TAG}" --repo theory-cloud/AppTheory --pattern "SHA256SUMS.txt" --clobber
-grep -E " (theory-cloud-apptheory-${VERSION}\\.tgz|apptheory-${VERSION}-py3-none-any\\.whl)$" SHA256SUMS.txt | sha256sum -c -
+grep -E " (theory-cloud-apptheory-${VERSION}\\.tgz|apptheory-${PYTHON_VERSION}-py3-none-any\\.whl)$" SHA256SUMS.txt | sha256sum -c -
 ```
 
 For npm lockfiles, run `npm install` after Renovate updates the release URL so `package-lock.json` records the new
@@ -119,7 +120,14 @@ passed `npm audit` with zero vulnerabilities. The removal rationale was:
   transitive dependency unless a current advisory or contract gate requires it.
 
 AWS CDK `2.261.0` currently bundles `brace-expansion@5.0.6` inside its published tarball. That copy is affected by
-`GHSA-3jxr-9vmj-r5cp`, and `npm audit fix` cannot replace a bundled dependency. AppTheory therefore carries a visible,
-exact-match exception in its CDK npm-audit and GovTheory OSV gates through **2026-08-05**. The exception applies only to
-the fixed-input CDK synthesis toolchain, not shipped Lambda assets, and fails closed if the advisory, package path,
-AWS CDK version, bundled graph, or expiry changes. Remove it as soon as AWS CDK bundles `brace-expansion>=5.0.7`.
+`GHSA-3jxr-9vmj-r5cp` and `GHSA-mh99-v99m-4gvg`, and `npm audit fix` cannot replace a bundled dependency. AppTheory
+therefore carries a visible, exact-match exception in its CDK npm-audit and GovTheory OSV gates through **2026-08-05**.
+The exception applies only to the fixed-input CDK synthesis toolchain, not shipped Lambda assets, and fails closed if
+the advisory, package path, AWS CDK version, bundled graph, or expiry changes. Remove it as soon as AWS CDK bundles
+`brace-expansion>=5.0.8`.
+
+The TypeScript lint graph still requires `minimatch@3.1.4 -> brace-expansion@1.1.16`; `GHSA-mh99-v99m-4gvg` has no
+patched 1.x release, and forcing the ESM/object-exporting 5.x package into minimatch 3 breaks the linter. AppTheory
+therefore carries one separate, exact, development-only SEC-2 exception for that path through **2026-08-05**. The
+independently resolvable minimatch 10 path is pinned by the lockfile to fixed `brace-expansion@5.0.8`. Any lint-parent,
+minimatch, package, advisory, path, or expiry drift fails closed.

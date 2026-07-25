@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -19,6 +21,8 @@ const (
 const (
 	// EnvExecutionRoleArn names the optional IAM role ARN passed to AWS Lambda MicroVMs during execution.
 	EnvExecutionRoleArn = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN"
+	// EnvLogging names the required deployment-owned MicroVM runtime logging union.
+	EnvLogging = "APPTHEORY_MICROVM_LOGGING"
 	// EnvImageRef names the deployment-pinned MicroVM image reference used when a run request omits image_ref.
 	EnvImageRef = "APPTHEORY_MICROVM_IMAGE_REF"
 	// EnvNetworkConnectorRefs names the legacy deployment-pinned MicroVM egress connector references.
@@ -160,16 +164,18 @@ type Client interface {
 
 // Controller handles constrained MicroVM control-plane commands.
 type Controller struct {
-	client           Client
-	provider         Provider
-	registry         SessionRegistry
-	controllerID     string
-	providerID       string
-	executionRoleArn string
-	deployment       ControllerDeploymentDefaults
-	clock            Clock
-	ids              IDGenerator
-	ttl              time.Duration
+	client            Client
+	provider          Provider
+	registry          SessionRegistry
+	controllerID      string
+	providerID        string
+	executionRoleArn  string
+	logging           ProviderLogging
+	loggingConfigured bool
+	deployment        ControllerDeploymentDefaults
+	clock             Clock
+	ids               IDGenerator
+	ttl               time.Duration
 }
 
 // ControllerOption configures a Controller.
@@ -233,6 +239,14 @@ func WithControllerExecutionRoleArn(executionRoleArn string) ControllerOption {
 	}
 }
 
+// WithControllerLogging sets the required deployment-owned MicroVM runtime logging union.
+func WithControllerLogging(logging ProviderLogging) ControllerOption {
+	return func(controller *Controller) {
+		controller.logging = normalizeProviderLogging(logging)
+		controller.loggingConfigured = true
+	}
+}
+
 // WithControllerDeploymentDefaults sets deployment-pinned MicroVM image and connector references.
 func WithControllerDeploymentDefaults(defaults ControllerDeploymentDefaults) ControllerOption {
 	return func(controller *Controller) {
@@ -285,8 +299,19 @@ func NewRealController(provider Provider, registry SessionRegistry, opts ...Cont
 			opt(controller)
 		}
 	}
+	if !controller.loggingConfigured {
+		logging, err := environmentProviderLogging()
+		if err != nil {
+			return nil, safeError(ErrorCodeInvalidControllerRequest, "apptheory: microvm runtime logging configuration is invalid", "")
+		}
+		controller.logging = logging
+		controller.loggingConfigured = true
+	}
 	if err := validateExecutionRoleArn(controller.executionRoleArn, ""); err != nil {
 		return nil, safeError(ErrorCodeInvalidControllerRequest, "apptheory: microvm execution role arn is invalid", "")
+	}
+	if err := validateProviderLogging(controller.logging, controller.executionRoleArn, ""); err != nil {
+		return nil, safeError(ErrorCodeInvalidControllerRequest, "apptheory: microvm runtime logging configuration is invalid", "")
 	}
 	return controller, nil
 }
@@ -527,6 +552,7 @@ func (c *Controller) handleRealRun(ctx context.Context, request ControllerReques
 		IdlePolicy:                  request.IdlePolicy,
 		MaximumDurationSeconds:      request.MaximumDurationSeconds,
 		ExecutionRoleArn:            c.executionRoleArn,
+		Logging:                     normalizeProviderLogging(c.logging),
 	})
 	if err != nil {
 		safe := asSafeError(err, request.RequestID)
@@ -542,6 +568,35 @@ func (c *Controller) handleRealRun(ctx context.Context, request ControllerReques
 		return controllerErrorResponse(request, safe), safe
 	}
 	return responseFromProviderSession(request, providerSessionFromRecord(record)), nil
+}
+
+func environmentProviderLogging() (ProviderLogging, error) {
+	raw := strings.TrimSpace(os.Getenv(EnvLogging))
+	if raw == "" {
+		return ProviderLogging{}, safeError(
+			ErrorCodeProviderRequestInvalid,
+			"apptheory: microvm provider logging is required",
+			"",
+		)
+	}
+	var logging ProviderLogging
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&logging); err != nil {
+		return ProviderLogging{}, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return ProviderLogging{}, safeError(
+				ErrorCodeProviderRequestInvalid,
+				"apptheory: microvm provider logging must contain one JSON value",
+				"",
+			)
+		}
+		return ProviderLogging{}, err
+	}
+	return normalizeProviderLogging(logging), nil
 }
 
 func (c *Controller) applyRealDeploymentDefaults(request ControllerRequest) (ControllerRequest, error) {

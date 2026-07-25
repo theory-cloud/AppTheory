@@ -3,11 +3,11 @@
 `AppTheoryMicrovmController` is the AppTheory CDK surface for deploying the Lambda MicroVM control plane. It creates:
 
 - a controller Lambda from caller-supplied Lambda packaging props;
-- protected HTTP API v2 routes for the M15 controller vocabulary;
+- protected HTTP API v2 routes for the real M16 controller vocabulary;
 - a durable DynamoDB session registry table with the canonical TableTheory shape (`pk`/`sk` and TTL `ttl`);
-- IAM grants for the session table, scoped MicroVM image actions, network-connector pass-through, and an optional
-  MicroVM execution role;
-- fail-closed controller environment wiring.
+- IAM grants for the session table, scoped MicroVM image actions, network-connector pass-through, and a caller-supplied
+  MicroVM execution role when required;
+- fail-closed controller environment wiring, including the image's required runtime logging posture.
 
 Official AWS references:
 
@@ -25,11 +25,14 @@ Official AWS references:
 - The controller environment also pins `APPTHEORY_MICROVM_CONTROLLER_AUTH_REQUIRED=true` and
   `APPTHEORY_MICROVM_CONTROLLER_AUTH_DEFAULT=deny`. Caller-provided Lambda environment variables cannot override
   AppTheory-reserved MicroVM keys.
+- Logging is deployment-owned. The controller copies the normalized CloudWatch-or-disabled choice from
+  `microvmImage.logging` into `APPTHEORY_MICROVM_LOGGING`; HTTP callers cannot replace it.
 - No live AWS mutation happens during construct tests or synthesis.
 
 ## TypeScript
 
 ```ts
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import {
   AppTheoryMicrovmController,
@@ -37,15 +40,23 @@ import {
   AppTheoryMicrovmNetworkConnector,
 } from "@theory-cloud/apptheory-cdk";
 
-const connector = new AppTheoryMicrovmNetworkConnector(this, "MicrovmEgress", {
-  vpc,
-  subnets,
-  securityGroups: [microvmEgressSecurityGroup],
+const egress = AppTheoryMicrovmNetworkConnector.internetEgress(this, "MicrovmEgress");
+const ingress = AppTheoryMicrovmNetworkConnector.httpIngress(this, "MicrovmIngress");
+const shellIngress = AppTheoryMicrovmNetworkConnector.shellIngress(this, "MicrovmShellIngress");
+
+const executionRole = new iam.Role(this, "MicrovmExecutionRole", {
+  assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
 });
 
 const image = new AppTheoryMicrovmImage(this, "MicrovmImage", {
   // required image props omitted for brevity
-  egressNetworkConnectors: [connector],
+  egressNetworkConnectors: [egress],
+  logging: {
+    cloudWatch: {
+      logGroup: "/aws/lambda/microvms/my-service",
+      logStream: "runtime",
+    },
+  },
 });
 
 const controller = new AppTheoryMicrovmController(this, "MicrovmController", {
@@ -56,22 +67,34 @@ const controller = new AppTheoryMicrovmController(this, "MicrovmController", {
   },
   authorizer,
   microvmImage: image,
-  egressNetworkConnectors: [connector],
+  ingressNetworkConnectors: [ingress],
+  egressNetworkConnectors: [egress],
+  shellIngressNetworkConnector: shellIngress,
+  executionRole,
   sessionTableName: "my-microvm-sessions",
 });
 
 controller.endpoint;
 ```
 
+The abbreviated example does not show the execution-role trust addition or Logs policy. CloudWatch mode requires
+`sts:AssumeRole`, `sts:TagSession`, `logs:CreateLogGroup`, `logs:CreateLogStream`, and `logs:PutLogEvents`; use
+`examples/cdk/microvm-controller` as the runnable reference.
+
 ## Routes
 
-The construct registers the fixed M15 controller route set:
+The construct registers the fixed M16 controller route set:
 
-- `POST /microvms`
-- `POST /microvms/{session_id}/start`
-- `POST /microvms/{session_id}/stop`
-- `GET /microvms/{session_id}/status`
-- `GET /microvms/{session_id}`
+- `POST /microvms` (`run`)
+- `GET /microvms` (`list`)
+- `GET /microvms/{session_id}` (`get`)
+- `POST /microvms/{session_id}/suspend`
+- `POST /microvms/{session_id}/resume`
+- `DELETE /microvms/{session_id}` (`terminate`)
+- `ANY /microvms/{session_id}/invoke`
+- `ANY /microvms/{session_id}/invoke/{proxy+}`
+- `POST /microvms/{session_id}/auth-token`
+- `POST /microvms/{session_id}/shell-auth-token`
 
 Each route uses the same controller Lambda integration and the same Lambda request authorizer.
 
@@ -81,7 +104,8 @@ The controller Lambda receives:
 
 - read/write permissions on the session registry table;
 - MicroVM control-plane permissions scoped to the configured `microvmImage`;
-- `lambda:PassNetworkConnector` scoped to the configured egress connector ARNs;
+- permission-only `lambda:PassNetworkConnector`, with the usable ingress/egress/shell connector set constrained by
+  typed props and reserved environment wiring;
 - `iam:PassRole` only when `executionRole` is supplied.
 
 Reserved environment variables:
@@ -89,23 +113,53 @@ Reserved environment variables:
 - `APPTHEORY_MICROVM_CONTRACT_NAME`
 - `APPTHEORY_MICROVM_CONTRACT_VERSION`
 - `APPTHEORY_MICROVM_CONTROLLER_ENDPOINT`
+- `APPTHEORY_MICROVM_CONTROLLER_OPERATIONS`
+- `APPTHEORY_MICROVM_CONTROLLER_ROUTES`
 - `APPTHEORY_MICROVM_CONTROLLER_AUTH_REQUIRED`
 - `APPTHEORY_MICROVM_CONTROLLER_AUTH_DEFAULT`
 - `APPTHEORY_MICROVM_SESSION_REGISTRY_TABLE`
 - `APPTHEORY_MICROVM_IMAGE_REF`
 - `APPTHEORY_MICROVM_NETWORK_CONNECTOR_REFS`
+- `APPTHEORY_MICROVM_INGRESS_NETWORK_CONNECTOR_REFS`
+- `APPTHEORY_MICROVM_EGRESS_NETWORK_CONNECTOR_REFS`
+- `APPTHEORY_MICROVM_SHELL_INGRESS_NETWORK_CONNECTOR_REF`
 - `APPTHEORY_MICROVM_EXECUTION_ROLE_ARN` (only when `executionRole` is supplied)
+- `APPTHEORY_MICROVM_LOGGING`
 
-The real AppTheory MicroVM controllers read `APPTHEORY_MICROVM_EXECUTION_ROLE_ARN` automatically and pass it to provider
-`RunMicrovm` requests. Controller code should use the AppTheory runtime/provider primitives instead of accepting
-caller-provided role ARNs or forking a raw AWS SDK provider.
+The real AppTheory MicroVM controllers read `APPTHEORY_MICROVM_EXECUTION_ROLE_ARN` and
+`APPTHEORY_MICROVM_LOGGING` automatically and pass them to provider `RunMicrovm` requests. Controller code should use the
+AppTheory runtime/provider primitives instead of accepting caller-provided role/logging values or forking a raw AWS SDK
+provider.
+
+## Runtime logging
+
+`microvmImage.logging` must contain exactly one of:
+
+```ts
+{ cloudWatch: { logGroup: "/aws/lambda/microvms/my-service", logStream: "runtime" } }
+```
+
+or:
+
+```ts
+{ disabled: true }
+```
+
+CloudWatch mode requires `executionRole`. That role must trust Lambda for `sts:AssumeRole`, allow `sts:TagSession`, and
+allow `logs:CreateLogGroup`, `logs:CreateLogStream`, and `logs:PutLogEvents`. AppTheory grants pass-role access but does
+not inspect or mutate caller-owned policies.
+
+Structural `IAppTheoryMicrovmImage` references must now carry their normalized `logging` posture. See the canonical
+[AppTheory 2.0 migration guide](../../docs/migration/microvm-runtime-logging-v2.md).
 
 ## Fail-closed validation
 
 The construct fails synthesis when:
 
 - `controller`, `authorizer`, or `microvmImage` is missing;
-- no egress network connector is supplied, or more than 10 are supplied;
+- an ingress, egress, or shell-ingress connector set is missing, has the wrong typed kind, or exceeds its bound;
+- `microvmImage.logging` is missing or does not contain exactly one valid member;
+- CloudWatch logging is selected without `executionRole`;
 - a controller environment variable attempts to override an AppTheory-reserved key;
 - customer-managed session-table encryption is selected without a KMS key;
 - the authorizer identity header or stage name is empty.

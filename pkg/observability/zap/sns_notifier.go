@@ -10,8 +10,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 
-	"github.com/theory-cloud/apptheory/pkg/observability"
-	"github.com/theory-cloud/apptheory/pkg/sanitization"
+	"github.com/theory-cloud/apptheory/v2/pkg/observability"
+	"github.com/theory-cloud/apptheory/v2/pkg/sanitization"
 )
 
 type snsAPI interface {

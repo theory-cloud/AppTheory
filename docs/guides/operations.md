@@ -74,6 +74,42 @@ Safe fixes:
 - redeploy through the normal AppTheory deployment path;
 - avoid raw AWS SDK escape hatches that bypass the runtime or deployment contract.
 
+## Lambda MicroVM runtime logs are dark
+
+Symptoms:
+
+- a MicroVM reaches `running`, but guest stdout/stderr never appears in CloudWatch Logs;
+- the expected log stream is absent or remains empty;
+- controller logs exist, but workload runtime output does not.
+
+Checks:
+
+1. Confirm the deployed `AppTheoryMicrovmImage.logging` posture is CloudWatch, not `disabled: true`.
+2. Confirm the controller received the reserved `APPTHEORY_MICROVM_LOGGING` value from
+   `AppTheoryMicrovmController`. Do not add that key manually to `controller.environment`.
+3. Confirm CloudWatch mode has an `AppTheoryMicrovmController.executionRole`. The image build role and controller Lambda
+   role are different roles and do not satisfy this requirement.
+4. Confirm the MicroVM execution-role trust allows Lambda `sts:AssumeRole` and `sts:TagSession`.
+5. Confirm the execution role allows `logs:CreateLogGroup`, `logs:CreateLogStream`, and `logs:PutLogEvents`.
+6. Check the configured log group/stream names and region. Do not assume a missing per-run union inherits an image-level
+   default.
+
+AppTheory validates that CloudWatch mode has an execution role, but it does not inspect or mutate policies on arbitrary
+caller-owned roles. Synthesis can therefore succeed while live delivery fails because a required Logs action is absent.
+
+Safe fixes:
+
+- update the logging posture on `AppTheoryMicrovmImage`;
+- update the role passed through `AppTheoryMicrovmController.executionRole`;
+- re-synthesize and redeploy through the AppTheory CDK path;
+- keep logging deployment-owned rather than accepting it in `POST /microvms`;
+- use explicit `logging: { disabled: true }` only when the intended outcome is no runtime log delivery.
+
+Factory EqualToAI's controlled lesser-host A/B showed that otherwise identical runs can differ solely because the AWS
+per-run `Logging` union was omitted versus explicitly set. AppTheory repository tests pin the corrected request shape,
+but they do not replace Factory's external post-change acceptance run. See
+[AppTheory 2.0 MicroVM Runtime Logging](../migration/microvm-runtime-logging-v2.md).
+
 ## Event-shape mismatches
 
 Symptoms:

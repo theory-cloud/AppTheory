@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { MICROVM_ERROR_FORBIDDEN_FIELD, MICROVM_ERROR_PROVIDER_OPERATION_FAILED, MICROVM_ERROR_PROVIDER_OPERATION_UNSUPPORTED, MICROVM_ERROR_PROVIDER_REQUEST_INVALID, MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE, MICROVM_ERROR_TENANT_BINDING_VIOLATION, MICROVM_ERROR_TOKEN_SAFETY_VIOLATION, MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER, MICROVM_ENV_EXECUTION_ROLE_ARN, MicroVMOperation, MicroVMSafeError, } from "./model.js";
+import { MICROVM_ERROR_FORBIDDEN_FIELD, MICROVM_ERROR_PROVIDER_OPERATION_FAILED, MICROVM_ERROR_PROVIDER_OPERATION_UNSUPPORTED, MICROVM_ERROR_PROVIDER_REQUEST_INVALID, MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE, MICROVM_ERROR_TENANT_BINDING_VIOLATION, MICROVM_ERROR_TOKEN_SAFETY_VIOLATION, MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER, MICROVM_ENV_EXECUTION_ROLE_ARN, MICROVM_ENV_LOGGING, MicroVMOperation, MicroVMSafeError, } from "./model.js";
 import { safeError } from "./errors.js";
 import { isRequiredMicroVMOperation, mapMicroVMProviderState, normalizeMicroVMOperation, normalizeMicroVMProviderState, normalizeMicroVMRealLifecycleState, } from "./operation-contract.js";
 import { forbiddenMicroVMFieldName, validateSafeMicroVMFieldValue, validateSafeMicroVMMetadata, } from "./safety.js";
@@ -94,6 +94,9 @@ export function validateMicroVMProviderRunInputInternal(input) {
     const executionRoleErr = validateMicroVMExecutionRoleArn(normalized.execution_role_arn ?? "", normalized.request_id);
     if (executionRoleErr)
         throw executionRoleErr;
+    const loggingErr = validateMicroVMProviderLogging(input.logging, normalized.execution_role_arn ?? "", normalized.request_id);
+    if (loggingErr)
+        throw loggingErr;
     const policy = normalized.idle_policy;
     if (policy &&
         (policy.max_idle_duration_seconds <= 0 ||
@@ -279,6 +282,78 @@ export function environmentMicroVMExecutionRoleArn() {
         return "";
     return normalizeMicroVMExecutionRoleArn(process.env?.[MICROVM_ENV_EXECUTION_ROLE_ARN] ?? "");
 }
+export function validateMicroVMProviderLogging(logging, executionRoleArn, requestID) {
+    const normalized = normalizeMicroVMProviderLogging(logging);
+    const keys = Object.keys((logging ?? {}));
+    if (keys.some((key) => key !== "cloud_watch" && key !== "disabled")) {
+        return safeError(MICROVM_ERROR_PROVIDER_REQUEST_INVALID, "apptheory: microvm provider logging contains an unknown field", requestID);
+    }
+    const hasCloudWatch = normalized.cloud_watch !== undefined;
+    const hasDisabled = normalized.disabled !== undefined;
+    if (hasCloudWatch === hasDisabled ||
+        (hasDisabled && normalized.disabled !== true)) {
+        return safeError(MICROVM_ERROR_PROVIDER_REQUEST_INVALID, "apptheory: microvm provider logging must specify exactly one of cloud_watch or disabled", requestID);
+    }
+    if (hasDisabled)
+        return null;
+    if (!normalizeMicroVMExecutionRoleArn(executionRoleArn)) {
+        return safeError(MICROVM_ERROR_PROVIDER_REQUEST_INVALID, "apptheory: microvm provider cloudwatch logging requires execution_role_arn", requestID);
+    }
+    const cloudWatch = normalized.cloud_watch ?? {};
+    const rawCloudWatch = (logging ?? {}).cloud_watch;
+    if (rawCloudWatch === null ||
+        Array.isArray(rawCloudWatch) ||
+        typeof rawCloudWatch !== "object") {
+        return safeError(MICROVM_ERROR_PROVIDER_REQUEST_INVALID, "apptheory: microvm provider cloudwatch logging is invalid", requestID);
+    }
+    const cloudWatchKeys = Object.keys(rawCloudWatch);
+    if (cloudWatchKeys.some((key) => key !== "log_group" && key !== "log_stream")) {
+        return safeError(MICROVM_ERROR_PROVIDER_REQUEST_INVALID, "apptheory: microvm provider cloudwatch logging contains an unknown field", requestID);
+    }
+    if (cloudWatch.log_group &&
+        !/^[a-zA-Z0-9_\-/.#]{1,512}$/.test(cloudWatch.log_group)) {
+        return safeError(MICROVM_ERROR_PROVIDER_REQUEST_INVALID, "apptheory: microvm provider cloudwatch log_group is invalid", requestID);
+    }
+    if (cloudWatch.log_stream &&
+        (cloudWatch.log_stream.length > 512 || /[:*]/.test(cloudWatch.log_stream))) {
+        return safeError(MICROVM_ERROR_PROVIDER_REQUEST_INVALID, "apptheory: microvm provider cloudwatch log_stream is invalid", requestID);
+    }
+    return null;
+}
+export function normalizeMicroVMProviderLogging(value) {
+    const raw = (value ?? {});
+    const out = {};
+    if (raw.cloud_watch !== undefined && raw.cloud_watch !== null) {
+        out.cloud_watch = {};
+        const logGroup = String(raw.cloud_watch.log_group ?? "").trim();
+        const logStream = String(raw.cloud_watch.log_stream ?? "").trim();
+        if (logGroup)
+            out.cloud_watch.log_group = logGroup;
+        if (logStream)
+            out.cloud_watch.log_stream = logStream;
+    }
+    if (Object.prototype.hasOwnProperty.call(raw, "disabled")) {
+        out.disabled = raw.disabled === true;
+    }
+    return out;
+}
+export function environmentMicroVMProviderLogging() {
+    if (typeof process === "undefined")
+        return {};
+    const raw = String(process.env?.[MICROVM_ENV_LOGGING] ?? "").trim();
+    if (!raw)
+        return {};
+    try {
+        const parsed = JSON.parse(raw);
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+            return {};
+        }
+        return parsed;
+    }
+    catch {
+        return {};
+    }
+}
 export function normalizeMicroVMProviderRunInput(input) {
     const out = {
         request_id: String(input.request_id ?? "").trim(),
@@ -288,6 +363,7 @@ export function normalizeMicroVMProviderRunInput(input) {
         auth_context: normalizeMicroVMAuthContext(input.auth_context ?? {}),
         image_ref: String(input.image_ref ?? "").trim(),
         session_spec: cloneMicroVMSessionSpec(input.session_spec ?? {}),
+        logging: normalizeMicroVMProviderLogging(input.logging),
     };
     const imageVersion = String(input.image_version ?? "").trim();
     if (imageVersion)

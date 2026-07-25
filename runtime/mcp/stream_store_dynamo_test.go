@@ -14,8 +14,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/theory-cloud/apptheory/pkg/objectstore"
-	objectstoretest "github.com/theory-cloud/apptheory/testkit/objectstore"
+	"github.com/theory-cloud/apptheory/v2/pkg/objectstore"
+	objectstoretest "github.com/theory-cloud/apptheory/v2/testkit/objectstore"
 )
 
 func TestDynamoStreamStore_CreateSubscribeReplayAndDeleteSession(t *testing.T) {
