@@ -28,7 +28,28 @@ func DetectProtocolVersion(headers map[string][]string, requestBody []byte) Prot
 	if headerVersion := strings.TrimSpace(firstHeader(headers, headerMcpProtocolVersion)); headerVersion != "" {
 		return protocolShapeForVersion(headerVersion)
 	}
+	return detectProtocolVersionFromJSON(requestBody)
+}
 
+// DetectProtocolVersionForMessage identifies the MCP transport shape for one
+// already-parsed JSON-RPC message.
+//
+// MCP-Protocol-Version takes precedence when present. Otherwise the detector
+// reads io.modelcontextprotocol/protocolVersion from params._meta. Values that
+// cannot be represented as a JSON object return ProtocolShapeUnknown.
+func DetectProtocolVersionForMessage(headers map[string][]string, message any) ProtocolShape {
+	if headerVersion := strings.TrimSpace(firstHeader(headers, headerMcpProtocolVersion)); headerVersion != "" {
+		return protocolShapeForVersion(headerVersion)
+	}
+
+	requestBody, err := json.Marshal(message)
+	if err != nil {
+		return ProtocolShapeUnknown
+	}
+	return detectProtocolVersionFromJSON(requestBody)
+}
+
+func detectProtocolVersionFromJSON(requestBody []byte) ProtocolShape {
 	var request struct {
 		Params json.RawMessage `json:"params"`
 	}

@@ -69,3 +69,69 @@ func TestDetectProtocolVersion(t *testing.T) {
 		t.Fatalf("ProtocolVersion20260728 = %q", ProtocolVersion20260728)
 	}
 }
+
+func TestDetectProtocolVersionForMessage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		headers map[string][]string
+		message any
+		want    ProtocolShape
+	}{
+		{
+			name:    "header takes precedence",
+			headers: map[string][]string{headerMcpProtocolVersion: {protocolVersion}},
+			message: map[string]any{
+				"params": map[string]any{
+					"_meta": map[string]any{protocolVersionMetaKey: ProtocolVersion20260728},
+				},
+			},
+			want: ProtocolShape20251125,
+		},
+		{
+			name: "parsed map",
+			message: map[string]any{
+				"jsonrpc": "2.0",
+				"method":  "ping",
+				"params": map[string]any{
+					"_meta": map[string]any{protocolVersionMetaKey: ProtocolVersion20260728},
+				},
+			},
+			want: ProtocolShape20260728,
+		},
+		{
+			name: "parsed request",
+			message: &Request{
+				JSONRPC: "2.0",
+				Method:  "ping",
+				Params:  []byte(`{"_meta":{"io.modelcontextprotocol/protocolVersion":"2025-11-25"}}`),
+			},
+			want: ProtocolShape20251125,
+		},
+		{
+			name:    "unsupported version",
+			message: map[string]any{"params": map[string]any{"_meta": map[string]any{protocolVersionMetaKey: "2099-01-01"}}},
+			want:    ProtocolShapeUnknown,
+		},
+		{
+			name:    "non JSON value",
+			message: make(chan struct{}),
+			want:    ProtocolShapeUnknown,
+		},
+		{
+			name:    "nil message",
+			message: nil,
+			want:    ProtocolShapeUnknown,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := DetectProtocolVersionForMessage(test.headers, test.message); got != test.want {
+				t.Fatalf("DetectProtocolVersionForMessage() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

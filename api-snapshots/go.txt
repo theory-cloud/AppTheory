@@ -3160,6 +3160,8 @@ func DefaultCapabilityConfig() CapabilityConfig
 
 func DetectProtocolVersion(map[string][]string, []byte) ProtocolShape
 
+func DetectProtocolVersionForMessage(map[string][]string, any) ProtocolShape
+
 func MarshalResponse(*Response) ([]byte, error)
 
 func NewDynamoSessionStore(tablecore.DB) SessionStore

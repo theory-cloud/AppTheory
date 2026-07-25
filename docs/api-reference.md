@@ -482,7 +482,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>924 exported top-level symbols</summary>
+<summary>925 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins
@@ -514,8 +514,9 @@ DecodeCloudWatchLogsSubscription, DecodeLoggingProfileJSON, DecodeLoggingProfile
 DefaultControllerContract, DefaultEmbeddingDimensions, DefaultEnvironmentErrorNotifications, DefaultEventBusConfig, DefaultLifecycleContract
 DefaultLoggingProfile, DefaultOperationContract, DefaultProviderStateMappings, DefaultQueryTopK, DefaultRealLifecycleContract
 DefaultSessionProviderID, DefaultSessionRegistryContract, DefaultSessionRegistryTableName, DefaultTitanEmbedTextModelID, DeleteInput
-DetectProtocolVersion, DiscoverResult, Discovery, DynamicClientRegistrationPolicy, DynamicClientRegistrationRequest, DynamicClientRegistrationResponse
-DynamoDBEventBus, DynamoDBStreamEvent, DynamoDBStreamEventOptions, DynamoDBStreamHandler, DynamoDBStreamRecordOptions, DynamoDBStreamRecordSummary
+DetectProtocolVersion, DetectProtocolVersionForMessage, DiscoverResult, Discovery
+DynamicClientRegistrationPolicy, DynamicClientRegistrationRequest, DynamicClientRegistrationResponse, DynamoDBEventBus
+DynamoDBStreamEvent, DynamoDBStreamEventOptions, DynamoDBStreamHandler, DynamoDBStreamRecordOptions, DynamoDBStreamRecordSummary
 DynamoJobLedger, DynamoRateLimiter, DynamoSessionStore, DynamoStreamStore, DynamoTaskStore
 Embedder, EmbeddingErrorCode, EMFMetricSink, EMFMetricSinkOption, EncodeLoggingProfileEvent
 EncodeLoggingProfileEventWithSanitizer, Env, EnvEgressNetworkConnectorRefs, EnvEmbeddingDimensions, EnvEmbeddingModelID
