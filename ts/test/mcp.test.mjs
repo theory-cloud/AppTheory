@@ -5,6 +5,8 @@ import {
   MCP_CODE_INVALID_PARAMS,
   MCP_CODE_METHOD_NOT_FOUND,
   MCP_HEADER_LAST_EVENT_ID,
+  MCP_HEADER_METHOD,
+  MCP_HEADER_NAME,
   MCP_HEADER_PROTOCOL_VERSION,
   MCP_HEADER_SESSION_ID,
   MCP_PROTOCOL_SHAPE_2025_11_25,
@@ -118,7 +120,10 @@ test("mcp 2026-07-28 requests stay stateless", async () => {
   const ping = await post(
     server,
     rpc("ping", "ping"),
-    { [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28] },
+    {
+      [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28],
+      [MCP_HEADER_METHOD]: ["ping"],
+    },
   );
   assert.equal(ping.status, 200);
   assert.equal(sessionHeader(ping), "");
@@ -132,7 +137,10 @@ test("mcp 2026-07-28 requests stay stateless", async () => {
   const initialize = await post(
     server,
     rpc("init", "initialize", { protocolVersion: MCP_PROTOCOL_VERSION_2026_07_28 }),
-    { [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28] },
+    {
+      [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28],
+      [MCP_HEADER_METHOD]: ["initialize"],
+    },
   );
   assert.equal(sessionHeader(initialize), "");
   assert.equal((await json(initialize)).error.code, MCP_CODE_METHOD_NOT_FOUND);
@@ -165,6 +173,8 @@ test("mcp 2026-07-28 tools support multi-round input_required results", async ()
   });
   const headers = {
     [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28],
+    [MCP_HEADER_METHOD]: ["tools/call"],
+    [MCP_HEADER_NAME]: ["continue"],
   };
 
   const first = await json(
@@ -173,6 +183,9 @@ test("mcp 2026-07-28 tools support multi-round input_required results", async ()
       rpc("first", "tools/call", {
         name: "continue",
         arguments: { message: "contract" },
+        _meta: {
+          "io.modelcontextprotocol/clientCapabilities": { elicitation: {} },
+        },
       }),
       headers,
     ),
@@ -190,6 +203,9 @@ test("mcp 2026-07-28 tools support multi-round input_required results", async ()
         arguments: { message: "contract" },
         requestState: "confirm",
         inputResponses: { confirmation: { action: "accept" } },
+        _meta: {
+          "io.modelcontextprotocol/clientCapabilities": { elicitation: {} },
+        },
       }),
       headers,
     ),

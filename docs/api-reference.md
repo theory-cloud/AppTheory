@@ -482,7 +482,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>921 exported top-level symbols</summary>
+<summary>924 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins
@@ -498,9 +498,9 @@ CacheControlISR, CacheControlSSG, CacheControlSSR, Call, CallToolRequest
 CanonicalizeIssuerURL, CanonicalResourceURL, CapabilityConfig, CaptureBodyStream, ClaudeDynamicClientRegistrationPolicy
 ClaudePublicClient, Client, ClientIP, Clock, CloneMetadata
 CloneVector, CloudWatchLogsSubscription, CloudWatchLogsSubscriptionData, CloudWatchLogsSubscriptionLogEvent, CloudWatchLogsSubscriptionOptions
-CloudWatchLogsSubscriptionSummary, CodeInternalError, CodeInvalidParams, CodeInvalidRequest, CodeMethodNotFound
-CodeParseError, CodeServerError, Command, CommandAuthToken, CommandCreate
-CommandGet, CommandInvoke, CommandLegacyShellToken, CommandList, CommandResume
+CloudWatchLogsSubscriptionSummary, CodeHeaderMismatch, CodeInternalError, CodeInvalidParams, CodeInvalidRequest, CodeMethodNotFound
+CodeMissingRequiredClientCapability, CodeParseError, CodeServerError, CodeUnsupportedProtocolVersion, Command, CommandAuthToken
+CommandCreate, CommandGet, CommandInvoke, CommandLegacyShellToken, CommandList, CommandResume
 CommandRun, CommandSession, CommandShellAuthToken, CommandShellToken, CommandStart
 CommandStatus, CommandStop, CommandSuspend, CommandTerminate, CompleteIdempotencyRecordInput
 Completion, CompletionArgument, CompletionContext, CompletionHook, CompletionRef

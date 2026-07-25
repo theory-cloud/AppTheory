@@ -1,44 +1,33 @@
 {
-  "id": "mcp.stateless.session_bound_rejections",
+  "id": "mcp.errors_2026.routing_headers",
   "tier": "mcp",
-  "name": "MCP 2026-07-28 accepts notifications and rejects session-bound requests",
+  "name": "MCP 2026-07-28 requires truthful routing headers without changing sessionful requests",
   "setup": {
     "mcp": {
       "server": {
         "name": "ContractMCP",
         "version": "sp09"
       },
-      "id_sequence": [
-        "forbidden-task-session"
-      ],
       "tools": [
         {
-          "name": "task_echo",
-          "description": "Echo through a task",
+          "name": "echo",
+          "description": "Echo text",
           "input_schema": {
-            "type": "object",
-            "properties": {
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "message"
-            ]
+            "type": "object"
           },
-          "handler": "task_echo",
-          "task_support": "optional"
+          "handler": "echo_text"
         }
       ],
-      "task_runtime": {
-        "enabled": true,
-        "default_ttl_ms": 86400000,
-        "max_ttl_ms": 86400000,
-        "poll_interval_ms": 100,
-        "list_limit": 10,
-        "model_immediate_response": "poll tasks/result",
-        "clock_unix_ms": 1783036800000,
-        "update_clock_unix_ms": 1783036801000
+      "session_store": {
+        "seed": [
+          {
+            "id": "legacy-headers",
+            "expires_unix_ms": 1900000000000,
+            "data": {
+              "protocolVersion": "2025-11-25"
+            }
+          }
+        ]
       }
     }
   },
@@ -46,7 +35,31 @@
     "mcp": {
       "steps": [
         {
-          "name": "initialize_rejected",
+          "name": "missing_method_header",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"missing-method\",\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "mismatched_method_header",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -61,18 +74,43 @@
                 "2026-07-28"
               ],
               "mcp-method": [
-                "initialize"
+                "tools/list"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"initialize\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2026-07-28\"}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"wrong-method\",\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
             },
             "is_base64": false
           }
         },
         {
-          "name": "notification_accepted",
+          "name": "notification_missing_method_header",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "missing_name_header",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -87,18 +125,19 @@
                 "2026-07-28"
               ],
               "mcp-method": [
-                "notifications/initialized"
+                "tools/call"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"missing-name\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
             },
             "is_base64": false
           }
         },
         {
-          "name": "task_augmented_tool_call_rejected",
+          "name": "mismatched_name_header",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -116,18 +155,19 @@
                 "tools/call"
               ],
               "mcp-name": [
-                "task_echo"
+                "other"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"task-call\",\"method\":\"tools/call\",\"params\":{\"name\":\"task_echo\",\"arguments\":{\"message\":\"must stay stateless\"},\"task\":{}}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"wrong-name\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
             },
             "is_base64": false
           }
         },
         {
-          "name": "tasks_get_rejected",
+          "name": "session_ful_headers_remain_optional",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -138,94 +178,17 @@
               "accept": [
                 "application/json, text/event-stream"
               ],
-              "mcp-protocol-version": [
-                "2026-07-28"
+              "mcp-session-id": [
+                "legacy-headers"
               ],
-              "mcp-method": [
-                "tasks/get"
+              "mcp-protocol-version": [
+                "2025-11-25"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tasks-get\",\"method\":\"tasks/get\",\"params\":{\"taskId\":\"task-1\"}}"
-            },
-            "is_base64": false
-          }
-        },
-        {
-          "name": "tasks_result_rejected",
-          "request": {
-            "method": "POST",
-            "path": "/mcp",
-            "headers": {
-              "content-type": [
-                "application/json"
-              ],
-              "accept": [
-                "application/json, text/event-stream"
-              ],
-              "mcp-protocol-version": [
-                "2026-07-28"
-              ],
-              "mcp-method": [
-                "tasks/result"
-              ]
-            },
-            "body": {
-              "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tasks-result\",\"method\":\"tasks/result\",\"params\":{\"taskId\":\"task-1\"}}"
-            },
-            "is_base64": false
-          }
-        },
-        {
-          "name": "tasks_list_rejected",
-          "request": {
-            "method": "POST",
-            "path": "/mcp",
-            "headers": {
-              "content-type": [
-                "application/json"
-              ],
-              "accept": [
-                "application/json, text/event-stream"
-              ],
-              "mcp-protocol-version": [
-                "2026-07-28"
-              ],
-              "mcp-method": [
-                "tasks/list"
-              ]
-            },
-            "body": {
-              "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tasks-list\",\"method\":\"tasks/list\",\"params\":{}}"
-            },
-            "is_base64": false
-          }
-        },
-        {
-          "name": "tasks_cancel_rejected",
-          "request": {
-            "method": "POST",
-            "path": "/mcp",
-            "headers": {
-              "content-type": [
-                "application/json"
-              ],
-              "accept": [
-                "application/json, text/event-stream"
-              ],
-              "mcp-protocol-version": [
-                "2026-07-28"
-              ],
-              "mcp-method": [
-                "tasks/cancel"
-              ]
-            },
-            "body": {
-              "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tasks-cancel\",\"method\":\"tasks/cancel\",\"params\":{\"taskId\":\"task-1\"}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"legacy-call\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"legacy contract\"}}}",
+              "is_base64": false
             },
             "is_base64": false
           }
@@ -237,7 +200,7 @@
     "mcp": {
       "steps": [
         {
-          "status": 200,
+          "status": 400,
           "headers": {
             "content-type": [
               "application/json"
@@ -249,26 +212,16 @@
           "cookies": [],
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "initialize",
+            "id": "missing-method",
             "error": {
-              "code": -32601,
-              "message": "Method not found: initialize"
+              "code": -32020,
+              "message": "Header mismatch: missing required Mcp-Method header"
             }
           },
           "is_base64": false
         },
         {
-          "status": 202,
-          "headers": {
-            "x-request-id": [
-              "req_mcp_123"
-            ]
-          },
-          "cookies": [],
-          "is_base64": false
-        },
-        {
-          "status": 200,
+          "status": 400,
           "headers": {
             "content-type": [
               "application/json"
@@ -280,16 +233,16 @@
           "cookies": [],
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "task-call",
+            "id": "wrong-method",
             "error": {
-              "code": -32601,
-              "message": "Method not found: tools/call"
+              "code": -32020,
+              "message": "Header mismatch: Mcp-Method does not match request method"
             }
           },
           "is_base64": false
         },
         {
-          "status": 200,
+          "status": 400,
           "headers": {
             "content-type": [
               "application/json"
@@ -301,16 +254,16 @@
           "cookies": [],
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "tasks-get",
+            "id": null,
             "error": {
-              "code": -32601,
-              "message": "Method not found: tasks/get"
+              "code": -32020,
+              "message": "Header mismatch: missing required Mcp-Method header"
             }
           },
           "is_base64": false
         },
         {
-          "status": 200,
+          "status": 400,
           "headers": {
             "content-type": [
               "application/json"
@@ -322,16 +275,16 @@
           "cookies": [],
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "tasks-result",
+            "id": "missing-name",
             "error": {
-              "code": -32601,
-              "message": "Method not found: tasks/result"
+              "code": -32020,
+              "message": "Header mismatch: missing required Mcp-Name header"
             }
           },
           "is_base64": false
         },
         {
-          "status": 200,
+          "status": 400,
           "headers": {
             "content-type": [
               "application/json"
@@ -343,10 +296,10 @@
           "cookies": [],
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "tasks-list",
+            "id": "wrong-name",
             "error": {
-              "code": -32601,
-              "message": "Method not found: tasks/list"
+              "code": -32020,
+              "message": "Header mismatch: Mcp-Name does not match request parameters"
             }
           },
           "is_base64": false
@@ -364,10 +317,14 @@
           "cookies": [],
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "tasks-cancel",
-            "error": {
-              "code": -32601,
-              "message": "Method not found: tasks/cancel"
+            "id": "legacy-call",
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "legacy contract"
+                }
+              ]
             }
           },
           "is_base64": false

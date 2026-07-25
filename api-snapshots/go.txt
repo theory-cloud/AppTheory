@@ -2611,6 +2611,8 @@ func (safeEventError) Error() string
 
 ## github.com/theory-cloud/apptheory/v2/runtime/mcp
 
+const CodeHeaderMismatch = -32020
+
 const CodeInternalError = -32603
 
 const CodeInvalidParams = -32602
@@ -2619,9 +2621,13 @@ const CodeInvalidRequest = -32600
 
 const CodeMethodNotFound = -32601
 
+const CodeMissingRequiredClientCapability = -32021
+
 const CodeParseError = -32700
 
 const CodeServerError = -32000
+
+const CodeUnsupportedProtocolVersion = -32022
 
 const LoggingLevelAlert LoggingLevel = "alert"
 

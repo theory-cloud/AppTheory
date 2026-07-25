@@ -18,7 +18,10 @@ func (g *countingServerIDGenerator) NewID() string {
 func TestStateless20260728DoesNotCreateOrRequireSession(t *testing.T) {
 	ids := &countingServerIDGenerator{}
 	s := NewServer("test", "dev", WithServerIDGenerator(ids))
-	headers := map[string][]string{headerMcpProtocolVersion: {ProtocolVersion20260728}}
+	headers := map[string][]string{
+		headerMcpProtocolVersion: {ProtocolVersion20260728},
+		headerMcpMethod:          {methodPing},
+	}
 
 	pingBody := mustMarshal(t, Request{JSONRPC: jsonrpcVersion, ID: "ping", Method: methodPing})
 	pingResp, err := invokeHandler(s, pingBody, headers)
@@ -41,6 +44,7 @@ func TestStateless20260728DoesNotCreateOrRequireSession(t *testing.T) {
 		Method:  methodInitialize,
 		Params:  json.RawMessage(`{"protocolVersion":"2026-07-28"}`),
 	})
+	headers[headerMcpMethod] = []string{methodInitialize}
 	initializeResp, err := invokeHandler(s, initializeBody, headers)
 	if err != nil {
 		t.Fatalf("invoke stateless initialize: %v", err)

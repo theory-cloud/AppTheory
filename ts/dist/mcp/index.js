@@ -12,6 +12,8 @@ export const MCP_RESULT_TYPE_COMPLETE = "complete";
 export const MCP_RESULT_TYPE_INPUT_REQUIRED = "input_required";
 export const MCP_HEADER_PROTOCOL_VERSION = "mcp-protocol-version";
 export const MCP_HEADER_SESSION_ID = "mcp-session-id";
+export const MCP_HEADER_METHOD = "mcp-method";
+export const MCP_HEADER_NAME = "mcp-name";
 export const MCP_HEADER_LAST_EVENT_ID = "last-event-id";
 const JSONRPC_VERSION = "2.0";
 const DEFAULT_SESSION_TTL_MINUTES = 60;
@@ -23,6 +25,7 @@ const MAX_TASK_LIST_LIMIT = 500;
 const RELATED_TASK_METADATA_KEY = "io.modelcontextprotocol/related-task";
 const MODEL_IMMEDIATE_RESPONSE_METADATA_KEY = "io.modelcontextprotocol/model-immediate-response";
 const PROTOCOL_VERSION_METADATA_KEY = "io.modelcontextprotocol/protocolVersion";
+const CLIENT_CAPABILITIES_METADATA_KEY = "io.modelcontextprotocol/clientCapabilities";
 const SERVER_INFO_METADATA_KEY = "io.modelcontextprotocol/serverInfo";
 const TASK_CANCELED_MESSAGE = "task canceled";
 const DEFAULT_TASK_TABLE_NAME = "mcp-tasks";
@@ -33,6 +36,9 @@ export const MCP_CODE_METHOD_NOT_FOUND = -32601;
 export const MCP_CODE_INVALID_PARAMS = -32602;
 export const MCP_CODE_INTERNAL_ERROR = -32603;
 export const MCP_CODE_SERVER_ERROR = -32000;
+export const MCP_CODE_HEADER_MISMATCH = -32020;
+export const MCP_CODE_MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
+export const MCP_CODE_UNSUPPORTED_PROTOCOL_VERSION = -32022;
 /**
  * Detects the MCP transport shape for one request.
  *
@@ -801,6 +807,11 @@ export class McpServer {
         catch (err) {
             return this.marshalSingleResponse(newErrorResponse(null, MCP_CODE_PARSE_ERROR, `Parse error: ${errorMessage(err)}`));
         }
+        const protocolValidation = validatePostRequestProtocol(headers, request, shape);
+        if (protocolValidation.response) {
+            return protocolValidation.response;
+        }
+        shape = protocolValidation.shape;
         if (shape === MCP_PROTOCOL_SHAPE_2026_07_28) {
             return this.handleStatelessPostRequest(request);
         }
@@ -831,6 +842,10 @@ export class McpServer {
             return emptyResponse(202);
         }
         const response = await this.dispatch(request, MCP_PROTOCOL_VERSION_2026_07_28, "");
+        const missing = missingRequiredClientCapabilities(request, response);
+        if (Object.keys(missing).length > 0) {
+            return protocolErrorResponse(request.id, MCP_CODE_MISSING_REQUIRED_CLIENT_CAPABILITY, "Missing required client capability", { requiredCapabilities: missing });
+        }
         return this.marshalSingleResponse(response);
     }
     async handlePostResponse(headers, body, shape) {
@@ -1039,12 +1054,7 @@ export class McpServer {
     }
     handleDiscover(request) {
         const result = {
-            supportedVersions: [
-                MCP_PROTOCOL_VERSION_2026_07_28,
-                MCP_PROTOCOL_VERSION,
-                MCP_PROTOCOL_VERSION_PRIOR,
-                MCP_PROTOCOL_VERSION_LEGACY,
-            ],
+            supportedVersions: supportedProtocolVersions(),
             capabilities: this.initializeCapabilities(MCP_PROTOCOL_VERSION_2026_07_28),
             _meta: {
                 [SERVER_INFO_METADATA_KEY]: {
@@ -1780,6 +1790,147 @@ function firstHeader(headers, key) {
     const values = headerValues(headers, key);
     return values.length > 0 ? String(values[0] ?? "") : "";
 }
+function validatePostRequestProtocol(headers, request, detectedShape) {
+    const headerVersion = firstHeader(headers, MCP_HEADER_PROTOCOL_VERSION).trim();
+    const metaVersion = requestProtocolVersionMetadata(request);
+    if (headerVersion && !isAdvertisedProtocolVersion(headerVersion)) {
+        if (!metaVersion &&
+            (firstHeader(headers, MCP_HEADER_SESSION_ID).trim() ||
+                request.method === "initialize")) {
+            return { shape: detectedShape, response: null };
+        }
+        return {
+            shape: MCP_PROTOCOL_SHAPE_UNKNOWN,
+            response: unsupportedProtocolVersionResponse(request.id, headerVersion),
+        };
+    }
+    if (metaVersion && !isAdvertisedProtocolVersion(metaVersion)) {
+        return {
+            shape: MCP_PROTOCOL_SHAPE_UNKNOWN,
+            response: unsupportedProtocolVersionResponse(request.id, metaVersion),
+        };
+    }
+    const modernClaim = headerVersion === MCP_PROTOCOL_VERSION_2026_07_28 ||
+        metaVersion === MCP_PROTOCOL_VERSION_2026_07_28;
+    if (modernClaim &&
+        headerVersion &&
+        metaVersion &&
+        headerVersion !== metaVersion) {
+        return {
+            shape: MCP_PROTOCOL_SHAPE_UNKNOWN,
+            response: protocolErrorResponse(request.id, MCP_CODE_HEADER_MISMATCH, "Header mismatch: MCP-Protocol-Version does not match request metadata"),
+        };
+    }
+    if (!modernClaim) {
+        return { shape: detectedShape, response: null };
+    }
+    return {
+        shape: MCP_PROTOCOL_SHAPE_2026_07_28,
+        response: validate20260728RoutingHeaders(headers, request),
+    };
+}
+function validate20260728RoutingHeaders(headers, request) {
+    const method = firstHeader(headers, MCP_HEADER_METHOD).trim();
+    if (!method) {
+        return protocolErrorResponse(request.id, MCP_CODE_HEADER_MISMATCH, "Header mismatch: missing required Mcp-Method header");
+    }
+    if (method !== request.method) {
+        return protocolErrorResponse(request.id, MCP_CODE_HEADER_MISMATCH, "Header mismatch: Mcp-Method does not match request method");
+    }
+    const routingName = requestRoutingName(request);
+    if (!routingName.required) {
+        return null;
+    }
+    const name = firstHeader(headers, MCP_HEADER_NAME).trim();
+    if (!name) {
+        return protocolErrorResponse(request.id, MCP_CODE_HEADER_MISMATCH, "Header mismatch: missing required Mcp-Name header");
+    }
+    if (name !== routingName.value) {
+        return protocolErrorResponse(request.id, MCP_CODE_HEADER_MISMATCH, "Header mismatch: Mcp-Name does not match request parameters");
+    }
+    return null;
+}
+function requestRoutingName(request) {
+    let field = "";
+    switch (request.method) {
+        case "tools/call":
+        case "prompts/get":
+            field = "name";
+            break;
+        case "resources/read":
+            field = "uri";
+            break;
+        default:
+            return { value: "", required: false };
+    }
+    const params = isRecord(request.params) ? request.params : {};
+    const value = params[field];
+    return {
+        value: typeof value === "string" ? value : "",
+        required: true,
+    };
+}
+function requestMetadata(request) {
+    const params = isRecord(request.params) ? request.params : null;
+    return params && isRecord(params["_meta"]) ? params["_meta"] : {};
+}
+function requestProtocolVersionMetadata(request) {
+    const value = requestMetadata(request)[PROTOCOL_VERSION_METADATA_KEY];
+    return typeof value === "string" ? value.trim() : "";
+}
+function isAdvertisedProtocolVersion(version) {
+    return supportedProtocolVersions().includes(version);
+}
+function supportedProtocolVersions() {
+    return [
+        MCP_PROTOCOL_VERSION_2026_07_28,
+        MCP_PROTOCOL_VERSION,
+        MCP_PROTOCOL_VERSION_PRIOR,
+        MCP_PROTOCOL_VERSION_LEGACY,
+    ];
+}
+function unsupportedProtocolVersionResponse(id, requested) {
+    return protocolErrorResponse(id, MCP_CODE_UNSUPPORTED_PROTOCOL_VERSION, "Unsupported protocol version", { supported: supportedProtocolVersions(), requested });
+}
+function protocolErrorResponse(id, code, message, data) {
+    return jsonBytesResponse(400, newErrorResponse(id, code, message, data));
+}
+function missingRequiredClientCapabilities(request, response) {
+    const required = requiredClientCapabilities(response);
+    const declared = requestMetadata(request)[CLIENT_CAPABILITIES_METADATA_KEY];
+    const capabilities = isRecord(declared) ? declared : {};
+    const missing = {};
+    for (const capability of required) {
+        if (!isRecord(capabilities[capability])) {
+            missing[capability] = {};
+        }
+    }
+    return missing;
+}
+function requiredClientCapabilities(response) {
+    if (response.error || !isRecord(response.result)) {
+        return [];
+    }
+    if (response.result["resultType"] !== MCP_RESULT_TYPE_INPUT_REQUIRED) {
+        return [];
+    }
+    const inputRequests = response.result["inputRequests"];
+    if (!isRecord(inputRequests)) {
+        return [];
+    }
+    const required = new Set();
+    for (const inputRequest of Object.values(inputRequests)) {
+        if (!isRecord(inputRequest) || typeof inputRequest["method"] !== "string") {
+            continue;
+        }
+        const method = inputRequest["method"].trim();
+        const slash = method.indexOf("/");
+        if (slash > 0) {
+            required.add(method.slice(0, slash));
+        }
+    }
+    return [...required].sort();
+}
 function headerValues(headers, key) {
     const lower = String(key ?? "").toLowerCase();
     const direct = headers[lower];
@@ -1793,11 +1944,15 @@ function headerValues(headers, key) {
     }
     return [];
 }
-function newErrorResponse(id, code, message) {
+function newErrorResponse(id, code, message, data) {
+    const error = { code, message };
+    if (data !== undefined) {
+        error.data = data;
+    }
     return {
         jsonrpc: JSONRPC_VERSION,
         id: id ?? null,
-        error: { code, message },
+        error,
     };
 }
 function newResultResponse(id, result) {

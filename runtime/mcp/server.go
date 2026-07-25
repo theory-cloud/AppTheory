@@ -28,8 +28,12 @@ const (
 
 	headerMcpProtocolVersion = "mcp-protocol-version"
 	headerMcpSessionID       = "mcp-session-id"
+	headerMcpMethod          = "mcp-method"
+	headerMcpName            = "mcp-name"
 	headerLastEventID        = "last-event-id"
 )
+
+const clientCapabilitiesMetaKey = "io.modelcontextprotocol/clientCapabilities"
 
 const (
 	methodInitialize               = "initialize"
@@ -344,6 +348,12 @@ func (s *Server) handlePOSTRequest(
 		return s.marshalSingleResponse(resp, "", false)
 	}
 
+	validatedShape, protocolResp := validatePOSTRequestProtocol(headers, req, shape)
+	if protocolResp != nil {
+		return protocolResp, nil
+	}
+	shape = validatedShape
+
 	if shape == ProtocolShape20260728 {
 		return s.handleStatelessPOSTRequest(ctx, req)
 	}
@@ -377,6 +387,14 @@ func (s *Server) handleStatelessPOSTRequest(ctx context.Context, req *Request) (
 	}
 
 	resp := s.dispatchForProtocol(ctx, req, ProtocolVersion20260728, "")
+	if missing := missingRequiredClientCapabilities(req, resp); len(missing) > 0 {
+		return protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeMissingRequiredClientCapability,
+			"Missing required client capability",
+			map[string]any{"requiredCapabilities": missing},
+		), nil
+	}
 	return s.marshalSingleResponse(resp, "", false)
 }
 
@@ -1174,6 +1192,22 @@ func jsonRPCErrorResponse(id any, code int, message string) *apptheory.Response 
 	}
 }
 
+func protocolJSONRPCErrorResponse(id any, code int, message string, errorData any) *apptheory.Response {
+	resp := NewErrorResponse(id, code, message)
+	resp.Error.Data = errorData
+	data, err := MarshalResponse(resp)
+	if err != nil {
+		data = []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"internal error"}}`)
+	}
+	return &apptheory.Response{
+		Status: 400,
+		Headers: map[string][]string{
+			"content-type": {"application/json"},
+		},
+		Body: data,
+	}
+}
+
 // firstHeader returns the first value for a header key using case-insensitive
 // lookup.
 func firstHeader(headers map[string][]string, key string) string {
@@ -1291,6 +1325,130 @@ func parseJSONObject(data []byte) (map[string]json.RawMessage, error) {
 		return nil, err
 	}
 	return raw, nil
+}
+
+func validatePOSTRequestProtocol(
+	headers map[string][]string,
+	req *Request,
+	detectedShape ProtocolShape,
+) (ProtocolShape, *apptheory.Response) {
+	headerVersion := strings.TrimSpace(firstHeader(headers, headerMcpProtocolVersion))
+	metaVersion := requestProtocolVersionMetadata(req)
+
+	if headerVersion != "" && !isAdvertisedProtocolVersion(headerVersion) {
+		if metaVersion == "" &&
+			(strings.TrimSpace(firstHeader(headers, headerMcpSessionID)) != "" || req.Method == methodInitialize) {
+			return detectedShape, nil
+		}
+		return ProtocolShapeUnknown, unsupportedProtocolVersionResponse(req.ID, headerVersion)
+	}
+	if metaVersion != "" && !isAdvertisedProtocolVersion(metaVersion) {
+		return ProtocolShapeUnknown, unsupportedProtocolVersionResponse(req.ID, metaVersion)
+	}
+
+	modernClaim := headerVersion == ProtocolVersion20260728 || metaVersion == ProtocolVersion20260728
+	if modernClaim && headerVersion != "" && metaVersion != "" && headerVersion != metaVersion {
+		return ProtocolShapeUnknown, protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeHeaderMismatch,
+			"Header mismatch: MCP-Protocol-Version does not match request metadata",
+			nil,
+		)
+	}
+	if !modernClaim {
+		return detectedShape, nil
+	}
+
+	if resp := validate20260728RoutingHeaders(headers, req); resp != nil {
+		return ProtocolShapeUnknown, resp
+	}
+	return ProtocolShape20260728, nil
+}
+
+func validate20260728RoutingHeaders(headers map[string][]string, req *Request) *apptheory.Response {
+	method := strings.TrimSpace(firstHeader(headers, headerMcpMethod))
+	if method == "" {
+		return protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeHeaderMismatch,
+			"Header mismatch: missing required Mcp-Method header",
+			nil,
+		)
+	}
+	if method != req.Method {
+		return protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeHeaderMismatch,
+			"Header mismatch: Mcp-Method does not match request method",
+			nil,
+		)
+	}
+
+	name, required := requestRoutingName(req)
+	if !required {
+		return nil
+	}
+	headerName := strings.TrimSpace(firstHeader(headers, headerMcpName))
+	if headerName == "" {
+		return protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeHeaderMismatch,
+			"Header mismatch: missing required Mcp-Name header",
+			nil,
+		)
+	}
+	if headerName != name {
+		return protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeHeaderMismatch,
+			"Header mismatch: Mcp-Name does not match request parameters",
+			nil,
+		)
+	}
+	return nil
+}
+
+func requestRoutingName(req *Request) (string, bool) {
+	var field string
+	switch req.Method {
+	case methodToolsCall, methodPromptsGet:
+		field = "name"
+	case methodResourcesRead:
+		field = "uri"
+	default:
+		return "", false
+	}
+
+	var params map[string]json.RawMessage
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return "", true
+	}
+	var name string
+	if err := json.Unmarshal(params[field], &name); err != nil {
+		return "", true
+	}
+	return name, true
+}
+
+func unsupportedProtocolVersionResponse(id any, requested string) *apptheory.Response {
+	return protocolJSONRPCErrorResponse(
+		id,
+		CodeUnsupportedProtocolVersion,
+		"Unsupported protocol version",
+		map[string]any{
+			"supported": supportedProtocolVersions(),
+			"requested": requested,
+		},
+	)
+}
+
+func isAdvertisedProtocolVersion(version string) bool {
+	for _, supported := range supportedProtocolVersions() {
+		if version == supported {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) validateOrigin(headers map[string][]string) *apptheory.Response {

@@ -24,6 +24,9 @@
               ],
               "accept": [
                 "application/json, text/event-stream"
+              ],
+              "mcp-method": [
+                "ping"
               ]
             },
             "body": {

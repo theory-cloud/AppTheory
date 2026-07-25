@@ -9,6 +9,8 @@ from apptheory import (
     MCP_CODE_METHOD_NOT_FOUND,
     MCP_CODE_PARSE_ERROR,
     MCP_CODE_SERVER_ERROR,
+    MCP_HEADER_METHOD,
+    MCP_HEADER_NAME,
     MCP_HEADER_PROTOCOL_VERSION,
     MCP_HEADER_SESSION_ID,
     MCP_PROTOCOL_SHAPE_2025_11_25,
@@ -152,6 +154,7 @@ class McpRuntimeTests(unittest.TestCase):
         )
         headers = _post_headers()
         headers[MCP_HEADER_PROTOCOL_VERSION] = [MCP_PROTOCOL_VERSION_2026_07_28]
+        headers[MCP_HEADER_METHOD] = ["ping"]
 
         ping = server.serve(
             {
@@ -171,6 +174,7 @@ class McpRuntimeTests(unittest.TestCase):
             },
         )
 
+        headers[MCP_HEADER_METHOD] = ["initialize"]
         initialize = server.serve(
             {
                 "method": "POST",
@@ -227,6 +231,8 @@ class McpRuntimeTests(unittest.TestCase):
         server.registry().register_tool({"name": "continue", "inputSchema": {}}, continue_tool)
         headers = _post_headers()
         headers[MCP_HEADER_PROTOCOL_VERSION] = [MCP_PROTOCOL_VERSION_2026_07_28]
+        headers[MCP_HEADER_METHOD] = ["tools/call"]
+        headers[MCP_HEADER_NAME] = ["continue"]
 
         first = _response_json(
             server.serve(
@@ -241,6 +247,9 @@ class McpRuntimeTests(unittest.TestCase):
                             "params": {
                                 "name": "continue",
                                 "arguments": {"message": "contract"},
+                                "_meta": {
+                                    "io.modelcontextprotocol/clientCapabilities": {"elicitation": {}},
+                                },
                             },
                         }
                     ),
@@ -267,6 +276,9 @@ class McpRuntimeTests(unittest.TestCase):
                                 "arguments": {"message": "contract"},
                                 "requestState": "confirm",
                                 "inputResponses": {"confirmation": {"action": "accept"}},
+                                "_meta": {
+                                    "io.modelcontextprotocol/clientCapabilities": {"elicitation": {}},
+                                },
                             },
                         }
                     ),

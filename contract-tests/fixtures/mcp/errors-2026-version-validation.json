@@ -1,38 +1,20 @@
 {
-  "id": "mcp.stateless.request_flow",
+  "id": "mcp.errors_2026.version_validation",
   "tier": "mcp",
-  "name": "MCP 2026-07-28 requests and responses flow without initialize or sessions",
+  "name": "MCP 2026-07-28 rejects version mismatches and unsupported versions before session routing",
   "setup": {
     "mcp": {
       "server": {
         "name": "ContractMCP",
         "version": "sp09"
-      },
-      "tools": [
-        {
-          "name": "echo",
-          "description": "Echo text",
-          "input_schema": {
-            "type": "object",
-            "properties": {
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "message"
-            ]
-          },
-          "handler": "echo_text"
-        }
-      ]
+      }
     }
   },
   "input": {
     "mcp": {
       "steps": [
         {
-          "name": "tools_list_without_initialize",
+          "name": "header_metadata_version_mismatch",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -47,44 +29,19 @@
                 "2026-07-28"
               ],
               "mcp-method": [
-                "tools/list"
+                "ping"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"list\",\"method\":\"tools/list\"}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"version-mismatch\",\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2025-11-25\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
             },
             "is_base64": false
           }
         },
         {
-          "name": "tools_call_without_session",
-          "request": {
-            "method": "POST",
-            "path": "/mcp",
-            "headers": {
-              "content-type": [
-                "application/json"
-              ],
-              "accept": [
-                "application/json, text/event-stream"
-              ],
-              "mcp-method": [
-                "tools/call"
-              ],
-              "mcp-name": [
-                "echo"
-              ]
-            },
-            "body": {
-              "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"call\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"stateless contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}}"
-            },
-            "is_base64": false
-          }
-        },
-        {
-          "name": "jsonrpc_response_without_session",
+          "name": "future_header_without_session",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -96,12 +53,40 @@
                 "application/json, text/event-stream"
               ],
               "mcp-protocol-version": [
-                "2026-07-28"
+                "2099-01-01"
+              ],
+              "mcp-method": [
+                "ping"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"client-response\",\"result\":{\"ok\":true}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"future-header\",\"method\":\"ping\",\"params\":{}}",
+              "is_base64": false
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "future_metadata_without_session",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-method": [
+                "ping"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"future-meta\",\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2099-01-02\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
             },
             "is_base64": false
           }
@@ -113,7 +98,7 @@
     "mcp": {
       "steps": [
         {
-          "status": 200,
+          "status": 400,
           "headers": {
             "content-type": [
               "application/json"
@@ -125,32 +110,16 @@
           "cookies": [],
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "list",
-            "result": {
-              "tools": [
-                {
-                  "name": "echo",
-                  "description": "Echo text",
-                  "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                      "message": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "message"
-                    ]
-                  }
-                }
-              ],
-              "resultType": "complete"
+            "id": "version-mismatch",
+            "error": {
+              "code": -32020,
+              "message": "Header mismatch: MCP-Protocol-Version does not match request metadata"
             }
           },
           "is_base64": false
         },
         {
-          "status": 200,
+          "status": 400,
           "headers": {
             "content-type": [
               "application/json"
@@ -162,27 +131,51 @@
           "cookies": [],
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "call",
-            "result": {
-              "content": [
-                {
-                  "type": "text",
-                  "text": "stateless contract"
-                }
-              ],
-              "resultType": "complete"
+            "id": "future-header",
+            "error": {
+              "code": -32022,
+              "message": "Unsupported protocol version",
+              "data": {
+                "supported": [
+                  "2026-07-28",
+                  "2025-11-25",
+                  "2025-06-18",
+                  "2025-03-26"
+                ],
+                "requested": "2099-01-01"
+              }
             }
           },
           "is_base64": false
         },
         {
-          "status": 202,
+          "status": 400,
           "headers": {
+            "content-type": [
+              "application/json"
+            ],
             "x-request-id": [
               "req_mcp_123"
             ]
           },
           "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "future-meta",
+            "error": {
+              "code": -32022,
+              "message": "Unsupported protocol version",
+              "data": {
+                "supported": [
+                  "2026-07-28",
+                  "2025-11-25",
+                  "2025-06-18",
+                  "2025-03-26"
+                ],
+                "requested": "2099-01-02"
+              }
+            }
+          },
           "is_base64": false
         }
       ]

@@ -92,6 +92,9 @@
               ],
               "mcp-protocol-version": [
                 "2026-07-28"
+              ],
+              "mcp-method": [
+                "server/discover"
               ]
             },
             "body": {

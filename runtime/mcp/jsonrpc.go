@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Standard JSON-RPC 2.0 error codes.
@@ -14,6 +15,16 @@ const (
 	CodeInvalidParams  = -32602
 	CodeInternalError  = -32603
 	CodeServerError    = -32000
+
+	// CodeHeaderMismatch identifies missing, malformed, or mismatched
+	// 2026-07-28 Streamable HTTP routing headers.
+	CodeHeaderMismatch = -32020
+	// CodeMissingRequiredClientCapability identifies a 2026-07-28 request
+	// whose per-request client capabilities cannot satisfy the result.
+	CodeMissingRequiredClientCapability = -32021
+	// CodeUnsupportedProtocolVersion identifies a request for a protocol
+	// version that this server does not implement.
+	CodeUnsupportedProtocolVersion = -32022
 )
 
 // ResultType identifies whether a 2026-07-28 result is final or requires
@@ -240,6 +251,97 @@ func marshalResultWithType(result any, resultType ResultType) ([]byte, error) {
 	}
 	object["resultType"] = encodedType
 	return json.Marshal(object)
+}
+
+func requestProtocolVersionMetadata(req *Request) string {
+	meta := requestMetadata(req)
+	rawVersion, ok := meta[protocolVersionMetaKey]
+	if !ok {
+		return ""
+	}
+	var version string
+	if err := json.Unmarshal(rawVersion, &version); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(version)
+}
+
+func requestMetadata(req *Request) map[string]json.RawMessage {
+	if req == nil || len(req.Params) == 0 {
+		return nil
+	}
+	var params struct {
+		Meta map[string]json.RawMessage `json:"_meta"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil
+	}
+	return params.Meta
+}
+
+func missingRequiredClientCapabilities(req *Request, resp *Response) map[string]any {
+	required := requiredClientCapabilities(resp)
+	if len(required) == 0 {
+		return nil
+	}
+	declared := declaredClientCapabilities(req)
+	missing := make(map[string]any)
+	for capability := range required {
+		raw, ok := declared[capability]
+		if !ok {
+			missing[capability] = map[string]any{}
+			continue
+		}
+		var value map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &value); err != nil || value == nil {
+			missing[capability] = map[string]any{}
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return missing
+}
+
+func declaredClientCapabilities(req *Request) map[string]json.RawMessage {
+	meta := requestMetadata(req)
+	raw, ok := meta[clientCapabilitiesMetaKey]
+	if !ok {
+		return nil
+	}
+	var capabilities map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &capabilities); err != nil {
+		return nil
+	}
+	return capabilities
+}
+
+func requiredClientCapabilities(resp *Response) map[string]struct{} {
+	if resp == nil || resp.Error != nil {
+		return nil
+	}
+	var inputRequests map[string]InputRequest
+	switch result := resp.Result.(type) {
+	case InputRequiredResult:
+		inputRequests = result.InputRequests
+	case *InputRequiredResult:
+		if result != nil {
+			inputRequests = result.InputRequests
+		}
+	default:
+		return nil
+	}
+	required := make(map[string]struct{})
+	for _, request := range inputRequests {
+		method := strings.TrimSpace(request.Method)
+		if slash := strings.IndexByte(method, '/'); slash > 0 {
+			required[method[:slash]] = struct{}{}
+		}
+	}
+	if len(required) == 0 {
+		return nil
+	}
+	return required
 }
 
 // trimLeftSpace trims leading whitespace bytes (space, tab, newline, carriage return).
