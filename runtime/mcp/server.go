@@ -16,8 +16,11 @@ import (
 	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 )
 
-// protocolVersion is the latest MCP protocol version supported by this server.
+// protocolVersion is the latest session-ful MCP protocol version supported by this server.
 const protocolVersion = "2025-11-25"
+
+// ProtocolVersion20260728 is the stateless MCP protocol version.
+const ProtocolVersion20260728 = "2026-07-28"
 
 const (
 	protocolVersionPrior  = "2025-06-18"
@@ -25,11 +28,16 @@ const (
 
 	headerMcpProtocolVersion = "mcp-protocol-version"
 	headerMcpSessionID       = "mcp-session-id"
+	headerMcpMethod          = "mcp-method"
+	headerMcpName            = "mcp-name"
 	headerLastEventID        = "last-event-id"
 )
 
+const clientCapabilitiesMetaKey = "io.modelcontextprotocol/clientCapabilities"
+
 const (
 	methodInitialize               = "initialize"
+	methodServerDiscover           = "server/discover"
 	methodNotificationsInitialized = "notifications/initialized"
 	methodNotificationsCancelled   = "notifications/cancel" + "led"
 	methodPing                     = "ping"
@@ -248,13 +256,14 @@ func (s *Server) Prompts() *PromptRegistry {
 // Handler returns an apptheory.Handler that processes MCP JSON-RPC requests.
 //
 // Streamable HTTP semantics:
-// - POST /mcp accepts JSON-RPC requests, notifications, and responses.
-// - GET /mcp replays/resumes previously interrupted SSE streams via Last-Event-ID.
-// - DELETE /mcp terminates a session.
+//   - POST /mcp accepts JSON-RPC requests, notifications, and responses.
+//   - MCP 2025-11-25 uses the session-ful GET and DELETE transport lifecycle.
+//   - MCP 2026-07-28 POST requests are stateless and never mint or require a
+//     Mcp-Session-Id.
 //
 // Notes:
-//   - Clients must initialize first; the server issues Mcp-Session-Id on the
-//     initialize response and requires it thereafter.
+//   - MCP 2025-11-25 clients must initialize first; the server issues
+//     Mcp-Session-Id on the initialize response and requires it thereafter.
 //   - Disconnects are not treated as cancellation. Streaming tool execution is
 //     decoupled from the connection and can be resumed with GET.
 func (s *Server) Handler() apptheory.Handler {
@@ -267,13 +276,7 @@ func (s *Server) Handler() apptheory.Handler {
 		case "DELETE":
 			return s.handleDELETE(c)
 		default:
-			return &apptheory.Response{
-				Status: 405,
-				Headers: map[string][]string{
-					"content-type": {"application/json"},
-				},
-				Body: []byte(`{"error":"method not allowed"}`),
-			}, nil
+			return methodNotAllowed(), nil
 		}
 	}
 }
@@ -293,6 +296,9 @@ func (s *Server) handlePOST(c *apptheory.Context) (*apptheory.Response, error) {
 	// Batch request support (legacy protocol only).
 	trimmed := trimLeftSpace(body)
 	if len(trimmed) > 0 && trimmed[0] == '[' {
+		if DetectProtocolVersion(c.Request.Headers, body) == ProtocolShape20260728 || batchNamesStatelessProtocol(body) {
+			return s.batchParseErrorResponse(ctx, errors.New("invalid JSON object"))
+		}
 		return s.handleBatch(ctx, body, c.Request.Headers)
 	}
 
@@ -305,23 +311,59 @@ func (s *Server) handlePOST(c *apptheory.Context) (*apptheory.Response, error) {
 
 	// Request/notification
 	if _, hasMethod := raw["method"]; hasMethod {
-		return s.handlePOSTRequest(ctx, body, c.Request.Headers)
+		return s.handlePOSTRequest(ctx, body, c.Request.Headers, DetectProtocolVersion(c.Request.Headers, body))
 	}
 
 	// Response
 	if _, hasResult := raw["result"]; hasResult || raw["error"] != nil {
-		return s.handlePOSTResponse(ctx, body, c.Request.Headers)
+		return s.handlePOSTResponse(ctx, body, c.Request.Headers, DetectProtocolVersion(c.Request.Headers, body))
 	}
 
 	return badRequest("invalid JSON-RPC message"), nil
 }
 
-func (s *Server) handlePOSTRequest(ctx context.Context, body []byte, headers map[string][]string) (*apptheory.Response, error) {
+func batchNamesStatelessProtocol(body []byte) bool {
+	var messages []json.RawMessage
+	if err := json.Unmarshal(body, &messages); err != nil {
+		return false
+	}
+	for _, message := range messages {
+		if DetectProtocolVersion(nil, message) == ProtocolShape20260728 {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) handlePOSTRequest(
+	ctx context.Context,
+	body []byte,
+	headers map[string][]string,
+	shape ProtocolShape,
+) (*apptheory.Response, error) {
 	req, parseErr := ParseRequest(body)
 	if parseErr != nil {
 		s.logger.ErrorContext(ctx, "parse error", "error", parseErr)
 		resp := NewErrorResponse(nil, CodeParseError, "Parse error: "+parseErr.Error())
 		return s.marshalSingleResponse(resp, "", false)
+	}
+
+	validatedShape, protocolResp := validatePOSTRequestProtocol(headers, req, shape)
+	if protocolResp != nil {
+		return protocolResp, nil
+	}
+	shape = validatedShape
+
+	if shape == ProtocolShape20260728 {
+		return s.handleStatelessPOSTRequest(ctx, req)
+	}
+
+	// Discovery is the one session-ful request that is valid before initialize.
+	if req.Method == methodServerDiscover {
+		if req.ID == nil {
+			return &apptheory.Response{Status: 202}, nil
+		}
+		return s.marshalSingleResponse(s.dispatchForProtocol(ctx, req, protocolVersion, ""), "", false)
 	}
 
 	// initialize creates and returns a session id.
@@ -346,10 +388,37 @@ func (s *Server) handlePOSTRequest(ctx context.Context, body []byte, headers map
 	return s.handleRequestHTTP(ctx, sessionID, sess, req, headers)
 }
 
-func (s *Server) handlePOSTResponse(ctx context.Context, body []byte, headers map[string][]string) (*apptheory.Response, error) {
+func (s *Server) handleStatelessPOSTRequest(ctx context.Context, req *Request) (*apptheory.Response, error) {
+	// Notifications are accepted at the transport layer and never create state.
+	if req.ID == nil {
+		return &apptheory.Response{Status: 202}, nil
+	}
+
+	resp := s.dispatchForProtocol(ctx, req, ProtocolVersion20260728, "")
+	if missing := missingRequiredClientCapabilities(req, resp); len(missing) > 0 {
+		return protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeMissingRequiredClientCapability,
+			"Missing required client capability",
+			map[string]any{"requiredCapabilities": missing},
+		), nil
+	}
+	return s.marshalSingleResponse(resp, "", false)
+}
+
+func (s *Server) handlePOSTResponse(
+	ctx context.Context,
+	body []byte,
+	headers map[string][]string,
+	shape ProtocolShape,
+) (*apptheory.Response, error) {
 	_, parseErr := ParseResponse(body)
 	if parseErr != nil {
 		return badRequest("invalid JSON-RPC response"), nil
+	}
+
+	if shape == ProtocolShape20260728 {
+		return &apptheory.Response{Status: 202}, nil
 	}
 
 	_, sess, errResp := s.requireSession(ctx, headers)
@@ -370,6 +439,9 @@ func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
 
 	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
 		return resp, nil
+	}
+	if DetectProtocolVersion(c.Request.Headers, nil) == ProtocolShape20260728 {
+		return methodNotAllowed(), nil
 	}
 	if resp := validateGETHeaders(c.Request.Headers); resp != nil {
 		return resp, nil
@@ -529,6 +601,9 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
 		return resp, nil
 	}
+	if DetectProtocolVersion(c.Request.Headers, c.Request.Body) == ProtocolShape20260728 {
+		return methodNotAllowed(), nil
+	}
 
 	sessionID := firstHeader(c.Request.Headers, headerMcpSessionID)
 	if sessionID == "" {
@@ -577,11 +652,14 @@ func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocol
 		s.logger.ErrorContext(ctx, "method not found", "method", req.Method, "protocolVersion", protocolVersion)
 		return NewErrorResponse(req.ID, CodeMethodNotFound, fmt.Sprintf("Method not found: %s", req.Method))
 	}
+	if protocolVersion == ProtocolVersion20260728 && statelessRequestRequiresSession(req) {
+		return NewErrorResponse(req.ID, CodeMethodNotFound, fmt.Sprintf("Method not found: %s", req.Method))
+	}
 	if isTaskMethod(req.Method) {
-		return s.dispatchTaskMethod(ctx, req, sessionID)
+		return responseForProtocol(s.dispatchTaskMethod(ctx, req, sessionID), protocolVersion)
 	}
 
-	return s.dispatchNonTaskMethod(ctx, req, sessionID)
+	return responseForProtocol(s.dispatchNonTaskMethod(ctx, req, sessionID), protocolVersion)
 }
 
 func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessionID string) *Response {
@@ -590,6 +668,8 @@ func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessio
 	}
 
 	switch req.Method {
+	case methodServerDiscover:
+		return s.handleDiscover(req)
 	case methodInitialize:
 		selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)
 		if errResp != nil {
@@ -653,6 +733,24 @@ func (s *Server) dispatchTaskMethod(ctx context.Context, req *Request, sessionID
 }
 
 func methodAllowedForProtocol(pv string, method string) bool {
+	if pv == ProtocolVersion20260728 {
+		switch method {
+		case methodServerDiscover,
+			methodPing,
+			methodToolsList,
+			methodToolsCall,
+			methodResourcesList,
+			methodResourcesRead,
+			methodResourcesTemplatesList,
+			methodLoggingSetLevel,
+			methodCompletionComplete,
+			methodPromptsList,
+			methodPromptsGet:
+			return true
+		default:
+			return false
+		}
+	}
 	if !isSupportedProtocolVersion(pv) {
 		return false
 	}
@@ -662,6 +760,7 @@ func methodAllowedForProtocol(pv string, method string) bool {
 
 	switch method {
 	case methodInitialize,
+		methodServerDiscover,
 		methodNotificationsInitialized,
 		methodNotificationsCancelled,
 		methodPing,
@@ -694,6 +793,18 @@ func isTaskMethod(method string) bool {
 	}
 }
 
+func statelessRequestRequiresSession(req *Request) bool {
+	if req == nil || req.Method != methodToolsCall {
+		return false
+	}
+	var params map[string]json.RawMessage
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return false
+	}
+	_, hasTask := params["task"]
+	return hasTask
+}
+
 // handleInitialize responds to the MCP initialize request with server capabilities.
 func (s *Server) handleInitialize(req *Request, selectedProtocolVersion string) *Response {
 	result := map[string]any{
@@ -718,10 +829,12 @@ func (s *Server) handleToolsList(req *Request) *Response {
 
 // toolsCallParams holds the parsed parameters for a tools/call request.
 type toolsCallParams struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
-	Task      *TaskMetadata   `json:"task,omitempty"`
-	Meta      struct {
+	Name           string          `json:"name"`
+	Arguments      json.RawMessage `json:"arguments,omitempty"`
+	InputResponses map[string]any  `json:"inputResponses,omitempty"`
+	RequestState   string          `json:"requestState,omitempty"`
+	Task           *TaskMetadata   `json:"task,omitempty"`
+	Meta           struct {
 		ProgressToken json.RawMessage `json:"progressToken,omitempty"`
 	} `json:"_meta,omitempty"`
 }
@@ -786,12 +899,97 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request, sessionID st
 		}
 	}()
 
-	result, err := s.registry.Call(ctx, params.Name, params.Arguments)
+	callCtx := withToolInput(ctx, ToolInput{
+		InputResponses: params.InputResponses,
+		RequestState:   params.RequestState,
+	})
+	result, err := s.registry.Call(callCtx, params.Name, params.Arguments)
 	if err != nil {
 		return s.toolCallError(ctx, req.ID, params.Name, err)
 	}
 
 	return NewResultResponse(req.ID, result)
+}
+
+func responseForProtocol(resp *Response, protocolVersion string) *Response {
+	if resp == nil || resp.Error != nil {
+		return resp
+	}
+
+	inputRequired, errResp := prepareResponseResult(resp, protocolVersion)
+	if errResp != nil {
+		return errResp
+	}
+	if protocolVersion == ProtocolVersion20260728 && !inputRequired {
+		result, err := marshalResultWithType(resp.Result, ResultTypeComplete)
+		if err != nil {
+			return NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+		}
+		resp.Result = json.RawMessage(result)
+	}
+	return resp
+}
+
+func prepareResponseResult(resp *Response, protocolVersion string) (bool, *Response) {
+	switch result := resp.Result.(type) {
+	case *ToolResult:
+		return prepareToolResult(resp, result, protocolVersion)
+	case InputRequiredResult:
+		return prepareInputRequiredResult(resp, result, protocolVersion)
+	case *InputRequiredResult:
+		if result == nil {
+			return false, NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+		}
+		return prepareInputRequiredResult(resp, *result, protocolVersion)
+	}
+	return false, nil
+}
+
+func prepareToolResult(resp *Response, result *ToolResult, protocolVersion string) (bool, *Response) {
+	if result == nil {
+		return false, NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+	}
+	switch result.ResultType {
+	case "", ResultTypeComplete:
+		if len(result.InputRequests) > 0 || strings.TrimSpace(result.RequestState) != "" {
+			return false, NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+		}
+		clean := *result
+		clean.ResultType = ""
+		clean.InputRequests = nil
+		clean.RequestState = ""
+		resp.Result = &clean
+		return false, nil
+	case ResultTypeInputRequired:
+		input := InputRequiredResult{
+			ResultType:    ResultTypeInputRequired,
+			InputRequests: result.InputRequests,
+			RequestState:  result.RequestState,
+		}
+		return prepareInputRequiredResult(resp, input, protocolVersion)
+	default:
+		return false, NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+	}
+}
+
+func prepareInputRequiredResult(
+	resp *Response,
+	result InputRequiredResult,
+	protocolVersion string,
+) (bool, *Response) {
+	if protocolVersion != ProtocolVersion20260728 {
+		return false, NewErrorResponse(
+			resp.ID,
+			CodeInvalidRequest,
+			"input_required results require MCP protocol version 2026-07-28",
+		)
+	}
+	if len(result.InputRequests) == 0 && strings.TrimSpace(result.RequestState) == "" {
+		return false, NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+	}
+	result.ResultType = ResultTypeInputRequired
+	resp.Result = result
+	return true, nil
 }
 
 // toolCallError maps a tool call error to the appropriate JSON-RPC error response.
@@ -999,6 +1197,22 @@ func jsonRPCErrorResponse(id any, code int, message string) *apptheory.Response 
 	}
 	return &apptheory.Response{
 		Status: 200,
+		Headers: map[string][]string{
+			"content-type": {"application/json"},
+		},
+		Body: data,
+	}
+}
+
+func protocolJSONRPCErrorResponse(id any, code int, message string, errorData any) *apptheory.Response {
+	resp := NewErrorResponse(id, code, message)
+	resp.Error.Data = errorData
+	data, err := MarshalResponse(resp)
+	if err != nil {
+		data = []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"internal error"}}`)
+	}
+	return &apptheory.Response{
+		Status: 400,
 		Headers: map[string][]string{
 			"content-type": {"application/json"},
 		},
@@ -1627,6 +1841,16 @@ func badRequest(msg string) *apptheory.Response {
 			"content-type": {"application/json"},
 		},
 		Body: []byte(fmt.Sprintf(`{"error":%q}`, msg)),
+	}
+}
+
+func methodNotAllowed() *apptheory.Response {
+	return &apptheory.Response{
+		Status: 405,
+		Headers: map[string][]string{
+			"content-type": {"application/json"},
+		},
+		Body: []byte(`{"error":"method not allowed"}`),
 	}
 }
 

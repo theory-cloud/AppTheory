@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -177,6 +178,26 @@ def tag_state(tag: str | None) -> tuple[str, str]:
     return ("absent", "not present in local refs")
 
 
+def module_tag_state(tag: str | None, root_target: str | None) -> tuple[str, str, str]:
+    if not tag:
+        return ("unknown", "none", "no release tag could be inferred")
+    match = re.fullmatch(r"v([0-9]+)\.[0-9]+\.[0-9]+(?:-rc(?:\.[0-9]+)?)?", tag)
+    if not match:
+        return ("unknown", "none", f"unsupported release tag {tag}")
+    if int(match.group(1)) < 2:
+        return ("not-applicable", "none", "v1 predates the nested Go module tag contract")
+
+    module_tag = f"cdk-go/apptheorycdk/{tag}"
+    target = git_commit(f"refs/tags/{module_tag}")
+    if not target:
+        return ("missing", module_tag, "not present in local refs")
+    if not root_target:
+        return ("unpaired", module_tag, target)
+    if target != root_target:
+        return ("conflict", module_tag, target)
+    return ("matching", module_tag, target)
+
+
 def verify_release_state() -> dict[str, Any]:
     completed = run(["bash", "scripts/verify-release-state.sh", "--live", "--json"])
     try:
@@ -198,11 +219,27 @@ def verify_release_state() -> dict[str, Any]:
     return data
 
 
-def safe_next_action(classification: str, release_status: str, tag_status: str, diagnostics: list[dict[str, str]]) -> str:
+def safe_next_action(
+    classification: str,
+    release_status: str,
+    tag_status: str,
+    module_tag_status: str,
+    diagnostics: list[dict[str, str]],
+) -> str:
+    if module_tag_status == "conflict":
+        return (
+            "The nested Go module tag conflicts with the immutable root release commit. "
+            "Do not delete, move, or overwrite either tag; cut a new version through the normal release train."
+        )
     if diagnostics:
         return (
             "Fix the reported branch/manifest/tag/release invariant, then rerun the same publisher. "
             "Do not delete tags/releases or overwrite published assets."
+        )
+    if module_tag_status in {"missing", "unpaired"}:
+        return (
+            "Rerun the same serialized publisher. It will create only the missing root/nested Go tag "
+            "at the immutable release commit and then prove exact module resolution; it never moves an existing ref."
         )
     if release_status == "published":
         return (
@@ -227,6 +264,8 @@ def safe_next_action(classification: str, release_status: str, tag_status: str, 
 def print_diagnostics(tag: str | None) -> None:
     head = git_commit("HEAD")
     tag_status, tag_detail = tag_state(tag)
+    root_target = tag_detail if tag_status == "present" else None
+    module_status, module_tag, module_detail = module_tag_state(tag, root_target)
     release = release_state(tag)
     release_status = str(release.get("state", "unknown"))
     verifier = verify_release_state()
@@ -236,6 +275,10 @@ def print_diagnostics(tag: str | None) -> None:
     print("release-diagnostics: BEGIN")
     print(f"release-diagnostics: branch={current_branch()} head={short_sha(head)}")
     print(f"release-diagnostics: tag={tag or 'unknown'} state={tag_status} target={tag_detail}")
+    print(
+        "release-diagnostics: "
+        f"go-module-tag={module_tag} state={module_status} target={module_detail}"
+    )
     release_line = (
         f"release-diagnostics: release={tag or 'unknown'} state={release_status} "
         f"target={release.get('target', 'unknown')} prerelease={release.get('prerelease', 'unknown')}"
@@ -267,7 +310,13 @@ def print_diagnostics(tag: str | None) -> None:
             )
     print(
         "release-diagnostics: safe-next-action="
-        + safe_next_action(classification, release_status, tag_status, [item for item in diagnostics if isinstance(item, dict)])
+        + safe_next_action(
+            classification,
+            release_status,
+            tag_status,
+            module_status,
+            [item for item in diagnostics if isinstance(item, dict)],
+        )
     )
     print("release-diagnostics: END")
 
@@ -279,6 +328,7 @@ def self_test() -> int:
             "invalid",
             "draft",
             "present",
+            "matching",
             [{"code": "manifest:staging-stable-mismatch", "message": "staging is stale"}],
             "Fix the reported branch/manifest/tag/release invariant",
         ),
@@ -287,6 +337,7 @@ def self_test() -> int:
             "stable-published",
             "published",
             "present",
+            "matching",
             [],
             "already immutable",
         ),
@@ -295,6 +346,7 @@ def self_test() -> int:
             "prerelease-draft",
             "draft",
             "present",
+            "matching",
             [],
             "Draft assets may be replaced only while the release is still draft",
         ),
@@ -303,13 +355,46 @@ def self_test() -> int:
             "prerelease-tagged",
             "absent",
             "present",
+            "matching",
             [],
             "recover the existing immutable tag",
         ),
+        (
+            "missing nested module tag recovers through publisher",
+            "stable-published",
+            "published",
+            "present",
+            "missing",
+            [],
+            "create only the missing root/nested Go tag",
+        ),
+        (
+            "conflicting nested module tag requires a new version",
+            "stable-published",
+            "published",
+            "present",
+            "conflict",
+            [],
+            "cut a new version",
+        ),
     ]
     failures: list[str] = []
-    for name, classification, release_status, tag_status, diagnostics, expected in cases:
-        actual = safe_next_action(classification, release_status, tag_status, diagnostics)
+    for (
+        name,
+        classification,
+        release_status,
+        tag_status,
+        module_status,
+        diagnostics,
+        expected,
+    ) in cases:
+        actual = safe_next_action(
+            classification,
+            release_status,
+            tag_status,
+            module_status,
+            diagnostics,
+        )
         if expected not in actual:
             failures.append(f"{name}: expected {expected!r} in {actual!r}")
     if failures:

@@ -1,0 +1,91 @@
+{
+  "id": "mcp.errors_2026.client_capability",
+  "tier": "mcp",
+  "name": "MCP 2026-07-28 fails closed when an input result needs an undeclared client capability",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      },
+      "tools": [
+        {
+          "name": "continue",
+          "description": "Request confirmation before completing",
+          "input_schema": {
+            "type": "object"
+          },
+          "handler": "input_required"
+        }
+      ]
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "elicitation_capability_not_declared",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "tools/call"
+              ],
+              "mcp-name": [
+                "continue"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"missing-elicitation\",\"method\":\"tools/call\",\"params\":{\"name\":\"continue\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "missing-elicitation",
+            "error": {
+              "code": -32021,
+              "message": "Missing required client capability",
+              "data": {
+                "requiredCapabilities": {
+                  "elicitation": {}
+                }
+              }
+            }
+          },
+          "is_base64": false
+        }
+      ]
+    }
+  }
+}

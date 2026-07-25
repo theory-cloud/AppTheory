@@ -1,0 +1,184 @@
+{
+  "id": "mcp.errors_2026.version_validation",
+  "tier": "mcp",
+  "name": "MCP 2026-07-28 rejects version mismatches and unsupported versions before session routing",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      }
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "header_metadata_version_mismatch",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "ping"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"version-mismatch\",\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2025-11-25\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "future_header_without_session",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2099-01-01"
+              ],
+              "mcp-method": [
+                "ping"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"future-header\",\"method\":\"ping\",\"params\":{}}",
+              "is_base64": false
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "future_metadata_without_session",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-method": [
+                "ping"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"future-meta\",\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2099-01-02\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "version-mismatch",
+            "error": {
+              "code": -32020,
+              "message": "Header mismatch: MCP-Protocol-Version does not match request metadata"
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "future-header",
+            "error": {
+              "code": -32022,
+              "message": "Unsupported protocol version",
+              "data": {
+                "supported": [
+                  "2026-07-28",
+                  "2025-11-25",
+                  "2025-06-18",
+                  "2025-03-26"
+                ],
+                "requested": "2099-01-01"
+              }
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "future-meta",
+            "error": {
+              "code": -32022,
+              "message": "Unsupported protocol version",
+              "data": {
+                "supported": [
+                  "2026-07-28",
+                  "2025-11-25",
+                  "2025-06-18",
+                  "2025-03-26"
+                ],
+                "requested": "2099-01-02"
+              }
+            }
+          },
+          "is_base64": false
+        }
+      ]
+    }
+  }
+}

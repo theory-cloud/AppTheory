@@ -142,5 +142,5 @@ func protocolSupportsCapability(pv string, surface capabilitySurface) bool {
 	if surface == capabilitySurfaceTasks {
 		return pv == protocolVersion
 	}
-	return isSupportedProtocolVersion(pv)
+	return pv == ProtocolVersion20260728 || isSupportedProtocolVersion(pv)
 }

@@ -1,0 +1,175 @@
+{
+  "id": "mcp.discover.tasks_pre_handshake",
+  "tier": "mcp",
+  "name": "MCP discovery is pre-handshake and advertises task-enabled server capabilities",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      },
+      "tools": [
+        {
+          "name": "task_echo",
+          "description": "Echo through a task",
+          "input_schema": {
+            "type": "object"
+          },
+          "handler": "task_echo",
+          "task_support": "optional"
+        }
+      ],
+      "task_runtime": {
+        "enabled": true
+      }
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "session_ful_discover_without_initialize",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"pre-handshake\",\"method\":\"server/discover\",\"params\":{}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "stateless_discover_reports_session_ful_tasks",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "server/discover"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"modern-discover\",\"method\":\"server/discover\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "pre-handshake",
+            "result": {
+              "supportedVersions": [
+                "2026-07-28",
+                "2025-11-25",
+                "2025-06-18",
+                "2025-03-26"
+              ],
+              "capabilities": {
+                "tasks": {
+                  "cancel": {},
+                  "list": {},
+                  "requests": {
+                    "tools": {
+                      "call": {}
+                    }
+                  }
+                },
+                "tools": {}
+              },
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
+            }
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "modern-discover",
+            "result": {
+              "supportedVersions": [
+                "2026-07-28",
+                "2025-11-25",
+                "2025-06-18",
+                "2025-03-26"
+              ],
+              "capabilities": {
+                "tasks": {
+                  "cancel": {},
+                  "list": {},
+                  "requests": {
+                    "tools": {
+                      "call": {}
+                    }
+                  }
+                },
+                "tools": {}
+              },
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              },
+              "resultType": "complete"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

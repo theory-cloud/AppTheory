@@ -1,6 +1,6 @@
 {
   "case": "happy-path",
-  "coverage": ["happy_path"],
+  "coverage": ["happy_path", "go_module_tags"],
   "expected": { "valid": true },
   "states": [
     {
@@ -37,19 +37,19 @@
           "premain": { "head": "P3", "ancestors": ["M2", "P2", "S2", "M1"] }
         },
         "manifests": {
-          "main": { "stable": "1.7.1", "premain": "1.7.1" },
-          "staging": { "stable": "1.7.1", "premain": "1.7.1" },
-          "premain": { "stable": "1.7.1", "premain": "1.7.1" }
+          "main": { "stable": "2.0.0", "premain": "2.0.0" },
+          "staging": { "stable": "2.0.0", "premain": "2.0.0" },
+          "premain": { "stable": "2.0.0", "premain": "2.0.0" }
         },
         "tags": {
           "v1.7.0": { "target": "M1" },
-          "v1.7.1-rc": { "target": "P2" },
-          "v1.7.1": { "target": "M2" }
+          "v2.0.0-rc": { "target": "P2" },
+          "v2.0.0": { "target": "M2" }
         },
         "releases": {
           "v1.7.0": { "state": "published", "target": "M1", "prerelease": false },
-          "v1.7.1-rc": { "state": "published", "target": "P2", "prerelease": true },
-          "v1.7.1": { "state": "published", "target": "M2", "prerelease": false }
+          "v2.0.0-rc": { "state": "published", "target": "P2", "prerelease": true },
+          "v2.0.0": { "state": "published", "target": "M2", "prerelease": false }
         }
       }
     }
@@ -67,7 +67,20 @@
       "generatedArtifactsSynced": true,
       "checksPassed": true
     },
-    { "kind": "publisher", "source": "premain", "tag": "v1.7.1-rc", "serialized": true, "assetsVerified": true },
+    {
+      "kind": "publisher",
+      "source": "premain",
+      "tag": "v2.0.0-rc",
+      "releaseCommit": "P2",
+      "nestedModuleTag": "cdk-go/apptheorycdk/v2.0.0-rc",
+      "rootModuleTagTarget": "P2",
+      "nestedModuleTagTarget": "P2",
+      "tagsCreatedWithoutOverwrite": true,
+      "exactModuleResolutionVerified": true,
+      "modulesVerifiedBeforePublication": true,
+      "serialized": true,
+      "assetsVerified": true
+    },
     { "kind": "promotion", "from": "premain", "to": "main", "ancestorPresent": true },
     {
       "kind": "release_please_pr",
@@ -80,7 +93,20 @@
       "premainManifestReset": true,
       "checksPassed": true
     },
-    { "kind": "publisher", "source": "main", "tag": "v1.7.1", "serialized": true, "assetsVerified": true },
+    {
+      "kind": "publisher",
+      "source": "main",
+      "tag": "v2.0.0",
+      "releaseCommit": "M2",
+      "nestedModuleTag": "cdk-go/apptheorycdk/v2.0.0",
+      "rootModuleTagTarget": "M2",
+      "nestedModuleTagTarget": "M2",
+      "tagsCreatedWithoutOverwrite": true,
+      "exactModuleResolutionVerified": true,
+      "modulesVerifiedBeforePublication": true,
+      "serialized": true,
+      "assetsVerified": true
+    },
     { "kind": "back_merge", "from": "main", "to": "staging", "beforeFurtherStagingWork": true }
   ]
 }

@@ -282,7 +282,14 @@ type FixtureMCPTaskRuntime struct {
 }
 
 type FixtureMCPInput struct {
-	Steps []FixtureMCPStep `json:"steps"`
+	Detections []FixtureMCPProtocolDetection `json:"detections,omitempty"`
+	Steps      []FixtureMCPStep              `json:"steps"`
+}
+
+type FixtureMCPProtocolDetection struct {
+	Name    string              `json:"name"`
+	Headers map[string][]string `json:"headers"`
+	Message json.RawMessage     `json:"message"`
 }
 
 type FixtureMCPStep struct {
@@ -292,7 +299,13 @@ type FixtureMCPStep struct {
 }
 
 type FixtureMCPExpect struct {
-	Steps []FixtureMCPExpectedStep `json:"steps"`
+	Detections []FixtureMCPExpectedProtocolDetection `json:"detections,omitempty"`
+	Steps      []FixtureMCPExpectedStep              `json:"steps"`
+}
+
+type FixtureMCPExpectedProtocolDetection struct {
+	Name  string `json:"name"`
+	Shape string `json:"shape"`
 }
 
 type FixtureMCPExpectedStep struct {

@@ -20,9 +20,9 @@ Claude Remote MCP requires real incremental streaming for tool calls. On AWS tha
 
 - API Gateway REST API v1
 - default `/mcp` routes:
-  - `POST /mcp` (streaming enabled)
-  - `GET /mcp` (streaming enabled; used for `Last-Event-ID` replay and session listeners)
-  - `DELETE /mcp`
+  - `POST /mcp` (both protocol shapes; streaming enabled for session-ful tools)
+  - `GET /mcp` (2025-11-25 only; streaming replay and session listeners)
+  - `DELETE /mcp` (2025-11-25 session termination)
 - optional per-actor bundle when `actorPath: true`:
   - `POST /mcp/{actor}` (streaming enabled)
   - `GET /mcp/{actor}` (streaming enabled)
@@ -37,6 +37,24 @@ Claude Remote MCP requires real incremental streaming for tool calls. On AWS tha
 If you are using OAuth for Claude connectors on the default `/mcp` route, also add:
 
 - `GET /.well-known/oauth-protected-resource/mcp`
+
+## Dual-version runtime contract
+
+`AppTheoryRemoteMcpServer` deploys one handler and one route bundle. The runtime—not a CDK prop—selects between:
+
+- established `2025-11-25` initialize/session/SSE behavior
+- final `2026-07-28` stateless POST behavior
+
+Modern clients call `server/discover`, send `Mcp-Method` on every JSON-RPC request/notification, and send `Mcp-Name`
+for `tools/call`, `prompts/get`, and `resources/read`. Their successful results carry `resultType`; modern
+header/version/capability validation can return `-32020`, `-32021`, or `-32022` with HTTP `400`.
+
+The optional session, stream, and task tables continue to support the session-ful transport. Stateless requests neither
+use those tables as a substitute session nor require a separate construct. `2026-07-28` GET/listen/subscriptions are not
+advertised or routed.
+
+Existing `2025-11-25` deployments require no construct changes. See `docs/migration/mcp-2026-07-28.md` before enabling a
+modern client.
 
 ## TypeScript example
 

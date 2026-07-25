@@ -20,6 +20,10 @@ For v1.0 fail-closed migration notes that affect MCP transport and session behav
 
 - `docs/migration/v1-security.md`
 
+For the additive `2026-07-28` stateless transport and client migration checklist, see:
+
+- `docs/migration/mcp-2026-07-28.md`
+
 OAuth helper surfaces used by Remote MCP deployments and Autheory are in:
 
 - `github.com/theory-cloud/apptheory/v2/runtime/oauth`
@@ -28,36 +32,60 @@ OAuth helper surfaces used by Remote MCP deployments and Autheory are in:
 
 ## Transport + endpoint
 
-AppTheory implements MCP Streamable HTTP on a single path:
+AppTheory implements both supported MCP transport shapes on one `/mcp` path:
 
 - `POST /mcp`: JSON-RPC requests, notifications, and client responses
-- `GET /mcp`: resumable SSE replay via `Last-Event-ID`, or a short-lived keepalive SSE response when `Last-Event-ID`
-  is absent
-- `DELETE /mcp`: session termination
+- `GET /mcp`: 2025-11-25 resumable SSE replay via `Last-Event-ID`, or a short-lived keepalive SSE response when
+  `Last-Event-ID` is absent
+- `DELETE /mcp`: 2025-11-25 session termination
+
+The runtime selects one shape per request:
+
+| Protocol shape | Selection | Session behavior |
+| --- | --- | --- |
+| `2025-11-25` | Existing initialize/session negotiation | `server/discover` is available before the handshake; `initialize` mints `mcp-session-id`; later POST/GET/DELETE requests require it |
+| `2026-07-28` | `mcp-protocol-version: 2026-07-28`, or `params._meta["io.modelcontextprotocol/protocolVersion"]` when the header is absent | Stateless POST; no initialize handshake or session id, and GET/DELETE are not routed |
+
+`mcp-protocol-version` has strict precedence during shape detection. For a `2026-07-28` request, the header and request
+metadata must agree when both are present; a disagreement fails closed with JSON-RPC code `-32020`. This lets one server
+concurrently accept established session-ful clients and new stateless clients without a server-wide mode flag while
+preventing intermediaries and payloads from naming different modern protocol versions.
 
 Header names are case-insensitive on the wire. The examples in this doc use lowercase HTTP headers.
 
 - Session header: `mcp-session-id`
 - Protocol header: `mcp-protocol-version`
+- Modern routing method header: `mcp-method`
+- Modern routing name header: `mcp-name`
 - Resume header: `last-event-id`
 
 Important transport behavior:
 
 - `POST /mcp` requires `content-type: application/json`
 - `POST /mcp` requires `accept` support for both `application/json` and `text/event-stream`
-- `GET /mcp` requires `accept` support for `text/event-stream`
-- `initialize` is the only request that creates a session and returns `mcp-session-id`
-- subsequent `POST /mcp`, `GET /mcp`, and `DELETE /mcp` calls require `mcp-session-id`
-- missing session header returns `400`
-- unknown or expired sessions return `404`
-- `mcp-protocol-version` is optional after initialization; when present it must be supported and must match the
-  session's negotiated protocol version
-- JSON-RPC success and error payloads return HTTP `200`; transport-level failures such as missing sessions, bad
-  protocol headers, rejected origins, or missing replay events return HTTP `4xx` / `5xx`
+- session-ful `GET /mcp` requires `accept` support for `text/event-stream`
+- in the 2025-11-25 shape, `server/discover` is available before `initialize`; `initialize` is the only request that
+  creates a session and returns `mcp-session-id`, and subsequent POST/GET/DELETE calls require it
+- missing 2025-11-25 session headers return `400`; unknown or expired sessions return `404`
+- 2026-07-28 requests never create or require `mcp-session-id`; JSON-RPC responses are accepted without a session
+- every 2026-07-28 JSON-RPC request or notification requires one unambiguous `mcp-method` value equal to the body
+  `method`; conflicting duplicate routing-header values fail closed
+- 2026-07-28 `tools/call`, `prompts/get`, and `resources/read` additionally require `mcp-name` equal to
+  `params.name`, `params.name`, or `params.uri`, respectively
+- `GET /mcp` and `DELETE /mcp` with the 2026-07-28 protocol header return `405`
+- `mcp-protocol-version` is optional after initialization. Header precedence applies per request: `2026-07-28`
+  routes that request through the stateless shape before session validation, even when `mcp-session-id` names a live
+  2025-11-25 session. Headers that select the session-ful shape must be supported and match the session's negotiated
+  protocol version
+- ordinary JSON-RPC results and method errors return HTTP `200`; modern protocol/header/capability validation errors
+  (`-32020`, `-32021`, and `-32022`) return their JSON-RPC envelope with HTTP `400`
+- other transport-level failures such as missing sessions, rejected origins, or missing replay events return HTTP
+  `4xx` / `5xx`
 
-Supported protocol versions negotiated on `initialize`:
+The final `2026-07-28` protocol is supported through the stateless request shape and is not negotiated with
+`initialize`. Session-ful versions negotiated on `initialize` remain:
 
-- `2025-11-25` (latest)
+- `2025-11-25` (latest session-ful)
 - `2025-06-18`
 - `2025-03-26` (legacy compatibility / batch mode)
 
@@ -78,15 +106,21 @@ Roll strict Streamable HTTP behavior out with a client canary before making it t
 1. Canary clients must send `content-type: application/json` on every `POST /mcp`.
 2. Canary clients must send `accept: application/json, text/event-stream` on every `POST /mcp`.
 3. Canary clients must send `accept: text/event-stream` on every `GET /mcp`.
-4. After initialization, clients should either omit `mcp-protocol-version` or send the exact negotiated version.
+4. After initialization, session-ful clients should either omit `mcp-protocol-version` or send the exact negotiated
+   version. Sending `2026-07-28` deliberately routes that request through the stateless shape instead.
 5. Streaming clients must tolerate the initial empty-data priming SSE event and store its `id` for reconnect.
 6. Reconnect with `GET /mcp` plus the latest `last-event-id`; do not assume dropped TCP connections cancel work.
+7. Stateless clients must send the exact `mcp-method` routing value and, for `tools/call`, `prompts/get`, and
+   `resources/read`, the exact `mcp-name` value.
+8. Stateless clients must read `result.resultType` and retry an `input_required` tool call with the returned
+   `requestState` and collected `inputResponses`.
 
 Compatibility risks to check during canary:
 
 - older clients that send `Accept: application/json` only on `POST /mcp` now receive HTTP `400`
 - clients that omit `Content-Type` or send non-JSON content types now receive HTTP `400`
-- clients that pin a protocol header different from the negotiated session version now receive HTTP `400`
+- clients that pin a different session-ful protocol header receive HTTP `400`; a `2026-07-28` header instead selects
+  the stateless shape for that request
 - SSE parsers that assume the first frame is JSON-RPC must skip or record the empty priming frame
 - replay clients that reuse a `Last-Event-ID` from another stream now fail closed instead of receiving unrelated events
 
@@ -106,9 +140,10 @@ app.Delete("/mcp", h)
 
 ## Supported JSON-RPC surface
 
-AppTheory currently dispatches these MCP request methods:
+The 2025-11-25 session-ful shape dispatches these MCP request methods:
 
 - `initialize`
+- `server/discover`
 - `ping`
 - `tools/list`
 - `tools/call`
@@ -130,12 +165,72 @@ Accepted notification methods:
 - `notifications/initialized`
 - `notifications/cancelled`
 
+The 2026-07-28 stateless shape dispatches the session-independent subset: `server/discover`, `ping`, `tools/list`, `tools/call`,
+`resources/list`, `resources/read`, `resources/templates/list`, `logging/setLevel`, `completion/complete`,
+`prompts/list`, and `prompts/get`. Stateless `tools/call` runs to a buffered JSON response even when the registered tool
+also supports the session-ful SSE path. Task-augmented tool calls, task methods, resource subscriptions, and initialize
+fail closed as unavailable in this shape. Stateless notifications return `202 Accepted` without creating or mutating a
+session.
+
 Other transport notes:
 
-- posted client responses are accepted for Streamable HTTP compliance and return `202 Accepted` with no body
+- posted client responses are accepted in either shape and return `202 Accepted` with no body
 - notifications also return `202 Accepted` with no body
 - JSON-RPC batch requests are only supported for legacy `2025-03-26` callers; after a session is established, batch
   dispatch uses the session's negotiated protocol version when the request omits `mcp-protocol-version`
+
+### Server discovery
+
+`server/discover` is implemented at the routing layer, so every AppTheory-hosted MCP server returns the same shape in
+both transports. It is reachable before `initialize` in the session-ful shape and does not require
+`Mcp-Session-Id`. Its result contains:
+
+- `supportedVersions`: `2026-07-28` (final), `2025-11-25`, `2025-06-18`, and `2025-03-26`, in preference order
+- `capabilities`: the enabled surfaces that the server can actually serve from its registries and configured hooks
+- `_meta["io.modelcontextprotocol/serverInfo"]`: the name and version passed to `mcp.NewServer(...)` or the equivalent
+  TypeScript/Python constructor
+
+The discovery capability map describes the server's registered surface across its advertised versions. A configured
+task runtime is therefore included as `"tasks": {...}` even though task methods remain available only after a
+`2025-11-25` session handshake.
+
+The advertisement never includes a subscriptions capability. AppTheory does not implement the `2026-07-28`
+`subscriptions/listen` transport, and applications must not add a wrapper that advertises it.
+
+### `2026-07-28` result types and multi-round input
+
+Every successful `2026-07-28` JSON-RPC result contains a `resultType`:
+
+- `"complete"` means the request is finished
+- `"input_required"` means the client must fulfill the returned `inputRequests` and retry the original request
+
+An `input_required` tool result includes at least one of `inputRequests` or `requestState`. On retry, the client sends
+the returned `requestState` and its named `inputResponses` in the original request parameters. Tool handlers read that
+round-trip state through `ToolInputFromContext(...)` in Go or the matching `McpToolContext` fields in TypeScript and
+Python.
+
+The client must advertise each capability needed by an input request under
+`params._meta["io.modelcontextprotocol/clientCapabilities"]`. For example, an `elicitation/create` input request
+requires `"elicitation": {}`. If the capability is missing, AppTheory rejects the result with `-32021` instead of
+returning an input request the client cannot satisfy.
+
+Session-ful results are unchanged: AppTheory removes a handler-supplied `"complete"` marker from the `2025-11-25`
+response shape, and `input_required` is unavailable there.
+
+### `2026-07-28` protocol errors
+
+Modern transport validation fails closed with these exported codes in Go, TypeScript, and Python:
+
+| Code | Meaning | Pinned cases |
+| --- | --- | --- |
+| `-32020` | Header mismatch | protocol header disagrees with `_meta`, `Mcp-Method` is absent/wrong, required `Mcp-Name` is absent/wrong, or either routing header has conflicting duplicate values |
+| `-32021` | Missing required client capability | an `input_required` result needs a capability omitted from per-request client metadata |
+| `-32022` | Unsupported protocol version | a sessionless request names an unsupported/future protocol version |
+
+These errors use a JSON-RPC error envelope and HTTP `400`. The `-32022` data includes `supported` and `requested`;
+`-32021` data includes `requiredCapabilities`. None of this changes the established `2025-11-25` session validation
+contract. If a name-routed method omits `params.name` / `params.uri` or supplies a non-string value, the body is
+invalid and AppTheory returns `-32602` rather than misreporting a routing-header mismatch.
 
 ### Runtime hardening guarantees
 
@@ -149,17 +244,17 @@ The MCP runtime fails closed around tool execution and durable replay:
   validation; the read cap uses the recorded event byte count and the configured maximum event size before size/hash
   validation
 
-### Capabilities advertisement (`initialize`)
+### Capabilities advertisement (`server/discover` and `initialize`)
 
-The `initialize` result advertises only surfaces that are both enabled in `mcp.CapabilityConfig` and actually registered
-on the server:
+The `server/discover` and `initialize` results advertise only surfaces that are both enabled in
+`mcp.CapabilityConfig` and actually registered on the server:
 
 - if `srv.Registry().Len() > 0` and tools are enabled -> `"tools": {}`
 - if `srv.Resources().Len() > 0` and resources are enabled -> `"resources": {}`
 - if `srv.Prompts().Len() > 0` and prompts are enabled -> `"prompts": {}`
 - if `mcp.WithCompletionHooks(...)` has at least one hook and completions are enabled -> `"completions": {}`
 - if `mcp.WithTaskRuntime(...)` supplies a store, at least one registered tool declares task support, and tasks are
-  enabled -> `"tasks": {...}` for protocol `2025-11-25` sessions
+  enabled -> `"tasks": {...}` in `server/discover` and for protocol `2025-11-25` sessions
 
 The default capability policy enables the implemented surfaces, but registration is still required before they are
 advertised. Use `mcp.WithCapabilityConfig(...)` to withhold an implemented surface for a product rollout.
@@ -399,6 +494,7 @@ Handled product failures should be converted to safe tool results through `Handl
 - `Content`: ordered `[]ContentBlock`
 - `StructuredContent`: serialized as `structuredContent`
 - `IsError`: serialized as `isError`
+- `ResultType`, `InputRequests`, and `RequestState`: the `2026-07-28` multi-round result contract described above
 
 `ContentBlock` shapes:
 

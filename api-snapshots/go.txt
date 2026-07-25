@@ -2611,6 +2611,8 @@ func (safeEventError) Error() string
 
 ## github.com/theory-cloud/apptheory/v2/runtime/mcp
 
+const CodeHeaderMismatch = -32020
+
 const CodeInternalError = -32603
 
 const CodeInvalidParams = -32602
@@ -2619,9 +2621,13 @@ const CodeInvalidRequest = -32600
 
 const CodeMethodNotFound = -32601
 
+const CodeMissingRequiredClientCapability = -32021
+
 const CodeParseError = -32700
 
 const CodeServerError = -32000
+
+const CodeUnsupportedProtocolVersion = -32022
 
 const LoggingLevelAlert LoggingLevel = "alert"
 
@@ -2638,6 +2644,18 @@ const LoggingLevelInfo LoggingLevel = "info"
 const LoggingLevelNotice LoggingLevel = "notice"
 
 const LoggingLevelWarning LoggingLevel = "warning"
+
+const ProtocolShape20251125 ProtocolShape = protocolVersion
+
+const ProtocolShape20260728 ProtocolShape = ProtocolVersion20260728
+
+const ProtocolShapeUnknown ProtocolShape = "unknown"
+
+const ProtocolVersion20260728 = "2026-07-28"
+
+const ResultTypeComplete ResultType = "complete"
+
+const ResultTypeInputRequired ResultType = "input_required"
 
 const TaskStatusCanceled TaskStatus = "cancel" + "led"
 
@@ -2745,6 +2763,12 @@ type CreateTaskResult struct {
 	Task Task           `json:"task"`
 }
 
+type DiscoverResult struct {
+	SupportedVersions []string       `json:"supportedVersions"`
+	Capabilities      map[string]any `json:"capabilities"`
+	Meta              map[string]any `json:"_meta"`
+}
+
 type DynamoSessionStore struct {
 	db tablecore.DB
 }
@@ -2775,6 +2799,18 @@ type Icon struct {
 type InitialSessionListenerBudgetOptions struct {
 	SafetyBuffer time.Duration
 	MaxDuration  time.Duration
+}
+
+type InputRequest struct {
+	Method string `json:"method"`
+	Params any    `json:"params,omitempty"`
+}
+
+type InputRequiredResult struct {
+	ResultType    ResultType              `json:"resultType,omitempty"`
+	InputRequests map[string]InputRequest `json:"inputRequests,omitempty"`
+	RequestState  string                  `json:"requestState,omitempty"`
+	Meta          map[string]any          `json:"_meta,omitempty"`
 }
 
 type LoggingLevel string
@@ -2841,6 +2877,8 @@ type PromptResult struct {
 	Messages    []PromptMessage `json:"messages"`
 }
 
+type ProtocolShape string
+
 type RPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
@@ -2906,6 +2944,8 @@ type Response struct {
 	Error   *RPCError `json:"error,omitempty"`
 }
 
+type ResultType string
+
 type SSEEvent struct {
 	Data any
 }
@@ -2933,6 +2973,11 @@ type Server struct {
 	taskExecutions          *taskExecutionTracker
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
+}
+
+type ServerIdentity struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
 }
 
 type ServerOption func(*Server)
@@ -3056,6 +3101,11 @@ type ToolExecution struct {
 
 type ToolHandler func(context.Context, json.RawMessage) (*ToolResult, error)
 
+type ToolInput struct {
+	InputResponses map[string]any
+	RequestState   string
+}
+
 type ToolLifecycleFinish struct {
 	Name              string               `json:"name"`
 	StartedAt         time.Time            `json:"startedAt"`
@@ -3096,14 +3146,21 @@ type ToolRegistry struct {
 }
 
 type ToolResult struct {
-	Content           []ContentBlock `json:"content"`
-	IsError           bool           `json:"isError,omitempty"`
-	StructuredContent map[string]any `json:"structuredContent,omitempty"`
+	Content           []ContentBlock          `json:"content"`
+	IsError           bool                    `json:"isError,omitempty"`
+	StructuredContent map[string]any          `json:"structuredContent,omitempty"`
+	ResultType        ResultType              `json:"resultType,omitempty"`
+	InputRequests     map[string]InputRequest `json:"inputRequests,omitempty"`
+	RequestState      string                  `json:"requestState,omitempty"`
 }
 
 func AllowOrigins(...string) OriginValidator
 
 func DefaultCapabilityConfig() CapabilityConfig
+
+func DetectProtocolVersion(map[string][]string, []byte) ProtocolShape
+
+func DetectProtocolVersionForMessage(map[string][]string, any) ProtocolShape
 
 func MarshalResponse(*Response) ([]byte, error)
 
@@ -3136,6 +3193,8 @@ func ParseBatchRequest([]byte) ([]*Request, error)
 func ParseRequest([]byte) (*Request, error)
 
 func ParseResponse([]byte) (*Response, error)
+
+func ToolInputFromContext(context.Context) ToolInput
 
 func WithCapabilityConfig(CapabilityConfig) ServerOption
 
