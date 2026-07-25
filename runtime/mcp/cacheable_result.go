@@ -84,8 +84,11 @@ func (s *Server) finalizeResponseForProtocol(
 		return prepared
 	}
 	hint, ok := s.cacheHintForRequest(req)
-	if !ok || requestIsMultiRoundTripRetry(req) {
+	if !ok {
 		return prepared
+	}
+	if requestIsMultiRoundTripRetry(req) {
+		hint = CacheHint{}
 	}
 	return applyCacheHint(prepared, hint)
 }

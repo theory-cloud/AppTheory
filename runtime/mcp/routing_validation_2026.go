@@ -14,6 +14,9 @@ func validatePOSTRequestProtocol(
 	req *Request,
 	detectedShape ProtocolShape,
 ) (ProtocolShape, *apptheory.Response) {
+	if resp := conflictingProtocolVersionHeaderResponse(headers, req.ID); resp != nil {
+		return ProtocolShapeUnknown, resp
+	}
 	modernClaim, resp := validatePOSTRequestVersions(headers, req)
 	if resp != nil {
 		return ProtocolShapeUnknown, resp
@@ -71,6 +74,9 @@ func validatePOSTResponseProtocol(
 	resp *Response,
 	detectedShape ProtocolShape,
 ) *apptheory.Response {
+	if conflictResponse := conflictingProtocolVersionHeaderResponse(headers, resp.ID); conflictResponse != nil {
+		return conflictResponse
+	}
 	headerVersion := strings.TrimSpace(firstHeader(headers, headerMcpProtocolVersion))
 	if headerVersion != "" && !isAdvertisedProtocolVersion(headerVersion) {
 		if strings.TrimSpace(firstHeader(headers, headerMcpSessionID)) != "" {
@@ -85,6 +91,18 @@ func validatePOSTResponseProtocol(
 		resp.ID,
 		CodeInvalidRequest,
 		"Invalid Request: clients must not send JSON-RPC responses",
+		nil,
+	)
+}
+
+func conflictingProtocolVersionHeaderResponse(headers map[string][]string, id any) *apptheory.Response {
+	if !conflictingHeaderValues(headers, headerMcpProtocolVersion) {
+		return nil
+	}
+	return protocolJSONRPCErrorResponse(
+		id,
+		CodeHeaderMismatch,
+		"Header mismatch: conflicting MCP-Protocol-Version header values",
 		nil,
 	)
 }
@@ -223,10 +241,10 @@ func decodeRoutingHeaderName(value string) (string, bool) {
 	if !strings.HasPrefix(value, prefix) {
 		return value, false
 	}
-	if !strings.HasSuffix(value, suffix) {
+	if len(value) < len(prefix)+len(suffix) || !strings.HasSuffix(value, suffix) {
 		return "", true
 	}
-	encoded := strings.TrimSuffix(strings.TrimPrefix(value, prefix), suffix)
+	encoded := value[len(prefix) : len(value)-len(suffix)]
 	decoded, err := base64.StdEncoding.Strict().DecodeString(encoded)
 	if err != nil || base64.StdEncoding.EncodeToString(decoded) != encoded || !utf8.Valid(decoded) {
 		return "", true

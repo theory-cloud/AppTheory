@@ -68,14 +68,6 @@ func TestFinalizeResponseForProtocolSkipsNonCacheableResults(t *testing.T) {
 			resp:            NewResultResponse("call", map[string]any{"content": []any{}}),
 			protocolVersion: ProtocolVersion20260728,
 		},
-		"mrtr retry": {
-			req: &Request{
-				Method: methodResourcesRead,
-				Params: json.RawMessage(`{"requestState":"read-resource"}`),
-			},
-			resp:            NewResultResponse("retry", map[string]any{"contents": []any{}}),
-			protocolVersion: ProtocolVersion20260728,
-		},
 		"input required": {
 			req: &Request{Method: methodResourcesRead},
 			resp: NewResultResponse("input", InputRequiredResult{
@@ -103,6 +95,38 @@ func TestFinalizeResponseForProtocolSkipsNonCacheableResults(t *testing.T) {
 			}
 			if _, ok := result["cacheScope"]; ok {
 				t.Fatalf("result unexpectedly contains cacheScope: %#v", result)
+			}
+		})
+	}
+}
+
+func TestFinalizeResponseForProtocolForcesFailClosedHintForMultiRoundTripRetries(t *testing.T) {
+	t.Parallel()
+
+	s := NewServer(
+		"cache-server",
+		"2.0.0",
+		WithCacheableResultConfig(CacheableResultConfig{
+			ResourcesRead: CacheHint{TTL: 30 * time.Second, Scope: CacheScopePublic},
+		}),
+	)
+	for name, params := range map[string]json.RawMessage{
+		"input responses": json.RawMessage(`{"inputResponses":{"approval":{"approved":true}}}`),
+		"request state":   json.RawMessage(`{"requestState":"read-resource"}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			resp := s.finalizeResponseForProtocol(
+				&Request{Method: methodResourcesRead, Params: params},
+				NewResultResponse("retry", map[string]any{"contents": []any{}}),
+				ProtocolVersion20260728,
+			)
+			result := cacheableResultObject(t, resp)
+			if got, want := result["ttlMs"], float64(0); got != want {
+				t.Fatalf("ttlMs = %#v, want %#v", got, want)
+			}
+			if got, want := result["cacheScope"], string(CacheScopePrivate); got != want {
+				t.Fatalf("cacheScope = %#v, want %#v", got, want)
 			}
 		})
 	}

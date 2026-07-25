@@ -121,6 +121,29 @@
           }
         },
         {
+          "name": "unsupported_protocol_response_without_session",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2099-01-01"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"unsupported-client-response\",\"result\":{\"ok\":true}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
           "name": "legacy_jsonrpc_response_remains_accepted",
           "request": {
             "method": "POST",
@@ -247,6 +270,36 @@
             "error": {
               "code": -32600,
               "message": "Invalid Request: clients must not send JSON-RPC responses"
+            }
+          }
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "unsupported-client-response",
+            "error": {
+              "code": -32022,
+              "message": "Unsupported protocol version",
+              "data": {
+                "supported": [
+                  "2026-07-28",
+                  "2025-11-25",
+                  "2025-06-18",
+                  "2025-03-26"
+                ],
+                "requested": "2099-01-01"
+              }
             }
           }
         },

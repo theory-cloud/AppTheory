@@ -114,6 +114,36 @@
           }
         },
         {
+          "name": "base64_name_overlapping_sentinel",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "tools/call"
+              ],
+              "mcp-name": [
+                "=?base64?="
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"overlapping-sentinel\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
+            },
+            "is_base64": false
+          }
+        },
+        {
           "name": "base64_marker_is_case_sensitive",
           "request": {
             "method": "POST",
@@ -217,6 +247,27 @@
           "body_json": {
             "jsonrpc": "2.0",
             "id": "invalid-base64",
+            "error": {
+              "code": -32020,
+              "message": "Header mismatch: malformed Mcp-Name Base64 encoding"
+            }
+          }
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "overlapping-sentinel",
             "error": {
               "code": -32020,
               "message": "Header mismatch: malformed Mcp-Name Base64 encoding"

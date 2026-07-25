@@ -520,6 +520,8 @@
                 }
               ],
               "resultType": "complete",
+              "ttlMs": 0,
+              "cacheScope": "private",
               "_meta": {
                 "io.modelcontextprotocol/serverInfo": {
                   "name": "ContractMCP",

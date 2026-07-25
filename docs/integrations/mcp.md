@@ -24,6 +24,10 @@ For the additive `2026-07-28` stateless transport and client migration checklist
 
 - `docs/migration/mcp-2026-07-28.md`
 
+This milestone closes the audited `2026-07-28` conformance gap list; it does not claim complete coverage of the draft.
+`Mcp-Param-*` mirroring, `subscriptions/listen`, per-request `io.modelcontextprotocol/logLevel`,
+`DiscoverResult.instructions`, and trace context remain deferred.
+
 OAuth helper surfaces used by Remote MCP deployments and Autheory are in:
 
 - `github.com/theory-cloud/apptheory/v2/runtime/oauth`
@@ -73,6 +77,8 @@ Important transport behavior:
 - every 2026-07-28 request or notification requires both
   `params._meta["io.modelcontextprotocol/protocolVersion"]` and
   `params._meta["io.modelcontextprotocol/clientCapabilities"]`; missing or invalid values return `-32602`
+- every 2026-07-28 request requires one unambiguous `mcp-protocol-version` value; conflicting duplicates fail closed
+  with `-32020` before the runtime selects a protocol shape
 - every 2026-07-28 JSON-RPC request or notification requires one unambiguous `mcp-method` value equal to the body
   `method`; conflicting duplicate routing-header values fail closed
 - 2026-07-28 `tools/call`, `prompts/get`, and `resources/read` additionally require `mcp-name` equal to
@@ -91,7 +97,7 @@ Important transport behavior:
 - other transport-level failures such as missing sessions, rejected origins, or missing replay events return HTTP
   `4xx` / `5xx`
 
-The final `2026-07-28` protocol is supported through the stateless request shape and is not negotiated with
+The audited `2026-07-28` surface is supported through the stateless request shape and is not negotiated with
 `initialize`. Session-ful versions negotiated on `initialize` remain:
 
 - `2025-11-25` (latest session-ful)
@@ -200,7 +206,7 @@ Other transport notes:
 both transports. It is reachable before `initialize` in the session-ful shape and does not require
 `Mcp-Session-Id`. Its result contains:
 
-- `supportedVersions`: `2026-07-28` (final), `2025-11-25`, `2025-06-18`, and `2025-03-26`, in preference order
+- `supportedVersions`: `2026-07-28`, `2025-11-25`, `2025-06-18`, and `2025-03-26`, in preference order
 - `capabilities`: the enabled surfaces that the server can actually serve from its registries and configured hooks
 - `_meta["io.modelcontextprotocol/serverInfo"]`: the name and version passed to `mcp.NewServer(...)` or the equivalent
   TypeScript/Python constructor
@@ -284,8 +290,9 @@ srv := mcp.NewServer(
 ```
 
 `input_required` results never carry caching hints. A completed multi-round retry that supplies `inputResponses` or
-`requestState` is also not cacheable because those inputs are not part of the protocol cache key. All `2025-11-25`
-responses remain byte-compatible and omit the modern cache fields.
+`requestState` remains schema-valid but is forced to `ttlMs: 0` and `cacheScope: "private"`, regardless of the
+configured surface hint, because those inputs are not part of the protocol cache key. All `2025-11-25` responses
+remain byte-compatible and omit the modern cache fields.
 
 ### `2026-07-28` protocol errors
 
@@ -293,7 +300,7 @@ Modern transport validation fails closed with these exported codes in Go, TypeSc
 
 | Code | Meaning | Pinned cases |
 | --- | --- | --- |
-| `-32020` | Header mismatch | the required protocol header is absent or disagrees with `_meta`, `Mcp-Method` is absent/wrong, required `Mcp-Name` is absent/wrong/malformed Base64, or either routing header has conflicting duplicate values |
+| `-32020` | Header mismatch | the required protocol header is absent, conflicts with a duplicate, or disagrees with `_meta`; `Mcp-Method` is absent/wrong; required `Mcp-Name` is absent/wrong/malformed Base64; or either routing header has conflicting duplicate values |
 | `-32021` | Missing required client capability | an `input_required` result needs a capability omitted from per-request client metadata |
 | `-32022` | Unsupported protocol version | a sessionless request names an unsupported/future protocol version |
 

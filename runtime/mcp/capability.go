@@ -186,7 +186,7 @@ func validExtensionIdentifier(identifier string) bool {
 
 func normalizeExtensionSettings(settings map[string]any) (map[string]any, bool) {
 	if settings == nil {
-		return map[string]any{}, true
+		return nil, false
 	}
 	data, err := json.Marshal(settings)
 	if err != nil {

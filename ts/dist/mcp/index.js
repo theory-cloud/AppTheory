@@ -1073,20 +1073,22 @@ export class McpServer {
         if (protocolVersion !== MCP_PROTOCOL_VERSION_2026_07_28 ||
             prepared.error ||
             !isRecord(prepared.result) ||
-            prepared.result["resultType"] !== MCP_RESULT_TYPE_COMPLETE ||
-            requestIsMultiRoundTripRetry(request)) {
+            prepared.result["resultType"] !== MCP_RESULT_TYPE_COMPLETE) {
             return prepared;
         }
         const hint = cacheHintForMethod(this.cacheableResults, request.method);
         if (!hint) {
             return prepared;
         }
+        const appliedHint = requestIsMultiRoundTripRetry(request)
+            ? { ttlMs: 0, cacheScope: "private" }
+            : hint;
         return {
             ...prepared,
             result: {
                 ...prepared.result,
-                ttlMs: hint.ttlMs,
-                cacheScope: hint.cacheScope,
+                ttlMs: appliedHint.ttlMs,
+                cacheScope: appliedHint.cacheScope,
             },
         };
     }
@@ -1947,6 +1949,12 @@ function firstHeader(headers, key) {
     return values.length > 0 ? String(values[0] ?? "") : "";
 }
 function validatePostRequestProtocol(headers, request, detectedShape) {
+    if (conflictingHeaderValues(headers, MCP_HEADER_PROTOCOL_VERSION)) {
+        return {
+            shape: MCP_PROTOCOL_SHAPE_UNKNOWN,
+            response: protocolErrorResponse(request.id, MCP_CODE_HEADER_MISMATCH, "Header mismatch: conflicting MCP-Protocol-Version header values"),
+        };
+    }
     const headerVersion = firstHeader(headers, MCP_HEADER_PROTOCOL_VERSION).trim();
     const metaVersion = requestProtocolVersionMetadata(request);
     if (headerVersion && !isAdvertisedProtocolVersion(headerVersion)) {
@@ -1999,6 +2007,9 @@ function validatePostRequestProtocol(headers, request, detectedShape) {
     };
 }
 function validatePostResponseProtocol(headers, response, detectedShape) {
+    if (conflictingHeaderValues(headers, MCP_HEADER_PROTOCOL_VERSION)) {
+        return protocolErrorResponse(response["id"], MCP_CODE_HEADER_MISMATCH, "Header mismatch: conflicting MCP-Protocol-Version header values");
+    }
     const headerVersion = firstHeader(headers, MCP_HEADER_PROTOCOL_VERSION).trim();
     if (headerVersion && !isAdvertisedProtocolVersion(headerVersion)) {
         if (firstHeader(headers, MCP_HEADER_SESSION_ID).trim()) {
@@ -2067,7 +2078,7 @@ function decodeRoutingHeaderName(value) {
     if (!value.startsWith(prefix)) {
         return { value, malformed: false };
     }
-    if (!value.endsWith(suffix)) {
+    if (value.length < prefix.length + suffix.length || !value.endsWith(suffix)) {
         return { value: "", malformed: true };
     }
     const encoded = value.slice(prefix.length, -suffix.length);

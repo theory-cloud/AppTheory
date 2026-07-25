@@ -97,6 +97,7 @@ func TestNormalizeExtensionCapabilitiesFailsClosed(t *testing.T) {
 		"/missing-prefix":       {},
 		"com..example/review":   {},
 		"com.example/two/parts": {},
+		"com.example/nil":       nil,
 		"com.example/review": {
 			"invalid": func() {},
 		},
@@ -106,7 +107,7 @@ func TestNormalizeExtensionCapabilitiesFailsClosed(t *testing.T) {
 	if got := cloneExtensionSettings(map[string]any{"invalid": func() {}}); len(got) != 0 {
 		t.Fatalf("invalid cloned extension settings = %#v", got)
 	}
-	if got, ok := normalizeExtensionSettings(nil); !ok || len(got) != 0 {
+	if got, ok := normalizeExtensionSettings(nil); ok || got != nil {
 		t.Fatalf("nil extension settings = (%#v, %t)", got, ok)
 	}
 	if !validExtensionIdentifier("com.example/") {

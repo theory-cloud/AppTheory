@@ -15,6 +15,10 @@ Locked decisions:
 
 If you’re looking for the full method surface and payload shapes, start with `docs/integrations/mcp.md`.
 
+This milestone closes the audited `2026-07-28` conformance gap list; it does not claim complete coverage of the draft.
+`Mcp-Param-*` mirroring, `subscriptions/listen`, per-request `io.modelcontextprotocol/logLevel`,
+`DiscoverResult.instructions`, and trace context remain deferred.
+
 ## 1) Build a Streamable HTTP MCP server (Go)
 
 ```go
@@ -56,7 +60,7 @@ func buildApp() *apptheory.App {
 ```
 
 Important behaviors for Claude compatibility:
-- AppTheory dual-serves the session-ful `2025-11-25` and final stateless `2026-07-28` shapes on the same handler.
+- AppTheory dual-serves the session-ful `2025-11-25` and audited stateless `2026-07-28` shapes on the same handler.
 - For `2025-11-25`, `initialize` returns `Mcp-Session-Id`, later requests carry that session id, and
   `notifications/initialized` returns `202 Accepted` with no body.
 - For `2026-07-28`, every POST sends `Mcp-Protocol-Version: 2026-07-28` and the matching

@@ -1805,8 +1805,7 @@ export class McpServer {
       protocolVersion !== MCP_PROTOCOL_VERSION_2026_07_28 ||
       prepared.error ||
       !isRecord(prepared.result) ||
-      prepared.result["resultType"] !== MCP_RESULT_TYPE_COMPLETE ||
-      requestIsMultiRoundTripRetry(request)
+      prepared.result["resultType"] !== MCP_RESULT_TYPE_COMPLETE
     ) {
       return prepared;
     }
@@ -1814,12 +1813,15 @@ export class McpServer {
     if (!hint) {
       return prepared;
     }
+    const appliedHint = requestIsMultiRoundTripRetry(request)
+      ? { ttlMs: 0, cacheScope: "private" as const }
+      : hint;
     return {
       ...prepared,
       result: {
         ...prepared.result,
-        ttlMs: hint.ttlMs,
-        cacheScope: hint.cacheScope,
+        ttlMs: appliedHint.ttlMs,
+        cacheScope: appliedHint.cacheScope,
       },
     };
   }
@@ -2942,6 +2944,16 @@ function validatePostRequestProtocol(
   request: ParsedRPCRequest,
   detectedShape: McpProtocolShape,
 ): { shape: McpProtocolShape; response: Response | null } {
+  if (conflictingHeaderValues(headers, MCP_HEADER_PROTOCOL_VERSION)) {
+    return {
+      shape: MCP_PROTOCOL_SHAPE_UNKNOWN,
+      response: protocolErrorResponse(
+        request.id,
+        MCP_CODE_HEADER_MISMATCH,
+        "Header mismatch: conflicting MCP-Protocol-Version header values",
+      ),
+    };
+  }
   const headerVersion = firstHeader(
     headers,
     MCP_HEADER_PROTOCOL_VERSION,
@@ -3018,6 +3030,13 @@ function validatePostResponseProtocol(
   response: Record<string, unknown>,
   detectedShape: McpProtocolShape,
 ): Response | null {
+  if (conflictingHeaderValues(headers, MCP_HEADER_PROTOCOL_VERSION)) {
+    return protocolErrorResponse(
+      response["id"],
+      MCP_CODE_HEADER_MISMATCH,
+      "Header mismatch: conflicting MCP-Protocol-Version header values",
+    );
+  }
   const headerVersion = firstHeader(
     headers,
     MCP_HEADER_PROTOCOL_VERSION,
@@ -3152,7 +3171,7 @@ function decodeRoutingHeaderName(value: string): {
   if (!value.startsWith(prefix)) {
     return { value, malformed: false };
   }
-  if (!value.endsWith(suffix)) {
+  if (value.length < prefix.length + suffix.length || !value.endsWith(suffix)) {
     return { value: "", malformed: true };
   }
   const encoded = value.slice(prefix.length, -suffix.length);

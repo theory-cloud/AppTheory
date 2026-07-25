@@ -1339,12 +1339,13 @@ class McpServer:
             or prepared.get("error") is not None
             or not isinstance(result, Mapping)
             or result.get("resultType") != MCP_RESULT_TYPE_COMPLETE
-            or _request_is_multi_round_trip_retry(request)
         ):
             return prepared
         hint = _cache_hint_for_method(self.cacheable_results, request.method)
         if hint is None:
             return prepared
+        if _request_is_multi_round_trip_retry(request):
+            hint = McpCacheHint(ttl_ms=0, cache_scope="private")
         return {
             **prepared,
             "result": {
@@ -2092,6 +2093,12 @@ def _validate_post_request_protocol(
     request: _ParsedRPCRequest,
     detected_shape: McpProtocolShape,
 ) -> tuple[McpProtocolShape, Response | None]:
+    if _conflicting_header_values(headers, MCP_HEADER_PROTOCOL_VERSION):
+        return MCP_PROTOCOL_SHAPE_UNKNOWN, _protocol_error_response(
+            request.id,
+            MCP_CODE_HEADER_MISMATCH,
+            "Header mismatch: conflicting MCP-Protocol-Version header values",
+        )
     header_version = _first_header(headers, MCP_HEADER_PROTOCOL_VERSION).strip()
     meta_version = _request_protocol_version_metadata(request)
 
@@ -2131,6 +2138,12 @@ def _validate_post_response_protocol(
     response: dict[str, Any],
     detected_shape: McpProtocolShape,
 ) -> Response | None:
+    if _conflicting_header_values(headers, MCP_HEADER_PROTOCOL_VERSION):
+        return _protocol_error_response(
+            response.get("id"),
+            MCP_CODE_HEADER_MISMATCH,
+            "Header mismatch: conflicting MCP-Protocol-Version header values",
+        )
     header_version = _first_header(headers, MCP_HEADER_PROTOCOL_VERSION).strip()
     if header_version and not _is_advertised_protocol_version(header_version):
         if _first_header(headers, MCP_HEADER_SESSION_ID).strip():
@@ -2243,7 +2256,7 @@ def _decode_routing_header_name(value: str) -> tuple[str, bool]:
     suffix = "?="
     if not value.startswith(prefix):
         return value, False
-    if not value.endswith(suffix):
+    if len(value) < len(prefix) + len(suffix) or not value.endswith(suffix):
         return "", True
     encoded = value[len(prefix) : -len(suffix)]
     try:

@@ -31,6 +31,15 @@ func TestValidatePOSTRequestProtocol20260728(t *testing.T) {
 			wantCode: CodeUnsupportedProtocolVersion,
 		},
 		{
+			name: "conflicting protocol versions",
+			headers: map[string][]string{
+				headerMcpProtocolVersion: {ProtocolVersion20260728, protocolVersion},
+			},
+			request:  &Request{ID: "conflicting-protocol", Method: methodPing, Params: modernParams},
+			detected: ProtocolShape20260728,
+			wantCode: CodeHeaderMismatch,
+		},
+		{
 			name:    "unsupported metadata",
 			headers: map[string][]string{headerMcpMethod: {methodPing}},
 			request: &Request{
@@ -449,6 +458,10 @@ func TestDecodeRoutingHeaderName(t *testing.T) {
 			value:         "=?base64?not-base64?=",
 			wantMalformed: true,
 		},
+		"overlapping sentinel": {
+			value:         "=?base64?=",
+			wantMalformed: true,
+		},
 		"invalid utf8": {
 			value:         "=?base64?/w==?=",
 			wantMalformed: true,
@@ -486,6 +499,18 @@ func TestValidatePOSTResponseProtocol(t *testing.T) {
 	); got != nil {
 		t.Fatalf("sessionful unsupported header response = %#v, want nil", got)
 	}
+	assertProtocolErrorCode(
+		t,
+		validatePOSTResponseProtocol(
+			map[string][]string{
+				headerMcpProtocolVersion: {ProtocolVersion20260728, protocolVersion},
+				headerMcpSessionID:       {"legacy-session"},
+			},
+			resp,
+			ProtocolShape20260728,
+		),
+		CodeHeaderMismatch,
+	)
 	assertProtocolErrorCode(
 		t,
 		validatePOSTResponseProtocol(

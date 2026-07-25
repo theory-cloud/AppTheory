@@ -233,7 +233,7 @@
             "extension_capabilities": {
               "type": "object",
               "additionalProperties": {
-                "type": "object"
+                "type": ["object", "null"]
               }
             },
             "cacheable_results": {

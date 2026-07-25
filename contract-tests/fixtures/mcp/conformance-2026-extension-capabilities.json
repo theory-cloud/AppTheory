@@ -10,7 +10,8 @@
         "extension_capabilities": {
           "com.example/review": {
             "mode": "approval"
-          }
+          },
+          "com.example/unconfigured": null
         }
       },
       "tools": [
