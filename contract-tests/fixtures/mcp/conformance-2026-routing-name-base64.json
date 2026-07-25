@@ -1,0 +1,301 @@
+{
+  "id": "mcp.conformance_2026.routing_name_base64",
+  "tier": "mcp",
+  "name": "MCP 2026-07-28 decodes the exact Mcp-Name Base64 sentinel before routing comparison",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      },
+      "tools": [
+        {
+          "name": "echo",
+          "description": "Echo text",
+          "input_schema": {
+            "type": "object"
+          },
+          "handler": "echo_text"
+        }
+      ]
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "base64_name_matches_body",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "tools/call"
+              ],
+              "mcp-name": [
+                "=?base64?ZWNobw==?="
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"encoded-name\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"encoded contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "base64_name_missing_terminator",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "tools/call"
+              ],
+              "mcp-name": [
+                "=?base64?ZWNobw=="
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"missing-terminator\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "base64_name_invalid_payload",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "tools/call"
+              ],
+              "mcp-name": [
+                "=?base64?***?="
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"invalid-base64\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "base64_name_overlapping_sentinel",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "tools/call"
+              ],
+              "mcp-name": [
+                "=?base64?="
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"overlapping-sentinel\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "base64_marker_is_case_sensitive",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "tools/call"
+              ],
+              "mcp-name": [
+                "=?BASE64?ZWNobw==?="
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"uppercase-marker\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "encoded-name",
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "encoded contract"
+                }
+              ],
+              "resultType": "complete",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
+            }
+          }
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "missing-terminator",
+            "error": {
+              "code": -32020,
+              "message": "Header mismatch: malformed Mcp-Name Base64 encoding"
+            }
+          }
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "invalid-base64",
+            "error": {
+              "code": -32020,
+              "message": "Header mismatch: malformed Mcp-Name Base64 encoding"
+            }
+          }
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "overlapping-sentinel",
+            "error": {
+              "code": -32020,
+              "message": "Header mismatch: malformed Mcp-Name Base64 encoding"
+            }
+          }
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "uppercase-marker",
+            "error": {
+              "code": -32020,
+              "message": "Header mismatch: Mcp-Name does not match request parameters"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

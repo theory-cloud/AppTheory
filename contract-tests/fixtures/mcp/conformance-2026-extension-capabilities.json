@@ -1,0 +1,287 @@
+{
+  "id": "mcp.conformance_2026.extension_capabilities",
+  "tier": "mcp",
+  "name": "MCP 2026-07-28 advertises extensions and fails closed when an extension is undeclared",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09",
+        "extension_capabilities": {
+          "com.example/review": {
+            "mode": "approval"
+          },
+          "com.example/unconfigured": null
+        }
+      },
+      "tools": [
+        {
+          "name": "review",
+          "description": "Request an extension-backed review",
+          "input_schema": {
+            "type": "object"
+          },
+          "handler": "input_required_extension"
+        }
+      ]
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "modern_discover_advertises_extensions",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "server/discover"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"discover-extensions\",\"method\":\"server/discover\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "extension_capability_not_declared",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "tools/call"
+              ],
+              "mcp-name": [
+                "review"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"missing-extension\",\"method\":\"tools/call\",\"params\":{\"name\":\"review\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "wrong_extension_capability_declared",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "tools/call"
+              ],
+              "mcp-name": [
+                "review"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"wrong-extension\",\"method\":\"tools/call\",\"params\":{\"name\":\"review\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"extensions\":{\"com.example/other\":{}}}}}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "declared_extension_allows_input_required",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "tools/call"
+              ],
+              "mcp-name": [
+                "review"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"declared-extension\",\"method\":\"tools/call\",\"params\":{\"name\":\"review\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"extensions\":{\"com.example/review\":{\"mode\":\"approval\"}}}}}}"
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "discover-extensions",
+            "result": {
+              "supportedVersions": [
+                "2026-07-28",
+                "2025-11-25",
+                "2025-06-18",
+                "2025-03-26"
+              ],
+              "capabilities": {
+                "extensions": {
+                  "com.example/review": {
+                    "mode": "approval"
+                  }
+                },
+                "tools": {}
+              },
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              },
+              "resultType": "complete",
+              "ttlMs": 0,
+              "cacheScope": "private"
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "missing-extension",
+            "error": {
+              "code": -32021,
+              "message": "Missing required client capability",
+              "data": {
+                "requiredCapabilities": {
+                  "extensions": {
+                    "com.example/review": {}
+                  }
+                }
+              }
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "wrong-extension",
+            "error": {
+              "code": -32021,
+              "message": "Missing required client capability",
+              "data": {
+                "requiredCapabilities": {
+                  "extensions": {
+                    "com.example/review": {}
+                  }
+                }
+              }
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "declared-extension",
+            "result": {
+              "resultType": "input_required",
+              "inputRequests": {
+                "approval": {
+                  "method": "com.example/review/approve",
+                  "params": {
+                    "message": "Review contract"
+                  }
+                }
+              },
+              "requestState": "review-contract",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
+            }
+          },
+          "is_base64": false
+        }
+      ]
+    }
+  }
+}

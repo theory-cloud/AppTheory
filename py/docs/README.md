@@ -71,7 +71,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>633 exported top-level symbols</summary>
+<summary>637 exported top-level symbols</summary>
 
 ```text
 App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest
@@ -118,7 +118,8 @@ MaxPutDeleteBatchSize, MaxQueryTopK, MCP_CODE_HEADER_MISMATCH, MCP_CODE_INTERNAL
 MCP_CODE_METHOD_NOT_FOUND, MCP_CODE_MISSING_REQUIRED_CLIENT_CAPABILITY, MCP_CODE_PARSE_ERROR, MCP_CODE_SERVER_ERROR, MCP_CODE_UNSUPPORTED_PROTOCOL_VERSION, MCP_HEADER_LAST_EVENT_ID
 MCP_HEADER_METHOD, MCP_HEADER_NAME, MCP_HEADER_PROTOCOL_VERSION, MCP_HEADER_SESSION_ID, MCP_PROTOCOL_SHAPE_2025_11_25, MCP_PROTOCOL_SHAPE_2026_07_28
 MCP_PROTOCOL_SHAPE_UNKNOWN, MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_2026_07_28, MCP_PROTOCOL_VERSION_LEGACY, MCP_PROTOCOL_VERSION_PRIOR, MCP_RESULT_TYPE_COMPLETE
-MCP_RESULT_TYPE_INPUT_REQUIRED, McpContentBlock, McpDiscoverResult, McpEventNotFoundError, McpInputRequest, McpInputRequiredResult
+MCP_RESULT_TYPE_INPUT_REQUIRED, McpCacheHint, McpCacheScope, McpCacheableResultConfig, McpContentBlock, McpDiscoverResult
+McpEventNotFoundError, McpExtensionCapabilities, McpInputRequest, McpInputRequiredResult
 McpJSONRecord, McpJSONValue, McpPromptArgument, McpPromptDef, McpPromptHandler, McpPromptMessage
 McpPromptRegistry, McpPromptResult, McpProtocolShape, McpRequestID, McpResourceContent, McpResourceContext
 McpResourceDef, McpResourceHandler, McpResourceRegistry, McpResourceTemplateDef, McpResultType, McpRPCError

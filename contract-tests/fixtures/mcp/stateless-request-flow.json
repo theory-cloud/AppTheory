@@ -25,7 +25,18 @@
           },
           "handler": "echo_text"
         }
-      ]
+      ],
+      "session_store": {
+        "seed": [
+          {
+            "id": "legacy-response",
+            "expires_unix_ms": 1900000000000,
+            "data": {
+              "protocolVersion": "2025-11-25"
+            }
+          }
+        ]
+      }
     }
   },
   "input": {
@@ -52,7 +63,7 @@
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"list\",\"method\":\"tools/list\"}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"list\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
             },
             "is_base64": false
           }
@@ -74,11 +85,14 @@
               ],
               "mcp-name": [
                 "echo"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"call\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"stateless contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"call\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"stateless contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
             },
             "is_base64": false
           }
@@ -102,6 +116,55 @@
             "body": {
               "encoding": "utf8",
               "value": "{\"jsonrpc\":\"2.0\",\"id\":\"client-response\",\"result\":{\"ok\":true}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "unsupported_protocol_response_without_session",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2099-01-01"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"unsupported-client-response\",\"result\":{\"ok\":true}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "legacy_jsonrpc_response_remains_accepted",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ],
+              "mcp-session-id": [
+                "legacy-response"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"legacy-client-response\",\"result\":{\"ok\":true}}"
             },
             "is_base64": false
           }
@@ -144,7 +207,15 @@
                   }
                 }
               ],
-              "resultType": "complete"
+              "resultType": "complete",
+              "ttlMs": 0,
+              "cacheScope": "private",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
             }
           },
           "is_base64": false
@@ -170,10 +241,67 @@
                   "text": "stateless contract"
                 }
               ],
-              "resultType": "complete"
+              "resultType": "complete",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
             }
           },
           "is_base64": false
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "client-response",
+            "error": {
+              "code": -32600,
+              "message": "Invalid Request: clients must not send JSON-RPC responses"
+            }
+          }
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "unsupported-client-response",
+            "error": {
+              "code": -32022,
+              "message": "Unsupported protocol version",
+              "data": {
+                "supported": [
+                  "2026-07-28",
+                  "2025-11-25",
+                  "2025-06-18",
+                  "2025-03-26"
+                ],
+                "requested": "2099-01-01"
+              }
+            }
+          }
         },
         {
           "status": 202,
