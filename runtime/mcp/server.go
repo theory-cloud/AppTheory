@@ -627,10 +627,10 @@ func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocol
 		return NewErrorResponse(req.ID, CodeMethodNotFound, fmt.Sprintf("Method not found: %s", req.Method))
 	}
 	if isTaskMethod(req.Method) {
-		return s.dispatchTaskMethod(ctx, req, sessionID)
+		return responseForProtocol(s.dispatchTaskMethod(ctx, req, sessionID), protocolVersion)
 	}
 
-	return s.dispatchNonTaskMethod(ctx, req, sessionID)
+	return responseForProtocol(s.dispatchNonTaskMethod(ctx, req, sessionID), protocolVersion)
 }
 
 func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessionID string) *Response {
@@ -800,10 +800,12 @@ func (s *Server) handleToolsList(req *Request) *Response {
 
 // toolsCallParams holds the parsed parameters for a tools/call request.
 type toolsCallParams struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
-	Task      *TaskMetadata   `json:"task,omitempty"`
-	Meta      struct {
+	Name           string          `json:"name"`
+	Arguments      json.RawMessage `json:"arguments,omitempty"`
+	InputResponses map[string]any  `json:"inputResponses,omitempty"`
+	RequestState   string          `json:"requestState,omitempty"`
+	Task           *TaskMetadata   `json:"task,omitempty"`
+	Meta           struct {
 		ProgressToken json.RawMessage `json:"progressToken,omitempty"`
 	} `json:"_meta,omitempty"`
 }
@@ -868,12 +870,96 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request, sessionID st
 		}
 	}()
 
-	result, err := s.registry.Call(ctx, params.Name, params.Arguments)
+	callCtx := withToolInput(ctx, ToolInput{
+		InputResponses: params.InputResponses,
+		RequestState:   params.RequestState,
+	})
+	result, err := s.registry.Call(callCtx, params.Name, params.Arguments)
 	if err != nil {
 		return s.toolCallError(ctx, req.ID, params.Name, err)
 	}
 
 	return NewResultResponse(req.ID, result)
+}
+
+func responseForProtocol(resp *Response, protocolVersion string) *Response {
+	if resp == nil || resp.Error != nil {
+		return resp
+	}
+
+	inputRequired, errResp := prepareResponseResult(resp, protocolVersion)
+	if errResp != nil {
+		return errResp
+	}
+	if protocolVersion == ProtocolVersion20260728 && !inputRequired {
+		resp.Result = resultWithType{
+			result:     resp.Result,
+			resultType: ResultTypeComplete,
+		}
+	}
+	return resp
+}
+
+func prepareResponseResult(resp *Response, protocolVersion string) (bool, *Response) {
+	switch result := resp.Result.(type) {
+	case *ToolResult:
+		return prepareToolResult(resp, result, protocolVersion)
+	case InputRequiredResult:
+		return prepareInputRequiredResult(resp, result, protocolVersion)
+	case *InputRequiredResult:
+		if result == nil {
+			return false, NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+		}
+		return prepareInputRequiredResult(resp, *result, protocolVersion)
+	}
+	return false, nil
+}
+
+func prepareToolResult(resp *Response, result *ToolResult, protocolVersion string) (bool, *Response) {
+	if result == nil {
+		return false, NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+	}
+	switch result.ResultType {
+	case "", ResultTypeComplete:
+		if len(result.InputRequests) > 0 || strings.TrimSpace(result.RequestState) != "" {
+			return false, NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+		}
+		clean := *result
+		clean.ResultType = ""
+		clean.InputRequests = nil
+		clean.RequestState = ""
+		resp.Result = &clean
+		return false, nil
+	case ResultTypeInputRequired:
+		input := InputRequiredResult{
+			ResultType:    ResultTypeInputRequired,
+			InputRequests: result.InputRequests,
+			RequestState:  result.RequestState,
+		}
+		return prepareInputRequiredResult(resp, input, protocolVersion)
+	default:
+		return false, NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+	}
+}
+
+func prepareInputRequiredResult(
+	resp *Response,
+	result InputRequiredResult,
+	protocolVersion string,
+) (bool, *Response) {
+	if protocolVersion != ProtocolVersion20260728 {
+		return false, NewErrorResponse(
+			resp.ID,
+			CodeInvalidRequest,
+			"input_required results require MCP protocol version 2026-07-28",
+		)
+	}
+	if len(result.InputRequests) == 0 && strings.TrimSpace(result.RequestState) == "" {
+		return false, NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+	}
+	result.ResultType = ResultTypeInputRequired
+	resp.Result = result
+	return true, nil
 }
 
 // toolCallError maps a tool call error to the appropriate JSON-RPC error response.

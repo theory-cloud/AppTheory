@@ -2215,6 +2215,38 @@ function fixtureMCPToolHandler(name) {
           structuredContent: { message },
         };
       };
+    case "input_required":
+      return (args, context) => {
+        const message = fixtureMCPMessageArg(args);
+        if (
+          context.requestState === `confirm-${message}` &&
+          context.inputResponses?.confirmation
+        ) {
+          return {
+            content: [{ type: "text", text: `confirmed ${message}` }],
+          };
+        }
+        return {
+          content: [],
+          resultType: "input_required",
+          inputRequests: {
+            confirmation: {
+              method: "elicitation/create",
+              params: {
+                message: `Confirm ${message}`,
+                requestedSchema: {
+                  type: "object",
+                  properties: {
+                    confirmed: { type: "boolean" },
+                  },
+                  required: ["confirmed"],
+                },
+              },
+            },
+          },
+          requestState: `confirm-${message}`,
+        };
+      };
     default:
       throw new Error(`unknown mcp tool handler ${JSON.stringify(name)}`);
   }

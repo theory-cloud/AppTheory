@@ -2387,6 +2387,36 @@ def _fixture_mcp_tool_handler(name: str):
             }
 
         return task_echo
+    if resolved == "input_required":
+
+        def input_required(args: Any, context: Any) -> dict[str, Any]:
+            message = _fixture_mcp_message_arg(args)
+            if str(
+                getattr(context, "request_state", "")
+            ) == f"confirm-{message}" and "confirmation" in dict(
+                getattr(context, "input_responses", {}) or {}
+            ):
+                return {"content": [{"type": "text", "text": f"confirmed {message}"}]}
+            return {
+                "content": [],
+                "resultType": "input_required",
+                "inputRequests": {
+                    "confirmation": {
+                        "method": "elicitation/create",
+                        "params": {
+                            "message": f"Confirm {message}",
+                            "requestedSchema": {
+                                "type": "object",
+                                "properties": {"confirmed": {"type": "boolean"}},
+                                "required": ["confirmed"],
+                            },
+                        },
+                    }
+                },
+                "requestState": f"confirm-{message}",
+            }
+
+        return input_required
     raise RuntimeError(f"unknown mcp tool handler {name!r}")
 
 

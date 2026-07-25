@@ -44,11 +44,69 @@ type Icon struct {
 // ToolHandler is the function signature for tool implementations.
 type ToolHandler func(ctx context.Context, args json.RawMessage) (*ToolResult, error)
 
+// InputRequest is a server-initiated request that a 2026-07-28 client must
+// fulfill before retrying the original tool call.
+type InputRequest struct {
+	Method string `json:"method"`
+	Params any    `json:"params,omitempty"`
+}
+
+// InputRequiredResult describes the client input needed before a request can
+// complete. At least one of InputRequests or RequestState must be present.
+type InputRequiredResult struct {
+	ResultType    ResultType              `json:"resultType,omitempty"`
+	InputRequests map[string]InputRequest `json:"inputRequests,omitempty"`
+	RequestState  string                  `json:"requestState,omitempty"`
+	Meta          map[string]any          `json:"_meta,omitempty"`
+}
+
 // ToolResult is the result of a tool invocation.
 type ToolResult struct {
-	Content           []ContentBlock `json:"content"`
-	IsError           bool           `json:"isError,omitempty"`
-	StructuredContent map[string]any `json:"structuredContent,omitempty"`
+	Content           []ContentBlock          `json:"content"`
+	IsError           bool                    `json:"isError,omitempty"`
+	StructuredContent map[string]any          `json:"structuredContent,omitempty"`
+	ResultType        ResultType              `json:"resultType,omitempty"`
+	InputRequests     map[string]InputRequest `json:"inputRequests,omitempty"`
+	RequestState      string                  `json:"requestState,omitempty"`
+}
+
+// ToolInput contains client responses supplied when retrying a 2026-07-28
+// multi-round tool call.
+type ToolInput struct {
+	InputResponses map[string]any
+	RequestState   string
+}
+
+type toolInputContextKey struct{}
+
+// ToolInputFromContext returns the multi-round client input associated with a
+// tool invocation. It returns the zero value for ordinary calls.
+func ToolInputFromContext(ctx context.Context) ToolInput {
+	if ctx == nil {
+		return ToolInput{}
+	}
+	input, ok := ctx.Value(toolInputContextKey{}).(ToolInput)
+	if !ok {
+		return ToolInput{}
+	}
+	input.InputResponses = cloneStringAnyMap(input.InputResponses)
+	return input
+}
+
+func withToolInput(ctx context.Context, input ToolInput) context.Context {
+	input.InputResponses = cloneStringAnyMap(input.InputResponses)
+	return context.WithValue(ctx, toolInputContextKey{}, input)
+}
+
+func cloneStringAnyMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 type ContentBlock struct {

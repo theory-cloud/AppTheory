@@ -1,7 +1,7 @@
 {
-  "id": "mcp.stateless.request_flow",
+  "id": "mcp.result_type.input_required",
   "tier": "mcp",
-  "name": "MCP 2026-07-28 requests and responses flow without initialize or sessions",
+  "name": "MCP 2026-07-28 tool calls can request and consume multi-round client input",
   "setup": {
     "mcp": {
       "server": {
@@ -10,8 +10,8 @@
       },
       "tools": [
         {
-          "name": "echo",
-          "description": "Echo text",
+          "name": "continue",
+          "description": "Request confirmation before completing",
           "input_schema": {
             "type": "object",
             "properties": {
@@ -23,7 +23,7 @@
               "message"
             ]
           },
-          "handler": "echo_text"
+          "handler": "input_required"
         }
       ]
     }
@@ -32,7 +32,7 @@
     "mcp": {
       "steps": [
         {
-          "name": "tools_list_without_initialize",
+          "name": "tool_requests_client_input",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -45,37 +45,23 @@
               ],
               "mcp-protocol-version": [
                 "2026-07-28"
-              ]
-            },
-            "body": {
-              "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"list\",\"method\":\"tools/list\"}"
-            },
-            "is_base64": false
-          }
-        },
-        {
-          "name": "tools_call_without_session",
-          "request": {
-            "method": "POST",
-            "path": "/mcp",
-            "headers": {
-              "content-type": [
-                "application/json"
               ],
-              "accept": [
-                "application/json, text/event-stream"
+              "mcp-method": [
+                "tools/call"
+              ],
+              "mcp-name": [
+                "continue"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"call\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"stateless contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"round-one\",\"method\":\"tools/call\",\"params\":{\"name\":\"continue\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"elicitation\":{}}}}}"
             },
             "is_base64": false
           }
         },
         {
-          "name": "jsonrpc_response_without_session",
+          "name": "tool_consumes_client_input",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -88,11 +74,17 @@
               ],
               "mcp-protocol-version": [
                 "2026-07-28"
+              ],
+              "mcp-method": [
+                "tools/call"
+              ],
+              "mcp-name": [
+                "continue"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"client-response\",\"result\":{\"ok\":true}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"round-two\",\"method\":\"tools/call\",\"params\":{\"name\":\"continue\",\"arguments\":{\"message\":\"contract\"},\"requestState\":\"confirm-contract\",\"inputResponses\":{\"confirmation\":{\"action\":\"accept\",\"content\":{\"confirmed\":true}}},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{\"elicitation\":{}}}}}"
             },
             "is_base64": false
           }
@@ -116,26 +108,29 @@
           "cookies": [],
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "list",
+            "id": "round-one",
             "result": {
-              "tools": [
-                {
-                  "name": "echo",
-                  "description": "Echo text",
-                  "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                      "message": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "message"
-                    ]
+              "resultType": "input_required",
+              "inputRequests": {
+                "confirmation": {
+                  "method": "elicitation/create",
+                  "params": {
+                    "message": "Confirm contract",
+                    "requestedSchema": {
+                      "type": "object",
+                      "properties": {
+                        "confirmed": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "confirmed"
+                      ]
+                    }
                   }
                 }
-              ],
-              "resultType": "complete"
+              },
+              "requestState": "confirm-contract"
             }
           },
           "is_base64": false
@@ -153,27 +148,17 @@
           "cookies": [],
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "call",
+            "id": "round-two",
             "result": {
               "content": [
                 {
                   "type": "text",
-                  "text": "stateless contract"
+                  "text": "confirmed contract"
                 }
               ],
               "resultType": "complete"
             }
           },
-          "is_base64": false
-        },
-        {
-          "status": 202,
-          "headers": {
-            "x-request-id": [
-              "req_mcp_123"
-            ]
-          },
-          "cookies": [],
           "is_base64": false
         }
       ]

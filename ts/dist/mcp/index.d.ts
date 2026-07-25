@@ -9,7 +9,10 @@ export declare const MCP_PROTOCOL_VERSION_LEGACY = "2025-03-26";
 export declare const MCP_PROTOCOL_SHAPE_2025_11_25 = "2025-11-25";
 export declare const MCP_PROTOCOL_SHAPE_2026_07_28 = "2026-07-28";
 export declare const MCP_PROTOCOL_SHAPE_UNKNOWN = "unknown";
+export declare const MCP_RESULT_TYPE_COMPLETE = "complete";
+export declare const MCP_RESULT_TYPE_INPUT_REQUIRED = "input_required";
 export type McpProtocolShape = typeof MCP_PROTOCOL_SHAPE_2025_11_25 | typeof MCP_PROTOCOL_SHAPE_2026_07_28 | typeof MCP_PROTOCOL_SHAPE_UNKNOWN;
+export type McpResultType = typeof MCP_RESULT_TYPE_COMPLETE | typeof MCP_RESULT_TYPE_INPUT_REQUIRED;
 export declare const MCP_HEADER_PROTOCOL_VERSION = "mcp-protocol-version";
 export declare const MCP_HEADER_SESSION_ID = "mcp-session-id";
 export declare const MCP_HEADER_LAST_EVENT_ID = "last-event-id";
@@ -72,10 +75,23 @@ export interface McpContentBlock {
     size?: number;
     resource?: McpResourceContent;
 }
+export interface McpInputRequest {
+    method: string;
+    params?: unknown;
+}
+export interface McpInputRequiredResult {
+    resultType: typeof MCP_RESULT_TYPE_INPUT_REQUIRED;
+    inputRequests?: Record<string, McpInputRequest>;
+    requestState?: string;
+    _meta?: Record<string, unknown>;
+}
 export interface McpToolResult {
     content: McpContentBlock[];
     isError?: boolean;
     structuredContent?: Record<string, unknown>;
+    resultType?: McpResultType;
+    inputRequests?: Record<string, McpInputRequest>;
+    requestState?: string;
 }
 export interface McpToolExecution {
     taskSupport?: McpTaskSupport;
@@ -97,6 +113,8 @@ export interface McpToolContext {
     sessionId: string;
     requestId: unknown;
     method: string;
+    inputResponses?: Record<string, unknown>;
+    requestState?: string;
 }
 export interface McpResourceDef {
     uri: string;

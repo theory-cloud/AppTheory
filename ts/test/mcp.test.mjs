@@ -13,6 +13,8 @@ import {
   MCP_PROTOCOL_VERSION,
   MCP_PROTOCOL_VERSION_2026_07_28,
   MCP_PROTOCOL_VERSION_LEGACY,
+  MCP_RESULT_TYPE_COMPLETE,
+  MCP_RESULT_TYPE_INPUT_REQUIRED,
   DynamoMcpStreamStore,
   DynamoMcpTaskStore,
   McpEventNotFoundError,
@@ -120,7 +122,11 @@ test("mcp 2026-07-28 requests stay stateless", async () => {
   );
   assert.equal(ping.status, 200);
   assert.equal(sessionHeader(ping), "");
-  assert.deepEqual(await json(ping), { jsonrpc: "2.0", id: "ping", result: {} });
+  assert.deepEqual(await json(ping), {
+    jsonrpc: "2.0",
+    id: "ping",
+    result: { resultType: MCP_RESULT_TYPE_COMPLETE },
+  });
   assert.equal(generatedIds, 0);
 
   const initialize = await post(
@@ -137,6 +143,59 @@ test("mcp 2026-07-28 requests stay stateless", async () => {
     headers: { [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28] },
   });
   assert.equal(deleted.status, 405);
+});
+
+test("mcp 2026-07-28 tools support multi-round input_required results", async () => {
+  const server = createMcpServer("MCP", "test");
+  server.registry().registerTool({ name: "continue", inputSchema: {} }, (args, context) => {
+    if (context.requestState === "confirm" && context.inputResponses?.confirmation) {
+      return { content: [textBlock(`confirmed ${args.message}`)] };
+    }
+    return {
+      content: [],
+      resultType: MCP_RESULT_TYPE_INPUT_REQUIRED,
+      inputRequests: {
+        confirmation: {
+          method: "elicitation/create",
+          params: { message: "Confirm" },
+        },
+      },
+      requestState: "confirm",
+    };
+  });
+  const headers = {
+    [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28],
+  };
+
+  const first = await json(
+    await post(
+      server,
+      rpc("first", "tools/call", {
+        name: "continue",
+        arguments: { message: "contract" },
+      }),
+      headers,
+    ),
+  );
+  assert.equal(first.result.resultType, MCP_RESULT_TYPE_INPUT_REQUIRED);
+  assert.equal(first.result.requestState, "confirm");
+  assert.equal(first.result.inputRequests.confirmation.method, "elicitation/create");
+  assert.equal(first.result.content, undefined);
+
+  const second = await json(
+    await post(
+      server,
+      rpc("second", "tools/call", {
+        name: "continue",
+        arguments: { message: "contract" },
+        requestState: "confirm",
+        inputResponses: { confirmation: { action: "accept" } },
+      }),
+      headers,
+    ),
+  );
+  assert.equal(second.result.resultType, MCP_RESULT_TYPE_COMPLETE);
+  assert.equal(second.result.content[0].text, "confirmed contract");
 });
 
 function fakeDb() {

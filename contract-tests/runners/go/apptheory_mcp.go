@@ -235,6 +235,40 @@ func fixtureMCPToolHandler(name string) (mcp.ToolHandler, error) {
 				StructuredContent: map[string]any{"message": message},
 			}, nil
 		}, nil
+	case "input_required":
+		return func(ctx context.Context, args json.RawMessage) (*mcp.ToolResult, error) {
+			message, err := mcpFixtureMessageArg(args)
+			if err != nil {
+				return nil, err
+			}
+			input := mcp.ToolInputFromContext(ctx)
+			if input.RequestState == "confirm-"+message {
+				if _, ok := input.InputResponses["confirmation"]; ok {
+					return &mcp.ToolResult{
+						Content: []mcp.ContentBlock{{Type: "text", Text: "confirmed " + message}},
+					}, nil
+				}
+			}
+			return &mcp.ToolResult{
+				ResultType: mcp.ResultTypeInputRequired,
+				InputRequests: map[string]mcp.InputRequest{
+					"confirmation": {
+						Method: "elicitation/create",
+						Params: map[string]any{
+							"message": "Confirm " + message,
+							"requestedSchema": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"confirmed": map[string]any{"type": "boolean"},
+								},
+								"required": []string{"confirmed"},
+							},
+						},
+					},
+				},
+				RequestState: "confirm-" + message,
+			}, nil
+		}, nil
 	default:
 		return nil, fmt.Errorf("unknown mcp tool handler %q", name)
 	}

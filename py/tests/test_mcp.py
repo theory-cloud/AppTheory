@@ -17,6 +17,8 @@ from apptheory import (
     MCP_PROTOCOL_VERSION,
     MCP_PROTOCOL_VERSION_2026_07_28,
     MCP_PROTOCOL_VERSION_LEGACY,
+    MCP_RESULT_TYPE_COMPLETE,
+    MCP_RESULT_TYPE_INPUT_REQUIRED,
     DynamoMcpStreamStore,
     DynamoMcpTaskStore,
     McpContentBlock,
@@ -160,7 +162,14 @@ class McpRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(ping.status, 200)
         self.assertNotIn(MCP_HEADER_SESSION_ID, ping.headers)
-        self.assertEqual(_response_json(ping), {"jsonrpc": "2.0", "id": "ping", "result": {}})
+        self.assertEqual(
+            _response_json(ping),
+            {
+                "jsonrpc": "2.0",
+                "id": "ping",
+                "result": {"resultType": MCP_RESULT_TYPE_COMPLETE},
+            },
+        )
 
         initialize = server.serve(
             {
@@ -195,6 +204,77 @@ class McpRuntimeTests(unittest.TestCase):
             }
         )
         self.assertEqual(legacy.headers[MCP_HEADER_SESSION_ID], ["sess-after-stateless"])
+
+    def test_2026_07_28_tools_support_multi_round_input_required_results(self) -> None:
+        server = create_mcp_server("PyMCP", "test")
+
+        def continue_tool(args: Any, context: McpToolContext) -> dict[str, Any]:
+            message = str((args or {}).get("message") or "")
+            if context.request_state == "confirm" and (context.input_responses or {}).get("confirmation"):
+                return {"content": [{"type": "text", "text": f"confirmed {message}"}]}
+            return {
+                "content": [],
+                "resultType": MCP_RESULT_TYPE_INPUT_REQUIRED,
+                "inputRequests": {
+                    "confirmation": {
+                        "method": "elicitation/create",
+                        "params": {"message": "Confirm"},
+                    }
+                },
+                "requestState": "confirm",
+            }
+
+        server.registry().register_tool({"name": "continue", "inputSchema": {}}, continue_tool)
+        headers = _post_headers()
+        headers[MCP_HEADER_PROTOCOL_VERSION] = [MCP_PROTOCOL_VERSION_2026_07_28]
+
+        first = _response_json(
+            server.serve(
+                {
+                    "method": "POST",
+                    "headers": headers,
+                    "body": json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": "first",
+                            "method": "tools/call",
+                            "params": {
+                                "name": "continue",
+                                "arguments": {"message": "contract"},
+                            },
+                        }
+                    ),
+                }
+            )
+        )
+        self.assertEqual(first["result"]["resultType"], MCP_RESULT_TYPE_INPUT_REQUIRED)
+        self.assertEqual(first["result"]["requestState"], "confirm")
+        self.assertEqual(first["result"]["inputRequests"]["confirmation"]["method"], "elicitation/create")
+        self.assertNotIn("content", first["result"])
+
+        second = _response_json(
+            server.serve(
+                {
+                    "method": "POST",
+                    "headers": headers,
+                    "body": json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": "second",
+                            "method": "tools/call",
+                            "params": {
+                                "name": "continue",
+                                "arguments": {"message": "contract"},
+                                "requestState": "confirm",
+                                "inputResponses": {"confirmation": {"action": "accept"}},
+                            },
+                        }
+                    ),
+                }
+            )
+        )
+        self.assertEqual(second["result"]["resultType"], MCP_RESULT_TYPE_COMPLETE)
+        self.assertEqual(second["result"]["content"][0]["text"], "confirmed contract")
 
     def test_tools_only_harness(self) -> None:
         server = create_mcp_server("PyMCP", "test", {"id_generator": sequence_mcp_id_generator(["sess-1"])})
@@ -438,13 +518,11 @@ class McpRuntimeTests(unittest.TestCase):
         self.assertEqual(unsupported_protocol.response.status, 400)
         self.assertEqual(unsupported_protocol.body_json, {"error": "unsupported MCP-Protocol-Version"})
 
-        legacy_server = create_mcp_server(
-            "PyMCP", "test", {"id_generator": sequence_mcp_id_generator(["sess-legacy"])}
-        )
+        legacy_server = create_mcp_server("PyMCP", "test", {"id_generator": sequence_mcp_id_generator(["sess-legacy"])})
         legacy_harness = create_mcp_test_harness(legacy_server)
-        legacy_session = legacy_harness.initialize(id="init", protocol_version=MCP_PROTOCOL_VERSION_LEGACY).response.headers[
-            "mcp-session-id"
-        ][0]
+        legacy_session = legacy_harness.initialize(
+            id="init", protocol_version=MCP_PROTOCOL_VERSION_LEGACY
+        ).response.headers["mcp-session-id"][0]
         mismatch = legacy_harness.call(legacy_session, "ping", {}, "mismatch")
         self.assertEqual(mismatch.response.status, 400)
         self.assertEqual(mismatch.body_json, {"error": "MCP-Protocol-Version mismatch"})
@@ -607,7 +685,9 @@ class McpRuntimeTests(unittest.TestCase):
         self.assertEqual(unknown.body_json["error"]["code"], MCP_CODE_METHOD_NOT_FOUND)
 
         server = create_mcp_server("PyMCP", "test", {"id_generator": sequence_mcp_id_generator(["sess-tools"])})
-        server.registry().register_tool({"name": "boom", "inputSchema": {}}, lambda _args, _ctx: (_ for _ in ()).throw(RuntimeError("boom")))
+        server.registry().register_tool(
+            {"name": "boom", "inputSchema": {}}, lambda _args, _ctx: (_ for _ in ()).throw(RuntimeError("boom"))
+        )
         server.registry().register_tool(
             {"name": "required", "inputSchema": {}, "execution": {"taskSupport": "required"}},
             lambda _args, _ctx: {"content": [{"type": "text", "text": "ok"}]},
@@ -684,9 +764,7 @@ class McpRuntimeTests(unittest.TestCase):
 
         invalid_ttl = harness.call(session_id, "tools/call", {"name": "required", "task": {"ttl": 0}}, "ttl-zero")
         self.assertEqual(invalid_ttl.body_json["error"]["code"], MCP_CODE_INVALID_PARAMS)
-        excessive_ttl = harness.call(
-            session_id, "tools/call", {"name": "required", "task": {"ttl": 3000}}, "ttl-high"
-        )
+        excessive_ttl = harness.call(session_id, "tools/call", {"name": "required", "task": {"ttl": 3000}}, "ttl-high")
         self.assertEqual(excessive_ttl.body_json["error"]["code"], MCP_CODE_INVALID_PARAMS)
 
         ok = harness.call(
@@ -696,7 +774,9 @@ class McpRuntimeTests(unittest.TestCase):
             "ok",
         )
         self.assertEqual(ok.body_json["result"]["task"]["taskId"], "task-ok")
-        self.assertEqual(ok.body_json["result"]["_meta"]["io.modelcontextprotocol/model-immediate-response"], "prefer-task")
+        self.assertEqual(
+            ok.body_json["result"]["_meta"]["io.modelcontextprotocol/model-immediate-response"], "prefer-task"
+        )
 
         task_failure = harness.call(session_id, "tools/call", {"name": "fail", "task": {}}, "fail")
         self.assertEqual(task_failure.body_json["result"]["task"]["taskId"], "task-fail")

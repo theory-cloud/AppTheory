@@ -482,7 +482,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>914 exported top-level symbols</summary>
+<summary>921 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins
@@ -511,12 +511,11 @@ ControllerCommandContract, ControllerContract, ControllerDeploymentDefaults, Con
 ControllerOption, ControllerRequest, ControllerResponse, CORSConfig, CreatedJSON
 CreateIdempotencyRecordInput, CreateJobInput, CreateSessionInput, CreateTaskResult, DCRResult
 DecodeCloudWatchLogsSubscription, DecodeLoggingProfileJSON, DecodeLoggingProfileYAML, DefaultCapabilityConfig, DefaultConfig
-DetectProtocolVersion
 DefaultControllerContract, DefaultEmbeddingDimensions, DefaultEnvironmentErrorNotifications, DefaultEventBusConfig, DefaultLifecycleContract
 DefaultLoggingProfile, DefaultOperationContract, DefaultProviderStateMappings, DefaultQueryTopK, DefaultRealLifecycleContract
 DefaultSessionProviderID, DefaultSessionRegistryContract, DefaultSessionRegistryTableName, DefaultTitanEmbedTextModelID, DeleteInput
-DiscoverResult, Discovery, DynamicClientRegistrationPolicy, DynamicClientRegistrationRequest, DynamicClientRegistrationResponse, DynamoDBEventBus
-DynamoDBStreamEvent, DynamoDBStreamEventOptions, DynamoDBStreamHandler, DynamoDBStreamRecordOptions, DynamoDBStreamRecordSummary
+DetectProtocolVersion, DiscoverResult, Discovery, DynamicClientRegistrationPolicy, DynamicClientRegistrationRequest, DynamicClientRegistrationResponse
+DynamoDBEventBus, DynamoDBStreamEvent, DynamoDBStreamEventOptions, DynamoDBStreamHandler, DynamoDBStreamRecordOptions, DynamoDBStreamRecordSummary
 DynamoJobLedger, DynamoRateLimiter, DynamoSessionStore, DynamoStreamStore, DynamoTaskStore
 Embedder, EmbeddingErrorCode, EMFMetricSink, EMFMetricSinkOption, EncodeLoggingProfileEvent
 EncodeLoggingProfileEventWithSanitizer, Env, EnvEgressNetworkConnectorRefs, EnvEmbeddingDimensions, EnvEmbeddingModelID
@@ -550,8 +549,8 @@ HookSuspend, HookTeardown, HookTerminate, HookValidate, HTML
 HTMLStream, HTTPErrorFormat, HTTPErrorFormatFlatLegacy, HTTPErrorFormatNested, HTTPEventOptions
 Icon, IdempotencyCreateOutcome, IdempotencyOutcomeAlreadyCompleted, IdempotencyOutcomeAlreadyInProgress, IdempotencyOutcomeCreated
 IdempotencyStatus, IdempotencyStatusCompleted, IdempotencyStatusInProgress, IdentifierKey, IdGenerator
-IDGenerator, InitializeRequest, InitialSessionListenerBudgetOptions, InspectSemaphoreInput, IsLambda
-IsTerminalState, JobLedger, JobLock, JobLockSortKey, JobMeta
+IDGenerator, InitializeRequest, InitialSessionListenerBudgetOptions, InputRequest, InputRequiredResult, InspectSemaphoreInput
+IsLambda, IsTerminalState, JobLedger, JobLock, JobLockSortKey, JobMeta
 JobMetaSortKey, JobPartitionKey, JobRecord, JobRecordSortKey, JobRequest
 JobRequestSortKey, JobStatus, JobStatusCanceled, JobStatusFailed, JobStatusPending
 JobStatusRunning, JobStatusSucceeded, JSON, KindControllerSession, KindLifecycle
@@ -600,8 +599,8 @@ PKCEVerifyS256, Policy, PolicyAction, PolicyAllow, PolicyDecision
 PolicyFromEnv, PolicyFromText, PolicyFullyRedact, PolicyHook, PolicyPartialMask
 PolicyRule, PrincipalAuthHook, ProfileLogger, ProfileLoggerOption, PromptArgument
 PromptDef, PromptHandler, PromptMessage, PromptRegistry, PromptResult
-ProtocolShape, ProtocolShape20251125, ProtocolShape20260728, ProtocolShapeUnknown, ProtocolVersion20260728
-ProtectedResourceMetadata, ProtectedResourceMetadataHandler, ProtectedResourceMetadataURLForRequest, ProtectedResourceWWWAuthenticate, Provider
+ProtectedResourceMetadata, ProtectedResourceMetadataHandler, ProtectedResourceMetadataURLForRequest, ProtectedResourceWWWAuthenticate, ProtocolShape
+ProtocolShape20251125, ProtocolShape20260728, ProtocolShapeUnknown, ProtocolVersion20260728, Provider
 ProviderCall, ProviderCloudWatchLogging, ProviderIdlePolicy, ProviderInvokeInput, ProviderInvokeOutput, ProviderListInput
 ProviderListOutput, ProviderLogging, ProviderPortScope, ProviderRunInput, ProviderSession, ProviderSessionBinding
 ProviderSessionInput, ProviderStateMapping, ProviderToken, ProviderTokenInput, PutInput
@@ -616,9 +615,9 @@ ReleaseSemaphoreSlotInput, ReportKinesisPutRecordsFailures, Request, RequireAnyS
 RequireBearerTokenMiddleware, RequireBearerTokenOptions, RequiredForbiddenOperationFields, RequiredOperations, RequireEventBridgeWorkloadEnvelope
 RequireScope, ResourceContent, ResourceDef, ResourceHandler, ResourceMetadataURLFromMcpEndpoint
 ResourceName, ResourceRegistry, ResourceSubscription, ResourceSubscriptionHook, ResourceTemplateDef
-Response, RFC9728ResourceMetadataURL, RouteOption, RPCError, S3EncryptionBucketDefault
-S3EncryptionConfig, S3EncryptionKMS, S3EncryptionMode, S3EncryptionS3Managed, S3StoreConfig
-S3VectorsAPI, S3VectorStore, SafeError, SafeJSONForHTML, SanitizationType
+Response, ResultType, ResultTypeComplete, ResultTypeInputRequired, RFC9728ResourceMetadataURL, RouteOption
+RPCError, S3EncryptionBucketDefault, S3EncryptionConfig, S3EncryptionKMS, S3EncryptionMode, S3EncryptionS3Managed
+S3StoreConfig, S3VectorsAPI, S3VectorStore, SafeError, SafeJSONForHTML, SanitizationType
 SanitizeFields, SanitizeFieldValue, SanitizeJSON, SanitizeJSONValue, SanitizeLogString
 SanitizerFunc, SanitizeXML, ScrubFreeText, SemanticIndex, SemanticRecord
 SemaphoreInspection, SemaphoreLease, SemaphorePartitionKey, SemaphoreSlotSortKey, SensitiveFields
@@ -644,8 +643,8 @@ TaskStore, TaskSupport, TaskSupportForbidden, TaskSupportOptional, TaskSupportRe
 TenantBindingRule, TestLogger, Text, Tier, TierP0
 TierP1, TierP2, TimeoutConfig, TimeoutMiddleware, TimeWindow
 TitanEmbedder, TokenIssuanceContract, TokenResponse, ToolAnnotations, ToolDef
-ToolExecution, ToolHandler, ToolLifecycleFinish, ToolLifecycleOptions, ToolLifecycleOutcome
-ToolLifecycleOutcomeContextCanceled, ToolLifecycleOutcomeHandledError, ToolLifecycleOutcomeInvalidParams, ToolLifecycleOutcomePanic, ToolLifecycleOutcomeSuccess
+ToolExecution, ToolHandler, ToolInput, ToolInputFromContext, ToolLifecycleFinish, ToolLifecycleOptions
+ToolLifecycleOutcome, ToolLifecycleOutcomeContextCanceled, ToolLifecycleOutcomeHandledError, ToolLifecycleOutcomeInvalidParams, ToolLifecycleOutcomePanic, ToolLifecycleOutcomeSuccess
 ToolLifecycleOutcomeTimeout, ToolLifecycleOutcomeUnhandledError, ToolLifecycleStart, ToolLifecycleTelemetry, ToolRegistry
 ToolResult, TransitionJobStatusInput, UpsertRecordStatusInput, UsageStats, UsageWindow
 ValidateControllerContract, ValidateDimension, ValidateDynamicClientRegistrationRequest, ValidateEscapeHatches, ValidateKey

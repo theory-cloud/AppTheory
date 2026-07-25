@@ -18,11 +18,16 @@ export const MCP_PROTOCOL_VERSION_LEGACY = "2025-03-26";
 export const MCP_PROTOCOL_SHAPE_2025_11_25 = MCP_PROTOCOL_VERSION;
 export const MCP_PROTOCOL_SHAPE_2026_07_28 = MCP_PROTOCOL_VERSION_2026_07_28;
 export const MCP_PROTOCOL_SHAPE_UNKNOWN = "unknown";
+export const MCP_RESULT_TYPE_COMPLETE = "complete";
+export const MCP_RESULT_TYPE_INPUT_REQUIRED = "input_required";
 
 export type McpProtocolShape =
   | typeof MCP_PROTOCOL_SHAPE_2025_11_25
   | typeof MCP_PROTOCOL_SHAPE_2026_07_28
   | typeof MCP_PROTOCOL_SHAPE_UNKNOWN;
+export type McpResultType =
+  | typeof MCP_RESULT_TYPE_COMPLETE
+  | typeof MCP_RESULT_TYPE_INPUT_REQUIRED;
 
 export const MCP_HEADER_PROTOCOL_VERSION = "mcp-protocol-version";
 export const MCP_HEADER_SESSION_ID = "mcp-session-id";
@@ -138,10 +143,25 @@ export interface McpContentBlock {
   resource?: McpResourceContent;
 }
 
+export interface McpInputRequest {
+  method: string;
+  params?: unknown;
+}
+
+export interface McpInputRequiredResult {
+  resultType: typeof MCP_RESULT_TYPE_INPUT_REQUIRED;
+  inputRequests?: Record<string, McpInputRequest>;
+  requestState?: string;
+  _meta?: Record<string, unknown>;
+}
+
 export interface McpToolResult {
   content: McpContentBlock[];
   isError?: boolean;
   structuredContent?: Record<string, unknown>;
+  resultType?: McpResultType;
+  inputRequests?: Record<string, McpInputRequest>;
+  requestState?: string;
 }
 
 export interface McpToolExecution {
@@ -176,6 +196,8 @@ export interface McpToolContext {
   sessionId: string;
   requestId: unknown;
   method: string;
+  inputResponses?: Record<string, unknown>;
+  requestState?: string;
 }
 
 export interface McpResourceDef {
@@ -1555,7 +1577,10 @@ export class McpServer {
       );
     }
     if (isTaskMethod(request.method)) {
-      return this.dispatchTaskMethod(request, sessionId);
+      return responseForProtocol(
+        await this.dispatchTaskMethod(request, sessionId),
+        protocolVersion,
+      );
     }
     if (!this.methodCapabilityEnabled(request.method)) {
       return newErrorResponse(
@@ -1565,45 +1590,58 @@ export class McpServer {
       );
     }
 
+    let response: McpRPCResponse;
     switch (request.method) {
       case "server/discover":
-        return this.handleDiscover(request);
+        response = this.handleDiscover(request);
+        break;
       case "initialize":
-        return this.handleInitialize(
+        response = this.handleInitialize(
           request,
           negotiateProtocolVersion(request.params),
         );
+        break;
       case "ping":
-        return newResultResponse(request.id, {});
+        response = newResultResponse(request.id, {});
+        break;
       case "tools/list":
-        return newResultResponse(request.id, {
+        response = newResultResponse(request.id, {
           tools: this.toolRegistry.list(),
         });
+        break;
       case "tools/call":
-        return this.handleToolsCall(request, sessionId);
+        response = await this.handleToolsCall(request, sessionId);
+        break;
       case "resources/list":
-        return newResultResponse(request.id, {
+        response = newResultResponse(request.id, {
           resources: this.resourceRegistry.list(),
         });
+        break;
       case "resources/read":
-        return this.handleResourcesRead(request);
+        response = await this.handleResourcesRead(request);
+        break;
       case "resources/templates/list":
-        return newResultResponse(request.id, {
+        response = newResultResponse(request.id, {
           resourceTemplates: this.resourceRegistry.listTemplates(),
         });
+        break;
       case "prompts/list":
-        return newResultResponse(request.id, {
+        response = newResultResponse(request.id, {
           prompts: this.promptRegistry.list(),
         });
+        break;
       case "prompts/get":
-        return this.handlePromptsGet(request);
+        response = await this.handlePromptsGet(request);
+        break;
       default:
-        return newErrorResponse(
+        response = newErrorResponse(
           request.id,
           MCP_CODE_METHOD_NOT_FOUND,
           `Method not found: ${request.method}`,
         );
+        break;
     }
+    return responseForProtocol(response, protocolVersion);
   }
 
   private async dispatchTaskMethod(
@@ -1725,11 +1763,22 @@ export class McpServer {
       );
     }
     try {
-      const result = await this.toolRegistry.call(name, params["arguments"], {
+      const toolContext: McpToolContext = {
         sessionId,
         requestId: request.id,
         method: request.method,
-      });
+      };
+      if (isRecord(params["inputResponses"])) {
+        toolContext.inputResponses = { ...params["inputResponses"] };
+      }
+      if (typeof params["requestState"] === "string") {
+        toolContext.requestState = params["requestState"];
+      }
+      const result = await this.toolRegistry.call(
+        name,
+        params["arguments"],
+        toolContext,
+      );
       return newResultResponse(request.id, result);
     } catch (err) {
       return toolCallError(request.id, name, err);
@@ -2615,6 +2664,95 @@ function newResultResponse(id: unknown, result: unknown): McpRPCResponse {
   return { jsonrpc: JSONRPC_VERSION, id: id ?? null, result };
 }
 
+function responseForProtocol(
+  response: McpRPCResponse,
+  protocolVersion: string,
+): McpRPCResponse {
+  if (response.error || response.result === undefined) {
+    return response;
+  }
+  if (!isRecord(response.result)) {
+    return newErrorResponse(
+      response.id,
+      MCP_CODE_INTERNAL_ERROR,
+      "internal error",
+    );
+  }
+
+  const result = response.result;
+  const declared = result["resultType"];
+  if (declared === MCP_RESULT_TYPE_INPUT_REQUIRED) {
+    if (protocolVersion !== MCP_PROTOCOL_VERSION_2026_07_28) {
+      return newErrorResponse(
+        response.id,
+        MCP_CODE_INVALID_REQUEST,
+        "input_required results require MCP protocol version 2026-07-28",
+      );
+    }
+    const inputRequests = isRecord(result["inputRequests"])
+      ? { ...result["inputRequests"] }
+      : undefined;
+    const requestState =
+      typeof result["requestState"] === "string" ? result["requestState"] : "";
+    if (
+      (!inputRequests || Object.keys(inputRequests).length === 0) &&
+      !requestState.trim()
+    ) {
+      return newErrorResponse(
+        response.id,
+        MCP_CODE_INTERNAL_ERROR,
+        "internal error",
+      );
+    }
+    const inputRequired: McpInputRequiredResult = {
+      resultType: MCP_RESULT_TYPE_INPUT_REQUIRED,
+    };
+    if (inputRequests && Object.keys(inputRequests).length > 0) {
+      inputRequired.inputRequests = inputRequests as Record<
+        string,
+        McpInputRequest
+      >;
+    }
+    if (requestState.trim()) {
+      inputRequired.requestState = requestState;
+    }
+    if (isRecord(result["_meta"])) {
+      inputRequired._meta = { ...result["_meta"] };
+    }
+    return { ...response, result: inputRequired };
+  }
+
+  if (
+    declared !== undefined &&
+    declared !== "" &&
+    declared !== MCP_RESULT_TYPE_COMPLETE
+  ) {
+    return newErrorResponse(
+      response.id,
+      MCP_CODE_INTERNAL_ERROR,
+      "internal error",
+    );
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(result, "inputRequests") ||
+    Object.prototype.hasOwnProperty.call(result, "requestState")
+  ) {
+    return newErrorResponse(
+      response.id,
+      MCP_CODE_INTERNAL_ERROR,
+      "internal error",
+    );
+  }
+
+  const complete = { ...result };
+  if (protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28) {
+    complete["resultType"] = MCP_RESULT_TYPE_COMPLETE;
+  } else {
+    delete complete["resultType"];
+  }
+  return { ...response, result: complete };
+}
+
 function badRequest(message: string): Response {
   return jsonBytesResponse(400, { error: message });
 }
@@ -2709,6 +2847,48 @@ function cloneToolDef(definition: McpToolDef): McpToolDef {
 }
 
 function normalizeToolResult(result: McpToolResult): McpToolResult {
+  const resultType = result?.resultType;
+  if (
+    resultType !== undefined &&
+    resultType !== MCP_RESULT_TYPE_COMPLETE &&
+    resultType !== MCP_RESULT_TYPE_INPUT_REQUIRED
+  ) {
+    throw new Error(`unsupported MCP resultType: ${String(resultType)}`);
+  }
+  if (resultType === MCP_RESULT_TYPE_INPUT_REQUIRED) {
+    const inputRequests = isRecord(result?.inputRequests)
+      ? { ...result.inputRequests }
+      : undefined;
+    const requestState = String(result?.requestState ?? "");
+    if (
+      (!inputRequests || Object.keys(inputRequests).length === 0) &&
+      !requestState.trim()
+    ) {
+      throw new Error(
+        "input_required result requires inputRequests or requestState",
+      );
+    }
+    const out: McpToolResult = {
+      content: [],
+      resultType: MCP_RESULT_TYPE_INPUT_REQUIRED,
+    };
+    if (inputRequests && Object.keys(inputRequests).length > 0) {
+      out.inputRequests = inputRequests as Record<string, McpInputRequest>;
+    }
+    if (requestState.trim()) {
+      out.requestState = requestState;
+    }
+    return out;
+  }
+  if (
+    result?.inputRequests !== undefined ||
+    String(result?.requestState ?? "").trim()
+  ) {
+    throw new Error(
+      "inputRequests and requestState require resultType input_required",
+    );
+  }
+
   const out: McpToolResult = {
     content: Array.isArray(result?.content)
       ? result.content.map(normalizeContentBlock)
@@ -2719,6 +2899,9 @@ function normalizeToolResult(result: McpToolResult): McpToolResult {
   }
   if (result?.structuredContent && isRecord(result.structuredContent)) {
     out.structuredContent = { ...result.structuredContent };
+  }
+  if (resultType === MCP_RESULT_TYPE_COMPLETE) {
+    out.resultType = MCP_RESULT_TYPE_COMPLETE;
   }
   return out;
 }

@@ -16,6 +16,15 @@ const (
 	CodeServerError    = -32000
 )
 
+// ResultType identifies whether a 2026-07-28 result is final or requires
+// another client-input round trip.
+type ResultType string
+
+const (
+	ResultTypeComplete      ResultType = "complete"
+	ResultTypeInputRequired ResultType = "input_required"
+)
+
 // jsonrpcVersion is the JSON-RPC protocol version string.
 const jsonrpcVersion = "2.0"
 
@@ -205,6 +214,32 @@ func NewResultResponse(id any, result any) *Response {
 		ID:      id,
 		Result:  result,
 	}
+}
+
+type resultWithType struct {
+	result     any
+	resultType ResultType
+}
+
+func (result resultWithType) MarshalJSON() ([]byte, error) {
+	return marshalResultWithType(result.result, result.resultType)
+}
+
+func marshalResultWithType(result any, resultType ResultType) ([]byte, error) {
+	data, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("marshal result: %w", err)
+	}
+	var object map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(data, &object); unmarshalErr != nil || object == nil {
+		return nil, errors.New("MCP result must be a JSON object")
+	}
+	encodedType, err := json.Marshal(resultType)
+	if err != nil {
+		return nil, fmt.Errorf("marshal resultType: %w", err)
+	}
+	object["resultType"] = encodedType
+	return json.Marshal(object)
 }
 
 // trimLeftSpace trims leading whitespace bytes (space, tab, newline, carriage return).

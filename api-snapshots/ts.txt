@@ -180,6 +180,8 @@ MCP_PROTOCOL_VERSION	const
 MCP_PROTOCOL_VERSION_2026_07_28	const
 MCP_PROTOCOL_VERSION_LEGACY	const
 MCP_PROTOCOL_VERSION_PRIOR	const
+MCP_RESULT_TYPE_COMPLETE	const
+MCP_RESULT_TYPE_INPUT_REQUIRED	const
 MICROVM_AWS_LAMBDA_PROVIDER_ID	const
 MICROVM_CONTRACT_NAME	const
 MICROVM_CONTRACT_VERSION	const
@@ -223,6 +225,8 @@ MaxQueryTopK	const
 McpContentBlock	interface
 McpDiscoverResult	interface
 McpEventNotFoundError	class
+McpInputRequest	interface
+McpInputRequiredResult	interface
 McpJSONRecord	type
 McpJSONValue	type
 McpPromptArgument	interface
@@ -242,6 +246,7 @@ McpResourceDef	interface
 McpResourceHandler	type
 McpResourceRegistry	class
 McpResourceTemplateDef	interface
+McpResultType	type
 McpSSEEvent	interface
 McpServer	class
 McpServerIdentity	interface

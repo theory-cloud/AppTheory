@@ -53,7 +53,9 @@
           "body_json": {
             "jsonrpc": "2.0",
             "id": "meta-ping",
-            "result": {}
+            "result": {
+              "resultType": "complete"
+            }
           },
           "is_base64": false
         }

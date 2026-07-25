@@ -27,6 +27,9 @@ MCP_PROTOCOL_SHAPE_2025_11_25 = MCP_PROTOCOL_VERSION
 MCP_PROTOCOL_SHAPE_2026_07_28 = MCP_PROTOCOL_VERSION_2026_07_28
 MCP_PROTOCOL_SHAPE_UNKNOWN = "unknown"
 McpProtocolShape = Literal["2025-11-25", "2026-07-28", "unknown"]
+MCP_RESULT_TYPE_COMPLETE = "complete"
+MCP_RESULT_TYPE_INPUT_REQUIRED = "input_required"
+McpResultType = Literal["complete", "input_required"]
 
 MCP_HEADER_PROTOCOL_VERSION = "mcp-protocol-version"
 MCP_HEADER_SESSION_ID = "mcp-session-id"
@@ -143,10 +146,27 @@ class McpContentBlock:
 
 
 @dataclass(slots=True)
+class McpInputRequest:
+    method: str
+    params: Any | None = None
+
+
+@dataclass(slots=True)
+class McpInputRequiredResult:
+    result_type: McpResultType = MCP_RESULT_TYPE_INPUT_REQUIRED
+    input_requests: dict[str, McpInputRequest | dict[str, Any]] | None = None
+    request_state: str = ""
+    meta: dict[str, Any] | None = None
+
+
+@dataclass(slots=True)
 class McpToolResult:
     content: list[McpContentBlock | dict[str, Any]] = field(default_factory=list)
     is_error: bool = False
     structured_content: dict[str, Any] | None = None
+    result_type: McpResultType | None = None
+    input_requests: dict[str, McpInputRequest | dict[str, Any]] | None = None
+    request_state: str = ""
 
 
 @dataclass(slots=True)
@@ -174,6 +194,8 @@ class McpToolContext:
     session_id: str
     request_id: Any
     method: str
+    input_responses: dict[str, Any] | None = None
+    request_state: str = ""
 
 
 @dataclass(slots=True)
@@ -1181,30 +1203,32 @@ class McpServer:
         if protocol_version == MCP_PROTOCOL_VERSION_2026_07_28 and _stateless_request_requires_session(request):
             return _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, f"Method not found: {request.method}")
         if _is_task_method(request.method):
-            return self._dispatch_task_method(request, session_id)
+            return _response_for_protocol(self._dispatch_task_method(request, session_id), protocol_version)
         if not self._method_capability_enabled(request.method):
             return _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, f"Method not found: {request.method}")
         if request.method == "server/discover":
-            return self._handle_discover(request)
-        if request.method == "initialize":
-            return self._handle_initialize(request, _negotiate_protocol_version(request.params))
-        if request.method == "ping":
-            return _new_result_response(request.id, {})
-        if request.method == "tools/list":
-            return _new_result_response(request.id, {"tools": self.tool_registry.list()})
-        if request.method == "tools/call":
-            return self._handle_tools_call(request, session_id)
-        if request.method == "resources/list":
-            return _new_result_response(request.id, {"resources": self.resource_registry.list()})
-        if request.method == "resources/read":
-            return self._handle_resources_read(request)
-        if request.method == "resources/templates/list":
-            return _new_result_response(request.id, {"resourceTemplates": self.resource_registry.list_templates()})
-        if request.method == "prompts/list":
-            return _new_result_response(request.id, {"prompts": self.prompt_registry.list()})
-        if request.method == "prompts/get":
-            return self._handle_prompts_get(request)
-        return _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, f"Method not found: {request.method}")
+            response = self._handle_discover(request)
+        elif request.method == "initialize":
+            response = self._handle_initialize(request, _negotiate_protocol_version(request.params))
+        elif request.method == "ping":
+            response = _new_result_response(request.id, {})
+        elif request.method == "tools/list":
+            response = _new_result_response(request.id, {"tools": self.tool_registry.list()})
+        elif request.method == "tools/call":
+            response = self._handle_tools_call(request, session_id)
+        elif request.method == "resources/list":
+            response = _new_result_response(request.id, {"resources": self.resource_registry.list()})
+        elif request.method == "resources/read":
+            response = self._handle_resources_read(request)
+        elif request.method == "resources/templates/list":
+            response = _new_result_response(request.id, {"resourceTemplates": self.resource_registry.list_templates()})
+        elif request.method == "prompts/list":
+            response = _new_result_response(request.id, {"prompts": self.prompt_registry.list()})
+        elif request.method == "prompts/get":
+            response = self._handle_prompts_get(request)
+        else:
+            response = _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, f"Method not found: {request.method}")
+        return _response_for_protocol(response, protocol_version)
 
     def _dispatch_task_method(self, request: _ParsedRPCRequest, session_id: str) -> dict[str, Any]:
         if not self._tasks_enabled():
@@ -1289,7 +1313,15 @@ class McpServer:
             result = self.tool_registry.call(
                 name,
                 params.get("arguments"),
-                McpToolContext(session_id=session_id, request_id=request.id, method=request.method),
+                McpToolContext(
+                    session_id=session_id,
+                    request_id=request.id,
+                    method=request.method,
+                    input_responses=(
+                        dict(params["inputResponses"]) if isinstance(params.get("inputResponses"), Mapping) else None
+                    ),
+                    request_state=(str(params["requestState"]) if isinstance(params.get("requestState"), str) else ""),
+                ),
             )
             return _new_result_response(request.id, result)
         except Exception as exc:  # noqa: BLE001
@@ -1866,6 +1898,50 @@ def _new_result_response(id: Any, result: Any) -> dict[str, Any]:
     return {"jsonrpc": JSONRPC_VERSION, "id": id if id is not None else None, "result": result}
 
 
+def _response_for_protocol(response: dict[str, Any], protocol_version: str) -> dict[str, Any]:
+    if response.get("error") is not None or "result" not in response:
+        return response
+    raw_result = response.get("result")
+    if not isinstance(raw_result, Mapping):
+        return _new_error_response(response.get("id"), MCP_CODE_INTERNAL_ERROR, "internal error")
+
+    result = dict(raw_result)
+    declared = result.get("resultType", result.get("result_type"))
+    if declared == MCP_RESULT_TYPE_INPUT_REQUIRED:
+        if protocol_version != MCP_PROTOCOL_VERSION_2026_07_28:
+            return _new_error_response(
+                response.get("id"),
+                MCP_CODE_INVALID_REQUEST,
+                "input_required results require MCP protocol version 2026-07-28",
+            )
+        raw_requests = result.get("inputRequests", result.get("input_requests"))
+        input_requests = dict(raw_requests) if isinstance(raw_requests, Mapping) else {}
+        request_state = str(result.get("requestState", result.get("request_state")) or "")
+        if not input_requests and not request_state.strip():
+            return _new_error_response(response.get("id"), MCP_CODE_INTERNAL_ERROR, "internal error")
+        input_required: dict[str, Any] = {"resultType": MCP_RESULT_TYPE_INPUT_REQUIRED}
+        if input_requests:
+            input_required["inputRequests"] = input_requests
+        if request_state.strip():
+            input_required["requestState"] = request_state
+        raw_meta = result.get("_meta", result.get("meta"))
+        if isinstance(raw_meta, Mapping):
+            input_required["_meta"] = dict(raw_meta)
+        return {**response, "result": input_required}
+
+    if declared not in {None, "", MCP_RESULT_TYPE_COMPLETE}:
+        return _new_error_response(response.get("id"), MCP_CODE_INTERNAL_ERROR, "internal error")
+    if any(key in result for key in ("inputRequests", "input_requests", "requestState", "request_state")):
+        return _new_error_response(response.get("id"), MCP_CODE_INTERNAL_ERROR, "internal error")
+
+    result.pop("result_type", None)
+    if protocol_version == MCP_PROTOCOL_VERSION_2026_07_28:
+        result["resultType"] = MCP_RESULT_TYPE_COMPLETE
+    else:
+        result.pop("resultType", None)
+    return {**response, "result": result}
+
+
 def _bad_request(message: str) -> Response:
     return _json_bytes_response(400, {"error": message})
 
@@ -1938,6 +2014,27 @@ def _normalize_tool_def(definition: Mapping[str, Any]) -> dict[str, Any]:
 
 def _normalize_tool_result(result: Any) -> dict[str, Any]:
     raw = _as_dict(result)
+    result_type = raw.get("resultType", raw.get("result_type"))
+    if result_type not in {None, "", MCP_RESULT_TYPE_COMPLETE, MCP_RESULT_TYPE_INPUT_REQUIRED}:
+        raise ValueError(f"unsupported MCP resultType: {result_type}")
+    if result_type == MCP_RESULT_TYPE_INPUT_REQUIRED:
+        raw_requests = raw.get("inputRequests", raw.get("input_requests"))
+        input_requests = dict(raw_requests) if isinstance(raw_requests, Mapping) else {}
+        request_state = str(raw.get("requestState", raw.get("request_state")) or "")
+        if not input_requests and not request_state.strip():
+            raise ValueError("input_required result requires inputRequests or requestState")
+        out: dict[str, Any] = {"content": [], "resultType": MCP_RESULT_TYPE_INPUT_REQUIRED}
+        if input_requests:
+            out["inputRequests"] = {str(key): _normalize_input_request(value) for key, value in input_requests.items()}
+        if request_state.strip():
+            out["requestState"] = request_state
+        return out
+    if (
+        raw.get("inputRequests", raw.get("input_requests")) is not None
+        or str(raw.get("requestState", raw.get("request_state")) or "").strip()
+    ):
+        raise ValueError("inputRequests and requestState require resultType input_required")
+
     content = raw.get("content")
     out: dict[str, Any] = {
         "content": [_normalize_content_block(block) for block in content] if isinstance(content, list) else []
@@ -1947,6 +2044,19 @@ def _normalize_tool_result(result: Any) -> dict[str, Any]:
     structured = raw.get("structuredContent", raw.get("structured_content"))
     if isinstance(structured, dict):
         out["structuredContent"] = dict(structured)
+    if result_type == MCP_RESULT_TYPE_COMPLETE:
+        out["resultType"] = MCP_RESULT_TYPE_COMPLETE
+    return out
+
+
+def _normalize_input_request(request: Any) -> dict[str, Any]:
+    raw = _as_dict(request)
+    method = str(raw.get("method") or "").strip()
+    if not method:
+        raise ValueError("input request method must not be empty")
+    out: dict[str, Any] = {"method": method}
+    if raw.get("params") is not None:
+        out["params"] = raw["params"]
     return out
 
 
@@ -2489,11 +2599,15 @@ __all__ = [
     "MCP_PROTOCOL_VERSION_2026_07_28",
     "MCP_PROTOCOL_VERSION_LEGACY",
     "MCP_PROTOCOL_VERSION_PRIOR",
+    "MCP_RESULT_TYPE_COMPLETE",
+    "MCP_RESULT_TYPE_INPUT_REQUIRED",
     "DynamoMcpStreamStore",
     "DynamoMcpTaskStore",
     "McpContentBlock",
     "McpDiscoverResult",
     "McpEventNotFoundError",
+    "McpInputRequest",
+    "McpInputRequiredResult",
     "McpJSONRecord",
     "McpJSONValue",
     "McpPromptArgument",
@@ -2513,6 +2627,7 @@ __all__ = [
     "McpResourceHandler",
     "McpResourceRegistry",
     "McpResourceTemplateDef",
+    "McpResultType",
     "McpSSEEvent",
     "McpServer",
     "McpServerIdentity",

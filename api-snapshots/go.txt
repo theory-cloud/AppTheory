@@ -2647,6 +2647,10 @@ const ProtocolShapeUnknown ProtocolShape = "unknown"
 
 const ProtocolVersion20260728 = "2026-07-28"
 
+const ResultTypeComplete ResultType = "complete"
+
+const ResultTypeInputRequired ResultType = "input_required"
+
 const TaskStatusCanceled TaskStatus = "cancel" + "led"
 
 const TaskStatusCompleted TaskStatus = "completed"
@@ -2791,6 +2795,18 @@ type InitialSessionListenerBudgetOptions struct {
 	MaxDuration  time.Duration
 }
 
+type InputRequest struct {
+	Method string `json:"method"`
+	Params any    `json:"params,omitempty"`
+}
+
+type InputRequiredResult struct {
+	ResultType    ResultType              `json:"resultType,omitempty"`
+	InputRequests map[string]InputRequest `json:"inputRequests,omitempty"`
+	RequestState  string                  `json:"requestState,omitempty"`
+	Meta          map[string]any          `json:"_meta,omitempty"`
+}
+
 type LoggingLevel string
 
 type LoggingLevelHook func(context.Context, LoggingLevelRequest) error
@@ -2921,6 +2937,8 @@ type Response struct {
 	Result  any       `json:"result,omitempty"`
 	Error   *RPCError `json:"error,omitempty"`
 }
+
+type ResultType string
 
 type SSEEvent struct {
 	Data any
@@ -3077,6 +3095,11 @@ type ToolExecution struct {
 
 type ToolHandler func(context.Context, json.RawMessage) (*ToolResult, error)
 
+type ToolInput struct {
+	InputResponses map[string]any
+	RequestState   string
+}
+
 type ToolLifecycleFinish struct {
 	Name              string               `json:"name"`
 	StartedAt         time.Time            `json:"startedAt"`
@@ -3117,9 +3140,12 @@ type ToolRegistry struct {
 }
 
 type ToolResult struct {
-	Content           []ContentBlock `json:"content"`
-	IsError           bool           `json:"isError,omitempty"`
-	StructuredContent map[string]any `json:"structuredContent,omitempty"`
+	Content           []ContentBlock          `json:"content"`
+	IsError           bool                    `json:"isError,omitempty"`
+	StructuredContent map[string]any          `json:"structuredContent,omitempty"`
+	ResultType        ResultType              `json:"resultType,omitempty"`
+	InputRequests     map[string]InputRequest `json:"inputRequests,omitempty"`
+	RequestState      string                  `json:"requestState,omitempty"`
 }
 
 func AllowOrigins(...string) OriginValidator
@@ -3159,6 +3185,8 @@ func ParseBatchRequest([]byte) ([]*Request, error)
 func ParseRequest([]byte) (*Request, error)
 
 func ParseResponse([]byte) (*Response, error)
+
+func ToolInputFromContext(context.Context) ToolInput
 
 func WithCapabilityConfig(CapabilityConfig) ServerOption
 
@@ -3296,6 +3324,8 @@ func (*ToolRegistry) RegisterTool(ToolDef, ToolHandler) error
 func (dynamoStreamRecord) TableName() string
 
 func (dynamoTaskRecord) TableName() string
+
+func (resultWithType) MarshalJSON() ([]byte, error)
 
 func (sessionRecord) TableName() string
 
