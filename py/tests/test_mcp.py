@@ -34,9 +34,10 @@ from apptheory import (
     McpResourceDef,
     McpResourceTemplateDef,
     McpRPCError,
-    McpSSEEvent,
+    McpRPCRequest,
     McpSession,
     McpSessionNotFoundError,
+    McpSSEEvent,
     McpStreamNotFoundError,
     McpTask,
     McpTaskInvalidCursorError,
@@ -54,6 +55,7 @@ from apptheory import (
     create_mcp_server,
     create_mcp_test_harness,
     detect_mcp_protocol_version,
+    detect_mcp_protocol_version_for_message,
     sequence_mcp_id_generator,
 )
 
@@ -143,6 +145,31 @@ class McpRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             detect_mcp_protocol_version({}, {"jsonrpc": "2.0", "method": "ping"}),
+            MCP_PROTOCOL_SHAPE_UNKNOWN,
+        )
+        self.assertEqual(
+            detect_mcp_protocol_version_for_message({}, request_2026),
+            MCP_PROTOCOL_SHAPE_2026_07_28,
+        )
+        self.assertEqual(
+            detect_mcp_protocol_version_for_message(
+                {},
+                McpRPCRequest(
+                    method="ping",
+                    params=request_2026["params"],
+                ),
+            ),
+            MCP_PROTOCOL_SHAPE_2026_07_28,
+        )
+        self.assertEqual(
+            detect_mcp_protocol_version_for_message(
+                {"MCP-Protocol-Version": [MCP_PROTOCOL_VERSION]},
+                request_2026,
+            ),
+            MCP_PROTOCOL_SHAPE_2025_11_25,
+        )
+        self.assertEqual(
+            detect_mcp_protocol_version_for_message({}, json.dumps(request_2026)),
             MCP_PROTOCOL_SHAPE_UNKNOWN,
         )
 

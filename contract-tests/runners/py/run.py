@@ -2699,6 +2699,40 @@ def run_fixture_mcp(
     fixture: dict[str, Any],
 ) -> tuple[bool, str, Any, Any, _DummyEffectsApp]:
     runtime = _load_apptheory_runtime()
+    detections = ((fixture.get("input") or {}).get("mcp") or {}).get("detections") or []
+    expected_detections = ((fixture.get("expect") or {}).get("mcp") or {}).get(
+        "detections"
+    ) or []
+    if len(detections) != len(expected_detections):
+        return (
+            False,
+            "mcp detections length mismatch",
+            {"detections": len(detections)},
+            {"detections": len(expected_detections)},
+            _DummyEffectsApp(),
+        )
+    for idx, detection in enumerate(detections):
+        expected = expected_detections[idx]
+        if str(detection.get("name") or "") != str(expected.get("name") or ""):
+            return (
+                False,
+                f"detection {idx} name mismatch",
+                detection.get("name"),
+                expected.get("name"),
+                _DummyEffectsApp(),
+            )
+        actual = runtime.detect_mcp_protocol_version_for_message(
+            detection.get("headers") or {},
+            detection.get("message"),
+        )
+        if actual != expected.get("shape"):
+            return (
+                False,
+                f"detection {detection.get('name')} shape mismatch",
+                actual,
+                expected.get("shape"),
+                _DummyEffectsApp(),
+            )
     server = _new_fixture_mcp_server(
         runtime, (fixture.get("setup") or {}).get("mcp") or {}
     )

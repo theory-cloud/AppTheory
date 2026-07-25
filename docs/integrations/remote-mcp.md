@@ -101,11 +101,12 @@ Important behaviors for Claude compatibility:
 
 ### Discover the dual-version surface
 
-Stateless clients call `server/discover` instead of `initialize`. Session-ful clients may call the same method after
-initialization. AppTheory returns one server-owned advertisement in both cases:
+Stateless clients call `server/discover` instead of `initialize`. Session-ful clients may call the same method before
+initialization without a session id. AppTheory returns one server-owned advertisement in both cases:
 
 - supported versions: `2026-07-28`, `2025-11-25`, `2025-06-18`, and `2025-03-26`, in that preference order
-- capabilities derived from the server's enabled and registered tools, resources, prompts, and completion hooks
+- capabilities derived from the server's enabled and registered tools, resources, prompts, completion hooks, and task
+  runtime (tasks remain callable only in a `2025-11-25` session)
 - server identity from the name and version passed to `mcp.NewServer(...)`
 
 The advertisement never includes a subscriptions capability. Do not add one in an application wrapper:

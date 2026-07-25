@@ -474,7 +474,21 @@
       "required": ["steps"],
       "additionalProperties": false,
       "properties": {
+        "detections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/mcpProtocolDetection" }
+        },
         "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/mcpStep" } }
+      }
+    },
+    "mcpProtocolDetection": {
+      "type": "object",
+      "required": ["name", "headers", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "headers": { "type": "object", "additionalProperties": true },
+        "message": {}
       }
     },
     "mcpStep": {
@@ -541,7 +555,23 @@
       "required": ["steps"],
       "additionalProperties": false,
       "properties": {
+        "detections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/mcpExpectedProtocolDetection" }
+        },
         "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/mcpExpectedStep" } }
+      }
+    },
+    "mcpExpectedProtocolDetection": {
+      "type": "object",
+      "required": ["name", "shape"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "shape": {
+          "type": "string",
+          "enum": ["2025-11-25", "2026-07-28", "unknown"]
+        }
       }
     },
     "mcpExpectedStep": {

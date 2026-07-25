@@ -87,6 +87,34 @@ def detect_mcp_protocol_version(
         return _protocol_shape_for_version(header_version)
 
     record = _protocol_request_record(request)
+    return _protocol_shape_for_parsed_message(record)
+
+
+def detect_mcp_protocol_version_for_message(
+    headers: Mapping[str, Any] | None,
+    message: Mapping[str, Any] | McpRPCRequest | None,
+) -> McpProtocolShape:
+    """Detect the MCP transport shape for one already-parsed JSON-RPC message.
+
+    MCP-Protocol-Version takes precedence when present. Otherwise the detector
+    reads io.modelcontextprotocol/protocolVersion from params._meta.
+    """
+
+    header_version = _first_header(dict(headers or {}), MCP_HEADER_PROTOCOL_VERSION).strip()
+    if header_version:
+        return _protocol_shape_for_version(header_version)
+
+    record: dict[str, Any] | None
+    if isinstance(message, Mapping):
+        record = dict(message)
+    elif is_dataclass(message) and not isinstance(message, type):
+        record = {name: getattr(message, name) for name in getattr(message, "__dataclass_fields__", {})}
+    else:
+        record = None
+    return _protocol_shape_for_parsed_message(record)
+
+
+def _protocol_shape_for_parsed_message(record: dict[str, Any] | None) -> McpProtocolShape:
     params = record.get("params") if record is not None else None
     meta = params.get("_meta") if isinstance(params, Mapping) else None
     meta_version = meta.get(PROTOCOL_VERSION_METADATA_KEY) if isinstance(meta, Mapping) else None
@@ -1082,6 +1110,10 @@ class McpServer:
             return protocol_response
         if shape == MCP_PROTOCOL_SHAPE_2026_07_28:
             return self._handle_stateless_post_request(request)
+        if request.method == "server/discover":
+            if not request.id_present:
+                return _empty_response(202)
+            return self._marshal_single_response(self._dispatch(request, MCP_PROTOCOL_VERSION, ""))
         if request.method == "initialize":
             return self._handle_initialize_http(request)
         session_id, session, response = self._require_session(headers)
@@ -1136,6 +1168,8 @@ class McpServer:
         origin_response = self._validate_origin(headers)
         if origin_response is not None:
             return origin_response
+        if detect_mcp_protocol_version(headers, b"") == MCP_PROTOCOL_SHAPE_2026_07_28:
+            return _json_bytes_response(405, {"error": "method not allowed"})
         header_response = _validate_get_headers(headers)
         if header_response is not None:
             return header_response
@@ -1272,21 +1306,11 @@ class McpServer:
         )
 
     def _handle_discover(self, request: _ParsedRPCRequest) -> dict[str, Any]:
-        result = McpDiscoverResult(
-            supported_versions=_supported_protocol_versions(),
-            capabilities=self._initialize_capabilities(MCP_PROTOCOL_VERSION_2026_07_28),
-            meta={
-                SERVER_INFO_METADATA_KEY: McpServerIdentity(
-                    name=self.name,
-                    version=self.version,
-                )
-            },
-        )
         return _new_result_response(
             request.id,
             {
-                "supportedVersions": result.supported_versions,
-                "capabilities": result.capabilities,
+                "supportedVersions": _supported_protocol_versions(),
+                "capabilities": self._initialize_capabilities(MCP_PROTOCOL_VERSION),
                 "_meta": {
                     SERVER_INFO_METADATA_KEY: {
                         "name": self.name,
@@ -1933,6 +1957,19 @@ def _validate_2026_07_28_routing_headers(
     headers: dict[str, Any],
     request: _ParsedRPCRequest,
 ) -> Response | None:
+    if _conflicting_header_values(headers, MCP_HEADER_METHOD):
+        return _protocol_error_response(
+            request.id,
+            MCP_CODE_HEADER_MISMATCH,
+            "Header mismatch: conflicting Mcp-Method header values",
+        )
+    if _conflicting_header_values(headers, MCP_HEADER_NAME):
+        return _protocol_error_response(
+            request.id,
+            MCP_CODE_HEADER_MISMATCH,
+            "Header mismatch: conflicting Mcp-Name header values",
+        )
+
     method = _first_header(headers, MCP_HEADER_METHOD).strip()
     if not method:
         return _protocol_error_response(
@@ -1947,7 +1984,13 @@ def _validate_2026_07_28_routing_headers(
             "Header mismatch: Mcp-Method does not match request method",
         )
 
-    name, required = _request_routing_name(request)
+    name, required, invalid_message = _request_routing_name(request)
+    if invalid_message:
+        return _protocol_error_response(
+            request.id,
+            MCP_CODE_INVALID_PARAMS,
+            invalid_message,
+        )
     if not required:
         return None
     header_name = _first_header(headers, MCP_HEADER_NAME).strip()
@@ -1966,16 +2009,37 @@ def _validate_2026_07_28_routing_headers(
     return None
 
 
-def _request_routing_name(request: _ParsedRPCRequest) -> tuple[str, bool]:
+def _request_routing_name(request: _ParsedRPCRequest) -> tuple[str, bool, str]:
     if request.method in {"tools/call", "prompts/get"}:
         field_name = "name"
     elif request.method == "resources/read":
         field_name = "uri"
     else:
-        return "", False
-    params = request.params if isinstance(request.params, Mapping) else {}
+        return "", False, ""
+    invalid_message = f"Invalid params: params.{field_name} must be a non-empty string"
+    if not isinstance(request.params, Mapping):
+        return "", True, invalid_message
+    params = request.params
     value = params.get(field_name)
-    return (value if isinstance(value, str) else ""), True
+    if not isinstance(value, str) or not value.strip():
+        return "", True, invalid_message
+    return value, True, ""
+
+
+def _conflicting_header_values(headers: dict[str, Any], key: str) -> bool:
+    lower = str(key or "").lower()
+    first: str | None = None
+    for name, raw_values in (headers or {}).items():
+        if str(name).lower() != lower:
+            continue
+        values = raw_values if isinstance(raw_values, list) else [raw_values]
+        for raw in values:
+            value = str(raw if raw is not None else "").strip()
+            if first is None:
+                first = value
+            elif value != first:
+                return True
+    return False
 
 
 def _request_metadata(request: _ParsedRPCRequest) -> dict[str, Any]:
@@ -2832,4 +2896,5 @@ __all__ = [
     "default_mcp_stream_model",
     "default_mcp_task_model",
     "detect_mcp_protocol_version",
+    "detect_mcp_protocol_version_for_message",
 ]

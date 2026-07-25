@@ -227,15 +227,6 @@ func NewResultResponse(id any, result any) *Response {
 	}
 }
 
-type resultWithType struct {
-	result     any
-	resultType ResultType
-}
-
-func (result resultWithType) MarshalJSON() ([]byte, error) {
-	return marshalResultWithType(result.result, result.resultType)
-}
-
 func marshalResultWithType(result any, resultType ResultType) ([]byte, error) {
 	data, err := json.Marshal(result)
 	if err != nil {

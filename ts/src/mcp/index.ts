@@ -115,6 +115,35 @@ export function detectMcpProtocolVersion(
   if (!record) {
     return MCP_PROTOCOL_SHAPE_UNKNOWN;
   }
+  return protocolShapeForParsedMessage(record);
+}
+
+/**
+ * Detects the MCP transport shape for one already-parsed JSON-RPC message.
+ *
+ * MCP-Protocol-Version takes precedence when present. Otherwise the detector
+ * reads io.modelcontextprotocol/protocolVersion from params._meta.
+ */
+export function detectMcpProtocolVersionForMessage(
+  headers: Headers,
+  message: unknown,
+): McpProtocolShape {
+  const headerVersion = firstHeader(
+    headers,
+    MCP_HEADER_PROTOCOL_VERSION,
+  ).trim();
+  if (headerVersion) {
+    return protocolShapeForVersion(headerVersion);
+  }
+  if (!isRecord(message)) {
+    return MCP_PROTOCOL_SHAPE_UNKNOWN;
+  }
+  return protocolShapeForParsedMessage(message);
+}
+
+function protocolShapeForParsedMessage(
+  record: Record<string, unknown>,
+): McpProtocolShape {
   const params = isRecord(record["params"]) ? record["params"] : null;
   const meta = params && isRecord(params["_meta"]) ? params["_meta"] : null;
   const metaVersion =
@@ -1372,6 +1401,15 @@ export class McpServer {
       return this.handleStatelessPostRequest(request);
     }
 
+    if (request.method === "server/discover") {
+      if (!request.idPresent) {
+        return emptyResponse(202);
+      }
+      return this.marshalSingleResponse(
+        await this.dispatch(request, MCP_PROTOCOL_VERSION, ""),
+      );
+    }
+
     if (request.method === "initialize") {
       return this.handleInitializeHTTP(request);
     }
@@ -1453,6 +1491,12 @@ export class McpServer {
     const originResponse = this.validateOrigin(headers);
     if (originResponse) {
       return originResponse;
+    }
+    if (
+      detectMcpProtocolVersion(headers, new Uint8Array()) ===
+      MCP_PROTOCOL_SHAPE_2026_07_28
+    ) {
+      return jsonBytesResponse(405, { error: "method not allowed" });
     }
     const headerResponse = validateGetHeaders(headers);
     if (headerResponse) {
@@ -1713,9 +1757,7 @@ export class McpServer {
   private handleDiscover(request: ParsedRPCRequest): McpRPCResponse {
     const result: McpDiscoverResult = {
       supportedVersions: supportedProtocolVersions(),
-      capabilities: this.initializeCapabilities(
-        MCP_PROTOCOL_VERSION_2026_07_28,
-      ),
+      capabilities: this.initializeCapabilities(MCP_PROTOCOL_VERSION),
       _meta: {
         [SERVER_INFO_METADATA_KEY]: {
           name: this.name,
@@ -2718,6 +2760,21 @@ function validate20260728RoutingHeaders(
   headers: Headers,
   request: ParsedRPCRequest,
 ): Response | null {
+  if (conflictingHeaderValues(headers, MCP_HEADER_METHOD)) {
+    return protocolErrorResponse(
+      request.id,
+      MCP_CODE_HEADER_MISMATCH,
+      "Header mismatch: conflicting Mcp-Method header values",
+    );
+  }
+  if (conflictingHeaderValues(headers, MCP_HEADER_NAME)) {
+    return protocolErrorResponse(
+      request.id,
+      MCP_CODE_HEADER_MISMATCH,
+      "Header mismatch: conflicting Mcp-Name header values",
+    );
+  }
+
   const method = firstHeader(headers, MCP_HEADER_METHOD).trim();
   if (!method) {
     return protocolErrorResponse(
@@ -2735,6 +2792,13 @@ function validate20260728RoutingHeaders(
   }
 
   const routingName = requestRoutingName(request);
+  if (routingName.invalidMessage) {
+    return protocolErrorResponse(
+      request.id,
+      MCP_CODE_INVALID_PARAMS,
+      routingName.invalidMessage,
+    );
+  }
   if (!routingName.required) {
     return null;
   }
@@ -2759,6 +2823,7 @@ function validate20260728RoutingHeaders(
 function requestRoutingName(request: ParsedRPCRequest): {
   value: string;
   required: boolean;
+  invalidMessage: string;
 } {
   let field = "";
   switch (request.method) {
@@ -2770,14 +2835,44 @@ function requestRoutingName(request: ParsedRPCRequest): {
       field = "uri";
       break;
     default:
-      return { value: "", required: false };
+      return { value: "", required: false, invalidMessage: "" };
   }
-  const params = isRecord(request.params) ? request.params : {};
+  const invalidMessage = `Invalid params: params.${field} must be a non-empty string`;
+  if (!isRecord(request.params)) {
+    return { value: "", required: true, invalidMessage };
+  }
+  const params = request.params;
   const value = params[field];
+  if (typeof value !== "string" || !value.trim()) {
+    return { value: "", required: true, invalidMessage };
+  }
   return {
-    value: typeof value === "string" ? value : "",
+    value,
     required: true,
+    invalidMessage: "",
   };
+}
+
+function conflictingHeaderValues(headers: Headers, key: string): boolean {
+  const lower = String(key ?? "").toLowerCase();
+  let first: string | undefined;
+  for (const [name, rawValues] of Object.entries(headers ?? {})) {
+    if (name.toLowerCase() !== lower) {
+      continue;
+    }
+    const values: unknown[] = Array.isArray(rawValues)
+      ? rawValues
+      : [rawValues];
+    for (const raw of values) {
+      const value = String(raw ?? "").trim();
+      if (first === undefined) {
+        first = value;
+      } else if (value !== first) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function requestMetadata(request: ParsedRPCRequest): Record<string, unknown> {

@@ -3333,8 +3333,6 @@ func (dynamoStreamRecord) TableName() string
 
 func (dynamoTaskRecord) TableName() string
 
-func (resultWithType) MarshalJSON() ([]byte, error)
-
 func (sessionRecord) TableName() string
 
 ## github.com/theory-cloud/apptheory/v2/runtime/microvm

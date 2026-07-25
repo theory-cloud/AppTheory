@@ -57,6 +57,13 @@ export interface McpRPCRequest {
  * reads io.modelcontextprotocol/protocolVersion from params._meta.
  */
 export declare function detectMcpProtocolVersion(headers: Headers, request: unknown): McpProtocolShape;
+/**
+ * Detects the MCP transport shape for one already-parsed JSON-RPC message.
+ *
+ * MCP-Protocol-Version takes precedence when present. Otherwise the detector
+ * reads io.modelcontextprotocol/protocolVersion from params._meta.
+ */
+export declare function detectMcpProtocolVersionForMessage(headers: Headers, message: unknown): McpProtocolShape;
 export interface McpServerIdentity {
     name: string;
     version: string;

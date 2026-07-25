@@ -561,6 +561,7 @@ defaultMicroVMProviderStateMappings	function
 defaultMicroVMRealLifecycleContract	function
 defaultMicroVMSessionRegistryContract	function
 detectMcpProtocolVersion	function
+detectMcpProtocolVersionForMessage	function
 encodeLoggingProfileEvent	function
 encodeLoggingProfileEventWithSanitizer	function
 etag	function

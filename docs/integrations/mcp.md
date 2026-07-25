@@ -43,8 +43,8 @@ The runtime selects one shape per request:
 
 | Protocol shape | Selection | Session behavior |
 | --- | --- | --- |
-| `2025-11-25` | Existing initialize/session negotiation | `initialize` mints `mcp-session-id`; later POST/GET/DELETE requests require it |
-| `2026-07-28` | `mcp-protocol-version: 2026-07-28`, or `params._meta["io.modelcontextprotocol/protocolVersion"]` when the header is absent | Stateless POST; no initialize handshake or session id, and DELETE is not routed |
+| `2025-11-25` | Existing initialize/session negotiation | `server/discover` is available before the handshake; `initialize` mints `mcp-session-id`; later POST/GET/DELETE requests require it |
+| `2026-07-28` | `mcp-protocol-version: 2026-07-28`, or `params._meta["io.modelcontextprotocol/protocolVersion"]` when the header is absent | Stateless POST; no initialize handshake or session id, and GET/DELETE are not routed |
 
 `mcp-protocol-version` has strict precedence during shape detection. For a `2026-07-28` request, the header and request
 metadata must agree when both are present; a disagreement fails closed with JSON-RPC code `-32020`. This lets one server
@@ -64,14 +64,15 @@ Important transport behavior:
 - `POST /mcp` requires `content-type: application/json`
 - `POST /mcp` requires `accept` support for both `application/json` and `text/event-stream`
 - session-ful `GET /mcp` requires `accept` support for `text/event-stream`
-- in the 2025-11-25 shape, `initialize` is the only request that creates a session and returns `mcp-session-id`;
-  subsequent POST/GET/DELETE calls require it
+- in the 2025-11-25 shape, `server/discover` is available before `initialize`; `initialize` is the only request that
+  creates a session and returns `mcp-session-id`, and subsequent POST/GET/DELETE calls require it
 - missing 2025-11-25 session headers return `400`; unknown or expired sessions return `404`
 - 2026-07-28 requests never create or require `mcp-session-id`; JSON-RPC responses are accepted without a session
-- every 2026-07-28 JSON-RPC request or notification requires `mcp-method` equal to the body `method`
+- every 2026-07-28 JSON-RPC request or notification requires one unambiguous `mcp-method` value equal to the body
+  `method`; conflicting duplicate routing-header values fail closed
 - 2026-07-28 `tools/call`, `prompts/get`, and `resources/read` additionally require `mcp-name` equal to
   `params.name`, `params.name`, or `params.uri`, respectively
-- `DELETE /mcp` with the 2026-07-28 protocol header returns `405`
+- `GET /mcp` and `DELETE /mcp` with the 2026-07-28 protocol header return `405`
 - `mcp-protocol-version` is optional after initialization. Header precedence applies per request: `2026-07-28`
   routes that request through the stateless shape before session validation, even when `mcp-session-id` names a live
   2025-11-25 session. Headers that select the session-ful shape must be supported and match the session's negotiated
@@ -181,12 +182,17 @@ Other transport notes:
 ### Server discovery
 
 `server/discover` is implemented at the routing layer, so every AppTheory-hosted MCP server returns the same shape in
-both transports. Its result contains:
+both transports. It is reachable before `initialize` in the session-ful shape and does not require
+`Mcp-Session-Id`. Its result contains:
 
 - `supportedVersions`: `2026-07-28` (final), `2025-11-25`, `2025-06-18`, and `2025-03-26`, in preference order
 - `capabilities`: the enabled surfaces that the server can actually serve from its registries and configured hooks
 - `_meta["io.modelcontextprotocol/serverInfo"]`: the name and version passed to `mcp.NewServer(...)` or the equivalent
   TypeScript/Python constructor
+
+The discovery capability map describes the server's registered surface across its advertised versions. A configured
+task runtime is therefore included as `"tasks": {...}` even though task methods remain available only after a
+`2025-11-25` session handshake.
 
 The advertisement never includes a subscriptions capability. AppTheory does not implement the `2026-07-28`
 `subscriptions/listen` transport, and applications must not add a wrapper that advertises it.
@@ -217,13 +223,14 @@ Modern transport validation fails closed with these exported codes in Go, TypeSc
 
 | Code | Meaning | Pinned cases |
 | --- | --- | --- |
-| `-32020` | Header mismatch | protocol header disagrees with `_meta`, `Mcp-Method` is absent/wrong, or required `Mcp-Name` is absent/wrong |
+| `-32020` | Header mismatch | protocol header disagrees with `_meta`, `Mcp-Method` is absent/wrong, required `Mcp-Name` is absent/wrong, or either routing header has conflicting duplicate values |
 | `-32021` | Missing required client capability | an `input_required` result needs a capability omitted from per-request client metadata |
 | `-32022` | Unsupported protocol version | a sessionless request names an unsupported/future protocol version |
 
 These errors use a JSON-RPC error envelope and HTTP `400`. The `-32022` data includes `supported` and `requested`;
 `-32021` data includes `requiredCapabilities`. None of this changes the established `2025-11-25` session validation
-contract.
+contract. If a name-routed method omits `params.name` / `params.uri` or supplies a non-string value, the body is
+invalid and AppTheory returns `-32602` rather than misreporting a routing-header mismatch.
 
 ### Runtime hardening guarantees
 
@@ -247,7 +254,7 @@ The `server/discover` and `initialize` results advertise only surfaces that are 
 - if `srv.Prompts().Len() > 0` and prompts are enabled -> `"prompts": {}`
 - if `mcp.WithCompletionHooks(...)` has at least one hook and completions are enabled -> `"completions": {}`
 - if `mcp.WithTaskRuntime(...)` supplies a store, at least one registered tool declares task support, and tasks are
-  enabled -> `"tasks": {...}` for protocol `2025-11-25` sessions
+  enabled -> `"tasks": {...}` in `server/discover` and for protocol `2025-11-25` sessions
 
 The default capability policy enables the implemented surfaces, but registration is still required before they are
 advertised. Use `mcp.WithCapabilityConfig(...)` to withhold an implemented surface for a product rollout.

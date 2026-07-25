@@ -18,7 +18,7 @@ type DiscoverResult struct {
 func (s *Server) handleDiscover(req *Request) *Response {
 	return NewResultResponse(req.ID, DiscoverResult{
 		SupportedVersions: supportedProtocolVersions(),
-		Capabilities:      s.initializeCapabilities(ProtocolVersion20260728),
+		Capabilities:      s.initializeCapabilities(protocolVersion),
 		Meta: map[string]any{
 			serverInfoMetaKey: ServerIdentity{
 				Name:    s.name,

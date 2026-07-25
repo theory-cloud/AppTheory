@@ -230,9 +230,15 @@ func TestRequestRoutingNameRejectsMalformedParams(t *testing.T) {
 		{Method: methodToolsCall, Params: json.RawMessage(`{`)},
 		{Method: methodResourcesRead, Params: json.RawMessage(`{"uri":1}`)},
 	} {
-		name, required := requestRoutingName(req)
-		if !required || name != "" {
-			t.Fatalf("requestRoutingName(%s) = (%q, %t), want empty required name", req.Method, name, required)
+		name, required, invalidMessage := requestRoutingName(req)
+		if !required || name != "" || invalidMessage == "" {
+			t.Fatalf(
+				"requestRoutingName(%s) = (%q, %t, %q), want invalid required name",
+				req.Method,
+				name,
+				required,
+				invalidMessage,
+			)
 		}
 	}
 }

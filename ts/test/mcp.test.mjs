@@ -36,6 +36,7 @@ import {
   defaultMcpStreamModel,
   defaultMcpTaskModel,
   detectMcpProtocolVersion,
+  detectMcpProtocolVersionForMessage,
   fixedIdGenerator,
   parseMcpTestSSEFrames,
   sequenceIdGenerator,
@@ -104,6 +105,21 @@ test("detectMcpProtocolVersion gives the header precedence over request _meta", 
   );
   assert.equal(detectMcpProtocolVersion({}, JSON.stringify(request2026)), MCP_PROTOCOL_SHAPE_2026_07_28);
   assert.equal(detectMcpProtocolVersion({}, { jsonrpc: "2.0", method: "ping" }), MCP_PROTOCOL_SHAPE_UNKNOWN);
+  assert.equal(
+    detectMcpProtocolVersionForMessage({}, request2026),
+    MCP_PROTOCOL_SHAPE_2026_07_28,
+  );
+  assert.equal(
+    detectMcpProtocolVersionForMessage(
+      { "MCP-Protocol-Version": [MCP_PROTOCOL_VERSION] },
+      request2026,
+    ),
+    MCP_PROTOCOL_SHAPE_2025_11_25,
+  );
+  assert.equal(
+    detectMcpProtocolVersionForMessage({}, JSON.stringify(request2026)),
+    MCP_PROTOCOL_SHAPE_UNKNOWN,
+  );
 });
 
 test("mcp 2026-07-28 requests stay stateless", async () => {

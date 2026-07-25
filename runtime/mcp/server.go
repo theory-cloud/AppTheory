@@ -358,6 +358,14 @@ func (s *Server) handlePOSTRequest(
 		return s.handleStatelessPOSTRequest(ctx, req)
 	}
 
+	// Discovery is the one session-ful request that is valid before initialize.
+	if req.Method == methodServerDiscover {
+		if req.ID == nil {
+			return &apptheory.Response{Status: 202}, nil
+		}
+		return s.marshalSingleResponse(s.dispatchForProtocol(ctx, req, protocolVersion, ""), "", false)
+	}
+
 	// initialize creates and returns a session id.
 	if req.Method == methodInitialize {
 		return s.handleInitializeHTTP(ctx, req)
@@ -431,6 +439,9 @@ func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
 
 	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
 		return resp, nil
+	}
+	if DetectProtocolVersion(c.Request.Headers, nil) == ProtocolShape20260728 {
+		return methodNotAllowed(), nil
 	}
 	if resp := validateGETHeaders(c.Request.Headers); resp != nil {
 		return resp, nil
@@ -910,10 +921,11 @@ func responseForProtocol(resp *Response, protocolVersion string) *Response {
 		return errResp
 	}
 	if protocolVersion == ProtocolVersion20260728 && !inputRequired {
-		resp.Result = resultWithType{
-			result:     resp.Result,
-			resultType: ResultTypeComplete,
+		result, err := marshalResultWithType(resp.Result, ResultTypeComplete)
+		if err != nil {
+			return NewErrorResponse(resp.ID, CodeInternalError, "internal error")
 		}
+		resp.Result = json.RawMessage(result)
 	}
 	return resp
 }
@@ -1325,130 +1337,6 @@ func parseJSONObject(data []byte) (map[string]json.RawMessage, error) {
 		return nil, err
 	}
 	return raw, nil
-}
-
-func validatePOSTRequestProtocol(
-	headers map[string][]string,
-	req *Request,
-	detectedShape ProtocolShape,
-) (ProtocolShape, *apptheory.Response) {
-	headerVersion := strings.TrimSpace(firstHeader(headers, headerMcpProtocolVersion))
-	metaVersion := requestProtocolVersionMetadata(req)
-
-	if headerVersion != "" && !isAdvertisedProtocolVersion(headerVersion) {
-		if metaVersion == "" &&
-			(strings.TrimSpace(firstHeader(headers, headerMcpSessionID)) != "" || req.Method == methodInitialize) {
-			return detectedShape, nil
-		}
-		return ProtocolShapeUnknown, unsupportedProtocolVersionResponse(req.ID, headerVersion)
-	}
-	if metaVersion != "" && !isAdvertisedProtocolVersion(metaVersion) {
-		return ProtocolShapeUnknown, unsupportedProtocolVersionResponse(req.ID, metaVersion)
-	}
-
-	modernClaim := headerVersion == ProtocolVersion20260728 || metaVersion == ProtocolVersion20260728
-	if modernClaim && headerVersion != "" && metaVersion != "" && headerVersion != metaVersion {
-		return ProtocolShapeUnknown, protocolJSONRPCErrorResponse(
-			req.ID,
-			CodeHeaderMismatch,
-			"Header mismatch: MCP-Protocol-Version does not match request metadata",
-			nil,
-		)
-	}
-	if !modernClaim {
-		return detectedShape, nil
-	}
-
-	if resp := validate20260728RoutingHeaders(headers, req); resp != nil {
-		return ProtocolShapeUnknown, resp
-	}
-	return ProtocolShape20260728, nil
-}
-
-func validate20260728RoutingHeaders(headers map[string][]string, req *Request) *apptheory.Response {
-	method := strings.TrimSpace(firstHeader(headers, headerMcpMethod))
-	if method == "" {
-		return protocolJSONRPCErrorResponse(
-			req.ID,
-			CodeHeaderMismatch,
-			"Header mismatch: missing required Mcp-Method header",
-			nil,
-		)
-	}
-	if method != req.Method {
-		return protocolJSONRPCErrorResponse(
-			req.ID,
-			CodeHeaderMismatch,
-			"Header mismatch: Mcp-Method does not match request method",
-			nil,
-		)
-	}
-
-	name, required := requestRoutingName(req)
-	if !required {
-		return nil
-	}
-	headerName := strings.TrimSpace(firstHeader(headers, headerMcpName))
-	if headerName == "" {
-		return protocolJSONRPCErrorResponse(
-			req.ID,
-			CodeHeaderMismatch,
-			"Header mismatch: missing required Mcp-Name header",
-			nil,
-		)
-	}
-	if headerName != name {
-		return protocolJSONRPCErrorResponse(
-			req.ID,
-			CodeHeaderMismatch,
-			"Header mismatch: Mcp-Name does not match request parameters",
-			nil,
-		)
-	}
-	return nil
-}
-
-func requestRoutingName(req *Request) (string, bool) {
-	var field string
-	switch req.Method {
-	case methodToolsCall, methodPromptsGet:
-		field = "name"
-	case methodResourcesRead:
-		field = "uri"
-	default:
-		return "", false
-	}
-
-	var params map[string]json.RawMessage
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return "", true
-	}
-	var name string
-	if err := json.Unmarshal(params[field], &name); err != nil {
-		return "", true
-	}
-	return name, true
-}
-
-func unsupportedProtocolVersionResponse(id any, requested string) *apptheory.Response {
-	return protocolJSONRPCErrorResponse(
-		id,
-		CodeUnsupportedProtocolVersion,
-		"Unsupported protocol version",
-		map[string]any{
-			"supported": supportedProtocolVersions(),
-			"requested": requested,
-		},
-	)
-}
-
-func isAdvertisedProtocolVersion(version string) bool {
-	for _, supported := range supportedProtocolVersions() {
-		if version == supported {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *Server) validateOrigin(headers map[string][]string) *apptheory.Response {

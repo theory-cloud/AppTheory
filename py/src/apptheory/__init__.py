@@ -328,6 +328,7 @@ from apptheory.mcp import (
     default_mcp_stream_model,
     default_mcp_task_model,
     detect_mcp_protocol_version,
+    detect_mcp_protocol_version_for_message,
 )
 from apptheory.microvm import (
     COMMAND_AUTH_TOKEN,
@@ -1193,6 +1194,7 @@ __all__ = [
     "default_microvm_real_lifecycle_contract",
     "default_microvm_session_registry_contract",
     "detect_mcp_protocol_version",
+    "detect_mcp_protocol_version_for_message",
     "encode_logging_profile_event",
     "encode_logging_profile_event_with_sanitizer",
     "etag",
