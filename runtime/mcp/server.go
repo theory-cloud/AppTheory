@@ -28,11 +28,16 @@ const (
 
 	headerMcpProtocolVersion = "mcp-protocol-version"
 	headerMcpSessionID       = "mcp-session-id"
+	headerMcpMethod          = "mcp-method"
+	headerMcpName            = "mcp-name"
 	headerLastEventID        = "last-event-id"
 )
 
+const clientCapabilitiesMetaKey = "io.modelcontextprotocol/clientCapabilities"
+
 const (
 	methodInitialize               = "initialize"
+	methodServerDiscover           = "server/discover"
 	methodNotificationsInitialized = "notifications/initialized"
 	methodNotificationsCancelled   = "notifications/cancel" + "led"
 	methodPing                     = "ping"
@@ -343,8 +348,22 @@ func (s *Server) handlePOSTRequest(
 		return s.marshalSingleResponse(resp, "", false)
 	}
 
+	validatedShape, protocolResp := validatePOSTRequestProtocol(headers, req, shape)
+	if protocolResp != nil {
+		return protocolResp, nil
+	}
+	shape = validatedShape
+
 	if shape == ProtocolShape20260728 {
 		return s.handleStatelessPOSTRequest(ctx, req)
+	}
+
+	// Discovery is the one session-ful request that is valid before initialize.
+	if req.Method == methodServerDiscover {
+		if req.ID == nil {
+			return &apptheory.Response{Status: 202}, nil
+		}
+		return s.marshalSingleResponse(s.dispatchForProtocol(ctx, req, protocolVersion, ""), "", false)
 	}
 
 	// initialize creates and returns a session id.
@@ -376,6 +395,14 @@ func (s *Server) handleStatelessPOSTRequest(ctx context.Context, req *Request) (
 	}
 
 	resp := s.dispatchForProtocol(ctx, req, ProtocolVersion20260728, "")
+	if missing := missingRequiredClientCapabilities(req, resp); len(missing) > 0 {
+		return protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeMissingRequiredClientCapability,
+			"Missing required client capability",
+			map[string]any{"requiredCapabilities": missing},
+		), nil
+	}
 	return s.marshalSingleResponse(resp, "", false)
 }
 
@@ -412,6 +439,9 @@ func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
 
 	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
 		return resp, nil
+	}
+	if DetectProtocolVersion(c.Request.Headers, nil) == ProtocolShape20260728 {
+		return methodNotAllowed(), nil
 	}
 	if resp := validateGETHeaders(c.Request.Headers); resp != nil {
 		return resp, nil
@@ -626,10 +656,10 @@ func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocol
 		return NewErrorResponse(req.ID, CodeMethodNotFound, fmt.Sprintf("Method not found: %s", req.Method))
 	}
 	if isTaskMethod(req.Method) {
-		return s.dispatchTaskMethod(ctx, req, sessionID)
+		return responseForProtocol(s.dispatchTaskMethod(ctx, req, sessionID), protocolVersion)
 	}
 
-	return s.dispatchNonTaskMethod(ctx, req, sessionID)
+	return responseForProtocol(s.dispatchNonTaskMethod(ctx, req, sessionID), protocolVersion)
 }
 
 func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessionID string) *Response {
@@ -638,6 +668,8 @@ func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessio
 	}
 
 	switch req.Method {
+	case methodServerDiscover:
+		return s.handleDiscover(req)
 	case methodInitialize:
 		selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)
 		if errResp != nil {
@@ -703,7 +735,8 @@ func (s *Server) dispatchTaskMethod(ctx context.Context, req *Request, sessionID
 func methodAllowedForProtocol(pv string, method string) bool {
 	if pv == ProtocolVersion20260728 {
 		switch method {
-		case methodPing,
+		case methodServerDiscover,
+			methodPing,
 			methodToolsList,
 			methodToolsCall,
 			methodResourcesList,
@@ -727,6 +760,7 @@ func methodAllowedForProtocol(pv string, method string) bool {
 
 	switch method {
 	case methodInitialize,
+		methodServerDiscover,
 		methodNotificationsInitialized,
 		methodNotificationsCancelled,
 		methodPing,
@@ -795,10 +829,12 @@ func (s *Server) handleToolsList(req *Request) *Response {
 
 // toolsCallParams holds the parsed parameters for a tools/call request.
 type toolsCallParams struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
-	Task      *TaskMetadata   `json:"task,omitempty"`
-	Meta      struct {
+	Name           string          `json:"name"`
+	Arguments      json.RawMessage `json:"arguments,omitempty"`
+	InputResponses map[string]any  `json:"inputResponses,omitempty"`
+	RequestState   string          `json:"requestState,omitempty"`
+	Task           *TaskMetadata   `json:"task,omitempty"`
+	Meta           struct {
 		ProgressToken json.RawMessage `json:"progressToken,omitempty"`
 	} `json:"_meta,omitempty"`
 }
@@ -863,12 +899,97 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request, sessionID st
 		}
 	}()
 
-	result, err := s.registry.Call(ctx, params.Name, params.Arguments)
+	callCtx := withToolInput(ctx, ToolInput{
+		InputResponses: params.InputResponses,
+		RequestState:   params.RequestState,
+	})
+	result, err := s.registry.Call(callCtx, params.Name, params.Arguments)
 	if err != nil {
 		return s.toolCallError(ctx, req.ID, params.Name, err)
 	}
 
 	return NewResultResponse(req.ID, result)
+}
+
+func responseForProtocol(resp *Response, protocolVersion string) *Response {
+	if resp == nil || resp.Error != nil {
+		return resp
+	}
+
+	inputRequired, errResp := prepareResponseResult(resp, protocolVersion)
+	if errResp != nil {
+		return errResp
+	}
+	if protocolVersion == ProtocolVersion20260728 && !inputRequired {
+		result, err := marshalResultWithType(resp.Result, ResultTypeComplete)
+		if err != nil {
+			return NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+		}
+		resp.Result = json.RawMessage(result)
+	}
+	return resp
+}
+
+func prepareResponseResult(resp *Response, protocolVersion string) (bool, *Response) {
+	switch result := resp.Result.(type) {
+	case *ToolResult:
+		return prepareToolResult(resp, result, protocolVersion)
+	case InputRequiredResult:
+		return prepareInputRequiredResult(resp, result, protocolVersion)
+	case *InputRequiredResult:
+		if result == nil {
+			return false, NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+		}
+		return prepareInputRequiredResult(resp, *result, protocolVersion)
+	}
+	return false, nil
+}
+
+func prepareToolResult(resp *Response, result *ToolResult, protocolVersion string) (bool, *Response) {
+	if result == nil {
+		return false, NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+	}
+	switch result.ResultType {
+	case "", ResultTypeComplete:
+		if len(result.InputRequests) > 0 || strings.TrimSpace(result.RequestState) != "" {
+			return false, NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+		}
+		clean := *result
+		clean.ResultType = ""
+		clean.InputRequests = nil
+		clean.RequestState = ""
+		resp.Result = &clean
+		return false, nil
+	case ResultTypeInputRequired:
+		input := InputRequiredResult{
+			ResultType:    ResultTypeInputRequired,
+			InputRequests: result.InputRequests,
+			RequestState:  result.RequestState,
+		}
+		return prepareInputRequiredResult(resp, input, protocolVersion)
+	default:
+		return false, NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+	}
+}
+
+func prepareInputRequiredResult(
+	resp *Response,
+	result InputRequiredResult,
+	protocolVersion string,
+) (bool, *Response) {
+	if protocolVersion != ProtocolVersion20260728 {
+		return false, NewErrorResponse(
+			resp.ID,
+			CodeInvalidRequest,
+			"input_required results require MCP protocol version 2026-07-28",
+		)
+	}
+	if len(result.InputRequests) == 0 && strings.TrimSpace(result.RequestState) == "" {
+		return false, NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+	}
+	result.ResultType = ResultTypeInputRequired
+	resp.Result = result
+	return true, nil
 }
 
 // toolCallError maps a tool call error to the appropriate JSON-RPC error response.
@@ -1076,6 +1197,22 @@ func jsonRPCErrorResponse(id any, code int, message string) *apptheory.Response 
 	}
 	return &apptheory.Response{
 		Status: 200,
+		Headers: map[string][]string{
+			"content-type": {"application/json"},
+		},
+		Body: data,
+	}
+}
+
+func protocolJSONRPCErrorResponse(id any, code int, message string, errorData any) *apptheory.Response {
+	resp := NewErrorResponse(id, code, message)
+	resp.Error.Data = errorData
+	data, err := MarshalResponse(resp)
+	if err != nil {
+		data = []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"internal error"}}`)
+	}
+	return &apptheory.Response{
+		Status: 400,
 		Headers: map[string][]string{
 			"content-type": {"application/json"},
 		},

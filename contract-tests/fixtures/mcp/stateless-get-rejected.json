@@ -1,7 +1,7 @@
 {
-  "id": "mcp.stateless.meta_negotiation",
+  "id": "mcp.stateless.get_rejected",
   "tier": "mcp",
-  "name": "MCP 2026-07-28 request metadata selects the stateless transport shape",
+  "name": "MCP 2026-07-28 GET is rejected before session validation",
   "setup": {
     "mcp": {
       "server": {
@@ -14,24 +14,21 @@
     "mcp": {
       "steps": [
         {
-          "name": "ping_with_request_metadata",
+          "name": "modern_get_method_not_allowed",
           "request": {
-            "method": "POST",
+            "method": "GET",
             "path": "/mcp",
             "headers": {
-              "content-type": [
-                "application/json"
-              ],
               "accept": [
-                "application/json, text/event-stream"
+                "text/event-stream"
               ],
-              "mcp-method": [
-                "ping"
+              "mcp-protocol-version": [
+                "2026-07-28"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"meta-ping\",\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}}"
+              "value": ""
             },
             "is_base64": false
           }
@@ -43,7 +40,7 @@
     "mcp": {
       "steps": [
         {
-          "status": 200,
+          "status": 405,
           "headers": {
             "content-type": [
               "application/json"
@@ -53,14 +50,10 @@
             ]
           },
           "cookies": [],
+          "is_base64": false,
           "body_json": {
-            "jsonrpc": "2.0",
-            "id": "meta-ping",
-            "result": {
-              "resultType": "complete"
-            }
-          },
-          "is_base64": false
+            "error": "method not allowed"
+          }
         }
       ]
     }

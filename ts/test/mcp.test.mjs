@@ -5,6 +5,8 @@ import {
   MCP_CODE_INVALID_PARAMS,
   MCP_CODE_METHOD_NOT_FOUND,
   MCP_HEADER_LAST_EVENT_ID,
+  MCP_HEADER_METHOD,
+  MCP_HEADER_NAME,
   MCP_HEADER_PROTOCOL_VERSION,
   MCP_HEADER_SESSION_ID,
   MCP_PROTOCOL_SHAPE_2025_11_25,
@@ -13,6 +15,8 @@ import {
   MCP_PROTOCOL_VERSION,
   MCP_PROTOCOL_VERSION_2026_07_28,
   MCP_PROTOCOL_VERSION_LEGACY,
+  MCP_RESULT_TYPE_COMPLETE,
+  MCP_RESULT_TYPE_INPUT_REQUIRED,
   DynamoMcpStreamStore,
   DynamoMcpTaskStore,
   McpEventNotFoundError,
@@ -32,6 +36,7 @@ import {
   defaultMcpStreamModel,
   defaultMcpTaskModel,
   detectMcpProtocolVersion,
+  detectMcpProtocolVersionForMessage,
   fixedIdGenerator,
   parseMcpTestSSEFrames,
   sequenceIdGenerator,
@@ -100,6 +105,21 @@ test("detectMcpProtocolVersion gives the header precedence over request _meta", 
   );
   assert.equal(detectMcpProtocolVersion({}, JSON.stringify(request2026)), MCP_PROTOCOL_SHAPE_2026_07_28);
   assert.equal(detectMcpProtocolVersion({}, { jsonrpc: "2.0", method: "ping" }), MCP_PROTOCOL_SHAPE_UNKNOWN);
+  assert.equal(
+    detectMcpProtocolVersionForMessage({}, request2026),
+    MCP_PROTOCOL_SHAPE_2026_07_28,
+  );
+  assert.equal(
+    detectMcpProtocolVersionForMessage(
+      { "MCP-Protocol-Version": [MCP_PROTOCOL_VERSION] },
+      request2026,
+    ),
+    MCP_PROTOCOL_SHAPE_2025_11_25,
+  );
+  assert.equal(
+    detectMcpProtocolVersionForMessage({}, JSON.stringify(request2026)),
+    MCP_PROTOCOL_SHAPE_UNKNOWN,
+  );
 });
 
 test("mcp 2026-07-28 requests stay stateless", async () => {
@@ -116,17 +136,27 @@ test("mcp 2026-07-28 requests stay stateless", async () => {
   const ping = await post(
     server,
     rpc("ping", "ping"),
-    { [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28] },
+    {
+      [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28],
+      [MCP_HEADER_METHOD]: ["ping"],
+    },
   );
   assert.equal(ping.status, 200);
   assert.equal(sessionHeader(ping), "");
-  assert.deepEqual(await json(ping), { jsonrpc: "2.0", id: "ping", result: {} });
+  assert.deepEqual(await json(ping), {
+    jsonrpc: "2.0",
+    id: "ping",
+    result: { resultType: MCP_RESULT_TYPE_COMPLETE },
+  });
   assert.equal(generatedIds, 0);
 
   const initialize = await post(
     server,
     rpc("init", "initialize", { protocolVersion: MCP_PROTOCOL_VERSION_2026_07_28 }),
-    { [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28] },
+    {
+      [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28],
+      [MCP_HEADER_METHOD]: ["initialize"],
+    },
   );
   assert.equal(sessionHeader(initialize), "");
   assert.equal((await json(initialize)).error.code, MCP_CODE_METHOD_NOT_FOUND);
@@ -137,6 +167,67 @@ test("mcp 2026-07-28 requests stay stateless", async () => {
     headers: { [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28] },
   });
   assert.equal(deleted.status, 405);
+});
+
+test("mcp 2026-07-28 tools support multi-round input_required results", async () => {
+  const server = createMcpServer("MCP", "test");
+  server.registry().registerTool({ name: "continue", inputSchema: {} }, (args, context) => {
+    if (context.requestState === "confirm" && context.inputResponses?.confirmation) {
+      return { content: [textBlock(`confirmed ${args.message}`)] };
+    }
+    return {
+      content: [],
+      resultType: MCP_RESULT_TYPE_INPUT_REQUIRED,
+      inputRequests: {
+        confirmation: {
+          method: "elicitation/create",
+          params: { message: "Confirm" },
+        },
+      },
+      requestState: "confirm",
+    };
+  });
+  const headers = {
+    [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28],
+    [MCP_HEADER_METHOD]: ["tools/call"],
+    [MCP_HEADER_NAME]: ["continue"],
+  };
+
+  const first = await json(
+    await post(
+      server,
+      rpc("first", "tools/call", {
+        name: "continue",
+        arguments: { message: "contract" },
+        _meta: {
+          "io.modelcontextprotocol/clientCapabilities": { elicitation: {} },
+        },
+      }),
+      headers,
+    ),
+  );
+  assert.equal(first.result.resultType, MCP_RESULT_TYPE_INPUT_REQUIRED);
+  assert.equal(first.result.requestState, "confirm");
+  assert.equal(first.result.inputRequests.confirmation.method, "elicitation/create");
+  assert.equal(first.result.content, undefined);
+
+  const second = await json(
+    await post(
+      server,
+      rpc("second", "tools/call", {
+        name: "continue",
+        arguments: { message: "contract" },
+        requestState: "confirm",
+        inputResponses: { confirmation: { action: "accept" } },
+        _meta: {
+          "io.modelcontextprotocol/clientCapabilities": { elicitation: {} },
+        },
+      }),
+      headers,
+    ),
+  );
+  assert.equal(second.result.resultType, MCP_RESULT_TYPE_COMPLETE);
+  assert.equal(second.result.content[0].text, "confirmed contract");
 });
 
 function fakeDb() {

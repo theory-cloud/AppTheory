@@ -2215,6 +2215,38 @@ function fixtureMCPToolHandler(name) {
           structuredContent: { message },
         };
       };
+    case "input_required":
+      return (args, context) => {
+        const message = fixtureMCPMessageArg(args);
+        if (
+          context.requestState === `confirm-${message}` &&
+          context.inputResponses?.confirmation
+        ) {
+          return {
+            content: [{ type: "text", text: `confirmed ${message}` }],
+          };
+        }
+        return {
+          content: [],
+          resultType: "input_required",
+          inputRequests: {
+            confirmation: {
+              method: "elicitation/create",
+              params: {
+                message: `Confirm ${message}`,
+                requestedSchema: {
+                  type: "object",
+                  properties: {
+                    confirmed: { type: "boolean" },
+                  },
+                  required: ["confirmed"],
+                },
+              },
+            },
+          },
+          requestState: `confirm-${message}`,
+        };
+      };
     default:
       throw new Error(`unknown mcp tool handler ${JSON.stringify(name)}`);
   }
@@ -2538,6 +2570,40 @@ function compareMCPStep(expected, actual) {
 
 async function runFixtureMCP(fixture) {
   const runtime = await loadAppTheoryRuntime();
+  const detections = fixture.input?.mcp?.detections ?? [];
+  const expectedDetections = fixture.expect?.mcp?.detections ?? [];
+  if (detections.length !== expectedDetections.length) {
+    return {
+      ok: false,
+      reason: "mcp detections length mismatch",
+      actual: detections.length,
+      expected: expectedDetections.length,
+    };
+  }
+  for (let i = 0; i < detections.length; i += 1) {
+    const detection = detections[i];
+    const expected = expectedDetections[i];
+    if (String(detection.name ?? "") !== String(expected.name ?? "")) {
+      return {
+        ok: false,
+        reason: `detection ${i} name mismatch`,
+        actual: detection.name,
+        expected: expected.name,
+      };
+    }
+    const actual = runtime.detectMcpProtocolVersionForMessage(
+      detection.headers ?? {},
+      detection.message,
+    );
+    if (actual !== expected.shape) {
+      return {
+        ok: false,
+        reason: `detection ${detection.name} shape mismatch`,
+        actual,
+        expected: expected.shape,
+      };
+    }
+  }
   const server = await newFixtureMCPServer(runtime, fixture.setup?.mcp ?? {});
   const ids = { newId: () => "req_mcp_123" };
   const app = runtime.createApp({ ids });

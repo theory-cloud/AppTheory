@@ -1,0 +1,189 @@
+{
+  "id": "mcp.discover.dual_version",
+  "tier": "mcp",
+  "name": "MCP server/discover advertises one truthful surface in both protocol shapes",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      },
+      "tools": [
+        {
+          "name": "echo",
+          "description": "Echo text",
+          "input_schema": {
+            "type": "object"
+          },
+          "handler": "echo_text"
+        }
+      ],
+      "resources": [
+        {
+          "uri": "file:///contract.txt",
+          "name": "contract",
+          "contents": [
+            {
+              "uri": "file:///contract.txt",
+              "text": "contract"
+            }
+          ]
+        }
+      ],
+      "prompts": [
+        {
+          "name": "greeting",
+          "handler": "render_greeting"
+        }
+      ],
+      "session_store": {
+        "seed": [
+          {
+            "id": "legacy-discover",
+            "expires_unix_ms": 1900000000000,
+            "data": {
+              "protocolVersion": "2025-11-25"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "session_ful_discover",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-session-id": [
+                "legacy-discover"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"legacy-discover\",\"method\":\"server/discover\",\"params\":{}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "stateless_discover",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "server/discover"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"stateless-discover\",\"method\":\"server/discover\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "legacy-discover",
+            "result": {
+              "supportedVersions": [
+                "2026-07-28",
+                "2025-11-25",
+                "2025-06-18",
+                "2025-03-26"
+              ],
+              "capabilities": {
+                "tools": {},
+                "resources": {},
+                "prompts": {}
+              },
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "stateless-discover",
+            "result": {
+              "supportedVersions": [
+                "2026-07-28",
+                "2025-11-25",
+                "2025-06-18",
+                "2025-03-26"
+              ],
+              "capabilities": {
+                "tools": {},
+                "resources": {},
+                "prompts": {}
+              },
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              },
+              "resultType": "complete"
+            }
+          },
+          "is_base64": false
+        }
+      ]
+    }
+  }
+}

@@ -18,14 +18,21 @@ export const MCP_PROTOCOL_VERSION_LEGACY = "2025-03-26";
 export const MCP_PROTOCOL_SHAPE_2025_11_25 = MCP_PROTOCOL_VERSION;
 export const MCP_PROTOCOL_SHAPE_2026_07_28 = MCP_PROTOCOL_VERSION_2026_07_28;
 export const MCP_PROTOCOL_SHAPE_UNKNOWN = "unknown";
+export const MCP_RESULT_TYPE_COMPLETE = "complete";
+export const MCP_RESULT_TYPE_INPUT_REQUIRED = "input_required";
 
 export type McpProtocolShape =
   | typeof MCP_PROTOCOL_SHAPE_2025_11_25
   | typeof MCP_PROTOCOL_SHAPE_2026_07_28
   | typeof MCP_PROTOCOL_SHAPE_UNKNOWN;
+export type McpResultType =
+  | typeof MCP_RESULT_TYPE_COMPLETE
+  | typeof MCP_RESULT_TYPE_INPUT_REQUIRED;
 
 export const MCP_HEADER_PROTOCOL_VERSION = "mcp-protocol-version";
 export const MCP_HEADER_SESSION_ID = "mcp-session-id";
+export const MCP_HEADER_METHOD = "mcp-method";
+export const MCP_HEADER_NAME = "mcp-name";
 export const MCP_HEADER_LAST_EVENT_ID = "last-event-id";
 
 const JSONRPC_VERSION = "2.0";
@@ -39,6 +46,9 @@ const RELATED_TASK_METADATA_KEY = "io.modelcontextprotocol/related-task";
 const MODEL_IMMEDIATE_RESPONSE_METADATA_KEY =
   "io.modelcontextprotocol/model-immediate-response";
 const PROTOCOL_VERSION_METADATA_KEY = "io.modelcontextprotocol/protocolVersion";
+const CLIENT_CAPABILITIES_METADATA_KEY =
+  "io.modelcontextprotocol/clientCapabilities";
+const SERVER_INFO_METADATA_KEY = "io.modelcontextprotocol/serverInfo";
 const TASK_CANCELED_MESSAGE = "task canceled";
 const DEFAULT_TASK_TABLE_NAME = "mcp-tasks";
 const DEFAULT_STREAM_TABLE_NAME = "mcp-streams";
@@ -49,6 +59,9 @@ export const MCP_CODE_METHOD_NOT_FOUND = -32601;
 export const MCP_CODE_INVALID_PARAMS = -32602;
 export const MCP_CODE_INTERNAL_ERROR = -32603;
 export const MCP_CODE_SERVER_ERROR = -32000;
+export const MCP_CODE_HEADER_MISMATCH = -32020;
+export const MCP_CODE_MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
+export const MCP_CODE_UNSUPPORTED_PROTOCOL_VERSION = -32022;
 
 export type McpRequestID = string | number | boolean | null;
 export type McpJSONValue =
@@ -102,6 +115,35 @@ export function detectMcpProtocolVersion(
   if (!record) {
     return MCP_PROTOCOL_SHAPE_UNKNOWN;
   }
+  return protocolShapeForParsedMessage(record);
+}
+
+/**
+ * Detects the MCP transport shape for one already-parsed JSON-RPC message.
+ *
+ * MCP-Protocol-Version takes precedence when present. Otherwise the detector
+ * reads io.modelcontextprotocol/protocolVersion from params._meta.
+ */
+export function detectMcpProtocolVersionForMessage(
+  headers: Headers,
+  message: unknown,
+): McpProtocolShape {
+  const headerVersion = firstHeader(
+    headers,
+    MCP_HEADER_PROTOCOL_VERSION,
+  ).trim();
+  if (headerVersion) {
+    return protocolShapeForVersion(headerVersion);
+  }
+  if (!isRecord(message)) {
+    return MCP_PROTOCOL_SHAPE_UNKNOWN;
+  }
+  return protocolShapeForParsedMessage(message);
+}
+
+function protocolShapeForParsedMessage(
+  record: Record<string, unknown>,
+): McpProtocolShape {
   const params = isRecord(record["params"]) ? record["params"] : null;
   const meta = params && isRecord(params["_meta"]) ? params["_meta"] : null;
   const metaVersion =
@@ -109,6 +151,19 @@ export function detectMcpProtocolVersion(
       ? String(meta[PROTOCOL_VERSION_METADATA_KEY]).trim()
       : "";
   return protocolShapeForVersion(metaVersion);
+}
+
+export interface McpServerIdentity {
+  name: string;
+  version: string;
+}
+
+export interface McpDiscoverResult {
+  supportedVersions: string[];
+  capabilities: Record<string, unknown>;
+  _meta: {
+    [SERVER_INFO_METADATA_KEY]: McpServerIdentity;
+  };
 }
 
 export interface McpContentBlock {
@@ -124,10 +179,25 @@ export interface McpContentBlock {
   resource?: McpResourceContent;
 }
 
+export interface McpInputRequest {
+  method: string;
+  params?: unknown;
+}
+
+export interface McpInputRequiredResult {
+  resultType: typeof MCP_RESULT_TYPE_INPUT_REQUIRED;
+  inputRequests?: Record<string, McpInputRequest>;
+  requestState?: string;
+  _meta?: Record<string, unknown>;
+}
+
 export interface McpToolResult {
   content: McpContentBlock[];
   isError?: boolean;
   structuredContent?: Record<string, unknown>;
+  resultType?: McpResultType;
+  inputRequests?: Record<string, McpInputRequest>;
+  requestState?: string;
 }
 
 export interface McpToolExecution {
@@ -162,6 +232,8 @@ export interface McpToolContext {
   sessionId: string;
   requestId: unknown;
   method: string;
+  inputResponses?: Record<string, unknown>;
+  requestState?: string;
 }
 
 export interface McpResourceDef {
@@ -1315,8 +1387,27 @@ export class McpServer {
       );
     }
 
+    const protocolValidation = validatePostRequestProtocol(
+      headers,
+      request,
+      shape,
+    );
+    if (protocolValidation.response) {
+      return protocolValidation.response;
+    }
+    shape = protocolValidation.shape;
+
     if (shape === MCP_PROTOCOL_SHAPE_2026_07_28) {
       return this.handleStatelessPostRequest(request);
+    }
+
+    if (request.method === "server/discover") {
+      if (!request.idPresent) {
+        return emptyResponse(202);
+      }
+      return this.marshalSingleResponse(
+        await this.dispatch(request, MCP_PROTOCOL_VERSION, ""),
+      );
     }
 
     if (request.method === "initialize") {
@@ -1355,6 +1446,15 @@ export class McpServer {
       MCP_PROTOCOL_VERSION_2026_07_28,
       "",
     );
+    const missing = missingRequiredClientCapabilities(request, response);
+    if (Object.keys(missing).length > 0) {
+      return protocolErrorResponse(
+        request.id,
+        MCP_CODE_MISSING_REQUIRED_CLIENT_CAPABILITY,
+        "Missing required client capability",
+        { requiredCapabilities: missing },
+      );
+    }
     return this.marshalSingleResponse(response);
   }
 
@@ -1391,6 +1491,12 @@ export class McpServer {
     const originResponse = this.validateOrigin(headers);
     if (originResponse) {
       return originResponse;
+    }
+    if (
+      detectMcpProtocolVersion(headers, new Uint8Array()) ===
+      MCP_PROTOCOL_SHAPE_2026_07_28
+    ) {
+      return jsonBytesResponse(405, { error: "method not allowed" });
     }
     const headerResponse = validateGetHeaders(headers);
     if (headerResponse) {
@@ -1541,7 +1647,10 @@ export class McpServer {
       );
     }
     if (isTaskMethod(request.method)) {
-      return this.dispatchTaskMethod(request, sessionId);
+      return responseForProtocol(
+        await this.dispatchTaskMethod(request, sessionId),
+        protocolVersion,
+      );
     }
     if (!this.methodCapabilityEnabled(request.method)) {
       return newErrorResponse(
@@ -1551,43 +1660,58 @@ export class McpServer {
       );
     }
 
+    let response: McpRPCResponse;
     switch (request.method) {
+      case "server/discover":
+        response = this.handleDiscover(request);
+        break;
       case "initialize":
-        return this.handleInitialize(
+        response = this.handleInitialize(
           request,
           negotiateProtocolVersion(request.params),
         );
+        break;
       case "ping":
-        return newResultResponse(request.id, {});
+        response = newResultResponse(request.id, {});
+        break;
       case "tools/list":
-        return newResultResponse(request.id, {
+        response = newResultResponse(request.id, {
           tools: this.toolRegistry.list(),
         });
+        break;
       case "tools/call":
-        return this.handleToolsCall(request, sessionId);
+        response = await this.handleToolsCall(request, sessionId);
+        break;
       case "resources/list":
-        return newResultResponse(request.id, {
+        response = newResultResponse(request.id, {
           resources: this.resourceRegistry.list(),
         });
+        break;
       case "resources/read":
-        return this.handleResourcesRead(request);
+        response = await this.handleResourcesRead(request);
+        break;
       case "resources/templates/list":
-        return newResultResponse(request.id, {
+        response = newResultResponse(request.id, {
           resourceTemplates: this.resourceRegistry.listTemplates(),
         });
+        break;
       case "prompts/list":
-        return newResultResponse(request.id, {
+        response = newResultResponse(request.id, {
           prompts: this.promptRegistry.list(),
         });
+        break;
       case "prompts/get":
-        return this.handlePromptsGet(request);
+        response = await this.handlePromptsGet(request);
+        break;
       default:
-        return newErrorResponse(
+        response = newErrorResponse(
           request.id,
           MCP_CODE_METHOD_NOT_FOUND,
           `Method not found: ${request.method}`,
         );
+        break;
     }
+    return responseForProtocol(response, protocolVersion);
   }
 
   private async dispatchTaskMethod(
@@ -1628,6 +1752,20 @@ export class McpServer {
       capabilities: this.initializeCapabilities(protocolVersion),
       serverInfo: { name: this.name, version: this.version },
     });
+  }
+
+  private handleDiscover(request: ParsedRPCRequest): McpRPCResponse {
+    const result: McpDiscoverResult = {
+      supportedVersions: supportedProtocolVersions(),
+      capabilities: this.initializeCapabilities(MCP_PROTOCOL_VERSION),
+      _meta: {
+        [SERVER_INFO_METADATA_KEY]: {
+          name: this.name,
+          version: this.version,
+        },
+      },
+    };
+    return newResultResponse(request.id, result);
   }
 
   private initializeCapabilities(
@@ -1688,11 +1826,22 @@ export class McpServer {
       );
     }
     try {
-      const result = await this.toolRegistry.call(name, params["arguments"], {
+      const toolContext: McpToolContext = {
         sessionId,
         requestId: request.id,
         method: request.method,
-      });
+      };
+      if (isRecord(params["inputResponses"])) {
+        toolContext.inputResponses = { ...params["inputResponses"] };
+      }
+      if (typeof params["requestState"] === "string") {
+        toolContext.requestState = params["requestState"];
+      }
+      const result = await this.toolRegistry.call(
+        name,
+        params["arguments"],
+        toolContext,
+      );
       return newResultResponse(request.id, result);
     } catch (err) {
       return toolCallError(request.id, name, err);
@@ -2329,6 +2478,7 @@ function methodAllowedForProtocol(
 ): boolean {
   if (protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28) {
     return new Set([
+      "server/discover",
       "ping",
       "tools/list",
       "tools/call",
@@ -2349,6 +2499,7 @@ function methodAllowedForProtocol(
   }
   return new Set([
     "initialize",
+    "server/discover",
     "notifications/initialized",
     "notifications/cancelled",
     "ping",
@@ -2546,6 +2697,269 @@ function firstHeader(headers: Headers, key: string): string {
   return values.length > 0 ? String(values[0] ?? "") : "";
 }
 
+function validatePostRequestProtocol(
+  headers: Headers,
+  request: ParsedRPCRequest,
+  detectedShape: McpProtocolShape,
+): { shape: McpProtocolShape; response: Response | null } {
+  const headerVersion = firstHeader(
+    headers,
+    MCP_HEADER_PROTOCOL_VERSION,
+  ).trim();
+  const metaVersion = requestProtocolVersionMetadata(request);
+
+  if (headerVersion && !isAdvertisedProtocolVersion(headerVersion)) {
+    if (
+      !metaVersion &&
+      (firstHeader(headers, MCP_HEADER_SESSION_ID).trim() ||
+        request.method === "initialize")
+    ) {
+      return { shape: detectedShape, response: null };
+    }
+    return {
+      shape: MCP_PROTOCOL_SHAPE_UNKNOWN,
+      response: unsupportedProtocolVersionResponse(request.id, headerVersion),
+    };
+  }
+  if (metaVersion && !isAdvertisedProtocolVersion(metaVersion)) {
+    return {
+      shape: MCP_PROTOCOL_SHAPE_UNKNOWN,
+      response: unsupportedProtocolVersionResponse(request.id, metaVersion),
+    };
+  }
+
+  const modernClaim =
+    headerVersion === MCP_PROTOCOL_VERSION_2026_07_28 ||
+    metaVersion === MCP_PROTOCOL_VERSION_2026_07_28;
+  if (
+    modernClaim &&
+    headerVersion &&
+    metaVersion &&
+    headerVersion !== metaVersion
+  ) {
+    return {
+      shape: MCP_PROTOCOL_SHAPE_UNKNOWN,
+      response: protocolErrorResponse(
+        request.id,
+        MCP_CODE_HEADER_MISMATCH,
+        "Header mismatch: MCP-Protocol-Version does not match request metadata",
+      ),
+    };
+  }
+  if (!modernClaim) {
+    return { shape: detectedShape, response: null };
+  }
+
+  return {
+    shape: MCP_PROTOCOL_SHAPE_2026_07_28,
+    response: validate20260728RoutingHeaders(headers, request),
+  };
+}
+
+function validate20260728RoutingHeaders(
+  headers: Headers,
+  request: ParsedRPCRequest,
+): Response | null {
+  if (conflictingHeaderValues(headers, MCP_HEADER_METHOD)) {
+    return protocolErrorResponse(
+      request.id,
+      MCP_CODE_HEADER_MISMATCH,
+      "Header mismatch: conflicting Mcp-Method header values",
+    );
+  }
+  if (conflictingHeaderValues(headers, MCP_HEADER_NAME)) {
+    return protocolErrorResponse(
+      request.id,
+      MCP_CODE_HEADER_MISMATCH,
+      "Header mismatch: conflicting Mcp-Name header values",
+    );
+  }
+
+  const method = firstHeader(headers, MCP_HEADER_METHOD).trim();
+  if (!method) {
+    return protocolErrorResponse(
+      request.id,
+      MCP_CODE_HEADER_MISMATCH,
+      "Header mismatch: missing required Mcp-Method header",
+    );
+  }
+  if (method !== request.method) {
+    return protocolErrorResponse(
+      request.id,
+      MCP_CODE_HEADER_MISMATCH,
+      "Header mismatch: Mcp-Method does not match request method",
+    );
+  }
+
+  const routingName = requestRoutingName(request);
+  if (routingName.invalidMessage) {
+    return protocolErrorResponse(
+      request.id,
+      MCP_CODE_INVALID_PARAMS,
+      routingName.invalidMessage,
+    );
+  }
+  if (!routingName.required) {
+    return null;
+  }
+  const name = firstHeader(headers, MCP_HEADER_NAME).trim();
+  if (!name) {
+    return protocolErrorResponse(
+      request.id,
+      MCP_CODE_HEADER_MISMATCH,
+      "Header mismatch: missing required Mcp-Name header",
+    );
+  }
+  if (name !== routingName.value) {
+    return protocolErrorResponse(
+      request.id,
+      MCP_CODE_HEADER_MISMATCH,
+      "Header mismatch: Mcp-Name does not match request parameters",
+    );
+  }
+  return null;
+}
+
+function requestRoutingName(request: ParsedRPCRequest): {
+  value: string;
+  required: boolean;
+  invalidMessage: string;
+} {
+  let field = "";
+  switch (request.method) {
+    case "tools/call":
+    case "prompts/get":
+      field = "name";
+      break;
+    case "resources/read":
+      field = "uri";
+      break;
+    default:
+      return { value: "", required: false, invalidMessage: "" };
+  }
+  const invalidMessage = `Invalid params: params.${field} must be a non-empty string`;
+  if (!isRecord(request.params)) {
+    return { value: "", required: true, invalidMessage };
+  }
+  const params = request.params;
+  const value = params[field];
+  if (typeof value !== "string" || !value.trim()) {
+    return { value: "", required: true, invalidMessage };
+  }
+  return {
+    value,
+    required: true,
+    invalidMessage: "",
+  };
+}
+
+function conflictingHeaderValues(headers: Headers, key: string): boolean {
+  const lower = String(key ?? "").toLowerCase();
+  let first: string | undefined;
+  for (const [name, rawValues] of Object.entries(headers ?? {})) {
+    if (name.toLowerCase() !== lower) {
+      continue;
+    }
+    const values: unknown[] = Array.isArray(rawValues)
+      ? rawValues
+      : [rawValues];
+    for (const raw of values) {
+      const value = String(raw ?? "").trim();
+      if (first === undefined) {
+        first = value;
+      } else if (value !== first) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function requestMetadata(request: ParsedRPCRequest): Record<string, unknown> {
+  const params = isRecord(request.params) ? request.params : null;
+  return params && isRecord(params["_meta"]) ? params["_meta"] : {};
+}
+
+function requestProtocolVersionMetadata(request: ParsedRPCRequest): string {
+  const value = requestMetadata(request)[PROTOCOL_VERSION_METADATA_KEY];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isAdvertisedProtocolVersion(version: string): boolean {
+  return supportedProtocolVersions().includes(version);
+}
+
+function supportedProtocolVersions(): string[] {
+  return [
+    MCP_PROTOCOL_VERSION_2026_07_28,
+    MCP_PROTOCOL_VERSION,
+    MCP_PROTOCOL_VERSION_PRIOR,
+    MCP_PROTOCOL_VERSION_LEGACY,
+  ];
+}
+
+function unsupportedProtocolVersionResponse(
+  id: unknown,
+  requested: string,
+): Response {
+  return protocolErrorResponse(
+    id,
+    MCP_CODE_UNSUPPORTED_PROTOCOL_VERSION,
+    "Unsupported protocol version",
+    { supported: supportedProtocolVersions(), requested },
+  );
+}
+
+function protocolErrorResponse(
+  id: unknown,
+  code: number,
+  message: string,
+  data?: unknown,
+): Response {
+  return jsonBytesResponse(400, newErrorResponse(id, code, message, data));
+}
+
+function missingRequiredClientCapabilities(
+  request: ParsedRPCRequest,
+  response: McpRPCResponse,
+): Record<string, unknown> {
+  const required = requiredClientCapabilities(response);
+  const declared = requestMetadata(request)[CLIENT_CAPABILITIES_METADATA_KEY];
+  const capabilities = isRecord(declared) ? declared : {};
+  const missing: Record<string, unknown> = {};
+  for (const capability of required) {
+    if (!isRecord(capabilities[capability])) {
+      missing[capability] = {};
+    }
+  }
+  return missing;
+}
+
+function requiredClientCapabilities(response: McpRPCResponse): string[] {
+  if (response.error || !isRecord(response.result)) {
+    return [];
+  }
+  if (response.result["resultType"] !== MCP_RESULT_TYPE_INPUT_REQUIRED) {
+    return [];
+  }
+  const inputRequests = response.result["inputRequests"];
+  if (!isRecord(inputRequests)) {
+    return [];
+  }
+  const required = new Set<string>();
+  for (const inputRequest of Object.values(inputRequests)) {
+    if (!isRecord(inputRequest) || typeof inputRequest["method"] !== "string") {
+      continue;
+    }
+    const method = inputRequest["method"].trim();
+    const slash = method.indexOf("/");
+    if (slash > 0) {
+      required.add(method.slice(0, slash));
+    }
+  }
+  return [...required].sort();
+}
+
 function headerValues(headers: Headers, key: string): string[] {
   const lower = String(key ?? "").toLowerCase();
   const direct = headers[lower];
@@ -2564,16 +2978,110 @@ function newErrorResponse(
   id: unknown,
   code: number,
   message: string,
+  data?: unknown,
 ): McpRPCResponse {
+  const error: McpRPCError = { code, message };
+  if (data !== undefined) {
+    error.data = data;
+  }
   return {
     jsonrpc: JSONRPC_VERSION,
     id: id ?? null,
-    error: { code, message },
+    error,
   };
 }
 
 function newResultResponse(id: unknown, result: unknown): McpRPCResponse {
   return { jsonrpc: JSONRPC_VERSION, id: id ?? null, result };
+}
+
+function responseForProtocol(
+  response: McpRPCResponse,
+  protocolVersion: string,
+): McpRPCResponse {
+  if (response.error || response.result === undefined) {
+    return response;
+  }
+  if (!isRecord(response.result)) {
+    return newErrorResponse(
+      response.id,
+      MCP_CODE_INTERNAL_ERROR,
+      "internal error",
+    );
+  }
+
+  const result = response.result;
+  const declared = result["resultType"];
+  if (declared === MCP_RESULT_TYPE_INPUT_REQUIRED) {
+    if (protocolVersion !== MCP_PROTOCOL_VERSION_2026_07_28) {
+      return newErrorResponse(
+        response.id,
+        MCP_CODE_INVALID_REQUEST,
+        "input_required results require MCP protocol version 2026-07-28",
+      );
+    }
+    const inputRequests = isRecord(result["inputRequests"])
+      ? { ...result["inputRequests"] }
+      : undefined;
+    const requestState =
+      typeof result["requestState"] === "string" ? result["requestState"] : "";
+    if (
+      (!inputRequests || Object.keys(inputRequests).length === 0) &&
+      !requestState.trim()
+    ) {
+      return newErrorResponse(
+        response.id,
+        MCP_CODE_INTERNAL_ERROR,
+        "internal error",
+      );
+    }
+    const inputRequired: McpInputRequiredResult = {
+      resultType: MCP_RESULT_TYPE_INPUT_REQUIRED,
+    };
+    if (inputRequests && Object.keys(inputRequests).length > 0) {
+      inputRequired.inputRequests = inputRequests as Record<
+        string,
+        McpInputRequest
+      >;
+    }
+    if (requestState.trim()) {
+      inputRequired.requestState = requestState;
+    }
+    if (isRecord(result["_meta"])) {
+      inputRequired._meta = { ...result["_meta"] };
+    }
+    return { ...response, result: inputRequired };
+  }
+
+  if (
+    declared !== undefined &&
+    declared !== "" &&
+    declared !== MCP_RESULT_TYPE_COMPLETE
+  ) {
+    return newErrorResponse(
+      response.id,
+      MCP_CODE_INTERNAL_ERROR,
+      "internal error",
+    );
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(result, "inputRequests") ||
+    Object.prototype.hasOwnProperty.call(result, "requestState")
+  ) {
+    return newErrorResponse(
+      response.id,
+      MCP_CODE_INTERNAL_ERROR,
+      "internal error",
+    );
+  }
+
+  const complete = { ...result };
+  if (protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28) {
+    complete["resultType"] = MCP_RESULT_TYPE_COMPLETE;
+  } else {
+    delete complete["resultType"];
+  }
+  return { ...response, result: complete };
 }
 
 function badRequest(message: string): Response {
@@ -2670,6 +3178,48 @@ function cloneToolDef(definition: McpToolDef): McpToolDef {
 }
 
 function normalizeToolResult(result: McpToolResult): McpToolResult {
+  const resultType = result?.resultType;
+  if (
+    resultType !== undefined &&
+    resultType !== MCP_RESULT_TYPE_COMPLETE &&
+    resultType !== MCP_RESULT_TYPE_INPUT_REQUIRED
+  ) {
+    throw new Error(`unsupported MCP resultType: ${String(resultType)}`);
+  }
+  if (resultType === MCP_RESULT_TYPE_INPUT_REQUIRED) {
+    const inputRequests = isRecord(result?.inputRequests)
+      ? { ...result.inputRequests }
+      : undefined;
+    const requestState = String(result?.requestState ?? "");
+    if (
+      (!inputRequests || Object.keys(inputRequests).length === 0) &&
+      !requestState.trim()
+    ) {
+      throw new Error(
+        "input_required result requires inputRequests or requestState",
+      );
+    }
+    const out: McpToolResult = {
+      content: [],
+      resultType: MCP_RESULT_TYPE_INPUT_REQUIRED,
+    };
+    if (inputRequests && Object.keys(inputRequests).length > 0) {
+      out.inputRequests = inputRequests as Record<string, McpInputRequest>;
+    }
+    if (requestState.trim()) {
+      out.requestState = requestState;
+    }
+    return out;
+  }
+  if (
+    result?.inputRequests !== undefined ||
+    String(result?.requestState ?? "").trim()
+  ) {
+    throw new Error(
+      "inputRequests and requestState require resultType input_required",
+    );
+  }
+
   const out: McpToolResult = {
     content: Array.isArray(result?.content)
       ? result.content.map(normalizeContentBlock)
@@ -2680,6 +3230,9 @@ function normalizeToolResult(result: McpToolResult): McpToolResult {
   }
   if (result?.structuredContent && isRecord(result.structuredContent)) {
     out.structuredContent = { ...result.structuredContent };
+  }
+  if (resultType === MCP_RESULT_TYPE_COMPLETE) {
+    out.resultType = MCP_RESULT_TYPE_COMPLETE;
   }
   return out;
 }

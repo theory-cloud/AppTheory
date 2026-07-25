@@ -1,7 +1,7 @@
 {
   "id": "mcp.stateless.header_precedence_delete",
   "tier": "mcp",
-  "name": "MCP protocol header precedence selects request shape and excludes stateless DELETE",
+  "name": "MCP 2026-07-28 rejects header/metadata mismatches and excludes stateless DELETE",
   "setup": {
     "mcp": {
       "server": {
@@ -27,6 +27,9 @@
               ],
               "mcp-protocol-version": [
                 "2026-07-28"
+              ],
+              "mcp-method": [
+                "ping"
               ]
             },
             "body": {
@@ -50,6 +53,9 @@
               ],
               "mcp-protocol-version": [
                 "2025-11-25"
+              ],
+              "mcp-method": [
+                "ping"
               ]
             },
             "body": {
@@ -83,7 +89,7 @@
     "mcp": {
       "steps": [
         {
-          "status": 200,
+          "status": 400,
           "headers": {
             "content-type": [
               "application/json"
@@ -96,7 +102,10 @@
           "body_json": {
             "jsonrpc": "2.0",
             "id": "header-stateless",
-            "result": {}
+            "error": {
+              "code": -32020,
+              "message": "Header mismatch: MCP-Protocol-Version does not match request metadata"
+            }
           },
           "is_base64": false
         },
@@ -112,7 +121,12 @@
           },
           "cookies": [],
           "body_json": {
-            "error": "missing Mcp-Session-Id"
+            "jsonrpc": "2.0",
+            "id": "header-session",
+            "error": {
+              "code": -32020,
+              "message": "Header mismatch: MCP-Protocol-Version does not match request metadata"
+            }
           },
           "is_base64": false
         },

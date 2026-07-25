@@ -164,13 +164,18 @@ LoggingProfileRequestContext	interface
 LoggingProfileSanitization	interface
 LoggingProfileSanitizer	type
 LoggingProfileValidationError	class
+MCP_CODE_HEADER_MISMATCH	const
 MCP_CODE_INTERNAL_ERROR	const
 MCP_CODE_INVALID_PARAMS	const
 MCP_CODE_INVALID_REQUEST	const
 MCP_CODE_METHOD_NOT_FOUND	const
+MCP_CODE_MISSING_REQUIRED_CLIENT_CAPABILITY	const
 MCP_CODE_PARSE_ERROR	const
 MCP_CODE_SERVER_ERROR	const
+MCP_CODE_UNSUPPORTED_PROTOCOL_VERSION	const
 MCP_HEADER_LAST_EVENT_ID	const
+MCP_HEADER_METHOD	const
+MCP_HEADER_NAME	const
 MCP_HEADER_PROTOCOL_VERSION	const
 MCP_HEADER_SESSION_ID	const
 MCP_PROTOCOL_SHAPE_2025_11_25	const
@@ -180,6 +185,8 @@ MCP_PROTOCOL_VERSION	const
 MCP_PROTOCOL_VERSION_2026_07_28	const
 MCP_PROTOCOL_VERSION_LEGACY	const
 MCP_PROTOCOL_VERSION_PRIOR	const
+MCP_RESULT_TYPE_COMPLETE	const
+MCP_RESULT_TYPE_INPUT_REQUIRED	const
 MICROVM_AWS_LAMBDA_PROVIDER_ID	const
 MICROVM_CONTRACT_NAME	const
 MICROVM_CONTRACT_VERSION	const
@@ -221,7 +228,10 @@ ManualIdGenerator	class
 MaxPutDeleteBatchSize	const
 MaxQueryTopK	const
 McpContentBlock	interface
+McpDiscoverResult	interface
 McpEventNotFoundError	class
+McpInputRequest	interface
+McpInputRequiredResult	interface
 McpJSONRecord	type
 McpJSONValue	type
 McpPromptArgument	interface
@@ -241,8 +251,10 @@ McpResourceDef	interface
 McpResourceHandler	type
 McpResourceRegistry	class
 McpResourceTemplateDef	interface
+McpResultType	type
 McpSSEEvent	interface
 McpServer	class
+McpServerIdentity	interface
 McpServerOptions	interface
 McpSession	interface
 McpSessionNotFoundError	class
@@ -549,6 +561,7 @@ defaultMicroVMProviderStateMappings	function
 defaultMicroVMRealLifecycleContract	function
 defaultMicroVMSessionRegistryContract	function
 detectMcpProtocolVersion	function
+detectMcpProtocolVersionForMessage	function
 encodeLoggingProfileEvent	function
 encodeLoggingProfileEventWithSanitizer	function
 etag	function
