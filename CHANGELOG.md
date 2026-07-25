@@ -1,5 +1,87 @@
 # Changelog
 
+## [2.0.0](https://github.com/theory-cloud/AppTheory/compare/v1.17.1...v2.0.0) (2026-07-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cdk:** make Go bindings major-version aware
+* **go:** migrate AppTheory module to v2
+* **cdk:** Structural IAppTheoryMicrovmImage references must now include logging; CloudWatch logging requires AppTheoryMicrovmController.executionRole with CloudWatch Logs permissions, while disabled logging remains role-optional.
+* **microvm:** MicroVM provider runs and real controllers now require an explicit CloudWatch-or-disabled logging configuration; CloudWatch logging also requires an execution role.
+
+### Features
+
+* **cdk:** propagate MicroVM runtime logging ([0e8c99c](https://github.com/theory-cloud/AppTheory/commit/0e8c99c8998c0d4efbfefe0827476bacf827d25f))
+* **mcp:** add 2026-07-28 dual-version transport ([776bd04](https://github.com/theory-cloud/AppTheory/commit/776bd0423050d8b23c57986a3993c4c6b4599d36))
+* **mcp:** add 2026-07-28 error codes and header enforcement ([e363f7f](https://github.com/theory-cloud/AppTheory/commit/e363f7f405ea37f2ec80bff99906b042bd3c78fd))
+* **mcp:** add 2026-07-28 protocol version detection primitive ([1a829b9](https://github.com/theory-cloud/AppTheory/commit/1a829b9c9e365a8d6fdd6221f07a07ddd6ab3bb0))
+* **mcp:** add stateless 2026-07-28 transport mode ([44fd7f9](https://github.com/theory-cloud/AppTheory/commit/44fd7f920f1a74465d3adabe29d6db2a68e3122a))
+* **mcp:** complete 2026-07-28 compliance surface ([1f6e8f2](https://github.com/theory-cloud/AppTheory/commit/1f6e8f2ec2073e639453b619d3c760254d95559d))
+* **mcp:** detect protocol versions from parsed messages ([a1136ea](https://github.com/theory-cloud/AppTheory/commit/a1136ea70b473c66e61d3ce26a7a52cdfde1db53))
+* **mcp:** implement server/discover at the routing layer ([c7fd879](https://github.com/theory-cloud/AppTheory/commit/c7fd87950a22ef2b92f52f123fb4acc66e51d4a3))
+* **mcp:** plumb resultType through 2026-07-28 results ([0c8ad34](https://github.com/theory-cloud/AppTheory/commit/0c8ad343e0b847accc8d640af63772d5db41121f))
+* **microvm:** require explicit runtime logging ([e7c7c50](https://github.com/theory-cloud/AppTheory/commit/e7c7c5047127cf7ddfce8f6ca9ecca5ae50e2b02))
+
+
+### Bug Fixes
+
+* **cdk:** make Go bindings major-version aware ([6e21a19](https://github.com/theory-cloud/AppTheory/commit/6e21a1962954beaedc5fc71e30697eaac56517a1))
+* **ci:** prove canonical-layout baseline in cdk-go major-version gate ([d289dcb](https://github.com/theory-cloud/AppTheory/commit/d289dcb2715b21cf754a5a44cff6c77e28143039))
+* **ci:** prove canonical-layout baseline in cdk-go major-version gate ([cd59e5c](https://github.com/theory-cloud/AppTheory/commit/cd59e5cac7ce6051968bc0272ff25ef5da58c073))
+* **deps:** bump docs json gem to 2.21.1 ([68f6a88](https://github.com/theory-cloud/AppTheory/commit/68f6a882b7105bbb4ade8717f08cec6976c89103))
+* **deps:** bump docs json gem to 2.21.1 ([8bbb219](https://github.com/theory-cloud/AppTheory/commit/8bbb2198a1bd8b0923ad19b57b3fb054a5aabcad))
+* **deps:** update TableTheory to v2.0.5 ([0224dd7](https://github.com/theory-cloud/AppTheory/commit/0224dd7f65acbee1700315b568d525b699f4bc9d))
+* **go:** migrate AppTheory module to v2 ([5c8a0b1](https://github.com/theory-cloud/AppTheory/commit/5c8a0b198a8cae7a7367025896ef0ce36ddaa0d4))
+* **mcp:** harden 2026 discovery and routing parity ([52869cd](https://github.com/theory-cloud/AppTheory/commit/52869cd1fdd64db5274d42b856b8c8b5aab571d8))
+* **mcp:** reject stateless batches before session routing ([ce2c5dc](https://github.com/theory-cloud/AppTheory/commit/ce2c5dc1e54869502b51b2ced77efc9388a04140))
+* **release:** close AppTheory v2 Go publication ([bd375f9](https://github.com/theory-cloud/AppTheory/commit/bd375f91c18c71498e267e667e75f4667c699f3c))
+* **release:** publish immutable Go module tags ([7053ed5](https://github.com/theory-cloud/AppTheory/commit/7053ed5bb4046228e395532d6bf293902b121b08))
+* **security:** clear brace-expansion SEC-2/SEC-4 advisory drift ([43c03fd](https://github.com/theory-cloud/AppTheory/commit/43c03fd1dcb3dac93e1a0b0a524347cdc84b66d7))
+* **security:** clear brace-expansion SEC-2/SEC-4 advisory drift ([e0bdd3d](https://github.com/theory-cloud/AppTheory/commit/e0bdd3d7564ffcb8902f7dc98182f451fa6239b8))
+* **security:** harden brace exception retirement ([91aaaed](https://github.com/theory-cloud/AppTheory/commit/91aaaed6d6b0e3e0abb6f8f77265ed3b2aa67d45))
+
+## [2.0.0-rc](https://github.com/theory-cloud/AppTheory/compare/v1.17.1...v2.0.0-rc) (2026-07-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cdk:** make Go bindings major-version aware
+* **go:** migrate AppTheory module to v2
+* **cdk:** Structural IAppTheoryMicrovmImage references must now include logging; CloudWatch logging requires AppTheoryMicrovmController.executionRole with CloudWatch Logs permissions, while disabled logging remains role-optional.
+* **microvm:** MicroVM provider runs and real controllers now require an explicit CloudWatch-or-disabled logging configuration; CloudWatch logging also requires an execution role.
+
+### Features
+
+* **cdk:** propagate MicroVM runtime logging ([0e8c99c](https://github.com/theory-cloud/AppTheory/commit/0e8c99c8998c0d4efbfefe0827476bacf827d25f))
+* **mcp:** add 2026-07-28 dual-version transport ([776bd04](https://github.com/theory-cloud/AppTheory/commit/776bd0423050d8b23c57986a3993c4c6b4599d36))
+* **mcp:** add 2026-07-28 error codes and header enforcement ([e363f7f](https://github.com/theory-cloud/AppTheory/commit/e363f7f405ea37f2ec80bff99906b042bd3c78fd))
+* **mcp:** add 2026-07-28 protocol version detection primitive ([1a829b9](https://github.com/theory-cloud/AppTheory/commit/1a829b9c9e365a8d6fdd6221f07a07ddd6ab3bb0))
+* **mcp:** add stateless 2026-07-28 transport mode ([44fd7f9](https://github.com/theory-cloud/AppTheory/commit/44fd7f920f1a74465d3adabe29d6db2a68e3122a))
+* **mcp:** complete 2026-07-28 compliance surface ([1f6e8f2](https://github.com/theory-cloud/AppTheory/commit/1f6e8f2ec2073e639453b619d3c760254d95559d))
+* **mcp:** detect protocol versions from parsed messages ([a1136ea](https://github.com/theory-cloud/AppTheory/commit/a1136ea70b473c66e61d3ce26a7a52cdfde1db53))
+* **mcp:** implement server/discover at the routing layer ([c7fd879](https://github.com/theory-cloud/AppTheory/commit/c7fd87950a22ef2b92f52f123fb4acc66e51d4a3))
+* **mcp:** plumb resultType through 2026-07-28 results ([0c8ad34](https://github.com/theory-cloud/AppTheory/commit/0c8ad343e0b847accc8d640af63772d5db41121f))
+* **microvm:** require explicit runtime logging ([e7c7c50](https://github.com/theory-cloud/AppTheory/commit/e7c7c5047127cf7ddfce8f6ca9ecca5ae50e2b02))
+
+
+### Bug Fixes
+
+* **cdk:** make Go bindings major-version aware ([6e21a19](https://github.com/theory-cloud/AppTheory/commit/6e21a1962954beaedc5fc71e30697eaac56517a1))
+* **ci:** prove canonical-layout baseline in cdk-go major-version gate ([d289dcb](https://github.com/theory-cloud/AppTheory/commit/d289dcb2715b21cf754a5a44cff6c77e28143039))
+* **ci:** prove canonical-layout baseline in cdk-go major-version gate ([cd59e5c](https://github.com/theory-cloud/AppTheory/commit/cd59e5cac7ce6051968bc0272ff25ef5da58c073))
+* **deps:** bump docs json gem to 2.21.1 ([68f6a88](https://github.com/theory-cloud/AppTheory/commit/68f6a882b7105bbb4ade8717f08cec6976c89103))
+* **deps:** bump docs json gem to 2.21.1 ([8bbb219](https://github.com/theory-cloud/AppTheory/commit/8bbb2198a1bd8b0923ad19b57b3fb054a5aabcad))
+* **deps:** update TableTheory to v2.0.5 ([0224dd7](https://github.com/theory-cloud/AppTheory/commit/0224dd7f65acbee1700315b568d525b699f4bc9d))
+* **go:** migrate AppTheory module to v2 ([5c8a0b1](https://github.com/theory-cloud/AppTheory/commit/5c8a0b198a8cae7a7367025896ef0ce36ddaa0d4))
+* **mcp:** harden 2026 discovery and routing parity ([52869cd](https://github.com/theory-cloud/AppTheory/commit/52869cd1fdd64db5274d42b856b8c8b5aab571d8))
+* **mcp:** reject stateless batches before session routing ([ce2c5dc](https://github.com/theory-cloud/AppTheory/commit/ce2c5dc1e54869502b51b2ced77efc9388a04140))
+* **release:** close AppTheory v2 Go publication ([bd375f9](https://github.com/theory-cloud/AppTheory/commit/bd375f91c18c71498e267e667e75f4667c699f3c))
+* **release:** publish immutable Go module tags ([7053ed5](https://github.com/theory-cloud/AppTheory/commit/7053ed5bb4046228e395532d6bf293902b121b08))
+* **security:** clear brace-expansion SEC-2/SEC-4 advisory drift ([43c03fd](https://github.com/theory-cloud/AppTheory/commit/43c03fd1dcb3dac93e1a0b0a524347cdc84b66d7))
+* **security:** clear brace-expansion SEC-2/SEC-4 advisory drift ([e0bdd3d](https://github.com/theory-cloud/AppTheory/commit/e0bdd3d7564ffcb8902f7dc98182f451fa6239b8))
+* **security:** harden brace exception retirement ([91aaaed](https://github.com/theory-cloud/AppTheory/commit/91aaaed6d6b0e3e0abb6f8f77265ed3b2aa67d45))
+
 ## [1.17.1](https://github.com/theory-cloud/AppTheory/compare/v1.17.0...v1.17.1) (2026-07-22)
 
 

@@ -2,7 +2,7 @@ package apptheorycdk
 
 import (
 	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
-	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/jsii"
+	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v2/jsii"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigateway"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsroute53"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awswafv2"
 	"github.com/aws/constructs-go/constructs/v10"
-	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
+	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v2/internal"
 )
 
 // A REST API v1 router that supports multi-Lambda routing with full streaming parity.
