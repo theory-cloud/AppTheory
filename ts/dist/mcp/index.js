@@ -748,6 +748,7 @@ export class McpServer {
     originValidator;
     taskRuntime;
     extensionCapabilities;
+    cacheableResults;
     toolRegistry = new McpToolRegistry();
     resourceRegistry = new McpResourceRegistry();
     promptRegistry = new McpPromptRegistry();
@@ -763,6 +764,7 @@ export class McpServer {
                 ((origin) => origin === "https://claude.ai" || origin === "https://claude.com");
         this.taskRuntime = normalizeTaskRuntime(options.taskRuntime);
         this.extensionCapabilities = normalizeExtensionCapabilities(options.extensionCapabilities);
+        this.cacheableResults = normalizeCacheableResultConfig(options.cacheableResults);
     }
     registry() {
         return this.toolRegistry;
@@ -1008,7 +1010,7 @@ export class McpServer {
             return newErrorResponse(request.id, MCP_CODE_METHOD_NOT_FOUND, `Method not found: ${request.method}`);
         }
         if (isTaskMethod(request.method)) {
-            return responseForProtocol(await this.dispatchTaskMethod(request, sessionId), protocolVersion);
+            return this.finalizeResponseForProtocol(request, await this.dispatchTaskMethod(request, sessionId), protocolVersion);
         }
         if (!this.methodCapabilityEnabled(request.method)) {
             return newErrorResponse(request.id, MCP_CODE_METHOD_NOT_FOUND, `Method not found: ${request.method}`);
@@ -1057,7 +1059,29 @@ export class McpServer {
                 response = newErrorResponse(request.id, MCP_CODE_METHOD_NOT_FOUND, `Method not found: ${request.method}`);
                 break;
         }
-        return responseForProtocol(response, protocolVersion);
+        return this.finalizeResponseForProtocol(request, response, protocolVersion);
+    }
+    finalizeResponseForProtocol(request, response, protocolVersion) {
+        const prepared = responseForProtocol(response, protocolVersion);
+        if (protocolVersion !== MCP_PROTOCOL_VERSION_2026_07_28 ||
+            prepared.error ||
+            !isRecord(prepared.result) ||
+            prepared.result["resultType"] !== MCP_RESULT_TYPE_COMPLETE ||
+            requestIsMultiRoundTripRetry(request)) {
+            return prepared;
+        }
+        const hint = cacheHintForMethod(this.cacheableResults, request.method);
+        if (!hint) {
+            return prepared;
+        }
+        return {
+            ...prepared,
+            result: {
+                ...prepared.result,
+                ttlMs: hint.ttlMs,
+                cacheScope: hint.cacheScope,
+            },
+        };
     }
     async dispatchTaskMethod(request, sessionId) {
         if (!this.tasksEnabled()) {
@@ -1584,6 +1608,48 @@ function normalizeTaskRuntime(options) {
         listLimit,
         modelImmediateResponse: String(options.modelImmediateResponse ?? "").trim(),
     };
+}
+function normalizeCacheableResultConfig(config) {
+    return {
+        serverDiscover: normalizeCacheHint(config?.serverDiscover),
+        toolsList: normalizeCacheHint(config?.toolsList),
+        promptsList: normalizeCacheHint(config?.promptsList),
+        resourcesList: normalizeCacheHint(config?.resourcesList),
+        resourceTemplatesList: normalizeCacheHint(config?.resourceTemplatesList),
+        resourcesRead: normalizeCacheHint(config?.resourcesRead),
+    };
+}
+function normalizeCacheHint(hint) {
+    const rawTtlMs = Number(hint?.ttlMs ?? 0);
+    return {
+        ttlMs: Number.isFinite(rawTtlMs) && rawTtlMs >= 0 ? Math.floor(rawTtlMs) : 0,
+        cacheScope: hint?.cacheScope === "public" ? "public" : "private",
+    };
+}
+function cacheHintForMethod(config, method) {
+    switch (method) {
+        case "server/discover":
+            return config.serverDiscover;
+        case "tools/list":
+            return config.toolsList;
+        case "prompts/list":
+            return config.promptsList;
+        case "resources/list":
+            return config.resourcesList;
+        case "resources/templates/list":
+            return config.resourceTemplatesList;
+        case "resources/read":
+            return config.resourcesRead;
+        default:
+            return null;
+    }
+}
+function requestIsMultiRoundTripRetry(request) {
+    if (!isRecord(request.params)) {
+        return false;
+    }
+    return (Object.prototype.hasOwnProperty.call(request.params, "inputResponses") ||
+        Object.prototype.hasOwnProperty.call(request.params, "requestState"));
 }
 function normalizeExtensionCapabilities(capabilities) {
     if (!isRecord(capabilities)) {

@@ -76,7 +76,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>692 exported top-level symbols</summary>
+<summary>695 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, ALBTargetGroupResponse
@@ -151,7 +151,8 @@ MCP_CODE_MISSING_REQUIRED_CLIENT_CAPABILITY, MCP_CODE_PARSE_ERROR, MCP_CODE_SERV
 MCP_HEADER_LAST_EVENT_ID, MCP_HEADER_METHOD, MCP_HEADER_NAME, MCP_HEADER_PROTOCOL_VERSION
 MCP_HEADER_SESSION_ID, MCP_PROTOCOL_SHAPE_2025_11_25, MCP_PROTOCOL_SHAPE_2026_07_28, MCP_PROTOCOL_SHAPE_UNKNOWN
 MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_2026_07_28, MCP_PROTOCOL_VERSION_LEGACY, MCP_PROTOCOL_VERSION_PRIOR
-MCP_RESULT_TYPE_COMPLETE, MCP_RESULT_TYPE_INPUT_REQUIRED, McpContentBlock, McpDiscoverResult
+MCP_RESULT_TYPE_COMPLETE, MCP_RESULT_TYPE_INPUT_REQUIRED, McpCacheHint, McpCacheScope
+McpCacheableResultConfig, McpContentBlock, McpDiscoverResult
 McpEventNotFoundError, McpExtensionCapabilities, McpInputRequest, McpInputRequiredResult, McpJSONRecord
 McpJSONValue, McpPromptArgument, McpPromptDef, McpPromptHandler
 McpPromptMessage, McpPromptRegistry, McpPromptResult, McpProtocolShape

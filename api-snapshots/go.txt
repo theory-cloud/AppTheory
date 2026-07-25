@@ -2611,6 +2611,10 @@ func (safeEventError) Error() string
 
 ## github.com/theory-cloud/apptheory/v2/runtime/mcp
 
+const CacheScopePrivate CacheScope = "private"
+
+const CacheScopePublic CacheScope = "public"
+
 const CodeHeaderMismatch = -32020
 
 const CodeInternalError = -32603
@@ -2698,6 +2702,22 @@ var ErrStreamNotFound = errors.New("stream not found")
 var ErrTaskNotFound = errors.New("task not found")
 
 var ErrTaskTerminal = errors.New("task already terminal")
+
+type CacheHint struct {
+	TTL   time.Duration
+	Scope CacheScope
+}
+
+type CacheScope string
+
+type CacheableResultConfig struct {
+	ServerDiscover        CacheHint
+	ToolsList             CacheHint
+	PromptsList           CacheHint
+	ResourcesList         CacheHint
+	ResourceTemplatesList CacheHint
+	ResourcesRead         CacheHint
+}
 
 type CapabilityConfig struct {
 	Tools       bool
@@ -2964,6 +2984,7 @@ type Server struct {
 	originValidator       OriginValidator
 	capabilities          CapabilityConfig
 	extensionCapabilities map[string]map[string]any
+	cacheableResults      CacheableResultConfig
 
 	resourceSubscribeHook   ResourceSubscriptionHook
 	resourceUnsubscribeHook ResourceSubscriptionHook
@@ -3196,6 +3217,8 @@ func ParseRequest([]byte) (*Request, error)
 func ParseResponse([]byte) (*Response, error)
 
 func ToolInputFromContext(context.Context) ToolInput
+
+func WithCacheableResultConfig(CacheableResultConfig) ServerOption
 
 func WithCapabilityConfig(CapabilityConfig) ServerOption
 

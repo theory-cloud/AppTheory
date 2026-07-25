@@ -217,6 +217,48 @@ returning an input request the client cannot satisfy.
 Session-ful results are unchanged: AppTheory removes a handler-supplied `"complete"` marker from the `2025-11-25`
 response shape, and `input_required` is unavailable there.
 
+### `2026-07-28` cacheable results
+
+AppTheory adds the required `ttlMs` and `cacheScope` fields to every `"complete"` result from these modern methods:
+
+- `server/discover`
+- `tools/list`
+- `prompts/list`
+- `resources/list`
+- `resources/templates/list`
+- `resources/read`
+
+The fail-closed default for every surface is `ttlMs: 0` (immediately stale) and `cacheScope: "private"`. A surface is
+marked `"public"` only when the server configures it explicitly; do not use public scope for results that vary by
+tenant, identity, authorization context, or request filtering. Negative/non-finite TTL configuration is normalized to
+zero.
+
+Go configures the six surfaces with `mcp.WithCacheableResultConfig(mcp.CacheableResultConfig{...})` and
+`mcp.CacheHint`. TypeScript uses `McpServerOptions.cacheableResults`; Python uses
+`McpServerOptions.cacheable_results`. The TypeScript/Python field names are the language-idiomatic equivalents of
+`ServerDiscover`, `ToolsList`, `PromptsList`, `ResourcesList`, `ResourceTemplatesList`, and `ResourcesRead`.
+
+```go
+srv := mcp.NewServer(
+    "my-mcp-server",
+    "dev",
+    mcp.WithCacheableResultConfig(mcp.CacheableResultConfig{
+        ToolsList: mcp.CacheHint{
+            TTL:   5 * time.Minute,
+            Scope: mcp.CacheScopePublic,
+        },
+        ResourcesRead: mcp.CacheHint{
+            TTL:   30 * time.Second,
+            Scope: mcp.CacheScopePrivate,
+        },
+    }),
+)
+```
+
+`input_required` results never carry caching hints. A completed multi-round retry that supplies `inputResponses` or
+`requestState` is also not cacheable because those inputs are not part of the protocol cache key. All `2025-11-25`
+responses remain byte-compatible and omit the modern cache fields.
+
 ### `2026-07-28` protocol errors
 
 Modern transport validation fails closed with these exported codes in Go, TypeScript, and Python:

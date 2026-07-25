@@ -85,6 +85,7 @@ type Server struct {
 	originValidator       OriginValidator
 	capabilities          CapabilityConfig
 	extensionCapabilities map[string]map[string]any
+	cacheableResults      CacheableResultConfig
 
 	resourceSubscribeHook   ResourceSubscriptionHook
 	resourceUnsubscribeHook ResourceSubscriptionHook
@@ -229,6 +230,7 @@ func NewServer(name, version string, opts ...ServerOption) *Server {
 		logger:           slog.Default(),
 		originValidator:  AllowOrigins("https://claude.ai", "https://claude.com"),
 		capabilities:     DefaultCapabilityConfig(),
+		cacheableResults: normalizeCacheableResultConfig(CacheableResultConfig{}),
 		taskExecutions:   newTaskExecutionTracker(),
 	}
 	for _, opt := range opts {
@@ -657,10 +659,14 @@ func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocol
 		return NewErrorResponse(req.ID, CodeMethodNotFound, fmt.Sprintf("Method not found: %s", req.Method))
 	}
 	if isTaskMethod(req.Method) {
-		return responseForProtocol(s.dispatchTaskMethod(ctx, req, sessionID), protocolVersion)
+		return s.finalizeResponseForProtocol(req, s.dispatchTaskMethod(ctx, req, sessionID), protocolVersion)
 	}
 
-	return responseForProtocol(s.dispatchNonTaskMethod(ctx, req, sessionID, protocolVersion), protocolVersion)
+	return s.finalizeResponseForProtocol(
+		req,
+		s.dispatchNonTaskMethod(ctx, req, sessionID, protocolVersion),
+		protocolVersion,
+	)
 }
 
 func (s *Server) dispatchNonTaskMethod(

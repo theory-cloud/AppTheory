@@ -156,7 +156,9 @@
                   "version": "sp09"
                 }
               },
-              "resultType": "complete"
+              "resultType": "complete",
+              "ttlMs": 0,
+              "cacheScope": "private"
             }
           }
         }

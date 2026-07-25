@@ -204,9 +204,24 @@ type FixtureMCPSetup struct {
 }
 
 type FixtureMCPServer struct {
-	Name                  string                    `json:"name,omitempty"`
-	Version               string                    `json:"version,omitempty"`
-	ExtensionCapabilities map[string]map[string]any `json:"extension_capabilities,omitempty"`
+	Name                  string                      `json:"name,omitempty"`
+	Version               string                      `json:"version,omitempty"`
+	ExtensionCapabilities map[string]map[string]any   `json:"extension_capabilities,omitempty"`
+	CacheableResults      *FixtureMCPCacheableResults `json:"cacheable_results,omitempty"`
+}
+
+type FixtureMCPCacheableResults struct {
+	ServerDiscover        FixtureMCPCacheHint `json:"server_discover,omitempty"`
+	ToolsList             FixtureMCPCacheHint `json:"tools_list,omitempty"`
+	PromptsList           FixtureMCPCacheHint `json:"prompts_list,omitempty"`
+	ResourcesList         FixtureMCPCacheHint `json:"resources_list,omitempty"`
+	ResourceTemplatesList FixtureMCPCacheHint `json:"resource_templates_list,omitempty"`
+	ResourcesRead         FixtureMCPCacheHint `json:"resources_read,omitempty"`
+}
+
+type FixtureMCPCacheHint struct {
+	TTLMS      int64  `json:"ttl_ms,omitempty"`
+	CacheScope string `json:"cache_scope,omitempty"`
 }
 
 type FixtureMCPTool struct {

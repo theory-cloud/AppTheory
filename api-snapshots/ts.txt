@@ -227,6 +227,9 @@ ManualClock	class
 ManualIdGenerator	class
 MaxPutDeleteBatchSize	const
 MaxQueryTopK	const
+McpCacheHint	interface
+McpCacheScope	type
+McpCacheableResultConfig	interface
 McpContentBlock	interface
 McpDiscoverResult	interface
 McpEventNotFoundError	class

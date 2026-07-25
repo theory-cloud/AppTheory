@@ -70,6 +70,7 @@ McpRequestID = str | int | bool | None
 McpJSONValue = str | int | float | bool | None | list[Any] | dict[str, Any]
 McpJSONRecord = dict[str, McpJSONValue]
 McpExtensionCapabilities = dict[str, McpJSONRecord]
+McpCacheScope = Literal["private", "public"]
 
 T = TypeVar("T")
 
@@ -408,6 +409,30 @@ class McpTaskRuntimeOptions:
 
 
 @dataclass(slots=True)
+class McpCacheHint:
+    """Cache metadata for one modern MCP result surface.
+
+    ``ttl_ms`` defaults to 0. ``cache_scope`` defaults to ``private`` and
+    ``public`` must be selected explicitly.
+    """
+
+    ttl_ms: int = 0
+    cache_scope: McpCacheScope = "private"
+
+
+@dataclass(slots=True)
+class McpCacheableResultConfig:
+    """Per-surface cache hints for MCP 2026-07-28 complete results."""
+
+    server_discover: McpCacheHint | dict[str, Any] = field(default_factory=McpCacheHint)
+    tools_list: McpCacheHint | dict[str, Any] = field(default_factory=McpCacheHint)
+    prompts_list: McpCacheHint | dict[str, Any] = field(default_factory=McpCacheHint)
+    resources_list: McpCacheHint | dict[str, Any] = field(default_factory=McpCacheHint)
+    resource_templates_list: McpCacheHint | dict[str, Any] = field(default_factory=McpCacheHint)
+    resources_read: McpCacheHint | dict[str, Any] = field(default_factory=McpCacheHint)
+
+
+@dataclass(slots=True)
 class McpServerOptions:
     id_generator: IdGenerator | None = None
     session_store: McpSessionStore | None = None
@@ -417,6 +442,7 @@ class McpServerOptions:
     session_ttl_ms: int = 0
     clock: Clock | None = None
     extension_capabilities: McpExtensionCapabilities = field(default_factory=dict)
+    cacheable_results: McpCacheableResultConfig | dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -1041,6 +1067,7 @@ class McpServer:
         )
         self.task_runtime = _normalize_task_runtime(opts.task_runtime)
         self.extension_capabilities = _normalize_extension_capabilities(opts.extension_capabilities)
+        self.cacheable_results = _normalize_cacheable_result_config(opts.cacheable_results)
         self.tool_registry = McpToolRegistry()
         self.resource_registry = McpResourceRegistry()
         self.prompt_registry = McpPromptRegistry()
@@ -1259,7 +1286,11 @@ class McpServer:
         if protocol_version == MCP_PROTOCOL_VERSION_2026_07_28 and _stateless_request_requires_session(request):
             return _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, f"Method not found: {request.method}")
         if _is_task_method(request.method):
-            return _response_for_protocol(self._dispatch_task_method(request, session_id), protocol_version)
+            return self._finalize_response_for_protocol(
+                request,
+                self._dispatch_task_method(request, session_id),
+                protocol_version,
+            )
         if not self._method_capability_enabled(request.method):
             return _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, f"Method not found: {request.method}")
         if request.method == "server/discover":
@@ -1284,7 +1315,35 @@ class McpServer:
             response = self._handle_prompts_get(request)
         else:
             response = _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, f"Method not found: {request.method}")
-        return _response_for_protocol(response, protocol_version)
+        return self._finalize_response_for_protocol(request, response, protocol_version)
+
+    def _finalize_response_for_protocol(
+        self,
+        request: _ParsedRPCRequest,
+        response: dict[str, Any],
+        protocol_version: str,
+    ) -> dict[str, Any]:
+        prepared = _response_for_protocol(response, protocol_version)
+        result = prepared.get("result")
+        if (
+            protocol_version != MCP_PROTOCOL_VERSION_2026_07_28
+            or prepared.get("error") is not None
+            or not isinstance(result, Mapping)
+            or result.get("resultType") != MCP_RESULT_TYPE_COMPLETE
+            or _request_is_multi_round_trip_retry(request)
+        ):
+            return prepared
+        hint = _cache_hint_for_method(self.cacheable_results, request.method)
+        if hint is None:
+            return prepared
+        return {
+            **prepared,
+            "result": {
+                **result,
+                "ttlMs": hint.ttl_ms,
+                "cacheScope": hint.cache_scope,
+            },
+        }
 
     def _dispatch_task_method(self, request: _ParsedRPCRequest, session_id: str) -> dict[str, Any]:
         if not self._tasks_enabled():
@@ -1705,6 +1764,51 @@ def _normalize_task_runtime(options: McpTaskRuntimeOptions | dict[str, Any] | No
         model_immediate_response=str(
             _field(options, "model_immediate_response") or _field(options, "modelImmediateResponse") or ""
         ).strip(),
+    )
+
+
+def _normalize_cacheable_result_config(config: Any) -> McpCacheableResultConfig:
+    return McpCacheableResultConfig(
+        server_discover=_normalize_cache_hint(_field(config, "server_discover") or _field(config, "serverDiscover")),
+        tools_list=_normalize_cache_hint(_field(config, "tools_list") or _field(config, "toolsList")),
+        prompts_list=_normalize_cache_hint(_field(config, "prompts_list") or _field(config, "promptsList")),
+        resources_list=_normalize_cache_hint(_field(config, "resources_list") or _field(config, "resourcesList")),
+        resource_templates_list=_normalize_cache_hint(
+            _field(config, "resource_templates_list") or _field(config, "resourceTemplatesList")
+        ),
+        resources_read=_normalize_cache_hint(_field(config, "resources_read") or _field(config, "resourcesRead")),
+    )
+
+
+def _normalize_cache_hint(hint: Any) -> McpCacheHint:
+    raw_ttl_ms = _field(hint, "ttl_ms")
+    if raw_ttl_ms is None:
+        raw_ttl_ms = _field(hint, "ttlMs")
+    try:
+        ttl_ms = max(0, int(raw_ttl_ms or 0))
+    except (TypeError, ValueError, OverflowError):
+        ttl_ms = 0
+    raw_scope = _field(hint, "cache_scope")
+    if raw_scope is None:
+        raw_scope = _field(hint, "cacheScope")
+    cache_scope: McpCacheScope = "public" if raw_scope == "public" else "private"
+    return McpCacheHint(ttl_ms=ttl_ms, cache_scope=cache_scope)
+
+
+def _cache_hint_for_method(config: McpCacheableResultConfig, method: str) -> McpCacheHint | None:
+    return {
+        "server/discover": config.server_discover,
+        "tools/list": config.tools_list,
+        "prompts/list": config.prompts_list,
+        "resources/list": config.resources_list,
+        "resources/templates/list": config.resource_templates_list,
+        "resources/read": config.resources_read,
+    }.get(method)
+
+
+def _request_is_multi_round_trip_retry(request: _ParsedRPCRequest) -> bool:
+    return isinstance(request.params, Mapping) and (
+        "inputResponses" in request.params or "requestState" in request.params
     )
 
 
@@ -2905,6 +3009,9 @@ __all__ = [
     "MCP_RESULT_TYPE_INPUT_REQUIRED",
     "DynamoMcpStreamStore",
     "DynamoMcpTaskStore",
+    "McpCacheHint",
+    "McpCacheScope",
+    "McpCacheableResultConfig",
     "McpContentBlock",
     "McpDiscoverResult",
     "McpEventNotFoundError",

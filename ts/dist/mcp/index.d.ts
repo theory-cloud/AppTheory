@@ -249,6 +249,21 @@ export interface McpTaskRuntimeOptions {
     listLimit?: number;
     modelImmediateResponse?: string;
 }
+export type McpCacheScope = "private" | "public";
+export interface McpCacheHint {
+    /** Defaults to 0 (immediately stale); negative and non-finite values become 0. */
+    ttlMs?: number;
+    /** Defaults to private; public must be configured explicitly. */
+    cacheScope?: McpCacheScope;
+}
+export interface McpCacheableResultConfig {
+    serverDiscover?: McpCacheHint;
+    toolsList?: McpCacheHint;
+    promptsList?: McpCacheHint;
+    resourcesList?: McpCacheHint;
+    resourceTemplatesList?: McpCacheHint;
+    resourcesRead?: McpCacheHint;
+}
 export interface McpServerOptions {
     idGenerator?: IdGenerator;
     sessionStore?: McpSessionStore;
@@ -262,6 +277,11 @@ export interface McpServerOptions {
      * extension negotiation fails closed.
      */
     extensionCapabilities?: McpExtensionCapabilities;
+    /**
+     * Per-surface cache hints for MCP 2026-07-28 complete results. Omitted
+     * surfaces emit ttlMs: 0 and cacheScope: private.
+     */
+    cacheableResults?: McpCacheableResultConfig;
 }
 export declare class McpSessionNotFoundError extends Error {
     constructor(message?: string);
@@ -400,6 +420,7 @@ export declare class McpServer {
     private readonly originValidator;
     private readonly taskRuntime;
     private readonly extensionCapabilities;
+    private readonly cacheableResults;
     private readonly toolRegistry;
     private readonly resourceRegistry;
     private readonly promptRegistry;
@@ -424,6 +445,7 @@ export declare class McpServer {
     private handleNotification;
     private handleRequestHTTP;
     private dispatch;
+    private finalizeResponseForProtocol;
     private dispatchTaskMethod;
     private handleInitialize;
     private handleDiscover;

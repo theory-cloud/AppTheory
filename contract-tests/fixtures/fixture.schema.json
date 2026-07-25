@@ -234,6 +234,18 @@
               "additionalProperties": {
                 "type": "object"
               }
+            },
+            "cacheable_results": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "server_discover": { "$ref": "#/$defs/mcpCacheHint" },
+                "tools_list": { "$ref": "#/$defs/mcpCacheHint" },
+                "prompts_list": { "$ref": "#/$defs/mcpCacheHint" },
+                "resources_list": { "$ref": "#/$defs/mcpCacheHint" },
+                "resource_templates_list": { "$ref": "#/$defs/mcpCacheHint" },
+                "resources_read": { "$ref": "#/$defs/mcpCacheHint" }
+              }
             }
           }
         },
@@ -264,6 +276,14 @@
             "update_clock_unix_ms": { "type": "integer" }
           }
         }
+      }
+    },
+    "mcpCacheHint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ttl_ms": { "type": "integer" },
+        "cache_scope": { "type": "string", "enum": ["private", "public"] }
       }
     },
     "mcpTool": {

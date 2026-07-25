@@ -2474,6 +2474,21 @@ async function newFixtureMCPServer(runtime, setup) {
   if (serverConfig.extension_capabilities) {
     options.extensionCapabilities = serverConfig.extension_capabilities;
   }
+  if (serverConfig.cacheable_results) {
+    const config = serverConfig.cacheable_results;
+    const hint = (value) => ({
+      ttlMs: Number(value?.ttl_ms ?? 0),
+      cacheScope: value?.cache_scope,
+    });
+    options.cacheableResults = {
+      serverDiscover: hint(config.server_discover),
+      toolsList: hint(config.tools_list),
+      promptsList: hint(config.prompts_list),
+      resourcesList: hint(config.resources_list),
+      resourceTemplatesList: hint(config.resource_templates_list),
+      resourcesRead: hint(config.resources_read),
+    };
+  }
   if (mcpSetup.task_runtime?.enabled) {
     options.taskRuntime = {
       store: new FixtureMCPTaskStore(runtime, mcpSetup.task_runtime),

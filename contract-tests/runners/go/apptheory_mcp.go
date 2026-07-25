@@ -102,6 +102,17 @@ func newFixtureMCPServer(setup FixtureMCPSetup) (*mcp.Server, error) {
 	if len(setup.Server.ExtensionCapabilities) > 0 {
 		opts = append(opts, mcp.WithExtensionCapabilities(setup.Server.ExtensionCapabilities))
 	}
+	if setup.Server.CacheableResults != nil {
+		config := setup.Server.CacheableResults
+		opts = append(opts, mcp.WithCacheableResultConfig(mcp.CacheableResultConfig{
+			ServerDiscover:        fixtureMCPCacheHint(config.ServerDiscover),
+			ToolsList:             fixtureMCPCacheHint(config.ToolsList),
+			PromptsList:           fixtureMCPCacheHint(config.PromptsList),
+			ResourcesList:         fixtureMCPCacheHint(config.ResourcesList),
+			ResourceTemplatesList: fixtureMCPCacheHint(config.ResourceTemplatesList),
+			ResourcesRead:         fixtureMCPCacheHint(config.ResourcesRead),
+		}))
+	}
 	if setup.TaskRuntime != nil && setup.TaskRuntime.Enabled {
 		opts = append(opts, mcp.WithTaskRuntime(mcp.TaskRuntimeOptions{
 			Store:                  newFixtureMCPTaskStore(*setup.TaskRuntime),
@@ -142,6 +153,13 @@ func durationFromMilliseconds(ms int64) time.Duration {
 		return 0
 	}
 	return time.Duration(ms) * time.Millisecond
+}
+
+func fixtureMCPCacheHint(hint FixtureMCPCacheHint) mcp.CacheHint {
+	return mcp.CacheHint{
+		TTL:   durationFromMilliseconds(hint.TTLMS),
+		Scope: mcp.CacheScope(hint.CacheScope),
+	}
 }
 
 type sequenceIDGenerator struct {

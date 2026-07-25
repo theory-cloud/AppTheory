@@ -397,6 +397,24 @@ export interface McpTaskRuntimeOptions {
   modelImmediateResponse?: string;
 }
 
+export type McpCacheScope = "private" | "public";
+
+export interface McpCacheHint {
+  /** Defaults to 0 (immediately stale); negative and non-finite values become 0. */
+  ttlMs?: number;
+  /** Defaults to private; public must be configured explicitly. */
+  cacheScope?: McpCacheScope;
+}
+
+export interface McpCacheableResultConfig {
+  serverDiscover?: McpCacheHint;
+  toolsList?: McpCacheHint;
+  promptsList?: McpCacheHint;
+  resourcesList?: McpCacheHint;
+  resourceTemplatesList?: McpCacheHint;
+  resourcesRead?: McpCacheHint;
+}
+
 export interface McpServerOptions {
   idGenerator?: IdGenerator;
   sessionStore?: McpSessionStore;
@@ -410,6 +428,11 @@ export interface McpServerOptions {
    * extension negotiation fails closed.
    */
   extensionCapabilities?: McpExtensionCapabilities;
+  /**
+   * Per-surface cache hints for MCP 2026-07-28 complete results. Omitted
+   * surfaces emit ttlMs: 0 and cacheScope: private.
+   */
+  cacheableResults?: McpCacheableResultConfig;
 }
 
 type RegisteredTool = {
@@ -435,6 +458,20 @@ type NormalizedTaskRuntime = {
   pollIntervalMs: number;
   listLimit: number;
   modelImmediateResponse: string;
+};
+
+type NormalizedCacheHint = {
+  ttlMs: number;
+  cacheScope: McpCacheScope;
+};
+
+type NormalizedCacheableResultConfig = {
+  serverDiscover: NormalizedCacheHint;
+  toolsList: NormalizedCacheHint;
+  promptsList: NormalizedCacheHint;
+  resourcesList: NormalizedCacheHint;
+  resourceTemplatesList: NormalizedCacheHint;
+  resourcesRead: NormalizedCacheHint;
 };
 
 type ParsedRPCRequest = {
@@ -1274,6 +1311,7 @@ export class McpServer {
     string,
     Record<string, unknown>
   >;
+  private readonly cacheableResults: NormalizedCacheableResultConfig;
   private readonly toolRegistry = new McpToolRegistry();
   private readonly resourceRegistry = new McpResourceRegistry();
   private readonly promptRegistry = new McpPromptRegistry();
@@ -1292,6 +1330,9 @@ export class McpServer {
     this.taskRuntime = normalizeTaskRuntime(options.taskRuntime);
     this.extensionCapabilities = normalizeExtensionCapabilities(
       options.extensionCapabilities,
+    );
+    this.cacheableResults = normalizeCacheableResultConfig(
+      options.cacheableResults,
     );
   }
 
@@ -1661,7 +1702,8 @@ export class McpServer {
       );
     }
     if (isTaskMethod(request.method)) {
-      return responseForProtocol(
+      return this.finalizeResponseForProtocol(
+        request,
         await this.dispatchTaskMethod(request, sessionId),
         protocolVersion,
       );
@@ -1725,7 +1767,36 @@ export class McpServer {
         );
         break;
     }
-    return responseForProtocol(response, protocolVersion);
+    return this.finalizeResponseForProtocol(request, response, protocolVersion);
+  }
+
+  private finalizeResponseForProtocol(
+    request: ParsedRPCRequest,
+    response: McpRPCResponse,
+    protocolVersion: string,
+  ): McpRPCResponse {
+    const prepared = responseForProtocol(response, protocolVersion);
+    if (
+      protocolVersion !== MCP_PROTOCOL_VERSION_2026_07_28 ||
+      prepared.error ||
+      !isRecord(prepared.result) ||
+      prepared.result["resultType"] !== MCP_RESULT_TYPE_COMPLETE ||
+      requestIsMultiRoundTripRetry(request)
+    ) {
+      return prepared;
+    }
+    const hint = cacheHintForMethod(this.cacheableResults, request.method);
+    if (!hint) {
+      return prepared;
+    }
+    return {
+      ...prepared,
+      result: {
+        ...prepared.result,
+        ttlMs: hint.ttlMs,
+        cacheScope: hint.cacheScope,
+      },
+    };
   }
 
   private async dispatchTaskMethod(
@@ -2433,6 +2504,62 @@ function normalizeTaskRuntime(
     listLimit,
     modelImmediateResponse: String(options.modelImmediateResponse ?? "").trim(),
   };
+}
+
+function normalizeCacheableResultConfig(
+  config: McpCacheableResultConfig | undefined,
+): NormalizedCacheableResultConfig {
+  return {
+    serverDiscover: normalizeCacheHint(config?.serverDiscover),
+    toolsList: normalizeCacheHint(config?.toolsList),
+    promptsList: normalizeCacheHint(config?.promptsList),
+    resourcesList: normalizeCacheHint(config?.resourcesList),
+    resourceTemplatesList: normalizeCacheHint(config?.resourceTemplatesList),
+    resourcesRead: normalizeCacheHint(config?.resourcesRead),
+  };
+}
+
+function normalizeCacheHint(
+  hint: McpCacheHint | undefined,
+): NormalizedCacheHint {
+  const rawTtlMs = Number(hint?.ttlMs ?? 0);
+  return {
+    ttlMs:
+      Number.isFinite(rawTtlMs) && rawTtlMs >= 0 ? Math.floor(rawTtlMs) : 0,
+    cacheScope: hint?.cacheScope === "public" ? "public" : "private",
+  };
+}
+
+function cacheHintForMethod(
+  config: NormalizedCacheableResultConfig,
+  method: string,
+): NormalizedCacheHint | null {
+  switch (method) {
+    case "server/discover":
+      return config.serverDiscover;
+    case "tools/list":
+      return config.toolsList;
+    case "prompts/list":
+      return config.promptsList;
+    case "resources/list":
+      return config.resourcesList;
+    case "resources/templates/list":
+      return config.resourceTemplatesList;
+    case "resources/read":
+      return config.resourcesRead;
+    default:
+      return null;
+  }
+}
+
+function requestIsMultiRoundTripRetry(request: ParsedRPCRequest): boolean {
+  if (!isRecord(request.params)) {
+    return false;
+  }
+  return (
+    Object.prototype.hasOwnProperty.call(request.params, "inputResponses") ||
+    Object.prototype.hasOwnProperty.call(request.params, "requestState")
+  );
 }
 
 function normalizeExtensionCapabilities(
