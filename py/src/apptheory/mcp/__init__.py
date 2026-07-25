@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import contextlib
 import datetime as dt
 import inspect
@@ -1181,11 +1183,12 @@ class McpServer:
         shape: McpProtocolShape,
     ) -> Response:
         try:
-            _parse_response(body)
+            rpc_response = _parse_response(body)
         except Exception:  # noqa: BLE001
             return _bad_request("invalid JSON-RPC response")
-        if shape == MCP_PROTOCOL_SHAPE_2026_07_28:
-            return _empty_response(202)
+        validation_response = _validate_post_response_protocol(headers, rpc_response, shape)
+        if validation_response is not None:
+            return validation_response
         _, session, response = self._require_session(headers)
         if response is not None:
             return response
@@ -1958,7 +1961,7 @@ def _parse_request(body: bytes) -> _ParsedRPCRequest:
     return _ParsedRPCRequest(method=method, id_present=id_present, id=raw.get("id"), params=raw.get("params"))
 
 
-def _parse_response(body: bytes) -> None:
+def _parse_response(body: bytes) -> dict[str, Any]:
     raw = _parse_json_object(body)
     if "jsonrpc" not in raw:
         raise ValueError("missing required field: jsonrpc")
@@ -1970,6 +1973,7 @@ def _parse_response(body: bytes) -> None:
         raise ValueError("response must have exactly one of result or error")
     if str(raw.get("jsonrpc") or "") != JSONRPC_VERSION:
         raise ValueError(f"unsupported jsonrpc version: {raw.get('jsonrpc') or ''}")
+    return raw
 
 
 def _parse_json_object(body: bytes) -> dict[str, Any]:
@@ -2089,10 +2093,68 @@ def _validate_post_request_protocol(
             MCP_CODE_HEADER_MISMATCH,
             "Header mismatch: MCP-Protocol-Version does not match request metadata",
         )
+    if meta_version == MCP_PROTOCOL_VERSION_2026_07_28 and not header_version:
+        return MCP_PROTOCOL_SHAPE_UNKNOWN, _protocol_error_response(
+            request.id,
+            MCP_CODE_HEADER_MISMATCH,
+            "Header mismatch: missing required MCP-Protocol-Version header",
+        )
     if not modern_claim:
         return detected_shape, None
 
+    metadata_response = _validate_2026_07_28_request_metadata(request)
+    if metadata_response is not None:
+        return MCP_PROTOCOL_SHAPE_UNKNOWN, metadata_response
     return MCP_PROTOCOL_SHAPE_2026_07_28, _validate_2026_07_28_routing_headers(headers, request)
+
+
+def _validate_post_response_protocol(
+    headers: dict[str, Any],
+    response: dict[str, Any],
+    detected_shape: McpProtocolShape,
+) -> Response | None:
+    header_version = _first_header(headers, MCP_HEADER_PROTOCOL_VERSION).strip()
+    if header_version and not _is_advertised_protocol_version(header_version):
+        if _first_header(headers, MCP_HEADER_SESSION_ID).strip():
+            return None
+        return _unsupported_protocol_version_response(response.get("id"), header_version)
+    if detected_shape != MCP_PROTOCOL_SHAPE_2026_07_28:
+        return None
+    return _protocol_error_response(
+        response.get("id"),
+        MCP_CODE_INVALID_REQUEST,
+        "Invalid Request: clients must not send JSON-RPC responses",
+    )
+
+
+def _validate_2026_07_28_request_metadata(request: _ParsedRPCRequest) -> Response | None:
+    if not isinstance(request.params, Mapping):
+        return _protocol_error_response(
+            request.id,
+            MCP_CODE_INVALID_PARAMS,
+            "Invalid params: missing or invalid io.modelcontextprotocol/protocolVersion",
+        )
+    meta = request.params.get("_meta")
+    if not isinstance(meta, Mapping):
+        return _protocol_error_response(
+            request.id,
+            MCP_CODE_INVALID_PARAMS,
+            "Invalid params: missing or invalid io.modelcontextprotocol/protocolVersion",
+        )
+    protocol_version = meta.get(PROTOCOL_VERSION_METADATA_KEY)
+    if not isinstance(protocol_version, str) or protocol_version.strip() != MCP_PROTOCOL_VERSION_2026_07_28:
+        return _protocol_error_response(
+            request.id,
+            MCP_CODE_INVALID_PARAMS,
+            "Invalid params: missing or invalid io.modelcontextprotocol/protocolVersion",
+        )
+    if not isinstance(meta.get(CLIENT_CAPABILITIES_METADATA_KEY), Mapping):
+        return _protocol_error_response(
+            request.id,
+            MCP_CODE_INVALID_PARAMS,
+            "Invalid params: missing or invalid io.modelcontextprotocol/clientCapabilities",
+        )
+    return None
 
 
 def _validate_2026_07_28_routing_headers(
@@ -2142,6 +2204,13 @@ def _validate_2026_07_28_routing_headers(
             MCP_CODE_HEADER_MISMATCH,
             "Header mismatch: missing required Mcp-Name header",
         )
+    header_name, malformed = _decode_routing_header_name(header_name)
+    if malformed:
+        return _protocol_error_response(
+            request.id,
+            MCP_CODE_HEADER_MISMATCH,
+            "Header mismatch: malformed Mcp-Name Base64 encoding",
+        )
     if header_name != name:
         return _protocol_error_response(
             request.id,
@@ -2149,6 +2218,24 @@ def _validate_2026_07_28_routing_headers(
             "Header mismatch: Mcp-Name does not match request parameters",
         )
     return None
+
+
+def _decode_routing_header_name(value: str) -> tuple[str, bool]:
+    prefix = "=?base64?"
+    suffix = "?="
+    if not value.startswith(prefix):
+        return value, False
+    if not value.endswith(suffix):
+        return "", True
+    encoded = value[len(prefix) : -len(suffix)]
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+        text = decoded.decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        return "", True
+    if base64.b64encode(decoded).decode("ascii") != encoded:
+        return "", True
+    return text, False
 
 
 def _request_routing_name(request: _ParsedRPCRequest) -> tuple[str, bool, str]:

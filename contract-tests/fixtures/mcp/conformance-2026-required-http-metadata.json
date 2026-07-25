@@ -1,30 +1,20 @@
 {
-  "id": "mcp.errors_2026.routing_header_hardening",
+  "id": "mcp.conformance_2026.required_http_metadata",
   "tier": "mcp",
-  "name": "MCP 2026-07-28 rejects ambiguous routing headers and invalid body routing names",
+  "name": "MCP 2026-07-28 HTTP requests require the protocol header and per-request metadata",
   "setup": {
     "mcp": {
       "server": {
         "name": "ContractMCP",
         "version": "sp09"
-      },
-      "tools": [
-        {
-          "name": "echo",
-          "description": "Echo text",
-          "input_schema": {
-            "type": "object"
-          },
-          "handler": "echo_text"
-        }
-      ]
+      }
     }
   },
   "input": {
     "mcp": {
       "steps": [
         {
-          "name": "conflicting_method_values",
+          "name": "metadata_claim_without_protocol_header",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -35,23 +25,20 @@
               "accept": [
                 "application/json, text/event-stream"
               ],
-              "mcp-protocol-version": [
-                "2026-07-28"
-              ],
               "mcp-method": [
-                "ping",
                 "tools/list"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"conflicting-method\",\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"missing-header\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
             },
             "is_base64": false
           }
         },
         {
-          "name": "conflicting_name_values",
+          "name": "missing_protocol_metadata",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -66,22 +53,19 @@
                 "2026-07-28"
               ],
               "mcp-method": [
-                "tools/call"
-              ],
-              "mcp-name": [
-                "echo",
-                "other"
+                "tools/list"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"conflicting-name\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"missing-protocol-meta\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
             },
             "is_base64": false
           }
         },
         {
-          "name": "identical_method_values_remain_unambiguous",
+          "name": "non_string_protocol_metadata",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -96,19 +80,19 @@
                 "2026-07-28"
               ],
               "mcp-method": [
-                "ping",
-                "ping"
+                "tools/list"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"identical-method\",\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"invalid-protocol-meta\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":20260728,\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
             },
             "is_base64": false
           }
         },
         {
-          "name": "missing_body_routing_name_is_invalid_params",
+          "name": "missing_client_capabilities",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -123,21 +107,19 @@
                 "2026-07-28"
               ],
               "mcp-method": [
-                "tools/call"
-              ],
-              "mcp-name": [
-                "echo"
+                "tools/list"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"missing-body-name\",\"method\":\"tools/call\",\"params\":{\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"missing-client-caps\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}}",
+              "is_base64": false
             },
             "is_base64": false
           }
         },
         {
-          "name": "non_string_body_routing_name_is_invalid_params",
+          "name": "non_object_client_capabilities",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -152,15 +134,13 @@
                 "2026-07-28"
               ],
               "mcp-method": [
-                "tools/call"
-              ],
-              "mcp-name": [
-                "42"
+                "tools/list"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"non-string-body-name\",\"method\":\"tools/call\",\"params\":{\"name\":42,\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"invalid-client-caps\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":[]}}}",
+              "is_base64": false
             },
             "is_base64": false
           }
@@ -185,10 +165,10 @@
           "is_base64": false,
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "conflicting-method",
+            "id": "missing-header",
             "error": {
               "code": -32020,
-              "message": "Header mismatch: conflicting Mcp-Method header values"
+              "message": "Header mismatch: missing required MCP-Protocol-Version header"
             }
           }
         },
@@ -206,51 +186,10 @@
           "is_base64": false,
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "conflicting-name",
-            "error": {
-              "code": -32020,
-              "message": "Header mismatch: conflicting Mcp-Name header values"
-            }
-          }
-        },
-        {
-          "status": 200,
-          "headers": {
-            "content-type": [
-              "application/json"
-            ],
-            "x-request-id": [
-              "req_mcp_123"
-            ]
-          },
-          "cookies": [],
-          "is_base64": false,
-          "body_json": {
-            "jsonrpc": "2.0",
-            "id": "identical-method",
-            "result": {
-              "resultType": "complete"
-            }
-          }
-        },
-        {
-          "status": 400,
-          "headers": {
-            "content-type": [
-              "application/json"
-            ],
-            "x-request-id": [
-              "req_mcp_123"
-            ]
-          },
-          "cookies": [],
-          "is_base64": false,
-          "body_json": {
-            "jsonrpc": "2.0",
-            "id": "missing-body-name",
+            "id": "missing-protocol-meta",
             "error": {
               "code": -32602,
-              "message": "Invalid params: params.name must be a non-empty string"
+              "message": "Invalid params: missing or invalid io.modelcontextprotocol/protocolVersion"
             }
           }
         },
@@ -268,10 +207,52 @@
           "is_base64": false,
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "non-string-body-name",
+            "id": "invalid-protocol-meta",
             "error": {
               "code": -32602,
-              "message": "Invalid params: params.name must be a non-empty string"
+              "message": "Invalid params: missing or invalid io.modelcontextprotocol/protocolVersion"
+            }
+          }
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "missing-client-caps",
+            "error": {
+              "code": -32602,
+              "message": "Invalid params: missing or invalid io.modelcontextprotocol/clientCapabilities"
+            }
+          }
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "invalid-client-caps",
+            "error": {
+              "code": -32602,
+              "message": "Invalid params: missing or invalid io.modelcontextprotocol/clientCapabilities"
             }
           }
         }

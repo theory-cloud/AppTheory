@@ -82,7 +82,7 @@ func TestValidatePOSTRequestProtocol20260728(t *testing.T) {
 			request: &Request{
 				ID:     "missing-name",
 				Method: methodToolsCall,
-				Params: json.RawMessage(`{"name":"echo","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}`),
+				Params: json.RawMessage(`{"name":"echo","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}`),
 			},
 			detected: ProtocolShape20260728,
 			wantCode: CodeHeaderMismatch,
@@ -97,7 +97,7 @@ func TestValidatePOSTRequestProtocol20260728(t *testing.T) {
 			request: &Request{
 				ID:     "wrong-name",
 				Method: methodResourcesRead,
-				Params: json.RawMessage(`{"uri":"file:///contract.txt","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}`),
+				Params: json.RawMessage(`{"uri":"file:///contract.txt","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}`),
 			},
 			detected: ProtocolShape20260728,
 			wantCode: CodeHeaderMismatch,
@@ -112,7 +112,7 @@ func TestValidatePOSTRequestProtocol20260728(t *testing.T) {
 			request: &Request{
 				ID:     "valid",
 				Method: methodPromptsGet,
-				Params: json.RawMessage(`{"name":"greeting","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}`),
+				Params: json.RawMessage(`{"name":"greeting","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}`),
 			},
 			detected:  ProtocolShape20260728,
 			wantShape: ProtocolShape20260728,

@@ -1,8 +1,10 @@
 package mcp
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 
 	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 )
@@ -35,14 +37,101 @@ func validatePOSTRequestProtocol(
 			nil,
 		)
 	}
+	if metaVersion == ProtocolVersion20260728 && headerVersion == "" {
+		return ProtocolShapeUnknown, protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeHeaderMismatch,
+			"Header mismatch: missing required MCP-Protocol-Version header",
+			nil,
+		)
+	}
 	if !modernClaim {
 		return detectedShape, nil
 	}
 
+	if resp := validate20260728RequestMetadata(req); resp != nil {
+		return ProtocolShapeUnknown, resp
+	}
 	if resp := validate20260728RoutingHeaders(headers, req); resp != nil {
 		return ProtocolShapeUnknown, resp
 	}
 	return ProtocolShape20260728, nil
+}
+
+func validatePOSTResponseProtocol(
+	headers map[string][]string,
+	resp *Response,
+	detectedShape ProtocolShape,
+) *apptheory.Response {
+	headerVersion := strings.TrimSpace(firstHeader(headers, headerMcpProtocolVersion))
+	if headerVersion != "" && !isAdvertisedProtocolVersion(headerVersion) {
+		if strings.TrimSpace(firstHeader(headers, headerMcpSessionID)) != "" {
+			return nil
+		}
+		return unsupportedProtocolVersionResponse(resp.ID, headerVersion)
+	}
+	if detectedShape != ProtocolShape20260728 {
+		return nil
+	}
+	return protocolJSONRPCErrorResponse(
+		resp.ID,
+		CodeInvalidRequest,
+		"Invalid Request: clients must not send JSON-RPC responses",
+		nil,
+	)
+}
+
+func validate20260728RequestMetadata(req *Request) *apptheory.Response {
+	var params map[string]json.RawMessage
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeInvalidParams,
+			"Invalid params: missing or invalid io.modelcontextprotocol/protocolVersion",
+			nil,
+		)
+	}
+	rawMeta, ok := params["_meta"]
+	if !ok {
+		return protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeInvalidParams,
+			"Invalid params: missing or invalid io.modelcontextprotocol/protocolVersion",
+			nil,
+		)
+	}
+	var meta map[string]json.RawMessage
+	if err := json.Unmarshal(rawMeta, &meta); err != nil {
+		return protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeInvalidParams,
+			"Invalid params: missing or invalid io.modelcontextprotocol/protocolVersion",
+			nil,
+		)
+	}
+	var protocolVersion string
+	if raw, ok := meta[protocolVersionMetaKey]; !ok ||
+		json.Unmarshal(raw, &protocolVersion) != nil ||
+		strings.TrimSpace(protocolVersion) != ProtocolVersion20260728 {
+		return protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeInvalidParams,
+			"Invalid params: missing or invalid io.modelcontextprotocol/protocolVersion",
+			nil,
+		)
+	}
+	var clientCapabilities map[string]json.RawMessage
+	if raw, ok := meta[clientCapabilitiesMetaKey]; !ok ||
+		json.Unmarshal(raw, &clientCapabilities) != nil ||
+		clientCapabilities == nil {
+		return protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeInvalidParams,
+			"Invalid params: missing or invalid io.modelcontextprotocol/clientCapabilities",
+			nil,
+		)
+	}
+	return nil
 }
 
 func validate20260728RoutingHeaders(headers map[string][]string, req *Request) *apptheory.Response {
@@ -97,6 +186,16 @@ func validate20260728RoutingHeaders(headers map[string][]string, req *Request) *
 			nil,
 		)
 	}
+	decodedName, malformed := decodeRoutingHeaderName(headerName)
+	if malformed {
+		return protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeHeaderMismatch,
+			"Header mismatch: malformed Mcp-Name Base64 encoding",
+			nil,
+		)
+	}
+	headerName = decodedName
 	if headerName != name {
 		return protocolJSONRPCErrorResponse(
 			req.ID,
@@ -106,6 +205,25 @@ func validate20260728RoutingHeaders(headers map[string][]string, req *Request) *
 		)
 	}
 	return nil
+}
+
+func decodeRoutingHeaderName(value string) (string, bool) {
+	const (
+		prefix = "=?base64?"
+		suffix = "?="
+	)
+	if !strings.HasPrefix(value, prefix) {
+		return value, false
+	}
+	if !strings.HasSuffix(value, suffix) {
+		return "", true
+	}
+	encoded := strings.TrimSuffix(strings.TrimPrefix(value, prefix), suffix)
+	decoded, err := base64.StdEncoding.Strict().DecodeString(encoded)
+	if err != nil || base64.StdEncoding.EncodeToString(decoded) != encoded || !utf8.Valid(decoded) {
+		return "", true
+	}
+	return string(decoded), false
 }
 
 func conflictingHeaderValues(headers map[string][]string, key string) bool {

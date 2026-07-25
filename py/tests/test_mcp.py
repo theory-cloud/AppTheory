@@ -187,7 +187,19 @@ class McpRuntimeTests(unittest.TestCase):
             {
                 "method": "POST",
                 "headers": headers,
-                "body": json.dumps({"jsonrpc": "2.0", "id": "ping", "method": "ping"}),
+                "body": json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "ping",
+                        "method": "ping",
+                        "params": {
+                            "_meta": {
+                                "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
+                                "io.modelcontextprotocol/clientCapabilities": {},
+                            }
+                        },
+                    }
+                ),
             }
         )
         self.assertEqual(ping.status, 200)
@@ -211,7 +223,13 @@ class McpRuntimeTests(unittest.TestCase):
                         "jsonrpc": "2.0",
                         "id": "init",
                         "method": "initialize",
-                        "params": {"protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28},
+                        "params": {
+                            "protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
+                            "_meta": {
+                                "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
+                                "io.modelcontextprotocol/clientCapabilities": {},
+                            },
+                        },
                     }
                 ),
             }
@@ -275,6 +293,7 @@ class McpRuntimeTests(unittest.TestCase):
                                 "name": "continue",
                                 "arguments": {"message": "contract"},
                                 "_meta": {
+                                    "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
                                     "io.modelcontextprotocol/clientCapabilities": {"elicitation": {}},
                                 },
                             },
@@ -304,6 +323,7 @@ class McpRuntimeTests(unittest.TestCase):
                                 "requestState": "confirm",
                                 "inputResponses": {"confirmation": {"action": "accept"}},
                                 "_meta": {
+                                    "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
                                     "io.modelcontextprotocol/clientCapabilities": {"elicitation": {}},
                                 },
                             },

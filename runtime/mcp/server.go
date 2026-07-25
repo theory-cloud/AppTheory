@@ -415,13 +415,13 @@ func (s *Server) handlePOSTResponse(
 	headers map[string][]string,
 	shape ProtocolShape,
 ) (*apptheory.Response, error) {
-	_, parseErr := ParseResponse(body)
+	rpcResponse, parseErr := ParseResponse(body)
 	if parseErr != nil {
 		return badRequest("invalid JSON-RPC response"), nil
 	}
 
-	if shape == ProtocolShape20260728 {
-		return &apptheory.Response{Status: 202}, nil
+	if validationResponse := validatePOSTResponseProtocol(headers, rpcResponse, shape); validationResponse != nil {
+		return validationResponse, nil
 	}
 
 	_, sess, errResp := s.requireSession(ctx, headers)

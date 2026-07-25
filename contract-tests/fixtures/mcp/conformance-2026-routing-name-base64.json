@@ -1,7 +1,7 @@
 {
-  "id": "mcp.stateless.request_flow",
+  "id": "mcp.conformance_2026.routing_name_base64",
   "tier": "mcp",
-  "name": "MCP 2026-07-28 requests and responses flow without initialize or sessions",
+  "name": "MCP 2026-07-28 decodes the exact Mcp-Name Base64 sentinel before routing comparison",
   "setup": {
     "mcp": {
       "server": {
@@ -13,37 +13,18 @@
           "name": "echo",
           "description": "Echo text",
           "input_schema": {
-            "type": "object",
-            "properties": {
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "message"
-            ]
+            "type": "object"
           },
           "handler": "echo_text"
         }
-      ],
-      "session_store": {
-        "seed": [
-          {
-            "id": "legacy-response",
-            "expires_unix_ms": 1900000000000,
-            "data": {
-              "protocolVersion": "2025-11-25"
-            }
-          }
-        ]
-      }
+      ]
     }
   },
   "input": {
     "mcp": {
       "steps": [
         {
-          "name": "tools_list_without_initialize",
+          "name": "base64_name_matches_body",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -56,49 +37,24 @@
               ],
               "mcp-protocol-version": [
                 "2026-07-28"
-              ],
-              "mcp-method": [
-                "tools/list"
-              ]
-            },
-            "body": {
-              "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"list\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
-            },
-            "is_base64": false
-          }
-        },
-        {
-          "name": "tools_call_without_session",
-          "request": {
-            "method": "POST",
-            "path": "/mcp",
-            "headers": {
-              "content-type": [
-                "application/json"
-              ],
-              "accept": [
-                "application/json, text/event-stream"
               ],
               "mcp-method": [
                 "tools/call"
               ],
               "mcp-name": [
-                "echo"
-              ],
-              "mcp-protocol-version": [
-                "2026-07-28"
+                "=?base64?ZWNobw==?="
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"call\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"stateless contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"encoded-name\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"encoded contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
             },
             "is_base64": false
           }
         },
         {
-          "name": "jsonrpc_response_without_session",
+          "name": "base64_name_missing_terminator",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -111,17 +67,24 @@
               ],
               "mcp-protocol-version": [
                 "2026-07-28"
+              ],
+              "mcp-method": [
+                "tools/call"
+              ],
+              "mcp-name": [
+                "=?base64?ZWNobw=="
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"client-response\",\"result\":{\"ok\":true}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"missing-terminator\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
             },
             "is_base64": false
           }
         },
         {
-          "name": "legacy_jsonrpc_response_remains_accepted",
+          "name": "base64_name_invalid_payload",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -133,15 +96,49 @@
                 "application/json, text/event-stream"
               ],
               "mcp-protocol-version": [
-                "2025-11-25"
+                "2026-07-28"
               ],
-              "mcp-session-id": [
-                "legacy-response"
+              "mcp-method": [
+                "tools/call"
+              ],
+              "mcp-name": [
+                "=?base64?***?="
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"legacy-client-response\",\"result\":{\"ok\":true}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"invalid-base64\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "base64_marker_is_case_sensitive",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "tools/call"
+              ],
+              "mcp-name": [
+                "=?BASE64?ZWNobw==?="
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"uppercase-marker\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "is_base64": false
             },
             "is_base64": false
           }
@@ -163,59 +160,20 @@
             ]
           },
           "cookies": [],
+          "is_base64": false,
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "list",
-            "result": {
-              "tools": [
-                {
-                  "name": "echo",
-                  "description": "Echo text",
-                  "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                      "message": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "message"
-                    ]
-                  }
-                }
-              ],
-              "resultType": "complete",
-              "ttlMs": 0,
-              "cacheScope": "private"
-            }
-          },
-          "is_base64": false
-        },
-        {
-          "status": 200,
-          "headers": {
-            "content-type": [
-              "application/json"
-            ],
-            "x-request-id": [
-              "req_mcp_123"
-            ]
-          },
-          "cookies": [],
-          "body_json": {
-            "jsonrpc": "2.0",
-            "id": "call",
+            "id": "encoded-name",
             "result": {
               "content": [
                 {
                   "type": "text",
-                  "text": "stateless contract"
+                  "text": "encoded contract"
                 }
               ],
               "resultType": "complete"
             }
-          },
-          "is_base64": false
+          }
         },
         {
           "status": 400,
@@ -231,22 +189,54 @@
           "is_base64": false,
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "client-response",
+            "id": "missing-terminator",
             "error": {
-              "code": -32600,
-              "message": "Invalid Request: clients must not send JSON-RPC responses"
+              "code": -32020,
+              "message": "Header mismatch: malformed Mcp-Name Base64 encoding"
             }
           }
         },
         {
-          "status": 202,
+          "status": 400,
           "headers": {
+            "content-type": [
+              "application/json"
+            ],
             "x-request-id": [
               "req_mcp_123"
             ]
           },
           "cookies": [],
-          "is_base64": false
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "invalid-base64",
+            "error": {
+              "code": -32020,
+              "message": "Header mismatch: malformed Mcp-Name Base64 encoding"
+            }
+          }
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "uppercase-marker",
+            "error": {
+              "code": -32020,
+              "message": "Header mismatch: Mcp-Name does not match request parameters"
+            }
+          }
         }
       ]
     }

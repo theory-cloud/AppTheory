@@ -1518,13 +1518,19 @@ export class McpServer {
     body: Uint8Array,
     shape: McpProtocolShape,
   ): Promise<Response> {
+    let rpcResponse: Record<string, unknown>;
     try {
-      parseResponse(body);
+      rpcResponse = parseResponse(body);
     } catch {
       return badRequest("invalid JSON-RPC response");
     }
-    if (shape === MCP_PROTOCOL_SHAPE_2026_07_28) {
-      return emptyResponse(202);
+    const validationResponse = validatePostResponseProtocol(
+      headers,
+      rpcResponse,
+      shape,
+    );
+    if (validationResponse) {
+      return validationResponse;
     }
     const sessionResult = await this.requireSession(headers);
     if (sessionResult.response) {
@@ -2772,7 +2778,7 @@ function parseRequest(body: Uint8Array): ParsedRPCRequest {
   return out;
 }
 
-function parseResponse(body: Uint8Array): void {
+function parseResponse(body: Uint8Array): Record<string, unknown> {
   const raw = parseJsonObject(body);
   if (!Object.prototype.hasOwnProperty.call(raw, "jsonrpc")) {
     throw new Error("missing required field: jsonrpc");
@@ -2790,6 +2796,7 @@ function parseResponse(body: Uint8Array): void {
       `unsupported jsonrpc version: ${String(raw["jsonrpc"] ?? "")}`,
     );
   }
+  return raw;
 }
 
 function parseJsonObject(body: Uint8Array): Record<string, unknown> {
@@ -2954,14 +2961,88 @@ function validatePostRequestProtocol(
       ),
     };
   }
+  if (metaVersion === MCP_PROTOCOL_VERSION_2026_07_28 && !headerVersion) {
+    return {
+      shape: MCP_PROTOCOL_SHAPE_UNKNOWN,
+      response: protocolErrorResponse(
+        request.id,
+        MCP_CODE_HEADER_MISMATCH,
+        "Header mismatch: missing required MCP-Protocol-Version header",
+      ),
+    };
+  }
   if (!modernClaim) {
     return { shape: detectedShape, response: null };
   }
 
+  const metadataResponse = validate20260728RequestMetadata(request);
+  if (metadataResponse) {
+    return {
+      shape: MCP_PROTOCOL_SHAPE_UNKNOWN,
+      response: metadataResponse,
+    };
+  }
   return {
     shape: MCP_PROTOCOL_SHAPE_2026_07_28,
     response: validate20260728RoutingHeaders(headers, request),
   };
+}
+
+function validatePostResponseProtocol(
+  headers: Headers,
+  response: Record<string, unknown>,
+  detectedShape: McpProtocolShape,
+): Response | null {
+  const headerVersion = firstHeader(
+    headers,
+    MCP_HEADER_PROTOCOL_VERSION,
+  ).trim();
+  if (headerVersion && !isAdvertisedProtocolVersion(headerVersion)) {
+    if (firstHeader(headers, MCP_HEADER_SESSION_ID).trim()) {
+      return null;
+    }
+    return unsupportedProtocolVersionResponse(response["id"], headerVersion);
+  }
+  if (detectedShape !== MCP_PROTOCOL_SHAPE_2026_07_28) {
+    return null;
+  }
+  return protocolErrorResponse(
+    response["id"],
+    MCP_CODE_INVALID_REQUEST,
+    "Invalid Request: clients must not send JSON-RPC responses",
+  );
+}
+
+function validate20260728RequestMetadata(
+  request: ParsedRPCRequest,
+): Response | null {
+  if (!isRecord(request.params) || !isRecord(request.params["_meta"])) {
+    return protocolErrorResponse(
+      request.id,
+      MCP_CODE_INVALID_PARAMS,
+      "Invalid params: missing or invalid io.modelcontextprotocol/protocolVersion",
+    );
+  }
+  const meta = request.params["_meta"];
+  const protocolVersion = meta[PROTOCOL_VERSION_METADATA_KEY];
+  if (
+    typeof protocolVersion !== "string" ||
+    protocolVersion.trim() !== MCP_PROTOCOL_VERSION_2026_07_28
+  ) {
+    return protocolErrorResponse(
+      request.id,
+      MCP_CODE_INVALID_PARAMS,
+      "Invalid params: missing or invalid io.modelcontextprotocol/protocolVersion",
+    );
+  }
+  if (!isRecord(meta[CLIENT_CAPABILITIES_METADATA_KEY])) {
+    return protocolErrorResponse(
+      request.id,
+      MCP_CODE_INVALID_PARAMS,
+      "Invalid params: missing or invalid io.modelcontextprotocol/clientCapabilities",
+    );
+  }
+  return null;
 }
 
 function validate20260728RoutingHeaders(
@@ -3010,7 +3091,7 @@ function validate20260728RoutingHeaders(
   if (!routingName.required) {
     return null;
   }
-  const name = firstHeader(headers, MCP_HEADER_NAME).trim();
+  let name = firstHeader(headers, MCP_HEADER_NAME).trim();
   if (!name) {
     return protocolErrorResponse(
       request.id,
@@ -3018,6 +3099,15 @@ function validate20260728RoutingHeaders(
       "Header mismatch: missing required Mcp-Name header",
     );
   }
+  const decodedName = decodeRoutingHeaderName(name);
+  if (decodedName.malformed) {
+    return protocolErrorResponse(
+      request.id,
+      MCP_CODE_HEADER_MISMATCH,
+      "Header mismatch: malformed Mcp-Name Base64 encoding",
+    );
+  }
+  name = decodedName.value;
   if (name !== routingName.value) {
     return protocolErrorResponse(
       request.id,
@@ -3026,6 +3116,37 @@ function validate20260728RoutingHeaders(
     );
   }
   return null;
+}
+
+function decodeRoutingHeaderName(value: string): {
+  value: string;
+  malformed: boolean;
+} {
+  const prefix = "=?base64?";
+  const suffix = "?=";
+  if (!value.startsWith(prefix)) {
+    return { value, malformed: false };
+  }
+  if (!value.endsWith(suffix)) {
+    return { value: "", malformed: true };
+  }
+  const encoded = value.slice(prefix.length, -suffix.length);
+  if (
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+      encoded,
+    )
+  ) {
+    return { value: "", malformed: true };
+  }
+  const decoded = Buffer.from(encoded, "base64");
+  if (decoded.toString("base64") !== encoded) {
+    return { value: "", malformed: true };
+  }
+  const text = decoded.toString("utf8");
+  if (!Buffer.from(text, "utf8").equals(decoded)) {
+    return { value: "", malformed: true };
+  }
+  return { value: text, malformed: false };
 }
 
 function requestRoutingName(request: ParsedRPCRequest): {
