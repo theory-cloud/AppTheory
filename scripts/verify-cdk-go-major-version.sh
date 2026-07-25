@@ -70,6 +70,22 @@ cp "${fixture_root}/cdk/.jsii" "${baseline_root}/cdk/.jsii"
 cp -a "${fixture_root}/cdk/lib" "${baseline_root}/cdk/lib"
 cp -a "${fixture_root}/cdk-go/." "${baseline_root}/cdk-go/"
 
+# When the checked-in bindings are already in the canonical next-major layout
+# (for example on a release-please branch after generated artifact sync), the
+# Release Please-authored baseline no longer matches the checkout. Reconstruct
+# the legacy baseline so the sync plan still has the module moves to prove.
+if [[ -f "${baseline_root}/cdk-go/apptheorycdk/go.mod" && ! -f "${baseline_root}/cdk-go/go.mod" ]]; then
+  sed \
+    -e 's|^module github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v[0-9]\+$|module github.com/theory-cloud/apptheory/cdk-go|' \
+    "${baseline_root}/cdk-go/apptheorycdk/go.mod" >"${baseline_root}/cdk-go/go.mod"
+  if [[ -f "${baseline_root}/cdk-go/apptheorycdk/go.sum" ]]; then
+    cp "${baseline_root}/cdk-go/apptheorycdk/go.sum" "${baseline_root}/cdk-go/go.sum"
+  fi
+  rm -f \
+    "${baseline_root}/cdk-go/apptheorycdk/go.mod" \
+    "${baseline_root}/cdk-go/apptheorycdk/go.sum"
+fi
+
 (cd "${fixture_root}" && bash scripts/update-cdk-generated.sh >/dev/null)
 
 if [[ -e "${fixture_root}/cdk-go/go.mod" || -e "${fixture_root}/cdk-go/go.sum" ]]; then
