@@ -72,20 +72,21 @@ const (
 // Server is the MCP protocol handler. It dispatches JSON-RPC 2.0 messages
 // to the appropriate MCP method handlers (initialize, tools/list, tools/call).
 type Server struct {
-	name                  string
-	version               string
-	registry              *ToolRegistry
-	resourceRegistry      *ResourceRegistry
-	promptRegistry        *PromptRegistry
-	sessionStore          SessionStore
-	streamStore           StreamStore
-	cancellations         *cancellationTracker
-	idGen                 apptheory.IDGenerator
-	logger                *slog.Logger
-	originValidator       OriginValidator
-	capabilities          CapabilityConfig
-	extensionCapabilities map[string]map[string]any
-	cacheableResults      CacheableResultConfig
+	name                      string
+	version                   string
+	registry                  *ToolRegistry
+	resourceRegistry          *ResourceRegistry
+	promptRegistry            *PromptRegistry
+	sessionStore              SessionStore
+	streamStore               StreamStore
+	cancellations             *cancellationTracker
+	idGen                     apptheory.IDGenerator
+	logger                    *slog.Logger
+	originValidator           OriginValidator
+	capabilities              CapabilityConfig
+	extensionCapabilities     map[string]map[string]any
+	cacheableResults          CacheableResultConfig
+	includeServerInfoMetadata bool
 
 	resourceSubscribeHook   ResourceSubscriptionHook
 	resourceUnsubscribeHook ResourceSubscriptionHook
@@ -218,20 +219,21 @@ func WithInitialSessionListenerBudget(opts InitialSessionListenerBudgetOptions) 
 // NewServer creates an MCP server with the given name, version, and options.
 func NewServer(name, version string, opts ...ServerOption) *Server {
 	s := &Server{
-		name:             name,
-		version:          version,
-		registry:         NewToolRegistry(),
-		resourceRegistry: NewResourceRegistry(),
-		promptRegistry:   NewPromptRegistry(),
-		sessionStore:     NewMemorySessionStore(),
-		streamStore:      NewMemoryStreamStore(),
-		cancellations:    newCancellationTracker(),
-		idGen:            apptheory.RandomIDGenerator{},
-		logger:           slog.Default(),
-		originValidator:  AllowOrigins("https://claude.ai", "https://claude.com"),
-		capabilities:     DefaultCapabilityConfig(),
-		cacheableResults: normalizeCacheableResultConfig(CacheableResultConfig{}),
-		taskExecutions:   newTaskExecutionTracker(),
+		name:                      name,
+		version:                   version,
+		registry:                  NewToolRegistry(),
+		resourceRegistry:          NewResourceRegistry(),
+		promptRegistry:            NewPromptRegistry(),
+		sessionStore:              NewMemorySessionStore(),
+		streamStore:               NewMemoryStreamStore(),
+		cancellations:             newCancellationTracker(),
+		idGen:                     apptheory.RandomIDGenerator{},
+		logger:                    slog.Default(),
+		originValidator:           AllowOrigins("https://claude.ai", "https://claude.com"),
+		capabilities:              DefaultCapabilityConfig(),
+		cacheableResults:          normalizeCacheableResultConfig(CacheableResultConfig{}),
+		includeServerInfoMetadata: true,
+		taskExecutions:            newTaskExecutionTracker(),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -406,7 +408,7 @@ func (s *Server) handleStatelessPOSTRequest(ctx context.Context, req *Request) (
 			map[string]any{"requiredCapabilities": missing},
 		), nil
 	}
-	return s.marshalSingleResponse(resp, "", false)
+	return s.marshalSingleResponse(resp, "", false, ProtocolVersion20260728)
 }
 
 func (s *Server) handlePOSTResponse(
@@ -748,13 +750,11 @@ func methodAllowedForProtocol(pv string, method string) bool {
 	if pv == ProtocolVersion20260728 {
 		switch method {
 		case methodServerDiscover,
-			methodPing,
 			methodToolsList,
 			methodToolsCall,
 			methodResourcesList,
 			methodResourcesRead,
 			methodResourcesTemplatesList,
-			methodLoggingSetLevel,
 			methodCompletionComplete,
 			methodPromptsList,
 			methodPromptsGet:
@@ -923,7 +923,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request, sessionID st
 	return NewResultResponse(req.ID, result)
 }
 
-func responseForProtocol(resp *Response, protocolVersion string) *Response {
+func responseForProtocol(resp *Response, protocolVersion string, serverInfo *ServerIdentity) *Response {
 	if resp == nil || resp.Error != nil {
 		return resp
 	}
@@ -934,6 +934,13 @@ func responseForProtocol(resp *Response, protocolVersion string) *Response {
 	}
 	if protocolVersion == ProtocolVersion20260728 && !inputRequired {
 		result, err := marshalResultWithType(resp.Result, ResultTypeComplete)
+		if err != nil {
+			return NewErrorResponse(resp.ID, CodeInternalError, "internal error")
+		}
+		resp.Result = json.RawMessage(result)
+	}
+	if protocolVersion == ProtocolVersion20260728 && serverInfo != nil {
+		result, err := marshalResultWithServerInfo(resp.Result, *serverInfo)
 		if err != nil {
 			return NewErrorResponse(resp.ID, CodeInternalError, "internal error")
 		}
@@ -1180,7 +1187,12 @@ func sessionTTL() time.Duration {
 
 // marshalSingleResponse serializes a JSON-RPC response and wraps it in an
 // apptheory.Response with the appropriate headers.
-func (s *Server) marshalSingleResponse(resp *Response, sessionID string, includeSession bool) (*apptheory.Response, error) {
+func (s *Server) marshalSingleResponse(
+	resp *Response,
+	sessionID string,
+	includeSession bool,
+	protocolVersions ...string,
+) (*apptheory.Response, error) {
 	data, err := MarshalResponse(resp)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal response: %w", err)
@@ -1193,8 +1205,16 @@ func (s *Server) marshalSingleResponse(resp *Response, sessionID string, include
 		headers[headerMcpSessionID] = []string{sessionID}
 	}
 
+	status := 200
+	if len(protocolVersions) > 0 &&
+		protocolVersions[0] == ProtocolVersion20260728 &&
+		resp != nil &&
+		resp.Error != nil &&
+		resp.Error.Code == CodeMethodNotFound {
+		status = 404
+	}
 	return &apptheory.Response{
-		Status:  200,
+		Status:  status,
 		Headers: headers,
 		Body:    data,
 	}, nil

@@ -308,6 +308,12 @@ func requiredClientCapabilities(resp *Response) map[string]any {
 		if result != nil {
 			inputRequests = result.InputRequests
 		}
+	case json.RawMessage:
+		var inputResult InputRequiredResult
+		if err := json.Unmarshal(result, &inputResult); err == nil &&
+			inputResult.ResultType == ResultTypeInputRequired {
+			inputRequests = inputResult.InputRequests
+		}
 	default:
 		return nil
 	}

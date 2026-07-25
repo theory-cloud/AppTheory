@@ -486,7 +486,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>932 exported top-level symbols</summary>
+<summary>933 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins
@@ -673,7 +673,7 @@ WithEnvironmentErrorNotifications, WithErrorNotifier, WithExtensionCapabilities,
 WithInitialSessionListenerBudget, WithLegacyHTTPErrorShape, WithLifecycleContract, WithLifecycleHandler, WithLimits
 WithLogger, WithLoggingLevelHook, WithObservability, WithOriginValidator, WithPolicyHook
 WithProfileClock, WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter, WithRegistryClientTTL
-WithResourceSubscriptionHooks, WithSanitizer, WithServerIDGenerator, WithSessionReconstructionClock, WithSessionReconstructionStaleAfter
+WithResourceSubscriptionHooks, WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata, WithSessionReconstructionClock, WithSessionReconstructionStaleAfter
 WithSessionStore, WithStreamIDGenerator, WithStreamStore, WithTaskRuntime, WithTier
 WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
 ```

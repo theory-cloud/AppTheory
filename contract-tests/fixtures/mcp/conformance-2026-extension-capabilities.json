@@ -269,7 +269,13 @@
                   }
                 }
               },
-              "requestState": "review-contract"
+              "requestState": "review-contract",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
             }
           },
           "is_base64": false

@@ -749,6 +749,7 @@ export class McpServer {
     taskRuntime;
     extensionCapabilities;
     cacheableResults;
+    includeServerInfoMetadata;
     toolRegistry = new McpToolRegistry();
     resourceRegistry = new McpResourceRegistry();
     promptRegistry = new McpPromptRegistry();
@@ -765,6 +766,8 @@ export class McpServer {
         this.taskRuntime = normalizeTaskRuntime(options.taskRuntime);
         this.extensionCapabilities = normalizeExtensionCapabilities(options.extensionCapabilities);
         this.cacheableResults = normalizeCacheableResultConfig(options.cacheableResults);
+        this.includeServerInfoMetadata =
+            options.includeServerInfoMetadata !== false;
     }
     registry() {
         return this.toolRegistry;
@@ -875,7 +878,7 @@ export class McpServer {
         if (Object.keys(missing).length > 0) {
             return protocolErrorResponse(request.id, MCP_CODE_MISSING_REQUIRED_CLIENT_CAPABILITY, "Missing required client capability", { requiredCapabilities: missing });
         }
-        return this.marshalSingleResponse(response);
+        return this.marshalSingleResponse(response, "", false, MCP_PROTOCOL_VERSION_2026_07_28);
     }
     async handlePostResponse(headers, body, shape) {
         let rpcResponse;
@@ -1064,7 +1067,9 @@ export class McpServer {
         return this.finalizeResponseForProtocol(request, response, protocolVersion);
     }
     finalizeResponseForProtocol(request, response, protocolVersion) {
-        const prepared = responseForProtocol(response, protocolVersion);
+        const prepared = responseForProtocol(response, protocolVersion, this.includeServerInfoMetadata
+            ? { name: this.name, version: this.version }
+            : null);
         if (protocolVersion !== MCP_PROTOCOL_VERSION_2026_07_28 ||
             prepared.error ||
             !isRecord(prepared.result) ||
@@ -1113,13 +1118,15 @@ export class McpServer {
         const result = {
             supportedVersions: supportedProtocolVersions(),
             capabilities: this.initializeCapabilities(protocolVersion),
-            _meta: {
+        };
+        if (protocolVersion !== MCP_PROTOCOL_VERSION_2026_07_28) {
+            result._meta = {
                 [SERVER_INFO_METADATA_KEY]: {
                     name: this.name,
                     version: this.version,
                 },
-            },
-        };
+            };
+        }
         return newResultResponse(request.id, result);
     }
     initializeCapabilities(protocolVersion) {
@@ -1487,13 +1494,17 @@ export class McpServer {
         await this.sessionStore.put(session);
         return session;
     }
-    marshalSingleResponse(response, sessionId = "", includeSession = false) {
+    marshalSingleResponse(response, sessionId = "", includeSession = false, protocolVersion = "") {
         const headers = { "content-type": ["application/json"] };
         if (includeSession && sessionId) {
             headers[MCP_HEADER_SESSION_ID] = [sessionId];
         }
+        const status = protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28 &&
+            response.error?.code === MCP_CODE_METHOD_NOT_FOUND
+            ? 404
+            : 200;
         return {
-            status: 200,
+            status,
             headers,
             cookies: [],
             body: Buffer.from(JSON.stringify(response), "utf8"),
@@ -1751,13 +1762,11 @@ function methodAllowedForProtocol(protocolVersion, method) {
     if (protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28) {
         return new Set([
             "server/discover",
-            "ping",
             "tools/list",
             "tools/call",
             "resources/list",
             "resources/read",
             "resources/templates/list",
-            "logging/setLevel",
             "completion/complete",
             "prompts/list",
             "prompts/get",
@@ -2243,7 +2252,7 @@ function newErrorResponse(id, code, message, data) {
 function newResultResponse(id, result) {
     return { jsonrpc: JSONRPC_VERSION, id: id ?? null, result };
 }
-function responseForProtocol(response, protocolVersion) {
+function responseForProtocol(response, protocolVersion, serverInfo) {
     if (response.error || response.result === undefined) {
         return response;
     }
@@ -2276,7 +2285,7 @@ function responseForProtocol(response, protocolVersion) {
         if (isRecord(result["_meta"])) {
             inputRequired._meta = { ...result["_meta"] };
         }
-        return { ...response, result: inputRequired };
+        return withServerInfoMetadata({ ...response, result: inputRequired }, protocolVersion, serverInfo);
     }
     if (declared !== undefined &&
         declared !== "" &&
@@ -2294,7 +2303,25 @@ function responseForProtocol(response, protocolVersion) {
     else {
         delete complete["resultType"];
     }
-    return { ...response, result: complete };
+    return withServerInfoMetadata({ ...response, result: complete }, protocolVersion, serverInfo);
+}
+function withServerInfoMetadata(response, protocolVersion, serverInfo) {
+    if (protocolVersion !== MCP_PROTOCOL_VERSION_2026_07_28 ||
+        !serverInfo ||
+        !isRecord(response.result)) {
+        return response;
+    }
+    const meta = isRecord(response.result["_meta"])
+        ? { ...response.result["_meta"] }
+        : {};
+    meta[SERVER_INFO_METADATA_KEY] = { ...serverInfo };
+    return {
+        ...response,
+        result: {
+            ...response.result,
+            _meta: meta,
+        },
+    };
 }
 function badRequest(message) {
     return jsonBytesResponse(400, { error: message });

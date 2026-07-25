@@ -135,7 +135,7 @@ test("mcp 2026-07-28 requests stay stateless", async () => {
 
   const ping = await post(
     server,
-    rpc("ping", "ping", {
+    rpc("discover", "server/discover", {
       _meta: {
         "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
         "io.modelcontextprotocol/clientCapabilities": {},
@@ -143,15 +143,32 @@ test("mcp 2026-07-28 requests stay stateless", async () => {
     }),
     {
       [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28],
-      [MCP_HEADER_METHOD]: ["ping"],
+      [MCP_HEADER_METHOD]: ["server/discover"],
     },
   );
   assert.equal(ping.status, 200);
   assert.equal(sessionHeader(ping), "");
   assert.deepEqual(await json(ping), {
     jsonrpc: "2.0",
-    id: "ping",
-    result: { resultType: MCP_RESULT_TYPE_COMPLETE },
+    id: "discover",
+    result: {
+      supportedVersions: [
+        MCP_PROTOCOL_VERSION_2026_07_28,
+        MCP_PROTOCOL_VERSION,
+        "2025-06-18",
+        "2025-03-26",
+      ],
+      capabilities: {},
+      _meta: {
+        "io.modelcontextprotocol/serverInfo": {
+          name: "MCP",
+          version: "test",
+        },
+      },
+      resultType: MCP_RESULT_TYPE_COMPLETE,
+      ttlMs: 0,
+      cacheScope: "private",
+    },
   });
   assert.equal(generatedIds, 0);
 

@@ -2786,7 +2786,7 @@ type CreateTaskResult struct {
 type DiscoverResult struct {
 	SupportedVersions []string       `json:"supportedVersions"`
 	Capabilities      map[string]any `json:"capabilities"`
-	Meta              map[string]any `json:"_meta"`
+	Meta              map[string]any `json:"_meta,omitempty"`
 }
 
 type DynamoSessionStore struct {
@@ -2971,20 +2971,21 @@ type SSEEvent struct {
 }
 
 type Server struct {
-	name                  string
-	version               string
-	registry              *ToolRegistry
-	resourceRegistry      *ResourceRegistry
-	promptRegistry        *PromptRegistry
-	sessionStore          SessionStore
-	streamStore           StreamStore
-	cancellations         *cancellationTracker
-	idGen                 apptheory.IDGenerator
-	logger                *slog.Logger
-	originValidator       OriginValidator
-	capabilities          CapabilityConfig
-	extensionCapabilities map[string]map[string]any
-	cacheableResults      CacheableResultConfig
+	name                      string
+	version                   string
+	registry                  *ToolRegistry
+	resourceRegistry          *ResourceRegistry
+	promptRegistry            *PromptRegistry
+	sessionStore              SessionStore
+	streamStore               StreamStore
+	cancellations             *cancellationTracker
+	idGen                     apptheory.IDGenerator
+	logger                    *slog.Logger
+	originValidator           OriginValidator
+	capabilities              CapabilityConfig
+	extensionCapabilities     map[string]map[string]any
+	cacheableResults          CacheableResultConfig
+	includeServerInfoMetadata bool
 
 	resourceSubscribeHook   ResourceSubscriptionHook
 	resourceUnsubscribeHook ResourceSubscriptionHook
@@ -3239,6 +3240,8 @@ func WithOriginValidator(OriginValidator) ServerOption
 func WithResourceSubscriptionHooks(ResourceSubscriptionHook, ResourceSubscriptionHook) ServerOption
 
 func WithServerIDGenerator(apptheory.IDGenerator) ServerOption
+
+func WithServerInfoMetadata(bool) ServerOption
 
 func WithSessionStore(SessionStore) ServerOption
 

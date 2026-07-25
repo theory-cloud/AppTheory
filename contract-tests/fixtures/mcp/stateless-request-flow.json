@@ -186,7 +186,13 @@
               ],
               "resultType": "complete",
               "ttlMs": 0,
-              "cacheScope": "private"
+              "cacheScope": "private",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
             }
           },
           "is_base64": false
@@ -212,7 +218,13 @@
                   "text": "stateless contract"
                 }
               ],
-              "resultType": "complete"
+              "resultType": "complete",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
             }
           },
           "is_base64": false

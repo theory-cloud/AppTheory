@@ -2474,6 +2474,9 @@ async function newFixtureMCPServer(runtime, setup) {
   if (serverConfig.extension_capabilities) {
     options.extensionCapabilities = serverConfig.extension_capabilities;
   }
+  if (serverConfig.include_server_info_metadata !== undefined) {
+    options.includeServerInfoMetadata = Boolean(serverConfig.include_server_info_metadata);
+  }
   if (serverConfig.cacheable_results) {
     const config = serverConfig.cacheable_results;
     const hint = (value) => ({

@@ -102,6 +102,9 @@ func newFixtureMCPServer(setup FixtureMCPSetup) (*mcp.Server, error) {
 	if len(setup.Server.ExtensionCapabilities) > 0 {
 		opts = append(opts, mcp.WithExtensionCapabilities(setup.Server.ExtensionCapabilities))
 	}
+	if setup.Server.IncludeServerInfoMetadata != nil {
+		opts = append(opts, mcp.WithServerInfoMetadata(*setup.Server.IncludeServerInfoMetadata))
+	}
 	if setup.Server.CacheableResults != nil {
 		config := setup.Server.CacheableResults
 		opts = append(opts, mcp.WithCacheableResultConfig(mcp.CacheableResultConfig{

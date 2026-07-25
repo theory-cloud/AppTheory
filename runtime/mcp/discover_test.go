@@ -58,11 +58,8 @@ func TestHandleDiscoverAdvertisesTruthfulSurface(t *testing.T) {
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("discover extensions = %#v, want %#v", got, want)
 	}
-	if got := result.Meta[serverInfoMetaKey]; !reflect.DeepEqual(got, ServerIdentity{
-		Name:    "discover-server",
-		Version: "2.0.0",
-	}) {
-		t.Fatalf("server identity = %#v", got)
+	if result.Meta != nil {
+		t.Fatalf("modern discover handler injected metadata before response finalization: %#v", result.Meta)
 	}
 }
 

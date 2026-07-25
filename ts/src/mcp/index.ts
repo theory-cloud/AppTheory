@@ -162,7 +162,7 @@ export interface McpServerIdentity {
 export interface McpDiscoverResult {
   supportedVersions: string[];
   capabilities: Record<string, unknown>;
-  _meta: {
+  _meta?: {
     [SERVER_INFO_METADATA_KEY]: McpServerIdentity;
   };
 }
@@ -433,6 +433,11 @@ export interface McpServerOptions {
    * surfaces emit ttlMs: 0 and cacheScope: private.
    */
   cacheableResults?: McpCacheableResultConfig;
+  /**
+   * Include server identity in every MCP 2026-07-28 result's _meta.
+   * Defaults to true.
+   */
+  includeServerInfoMetadata?: boolean;
 }
 
 type RegisteredTool = {
@@ -1312,6 +1317,7 @@ export class McpServer {
     Record<string, unknown>
   >;
   private readonly cacheableResults: NormalizedCacheableResultConfig;
+  private readonly includeServerInfoMetadata: boolean;
   private readonly toolRegistry = new McpToolRegistry();
   private readonly resourceRegistry = new McpResourceRegistry();
   private readonly promptRegistry = new McpPromptRegistry();
@@ -1334,6 +1340,8 @@ export class McpServer {
     this.cacheableResults = normalizeCacheableResultConfig(
       options.cacheableResults,
     );
+    this.includeServerInfoMetadata =
+      options.includeServerInfoMetadata !== false;
   }
 
   registry(): McpToolRegistry {
@@ -1510,7 +1518,12 @@ export class McpServer {
         { requiredCapabilities: missing },
       );
     }
-    return this.marshalSingleResponse(response);
+    return this.marshalSingleResponse(
+      response,
+      "",
+      false,
+      MCP_PROTOCOL_VERSION_2026_07_28,
+    );
   }
 
   private async handlePostResponse(
@@ -1781,7 +1794,13 @@ export class McpServer {
     response: McpRPCResponse,
     protocolVersion: string,
   ): McpRPCResponse {
-    const prepared = responseForProtocol(response, protocolVersion);
+    const prepared = responseForProtocol(
+      response,
+      protocolVersion,
+      this.includeServerInfoMetadata
+        ? { name: this.name, version: this.version }
+        : null,
+    );
     if (
       protocolVersion !== MCP_PROTOCOL_VERSION_2026_07_28 ||
       prepared.error ||
@@ -1852,13 +1871,15 @@ export class McpServer {
     const result: McpDiscoverResult = {
       supportedVersions: supportedProtocolVersions(),
       capabilities: this.initializeCapabilities(protocolVersion),
-      _meta: {
+    };
+    if (protocolVersion !== MCP_PROTOCOL_VERSION_2026_07_28) {
+      result._meta = {
         [SERVER_INFO_METADATA_KEY]: {
           name: this.name,
           version: this.version,
         },
-      },
-    };
+      };
+    }
     return newResultResponse(request.id, result);
   }
 
@@ -2369,13 +2390,19 @@ export class McpServer {
     response: McpRPCResponse,
     sessionId = "",
     includeSession = false,
+    protocolVersion = "",
   ): Response {
     const headers: Headers = { "content-type": ["application/json"] };
     if (includeSession && sessionId) {
       headers[MCP_HEADER_SESSION_ID] = [sessionId];
     }
+    const status =
+      protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28 &&
+      response.error?.code === MCP_CODE_METHOD_NOT_FOUND
+        ? 404
+        : 200;
     return {
-      status: 200,
+      status,
       headers,
       cookies: [],
       body: Buffer.from(JSON.stringify(response), "utf8"),
@@ -2693,13 +2720,11 @@ function methodAllowedForProtocol(
   if (protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28) {
     return new Set([
       "server/discover",
-      "ping",
       "tools/list",
       "tools/call",
       "resources/list",
       "resources/read",
       "resources/templates/list",
-      "logging/setLevel",
       "completion/complete",
       "prompts/list",
       "prompts/get",
@@ -3371,6 +3396,7 @@ function newResultResponse(id: unknown, result: unknown): McpRPCResponse {
 function responseForProtocol(
   response: McpRPCResponse,
   protocolVersion: string,
+  serverInfo: McpServerIdentity | null,
 ): McpRPCResponse {
   if (response.error || response.result === undefined) {
     return response;
@@ -3423,7 +3449,11 @@ function responseForProtocol(
     if (isRecord(result["_meta"])) {
       inputRequired._meta = { ...result["_meta"] };
     }
-    return { ...response, result: inputRequired };
+    return withServerInfoMetadata(
+      { ...response, result: inputRequired },
+      protocolVersion,
+      serverInfo,
+    );
   }
 
   if (
@@ -3454,7 +3484,36 @@ function responseForProtocol(
   } else {
     delete complete["resultType"];
   }
-  return { ...response, result: complete };
+  return withServerInfoMetadata(
+    { ...response, result: complete },
+    protocolVersion,
+    serverInfo,
+  );
+}
+
+function withServerInfoMetadata(
+  response: McpRPCResponse,
+  protocolVersion: string,
+  serverInfo: McpServerIdentity | null,
+): McpRPCResponse {
+  if (
+    protocolVersion !== MCP_PROTOCOL_VERSION_2026_07_28 ||
+    !serverInfo ||
+    !isRecord(response.result)
+  ) {
+    return response;
+  }
+  const meta = isRecord(response.result["_meta"])
+    ? { ...response.result["_meta"] }
+    : {};
+  meta[SERVER_INFO_METADATA_KEY] = { ...serverInfo };
+  return {
+    ...response,
+    result: {
+      ...response.result,
+      _meta: meta,
+    },
+  };
 }
 
 function badRequest(message: string): Response {

@@ -72,7 +72,7 @@ export interface McpServerIdentity {
 export interface McpDiscoverResult {
     supportedVersions: string[];
     capabilities: Record<string, unknown>;
-    _meta: {
+    _meta?: {
         [SERVER_INFO_METADATA_KEY]: McpServerIdentity;
     };
 }
@@ -282,6 +282,11 @@ export interface McpServerOptions {
      * surfaces emit ttlMs: 0 and cacheScope: private.
      */
     cacheableResults?: McpCacheableResultConfig;
+    /**
+     * Include server identity in every MCP 2026-07-28 result's _meta.
+     * Defaults to true.
+     */
+    includeServerInfoMetadata?: boolean;
 }
 export declare class McpSessionNotFoundError extends Error {
     constructor(message?: string);
@@ -421,6 +426,7 @@ export declare class McpServer {
     private readonly taskRuntime;
     private readonly extensionCapabilities;
     private readonly cacheableResults;
+    private readonly includeServerInfoMetadata;
     private readonly toolRegistry;
     private readonly resourceRegistry;
     private readonly promptRegistry;

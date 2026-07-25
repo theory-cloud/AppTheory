@@ -339,7 +339,13 @@
               ],
               "resultType": "complete",
               "ttlMs": 0,
-              "cacheScope": "private"
+              "cacheScope": "private",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
             }
           },
           "is_base64": false
@@ -360,19 +366,25 @@
             "id": "prompts",
             "result": {
               "prompts": [
-            {
-              "name": "greet",
-              "description": "Render a greeting",
-              "arguments": [
                 {
-                  "name": "name"
+                  "name": "greet",
+                  "description": "Render a greeting",
+                  "arguments": [
+                    {
+                      "name": "name"
+                    }
+                  ]
                 }
-              ]
-            }
               ],
               "resultType": "complete",
               "ttlMs": 30000,
-              "cacheScope": "private"
+              "cacheScope": "private",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
             }
           },
           "is_base64": false
@@ -403,7 +415,13 @@
               ],
               "resultType": "complete",
               "ttlMs": 0,
-              "cacheScope": "public"
+              "cacheScope": "public",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
             }
           },
           "is_base64": false
@@ -433,7 +451,13 @@
               ],
               "resultType": "complete",
               "ttlMs": 45000,
-              "cacheScope": "public"
+              "cacheScope": "public",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
             }
           },
           "is_base64": false
@@ -462,7 +486,13 @@
               ],
               "resultType": "complete",
               "ttlMs": 5000,
-              "cacheScope": "private"
+              "cacheScope": "private",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
             }
           },
           "is_base64": false
@@ -489,7 +519,13 @@
                   "text": "hello resource"
                 }
               ],
-              "resultType": "complete"
+              "resultType": "complete",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
             }
           },
           "is_base64": false

@@ -229,6 +229,7 @@
           "properties": {
             "name": { "type": "string", "minLength": 1 },
             "version": { "type": "string", "minLength": 1 },
+            "include_server_info_metadata": { "type": "boolean" },
             "extension_capabilities": {
               "type": "object",
               "additionalProperties": {

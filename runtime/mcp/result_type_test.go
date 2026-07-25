@@ -10,7 +10,7 @@ import (
 func TestResponseForProtocolAddsCompleteOnlyFor20260728(t *testing.T) {
 	t.Parallel()
 
-	modern := responseForProtocol(NewResultResponse("modern", map[string]any{"ok": true}), ProtocolVersion20260728)
+	modern := responseForProtocol(NewResultResponse("modern", map[string]any{"ok": true}), ProtocolVersion20260728, nil)
 	modernBody, err := MarshalResponse(modern)
 	if err != nil {
 		t.Fatalf("marshal modern response: %v", err)
@@ -19,7 +19,7 @@ func TestResponseForProtocolAddsCompleteOnlyFor20260728(t *testing.T) {
 		`{"jsonrpc":"2.0","id":"modern","result":{"ok":true,"resultType":"complete"}}`,
 	))
 
-	legacy := responseForProtocol(NewResultResponse("legacy", map[string]any{"ok": true}), protocolVersion)
+	legacy := responseForProtocol(NewResultResponse("legacy", map[string]any{"ok": true}), protocolVersion, nil)
 	legacyBody, err := MarshalResponse(legacy)
 	if err != nil {
 		t.Fatalf("marshal legacy response: %v", err)
@@ -41,7 +41,7 @@ func TestResponseForProtocolBuildsInputRequiredResult(t *testing.T) {
 			},
 		},
 		RequestState: "confirm-contract",
-	}), ProtocolVersion20260728)
+	}), ProtocolVersion20260728, nil)
 
 	body, err := MarshalResponse(resp)
 	if err != nil {
@@ -58,7 +58,7 @@ func TestResponseForProtocolRejectsInputRequiredForSessionfulClient(t *testing.T
 	resp := responseForProtocol(NewResultResponse("legacy", &ToolResult{
 		ResultType:   ResultTypeInputRequired,
 		RequestState: "state",
-	}), protocolVersion)
+	}), protocolVersion, nil)
 
 	if resp.Error == nil {
 		t.Fatal("expected error response")
@@ -81,7 +81,7 @@ func TestResponseForProtocolAcceptsInputRequiredResultForms(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			resp := responseForProtocol(NewResultResponse(name, result), ProtocolVersion20260728)
+			resp := responseForProtocol(NewResultResponse(name, result), ProtocolVersion20260728, nil)
 			if resp.Error != nil {
 				t.Fatalf("unexpected error response: %#v", resp.Error)
 			}
@@ -109,7 +109,7 @@ func TestResponseForProtocolRejectsInvalidResultStates(t *testing.T) {
 	for name, result := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			resp := responseForProtocol(NewResultResponse(name, result), ProtocolVersion20260728)
+			resp := responseForProtocol(NewResultResponse(name, result), ProtocolVersion20260728, nil)
 			if resp.Error == nil {
 				t.Fatal("expected error response")
 			}

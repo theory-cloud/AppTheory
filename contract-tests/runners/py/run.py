@@ -2587,6 +2587,10 @@ def _new_fixture_mcp_server(runtime: Any, setup: dict[str, Any]) -> Any:
     }
     if server_config.get("extension_capabilities"):
         options["extension_capabilities"] = server_config["extension_capabilities"]
+    if "include_server_info_metadata" in server_config:
+        options["include_server_info_metadata"] = bool(
+            server_config["include_server_info_metadata"]
+        )
     if server_config.get("cacheable_results"):
         options["cacheable_results"] = server_config["cacheable_results"]
     task_runtime = setup.get("task_runtime") or {}

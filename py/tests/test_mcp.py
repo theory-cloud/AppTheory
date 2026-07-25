@@ -181,7 +181,7 @@ class McpRuntimeTests(unittest.TestCase):
         )
         headers = _post_headers()
         headers[MCP_HEADER_PROTOCOL_VERSION] = [MCP_PROTOCOL_VERSION_2026_07_28]
-        headers[MCP_HEADER_METHOD] = ["ping"]
+        headers[MCP_HEADER_METHOD] = ["server/discover"]
 
         ping = server.serve(
             {
@@ -190,8 +190,8 @@ class McpRuntimeTests(unittest.TestCase):
                 "body": json.dumps(
                     {
                         "jsonrpc": "2.0",
-                        "id": "ping",
-                        "method": "ping",
+                        "id": "discover",
+                        "method": "server/discover",
                         "params": {
                             "_meta": {
                                 "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
@@ -208,8 +208,25 @@ class McpRuntimeTests(unittest.TestCase):
             _response_json(ping),
             {
                 "jsonrpc": "2.0",
-                "id": "ping",
-                "result": {"resultType": MCP_RESULT_TYPE_COMPLETE},
+                "id": "discover",
+                "result": {
+                    "supportedVersions": [
+                        MCP_PROTOCOL_VERSION_2026_07_28,
+                        MCP_PROTOCOL_VERSION,
+                        "2025-06-18",
+                        "2025-03-26",
+                    ],
+                    "capabilities": {},
+                    "_meta": {
+                        "io.modelcontextprotocol/serverInfo": {
+                            "name": "PyMCP",
+                            "version": "test",
+                        }
+                    },
+                    "resultType": MCP_RESULT_TYPE_COMPLETE,
+                    "ttlMs": 0,
+                    "cacheScope": "private",
+                },
             },
         )
 

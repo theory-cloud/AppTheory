@@ -20,13 +20,13 @@ func TestStateless20260728DoesNotCreateOrRequireSession(t *testing.T) {
 	s := NewServer("test", "dev", WithServerIDGenerator(ids))
 	headers := map[string][]string{
 		headerMcpProtocolVersion: {ProtocolVersion20260728},
-		headerMcpMethod:          {methodPing},
+		headerMcpMethod:          {methodServerDiscover},
 	}
 
 	pingBody := mustMarshal(t, Request{
 		JSONRPC: jsonrpcVersion,
-		ID:      "ping",
-		Method:  methodPing,
+		ID:      "discover",
+		Method:  methodServerDiscover,
 		Params: json.RawMessage(
 			`{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}`,
 		),

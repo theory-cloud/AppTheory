@@ -103,12 +103,12 @@
                 "2026-07-28"
               ],
               "mcp-method": [
-                "ping"
+                "server/discover"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"anchor\",\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"anchor\",\"method\":\"server/discover\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
             },
             "is_base64": false
           }
@@ -161,7 +161,22 @@
             "jsonrpc": "2.0",
             "id": "anchor",
             "result": {
-              "resultType": "complete"
+              "supportedVersions": [
+                "2026-07-28",
+                "2025-11-25",
+                "2025-06-18",
+                "2025-03-26"
+              ],
+              "capabilities": {},
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              },
+              "resultType": "complete",
+              "ttlMs": 0,
+              "cacheScope": "private"
             }
           }
         }

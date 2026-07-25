@@ -159,7 +159,7 @@ class McpServerIdentity:
 class McpDiscoverResult:
     supported_versions: list[str]
     capabilities: dict[str, Any]
-    meta: dict[str, Any]
+    meta: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -445,6 +445,7 @@ class McpServerOptions:
     clock: Clock | None = None
     extension_capabilities: McpExtensionCapabilities = field(default_factory=dict)
     cacheable_results: McpCacheableResultConfig | dict[str, Any] | None = None
+    include_server_info_metadata: bool = True
 
 
 @dataclass(slots=True)
@@ -1070,6 +1071,7 @@ class McpServer:
         self.task_runtime = _normalize_task_runtime(opts.task_runtime)
         self.extension_capabilities = _normalize_extension_capabilities(opts.extension_capabilities)
         self.cacheable_results = _normalize_cacheable_result_config(opts.cacheable_results)
+        self.include_server_info_metadata = bool(opts.include_server_info_metadata)
         self.tool_registry = McpToolRegistry()
         self.resource_registry = McpResourceRegistry()
         self.prompt_registry = McpPromptRegistry()
@@ -1174,7 +1176,7 @@ class McpServer:
                 "Missing required client capability",
                 {"requiredCapabilities": missing},
             )
-        return self._marshal_single_response(response)
+        return self._marshal_single_response(response, protocol_version=MCP_PROTOCOL_VERSION_2026_07_28)
 
     def _handle_post_response(
         self,
@@ -1326,7 +1328,11 @@ class McpServer:
         response: dict[str, Any],
         protocol_version: str,
     ) -> dict[str, Any]:
-        prepared = _response_for_protocol(response, protocol_version)
+        prepared = _response_for_protocol(
+            response,
+            protocol_version,
+            McpServerIdentity(name=self.name, version=self.version) if self.include_server_info_metadata else None,
+        )
         result = prepared.get("result")
         if (
             protocol_version != MCP_PROTOCOL_VERSION_2026_07_28
@@ -1372,19 +1378,18 @@ class McpServer:
         )
 
     def _handle_discover(self, request: _ParsedRPCRequest, protocol_version: str) -> dict[str, Any]:
-        return _new_result_response(
-            request.id,
-            {
-                "supportedVersions": _supported_protocol_versions(),
-                "capabilities": self._initialize_capabilities(protocol_version),
-                "_meta": {
-                    SERVER_INFO_METADATA_KEY: {
-                        "name": self.name,
-                        "version": self.version,
-                    }
-                },
-            },
-        )
+        result: dict[str, Any] = {
+            "supportedVersions": _supported_protocol_versions(),
+            "capabilities": self._initialize_capabilities(protocol_version),
+        }
+        if protocol_version != MCP_PROTOCOL_VERSION_2026_07_28:
+            result["_meta"] = {
+                SERVER_INFO_METADATA_KEY: {
+                    "name": self.name,
+                    "version": self.version,
+                }
+            }
+        return _new_result_response(request.id, result)
 
     def _initialize_capabilities(self, protocol_version: str) -> dict[str, Any]:
         capabilities: dict[str, Any] = {}
@@ -1682,12 +1687,24 @@ class McpServer:
         return session
 
     def _marshal_single_response(
-        self, response: dict[str, Any], session_id: str = "", include_session: bool = False
+        self,
+        response: dict[str, Any],
+        session_id: str = "",
+        include_session: bool = False,
+        protocol_version: str = "",
     ) -> Response:
         headers: dict[str, list[str]] = {"content-type": ["application/json"]}
         if include_session and session_id:
             headers[MCP_HEADER_SESSION_ID] = [session_id]
-        return Response(status=200, headers=headers, cookies=[], body=_json_bytes(response), is_base64=False)
+        error = response.get("error")
+        status = (
+            404
+            if protocol_version == MCP_PROTOCOL_VERSION_2026_07_28
+            and isinstance(error, Mapping)
+            and error.get("code") == MCP_CODE_METHOD_NOT_FOUND
+            else 200
+        )
+        return Response(status=status, headers=headers, cookies=[], body=_json_bytes(response), is_base64=False)
 
     def _stream_to_sse(self, session_id: str, events: list[McpStreamEvent]) -> Response:
         return _sse_bytes_response(200, [_format_mcp_sse_frame(event) for event in events], session_id)
@@ -1900,13 +1917,11 @@ def _method_allowed_for_protocol(protocol_version: str, method: str) -> bool:
     if protocol_version == MCP_PROTOCOL_VERSION_2026_07_28:
         return method in {
             "server/discover",
-            "ping",
             "tools/list",
             "tools/call",
             "resources/list",
             "resources/read",
             "resources/templates/list",
-            "logging/setLevel",
             "completion/complete",
             "prompts/list",
             "prompts/get",
@@ -2386,7 +2401,11 @@ def _new_result_response(id: Any, result: Any) -> dict[str, Any]:
     return {"jsonrpc": JSONRPC_VERSION, "id": id if id is not None else None, "result": result}
 
 
-def _response_for_protocol(response: dict[str, Any], protocol_version: str) -> dict[str, Any]:
+def _response_for_protocol(
+    response: dict[str, Any],
+    protocol_version: str,
+    server_info: McpServerIdentity | None,
+) -> dict[str, Any]:
     if response.get("error") is not None or "result" not in response:
         return response
     raw_result = response.get("result")
@@ -2415,7 +2434,11 @@ def _response_for_protocol(response: dict[str, Any], protocol_version: str) -> d
         raw_meta = result.get("_meta", result.get("meta"))
         if isinstance(raw_meta, Mapping):
             input_required["_meta"] = dict(raw_meta)
-        return {**response, "result": input_required}
+        return _with_server_info_metadata(
+            {**response, "result": input_required},
+            protocol_version,
+            server_info,
+        )
 
     if declared not in {None, "", MCP_RESULT_TYPE_COMPLETE}:
         return _new_error_response(response.get("id"), MCP_CODE_INTERNAL_ERROR, "internal error")
@@ -2427,7 +2450,28 @@ def _response_for_protocol(response: dict[str, Any], protocol_version: str) -> d
         result["resultType"] = MCP_RESULT_TYPE_COMPLETE
     else:
         result.pop("resultType", None)
-    return {**response, "result": result}
+    return _with_server_info_metadata(
+        {**response, "result": result},
+        protocol_version,
+        server_info,
+    )
+
+
+def _with_server_info_metadata(
+    response: dict[str, Any],
+    protocol_version: str,
+    server_info: McpServerIdentity | None,
+) -> dict[str, Any]:
+    result = response.get("result")
+    if protocol_version != MCP_PROTOCOL_VERSION_2026_07_28 or server_info is None or not isinstance(result, Mapping):
+        return response
+    raw_meta = result.get("_meta")
+    meta = dict(raw_meta) if isinstance(raw_meta, Mapping) else {}
+    meta[SERVER_INFO_METADATA_KEY] = {
+        "name": server_info.name,
+        "version": server_info.version,
+    }
+    return {**response, "result": {**result, "_meta": meta}}
 
 
 def _bad_request(message: str) -> Response:

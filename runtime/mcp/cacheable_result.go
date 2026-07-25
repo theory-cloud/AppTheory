@@ -75,7 +75,11 @@ func (s *Server) finalizeResponseForProtocol(
 	resp *Response,
 	protocolVersion string,
 ) *Response {
-	prepared := responseForProtocol(resp, protocolVersion)
+	var serverInfo *ServerIdentity
+	if s.includeServerInfoMetadata {
+		serverInfo = &ServerIdentity{Name: s.name, Version: s.version}
+	}
+	prepared := responseForProtocol(resp, protocolVersion, serverInfo)
 	if protocolVersion != ProtocolVersion20260728 || prepared == nil || prepared.Error != nil {
 		return prepared
 	}

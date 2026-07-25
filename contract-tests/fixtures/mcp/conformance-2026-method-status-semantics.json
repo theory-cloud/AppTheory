@@ -1,30 +1,31 @@
 {
-  "id": "mcp.conformance_2026.routing_name_base64",
+  "id": "mcp.conformance_2026.method_status_semantics",
   "tier": "mcp",
-  "name": "MCP 2026-07-28 decodes the exact Mcp-Name Base64 sentinel before routing comparison",
+  "name": "MCP 2026-07-28 removes legacy utility methods and maps method-not-found to HTTP 404",
   "setup": {
     "mcp": {
       "server": {
         "name": "ContractMCP",
         "version": "sp09"
       },
-      "tools": [
-        {
-          "name": "echo",
-          "description": "Echo text",
-          "input_schema": {
-            "type": "object"
-          },
-          "handler": "echo_text"
-        }
-      ]
+      "session_store": {
+        "seed": [
+          {
+            "id": "legacy-methods",
+            "expires_unix_ms": 1900000000000,
+            "data": {
+              "protocolVersion": "2025-11-25"
+            }
+          }
+        ]
+      }
     }
   },
   "input": {
     "mcp": {
       "steps": [
         {
-          "name": "base64_name_matches_body",
+          "name": "modern_ping_is_not_a_method",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -39,22 +40,19 @@
                 "2026-07-28"
               ],
               "mcp-method": [
-                "tools/call"
-              ],
-              "mcp-name": [
-                "=?base64?ZWNobw==?="
+                "ping"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"encoded-name\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"encoded contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"modern-ping\",\"method\":\"ping\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
               "is_base64": false
             },
             "is_base64": false
           }
         },
         {
-          "name": "base64_name_missing_terminator",
+          "name": "modern_logging_set_level_is_not_a_method",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -69,22 +67,19 @@
                 "2026-07-28"
               ],
               "mcp-method": [
-                "tools/call"
-              ],
-              "mcp-name": [
-                "=?base64?ZWNobw=="
+                "logging/setLevel"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"missing-terminator\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"modern-logging\",\"method\":\"logging/setLevel\",\"params\":{\"level\":\"info\",\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
               "is_base64": false
             },
             "is_base64": false
           }
         },
         {
-          "name": "base64_name_invalid_payload",
+          "name": "modern_unknown_method_uses_probe_status",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -99,22 +94,19 @@
                 "2026-07-28"
               ],
               "mcp-method": [
-                "tools/call"
-              ],
-              "mcp-name": [
-                "=?base64?***?="
+                "server/unknown"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"invalid-base64\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"modern-unknown\",\"method\":\"server/unknown\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
               "is_base64": false
             },
             "is_base64": false
           }
         },
         {
-          "name": "base64_marker_is_case_sensitive",
+          "name": "legacy_ping_remains_available",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -126,18 +118,42 @@
                 "application/json, text/event-stream"
               ],
               "mcp-protocol-version": [
-                "2026-07-28"
+                "2025-11-25"
               ],
-              "mcp-method": [
-                "tools/call"
-              ],
-              "mcp-name": [
-                "=?BASE64?ZWNobw==?="
+              "mcp-session-id": [
+                "legacy-methods"
               ]
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"uppercase-marker\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"contract\"},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"legacy-ping\",\"method\":\"ping\",\"params\":{}}",
+              "is_base64": false
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "legacy_method_not_found_keeps_jsonrpc_status",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ],
+              "mcp-session-id": [
+                "legacy-methods"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"legacy-logging\",\"method\":\"logging/setLevel\",\"params\":{\"level\":\"info\"}}",
               "is_base64": false
             },
             "is_base64": false
@@ -149,6 +165,69 @@
   "expect": {
     "mcp": {
       "steps": [
+        {
+          "status": 404,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "modern-ping",
+            "error": {
+              "code": -32601,
+              "message": "Method not found: ping"
+            }
+          }
+        },
+        {
+          "status": 404,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "modern-logging",
+            "error": {
+              "code": -32601,
+              "message": "Method not found: logging/setLevel"
+            }
+          }
+        },
+        {
+          "status": 404,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "modern-unknown",
+            "error": {
+              "code": -32601,
+              "message": "Method not found: server/unknown"
+            }
+          }
+        },
         {
           "status": 200,
           "headers": {
@@ -163,26 +242,12 @@
           "is_base64": false,
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "encoded-name",
-            "result": {
-              "content": [
-                {
-                  "type": "text",
-                  "text": "encoded contract"
-                }
-              ],
-              "resultType": "complete",
-              "_meta": {
-                "io.modelcontextprotocol/serverInfo": {
-                  "name": "ContractMCP",
-                  "version": "sp09"
-                }
-              }
-            }
+            "id": "legacy-ping",
+            "result": {}
           }
         },
         {
-          "status": 400,
+          "status": 200,
           "headers": {
             "content-type": [
               "application/json"
@@ -195,52 +260,10 @@
           "is_base64": false,
           "body_json": {
             "jsonrpc": "2.0",
-            "id": "missing-terminator",
+            "id": "legacy-logging",
             "error": {
-              "code": -32020,
-              "message": "Header mismatch: malformed Mcp-Name Base64 encoding"
-            }
-          }
-        },
-        {
-          "status": 400,
-          "headers": {
-            "content-type": [
-              "application/json"
-            ],
-            "x-request-id": [
-              "req_mcp_123"
-            ]
-          },
-          "cookies": [],
-          "is_base64": false,
-          "body_json": {
-            "jsonrpc": "2.0",
-            "id": "invalid-base64",
-            "error": {
-              "code": -32020,
-              "message": "Header mismatch: malformed Mcp-Name Base64 encoding"
-            }
-          }
-        },
-        {
-          "status": 400,
-          "headers": {
-            "content-type": [
-              "application/json"
-            ],
-            "x-request-id": [
-              "req_mcp_123"
-            ]
-          },
-          "cookies": [],
-          "is_base64": false,
-          "body_json": {
-            "jsonrpc": "2.0",
-            "id": "uppercase-marker",
-            "error": {
-              "code": -32020,
-              "message": "Header mismatch: Mcp-Name does not match request parameters"
+              "code": -32601,
+              "message": "Method not found: logging/setLevel"
             }
           }
         }
