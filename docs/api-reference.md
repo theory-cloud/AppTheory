@@ -482,7 +482,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>906 exported top-level symbols</summary>
+<summary>912 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins
@@ -511,6 +511,7 @@ ControllerCommandContract, ControllerContract, ControllerDeploymentDefaults, Con
 ControllerOption, ControllerRequest, ControllerResponse, CORSConfig, CreatedJSON
 CreateIdempotencyRecordInput, CreateJobInput, CreateSessionInput, CreateTaskResult, DCRResult
 DecodeCloudWatchLogsSubscription, DecodeLoggingProfileJSON, DecodeLoggingProfileYAML, DefaultCapabilityConfig, DefaultConfig
+DetectProtocolVersion
 DefaultControllerContract, DefaultEmbeddingDimensions, DefaultEnvironmentErrorNotifications, DefaultEventBusConfig, DefaultLifecycleContract
 DefaultLoggingProfile, DefaultOperationContract, DefaultProviderStateMappings, DefaultQueryTopK, DefaultRealLifecycleContract
 DefaultSessionProviderID, DefaultSessionRegistryContract, DefaultSessionRegistryTableName, DefaultTitanEmbedTextModelID, DeleteInput
@@ -599,6 +600,7 @@ PKCEVerifyS256, Policy, PolicyAction, PolicyAllow, PolicyDecision
 PolicyFromEnv, PolicyFromText, PolicyFullyRedact, PolicyHook, PolicyPartialMask
 PolicyRule, PrincipalAuthHook, ProfileLogger, ProfileLoggerOption, PromptArgument
 PromptDef, PromptHandler, PromptMessage, PromptRegistry, PromptResult
+ProtocolShape, ProtocolShape20251125, ProtocolShape20260728, ProtocolShapeUnknown, ProtocolVersion20260728
 ProtectedResourceMetadata, ProtectedResourceMetadataHandler, ProtectedResourceMetadataURLForRequest, ProtectedResourceWWWAuthenticate, Provider
 ProviderCall, ProviderCloudWatchLogging, ProviderIdlePolicy, ProviderInvokeInput, ProviderInvokeOutput, ProviderListInput
 ProviderListOutput, ProviderLogging, ProviderPortScope, ProviderRunInput, ProviderSession, ProviderSessionBinding

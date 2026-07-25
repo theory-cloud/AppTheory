@@ -2639,6 +2639,14 @@ const LoggingLevelNotice LoggingLevel = "notice"
 
 const LoggingLevelWarning LoggingLevel = "warning"
 
+const ProtocolShape20251125 ProtocolShape = protocolVersion
+
+const ProtocolShape20260728 ProtocolShape = ProtocolVersion20260728
+
+const ProtocolShapeUnknown ProtocolShape = "unknown"
+
+const ProtocolVersion20260728 = "2026-07-28"
+
 const TaskStatusCanceled TaskStatus = "cancel" + "led"
 
 const TaskStatusCompleted TaskStatus = "completed"
@@ -2840,6 +2848,8 @@ type PromptResult struct {
 	Description string          `json:"description,omitempty"`
 	Messages    []PromptMessage `json:"messages"`
 }
+
+type ProtocolShape string
 
 type RPCError struct {
 	Code    int    `json:"code"`
@@ -3104,6 +3114,8 @@ type ToolResult struct {
 func AllowOrigins(...string) OriginValidator
 
 func DefaultCapabilityConfig() CapabilityConfig
+
+func DetectProtocolVersion(map[string][]string, []byte) ProtocolShape
 
 func MarshalResponse(*Response) ([]byte, error)
 

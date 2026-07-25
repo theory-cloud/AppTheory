@@ -28,12 +28,23 @@ OAuth helper surfaces used by Remote MCP deployments and Autheory are in:
 
 ## Transport + endpoint
 
-AppTheory implements MCP Streamable HTTP on a single path:
+AppTheory implements both supported MCP transport shapes on one `/mcp` path:
 
 - `POST /mcp`: JSON-RPC requests, notifications, and client responses
-- `GET /mcp`: resumable SSE replay via `Last-Event-ID`, or a short-lived keepalive SSE response when `Last-Event-ID`
-  is absent
-- `DELETE /mcp`: session termination
+- `GET /mcp`: 2025-11-25 resumable SSE replay via `Last-Event-ID`, or a short-lived keepalive SSE response when
+  `Last-Event-ID` is absent
+- `DELETE /mcp`: 2025-11-25 session termination
+
+The runtime selects one shape per request:
+
+| Protocol shape | Selection | Session behavior |
+| --- | --- | --- |
+| `2025-11-25` | Existing initialize/session negotiation | `initialize` mints `mcp-session-id`; later POST/GET/DELETE requests require it |
+| `2026-07-28` | `mcp-protocol-version: 2026-07-28`, or `params._meta["io.modelcontextprotocol/protocolVersion"]` when the header is absent | Stateless POST; no initialize handshake or session id, and DELETE is not routed |
+
+`mcp-protocol-version` has strict precedence over request `_meta`. A present header therefore selects its own shape even
+when the request metadata names the other version. This lets one server concurrently accept established session-ful
+clients and new stateless clients without a server-wide mode flag.
 
 Header names are case-insensitive on the wire. The examples in this doc use lowercase HTTP headers.
 
@@ -45,19 +56,23 @@ Important transport behavior:
 
 - `POST /mcp` requires `content-type: application/json`
 - `POST /mcp` requires `accept` support for both `application/json` and `text/event-stream`
-- `GET /mcp` requires `accept` support for `text/event-stream`
-- `initialize` is the only request that creates a session and returns `mcp-session-id`
-- subsequent `POST /mcp`, `GET /mcp`, and `DELETE /mcp` calls require `mcp-session-id`
-- missing session header returns `400`
-- unknown or expired sessions return `404`
-- `mcp-protocol-version` is optional after initialization; when present it must be supported and must match the
-  session's negotiated protocol version
+- session-ful `GET /mcp` requires `accept` support for `text/event-stream`
+- in the 2025-11-25 shape, `initialize` is the only request that creates a session and returns `mcp-session-id`;
+  subsequent POST/GET/DELETE calls require it
+- missing 2025-11-25 session headers return `400`; unknown or expired sessions return `404`
+- 2026-07-28 requests never create or require `mcp-session-id`; JSON-RPC responses are accepted without a session
+- `DELETE /mcp` with the 2026-07-28 protocol header returns `405`
+- `mcp-protocol-version` is optional after initialization. Header precedence applies per request: `2026-07-28`
+  routes that request through the stateless shape before session validation, even when `mcp-session-id` names a live
+  2025-11-25 session. Headers that select the session-ful shape must be supported and match the session's negotiated
+  protocol version
 - JSON-RPC success and error payloads return HTTP `200`; transport-level failures such as missing sessions, bad
   protocol headers, rejected origins, or missing replay events return HTTP `4xx` / `5xx`
 
-Supported protocol versions negotiated on `initialize`:
+The final `2026-07-28` protocol is supported through the stateless request shape and is not negotiated with
+`initialize`. Session-ful versions negotiated on `initialize` remain:
 
-- `2025-11-25` (latest)
+- `2025-11-25` (latest session-ful)
 - `2025-06-18`
 - `2025-03-26` (legacy compatibility / batch mode)
 
@@ -78,7 +93,8 @@ Roll strict Streamable HTTP behavior out with a client canary before making it t
 1. Canary clients must send `content-type: application/json` on every `POST /mcp`.
 2. Canary clients must send `accept: application/json, text/event-stream` on every `POST /mcp`.
 3. Canary clients must send `accept: text/event-stream` on every `GET /mcp`.
-4. After initialization, clients should either omit `mcp-protocol-version` or send the exact negotiated version.
+4. After initialization, session-ful clients should either omit `mcp-protocol-version` or send the exact negotiated
+   version. Sending `2026-07-28` deliberately routes that request through the stateless shape instead.
 5. Streaming clients must tolerate the initial empty-data priming SSE event and store its `id` for reconnect.
 6. Reconnect with `GET /mcp` plus the latest `last-event-id`; do not assume dropped TCP connections cancel work.
 
@@ -86,7 +102,8 @@ Compatibility risks to check during canary:
 
 - older clients that send `Accept: application/json` only on `POST /mcp` now receive HTTP `400`
 - clients that omit `Content-Type` or send non-JSON content types now receive HTTP `400`
-- clients that pin a protocol header different from the negotiated session version now receive HTTP `400`
+- clients that pin a different session-ful protocol header receive HTTP `400`; a `2026-07-28` header instead selects
+  the stateless shape for that request
 - SSE parsers that assume the first frame is JSON-RPC must skip or record the empty priming frame
 - replay clients that reuse a `Last-Event-ID` from another stream now fail closed instead of receiving unrelated events
 
@@ -106,7 +123,7 @@ app.Delete("/mcp", h)
 
 ## Supported JSON-RPC surface
 
-AppTheory currently dispatches these MCP request methods:
+The 2025-11-25 session-ful shape dispatches these MCP request methods:
 
 - `initialize`
 - `ping`
@@ -130,9 +147,16 @@ Accepted notification methods:
 - `notifications/initialized`
 - `notifications/cancelled`
 
+The 2026-07-28 stateless shape dispatches the session-independent subset: `ping`, `tools/list`, `tools/call`,
+`resources/list`, `resources/read`, `resources/templates/list`, `logging/setLevel`, `completion/complete`,
+`prompts/list`, and `prompts/get`. Stateless `tools/call` runs to a buffered JSON response even when the registered tool
+also supports the session-ful SSE path. Task-augmented tool calls, task methods, resource subscriptions, and initialize
+fail closed as unavailable in this shape. Stateless notifications return `202 Accepted` without creating or mutating a
+session.
+
 Other transport notes:
 
-- posted client responses are accepted for Streamable HTTP compliance and return `202 Accepted` with no body
+- posted client responses are accepted in either shape and return `202 Accepted` with no body
 - notifications also return `202 Accepted` with no body
 - JSON-RPC batch requests are only supported for legacy `2025-03-26` callers; after a session is established, batch
   dispatch uses the session's negotiated protocol version when the request omits `mcp-protocol-version`

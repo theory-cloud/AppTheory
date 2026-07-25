@@ -19,8 +19,14 @@ from apptheory.ids import IdGenerator, RealIdGenerator
 from apptheory.response import Response
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
+MCP_PROTOCOL_VERSION_2026_07_28 = "2026-07-28"
 MCP_PROTOCOL_VERSION_PRIOR = "2025-06-18"
 MCP_PROTOCOL_VERSION_LEGACY = "2025-03-26"
+
+MCP_PROTOCOL_SHAPE_2025_11_25 = MCP_PROTOCOL_VERSION
+MCP_PROTOCOL_SHAPE_2026_07_28 = MCP_PROTOCOL_VERSION_2026_07_28
+MCP_PROTOCOL_SHAPE_UNKNOWN = "unknown"
+McpProtocolShape = Literal["2025-11-25", "2026-07-28", "unknown"]
 
 MCP_HEADER_PROTOCOL_VERSION = "mcp-protocol-version"
 MCP_HEADER_SESSION_ID = "mcp-session-id"
@@ -42,6 +48,7 @@ DEFAULT_TASK_LIST_LIMIT = 100
 MAX_TASK_LIST_LIMIT = 500
 RELATED_TASK_METADATA_KEY = "io.modelcontextprotocol/related-task"
 MODEL_IMMEDIATE_RESPONSE_METADATA_KEY = "io.modelcontextprotocol/model-immediate-response"
+PROTOCOL_VERSION_METADATA_KEY = "io.modelcontextprotocol/protocolVersion"
 TASK_CANCELED_MESSAGE = "task canceled"
 DEFAULT_TASK_TABLE_NAME = "mcp-tasks"
 DEFAULT_STREAM_TABLE_NAME = "mcp-streams"
@@ -53,6 +60,27 @@ McpJSONValue = str | int | float | bool | None | list[Any] | dict[str, Any]
 McpJSONRecord = dict[str, McpJSONValue]
 
 T = TypeVar("T")
+
+
+def detect_mcp_protocol_version(
+    headers: Mapping[str, Any] | None,
+    request: Mapping[str, Any] | bytes | bytearray | str | None,
+) -> McpProtocolShape:
+    """Detect the MCP transport shape for one request.
+
+    MCP-Protocol-Version takes precedence when present. Otherwise the detector
+    reads io.modelcontextprotocol/protocolVersion from params._meta.
+    """
+
+    header_version = _first_header(dict(headers or {}), MCP_HEADER_PROTOCOL_VERSION).strip()
+    if header_version:
+        return _protocol_shape_for_version(header_version)
+
+    record = _protocol_request_record(request)
+    params = record.get("params") if record is not None else None
+    meta = params.get("_meta") if isinstance(params, Mapping) else None
+    meta_version = meta.get(PROTOCOL_VERSION_METADATA_KEY) if isinstance(meta, Mapping) else None
+    return _protocol_shape_for_version(str(meta_version).strip() if isinstance(meta_version, str) else "")
 
 
 @dataclass(slots=True)
@@ -972,7 +1000,7 @@ class McpServer:
         if normalized_method == "GET":
             return self._handle_get(headers)
         if normalized_method == "DELETE":
-            return self._handle_delete(headers)
+            return self._handle_delete(headers, _to_bytes(body))
         return _json_bytes_response(405, {"error": "method not allowed"})
 
     def _handle_post(self, headers: dict[str, Any], body: bytes) -> Response:
@@ -988,19 +1016,27 @@ class McpServer:
             return self._marshal_single_response(
                 _new_error_response(None, MCP_CODE_PARSE_ERROR, f"Parse error: {_error_message(exc)}")
             )
+        shape = detect_mcp_protocol_version(headers, body)
         if "method" in raw:
-            return self._handle_post_request(headers, body)
+            return self._handle_post_request(headers, body, shape)
         if "result" in raw or "error" in raw:
-            return self._handle_post_response(headers, body)
+            return self._handle_post_response(headers, body, shape)
         return _bad_request("invalid JSON-RPC message")
 
-    def _handle_post_request(self, headers: dict[str, Any], body: bytes) -> Response:
+    def _handle_post_request(
+        self,
+        headers: dict[str, Any],
+        body: bytes,
+        shape: McpProtocolShape,
+    ) -> Response:
         try:
             request = _parse_request(body)
         except Exception as exc:  # noqa: BLE001
             return self._marshal_single_response(
                 _new_error_response(None, MCP_CODE_PARSE_ERROR, f"Parse error: {_error_message(exc)}")
             )
+        if shape == MCP_PROTOCOL_SHAPE_2026_07_28:
+            return self._handle_stateless_post_request(request)
         if request.method == "initialize":
             return self._handle_initialize_http(request)
         session_id, session, response = self._require_session(headers)
@@ -1016,11 +1052,23 @@ class McpServer:
             return _empty_response(202)
         return self._handle_request_http(session_id, session, request, headers)
 
-    def _handle_post_response(self, headers: dict[str, Any], body: bytes) -> Response:
+    def _handle_stateless_post_request(self, request: _ParsedRPCRequest) -> Response:
+        if not request.id_present:
+            return _empty_response(202)
+        return self._marshal_single_response(self._dispatch(request, MCP_PROTOCOL_VERSION_2026_07_28, ""))
+
+    def _handle_post_response(
+        self,
+        headers: dict[str, Any],
+        body: bytes,
+        shape: McpProtocolShape,
+    ) -> Response:
         try:
             _parse_response(body)
         except Exception:  # noqa: BLE001
             return _bad_request("invalid JSON-RPC response")
+        if shape == MCP_PROTOCOL_SHAPE_2026_07_28:
+            return _empty_response(202)
         _, session, response = self._require_session(headers)
         if response is not None:
             return response
@@ -1059,10 +1107,12 @@ class McpServer:
         except Exception:  # noqa: BLE001
             return _internal_server_error()
 
-    def _handle_delete(self, headers: dict[str, Any]) -> Response:
+    def _handle_delete(self, headers: dict[str, Any], body: bytes) -> Response:
         origin_response = self._validate_origin(headers)
         if origin_response is not None:
             return origin_response
+        if detect_mcp_protocol_version(headers, body) == MCP_PROTOCOL_SHAPE_2026_07_28:
+            return _json_bytes_response(405, {"error": "method not allowed"})
         session_id = _first_header(headers, MCP_HEADER_SESSION_ID)
         if not session_id:
             return _bad_request("missing Mcp-Session-Id")
@@ -1113,6 +1163,8 @@ class McpServer:
 
     def _dispatch(self, request: _ParsedRPCRequest, protocol_version: str, session_id: str) -> dict[str, Any]:
         if not _method_allowed_for_protocol(protocol_version, request.method):
+            return _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, f"Method not found: {request.method}")
+        if protocol_version == MCP_PROTOCOL_VERSION_2026_07_28 and _stateless_request_requires_session(request):
             return _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, f"Method not found: {request.method}")
         if _is_task_method(request.method):
             return self._dispatch_task_method(request, session_id)
@@ -1543,6 +1595,31 @@ def _positive_integer(value: Any, fallback: int) -> int:
     return n if n > 0 else fallback
 
 
+def _protocol_shape_for_version(value: str) -> McpProtocolShape:
+    if value == MCP_PROTOCOL_VERSION:
+        return MCP_PROTOCOL_SHAPE_2025_11_25
+    if value == MCP_PROTOCOL_VERSION_2026_07_28:
+        return MCP_PROTOCOL_SHAPE_2026_07_28
+    return MCP_PROTOCOL_SHAPE_UNKNOWN
+
+
+def _protocol_request_record(
+    request: Mapping[str, Any] | bytes | bytearray | str | None,
+) -> dict[str, Any] | None:
+    value: Any = request
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            value = bytes(value).decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    if isinstance(value, str):
+        try:
+            value = jsonlib.loads(value)
+        except (TypeError, ValueError):
+            return None
+    return dict(value) if isinstance(value, Mapping) else None
+
+
 def _is_supported_protocol_version(value: str) -> bool:
     return value in {MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_PRIOR, MCP_PROTOCOL_VERSION_LEGACY}
 
@@ -1560,6 +1637,19 @@ def _session_protocol_version(session: McpSession) -> str:
 
 
 def _method_allowed_for_protocol(protocol_version: str, method: str) -> bool:
+    if protocol_version == MCP_PROTOCOL_VERSION_2026_07_28:
+        return method in {
+            "ping",
+            "tools/list",
+            "tools/call",
+            "resources/list",
+            "resources/read",
+            "resources/templates/list",
+            "logging/setLevel",
+            "completion/complete",
+            "prompts/list",
+            "prompts/get",
+        }
     if not _is_supported_protocol_version(protocol_version):
         return False
     if _is_task_method(method):
@@ -1585,6 +1675,10 @@ def _method_allowed_for_protocol(protocol_version: str, method: str) -> bool:
 
 def _is_task_method(method: str) -> bool:
     return method in {"tasks/get", "tasks/result", "tasks/list", "tasks/cancel"}
+
+
+def _stateless_request_requires_session(request: _ParsedRPCRequest) -> bool:
+    return request.method == "tools/call" and "task" in _params_record(request.params)
 
 
 def _parse_request(body: bytes) -> _ParsedRPCRequest:
@@ -2340,7 +2434,11 @@ __all__ = [
     "MCP_HEADER_LAST_EVENT_ID",
     "MCP_HEADER_PROTOCOL_VERSION",
     "MCP_HEADER_SESSION_ID",
+    "MCP_PROTOCOL_SHAPE_2025_11_25",
+    "MCP_PROTOCOL_SHAPE_2026_07_28",
+    "MCP_PROTOCOL_SHAPE_UNKNOWN",
     "MCP_PROTOCOL_VERSION",
+    "MCP_PROTOCOL_VERSION_2026_07_28",
     "MCP_PROTOCOL_VERSION_LEGACY",
     "MCP_PROTOCOL_VERSION_PRIOR",
     "DynamoMcpStreamStore",
@@ -2355,6 +2453,7 @@ __all__ = [
     "McpPromptMessage",
     "McpPromptRegistry",
     "McpPromptResult",
+    "McpProtocolShape",
     "McpRPCError",
     "McpRPCRequest",
     "McpRPCResponse",
@@ -2398,4 +2497,5 @@ __all__ = [
     "create_mcp_server",
     "default_mcp_stream_model",
     "default_mcp_task_model",
+    "detect_mcp_protocol_version",
 ]

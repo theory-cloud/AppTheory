@@ -3,8 +3,13 @@ import type { Handler } from "../context.js";
 import { type IdGenerator } from "../ids.js";
 import type { Headers, Response } from "../types.js";
 export declare const MCP_PROTOCOL_VERSION = "2025-11-25";
+export declare const MCP_PROTOCOL_VERSION_2026_07_28 = "2026-07-28";
 export declare const MCP_PROTOCOL_VERSION_PRIOR = "2025-06-18";
 export declare const MCP_PROTOCOL_VERSION_LEGACY = "2025-03-26";
+export declare const MCP_PROTOCOL_SHAPE_2025_11_25 = "2025-11-25";
+export declare const MCP_PROTOCOL_SHAPE_2026_07_28 = "2026-07-28";
+export declare const MCP_PROTOCOL_SHAPE_UNKNOWN = "unknown";
+export type McpProtocolShape = typeof MCP_PROTOCOL_SHAPE_2025_11_25 | typeof MCP_PROTOCOL_SHAPE_2026_07_28 | typeof MCP_PROTOCOL_SHAPE_UNKNOWN;
 export declare const MCP_HEADER_PROTOCOL_VERSION = "mcp-protocol-version";
 export declare const MCP_HEADER_SESSION_ID = "mcp-session-id";
 export declare const MCP_HEADER_LAST_EVENT_ID = "last-event-id";
@@ -36,6 +41,13 @@ export interface McpRPCRequest {
     method: string;
     params?: unknown;
 }
+/**
+ * Detects the MCP transport shape for one request.
+ *
+ * MCP-Protocol-Version takes precedence when present. Otherwise the detector
+ * reads io.modelcontextprotocol/protocolVersion from params._meta.
+ */
+export declare function detectMcpProtocolVersion(headers: Headers, request: unknown): McpProtocolShape;
 export interface McpContentBlock {
     type: string;
     text?: string;
@@ -354,6 +366,7 @@ export declare class McpServer {
     private handle;
     private handlePost;
     private handlePostRequest;
+    private handleStatelessPostRequest;
     private handlePostResponse;
     private handleGet;
     private handleDelete;

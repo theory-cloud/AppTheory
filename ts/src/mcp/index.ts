@@ -11,8 +11,18 @@ import { RandomIdGenerator, type IdGenerator } from "../ids.js";
 import type { Headers, Response } from "../types.js";
 
 export const MCP_PROTOCOL_VERSION = "2025-11-25";
+export const MCP_PROTOCOL_VERSION_2026_07_28 = "2026-07-28";
 export const MCP_PROTOCOL_VERSION_PRIOR = "2025-06-18";
 export const MCP_PROTOCOL_VERSION_LEGACY = "2025-03-26";
+
+export const MCP_PROTOCOL_SHAPE_2025_11_25 = MCP_PROTOCOL_VERSION;
+export const MCP_PROTOCOL_SHAPE_2026_07_28 = MCP_PROTOCOL_VERSION_2026_07_28;
+export const MCP_PROTOCOL_SHAPE_UNKNOWN = "unknown";
+
+export type McpProtocolShape =
+  | typeof MCP_PROTOCOL_SHAPE_2025_11_25
+  | typeof MCP_PROTOCOL_SHAPE_2026_07_28
+  | typeof MCP_PROTOCOL_SHAPE_UNKNOWN;
 
 export const MCP_HEADER_PROTOCOL_VERSION = "mcp-protocol-version";
 export const MCP_HEADER_SESSION_ID = "mcp-session-id";
@@ -28,6 +38,7 @@ const MAX_TASK_LIST_LIMIT = 500;
 const RELATED_TASK_METADATA_KEY = "io.modelcontextprotocol/related-task";
 const MODEL_IMMEDIATE_RESPONSE_METADATA_KEY =
   "io.modelcontextprotocol/model-immediate-response";
+const PROTOCOL_VERSION_METADATA_KEY = "io.modelcontextprotocol/protocolVersion";
 const TASK_CANCELED_MESSAGE = "task canceled";
 const DEFAULT_TASK_TABLE_NAME = "mcp-tasks";
 const DEFAULT_STREAM_TABLE_NAME = "mcp-streams";
@@ -67,6 +78,37 @@ export interface McpRPCRequest {
   id?: unknown;
   method: string;
   params?: unknown;
+}
+
+/**
+ * Detects the MCP transport shape for one request.
+ *
+ * MCP-Protocol-Version takes precedence when present. Otherwise the detector
+ * reads io.modelcontextprotocol/protocolVersion from params._meta.
+ */
+export function detectMcpProtocolVersion(
+  headers: Headers,
+  request: unknown,
+): McpProtocolShape {
+  const headerVersion = firstHeader(
+    headers,
+    MCP_HEADER_PROTOCOL_VERSION,
+  ).trim();
+  if (headerVersion) {
+    return protocolShapeForVersion(headerVersion);
+  }
+
+  const record = protocolRequestRecord(request);
+  if (!record) {
+    return MCP_PROTOCOL_SHAPE_UNKNOWN;
+  }
+  const params = isRecord(record["params"]) ? record["params"] : null;
+  const meta = params && isRecord(params["_meta"]) ? params["_meta"] : null;
+  const metaVersion =
+    typeof meta?.[PROTOCOL_VERSION_METADATA_KEY] === "string"
+      ? String(meta[PROTOCOL_VERSION_METADATA_KEY]).trim()
+      : "";
+  return protocolShapeForVersion(metaVersion);
 }
 
 export interface McpContentBlock {
@@ -1211,7 +1253,7 @@ export class McpServer {
       return this.handleGet(headers);
     }
     if (normalizedMethod === "DELETE") {
-      return this.handleDelete(headers);
+      return this.handleDelete(headers, body);
     }
     return jsonBytesResponse(405, { error: "method not allowed" });
   }
@@ -1242,14 +1284,15 @@ export class McpServer {
       );
     }
 
+    const shape = detectMcpProtocolVersion(headers, body);
     if (Object.prototype.hasOwnProperty.call(raw, "method")) {
-      return this.handlePostRequest(headers, body);
+      return this.handlePostRequest(headers, body, shape);
     }
     if (
       Object.prototype.hasOwnProperty.call(raw, "result") ||
       Object.prototype.hasOwnProperty.call(raw, "error")
     ) {
-      return this.handlePostResponse(headers, body);
+      return this.handlePostResponse(headers, body, shape);
     }
     return badRequest("invalid JSON-RPC message");
   }
@@ -1257,6 +1300,7 @@ export class McpServer {
   private async handlePostRequest(
     headers: Headers,
     body: Uint8Array,
+    shape: McpProtocolShape,
   ): Promise<Response> {
     let request: ParsedRPCRequest;
     try {
@@ -1269,6 +1313,10 @@ export class McpServer {
           `Parse error: ${errorMessage(err)}`,
         ),
       );
+    }
+
+    if (shape === MCP_PROTOCOL_SHAPE_2026_07_28) {
+      return this.handleStatelessPostRequest(request);
     }
 
     if (request.method === "initialize") {
@@ -1296,14 +1344,32 @@ export class McpServer {
     return this.handleRequestHTTP(sessionId, session, request, headers);
   }
 
+  private async handleStatelessPostRequest(
+    request: ParsedRPCRequest,
+  ): Promise<Response> {
+    if (!request.idPresent) {
+      return emptyResponse(202);
+    }
+    const response = await this.dispatch(
+      request,
+      MCP_PROTOCOL_VERSION_2026_07_28,
+      "",
+    );
+    return this.marshalSingleResponse(response);
+  }
+
   private async handlePostResponse(
     headers: Headers,
     body: Uint8Array,
+    shape: McpProtocolShape,
   ): Promise<Response> {
     try {
       parseResponse(body);
     } catch {
       return badRequest("invalid JSON-RPC response");
+    }
+    if (shape === MCP_PROTOCOL_SHAPE_2026_07_28) {
+      return emptyResponse(202);
     }
     const sessionResult = await this.requireSession(headers);
     if (sessionResult.response) {
@@ -1375,10 +1441,18 @@ export class McpServer {
     }
   }
 
-  private async handleDelete(headers: Headers): Promise<Response> {
+  private async handleDelete(
+    headers: Headers,
+    body: Uint8Array,
+  ): Promise<Response> {
     const originResponse = this.validateOrigin(headers);
     if (originResponse) {
       return originResponse;
+    }
+    if (
+      detectMcpProtocolVersion(headers, body) === MCP_PROTOCOL_SHAPE_2026_07_28
+    ) {
+      return jsonBytesResponse(405, { error: "method not allowed" });
     }
     const sessionId = firstHeader(headers, MCP_HEADER_SESSION_ID);
     if (!sessionId) {
@@ -1450,6 +1524,16 @@ export class McpServer {
     sessionId: string,
   ): Promise<McpRPCResponse> {
     if (!methodAllowedForProtocol(protocolVersion, request.method)) {
+      return newErrorResponse(
+        request.id,
+        MCP_CODE_METHOD_NOT_FOUND,
+        `Method not found: ${request.method}`,
+      );
+    }
+    if (
+      protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28 &&
+      statelessRequestRequiresSession(request)
+    ) {
       return newErrorResponse(
         request.id,
         MCP_CODE_METHOD_NOT_FOUND,
@@ -2185,6 +2269,33 @@ function positiveInteger(value: number | undefined, fallback: number): number {
   return fallback;
 }
 
+function protocolShapeForVersion(value: string): McpProtocolShape {
+  if (value === MCP_PROTOCOL_VERSION) {
+    return MCP_PROTOCOL_SHAPE_2025_11_25;
+  }
+  if (value === MCP_PROTOCOL_VERSION_2026_07_28) {
+    return MCP_PROTOCOL_SHAPE_2026_07_28;
+  }
+  return MCP_PROTOCOL_SHAPE_UNKNOWN;
+}
+
+function protocolRequestRecord(
+  request: unknown,
+): Record<string, unknown> | null {
+  let value = request;
+  if (value instanceof Uint8Array) {
+    value = Buffer.from(value).toString("utf8");
+  }
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  return isRecord(value) ? value : null;
+}
+
 function isSupportedProtocolVersion(value: string): boolean {
   return (
     value === MCP_PROTOCOL_VERSION ||
@@ -2216,6 +2327,20 @@ function methodAllowedForProtocol(
   protocolVersion: string,
   method: string,
 ): boolean {
+  if (protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28) {
+    return new Set([
+      "ping",
+      "tools/list",
+      "tools/call",
+      "resources/list",
+      "resources/read",
+      "resources/templates/list",
+      "logging/setLevel",
+      "completion/complete",
+      "prompts/list",
+      "prompts/get",
+    ]).has(method);
+  }
   if (!isSupportedProtocolVersion(protocolVersion)) {
     return false;
   }
@@ -2248,6 +2373,13 @@ function isTaskMethod(method: string): boolean {
     "tasks/list",
     "tasks/cancel",
   ]).has(method);
+}
+
+function statelessRequestRequiresSession(request: ParsedRPCRequest): boolean {
+  return (
+    request.method === "tools/call" &&
+    Object.prototype.hasOwnProperty.call(paramsRecord(request.params), "task")
+  );
 }
 
 function parseRequest(body: Uint8Array): ParsedRPCRequest {
