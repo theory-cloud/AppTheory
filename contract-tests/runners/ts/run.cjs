@@ -2247,6 +2247,21 @@ function fixtureMCPToolHandler(name) {
           requestState: `confirm-${message}`,
         };
       };
+    case "input_required_extension":
+      return (args) => {
+        const message = fixtureMCPMessageArg(args);
+        return {
+          content: [],
+          resultType: "input_required",
+          inputRequests: {
+            approval: {
+              method: "com.example/review/approve",
+              params: { message: `Review ${message}` },
+            },
+          },
+          requestState: `review-${message}`,
+        };
+      };
     default:
       throw new Error(`unknown mcp tool handler ${JSON.stringify(name)}`);
   }
@@ -2456,6 +2471,9 @@ async function newFixtureMCPServer(runtime, setup) {
     }),
     streamStore: new runtime.MemoryMcpStreamStore({ idGenerator: streamIdGenerator }),
   };
+  if (serverConfig.extension_capabilities) {
+    options.extensionCapabilities = serverConfig.extension_capabilities;
+  }
   if (mcpSetup.task_runtime?.enabled) {
     options.taskRuntime = {
       store: new FixtureMCPTaskStore(runtime, mcpSetup.task_runtime),

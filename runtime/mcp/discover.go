@@ -15,7 +15,7 @@ type DiscoverResult struct {
 	Meta              map[string]any `json:"_meta"`
 }
 
-func (s *Server) handleDiscover(req *Request) *Response {
+func (s *Server) handleDiscover(req *Request, protocolVersion string) *Response {
 	return NewResultResponse(req.ID, DiscoverResult{
 		SupportedVersions: supportedProtocolVersions(),
 		Capabilities:      s.initializeCapabilities(protocolVersion),

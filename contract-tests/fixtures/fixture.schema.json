@@ -228,7 +228,13 @@
           "additionalProperties": false,
           "properties": {
             "name": { "type": "string", "minLength": 1 },
-            "version": { "type": "string", "minLength": 1 }
+            "version": { "type": "string", "minLength": 1 },
+            "extension_capabilities": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object"
+              }
+            }
           }
         },
         "id_sequence": { "$ref": "#/$defs/stringArray" },

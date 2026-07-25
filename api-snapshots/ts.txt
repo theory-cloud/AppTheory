@@ -230,6 +230,7 @@ MaxQueryTopK	const
 McpContentBlock	interface
 McpDiscoverResult	interface
 McpEventNotFoundError	class
+McpExtensionCapabilities	type
 McpInputRequest	interface
 McpInputRequiredResult	interface
 McpJSONRecord	type

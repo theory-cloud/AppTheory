@@ -72,6 +72,7 @@ export type McpJSONValue =
   | McpJSONValue[]
   | { [key: string]: McpJSONValue };
 export type McpJSONRecord = Record<string, McpJSONValue>;
+export type McpExtensionCapabilities = Record<string, McpJSONRecord>;
 
 export interface McpRPCError {
   code: number;
@@ -403,6 +404,12 @@ export interface McpServerOptions {
   taskRuntime?: McpTaskRuntimeOptions;
   originValidator?: (origin: string) => boolean;
   sessionTtlMs?: number;
+  /**
+   * MCP extensions advertised by server/discover for protocol version
+   * 2026-07-28. Invalid identifiers and non-JSON settings are omitted so
+   * extension negotiation fails closed.
+   */
+  extensionCapabilities?: McpExtensionCapabilities;
 }
 
 type RegisteredTool = {
@@ -1263,6 +1270,10 @@ export class McpServer {
   private readonly sessionTtlMs: number;
   private readonly originValidator: (origin: string) => boolean;
   private readonly taskRuntime: NormalizedTaskRuntime;
+  private readonly extensionCapabilities: Record<
+    string,
+    Record<string, unknown>
+  >;
   private readonly toolRegistry = new McpToolRegistry();
   private readonly resourceRegistry = new McpResourceRegistry();
   private readonly promptRegistry = new McpPromptRegistry();
@@ -1279,6 +1290,9 @@ export class McpServer {
       ((origin: string) =>
         origin === "https://claude.ai" || origin === "https://claude.com");
     this.taskRuntime = normalizeTaskRuntime(options.taskRuntime);
+    this.extensionCapabilities = normalizeExtensionCapabilities(
+      options.extensionCapabilities,
+    );
   }
 
   registry(): McpToolRegistry {
@@ -1663,7 +1677,7 @@ export class McpServer {
     let response: McpRPCResponse;
     switch (request.method) {
       case "server/discover":
-        response = this.handleDiscover(request);
+        response = this.handleDiscover(request, protocolVersion);
         break;
       case "initialize":
         response = this.handleInitialize(
@@ -1754,10 +1768,13 @@ export class McpServer {
     });
   }
 
-  private handleDiscover(request: ParsedRPCRequest): McpRPCResponse {
+  private handleDiscover(
+    request: ParsedRPCRequest,
+    protocolVersion: string,
+  ): McpRPCResponse {
     const result: McpDiscoverResult = {
       supportedVersions: supportedProtocolVersions(),
-      capabilities: this.initializeCapabilities(MCP_PROTOCOL_VERSION),
+      capabilities: this.initializeCapabilities(protocolVersion),
       _meta: {
         [SERVER_INFO_METADATA_KEY]: {
           name: this.name,
@@ -1790,6 +1807,14 @@ export class McpServer {
         list: {},
         requests: { tools: { call: {} } },
       };
+    }
+    if (
+      protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28 &&
+      Object.keys(this.extensionCapabilities).length > 0
+    ) {
+      capabilities["extensions"] = cloneExtensionCapabilities(
+        this.extensionCapabilities,
+      );
     }
     return capabilities;
   }
@@ -2410,6 +2435,62 @@ function normalizeTaskRuntime(
   };
 }
 
+function normalizeExtensionCapabilities(
+  capabilities: McpExtensionCapabilities | undefined,
+): Record<string, Record<string, unknown>> {
+  if (!isRecord(capabilities)) {
+    return {};
+  }
+  const normalized: Record<string, Record<string, unknown>> = {};
+  for (const [rawIdentifier, rawSettings] of Object.entries(capabilities)) {
+    const identifier = rawIdentifier;
+    if (!validExtensionIdentifier(identifier) || !isRecord(rawSettings)) {
+      continue;
+    }
+    try {
+      const cloned: unknown = JSON.parse(JSON.stringify(rawSettings));
+      if (isRecord(cloned)) {
+        normalized[identifier] = cloned;
+      }
+    } catch {
+      // Invalid JSON settings are not advertised so negotiation fails closed.
+    }
+  }
+  return normalized;
+}
+
+function cloneExtensionCapabilities(
+  capabilities: Record<string, Record<string, unknown>>,
+): Record<string, Record<string, unknown>> {
+  const cloned: Record<string, Record<string, unknown>> = {};
+  for (const [identifier, settings] of Object.entries(capabilities)) {
+    cloned[identifier] = JSON.parse(JSON.stringify(settings)) as Record<
+      string,
+      unknown
+    >;
+  }
+  return cloned;
+}
+
+function validExtensionIdentifier(identifier: string): boolean {
+  const slash = identifier.indexOf("/");
+  if (
+    slash <= 0 ||
+    slash !== identifier.lastIndexOf("/") ||
+    identifier !== identifier.trim()
+  ) {
+    return false;
+  }
+  const prefix = identifier.slice(0, slash);
+  const name = identifier.slice(slash + 1);
+  const validLabel = /^[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
+  const validName = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+  return (
+    prefix.split(".").every((label) => validLabel.test(label)) &&
+    (name === "" || validName.test(name))
+  );
+}
+
 function positiveInteger(value: number | undefined, fallback: number): number {
   const n = Number(value ?? 0);
   if (Number.isFinite(n) && n > 0) {
@@ -2926,38 +3007,82 @@ function missingRequiredClientCapabilities(
   const required = requiredClientCapabilities(response);
   const declared = requestMetadata(request)[CLIENT_CAPABILITIES_METADATA_KEY];
   const capabilities = isRecord(declared) ? declared : {};
-  const missing: Record<string, unknown> = {};
-  for (const capability of required) {
-    if (!isRecord(capabilities[capability])) {
-      missing[capability] = {};
-    }
-  }
-  return missing;
+  return missingCapabilityTree(required, capabilities);
 }
 
-function requiredClientCapabilities(response: McpRPCResponse): string[] {
+function requiredClientCapabilities(
+  response: McpRPCResponse,
+): Record<string, unknown> {
   if (response.error || !isRecord(response.result)) {
-    return [];
+    return {};
   }
   if (response.result["resultType"] !== MCP_RESULT_TYPE_INPUT_REQUIRED) {
-    return [];
+    return {};
   }
   const inputRequests = response.result["inputRequests"];
   if (!isRecord(inputRequests)) {
-    return [];
+    return {};
   }
-  const required = new Set<string>();
+  const required: Record<string, unknown> = {};
   for (const inputRequest of Object.values(inputRequests)) {
     if (!isRecord(inputRequest) || typeof inputRequest["method"] !== "string") {
       continue;
     }
     const method = inputRequest["method"].trim();
-    const slash = method.indexOf("/");
-    if (slash > 0) {
-      required.add(method.slice(0, slash));
+    const firstSlash = method.indexOf("/");
+    if (firstSlash <= 0) {
+      continue;
+    }
+    const lastSlash = method.lastIndexOf("/");
+    if (firstSlash === lastSlash) {
+      required[method.slice(0, firstSlash)] = {};
+      continue;
+    }
+    const identifier = method.slice(0, lastSlash);
+    if (validExtensionIdentifier(identifier)) {
+      const extensions = isRecord(required["extensions"])
+        ? required["extensions"]
+        : {};
+      extensions[identifier] = {};
+      required["extensions"] = extensions;
     }
   }
-  return [...required].sort();
+  return required;
+}
+
+function missingCapabilityTree(
+  required: Record<string, unknown>,
+  declared: Record<string, unknown>,
+): Record<string, unknown> {
+  const missing: Record<string, unknown> = {};
+  for (const [capability, rawRequired] of Object.entries(required)) {
+    const requiredChildren = isRecord(rawRequired) ? rawRequired : {};
+    const declaredChildren = declared[capability];
+    if (!isRecord(declaredChildren)) {
+      missing[capability] = cloneCapabilityRequirement(requiredChildren);
+      continue;
+    }
+    const childMissing = missingCapabilityTree(
+      requiredChildren,
+      declaredChildren,
+    );
+    if (Object.keys(childMissing).length > 0) {
+      missing[capability] = childMissing;
+    }
+  }
+  return missing;
+}
+
+function cloneCapabilityRequirement(
+  required: Record<string, unknown>,
+): Record<string, unknown> {
+  const cloned: Record<string, unknown> = {};
+  for (const [key, rawChildren] of Object.entries(required)) {
+    cloned[key] = cloneCapabilityRequirement(
+      isRecord(rawChildren) ? rawChildren : {},
+    );
+  }
+  return cloned;
 }
 
 function headerValues(headers: Headers, key: string): string[] {

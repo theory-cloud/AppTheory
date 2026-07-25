@@ -204,8 +204,9 @@ type FixtureMCPSetup struct {
 }
 
 type FixtureMCPServer struct {
-	Name    string `json:"name,omitempty"`
-	Version string `json:"version,omitempty"`
+	Name                  string                    `json:"name,omitempty"`
+	Version               string                    `json:"version,omitempty"`
+	ExtensionCapabilities map[string]map[string]any `json:"extension_capabilities,omitempty"`
 }
 
 type FixtureMCPTool struct {

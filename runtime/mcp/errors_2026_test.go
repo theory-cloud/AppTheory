@@ -223,6 +223,38 @@ func TestMissingRequiredClientCapabilities(t *testing.T) {
 	}
 }
 
+func TestMissingRequiredClientExtensionCapability(t *testing.T) {
+	t.Parallel()
+
+	inputResponse := NewResultResponse("input", InputRequiredResult{
+		ResultType: ResultTypeInputRequired,
+		InputRequests: map[string]InputRequest{
+			"approval": {Method: "com.example/review/approve"},
+		},
+	})
+	missingRequest := &Request{
+		Params: json.RawMessage(
+			`{"_meta":{"io.modelcontextprotocol/clientCapabilities":{"extensions":{"com.example/other":{}}}}}`,
+		),
+	}
+	if got, want := missingRequiredClientCapabilities(missingRequest, inputResponse), map[string]any{
+		"extensions": map[string]any{
+			"com.example/review": map[string]any{},
+		},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("missing extension capabilities = %#v, want %#v", got, want)
+	}
+
+	declaredRequest := &Request{
+		Params: json.RawMessage(
+			`{"_meta":{"io.modelcontextprotocol/clientCapabilities":{"extensions":{"com.example/review":{"mode":"approval"}}}}}`,
+		),
+	}
+	if got := missingRequiredClientCapabilities(declaredRequest, inputResponse); got != nil {
+		t.Fatalf("declared extension capability reported missing: %#v", got)
+	}
+}
+
 func TestRequestRoutingNameRejectsMalformedParams(t *testing.T) {
 	t.Parallel()
 

@@ -33,6 +33,7 @@ export type McpJSONValue = string | number | boolean | null | McpJSONValue[] | {
     [key: string]: McpJSONValue;
 };
 export type McpJSONRecord = Record<string, McpJSONValue>;
+export type McpExtensionCapabilities = Record<string, McpJSONRecord>;
 export interface McpRPCError {
     code: number;
     message: string;
@@ -255,6 +256,12 @@ export interface McpServerOptions {
     taskRuntime?: McpTaskRuntimeOptions;
     originValidator?: (origin: string) => boolean;
     sessionTtlMs?: number;
+    /**
+     * MCP extensions advertised by server/discover for protocol version
+     * 2026-07-28. Invalid identifiers and non-JSON settings are omitted so
+     * extension negotiation fails closed.
+     */
+    extensionCapabilities?: McpExtensionCapabilities;
 }
 export declare class McpSessionNotFoundError extends Error {
     constructor(message?: string);
@@ -392,6 +399,7 @@ export declare class McpServer {
     private readonly sessionTtlMs;
     private readonly originValidator;
     private readonly taskRuntime;
+    private readonly extensionCapabilities;
     private readonly toolRegistry;
     private readonly resourceRegistry;
     private readonly promptRegistry;

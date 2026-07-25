@@ -72,18 +72,19 @@ const (
 // Server is the MCP protocol handler. It dispatches JSON-RPC 2.0 messages
 // to the appropriate MCP method handlers (initialize, tools/list, tools/call).
 type Server struct {
-	name             string
-	version          string
-	registry         *ToolRegistry
-	resourceRegistry *ResourceRegistry
-	promptRegistry   *PromptRegistry
-	sessionStore     SessionStore
-	streamStore      StreamStore
-	cancellations    *cancellationTracker
-	idGen            apptheory.IDGenerator
-	logger           *slog.Logger
-	originValidator  OriginValidator
-	capabilities     CapabilityConfig
+	name                  string
+	version               string
+	registry              *ToolRegistry
+	resourceRegistry      *ResourceRegistry
+	promptRegistry        *PromptRegistry
+	sessionStore          SessionStore
+	streamStore           StreamStore
+	cancellations         *cancellationTracker
+	idGen                 apptheory.IDGenerator
+	logger                *slog.Logger
+	originValidator       OriginValidator
+	capabilities          CapabilityConfig
+	extensionCapabilities map[string]map[string]any
 
 	resourceSubscribeHook   ResourceSubscriptionHook
 	resourceUnsubscribeHook ResourceSubscriptionHook
@@ -659,17 +660,22 @@ func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocol
 		return responseForProtocol(s.dispatchTaskMethod(ctx, req, sessionID), protocolVersion)
 	}
 
-	return responseForProtocol(s.dispatchNonTaskMethod(ctx, req, sessionID), protocolVersion)
+	return responseForProtocol(s.dispatchNonTaskMethod(ctx, req, sessionID, protocolVersion), protocolVersion)
 }
 
-func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessionID string) *Response {
+func (s *Server) dispatchNonTaskMethod(
+	ctx context.Context,
+	req *Request,
+	sessionID string,
+	protocolVersion string,
+) *Response {
 	if !s.methodCapabilityEnabled(req.Method) {
 		return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: "+req.Method)
 	}
 
 	switch req.Method {
 	case methodServerDiscover:
-		return s.handleDiscover(req)
+		return s.handleDiscover(req, protocolVersion)
 	case methodInitialize:
 		selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)
 		if errResp != nil {

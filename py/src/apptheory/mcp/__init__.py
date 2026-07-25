@@ -8,6 +8,7 @@ import datetime as dt
 import inspect
 import json as jsonlib
 import os
+import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field, is_dataclass
 from typing import Any, Literal, Protocol, TypeVar, cast
@@ -68,6 +69,7 @@ McpTaskStatus = Literal["working", "input_required", "completed", "failed", "can
 McpRequestID = str | int | bool | None
 McpJSONValue = str | int | float | bool | None | list[Any] | dict[str, Any]
 McpJSONRecord = dict[str, McpJSONValue]
+McpExtensionCapabilities = dict[str, McpJSONRecord]
 
 T = TypeVar("T")
 
@@ -414,6 +416,7 @@ class McpServerOptions:
     origin_validator: Callable[[str], bool] | None = None
     session_ttl_ms: int = 0
     clock: Clock | None = None
+    extension_capabilities: McpExtensionCapabilities = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -1037,6 +1040,7 @@ class McpServer:
             lambda origin: origin in {"https://claude.ai", "https://claude.com"}
         )
         self.task_runtime = _normalize_task_runtime(opts.task_runtime)
+        self.extension_capabilities = _normalize_extension_capabilities(opts.extension_capabilities)
         self.tool_registry = McpToolRegistry()
         self.resource_registry = McpResourceRegistry()
         self.prompt_registry = McpPromptRegistry()
@@ -1259,7 +1263,7 @@ class McpServer:
         if not self._method_capability_enabled(request.method):
             return _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, f"Method not found: {request.method}")
         if request.method == "server/discover":
-            response = self._handle_discover(request)
+            response = self._handle_discover(request, protocol_version)
         elif request.method == "initialize":
             response = self._handle_initialize(request, _negotiate_protocol_version(request.params))
         elif request.method == "ping":
@@ -1305,12 +1309,12 @@ class McpServer:
             },
         )
 
-    def _handle_discover(self, request: _ParsedRPCRequest) -> dict[str, Any]:
+    def _handle_discover(self, request: _ParsedRPCRequest, protocol_version: str) -> dict[str, Any]:
         return _new_result_response(
             request.id,
             {
                 "supportedVersions": _supported_protocol_versions(),
-                "capabilities": self._initialize_capabilities(MCP_PROTOCOL_VERSION),
+                "capabilities": self._initialize_capabilities(protocol_version),
                 "_meta": {
                     SERVER_INFO_METADATA_KEY: {
                         "name": self.name,
@@ -1330,6 +1334,8 @@ class McpServer:
             capabilities["prompts"] = {}
         if protocol_version == MCP_PROTOCOL_VERSION and self._tasks_enabled():
             capabilities["tasks"] = {"cancel": {}, "list": {}, "requests": {"tools": {"call": {}}}}
+        if protocol_version == MCP_PROTOCOL_VERSION_2026_07_28 and self.extension_capabilities:
+            capabilities["extensions"] = _json_clone(self.extension_capabilities)
         return capabilities
 
     def _handle_tools_call(self, request: _ParsedRPCRequest, session_id: str) -> dict[str, Any]:
@@ -1699,6 +1705,38 @@ def _normalize_task_runtime(options: McpTaskRuntimeOptions | dict[str, Any] | No
         model_immediate_response=str(
             _field(options, "model_immediate_response") or _field(options, "modelImmediateResponse") or ""
         ).strip(),
+    )
+
+
+def _normalize_extension_capabilities(capabilities: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(capabilities, Mapping):
+        return {}
+    normalized: dict[str, dict[str, Any]] = {}
+    for raw_identifier, raw_settings in capabilities.items():
+        if not isinstance(raw_identifier, str):
+            continue
+        identifier = raw_identifier
+        if not _valid_extension_identifier(identifier) or not isinstance(raw_settings, Mapping):
+            continue
+        try:
+            cloned = _json_clone(dict(raw_settings))
+        except (TypeError, ValueError):
+            continue
+        if isinstance(cloned, dict):
+            normalized[identifier] = cloned
+    return normalized
+
+
+def _valid_extension_identifier(identifier: str) -> bool:
+    if identifier != identifier.strip() or identifier.count("/") != 1:
+        return False
+    prefix, name = identifier.split("/", 1)
+    if not prefix:
+        return False
+    valid_label = re.compile(r"^[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?$")
+    valid_name = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+    return all(valid_label.fullmatch(label) for label in prefix.split(".")) and (
+        not name or valid_name.fullmatch(name) is not None
     )
 
 
@@ -2086,29 +2124,60 @@ def _missing_required_client_capabilities(
     required = _required_client_capabilities(response)
     declared = _request_metadata(request).get(CLIENT_CAPABILITIES_METADATA_KEY)
     capabilities = declared if isinstance(declared, Mapping) else {}
-    return {capability: {} for capability in required if not isinstance(capabilities.get(capability), Mapping)}
+    return _missing_capability_tree(required, capabilities)
 
 
-def _required_client_capabilities(response: dict[str, Any]) -> list[str]:
+def _required_client_capabilities(response: dict[str, Any]) -> dict[str, Any]:
     if response.get("error") is not None:
-        return []
+        return {}
     result = response.get("result")
     if not isinstance(result, Mapping) or result.get("resultType") != MCP_RESULT_TYPE_INPUT_REQUIRED:
-        return []
+        return {}
     input_requests = result.get("inputRequests")
     if not isinstance(input_requests, Mapping):
-        return []
-    required: set[str] = set()
+        return {}
+    required: dict[str, Any] = {}
     for input_request in input_requests.values():
         if not isinstance(input_request, Mapping):
             continue
         method = input_request.get("method")
         if not isinstance(method, str):
             continue
-        capability, separator, _ = method.strip().partition("/")
-        if separator and capability:
-            required.add(capability)
-    return sorted(required)
+        method = method.strip()
+        first_slash = method.find("/")
+        if first_slash <= 0:
+            continue
+        last_slash = method.rfind("/")
+        if first_slash == last_slash:
+            required[method[:first_slash]] = {}
+            continue
+        identifier = method[:last_slash]
+        if _valid_extension_identifier(identifier):
+            extensions = required.setdefault("extensions", {})
+            if isinstance(extensions, dict):
+                extensions[identifier] = {}
+    return required
+
+
+def _missing_capability_tree(required: Mapping[str, Any], declared: Mapping[str, Any]) -> dict[str, Any]:
+    missing: dict[str, Any] = {}
+    for capability, raw_required in required.items():
+        required_children = raw_required if isinstance(raw_required, Mapping) else {}
+        declared_children = declared.get(capability)
+        if not isinstance(declared_children, Mapping):
+            missing[capability] = _clone_capability_requirement(required_children)
+            continue
+        child_missing = _missing_capability_tree(required_children, declared_children)
+        if child_missing:
+            missing[capability] = child_missing
+    return missing
+
+
+def _clone_capability_requirement(required: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: _clone_capability_requirement(value if isinstance(value, Mapping) else {})
+        for key, value in required.items()
+    }
 
 
 def _new_error_response(id: Any, code: int, message: str, data: Any | None = None) -> dict[str, Any]:
@@ -2839,6 +2908,7 @@ __all__ = [
     "McpContentBlock",
     "McpDiscoverResult",
     "McpEventNotFoundError",
+    "McpExtensionCapabilities",
     "McpInputRequest",
     "McpInputRequiredResult",
     "McpJSONRecord",

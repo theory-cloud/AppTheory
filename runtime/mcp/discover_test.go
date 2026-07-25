@@ -10,7 +10,16 @@ import (
 func TestHandleDiscoverAdvertisesTruthfulSurface(t *testing.T) {
 	t.Parallel()
 
-	s := NewServer("discover-server", "2.0.0")
+	settings := map[string]any{"mode": "approval"}
+	s := NewServer(
+		"discover-server",
+		"2.0.0",
+		WithExtensionCapabilities(map[string]map[string]any{
+			"com.example/review":  settings,
+			" invalid/extension ": {},
+		}),
+	)
+	settings["mode"] = "mutated"
 	if err := s.Registry().RegisterTool(ToolDef{
 		Name:        "echo",
 		InputSchema: []byte(`{"type":"object"}`),
@@ -20,7 +29,10 @@ func TestHandleDiscoverAdvertisesTruthfulSurface(t *testing.T) {
 		t.Fatalf("register tool: %v", err)
 	}
 
-	resp := s.handleDiscover(&Request{JSONRPC: jsonrpcVersion, ID: "discover", Method: methodServerDiscover})
+	resp := s.handleDiscover(
+		&Request{JSONRPC: jsonrpcVersion, ID: "discover", Method: methodServerDiscover},
+		ProtocolVersion20260728,
+	)
 	result, ok := resp.Result.(DiscoverResult)
 	if !ok {
 		t.Fatalf("discover result type = %T, want DiscoverResult", resp.Result)
@@ -41,11 +53,39 @@ func TestHandleDiscoverAdvertisesTruthfulSurface(t *testing.T) {
 	if _, ok := result.Capabilities["subscriptions"]; ok {
 		t.Fatalf("discover capabilities advertised subscriptions: %#v", result.Capabilities)
 	}
+	if got, want := result.Capabilities["extensions"], map[string]any{
+		"com.example/review": map[string]any{"mode": "approval"},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("discover extensions = %#v, want %#v", got, want)
+	}
 	if got := result.Meta[serverInfoMetaKey]; !reflect.DeepEqual(got, ServerIdentity{
 		Name:    "discover-server",
 		Version: "2.0.0",
 	}) {
 		t.Fatalf("server identity = %#v", got)
+	}
+}
+
+func TestHandleDiscoverKeepsExtensionsModernOnly(t *testing.T) {
+	t.Parallel()
+
+	s := NewServer(
+		"discover-server",
+		"2.0.0",
+		WithExtensionCapabilities(map[string]map[string]any{
+			"com.example/review": {},
+		}),
+	)
+	resp := s.handleDiscover(
+		&Request{JSONRPC: jsonrpcVersion, ID: "discover", Method: methodServerDiscover},
+		protocolVersion,
+	)
+	result, ok := resp.Result.(DiscoverResult)
+	if !ok {
+		t.Fatalf("discover result type = %T, want DiscoverResult", resp.Result)
+	}
+	if _, ok := result.Capabilities["extensions"]; ok {
+		t.Fatalf("legacy discover capabilities advertised extensions: %#v", result.Capabilities)
 	}
 }
 

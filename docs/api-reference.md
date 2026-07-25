@@ -486,7 +486,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>925 exported top-level symbols</summary>
+<summary>926 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins
@@ -667,7 +667,7 @@ WithAuthPrincipalHook, WithAWSConfig, WithAWSLambdaMicroVMClock, WithAWSLambdaMi
 WithClock, WithCompletionHooks, WithControllerClock, WithControllerDeploymentDefaults, WithControllerExecutionRoleArn
 WithControllerID, WithControllerIDGenerator, WithControllerLogging, WithControllerProviderID, WithControllerSessionTTL
 WithCORS, WithEMFClock, WithEMFNamespace, WithEMFService, WithEMFWriter
-WithEnvironmentErrorNotifications, WithErrorNotifier, WithHTTPErrorFormat, WithIdentifier, WithIDGenerator
+WithEnvironmentErrorNotifications, WithErrorNotifier, WithExtensionCapabilities, WithHTTPErrorFormat, WithIdentifier, WithIDGenerator
 WithInitialSessionListenerBudget, WithLegacyHTTPErrorShape, WithLifecycleContract, WithLifecycleHandler, WithLimits
 WithLogger, WithLoggingLevelHook, WithObservability, WithOriginValidator, WithPolicyHook
 WithProfileClock, WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter, WithRegistryClientTTL

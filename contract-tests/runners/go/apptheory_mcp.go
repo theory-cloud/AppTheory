@@ -99,6 +99,9 @@ func newFixtureMCPServer(setup FixtureMCPSetup) (*mcp.Server, error) {
 		mcp.WithSessionStore(sessionStore),
 		mcp.WithStreamStore(streamStore),
 	}
+	if len(setup.Server.ExtensionCapabilities) > 0 {
+		opts = append(opts, mcp.WithExtensionCapabilities(setup.Server.ExtensionCapabilities))
+	}
 	if setup.TaskRuntime != nil && setup.TaskRuntime.Enabled {
 		opts = append(opts, mcp.WithTaskRuntime(mcp.TaskRuntimeOptions{
 			Store:                  newFixtureMCPTaskStore(*setup.TaskRuntime),
@@ -293,6 +296,23 @@ func fixtureMCPToolHandler(name string) (mcp.ToolHandler, error) {
 					},
 				},
 				RequestState: "confirm-" + message,
+			}, nil
+		}, nil
+	case "input_required_extension":
+		return func(_ context.Context, args json.RawMessage) (*mcp.ToolResult, error) {
+			message, err := mcpFixtureMessageArg(args)
+			if err != nil {
+				return nil, err
+			}
+			return &mcp.ToolResult{
+				ResultType: mcp.ResultTypeInputRequired,
+				InputRequests: map[string]mcp.InputRequest{
+					"approval": {
+						Method: "com.example/review/approve",
+						Params: map[string]any{"message": "Review " + message},
+					},
+				},
+				RequestState: "review-" + message,
 			}, nil
 		}, nil
 	default:

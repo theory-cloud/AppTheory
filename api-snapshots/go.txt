@@ -2951,18 +2951,19 @@ type SSEEvent struct {
 }
 
 type Server struct {
-	name             string
-	version          string
-	registry         *ToolRegistry
-	resourceRegistry *ResourceRegistry
-	promptRegistry   *PromptRegistry
-	sessionStore     SessionStore
-	streamStore      StreamStore
-	cancellations    *cancellationTracker
-	idGen            apptheory.IDGenerator
-	logger           *slog.Logger
-	originValidator  OriginValidator
-	capabilities     CapabilityConfig
+	name                  string
+	version               string
+	registry              *ToolRegistry
+	resourceRegistry      *ResourceRegistry
+	promptRegistry        *PromptRegistry
+	sessionStore          SessionStore
+	streamStore           StreamStore
+	cancellations         *cancellationTracker
+	idGen                 apptheory.IDGenerator
+	logger                *slog.Logger
+	originValidator       OriginValidator
+	capabilities          CapabilityConfig
+	extensionCapabilities map[string]map[string]any
 
 	resourceSubscribeHook   ResourceSubscriptionHook
 	resourceUnsubscribeHook ResourceSubscriptionHook
@@ -3201,6 +3202,8 @@ func WithCapabilityConfig(CapabilityConfig) ServerOption
 func WithClock(apptheory.Clock) MemorySessionStoreOption
 
 func WithCompletionHooks(CompletionHook, CompletionHook) ServerOption
+
+func WithExtensionCapabilities(map[string]map[string]any) ServerOption
 
 func WithInitialSessionListenerBudget(InitialSessionListenerBudgetOptions) ServerOption
 

@@ -76,7 +76,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>691 exported top-level symbols</summary>
+<summary>692 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, ALBTargetGroupResponse
@@ -152,7 +152,7 @@ MCP_HEADER_LAST_EVENT_ID, MCP_HEADER_METHOD, MCP_HEADER_NAME, MCP_HEADER_PROTOCO
 MCP_HEADER_SESSION_ID, MCP_PROTOCOL_SHAPE_2025_11_25, MCP_PROTOCOL_SHAPE_2026_07_28, MCP_PROTOCOL_SHAPE_UNKNOWN
 MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_2026_07_28, MCP_PROTOCOL_VERSION_LEGACY, MCP_PROTOCOL_VERSION_PRIOR
 MCP_RESULT_TYPE_COMPLETE, MCP_RESULT_TYPE_INPUT_REQUIRED, McpContentBlock, McpDiscoverResult
-McpEventNotFoundError, McpInputRequest, McpInputRequiredResult, McpJSONRecord
+McpEventNotFoundError, McpExtensionCapabilities, McpInputRequest, McpInputRequiredResult, McpJSONRecord
 McpJSONValue, McpPromptArgument, McpPromptDef, McpPromptHandler
 McpPromptMessage, McpPromptRegistry, McpPromptResult, McpProtocolShape
 McpRequestID, McpResourceContent, McpResourceContext, McpResourceDef
