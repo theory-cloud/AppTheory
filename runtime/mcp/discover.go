@@ -12,20 +12,23 @@ type ServerIdentity struct {
 type DiscoverResult struct {
 	SupportedVersions []string       `json:"supportedVersions"`
 	Capabilities      map[string]any `json:"capabilities"`
-	Meta              map[string]any `json:"_meta"`
+	Meta              map[string]any `json:"_meta,omitempty"`
 }
 
-func (s *Server) handleDiscover(req *Request) *Response {
-	return NewResultResponse(req.ID, DiscoverResult{
+func (s *Server) handleDiscover(req *Request, protocolVersion string) *Response {
+	result := DiscoverResult{
 		SupportedVersions: supportedProtocolVersions(),
 		Capabilities:      s.initializeCapabilities(protocolVersion),
-		Meta: map[string]any{
+	}
+	if protocolVersion != ProtocolVersion20260728 {
+		result.Meta = map[string]any{
 			serverInfoMetaKey: ServerIdentity{
 				Name:    s.name,
 				Version: s.version,
 			},
-		},
-	})
+		}
+	}
+	return NewResultResponse(req.ID, result)
 }
 
 func supportedProtocolVersions() []string {

@@ -1,7 +1,7 @@
 {
   "id": "mcp.discover.tasks_pre_handshake",
   "tier": "mcp",
-  "name": "MCP discovery is pre-handshake and advertises task-enabled server capabilities",
+  "name": "MCP discovery is pre-handshake and advertises version-specific server capabilities",
   "setup": {
     "mcp": {
       "server": {
@@ -51,7 +51,7 @@
           }
         },
         {
-          "name": "stateless_discover_reports_session_ful_tasks",
+          "name": "stateless_discover_omits_legacy_tasks",
           "request": {
             "method": "POST",
             "path": "/mcp",
@@ -148,15 +148,6 @@
                 "2025-03-26"
               ],
               "capabilities": {
-                "tasks": {
-                  "cancel": {},
-                  "list": {},
-                  "requests": {
-                    "tools": {
-                      "call": {}
-                    }
-                  }
-                },
                 "tools": {}
               },
               "_meta": {
@@ -165,7 +156,9 @@
                   "version": "sp09"
                 }
               },
-              "resultType": "complete"
+              "resultType": "complete",
+              "ttlMs": 0,
+              "cacheScope": "private"
             }
           }
         }

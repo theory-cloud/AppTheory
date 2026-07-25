@@ -130,7 +130,13 @@
                   }
                 }
               },
-              "requestState": "confirm-contract"
+              "requestState": "confirm-contract",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
             }
           },
           "is_base64": false
@@ -156,7 +162,13 @@
                   "text": "confirmed contract"
                 }
               ],
-              "resultType": "complete"
+              "resultType": "complete",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
             }
           },
           "is_base64": false

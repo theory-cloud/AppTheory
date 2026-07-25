@@ -33,6 +33,7 @@ export type McpJSONValue = string | number | boolean | null | McpJSONValue[] | {
     [key: string]: McpJSONValue;
 };
 export type McpJSONRecord = Record<string, McpJSONValue>;
+export type McpExtensionCapabilities = Record<string, McpJSONRecord>;
 export interface McpRPCError {
     code: number;
     message: string;
@@ -71,7 +72,7 @@ export interface McpServerIdentity {
 export interface McpDiscoverResult {
     supportedVersions: string[];
     capabilities: Record<string, unknown>;
-    _meta: {
+    _meta?: {
         [SERVER_INFO_METADATA_KEY]: McpServerIdentity;
     };
 }
@@ -248,6 +249,21 @@ export interface McpTaskRuntimeOptions {
     listLimit?: number;
     modelImmediateResponse?: string;
 }
+export type McpCacheScope = "private" | "public";
+export interface McpCacheHint {
+    /** Defaults to 0 (immediately stale); negative and non-finite values become 0. */
+    ttlMs?: number;
+    /** Defaults to private; public must be configured explicitly. */
+    cacheScope?: McpCacheScope;
+}
+export interface McpCacheableResultConfig {
+    serverDiscover?: McpCacheHint;
+    toolsList?: McpCacheHint;
+    promptsList?: McpCacheHint;
+    resourcesList?: McpCacheHint;
+    resourceTemplatesList?: McpCacheHint;
+    resourcesRead?: McpCacheHint;
+}
 export interface McpServerOptions {
     idGenerator?: IdGenerator;
     sessionStore?: McpSessionStore;
@@ -255,6 +271,22 @@ export interface McpServerOptions {
     taskRuntime?: McpTaskRuntimeOptions;
     originValidator?: (origin: string) => boolean;
     sessionTtlMs?: number;
+    /**
+     * MCP extensions advertised by server/discover for protocol version
+     * 2026-07-28. Invalid identifiers and non-JSON settings are omitted so
+     * extension negotiation fails closed.
+     */
+    extensionCapabilities?: McpExtensionCapabilities;
+    /**
+     * Per-surface cache hints for MCP 2026-07-28 complete results. Omitted
+     * surfaces emit ttlMs: 0 and cacheScope: private.
+     */
+    cacheableResults?: McpCacheableResultConfig;
+    /**
+     * Include server identity in every MCP 2026-07-28 result's _meta.
+     * Defaults to true.
+     */
+    includeServerInfoMetadata?: boolean;
 }
 export declare class McpSessionNotFoundError extends Error {
     constructor(message?: string);
@@ -392,6 +424,9 @@ export declare class McpServer {
     private readonly sessionTtlMs;
     private readonly originValidator;
     private readonly taskRuntime;
+    private readonly extensionCapabilities;
+    private readonly cacheableResults;
+    private readonly includeServerInfoMetadata;
     private readonly toolRegistry;
     private readonly resourceRegistry;
     private readonly promptRegistry;
@@ -416,6 +451,7 @@ export declare class McpServer {
     private handleNotification;
     private handleRequestHTTP;
     private dispatch;
+    private finalizeResponseForProtocol;
     private dispatchTaskMethod;
     private handleInitialize;
     private handleDiscover;

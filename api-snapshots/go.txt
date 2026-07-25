@@ -2611,6 +2611,10 @@ func (safeEventError) Error() string
 
 ## github.com/theory-cloud/apptheory/v2/runtime/mcp
 
+const CacheScopePrivate CacheScope = "private"
+
+const CacheScopePublic CacheScope = "public"
+
 const CodeHeaderMismatch = -32020
 
 const CodeInternalError = -32603
@@ -2699,6 +2703,22 @@ var ErrTaskNotFound = errors.New("task not found")
 
 var ErrTaskTerminal = errors.New("task already terminal")
 
+type CacheHint struct {
+	TTL   time.Duration
+	Scope CacheScope
+}
+
+type CacheScope string
+
+type CacheableResultConfig struct {
+	ServerDiscover        CacheHint
+	ToolsList             CacheHint
+	PromptsList           CacheHint
+	ResourcesList         CacheHint
+	ResourceTemplatesList CacheHint
+	ResourcesRead         CacheHint
+}
+
 type CapabilityConfig struct {
 	Tools       bool
 	Resources   bool
@@ -2766,7 +2786,7 @@ type CreateTaskResult struct {
 type DiscoverResult struct {
 	SupportedVersions []string       `json:"supportedVersions"`
 	Capabilities      map[string]any `json:"capabilities"`
-	Meta              map[string]any `json:"_meta"`
+	Meta              map[string]any `json:"_meta,omitempty"`
 }
 
 type DynamoSessionStore struct {
@@ -2951,18 +2971,21 @@ type SSEEvent struct {
 }
 
 type Server struct {
-	name             string
-	version          string
-	registry         *ToolRegistry
-	resourceRegistry *ResourceRegistry
-	promptRegistry   *PromptRegistry
-	sessionStore     SessionStore
-	streamStore      StreamStore
-	cancellations    *cancellationTracker
-	idGen            apptheory.IDGenerator
-	logger           *slog.Logger
-	originValidator  OriginValidator
-	capabilities     CapabilityConfig
+	name                      string
+	version                   string
+	registry                  *ToolRegistry
+	resourceRegistry          *ResourceRegistry
+	promptRegistry            *PromptRegistry
+	sessionStore              SessionStore
+	streamStore               StreamStore
+	cancellations             *cancellationTracker
+	idGen                     apptheory.IDGenerator
+	logger                    *slog.Logger
+	originValidator           OriginValidator
+	capabilities              CapabilityConfig
+	extensionCapabilities     map[string]map[string]any
+	cacheableResults          CacheableResultConfig
+	includeServerInfoMetadata bool
 
 	resourceSubscribeHook   ResourceSubscriptionHook
 	resourceUnsubscribeHook ResourceSubscriptionHook
@@ -3196,11 +3219,15 @@ func ParseResponse([]byte) (*Response, error)
 
 func ToolInputFromContext(context.Context) ToolInput
 
+func WithCacheableResultConfig(CacheableResultConfig) ServerOption
+
 func WithCapabilityConfig(CapabilityConfig) ServerOption
 
 func WithClock(apptheory.Clock) MemorySessionStoreOption
 
 func WithCompletionHooks(CompletionHook, CompletionHook) ServerOption
+
+func WithExtensionCapabilities(map[string]map[string]any) ServerOption
 
 func WithInitialSessionListenerBudget(InitialSessionListenerBudgetOptions) ServerOption
 
@@ -3213,6 +3240,8 @@ func WithOriginValidator(OriginValidator) ServerOption
 func WithResourceSubscriptionHooks(ResourceSubscriptionHook, ResourceSubscriptionHook) ServerOption
 
 func WithServerIDGenerator(apptheory.IDGenerator) ServerOption
+
+func WithServerInfoMetadata(bool) ServerOption
 
 func WithSessionStore(SessionStore) ServerOption
 

@@ -181,13 +181,25 @@ class McpRuntimeTests(unittest.TestCase):
         )
         headers = _post_headers()
         headers[MCP_HEADER_PROTOCOL_VERSION] = [MCP_PROTOCOL_VERSION_2026_07_28]
-        headers[MCP_HEADER_METHOD] = ["ping"]
+        headers[MCP_HEADER_METHOD] = ["server/discover"]
 
         ping = server.serve(
             {
                 "method": "POST",
                 "headers": headers,
-                "body": json.dumps({"jsonrpc": "2.0", "id": "ping", "method": "ping"}),
+                "body": json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "discover",
+                        "method": "server/discover",
+                        "params": {
+                            "_meta": {
+                                "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
+                                "io.modelcontextprotocol/clientCapabilities": {},
+                            }
+                        },
+                    }
+                ),
             }
         )
         self.assertEqual(ping.status, 200)
@@ -196,8 +208,25 @@ class McpRuntimeTests(unittest.TestCase):
             _response_json(ping),
             {
                 "jsonrpc": "2.0",
-                "id": "ping",
-                "result": {"resultType": MCP_RESULT_TYPE_COMPLETE},
+                "id": "discover",
+                "result": {
+                    "supportedVersions": [
+                        MCP_PROTOCOL_VERSION_2026_07_28,
+                        MCP_PROTOCOL_VERSION,
+                        "2025-06-18",
+                        "2025-03-26",
+                    ],
+                    "capabilities": {},
+                    "_meta": {
+                        "io.modelcontextprotocol/serverInfo": {
+                            "name": "PyMCP",
+                            "version": "test",
+                        }
+                    },
+                    "resultType": MCP_RESULT_TYPE_COMPLETE,
+                    "ttlMs": 0,
+                    "cacheScope": "private",
+                },
             },
         )
 
@@ -211,7 +240,13 @@ class McpRuntimeTests(unittest.TestCase):
                         "jsonrpc": "2.0",
                         "id": "init",
                         "method": "initialize",
-                        "params": {"protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28},
+                        "params": {
+                            "protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
+                            "_meta": {
+                                "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
+                                "io.modelcontextprotocol/clientCapabilities": {},
+                            },
+                        },
                     }
                 ),
             }
@@ -275,6 +310,7 @@ class McpRuntimeTests(unittest.TestCase):
                                 "name": "continue",
                                 "arguments": {"message": "contract"},
                                 "_meta": {
+                                    "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
                                     "io.modelcontextprotocol/clientCapabilities": {"elicitation": {}},
                                 },
                             },
@@ -304,6 +340,7 @@ class McpRuntimeTests(unittest.TestCase):
                                 "requestState": "confirm",
                                 "inputResponses": {"confirmation": {"action": "accept"}},
                                 "_meta": {
+                                    "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
                                     "io.modelcontextprotocol/clientCapabilities": {"elicitation": {}},
                                 },
                             },

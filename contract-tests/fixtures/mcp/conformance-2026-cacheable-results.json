@@ -1,0 +1,538 @@
+{
+  "id": "mcp.conformance_2026.cacheable_results",
+  "tier": "mcp",
+  "name": "MCP 2026-07-28 complete cacheable results carry fail-closed per-surface hints",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09",
+        "cacheable_results": {
+          "server_discover": {
+            "ttl_ms": 60000,
+            "cache_scope": "public"
+          },
+          "prompts_list": {
+            "ttl_ms": 30000
+          },
+          "resources_list": {
+            "ttl_ms": -50,
+            "cache_scope": "public"
+          },
+          "resource_templates_list": {
+            "ttl_ms": 45000,
+            "cache_scope": "public"
+          },
+          "resources_read": {
+            "ttl_ms": 5000,
+            "cache_scope": "private"
+          }
+        }
+      },
+      "tools": [
+        {
+          "name": "echo",
+          "description": "Echo text",
+          "input_schema": {
+            "type": "object"
+          },
+          "handler": "echo_text"
+        }
+      ],
+      "prompts": [
+        {
+          "name": "greet",
+          "description": "Render a greeting",
+          "arguments": [
+            {
+              "name": "name"
+            }
+          ],
+          "handler": "render_greeting"
+        }
+      ],
+      "resources": [
+        {
+          "uri": "file:///guide.txt",
+          "name": "guide",
+          "description": "Fixture guide",
+          "mime_type": "text/plain",
+          "size": 14,
+          "contents": [
+            {
+              "uri": "file:///guide.txt",
+              "mime_type": "text/plain",
+              "text": "hello resource"
+            }
+          ]
+        }
+      ],
+      "resource_templates": [
+        {
+          "uri_template": "file:///{path}",
+          "name": "project-file",
+          "description": "Read a project file by path",
+          "mime_type": "text/plain"
+        }
+      ]
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "discover_uses_explicit_public_hint",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "server/discover"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"discover\",\"method\":\"server/discover\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "tools_list_uses_default_private_hint",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "tools/list"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tools\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "prompts_list_defaults_scope_private",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "prompts/list"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"prompts\",\"method\":\"prompts/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "resources_list_normalizes_negative_ttl",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "resources/list"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"resources\",\"method\":\"resources/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "resource_templates_list_uses_public_hint",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "resources/templates/list"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"templates\",\"method\":\"resources/templates/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "resources_read_uses_private_hint",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "resources/read"
+              ],
+              "mcp-name": [
+                "file:///guide.txt"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"read\",\"method\":\"resources/read\",\"params\":{\"uri\":\"file:///guide.txt\",\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "mrtr_retry_is_not_cacheable",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ],
+              "mcp-method": [
+                "resources/read"
+              ],
+              "mcp-name": [
+                "file:///guide.txt"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"retry\",\"method\":\"resources/read\",\"params\":{\"uri\":\"file:///guide.txt\",\"requestState\":\"read-guide\",\"inputResponses\":{\"approval\":{\"approved\":true}},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "discover",
+            "result": {
+              "supportedVersions": [
+                "2026-07-28",
+                "2025-11-25",
+                "2025-06-18",
+                "2025-03-26"
+              ],
+              "capabilities": {
+                "prompts": {},
+                "resources": {},
+                "tools": {}
+              },
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              },
+              "resultType": "complete",
+              "ttlMs": 60000,
+              "cacheScope": "public"
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "tools",
+            "result": {
+              "tools": [
+                {
+                  "name": "echo",
+                  "description": "Echo text",
+                  "inputSchema": {
+                    "type": "object"
+                  }
+                }
+              ],
+              "resultType": "complete",
+              "ttlMs": 0,
+              "cacheScope": "private",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "prompts",
+            "result": {
+              "prompts": [
+                {
+                  "name": "greet",
+                  "description": "Render a greeting",
+                  "arguments": [
+                    {
+                      "name": "name"
+                    }
+                  ]
+                }
+              ],
+              "resultType": "complete",
+              "ttlMs": 30000,
+              "cacheScope": "private",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "resources",
+            "result": {
+              "resources": [
+                {
+                  "uri": "file:///guide.txt",
+                  "name": "guide",
+                  "description": "Fixture guide",
+                  "mimeType": "text/plain",
+                  "size": 14
+                }
+              ],
+              "resultType": "complete",
+              "ttlMs": 0,
+              "cacheScope": "public",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "templates",
+            "result": {
+              "resourceTemplates": [
+                {
+                  "uriTemplate": "file:///{path}",
+                  "name": "project-file",
+                  "description": "Read a project file by path",
+                  "mimeType": "text/plain"
+                }
+              ],
+              "resultType": "complete",
+              "ttlMs": 45000,
+              "cacheScope": "public",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "read",
+            "result": {
+              "contents": [
+                {
+                  "uri": "file:///guide.txt",
+                  "mimeType": "text/plain",
+                  "text": "hello resource"
+                }
+              ],
+              "resultType": "complete",
+              "ttlMs": 5000,
+              "cacheScope": "private",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "retry",
+            "result": {
+              "contents": [
+                {
+                  "uri": "file:///guide.txt",
+                  "mimeType": "text/plain",
+                  "text": "hello resource"
+                }
+              ],
+              "resultType": "complete",
+              "ttlMs": 0,
+              "cacheScope": "private",
+              "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                  "name": "ContractMCP",
+                  "version": "sp09"
+                }
+              }
+            }
+          },
+          "is_base64": false
+        }
+      ]
+    }
+  }
+}
