@@ -61,6 +61,9 @@ Important behaviors for Claude compatibility:
   `notifications/initialized` returns `202 Accepted` with no body.
 - For `2026-07-28`, each POST identifies the protocol with `Mcp-Protocol-Version: 2026-07-28` or
   `params._meta["io.modelcontextprotocol/protocolVersion"]`; the header takes precedence when both are present.
+- `server/discover` is routed by AppTheory in both transport shapes. It reports the server's supported protocol
+  versions in preference order, derives capabilities from the configured registries and hooks, and returns the
+  `NewServer(...)` name/version under `_meta["io.modelcontextprotocol/serverInfo"]`.
 - `2026-07-28` clients do not initialize and never send or receive `Mcp-Session-Id`; `DELETE /mcp` is not routed for
   that shape. GET/subscriptions/listen support is intentionally outside this milestone.
 - `POST /mcp` requires `Content-Type: application/json` and `Accept: application/json, text/event-stream`.
@@ -92,6 +95,18 @@ Important behaviors for Claude compatibility:
   unchanged.
 - Task records are session-scoped. Products must bind the MCP session to the same principal, tenant, actor route, and
   entitlement policy used by OAuth validation before exposing task-capable tools.
+
+### Discover the dual-version surface
+
+Stateless clients call `server/discover` instead of `initialize`. Session-ful clients may call the same method after
+initialization. AppTheory returns one server-owned advertisement in both cases:
+
+- supported versions: `2026-07-28`, `2025-11-25`, `2025-06-18`, and `2025-03-26`, in that preference order
+- capabilities derived from the server's enabled and registered tools, resources, prompts, and completion hooks
+- server identity from the name and version passed to `mcp.NewServer(...)`
+
+The advertisement never includes a subscriptions capability. Do not add one in an application wrapper:
+`subscriptions/listen` is outside AppTheory's Lambda transport contract.
 
 Rate-limit integration is not a Remote MCP-specific feature. Route-, principal-, and tool-aware throttling should use the
 normal AppTheory middleware path: validate OAuth/tenant policy, then mount `runtime.RateLimitMiddleware(...)` around the

@@ -76,7 +76,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>678 exported top-level symbols</summary>
+<summary>680 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, ALBTargetGroupResponse
@@ -150,12 +150,12 @@ MaxQueryTopK, MCP_CODE_INTERNAL_ERROR, MCP_CODE_INVALID_PARAMS, MCP_CODE_INVALID
 MCP_CODE_METHOD_NOT_FOUND, MCP_CODE_PARSE_ERROR, MCP_CODE_SERVER_ERROR, MCP_HEADER_LAST_EVENT_ID
 MCP_HEADER_PROTOCOL_VERSION, MCP_HEADER_SESSION_ID, MCP_PROTOCOL_SHAPE_2025_11_25, MCP_PROTOCOL_SHAPE_2026_07_28
 MCP_PROTOCOL_SHAPE_UNKNOWN, MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_2026_07_28, MCP_PROTOCOL_VERSION_LEGACY
-MCP_PROTOCOL_VERSION_PRIOR, McpContentBlock, McpEventNotFoundError, McpJSONRecord
+MCP_PROTOCOL_VERSION_PRIOR, McpContentBlock, McpDiscoverResult, McpEventNotFoundError, McpJSONRecord
 McpJSONValue, McpPromptArgument, McpPromptDef, McpPromptHandler
 McpPromptMessage, McpPromptRegistry, McpPromptResult, McpProtocolShape, McpRequestID
 McpResourceContent, McpResourceContext, McpResourceDef, McpResourceHandler
 McpResourceRegistry, McpResourceTemplateDef, McpRPCError, McpRPCRequest
-McpRPCResponse, McpServer, McpServerOptions, McpSession
+McpRPCResponse, McpServer, McpServerIdentity, McpServerOptions, McpSession
 McpSessionNotFoundError, McpSessionStore, McpSSEEvent, McpStreamEvent
 McpStreamingToolHandler, McpStreamNotFoundError, McpStreamStore, McpTask
 McpTaskInvalidCursorError, McpTaskListRequest, McpTaskListResult, McpTaskLookup

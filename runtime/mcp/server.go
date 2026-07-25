@@ -33,6 +33,7 @@ const (
 
 const (
 	methodInitialize               = "initialize"
+	methodServerDiscover           = "server/discover"
 	methodNotificationsInitialized = "notifications/initialized"
 	methodNotificationsCancelled   = "notifications/cancel" + "led"
 	methodPing                     = "ping"
@@ -638,6 +639,8 @@ func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessio
 	}
 
 	switch req.Method {
+	case methodServerDiscover:
+		return s.handleDiscover(req)
 	case methodInitialize:
 		selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)
 		if errResp != nil {
@@ -703,7 +706,8 @@ func (s *Server) dispatchTaskMethod(ctx context.Context, req *Request, sessionID
 func methodAllowedForProtocol(pv string, method string) bool {
 	if pv == ProtocolVersion20260728 {
 		switch method {
-		case methodPing,
+		case methodServerDiscover,
+			methodPing,
 			methodToolsList,
 			methodToolsCall,
 			methodResourcesList,
@@ -727,6 +731,7 @@ func methodAllowedForProtocol(pv string, method string) bool {
 
 	switch method {
 	case methodInitialize,
+		methodServerDiscover,
 		methodNotificationsInitialized,
 		methodNotificationsCancelled,
 		methodPing,

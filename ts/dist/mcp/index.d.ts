@@ -13,6 +13,7 @@ export type McpProtocolShape = typeof MCP_PROTOCOL_SHAPE_2025_11_25 | typeof MCP
 export declare const MCP_HEADER_PROTOCOL_VERSION = "mcp-protocol-version";
 export declare const MCP_HEADER_SESSION_ID = "mcp-session-id";
 export declare const MCP_HEADER_LAST_EVENT_ID = "last-event-id";
+declare const SERVER_INFO_METADATA_KEY = "io.modelcontextprotocol/serverInfo";
 export declare const MCP_CODE_PARSE_ERROR = -32700;
 export declare const MCP_CODE_INVALID_REQUEST = -32600;
 export declare const MCP_CODE_METHOD_NOT_FOUND = -32601;
@@ -48,6 +49,17 @@ export interface McpRPCRequest {
  * reads io.modelcontextprotocol/protocolVersion from params._meta.
  */
 export declare function detectMcpProtocolVersion(headers: Headers, request: unknown): McpProtocolShape;
+export interface McpServerIdentity {
+    name: string;
+    version: string;
+}
+export interface McpDiscoverResult {
+    supportedVersions: string[];
+    capabilities: Record<string, unknown>;
+    _meta: {
+        [SERVER_INFO_METADATA_KEY]: McpServerIdentity;
+    };
+}
 export interface McpContentBlock {
     type: string;
     text?: string;
@@ -376,6 +388,7 @@ export declare class McpServer {
     private dispatch;
     private dispatchTaskMethod;
     private handleInitialize;
+    private handleDiscover;
     private initializeCapabilities;
     private handleToolsCall;
     private handleResourcesRead;
@@ -402,4 +415,5 @@ export declare class McpServer {
 export declare function createMcpServer(name: string, version: string, options?: McpServerOptions): McpServer;
 export declare function defaultMcpTaskModel(tableName?: string): Model;
 export declare function defaultMcpStreamModel(tableName?: string): Model;
+export {};
 //# sourceMappingURL=index.d.ts.map

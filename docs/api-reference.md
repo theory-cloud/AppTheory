@@ -482,7 +482,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>912 exported top-level symbols</summary>
+<summary>914 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins
@@ -515,7 +515,7 @@ DetectProtocolVersion
 DefaultControllerContract, DefaultEmbeddingDimensions, DefaultEnvironmentErrorNotifications, DefaultEventBusConfig, DefaultLifecycleContract
 DefaultLoggingProfile, DefaultOperationContract, DefaultProviderStateMappings, DefaultQueryTopK, DefaultRealLifecycleContract
 DefaultSessionProviderID, DefaultSessionRegistryContract, DefaultSessionRegistryTableName, DefaultTitanEmbedTextModelID, DeleteInput
-Discovery, DynamicClientRegistrationPolicy, DynamicClientRegistrationRequest, DynamicClientRegistrationResponse, DynamoDBEventBus
+DiscoverResult, Discovery, DynamicClientRegistrationPolicy, DynamicClientRegistrationRequest, DynamicClientRegistrationResponse, DynamoDBEventBus
 DynamoDBStreamEvent, DynamoDBStreamEventOptions, DynamoDBStreamHandler, DynamoDBStreamRecordOptions, DynamoDBStreamRecordSummary
 DynamoJobLedger, DynamoRateLimiter, DynamoSessionStore, DynamoStreamStore, DynamoTaskStore
 Embedder, EmbeddingErrorCode, EMFMetricSink, EMFMetricSinkOption, EncodeLoggingProfileEvent
@@ -622,7 +622,7 @@ S3VectorsAPI, S3VectorStore, SafeError, SafeJSONForHTML, SanitizationType
 SanitizeFields, SanitizeFieldValue, SanitizeJSON, SanitizeJSONValue, SanitizeLogString
 SanitizerFunc, SanitizeXML, ScrubFreeText, SemanticIndex, SemanticRecord
 SemaphoreInspection, SemaphoreLease, SemaphorePartitionKey, SemaphoreSlotSortKey, SensitiveFields
-Server, ServerOption, Session, SessionCommandInput, SessionKey
+Server, ServerIdentity, ServerOption, Session, SessionCommandInput, SessionKey
 SessionListInput, SessionQueryInput, SessionReconstructionHook, SessionReconstructionOption, SessionReconstructionRequest
 SessionRecord, SessionRecordFromRegistryRecord, SessionRecordToRegistryRecord, SessionRegistry, SessionRegistryContract
 SessionRegistryLister, SessionRegistryPartitionKey, SessionRegistryRecord, SessionRegistrySortKey, SessionRegistryTableName

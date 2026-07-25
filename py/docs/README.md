@@ -71,7 +71,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>620 exported top-level symbols</summary>
+<summary>622 exported top-level symbols</summary>
 
 ```text
 App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest
@@ -118,10 +118,10 @@ mask_first_last4, matches_if_none_match, max_length, max_value, MaxPutDeleteBatc
 MCP_CODE_INTERNAL_ERROR, MCP_CODE_INVALID_PARAMS, MCP_CODE_INVALID_REQUEST, MCP_CODE_METHOD_NOT_FOUND, MCP_CODE_PARSE_ERROR, MCP_CODE_SERVER_ERROR
 MCP_HEADER_LAST_EVENT_ID, MCP_HEADER_PROTOCOL_VERSION, MCP_HEADER_SESSION_ID, MCP_PROTOCOL_SHAPE_2025_11_25, MCP_PROTOCOL_SHAPE_2026_07_28, MCP_PROTOCOL_SHAPE_UNKNOWN
 MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_2026_07_28, MCP_PROTOCOL_VERSION_LEGACY, MCP_PROTOCOL_VERSION_PRIOR
-McpContentBlock, McpEventNotFoundError, McpJSONRecord, McpJSONValue, McpPromptArgument, McpPromptDef
+McpContentBlock, McpDiscoverResult, McpEventNotFoundError, McpJSONRecord, McpJSONValue, McpPromptArgument, McpPromptDef
 McpPromptHandler, McpPromptMessage, McpPromptRegistry, McpPromptResult, McpProtocolShape, McpRequestID, McpResourceContent
 McpResourceContext, McpResourceDef, McpResourceHandler, McpResourceRegistry, McpResourceTemplateDef, McpRPCError
-McpRPCRequest, McpRPCResponse, McpServer, McpServerOptions, McpSession, McpSessionNotFoundError
+McpRPCRequest, McpRPCResponse, McpServer, McpServerIdentity, McpServerOptions, McpSession, McpSessionNotFoundError
 McpSessionStore, McpSSEEvent, McpStreamEvent, McpStreamingToolHandler, McpStreamNotFoundError, McpStreamStore
 McpTask, McpTaskInvalidCursorError, McpTaskListRequest, McpTaskListResult, McpTaskLookup, McpTaskNotFoundError
 McpTaskRecord, McpTaskRuntimeOptions, McpTaskStatus, McpTaskStore, McpTaskSupport, McpTaskTerminalError

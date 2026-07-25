@@ -221,6 +221,7 @@ ManualIdGenerator	class
 MaxPutDeleteBatchSize	const
 MaxQueryTopK	const
 McpContentBlock	interface
+McpDiscoverResult	interface
 McpEventNotFoundError	class
 McpJSONRecord	type
 McpJSONValue	type
@@ -243,6 +244,7 @@ McpResourceRegistry	class
 McpResourceTemplateDef	interface
 McpSSEEvent	interface
 McpServer	class
+McpServerIdentity	interface
 McpServerOptions	interface
 McpSession	interface
 McpSessionNotFoundError	class

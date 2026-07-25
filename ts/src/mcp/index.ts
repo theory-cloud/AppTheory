@@ -39,6 +39,7 @@ const RELATED_TASK_METADATA_KEY = "io.modelcontextprotocol/related-task";
 const MODEL_IMMEDIATE_RESPONSE_METADATA_KEY =
   "io.modelcontextprotocol/model-immediate-response";
 const PROTOCOL_VERSION_METADATA_KEY = "io.modelcontextprotocol/protocolVersion";
+const SERVER_INFO_METADATA_KEY = "io.modelcontextprotocol/serverInfo";
 const TASK_CANCELED_MESSAGE = "task canceled";
 const DEFAULT_TASK_TABLE_NAME = "mcp-tasks";
 const DEFAULT_STREAM_TABLE_NAME = "mcp-streams";
@@ -109,6 +110,19 @@ export function detectMcpProtocolVersion(
       ? String(meta[PROTOCOL_VERSION_METADATA_KEY]).trim()
       : "";
   return protocolShapeForVersion(metaVersion);
+}
+
+export interface McpServerIdentity {
+  name: string;
+  version: string;
+}
+
+export interface McpDiscoverResult {
+  supportedVersions: string[];
+  capabilities: Record<string, unknown>;
+  _meta: {
+    [SERVER_INFO_METADATA_KEY]: McpServerIdentity;
+  };
 }
 
 export interface McpContentBlock {
@@ -1552,6 +1566,8 @@ export class McpServer {
     }
 
     switch (request.method) {
+      case "server/discover":
+        return this.handleDiscover(request);
       case "initialize":
         return this.handleInitialize(
           request,
@@ -1628,6 +1644,27 @@ export class McpServer {
       capabilities: this.initializeCapabilities(protocolVersion),
       serverInfo: { name: this.name, version: this.version },
     });
+  }
+
+  private handleDiscover(request: ParsedRPCRequest): McpRPCResponse {
+    const result: McpDiscoverResult = {
+      supportedVersions: [
+        MCP_PROTOCOL_VERSION_2026_07_28,
+        MCP_PROTOCOL_VERSION,
+        MCP_PROTOCOL_VERSION_PRIOR,
+        MCP_PROTOCOL_VERSION_LEGACY,
+      ],
+      capabilities: this.initializeCapabilities(
+        MCP_PROTOCOL_VERSION_2026_07_28,
+      ),
+      _meta: {
+        [SERVER_INFO_METADATA_KEY]: {
+          name: this.name,
+          version: this.version,
+        },
+      },
+    };
+    return newResultResponse(request.id, result);
   }
 
   private initializeCapabilities(
@@ -2329,6 +2366,7 @@ function methodAllowedForProtocol(
 ): boolean {
   if (protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28) {
     return new Set([
+      "server/discover",
       "ping",
       "tools/list",
       "tools/call",
@@ -2349,6 +2387,7 @@ function methodAllowedForProtocol(
   }
   return new Set([
     "initialize",
+    "server/discover",
     "notifications/initialized",
     "notifications/cancelled",
     "ping",

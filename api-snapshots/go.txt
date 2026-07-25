@@ -2753,6 +2753,12 @@ type CreateTaskResult struct {
 	Task Task           `json:"task"`
 }
 
+type DiscoverResult struct {
+	SupportedVersions []string       `json:"supportedVersions"`
+	Capabilities      map[string]any `json:"capabilities"`
+	Meta              map[string]any `json:"_meta"`
+}
+
 type DynamoSessionStore struct {
 	db tablecore.DB
 }
@@ -2943,6 +2949,11 @@ type Server struct {
 	taskExecutions          *taskExecutionTracker
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
+}
+
+type ServerIdentity struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
 }
 
 type ServerOption func(*Server)

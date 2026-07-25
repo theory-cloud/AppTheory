@@ -49,6 +49,7 @@ MAX_TASK_LIST_LIMIT = 500
 RELATED_TASK_METADATA_KEY = "io.modelcontextprotocol/related-task"
 MODEL_IMMEDIATE_RESPONSE_METADATA_KEY = "io.modelcontextprotocol/model-immediate-response"
 PROTOCOL_VERSION_METADATA_KEY = "io.modelcontextprotocol/protocolVersion"
+SERVER_INFO_METADATA_KEY = "io.modelcontextprotocol/serverInfo"
 TASK_CANCELED_MESSAGE = "task canceled"
 DEFAULT_TASK_TABLE_NAME = "mcp-tasks"
 DEFAULT_STREAM_TABLE_NAME = "mcp-streams"
@@ -104,6 +105,19 @@ class McpRPCRequest:
     method: str = ""
     id: Any | None = None
     params: Any | None = None
+
+
+@dataclass(slots=True)
+class McpServerIdentity:
+    name: str
+    version: str
+
+
+@dataclass(slots=True)
+class McpDiscoverResult:
+    supported_versions: list[str]
+    capabilities: dict[str, Any]
+    meta: dict[str, Any]
 
 
 @dataclass(slots=True)
@@ -1170,6 +1184,8 @@ class McpServer:
             return self._dispatch_task_method(request, session_id)
         if not self._method_capability_enabled(request.method):
             return _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, f"Method not found: {request.method}")
+        if request.method == "server/discover":
+            return self._handle_discover(request)
         if request.method == "initialize":
             return self._handle_initialize(request, _negotiate_protocol_version(request.params))
         if request.method == "ping":
@@ -1210,6 +1226,36 @@ class McpServer:
                 "protocolVersion": protocol_version,
                 "capabilities": self._initialize_capabilities(protocol_version),
                 "serverInfo": {"name": self.name, "version": self.version},
+            },
+        )
+
+    def _handle_discover(self, request: _ParsedRPCRequest) -> dict[str, Any]:
+        result = McpDiscoverResult(
+            supported_versions=[
+                MCP_PROTOCOL_VERSION_2026_07_28,
+                MCP_PROTOCOL_VERSION,
+                MCP_PROTOCOL_VERSION_PRIOR,
+                MCP_PROTOCOL_VERSION_LEGACY,
+            ],
+            capabilities=self._initialize_capabilities(MCP_PROTOCOL_VERSION_2026_07_28),
+            meta={
+                SERVER_INFO_METADATA_KEY: McpServerIdentity(
+                    name=self.name,
+                    version=self.version,
+                )
+            },
+        )
+        return _new_result_response(
+            request.id,
+            {
+                "supportedVersions": result.supported_versions,
+                "capabilities": result.capabilities,
+                "_meta": {
+                    SERVER_INFO_METADATA_KEY: {
+                        "name": self.name,
+                        "version": self.version,
+                    }
+                },
             },
         )
 
@@ -1639,6 +1685,7 @@ def _session_protocol_version(session: McpSession) -> str:
 def _method_allowed_for_protocol(protocol_version: str, method: str) -> bool:
     if protocol_version == MCP_PROTOCOL_VERSION_2026_07_28:
         return method in {
+            "server/discover",
             "ping",
             "tools/list",
             "tools/call",
@@ -1656,6 +1703,7 @@ def _method_allowed_for_protocol(protocol_version: str, method: str) -> bool:
         return protocol_version == MCP_PROTOCOL_VERSION
     return method in {
         "initialize",
+        "server/discover",
         "notifications/initialized",
         "notifications/cancelled",
         "ping",
@@ -2444,6 +2492,7 @@ __all__ = [
     "DynamoMcpStreamStore",
     "DynamoMcpTaskStore",
     "McpContentBlock",
+    "McpDiscoverResult",
     "McpEventNotFoundError",
     "McpJSONRecord",
     "McpJSONValue",
@@ -2466,6 +2515,7 @@ __all__ = [
     "McpResourceTemplateDef",
     "McpSSEEvent",
     "McpServer",
+    "McpServerIdentity",
     "McpServerOptions",
     "McpSession",
     "McpSessionNotFoundError",
