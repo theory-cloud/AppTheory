@@ -120,7 +120,14 @@ passed `npm audit` with zero vulnerabilities. The removal rationale was:
   transitive dependency unless a current advisory or contract gate requires it.
 
 AWS CDK `2.261.0` currently bundles `brace-expansion@5.0.6` inside its published tarball. That copy is affected by
-`GHSA-3jxr-9vmj-r5cp`, and `npm audit fix` cannot replace a bundled dependency. AppTheory therefore carries a visible,
-exact-match exception in its CDK npm-audit and GovTheory OSV gates through **2026-08-05**. The exception applies only to
-the fixed-input CDK synthesis toolchain, not shipped Lambda assets, and fails closed if the advisory, package path,
-AWS CDK version, bundled graph, or expiry changes. Remove it as soon as AWS CDK bundles `brace-expansion>=5.0.7`.
+`GHSA-3jxr-9vmj-r5cp` and `GHSA-mh99-v99m-4gvg`, and `npm audit fix` cannot replace a bundled dependency. AppTheory
+therefore carries a visible, exact-match exception in its CDK npm-audit and GovTheory OSV gates through **2026-08-05**.
+The exception applies only to the fixed-input CDK synthesis toolchain, not shipped Lambda assets, and fails closed if
+the advisory, package path, AWS CDK version, bundled graph, or expiry changes. Remove it as soon as AWS CDK bundles
+`brace-expansion>=5.0.8`.
+
+The TypeScript lint graph still requires `minimatch@3.1.4 -> brace-expansion@1.1.16`; `GHSA-mh99-v99m-4gvg` has no
+patched 1.x release, and forcing the ESM/object-exporting 5.x package into minimatch 3 breaks the linter. AppTheory
+therefore carries one separate, exact, development-only SEC-2 exception for that path through **2026-08-05**. The
+independently resolvable minimatch 10 path is pinned by the lockfile to fixed `brace-expansion@5.0.8`. Any lint-parent,
+minimatch, package, advisory, path, or expiry drift fails closed.
