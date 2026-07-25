@@ -5,6 +5,9 @@ This example demonstrates a streaming tool call where:
 - the client can disconnect and later resume via `GET /mcp` + `Last-Event-ID`
 - the server opts into Lambda-aware budgeting for the initial `GET /mcp` keepalive listener
 
+This is intentionally the session-ful `2025-11-25` path. The `2026-07-28` shape uses buffered stateless POST responses
+and does not route GET/listen/subscriptions.
+
 In production (AWS), ensure:
 - API Gateway **REST API v1** is used for `/mcp` streaming
 - long tasks append progress/results into a durable event log for replay

@@ -60,7 +60,10 @@ Important behaviors for Claude compatibility:
 - For `2025-11-25`, `initialize` returns `Mcp-Session-Id`, later requests carry that session id, and
   `notifications/initialized` returns `202 Accepted` with no body.
 - For `2026-07-28`, each POST identifies the protocol with `Mcp-Protocol-Version: 2026-07-28` or
-  `params._meta["io.modelcontextprotocol/protocolVersion"]`; the header takes precedence when both are present.
+  `params._meta["io.modelcontextprotocol/protocolVersion"]`. The header takes precedence during detection, and both
+  values must agree when both are present.
+- Each `2026-07-28` request or notification sends `Mcp-Method` equal to the JSON-RPC method. `tools/call`,
+  `prompts/get`, and `resources/read` also send `Mcp-Name` equal to the routed `name` or `uri`.
 - `server/discover` is routed by AppTheory in both transport shapes. It reports the server's supported protocol
   versions in preference order, derives capabilities from the configured registries and hooks, and returns the
   `NewServer(...)` name/version under `_meta["io.modelcontextprotocol/serverInfo"]`.
@@ -108,6 +111,46 @@ initialization. AppTheory returns one server-owned advertisement in both cases:
 The advertisement never includes a subscriptions capability. Do not add one in an application wrapper:
 `subscriptions/listen` is outside AppTheory's Lambda transport contract.
 
+Example stateless discovery request:
+
+```bash
+curl -sS \
+  -X POST "https://YOUR_ENDPOINT/mcp" \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -H 'mcp-protocol-version: 2026-07-28' \
+  -H 'mcp-method: server/discover' \
+  -d '{
+    "jsonrpc":"2.0",
+    "id":"discover",
+    "method":"server/discover",
+    "params":{
+      "_meta":{
+        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities":{}
+      }
+    }
+  }'
+```
+
+### `2026-07-28` results and fail-closed routing
+
+Every successful stateless result carries `resultType: "complete"` or `resultType: "input_required"`. For
+`input_required`, collect the named `inputRequests`, preserve the returned `requestState`, and retry the original
+request with `inputResponses`. Advertise the needed per-request client capabilities under
+`params._meta["io.modelcontextprotocol/clientCapabilities"]`; AppTheory returns `-32021` when a required capability is
+missing.
+
+Modern routing errors are JSON-RPC envelopes returned with HTTP `400`:
+
+- `-32020`: `Mcp-Protocol-Version`/request `_meta` mismatch or missing/mismatched `Mcp-Method`/`Mcp-Name`
+- `-32021`: missing required client capability
+- `-32022`: unsupported/future protocol version, including a sessionless request that would otherwise look like a
+  missing legacy session
+
+Existing `2025-11-25` clients keep their session, initialize, response, SSE, and error behavior unchanged. See
+`docs/migration/mcp-2026-07-28.md` for the client checklist.
+
 Rate-limit integration is not a Remote MCP-specific feature. Route-, principal-, and tool-aware throttling should use the
 normal AppTheory middleware path: validate OAuth/tenant policy, then mount `runtime.RateLimitMiddleware(...)` around the
 `/mcp` routes with `pkg/limited` as the durable backend when shared counters are required. Product extractors may map the
@@ -119,6 +162,8 @@ Strict transport rollout checklist:
 - Canary one connector/client population first and confirm it sends the strict `Accept` and `Content-Type` headers.
 - Confirm the client carries forward the negotiated protocol version, or omits `Mcp-Protocol-Version` after
   initialization so AppTheory uses the session value.
+- For a stateless client, confirm `Mcp-Method` and any required `Mcp-Name` exactly match the JSON-RPC body.
+- Confirm stateless callers branch on `result.resultType` and preserve multi-round `requestState`.
 - Confirm the client records the first SSE `id`, even when its `data:` field is empty, before long-running work emits
   progress.
 - Confirm reconnect uses `GET /mcp` with the latest `Last-Event-ID` for the same session and stream.
