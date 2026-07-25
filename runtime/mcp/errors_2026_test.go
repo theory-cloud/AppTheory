@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"reflect"
 	"testing"
@@ -55,11 +56,28 @@ func TestValidatePOSTRequestProtocol20260728(t *testing.T) {
 			wantCode: CodeHeaderMismatch,
 		},
 		{
+			name:     "missing required version header",
+			headers:  map[string][]string{headerMcpMethod: {methodPing}},
+			request:  &Request{ID: "missing-version-header", Method: methodPing, Params: modernParams},
+			detected: ProtocolShape20260728,
+			wantCode: CodeHeaderMismatch,
+		},
+		{
 			name: "missing method",
 			headers: map[string][]string{
 				headerMcpProtocolVersion: {ProtocolVersion20260728},
 			},
 			request:  &Request{ID: "missing-method", Method: methodPing, Params: modernParams},
+			detected: ProtocolShape20260728,
+			wantCode: CodeHeaderMismatch,
+		},
+		{
+			name: "conflicting method",
+			headers: map[string][]string{
+				headerMcpProtocolVersion: {ProtocolVersion20260728},
+				headerMcpMethod:          {methodPing, methodToolsList},
+			},
+			request:  &Request{ID: "conflicting-method", Method: methodPing, Params: modernParams},
 			detected: ProtocolShape20260728,
 			wantCode: CodeHeaderMismatch,
 		},
@@ -74,6 +92,21 @@ func TestValidatePOSTRequestProtocol20260728(t *testing.T) {
 			wantCode: CodeHeaderMismatch,
 		},
 		{
+			name: "conflicting name",
+			headers: map[string][]string{
+				headerMcpProtocolVersion: {ProtocolVersion20260728},
+				headerMcpMethod:          {methodToolsCall},
+				headerMcpName:            {"echo", "other"},
+			},
+			request: &Request{
+				ID:     "conflicting-name",
+				Method: methodToolsCall,
+				Params: json.RawMessage(`{"name":"echo","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}`),
+			},
+			detected: ProtocolShape20260728,
+			wantCode: CodeHeaderMismatch,
+		},
+		{
 			name: "missing name",
 			headers: map[string][]string{
 				headerMcpProtocolVersion: {ProtocolVersion20260728},
@@ -81,6 +114,21 @@ func TestValidatePOSTRequestProtocol20260728(t *testing.T) {
 			},
 			request: &Request{
 				ID:     "missing-name",
+				Method: methodToolsCall,
+				Params: json.RawMessage(`{"name":"echo","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}`),
+			},
+			detected: ProtocolShape20260728,
+			wantCode: CodeHeaderMismatch,
+		},
+		{
+			name: "malformed encoded name",
+			headers: map[string][]string{
+				headerMcpProtocolVersion: {ProtocolVersion20260728},
+				headerMcpMethod:          {methodToolsCall},
+				headerMcpName:            {"=?base64?not-base64?="},
+			},
+			request: &Request{
+				ID:     "malformed-name",
 				Method: methodToolsCall,
 				Params: json.RawMessage(`{"name":"echo","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}`),
 			},
@@ -101,6 +149,21 @@ func TestValidatePOSTRequestProtocol20260728(t *testing.T) {
 			},
 			detected: ProtocolShape20260728,
 			wantCode: CodeHeaderMismatch,
+		},
+		{
+			name: "invalid routed body name",
+			headers: map[string][]string{
+				headerMcpProtocolVersion: {ProtocolVersion20260728},
+				headerMcpMethod:          {methodResourcesRead},
+				headerMcpName:            {"file:///contract.txt"},
+			},
+			request: &Request{
+				ID:     "invalid-body-name",
+				Method: methodResourcesRead,
+				Params: json.RawMessage(`{"uri":1,"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}`),
+			},
+			detected: ProtocolShape20260728,
+			wantCode: CodeInvalidParams,
 		},
 		{
 			name: "valid named request",
@@ -226,12 +289,13 @@ func TestMissingRequiredClientCapabilities(t *testing.T) {
 func TestMissingRequiredClientExtensionCapability(t *testing.T) {
 	t.Parallel()
 
-	inputResponse := NewResultResponse("input", InputRequiredResult{
+	inputResult := InputRequiredResult{
 		ResultType: ResultTypeInputRequired,
 		InputRequests: map[string]InputRequest{
 			"approval": {Method: "com.example/review/approve"},
 		},
-	})
+	}
+	inputResponse := NewResultResponse("input", inputResult)
 	missingRequest := &Request{
 		Params: json.RawMessage(
 			`{"_meta":{"io.modelcontextprotocol/clientCapabilities":{"extensions":{"com.example/other":{}}}}}`,
@@ -253,6 +317,33 @@ func TestMissingRequiredClientExtensionCapability(t *testing.T) {
 	if got := missingRequiredClientCapabilities(declaredRequest, inputResponse); got != nil {
 		t.Fatalf("declared extension capability reported missing: %#v", got)
 	}
+
+	for name, result := range map[string]any{
+		"pointer": &inputResult,
+		"raw":     json.RawMessage(`{"resultType":"input_required","inputRequests":{"approval":{"method":"com.example/review/approve"}}}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			required := requiredClientCapabilities(NewResultResponse(name, result))
+			if _, ok := required["extensions"]; !ok {
+				t.Fatalf("required capabilities = %#v, want extensions", required)
+			}
+		})
+	}
+	if got := requiredClientCapabilities(NewResultResponse("nil-pointer", (*InputRequiredResult)(nil))); got != nil {
+		t.Fatalf("nil input-required pointer capabilities = %#v, want nil", got)
+	}
+
+	required := map[string]any{
+		"extensions": map[string]any{
+			"com.example/review": map[string]any{
+				"nested": map[string]any{},
+			},
+		},
+	}
+	if got := missingCapabilityTree(required, nil); !reflect.DeepEqual(got, required) {
+		t.Fatalf("cloned missing capability tree = %#v, want %#v", got, required)
+	}
 }
 
 func TestRequestRoutingNameRejectsMalformedParams(t *testing.T) {
@@ -273,6 +364,149 @@ func TestRequestRoutingNameRejectsMalformedParams(t *testing.T) {
 			)
 		}
 	}
+}
+
+func TestValidate20260728RequestMetadata(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		params   json.RawMessage
+		wantCode int
+	}{
+		"malformed params": {
+			params:   json.RawMessage(`{`),
+			wantCode: CodeInvalidParams,
+		},
+		"missing meta": {
+			params:   json.RawMessage(`{}`),
+			wantCode: CodeInvalidParams,
+		},
+		"invalid meta": {
+			params:   json.RawMessage(`{"_meta":"invalid"}`),
+			wantCode: CodeInvalidParams,
+		},
+		"missing protocol version": {
+			params:   json.RawMessage(`{"_meta":{"io.modelcontextprotocol/clientCapabilities":{}}}`),
+			wantCode: CodeInvalidParams,
+		},
+		"missing client capabilities": {
+			params:   json.RawMessage(`{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}`),
+			wantCode: CodeInvalidParams,
+		},
+		"null client capabilities": {
+			params: json.RawMessage(
+				`{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":null}}`,
+			),
+			wantCode: CodeInvalidParams,
+		},
+		"valid": {
+			params: json.RawMessage(
+				`{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}`,
+			),
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			resp := validate20260728RequestMetadata(&Request{ID: name, Params: test.params})
+			if test.wantCode == 0 {
+				if resp != nil {
+					t.Fatalf("unexpected response: %#v", resp)
+				}
+				return
+			}
+			assertProtocolErrorCode(t, resp, test.wantCode)
+		})
+	}
+}
+
+func TestDecodeRoutingHeaderName(t *testing.T) {
+	t.Parallel()
+
+	encoded := base64.StdEncoding.EncodeToString([]byte("file:///résumé.txt"))
+	tests := map[string]struct {
+		value         string
+		want          string
+		wantMalformed bool
+	}{
+		"plain": {
+			value: "file:///plain.txt",
+			want:  "file:///plain.txt",
+		},
+		"valid": {
+			value: "=?base64?" + encoded + "?=",
+			want:  "file:///résumé.txt",
+		},
+		"case-sensitive marker": {
+			value: "=?Base64?" + encoded + "?=",
+			want:  "=?Base64?" + encoded + "?=",
+		},
+		"missing suffix": {
+			value:         "=?base64?" + encoded,
+			wantMalformed: true,
+		},
+		"invalid base64": {
+			value:         "=?base64?not-base64?=",
+			wantMalformed: true,
+		},
+		"invalid utf8": {
+			value:         "=?base64?/w==?=",
+			wantMalformed: true,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, malformed := decodeRoutingHeaderName(test.value)
+			if got != test.want || malformed != test.wantMalformed {
+				t.Fatalf(
+					"decodeRoutingHeaderName(%q) = (%q, %t), want (%q, %t)",
+					test.value,
+					got,
+					malformed,
+					test.want,
+					test.wantMalformed,
+				)
+			}
+		})
+	}
+}
+
+func TestValidatePOSTResponseProtocol(t *testing.T) {
+	t.Parallel()
+
+	resp := NewResultResponse("response", map[string]any{})
+	if got := validatePOSTResponseProtocol(
+		map[string][]string{
+			headerMcpProtocolVersion: {"2099-01-01"},
+			headerMcpSessionID:       {"legacy-session"},
+		},
+		resp,
+		ProtocolShapeUnknown,
+	); got != nil {
+		t.Fatalf("sessionful unsupported header response = %#v, want nil", got)
+	}
+	assertProtocolErrorCode(
+		t,
+		validatePOSTResponseProtocol(
+			map[string][]string{headerMcpProtocolVersion: {"2099-01-01"}},
+			resp,
+			ProtocolShapeUnknown,
+		),
+		CodeUnsupportedProtocolVersion,
+	)
+	if got := validatePOSTResponseProtocol(nil, resp, ProtocolShape20251125); got != nil {
+		t.Fatalf("legacy posted response validation = %#v, want nil", got)
+	}
+	assertProtocolErrorCode(
+		t,
+		validatePOSTResponseProtocol(
+			map[string][]string{headerMcpProtocolVersion: {ProtocolVersion20260728}},
+			resp,
+			ProtocolShape20260728,
+		),
+		CodeInvalidRequest,
+	)
 }
 
 func assertProtocolErrorCode(t *testing.T, resp *apptheory.Response, code int) {

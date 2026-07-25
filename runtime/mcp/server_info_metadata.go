@@ -1,6 +1,9 @@
 package mcp
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+)
 
 // WithServerInfoMetadata controls whether MCP 2026-07-28 results include the
 // server identity in _meta. Identity metadata is included by default.
@@ -16,12 +19,19 @@ func marshalResultWithServerInfo(result any, serverInfo ServerIdentity) ([]byte,
 		return nil, err
 	}
 	var object map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &object); err != nil {
+	err = json.Unmarshal(raw, &object)
+	if err != nil || object == nil {
+		if err == nil {
+			err = errors.New("MCP result must be a JSON object")
+		}
 		return nil, err
 	}
 	meta := map[string]json.RawMessage{}
 	if rawMeta, ok := object["_meta"]; ok {
-		_ = json.Unmarshal(rawMeta, &meta)
+		err = json.Unmarshal(rawMeta, &meta)
+		if err != nil {
+			return nil, err
+		}
 		if meta == nil {
 			meta = map[string]json.RawMessage{}
 		}

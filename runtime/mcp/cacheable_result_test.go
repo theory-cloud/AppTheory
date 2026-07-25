@@ -108,6 +108,54 @@ func TestFinalizeResponseForProtocolSkipsNonCacheableResults(t *testing.T) {
 	}
 }
 
+func TestCacheableResultHelpersFailClosed(t *testing.T) {
+	t.Parallel()
+
+	normalized := normalizeCacheHint(CacheHint{
+		TTL:   -time.Second,
+		Scope: CacheScope("shared"),
+	})
+	if normalized.TTL != 0 || normalized.Scope != CacheScopePrivate {
+		t.Fatalf("normalized cache hint = %#v", normalized)
+	}
+
+	s := NewServer("cache-server", "2.0.0")
+	if _, ok := s.cacheHintForRequest(nil); ok {
+		t.Fatal("nil request unexpectedly has a cache hint")
+	}
+	for _, method := range []string{
+		methodPromptsList,
+		methodResourcesList,
+		methodResourcesTemplatesList,
+		methodResourcesRead,
+	} {
+		if _, ok := s.cacheHintForRequest(&Request{Method: method}); !ok {
+			t.Fatalf("method %q missing cache hint", method)
+		}
+	}
+	if requestIsMultiRoundTripRetry(&Request{Params: json.RawMessage(`{`)}) {
+		t.Fatal("malformed params reported as a multi-round retry")
+	}
+
+	plain := NewResultResponse("plain", map[string]any{})
+	if got := applyCacheHint(plain, CacheHint{}); got != plain {
+		t.Fatalf("non-canonical result changed: %#v", got)
+	}
+
+	invalid := NewResultResponse("invalid", json.RawMessage(`{`))
+	if got := applyCacheHint(invalid, CacheHint{}); got.Error == nil || got.Error.Code != CodeInternalError {
+		t.Fatalf("invalid canonical result = %#v, want internal error", got)
+	}
+
+	inputRequired := NewResultResponse(
+		"input-required",
+		json.RawMessage(`{"resultType":"input_required"}`),
+	)
+	if got := applyCacheHint(inputRequired, CacheHint{}); got != inputRequired {
+		t.Fatalf("input-required result changed: %#v", got)
+	}
+}
+
 func cacheableResultObject(t *testing.T, resp *Response) map[string]any {
 	t.Helper()
 	if resp == nil || resp.Error != nil {

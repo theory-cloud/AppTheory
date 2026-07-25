@@ -1816,7 +1816,7 @@ def _normalize_cache_hint(hint: Any) -> McpCacheHint:
 
 
 def _cache_hint_for_method(config: McpCacheableResultConfig, method: str) -> McpCacheHint | None:
-    return {
+    hint = {
         "server/discover": config.server_discover,
         "tools/list": config.tools_list,
         "prompts/list": config.prompts_list,
@@ -1824,6 +1824,9 @@ def _cache_hint_for_method(config: McpCacheableResultConfig, method: str) -> Mcp
         "resources/templates/list": config.resource_templates_list,
         "resources/read": config.resources_read,
     }.get(method)
+    if hint is None or isinstance(hint, McpCacheHint):
+        return hint
+    return _normalize_cache_hint(hint)
 
 
 def _request_is_multi_round_trip_retry(request: _ParsedRPCRequest) -> bool:

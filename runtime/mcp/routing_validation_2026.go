@@ -14,36 +14,9 @@ func validatePOSTRequestProtocol(
 	req *Request,
 	detectedShape ProtocolShape,
 ) (ProtocolShape, *apptheory.Response) {
-	headerVersion := strings.TrimSpace(firstHeader(headers, headerMcpProtocolVersion))
-	metaVersion := requestProtocolVersionMetadata(req)
-
-	if headerVersion != "" && !isAdvertisedProtocolVersion(headerVersion) {
-		if metaVersion == "" &&
-			(strings.TrimSpace(firstHeader(headers, headerMcpSessionID)) != "" || req.Method == methodInitialize) {
-			return detectedShape, nil
-		}
-		return ProtocolShapeUnknown, unsupportedProtocolVersionResponse(req.ID, headerVersion)
-	}
-	if metaVersion != "" && !isAdvertisedProtocolVersion(metaVersion) {
-		return ProtocolShapeUnknown, unsupportedProtocolVersionResponse(req.ID, metaVersion)
-	}
-
-	modernClaim := headerVersion == ProtocolVersion20260728 || metaVersion == ProtocolVersion20260728
-	if modernClaim && headerVersion != "" && metaVersion != "" && headerVersion != metaVersion {
-		return ProtocolShapeUnknown, protocolJSONRPCErrorResponse(
-			req.ID,
-			CodeHeaderMismatch,
-			"Header mismatch: MCP-Protocol-Version does not match request metadata",
-			nil,
-		)
-	}
-	if metaVersion == ProtocolVersion20260728 && headerVersion == "" {
-		return ProtocolShapeUnknown, protocolJSONRPCErrorResponse(
-			req.ID,
-			CodeHeaderMismatch,
-			"Header mismatch: missing required MCP-Protocol-Version header",
-			nil,
-		)
+	modernClaim, resp := validatePOSTRequestVersions(headers, req)
+	if resp != nil {
+		return ProtocolShapeUnknown, resp
 	}
 	if !modernClaim {
 		return detectedShape, nil
@@ -56,6 +29,41 @@ func validatePOSTRequestProtocol(
 		return ProtocolShapeUnknown, resp
 	}
 	return ProtocolShape20260728, nil
+}
+
+func validatePOSTRequestVersions(headers map[string][]string, req *Request) (bool, *apptheory.Response) {
+	headerVersion := strings.TrimSpace(firstHeader(headers, headerMcpProtocolVersion))
+	metaVersion := requestProtocolVersionMetadata(req)
+
+	if headerVersion != "" && !isAdvertisedProtocolVersion(headerVersion) {
+		if metaVersion == "" &&
+			(strings.TrimSpace(firstHeader(headers, headerMcpSessionID)) != "" || req.Method == methodInitialize) {
+			return false, nil
+		}
+		return false, unsupportedProtocolVersionResponse(req.ID, headerVersion)
+	}
+	if metaVersion != "" && !isAdvertisedProtocolVersion(metaVersion) {
+		return false, unsupportedProtocolVersionResponse(req.ID, metaVersion)
+	}
+
+	modernClaim := headerVersion == ProtocolVersion20260728 || metaVersion == ProtocolVersion20260728
+	if modernClaim && headerVersion != "" && metaVersion != "" && headerVersion != metaVersion {
+		return false, protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeHeaderMismatch,
+			"Header mismatch: MCP-Protocol-Version does not match request metadata",
+			nil,
+		)
+	}
+	if metaVersion == ProtocolVersion20260728 && headerVersion == "" {
+		return false, protocolJSONRPCErrorResponse(
+			req.ID,
+			CodeHeaderMismatch,
+			"Header mismatch: missing required MCP-Protocol-Version header",
+			nil,
+		)
+	}
+	return modernClaim, nil
 }
 
 func validatePOSTResponseProtocol(

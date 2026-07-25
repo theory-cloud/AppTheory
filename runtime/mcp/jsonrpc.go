@@ -331,12 +331,7 @@ func requiredClientCapabilities(resp *Response) map[string]any {
 		}
 		extensionIdentifier := method[:lastSlash]
 		if validExtensionIdentifier(extensionIdentifier) {
-			extensions, _ := required["extensions"].(map[string]any)
-			if extensions == nil {
-				extensions = map[string]any{}
-				required["extensions"] = extensions
-			}
-			extensions[extensionIdentifier] = map[string]any{}
+			addRequiredExtensionCapability(required, extensionIdentifier)
 		}
 	}
 	if len(required) == 0 {
@@ -345,10 +340,22 @@ func requiredClientCapabilities(resp *Response) map[string]any {
 	return required
 }
 
+func addRequiredExtensionCapability(required map[string]any, identifier string) {
+	extensions, ok := required["extensions"].(map[string]any)
+	if !ok || extensions == nil {
+		extensions = map[string]any{}
+		required["extensions"] = extensions
+	}
+	extensions[identifier] = map[string]any{}
+}
+
 func missingCapabilityTree(required map[string]any, declared map[string]any) map[string]any {
 	missing := make(map[string]any)
 	for capability, rawRequired := range required {
-		requiredChildren, _ := rawRequired.(map[string]any)
+		requiredChildren, ok := rawRequired.(map[string]any)
+		if !ok {
+			requiredChildren = map[string]any{}
+		}
 		rawDeclared, ok := declared[capability]
 		declaredChildren, isObject := rawDeclared.(map[string]any)
 		if !ok || !isObject {
@@ -372,7 +379,10 @@ func cloneCapabilityRequirement(required map[string]any) map[string]any {
 	}
 	cloned := make(map[string]any, len(required))
 	for key, raw := range required {
-		children, _ := raw.(map[string]any)
+		children, ok := raw.(map[string]any)
+		if !ok {
+			children = map[string]any{}
+		}
 		cloned[key] = cloneCapabilityRequirement(children)
 	}
 	return cloned

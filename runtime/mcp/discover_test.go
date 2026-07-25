@@ -11,12 +11,13 @@ func TestHandleDiscoverAdvertisesTruthfulSurface(t *testing.T) {
 	t.Parallel()
 
 	settings := map[string]any{"mode": "approval"}
+	invalidExtensionIdentifier := " invalid/extension "
 	s := NewServer(
 		"discover-server",
 		"2.0.0",
 		WithExtensionCapabilities(map[string]map[string]any{
-			"com.example/review":  settings,
-			" invalid/extension ": {},
+			"com.example/review":       settings,
+			invalidExtensionIdentifier: {},
 		}),
 	)
 	settings["mode"] = "mutated"
@@ -83,6 +84,33 @@ func TestHandleDiscoverKeepsExtensionsModernOnly(t *testing.T) {
 	}
 	if _, ok := result.Capabilities["extensions"]; ok {
 		t.Fatalf("legacy discover capabilities advertised extensions: %#v", result.Capabilities)
+	}
+}
+
+func TestNormalizeExtensionCapabilitiesFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	if got := normalizeExtensionCapabilities(nil); got != nil {
+		t.Fatalf("nil extension capabilities = %#v", got)
+	}
+	if got := normalizeExtensionCapabilities(map[string]map[string]any{
+		"/missing-prefix":       {},
+		"com..example/review":   {},
+		"com.example/two/parts": {},
+		"com.example/review": {
+			"invalid": func() {},
+		},
+	}); got != nil {
+		t.Fatalf("invalid extension capabilities = %#v", got)
+	}
+	if got := cloneExtensionSettings(map[string]any{"invalid": func() {}}); len(got) != 0 {
+		t.Fatalf("invalid cloned extension settings = %#v", got)
+	}
+	if got, ok := normalizeExtensionSettings(nil); !ok || len(got) != 0 {
+		t.Fatalf("nil extension settings = (%#v, %t)", got, ok)
+	}
+	if !validExtensionIdentifier("com.example/") {
+		t.Fatal("mandatory extension prefix without a name was rejected")
 	}
 }
 

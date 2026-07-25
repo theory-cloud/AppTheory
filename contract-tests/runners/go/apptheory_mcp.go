@@ -99,23 +99,7 @@ func newFixtureMCPServer(setup FixtureMCPSetup) (*mcp.Server, error) {
 		mcp.WithSessionStore(sessionStore),
 		mcp.WithStreamStore(streamStore),
 	}
-	if len(setup.Server.ExtensionCapabilities) > 0 {
-		opts = append(opts, mcp.WithExtensionCapabilities(setup.Server.ExtensionCapabilities))
-	}
-	if setup.Server.IncludeServerInfoMetadata != nil {
-		opts = append(opts, mcp.WithServerInfoMetadata(*setup.Server.IncludeServerInfoMetadata))
-	}
-	if setup.Server.CacheableResults != nil {
-		config := setup.Server.CacheableResults
-		opts = append(opts, mcp.WithCacheableResultConfig(mcp.CacheableResultConfig{
-			ServerDiscover:        fixtureMCPCacheHint(config.ServerDiscover),
-			ToolsList:             fixtureMCPCacheHint(config.ToolsList),
-			PromptsList:           fixtureMCPCacheHint(config.PromptsList),
-			ResourcesList:         fixtureMCPCacheHint(config.ResourcesList),
-			ResourceTemplatesList: fixtureMCPCacheHint(config.ResourceTemplatesList),
-			ResourcesRead:         fixtureMCPCacheHint(config.ResourcesRead),
-		}))
-	}
+	opts = appendFixtureMCPServerOptions(opts, setup.Server)
 	if setup.TaskRuntime != nil && setup.TaskRuntime.Enabled {
 		opts = append(opts, mcp.WithTaskRuntime(mcp.TaskRuntimeOptions{
 			Store:                  newFixtureMCPTaskStore(*setup.TaskRuntime),
@@ -149,6 +133,27 @@ func newFixtureMCPServer(setup FixtureMCPSetup) (*mcp.Server, error) {
 		}
 	}
 	return server, nil
+}
+
+func appendFixtureMCPServerOptions(opts []mcp.ServerOption, config FixtureMCPServer) []mcp.ServerOption {
+	if len(config.ExtensionCapabilities) > 0 {
+		opts = append(opts, mcp.WithExtensionCapabilities(config.ExtensionCapabilities))
+	}
+	if config.IncludeServerInfoMetadata != nil {
+		opts = append(opts, mcp.WithServerInfoMetadata(*config.IncludeServerInfoMetadata))
+	}
+	if config.CacheableResults != nil {
+		cache := config.CacheableResults
+		opts = append(opts, mcp.WithCacheableResultConfig(mcp.CacheableResultConfig{
+			ServerDiscover:        fixtureMCPCacheHint(cache.ServerDiscover),
+			ToolsList:             fixtureMCPCacheHint(cache.ToolsList),
+			PromptsList:           fixtureMCPCacheHint(cache.PromptsList),
+			ResourcesList:         fixtureMCPCacheHint(cache.ResourcesList),
+			ResourceTemplatesList: fixtureMCPCacheHint(cache.ResourceTemplatesList),
+			ResourcesRead:         fixtureMCPCacheHint(cache.ResourcesRead),
+		}))
+	}
+	return opts
 }
 
 func durationFromMilliseconds(ms int64) time.Duration {
