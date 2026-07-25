@@ -291,6 +291,9 @@ func (s *Server) handlePOST(c *apptheory.Context) (*apptheory.Response, error) {
 	// Batch request support (legacy protocol only).
 	trimmed := trimLeftSpace(body)
 	if len(trimmed) > 0 && trimmed[0] == '[' {
+		if DetectProtocolVersion(c.Request.Headers, body) == ProtocolShape20260728 || batchNamesStatelessProtocol(body) {
+			return s.batchParseErrorResponse(ctx, errors.New("invalid JSON object"))
+		}
 		return s.handleBatch(ctx, body, c.Request.Headers)
 	}
 
@@ -312,6 +315,19 @@ func (s *Server) handlePOST(c *apptheory.Context) (*apptheory.Response, error) {
 	}
 
 	return badRequest("invalid JSON-RPC message"), nil
+}
+
+func batchNamesStatelessProtocol(body []byte) bool {
+	var messages []json.RawMessage
+	if err := json.Unmarshal(body, &messages); err != nil {
+		return false
+	}
+	for _, message := range messages {
+		if DetectProtocolVersion(nil, message) == ProtocolShape20260728 {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handlePOSTRequest(

@@ -1,0 +1,354 @@
+{
+  "id": "mcp.stateless.session_bound_rejections",
+  "tier": "mcp",
+  "name": "MCP 2026-07-28 accepts notifications and rejects session-bound requests",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      },
+      "id_sequence": [
+        "forbidden-task-session"
+      ],
+      "tools": [
+        {
+          "name": "task_echo",
+          "description": "Echo through a task",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ]
+          },
+          "handler": "task_echo",
+          "task_support": "optional"
+        }
+      ],
+      "task_runtime": {
+        "enabled": true,
+        "default_ttl_ms": 86400000,
+        "max_ttl_ms": 86400000,
+        "poll_interval_ms": 100,
+        "list_limit": 10,
+        "model_immediate_response": "poll tasks/result",
+        "clock_unix_ms": 1783036800000,
+        "update_clock_unix_ms": 1783036801000
+      }
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "initialize_rejected",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"initialize\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2026-07-28\"}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "notification_accepted",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "task_augmented_tool_call_rejected",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"task-call\",\"method\":\"tools/call\",\"params\":{\"name\":\"task_echo\",\"arguments\":{\"message\":\"must stay stateless\"},\"task\":{}}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "tasks_get_rejected",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tasks-get\",\"method\":\"tasks/get\",\"params\":{\"taskId\":\"task-1\"}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "tasks_result_rejected",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tasks-result\",\"method\":\"tasks/result\",\"params\":{\"taskId\":\"task-1\"}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "tasks_list_rejected",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tasks-list\",\"method\":\"tasks/list\",\"params\":{}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "tasks_cancel_rejected",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2026-07-28"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tasks-cancel\",\"method\":\"tasks/cancel\",\"params\":{\"taskId\":\"task-1\"}}"
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "initialize",
+            "error": {
+              "code": -32601,
+              "message": "Method not found: initialize"
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 202,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false
+        },
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "task-call",
+            "error": {
+              "code": -32601,
+              "message": "Method not found: tools/call"
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "tasks-get",
+            "error": {
+              "code": -32601,
+              "message": "Method not found: tasks/get"
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "tasks-result",
+            "error": {
+              "code": -32601,
+              "message": "Method not found: tasks/result"
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "tasks-list",
+            "error": {
+              "code": -32601,
+              "message": "Method not found: tasks/list"
+            }
+          },
+          "is_base64": false
+        },
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "tasks-cancel",
+            "error": {
+              "code": -32601,
+              "message": "Method not found: tasks/cancel"
+            }
+          },
+          "is_base64": false
+        }
+      ]
+    }
+  }
+}

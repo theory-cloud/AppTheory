@@ -62,8 +62,10 @@ Important transport behavior:
 - missing 2025-11-25 session headers return `400`; unknown or expired sessions return `404`
 - 2026-07-28 requests never create or require `mcp-session-id`; JSON-RPC responses are accepted without a session
 - `DELETE /mcp` with the 2026-07-28 protocol header returns `405`
-- `mcp-protocol-version` is optional after initialization; when present it must be supported and must match the
-  2025-11-25 session's negotiated protocol version
+- `mcp-protocol-version` is optional after initialization. Header precedence applies per request: `2026-07-28`
+  routes that request through the stateless shape before session validation, even when `mcp-session-id` names a live
+  2025-11-25 session. Headers that select the session-ful shape must be supported and match the session's negotiated
+  protocol version
 - JSON-RPC success and error payloads return HTTP `200`; transport-level failures such as missing sessions, bad
   protocol headers, rejected origins, or missing replay events return HTTP `4xx` / `5xx`
 
@@ -91,7 +93,8 @@ Roll strict Streamable HTTP behavior out with a client canary before making it t
 1. Canary clients must send `content-type: application/json` on every `POST /mcp`.
 2. Canary clients must send `accept: application/json, text/event-stream` on every `POST /mcp`.
 3. Canary clients must send `accept: text/event-stream` on every `GET /mcp`.
-4. After initialization, clients should either omit `mcp-protocol-version` or send the exact negotiated version.
+4. After initialization, session-ful clients should either omit `mcp-protocol-version` or send the exact negotiated
+   version. Sending `2026-07-28` deliberately routes that request through the stateless shape instead.
 5. Streaming clients must tolerate the initial empty-data priming SSE event and store its `id` for reconnect.
 6. Reconnect with `GET /mcp` plus the latest `last-event-id`; do not assume dropped TCP connections cancel work.
 
@@ -99,7 +102,8 @@ Compatibility risks to check during canary:
 
 - older clients that send `Accept: application/json` only on `POST /mcp` now receive HTTP `400`
 - clients that omit `Content-Type` or send non-JSON content types now receive HTTP `400`
-- clients that pin a protocol header different from the negotiated session version now receive HTTP `400`
+- clients that pin a different session-ful protocol header receive HTTP `400`; a `2026-07-28` header instead selects
+  the stateless shape for that request
 - SSE parsers that assume the first frame is JSON-RPC must skip or record the empty priming frame
 - replay clients that reuse a `Last-Event-ID` from another stream now fail closed instead of receiving unrelated events
 
