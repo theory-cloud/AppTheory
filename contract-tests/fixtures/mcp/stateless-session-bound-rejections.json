@@ -66,7 +66,7 @@
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"initialize\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2026-07-28\"}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"initialize\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2026-07-28\",\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
             },
             "is_base64": false
           }
@@ -92,7 +92,7 @@
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"
+              "value": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
             },
             "is_base64": false
           }
@@ -121,7 +121,7 @@
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"task-call\",\"method\":\"tools/call\",\"params\":{\"name\":\"task_echo\",\"arguments\":{\"message\":\"must stay stateless\"},\"task\":{}}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"task-call\",\"method\":\"tools/call\",\"params\":{\"name\":\"task_echo\",\"arguments\":{\"message\":\"must stay stateless\"},\"task\":{},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
             },
             "is_base64": false
           }
@@ -147,7 +147,7 @@
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tasks-get\",\"method\":\"tasks/get\",\"params\":{\"taskId\":\"task-1\"}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tasks-get\",\"method\":\"tasks/get\",\"params\":{\"taskId\":\"task-1\",\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
             },
             "is_base64": false
           }
@@ -173,7 +173,7 @@
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tasks-result\",\"method\":\"tasks/result\",\"params\":{\"taskId\":\"task-1\"}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tasks-result\",\"method\":\"tasks/result\",\"params\":{\"taskId\":\"task-1\",\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
             },
             "is_base64": false
           }
@@ -199,7 +199,7 @@
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tasks-list\",\"method\":\"tasks/list\",\"params\":{}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tasks-list\",\"method\":\"tasks/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
             },
             "is_base64": false
           }
@@ -225,7 +225,7 @@
             },
             "body": {
               "encoding": "utf8",
-              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tasks-cancel\",\"method\":\"tasks/cancel\",\"params\":{\"taskId\":\"task-1\"}}"
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"tasks-cancel\",\"method\":\"tasks/cancel\",\"params\":{\"taskId\":\"task-1\",\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
             },
             "is_base64": false
           }
@@ -237,7 +237,7 @@
     "mcp": {
       "steps": [
         {
-          "status": 200,
+          "status": 404,
           "headers": {
             "content-type": [
               "application/json"
@@ -268,7 +268,7 @@
           "is_base64": false
         },
         {
-          "status": 200,
+          "status": 404,
           "headers": {
             "content-type": [
               "application/json"
@@ -289,7 +289,7 @@
           "is_base64": false
         },
         {
-          "status": 200,
+          "status": 404,
           "headers": {
             "content-type": [
               "application/json"
@@ -310,7 +310,7 @@
           "is_base64": false
         },
         {
-          "status": 200,
+          "status": 404,
           "headers": {
             "content-type": [
               "application/json"
@@ -331,7 +331,7 @@
           "is_base64": false
         },
         {
-          "status": 200,
+          "status": 404,
           "headers": {
             "content-type": [
               "application/json"
@@ -352,7 +352,7 @@
           "is_base64": false
         },
         {
-          "status": 200,
+          "status": 404,
           "headers": {
             "content-type": [
               "application/json"

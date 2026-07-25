@@ -747,6 +747,9 @@ export class McpServer {
     sessionTtlMs;
     originValidator;
     taskRuntime;
+    extensionCapabilities;
+    cacheableResults;
+    includeServerInfoMetadata;
     toolRegistry = new McpToolRegistry();
     resourceRegistry = new McpResourceRegistry();
     promptRegistry = new McpPromptRegistry();
@@ -761,6 +764,10 @@ export class McpServer {
             options.originValidator ??
                 ((origin) => origin === "https://claude.ai" || origin === "https://claude.com");
         this.taskRuntime = normalizeTaskRuntime(options.taskRuntime);
+        this.extensionCapabilities = normalizeExtensionCapabilities(options.extensionCapabilities);
+        this.cacheableResults = normalizeCacheableResultConfig(options.cacheableResults);
+        this.includeServerInfoMetadata =
+            options.includeServerInfoMetadata !== false;
     }
     registry() {
         return this.toolRegistry;
@@ -871,17 +878,19 @@ export class McpServer {
         if (Object.keys(missing).length > 0) {
             return protocolErrorResponse(request.id, MCP_CODE_MISSING_REQUIRED_CLIENT_CAPABILITY, "Missing required client capability", { requiredCapabilities: missing });
         }
-        return this.marshalSingleResponse(response);
+        return this.marshalSingleResponse(response, "", false, MCP_PROTOCOL_VERSION_2026_07_28);
     }
     async handlePostResponse(headers, body, shape) {
+        let rpcResponse;
         try {
-            parseResponse(body);
+            rpcResponse = parseResponse(body);
         }
         catch {
             return badRequest("invalid JSON-RPC response");
         }
-        if (shape === MCP_PROTOCOL_SHAPE_2026_07_28) {
-            return emptyResponse(202);
+        const validationResponse = validatePostResponseProtocol(headers, rpcResponse, shape);
+        if (validationResponse) {
+            return validationResponse;
         }
         const sessionResult = await this.requireSession(headers);
         if (sessionResult.response) {
@@ -1006,7 +1015,7 @@ export class McpServer {
             return newErrorResponse(request.id, MCP_CODE_METHOD_NOT_FOUND, `Method not found: ${request.method}`);
         }
         if (isTaskMethod(request.method)) {
-            return responseForProtocol(await this.dispatchTaskMethod(request, sessionId), protocolVersion);
+            return this.finalizeResponseForProtocol(request, await this.dispatchTaskMethod(request, sessionId), protocolVersion);
         }
         if (!this.methodCapabilityEnabled(request.method)) {
             return newErrorResponse(request.id, MCP_CODE_METHOD_NOT_FOUND, `Method not found: ${request.method}`);
@@ -1014,7 +1023,7 @@ export class McpServer {
         let response;
         switch (request.method) {
             case "server/discover":
-                response = this.handleDiscover(request);
+                response = this.handleDiscover(request, protocolVersion);
                 break;
             case "initialize":
                 response = this.handleInitialize(request, negotiateProtocolVersion(request.params));
@@ -1055,7 +1064,33 @@ export class McpServer {
                 response = newErrorResponse(request.id, MCP_CODE_METHOD_NOT_FOUND, `Method not found: ${request.method}`);
                 break;
         }
-        return responseForProtocol(response, protocolVersion);
+        return this.finalizeResponseForProtocol(request, response, protocolVersion);
+    }
+    finalizeResponseForProtocol(request, response, protocolVersion) {
+        const prepared = responseForProtocol(response, protocolVersion, this.includeServerInfoMetadata
+            ? { name: this.name, version: this.version }
+            : null);
+        if (protocolVersion !== MCP_PROTOCOL_VERSION_2026_07_28 ||
+            prepared.error ||
+            !isRecord(prepared.result) ||
+            prepared.result["resultType"] !== MCP_RESULT_TYPE_COMPLETE) {
+            return prepared;
+        }
+        const hint = cacheHintForMethod(this.cacheableResults, request.method);
+        if (!hint) {
+            return prepared;
+        }
+        const appliedHint = requestIsMultiRoundTripRetry(request)
+            ? { ttlMs: 0, cacheScope: "private" }
+            : hint;
+        return {
+            ...prepared,
+            result: {
+                ...prepared.result,
+                ttlMs: appliedHint.ttlMs,
+                cacheScope: appliedHint.cacheScope,
+            },
+        };
     }
     async dispatchTaskMethod(request, sessionId) {
         if (!this.tasksEnabled()) {
@@ -1081,17 +1116,19 @@ export class McpServer {
             serverInfo: { name: this.name, version: this.version },
         });
     }
-    handleDiscover(request) {
+    handleDiscover(request, protocolVersion) {
         const result = {
             supportedVersions: supportedProtocolVersions(),
-            capabilities: this.initializeCapabilities(MCP_PROTOCOL_VERSION),
-            _meta: {
+            capabilities: this.initializeCapabilities(protocolVersion),
+        };
+        if (protocolVersion !== MCP_PROTOCOL_VERSION_2026_07_28) {
+            result._meta = {
                 [SERVER_INFO_METADATA_KEY]: {
                     name: this.name,
                     version: this.version,
                 },
-            },
-        };
+            };
+        }
         return newResultResponse(request.id, result);
     }
     initializeCapabilities(protocolVersion) {
@@ -1112,6 +1149,10 @@ export class McpServer {
                 list: {},
                 requests: { tools: { call: {} } },
             };
+        }
+        if (protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28 &&
+            Object.keys(this.extensionCapabilities).length > 0) {
+            capabilities["extensions"] = cloneExtensionCapabilities(this.extensionCapabilities);
         }
         return capabilities;
     }
@@ -1455,13 +1496,17 @@ export class McpServer {
         await this.sessionStore.put(session);
         return session;
     }
-    marshalSingleResponse(response, sessionId = "", includeSession = false) {
+    marshalSingleResponse(response, sessionId = "", includeSession = false, protocolVersion = "") {
         const headers = { "content-type": ["application/json"] };
         if (includeSession && sessionId) {
             headers[MCP_HEADER_SESSION_ID] = [sessionId];
         }
+        const status = protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28 &&
+            response.error?.code === MCP_CODE_METHOD_NOT_FOUND
+            ? 404
+            : 200;
         return {
-            status: 200,
+            status,
             headers,
             cookies: [],
             body: Buffer.from(JSON.stringify(response), "utf8"),
@@ -1579,6 +1624,91 @@ function normalizeTaskRuntime(options) {
         modelImmediateResponse: String(options.modelImmediateResponse ?? "").trim(),
     };
 }
+function normalizeCacheableResultConfig(config) {
+    return {
+        serverDiscover: normalizeCacheHint(config?.serverDiscover),
+        toolsList: normalizeCacheHint(config?.toolsList),
+        promptsList: normalizeCacheHint(config?.promptsList),
+        resourcesList: normalizeCacheHint(config?.resourcesList),
+        resourceTemplatesList: normalizeCacheHint(config?.resourceTemplatesList),
+        resourcesRead: normalizeCacheHint(config?.resourcesRead),
+    };
+}
+function normalizeCacheHint(hint) {
+    const rawTtlMs = Number(hint?.ttlMs ?? 0);
+    return {
+        ttlMs: Number.isFinite(rawTtlMs) && rawTtlMs >= 0 ? Math.floor(rawTtlMs) : 0,
+        cacheScope: hint?.cacheScope === "public" ? "public" : "private",
+    };
+}
+function cacheHintForMethod(config, method) {
+    switch (method) {
+        case "server/discover":
+            return config.serverDiscover;
+        case "tools/list":
+            return config.toolsList;
+        case "prompts/list":
+            return config.promptsList;
+        case "resources/list":
+            return config.resourcesList;
+        case "resources/templates/list":
+            return config.resourceTemplatesList;
+        case "resources/read":
+            return config.resourcesRead;
+        default:
+            return null;
+    }
+}
+function requestIsMultiRoundTripRetry(request) {
+    if (!isRecord(request.params)) {
+        return false;
+    }
+    return (Object.prototype.hasOwnProperty.call(request.params, "inputResponses") ||
+        Object.prototype.hasOwnProperty.call(request.params, "requestState"));
+}
+function normalizeExtensionCapabilities(capabilities) {
+    if (!isRecord(capabilities)) {
+        return {};
+    }
+    const normalized = {};
+    for (const [rawIdentifier, rawSettings] of Object.entries(capabilities)) {
+        const identifier = rawIdentifier;
+        if (!validExtensionIdentifier(identifier) || !isRecord(rawSettings)) {
+            continue;
+        }
+        try {
+            const cloned = JSON.parse(JSON.stringify(rawSettings));
+            if (isRecord(cloned)) {
+                normalized[identifier] = cloned;
+            }
+        }
+        catch {
+            // Invalid JSON settings are not advertised so negotiation fails closed.
+        }
+    }
+    return normalized;
+}
+function cloneExtensionCapabilities(capabilities) {
+    const cloned = {};
+    for (const [identifier, settings] of Object.entries(capabilities)) {
+        cloned[identifier] = JSON.parse(JSON.stringify(settings));
+    }
+    return cloned;
+}
+function validExtensionIdentifier(identifier) {
+    const slash = identifier.indexOf("/");
+    if (slash <= 0 ||
+        slash !== identifier.lastIndexOf("/") ||
+        identifier !== identifier.trim()) {
+        return false;
+    }
+    const prefix = identifier.slice(0, slash);
+    const name = identifier.slice(slash + 1);
+    const validLabel = /^[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
+    const validName = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+    return (prefix.split(".").every((label) => validLabel.test(label)) &&
+        (name === "" || validName.test(name)));
+}
 function positiveInteger(value, fallback) {
     const n = Number(value ?? 0);
     if (Number.isFinite(n) && n > 0) {
@@ -1634,13 +1764,11 @@ function methodAllowedForProtocol(protocolVersion, method) {
     if (protocolVersion === MCP_PROTOCOL_VERSION_2026_07_28) {
         return new Set([
             "server/discover",
-            "ping",
             "tools/list",
             "tools/call",
             "resources/list",
             "resources/read",
             "resources/templates/list",
-            "logging/setLevel",
             "completion/complete",
             "prompts/list",
             "prompts/get",
@@ -1729,6 +1857,7 @@ function parseResponse(body) {
     if (String(raw["jsonrpc"] ?? "") !== JSONRPC_VERSION) {
         throw new Error(`unsupported jsonrpc version: ${String(raw["jsonrpc"] ?? "")}`);
     }
+    return raw;
 }
 function parseJsonObject(body) {
     if (body.length === 0) {
@@ -1820,6 +1949,12 @@ function firstHeader(headers, key) {
     return values.length > 0 ? String(values[0] ?? "") : "";
 }
 function validatePostRequestProtocol(headers, request, detectedShape) {
+    if (conflictingHeaderValues(headers, MCP_HEADER_PROTOCOL_VERSION)) {
+        return {
+            shape: MCP_PROTOCOL_SHAPE_UNKNOWN,
+            response: protocolErrorResponse(request.id, MCP_CODE_HEADER_MISMATCH, "Header mismatch: conflicting MCP-Protocol-Version header values"),
+        };
+    }
     const headerVersion = firstHeader(headers, MCP_HEADER_PROTOCOL_VERSION).trim();
     const metaVersion = requestProtocolVersionMetadata(request);
     if (headerVersion && !isAdvertisedProtocolVersion(headerVersion)) {
@@ -1850,13 +1985,57 @@ function validatePostRequestProtocol(headers, request, detectedShape) {
             response: protocolErrorResponse(request.id, MCP_CODE_HEADER_MISMATCH, "Header mismatch: MCP-Protocol-Version does not match request metadata"),
         };
     }
+    if (metaVersion === MCP_PROTOCOL_VERSION_2026_07_28 && !headerVersion) {
+        return {
+            shape: MCP_PROTOCOL_SHAPE_UNKNOWN,
+            response: protocolErrorResponse(request.id, MCP_CODE_HEADER_MISMATCH, "Header mismatch: missing required MCP-Protocol-Version header"),
+        };
+    }
     if (!modernClaim) {
         return { shape: detectedShape, response: null };
+    }
+    const metadataResponse = validate20260728RequestMetadata(request);
+    if (metadataResponse) {
+        return {
+            shape: MCP_PROTOCOL_SHAPE_UNKNOWN,
+            response: metadataResponse,
+        };
     }
     return {
         shape: MCP_PROTOCOL_SHAPE_2026_07_28,
         response: validate20260728RoutingHeaders(headers, request),
     };
+}
+function validatePostResponseProtocol(headers, response, detectedShape) {
+    if (conflictingHeaderValues(headers, MCP_HEADER_PROTOCOL_VERSION)) {
+        return protocolErrorResponse(response["id"], MCP_CODE_HEADER_MISMATCH, "Header mismatch: conflicting MCP-Protocol-Version header values");
+    }
+    const headerVersion = firstHeader(headers, MCP_HEADER_PROTOCOL_VERSION).trim();
+    if (headerVersion && !isAdvertisedProtocolVersion(headerVersion)) {
+        if (firstHeader(headers, MCP_HEADER_SESSION_ID).trim()) {
+            return null;
+        }
+        return unsupportedProtocolVersionResponse(response["id"], headerVersion);
+    }
+    if (detectedShape !== MCP_PROTOCOL_SHAPE_2026_07_28) {
+        return null;
+    }
+    return protocolErrorResponse(response["id"], MCP_CODE_INVALID_REQUEST, "Invalid Request: clients must not send JSON-RPC responses");
+}
+function validate20260728RequestMetadata(request) {
+    if (!isRecord(request.params) || !isRecord(request.params["_meta"])) {
+        return protocolErrorResponse(request.id, MCP_CODE_INVALID_PARAMS, "Invalid params: missing or invalid io.modelcontextprotocol/protocolVersion");
+    }
+    const meta = request.params["_meta"];
+    const protocolVersion = meta[PROTOCOL_VERSION_METADATA_KEY];
+    if (typeof protocolVersion !== "string" ||
+        protocolVersion.trim() !== MCP_PROTOCOL_VERSION_2026_07_28) {
+        return protocolErrorResponse(request.id, MCP_CODE_INVALID_PARAMS, "Invalid params: missing or invalid io.modelcontextprotocol/protocolVersion");
+    }
+    if (!isRecord(meta[CLIENT_CAPABILITIES_METADATA_KEY])) {
+        return protocolErrorResponse(request.id, MCP_CODE_INVALID_PARAMS, "Invalid params: missing or invalid io.modelcontextprotocol/clientCapabilities");
+    }
+    return null;
 }
 function validate20260728RoutingHeaders(headers, request) {
     if (conflictingHeaderValues(headers, MCP_HEADER_METHOD)) {
@@ -1879,14 +2058,42 @@ function validate20260728RoutingHeaders(headers, request) {
     if (!routingName.required) {
         return null;
     }
-    const name = firstHeader(headers, MCP_HEADER_NAME).trim();
+    let name = firstHeader(headers, MCP_HEADER_NAME).trim();
     if (!name) {
         return protocolErrorResponse(request.id, MCP_CODE_HEADER_MISMATCH, "Header mismatch: missing required Mcp-Name header");
     }
+    const decodedName = decodeRoutingHeaderName(name);
+    if (decodedName.malformed) {
+        return protocolErrorResponse(request.id, MCP_CODE_HEADER_MISMATCH, "Header mismatch: malformed Mcp-Name Base64 encoding");
+    }
+    name = decodedName.value;
     if (name !== routingName.value) {
         return protocolErrorResponse(request.id, MCP_CODE_HEADER_MISMATCH, "Header mismatch: Mcp-Name does not match request parameters");
     }
     return null;
+}
+function decodeRoutingHeaderName(value) {
+    const prefix = "=?base64?";
+    const suffix = "?=";
+    if (!value.startsWith(prefix)) {
+        return { value, malformed: false };
+    }
+    if (value.length < prefix.length + suffix.length || !value.endsWith(suffix)) {
+        return { value: "", malformed: true };
+    }
+    const encoded = value.slice(prefix.length, -suffix.length);
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+        return { value: "", malformed: true };
+    }
+    const decoded = Buffer.from(encoded, "base64");
+    if (decoded.toString("base64") !== encoded) {
+        return { value: "", malformed: true };
+    }
+    const text = decoded.toString("utf8");
+    if (!Buffer.from(text, "utf8").equals(decoded)) {
+        return { value: "", malformed: true };
+    }
+    return { value: text, malformed: false };
 }
 function requestRoutingName(request) {
     let field = "";
@@ -1967,37 +2174,67 @@ function missingRequiredClientCapabilities(request, response) {
     const required = requiredClientCapabilities(response);
     const declared = requestMetadata(request)[CLIENT_CAPABILITIES_METADATA_KEY];
     const capabilities = isRecord(declared) ? declared : {};
-    const missing = {};
-    for (const capability of required) {
-        if (!isRecord(capabilities[capability])) {
-            missing[capability] = {};
-        }
-    }
-    return missing;
+    return missingCapabilityTree(required, capabilities);
 }
 function requiredClientCapabilities(response) {
     if (response.error || !isRecord(response.result)) {
-        return [];
+        return {};
     }
     if (response.result["resultType"] !== MCP_RESULT_TYPE_INPUT_REQUIRED) {
-        return [];
+        return {};
     }
     const inputRequests = response.result["inputRequests"];
     if (!isRecord(inputRequests)) {
-        return [];
+        return {};
     }
-    const required = new Set();
+    const required = {};
     for (const inputRequest of Object.values(inputRequests)) {
         if (!isRecord(inputRequest) || typeof inputRequest["method"] !== "string") {
             continue;
         }
         const method = inputRequest["method"].trim();
-        const slash = method.indexOf("/");
-        if (slash > 0) {
-            required.add(method.slice(0, slash));
+        const firstSlash = method.indexOf("/");
+        if (firstSlash <= 0) {
+            continue;
+        }
+        const lastSlash = method.lastIndexOf("/");
+        if (firstSlash === lastSlash) {
+            required[method.slice(0, firstSlash)] = {};
+            continue;
+        }
+        const identifier = method.slice(0, lastSlash);
+        if (validExtensionIdentifier(identifier)) {
+            const extensions = isRecord(required["extensions"])
+                ? required["extensions"]
+                : {};
+            extensions[identifier] = {};
+            required["extensions"] = extensions;
         }
     }
-    return [...required].sort();
+    return required;
+}
+function missingCapabilityTree(required, declared) {
+    const missing = {};
+    for (const [capability, rawRequired] of Object.entries(required)) {
+        const requiredChildren = isRecord(rawRequired) ? rawRequired : {};
+        const declaredChildren = declared[capability];
+        if (!isRecord(declaredChildren)) {
+            missing[capability] = cloneCapabilityRequirement(requiredChildren);
+            continue;
+        }
+        const childMissing = missingCapabilityTree(requiredChildren, declaredChildren);
+        if (Object.keys(childMissing).length > 0) {
+            missing[capability] = childMissing;
+        }
+    }
+    return missing;
+}
+function cloneCapabilityRequirement(required) {
+    const cloned = {};
+    for (const [key, rawChildren] of Object.entries(required)) {
+        cloned[key] = cloneCapabilityRequirement(isRecord(rawChildren) ? rawChildren : {});
+    }
+    return cloned;
 }
 function headerValues(headers, key) {
     const lower = String(key ?? "").toLowerCase();
@@ -2026,7 +2263,7 @@ function newErrorResponse(id, code, message, data) {
 function newResultResponse(id, result) {
     return { jsonrpc: JSONRPC_VERSION, id: id ?? null, result };
 }
-function responseForProtocol(response, protocolVersion) {
+function responseForProtocol(response, protocolVersion, serverInfo) {
     if (response.error || response.result === undefined) {
         return response;
     }
@@ -2059,7 +2296,7 @@ function responseForProtocol(response, protocolVersion) {
         if (isRecord(result["_meta"])) {
             inputRequired._meta = { ...result["_meta"] };
         }
-        return { ...response, result: inputRequired };
+        return withServerInfoMetadata({ ...response, result: inputRequired }, protocolVersion, serverInfo);
     }
     if (declared !== undefined &&
         declared !== "" &&
@@ -2077,7 +2314,25 @@ function responseForProtocol(response, protocolVersion) {
     else {
         delete complete["resultType"];
     }
-    return { ...response, result: complete };
+    return withServerInfoMetadata({ ...response, result: complete }, protocolVersion, serverInfo);
+}
+function withServerInfoMetadata(response, protocolVersion, serverInfo) {
+    if (protocolVersion !== MCP_PROTOCOL_VERSION_2026_07_28 ||
+        !serverInfo ||
+        !isRecord(response.result)) {
+        return response;
+    }
+    const meta = isRecord(response.result["_meta"])
+        ? { ...response.result["_meta"] }
+        : {};
+    meta[SERVER_INFO_METADATA_KEY] = { ...serverInfo };
+    return {
+        ...response,
+        result: {
+            ...response.result,
+            _meta: meta,
+        },
+    };
 }
 function badRequest(message) {
     return jsonBytesResponse(400, { error: message });

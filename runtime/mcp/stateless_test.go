@@ -20,10 +20,17 @@ func TestStateless20260728DoesNotCreateOrRequireSession(t *testing.T) {
 	s := NewServer("test", "dev", WithServerIDGenerator(ids))
 	headers := map[string][]string{
 		headerMcpProtocolVersion: {ProtocolVersion20260728},
-		headerMcpMethod:          {methodPing},
+		headerMcpMethod:          {methodServerDiscover},
 	}
 
-	pingBody := mustMarshal(t, Request{JSONRPC: jsonrpcVersion, ID: "ping", Method: methodPing})
+	pingBody := mustMarshal(t, Request{
+		JSONRPC: jsonrpcVersion,
+		ID:      "discover",
+		Method:  methodServerDiscover,
+		Params: json.RawMessage(
+			`{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}`,
+		),
+	})
 	pingResp, err := invokeHandler(s, pingBody, headers)
 	if err != nil {
 		t.Fatalf("invoke stateless ping: %v", err)
@@ -42,7 +49,9 @@ func TestStateless20260728DoesNotCreateOrRequireSession(t *testing.T) {
 		JSONRPC: jsonrpcVersion,
 		ID:      "initialize",
 		Method:  methodInitialize,
-		Params:  json.RawMessage(`{"protocolVersion":"2026-07-28"}`),
+		Params: json.RawMessage(
+			`{"protocolVersion":"2026-07-28","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}`,
+		),
 	})
 	headers[headerMcpMethod] = []string{methodInitialize}
 	initializeResp, err := invokeHandler(s, initializeBody, headers)

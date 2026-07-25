@@ -2417,6 +2417,23 @@ def _fixture_mcp_tool_handler(name: str):
             }
 
         return input_required
+    if resolved == "input_required_extension":
+
+        def input_required_extension(args: Any, _context: Any) -> dict[str, Any]:
+            message = _fixture_mcp_message_arg(args)
+            return {
+                "content": [],
+                "resultType": "input_required",
+                "inputRequests": {
+                    "approval": {
+                        "method": "com.example/review/approve",
+                        "params": {"message": f"Review {message}"},
+                    }
+                },
+                "requestState": f"review-{message}",
+            }
+
+        return input_required_extension
     raise RuntimeError(f"unknown mcp tool handler {name!r}")
 
 
@@ -2568,6 +2585,14 @@ def _new_fixture_mcp_server(runtime: Any, setup: dict[str, Any]) -> Any:
         ),
         "stream_store": runtime.MemoryMcpStreamStore(id_generator=stream_id_generator),
     }
+    if server_config.get("extension_capabilities"):
+        options["extension_capabilities"] = server_config["extension_capabilities"]
+    if "include_server_info_metadata" in server_config:
+        options["include_server_info_metadata"] = bool(
+            server_config["include_server_info_metadata"]
+        )
+    if server_config.get("cacheable_results"):
+        options["cacheable_results"] = server_config["cacheable_results"]
     task_runtime = setup.get("task_runtime") or {}
     if task_runtime.get("enabled"):
         task_clock = runtime.ManualClock(

@@ -276,38 +276,27 @@ func missingRequiredClientCapabilities(req *Request, resp *Response) map[string]
 		return nil
 	}
 	declared := declaredClientCapabilities(req)
-	missing := make(map[string]any)
-	for capability := range required {
-		raw, ok := declared[capability]
-		if !ok {
-			missing[capability] = map[string]any{}
-			continue
-		}
-		var value map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &value); err != nil || value == nil {
-			missing[capability] = map[string]any{}
-		}
-	}
+	missing := missingCapabilityTree(required, declared)
 	if len(missing) == 0 {
 		return nil
 	}
 	return missing
 }
 
-func declaredClientCapabilities(req *Request) map[string]json.RawMessage {
+func declaredClientCapabilities(req *Request) map[string]any {
 	meta := requestMetadata(req)
 	raw, ok := meta[clientCapabilitiesMetaKey]
 	if !ok {
 		return nil
 	}
-	var capabilities map[string]json.RawMessage
+	var capabilities map[string]any
 	if err := json.Unmarshal(raw, &capabilities); err != nil {
 		return nil
 	}
 	return capabilities
 }
 
-func requiredClientCapabilities(resp *Response) map[string]struct{} {
+func requiredClientCapabilities(resp *Response) map[string]any {
 	if resp == nil || resp.Error != nil {
 		return nil
 	}
@@ -319,20 +308,84 @@ func requiredClientCapabilities(resp *Response) map[string]struct{} {
 		if result != nil {
 			inputRequests = result.InputRequests
 		}
+	case json.RawMessage:
+		var inputResult InputRequiredResult
+		if err := json.Unmarshal(result, &inputResult); err == nil &&
+			inputResult.ResultType == ResultTypeInputRequired {
+			inputRequests = inputResult.InputRequests
+		}
 	default:
 		return nil
 	}
-	required := make(map[string]struct{})
+	required := make(map[string]any)
 	for _, request := range inputRequests {
 		method := strings.TrimSpace(request.Method)
-		if slash := strings.IndexByte(method, '/'); slash > 0 {
-			required[method[:slash]] = struct{}{}
+		firstSlash := strings.IndexByte(method, '/')
+		if firstSlash <= 0 {
+			continue
+		}
+		lastSlash := strings.LastIndexByte(method, '/')
+		if firstSlash == lastSlash {
+			required[method[:firstSlash]] = map[string]any{}
+			continue
+		}
+		extensionIdentifier := method[:lastSlash]
+		if validExtensionIdentifier(extensionIdentifier) {
+			addRequiredExtensionCapability(required, extensionIdentifier)
 		}
 	}
 	if len(required) == 0 {
 		return nil
 	}
 	return required
+}
+
+func addRequiredExtensionCapability(required map[string]any, identifier string) {
+	extensions, ok := required["extensions"].(map[string]any)
+	if !ok || extensions == nil {
+		extensions = map[string]any{}
+		required["extensions"] = extensions
+	}
+	extensions[identifier] = map[string]any{}
+}
+
+func missingCapabilityTree(required map[string]any, declared map[string]any) map[string]any {
+	missing := make(map[string]any)
+	for capability, rawRequired := range required {
+		requiredChildren, ok := rawRequired.(map[string]any)
+		if !ok {
+			requiredChildren = map[string]any{}
+		}
+		rawDeclared, ok := declared[capability]
+		declaredChildren, isObject := rawDeclared.(map[string]any)
+		if !ok || !isObject {
+			missing[capability] = cloneCapabilityRequirement(requiredChildren)
+			continue
+		}
+		if len(requiredChildren) == 0 {
+			continue
+		}
+		childMissing := missingCapabilityTree(requiredChildren, declaredChildren)
+		if len(childMissing) > 0 {
+			missing[capability] = childMissing
+		}
+	}
+	return missing
+}
+
+func cloneCapabilityRequirement(required map[string]any) map[string]any {
+	if len(required) == 0 {
+		return map[string]any{}
+	}
+	cloned := make(map[string]any, len(required))
+	for key, raw := range required {
+		children, ok := raw.(map[string]any)
+		if !ok {
+			children = map[string]any{}
+		}
+		cloned[key] = cloneCapabilityRequirement(children)
+	}
+	return cloned
 }
 
 // trimLeftSpace trims leading whitespace bytes (space, tab, newline, carriage return).

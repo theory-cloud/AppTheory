@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import contextlib
 import datetime as dt
 import inspect
 import json as jsonlib
 import os
+import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field, is_dataclass
 from typing import Any, Literal, Protocol, TypeVar, cast
@@ -68,6 +71,8 @@ McpTaskStatus = Literal["working", "input_required", "completed", "failed", "can
 McpRequestID = str | int | bool | None
 McpJSONValue = str | int | float | bool | None | list[Any] | dict[str, Any]
 McpJSONRecord = dict[str, McpJSONValue]
+McpExtensionCapabilities = dict[str, McpJSONRecord]
+McpCacheScope = Literal["private", "public"]
 
 T = TypeVar("T")
 
@@ -154,7 +159,7 @@ class McpServerIdentity:
 class McpDiscoverResult:
     supported_versions: list[str]
     capabilities: dict[str, Any]
-    meta: dict[str, Any]
+    meta: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -406,6 +411,30 @@ class McpTaskRuntimeOptions:
 
 
 @dataclass(slots=True)
+class McpCacheHint:
+    """Cache metadata for one modern MCP result surface.
+
+    ``ttl_ms`` defaults to 0. ``cache_scope`` defaults to ``private`` and
+    ``public`` must be selected explicitly.
+    """
+
+    ttl_ms: int = 0
+    cache_scope: McpCacheScope = "private"
+
+
+@dataclass(slots=True)
+class McpCacheableResultConfig:
+    """Per-surface cache hints for MCP 2026-07-28 complete results."""
+
+    server_discover: McpCacheHint | dict[str, Any] = field(default_factory=McpCacheHint)
+    tools_list: McpCacheHint | dict[str, Any] = field(default_factory=McpCacheHint)
+    prompts_list: McpCacheHint | dict[str, Any] = field(default_factory=McpCacheHint)
+    resources_list: McpCacheHint | dict[str, Any] = field(default_factory=McpCacheHint)
+    resource_templates_list: McpCacheHint | dict[str, Any] = field(default_factory=McpCacheHint)
+    resources_read: McpCacheHint | dict[str, Any] = field(default_factory=McpCacheHint)
+
+
+@dataclass(slots=True)
 class McpServerOptions:
     id_generator: IdGenerator | None = None
     session_store: McpSessionStore | None = None
@@ -414,6 +443,9 @@ class McpServerOptions:
     origin_validator: Callable[[str], bool] | None = None
     session_ttl_ms: int = 0
     clock: Clock | None = None
+    extension_capabilities: McpExtensionCapabilities = field(default_factory=dict)
+    cacheable_results: McpCacheableResultConfig | dict[str, Any] | None = None
+    include_server_info_metadata: bool = True
 
 
 @dataclass(slots=True)
@@ -1037,6 +1069,9 @@ class McpServer:
             lambda origin: origin in {"https://claude.ai", "https://claude.com"}
         )
         self.task_runtime = _normalize_task_runtime(opts.task_runtime)
+        self.extension_capabilities = _normalize_extension_capabilities(opts.extension_capabilities)
+        self.cacheable_results = _normalize_cacheable_result_config(opts.cacheable_results)
+        self.include_server_info_metadata = bool(opts.include_server_info_metadata)
         self.tool_registry = McpToolRegistry()
         self.resource_registry = McpResourceRegistry()
         self.prompt_registry = McpPromptRegistry()
@@ -1141,7 +1176,7 @@ class McpServer:
                 "Missing required client capability",
                 {"requiredCapabilities": missing},
             )
-        return self._marshal_single_response(response)
+        return self._marshal_single_response(response, protocol_version=MCP_PROTOCOL_VERSION_2026_07_28)
 
     def _handle_post_response(
         self,
@@ -1150,11 +1185,12 @@ class McpServer:
         shape: McpProtocolShape,
     ) -> Response:
         try:
-            _parse_response(body)
+            rpc_response = _parse_response(body)
         except Exception:  # noqa: BLE001
             return _bad_request("invalid JSON-RPC response")
-        if shape == MCP_PROTOCOL_SHAPE_2026_07_28:
-            return _empty_response(202)
+        validation_response = _validate_post_response_protocol(headers, rpc_response, shape)
+        if validation_response is not None:
+            return validation_response
         _, session, response = self._require_session(headers)
         if response is not None:
             return response
@@ -1255,11 +1291,15 @@ class McpServer:
         if protocol_version == MCP_PROTOCOL_VERSION_2026_07_28 and _stateless_request_requires_session(request):
             return _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, f"Method not found: {request.method}")
         if _is_task_method(request.method):
-            return _response_for_protocol(self._dispatch_task_method(request, session_id), protocol_version)
+            return self._finalize_response_for_protocol(
+                request,
+                self._dispatch_task_method(request, session_id),
+                protocol_version,
+            )
         if not self._method_capability_enabled(request.method):
             return _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, f"Method not found: {request.method}")
         if request.method == "server/discover":
-            response = self._handle_discover(request)
+            response = self._handle_discover(request, protocol_version)
         elif request.method == "initialize":
             response = self._handle_initialize(request, _negotiate_protocol_version(request.params))
         elif request.method == "ping":
@@ -1280,7 +1320,40 @@ class McpServer:
             response = self._handle_prompts_get(request)
         else:
             response = _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, f"Method not found: {request.method}")
-        return _response_for_protocol(response, protocol_version)
+        return self._finalize_response_for_protocol(request, response, protocol_version)
+
+    def _finalize_response_for_protocol(
+        self,
+        request: _ParsedRPCRequest,
+        response: dict[str, Any],
+        protocol_version: str,
+    ) -> dict[str, Any]:
+        prepared = _response_for_protocol(
+            response,
+            protocol_version,
+            McpServerIdentity(name=self.name, version=self.version) if self.include_server_info_metadata else None,
+        )
+        result = prepared.get("result")
+        if (
+            protocol_version != MCP_PROTOCOL_VERSION_2026_07_28
+            or prepared.get("error") is not None
+            or not isinstance(result, Mapping)
+            or result.get("resultType") != MCP_RESULT_TYPE_COMPLETE
+        ):
+            return prepared
+        hint = _cache_hint_for_method(self.cacheable_results, request.method)
+        if hint is None:
+            return prepared
+        if _request_is_multi_round_trip_retry(request):
+            hint = McpCacheHint(ttl_ms=0, cache_scope="private")
+        return {
+            **prepared,
+            "result": {
+                **result,
+                "ttlMs": hint.ttl_ms,
+                "cacheScope": hint.cache_scope,
+            },
+        }
 
     def _dispatch_task_method(self, request: _ParsedRPCRequest, session_id: str) -> dict[str, Any]:
         if not self._tasks_enabled():
@@ -1305,20 +1378,19 @@ class McpServer:
             },
         )
 
-    def _handle_discover(self, request: _ParsedRPCRequest) -> dict[str, Any]:
-        return _new_result_response(
-            request.id,
-            {
-                "supportedVersions": _supported_protocol_versions(),
-                "capabilities": self._initialize_capabilities(MCP_PROTOCOL_VERSION),
-                "_meta": {
-                    SERVER_INFO_METADATA_KEY: {
-                        "name": self.name,
-                        "version": self.version,
-                    }
-                },
-            },
-        )
+    def _handle_discover(self, request: _ParsedRPCRequest, protocol_version: str) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "supportedVersions": _supported_protocol_versions(),
+            "capabilities": self._initialize_capabilities(protocol_version),
+        }
+        if protocol_version != MCP_PROTOCOL_VERSION_2026_07_28:
+            result["_meta"] = {
+                SERVER_INFO_METADATA_KEY: {
+                    "name": self.name,
+                    "version": self.version,
+                }
+            }
+        return _new_result_response(request.id, result)
 
     def _initialize_capabilities(self, protocol_version: str) -> dict[str, Any]:
         capabilities: dict[str, Any] = {}
@@ -1330,6 +1402,8 @@ class McpServer:
             capabilities["prompts"] = {}
         if protocol_version == MCP_PROTOCOL_VERSION and self._tasks_enabled():
             capabilities["tasks"] = {"cancel": {}, "list": {}, "requests": {"tools": {"call": {}}}}
+        if protocol_version == MCP_PROTOCOL_VERSION_2026_07_28 and self.extension_capabilities:
+            capabilities["extensions"] = _json_clone(self.extension_capabilities)
         return capabilities
 
     def _handle_tools_call(self, request: _ParsedRPCRequest, session_id: str) -> dict[str, Any]:
@@ -1614,12 +1688,24 @@ class McpServer:
         return session
 
     def _marshal_single_response(
-        self, response: dict[str, Any], session_id: str = "", include_session: bool = False
+        self,
+        response: dict[str, Any],
+        session_id: str = "",
+        include_session: bool = False,
+        protocol_version: str = "",
     ) -> Response:
         headers: dict[str, list[str]] = {"content-type": ["application/json"]}
         if include_session and session_id:
             headers[MCP_HEADER_SESSION_ID] = [session_id]
-        return Response(status=200, headers=headers, cookies=[], body=_json_bytes(response), is_base64=False)
+        error = response.get("error")
+        status = (
+            404
+            if protocol_version == MCP_PROTOCOL_VERSION_2026_07_28
+            and isinstance(error, Mapping)
+            and error.get("code") == MCP_CODE_METHOD_NOT_FOUND
+            else 200
+        )
+        return Response(status=status, headers=headers, cookies=[], body=_json_bytes(response), is_base64=False)
 
     def _stream_to_sse(self, session_id: str, events: list[McpStreamEvent]) -> Response:
         return _sse_bytes_response(200, [_format_mcp_sse_frame(event) for event in events], session_id)
@@ -1702,6 +1788,86 @@ def _normalize_task_runtime(options: McpTaskRuntimeOptions | dict[str, Any] | No
     )
 
 
+def _normalize_cacheable_result_config(config: Any) -> McpCacheableResultConfig:
+    return McpCacheableResultConfig(
+        server_discover=_normalize_cache_hint(_field(config, "server_discover") or _field(config, "serverDiscover")),
+        tools_list=_normalize_cache_hint(_field(config, "tools_list") or _field(config, "toolsList")),
+        prompts_list=_normalize_cache_hint(_field(config, "prompts_list") or _field(config, "promptsList")),
+        resources_list=_normalize_cache_hint(_field(config, "resources_list") or _field(config, "resourcesList")),
+        resource_templates_list=_normalize_cache_hint(
+            _field(config, "resource_templates_list") or _field(config, "resourceTemplatesList")
+        ),
+        resources_read=_normalize_cache_hint(_field(config, "resources_read") or _field(config, "resourcesRead")),
+    )
+
+
+def _normalize_cache_hint(hint: Any) -> McpCacheHint:
+    raw_ttl_ms = _field(hint, "ttl_ms")
+    if raw_ttl_ms is None:
+        raw_ttl_ms = _field(hint, "ttlMs")
+    try:
+        ttl_ms = max(0, int(raw_ttl_ms or 0))
+    except (TypeError, ValueError, OverflowError):
+        ttl_ms = 0
+    raw_scope = _field(hint, "cache_scope")
+    if raw_scope is None:
+        raw_scope = _field(hint, "cacheScope")
+    cache_scope: McpCacheScope = "public" if raw_scope == "public" else "private"
+    return McpCacheHint(ttl_ms=ttl_ms, cache_scope=cache_scope)
+
+
+def _cache_hint_for_method(config: McpCacheableResultConfig, method: str) -> McpCacheHint | None:
+    hint = {
+        "server/discover": config.server_discover,
+        "tools/list": config.tools_list,
+        "prompts/list": config.prompts_list,
+        "resources/list": config.resources_list,
+        "resources/templates/list": config.resource_templates_list,
+        "resources/read": config.resources_read,
+    }.get(method)
+    if hint is None or isinstance(hint, McpCacheHint):
+        return hint
+    return _normalize_cache_hint(hint)
+
+
+def _request_is_multi_round_trip_retry(request: _ParsedRPCRequest) -> bool:
+    return isinstance(request.params, Mapping) and (
+        "inputResponses" in request.params or "requestState" in request.params
+    )
+
+
+def _normalize_extension_capabilities(capabilities: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(capabilities, Mapping):
+        return {}
+    normalized: dict[str, dict[str, Any]] = {}
+    for raw_identifier, raw_settings in capabilities.items():
+        if not isinstance(raw_identifier, str):
+            continue
+        identifier = raw_identifier
+        if not _valid_extension_identifier(identifier) or not isinstance(raw_settings, Mapping):
+            continue
+        try:
+            cloned = _json_clone(dict(raw_settings))
+        except (TypeError, ValueError):
+            continue
+        if isinstance(cloned, dict):
+            normalized[identifier] = cloned
+    return normalized
+
+
+def _valid_extension_identifier(identifier: str) -> bool:
+    if identifier != identifier.strip() or identifier.count("/") != 1:
+        return False
+    prefix, name = identifier.split("/", 1)
+    if not prefix:
+        return False
+    valid_label = re.compile(r"^[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?$")
+    valid_name = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+    return all(valid_label.fullmatch(label) for label in prefix.split(".")) and (
+        not name or valid_name.fullmatch(name) is not None
+    )
+
+
 def _positive_integer(value: Any, fallback: int) -> int:
     try:
         n = int(value or 0)
@@ -1755,13 +1921,11 @@ def _method_allowed_for_protocol(protocol_version: str, method: str) -> bool:
     if protocol_version == MCP_PROTOCOL_VERSION_2026_07_28:
         return method in {
             "server/discover",
-            "ping",
             "tools/list",
             "tools/call",
             "resources/list",
             "resources/read",
             "resources/templates/list",
-            "logging/setLevel",
             "completion/complete",
             "prompts/list",
             "prompts/get",
@@ -1816,7 +1980,7 @@ def _parse_request(body: bytes) -> _ParsedRPCRequest:
     return _ParsedRPCRequest(method=method, id_present=id_present, id=raw.get("id"), params=raw.get("params"))
 
 
-def _parse_response(body: bytes) -> None:
+def _parse_response(body: bytes) -> dict[str, Any]:
     raw = _parse_json_object(body)
     if "jsonrpc" not in raw:
         raise ValueError("missing required field: jsonrpc")
@@ -1828,6 +1992,7 @@ def _parse_response(body: bytes) -> None:
         raise ValueError("response must have exactly one of result or error")
     if str(raw.get("jsonrpc") or "") != JSONRPC_VERSION:
         raise ValueError(f"unsupported jsonrpc version: {raw.get('jsonrpc') or ''}")
+    return raw
 
 
 def _parse_json_object(body: bytes) -> dict[str, Any]:
@@ -1928,6 +2093,12 @@ def _validate_post_request_protocol(
     request: _ParsedRPCRequest,
     detected_shape: McpProtocolShape,
 ) -> tuple[McpProtocolShape, Response | None]:
+    if _conflicting_header_values(headers, MCP_HEADER_PROTOCOL_VERSION):
+        return MCP_PROTOCOL_SHAPE_UNKNOWN, _protocol_error_response(
+            request.id,
+            MCP_CODE_HEADER_MISMATCH,
+            "Header mismatch: conflicting MCP-Protocol-Version header values",
+        )
     header_version = _first_header(headers, MCP_HEADER_PROTOCOL_VERSION).strip()
     meta_version = _request_protocol_version_metadata(request)
 
@@ -1947,10 +2118,74 @@ def _validate_post_request_protocol(
             MCP_CODE_HEADER_MISMATCH,
             "Header mismatch: MCP-Protocol-Version does not match request metadata",
         )
+    if meta_version == MCP_PROTOCOL_VERSION_2026_07_28 and not header_version:
+        return MCP_PROTOCOL_SHAPE_UNKNOWN, _protocol_error_response(
+            request.id,
+            MCP_CODE_HEADER_MISMATCH,
+            "Header mismatch: missing required MCP-Protocol-Version header",
+        )
     if not modern_claim:
         return detected_shape, None
 
+    metadata_response = _validate_2026_07_28_request_metadata(request)
+    if metadata_response is not None:
+        return MCP_PROTOCOL_SHAPE_UNKNOWN, metadata_response
     return MCP_PROTOCOL_SHAPE_2026_07_28, _validate_2026_07_28_routing_headers(headers, request)
+
+
+def _validate_post_response_protocol(
+    headers: dict[str, Any],
+    response: dict[str, Any],
+    detected_shape: McpProtocolShape,
+) -> Response | None:
+    if _conflicting_header_values(headers, MCP_HEADER_PROTOCOL_VERSION):
+        return _protocol_error_response(
+            response.get("id"),
+            MCP_CODE_HEADER_MISMATCH,
+            "Header mismatch: conflicting MCP-Protocol-Version header values",
+        )
+    header_version = _first_header(headers, MCP_HEADER_PROTOCOL_VERSION).strip()
+    if header_version and not _is_advertised_protocol_version(header_version):
+        if _first_header(headers, MCP_HEADER_SESSION_ID).strip():
+            return None
+        return _unsupported_protocol_version_response(response.get("id"), header_version)
+    if detected_shape != MCP_PROTOCOL_SHAPE_2026_07_28:
+        return None
+    return _protocol_error_response(
+        response.get("id"),
+        MCP_CODE_INVALID_REQUEST,
+        "Invalid Request: clients must not send JSON-RPC responses",
+    )
+
+
+def _validate_2026_07_28_request_metadata(request: _ParsedRPCRequest) -> Response | None:
+    if not isinstance(request.params, Mapping):
+        return _protocol_error_response(
+            request.id,
+            MCP_CODE_INVALID_PARAMS,
+            "Invalid params: missing or invalid io.modelcontextprotocol/protocolVersion",
+        )
+    meta = request.params.get("_meta")
+    if not isinstance(meta, Mapping):
+        return _protocol_error_response(
+            request.id,
+            MCP_CODE_INVALID_PARAMS,
+            "Invalid params: missing or invalid io.modelcontextprotocol/protocolVersion",
+        )
+    protocol_version = meta.get(PROTOCOL_VERSION_METADATA_KEY)
+    if not isinstance(protocol_version, str) or protocol_version.strip() != MCP_PROTOCOL_VERSION_2026_07_28:
+        return _protocol_error_response(
+            request.id,
+            MCP_CODE_INVALID_PARAMS,
+            "Invalid params: missing or invalid io.modelcontextprotocol/protocolVersion",
+        )
+    if not isinstance(meta.get(CLIENT_CAPABILITIES_METADATA_KEY), Mapping):
+        return _protocol_error_response(
+            request.id,
+            MCP_CODE_INVALID_PARAMS,
+            "Invalid params: missing or invalid io.modelcontextprotocol/clientCapabilities",
+        )
+    return None
 
 
 def _validate_2026_07_28_routing_headers(
@@ -2000,6 +2235,13 @@ def _validate_2026_07_28_routing_headers(
             MCP_CODE_HEADER_MISMATCH,
             "Header mismatch: missing required Mcp-Name header",
         )
+    header_name, malformed = _decode_routing_header_name(header_name)
+    if malformed:
+        return _protocol_error_response(
+            request.id,
+            MCP_CODE_HEADER_MISMATCH,
+            "Header mismatch: malformed Mcp-Name Base64 encoding",
+        )
     if header_name != name:
         return _protocol_error_response(
             request.id,
@@ -2007,6 +2249,24 @@ def _validate_2026_07_28_routing_headers(
             "Header mismatch: Mcp-Name does not match request parameters",
         )
     return None
+
+
+def _decode_routing_header_name(value: str) -> tuple[str, bool]:
+    prefix = "=?base64?"
+    suffix = "?="
+    if not value.startswith(prefix):
+        return value, False
+    if len(value) < len(prefix) + len(suffix) or not value.endswith(suffix):
+        return "", True
+    encoded = value[len(prefix) : -len(suffix)]
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+        text = decoded.decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        return "", True
+    if base64.b64encode(decoded).decode("ascii") != encoded:
+        return "", True
+    return text, False
 
 
 def _request_routing_name(request: _ParsedRPCRequest) -> tuple[str, bool, str]:
@@ -2086,29 +2346,60 @@ def _missing_required_client_capabilities(
     required = _required_client_capabilities(response)
     declared = _request_metadata(request).get(CLIENT_CAPABILITIES_METADATA_KEY)
     capabilities = declared if isinstance(declared, Mapping) else {}
-    return {capability: {} for capability in required if not isinstance(capabilities.get(capability), Mapping)}
+    return _missing_capability_tree(required, capabilities)
 
 
-def _required_client_capabilities(response: dict[str, Any]) -> list[str]:
+def _required_client_capabilities(response: dict[str, Any]) -> dict[str, Any]:
     if response.get("error") is not None:
-        return []
+        return {}
     result = response.get("result")
     if not isinstance(result, Mapping) or result.get("resultType") != MCP_RESULT_TYPE_INPUT_REQUIRED:
-        return []
+        return {}
     input_requests = result.get("inputRequests")
     if not isinstance(input_requests, Mapping):
-        return []
-    required: set[str] = set()
+        return {}
+    required: dict[str, Any] = {}
     for input_request in input_requests.values():
         if not isinstance(input_request, Mapping):
             continue
         method = input_request.get("method")
         if not isinstance(method, str):
             continue
-        capability, separator, _ = method.strip().partition("/")
-        if separator and capability:
-            required.add(capability)
-    return sorted(required)
+        method = method.strip()
+        first_slash = method.find("/")
+        if first_slash <= 0:
+            continue
+        last_slash = method.rfind("/")
+        if first_slash == last_slash:
+            required[method[:first_slash]] = {}
+            continue
+        identifier = method[:last_slash]
+        if _valid_extension_identifier(identifier):
+            extensions = required.setdefault("extensions", {})
+            if isinstance(extensions, dict):
+                extensions[identifier] = {}
+    return required
+
+
+def _missing_capability_tree(required: Mapping[str, Any], declared: Mapping[str, Any]) -> dict[str, Any]:
+    missing: dict[str, Any] = {}
+    for capability, raw_required in required.items():
+        required_children = raw_required if isinstance(raw_required, Mapping) else {}
+        declared_children = declared.get(capability)
+        if not isinstance(declared_children, Mapping):
+            missing[capability] = _clone_capability_requirement(required_children)
+            continue
+        child_missing = _missing_capability_tree(required_children, declared_children)
+        if child_missing:
+            missing[capability] = child_missing
+    return missing
+
+
+def _clone_capability_requirement(required: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: _clone_capability_requirement(value if isinstance(value, Mapping) else {})
+        for key, value in required.items()
+    }
 
 
 def _new_error_response(id: Any, code: int, message: str, data: Any | None = None) -> dict[str, Any]:
@@ -2126,7 +2417,11 @@ def _new_result_response(id: Any, result: Any) -> dict[str, Any]:
     return {"jsonrpc": JSONRPC_VERSION, "id": id if id is not None else None, "result": result}
 
 
-def _response_for_protocol(response: dict[str, Any], protocol_version: str) -> dict[str, Any]:
+def _response_for_protocol(
+    response: dict[str, Any],
+    protocol_version: str,
+    server_info: McpServerIdentity | None,
+) -> dict[str, Any]:
     if response.get("error") is not None or "result" not in response:
         return response
     raw_result = response.get("result")
@@ -2155,7 +2450,11 @@ def _response_for_protocol(response: dict[str, Any], protocol_version: str) -> d
         raw_meta = result.get("_meta", result.get("meta"))
         if isinstance(raw_meta, Mapping):
             input_required["_meta"] = dict(raw_meta)
-        return {**response, "result": input_required}
+        return _with_server_info_metadata(
+            {**response, "result": input_required},
+            protocol_version,
+            server_info,
+        )
 
     if declared not in {None, "", MCP_RESULT_TYPE_COMPLETE}:
         return _new_error_response(response.get("id"), MCP_CODE_INTERNAL_ERROR, "internal error")
@@ -2167,7 +2466,28 @@ def _response_for_protocol(response: dict[str, Any], protocol_version: str) -> d
         result["resultType"] = MCP_RESULT_TYPE_COMPLETE
     else:
         result.pop("resultType", None)
-    return {**response, "result": result}
+    return _with_server_info_metadata(
+        {**response, "result": result},
+        protocol_version,
+        server_info,
+    )
+
+
+def _with_server_info_metadata(
+    response: dict[str, Any],
+    protocol_version: str,
+    server_info: McpServerIdentity | None,
+) -> dict[str, Any]:
+    result = response.get("result")
+    if protocol_version != MCP_PROTOCOL_VERSION_2026_07_28 or server_info is None or not isinstance(result, Mapping):
+        return response
+    raw_meta = result.get("_meta")
+    meta = dict(raw_meta) if isinstance(raw_meta, Mapping) else {}
+    meta[SERVER_INFO_METADATA_KEY] = {
+        "name": server_info.name,
+        "version": server_info.version,
+    }
+    return {**response, "result": {**result, "_meta": meta}}
 
 
 def _bad_request(message: str) -> Response:
@@ -2836,9 +3156,13 @@ __all__ = [
     "MCP_RESULT_TYPE_INPUT_REQUIRED",
     "DynamoMcpStreamStore",
     "DynamoMcpTaskStore",
+    "McpCacheHint",
+    "McpCacheScope",
+    "McpCacheableResultConfig",
     "McpContentBlock",
     "McpDiscoverResult",
     "McpEventNotFoundError",
+    "McpExtensionCapabilities",
     "McpInputRequest",
     "McpInputRequiredResult",
     "McpJSONRecord",

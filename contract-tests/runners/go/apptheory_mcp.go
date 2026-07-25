@@ -99,6 +99,7 @@ func newFixtureMCPServer(setup FixtureMCPSetup) (*mcp.Server, error) {
 		mcp.WithSessionStore(sessionStore),
 		mcp.WithStreamStore(streamStore),
 	}
+	opts = appendFixtureMCPServerOptions(opts, setup.Server)
 	if setup.TaskRuntime != nil && setup.TaskRuntime.Enabled {
 		opts = append(opts, mcp.WithTaskRuntime(mcp.TaskRuntimeOptions{
 			Store:                  newFixtureMCPTaskStore(*setup.TaskRuntime),
@@ -134,11 +135,39 @@ func newFixtureMCPServer(setup FixtureMCPSetup) (*mcp.Server, error) {
 	return server, nil
 }
 
+func appendFixtureMCPServerOptions(opts []mcp.ServerOption, config FixtureMCPServer) []mcp.ServerOption {
+	if len(config.ExtensionCapabilities) > 0 {
+		opts = append(opts, mcp.WithExtensionCapabilities(config.ExtensionCapabilities))
+	}
+	if config.IncludeServerInfoMetadata != nil {
+		opts = append(opts, mcp.WithServerInfoMetadata(*config.IncludeServerInfoMetadata))
+	}
+	if config.CacheableResults != nil {
+		cache := config.CacheableResults
+		opts = append(opts, mcp.WithCacheableResultConfig(mcp.CacheableResultConfig{
+			ServerDiscover:        fixtureMCPCacheHint(cache.ServerDiscover),
+			ToolsList:             fixtureMCPCacheHint(cache.ToolsList),
+			PromptsList:           fixtureMCPCacheHint(cache.PromptsList),
+			ResourcesList:         fixtureMCPCacheHint(cache.ResourcesList),
+			ResourceTemplatesList: fixtureMCPCacheHint(cache.ResourceTemplatesList),
+			ResourcesRead:         fixtureMCPCacheHint(cache.ResourcesRead),
+		}))
+	}
+	return opts
+}
+
 func durationFromMilliseconds(ms int64) time.Duration {
 	if ms <= 0 {
 		return 0
 	}
 	return time.Duration(ms) * time.Millisecond
+}
+
+func fixtureMCPCacheHint(hint FixtureMCPCacheHint) mcp.CacheHint {
+	return mcp.CacheHint{
+		TTL:   durationFromMilliseconds(hint.TTLMS),
+		Scope: mcp.CacheScope(hint.CacheScope),
+	}
 }
 
 type sequenceIDGenerator struct {
@@ -293,6 +322,23 @@ func fixtureMCPToolHandler(name string) (mcp.ToolHandler, error) {
 					},
 				},
 				RequestState: "confirm-" + message,
+			}, nil
+		}, nil
+	case "input_required_extension":
+		return func(_ context.Context, args json.RawMessage) (*mcp.ToolResult, error) {
+			message, err := mcpFixtureMessageArg(args)
+			if err != nil {
+				return nil, err
+			}
+			return &mcp.ToolResult{
+				ResultType: mcp.ResultTypeInputRequired,
+				InputRequests: map[string]mcp.InputRequest{
+					"approval": {
+						Method: "com.example/review/approve",
+						Params: map[string]any{"message": "Review " + message},
+					},
+				},
+				RequestState: "review-" + message,
 			}, nil
 		}, nil
 	default:

@@ -486,7 +486,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>925 exported top-level symbols</summary>
+<summary>933 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins
@@ -498,7 +498,8 @@ AuthorizationServerMetadata, AuthorizationServerMetadataHandler, AuthorizeOption
 AWSLambdaMicroVMProviderID, AWSLambdaMicroVMProviderOption, BaseName, BearerTokenClaims, BearerTokenClaimsFromContext
 BearerTokenClaimsValidator, BearerTokenFromHeaders, BearerTokenRecord, BearerTokenValidationOptions, BearerTokenValidator
 BedrockRuntimeAPI, Binary, BindConfig, BodyStream, BuiltInLoggingProfileNames
-CacheControlISR, CacheControlSSG, CacheControlSSR, Call, CallToolRequest
+CacheableResultConfig, CacheControlISR, CacheControlSSG, CacheControlSSR, CacheHint
+CacheScope, CacheScopePrivate, CacheScopePublic, Call, CallToolRequest
 CanonicalizeIssuerURL, CanonicalResourceURL, CapabilityConfig, CaptureBodyStream, ClaudeDynamicClientRegistrationPolicy
 ClaudePublicClient, Client, ClientIP, Clock, CloneMetadata
 CloneVector, CloudWatchLogsSubscription, CloudWatchLogsSubscriptionData, CloudWatchLogsSubscriptionLogEvent, CloudWatchLogsSubscriptionOptions
@@ -663,15 +664,16 @@ ValidateVector, ValidationFieldError, ValidationRuleEnum, ValidationRuleMax, Val
 ValidationRuleMin, ValidationRuleMinLength, ValidationRulePattern, ValidationRuleRequired, Vary
 VectorRecord, WebSocketClientFactory, WebSocketContext, WebSocketEvent, WebSocketEventOptions
 WebSocketHandler, WindowConfig, WindowLimit, WithAPI, WithAuthHook
-WithAuthPrincipalHook, WithAWSConfig, WithAWSLambdaMicroVMClock, WithAWSLambdaMicroVMRegion, WithCapabilityConfig
+WithAuthPrincipalHook, WithAWSConfig, WithAWSLambdaMicroVMClock, WithAWSLambdaMicroVMRegion, WithCacheableResultConfig
+WithCapabilityConfig
 WithClock, WithCompletionHooks, WithControllerClock, WithControllerDeploymentDefaults, WithControllerExecutionRoleArn
 WithControllerID, WithControllerIDGenerator, WithControllerLogging, WithControllerProviderID, WithControllerSessionTTL
 WithCORS, WithEMFClock, WithEMFNamespace, WithEMFService, WithEMFWriter
-WithEnvironmentErrorNotifications, WithErrorNotifier, WithHTTPErrorFormat, WithIdentifier, WithIDGenerator
+WithEnvironmentErrorNotifications, WithErrorNotifier, WithExtensionCapabilities, WithHTTPErrorFormat, WithIdentifier, WithIDGenerator
 WithInitialSessionListenerBudget, WithLegacyHTTPErrorShape, WithLifecycleContract, WithLifecycleHandler, WithLimits
 WithLogger, WithLoggingLevelHook, WithObservability, WithOriginValidator, WithPolicyHook
 WithProfileClock, WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter, WithRegistryClientTTL
-WithResourceSubscriptionHooks, WithSanitizer, WithServerIDGenerator, WithSessionReconstructionClock, WithSessionReconstructionStaleAfter
+WithResourceSubscriptionHooks, WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata, WithSessionReconstructionClock, WithSessionReconstructionStaleAfter
 WithSessionStore, WithStreamIDGenerator, WithStreamStore, WithTaskRuntime, WithTier
 WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
 ```
