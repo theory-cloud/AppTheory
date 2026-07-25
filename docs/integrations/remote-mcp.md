@@ -59,16 +59,21 @@ Important behaviors for Claude compatibility:
 - AppTheory dual-serves the session-ful `2025-11-25` and final stateless `2026-07-28` shapes on the same handler.
 - For `2025-11-25`, `initialize` returns `Mcp-Session-Id`, later requests carry that session id, and
   `notifications/initialized` returns `202 Accepted` with no body.
-- For `2026-07-28`, each POST identifies the protocol with `Mcp-Protocol-Version: 2026-07-28` or
-  `params._meta["io.modelcontextprotocol/protocolVersion"]`. The header takes precedence during detection, and both
-  values must agree when both are present.
+- For `2026-07-28`, every POST sends `Mcp-Protocol-Version: 2026-07-28` and the matching
+  `params._meta["io.modelcontextprotocol/protocolVersion"]`. Metadata-only selection remains valid for non-HTTP
+  bindings such as stdio, but the Streamable HTTP header is mandatory.
+- Every 2026-07-28 request also sends
+  `params._meta["io.modelcontextprotocol/clientCapabilities"]`, even when the declaration is empty.
 - Each `2026-07-28` request or notification sends `Mcp-Method` equal to the JSON-RPC method. `tools/call`,
   `prompts/get`, and `resources/read` also send `Mcp-Name` equal to the routed `name` or `uri`.
+- `Mcp-Name` may use the exact case-sensitive `=?base64?{value}?=` sentinel. AppTheory decodes canonical Base64
+  before comparison and rejects malformed encoding with `-32020`.
 - `server/discover` is routed by AppTheory in both transport shapes. It reports the server's supported protocol
   versions in preference order, derives capabilities from the configured registries and hooks, and returns the
   `NewServer(...)` name/version under `_meta["io.modelcontextprotocol/serverInfo"]`.
 - `2026-07-28` clients do not initialize and never send or receive `Mcp-Session-Id`; `DELETE /mcp` is not routed for
-  that shape. GET/subscriptions/listen support is intentionally outside this milestone.
+  that shape. GET/subscriptions/listen support is intentionally outside this milestone. A posted JSON-RPC response is
+  rejected with HTTP `400`; modern clients post only requests and notifications.
 - `POST /mcp` requires `Content-Type: application/json` and `Accept: application/json, text/event-stream`.
 - `GET /mcp` requires `Accept: text/event-stream`.
 - `tools/call` may stream with SSE when the target tool is registered for streaming and the client advertises SSE.
@@ -85,14 +90,14 @@ Important behaviors for Claude compatibility:
   `https://claude.com`); use `mcp.WithOriginValidator(...)` for other browser origins.
 - Tool handler panics are recovered as sanitized JSON-RPC internal errors. Do not rely on panic text reaching the
   client; AppTheory logs it server-side and keeps the MCP server reusable.
-- Optional utility methods are hook-gated. Resource subscription requests require
+- Optional session-ful utility methods are hook-gated. Resource subscription requests require
   `mcp.WithResourceSubscriptionHooks(...)`, logging level requests require `mcp.WithLoggingLevelHook(...)`, and
   completions require `mcp.WithCompletionHooks(...)`. AppTheory advertises only capabilities it can deliver
   end-to-end: completions can be advertised with hooks today, while `resources.subscribe` and `logging` remain omitted
   until the outbound notification contracts for resource updates and log messages exist.
 - `notifications/cancelled` cancels matching in-flight AppTheory requests for the same session and safely ignores
   unknown or already-completed request ids.
-- MCP tasks are opt-in. AppTheory advertises `tasks` only for protocol `2025-11-25` sessions when
+- MCP tasks are opt-in. AppTheory advertises `tasks` only for protocol `2025-11-25` discovery/initialize results when
   `mcp.WithTaskRuntime(...)` supplies a store and at least one registered tool declares task support.
 - The stateless shape does not expose task methods or task-augmented `tools/call`; session-ful task behavior is
   unchanged.
@@ -105,8 +110,8 @@ Stateless clients call `server/discover` instead of `initialize`. Session-ful cl
 initialization without a session id. AppTheory returns one server-owned advertisement in both cases:
 
 - supported versions: `2026-07-28`, `2025-11-25`, `2025-06-18`, and `2025-03-26`, in that preference order
-- capabilities derived from the server's enabled and registered tools, resources, prompts, completion hooks, and task
-  runtime (tasks remain callable only in a `2025-11-25` session)
+- capabilities derived from the server's enabled and registered tools, resources, prompts, completion hooks, and
+  configured extensions; modern discovery omits `tasks` because AppTheory does not implement the 2026 task extension
 - server identity from the name and version passed to `mcp.NewServer(...)`
 
 The advertisement never includes a subscriptions capability. Do not add one in an application wrapper:
@@ -136,18 +141,26 @@ curl -sS \
 
 ### `2026-07-28` results and fail-closed routing
 
-Every successful stateless result carries `resultType: "complete"` or `resultType: "input_required"`. For
+Every successful stateless result carries `resultType: "complete"` or `resultType: "input_required"` and, by default,
+includes the server name/version under `_meta["io.modelcontextprotocol/serverInfo"]`. The explicit server-level opt-out is
+`mcp.WithServerInfoMetadata(false)` in Go, `includeServerInfoMetadata: false` in TypeScript, or
+`include_server_info_metadata=False` in Python. For
 `input_required`, collect the named `inputRequests`, preserve the returned `requestState`, and retry the original
 request with `inputResponses`. Advertise the needed per-request client capabilities under
 `params._meta["io.modelcontextprotocol/clientCapabilities"]`; AppTheory returns `-32021` when a required capability is
 missing.
 
-Modern routing errors are JSON-RPC envelopes returned with HTTP `400`:
+Modern transport validation errors are JSON-RPC envelopes returned with HTTP `400`:
 
-- `-32020`: `Mcp-Protocol-Version`/request `_meta` mismatch or missing/mismatched `Mcp-Method`/`Mcp-Name`
+- `-32020`: missing required `Mcp-Protocol-Version`, protocol/request `_meta` mismatch, or
+  missing/mismatched/malformed `Mcp-Method`/`Mcp-Name`
 - `-32021`: missing required client capability
 - `-32022`: unsupported/future protocol version, including a sessionless request that would otherwise look like a
   missing legacy session
+- `-32602`: missing or invalid required per-request protocol/client-capability metadata
+
+The modern method set excludes `ping` and `logging/setLevel`. Those methods and every other unavailable modern method
+return HTTP `404` with JSON-RPC `-32601`; session-ful method errors retain HTTP `200`.
 
 Existing `2025-11-25` clients keep their session, initialize, response, SSE, and error behavior unchanged. See
 `docs/migration/mcp-2026-07-28.md` for the client checklist.
@@ -164,12 +177,13 @@ Strict transport rollout checklist:
 - Confirm the client carries forward the negotiated protocol version, or omits `Mcp-Protocol-Version` after
   initialization so AppTheory uses the session value.
 - For a stateless client, confirm `Mcp-Method` and any required `Mcp-Name` exactly match the JSON-RPC body.
+- Confirm every stateless POST carries `Mcp-Protocol-Version: 2026-07-28` plus both required request `_meta` fields.
 - Confirm stateless callers branch on `result.resultType` and preserve multi-round `requestState`.
 - Confirm the client records the first SSE `id`, even when its `data:` field is empty, before long-running work emits
   progress.
 - Confirm reconnect uses `GET /mcp` with the latest `Last-Event-ID` for the same session and stream.
-- Treat HTTP `400` responses during canary as compatibility failures to fix in the client, not as server fallbacks to
-  loosen.
+- Treat HTTP `400` and modern method-probe `404` responses during canary as compatibility signals to handle in the
+  client, not as server fallbacks to loosen.
 - Do not hard-code `resources.subscribe`, `logging`, or `completions` capabilities in a Remote MCP product wrapper.
   Configure the AppTheory hook, let AppTheory emit the initialize capability, and keep the capability absent until
   product authorization and tenant policy are ready.
