@@ -40,13 +40,6 @@ const lock = readJson(lockfilePath, "lockfile");
 const exception = {
   advisories: [
     {
-      advisoryId: "GHSA-3jxr-9vmj-r5cp",
-      advisoryUrl: "https://github.com/advisories/GHSA-3jxr-9vmj-r5cp",
-      affectedRange: ">=3.0.0 <5.0.7",
-      alias: "CVE-2026-13149",
-      fixedVersions: ["1.1.16", "2.1.2", "5.0.7"],
-    },
-    {
       advisoryId: "GHSA-mh99-v99m-4gvg",
       advisoryUrl: "https://github.com/advisories/GHSA-mh99-v99m-4gvg",
       affectedRange: "<=5.0.7",
@@ -54,13 +47,13 @@ const exception = {
       fixedVersions: ["5.0.8"],
     },
   ],
-  cdkVersion: "2.261.0",
+  cdkVersion: "2.262.2",
   expiresOn: "2026-08-05",
   lockfile: normalizePath(lockfilePath),
   minimatchVersion: "10.2.5",
   packageName: "brace-expansion",
   packagePath: "node_modules/aws-cdk-lib/node_modules/brace-expansion",
-  packageVersion: "5.0.6",
+  packageVersion: "5.0.7",
 };
 
 if (new Date().toISOString().slice(0, 10) > exception.expiresOn) {
