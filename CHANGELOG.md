@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.2](https://github.com/theory-cloud/AppTheory/compare/v2.0.1...v2.0.2) (2026-07-30)
+
+
+### Bug Fixes
+
+* **cdk:** align example dependency pins ([b92d220](https://github.com/theory-cloud/AppTheory/commit/b92d220d081e266dc806077cc3c397c954fde550))
+* **deps:** update CDK and TableTheory pins ([79450bf](https://github.com/theory-cloud/AppTheory/commit/79450bfdd3f118ce4ed35d199d3f14dd0a9089dc))
+* **deps:** update CDK and TableTheory pins ([be785f8](https://github.com/theory-cloud/AppTheory/commit/be785f8c4a95f679278e715921cb76e02e794b5a))
+* **init:** align scaffolded CDK dependencies ([6e6aa42](https://github.com/theory-cloud/AppTheory/commit/6e6aa42e47569610931c5cfa3dfb5f18307245ac))
+* **security:** refresh AWS CDK audit exception ([0d3cf6b](https://github.com/theory-cloud/AppTheory/commit/0d3cf6b231eaabc859bc049af7cfbae77421cb06))
+
 ## [2.0.2-rc](https://github.com/theory-cloud/AppTheory/compare/v2.0.1...v2.0.2-rc) (2026-07-30)
 
 
