@@ -6,8 +6,8 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.261.0",
-    "constructs": "10.6.0"
+    "aws-cdk-lib": "2.262.2",
+    "constructs": "10.8.0"
   },
   "dependencyClosure": {
     "@aws-cdk/asset-awscli-v1": {
@@ -1148,6 +1148,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_controlcatalog": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.ControlCatalog"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.controlcatalog"
+            },
+            "python": {
+              "module": "aws_cdk.aws_controlcatalog"
+            }
+          }
+        },
         "aws-cdk-lib.aws_controltower": {
           "targets": {
             "dotnet": {
@@ -1197,6 +1210,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_databrew"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_dataexchange": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.DataExchange"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.dataexchange"
+            },
+            "python": {
+              "module": "aws_cdk.aws_dataexchange"
             }
           }
         },
@@ -3010,6 +3036,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_osis"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_outposts": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.Outposts"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.outposts"
+            },
+            "python": {
+              "module": "aws_cdk.aws_outposts"
             }
           }
         },
@@ -5462,6 +5501,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_controlcatalog": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.ControlCatalog"
+            },
+            "go": {
+              "packageName": "interfacesawscontrolcatalog"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.controlcatalog"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_controlcatalog"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_controltower": {
           "targets": {
             "dotnet": {
@@ -5523,6 +5578,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_databrew"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_dataexchange": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.DataExchange"
+            },
+            "go": {
+              "packageName": "interfacesawsdataexchange"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.dataexchange"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_dataexchange"
             }
           }
         },
@@ -7539,6 +7610,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_osis"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_outposts": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.Outposts"
+            },
+            "go": {
+              "packageName": "interfacesawsoutposts"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.outposts"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_outposts"
             }
           }
         },
@@ -27028,5 +27115,5 @@
     }
   },
   "version": "2.0.0",
-  "fingerprint": "tpSrgLJF6/3QIvX7Hh3XRa73PxJ4FBpw3+5gOs+v0s0="
+  "fingerprint": "rVFftWgVXd40XrpRGJJBrVZhUf/dVljYp1PixvL9qhY="
 }
