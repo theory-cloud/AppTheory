@@ -323,7 +323,7 @@ class AppTheoryRestApiRouter extends constructs_1.Construct {
 }
 exports.AppTheoryRestApiRouter = AppTheoryRestApiRouter;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryRestApiRouter[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouter", version: "2.0.2-rc" };
+AppTheoryRestApiRouter[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouter", version: "2.0.2" };
 /**
  * Convert a domain name to a Route53 record name relative to the zone.
  */
