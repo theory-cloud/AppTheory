@@ -20,10 +20,10 @@ Notes:
 - `SEC-3` (supply-chain) may materialize Node dependencies with scripts disabled and scan `node_modules` lifecycle hooks,
   plus lightweight scans of `go.mod` and Python dependency files. Use the allowlist only with justification:
   `gov-infra/planning/apptheory-supply-chain-allowlist.txt`.
-- `SEC-2` vulnerability exceptions are not a general allowlist. The current AWS CDK `2.261.0` tarball bundles
-  `brace-expansion@5.0.6`, which cannot be replaced by npm and is affected by `GHSA-3jxr-9vmj-r5cp` and
-  `GHSA-mh99-v99m-4gvg`. The verifier keeps exactly those two build-tool-only findings visible through a narrow
-  exception that expires on **2026-08-05**; any advisory, package graph, version, path, or expiry drift fails closed.
+- `SEC-2` vulnerability exceptions are not a general allowlist. The current AWS CDK `2.262.2` tarball bundles
+  `brace-expansion@5.0.7`, which cannot be replaced by npm and is affected by `GHSA-mh99-v99m-4gvg`. The verifier
+  keeps that build-tool-only finding visible through a narrow exception that expires on **2026-08-05**; any advisory,
+  package graph, version, path, or expiry drift fails closed.
   Remove the exception as soon as AWS CDK bundles `brace-expansion>=5.0.8`.
 - The TypeScript lint graph still requires `minimatch@3.1.4 -> brace-expansion@1.1.16`; the new advisory has no patched
   1.x release, and forcing the ESM/object-exporting 5.x package into minimatch 3 breaks the linter. SEC-2 therefore
