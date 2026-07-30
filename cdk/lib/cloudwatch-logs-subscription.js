@@ -39,7 +39,7 @@ class AppTheoryCloudWatchLogsSubscription extends constructs_1.Construct {
 }
 exports.AppTheoryCloudWatchLogsSubscription = AppTheoryCloudWatchLogsSubscription;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryCloudWatchLogsSubscription[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsSubscription", version: "2.0.1" };
+AppTheoryCloudWatchLogsSubscription[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsSubscription", version: "2.0.2" };
 function resolveLogGroupName(props) {
     requireExactlyOne(props.logGroup, "logGroup", props.logGroupName, "logGroupName");
     if (isProvided(props.logGroupName)) {

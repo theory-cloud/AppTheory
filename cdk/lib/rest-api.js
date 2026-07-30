@@ -51,7 +51,7 @@ class AppTheoryRestApi extends constructs_1.Construct {
 }
 exports.AppTheoryRestApi = AppTheoryRestApi;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryRestApi[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRestApi", version: "2.0.1" };
+AppTheoryRestApi[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRestApi", version: "2.0.2" };
 function resourceForPath(api, inputPath) {
     let current = api.root;
     const trimmed = (0, string_utils_1.trimRepeatedChar)(String(inputPath ?? "").trim(), "/");

@@ -113,7 +113,7 @@ class AppTheoryHttpApi extends constructs_1.Construct {
 }
 exports.AppTheoryHttpApi = AppTheoryHttpApi;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryHttpApi[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryHttpApi", version: "2.0.1" };
+AppTheoryHttpApi[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryHttpApi", version: "2.0.2" };
 function buildCorsPreflight(input) {
     if (!input) {
         return undefined;
