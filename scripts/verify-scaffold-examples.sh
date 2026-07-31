@@ -73,10 +73,55 @@ assert_release_pins() {
   fi
 }
 
+assert_go_module_pin() {
+  local dir="$1"
+  python3 - "${dir}" <<'PY'
+import pathlib
+import re
+import sys
+
+project = pathlib.Path(sys.argv[1])
+go_mod = project.joinpath("go.mod").read_text()
+match = re.search(
+    r"^require (github\.com/theory-cloud/apptheory(?:/v[2-9][0-9]*)?) (v([0-9]+)\.[^\s]+)$",
+    go_mod,
+    re.MULTILINE,
+)
+if match is None:
+    raise SystemExit(f"scaffold: FAIL ({project}/go.mod does not contain a valid AppTheory require line)")
+module, version, version_major_text = match.groups()
+version_major = int(version_major_text)
+expected_module = "github.com/theory-cloud/" + "apptheory"
+if version_major >= 2:
+    expected_module += f"/v{version_major}"
+if module != expected_module:
+    raise SystemExit(
+        f"scaffold: FAIL ({project}/go.mod module {module} does not match version major {version_major})"
+    )
+for source in project.rglob("*.go"):
+    text = source.read_text()
+    for imported_module in re.findall(
+        r'"(github\.com/theory-cloud/apptheory(?:/v[2-9][0-9]*)?)/', text
+    ):
+        if imported_module != expected_module:
+            raise SystemExit(
+                f"scaffold: FAIL ({source} imports {imported_module}, expected {expected_module})"
+            )
+print(f"scaffold: valid Go pin {module} {version}")
+PY
+}
+
 synth_project() {
   local dir="$1"
   (cd "${dir}" && npx cdk synth --quiet --no-notices --no-version-reporting -o cdk.out >/dev/null)
 }
+
+# Default Go pin must remain valid while VERSION and the staged module major
+# temporarily differ during a major-version migration.
+default_go_dir="${work_root}/hello-go-default"
+go run ./cmd/apptheory-init --lang=go "${default_go_dir}" >/dev/null
+assert_release_pins "${default_go_dir}"
+assert_go_module_pin "${default_go_dir}"
 
 # Go scaffold.
 go_dir="${work_root}/hello-go"
@@ -84,7 +129,7 @@ go run ./cmd/apptheory-init --lang=go --version="${go_version}" "${go_dir}" >/de
 assert_release_pins "${go_dir}" "${go_version}"
 (
   cd "${go_dir}"
-  go mod edit -replace github.com/theory-cloud/apptheory/v2="${repo_root}"
+  go mod edit -replace "${root_module}=${repo_root}"
   go mod tidy
   go test ./...
   patch_package_json package.json

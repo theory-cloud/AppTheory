@@ -24,14 +24,14 @@ func TestScaffoldTypeScriptProject(t *testing.T) {
 	}
 }
 
-func TestScaffoldGoProjectUsesV2Module(t *testing.T) {
+func TestScaffoldGoProjectDerivesModuleMajorFromVersion(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "hello-go")
-	if err := run([]string{"--lang=go", "--version=2.0.0-rc", target}); err != nil {
+	if err := run([]string{"--lang=go", "--version=3.0.0-rc", target}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	goMod := readFile(t, filepath.Join(target, "go.mod"))
-	if !strings.Contains(goMod, "require github.com/theory-cloud/apptheory/v2 v2.0.0-rc") {
-		t.Fatalf("go.mod does not pin the AppTheory v2 module: %s", goMod)
+	if !strings.Contains(goMod, "require github.com/theory-cloud/apptheory/v3 v3.0.0-rc") {
+		t.Fatalf("go.mod does not pin the AppTheory module matching the requested version: %s", goMod)
 	}
 	legacyModule := "github.com/theory-cloud/" + "apptheory v"
 	if strings.Contains(goMod, legacyModule) {

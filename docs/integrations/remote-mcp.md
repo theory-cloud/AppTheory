@@ -28,8 +28,8 @@ import (
   "context"
   "encoding/json"
 
-  apptheory "github.com/theory-cloud/apptheory/v2/runtime"
-  "github.com/theory-cloud/apptheory/v2/runtime/mcp"
+  apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+  "github.com/theory-cloud/apptheory/v3/runtime/mcp"
 )
 
 func buildApp() *apptheory.App {

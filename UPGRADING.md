@@ -15,6 +15,19 @@ or deprecation posture must add or update a section here before the release is p
 
 ## v3.x line
 
+### Go module paths
+
+AppTheory v3 uses Go semantic import versioning. Replace the `/v2` suffix on every AppTheory runtime import with the
+canonical `github.com/theory-cloud/apptheory/v3` path, update the root module requirement to the pinned v3 release tag,
+and run `go mod tidy`. Do not retain both AppTheory major paths in one
+application: packages from `/v2` and `/v3` have distinct Go type identities even where their APIs are otherwise
+unchanged.
+
+The generated CDK Go bindings move in the same release transaction. Replace the bindings' `/v2` suffix with
+`github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3`, pin the matching `v3.x` tag, and run `go mod tidy` in the
+CDK application's module. Runtime and CDK module tags continue to target the same immutable release commit; do not mix
+major lines or substitute registry-published artifacts.
+
 ### TableTheory v3 dependency floor
 
 The next AppTheory major line adopts TableTheory v3.0.0 in all three runtimes. This changes the Go type identity exposed
