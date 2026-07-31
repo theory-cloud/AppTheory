@@ -119,15 +119,17 @@ passed `npm audit` with zero vulnerabilities. The removal rationale was:
 - `yaml`: the TableTheory release asset now resolves `yaml@2.9.0`; AppTheory should not override TableTheory's
   transitive dependency unless a current advisory or contract gate requires it.
 
-AWS CDK `2.262.2` currently bundles `brace-expansion@5.0.7` inside its published tarball. That copy is affected by
-`GHSA-mh99-v99m-4gvg`; `GHSA-3jxr-9vmj-r5cp` is resolved at 5.0.7. `npm audit fix` cannot replace a bundled dependency.
-AppTheory therefore carries a visible, exact-match exception in its CDK npm-audit and GovTheory OSV gates through
-**2026-08-05**. The exception applies only to the fixed-input CDK synthesis toolchain, not shipped Lambda assets, and
-fails closed if the advisory, package path, AWS CDK version, bundled graph, or expiry changes. Remove it as soon as AWS
-CDK bundles `brace-expansion>=5.0.8`.
+AWS CDK `2.263.0` bundles patched `brace-expansion@5.0.8` inside its published tarball, resolving
+`GHSA-mh99-v99m-4gvg` without a local override. The CDK npm-audit and GovTheory OSV gates verify the exact bundled graph
+and require empty scanner reports; any AWS CDK, minimatch, brace-expansion, package-path, or finding drift fails closed.
 
-The TypeScript lint graph still requires `minimatch@3.1.4 -> brace-expansion@1.1.16`; `GHSA-mh99-v99m-4gvg` has no
-patched 1.x release, and forcing the ESM/object-exporting 5.x package into minimatch 3 breaks the linter. AppTheory
-therefore carries one separate, exact, development-only SEC-2 exception for that path through **2026-08-05**. The
-independently resolvable minimatch 10 path is pinned by the lockfile to fixed `brace-expansion@5.0.8`. Any lint-parent,
-minimatch, package, advisory, path, or expiry drift fails closed.
+The TypeScript lint graph still requires `minimatch@3.1.4`, but its compatible `brace-expansion` range now resolves to
+patched `brace-expansion@1.1.17`, the first fixed 1.x release for `GHSA-mh99-v99m-4gvg`. The independently resolvable
+minimatch 10 path remains pinned by the lockfile to fixed `brace-expansion@5.0.8`. SEC-2 verifies both exact paths and
+requires an empty OSV report; any lint-parent, minimatch, package, advisory, or path drift fails closed.
+
+The `ts/` SEC-2 gate's deterministic result currently depends on OSV serving the advisory's multi-range record, which
+identifies `1.1.17` as fixed. A stale single-range record (`introduced: 0`, `fixed: 5.0.8`) is a known flake vector: it
+misclassifies `brace-expansion@1.1.17`, so a clean tree fails closed with `unexpected vulnerability
+GHSA-mh99-v99m-4gvg in brace-expansion@1.1.17`. The AWS CDK gate is variant-independent because bundled `5.0.8` is
+fixed in both record variants.
