@@ -139,7 +139,10 @@ if (
 }
 
 const findings = [];
-for (const result of report.results ?? []) {
+if (!Array.isArray(report.results)) {
+  fail("OSV report is missing its results array");
+}
+for (const result of report.results) {
   for (const pkg of result.packages ?? []) {
     for (const vuln of pkg.vulnerabilities ?? []) {
       const packageInfo = pkg?.package ?? {};

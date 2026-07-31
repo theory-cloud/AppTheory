@@ -127,3 +127,9 @@ The TypeScript lint graph still requires `minimatch@3.1.4`, but its compatible `
 patched `brace-expansion@1.1.17`, the first fixed 1.x release for `GHSA-mh99-v99m-4gvg`. The independently resolvable
 minimatch 10 path remains pinned by the lockfile to fixed `brace-expansion@5.0.8`. SEC-2 verifies both exact paths and
 requires an empty OSV report; any lint-parent, minimatch, package, advisory, or path drift fails closed.
+
+The `ts/` SEC-2 gate's deterministic result currently depends on OSV serving the advisory's multi-range record, which
+identifies `1.1.17` as fixed. A stale single-range record (`introduced: 0`, `fixed: 5.0.8`) is a known flake vector: it
+misclassifies `brace-expansion@1.1.17`, so a clean tree fails closed with `unexpected vulnerability
+GHSA-mh99-v99m-4gvg in brace-expansion@1.1.17`. The AWS CDK gate is variant-independent because bundled `5.0.8` is
+fixed in both record variants.

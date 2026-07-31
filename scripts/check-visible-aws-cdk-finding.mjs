@@ -66,8 +66,10 @@ const expectation = {
 };
 
 const packages = lock.packages ?? {};
-const bracePaths = Object.keys(packages).filter((path) =>
-  path.endsWith(`/node_modules/${expectation.packageName}`),
+const bracePaths = Object.keys(packages).filter(
+  (path) =>
+    path === `node_modules/${expectation.packageName}` ||
+    path.endsWith(`/node_modules/${expectation.packageName}`),
 );
 const cdkPackage = packages["node_modules/aws-cdk-lib"];
 const minimatchPackage = packages["node_modules/aws-cdk-lib/node_modules/minimatch"];

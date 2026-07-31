@@ -20,16 +20,14 @@ Notes:
 - `SEC-3` (supply-chain) may materialize Node dependencies with scripts disabled and scan `node_modules` lifecycle hooks,
   plus lightweight scans of `go.mod` and Python dependency files. Use the allowlist only with justification:
   `gov-infra/planning/apptheory-supply-chain-allowlist.txt`.
-- `SEC-2` vulnerability exceptions are not a general allowlist. The current AWS CDK `2.262.2` tarball bundles
-  `brace-expansion@5.0.7`, which cannot be replaced by npm and is affected by `GHSA-mh99-v99m-4gvg`. The verifier
-  keeps that build-tool-only finding visible through a narrow exception that expires on **2026-08-05**; any advisory,
-  package graph, version, path, or expiry drift fails closed.
-  Remove the exception as soon as AWS CDK bundles `brace-expansion>=5.0.8`.
-- The TypeScript lint graph still requires `minimatch@3.1.4 -> brace-expansion@1.1.16`; the new advisory has no patched
-  1.x release, and forcing the ESM/object-exporting 5.x package into minimatch 3 breaks the linter. SEC-2 therefore
-  records one separate, exact, development-only exception for `GHSA-mh99-v99m-4gvg` on that path, also expiring on
-  **2026-08-05**. The independently resolvable minimatch 10 path is pinned by the lockfile to fixed
-  `brace-expansion@5.0.8`. Any lint-parent, minimatch, package, advisory, path, or expiry drift fails closed.
+- The former `SEC-2` exceptions for `GHSA-mh99-v99m-4gvg` are retired. The patched graph uses
+  `brace-expansion@1.1.17` in `ts/` and AWS CDK `2.263.0`, which bundles `brace-expansion@5.0.8`, in `cdk/` and the CDK
+  examples. The checkers now require both zero scanner findings and the exact patched graph; any package, parent,
+  version, path, or finding drift fails closed.
+- The `ts/` SEC-2 gate currently depends on OSV serving the advisory's multi-range record, which identifies `1.1.17` as
+  fixed. A stale single-range record (`introduced: 0`, `fixed: 5.0.8`) is a known flake vector: it misclassifies
+  `brace-expansion@1.1.17` and fails closed with `unexpected vulnerability GHSA-mh99-v99m-4gvg in
+  brace-expansion@1.1.17`. The AWS CDK graph is unaffected because its bundled `5.0.8` is fixed in both record variants.
 
 ## What’s In Here
 
