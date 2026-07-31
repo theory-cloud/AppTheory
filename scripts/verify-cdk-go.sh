@@ -72,7 +72,7 @@ else
   go_mod="${canonical_go_mod}"
   expected_module="${legacy_module}/apptheorycdk/v${go_module_major}"
   if [[ -f "${legacy_go_mod}" || -f "cdk-go/go.sum" ]]; then
-    echo "cdk-go: FAIL (v${cdk_major} layout must not retain legacy cdk-go/go.mod or cdk-go/go.sum)" >&2
+    echo "cdk-go: FAIL (v${go_module_major} layout must not retain legacy cdk-go/go.mod or cdk-go/go.sum)" >&2
     exit 1
   fi
 fi

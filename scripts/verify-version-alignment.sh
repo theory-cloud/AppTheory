@@ -349,20 +349,11 @@ PY
 
 legacy_cdk_go_mod="cdk-go/go.mod"
 canonical_cdk_go_mod="cdk-go/apptheorycdk/go.mod"
-if (( expected_module_major == 1 )); then
-  expected_cdk_go_mod="${legacy_cdk_go_mod}"
-  expected_cdk_go_module="github.com/theory-cloud/apptheory/cdk-go"
-  if [[ -f "${canonical_cdk_go_mod}" ]]; then
-    echo "version-alignment: FAIL (VERSION ${expected_version} must not use ${canonical_cdk_go_mod})"
-    exit 1
-  fi
-else
-  expected_cdk_go_mod="${canonical_cdk_go_mod}"
-  expected_cdk_go_module="github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v${expected_module_major}"
-  if [[ -f "${legacy_cdk_go_mod}" || -f "cdk-go/go.sum" ]]; then
-    echo "version-alignment: FAIL (VERSION ${expected_version} must not retain legacy cdk-go/go.mod or cdk-go/go.sum)"
-    exit 1
-  fi
+expected_cdk_go_mod="${canonical_cdk_go_mod}"
+expected_cdk_go_module="github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v${expected_module_major}"
+if [[ -f "${legacy_cdk_go_mod}" || -f "cdk-go/go.sum" ]]; then
+  echo "version-alignment: FAIL (VERSION ${expected_version} must not retain legacy cdk-go/go.mod or cdk-go/go.sum)"
+  exit 1
 fi
 
 if [[ ! -f "${expected_cdk_go_mod}" ]]; then
