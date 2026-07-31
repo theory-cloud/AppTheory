@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
-	tableerrors "github.com/theory-cloud/tabletheory/v2/pkg/errors"
-	tablemocks "github.com/theory-cloud/tabletheory/v2/pkg/mocks"
+	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/v3/pkg/errors"
+	tablemocks "github.com/theory-cloud/tabletheory/v3/pkg/mocks"
 )
 
 func resetEventBusTableNameOverride(t *testing.T) {

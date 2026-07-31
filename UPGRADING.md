@@ -13,6 +13,33 @@ for `CHANGELOG.md`:
 Every minor release line that changes runtime behavior, deployment constructs, generated artifacts, dependency floors,
 or deprecation posture must add or update a section here before the release is promoted.
 
+## v3.x line
+
+### TableTheory v3 dependency floor
+
+The next AppTheory major line adopts TableTheory v3.0.0 in all three runtimes. This changes the Go type identity exposed
+by AppTheory constructors and adapters that accept TableTheory interfaces: Go consumers must replace the previous
+TableTheory `/v2` import path with `github.com/theory-cloud/tabletheory/v3` and require v3.0.0 or later before upgrading
+AppTheory. Do not keep both TableTheory major paths in one application; their otherwise similar interfaces are distinct
+Go types.
+
+TableTheory v3 also adopts DMS v0.2 explicit-empty update semantics. An explicitly selected empty field marked
+`omitempty` / `omit_empty` is removed instead of stored, while an unselected empty field remains unchanged. Audit
+conditions, sparse indexes, projections, streams, and tests that depend on the presence of empty attributes. Follow the
+canonical [TableTheory v3 migration guide](https://github.com/theory-cloud/TableTheory/blob/v3.0.0/docs/migration/v3.md)
+for the complete persisted-shape and transaction changes.
+
+AppTheory's TypeScript and Python release metadata continues to install TableTheory only from immutable GitHub Release
+assets. The v3 dependency assets pinned by this line are:
+
+- TypeScript: `theory-cloud-tabletheory-ts-3.0.0.tgz`, verified with SHA-512
+  `OY3zGyKs9gtrQ+DbwGXIqmoNO+U+lBAbJ35fv9aXRDxdMNiaOKlcGAAREhViaWXUqwbTDh0f7L4y5c/q4EP2tA==`.
+- Python: `tabletheory_py-3.0.0-py3-none-any.whl`, verified with SHA-256
+  `e39524f703cc653c769b53671a4d33089382d013330b2e092d45c197a6e43053`.
+
+Use those pinned assets through AppTheory's package metadata; do not substitute registry-published packages or mutable
+URLs.
+
 ## v1.15.x line
 
 The v1.15 line contains the Strengthening Program work that made AppTheory stricter without creating a v1 breaking

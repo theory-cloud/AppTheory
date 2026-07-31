@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	tableerrors "github.com/theory-cloud/tabletheory/v2/pkg/errors"
-	tablemocks "github.com/theory-cloud/tabletheory/v2/pkg/mocks"
+	tableerrors "github.com/theory-cloud/tabletheory/v3/pkg/errors"
+	tablemocks "github.com/theory-cloud/tabletheory/v3/pkg/mocks"
 )
 
 func TestErrorStringAndUnwrap(t *testing.T) {
