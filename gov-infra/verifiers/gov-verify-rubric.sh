@@ -791,7 +791,10 @@ osv_scan_lockfile() {
   set -e
   rm -f "${tmp_report}"
 
-  if [[ "${scan_status}" -eq 0 && "${filter_status}" -eq 0 ]]; then
+  # The TypeScript checker now verifies a patched graph and therefore expects
+  # an empty scanner report. Only the AWS CDK path remains an exception whose
+  # checker must never accept an empty report.
+  if [[ "${exception_kind}" == "aws-cdk" && "${scan_status}" -eq 0 && "${filter_status}" -eq 0 ]]; then
     echo "FAIL: vulnerability exception checker accepted an empty scanner report" >&2
     return 1
   fi

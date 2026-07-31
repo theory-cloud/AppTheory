@@ -126,8 +126,7 @@ AppTheory therefore carries a visible, exact-match exception in its CDK npm-audi
 fails closed if the advisory, package path, AWS CDK version, bundled graph, or expiry changes. Remove it as soon as AWS
 CDK bundles `brace-expansion>=5.0.8`.
 
-The TypeScript lint graph still requires `minimatch@3.1.4 -> brace-expansion@1.1.16`; `GHSA-mh99-v99m-4gvg` has no
-patched 1.x release, and forcing the ESM/object-exporting 5.x package into minimatch 3 breaks the linter. AppTheory
-therefore carries one separate, exact, development-only SEC-2 exception for that path through **2026-08-05**. The
-independently resolvable minimatch 10 path is pinned by the lockfile to fixed `brace-expansion@5.0.8`. Any lint-parent,
-minimatch, package, advisory, path, or expiry drift fails closed.
+The TypeScript lint graph still requires `minimatch@3.1.4`, but its compatible `brace-expansion` range now resolves to
+patched `brace-expansion@1.1.17`, the first fixed 1.x release for `GHSA-mh99-v99m-4gvg`. The independently resolvable
+minimatch 10 path remains pinned by the lockfile to fixed `brace-expansion@5.0.8`. SEC-2 verifies both exact paths and
+requires an empty OSV report; any lint-parent, minimatch, package, advisory, or path drift fails closed.

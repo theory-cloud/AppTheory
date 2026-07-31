@@ -42,9 +42,10 @@ const exception = {
     {
       advisoryId: "GHSA-mh99-v99m-4gvg",
       advisoryUrl: "https://github.com/advisories/GHSA-mh99-v99m-4gvg",
-      affectedRange: "<=5.0.7",
+      affectedRange: ">=4.0.0 <5.0.8",
       alias: "CVE-2026-14257",
-      fixedVersions: ["5.0.8"],
+      fixedVersions: ["1.1.17", "2.1.3", "3.0.3", "5.0.8"],
+      npmRange: "4.0.0 - 5.0.7",
     },
   ],
   cdkVersion: "2.262.2",
@@ -126,7 +127,7 @@ function matchesNpmFinding(vuln) {
     vuln.name === exception.packageName &&
     vuln.severity === "high" &&
     vuln.isDirect === false &&
-    vuln.range === "<=5.0.7" &&
+    vuln.range === exception.advisories[0].npmRange &&
     Array.isArray(vuln.nodes) &&
     sameStringSet(vuln.nodes, [exception.packagePath]) &&
     Array.isArray(vuln.effects) &&
