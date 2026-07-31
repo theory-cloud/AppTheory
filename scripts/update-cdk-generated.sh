@@ -83,6 +83,47 @@ legacy_module="github.com/theory-cloud/apptheory/cdk-go"
 generated_module_base="${legacy_module}/apptheorycdk"
 destination="cdk-go/apptheorycdk"
 
+root_module="$(awk '/^module[[:space:]]+/{print $2; exit}' go.mod || true)"
+if [[ "${root_module}" =~ ^github\.com/theory-cloud/apptheory/v([2-9][0-9]*)$ ]]; then
+  go_module_major="${BASH_REMATCH[1]}"
+elif [[ "${root_module}" == "github.com/theory-cloud/apptheory" ]]; then
+  go_module_major=1
+else
+  echo "update-cdk-generated: FAIL (unsupported root Go module '${root_module}')" >&2
+  exit 1
+fi
+
+if (( cdk_major == go_module_major )); then
+  go_module_state="released-major"
+elif (( cdk_major + 1 == go_module_major && cdk_major >= 2 )); then
+  # Release Please owns the CDK package version. While staging prepares the
+  # next semantic Go import path, normalize jsii's current-major output to the
+  # already-migrated root module major.
+  go_module_state="staged-next-major"
+  python3 - "${generated_root}" "${generated_module_base}/v${cdk_major}" \
+    "${generated_module_base}/v${go_module_major}" <<'PY'
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+old = sys.argv[2].encode()
+new = sys.argv[3].encode()
+for path in root.rglob("*"):
+    if not path.is_file() or (path.suffix != ".go" and path.name not in {"go.mod", "go.sum", "README.md"}):
+        continue
+    data = path.read_bytes()
+    updated = data.replace(old, new)
+    if updated != data:
+        path.write_bytes(updated)
+PY
+  generated_module="$(awk '/^module[[:space:]]+/{print $2; exit}' "${generated_root}/go.mod")"
+else
+  echo \
+    "update-cdk-generated: FAIL (CDK major ${cdk_major} is incompatible with Go module major ${go_module_major})" \
+    >&2
+  exit 1
+fi
+
 for handwritten_test in bindings_test.go generated_sync_test.go; do
   cp "${destination}/${handwritten_test}" "${tmp_dir}/${handwritten_test}"
 done
@@ -111,8 +152,10 @@ if [[ "${generated_module}" == "${generated_module_base}" ]]; then
   module_root="cdk-go"
 elif [[ "${generated_module}" =~ ^github\.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v([2-9][0-9]*)$ ]]; then
   generated_major="${BASH_REMATCH[1]}"
-  if (( generated_major != cdk_major )); then
-    echo "update-cdk-generated: FAIL (CDK major ${cdk_major} generated module major ${generated_major})" >&2
+  if (( generated_major != go_module_major )); then
+    echo \
+      "update-cdk-generated: FAIL (Go module major ${go_module_major} generated CDK module major ${generated_major})" \
+      >&2
     exit 1
   fi
   expected_module="${generated_module_base}/v${generated_major}"
@@ -143,4 +186,4 @@ done
 find "${destination}" -type f -name '*.go' -print0 | xargs -0 gofmt -w
 (cd "${module_root}" && go mod tidy >/dev/null)
 
-echo "update-cdk-generated: PASS (${generated_module})"
+echo "update-cdk-generated: PASS (${generated_module}; ${go_module_state})"

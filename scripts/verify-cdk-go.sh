@@ -40,7 +40,26 @@ legacy_go_mod="cdk-go/go.mod"
 canonical_go_mod="cdk-go/apptheorycdk/go.mod"
 legacy_module="github.com/theory-cloud/apptheory/cdk-go"
 
-if (( cdk_major == 1 )); then
+root_module="$(awk '/^module[[:space:]]+/{print $2; exit}' go.mod || true)"
+if [[ "${root_module}" =~ ^github\.com/theory-cloud/apptheory/v([2-9][0-9]*)$ ]]; then
+  go_module_major="${BASH_REMATCH[1]}"
+elif [[ "${root_module}" == "github.com/theory-cloud/apptheory" ]]; then
+  go_module_major=1
+else
+  echo "cdk-go: FAIL (unsupported root Go module '${root_module}')" >&2
+  exit 1
+fi
+
+if (( cdk_major == go_module_major )); then
+  go_module_state="released-major"
+elif (( cdk_major + 1 == go_module_major )); then
+  go_module_state="staged-next-major"
+else
+  echo "cdk-go: FAIL (CDK major ${cdk_major} is incompatible with Go module major ${go_module_major})" >&2
+  exit 1
+fi
+
+if (( go_module_major == 1 )); then
   module_root="cdk-go"
   go_mod="${legacy_go_mod}"
   expected_module="${legacy_module}"
@@ -51,7 +70,7 @@ if (( cdk_major == 1 )); then
 else
   module_root="cdk-go/apptheorycdk"
   go_mod="${canonical_go_mod}"
-  expected_module="${legacy_module}/apptheorycdk/v${cdk_major}"
+  expected_module="${legacy_module}/apptheorycdk/v${go_module_major}"
   if [[ -f "${legacy_go_mod}" || -f "cdk-go/go.sum" ]]; then
     echo "cdk-go: FAIL (v${cdk_major} layout must not retain legacy cdk-go/go.mod or cdk-go/go.sum)" >&2
     exit 1
@@ -78,4 +97,4 @@ done
 
 (cd "${module_root}" && go test ./... >/dev/null)
 
-echo "cdk-go: PASS (${observed_module})"
+echo "cdk-go: PASS (${observed_module}; ${go_module_state})"

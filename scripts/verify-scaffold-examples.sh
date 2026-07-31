@@ -84,7 +84,7 @@ go run ./cmd/apptheory-init --lang=go --version="${go_version}" "${go_dir}" >/de
 assert_release_pins "${go_dir}" "${go_version}"
 (
   cd "${go_dir}"
-  go mod edit -replace github.com/theory-cloud/apptheory/v2="${repo_root}"
+  go mod edit -replace github.com/theory-cloud/apptheory/v3="${repo_root}"
   go mod tidy
   go test ./...
   patch_package_json package.json

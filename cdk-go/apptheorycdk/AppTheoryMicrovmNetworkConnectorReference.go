@@ -2,10 +2,10 @@ package apptheorycdk
 
 import (
 	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
-	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v2/jsii"
+	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3/jsii"
 
 	"github.com/aws/constructs-go/constructs/v10"
-	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v2/internal"
+	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3/internal"
 )
 
 // AppTheory CDK reference to an existing or AWS-managed Lambda MicroVM network connector.

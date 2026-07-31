@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/theory-cloud/apptheory/v2/pkg/observability"
-	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
-	"github.com/theory-cloud/apptheory/v2/testkit"
+	"github.com/theory-cloud/apptheory/v3/pkg/observability"
+	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	"github.com/theory-cloud/apptheory/v3/testkit"
 )
 
 func runFixtureP2(f Fixture) error {

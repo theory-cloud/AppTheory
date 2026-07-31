@@ -3,8 +3,8 @@ package logger
 import (
 	"sync"
 
-	"github.com/theory-cloud/apptheory/v2/pkg/observability"
-	"github.com/theory-cloud/apptheory/v2/pkg/sanitization"
+	"github.com/theory-cloud/apptheory/v3/pkg/observability"
+	"github.com/theory-cloud/apptheory/v3/pkg/sanitization"
 )
 
 var (

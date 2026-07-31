@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Purpose: prove a synthetic AppTheory 2.0 release produces the canonical jsii Go module and sync plan.
+# Purpose: prove the staged AppTheory 3.0 Go module survives jsii release generation and artifact sync.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -11,8 +11,8 @@ for cmd in go npm npx python3 rsync; do
   fi
 done
 
-synthetic_version="2.0.0-rc"
-canonical_module="github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v2"
+synthetic_version="3.0.0-rc"
+canonical_module="github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3"
 tmp_dir="$(mktemp -d)"
 cleanup() {
   rm -rf "${tmp_dir}"
@@ -29,7 +29,7 @@ rsync -a \
   cdk/ \
   "${fixture_root}/cdk/"
 rsync -a cdk-go/ "${fixture_root}/cdk-go/"
-cp VERSION "${fixture_root}/VERSION"
+cp VERSION go.mod "${fixture_root}/"
 cp \
   scripts/render-release-artifact-sync-plan.py \
   scripts/update-cdk-generated.sh \
@@ -70,32 +70,16 @@ cp "${fixture_root}/cdk/.jsii" "${baseline_root}/cdk/.jsii"
 cp -a "${fixture_root}/cdk/lib" "${baseline_root}/cdk/lib"
 cp -a "${fixture_root}/cdk-go/." "${baseline_root}/cdk-go/"
 
-# When the checked-in bindings are already in the canonical next-major layout
-# (for example on a release-please branch after generated artifact sync), the
-# Release Please-authored baseline no longer matches the checkout. Reconstruct
-# the legacy baseline so the sync plan still has the module moves to prove.
-if [[ -f "${baseline_root}/cdk-go/apptheorycdk/go.mod" && ! -f "${baseline_root}/cdk-go/go.mod" ]]; then
-  sed \
-    -e 's|^module github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v[0-9]\+$|module github.com/theory-cloud/apptheory/cdk-go|' \
-    "${baseline_root}/cdk-go/apptheorycdk/go.mod" >"${baseline_root}/cdk-go/go.mod"
-  if [[ -f "${baseline_root}/cdk-go/apptheorycdk/go.sum" ]]; then
-    cp "${baseline_root}/cdk-go/apptheorycdk/go.sum" "${baseline_root}/cdk-go/go.sum"
-  fi
-  rm -f \
-    "${baseline_root}/cdk-go/apptheorycdk/go.mod" \
-    "${baseline_root}/cdk-go/apptheorycdk/go.sum"
-fi
-
 (cd "${fixture_root}" && bash scripts/update-cdk-generated.sh >/dev/null)
 
 if [[ -e "${fixture_root}/cdk-go/go.mod" || -e "${fixture_root}/cdk-go/go.sum" ]]; then
-  echo "cdk-go-major-version: FAIL (synthetic v2 generation retained legacy parent module files)" >&2
+  echo "cdk-go-major-version: FAIL (synthetic v3 generation retained legacy parent module files)" >&2
   exit 1
 fi
 
 canonical_go_mod="${fixture_root}/cdk-go/apptheorycdk/go.mod"
 if [[ ! -f "${canonical_go_mod}" ]]; then
-  echo "cdk-go-major-version: FAIL (synthetic v2 generation did not create nested go.mod)" >&2
+  echo "cdk-go-major-version: FAIL (synthetic v3 generation did not create nested go.mod)" >&2
   exit 1
 fi
 observed_module="$(awk '/^module[[:space:]]+/{print $2; exit}' "${canonical_go_mod}")"
@@ -119,7 +103,7 @@ if grep -R -F \
   "${fixture_root}/cdk-go/apptheorycdk" \
   --include='*.go' >/dev/null
 then
-  echo "cdk-go-major-version: FAIL (generated v2 bindings contain legacy internal imports)" >&2
+  echo "cdk-go-major-version: FAIL (generated v3 bindings contain legacy internal imports)" >&2
   exit 1
 fi
 if ! grep -R -F \
@@ -127,7 +111,7 @@ if ! grep -R -F \
   "${fixture_root}/cdk-go/apptheorycdk" \
   --include='*.go' >/dev/null
 then
-  echo "cdk-go-major-version: FAIL (generated v2 bindings do not use canonical internal imports)" >&2
+  echo "cdk-go-major-version: FAIL (generated v3 bindings do not use canonical internal imports)" >&2
   exit 1
 fi
 
@@ -160,25 +144,23 @@ additions = set(summary.get("additions", []))
 deletions = set(summary.get("deletions", []))
 
 required_additions = {
-    "cdk-go/apptheorycdk/go.mod",
-    "cdk-go/apptheorycdk/go.sum",
-}
-required_deletions = {
-    "cdk-go/go.mod",
-    "cdk-go/go.sum",
+    "cdk-go/apptheorycdk/jsii/jsii.go",
+    "cdk-go/apptheorycdk/jsii/theory-cloud-apptheory-cdk-3.0.0-rc.tgz",
 }
 if summary.get("additionCount", 0) <= 0:
     raise SystemExit("cdk-go-major-version: FAIL (synthetic GitHub artifact-sync plan is empty)")
 if not required_additions.issubset(additions):
     raise SystemExit(
-        "cdk-go-major-version: FAIL (artifact-sync plan is missing nested module additions: "
+        "cdk-go-major-version: FAIL (artifact-sync plan is missing v3 generated additions: "
         f"{sorted(required_additions - additions)})"
     )
-if not required_deletions.issubset(deletions):
+if not any(path.startswith("cdk-go/apptheorycdk/jsii/") and path.endswith(".tgz") for path in deletions):
     raise SystemExit(
-        "cdk-go-major-version: FAIL (artifact-sync plan is missing legacy module deletions: "
-        f"{sorted(required_deletions - deletions)})"
+        "cdk-go-major-version: FAIL (artifact-sync plan is missing the superseded jsii archive deletion)"
     )
+legacy_module_files = {"cdk-go/go.mod", "cdk-go/go.sum"}
+if legacy_module_files.intersection(additions | deletions):
+    raise SystemExit("cdk-go-major-version: FAIL (v3 artifact sync touched legacy parent module files)")
 
 file_changes = payload.get("variables", {}).get("input", {}).get("fileChanges", {})
 if len(file_changes.get("additions", [])) != summary["additionCount"]:

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/theory-cloud/apptheory/v2/pkg/streamer"
-	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+	"github.com/theory-cloud/apptheory/v3/pkg/streamer"
+	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 )
 
 func TestWebSocketEvent_DefaultsAndCloning(t *testing.T) {
