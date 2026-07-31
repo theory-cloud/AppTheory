@@ -17,7 +17,7 @@ import (
 
 	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
 	"github.com/theory-cloud/apptheory/v2/runtime/microvm"
-	"github.com/theory-cloud/tabletheory/v2"
+	"github.com/theory-cloud/tabletheory/v3"
 )
 
 const (
