@@ -42,10 +42,13 @@ conditions, sparse indexes, projections, streams, and tests that depend on the p
 canonical [TableTheory v3 migration guide](https://github.com/theory-cloud/TableTheory/blob/v3.0.1/docs/migration/v3.md)
 for the complete persisted-shape and transaction changes.
 
-TableTheory v3.0.1 also restores the legacy Go `Transaction.Update(model)` lifecycle contract: it owns
-`created_at` / `updated_at`, excludes `version` / `created_at` from implicit field selection, and returns
-`no non-key fields to update` when a model contains only keys and library-managed fields. Prefer the explicit
-transaction builder update surface when the updated field set is known.
+TableTheory v3.0.1 also restores the legacy Go `Transaction.Update(model)` lifecycle contract: it excludes
+`version` / `created_at` / `updated_at` from implicit caller-owned field selection while still applying managed
+`version` and `updated_at` assignments when their model fields qualify. Unlike v3.0.0, a caller-set non-empty
+`updated_at` is silently replaced with the library timestamp on this legacy implicit surface, which affects
+deterministic-timestamp tests and backfills. The update returns `no non-key fields to update` only when it yields zero
+assignments: the model has no `updated_at` field, no non-zero `version` field, and no caller-owned selected field.
+Prefer the explicit transaction builder update surface when the updated field set is known.
 
 AppTheory's TypeScript and Python release metadata continues to install TableTheory only from immutable GitHub Release
 assets. The v3 dependency assets pinned by this line are:
