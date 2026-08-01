@@ -30,25 +30,30 @@ major lines or substitute registry-published artifacts.
 
 ### TableTheory v3 dependency floor
 
-The next AppTheory major line adopts TableTheory v3.0.0 in all three runtimes. This changes the Go type identity exposed
+The next AppTheory major line adopts TableTheory v3.0.1 in all three runtimes. This changes the Go type identity exposed
 by AppTheory constructors and adapters that accept TableTheory interfaces: Go consumers must replace the previous
-TableTheory `/v2` import path with `github.com/theory-cloud/tabletheory/v3` and require v3.0.0 or later before upgrading
+TableTheory `/v2` import path with `github.com/theory-cloud/tabletheory/v3` and require v3.0.1 or later before upgrading
 AppTheory. Do not keep both TableTheory major paths in one application; their otherwise similar interfaces are distinct
 Go types.
 
 TableTheory v3 also adopts DMS v0.2 explicit-empty update semantics. An explicitly selected empty field marked
 `omitempty` / `omit_empty` is removed instead of stored, while an unselected empty field remains unchanged. Audit
 conditions, sparse indexes, projections, streams, and tests that depend on the presence of empty attributes. Follow the
-canonical [TableTheory v3 migration guide](https://github.com/theory-cloud/TableTheory/blob/v3.0.0/docs/migration/v3.md)
+canonical [TableTheory v3 migration guide](https://github.com/theory-cloud/TableTheory/blob/v3.0.1/docs/migration/v3.md)
 for the complete persisted-shape and transaction changes.
+
+TableTheory v3.0.1 also restores the legacy Go `Transaction.Update(model)` lifecycle contract: it owns
+`created_at` / `updated_at`, excludes `version` / `created_at` from implicit field selection, and returns
+`no non-key fields to update` when a model contains only keys and library-managed fields. Prefer the explicit
+transaction builder update surface when the updated field set is known.
 
 AppTheory's TypeScript and Python release metadata continues to install TableTheory only from immutable GitHub Release
 assets. The v3 dependency assets pinned by this line are:
 
-- TypeScript: `theory-cloud-tabletheory-ts-3.0.0.tgz`, verified with SHA-512
-  `OY3zGyKs9gtrQ+DbwGXIqmoNO+U+lBAbJ35fv9aXRDxdMNiaOKlcGAAREhViaWXUqwbTDh0f7L4y5c/q4EP2tA==`.
-- Python: `tabletheory_py-3.0.0-py3-none-any.whl`, verified with SHA-256
-  `e39524f703cc653c769b53671a4d33089382d013330b2e092d45c197a6e43053`.
+- TypeScript: `theory-cloud-tabletheory-ts-3.0.1.tgz`, verified with SHA-512
+  `cBKeWC9eZWJZPLgODZixDRfqkBvlb1atxiug3AUdX0V5WaVcA26oWKUL7/uywSgBscyYjVylkhHnkqrJIfRJgw==`.
+- Python: `tabletheory_py-3.0.1-py3-none-any.whl`, verified with SHA-256
+  `cc754fb16fd6798c60b05cb25ca689499c9f97a027b445629c90daff58c14d4d`.
 
 Use those pinned assets through AppTheory's package metadata; do not substitute registry-published packages or mutable
 URLs.
