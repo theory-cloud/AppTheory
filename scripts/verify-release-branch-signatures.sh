@@ -8,6 +8,12 @@ SIGNED_HISTORY_BASE="${SIGNED_HISTORY_BASE:-c723c42c71d9220f49702db965d4deffff61
 HISTORICAL_UNSIGNED_FIXTURE="${HISTORICAL_UNSIGNED_FIXTURE:-ae2468e0c27b02138ad25f3035afff17e253b8a1}"
 RELEASE_SIGNATURE_VERBOSE="${RELEASE_SIGNATURE_VERBOSE:-false}"
 
+declare -A GITHUB_VERIFICATION_CACHE_STATE=()
+declare -A GITHUB_VERIFICATION_CACHE_VERIFIED=()
+declare -A GITHUB_VERIFICATION_CACHE_REASON=()
+declare -A GITHUB_VERIFICATION_CACHE_SIGNER=()
+declare -A GITHUB_VERIFICATION_CACHE_KEY=()
+
 github_repo_name() {
   if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
     printf '%s\n' "${GITHUB_REPOSITORY}"
@@ -55,10 +61,37 @@ verify_commit_signature_status() {
       return 1
       ;;
     *)
-      local verification
-      if verification="$(github_commit_verification "${sha}")"; then
-        local verified reason gh_signer gh_key
-        IFS=$'\t' read -r verified reason gh_signer gh_key <<<"${verification}"
+      local cache_state="${GITHUB_VERIFICATION_CACHE_STATE[${sha}]-}"
+      if [[ -z "${cache_state}" ]]; then
+        local verification=""
+        local attempt
+        for attempt in 1 2 3; do
+          if verification="$(github_commit_verification "${sha}")"; then
+            local verified reason gh_signer gh_key
+            IFS=$'\t' read -r verified reason gh_signer gh_key <<<"${verification}"
+            GITHUB_VERIFICATION_CACHE_STATE["${sha}"]="available"
+            GITHUB_VERIFICATION_CACHE_VERIFIED["${sha}"]="${verified}"
+            GITHUB_VERIFICATION_CACHE_REASON["${sha}"]="${reason}"
+            GITHUB_VERIFICATION_CACHE_SIGNER["${sha}"]="${gh_signer}"
+            GITHUB_VERIFICATION_CACHE_KEY["${sha}"]="${gh_key}"
+            cache_state="available"
+            break
+          fi
+          if (( attempt < 3 )); then
+            sleep "$((attempt * 5))"
+          fi
+        done
+        if [[ -z "${cache_state}" ]]; then
+          GITHUB_VERIFICATION_CACHE_STATE["${sha}"]="unavailable"
+          cache_state="unavailable"
+        fi
+      fi
+
+      if [[ "${cache_state}" == "available" ]]; then
+        local verified="${GITHUB_VERIFICATION_CACHE_VERIFIED[${sha}]}"
+        local reason="${GITHUB_VERIFICATION_CACHE_REASON[${sha}]}"
+        local gh_signer="${GITHUB_VERIFICATION_CACHE_SIGNER[${sha}]}"
+        local gh_key="${GITHUB_VERIFICATION_CACHE_KEY[${sha}]}"
         if [[ "${verified}" == "true" && "${reason}" == "valid" ]]; then
           echo "release-signatures: PASS ${label} ${sha} github-verified reason=${reason} signer=${gh_signer:-unknown} key=${gh_key:-unknown} local_status=${status} subject=${subject}"
           return 0
@@ -273,6 +306,44 @@ run_self_test() {
   else
     echo "release-signatures self-test: PASS GitHub verified-valid fallback for local_status=N"
     echo "${github_fallback_output}"
+  fi
+
+  local dedupe_count_file
+  dedupe_count_file="$(mktemp)"
+  local dedupe_output
+  local dedupe_status=0
+  dedupe_output="$(
+    github_commit_verification() {
+      printf '%s\n' "$1" >>"${dedupe_count_file}"
+      printf 'true\tvalid\tgithub-self-test\tself-test-key\n'
+    }
+    git() {
+      if [[ "$1" == "rev-parse" ]]; then
+        return 0
+      fi
+      if [[ "$1" == "log" ]]; then
+        printf '0123456789abcdef0123456789abcdef01234567\x1fN\x1f\x1f\x1fself-test simulated duplicate commit\n'
+        return 0
+      fi
+      command git "$@"
+    }
+    scan_range "self-test:dedupe-range-one" "dedupe-base-one..dedupe-head-one"
+    scan_range "self-test:dedupe-range-two" "dedupe-base-two..dedupe-head-two"
+  )" || dedupe_status=$?
+  local dedupe_calls
+  dedupe_calls="$(wc -l <"${dedupe_count_file}")"
+  rm -f "${dedupe_count_file}"
+  if [[ "${dedupe_status}" -ne 0 ]]; then
+    echo "release-signatures self-test: FAIL (cross-range GitHub verification dedupe scan failed)" >&2
+    echo "${dedupe_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${dedupe_calls}" -ne 1 ]]; then
+    echo "release-signatures self-test: FAIL (cross-range GitHub verification dedupe called helper ${dedupe_calls} times, expected 1)" >&2
+    echo "${dedupe_output}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS cross-range GitHub verification dedupe"
+    echo "${dedupe_output}"
   fi
 
   if (( failures > 0 )); then
