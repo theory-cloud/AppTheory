@@ -133,31 +133,60 @@ summary_file="${tmp_dir}/summary.json"
     --baseline-root "${baseline_root}"
 )
 
-python3 - "${summary_file}" "${payload_file}" <<'PY'
+python3 - \
+  "${summary_file}" \
+  "${payload_file}" \
+  "${baseline_root}" \
+  "${fixture_root}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 payload = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+baseline_root = Path(sys.argv[3])
+generated_root = Path(sys.argv[4])
 additions = set(summary.get("additions", []))
 deletions = set(summary.get("deletions", []))
 
-required_additions = {
+required_generated = {
     "cdk-go/apptheorycdk/jsii/jsii.go",
     "cdk-go/apptheorycdk/jsii/theory-cloud-apptheory-cdk-3.0.0-rc.tgz",
 }
-if summary.get("additionCount", 0) <= 0:
-    raise SystemExit("cdk-go-major-version: FAIL (synthetic GitHub artifact-sync plan is empty)")
-if not required_additions.issubset(additions):
-    raise SystemExit(
-        "cdk-go-major-version: FAIL (artifact-sync plan is missing v3 generated additions: "
-        f"{sorted(required_additions - additions)})"
-    )
-if not any(path.startswith("cdk-go/apptheorycdk/jsii/") and path.endswith(".tgz") for path in deletions):
-    raise SystemExit(
-        "cdk-go-major-version: FAIL (artifact-sync plan is missing the superseded jsii archive deletion)"
-    )
+target_archive = "cdk-go/apptheorycdk/jsii/theory-cloud-apptheory-cdk-3.0.0-rc.tgz"
+post_sync = baseline_root.joinpath(target_archive).is_file()
+
+if post_sync:
+    stale_generated = []
+    for relative in sorted(required_generated):
+        baseline_path = baseline_root / relative
+        generated_path = generated_root / relative
+        if (
+            not baseline_path.is_file()
+            or not generated_path.is_file()
+            or baseline_path.read_bytes() != generated_path.read_bytes()
+        ):
+            stale_generated.append(relative)
+    if stale_generated:
+        raise SystemExit(
+            "cdk-go-major-version: FAIL (post-sync baseline has stale or modified v3 generated artifacts: "
+            f"{stale_generated})"
+        )
+else:
+    if summary.get("additionCount", 0) <= 0:
+        raise SystemExit("cdk-go-major-version: FAIL (synthetic GitHub artifact-sync plan is empty)")
+    if not required_generated.issubset(additions):
+        raise SystemExit(
+            "cdk-go-major-version: FAIL (artifact-sync plan is missing v3 generated additions: "
+            f"{sorted(required_generated - additions)})"
+        )
+    if not any(
+        path.startswith("cdk-go/apptheorycdk/jsii/") and path.endswith(".tgz")
+        for path in deletions
+    ):
+        raise SystemExit(
+            "cdk-go-major-version: FAIL (artifact-sync plan is missing the superseded jsii archive deletion)"
+        )
 legacy_module_files = {"cdk-go/go.mod", "cdk-go/go.sum"}
 if legacy_module_files.intersection(additions | deletions):
     raise SystemExit("cdk-go-major-version: FAIL (v3 artifact sync touched legacy parent module files)")
@@ -170,6 +199,7 @@ if len(file_changes.get("deletions", [])) != summary["deletionCount"]:
 
 print(
     "cdk-go-major-version: PASS "
-    f"(additions={summary['additionCount']}, deletions={summary['deletionCount']})"
+    f"(state={'post-sync' if post_sync else 'pre-sync'}, "
+    f"additions={summary['additionCount']}, deletions={summary['deletionCount']})"
 )
 PY
