@@ -46,8 +46,10 @@ TableTheory v3.0.1 established the legacy Go `Transaction.Update(model)` lifecyc
 `version` / `created_at` / `updated_at`, preserves stored `created_at`, and replaces caller-set `updated_at` with the
 library timestamp. TableTheory v3.0.2 additionally treats zero as valid persisted optimistic-lock state on this surface:
 it locks and increments version 0, so a missing or mismatched item fails its condition and aborts the whole transaction
-group instead of being upserted. Call `Rollback`, then issue an explicit create when the item is absent. Transactional
-deletes are unchanged by design: legacy and explicit deletes add a lock condition only for non-zero versions.
+group instead of being upserted. Call `Rollback`, then issue an explicit create when the item is absent. The legacy
+transactional `Transaction.Delete(model)` surface and the explicit query `Delete()` surface add a lock condition only
+for non-zero versions. `TransactionBuilder.Delete` attaches no automatic version lock; callers who need one must supply
+the condition themselves.
 
 Handle every legacy `Create`, `Update`, or `Delete` construction error. An ignored error now poisons the transaction;
 `Commit` returns the stored first error and submits nothing, and `Rollback` is required before reuse. Unsigned Go
