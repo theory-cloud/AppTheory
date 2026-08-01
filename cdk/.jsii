@@ -6,7 +6,7 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.262.2",
+    "aws-cdk-lib": "2.263.0",
     "constructs": "10.8.0"
   },
   "dependencyClosure": {
@@ -27114,6 +27114,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "2.0.2-rc",
-  "fingerprint": "HE80Jfk+99CaR9umSp+dFPvWgeVH5zU5/ApYSrhgwa4="
+  "version": "2.0.2",
+  "fingerprint": "vk0u3pPDlLmNkT8KnqsDJXOJSD89MnfgrTraVRYCHJ0="
 }

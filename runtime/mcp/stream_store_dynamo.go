@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
-	tableerrors "github.com/theory-cloud/tabletheory/v2/pkg/errors"
+	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/v3/pkg/errors"
 
-	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 )
 
 const (

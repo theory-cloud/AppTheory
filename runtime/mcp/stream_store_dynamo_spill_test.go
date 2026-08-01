@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/theory-cloud/apptheory/v2/pkg/objectstore"
-	objectstoretest "github.com/theory-cloud/apptheory/v2/testkit/objectstore"
+	"github.com/theory-cloud/apptheory/v3/pkg/objectstore"
+	objectstoretest "github.com/theory-cloud/apptheory/v3/testkit/objectstore"
 )
 
 func TestDynamoStreamSpillStoreFromEnvAndObjectKey(t *testing.T) {

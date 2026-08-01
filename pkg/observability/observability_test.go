@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 )
 
 func TestNewNoOpLogger(t *testing.T) {

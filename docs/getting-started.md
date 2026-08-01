@@ -36,12 +36,12 @@ go mod download
 AppTheory release artifacts are also published via GitHub Releases. Pin and verify the release you consume:
 
 ```bash
-VERSION=2.0.0-rc
+VERSION=3.0.0-rc
 TAG="v${VERSION}"
 REPO="theory-cloud/AppTheory"
 PYTHON_VERSION="${VERSION/-rc/rc0}"
 
-go get "github.com/theory-cloud/apptheory/v2@${TAG}"
+go get "github.com/theory-cloud/apptheory/v3@${TAG}"
 gh release download "${TAG}" --repo "${REPO}" \
   --pattern "theory-cloud-apptheory-${VERSION}.tgz" \
   --pattern "apptheory-${PYTHON_VERSION}-py3-none-any.whl" \
@@ -65,8 +65,8 @@ package mysvc
 import (
 	"context"
 
-	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
-	"github.com/theory-cloud/apptheory/v2/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	"github.com/theory-cloud/apptheory/v3/testkit"
 )
 
 func Example() {

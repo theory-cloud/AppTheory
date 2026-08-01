@@ -7,24 +7,24 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 if [[ "${1:-}" == "--self-test" ]]; then
   temporary="$(mktemp -d)"
   RELEASE_NOTES_OUTPUT_DIR="${temporary}" \
-    bash scripts/render-release-notes.sh "v2.0.0-rc.1" >/dev/null
+    bash scripts/render-release-notes.sh "v3.0.0-rc.1" >/dev/null
   notes="${temporary}/RELEASE_NOTES.md"
   grep -Fq \
-    'go get github.com/theory-cloud/apptheory/v2@v2.0.0-rc.1' \
+    'go get github.com/theory-cloud/apptheory/v3@v3.0.0-rc.1' \
     "${notes}"
   grep -Fq \
-    'go get github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v2@v2.0.0-rc.1' \
+    'go get github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3@v3.0.0-rc.1' \
     "${notes}"
   grep -Fq \
-    'cdk-go/apptheorycdk/v2.0.0-rc.1` targets the same immutable commit as `v2.0.0-rc.1' \
+    'cdk-go/apptheorycdk/v3.0.0-rc.1` targets the same immutable commit as `v3.0.0-rc.1' \
     "${notes}"
-  if grep -Fq 'go get github.com/theory-cloud/apptheory@v2.0.0-rc.1' "${notes}"; then
-    echo "release-notes self-test: FAIL (v2 notes contain the legacy root module)" >&2
+  if grep -Fq 'go get github.com/theory-cloud/apptheory@v3.0.0-rc.1' "${notes}"; then
+    echo "release-notes self-test: FAIL (v3 notes contain the legacy root module)" >&2
     rm -rf "${temporary}"
     exit 1
   fi
   rm -rf "${temporary}"
-  echo "release-notes self-test: PASS (v2 root + nested CDK commands)"
+  echo "release-notes self-test: PASS (v3 root + nested CDK commands)"
   exit 0
 fi
 

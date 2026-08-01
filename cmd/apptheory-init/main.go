@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -30,6 +31,7 @@ type renderContext struct {
 	modulePath   string
 	className    string
 	pythonModule string
+	goModule     string
 	version      string
 	tag          string
 }
@@ -107,12 +109,20 @@ func scaffold(opts initOptions) error {
 			return err
 		}
 	}
+	goModule := ""
+	if opts.lang == "go" {
+		goModule, err = appTheoryGoModule(version)
+		if err != nil {
+			return err
+		}
+	}
 	ctx := renderContext{
 		appName:      appName,
 		packageName:  kebab(appName),
 		modulePath:   "example.com/" + kebab(appName),
 		className:    pascal(appName),
 		pythonModule: snake(appName),
+		goModule:     goModule,
 		version:      version,
 		tag:          "v" + version,
 	}
@@ -230,6 +240,19 @@ func cleanVersion(input string) string {
 	return strings.TrimPrefix(line, "v")
 }
 
+func appTheoryGoModule(version string) (string, error) {
+	majorText, _, ok := strings.Cut(version, ".")
+	major, err := strconv.Atoi(majorText)
+	if !ok || err != nil || major < 0 {
+		return "", fmt.Errorf("apptheory-init Go version %q must begin with a numeric semantic major", version)
+	}
+	module := "github.com/theory-cloud/" + "apptheory"
+	if major >= 2 {
+		module += fmt.Sprintf("/v%d", major)
+	}
+	return module, nil
+}
+
 func copyTemplateTree(srcRoot string, destRoot string, ctx renderContext) error {
 	var dirs []string
 	var files []string
@@ -291,13 +314,14 @@ func renderPath(path string, ctx renderContext) string {
 
 func renderString(input string, ctx renderContext) string {
 	replacements := map[string]string{
-		"__APP_NAME__":          ctx.appName,
-		"__APP_PACKAGE__":       ctx.packageName,
-		"__APP_MODULE__":        ctx.modulePath,
-		"__APP_CLASS__":         ctx.className,
-		"__APP_PY_MODULE__":     ctx.pythonModule,
-		"__APPTHEORY_VERSION__": ctx.version,
-		"__APPTHEORY_TAG__":     ctx.tag,
+		"__APP_NAME__":            ctx.appName,
+		"__APP_PACKAGE__":         ctx.packageName,
+		"__APP_MODULE__":          ctx.modulePath,
+		"__APP_CLASS__":           ctx.className,
+		"__APP_PY_MODULE__":       ctx.pythonModule,
+		"__APPTHEORY_GO_MODULE__": ctx.goModule,
+		"__APPTHEORY_VERSION__":   ctx.version,
+		"__APPTHEORY_TAG__":       ctx.tag,
 	}
 	out := input
 	for old, new := range replacements {

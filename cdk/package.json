@@ -1,6 +1,6 @@
 {
   "name": "@theory-cloud/apptheory-cdk",
-  "version": "2.0.2-rc",
+  "version": "2.0.2",
   "description": "AppTheory CDK constructs (TS-first jsii)",
   "author": "Theory Cloud",
   "repository": {
@@ -24,12 +24,12 @@
     "test": "node --test test/*.test.cjs"
   },
   "peerDependencies": {
-    "aws-cdk-lib": "2.262.2",
+    "aws-cdk-lib": "2.263.0",
     "constructs": "10.8.0"
   },
   "devDependencies": {
     "@types/node": "20.19.43",
-    "aws-cdk-lib": "2.262.2",
+    "aws-cdk-lib": "2.263.0",
     "constructs": "10.8.0",
     "jsii": "5.9.34",
     "jsii-pacmak": "1.127.0",
