@@ -152,7 +152,7 @@ verify_commit_signature_status() {
         return 1
       fi
       local verification_stderr="${GITHUB_VERIFICATION_CACHE_STDERR[${sha}]-}"
-      if [[ -n "${verification_stderr}" && "${GITHUB_VERIFICATION_CACHE_STDERR_REPORTED[${sha}]-}" != "true" ]]; then
+      if [[ "${RELEASE_SIGNATURE_VERBOSE}" != "true" && -n "${verification_stderr}" && "${GITHUB_VERIFICATION_CACHE_STDERR_REPORTED[${sha}]-}" != "true" ]]; then
         printf '%s\n' "${verification_stderr}" >&2
         GITHUB_VERIFICATION_CACHE_STDERR_REPORTED["${sha}"]="true"
       fi
@@ -412,6 +412,8 @@ run_self_test() {
   auth_output="$(
     GITHUB_REPOSITORY="theory-cloud/AppTheory"
     RELEASE_SIGNATURE_VERBOSE=false
+    RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS=300
+    release_signature_retry_sleep_seconds=0
     gh() {
       printf '%s\n' "$*" >>"${auth_calls_file}"
       echo "self-test gh auth not configured" >&2
