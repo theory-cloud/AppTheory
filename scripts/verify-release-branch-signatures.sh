@@ -45,10 +45,12 @@ github_commit_verification() {
   fi
 
   local api_stderr_file
+  local api_status=0
   api_stderr_file="$(mktemp)"
-  if gh api "repos/${repo}/commits/${sha}" \
+  gh api "repos/${repo}/commits/${sha}" \
     --jq '[.commit.verification.verified, .commit.verification.reason, (.commit.verification.signer.login // ""), (.commit.verification.key_id // "")] | @tsv' \
-    2>"${api_stderr_file}"; then
+    2>"${api_stderr_file}" || api_status=$?
+  if (( api_status == 0 )); then
     rm -f "${api_stderr_file}"
     return 0
   fi
@@ -56,7 +58,10 @@ github_commit_verification() {
   local api_stderr
   api_stderr="$(<"${api_stderr_file}")"
   rm -f "${api_stderr_file}"
-  if [[ "${api_stderr}" =~ HTTP[[:space:]]+4[0-9][0-9] ]]; then
+  if [[ "${RELEASE_SIGNATURE_VERBOSE}" == "true" && -n "${api_stderr}" ]]; then
+    printf '%s\n' "${api_stderr}" >&2
+  fi
+  if (( api_status == 4 )) || [[ "${api_stderr}" =~ HTTP[[:space:]]+4[0-9][0-9] ]]; then
     return 3
   fi
   return 1
@@ -106,7 +111,7 @@ verify_commit_signature_status() {
           fi
           if (( attempt < 3 )); then
             local retry_sleep_seconds=$((attempt * 5))
-            if (( release_signature_retry_sleep_seconds + retry_sleep_seconds > RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS )); then
+            if (( release_signature_retry_sleep_seconds + retry_sleep_seconds > 10#${RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS} )); then
               break
             fi
             release_signature_retry_sleep_seconds=$((release_signature_retry_sleep_seconds + retry_sleep_seconds))
