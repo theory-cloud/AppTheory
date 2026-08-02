@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.0.1-rc](https://github.com/theory-cloud/AppTheory/compare/v3.0.0...v3.0.1-rc) (2026-08-02)
+
+
+### Bug Fixes
+
+* **ci:** harden signature-gate failure handling ([5ddb5eb](https://github.com/theory-cloud/AppTheory/commit/5ddb5eba3f8ec663583cf7a6ae67a4fd237377a4))
+* **ci:** signature-gate polish (THE-2802) ([1180b3f](https://github.com/theory-cloud/AppTheory/commit/1180b3f69bf91e1241b1e0428bf6ec2a615430e1))
+
 ## [3.0.0](https://github.com/theory-cloud/AppTheory/compare/v2.0.2...v3.0.0) (2026-08-02)
 
 
