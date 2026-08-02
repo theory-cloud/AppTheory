@@ -7,6 +7,22 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 SIGNED_HISTORY_BASE="${SIGNED_HISTORY_BASE:-c723c42c71d9220f49702db965d4deffff6183f1}"
 HISTORICAL_UNSIGNED_FIXTURE="${HISTORICAL_UNSIGNED_FIXTURE:-ae2468e0c27b02138ad25f3035afff17e253b8a1}"
 RELEASE_SIGNATURE_VERBOSE="${RELEASE_SIGNATURE_VERBOSE:-false}"
+RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS="${RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS:-300}"
+
+if [[ ! "${RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS}" =~ ^[0-9]+$ ]]; then
+  echo "release-signatures: FAIL RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS must be a non-negative integer" >&2
+  exit 1
+fi
+
+release_signature_retry_sleep_seconds=0
+
+declare -A GITHUB_VERIFICATION_CACHE_STATE=()
+declare -A GITHUB_VERIFICATION_CACHE_VERIFIED=()
+declare -A GITHUB_VERIFICATION_CACHE_REASON=()
+declare -A GITHUB_VERIFICATION_CACHE_SIGNER=()
+declare -A GITHUB_VERIFICATION_CACHE_KEY=()
+declare -A GITHUB_VERIFICATION_CACHE_STDERR=()
+declare -A GITHUB_VERIFICATION_CACHE_STDERR_REPORTED=()
 
 github_repo_name() {
   if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
@@ -23,16 +39,37 @@ github_commit_verification() {
   local repo
   repo="$(github_repo_name)"
   if [[ -z "${repo}" ]] || ! command -v gh >/dev/null 2>&1; then
-    return 1
+    return 2
   fi
 
   if [[ -n "${GITHUB_TOKEN:-}" && -z "${GH_TOKEN:-}" ]]; then
     export GH_TOKEN="${GITHUB_TOKEN}"
   fi
 
+  local api_stderr_file
+  local api_status=0
+  api_stderr_file="$(mktemp)"
   gh api "repos/${repo}/commits/${sha}" \
     --jq '[.commit.verification.verified, .commit.verification.reason, (.commit.verification.signer.login // ""), (.commit.verification.key_id // "")] | @tsv' \
-    2>/dev/null || return 1
+    2>"${api_stderr_file}" || api_status=$?
+  if (( api_status == 0 )); then
+    rm -f "${api_stderr_file}"
+    return 0
+  fi
+
+  local api_stderr
+  api_stderr="$(<"${api_stderr_file}")"
+  rm -f "${api_stderr_file}"
+  if [[ -n "${GITHUB_VERIFICATION_STDERR_FILE:-}" ]]; then
+    printf '%s' "${api_stderr}" >"${GITHUB_VERIFICATION_STDERR_FILE}"
+  fi
+  if [[ "${RELEASE_SIGNATURE_VERBOSE}" == "true" && -n "${api_stderr}" ]]; then
+    printf '%s\n' "${api_stderr}" >&2
+  fi
+  if (( api_status == 4 )) || [[ "${api_stderr}" =~ HTTP[[:space:]]+4[0-9][0-9] ]]; then
+    return 3
+  fi
+  return 1
 }
 
 verify_commit_signature_status() {
@@ -55,16 +92,69 @@ verify_commit_signature_status() {
       return 1
       ;;
     *)
-      local verification
-      if verification="$(github_commit_verification "${sha}")"; then
-        local verified reason gh_signer gh_key
-        IFS=$'\t' read -r verified reason gh_signer gh_key <<<"${verification}"
+      local cache_state="${GITHUB_VERIFICATION_CACHE_STATE[${sha}]-}"
+      if [[ -z "${cache_state}" ]]; then
+        local verification=""
+        local verification_stderr_file
+        verification_stderr_file="$(mktemp)"
+        local GITHUB_VERIFICATION_STDERR_FILE="${verification_stderr_file}"
+        local attempt
+        for attempt in 1 2 3; do
+          local verification_status
+          if verification="$(github_commit_verification "${sha}")"; then
+            local verified reason gh_signer gh_key
+            IFS=$'\t' read -r verified reason gh_signer gh_key <<<"${verification}"
+            GITHUB_VERIFICATION_CACHE_STATE["${sha}"]="available"
+            GITHUB_VERIFICATION_CACHE_VERIFIED["${sha}"]="${verified}"
+            GITHUB_VERIFICATION_CACHE_REASON["${sha}"]="${reason}"
+            GITHUB_VERIFICATION_CACHE_SIGNER["${sha}"]="${gh_signer}"
+            GITHUB_VERIFICATION_CACHE_KEY["${sha}"]="${gh_key}"
+            cache_state="available"
+            break
+          else
+            verification_status=$?
+          fi
+          if (( verification_status == 2 || verification_status == 3 )); then
+            break
+          fi
+          if (( attempt < 3 )); then
+            local retry_sleep_seconds=$((attempt * 5))
+            # 10# is safe only because the ^[0-9]+$ guard above guarantees non-empty digits.
+            if (( release_signature_retry_sleep_seconds + retry_sleep_seconds > 10#${RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS} )); then
+              break
+            fi
+            release_signature_retry_sleep_seconds=$((release_signature_retry_sleep_seconds + retry_sleep_seconds))
+            sleep "${retry_sleep_seconds}"
+          fi
+        done
+        local verification_stderr=""
+        if [[ -s "${verification_stderr_file}" ]]; then
+          verification_stderr="$(<"${verification_stderr_file}")"
+        fi
+        rm -f "${verification_stderr_file}"
+        if [[ -z "${cache_state}" ]]; then
+          GITHUB_VERIFICATION_CACHE_STATE["${sha}"]="unavailable"
+          GITHUB_VERIFICATION_CACHE_STDERR["${sha}"]="${verification_stderr}"
+          cache_state="unavailable"
+        fi
+      fi
+
+      if [[ "${cache_state}" == "available" ]]; then
+        local verified="${GITHUB_VERIFICATION_CACHE_VERIFIED[${sha}]}"
+        local reason="${GITHUB_VERIFICATION_CACHE_REASON[${sha}]}"
+        local gh_signer="${GITHUB_VERIFICATION_CACHE_SIGNER[${sha}]}"
+        local gh_key="${GITHUB_VERIFICATION_CACHE_KEY[${sha}]}"
         if [[ "${verified}" == "true" && "${reason}" == "valid" ]]; then
           echo "release-signatures: PASS ${label} ${sha} github-verified reason=${reason} signer=${gh_signer:-unknown} key=${gh_key:-unknown} local_status=${status} subject=${subject}"
           return 0
         fi
         echo "release-signatures: FAIL ${label} ${sha} local_status=${status} github_verified=${verified:-unknown} reason=${reason:-unknown} subject=${subject}" >&2
         return 1
+      fi
+      local verification_stderr="${GITHUB_VERIFICATION_CACHE_STDERR[${sha}]-}"
+      if [[ "${RELEASE_SIGNATURE_VERBOSE}" != "true" && -n "${verification_stderr}" && "${GITHUB_VERIFICATION_CACHE_STDERR_REPORTED[${sha}]-}" != "true" ]]; then
+        printf '%s\n' "${verification_stderr}" >&2
+        GITHUB_VERIFICATION_CACHE_STDERR_REPORTED["${sha}"]="true"
       fi
       echo "release-signatures: FAIL ${label} ${sha} local_status=${status}; GitHub verification evidence unavailable subject=${subject}" >&2
       return 1
@@ -246,16 +336,17 @@ run_self_test() {
   local github_fallback_output
   local github_fallback_status=0
   github_fallback_output="$(
+    local github_fallback_sha="0123456789abcdef0123456789abcdef01234567"
     github_commit_verification() {
       local requested_sha="$1"
-      if [[ "${requested_sha}" == "${SIGNED_HISTORY_BASE}" ]]; then
+      if [[ "${requested_sha}" == "${github_fallback_sha}" ]]; then
         printf 'true\tvalid\tgithub-self-test\tself-test-key\n'
         return 0
       fi
       return 1
     }
     verify_commit_signature_status \
-      "${SIGNED_HISTORY_BASE}" \
+      "${github_fallback_sha}" \
       "N" \
       "" \
       "" \
@@ -273,6 +364,322 @@ run_self_test() {
   else
     echo "release-signatures self-test: PASS GitHub verified-valid fallback for local_status=N"
     echo "${github_fallback_output}"
+  fi
+
+  local dedupe_count_file
+  dedupe_count_file="$(mktemp)"
+  local dedupe_output
+  local dedupe_status=0
+  dedupe_output="$(
+    github_commit_verification() {
+      printf '%s\n' "$1" >>"${dedupe_count_file}"
+      printf 'true\tvalid\tgithub-self-test\tself-test-key\n'
+    }
+    git() {
+      if [[ "$1" == "rev-parse" ]]; then
+        return 0
+      fi
+      if [[ "$1" == "log" ]]; then
+        printf '0123456789abcdef0123456789abcdef01234567\x1fN\x1f\x1f\x1fself-test simulated duplicate commit\n'
+        return 0
+      fi
+      command git "$@"
+    }
+    scan_range "self-test:dedupe-range-one" "dedupe-base-one..dedupe-head-one"
+    scan_range "self-test:dedupe-range-two" "dedupe-base-two..dedupe-head-two"
+  )" || dedupe_status=$?
+  local dedupe_calls
+  dedupe_calls="$(wc -l <"${dedupe_count_file}")"
+  rm -f "${dedupe_count_file}"
+  if [[ "${dedupe_status}" -ne 0 ]]; then
+    echo "release-signatures self-test: FAIL (cross-range GitHub verification dedupe scan failed)" >&2
+    echo "${dedupe_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${dedupe_calls}" -ne 1 ]]; then
+    echo "release-signatures self-test: FAIL (cross-range GitHub verification dedupe called helper ${dedupe_calls} times, expected 1)" >&2
+    echo "${dedupe_output}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS cross-range GitHub verification dedupe"
+    echo "${dedupe_output}"
+  fi
+
+  local auth_calls_file auth_sleeps_file
+  auth_calls_file="$(mktemp)"
+  auth_sleeps_file="$(mktemp)"
+  local auth_output
+  local auth_status=0
+  auth_output="$(
+    GITHUB_REPOSITORY="theory-cloud/AppTheory"
+    RELEASE_SIGNATURE_VERBOSE=false
+    RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS=300
+    release_signature_retry_sleep_seconds=0
+    gh() {
+      printf '%s\n' "$*" >>"${auth_calls_file}"
+      echo "self-test gh auth not configured" >&2
+      return 4
+    }
+    sleep() {
+      printf '%s\n' "$1" >>"${auth_sleeps_file}"
+    }
+    {
+      verify_commit_signature_status \
+        "1123456789abcdef0123456789abcdef01234567" \
+        "N" \
+        "" \
+        "" \
+        "self-test simulated gh auth failure" \
+        "self-test:gh-auth-permanent" || true
+      verify_commit_signature_status \
+        "1123456789abcdef0123456789abcdef01234567" \
+        "N" \
+        "" \
+        "" \
+        "self-test simulated cached gh auth failure" \
+        "self-test:gh-auth-permanent-cached"
+    } 2>&1
+  )" || auth_status=$?
+  local auth_calls auth_sleeps auth_stderr_count
+  auth_calls="$(wc -l <"${auth_calls_file}")"
+  auth_sleeps="$(wc -l <"${auth_sleeps_file}")"
+  auth_stderr_count="$(grep -cF "self-test gh auth not configured" <<<"${auth_output}" || true)"
+  rm -f "${auth_calls_file}" "${auth_sleeps_file}"
+  if [[ "${auth_status}" -eq 0 ]]; then
+    echo "release-signatures self-test: FAIL (gh exit 4 unexpectedly passed verification)" >&2
+    echo "${auth_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${auth_calls}" -ne 1 || "${auth_sleeps}" -ne 0 ]]; then
+    echo "release-signatures self-test: FAIL (gh exit 4 was retried: calls=${auth_calls} sleeps=${auth_sleeps})" >&2
+    echo "${auth_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${auth_stderr_count}" -ne 1 ]]; then
+    echo "release-signatures self-test: FAIL (terminal gh exit 4 stderr surfaced ${auth_stderr_count} times, expected 1)" >&2
+    echo "${auth_output}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS gh exit 4 is permanent without retries"
+    echo "${auth_output}"
+  fi
+
+  local http_4xx_calls_file http_4xx_sleeps_file
+  http_4xx_calls_file="$(mktemp)"
+  http_4xx_sleeps_file="$(mktemp)"
+  local http_4xx_output
+  local http_4xx_status=0
+  http_4xx_output="$(
+    GITHUB_REPOSITORY="theory-cloud/AppTheory"
+    RELEASE_SIGNATURE_VERBOSE=false
+    RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS=300
+    release_signature_retry_sleep_seconds=0
+    gh() {
+      printf '%s\n' "$*" >>"${http_4xx_calls_file}"
+      echo "gh: Bad credentials (HTTP 401)" >&2
+      return 1
+    }
+    sleep() {
+      printf '%s\n' "$1" >>"${http_4xx_sleeps_file}"
+    }
+    verify_commit_signature_status \
+      "4123456789abcdef0123456789abcdef01234567" \
+      "N" \
+      "" \
+      "" \
+      "self-test simulated gh HTTP 401 failure" \
+      "self-test:gh-http-4xx-permanent" 2>&1
+  )" || http_4xx_status=$?
+  local http_4xx_calls http_4xx_sleeps http_4xx_stderr_count
+  http_4xx_calls="$(wc -l <"${http_4xx_calls_file}")"
+  http_4xx_sleeps="$(wc -l <"${http_4xx_sleeps_file}")"
+  http_4xx_stderr_count="$(grep -cF "gh: Bad credentials (HTTP 401)" <<<"${http_4xx_output}" || true)"
+  rm -f "${http_4xx_calls_file}" "${http_4xx_sleeps_file}"
+  if [[ "${http_4xx_status}" -eq 0 ]]; then
+    echo "release-signatures self-test: FAIL (gh HTTP 401 unexpectedly passed verification)" >&2
+    echo "${http_4xx_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${http_4xx_calls}" -ne 1 || "${http_4xx_sleeps}" -ne 0 ]]; then
+    echo "release-signatures self-test: FAIL (gh HTTP 401 was retried: calls=${http_4xx_calls} sleeps=${http_4xx_sleeps})" >&2
+    echo "${http_4xx_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${http_4xx_stderr_count}" -ne 1 || "${http_4xx_output}" != *"GitHub verification evidence unavailable"* ]]; then
+    echo "release-signatures self-test: FAIL (gh HTTP 401 did not fail closed through unavailable evidence)" >&2
+    echo "${http_4xx_output}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS gh HTTP 401 is permanent without retries"
+    echo "${http_4xx_output}"
+  fi
+
+  local http_5xx_calls_file http_5xx_sleeps_file
+  http_5xx_calls_file="$(mktemp)"
+  http_5xx_sleeps_file="$(mktemp)"
+  local http_5xx_output
+  local http_5xx_status=0
+  http_5xx_output="$(
+    GITHUB_REPOSITORY="theory-cloud/AppTheory"
+    RELEASE_SIGNATURE_VERBOSE=false
+    RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS=300
+    release_signature_retry_sleep_seconds=0
+    gh() {
+      printf '%s\n' "$*" >>"${http_5xx_calls_file}"
+      echo "gh: Service Unavailable (HTTP 503)" >&2
+      return 1
+    }
+    sleep() {
+      printf '%s\n' "$1" >>"${http_5xx_sleeps_file}"
+    }
+    verify_commit_signature_status \
+      "6123456789abcdef0123456789abcdef01234567" \
+      "N" \
+      "" \
+      "" \
+      "self-test simulated gh HTTP 503 failure" \
+      "self-test:gh-http-5xx-transient" 2>&1
+  )" || http_5xx_status=$?
+  local http_5xx_calls http_5xx_sleeps http_5xx_stderr_count
+  http_5xx_calls="$(wc -l <"${http_5xx_calls_file}")"
+  http_5xx_sleeps="$(tr '\n' ' ' <"${http_5xx_sleeps_file}")"
+  http_5xx_stderr_count="$(grep -cF "gh: Service Unavailable (HTTP 503)" <<<"${http_5xx_output}" || true)"
+  rm -f "${http_5xx_calls_file}" "${http_5xx_sleeps_file}"
+  if [[ "${http_5xx_status}" -eq 0 ]]; then
+    echo "release-signatures self-test: FAIL (gh HTTP 503 unexpectedly passed verification)" >&2
+    echo "${http_5xx_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${http_5xx_calls}" -ne 3 || "${http_5xx_sleeps}" != "5 10 " ]]; then
+    echo "release-signatures self-test: FAIL (gh HTTP 503 did not exhaust retries: calls=${http_5xx_calls} sleeps=${http_5xx_sleeps:-none})" >&2
+    echo "${http_5xx_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${http_5xx_stderr_count}" -ne 1 || "${http_5xx_output}" != *"GitHub verification evidence unavailable"* ]]; then
+    echo "release-signatures self-test: FAIL (gh HTTP 503 did not fail closed through unavailable evidence)" >&2
+    echo "${http_5xx_output}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS gh HTTP 503 is transient with bounded retries"
+    echo "${http_5xx_output}"
+  fi
+
+  local budget_calls_file budget_sleeps_file
+  budget_calls_file="$(mktemp)"
+  budget_sleeps_file="$(mktemp)"
+  local budget_output
+  local budget_status=0
+  budget_output="$(
+    RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS=0008
+    release_signature_retry_sleep_seconds=0
+    github_commit_verification() {
+      printf '%s\n' "$1" >>"${budget_calls_file}"
+      return 1
+    }
+    sleep() {
+      printf '%s\n' "$1" >>"${budget_sleeps_file}"
+    }
+    verify_commit_signature_status \
+      "2123456789abcdef0123456789abcdef01234567" \
+      "N" \
+      "" \
+      "" \
+      "self-test simulated padded retry budget" \
+      "self-test:padded-retry-budget" 2>&1
+  )" || budget_status=$?
+  local budget_calls budget_sleeps
+  budget_calls="$(wc -l <"${budget_calls_file}")"
+  budget_sleeps="$(tr '\n' ' ' <"${budget_sleeps_file}")"
+  rm -f "${budget_calls_file}" "${budget_sleeps_file}"
+  if [[ "${budget_status}" -eq 0 ]]; then
+    echo "release-signatures self-test: FAIL (padded retry budget unexpectedly passed verification)" >&2
+    echo "${budget_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${budget_output}" == *"value too great for base"* ]]; then
+    echo "release-signatures self-test: FAIL (padded retry budget triggered octal arithmetic)" >&2
+    echo "${budget_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${budget_calls}" -ne 2 || "${budget_sleeps}" != "5 " ]]; then
+    echo "release-signatures self-test: FAIL (padded retry budget was not enforced: calls=${budget_calls} sleeps=${budget_sleeps:-none})" >&2
+    echo "${budget_output}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS padded retry budget is decimal and enforced"
+    echo "${budget_output}"
+  fi
+
+  local verbose_calls_file verbose_sleeps_file quiet_calls_file quiet_sleeps_file
+  verbose_calls_file="$(mktemp)"
+  verbose_sleeps_file="$(mktemp)"
+  quiet_calls_file="$(mktemp)"
+  quiet_sleeps_file="$(mktemp)"
+  local verbose_output quiet_output
+  local verbose_status=0 quiet_status=0
+  verbose_output="$(
+    GITHUB_REPOSITORY="theory-cloud/AppTheory"
+    RELEASE_SIGNATURE_VERBOSE=true
+    RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS=300
+    release_signature_retry_sleep_seconds=0
+    gh() {
+      printf '%s\n' "$*" >>"${verbose_calls_file}"
+      echo "self-test verbose gh stderr" >&2
+      return 1
+    }
+    sleep() {
+      printf '%s\n' "$1" >>"${verbose_sleeps_file}"
+    }
+    verify_commit_signature_status \
+      "3123456789abcdef0123456789abcdef01234567" \
+      "N" \
+      "" \
+      "" \
+      "self-test simulated verbose gh failure" \
+      "self-test:verbose-gh-stderr" 2>&1
+  )" || verbose_status=$?
+  quiet_output="$(
+    GITHUB_REPOSITORY="theory-cloud/AppTheory"
+    RELEASE_SIGNATURE_VERBOSE=false
+    RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS=300
+    release_signature_retry_sleep_seconds=0
+    gh() {
+      printf '%s\n' "$*" >>"${quiet_calls_file}"
+      echo "self-test quiet gh stderr" >&2
+      return 1
+    }
+    sleep() {
+      printf '%s\n' "$1" >>"${quiet_sleeps_file}"
+    }
+    verify_commit_signature_status \
+      "5123456789abcdef0123456789abcdef01234567" \
+      "N" \
+      "" \
+      "" \
+      "self-test simulated quiet gh failure" \
+      "self-test:quiet-gh-stderr" 2>&1
+  )" || quiet_status=$?
+  local verbose_calls verbose_sleeps quiet_calls quiet_sleeps verbose_stderr_count quiet_stderr_count
+  verbose_calls="$(wc -l <"${verbose_calls_file}")"
+  verbose_sleeps="$(tr '\n' ' ' <"${verbose_sleeps_file}")"
+  quiet_calls="$(wc -l <"${quiet_calls_file}")"
+  quiet_sleeps="$(tr '\n' ' ' <"${quiet_sleeps_file}")"
+  verbose_stderr_count="$(grep -cF "self-test verbose gh stderr" <<<"${verbose_output}" || true)"
+  quiet_stderr_count="$(grep -cF "self-test quiet gh stderr" <<<"${quiet_output}" || true)"
+  rm -f "${verbose_calls_file}" "${verbose_sleeps_file}" "${quiet_calls_file}" "${quiet_sleeps_file}"
+  if [[ "${verbose_status}" -eq 0 || "${quiet_status}" -eq 0 ]]; then
+    echo "release-signatures self-test: FAIL (terminal gh stderr fixture unexpectedly passed verification)" >&2
+    echo "${verbose_output}" >&2
+    echo "${quiet_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${verbose_calls}" -ne 3 || "${verbose_sleeps}" != "5 10 " || "${quiet_calls}" -ne 3 || "${quiet_sleeps}" != "5 10 " ]]; then
+    echo "release-signatures self-test: FAIL (terminal gh stderr fixture did not exhaust retries: verbose_calls=${verbose_calls} verbose_sleeps=${verbose_sleeps:-none} quiet_calls=${quiet_calls} quiet_sleeps=${quiet_sleeps:-none})" >&2
+    echo "${verbose_output}" >&2
+    echo "${quiet_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${verbose_stderr_count}" -ne 3 ]]; then
+    echo "release-signatures self-test: FAIL (verbose gh stderr surfaced ${verbose_stderr_count} times, expected 3)" >&2
+    echo "${verbose_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${quiet_stderr_count}" -ne 1 ]]; then
+    echo "release-signatures self-test: FAIL (non-verbose gh stderr surfaced ${quiet_stderr_count} times, expected 1)" >&2
+    echo "${quiet_output}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS terminal gh stderr count follows verbose mode"
+    echo "${verbose_output}"
+    echo "${quiet_output}"
   fi
 
   if (( failures > 0 )); then
