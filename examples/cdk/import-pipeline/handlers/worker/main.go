@@ -9,8 +9,8 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 
-	"github.com/theory-cloud/apptheory/v2/pkg/jobs"
-	"github.com/theory-cloud/tabletheory/v2"
+	"github.com/theory-cloud/apptheory/v3/pkg/jobs"
+	"github.com/theory-cloud/tabletheory/v3"
 )
 
 type recordMessage struct {

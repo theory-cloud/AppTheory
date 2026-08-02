@@ -1,7 +1,7 @@
 package oauth
 
 import (
-	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 )
 
 func jsonBytesHandler(marshal func() ([]byte, error)) apptheory.Handler {

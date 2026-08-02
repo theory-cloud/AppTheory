@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strings"
 
-	apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 )
 
 const protectedResourceMetadataPath = "/.well-known/oauth-protected-resource"

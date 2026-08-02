@@ -13,8 +13,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
-	tableerrors "github.com/theory-cloud/tabletheory/v2/pkg/errors"
+	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/v3/pkg/errors"
 )
 
 type fakeDynamoStreamSpillStore struct {

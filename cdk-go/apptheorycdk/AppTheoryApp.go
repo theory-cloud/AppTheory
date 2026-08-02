@@ -2,12 +2,12 @@ package apptheorycdk
 
 import (
 	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
-	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v2/jsii"
+	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3/jsii"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/constructs-go/constructs/v10"
-	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v2/internal"
+	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3/internal"
 )
 
 type AppTheoryApp interface {

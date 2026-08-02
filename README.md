@@ -54,13 +54,13 @@ AppTheory is the runtime layer of the [Theory Cloud](THEORY_CLOUD.md) stack — 
 AppTheory is distributed exclusively through immutable **[GitHub Releases](https://github.com/theory-cloud/AppTheory/releases)** — no PyPI, no npm. The single distribution path keeps versions aligned across all three runtimes. Pin the release you are consuming and verify downloaded assets before installing them:
 
 ```bash
-VERSION=2.0.0-rc
+VERSION=3.0.0-rc
 TAG="v${VERSION}"
 REPO="theory-cloud/AppTheory"
 PYTHON_VERSION="${VERSION/-rc/rc0}"
 
 # Go resolves the immutable git tag.
-go get "github.com/theory-cloud/apptheory/v2@${TAG}"
+go get "github.com/theory-cloud/apptheory/v3@${TAG}"
 
 # TypeScript and Python install from verified GitHub Release assets.
 gh release download "${TAG}" --repo "${REPO}" \
@@ -193,7 +193,7 @@ import (
     "encoding/json"
 
     "github.com/aws/aws-lambda-go/lambda"
-    apptheory "github.com/theory-cloud/apptheory/v2/runtime"
+    apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 )
 
 func main() {
