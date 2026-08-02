@@ -7,6 +7,14 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 SIGNED_HISTORY_BASE="${SIGNED_HISTORY_BASE:-c723c42c71d9220f49702db965d4deffff6183f1}"
 HISTORICAL_UNSIGNED_FIXTURE="${HISTORICAL_UNSIGNED_FIXTURE:-ae2468e0c27b02138ad25f3035afff17e253b8a1}"
 RELEASE_SIGNATURE_VERBOSE="${RELEASE_SIGNATURE_VERBOSE:-false}"
+RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS="${RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS:-300}"
+
+if [[ ! "${RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS}" =~ ^[0-9]+$ ]]; then
+  echo "release-signatures: FAIL RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS must be a non-negative integer" >&2
+  exit 1
+fi
+
+release_signature_retry_sleep_seconds=0
 
 declare -A GITHUB_VERIFICATION_CACHE_STATE=()
 declare -A GITHUB_VERIFICATION_CACHE_VERIFIED=()
@@ -29,16 +37,29 @@ github_commit_verification() {
   local repo
   repo="$(github_repo_name)"
   if [[ -z "${repo}" ]] || ! command -v gh >/dev/null 2>&1; then
-    return 1
+    return 2
   fi
 
   if [[ -n "${GITHUB_TOKEN:-}" && -z "${GH_TOKEN:-}" ]]; then
     export GH_TOKEN="${GITHUB_TOKEN}"
   fi
 
-  gh api "repos/${repo}/commits/${sha}" \
+  local api_stderr_file
+  api_stderr_file="$(mktemp)"
+  if gh api "repos/${repo}/commits/${sha}" \
     --jq '[.commit.verification.verified, .commit.verification.reason, (.commit.verification.signer.login // ""), (.commit.verification.key_id // "")] | @tsv' \
-    2>/dev/null || return 1
+    2>"${api_stderr_file}"; then
+    rm -f "${api_stderr_file}"
+    return 0
+  fi
+
+  local api_stderr
+  api_stderr="$(<"${api_stderr_file}")"
+  rm -f "${api_stderr_file}"
+  if [[ "${api_stderr}" =~ HTTP[[:space:]]+4[0-9][0-9] ]]; then
+    return 3
+  fi
+  return 1
 }
 
 verify_commit_signature_status() {
@@ -66,6 +87,7 @@ verify_commit_signature_status() {
         local verification=""
         local attempt
         for attempt in 1 2 3; do
+          local verification_status
           if verification="$(github_commit_verification "${sha}")"; then
             local verified reason gh_signer gh_key
             IFS=$'\t' read -r verified reason gh_signer gh_key <<<"${verification}"
@@ -76,9 +98,19 @@ verify_commit_signature_status() {
             GITHUB_VERIFICATION_CACHE_KEY["${sha}"]="${gh_key}"
             cache_state="available"
             break
+          else
+            verification_status=$?
+          fi
+          if (( verification_status == 2 || verification_status == 3 )); then
+            break
           fi
           if (( attempt < 3 )); then
-            sleep "$((attempt * 5))"
+            local retry_sleep_seconds=$((attempt * 5))
+            if (( release_signature_retry_sleep_seconds + retry_sleep_seconds > RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS )); then
+              break
+            fi
+            release_signature_retry_sleep_seconds=$((release_signature_retry_sleep_seconds + retry_sleep_seconds))
+            sleep "${retry_sleep_seconds}"
           fi
         done
         if [[ -z "${cache_state}" ]]; then
@@ -279,16 +311,17 @@ run_self_test() {
   local github_fallback_output
   local github_fallback_status=0
   github_fallback_output="$(
+    local github_fallback_sha="0123456789abcdef0123456789abcdef01234567"
     github_commit_verification() {
       local requested_sha="$1"
-      if [[ "${requested_sha}" == "${SIGNED_HISTORY_BASE}" ]]; then
+      if [[ "${requested_sha}" == "${github_fallback_sha}" ]]; then
         printf 'true\tvalid\tgithub-self-test\tself-test-key\n'
         return 0
       fi
       return 1
     }
     verify_commit_signature_status \
-      "${SIGNED_HISTORY_BASE}" \
+      "${github_fallback_sha}" \
       "N" \
       "" \
       "" \
