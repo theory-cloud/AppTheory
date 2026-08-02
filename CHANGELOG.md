@@ -1,5 +1,36 @@
 # Changelog
 
+## [3.0.0](https://github.com/theory-cloud/AppTheory/compare/v2.0.2...v3.0.0) (2026-08-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **go:** Go consumers must migrate AppTheory runtime and CDK imports from /v2 to /v3.
+* **deps:** Go consumers must use `github.com/theory-cloud/tabletheory/v3` for TableTheory values passed to AppTheory APIs.
+
+### Features
+
+* **deps:** adopt TableTheory v3.0.0 ([a9c0a6f](https://github.com/theory-cloud/AppTheory/commit/a9c0a6f4aadd167c662a691ee7ea1afc2946cf5d))
+
+
+### Bug Fixes
+
+* **ci:** close checker gaps and correct retired-exception docs ([a8fcf4e](https://github.com/theory-cloud/AppTheory/commit/a8fcf4ea472597db550ef630c8b2c040a6a7c162))
+* **ci:** validate synced v3 cdk-go artifacts ([d48377d](https://github.com/theory-cloud/AppTheory/commit/d48377daa6aabe27b0ea236668f128a8ef1e6b6b))
+* **ci:** validate synced v3 cdk-go artifacts ([a9ef7a4](https://github.com/theory-cloud/AppTheory/commit/a9ef7a409f5dc6613b9eb0b2b70eda142540eaf2))
+* **cli:** derive scaffolded Go module major from resolved pin ([f9e9db7](https://github.com/theory-cloud/AppTheory/commit/f9e9db77fd37855c232a68be89e571133cfaf593))
+* **deps:** adopt TableTheory v3.0.1 ([1041e21](https://github.com/theory-cloud/AppTheory/commit/1041e21b1e438847ae66431beede1b41a9d742a5))
+* **deps:** adopt TableTheory v3.0.1 ([99f7ad4](https://github.com/theory-cloud/AppTheory/commit/99f7ad43f4ba1c418d536ddb67d853ee03c2d0b2))
+* **deps:** adopt TableTheory v3.0.2 ([2a4df96](https://github.com/theory-cloud/AppTheory/commit/2a4df9617082a80c99a0c9d77366359257dd55fe))
+* **deps:** adopt TableTheory v3.0.2 ([72aa90e](https://github.com/theory-cloud/AppTheory/commit/72aa90e46e00cb21894f1132677f8fc50ec6f9b3))
+* **deps:** bump aws-cdk-lib to 2.263.0 and retire bundled exception ([101a13d](https://github.com/theory-cloud/AppTheory/commit/101a13dff8b1f3f74ac52bbd818add2ac953f7be))
+* **deps:** bump brace-expansion and refresh GHSA pins ([dd30d7e](https://github.com/theory-cloud/AppTheory/commit/dd30d7e23a7d8fcba86255d251d558f91525b5d0))
+* **deps:** bump brace-expansion and refresh GHSA pins ([459a559](https://github.com/theory-cloud/AppTheory/commit/459a559cf1ef7c44be6c13be02e289121493d03f))
+* **deps:** clarify TableTheory delete locking ([d9ffb8c](https://github.com/theory-cloud/AppTheory/commit/d9ffb8c92961086fb091dccbbf7ff527a1226cd4))
+* **docs:** clarify legacy transaction upgrade delta ([8c731f2](https://github.com/theory-cloud/AppTheory/commit/8c731f248a944e5735448bffe95942ee0b893b0a))
+* **docs:** correct legacy transaction upgrade guidance ([cdd995b](https://github.com/theory-cloud/AppTheory/commit/cdd995b44068c804891dd496e12249f6727f5110))
+* **go:** migrate AppTheory module to v3 ([15111a7](https://github.com/theory-cloud/AppTheory/commit/15111a79f776307dca2236926bbbca33876419f1))
+
 ## [3.0.0-rc](https://github.com/theory-cloud/AppTheory/compare/v2.0.2...v3.0.0-rc) (2026-08-01)
 
 
