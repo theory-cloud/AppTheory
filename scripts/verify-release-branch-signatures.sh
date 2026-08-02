@@ -461,6 +461,54 @@ run_self_test() {
     echo "${auth_output}"
   fi
 
+  local http_4xx_calls_file http_4xx_sleeps_file
+  http_4xx_calls_file="$(mktemp)"
+  http_4xx_sleeps_file="$(mktemp)"
+  local http_4xx_output
+  local http_4xx_status=0
+  http_4xx_output="$(
+    GITHUB_REPOSITORY="theory-cloud/AppTheory"
+    RELEASE_SIGNATURE_VERBOSE=false
+    RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS=300
+    release_signature_retry_sleep_seconds=0
+    gh() {
+      printf '%s\n' "$*" >>"${http_4xx_calls_file}"
+      echo "gh: Bad credentials (HTTP 401)" >&2
+      return 1
+    }
+    sleep() {
+      printf '%s\n' "$1" >>"${http_4xx_sleeps_file}"
+    }
+    verify_commit_signature_status \
+      "4123456789abcdef0123456789abcdef01234567" \
+      "N" \
+      "" \
+      "" \
+      "self-test simulated gh HTTP 401 failure" \
+      "self-test:gh-http-4xx-permanent" 2>&1
+  )" || http_4xx_status=$?
+  local http_4xx_calls http_4xx_sleeps http_4xx_stderr_count
+  http_4xx_calls="$(wc -l <"${http_4xx_calls_file}")"
+  http_4xx_sleeps="$(wc -l <"${http_4xx_sleeps_file}")"
+  http_4xx_stderr_count="$(grep -cF "gh: Bad credentials (HTTP 401)" <<<"${http_4xx_output}" || true)"
+  rm -f "${http_4xx_calls_file}" "${http_4xx_sleeps_file}"
+  if [[ "${http_4xx_status}" -eq 0 ]]; then
+    echo "release-signatures self-test: FAIL (gh HTTP 401 unexpectedly passed verification)" >&2
+    echo "${http_4xx_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${http_4xx_calls}" -ne 1 || "${http_4xx_sleeps}" -ne 0 ]]; then
+    echo "release-signatures self-test: FAIL (gh HTTP 401 was retried: calls=${http_4xx_calls} sleeps=${http_4xx_sleeps})" >&2
+    echo "${http_4xx_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${http_4xx_stderr_count}" -ne 1 || "${http_4xx_output}" != *"GitHub verification evidence unavailable"* ]]; then
+    echo "release-signatures self-test: FAIL (gh HTTP 401 did not fail closed through unavailable evidence)" >&2
+    echo "${http_4xx_output}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS gh HTTP 401 is permanent without retries"
+    echo "${http_4xx_output}"
+  fi
+
   local budget_calls_file budget_sleeps_file
   budget_calls_file="$(mktemp)"
   budget_sleeps_file="$(mktemp)"
@@ -505,28 +553,85 @@ run_self_test() {
     echo "${budget_output}"
   fi
 
-  local verbose_output
-  local verbose_status=0
+  local verbose_calls_file verbose_sleeps_file quiet_calls_file quiet_sleeps_file
+  verbose_calls_file="$(mktemp)"
+  verbose_sleeps_file="$(mktemp)"
+  quiet_calls_file="$(mktemp)"
+  quiet_sleeps_file="$(mktemp)"
+  local verbose_output quiet_output
+  local verbose_status=0 quiet_status=0
   verbose_output="$(
     GITHUB_REPOSITORY="theory-cloud/AppTheory"
     RELEASE_SIGNATURE_VERBOSE=true
+    RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS=300
+    release_signature_retry_sleep_seconds=0
     gh() {
+      printf '%s\n' "$*" >>"${verbose_calls_file}"
       echo "self-test verbose gh stderr" >&2
       return 1
     }
-    github_commit_verification "3123456789abcdef0123456789abcdef01234567" 2>&1
+    sleep() {
+      printf '%s\n' "$1" >>"${verbose_sleeps_file}"
+    }
+    verify_commit_signature_status \
+      "3123456789abcdef0123456789abcdef01234567" \
+      "N" \
+      "" \
+      "" \
+      "self-test simulated verbose gh failure" \
+      "self-test:verbose-gh-stderr" 2>&1
   )" || verbose_status=$?
-  if [[ "${verbose_status}" -ne 1 ]]; then
-    echo "release-signatures self-test: FAIL (verbose gh failure returned ${verbose_status}, expected 1)" >&2
+  quiet_output="$(
+    GITHUB_REPOSITORY="theory-cloud/AppTheory"
+    RELEASE_SIGNATURE_VERBOSE=false
+    RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS=300
+    release_signature_retry_sleep_seconds=0
+    gh() {
+      printf '%s\n' "$*" >>"${quiet_calls_file}"
+      echo "self-test quiet gh stderr" >&2
+      return 1
+    }
+    sleep() {
+      printf '%s\n' "$1" >>"${quiet_sleeps_file}"
+    }
+    verify_commit_signature_status \
+      "5123456789abcdef0123456789abcdef01234567" \
+      "N" \
+      "" \
+      "" \
+      "self-test simulated quiet gh failure" \
+      "self-test:quiet-gh-stderr" 2>&1
+  )" || quiet_status=$?
+  local verbose_calls verbose_sleeps quiet_calls quiet_sleeps verbose_stderr_count quiet_stderr_count
+  verbose_calls="$(wc -l <"${verbose_calls_file}")"
+  verbose_sleeps="$(tr '\n' ' ' <"${verbose_sleeps_file}")"
+  quiet_calls="$(wc -l <"${quiet_calls_file}")"
+  quiet_sleeps="$(tr '\n' ' ' <"${quiet_sleeps_file}")"
+  verbose_stderr_count="$(grep -cF "self-test verbose gh stderr" <<<"${verbose_output}" || true)"
+  quiet_stderr_count="$(grep -cF "self-test quiet gh stderr" <<<"${quiet_output}" || true)"
+  rm -f "${verbose_calls_file}" "${verbose_sleeps_file}" "${quiet_calls_file}" "${quiet_sleeps_file}"
+  if [[ "${verbose_status}" -eq 0 || "${quiet_status}" -eq 0 ]]; then
+    echo "release-signatures self-test: FAIL (terminal gh stderr fixture unexpectedly passed verification)" >&2
+    echo "${verbose_output}" >&2
+    echo "${quiet_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${verbose_calls}" -ne 3 || "${verbose_sleeps}" != "5 10 " || "${quiet_calls}" -ne 3 || "${quiet_sleeps}" != "5 10 " ]]; then
+    echo "release-signatures self-test: FAIL (terminal gh stderr fixture did not exhaust retries: verbose_calls=${verbose_calls} verbose_sleeps=${verbose_sleeps:-none} quiet_calls=${quiet_calls} quiet_sleeps=${quiet_sleeps:-none})" >&2
+    echo "${verbose_output}" >&2
+    echo "${quiet_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${verbose_stderr_count}" -ne 3 ]]; then
+    echo "release-signatures self-test: FAIL (verbose gh stderr surfaced ${verbose_stderr_count} times, expected 3)" >&2
     echo "${verbose_output}" >&2
     failures=$((failures + 1))
-  elif [[ "${verbose_output}" != *"self-test verbose gh stderr"* ]]; then
-    echo "release-signatures self-test: FAIL (verbose gh stderr was not surfaced)" >&2
-    echo "${verbose_output}" >&2
+  elif [[ "${quiet_stderr_count}" -ne 1 ]]; then
+    echo "release-signatures self-test: FAIL (non-verbose gh stderr surfaced ${quiet_stderr_count} times, expected 1)" >&2
+    echo "${quiet_output}" >&2
     failures=$((failures + 1))
   else
-    echo "release-signatures self-test: PASS verbose gh stderr is surfaced"
+    echo "release-signatures self-test: PASS terminal gh stderr count follows verbose mode"
     echo "${verbose_output}"
+    echo "${quiet_output}"
   fi
 
   if (( failures > 0 )); then
