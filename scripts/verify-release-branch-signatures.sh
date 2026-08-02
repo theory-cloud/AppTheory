@@ -509,6 +509,54 @@ run_self_test() {
     echo "${http_4xx_output}"
   fi
 
+  local http_5xx_calls_file http_5xx_sleeps_file
+  http_5xx_calls_file="$(mktemp)"
+  http_5xx_sleeps_file="$(mktemp)"
+  local http_5xx_output
+  local http_5xx_status=0
+  http_5xx_output="$(
+    GITHUB_REPOSITORY="theory-cloud/AppTheory"
+    RELEASE_SIGNATURE_VERBOSE=false
+    RELEASE_SIGNATURE_RETRY_SLEEP_BUDGET_SECONDS=300
+    release_signature_retry_sleep_seconds=0
+    gh() {
+      printf '%s\n' "$*" >>"${http_5xx_calls_file}"
+      echo "gh: Service Unavailable (HTTP 503)" >&2
+      return 1
+    }
+    sleep() {
+      printf '%s\n' "$1" >>"${http_5xx_sleeps_file}"
+    }
+    verify_commit_signature_status \
+      "6123456789abcdef0123456789abcdef01234567" \
+      "N" \
+      "" \
+      "" \
+      "self-test simulated gh HTTP 503 failure" \
+      "self-test:gh-http-5xx-transient" 2>&1
+  )" || http_5xx_status=$?
+  local http_5xx_calls http_5xx_sleeps http_5xx_stderr_count
+  http_5xx_calls="$(wc -l <"${http_5xx_calls_file}")"
+  http_5xx_sleeps="$(tr '\n' ' ' <"${http_5xx_sleeps_file}")"
+  http_5xx_stderr_count="$(grep -cF "gh: Service Unavailable (HTTP 503)" <<<"${http_5xx_output}" || true)"
+  rm -f "${http_5xx_calls_file}" "${http_5xx_sleeps_file}"
+  if [[ "${http_5xx_status}" -eq 0 ]]; then
+    echo "release-signatures self-test: FAIL (gh HTTP 503 unexpectedly passed verification)" >&2
+    echo "${http_5xx_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${http_5xx_calls}" -ne 3 || "${http_5xx_sleeps}" != "5 10 " ]]; then
+    echo "release-signatures self-test: FAIL (gh HTTP 503 did not exhaust retries: calls=${http_5xx_calls} sleeps=${http_5xx_sleeps:-none})" >&2
+    echo "${http_5xx_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${http_5xx_stderr_count}" -ne 1 || "${http_5xx_output}" != *"GitHub verification evidence unavailable"* ]]; then
+    echo "release-signatures self-test: FAIL (gh HTTP 503 did not fail closed through unavailable evidence)" >&2
+    echo "${http_5xx_output}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS gh HTTP 503 is transient with bounded retries"
+    echo "${http_5xx_output}"
+  fi
+
   local budget_calls_file budget_sleeps_file
   budget_calls_file="$(mktemp)"
   budget_sleeps_file="$(mktemp)"
