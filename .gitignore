@@ -42,6 +42,7 @@ gov-infra/evidence/py-coverage-summary.txt
 gov-infra/evidence/py-coverage.data
 /reference/
 .codex/
+.theorymcp/
 .claude/
 .agents/
 .mcp.json

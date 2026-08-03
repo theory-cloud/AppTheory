@@ -1456,6 +1456,26 @@ check_doc_integrity() {
     return 1
   }
 
+  local failures=0
+  local materialized_surface
+  for materialized_surface in \
+    ".codex/steward.md" \
+    ".codex/theorymcp/" \
+    ".theorymcp/"; do
+    if git -C "${REPO_ROOT}" ls-files --error-unmatch -- "${materialized_surface}" >/dev/null 2>&1; then
+      echo "FAIL: TheoryCloud materialization must not be tracked: ${materialized_surface}"
+      failures=$((failures + 1))
+    fi
+    if ! git -C "${REPO_ROOT}" check-ignore -q -- "${materialized_surface}"; then
+      echo "FAIL: TheoryCloud materialization must be covered by .gitignore: ${materialized_surface}"
+      failures=$((failures + 1))
+    fi
+  done
+
+  if [[ "${failures}" -ne 0 ]]; then
+    return 1
+  fi
+
   echo "doc-integrity: PASS"
 }
 
