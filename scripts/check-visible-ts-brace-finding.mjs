@@ -1,5 +1,5 @@
-// Purpose: validate that the TypeScript lint-tool brace-expansion path is
-// patched and no longer produces an OSV finding.
+// Purpose: validate the exact reviewed vulnerability exception for the
+// TypeScript lint-tool brace-expansion paths.
 import fs from "node:fs";
 
 const [reportPath, lockfilePath] = process.argv.slice(2);
@@ -97,6 +97,24 @@ const expectation = {
   vulnerableTransitivePath: "node_modules/minimatch",
   vulnerableTransitiveVersion: "3.1.4",
 };
+const exception = {
+  advisoryId: "GHSA-rgw5-rvv9-x895",
+  advisoryUrl: "https://github.com/advisories/GHSA-rgw5-rvv9-x895",
+  alias: "CVE-2026-69152",
+  fixedVersions: ["1.1.18", "2.1.4", "3.0.6", "5.0.9"],
+  instances: [
+    {
+      path: expectation.packagePath,
+      version: expectation.packageVersion,
+    },
+    {
+      path: expectation.patchedPackagePath,
+      version: expectation.patchedPackageVersion,
+    },
+  ],
+  justification:
+    "New advisory; no fixed aws-cdk release available; operator-authorized exception 2026-08-03 pending upstream fix.",
+};
 
 const packages = lock.packages ?? {};
 const bracePaths = Object.keys(packages).filter(
@@ -138,67 +156,96 @@ if (
   fail(`lockfile graph no longer matches the patched TypeScript lint-tool ${expectation.packageName} path`);
 }
 
-const findings = [];
+const unexpected = [];
+const visibleCounts = new Map(exception.instances.map((instance) => [instance.version, 0]));
 if (!Array.isArray(report.results)) {
   fail("OSV report is missing its results array");
 }
 for (const result of report.results) {
   for (const pkg of result.packages ?? []) {
     for (const vuln of pkg.vulnerabilities ?? []) {
+      const sourcePath = normalizePath(result?.source?.path);
       const packageInfo = pkg?.package ?? {};
-      findings.push({
-        fixedVersions: fixedVersions(vuln, expectation.packageName),
-        id: vuln.id ?? "<unknown>",
-        packageName: packageInfo.name ?? "<unknown>",
-        source: result?.source?.path ?? "<unknown>",
-        version: packageInfo.version ?? "<unknown>",
-      });
+      const dependencyGroups = (pkg.dependency_groups ?? []).map(String);
+      const instance = exception.instances.find(
+        (candidate) => candidate.version === packageInfo.version,
+      );
+      const matches =
+        instance &&
+        (sourcePath === expectation.lockfile || sourcePath.endsWith(`/${expectation.lockfile}`)) &&
+        packageInfo.ecosystem === "npm" &&
+        packageInfo.name === expectation.packageName &&
+        sameStringSet(dependencyGroups, ["dev"]) &&
+        vuln.id === exception.advisoryId &&
+        sameStringSet((vuln.aliases ?? []).map(String), [exception.alias]) &&
+        sameStringSet(fixedVersions(vuln, expectation.packageName), exception.fixedVersions);
+
+      if (matches) {
+        visibleCounts.set(instance.version, visibleCounts.get(instance.version) + 1);
+      } else {
+        unexpected.push({
+          fixedVersions: fixedVersions(vuln, expectation.packageName),
+          id: vuln.id ?? "<unknown>",
+          packageName: packageInfo.name ?? "<unknown>",
+          source: result?.source?.path ?? "<unknown>",
+          version: packageInfo.version ?? "<unknown>",
+        });
+      }
     }
   }
 }
 
-if (findings.length > 0) {
-  for (const vuln of findings) {
+const incorrectCounts = [...visibleCounts].filter(([, count]) => count !== 1);
+if (unexpected.length > 0 || incorrectCounts.length > 0) {
+  for (const vuln of unexpected) {
     console.error(
       `osv-scanner: unexpected vulnerability ${vuln.id} in ${vuln.packageName}@${vuln.version} from ${vuln.source} (fixed versions: ${JSON.stringify(vuln.fixedVersions)})`,
     );
   }
-  fail("expected no TypeScript lint-tool findings after the brace-expansion patch");
+  for (const [version, count] of incorrectCounts) {
+    console.error(
+      `osv-scanner: expected exactly one visible TypeScript lint-tool ${exception.advisoryId} finding for ${expectation.packageName}@${version}, matched ${count}`,
+    );
+  }
+  fail("visible TypeScript lint-tool findings did not match the reviewed exception set");
 }
 
-console.error(
-  `osv-scanner: PASS ${JSON.stringify({
-    recordType: "verified-patched-dependency",
-    checkId: "typescript-legacy-minimatch-brace-expansion",
-    advisoryId: expectation.advisoryId,
-    advisoryUrl: expectation.advisoryUrl,
-    alias: expectation.alias,
-    fixedVersions: expectation.fixedVersions,
-    lockfile: expectation.lockfile,
-    package: {
-      name: expectation.packageName,
-      path: expectation.packagePath,
-      version: expectation.packageVersion,
-    },
-    provenance: {
-      legacyMinimatch: {
-        dependencyRange: "^1.1.7",
-        path: expectation.vulnerableTransitivePath,
-        version: expectation.vulnerableTransitiveVersion,
+for (const instance of exception.instances) {
+  console.error(
+    `osv-scanner: WARN ${JSON.stringify({
+      recordType: "reviewed-vulnerability-exception",
+      exceptionId: "typescript-brace-expansion",
+      advisoryId: exception.advisoryId,
+      advisoryUrl: exception.advisoryUrl,
+      alias: exception.alias,
+      fixedVersions: exception.fixedVersions,
+      justification: exception.justification,
+      lockfile: expectation.lockfile,
+      package: {
+        name: expectation.packageName,
+        path: instance.path,
+        version: instance.version,
       },
-      legacyParents: expectation.legacyParents,
-      patchedBranch: {
-        braceExpansion: {
-          path: expectation.patchedPackagePath,
-          version: expectation.patchedPackageVersion,
+      provenance: {
+        legacyMinimatch: {
+          dependencyRange: "^1.1.7",
+          path: expectation.vulnerableTransitivePath,
+          version: expectation.vulnerableTransitiveVersion,
         },
-        minimatch: {
-          dependencyRange: "^5.0.5",
-          path: expectation.patchedTransitivePath,
-          version: expectation.patchedTransitiveVersion,
+        legacyParents: expectation.legacyParents,
+        patchedBranch: {
+          braceExpansion: {
+            path: expectation.patchedPackagePath,
+            version: expectation.patchedPackageVersion,
+          },
+          minimatch: {
+            dependencyRange: "^5.0.5",
+            path: expectation.patchedTransitivePath,
+            version: expectation.patchedTransitiveVersion,
+          },
+          parent: expectation.patchedParent,
         },
-        parent: expectation.patchedParent,
       },
-    },
-  })}`,
-);
+    })}`,
+  );
+}
