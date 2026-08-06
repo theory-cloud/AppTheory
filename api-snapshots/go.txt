@@ -4130,10 +4130,10 @@ type SessionStatus struct {
 }
 
 type SessionTokenMetadata struct {
-	TokenID   string    `json:"token_id"`
-	TokenType string    `json:"token_type"`
-	ExpiresAt time.Time `json:"expires_at"`
-	Scope     []string  `json:"scope"`
+	TokenID   string    `json:"token_id,omitempty"`
+	TokenType string    `json:"token_type,omitempty"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	Scope     []string  `json:"scope,omitempty"`
 }
 
 type TableTheorySessionRegistry struct {
