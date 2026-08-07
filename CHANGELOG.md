@@ -1,5 +1,25 @@
 # Changelog
 
+## [3.0.2](https://github.com/theory-cloud/AppTheory/compare/v3.0.1...v3.0.2) (2026-08-07)
+
+
+### Bug Fixes
+
+* **deps:** bump js-yaml to 4.3.1 for GHSA-5p4m-2wfm-xmqj ([e49e23a](https://github.com/theory-cloud/AppTheory/commit/e49e23adab826587a2f879a31c4f2c085368f25a))
+* **runtime/microvm:** omit zero SessionTokenMetadata fields in nested marshal ([cfe5a0b](https://github.com/theory-cloud/AppTheory/commit/cfe5a0b71b858f57a76791bddbb3f4664b43c694)), closes [#883](https://github.com/theory-cloud/AppTheory/issues/883)
+* **runtime/microvm:** SessionTokenMetadata omitempty + pin tabletheory v3.0.3 ([4a143c7](https://github.com/theory-cloud/AppTheory/commit/4a143c78bb3339a996f7873655719100c2696d28))
+* **security:** allow current brace-expansion advisory ([b3ae673](https://github.com/theory-cloud/AppTheory/commit/b3ae6739a413923b0ff05afe8950c90838d811b5))
+
+## [3.0.2-rc](https://github.com/theory-cloud/AppTheory/compare/v3.0.1...v3.0.2-rc) (2026-08-07)
+
+
+### Bug Fixes
+
+* **deps:** bump js-yaml to 4.3.1 for GHSA-5p4m-2wfm-xmqj ([e49e23a](https://github.com/theory-cloud/AppTheory/commit/e49e23adab826587a2f879a31c4f2c085368f25a))
+* **runtime/microvm:** omit zero SessionTokenMetadata fields in nested marshal ([cfe5a0b](https://github.com/theory-cloud/AppTheory/commit/cfe5a0b71b858f57a76791bddbb3f4664b43c694)), closes [#883](https://github.com/theory-cloud/AppTheory/issues/883)
+* **runtime/microvm:** SessionTokenMetadata omitempty + pin tabletheory v3.0.3 ([4a143c7](https://github.com/theory-cloud/AppTheory/commit/4a143c78bb3339a996f7873655719100c2696d28))
+* **security:** allow current brace-expansion advisory ([b3ae673](https://github.com/theory-cloud/AppTheory/commit/b3ae6739a413923b0ff05afe8950c90838d811b5))
+
 ## [3.0.1](https://github.com/theory-cloud/AppTheory/compare/v3.0.0...v3.0.1) (2026-08-02)
 
 
