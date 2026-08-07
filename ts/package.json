@@ -1,6 +1,6 @@
 {
   "name": "@theory-cloud/apptheory",
-  "version": "3.0.1-rc",
+  "version": "3.0.1",
   "description": "AppTheory — multi-language serverless application framework (TypeScript package)",
   "type": "module",
   "license": "Apache-2.0",
@@ -26,7 +26,7 @@
     "@aws-sdk/client-lambda-microvms": "^3.1075.0",
     "@aws-sdk/client-s3": "^3.1015.0",
     "@aws-sdk/client-s3vectors": "^3.1081.0",
-    "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v3.0.2/theory-cloud-tabletheory-ts-3.0.2.tgz#sha512-K+jT8P2m+8QHvM+Y1hZxThnQfumcMVVwb8BltkEI8vs7bOg8PbUFR5w92ihBQbiA1pCvxG3kz7vwFhqNT0VUtw=="
+    "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v3.0.4/theory-cloud-tabletheory-ts-3.0.4.tgz#sha512-mso+vAlNLGZVj3DtsxuSVXMpvacwd1dTdX4IUHoNCIpPSLrp9Y+JWP0EgONDgfmaqrlE1sDgKYGftpP7JeqrRw=="
   },
   "files": [
     "dist",
