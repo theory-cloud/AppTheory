@@ -24,10 +24,10 @@ type SessionKey struct {
 // It deliberately contains no plaintext token, bearer token, X-aws-proxy-auth header value,
 // provider credential, raw SDK object, or provider pagination token.
 type SessionTokenMetadata struct {
-	TokenID   string    `json:"token_id"`
-	TokenType string    `json:"token_type"`
-	ExpiresAt time.Time `json:"expires_at"`
-	Scope     []string  `json:"scope"`
+	TokenID   string    `json:"token_id,omitempty"`
+	TokenType string    `json:"token_type,omitempty"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	Scope     []string  `json:"scope,omitempty"`
 }
 
 // CreateSessionInput is the safe client input for creating a session.

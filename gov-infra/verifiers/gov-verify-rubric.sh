@@ -791,12 +791,8 @@ osv_scan_lockfile() {
   set -e
   rm -f "${tmp_report}"
 
-  # Both specialized checkers verify exact patched graphs and require empty
-  # scanner reports. A nonzero scanner exit therefore always fails closed.
-  if [[ "${scan_status}" -ne 0 ]]; then
-    if [[ "${filter_status}" -eq 0 ]]; then
-      echo "FAIL: osv-scanner exited ${scan_status} without a reported finding" >&2
-    fi
+  if [[ "${scan_status}" -eq 0 && "${filter_status}" -eq 0 ]]; then
+    echo "FAIL: vulnerability exception checker accepted an empty scanner report" >&2
     return 1
   fi
 
@@ -1455,6 +1451,26 @@ check_doc_integrity() {
     echo "FAIL: pack.json profile_version marker mismatch" >&2
     return 1
   }
+
+  local failures=0
+  local materialized_surface
+  for materialized_surface in \
+    ".codex/steward.md" \
+    ".codex/theorymcp/" \
+    ".theorymcp/"; do
+    if git -C "${REPO_ROOT}" ls-files --error-unmatch -- "${materialized_surface}" >/dev/null 2>&1; then
+      echo "FAIL: TheoryCloud materialization must not be tracked: ${materialized_surface}"
+      failures=$((failures + 1))
+    fi
+    if ! git -C "${REPO_ROOT}" check-ignore -q -- "${materialized_surface}"; then
+      echo "FAIL: TheoryCloud materialization must be covered by .gitignore: ${materialized_surface}"
+      failures=$((failures + 1))
+    fi
+  done
+
+  if [[ "${failures}" -ne 0 ]]; then
+    return 1
+  fi
 
   echo "doc-integrity: PASS"
 }

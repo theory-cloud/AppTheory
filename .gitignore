@@ -41,7 +41,9 @@ gov-infra/evidence/ts-coverage-summary.txt
 gov-infra/evidence/py-coverage-summary.txt
 gov-infra/evidence/py-coverage.data
 /reference/
+.kimi-code/
 .codex/
+.theorymcp/
 .claude/
 .agents/
 .mcp.json
