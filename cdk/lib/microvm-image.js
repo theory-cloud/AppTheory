@@ -98,7 +98,7 @@ class AppTheoryMicrovmImage extends constructs_1.Construct {
 }
 exports.AppTheoryMicrovmImage = AppTheoryMicrovmImage;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryMicrovmImage[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImage", version: "3.0.1" };
+AppTheoryMicrovmImage[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImage", version: "3.0.2-rc" };
 function normalizeName(value) {
     const name = normalizeRequiredString(value, "name");
     if (!aws_cdk_lib_1.Token.isUnresolved(value) && !/^[A-Za-z0-9_-]{1,64}$/.test(name)) {
