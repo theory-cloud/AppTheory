@@ -48,3 +48,4 @@ gov-infra/evidence/py-coverage.data
 .agents/
 .mcp.json
 GEMINI.md
+AGENTS.md
