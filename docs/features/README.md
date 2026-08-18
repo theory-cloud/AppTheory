@@ -12,6 +12,7 @@ contract.
 
 ## Current feature guides
 
+- [SecureApp Closed-Default Routing](./secure-app.md)
 - [Sanitization](./sanitization.md)
 - [Observability Hooks](./observability.md)
 - [Logging Profiles](./logging-profiles.md)
