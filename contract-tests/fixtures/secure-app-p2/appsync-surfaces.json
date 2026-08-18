@@ -142,6 +142,29 @@
           },
           "is_base64": false
         }
+      },
+      {
+        "name": "appsync-cannot-match-http",
+        "operation": "appsync",
+        "aws_event": {
+          "source": "appsync",
+          "event": {
+            "arguments": {},
+            "identity": {},
+            "info": {
+              "fieldName": "http-only",
+              "parentTypeName": "Query",
+              "variables": {}
+            },
+            "request": {
+              "headers": {}
+            }
+          }
+        }
+      },
+      {
+        "name": "routes-metadata",
+        "operation": "routes"
       }
     ]
   },
@@ -192,6 +215,55 @@
         "resolver_calls": 0,
         "middleware_calls": 0,
         "handler_calls": 0
+      },
+      {
+        "name": "appsync-cannot-match-http",
+        "status": 404,
+        "error_code": "app.not_found",
+        "resolver_calls": 0,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "routes-metadata",
+        "routes": [
+          {
+            "surface": "appsync",
+            "method": "GET",
+            "path": "/note",
+            "posture": "authenticated",
+            "scopes": [
+              "notes:read"
+            ],
+            "appsync_parent_type": "Query",
+            "appsync_field": "note"
+          },
+          {
+            "surface": "appsync",
+            "method": "GET",
+            "path": "/updates",
+            "posture": "authenticated",
+            "scopes": [
+              "notes:read"
+            ],
+            "appsync_parent_type": "Subscription",
+            "appsync_field": "updates"
+          },
+          {
+            "surface": "appsync",
+            "method": "POST",
+            "path": "/deliver",
+            "posture": "internal_only",
+            "appsync_parent_type": "Mutation",
+            "appsync_field": "deliver"
+          },
+          {
+            "surface": "http",
+            "method": "GET",
+            "path": "/http-only",
+            "posture": "public"
+          }
+        ]
       }
     ]
   }

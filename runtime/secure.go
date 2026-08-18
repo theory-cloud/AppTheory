@@ -347,7 +347,11 @@ func canonicalRouteKey(method, path string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	_ = segments
+	for _, segment := range segments {
+		if segment.Kind != routeSegmentStatic && strings.ContainsAny(segment.Value, "{}") {
+			return "", "", routeRegistrationError("invalid route pattern")
+		}
+	}
 	if len(canonical) == 0 {
 		path = "/"
 	} else {

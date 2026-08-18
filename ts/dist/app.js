@@ -376,6 +376,9 @@ export class App {
             throw new AppError("app.internal", "internal error");
         }
         const posture = secureRoute.posture;
+        if (!["public", "optional", "authenticated", "internal_only"].includes(posture)) {
+            throw new AppError("app.internal", "internal error");
+        }
         if (posture === "public")
             return;
         requestCtx.middlewareTrace.push("auth");

@@ -1,0 +1,35 @@
+{
+  "id": "p2.secure_registration_missing_posture",
+  "tier": "p2",
+  "name": "secure registration rejects missing posture independently",
+  "setup": {
+    "secure_app": {
+      "tier": "p2",
+      "routes": [
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/missing",
+          "handler": "secure_echo",
+          "posture": "missing"
+        }
+      ]
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "missing-posture",
+        "operation": "construct"
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "missing-posture",
+        "construction_error_contains": "invalid auth posture"
+      }
+    ]
+  }
+}

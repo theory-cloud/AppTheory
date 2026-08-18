@@ -1,0 +1,580 @@
+{
+  "id": "p2.secure_openapi_errors",
+  "tier": "p2",
+  "name": "secure OpenAPI rejects exact-join scheme proxy surface and numeric violations",
+  "setup": {
+    "secure_app": {
+      "tier": "p2",
+      "routes": [
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/a",
+          "handler": "secure_echo",
+          "posture": "public"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/b",
+          "handler": "secure_echo",
+          "posture": "public"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/secure",
+          "handler": "secure_echo",
+          "posture": "authenticated"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/proxy/{path+}",
+          "handler": "secure_echo",
+          "posture": "public"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/proxy/{path}",
+          "handler": "secure_echo",
+          "posture": "public"
+        },
+        {
+          "surface": "appsync",
+          "parent_type": "Query",
+          "field": "note",
+          "handler": "secure_echo",
+          "posture": "public"
+        }
+      ]
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "missing-route",
+        "operation": "openapi",
+        "openapi": {
+          "title": "Errors",
+          "version": "1.0.0",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/secure",
+              "operation_id": "secure",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/proxy/{path+}",
+              "operation_id": "proxy",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/proxy/{path}",
+              "operation_id": "param",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/x",
+              "operation_id": "x",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/y",
+              "operation_id": "y",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            }
+          ],
+          "security_schemes": {
+            "BearerAuth": {
+              "type": "http",
+              "scheme": "bearer"
+            }
+          },
+          "auth_schemes": {
+            "authenticated": [
+              "BearerAuth"
+            ],
+            "internal_only": []
+          }
+        }
+      },
+      {
+        "name": "extra-route",
+        "operation": "openapi",
+        "openapi": {
+          "title": "Errors",
+          "version": "1.0.0",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/a",
+              "operation_id": "a",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/b",
+              "operation_id": "b",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/secure",
+              "operation_id": "secure",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/proxy/{path+}",
+              "operation_id": "proxy",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/proxy/{path}",
+              "operation_id": "param",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/extra",
+              "operation_id": "extra",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            }
+          ],
+          "security_schemes": {
+            "BearerAuth": {
+              "type": "http",
+              "scheme": "bearer"
+            }
+          },
+          "auth_schemes": {
+            "authenticated": [
+              "BearerAuth"
+            ],
+            "internal_only": []
+          }
+        }
+      },
+      {
+        "name": "duplicate-key",
+        "operation": "openapi",
+        "openapi": {
+          "title": "Errors",
+          "version": "1.0.0",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/a",
+              "operation_id": "a",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/b",
+              "operation_id": "b",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/secure",
+              "operation_id": "secure",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/proxy/{path+}",
+              "operation_id": "proxy",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/proxy/{path}",
+              "operation_id": "param",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": " get ",
+              "path": "a?ignored=yes",
+              "operation_id": "a-duplicate",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            }
+          ],
+          "security_schemes": {
+            "BearerAuth": {
+              "type": "http",
+              "scheme": "bearer"
+            }
+          },
+          "auth_schemes": {
+            "authenticated": [
+              "BearerAuth"
+            ],
+            "internal_only": []
+          }
+        }
+      },
+      {
+        "name": "missing-scheme-binding",
+        "operation": "openapi",
+        "openapi": {
+          "title": "Errors",
+          "version": "1.0.0",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/a",
+              "operation_id": "a",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/b",
+              "operation_id": "b",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/secure",
+              "operation_id": "secure",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/proxy/{path+}",
+              "operation_id": "proxy",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/proxy/{path}",
+              "operation_id": "param",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            }
+          ],
+          "security_schemes": {},
+          "auth_schemes": {
+            "authenticated": [],
+            "internal_only": []
+          }
+        }
+      },
+      {
+        "name": "proxy-collision",
+        "operation": "openapi",
+        "openapi": {
+          "title": "Errors",
+          "version": "1.0.0",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/a",
+              "operation_id": "a",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/b",
+              "operation_id": "b",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/secure",
+              "operation_id": "secure",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/proxy/{path+}",
+              "operation_id": "proxy",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/proxy/{path}",
+              "operation_id": "param",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            }
+          ],
+          "security_schemes": {
+            "BearerAuth": {
+              "type": "http",
+              "scheme": "bearer"
+            }
+          },
+          "auth_schemes": {
+            "authenticated": [
+              "BearerAuth"
+            ],
+            "internal_only": []
+          }
+        }
+      },
+      {
+        "name": "non-http-description",
+        "operation": "openapi",
+        "openapi": {
+          "title": "Errors",
+          "version": "1.0.0",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/a",
+              "operation_id": "a",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/b",
+              "operation_id": "b",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/secure",
+              "operation_id": "secure",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/proxy/{path+}",
+              "operation_id": "proxy",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/proxy/{path}",
+              "operation_id": "param",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/note",
+              "operation_id": "note",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            }
+          ],
+          "security_schemes": {
+            "BearerAuth": {
+              "type": "http",
+              "scheme": "bearer"
+            }
+          },
+          "auth_schemes": {
+            "authenticated": [
+              "BearerAuth"
+            ],
+            "internal_only": []
+          }
+        }
+      },
+      {
+        "name": "numeric-scheme-value",
+        "operation": "openapi",
+        "openapi": {
+          "title": "Errors",
+          "version": "1.0.0",
+          "routes": [
+            {
+              "method": "GET",
+              "path": "/a",
+              "operation_id": "a",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/b",
+              "operation_id": "b",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/secure",
+              "operation_id": "secure",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/proxy/{path+}",
+              "operation_id": "proxy",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            },
+            {
+              "method": "GET",
+              "path": "/proxy/{path}",
+              "operation_id": "param",
+              "response": {
+                "description": "ok",
+                "fields": []
+              }
+            }
+          ],
+          "security_schemes": {
+            "BearerAuth": {
+              "type": "http",
+              "scheme": "bearer",
+              "x-number": 1
+            }
+          },
+          "auth_schemes": {
+            "authenticated": [
+              "BearerAuth"
+            ],
+            "internal_only": []
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "missing-route",
+        "openapi_error": "apptheory: secure openapi missing route GET /a"
+      },
+      {
+        "name": "extra-route",
+        "openapi_error": "apptheory: secure openapi extra route GET /extra"
+      },
+      {
+        "name": "duplicate-key",
+        "openapi_error": "apptheory: secure openapi route GET /a is duplicated"
+      },
+      {
+        "name": "missing-scheme-binding",
+        "openapi_error": "apptheory: secure openapi authenticated scheme binding is required"
+      },
+      {
+        "name": "proxy-collision",
+        "openapi_error": "apptheory: secure openapi emitted route GET /proxy/{path} collides"
+      },
+      {
+        "name": "non-http-description",
+        "openapi_error": "apptheory: secure openapi extra route GET /note"
+      },
+      {
+        "name": "numeric-scheme-value",
+        "openapi_error_contains": "not allowed"
+      }
+    ]
+  }
+}

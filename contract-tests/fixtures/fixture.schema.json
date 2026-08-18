@@ -111,6 +111,9 @@
         "websocket_support": { "type": "boolean" },
         "invalid_websocket_factory": { "type": "boolean" },
         "unknown_option": { "type": "boolean" },
+        "inject_posture_records": { "type": "boolean" },
+        "principal_resolver": { "type": "boolean" },
+        "policy_hook": { "type": "boolean" },
         "routes": { "type": "array", "items": { "$ref": "#/$defs/secureRoute" } },
         "middlewares": { "$ref": "#/$defs/stringArray" },
         "openapi": { "$ref": "#/$defs/secureOpenAPISpec" }
@@ -131,7 +134,8 @@
         "persist_connection": { "type": "boolean" },
         "revoke_connection": { "type": "boolean" },
         "mutate_returned": { "type": "boolean" },
-        "mutate_routes": { "type": "boolean" }
+        "mutate_routes": { "type": "boolean" },
+        "openapi": { "$ref": "#/$defs/secureOpenAPISpec" }
       }
     },
     "secureExpectedStep": {
@@ -145,12 +149,18 @@
         "trace": { "$ref": "#/$defs/stringArray" },
         "principal": { "$ref": "#/$defs/securePrincipal" },
         "resolver_calls": { "type": "integer" },
+        "policy_calls": { "type": "integer" },
         "middleware_calls": { "type": "integer" },
         "handler_calls": { "type": "integer" },
+        "response": { "$ref": "#/$defs/response" },
         "routes": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
         "openapi": { "type": "object", "additionalProperties": true },
         "openapi_json": { "type": "string" },
-        "construction_error": { "type": "string" }
+        "openapi_error": { "type": "string" },
+        "openapi_error_contains": { "type": "string" },
+        "construction_error": { "type": "string" },
+        "construction_error_contains": { "type": "string" },
+        "construction_error_present": { "type": "boolean" }
       }
     },
     "namedHandler": {

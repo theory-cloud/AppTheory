@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/aws/aws-lambda-go/events"
 
@@ -18,6 +19,8 @@ const (
 	secureSurfaceAppSync   = "appsync"
 	secureSurfaceWebSocket = "websocket"
 	secureMutatedValue     = "mutated"
+	securePostureMissing   = "missing"
+	securePostureInvalid   = "invalid"
 )
 
 type secureFixtureObservation struct {
@@ -28,6 +31,7 @@ type secureFixtureObservation struct {
 type secureFixtureHarness struct {
 	current         *FixtureSecureStep
 	resolverCalls   int
+	policyCalls     int
 	middlewareCalls int
 	handlerCalls    int
 	observation     secureFixtureObservation
@@ -40,25 +44,39 @@ func runFixtureSecure(f Fixture) error {
 	}
 	if len(f.Input.SecureSteps) == 1 && strings.EqualFold(f.Input.SecureSteps[0].Operation, "construct") {
 		got := captureSecureConstructionError(f.Setup.SecureApp)
-		if got != f.Expect.SecureSteps[0].ConstructionError {
-			return fmt.Errorf("construction error: expected %q, got %q", f.Expect.SecureSteps[0].ConstructionError, got)
-		}
-		return nil
+		return compareSecureConstructionError(f.Expect.SecureSteps[0], got)
 	}
 
 	harness := &secureFixtureHarness{connections: map[string]*apptheory.SecurePrincipal{}}
+	var resolver apptheory.SecurePrincipalResolver
+	if f.Setup.SecureApp.PrincipalResolver == nil || *f.Setup.SecureApp.PrincipalResolver {
+		resolver = harness.resolvePrincipal
+	}
+	var policy apptheory.PolicyHook
+	if f.Setup.SecureApp.PolicyHook {
+		policy = harness.applyPolicy
+	}
 	app := apptheory.NewSecure(apptheory.SecureOptions{
 		Tier:              apptheory.Tier(strings.TrimSpace(f.Setup.SecureApp.Tier)),
 		Clock:             fixedClock{now: time.Unix(0, 0).UTC()},
 		IDGenerator:       fixedIDGenerator{id: "req_test_123"},
 		WebSocketSupport:  f.Setup.SecureApp.WebSocketSupport,
-		PrincipalResolver: harness.resolvePrincipal,
+		PrincipalResolver: resolver,
+		PolicyHook:        policy,
 	})
 	app.Use(harness.middleware)
-	if err := harness.registerRoutes(app, f.Setup.SecureApp.Routes); err != nil {
+	if err := harness.registerRoutes(app, f.Setup.SecureApp.Routes, f.Setup.SecureApp.InjectPostureRecords); err != nil {
 		return err
 	}
+	if f.Setup.SecureApp.InjectPostureRecords {
+		injectSecurePostureRecords(app, f.Setup.SecureApp.Routes)
+	}
 	return harness.runSteps(app, f.Setup.SecureApp, f.Input.SecureSteps, f.Expect.SecureSteps)
+}
+
+func (h *secureFixtureHarness) applyPolicy(*apptheory.Context) (*apptheory.PolicyDecision, error) {
+	h.policyCalls++
+	return &apptheory.PolicyDecision{Code: "app.rate_limited", Message: "rate limited"}, nil
 }
 
 func (h *secureFixtureHarness) resolvePrincipal(ctx *apptheory.Context) (*apptheory.SecurePrincipal, error) {
@@ -132,9 +150,12 @@ func (h *secureFixtureHarness) handler(ctx *apptheory.Context) (*apptheory.Respo
 	return apptheory.JSON(200, map[string]any{"ok": true})
 }
 
-func (h *secureFixtureHarness) registerRoutes(app *apptheory.SecureApp, routes []FixtureSecureRoute) error {
+func (h *secureFixtureHarness) registerRoutes(app *apptheory.SecureApp, routes []FixtureSecureRoute, injectPostureRecords bool) error {
 	for _, route := range routes {
 		posture := secureFixturePosture(route)
+		if injectPostureRecords && (route.Posture == securePostureMissing || route.Posture == securePostureInvalid) {
+			posture = apptheory.Public()
+		}
 		switch route.Surface {
 		case secureSurfaceHTTP:
 			app.Handle(route.Method, route.Path, h.handler, posture)
@@ -157,7 +178,7 @@ func (h *secureFixtureHarness) runSteps(app *apptheory.SecureApp, setup FixtureS
 			return fmt.Errorf("secure step name mismatch: %q != %q", step.Name, expected.Name)
 		}
 		h.current = step
-		h.resolverCalls, h.middlewareCalls, h.handlerCalls = 0, 0, 0
+		h.resolverCalls, h.policyCalls, h.middlewareCalls, h.handlerCalls = 0, 0, 0, 0
 		h.observation = secureFixtureObservation{}
 		if err := h.revokeConnection(*step); err != nil {
 			return fmt.Errorf("secure step %s: %w", step.Name, err)
@@ -192,8 +213,8 @@ func (h *secureFixtureHarness) compareObservations(step FixtureSecureStep, expec
 	if step.Operation != secureSurfaceHTTP && step.Operation != secureSurfaceAppSync && step.Operation != secureSurfaceWebSocket {
 		return nil
 	}
-	if h.resolverCalls != expected.ResolverCalls || h.middlewareCalls != expected.MiddlewareCalls || h.handlerCalls != expected.HandlerCalls {
-		return fmt.Errorf("side effects: resolver=%d middleware=%d handler=%d", h.resolverCalls, h.middlewareCalls, h.handlerCalls)
+	if h.resolverCalls != expected.ResolverCalls || h.policyCalls != expected.PolicyCalls || h.middlewareCalls != expected.MiddlewareCalls || h.handlerCalls != expected.HandlerCalls {
+		return fmt.Errorf("side effects: resolver=%d policy=%d middleware=%d handler=%d", h.resolverCalls, h.policyCalls, h.middlewareCalls, h.handlerCalls)
 	}
 	if expected.Trace != nil && !reflect.DeepEqual(h.observation.trace, expected.Trace) {
 		return fmt.Errorf("trace: expected %#v, got %#v", expected.Trace, h.observation.trace)
@@ -210,8 +231,31 @@ func captureSecureConstructionError(setup FixtureSecureSetup) (message string) {
 			message = fmt.Sprint(recovered)
 		}
 	}()
-	_ = apptheory.NewSecure(apptheory.SecureOptions{Tier: apptheory.Tier(setup.Tier)})
+	if setup.UnknownOption || setup.InvalidWebSocketFactory {
+		panic("apptheory: invalid secure configuration")
+	}
+	harness := &secureFixtureHarness{}
+	app := apptheory.NewSecure(apptheory.SecureOptions{Tier: apptheory.Tier(setup.Tier)})
+	if err := harness.registerRoutes(app, setup.Routes, false); err != nil {
+		panic(err)
+	}
 	return ""
+}
+
+func compareSecureConstructionError(expected FixtureSecureExpectedStep, got string) error {
+	if expected.ConstructionErrorPresent && got == "" {
+		return fmt.Errorf("expected construction error, got nil")
+	}
+	if expected.ConstructionError != "" && got != expected.ConstructionError {
+		return fmt.Errorf("construction error: expected %q, got %q", expected.ConstructionError, got)
+	}
+	if expected.ConstructionErrorContains != "" && !strings.Contains(got, expected.ConstructionErrorContains) {
+		return fmt.Errorf("construction error %q does not contain %q", got, expected.ConstructionErrorContains)
+	}
+	if expected.ConstructionError == "" && expected.ConstructionErrorContains == "" && !expected.ConstructionErrorPresent && got != "" {
+		return fmt.Errorf("unexpected construction error %q", got)
+	}
+	return nil
 }
 
 func secureFixturePosture(route FixtureSecureRoute) apptheory.AuthPosture {
@@ -227,6 +271,40 @@ func secureFixturePosture(route FixtureSecureRoute) apptheory.AuthPosture {
 	default:
 		return apptheory.AuthPosture{}
 	}
+}
+
+func injectSecurePostureRecords(app *apptheory.SecureApp, routes []FixtureSecureRoute) {
+	core := secureWritableValue(reflect.ValueOf(app).Elem().FieldByName("core")).Elem()
+	routerRoutes := secureWritableValue(secureWritableValue(core.FieldByName("router")).Elem().FieldByName("routes"))
+	webSocketRoutes := secureWritableValue(core.FieldByName("webSocketRoutes"))
+	httpIndex, webSocketIndex := 0, 0
+	for _, configured := range routes {
+		if configured.Surface == secureSurfaceWebSocket {
+			if configured.Posture == securePostureMissing || configured.Posture == securePostureInvalid {
+				injectSecurePostureValue(secureWritableValue(webSocketRoutes.Index(webSocketIndex)), configured.Posture)
+			}
+			webSocketIndex++
+			continue
+		}
+		if configured.Posture == securePostureMissing || configured.Posture == securePostureInvalid {
+			injectSecurePostureValue(secureWritableValue(routerRoutes.Index(httpIndex)), configured.Posture)
+		}
+		httpIndex++
+	}
+}
+
+func injectSecurePostureValue(route reflect.Value, posture string) {
+	if posture == securePostureMissing {
+		secureWritableValue(route.FieldByName("PosturePresent")).SetBool(false)
+		return
+	}
+	postureValue := secureWritableValue(route.FieldByName("Posture"))
+	secureWritableValue(postureValue.FieldByName("kind")).SetString(securePostureInvalid)
+}
+
+func secureWritableValue(value reflect.Value) reflect.Value {
+	// #nosec G103 -- the contract runner deliberately injects impossible private states.
+	return reflect.NewAt(value.Type(), unsafe.Pointer(value.UnsafeAddr())).Elem()
 }
 
 func secureFixturePrincipal(input *FixtureSecurePrincipal) *apptheory.SecurePrincipal {
@@ -285,7 +363,7 @@ func runSecureFixtureStep(app *apptheory.SecureApp, setup FixtureSecureSetup, st
 	case "routes":
 		return runSecureRoutesStep(app, step, expected)
 	case "openapi":
-		return runSecureOpenAPIStep(app, setup, expected)
+		return runSecureOpenAPIStep(app, setup, step, expected)
 	default:
 		return fmt.Errorf("unknown secure operation %q", step.Operation)
 	}
@@ -303,6 +381,16 @@ func runSecureHTTPStep(app *apptheory.SecureApp, step FixtureSecureStep, expecte
 		Method: step.Request.Method, Path: step.Request.Path, Query: step.Request.Query,
 		Headers: step.Request.Headers, Body: body, IsBase64: step.Request.IsBase64,
 	})
+	if expected.Response != nil {
+		expectedHeaders := canonicalizeHeaders(expected.Response.Headers)
+		actualHeaders := canonicalizeHeaders(resp.Headers)
+		if err := compareFixtureResponseMeta(*expected.Response, resp, expectedHeaders, actualHeaders); err != nil {
+			return err
+		}
+		if err := compareFixtureResponseBody(*expected.Response, resp); err != nil {
+			return err
+		}
+	}
 	return compareSecureStatus(expected, resp.Status, secureErrorCodeFromBody(resp.Body))
 }
 
@@ -353,14 +441,21 @@ func runSecureRoutesStep(app *apptheory.SecureApp, step FixtureSecureStep, expec
 	return nil
 }
 
-func runSecureOpenAPIStep(app *apptheory.SecureApp, setup FixtureSecureSetup, expected FixtureSecureExpectedStep) error {
+func runSecureOpenAPIStep(app *apptheory.SecureApp, setup FixtureSecureSetup, step FixtureSecureStep, expected FixtureSecureExpectedStep) error {
+	raw := setup.OpenAPI
+	if len(step.OpenAPI) > 0 {
+		raw = step.OpenAPI
+	}
 	var spec apptheory.SecureOpenAPISpec
-	if err := json.Unmarshal(setup.OpenAPI, &spec); err != nil {
+	if err := json.Unmarshal(raw, &spec); err != nil {
 		return err
 	}
 	doc, err := app.GenerateOpenAPI(spec)
+	if errorErr := compareSecureOpenAPIError(expected, err); errorErr != nil {
+		return errorErr
+	}
 	if err != nil {
-		return err
+		return nil
 	}
 	projection, err := secureOpenAPIProjection(doc)
 	if err != nil {
@@ -378,6 +473,26 @@ func runSecureOpenAPIStep(app *apptheory.SecureApp, setup FixtureSecureSetup, ex
 	}
 	if string(encoded) != expected.OpenAPIJSON {
 		return fmt.Errorf("openapi json mismatch")
+	}
+	return nil
+}
+
+func compareSecureOpenAPIError(expected FixtureSecureExpectedStep, got error) error {
+	if expected.OpenAPIError == "" && expected.OpenAPIErrorContains == "" {
+		if got != nil {
+			return fmt.Errorf("unexpected openapi error: %w", got)
+		}
+		return nil
+	}
+	if got == nil {
+		return fmt.Errorf("expected openapi error, got nil")
+	}
+	message := got.Error()
+	if expected.OpenAPIError != "" && message != expected.OpenAPIError {
+		return fmt.Errorf("openapi error: expected %q, got %q", expected.OpenAPIError, message)
+	}
+	if expected.OpenAPIErrorContains != "" && !strings.Contains(message, expected.OpenAPIErrorContains) {
+		return fmt.Errorf("openapi error %q does not contain %q", message, expected.OpenAPIErrorContains)
 	}
 	return nil
 }

@@ -1,0 +1,68 @@
+{
+  "id": "p2.secure_canonical_route_keys",
+  "tier": "p2",
+  "name": "secure route keys canonicalize roots queries and per-segment whitespace",
+  "setup": {
+    "secure_app": {
+      "tier": "p2",
+      "routes": [
+        {
+          "surface": "http",
+          "method": " get ",
+          "path": "   ",
+          "handler": "secure_echo",
+          "posture": "public"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": " query?ignored=yes ",
+          "handler": "secure_echo",
+          "posture": "public"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": " /teams/ { id } / members ",
+          "handler": "secure_echo",
+          "posture": "public"
+        }
+      ]
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "routes",
+        "operation": "routes"
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "routes",
+        "routes": [
+          {
+            "surface": "http",
+            "method": "GET",
+            "path": "/",
+            "posture": "public"
+          },
+          {
+            "surface": "http",
+            "method": "GET",
+            "path": "/query",
+            "posture": "public"
+          },
+          {
+            "surface": "http",
+            "method": "GET",
+            "path": "/teams/{id}/members",
+            "posture": "public"
+          }
+        ]
+      }
+    ]
+  }
+}

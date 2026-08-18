@@ -37,7 +37,8 @@
           "handler": "secure_echo",
           "posture": "internal_only"
         }
-      ]
+      ],
+      "policy_hook": true
     }
   },
   "input": {
@@ -143,7 +144,8 @@
         ],
         "resolver_calls": 1,
         "middleware_calls": 1,
-        "handler_calls": 1
+        "handler_calls": 1,
+        "policy_calls": 0
       },
       {
         "name": "public",
@@ -151,7 +153,8 @@
         "trace": [],
         "resolver_calls": 0,
         "middleware_calls": 1,
-        "handler_calls": 1
+        "handler_calls": 1,
+        "policy_calls": 0
       },
       {
         "name": "optional-anonymous",
@@ -161,7 +164,8 @@
         ],
         "resolver_calls": 1,
         "middleware_calls": 1,
-        "handler_calls": 1
+        "handler_calls": 1,
+        "policy_calls": 0
       },
       {
         "name": "internal-external",
@@ -169,7 +173,8 @@
         "error_code": "app.forbidden",
         "resolver_calls": 1,
         "middleware_calls": 0,
-        "handler_calls": 0
+        "handler_calls": 0,
+        "policy_calls": 0
       },
       {
         "name": "p0-options-normal-route",
@@ -177,7 +182,8 @@
         "error_code": "app.method_not_allowed",
         "resolver_calls": 0,
         "middleware_calls": 0,
-        "handler_calls": 0
+        "handler_calls": 0,
+        "policy_calls": 0
       }
     ]
   }

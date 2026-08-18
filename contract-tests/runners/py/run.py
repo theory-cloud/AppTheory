@@ -3564,6 +3564,44 @@ def _secure_fixture_posture(runtime: Any, route: dict[str, Any]) -> Any:
     return object()
 
 
+def _secure_construction_error_matches(expected: dict[str, Any], message: str) -> bool:
+    if expected.get("construction_error_present") and not message:
+        return False
+    if expected.get("construction_error") and message != str(expected["construction_error"]):
+        return False
+    if expected.get("construction_error_contains") and str(expected["construction_error_contains"]) not in message:
+        return False
+    if not any(
+        key in expected
+        for key in ("construction_error_present", "construction_error", "construction_error_contains")
+    ):
+        return not message
+    return True
+
+
+def _secure_openapi_error_matches(expected: dict[str, Any], message: str) -> bool:
+    exact = str(expected.get("openapi_error") or "")
+    contains = str(expected.get("openapi_error_contains") or "")
+    if not exact and not contains:
+        return not message
+    if not message or (exact and message != exact):
+        return False
+    return not contains or contains in message
+
+
+def _secure_response_matches(expected: dict[str, Any], actual: Any) -> bool:
+    if actual is None:
+        return False
+    expected_body = decode_fixture_body(expected.get("body")) if expected.get("body") else b""
+    return (
+        int(expected.get("status", 0)) == int(actual.status)
+        and canonicalize_headers(expected.get("headers") or {}) == canonicalize_headers(actual.headers or {})
+        and list(expected.get("cookies") or []) == list(actual.cookies or [])
+        and bool(expected.get("is_base64")) == bool(actual.is_base64)
+        and expected_body == bytes(actual.body)
+    )
+
+
 def _secure_error_code(body: Any) -> str:
     try:
         if isinstance(body, bytes):
@@ -3603,28 +3641,30 @@ def run_fixture_secure(
             }
             if setup.get("unknown_option"):
                 kwargs["unknown_option"] = True
-            runtime.SecureApp(**kwargs)
-        except TypeError as exc:
-            # Python rejects unknown keyword arguments at the closed signature. The
-            # fixture also supplies an invalid tier, whose stable contract message
-            # is what the cross-runtime assertion pins.
-            if setup.get("tier") not in {"p0", "p1", "p2"}:
-                try:
-                    runtime.SecureApp(tier=setup.get("tier"))
-                except Exception as stable_exc:  # noqa: BLE001
-                    message = str(stable_exc)
-                else:
-                    message = str(exc)
-            else:
-                message = str(exc)
+            app = runtime.SecureApp(**kwargs)
+            handler = lambda _ctx: runtime.json(200, {"ok": True})
+            for route in setup.get("routes") or []:
+                posture = _secure_fixture_posture(runtime, route)
+                if route.get("surface") == "http":
+                    app.handle(route.get("method", ""), route.get("path", ""), handler, posture)
+                elif route.get("surface") == "appsync":
+                    app.appsync_field(route.get("parent_type", ""), route.get("field", ""), handler, posture)
+                elif route.get("surface") == "websocket":
+                    app.websocket(route.get("route_key", ""), handler, posture)
         except Exception as exc:  # noqa: BLE001
             message = str(exc)
-        expected = str(expected_steps[0].get("construction_error", ""))
-        return message == expected, "secure construction error mismatch", empty, {}, effects
+        return (
+            _secure_construction_error_matches(expected_steps[0], message),
+            "secure construction error mismatch",
+            empty,
+            {},
+            effects,
+        )
 
     state: dict[str, Any] = {
         "current": None,
         "resolver_calls": 0,
+        "policy_calls": 0,
         "middleware_calls": 0,
         "handler_calls": 0,
         "trace": [],
@@ -3663,11 +3703,20 @@ def run_fixture_secure(
                 return runtime.SecurePrincipal(**_clone_json(stored))
         return None
 
-    app = runtime.SecureApp(
-        tier=setup.get("tier") or "p2",
-        websocket_support=bool(setup.get("websocket_support")),
-        principal_resolver=resolver,
-    )
+    def policy_hook(_ctx: Any) -> Any:
+        state["policy_calls"] += 1
+        return runtime.PolicyDecision(code="app.rate_limited", message="rate limited")
+
+    app_options: dict[str, Any] = {
+        "tier": setup.get("tier") or "p2",
+        "id_generator": _MCPFixedIdGenerator("req_test_123"),
+        "websocket_support": bool(setup.get("websocket_support")),
+    }
+    if setup.get("principal_resolver") is not False:
+        app_options["principal_resolver"] = resolver
+    if setup.get("policy_hook"):
+        app_options["policy_hook"] = policy_hook
+    app = runtime.SecureApp(**app_options)
 
     def middleware(ctx: Any, next_handler: Any) -> Any:
         state["middleware_calls"] += 1
@@ -3702,7 +3751,11 @@ def run_fixture_secure(
         return runtime.json(200, {"ok": True})
 
     for route in setup.get("routes") or []:
-        posture = _secure_fixture_posture(runtime, route)
+        posture = (
+            runtime.public()
+            if setup.get("inject_posture_records") and route.get("posture") in {"missing", "invalid"}
+            else _secure_fixture_posture(runtime, route)
+        )
         surface = route.get("surface")
         if surface == "http":
             app.handle(route.get("method", ""), route.get("path", ""), handler, posture)
@@ -3713,11 +3766,29 @@ def run_fixture_secure(
         else:
             return False, "unknown secure route surface", empty, {}, effects
 
+    if setup.get("inject_posture_records"):
+        core = getattr(app, "_SecureApp__core")
+        http_index = 0
+        for route in setup.get("routes") or []:
+            if route.get("surface") == "websocket":
+                record = core._ws_routes.get(str(route.get("route_key", "")).strip())
+            else:
+                record = core._router._routes[http_index]
+                http_index += 1
+            if route.get("posture") == "missing":
+                record.posture_present = False
+            elif route.get("posture") == "invalid":
+                if route.get("surface") == "websocket":
+                    record.posture = "invalid"
+                else:
+                    record.secure_posture = "invalid"
+
     for index, step in enumerate(steps):
         expected = expected_steps[index]
         state.update(
             current=step,
             resolver_calls=0,
+            policy_calls=0,
             middleware_calls=0,
             handler_calls=0,
             trace=[],
@@ -3742,7 +3813,7 @@ def run_fixture_secure(
                     is_base64=bool(request.get("is_base64")),
                 )
             )
-            result.update(status=response.status, error_code=_secure_error_code(response.body))
+            result.update(status=response.status, error_code=_secure_error_code(response.body), response=response)
         elif operation == "appsync":
             output = app.serve_appsync(event)
             if isinstance(output, dict) and output.get("pay_theory_error") is True:
@@ -3767,24 +3838,28 @@ def run_fixture_secure(
                 routes = [asdict(route) for route in app.routes()]
             result["routes"] = routes
         elif operation == "openapi":
-            raw = setup.get("openapi") or {}
-            document = app.generate_openapi(raw)
-            paths = document.get("paths") or {}
-            result["openapi"] = {
-                "x-apptheory-contract-mode": document.get("x-apptheory-contract-mode"),
-                "http_route_count": len(paths),
-                "has_appsync_path": "/note" in paths,
-                "has_websocket_path": "/send" in paths,
-                "proxy_path": "/files/{path}",
-                "public_posture": (paths.get("/public") or {}).get("get", {}).get("x-apptheory-auth-posture"),
-                "files_posture": (paths.get("/files/{path}") or {}).get("get", {}).get("x-apptheory-auth-posture"),
-                "files_scopes": (paths.get("/files/{path}") or {}).get("get", {}).get("x-apptheory-required-scopes"),
-                "optional_posture": (paths.get("/optional") or {}).get("get", {}).get("x-apptheory-auth-posture"),
-                "optional_security": (paths.get("/optional") or {}).get("get", {}).get("security"),
-                "internal_posture": (paths.get("/internal") or {}).get("post", {}).get("x-apptheory-auth-posture"),
-                "internal_security": (paths.get("/internal") or {}).get("post", {}).get("security"),
-            }
-            result["openapi_json"] = app.generate_openapi_json(raw)
+            raw = step.get("openapi") or setup.get("openapi") or {}
+            try:
+                document = app.generate_openapi(raw)
+            except Exception as exc:  # noqa: BLE001
+                result["openapi_error"] = str(exc)
+            else:
+                paths = document.get("paths") or {}
+                result["openapi"] = {
+                    "x-apptheory-contract-mode": document.get("x-apptheory-contract-mode"),
+                    "http_route_count": len(paths),
+                    "has_appsync_path": "/note" in paths,
+                    "has_websocket_path": "/send" in paths,
+                    "proxy_path": "/files/{path}",
+                    "public_posture": (paths.get("/public") or {}).get("get", {}).get("x-apptheory-auth-posture"),
+                    "files_posture": (paths.get("/files/{path}") or {}).get("get", {}).get("x-apptheory-auth-posture"),
+                    "files_scopes": (paths.get("/files/{path}") or {}).get("get", {}).get("x-apptheory-required-scopes"),
+                    "optional_posture": (paths.get("/optional") or {}).get("get", {}).get("x-apptheory-auth-posture"),
+                    "optional_security": (paths.get("/optional") or {}).get("get", {}).get("security"),
+                    "internal_posture": (paths.get("/internal") or {}).get("post", {}).get("x-apptheory-auth-posture"),
+                    "internal_security": (paths.get("/internal") or {}).get("post", {}).get("security"),
+                }
+                result["openapi_json"] = app.generate_openapi_json(raw)
 
         name = str(step.get("name", ""))
         if int(expected.get("status", 0)) != int(result.get("status", 0)):
@@ -3794,6 +3869,7 @@ def run_fixture_secure(
         if operation in {"http", "appsync", "websocket"}:
             if (
                 state["resolver_calls"] != int(expected.get("resolver_calls", 0))
+                or state["policy_calls"] != int(expected.get("policy_calls", 0))
                 or state["middleware_calls"] != int(expected.get("middleware_calls", 0))
                 or state["handler_calls"] != int(expected.get("handler_calls", 0))
             ):
@@ -3802,8 +3878,16 @@ def run_fixture_secure(
                 return False, f"secure {name} trace mismatch", empty, {}, effects
             if "principal" in expected and expected["principal"] != state["principal"]:
                 return False, f"secure {name} principal mismatch", empty, {}, effects
+            if expected.get("response") and not _secure_response_matches(expected["response"], result.get("response")):
+                return False, f"secure {name} response mismatch", empty, {}, effects
         if operation == "routes" and not _secure_array_subset(expected.get("routes") or [], result.get("routes") or []):
             return False, "secure routes mismatch", empty, {}, effects
+        if operation == "openapi" and not _secure_openapi_error_matches(
+            expected, str(result.get("openapi_error") or "")
+        ):
+            return False, "secure openapi error mismatch", empty, {}, effects
+        if operation == "openapi" and result.get("openapi_error"):
+            continue
         if operation == "openapi" and not _secure_object_subset(
             expected.get("openapi") or {}, result.get("openapi") or {}
         ):

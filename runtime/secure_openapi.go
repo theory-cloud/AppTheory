@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 )
 
@@ -101,12 +102,22 @@ func secureOpenAPIDescriptions(routes []OpenAPIRouteSpec) (map[string]OpenAPIRou
 }
 
 func secureValidateExactRouteSet(registered map[string]SecureRoute, described map[string]OpenAPIRouteSpec) error {
+	registeredKeys := make([]string, 0, len(registered))
 	for key := range registered {
+		registeredKeys = append(registeredKeys, key)
+	}
+	sort.Strings(registeredKeys)
+	for _, key := range registeredKeys {
 		if _, ok := described[key]; !ok {
 			return fmt.Errorf("apptheory: secure openapi missing route %s", key)
 		}
 	}
+	describedKeys := make([]string, 0, len(described))
 	for key := range described {
+		describedKeys = append(describedKeys, key)
+	}
+	sort.Strings(describedKeys)
+	for _, key := range describedKeys {
 		if _, ok := registered[key]; !ok {
 			return fmt.Errorf("apptheory: secure openapi extra route %s", key)
 		}

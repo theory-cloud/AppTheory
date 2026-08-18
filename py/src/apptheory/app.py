@@ -613,6 +613,16 @@ class App:
             trace_id,
         )
 
+    def _canonicalize_secure_error_response(self, response: Response) -> Response:
+        if not self._secure:
+            return response
+        try:
+            payload = json.loads(bytes(response.body).decode("utf-8"))
+        except (TypeError, ValueError, UnicodeDecodeError):
+            return response
+        response.body = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return response
+
     def serve(self, request: Request, ctx: Any | None = None) -> Response:
         """Serve a normalized AppTheory request and return a normalized response."""
         return self._serve(request, ctx)
@@ -634,11 +644,13 @@ class App:
             trace_id: str = "",
         ) -> Response:
             if error_responder is not None:
-                return error_responder(exc, error_request, request_id)
+                return self._canonicalize_secure_error_response(error_responder(exc, error_request, request_id))
             if request_id:
                 resolved_trace_id = str(trace_id or "").strip() or str(getattr(error_request, "trace_id", "") or "")
-                return self._response_for_http_error_with_request_id_trace_id(exc, request_id, resolved_trace_id)
-            return self._response_for_http_error(exc)
+                return self._canonicalize_secure_error_response(
+                    self._response_for_http_error_with_request_id_trace_id(exc, request_id, resolved_trace_id)
+                )
+            return self._canonicalize_secure_error_response(self._response_for_http_error(exc))
 
         if self._tier == "p1":
             return self._serve_portable(
@@ -874,9 +886,11 @@ class App:
             trace_id: str = "",
         ) -> Response:
             if error_responder is not None:
-                return error_responder(exc, error_request, request_id)
+                return self._canonicalize_secure_error_response(error_responder(exc, error_request, request_id))
             resolved_trace_id = str(trace_id or "").strip() or str(getattr(error_request, "trace_id", "") or "")
-            return self._response_for_http_error_with_request_id_trace_id(exc, request_id, resolved_trace_id)
+            return self._canonicalize_secure_error_response(
+                self._response_for_http_error_with_request_id_trace_id(exc, request_id, resolved_trace_id)
+            )
 
         started_at = self._clock.now()
         pre_headers = canonicalize_headers(request.headers)

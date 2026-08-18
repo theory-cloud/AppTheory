@@ -1,8 +1,6 @@
 {
-  "id":"p2.secure_construction_registration","tier":"p2","name":"secure construction and registration reject unknown configuration and missing posture",
-  "setup":{"secure_app":{"tier":"unknown","unknown_option":true,"invalid_websocket_factory":true,"routes":[
-    {"surface":"http","method":"GET","path":"/missing","handler":"secure_echo","posture":"missing"}
-  ]}},
-  "input":{"secure_steps":[{"name":"construct","operation":"construct"}]},
-  "expect":{"secure_steps":[{"name":"construct","construction_error":"apptheory: invalid secure configuration"}]}
+  "id":"p2.secure_construction_invalid_tier","tier":"p2","name":"secure construction rejects an unknown tier independently",
+  "setup":{"secure_app":{"tier":"unknown"}},
+  "input":{"secure_steps":[{"name":"invalid-tier","operation":"construct"}]},
+  "expect":{"secure_steps":[{"name":"invalid-tier","construction_error":"apptheory: invalid secure configuration"}]}
 }

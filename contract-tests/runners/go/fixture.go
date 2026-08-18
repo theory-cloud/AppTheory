@@ -150,6 +150,9 @@ type FixtureSecureSetup struct {
 	WebSocketSupport        bool                 `json:"websocket_support,omitempty"`
 	InvalidWebSocketFactory bool                 `json:"invalid_websocket_factory,omitempty"`
 	UnknownOption           bool                 `json:"unknown_option,omitempty"`
+	InjectPostureRecords    bool                 `json:"inject_posture_records,omitempty"`
+	PrincipalResolver       *bool                `json:"principal_resolver,omitempty"`
+	PolicyHook              bool                 `json:"policy_hook,omitempty"`
 	Routes                  []FixtureSecureRoute `json:"routes,omitempty"`
 	Middlewares             []string             `json:"middlewares,omitempty"`
 	OpenAPI                 json.RawMessage      `json:"openapi,omitempty"`
@@ -191,21 +194,28 @@ type FixtureSecureStep struct {
 	RevokeConnection             bool                        `json:"revoke_connection,omitempty"`
 	MutateReturned               bool                        `json:"mutate_returned,omitempty"`
 	MutateRoutes                 bool                        `json:"mutate_routes,omitempty"`
+	OpenAPI                      json.RawMessage             `json:"openapi,omitempty"`
 }
 
 type FixtureSecureExpectedStep struct {
-	Name              string                  `json:"name"`
-	Status            int                     `json:"status,omitempty"`
-	ErrorCode         string                  `json:"error_code,omitempty"`
-	Trace             []string                `json:"trace,omitempty"`
-	Principal         *FixtureSecurePrincipal `json:"principal,omitempty"`
-	ResolverCalls     int                     `json:"resolver_calls,omitempty"`
-	MiddlewareCalls   int                     `json:"middleware_calls,omitempty"`
-	HandlerCalls      int                     `json:"handler_calls,omitempty"`
-	Routes            []map[string]any        `json:"routes,omitempty"`
-	OpenAPI           map[string]any          `json:"openapi,omitempty"`
-	OpenAPIJSON       string                  `json:"openapi_json,omitempty"`
-	ConstructionError string                  `json:"construction_error,omitempty"`
+	Name                      string                  `json:"name"`
+	Status                    int                     `json:"status,omitempty"`
+	ErrorCode                 string                  `json:"error_code,omitempty"`
+	Trace                     []string                `json:"trace,omitempty"`
+	Principal                 *FixtureSecurePrincipal `json:"principal,omitempty"`
+	ResolverCalls             int                     `json:"resolver_calls,omitempty"`
+	PolicyCalls               int                     `json:"policy_calls,omitempty"`
+	MiddlewareCalls           int                     `json:"middleware_calls,omitempty"`
+	HandlerCalls              int                     `json:"handler_calls,omitempty"`
+	Response                  *FixtureResponse        `json:"response,omitempty"`
+	Routes                    []map[string]any        `json:"routes,omitempty"`
+	OpenAPI                   map[string]any          `json:"openapi,omitempty"`
+	OpenAPIJSON               string                  `json:"openapi_json,omitempty"`
+	OpenAPIError              string                  `json:"openapi_error,omitempty"`
+	OpenAPIErrorContains      string                  `json:"openapi_error_contains,omitempty"`
+	ConstructionError         string                  `json:"construction_error,omitempty"`
+	ConstructionErrorContains string                  `json:"construction_error_contains,omitempty"`
+	ConstructionErrorPresent  bool                    `json:"construction_error_present,omitempty"`
 }
 
 type FixtureOAuthSetup struct {

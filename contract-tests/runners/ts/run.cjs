@@ -9,6 +9,8 @@ const { pathToFileURL } = require("node:url");
 const util = require("node:util");
 
 let cachedRuntime = null;
+let securePostureInjections = new Map();
+let securePostureInjectorInstalled = false;
 
 const CLOUDWATCH_LOGS_SUBSCRIPTION_HANDLER =
   "kinesis_require_cloudwatch_logs_subscription";
@@ -21,6 +23,35 @@ async function loadAppTheoryRuntime() {
   const runtimeUrl = pathToFileURL(runtimePath).href;
   cachedRuntime = await import(runtimeUrl);
   return cachedRuntime;
+}
+
+async function configureSecurePostureInjections(setup) {
+  securePostureInjections = new Map();
+  if (!setup.inject_posture_records) return;
+  for (const route of setup.routes ?? []) {
+    if (!['missing', 'invalid'].includes(String(route.posture))) continue;
+    const method = route.surface === 'appsync'
+      ? ['Query', 'Subscription'].includes(String(route.parent_type).trim()) ? 'GET' : 'POST'
+      : String(route.method ?? '').trim().toUpperCase();
+    const rawPath = route.surface === 'appsync' ? `/${String(route.field).trim()}` : String(route.path ?? '').trim();
+    const pathValue = (rawPath.split('?', 1)[0].trim() || '/');
+    const normalizedPath = pathValue.startsWith('/') ? pathValue : `/${pathValue}`;
+    securePostureInjections.set(`${method} ${normalizedPath}`, String(route.posture));
+  }
+  if (securePostureInjectorInstalled) return;
+  const routerPath = path.join(process.cwd(), 'ts', 'dist', 'internal', 'router.js');
+  const { Router } = await import(pathToFileURL(routerPath).href);
+  const originalMatch = Router.prototype.match;
+  Router.prototype.match = function (...args) {
+    const result = originalMatch.apply(this, args);
+    const route = result?.match?.route;
+    const key = route ? `${route.method} ${route.pattern}` : '';
+    const injection = securePostureInjections.get(key);
+    if (route?.secure && injection === 'missing') route.secure.posturePresent = false;
+    if (route?.secure && injection === 'invalid') route.secure.posture = 'invalid';
+    return result;
+  };
+  securePostureInjectorInstalled = true;
 }
 
 function parseArgs(argv) {
@@ -3088,34 +3119,50 @@ async function runFixtureSecure(fixture) {
   if (steps.length !== expectedSteps.length) {
     return { ok: false, reason: "secure step count mismatch" };
   }
+  await configureSecurePostureInjections(setup);
   if (steps.length === 1 && steps[0]?.operation === "construct") {
     let message = "";
     try {
-      new runtime.SecureApp({
+      const constructionOptions = {
         tier: setup.tier,
-        unknownOption: setup.unknown_option ? true : undefined,
-        webSocketClientFactory: setup.invalid_websocket_factory
-          ? 7
-          : undefined,
-      });
+        ...(setup.unknown_option ? { unknownOption: true } : {}),
+        ...(setup.invalid_websocket_factory ? { webSocketClientFactory: 7 } : {}),
+      };
+      const app = new runtime.SecureApp(constructionOptions);
+      const handler = async () => ({ status: 200, headers: {}, cookies: [], body: Buffer.alloc(0), isBase64: false });
+      for (const route of setup.routes ?? []) {
+        const posture = secureFixturePosture(runtime, route, false);
+        if (route.surface === 'http') app.handle(route.method, route.path, handler, posture);
+        else if (route.surface === 'appsync') app.appSyncField(route.parent_type, route.field, handler, posture);
+        else if (route.surface === 'websocket') app.webSocket(route.route_key, handler, posture);
+      }
     } catch (err) {
       message = String(err?.message ?? err);
     }
-    return message === String(expectedSteps[0]?.construction_error ?? "")
+    return secureConstructionErrorMatches(expectedSteps[0] ?? {}, message)
       ? { ok: true }
       : { ok: false, reason: "secure construction error mismatch" };
   }
 
   let current = null;
   let resolverCalls = 0;
+  let policyCalls = 0;
   let middlewareCalls = 0;
   let handlerCalls = 0;
   let observation = { trace: [], principal: null };
   const connections = new Map();
-  const app = new runtime.SecureApp({
+  const options = {
     tier: setup.tier || "p2",
+    clock: { now: () => new Date(0) },
+    ids: { newId: () => "req_test_123" },
     webSocketSupport: Boolean(setup.websocket_support),
-    principalResolver: async (ctx) => {
+    policyHook: setup.policy_hook ? async () => {
+      policyCalls += 1;
+      return { code: 'app.rate_limited', message: 'rate limited' };
+    } : undefined,
+  };
+  if (setup.principal_resolver !== false) {
+    options.principalResolver = async (ctx) => {
       resolverCalls += 1;
       if (current?.resolver_error) {
         throw new runtime.AppError(
@@ -3140,8 +3187,9 @@ async function runFixtureSecure(fixture) {
         return cloneSecureFixtureValue(connections.get(ws.connectionId) ?? null);
       }
       return null;
-    },
-  });
+    };
+  }
+  const app = new runtime.SecureApp(options);
   app.use(async (ctx, next) => {
     middlewareCalls += 1;
     return await next(ctx);
@@ -3171,7 +3219,7 @@ async function runFixtureSecure(fixture) {
   };
 
   for (const route of setup.routes ?? []) {
-    const posture = secureFixturePosture(runtime, route);
+    const posture = secureFixturePosture(runtime, route, Boolean(setup.inject_posture_records));
     if (route.surface === "http") {
       app.handle(route.method, route.path, handler, posture);
     } else if (route.surface === "appsync") {
@@ -3187,6 +3235,7 @@ async function runFixtureSecure(fixture) {
     current = steps[index];
     const expected = expectedSteps[index];
     resolverCalls = 0;
+    policyCalls = 0;
     middlewareCalls = 0;
     handlerCalls = 0;
     observation = { trace: [], principal: null };
@@ -3208,10 +3257,14 @@ async function runFixtureSecure(fixture) {
     if (["http", "appsync", "websocket"].includes(current.operation)) {
       if (
         resolverCalls !== Number(expected.resolver_calls ?? 0) ||
+        policyCalls !== Number(expected.policy_calls ?? 0) ||
         middlewareCalls !== Number(expected.middleware_calls ?? 0) ||
         handlerCalls !== Number(expected.handler_calls ?? 0)
       ) {
         return { ok: false, reason: `secure ${current.name} side effects mismatch` };
+      }
+      if (expected.response && !secureResponseMatches(expected.response, result.response)) {
+        return { ok: false, reason: `secure ${current.name} response mismatch` };
       }
       if (expected.trace && !deepEqual(expected.trace, observation.trace)) {
         return { ok: false, reason: `secure ${current.name} trace mismatch` };
@@ -3231,6 +3284,18 @@ async function runFixtureSecure(fixture) {
     }
     if (
       current.operation === "openapi" &&
+      !secureOpenAPIErrorMatches(expected, result.openapiError)
+    ) {
+      return { ok: false, reason: "secure openapi error mismatch" };
+    }
+    if (
+      current.operation === "openapi" &&
+      result.openapiError
+    ) {
+      continue;
+    }
+    if (
+      current.operation === "openapi" &&
       !secureObjectSubset(expected.openapi ?? {}, result.openapi ?? {})
     ) {
       return { ok: false, reason: "secure openapi projection mismatch" };
@@ -3246,7 +3311,10 @@ async function runFixtureSecure(fixture) {
   return { ok: true };
 }
 
-function secureFixturePosture(runtime, route) {
+function secureFixturePosture(runtime, route, injectPostureRecords = false) {
+  if (injectPostureRecords && ["missing", "invalid"].includes(route.posture)) {
+    return runtime.Public();
+  }
   if (route.posture === "public") return runtime.Public();
   if (route.posture === "optional") return runtime.Optional();
   if (route.posture === "authenticated") {
@@ -3254,6 +3322,33 @@ function secureFixturePosture(runtime, route) {
   }
   if (route.posture === "internal_only") return runtime.InternalOnly();
   return {};
+}
+
+function secureConstructionErrorMatches(expected, message) {
+  if (expected.construction_error_present && !message) return false;
+  if (expected.construction_error && message !== String(expected.construction_error)) return false;
+  if (expected.construction_error_contains && !message.includes(String(expected.construction_error_contains))) return false;
+  if (!expected.construction_error_present && !expected.construction_error && !expected.construction_error_contains && message) return false;
+  return true;
+}
+
+function secureOpenAPIErrorMatches(expected, message) {
+  const exact = String(expected.openapi_error ?? '');
+  const contains = String(expected.openapi_error_contains ?? '');
+  if (!exact && !contains) return !message;
+  if (!message) return false;
+  if (exact && message !== exact) return false;
+  return !contains || message.includes(contains);
+}
+
+function secureResponseMatches(expected, actual) {
+  if (!actual) return false;
+  const expectedBody = expected.body ? decodeFixtureBody(expected.body) : Buffer.alloc(0);
+  return Number(expected.status) === Number(actual.status) &&
+    deepEqual(canonicalizeHeaders(expected.headers ?? {}), canonicalizeHeaders(actual.headers ?? {})) &&
+    deepEqual(expected.cookies ?? [], actual.cookies ?? []) &&
+    Boolean(expected.is_base64) === Boolean(actual.isBase64) &&
+    Buffer.from(actual.body ?? []).equals(Buffer.from(expectedBody));
 }
 
 function cloneSecureFixtureValue(value) {
@@ -3275,6 +3370,7 @@ async function runSecureFixtureStep(app, setup, step) {
     return {
       status: response.status,
       errorCode: secureErrorCode(Buffer.from(response.body).toString("utf8")),
+      response,
     };
   }
   if (step.operation === "appsync") {
@@ -3304,7 +3400,7 @@ async function runSecureFixtureStep(app, setup, step) {
     return { status: 0, routes };
   }
   if (step.operation === "openapi") {
-    const raw = setup.openapi ?? {};
+    const raw = step.openapi ?? setup.openapi ?? {};
     const spec = {
       title: raw.title,
       version: raw.version,
@@ -3320,7 +3416,12 @@ async function runSecureFixtureStep(app, setup, step) {
         internalOnly: raw.auth_schemes?.internal_only ?? [],
       },
     };
-    const document = app.generateOpenAPI(spec);
+    let document;
+    try {
+      document = app.generateOpenAPI(spec);
+    } catch (err) {
+      return { status: 0, openapiError: String(err?.message ?? err) };
+    }
     const paths = document.paths ?? {};
     return {
       status: 0,
