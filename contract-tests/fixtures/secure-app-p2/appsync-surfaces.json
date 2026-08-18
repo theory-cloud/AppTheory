@@ -1,0 +1,198 @@
+{
+  "id": "p2.secure_appsync_surfaces",
+  "tier": "p2",
+  "name": "secure AppSync fields are posture-bearing and transport isolated",
+  "setup": {
+    "secure_app": {
+      "tier": "p2",
+      "middlewares": [
+        "record"
+      ],
+      "routes": [
+        {
+          "surface": "appsync",
+          "parent_type": "Query",
+          "field": "note",
+          "handler": "secure_echo",
+          "posture": "authenticated",
+          "scopes": [
+            "notes:read"
+          ]
+        },
+        {
+          "surface": "appsync",
+          "parent_type": "Subscription",
+          "field": "updates",
+          "handler": "secure_echo",
+          "posture": "authenticated",
+          "scopes": [
+            "notes:read"
+          ]
+        },
+        {
+          "surface": "appsync",
+          "parent_type": "Mutation",
+          "field": "deliver",
+          "handler": "secure_echo",
+          "posture": "internal_only"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/http-only",
+          "handler": "secure_echo",
+          "posture": "public"
+        }
+      ]
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "query-success",
+        "operation": "appsync",
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [
+            "notes:read"
+          ],
+          "claims": {}
+        },
+        "aws_event": {
+          "source": "appsync",
+          "event": {
+            "arguments": {},
+            "identity": {
+              "sub": "user"
+            },
+            "info": {
+              "fieldName": "note",
+              "parentTypeName": "Query",
+              "variables": {}
+            },
+            "request": {
+              "headers": {}
+            }
+          }
+        }
+      },
+      {
+        "name": "subscription-identity",
+        "operation": "appsync",
+        "principal_from_appsync_identity": true,
+        "aws_event": {
+          "source": "appsync",
+          "event": {
+            "arguments": {},
+            "identity": {
+              "sub": "from-appsync",
+              "scopes": [
+                "notes:read"
+              ]
+            },
+            "info": {
+              "fieldName": "updates",
+              "parentTypeName": "Subscription",
+              "variables": {}
+            },
+            "request": {
+              "headers": {}
+            }
+          }
+        }
+      },
+      {
+        "name": "mutation-external",
+        "operation": "appsync",
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [],
+          "claims": {}
+        },
+        "aws_event": {
+          "source": "appsync",
+          "event": {
+            "arguments": {},
+            "identity": {
+              "sub": "user"
+            },
+            "info": {
+              "fieldName": "deliver",
+              "parentTypeName": "Mutation",
+              "variables": {}
+            },
+            "request": {
+              "headers": {}
+            }
+          }
+        }
+      },
+      {
+        "name": "http-cannot-match-appsync",
+        "operation": "http",
+        "request": {
+          "method": "GET",
+          "path": "/note",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "query-success",
+        "status": 200,
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [
+            "notes:read"
+          ],
+          "claims": {}
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "subscription-identity",
+        "status": 200,
+        "principal": {
+          "identity": "from-appsync",
+          "kind": "external",
+          "scopes": [
+            "notes:read"
+          ],
+          "claims": {}
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "mutation-external",
+        "status": 403,
+        "error_code": "app.forbidden",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "http-cannot-match-appsync",
+        "status": 404,
+        "error_code": "app.not_found",
+        "resolver_calls": 0,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      }
+    ]
+  }
+}
