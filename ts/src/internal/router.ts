@@ -7,6 +7,14 @@ export interface RouteOptions {
   authRequired?: boolean;
 }
 
+/** Private metadata carried only by SecureApp registrations. */
+export interface SecureRouteMetadata {
+  surface: "http" | "appsync";
+  posture: "public" | "optional" | "authenticated" | "internal_only";
+  scopes: string[];
+  posturePresent: boolean;
+}
+
 interface ParsedRouteSegment {
   kind: "static" | "param" | "proxy";
   value: string;
@@ -32,6 +40,7 @@ interface Route<THandler> {
   segments: ParsedRouteSegment[];
   handler: THandler;
   authRequired: boolean;
+  secure: SecureRouteMetadata | null;
   staticCount: number;
   paramCount: number;
   hasProxy: boolean;
@@ -87,11 +96,30 @@ export class Router<THandler> {
       segments: parsed.segments,
       handler,
       authRequired: Boolean(options.authRequired),
+      secure: null,
       staticCount: parsed.staticCount,
       paramCount: parsed.paramCount,
       hasProxy: parsed.hasProxy,
       order: this._routes.length,
     });
+  }
+
+  /** Registers one posture-bearing secure route. */
+  addSecure(
+    method: string,
+    pattern: string,
+    handler: THandler,
+    metadata: SecureRouteMetadata,
+  ): void {
+    this.addStrict(method, pattern, handler, {});
+    const route = this._routes[this._routes.length - 1];
+    if (!route) throw routeRegistrationError("secure route invariant");
+    route.secure = {
+      surface: metadata.surface,
+      posture: metadata.posture,
+      scopes: [...metadata.scopes],
+      posturePresent: Boolean(metadata.posturePresent),
+    };
   }
 
   /** Registers a route using the fail-closed route-registration path. */
@@ -108,6 +136,7 @@ export class Router<THandler> {
   match(
     method: string,
     path: string,
+    surface?: "http" | "appsync",
   ): {
     match: { route: Route<THandler>; params: Record<string, string> } | null;
     allowed: string[];
@@ -121,6 +150,9 @@ export class Router<THandler> {
       params: Record<string, string>;
     } | null = null;
     for (const route of this._routes) {
+      if (surface && route.secure && route.secure.surface !== surface) {
+        continue;
+      }
       const params = matchRoute(route.segments, pathSegments);
       if (!params) {
         continue;

@@ -14,6 +14,10 @@ class Match:
     handler: Any
     params: dict[str, str]
     auth_required: bool
+    secure_surface: str = ""
+    secure_posture: str = ""
+    secure_scopes: list[str] | None = None
+    posture_present: bool = False
 
 
 @dataclass(slots=True)
@@ -23,6 +27,10 @@ class _Route:
     segments: list[tuple[str, str]]
     handler: Any
     auth_required: bool
+    secure_surface: str
+    secure_posture: str
+    secure_scopes: list[str]
+    posture_present: bool
     static_count: int
     param_count: int
     has_proxy: bool
@@ -57,6 +65,10 @@ class Router:
                 segments=segments,
                 handler=handler,
                 auth_required=bool(auth_required),
+                secure_surface="",
+                secure_posture="",
+                secure_scopes=[],
+                posture_present=False,
                 static_count=static_count,
                 param_count=param_count,
                 has_proxy=has_proxy,
@@ -64,7 +76,25 @@ class Router:
             )
         )
 
-    def match(self, method: str, path: str) -> tuple[Match | None, list[str]]:
+    def add_secure(
+        self,
+        method: str,
+        pattern: str,
+        handler: Any,
+        *,
+        surface: str,
+        posture: str,
+        scopes: list[str],
+    ) -> None:
+        """Register one posture-bearing secure route."""
+        self.add_strict(method, pattern, handler)
+        route = self._routes[-1]
+        route.secure_surface = str(surface)
+        route.secure_posture = str(posture)
+        route.secure_scopes = list(scopes)
+        route.posture_present = True
+
+    def match(self, method: str, path: str, *, surface: str = "") -> tuple[Match | None, list[str]]:
         """Match an HTTP method and path against registered routes."""
         method_value = str(method or "").strip().upper()
         path_segments = _split_path(normalize_path(path))
@@ -73,6 +103,8 @@ class Router:
         best: _Route | None = None
         best_params: dict[str, str] | None = None
         for route in self._routes:
+            if surface and route.secure_surface and route.secure_surface != surface:
+                continue
             params = _match_route(route.segments, path_segments)
             if params is None:
                 continue
@@ -83,7 +115,15 @@ class Router:
 
         if best is None or best_params is None:
             return None, allowed
-        return Match(handler=best.handler, params=best_params, auth_required=best.auth_required), allowed
+        return Match(
+            handler=best.handler,
+            params=best_params,
+            auth_required=best.auth_required,
+            secure_surface=best.secure_surface,
+            secure_posture=best.secure_posture,
+            secure_scopes=list(best.secure_scopes),
+            posture_present=best.posture_present,
+        ), allowed
 
     @staticmethod
     def format_allow_header(methods: list[str]) -> str:

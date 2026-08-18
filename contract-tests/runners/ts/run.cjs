@@ -3080,7 +3080,320 @@ function cloneObjectStoreMetadata(metadata) {
   );
 }
 
+async function runFixtureSecure(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const setup = fixture.setup?.secure_app ?? {};
+  const steps = fixture.input?.secure_steps ?? [];
+  const expectedSteps = fixture.expect?.secure_steps ?? [];
+  if (steps.length !== expectedSteps.length) {
+    return { ok: false, reason: "secure step count mismatch" };
+  }
+  if (steps.length === 1 && steps[0]?.operation === "construct") {
+    let message = "";
+    try {
+      new runtime.SecureApp({
+        tier: setup.tier,
+        unknownOption: setup.unknown_option ? true : undefined,
+        webSocketClientFactory: setup.invalid_websocket_factory
+          ? 7
+          : undefined,
+      });
+    } catch (err) {
+      message = String(err?.message ?? err);
+    }
+    return message === String(expectedSteps[0]?.construction_error ?? "")
+      ? { ok: true }
+      : { ok: false, reason: "secure construction error mismatch" };
+  }
+
+  let current = null;
+  let resolverCalls = 0;
+  let middlewareCalls = 0;
+  let handlerCalls = 0;
+  let observation = { trace: [], principal: null };
+  const connections = new Map();
+  const app = new runtime.SecureApp({
+    tier: setup.tier || "p2",
+    webSocketSupport: Boolean(setup.websocket_support),
+    principalResolver: async (ctx) => {
+      resolverCalls += 1;
+      if (current?.resolver_error) {
+        throw new runtime.AppError(
+          current.resolver_error.code,
+          current.resolver_error.message,
+        );
+      }
+      if (current?.principal) return cloneSecureFixtureValue(current.principal);
+      if (current?.principal_from_appsync_identity) {
+        const identity = ctx.asAppSync()?.identity ?? {};
+        return {
+          identity: String(identity.sub ?? ""),
+          kind: "external",
+          scopes: Array.isArray(identity.scopes)
+            ? identity.scopes.map(String)
+            : [],
+          claims: {},
+        };
+      }
+      const ws = ctx.asWebSocket();
+      if (ws && ws.routeKey !== "$connect") {
+        return cloneSecureFixtureValue(connections.get(ws.connectionId) ?? null);
+      }
+      return null;
+    },
+  });
+  app.use(async (ctx, next) => {
+    middlewareCalls += 1;
+    return await next(ctx);
+  });
+  const handler = async (ctx) => {
+    handlerCalls += 1;
+    observation.trace = [...ctx.middlewareTrace];
+    let principal = ctx.securePrincipal();
+    if (current?.mutate_returned && principal) {
+      principal.identity = "mutated";
+      if (principal.scopes.length > 0) principal.scopes[0] = "mutated";
+      if (principal.claims?.nested) principal.claims.nested.value = "mutated";
+      principal = ctx.securePrincipal();
+    }
+    observation.principal = cloneSecureFixtureValue(principal);
+    const ws = ctx.asWebSocket();
+    if (current?.persist_connection && principal && ws) {
+      connections.set(ws.connectionId, cloneSecureFixtureValue(principal));
+    }
+    return {
+      status: 200,
+      headers: { "content-type": ["application/json; charset=utf-8"] },
+      cookies: [],
+      body: Buffer.from('{"ok":true}', "utf8"),
+      isBase64: false,
+    };
+  };
+
+  for (const route of setup.routes ?? []) {
+    const posture = secureFixturePosture(runtime, route);
+    if (route.surface === "http") {
+      app.handle(route.method, route.path, handler, posture);
+    } else if (route.surface === "appsync") {
+      app.appSyncField(route.parent_type, route.field, handler, posture);
+    } else if (route.surface === "websocket") {
+      app.webSocket(route.route_key, handler, posture);
+    } else {
+      return { ok: false, reason: "unknown secure route surface" };
+    }
+  }
+
+  for (let index = 0; index < steps.length; index += 1) {
+    current = steps[index];
+    const expected = expectedSteps[index];
+    resolverCalls = 0;
+    middlewareCalls = 0;
+    handlerCalls = 0;
+    observation = { trace: [], principal: null };
+    if (current.revoke_connection) {
+      connections.delete(
+        String(current.aws_event?.event?.requestContext?.connectionId ?? ""),
+      );
+    }
+    const result = await runSecureFixtureStep(app, setup, current);
+    if (Number(expected.status ?? 0) !== Number(result.status ?? 0)) {
+      return { ok: false, reason: `secure ${current.name} status mismatch` };
+    }
+    if (
+      expected.error_code &&
+      String(expected.error_code) !== String(result.errorCode ?? "")
+    ) {
+      return { ok: false, reason: `secure ${current.name} error mismatch` };
+    }
+    if (["http", "appsync", "websocket"].includes(current.operation)) {
+      if (
+        resolverCalls !== Number(expected.resolver_calls ?? 0) ||
+        middlewareCalls !== Number(expected.middleware_calls ?? 0) ||
+        handlerCalls !== Number(expected.handler_calls ?? 0)
+      ) {
+        return { ok: false, reason: `secure ${current.name} side effects mismatch` };
+      }
+      if (expected.trace && !deepEqual(expected.trace, observation.trace)) {
+        return { ok: false, reason: `secure ${current.name} trace mismatch` };
+      }
+      if (
+        expected.principal &&
+        !deepEqual(expected.principal, observation.principal)
+      ) {
+        return { ok: false, reason: `secure ${current.name} principal mismatch` };
+      }
+    }
+    if (
+      current.operation === "routes" &&
+      !secureArraySubset(expected.routes ?? [], result.routes ?? [])
+    ) {
+      return { ok: false, reason: "secure routes mismatch" };
+    }
+    if (
+      current.operation === "openapi" &&
+      !secureObjectSubset(expected.openapi ?? {}, result.openapi ?? {})
+    ) {
+      return { ok: false, reason: "secure openapi projection mismatch" };
+    }
+    if (
+      current.operation === "openapi" &&
+      expected.openapi_json &&
+      expected.openapi_json !== result.openapiJSON
+    ) {
+      return { ok: false, reason: "secure openapi json mismatch" };
+    }
+  }
+  return { ok: true };
+}
+
+function secureFixturePosture(runtime, route) {
+  if (route.posture === "public") return runtime.Public();
+  if (route.posture === "optional") return runtime.Optional();
+  if (route.posture === "authenticated") {
+    return runtime.Authenticated(...(route.scopes ?? []));
+  }
+  if (route.posture === "internal_only") return runtime.InternalOnly();
+  return {};
+}
+
+function cloneSecureFixtureValue(value) {
+  if (value === undefined || value === null) return null;
+  return JSON.parse(JSON.stringify(value));
+}
+
+async function runSecureFixtureStep(app, setup, step) {
+  if (step.operation === "http") {
+    const request = step.request ?? {};
+    const response = await app.serve({
+      method: request.method,
+      path: request.path,
+      query: request.query ?? {},
+      headers: request.headers ?? {},
+      body: decodeFixtureBody(request.body),
+      isBase64: Boolean(request.is_base64),
+    });
+    return {
+      status: response.status,
+      errorCode: secureErrorCode(Buffer.from(response.body).toString("utf8")),
+    };
+  }
+  if (step.operation === "appsync") {
+    const output = await app.serveAppSync(step.aws_event?.event ?? {});
+    if (output?.pay_theory_error === true) {
+      return {
+        status: Number(output?.error_data?.status_code ?? 500),
+        errorCode: String(output?.error_info?.code ?? ""),
+      };
+    }
+    return { status: 200, errorCode: "" };
+  }
+  if (step.operation === "websocket") {
+    const output = await app.serveWebSocket(step.aws_event?.event ?? {});
+    return {
+      status: Number(output.statusCode ?? 0),
+      errorCode: secureErrorCode(String(output.body ?? "")),
+    };
+  }
+  if (step.operation === "routes") {
+    let routes = secureFixtureRoutes(app.routes());
+    if (step.mutate_routes && routes.length > 0) {
+      routes[0].path = "/mutated";
+      if (routes[0].scopes?.length) routes[0].scopes[0] = "mutated";
+      routes = secureFixtureRoutes(app.routes());
+    }
+    return { status: 0, routes };
+  }
+  if (step.operation === "openapi") {
+    const raw = setup.openapi ?? {};
+    const spec = {
+      title: raw.title,
+      version: raw.version,
+      routes: (raw.routes ?? []).map((route) => ({
+        method: route.method,
+        path: route.path,
+        operationId: route.operation_id,
+        response: route.response,
+      })),
+      securitySchemes: raw.security_schemes ?? {},
+      authSchemes: {
+        authenticated: raw.auth_schemes?.authenticated ?? [],
+        internalOnly: raw.auth_schemes?.internal_only ?? [],
+      },
+    };
+    const document = app.generateOpenAPI(spec);
+    const paths = document.paths ?? {};
+    return {
+      status: 0,
+      openapiJSON: app.generateOpenAPIJSON(spec),
+      openapi: {
+        "x-apptheory-contract-mode": document["x-apptheory-contract-mode"],
+        http_route_count: Object.keys(paths).length,
+        has_appsync_path: Boolean(paths["/note"]),
+        has_websocket_path: Boolean(paths["/send"]),
+        proxy_path: "/files/{path}",
+        public_posture:
+          paths["/public"]?.get?.["x-apptheory-auth-posture"],
+        files_posture:
+          paths["/files/{path}"]?.get?.["x-apptheory-auth-posture"],
+        files_scopes:
+          paths["/files/{path}"]?.get?.["x-apptheory-required-scopes"],
+        optional_posture:
+          paths["/optional"]?.get?.["x-apptheory-auth-posture"],
+        optional_security: paths["/optional"]?.get?.security,
+        internal_posture:
+          paths["/internal"]?.post?.["x-apptheory-auth-posture"],
+        internal_security: paths["/internal"]?.post?.security,
+      },
+    };
+  }
+  return { status: 0 };
+}
+
+function secureFixtureRoutes(routes) {
+  return routes.map((route) => ({
+    surface: route.surface,
+    method: route.method,
+    path: route.path,
+    posture: route.posture,
+    ...(route.scopes ? { scopes: [...route.scopes] } : {}),
+    ...(route.appSyncParentType
+      ? { appsync_parent_type: route.appSyncParentType }
+      : {}),
+    ...(route.appSyncField ? { appsync_field: route.appSyncField } : {}),
+    ...(route.webSocketRouteKey
+      ? { websocket_route_key: route.webSocketRouteKey }
+      : {}),
+  }));
+}
+
+function secureErrorCode(body) {
+  try {
+    return String(JSON.parse(body)?.error?.code ?? "");
+  } catch {
+    return "";
+  }
+}
+
+function secureObjectSubset(expected, actual) {
+  return Object.entries(expected).every(([key, value]) =>
+    deepEqual(value, actual?.[key]),
+  );
+}
+
+function secureArraySubset(expected, actual) {
+  return (
+    expected.length === actual.length &&
+    expected.every((item, index) => secureObjectSubset(item, actual[index]))
+  );
+}
+
 async function runFixture(fixture) {
+  if (
+    Array.isArray(fixture.input?.secure_steps) ||
+    Array.isArray(fixture.expect?.secure_steps)
+  ) {
+    return await runFixtureSecure(fixture);
+  }
   if (isOpenAPIContractFixture(fixture)) {
     return await compareOpenAPIContract(fixture);
   }

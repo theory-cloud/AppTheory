@@ -4,7 +4,8 @@ import asyncio
 import datetime as dt
 import inspect
 import json
-from collections.abc import Awaitable, Callable
+import os
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, TypeVar, cast
 
@@ -42,6 +43,21 @@ from apptheory.ids import IdGenerator, RealIdGenerator
 from apptheory.request import Request, normalize_request, normalize_request_with_max_bytes
 from apptheory.response import Response, normalize_response
 from apptheory.router import Router
+from apptheory.secure_openapi import (
+    SecureOpenAPISpec,
+    generate_secure_openapi,
+    generate_secure_openapi_json,
+)
+from apptheory.secure_types import (
+    AuthPosture,
+    AuthPostureKind,
+    PrincipalKind,
+    SecurePrincipalResolver,
+    SecureRoute,
+    clone_secure_principal,
+    decode_auth_posture,
+    normalize_secure_principal,
+)
 from apptheory.trace_context import extract_trace_id_from_headers
 from apptheory.util import canonicalize_headers, clone_query
 
@@ -81,6 +97,37 @@ SNSHandler = Callable[[EventContext, dict[str, Any]], object | Awaitable[object]
 DynamoDBStreamHandler = Callable[[EventContext, dict[str, Any]], None | Awaitable[None]]
 EventBridgeHandler = Callable[[EventContext, dict[str, Any]], object | Awaitable[object]]
 WebSocketHandler = Callable[[Context], Response | Awaitable[Response]]
+
+
+def _canonical_route_key(method: str, path: str) -> tuple[str, str, str]:
+    method_value = str(method or "").strip().upper()
+    if not method_value:
+        raise ValueError("apptheory: route method is empty")
+    path_value = str(path or "").strip().split("?", 1)[0].strip() or "/"
+    if not path_value.startswith("/"):
+        path_value = f"/{path_value}"
+    raw_segments = [] if path_value == "/" else path_value[1:].split("/")
+    canonical: list[str] = []
+    for index, raw in enumerate(raw_segments):
+        segment = str(raw or "").strip()
+        if not segment:
+            raise ValueError("apptheory: invalid route pattern")
+        if segment.startswith(":") and len(segment) > 1:
+            segment = "{" + segment[1:] + "}"
+        if segment.startswith("{") and segment.endswith("}"):
+            name = segment[1:-1].strip()
+            proxy = name.endswith("+")
+            if proxy:
+                name = name[:-1].strip()
+            if not name or "{" in name or "}" in name or (proxy and index != len(raw_segments) - 1):
+                raise ValueError("apptheory: invalid route pattern")
+            canonical.append("{" + name + ("+" if proxy else "") + "}")
+            continue
+        if "{" in segment or "}" in segment:
+            raise ValueError("apptheory: invalid route pattern")
+        canonical.append(segment)
+    canonical_path = "/" + "/".join(canonical) if canonical else "/"
+    return method_value, canonical_path, f"{method_value} {canonical_path}"
 
 
 @dataclass(slots=True)
@@ -196,8 +243,20 @@ class _EventObservation:
 
 
 @dataclass(slots=True)
+class _SecureWebSocketRoute:
+    handler: WebSocketHandler
+    posture: str
+    scopes: list[str]
+    posture_present: bool = True
+
+
+@dataclass(slots=True)
 class App:
-    """Contract-first application container for routes, middleware, and Lambda event dispatch."""
+    """Contract-first application container.
+
+    Deprecated for new HTTP, AppSync, and WebSocket applications; use SecureApp.
+    Existing App behavior remains frozen for compatibility.
+    """
 
     _router: Router
     _clock: Clock
@@ -214,10 +273,14 @@ class App:
     _sns_routes: list[tuple[str, SNSHandler]]
     _eventbridge_routes: list[tuple[EventBridgeSelector, EventBridgeHandler]]
     _dynamodb_routes: list[tuple[str, DynamoDBStreamHandler]]
-    _ws_routes: dict[str, WebSocketHandler]
+    _ws_routes: dict[str, WebSocketHandler | _SecureWebSocketRoute]
+    _websocket_enabled: bool
     _websocket_client_factory: WebSocketClientFactory | None
     _middlewares: list[Middleware]
     _event_middlewares: list[EventMiddleware]
+    _secure: bool
+    _secure_principal_resolver: SecurePrincipalResolver | None
+    _secure_routes: list[SecureRoute]
 
     def __init__(
         self,
@@ -252,14 +315,102 @@ class App:
         self._eventbridge_routes = []
         self._dynamodb_routes = []
         self._ws_routes = {}
+        self._websocket_enabled = True
         self._websocket_client_factory = websocket_client_factory or _default_websocket_client_factory
         self._middlewares = []
         self._event_middlewares = []
+        self._secure = False
+        self._secure_principal_resolver = None
+        self._secure_routes = []
 
     def handle(self, method: str, pattern: str, handler: Handler, *, auth_required: bool = False) -> App:
         """Register a handler for an HTTP method and route pattern."""
         self._router.add(method, pattern, handler, auth_required=auth_required)
         return self
+
+    def _register_secure_route(
+        self,
+        method: str,
+        pattern: str,
+        handler: Handler,
+        posture: AuthPosture,
+        *,
+        surface: str,
+        appsync_parent_type: str = "",
+        appsync_field: str = "",
+    ) -> None:
+        if not self._secure:
+            raise RuntimeError("apptheory: secure core is required")
+        kind, scopes = decode_auth_posture(posture)
+        canonical_method, canonical_path, _ = _canonical_route_key(method, pattern)
+        self._router.add_secure(
+            canonical_method,
+            canonical_path,
+            handler,
+            surface=surface,
+            posture=kind.value,
+            scopes=scopes,
+        )
+        self._secure_routes.append(
+            SecureRoute(
+                surface=surface,
+                method=canonical_method,
+                path=canonical_path,
+                posture=kind.value,
+                scopes=list(scopes),
+                appsync_parent_type=appsync_parent_type,
+                appsync_field=appsync_field,
+            )
+        )
+
+    def _register_secure_appsync(
+        self,
+        parent_type_name: str,
+        field_name: str,
+        handler: Handler,
+        posture: AuthPosture,
+    ) -> None:
+        parent = str(parent_type_name or "").strip()
+        field_name = str(field_name or "").strip()
+        if not parent or not field_name:
+            raise ValueError("apptheory: appsync parent type and field are required")
+        method = "GET" if parent in {"Query", "Subscription"} else "POST"
+        self._register_secure_route(
+            method,
+            f"/{field_name}",
+            handler,
+            posture,
+            surface="appsync",
+            appsync_parent_type=parent,
+            appsync_field=field_name,
+        )
+
+    def _register_secure_websocket(
+        self,
+        route_key: str,
+        handler: WebSocketHandler,
+        posture: AuthPosture,
+    ) -> None:
+        if not self._secure:
+            raise RuntimeError("apptheory: secure core is required")
+        key = str(route_key or "").strip()
+        if not key or handler is None:
+            raise ValueError("apptheory: invalid websocket route")
+        if key in self._ws_routes:
+            raise ValueError("apptheory: duplicate websocket route")
+        kind, scopes = decode_auth_posture(posture)
+        self._ws_routes[key] = _SecureWebSocketRoute(handler=handler, posture=kind.value, scopes=list(scopes))
+        self._websocket_enabled = True
+        self._secure_routes.append(
+            SecureRoute(
+                surface="websocket",
+                method="",
+                path="",
+                posture=kind.value,
+                scopes=list(scopes),
+                websocket_route_key=key,
+            )
+        )
 
     def handle_strict(self, method: str, pattern: str, handler: Handler, *, auth_required: bool = False) -> App:
         """Register a route and raise registration errors.
@@ -466,7 +617,7 @@ class App:
         """Serve a normalized AppTheory request and return a normalized response."""
         return self._serve(request, ctx)
 
-    def _serve(
+    def _serve(  # noqa: C901
         self,
         request: Request,
         ctx: Any | None = None,
@@ -474,6 +625,7 @@ class App:
         appsync: AppSyncContext | None = None,
         error_responder: Callable[[Exception, Request, str], Response] | None = None,
         fallback_request_id: str = "",
+        surface: str = "",
     ) -> Response:
         def respond_to_error(
             exc: Exception,
@@ -497,6 +649,7 @@ class App:
                 appsync=appsync,
                 error_responder=error_responder,
                 fallback_request_id=fallback_request_id,
+                surface=surface,
             )
         if self._tier == "p2":
             return self._serve_portable(
@@ -507,6 +660,7 @@ class App:
                 appsync=appsync,
                 error_responder=error_responder,
                 fallback_request_id=fallback_request_id,
+                surface=surface,
             )
 
         try:
@@ -514,7 +668,11 @@ class App:
         except Exception as exc:  # noqa: BLE001
             return respond_to_error(exc, request, fallback_request_id)
 
-        match, allowed = self._router.match(normalized.method, normalized.path)
+        match, allowed = self._router.match(
+            normalized.method,
+            normalized.path,
+            surface=(surface or "http") if self._secure else "",
+        )
         if match is None:
             if error_responder is not None:
                 if allowed:
@@ -548,8 +706,15 @@ class App:
         if context_configurer is not None:
             context_configurer(request_ctx)
 
-        handler = self._apply_middlewares(match.handler)
         try:
+            if self._secure:
+                self._secure_gate(
+                    request_ctx,
+                    posture=match.secure_posture,
+                    scopes=match.secure_scopes,
+                    posture_present=match.posture_present,
+                )
+            handler = self._apply_middlewares(match.handler)
             resp = _resolve(handler(request_ctx))
         except Exception as exc:  # noqa: BLE001
             return respond_to_error(exc, normalized, fallback_request_id)
@@ -655,6 +820,41 @@ class App:
         request_ctx.auth_identity = str(identity)
         return None
 
+    def _secure_gate(
+        self,
+        request_ctx: Context,
+        *,
+        posture: str,
+        scopes: list[str] | None,
+        posture_present: bool,
+    ) -> None:
+        if not posture_present:
+            raise AppError("app.internal", "internal error")
+        try:
+            kind = AuthPostureKind(str(posture))
+        except ValueError:
+            raise AppError("app.internal", "internal error") from None
+        if kind == AuthPostureKind.PUBLIC:
+            return
+        request_ctx.middleware_trace.append("auth")
+        resolved = None
+        if self._secure_principal_resolver is not None:
+            resolved = _resolve(self._secure_principal_resolver(request_ctx))
+        principal, invalid_kind = normalize_secure_principal(resolved)
+        if invalid_kind:
+            raise AppError("app.unauthorized", "unauthorized")
+        if principal is None or not principal.identity:
+            if kind == AuthPostureKind.OPTIONAL:
+                return
+            raise AppError("app.unauthorized", "unauthorized")
+        request_ctx._secure_principal = clone_secure_principal(principal)
+        request_ctx.auth_identity = principal.identity
+        required_scopes = list(scopes or [])
+        if kind == AuthPostureKind.AUTHENTICATED and any(scope not in principal.scopes for scope in required_scopes):
+            raise AppError("app.forbidden", "forbidden")
+        if kind == AuthPostureKind.INTERNAL_ONLY and str(principal.kind) != PrincipalKind.INTERNAL.value:
+            raise AppError("app.forbidden", "forbidden")
+
     def _serve_portable(  # noqa: C901
         self,
         request: Request,
@@ -665,6 +865,7 @@ class App:
         appsync: AppSyncContext | None = None,
         error_responder: Callable[[Exception, Request, str], Response] | None = None,
         fallback_request_id: str = "",
+        surface: str = "",
     ) -> Response:
         def respond_to_error(
             exc: Exception,
@@ -756,7 +957,11 @@ class App:
                 "app.too_large",
             )
 
-        match, allowed = self._router.match(normalized.method, normalized.path)
+        match, allowed = self._router.match(
+            normalized.method,
+            normalized.path,
+            surface=(surface or "http") if self._secure else "",
+        )
         if match is None:
             if error_responder is not None:
                 if allowed:
@@ -822,17 +1027,29 @@ class App:
             resp, error_code = policy_outcome
             return finish(resp, error_code)
 
-        auth_outcome = self._auth_check(
-            request_ctx,
-            auth_required=match.auth_required,
-            request_id=request_id,
-            trace=trace,
-            trace_id=trace_id,
-            error_responder=error_responder,
-        )
-        if auth_outcome is not None:
-            resp, error_code = auth_outcome
-            return finish(resp, error_code)
+        if self._secure:
+            try:
+                self._secure_gate(
+                    request_ctx,
+                    posture=match.secure_posture,
+                    scopes=match.secure_scopes,
+                    posture_present=match.posture_present,
+                )
+            except Exception as exc:  # noqa: BLE001
+                error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
+                return finish(respond_to_error(exc, normalized, request_id, trace_id), error_code)
+        else:
+            auth_outcome = self._auth_check(
+                request_ctx,
+                auth_required=match.auth_required,
+                request_id=request_id,
+                trace=trace,
+                trace_id=trace_id,
+                error_responder=error_responder,
+            )
+            if auth_outcome is not None:
+                resp, error_code = auth_outcome
+                return finish(resp, error_code)
 
         trace.append("handler")
 
@@ -1013,6 +1230,7 @@ class App:
                 _appsync_context_from_event(event),
                 lambda exc, error_request, request_id: _appsync_error_response(exc, error_request, request_id),
                 fallback_request_id,
+                "appsync",
             )
             return _appsync_payload_from_response(resp)
         except Exception as exc:  # noqa: BLE001
@@ -1041,11 +1259,10 @@ class App:
             request_context = {}
 
         route_key = str(request_context.get("routeKey") or "").strip()
-        handler = self._ws_routes.get(route_key)
-        if handler is None:
+        registered = self._ws_routes.get(route_key)
+        if registered is None:
             return apigw_proxy_response_from_response(error_response("app.not_found", "not found"))
-
-        handler = self._apply_middlewares(handler)
+        handler = registered.handler if isinstance(registered, _SecureWebSocketRoute) else registered
 
         request_id = str(request_context.get("requestId") or "").strip()
         if not request_id:
@@ -1090,9 +1307,22 @@ class App:
         )
 
         try:
+            if self._secure:
+                secure_route = registered if isinstance(registered, _SecureWebSocketRoute) else None
+                self._secure_gate(
+                    request_ctx,
+                    posture=secure_route.posture if secure_route is not None else "",
+                    scopes=secure_route.scopes if secure_route is not None else [],
+                    posture_present=bool(secure_route and secure_route.posture_present),
+                )
+            handler = self._apply_middlewares(handler)
             resp = _resolve(handler(request_ctx))
         except Exception as exc:  # noqa: BLE001
-            return apigw_proxy_response_from_response(response_for_error(exc))
+            if not self._secure or self._tier == "p0":
+                return apigw_proxy_response_from_response(response_for_error(exc))
+            return apigw_proxy_response_from_response(
+                response_for_error_with_request_id_and_format(self._http_error_format, exc, request_id)
+            )
 
         return apigw_proxy_response_from_response(normalize_response(resp))
 
@@ -1341,7 +1571,7 @@ class App:
 
         if "requestContext" in event:
             request_context = event.get("requestContext") or {}
-            if isinstance(request_context, dict) and request_context.get("connectionId"):
+            if isinstance(request_context, dict) and request_context.get("connectionId") and self._websocket_enabled:
                 return self.serve_websocket(event, ctx=ctx)
             if isinstance(request_context, dict) and "http" in request_context:
                 if "routeKey" in event:
@@ -1357,6 +1587,187 @@ class App:
                 return self.serve_apigw_proxy(event, ctx=ctx)
 
         raise RuntimeError("apptheory: unknown event type")
+
+    def is_lambda(self) -> bool:
+        """Return whether standard AWS Lambda environment markers are present."""
+        return any(
+            os.getenv(name)
+            for name in (
+                "AWS_LAMBDA_FUNCTION_NAME",
+                "AWS_LAMBDA_RUNTIME_API",
+                "LAMBDA_TASK_ROOT",
+                "AWS_EXECUTION_ENV",
+            )
+        )
+
+
+class SecureApp:
+    """Closed-by-default AppTheory HTTP, AppSync, and WebSocket facade."""
+
+    def __init__(
+        self,
+        *,
+        clock: Clock | None = None,
+        id_generator: IdGenerator | None = None,
+        tier: str = "p2",
+        http_error_format: str = HTTP_ERROR_FORMAT_NESTED,
+        limits: Limits | None = None,
+        cors: CORSConfig | None = None,
+        principal_resolver: SecurePrincipalResolver | None = None,
+        observability: ObservabilityHooks | None = None,
+        policy_hook: PolicyHook | None = None,
+        websocket_support: bool = False,
+        websocket_client_factory: WebSocketClientFactory | None = None,
+    ) -> None:
+        tier_value = str(tier or "").strip().lower()
+        if tier_value not in {"p0", "p1", "p2"}:
+            raise ValueError("apptheory: invalid secure configuration")
+        if principal_resolver is not None and not callable(principal_resolver):
+            raise ValueError("apptheory: invalid secure configuration")
+        if websocket_client_factory is not None and not callable(websocket_client_factory):
+            raise ValueError("apptheory: invalid secure configuration")
+        self.__core = App(
+            clock=clock,
+            id_generator=id_generator,
+            tier=tier_value,
+            http_error_format=http_error_format,
+            limits=limits,
+            cors=cors,
+            observability=observability,
+            policy_hook=policy_hook,
+            websocket_client_factory=websocket_client_factory,
+        )
+        self.__core._secure = True
+        self.__core._secure_principal_resolver = principal_resolver
+        self.__core._secure_routes = []
+        self.__core._websocket_enabled = bool(websocket_support)
+
+    def handle(self, method: str, pattern: str, handler: Handler, posture: AuthPosture) -> SecureApp:
+        self.__core._register_secure_route(method, pattern, handler, posture, surface="http")
+        return self
+
+    def get(self, pattern: str, handler: Handler, posture: AuthPosture) -> SecureApp:
+        return self.handle("GET", pattern, handler, posture)
+
+    def post(self, pattern: str, handler: Handler, posture: AuthPosture) -> SecureApp:
+        return self.handle("POST", pattern, handler, posture)
+
+    def put(self, pattern: str, handler: Handler, posture: AuthPosture) -> SecureApp:
+        return self.handle("PUT", pattern, handler, posture)
+
+    def patch(self, pattern: str, handler: Handler, posture: AuthPosture) -> SecureApp:
+        return self.handle("PATCH", pattern, handler, posture)
+
+    def options(self, pattern: str, handler: Handler, posture: AuthPosture) -> SecureApp:
+        return self.handle("OPTIONS", pattern, handler, posture)
+
+    def delete(self, pattern: str, handler: Handler, posture: AuthPosture) -> SecureApp:
+        return self.handle("DELETE", pattern, handler, posture)
+
+    def appsync_field(
+        self,
+        parent_type_name: str,
+        field_name: str,
+        handler: Handler,
+        posture: AuthPosture,
+    ) -> SecureApp:
+        self.__core._register_secure_appsync(parent_type_name, field_name, handler, posture)
+        return self
+
+    def websocket(self, route_key: str, handler: WebSocketHandler, posture: AuthPosture) -> SecureApp:
+        self.__core._register_secure_websocket(route_key, handler, posture)
+        return self
+
+    def routes(self) -> list[SecureRoute]:
+        return [
+            SecureRoute(
+                surface=route.surface,
+                method=route.method,
+                path=route.path,
+                posture=route.posture,
+                scopes=list(route.scopes),
+                appsync_parent_type=route.appsync_parent_type,
+                appsync_field=route.appsync_field,
+                websocket_route_key=route.websocket_route_key,
+            )
+            for route in self.__core._secure_routes
+        ]
+
+    def generate_openapi(self, spec: SecureOpenAPISpec | Mapping[str, Any]) -> dict[str, Any]:
+        return generate_secure_openapi(self.routes(), spec)
+
+    def generate_openapi_json(self, spec: SecureOpenAPISpec | Mapping[str, Any]) -> str:
+        return generate_secure_openapi_json(self.routes(), spec)
+
+    def use(self, middleware: Middleware) -> SecureApp:
+        self.__core.use(middleware)
+        return self
+
+    def use_events(self, middleware: EventMiddleware) -> SecureApp:
+        self.__core.use_events(middleware)
+        return self
+
+    def sqs(self, queue_name: str, handler: SQSHandler) -> SecureApp:
+        self.__core.sqs(queue_name, handler)
+        return self
+
+    def sns(self, topic_name: str, handler: SNSHandler) -> SecureApp:
+        self.__core.sns(topic_name, handler)
+        return self
+
+    def kinesis(self, stream_name: str, handler: KinesisHandler) -> SecureApp:
+        self.__core.kinesis(stream_name, handler)
+        return self
+
+    def event_bridge(self, selector: EventBridgeSelector, handler: EventBridgeHandler) -> SecureApp:
+        self.__core.event_bridge(selector, handler)
+        return self
+
+    def dynamodb(self, table_name: str, handler: DynamoDBStreamHandler) -> SecureApp:
+        self.__core.dynamodb(table_name, handler)
+        return self
+
+    def serve(self, request: Request, ctx: Any | None = None) -> Response:
+        return self.__core.serve(request, ctx)
+
+    def serve_alb(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        return self.__core.serve_alb(event, ctx)
+
+    def serve_apigw_proxy(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        return self.__core.serve_apigw_proxy(event, ctx)
+
+    def serve_apigw_v2(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        return self.__core.serve_apigw_v2(event, ctx)
+
+    def serve_lambda_function_url(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        return self.__core.serve_lambda_function_url(event, ctx)
+
+    def serve_appsync(self, event: AppSyncResolverEvent, ctx: Any | None = None) -> Any:
+        return self.__core.serve_appsync(event, ctx)
+
+    def serve_websocket(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        return self.__core.serve_websocket(event, ctx)
+
+    def serve_dynamodb_stream(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        return self.__core.serve_dynamodb_stream(event, ctx)
+
+    def serve_eventbridge(self, event: dict[str, Any], ctx: Any | None = None) -> Any:
+        return self.__core.serve_eventbridge(event, ctx)
+
+    def serve_kinesis(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        return self.__core.serve_kinesis(event, ctx)
+
+    def serve_sns(self, event: dict[str, Any], ctx: Any | None = None) -> Any:
+        return self.__core.serve_sns(event, ctx)
+
+    def serve_sqs(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        return self.__core.serve_sqs(event, ctx)
+
+    def handle_lambda(self, event: Any, ctx: Any | None = None) -> Any:
+        return self.__core.handle_lambda(event, ctx)
+
+    def is_lambda(self) -> bool:
+        return self.__core.is_lambda()
 
 
 def create_app(

@@ -100,8 +100,24 @@ import {
 import { Router } from "./internal/router.js";
 import { extractTraceIdFromHeaders } from "./internal/trace-context.js";
 import { vary } from "./response.js";
+import {
+  generateSecureOpenAPI,
+  generateSecureOpenAPIJSON,
+  type SecureOpenAPISpec,
+} from "./secure-openapi.js";
+import {
+  cloneSecurePrincipal,
+  normalizeSecurePrincipal,
+  type SecurePrincipal,
+} from "./secure-principal.js";
 import type { BodyStream, Headers, Query, Request, Response } from "./types.js";
 import { WebSocketManagementClient } from "./websocket-management.js";
+
+export type { PrincipalKind, SecurePrincipal } from "./secure-principal.js";
+export type {
+  OpenAPIAuthSchemes,
+  SecureOpenAPISpec,
+} from "./secure-openapi.js";
 
 /** Runtime tier selected for AppTheory request handling. */
 export type Tier = "p0" | "p1" | "p2";
@@ -249,6 +265,10 @@ type NormalizedCORSConfig = {
 };
 
 type WebSocketRoute = { routeKey: string; handler: Handler };
+type SecureWebSocketRoute = WebSocketRoute & {
+  posture: InternalAuthPosture | null;
+  posturePresent: boolean;
+};
 type SQSRoute = { queueName: string; handler: SQSHandler };
 type KinesisRoute = { streamName: string; handler: KinesisHandler };
 type SNSRoute = { topicName: string; handler: SNSHandler };
@@ -267,9 +287,222 @@ type RequestContextOptions = {
     traceId?: string,
   ) => Response;
   fallbackRequestId?: string;
+  surface?: "http" | "appsync";
 };
 
-/** Contract-first application container for routes, middleware, and Lambda event dispatch. */
+const authPostureBrand: unique symbol = Symbol("apptheory.auth-posture");
+
+/** Opaque secure-route authorization posture. */
+export interface AuthPosture {
+  readonly [authPostureBrand]: true;
+}
+
+export type AuthPostureKind =
+  | "public"
+  | "optional"
+  | "authenticated"
+  | "internal_only";
+
+type InternalAuthPosture = AuthPosture & {
+  kind: AuthPostureKind;
+  scopes: string[];
+  scopesSupplied: boolean;
+};
+
+function normalizeScopeList(scopes: readonly string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of scopes) {
+    const scope = String(raw ?? "").trim();
+    if (!scope || seen.has(scope)) continue;
+    seen.add(scope);
+    out.push(scope);
+  }
+  return out;
+}
+
+function createAuthPosture(
+  kind: AuthPostureKind,
+  scopes: readonly string[] = [],
+  scopesSupplied = false,
+): AuthPosture {
+  return Object.freeze({
+    [authPostureBrand]: true as const,
+    kind,
+    scopes: Object.freeze(normalizeScopeList(scopes)),
+    scopesSupplied,
+  }) as unknown as AuthPosture;
+}
+
+function decodeAuthPosture(posture: AuthPosture): InternalAuthPosture {
+  const value = posture as unknown as Partial<InternalAuthPosture>;
+  if (!value || value[authPostureBrand] !== true) {
+    throw new Error("apptheory: invalid auth posture");
+  }
+  const kind = String(value.kind ?? "") as AuthPostureKind;
+  const scopes = normalizeScopeList(
+    Array.isArray(value.scopes) ? value.scopes : [],
+  );
+  const supplied = Boolean(value.scopesSupplied);
+  if (
+    !["public", "optional", "authenticated", "internal_only"].includes(kind)
+  ) {
+    throw new Error("apptheory: invalid auth posture");
+  }
+  if (kind !== "authenticated" && (scopes.length > 0 || supplied)) {
+    throw new Error("apptheory: invalid auth posture");
+  }
+  if (kind === "authenticated" && supplied && scopes.length === 0) {
+    throw new Error("apptheory: authenticated scopes normalize to empty");
+  }
+  return {
+    [authPostureBrand]: true,
+    kind,
+    scopes,
+    scopesSupplied: supplied,
+  };
+}
+
+/** Creates an anonymous secure route posture. */
+export function Public(): AuthPosture {
+  return createAuthPosture("public");
+}
+
+/** Creates an optional-principal secure route posture. */
+export function Optional(): AuthPosture {
+  return createAuthPosture("optional");
+}
+
+/** Creates an authenticated secure route posture requiring all supplied scopes. */
+export function Authenticated(...scopes: string[]): AuthPosture {
+  return createAuthPosture("authenticated", scopes, scopes.length > 0);
+}
+
+/** Creates an internal-principal-only secure route posture. */
+export function InternalOnly(): AuthPosture {
+  return createAuthPosture("internal_only");
+}
+
+export type SecurePrincipalResolver = (
+  ctx: Context,
+) =>
+  | SecurePrincipal
+  | null
+  | undefined
+  | Promise<SecurePrincipal | null | undefined>;
+
+export type SecureRouteSurface = "http" | "appsync" | "websocket";
+
+/** Immutable secure route introspection metadata. */
+export interface SecureRoute {
+  surface: SecureRouteSurface;
+  method: string;
+  path: string;
+  posture: AuthPostureKind;
+  scopes?: string[];
+  appSyncParentType?: string;
+  appSyncField?: string;
+  webSocketRouteKey?: string;
+}
+
+/** Closed options accepted by SecureApp. */
+export interface SecureOptions {
+  clock?: Clock;
+  ids?: IdGenerator;
+  tier?: Tier;
+  httpErrorFormat?: HTTPErrorFormat;
+  limits?: Limits;
+  cors?: CORSConfig;
+  principalResolver?: SecurePrincipalResolver;
+  policyHook?: PolicyHook;
+  observability?: ObservabilityHooks;
+  webSocketSupport?: boolean;
+  webSocketClientFactory?: WebSocketClientFactory;
+}
+
+interface SecureCoreOptions {
+  principalResolver: SecurePrincipalResolver | null;
+  webSocketSupport: boolean;
+}
+
+/** Options accepted by the legacy App constructor. */
+interface AppOptions {
+  clock?: Clock;
+  ids?: IdGenerator;
+  tier?: Tier;
+  httpErrorFormat?: HTTPErrorFormat;
+  limits?: Limits;
+  cors?: CORSConfig;
+  authHook?: AuthHook;
+  policyHook?: PolicyHook;
+  observability?: ObservabilityHooks;
+  webSocketClientFactory?: WebSocketClientFactory;
+}
+
+const secureConstructionOptions = new WeakMap<object, SecureCoreOptions>();
+const secureRegisterRoute: unique symbol = Symbol(
+  "apptheory.secure-register-route",
+);
+const secureRegisterAppSync: unique symbol = Symbol(
+  "apptheory.secure-register-appsync",
+);
+const secureRegisterWebSocket: unique symbol = Symbol(
+  "apptheory.secure-register-websocket",
+);
+const secureRoutesSnapshot: unique symbol = Symbol(
+  "apptheory.secure-routes-snapshot",
+);
+
+function canonicalRouteKey(
+  methodValue: string,
+  pathValue: string,
+): { key: string; method: string; path: string } {
+  const method = String(methodValue ?? "")
+    .trim()
+    .toUpperCase();
+  if (!method) throw new Error("apptheory: route method is empty");
+  let path = String(pathValue ?? "").trim();
+  const queryIndex = path.indexOf("?");
+  if (queryIndex >= 0) path = path.slice(0, queryIndex);
+  path = path.trim();
+  if (!path) path = "/";
+  if (!path.startsWith("/")) path = `/${path}`;
+  const rawSegments = path === "/" ? [] : path.slice(1).split("/");
+  const canonical: string[] = [];
+  for (let index = 0; index < rawSegments.length; index += 1) {
+    let segment = String(rawSegments[index] ?? "").trim();
+    if (!segment) throw new Error("apptheory: invalid route pattern");
+    if (segment.startsWith(":") && segment.length > 1) {
+      segment = `{${segment.slice(1)}}`;
+    }
+    if (segment.startsWith("{") && segment.endsWith("}")) {
+      let name = segment.slice(1, -1).trim();
+      const proxy = name.endsWith("+");
+      if (proxy) name = name.slice(0, -1).trim();
+      if (!name || name.includes("{") || name.includes("}")) {
+        throw new Error("apptheory: invalid route pattern");
+      }
+      if (proxy && index !== rawSegments.length - 1) {
+        throw new Error("apptheory: invalid route pattern");
+      }
+      canonical.push(`{${name}${proxy ? "+" : ""}}`);
+      continue;
+    }
+    if (segment.includes("{") || segment.includes("}")) {
+      throw new Error("apptheory: invalid route pattern");
+    }
+    canonical.push(segment);
+  }
+  path = canonical.length > 0 ? `/${canonical.join("/")}` : "/";
+  return { key: `${method} ${path}`, method, path };
+}
+
+/**
+ * Contract-first application container for routes, middleware, and Lambda event dispatch.
+ *
+ * @deprecated Use SecureApp for new HTTP, AppSync, and WebSocket applications.
+ * Existing App behavior remains frozen for compatibility.
+ */
 export class App {
   private readonly _router: Router<Handler>;
   private readonly _clock: Clock;
@@ -281,7 +514,10 @@ export class App {
   private readonly _authHook: AuthHook | null;
   private readonly _policyHook: PolicyHook | null;
   private readonly _observability: ObservabilityHooks | null;
-  private readonly _webSocketRoutes: WebSocketRoute[];
+  private readonly _webSocketRoutes: Array<
+    WebSocketRoute | SecureWebSocketRoute
+  >;
+  private _webSocketEnabled: boolean;
   private readonly _webSocketClientFactory: WebSocketClientFactory;
   private readonly _sqsRoutes: SQSRoute[];
   private readonly _kinesisRoutes: KinesisRoute[];
@@ -290,21 +526,13 @@ export class App {
   private readonly _dynamoDBRoutes: DynamoDBRoute[];
   private readonly _middlewares: Middleware[];
   private readonly _eventMiddlewares: EventMiddleware[];
+  private readonly _secure: boolean;
+  private readonly _securePrincipalResolver: SecurePrincipalResolver | null;
+  private readonly _secureRoutes: SecureRoute[];
 
-  constructor(
-    options: {
-      clock?: Clock;
-      ids?: IdGenerator;
-      tier?: Tier;
-      httpErrorFormat?: HTTPErrorFormat;
-      limits?: Limits;
-      cors?: CORSConfig;
-      authHook?: AuthHook;
-      policyHook?: PolicyHook;
-      observability?: ObservabilityHooks;
-      webSocketClientFactory?: WebSocketClientFactory;
-    } = {},
-  ) {
+  constructor(options: AppOptions = {}) {
+    const secureOptions = secureConstructionOptions.get(options);
+    if (secureOptions) secureConstructionOptions.delete(options);
     this._router = new Router();
     this._clock = options.clock ?? new RealClock();
     this._ids = options.ids ?? new RandomIdGenerator();
@@ -322,6 +550,9 @@ export class App {
     this._policyHook = options.policyHook ?? null;
     this._observability = options.observability ?? null;
     this._webSocketRoutes = [];
+    this._webSocketEnabled = secureOptions
+      ? secureOptions.webSocketSupport
+      : true;
     this._webSocketClientFactory =
       typeof options.webSocketClientFactory === "function"
         ? options.webSocketClientFactory
@@ -333,6 +564,9 @@ export class App {
     this._dynamoDBRoutes = [];
     this._middlewares = [];
     this._eventMiddlewares = [];
+    this._secure = Boolean(secureOptions);
+    this._securePrincipalResolver = secureOptions?.principalResolver ?? null;
+    this._secureRoutes = [];
   }
 
   /** Returns the configured HTTP error-envelope format. */
@@ -349,6 +583,96 @@ export class App {
   ): this {
     this._router.add(method, pattern, handler, options);
     return this;
+  }
+
+  [secureRegisterRoute](
+    method: string,
+    pattern: string,
+    handler: Handler,
+    postureValue: AuthPosture,
+    surface: "http" | "appsync",
+    appSyncParentType = "",
+    appSyncField = "",
+  ): void {
+    if (!this._secure) throw new Error("apptheory: secure core is required");
+    const posture = decodeAuthPosture(postureValue);
+    const canonical = canonicalRouteKey(method, pattern);
+    this._router.addSecure(canonical.method, canonical.path, handler, {
+      surface,
+      posture: posture.kind,
+      scopes: posture.scopes,
+      posturePresent: true,
+    });
+    this._secureRoutes.push({
+      surface,
+      method: canonical.method,
+      path: canonical.path,
+      posture: posture.kind,
+      ...(posture.scopes.length > 0 ? { scopes: [...posture.scopes] } : {}),
+      ...(surface === "appsync" ? { appSyncParentType, appSyncField } : {}),
+    });
+  }
+
+  [secureRegisterAppSync](
+    parentTypeName: string,
+    fieldName: string,
+    handler: Handler,
+    posture: AuthPosture,
+  ): void {
+    const parent = String(parentTypeName ?? "").trim();
+    const field = String(fieldName ?? "").trim();
+    if (!parent || !field) {
+      throw new Error("apptheory: appsync parent type and field are required");
+    }
+    const method =
+      parent === "Query" || parent === "Subscription" ? "GET" : "POST";
+    this[secureRegisterRoute](
+      method,
+      `/${field}`,
+      handler,
+      posture,
+      "appsync",
+      parent,
+      field,
+    );
+  }
+
+  [secureRegisterWebSocket](
+    routeKey: string,
+    handler: Handler,
+    postureValue: AuthPosture,
+  ): void {
+    if (!this._secure) throw new Error("apptheory: secure core is required");
+    const key = String(routeKey ?? "").trim();
+    if (!key || typeof handler !== "function") {
+      throw new Error("apptheory: invalid websocket route");
+    }
+    if (this._webSocketRoutes.some((route) => route.routeKey === key)) {
+      throw new Error("apptheory: duplicate websocket route");
+    }
+    const posture = decodeAuthPosture(postureValue);
+    this._webSocketRoutes.push({
+      routeKey: key,
+      handler,
+      posture,
+      posturePresent: true,
+    });
+    this._webSocketEnabled = true;
+    this._secureRoutes.push({
+      surface: "websocket",
+      method: "",
+      path: "",
+      posture: posture.kind,
+      ...(posture.scopes.length > 0 ? { scopes: [...posture.scopes] } : {}),
+      webSocketRouteKey: key,
+    });
+  }
+
+  [secureRoutesSnapshot](): SecureRoute[] {
+    return this._secureRoutes.map((route) => ({
+      ...route,
+      ...(route.scopes ? { scopes: [...route.scopes] } : {}),
+    }));
   }
 
   /**
@@ -500,6 +824,48 @@ export class App {
     );
   }
 
+  private async _authorizeSecure(
+    secureRoute: {
+      posture: AuthPostureKind;
+      scopes: string[];
+      posturePresent: boolean;
+    } | null,
+    requestCtx: Context,
+  ): Promise<void> {
+    if (!secureRoute?.posturePresent) {
+      throw new AppError("app.internal", "internal error");
+    }
+    const posture = secureRoute.posture;
+    if (posture === "public") return;
+    requestCtx.middlewareTrace.push("auth");
+    let resolved: SecurePrincipal | null | undefined = null;
+    if (this._securePrincipalResolver) {
+      resolved = await this._securePrincipalResolver(requestCtx);
+    }
+    const normalized = normalizeSecurePrincipal(resolved);
+    if (normalized.invalidKind) {
+      throw new AppError("app.unauthorized", "unauthorized");
+    }
+    const principal = normalized.principal;
+    if (!principal || !principal.identity) {
+      if (posture === "optional") return;
+      throw new AppError("app.unauthorized", "unauthorized");
+    }
+    (
+      requestCtx as unknown as { _securePrincipal: SecurePrincipal | null }
+    )._securePrincipal = cloneSecurePrincipal(principal);
+    requestCtx.authIdentity = principal.identity;
+    if (
+      posture === "authenticated" &&
+      secureRoute.scopes.some((scope) => !principal.scopes.includes(scope))
+    ) {
+      throw new AppError("app.forbidden", "forbidden");
+    }
+    if (posture === "internal_only" && principal.kind !== "internal") {
+      throw new AppError("app.forbidden", "forbidden");
+    }
+  }
+
   /** Registers a WebSocket route handler by route key. */
   webSocket(routeKey: string, handler: Handler): this {
     const key = String(routeKey ?? "").trim();
@@ -608,6 +974,7 @@ export class App {
       const { match, allowed } = this._router.match(
         normalized.method,
         normalized.path,
+        this._secure ? (contextOptions?.surface ?? "http") : undefined,
       );
       if (!match) {
         if (typeof contextOptions?.errorResponder === "function") {
@@ -648,6 +1015,9 @@ export class App {
       contextOptions?.configure?.(requestCtx);
 
       try {
+        if (this._secure) {
+          await this._authorizeSecure(match.route.secure, requestCtx);
+        }
         const handler = this._applyMiddlewares(match.route.handler) as Handler;
         const out = await handler(requestCtx);
         if (!out) {
@@ -767,6 +1137,7 @@ export class App {
     const { match, allowed } = this._router.match(
       normalized.method,
       normalized.path,
+      this._secure ? (contextOptions?.surface ?? "http") : undefined,
     );
     if (!match) {
       if (typeof contextOptions?.errorResponder === "function") {
@@ -871,7 +1242,17 @@ export class App {
       }
     }
 
-    if (match.route.authRequired) {
+    if (this._secure) {
+      try {
+        await this._authorizeSecure(match.route.secure, requestCtx);
+      } catch (err) {
+        const code = errorCodeFrom(err);
+        return finish(
+          respondToServeError(err, normalized, requestId, traceId),
+          code,
+        );
+      }
+    } else if (match.route.authRequired) {
       middlewareTrace.push("auth");
       try {
         if (!this._authHook) {
@@ -1055,6 +1436,7 @@ export class App {
     try {
       resp = await this._serve(request, ctx, {
         appSync: createAppSyncContext(event),
+        surface: "appsync",
         fallbackRequestId,
         configure: (requestCtx) => {
           applyAppSyncContextValues(requestCtx, event);
@@ -1076,13 +1458,13 @@ export class App {
     }
   }
 
-  private _webSocketHandlerForEvent(
+  private _webSocketRouteForEvent(
     event: APIGatewayWebSocketProxyRequest,
-  ): Handler | null {
+  ): WebSocketRoute | SecureWebSocketRoute | null {
     const routeKey = String(event?.requestContext?.routeKey ?? "").trim();
     if (!routeKey) return null;
     for (const route of this._webSocketRoutes) {
-      if (route.routeKey === routeKey) return route.handler;
+      if (route.routeKey === routeKey) return route;
     }
     return null;
   }
@@ -1092,9 +1474,8 @@ export class App {
     event: APIGatewayWebSocketProxyRequest,
     ctx?: unknown,
   ): Promise<APIGatewayProxyResponse> {
-    const handler = this._applyMiddlewares(
-      this._webSocketHandlerForEvent(event),
-    );
+    const route = this._webSocketRouteForEvent(event);
+    let handler = route?.handler ?? null;
 
     let requestId = String(event?.requestContext?.requestId ?? "").trim();
     if (!requestId) {
@@ -1166,6 +1547,30 @@ export class App {
         errorResponseWithRequestId("app.not_found", "not found", {}, requestId),
       );
     }
+
+    if (this._secure) {
+      const secureRoute = route as SecureWebSocketRoute | null;
+      try {
+        await this._authorizeSecure(
+          secureRoute
+            ? {
+                posture: secureRoute.posture?.kind ?? "public",
+                scopes: [...(secureRoute.posture?.scopes ?? [])],
+                posturePresent: secureRoute.posturePresent,
+              }
+            : null,
+          requestCtx,
+        );
+      } catch (err) {
+        if (this._tier === "p0") {
+          return apigatewayProxyResponseFromResponse(responseForError(err));
+        }
+        return apigatewayProxyResponseFromResponse(
+          responseForErrorWithRequestId(err, requestId),
+        );
+      }
+    }
+    handler = this._applyMiddlewares(handler);
 
     let resp: Response | null;
     try {
@@ -1517,6 +1922,9 @@ export class App {
         typeof rc["connectionId"] === "string" &&
         String(rc["connectionId"]).trim()
       ) {
+        if (!this._webSocketEnabled) {
+          throw new Error("apptheory: unknown event type");
+        }
         return this.serveWebSocket(
           event as APIGatewayWebSocketProxyRequest,
           ctx,
@@ -1549,6 +1957,239 @@ export class App {
     }
 
     throw new Error("apptheory: unknown event type");
+  }
+
+  /** Returns whether standard AWS Lambda environment markers are present. */
+  isLambda(): boolean {
+    return Boolean(
+      process.env["AWS_LAMBDA_FUNCTION_NAME"] ||
+      process.env["AWS_LAMBDA_RUNTIME_API"] ||
+      process.env["LAMBDA_TASK_ROOT"] ||
+      process.env["AWS_EXECUTION_ENV"],
+    );
+  }
+}
+
+const SECURE_OPTION_KEYS = new Set([
+  "clock",
+  "ids",
+  "tier",
+  "httpErrorFormat",
+  "limits",
+  "cors",
+  "principalResolver",
+  "policyHook",
+  "observability",
+  "webSocketSupport",
+  "webSocketClientFactory",
+]);
+
+/** Closed-by-default AppTheory HTTP, AppSync, and WebSocket facade. */
+export class SecureApp {
+  readonly #core: App;
+
+  constructor(options: SecureOptions = {}) {
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      throw new Error("apptheory: invalid secure configuration");
+    }
+    for (const key of Object.keys(options)) {
+      if (!SECURE_OPTION_KEYS.has(key)) {
+        throw new Error("apptheory: invalid secure configuration");
+      }
+    }
+    const tier = options.tier ?? "p2";
+    if (tier !== "p0" && tier !== "p1" && tier !== "p2") {
+      throw new Error("apptheory: invalid secure configuration");
+    }
+    if (
+      options.principalResolver !== undefined &&
+      typeof options.principalResolver !== "function"
+    ) {
+      throw new Error("apptheory: invalid secure configuration");
+    }
+    if (
+      options.webSocketClientFactory !== undefined &&
+      typeof options.webSocketClientFactory !== "function"
+    ) {
+      throw new Error("apptheory: invalid secure configuration");
+    }
+    const coreOptions: AppOptions = {
+      tier,
+      ...(options.clock !== undefined ? { clock: options.clock } : {}),
+      ...(options.ids !== undefined ? { ids: options.ids } : {}),
+      ...(options.httpErrorFormat !== undefined
+        ? { httpErrorFormat: options.httpErrorFormat }
+        : {}),
+      ...(options.limits !== undefined ? { limits: options.limits } : {}),
+      ...(options.cors !== undefined ? { cors: options.cors } : {}),
+      ...(options.policyHook !== undefined
+        ? { policyHook: options.policyHook }
+        : {}),
+      ...(options.observability !== undefined
+        ? { observability: options.observability }
+        : {}),
+      ...(options.webSocketClientFactory !== undefined
+        ? { webSocketClientFactory: options.webSocketClientFactory }
+        : {}),
+    };
+    secureConstructionOptions.set(coreOptions, {
+      principalResolver: options.principalResolver ?? null,
+      webSocketSupport: Boolean(options.webSocketSupport),
+    });
+    this.#core = new App(coreOptions);
+  }
+
+  handle(
+    method: string,
+    pattern: string,
+    handler: Handler,
+    posture: AuthPosture,
+  ): this {
+    this.#core[secureRegisterRoute](method, pattern, handler, posture, "http");
+    return this;
+  }
+
+  get(pattern: string, handler: Handler, posture: AuthPosture): this {
+    return this.handle("GET", pattern, handler, posture);
+  }
+  post(pattern: string, handler: Handler, posture: AuthPosture): this {
+    return this.handle("POST", pattern, handler, posture);
+  }
+  put(pattern: string, handler: Handler, posture: AuthPosture): this {
+    return this.handle("PUT", pattern, handler, posture);
+  }
+  patch(pattern: string, handler: Handler, posture: AuthPosture): this {
+    return this.handle("PATCH", pattern, handler, posture);
+  }
+  options(pattern: string, handler: Handler, posture: AuthPosture): this {
+    return this.handle("OPTIONS", pattern, handler, posture);
+  }
+  delete(pattern: string, handler: Handler, posture: AuthPosture): this {
+    return this.handle("DELETE", pattern, handler, posture);
+  }
+  appSyncField(
+    parentTypeName: string,
+    fieldName: string,
+    handler: Handler,
+    posture: AuthPosture,
+  ): this {
+    this.#core[secureRegisterAppSync](
+      parentTypeName,
+      fieldName,
+      handler,
+      posture,
+    );
+    return this;
+  }
+  webSocket(routeKey: string, handler: Handler, posture: AuthPosture): this {
+    this.#core[secureRegisterWebSocket](routeKey, handler, posture);
+    return this;
+  }
+  routes(): SecureRoute[] {
+    return this.#core[secureRoutesSnapshot]();
+  }
+  generateOpenAPI(
+    spec: SecureOpenAPISpec,
+  ): ReturnType<typeof generateSecureOpenAPI> {
+    return generateSecureOpenAPI(this.routes(), spec);
+  }
+  generateOpenAPIJSON(spec: SecureOpenAPISpec): string {
+    return generateSecureOpenAPIJSON(this.routes(), spec);
+  }
+
+  use(middleware: Middleware): this {
+    this.#core.use(middleware);
+    return this;
+  }
+  useEvents(middleware: EventMiddleware): this {
+    this.#core.useEvents(middleware);
+    return this;
+  }
+  sqs(queueName: string, handler: SQSHandler): this {
+    this.#core.sqs(queueName, handler);
+    return this;
+  }
+  sns(topicName: string, handler: SNSHandler): this {
+    this.#core.sns(topicName, handler);
+    return this;
+  }
+  kinesis(streamName: string, handler: KinesisHandler): this {
+    this.#core.kinesis(streamName, handler);
+    return this;
+  }
+  eventBridge(
+    selector: EventBridgeSelector,
+    handler: EventBridgeHandler,
+  ): this {
+    this.#core.eventBridge(selector, handler);
+    return this;
+  }
+  dynamoDB(tableName: string, handler: DynamoDBStreamHandler): this {
+    this.#core.dynamoDB(tableName, handler);
+    return this;
+  }
+  serve(request: Request, ctx?: unknown): Promise<Response> {
+    return this.#core.serve(request, ctx);
+  }
+  serveALB(
+    event: ALBTargetGroupRequest,
+    ctx?: unknown,
+  ): Promise<ALBTargetGroupResponse> {
+    return this.#core.serveALB(event, ctx);
+  }
+  serveAPIGatewayProxy(
+    event: APIGatewayProxyRequest,
+    ctx?: unknown,
+  ): Promise<APIGatewayProxyResponse> {
+    return this.#core.serveAPIGatewayProxy(event, ctx);
+  }
+  serveAPIGatewayV2(
+    event: APIGatewayV2HTTPRequest,
+    ctx?: unknown,
+  ): Promise<APIGatewayV2HTTPResponse> {
+    return this.#core.serveAPIGatewayV2(event, ctx);
+  }
+  serveLambdaFunctionURL(
+    event: LambdaFunctionURLRequest,
+    ctx?: unknown,
+  ): Promise<LambdaFunctionURLResponse> {
+    return this.#core.serveLambdaFunctionURL(event, ctx);
+  }
+  serveAppSync(event: AppSyncResolverEvent, ctx?: unknown): Promise<unknown> {
+    return this.#core.serveAppSync(event, ctx);
+  }
+  serveWebSocket(
+    event: APIGatewayWebSocketProxyRequest,
+    ctx?: unknown,
+  ): Promise<APIGatewayProxyResponse> {
+    return this.#core.serveWebSocket(event, ctx);
+  }
+  serveDynamoDBStream(
+    event: DynamoDBStreamEvent,
+    ctx?: unknown,
+  ): Promise<DynamoDBStreamEventResponse> {
+    return this.#core.serveDynamoDBStream(event, ctx);
+  }
+  serveEventBridge(event: EventBridgeEvent, ctx?: unknown): Promise<unknown> {
+    return this.#core.serveEventBridge(event, ctx);
+  }
+  serveKinesisEvent(
+    event: KinesisEvent,
+    ctx?: unknown,
+  ): Promise<KinesisEventResponse> {
+    return this.#core.serveKinesisEvent(event, ctx);
+  }
+  serveSNSEvent(event: SNSEvent, ctx?: unknown): Promise<unknown[]> {
+    return this.#core.serveSNSEvent(event, ctx);
+  }
+  serveSQSEvent(event: SQSEvent, ctx?: unknown): Promise<SQSEventResponse> {
+    return this.#core.serveSQSEvent(event, ctx);
+  }
+  handleLambda(event: unknown, ctx?: unknown): Promise<unknown> {
+    return this.#core.handleLambda(event, ctx);
+  }
+  isLambda(): boolean {
+    return this.#core.isLambda();
   }
 }
 

@@ -16,6 +16,9 @@ type App struct {
 	principalAuth    PrincipalAuthHook
 	obs              ObservabilityHooks
 	policy           PolicyHook
+	secure           bool
+	secureResolver   SecurePrincipalResolver
+	secureRoutes     []SecureRoute
 	middlewares      []Middleware
 	eventMiddlewares []EventMiddleware
 
@@ -48,6 +51,9 @@ type Limits struct {
 type AuthHook func(*Context) (identity string, err error)
 
 // New creates a new AppTheory application container.
+//
+// New secure applications should use NewSecure. Existing applications may
+// continue to use New; its route and runtime behavior is frozen.
 func New(opts ...Option) *App {
 	app := &App{
 		router:          newRouter(),

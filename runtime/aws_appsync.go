@@ -420,6 +420,7 @@ func (a *App) ServeAppSync(ctx context.Context, event AppSyncResolverEvent) any 
 	}
 
 	resp := a.serveWithOptions(ctx, request, serveOptions{
+		surface: SecureRouteAppSync,
 		configure: func(requestCtx *Context) {
 			applyAppSyncContextValues(requestCtx, event)
 		},
