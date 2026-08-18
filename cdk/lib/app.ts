@@ -34,6 +34,15 @@ export interface AppTheoryAppProps {
   readonly securityGroups?: ec2.ISecurityGroup[];
   readonly allowAllOutbound?: boolean;
   readonly allowPublicSubnet?: boolean;
+  /**
+   * Stable physical name for the app function's AppTheory-managed IAM role.
+   *
+   * The value is forwarded unchanged to AppTheoryFunction. Synthesis fails if
+   * AppTheory cannot apply the requested name exactly.
+   *
+   * @default undefined
+   */
+  readonly roleName?: string;
   readonly alias?: AppTheoryFunctionAliasOptions;
 
   readonly enableDatabase?: boolean;
@@ -155,6 +164,7 @@ export class AppTheoryApp extends Construct {
       securityGroups: props.securityGroups,
       allowAllOutbound: props.allowAllOutbound,
       allowPublicSubnet: props.allowPublicSubnet,
+      roleName: props.roleName,
       alias: props.alias,
     });
     (this as { alias?: lambda.Alias }).alias = this.fn.alias;

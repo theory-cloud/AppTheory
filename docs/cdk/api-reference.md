@@ -40,7 +40,8 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 
 ## Supporting constructs exported from `cdk/lib/index.ts`
 
-- `AppTheoryFunction`
+- `AppTheoryFunction`: Lambda wrapper with AppTheory defaults; set `roleName` when the execution role needs a stable
+  physical name
 - `AppTheoryFunctionAlarms`
 - `AppTheoryDynamoDBStreamMapping`
 - `AppTheoryDynamoTable`
@@ -49,6 +50,24 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryPathRoutedFrontend`
 - `AppTheoryMediaCdn`
 - `AppTheoryWebSocketApi`
+
+## Stable Lambda execution role names
+
+`AppTheoryFunctionProps.roleName` creates the function's execution role through the AppTheory role construct and sets
+the synthesized `AWS::IAM::Role.RoleName` to the exact requested value. `AppTheoryAppProps.roleName` forwards the same
+contract to its named function:
+
+```ts
+new AppTheoryApp(this, "Runtime", {
+  appName: "orders-api",
+  code: lambda.Code.fromAsset("dist"),
+  roleName: "orders-api-runtime",
+});
+```
+
+When `roleName` is omitted, CloudFormation continues to generate the role name. When it is requested, AppTheory fails
+synthesis rather than silently using an unnamed or differently named role. This prop supersedes direct
+`CfnRole.addPropertyOverride("RoleName", ...)` escape hatches for stable function role names.
 
 ## Selection guide
 

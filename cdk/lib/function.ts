@@ -1,9 +1,12 @@
 import { Duration } from "aws-cdk-lib";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as codedeploy from "aws-cdk-lib/aws-codedeploy";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
+
+import { AppTheoryLambdaRole } from "./lambda-role";
 
 /**
  * Traffic shifting mode for AppTheory-managed Lambda aliases.
@@ -103,6 +106,17 @@ export interface AppTheoryFunctionAliasOptions {
 
 export interface AppTheoryFunctionProps extends lambda.FunctionProps {
   /**
+   * Stable physical name for the AppTheory-managed Lambda execution role.
+   *
+   * AppTheory creates the role through AppTheoryLambdaRole and fails synthesis
+   * if the requested name cannot be applied exactly. Do not combine this with
+   * the inherited `role` prop; caller-provided roles own their physical name.
+   *
+   * @default undefined
+   */
+  readonly roleName?: string;
+
+  /**
    * Optional AppTheory-managed Lambda alias.
    *
    * When set, the alias points at the function's current version and can also
@@ -122,8 +136,24 @@ export class AppTheoryFunction extends Construct {
   constructor(scope: Construct, id: string, props: AppTheoryFunctionProps) {
     super(scope, id);
 
-    const { alias, ...inputLambdaProps } = props;
-    const lambdaProps: lambda.FunctionProps = { ...inputLambdaProps };
+    const { alias, roleName, ...inputLambdaProps } = props;
+    let lambdaProps: lambda.FunctionProps = { ...inputLambdaProps };
+    if (roleName !== undefined) {
+      if (lambdaProps.role) {
+        throw new Error(
+          "AppTheoryFunction cannot honor props.roleName when props.role supplies the execution role; omit props.role or configure its name where that role is created",
+        );
+      }
+
+      const executionRole = new AppTheoryLambdaRole(this, "Role", { roleName });
+      const roleResource = executionRole.role.node.defaultChild;
+      if (!(roleResource instanceof iam.CfnRole) || roleResource.roleName !== roleName) {
+        throw new Error(
+          `AppTheoryFunction execution role is unavailable for the required stable roleName ${JSON.stringify(roleName)}`,
+        );
+      }
+      lambdaProps = { ...lambdaProps, role: executionRole.role };
+    }
     const logRetention = lambdaProps.logRetention ?? logs.RetentionDays.ONE_MONTH;
     const logRemovalPolicy = lambdaProps.logRemovalPolicy;
     delete (lambdaProps as { logRetention?: logs.RetentionDays }).logRetention;

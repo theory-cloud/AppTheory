@@ -78,6 +78,9 @@ new AppTheoryHttpApi(stack, "Api", { handler: fn, apiName: "my-api" });
 
 ## Production surface notes
 
+- `AppTheoryFunctionProps.roleName` and `AppTheoryAppProps.roleName` are the
+  supported, fail-closed path for stable Lambda execution role names. They
+  supersede direct `CfnRole` property-override escape hatches.
 - Regional WAF is supported only on `AppTheoryRestApi` and `AppTheoryRestApiRouter`
   because API Gateway REST API stages use the WAF-supported
   `/restapis/{apiId}/stages/{stageName}` ARN shape. `AppTheoryHttpApi` and

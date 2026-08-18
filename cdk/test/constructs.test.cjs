@@ -199,6 +199,63 @@ test("AppTheoryFunction synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryFunction applies an exact stable execution role name", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    roleName: "apptheory-stable-runtime",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+
+  assert.equal(roles.length, 1, "Should synthesize exactly one execution role");
+  assert.equal(roles[0].Properties?.RoleName, "apptheory-stable-runtime");
+});
+
+test("AppTheoryFunction leaves the execution role unnamed by default", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+
+  assert.equal(roles.length, 1, "Should synthesize exactly one execution role");
+  assert.equal(roles[0].Properties?.RoleName, undefined);
+});
+
+test("AppTheoryFunction fails closed when a stable role name cannot be honored", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const importedRole = iam.Role.fromRoleArn(
+    stack,
+    "ImportedRole",
+    "arn:aws:iam::123456789012:role/existing-runtime",
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryFunction(stack, "Fn", {
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        role: importedRole,
+        roleName: "apptheory-required-runtime",
+      }),
+    /cannot honor props\.roleName when props\.role supplies the execution role/,
+  );
+});
+
 test("AppTheoryFunction exposes log retention, VPC, alias, provisioned concurrency, and canary deploys", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -2353,6 +2410,25 @@ test("AppTheoryApp synthesizes expected template", () => {
   } else {
     expectSnapshot("app", template);
   }
+});
+
+test("AppTheoryApp forwards an exact stable execution role name", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryApp(stack, "App", {
+    appName: "apptheory-stable-app",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    roleName: "apptheory-stable-app-runtime",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+
+  assert.equal(roles.length, 1, "Should synthesize exactly one app execution role");
+  assert.equal(roles[0].Properties?.RoleName, "apptheory-stable-app-runtime");
 });
 
 test("AppTheoryApp exposes production deployment surface without raw CDK escape hatches", () => {
