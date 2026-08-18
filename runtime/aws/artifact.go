@@ -9,12 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 
-	awssdk "github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/theory-cloud/apptheory/v3/pkg/objectstore"
 )
 
 const (
@@ -60,11 +61,6 @@ const (
 	// ArtifactVerificationVerified means all three F6 checks succeeded.
 	ArtifactVerificationVerified ArtifactVerificationState = "verified"
 )
-
-// GetObjectAPI is the narrow S3 operation required by VerifyVersionedArtifact.
-type GetObjectAPI interface {
-	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
-}
 
 // VersionedArtifactRequest pins one S3 object version to one aggregate archive digest.
 type VersionedArtifactRequest struct {
@@ -133,14 +129,14 @@ func (a VersionedArtifact) Entries() []ArtifactEntry {
 // regular archive member and compares the derived aggregate digest.
 func VerifyVersionedArtifact(
 	ctx context.Context,
-	client GetObjectAPI,
+	store objectstore.Store,
 	request VersionedArtifactRequest,
 ) (VersionedArtifact, error) {
 	artifact, bucket, key, err := validateVersionedArtifactRequest(request)
 	if err != nil {
 		return artifact, err
 	}
-	raw, returnedVersionID, err := fetchVersionedArtifact(ctx, client, bucket, key, artifact.RequestedVersionID)
+	raw, returnedVersionID, err := fetchVersionedArtifact(ctx, store, bucket, key, artifact.RequestedVersionID)
 	if err != nil {
 		artifact.State = ArtifactVerificationUnavailable
 		if errors.Is(err, ErrArtifactArchiveInvalid) {
@@ -182,6 +178,9 @@ func validateVersionedArtifactRequest(request VersionedArtifactRequest) (Version
 		artifact.State = ArtifactVerificationVersionRequired
 		return artifact, "", "", ErrArtifactVersionRequired
 	}
+	if artifact.RequestedVersionID == "null" {
+		return artifact, "", "", ErrArtifactInvalidRequest
+	}
 	bucket := strings.TrimSpace(request.Bucket)
 	key := strings.TrimSpace(request.Key)
 	if bucket == "" || key == "" || !aggregateDigestPattern.MatchString(artifact.ExpectedDigest) {
@@ -192,48 +191,38 @@ func validateVersionedArtifactRequest(request VersionedArtifactRequest) (Version
 
 func fetchVersionedArtifact(
 	ctx context.Context,
-	client GetObjectAPI,
+	store objectstore.Store,
 	bucket string,
 	key string,
 	versionID string,
 ) ([]byte, string, error) {
-	if client == nil {
+	if store == nil {
 		return nil, "", ErrArtifactUnavailable
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	output, err := client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket:    awssdk.String(bucket),
-		Key:       awssdk.String(key),
-		VersionId: awssdk.String(versionID),
+	output, err := store.Get(ctx, objectstore.GetInput{
+		Ref: objectstore.ObjectRef{
+			Bucket:    bucket,
+			Key:       key,
+			VersionID: versionID,
+		},
+		MaxBytes: MaxVersionedArtifactBytes,
 	})
 	if err != nil {
+		if errors.Is(err, objectstore.ErrObjectTooLarge) {
+			return nil, "", ErrArtifactArchiveInvalid
+		}
 		return nil, "", fmt.Errorf("%w: %v", ErrArtifactUnavailable, err)
 	}
-	if output == nil || output.Body == nil {
+	if output == nil {
 		return nil, "", ErrArtifactUnavailable
 	}
-	raw, err := readVersionedArtifactBody(output.Body)
-	if err != nil {
-		return nil, "", err
+	if len(output.Payload) == 0 || int64(len(output.Payload)) > MaxVersionedArtifactBytes {
+		return nil, "", ErrArtifactArchiveInvalid
 	}
-	return raw, strings.TrimSpace(awssdk.ToString(output.VersionId)), nil
-}
-
-func readVersionedArtifactBody(body io.ReadCloser) ([]byte, error) {
-	raw, readErr := io.ReadAll(io.LimitReader(body, MaxVersionedArtifactBytes+1))
-	closeErr := body.Close()
-	if readErr != nil {
-		return nil, fmt.Errorf("%w: %v", ErrArtifactUnavailable, readErr)
-	}
-	if closeErr != nil {
-		return nil, fmt.Errorf("%w: %v", ErrArtifactUnavailable, closeErr)
-	}
-	if len(raw) == 0 || int64(len(raw)) > MaxVersionedArtifactBytes {
-		return nil, ErrArtifactArchiveInvalid
-	}
-	return raw, nil
+	return cloneArtifactBytes(output.Payload), strings.TrimSpace(output.Ref.VersionID), nil
 }
 
 func readVersionedArtifactArchive(raw []byte) ([]ArtifactEntry, error) {
@@ -255,35 +244,67 @@ func readVersionedArtifactArchive(raw []byte) ([]ArtifactEntry, error) {
 		if members > MaxVersionedArtifactEntries {
 			return nil, fmt.Errorf("archive holds more than %d members", MaxVersionedArtifactEntries)
 		}
-		name := strings.TrimPrefix(strings.TrimSpace(header.Name), "./")
-		if name == "" || strings.HasSuffix(name, "/") || header.Typeflag == tar.TypeDir {
-			continue
-		}
-		if header.Typeflag != tar.TypeReg {
-			return nil, fmt.Errorf("archive member %q is not a regular file", name)
-		}
-		if header.Size < 0 || header.Size > MaxVersionedArtifactBytes {
-			return nil, fmt.Errorf("archive member %q has an invalid size", name)
-		}
-		content, err := io.ReadAll(io.LimitReader(reader, header.Size+1))
+		entry, err := readVersionedArtifactEntry(reader, header)
 		if err != nil {
-			return nil, fmt.Errorf("archive member %q could not be read: %w", name, err)
+			return nil, err
 		}
-		if int64(len(content)) != header.Size {
-			return nil, fmt.Errorf("archive member %q length does not match its header", name)
+		if entry != nil {
+			entries = append(entries, *entry)
 		}
-		sum := sha256.Sum256(content)
-		entries = append(entries, ArtifactEntry{
-			Path:    name,
-			Mode:    header.Mode,
-			content: content,
-			digest:  hex.EncodeToString(sum[:]),
-		})
 	}
 	if len(entries) == 0 {
 		return nil, errors.New("archive holds no regular-file members")
 	}
 	return entries, nil
+}
+
+func readVersionedArtifactEntry(reader *tar.Reader, header *tar.Header) (*ArtifactEntry, error) {
+	name, err := validateArtifactMemberPath(header.Name)
+	if err != nil {
+		return nil, err
+	}
+	if name == "" || strings.HasSuffix(name, "/") || header.Typeflag == tar.TypeDir {
+		return nil, nil
+	}
+	if header.Typeflag != tar.TypeReg {
+		return nil, fmt.Errorf("archive member %q is not a regular file", name)
+	}
+	if header.Size < 0 || header.Size > MaxVersionedArtifactBytes {
+		return nil, fmt.Errorf("archive member %q has an invalid size", name)
+	}
+	content := make([]byte, header.Size)
+	if _, err := io.ReadFull(reader, content); err != nil {
+		return nil, fmt.Errorf("archive member %q could not be read: %w", name, err)
+	}
+	sum := sha256.Sum256(content)
+	return &ArtifactEntry{
+		Path:    name,
+		Mode:    header.Mode,
+		content: content,
+		digest:  hex.EncodeToString(sum[:]),
+	}, nil
+}
+
+func validateArtifactMemberPath(name string) (string, error) {
+	if strings.Contains(name, "  ") {
+		return "", fmt.Errorf("archive member path %q contains doubled spaces", name)
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return "", fmt.Errorf("archive member path %q contains a control character", name)
+		}
+	}
+	normalized := strings.TrimSpace(name)
+	normalized = strings.TrimPrefix(normalized, "./")
+	if path.IsAbs(normalized) {
+		return "", fmt.Errorf("archive member path %q is absolute", name)
+	}
+	for _, segment := range strings.Split(normalized, "/") {
+		if segment == ".." {
+			return "", fmt.Errorf("archive member path %q contains a parent segment", name)
+		}
+	}
+	return normalized, nil
 }
 
 func deriveAggregateDigest(entries []ArtifactEntry) string {

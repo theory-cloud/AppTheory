@@ -2862,10 +2862,6 @@ type CallerIdentityAPI interface {
 
 type CallerIdentityFactory func(awssdk.CredentialsProvider) CallerIdentityAPI
 
-type GetObjectAPI interface {
-	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
-}
-
 type VersionedArtifact struct {
 	State              ArtifactVerificationState
 	RequestedVersionID string
@@ -2895,7 +2891,7 @@ func AssumeFirst(
 
 func VerifyVersionedArtifact(
 	context.Context,
-	GetObjectAPI,
+	objectstore.Store,
 	VersionedArtifactRequest,
 ) (VersionedArtifact, error)
 

@@ -152,6 +152,91 @@ func TestAssumeFirstFailureDoesNotExposeCredentials(t *testing.T) {
 	}
 }
 
+func TestAssumeFirstRejectsEmptyCredentials(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		output *sts.AssumeRoleOutput
+	}{
+		{name: "nil output"},
+		{name: "nil credentials", output: &sts.AssumeRoleOutput{}},
+		{name: "empty access key", output: &sts.AssumeRoleOutput{Credentials: &ststypes.Credentials{
+			SecretAccessKey: awssdk.String("secret"),
+		}}},
+		{name: "empty secret key", output: &sts.AssumeRoleOutput{Credentials: &ststypes.Credentials{
+			AccessKeyId: awssdk.String("ASIAEXAMPLE"),
+		}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			factoryCalls := 0
+			result, err := AssumeFirst(
+				context.Background(),
+				&fakeAssumeRoleClient{output: test.output},
+				func(awssdk.CredentialsProvider) CallerIdentityAPI {
+					factoryCalls++
+					return &fakeCallerIdentityClient{}
+				},
+				AssumeRoleRequest{
+					RoleARN:           "arn:aws:iam::111122223333:role/Deploy",
+					RoleSessionName:   "apptheory-test",
+					ExpectedAccountID: "111122223333",
+				},
+			)
+			if !errors.Is(err, ErrAssumeRoleFailed) {
+				t.Fatalf("AssumeFirst() error = %v, want ErrAssumeRoleFailed", err)
+			}
+			if result.Assertion.State != AccountAssertionAssumeFailed {
+				t.Fatalf("AssumeFirst() state = %q, want %q", result.Assertion.State, AccountAssertionAssumeFailed)
+			}
+			if result.Credentials != nil {
+				t.Fatal("AssumeFirst() exposed incomplete credentials")
+			}
+			if factoryCalls != 0 {
+				t.Fatalf("identity factory calls = %d, want 0", factoryCalls)
+			}
+		})
+	}
+}
+
+func TestAssumeFirstNilIdentityFactoryFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	result, err := AssumeFirst(
+		context.Background(),
+		successfulAssumer(),
+		nil,
+		AssumeRoleRequest{
+			RoleARN:           "arn:aws:iam::111122223333:role/Deploy",
+			RoleSessionName:   "apptheory-test",
+			ExpectedAccountID: "111122223333",
+		},
+	)
+	if !errors.Is(err, ErrCallerIdentityUnavailable) {
+		t.Fatalf("AssumeFirst() error = %v, want ErrCallerIdentityUnavailable", err)
+	}
+	if result.Assertion.State != AccountAssertionUnavailable {
+		t.Fatalf("AssumeFirst() state = %q, want %q", result.Assertion.State, AccountAssertionUnavailable)
+	}
+	if result.Credentials != nil {
+		t.Fatal("AssumeFirst() exposed credentials without an identity factory")
+	}
+}
+
+func TestAssertAccountNilClientFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	assertion, err := AssertAccount(context.Background(), nil, "111122223333")
+	if !errors.Is(err, ErrCallerIdentityUnavailable) {
+		t.Fatalf("AssertAccount() error = %v, want ErrCallerIdentityUnavailable", err)
+	}
+	if assertion.State != AccountAssertionUnavailable {
+		t.Fatalf("AssertAccount() state = %q, want %q", assertion.State, AccountAssertionUnavailable)
+	}
+}
+
 func TestAssumeFirstIdentityFailureDoesNotExposeCredentials(t *testing.T) {
 	t.Parallel()
 

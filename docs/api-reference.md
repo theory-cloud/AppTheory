@@ -369,8 +369,9 @@ identity proof to `AssertAccount` through `CallerIdentityAPI`, and returns `Assu
 `AccountAssertionVerified` result. `AccountAssertion`, `AccountAssertionState`, and `AssumeRoleRequest` preserve the
 explicit not-configured, assume-failed, unavailable, mismatch, and verified outcomes.
 
-`VerifyVersionedArtifact` accepts only `GetObjectAPI` and a fully pinned `VersionedArtifactRequest`. It requires the
-requested S3 `VersionId`, verifies the returned ID, and derives the aggregate digest from a bounded regular-file tar.
+`VerifyVersionedArtifact` accepts AppTheory's existing `objectstore.Store` and a fully pinned
+`VersionedArtifactRequest`. It requires a non-`null` S3 `VersionID`, verifies `GetOutput.Ref.VersionID`, and derives the
+aggregate digest from a bounded regular-file tar whose member paths reject ambiguous or unsafe forms.
 `VersionedArtifact`, `ArtifactEntry`, and `ArtifactVerificationState` carry explicit evidence; verified bytes are exposed
 only through defensive-copy accessors. `MaxVersionedArtifactBytes` and `MaxVersionedArtifactEntries` are fixed ceilings.
 Stable errors distinguish invalid requests, missing versions, unavailable objects, version mismatches, invalid archives,
@@ -525,7 +526,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>997 exported top-level symbols</summary>
+<summary>996 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins, APIGatewayV2Request
@@ -711,7 +712,7 @@ ArtifactVerificationVersionMismatch, ArtifactVerificationVersionRequired, Assert
 AssumeFirstResult, AssumeRoleAPI, AssumeRoleRequest, CallerIdentityAPI, CallerIdentityFactory, ErrAccountMismatch,
 ErrArtifactArchiveInvalid, ErrArtifactDigestMismatch, ErrArtifactInvalidRequest, ErrArtifactUnavailable,
 ErrArtifactVersionMismatch, ErrArtifactVersionRequired, ErrAssumeRoleFailed, ErrCallerIdentityUnavailable,
-ErrExpectedAccountNotConfigured, GetObjectAPI, MaxVersionedArtifactBytes, MaxVersionedArtifactEntries,
+ErrExpectedAccountNotConfigured, MaxVersionedArtifactBytes, MaxVersionedArtifactEntries,
 VerifyVersionedArtifact, VersionedArtifact, VersionedArtifactRequest
 ```
 

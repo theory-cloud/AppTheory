@@ -3,49 +3,46 @@ package runtimeaws
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
-	"io"
+	"fmt"
 	"testing"
 
-	awssdk "github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/theory-cloud/apptheory/v3/pkg/objectstore"
+	objectstoretest "github.com/theory-cloud/apptheory/v3/testkit/objectstore"
 )
 
 const verifiedFixtureDigest = "sha256:b7a08ec283db64788286788097854b24cba0095651252167f4e3e961e682412d"
 
-type fakeGetObjectClient struct {
-	output *s3.GetObjectOutput
+type stubArtifactStore struct {
+	output *objectstore.GetOutput
 	err    error
 	calls  int
-	input  *s3.GetObjectInput
+	input  objectstore.GetInput
 }
 
-func (f *fakeGetObjectClient) GetObject(
-	_ context.Context,
-	input *s3.GetObjectInput,
-	_ ...func(*s3.Options),
-) (*s3.GetObjectOutput, error) {
-	f.calls++
-	f.input = input
-	return f.output, f.err
+func (s *stubArtifactStore) Put(context.Context, objectstore.PutInput) (objectstore.ObjectRef, error) {
+	return objectstore.ObjectRef{}, errors.New("unexpected Put call")
 }
 
-type trackedReadCloser struct {
-	io.Reader
-	closed bool
+func (s *stubArtifactStore) Get(_ context.Context, input objectstore.GetInput) (*objectstore.GetOutput, error) {
+	s.calls++
+	s.input = input
+	return s.output, s.err
 }
 
-func (r *trackedReadCloser) Close() error {
-	r.closed = true
-	return nil
+func (s *stubArtifactStore) Delete(context.Context, objectstore.DeleteInput) error {
+	return errors.New("unexpected Delete call")
 }
 
 func TestVerifyVersionedArtifactRequiresRequestedVersion(t *testing.T) {
 	t.Parallel()
 
-	client := &fakeGetObjectClient{}
-	artifact, err := VerifyVersionedArtifact(context.Background(), client, VersionedArtifactRequest{
+	store := &stubArtifactStore{}
+	artifact, err := VerifyVersionedArtifact(context.Background(), store, VersionedArtifactRequest{
 		Bucket:         "artifacts",
 		Key:            "ns/demo/release.tar",
 		ExpectedDigest: verifiedFixtureDigest,
@@ -56,35 +53,114 @@ func TestVerifyVersionedArtifactRequiresRequestedVersion(t *testing.T) {
 	if artifact.State != ArtifactVerificationVersionRequired {
 		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationVersionRequired)
 	}
-	if client.calls != 0 {
-		t.Fatalf("GetObject calls = %d, want 0", client.calls)
+	if store.calls != 0 {
+		t.Fatalf("Store.Get calls = %d, want 0", store.calls)
 	}
 }
 
-func TestVerifyVersionedArtifactGetObjectError(t *testing.T) {
+func TestVerifyVersionedArtifactRejectsNullVersion(t *testing.T) {
 	t.Parallel()
 
-	client := &fakeGetObjectClient{err: errors.New("s3 unavailable")}
-	artifact, err := VerifyVersionedArtifact(context.Background(), client, validArtifactRequest())
+	store := &stubArtifactStore{}
+	request := validArtifactRequest()
+	request.VersionID = " null "
+	artifact, err := VerifyVersionedArtifact(context.Background(), store, request)
+	if !errors.Is(err, ErrArtifactInvalidRequest) {
+		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactInvalidRequest", err)
+	}
+	if artifact.State != ArtifactVerificationInvalidRequest {
+		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationInvalidRequest)
+	}
+	if store.calls != 0 {
+		t.Fatalf("Store.Get calls = %d, want 0", store.calls)
+	}
+}
+
+func TestVerifyVersionedArtifactRejectsInvalidRequest(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*VersionedArtifactRequest)
+	}{
+		{name: "empty bucket", mutate: func(request *VersionedArtifactRequest) { request.Bucket = " " }},
+		{name: "empty key", mutate: func(request *VersionedArtifactRequest) { request.Key = " " }},
+		{name: "digest missing prefix", mutate: func(request *VersionedArtifactRequest) { request.ExpectedDigest = request.ExpectedDigest[7:] }},
+		{name: "digest uppercase", mutate: func(request *VersionedArtifactRequest) {
+			request.ExpectedDigest = "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		}},
+		{name: "digest wrong length", mutate: func(request *VersionedArtifactRequest) { request.ExpectedDigest = "sha256:abcd" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := &stubArtifactStore{}
+			request := validArtifactRequest()
+			test.mutate(&request)
+			artifact, err := VerifyVersionedArtifact(context.Background(), store, request)
+			if !errors.Is(err, ErrArtifactInvalidRequest) {
+				t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactInvalidRequest", err)
+			}
+			if artifact.State != ArtifactVerificationInvalidRequest {
+				t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationInvalidRequest)
+			}
+			if store.calls != 0 {
+				t.Fatalf("Store.Get calls = %d, want 0", store.calls)
+			}
+		})
+	}
+}
+
+func TestVerifyVersionedArtifactNilStoreFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	artifact, err := VerifyVersionedArtifact(context.Background(), nil, validArtifactRequest())
 	if !errors.Is(err, ErrArtifactUnavailable) {
 		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactUnavailable", err)
 	}
 	if artifact.State != ArtifactVerificationUnavailable {
 		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationUnavailable)
 	}
-	assertVersionPinnedGetObject(t, client)
+}
+
+func TestVerifyVersionedArtifactStoreError(t *testing.T) {
+	t.Parallel()
+
+	store := &stubArtifactStore{err: errors.New("s3 unavailable")}
+	artifact, err := VerifyVersionedArtifact(context.Background(), store, validArtifactRequest())
+	if !errors.Is(err, ErrArtifactUnavailable) {
+		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactUnavailable", err)
+	}
+	if artifact.State != ArtifactVerificationUnavailable {
+		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationUnavailable)
+	}
+	assertVersionPinnedGet(t, store)
+}
+
+func TestVerifyVersionedArtifactStoreEnforcesArchiveLimit(t *testing.T) {
+	t.Parallel()
+
+	store := &stubArtifactStore{err: objectstore.ErrObjectTooLarge}
+	artifact, err := VerifyVersionedArtifact(context.Background(), store, validArtifactRequest())
+	if !errors.Is(err, ErrArtifactArchiveInvalid) {
+		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactArchiveInvalid", err)
+	}
+	if artifact.State != ArtifactVerificationArchiveInvalid {
+		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationArchiveInvalid)
+	}
+	if store.input.MaxBytes != MaxVersionedArtifactBytes {
+		t.Fatalf("Store.Get MaxBytes = %d, want %d", store.input.MaxBytes, MaxVersionedArtifactBytes)
+	}
 }
 
 func TestVerifyVersionedArtifactReturnedVersionMismatch(t *testing.T) {
 	t.Parallel()
 
-	raw := releaseArchive(t)
-	body := &trackedReadCloser{Reader: bytes.NewReader(raw)}
-	client := &fakeGetObjectClient{output: &s3.GetObjectOutput{
-		Body:      body,
-		VersionId: awssdk.String("version-returned"),
+	store := &stubArtifactStore{output: &objectstore.GetOutput{
+		Ref:     objectstore.ObjectRef{VersionID: "version-returned"},
+		Payload: releaseArchive(t),
 	}}
-	artifact, err := VerifyVersionedArtifact(context.Background(), client, validArtifactRequest())
+	artifact, err := VerifyVersionedArtifact(context.Background(), store, validArtifactRequest())
 	if !errors.Is(err, ErrArtifactVersionMismatch) {
 		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactVersionMismatch", err)
 	}
@@ -94,19 +170,14 @@ func TestVerifyVersionedArtifactReturnedVersionMismatch(t *testing.T) {
 	if artifact.RequestedVersionID != "version-requested" || artifact.ReturnedVersionID != "version-returned" {
 		t.Fatalf("version evidence = requested %q returned %q", artifact.RequestedVersionID, artifact.ReturnedVersionID)
 	}
-	if !body.closed {
-		t.Fatal("GetObject body was not closed")
-	}
-	assertVersionPinnedGetObject(t, client)
+	assertVersionPinnedGet(t, store)
 }
 
 func TestVerifyVersionedArtifactMissingReturnedVersionIsMismatch(t *testing.T) {
 	t.Parallel()
 
-	client := &fakeGetObjectClient{output: &s3.GetObjectOutput{
-		Body: io.NopCloser(bytes.NewReader(releaseArchive(t))),
-	}}
-	artifact, err := VerifyVersionedArtifact(context.Background(), client, validArtifactRequest())
+	store := &stubArtifactStore{output: &objectstore.GetOutput{Payload: releaseArchive(t)}}
+	artifact, err := VerifyVersionedArtifact(context.Background(), store, validArtifactRequest())
 	if !errors.Is(err, ErrArtifactVersionMismatch) {
 		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactVersionMismatch", err)
 	}
@@ -118,10 +189,9 @@ func TestVerifyVersionedArtifactMissingReturnedVersionIsMismatch(t *testing.T) {
 func TestVerifyVersionedArtifactDigestMismatch(t *testing.T) {
 	t.Parallel()
 
-	request := validArtifactRequest()
+	store, request := artifactFixture(t, releaseArchive(t))
 	request.ExpectedDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	client := verifiedObjectClient(t)
-	artifact, err := VerifyVersionedArtifact(context.Background(), client, request)
+	artifact, err := VerifyVersionedArtifact(context.Background(), store, request)
 	if !errors.Is(err, ErrArtifactDigestMismatch) {
 		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactDigestMismatch", err)
 	}
@@ -134,19 +204,14 @@ func TestVerifyVersionedArtifactDigestMismatch(t *testing.T) {
 	if got := artifact.ArchiveBytes(); got != nil {
 		t.Fatalf("ArchiveBytes() after mismatch = %d bytes, want nil", len(got))
 	}
-	assertVersionPinnedGetObject(t, client)
 }
 
-func TestVerifyVersionedArtifactHappyPath(t *testing.T) {
+func TestVerifyVersionedArtifactHappyPathUsesObjectStore(t *testing.T) {
 	t.Parallel()
 
 	raw := releaseArchive(t)
-	body := &trackedReadCloser{Reader: bytes.NewReader(raw)}
-	client := &fakeGetObjectClient{output: &s3.GetObjectOutput{
-		Body:      body,
-		VersionId: awssdk.String("version-requested"),
-	}}
-	artifact, err := VerifyVersionedArtifact(context.Background(), client, validArtifactRequest())
+	store, request := artifactFixture(t, raw)
+	artifact, err := VerifyVersionedArtifact(context.Background(), store, request)
 	if err != nil {
 		t.Fatalf("VerifyVersionedArtifact() error = %v", err)
 	}
@@ -156,10 +221,17 @@ func TestVerifyVersionedArtifactHappyPath(t *testing.T) {
 	if artifact.ActualDigest != verifiedFixtureDigest {
 		t.Fatalf("actual digest = %q, want %q", artifact.ActualDigest, verifiedFixtureDigest)
 	}
-	if !body.closed {
-		t.Fatal("GetObject body was not closed")
+
+	calls := store.Calls()
+	if len(calls) != 2 || calls[1].Operation != objectstoretest.OperationGet {
+		t.Fatalf("object-store calls = %#v, want Put then Get", calls)
 	}
-	assertVersionPinnedGetObject(t, client)
+	if calls[1].Ref.Bucket != request.Bucket || calls[1].Ref.Key != request.Key || calls[1].Ref.VersionID != request.VersionID {
+		t.Fatalf("Store.Get ref = %#v, want request pins", calls[1].Ref)
+	}
+	if calls[1].MaxBytes != MaxVersionedArtifactBytes {
+		t.Fatalf("Store.Get MaxBytes = %d, want %d", calls[1].MaxBytes, MaxVersionedArtifactBytes)
+	}
 
 	archiveCopy := artifact.ArchiveBytes()
 	if !bytes.Equal(archiveCopy, raw) {
@@ -177,6 +249,10 @@ func TestVerifyVersionedArtifactHappyPath(t *testing.T) {
 	if entries[0].Path != "release.json" || string(entries[0].Bytes()) != `{"app":"demo"}` {
 		t.Fatalf("Entries()[0] = path %q content %q", entries[0].Path, string(entries[0].Bytes()))
 	}
+	sum := sha256.Sum256(entries[0].Bytes())
+	if got, want := entries[0].SHA256(), hex.EncodeToString(sum[:]); got != want {
+		t.Fatalf("ArtifactEntry.SHA256() = %q, want %q", got, want)
+	}
 	entryBytes := entries[0].Bytes()
 	entryBytes[0] = 'X'
 	if string(artifact.Entries()[0].Bytes()) != `{"app":"demo"}` {
@@ -187,11 +263,94 @@ func TestVerifyVersionedArtifactHappyPath(t *testing.T) {
 func TestVerifyVersionedArtifactRejectsInvalidArchive(t *testing.T) {
 	t.Parallel()
 
-	client := &fakeGetObjectClient{output: &s3.GetObjectOutput{
-		Body:      io.NopCloser(bytes.NewReader([]byte("not a tar archive"))),
-		VersionId: awssdk.String("version-requested"),
-	}}
-	artifact, err := VerifyVersionedArtifact(context.Background(), client, validArtifactRequest())
+	assertArchiveInvalid(t, []byte("not a tar archive"))
+}
+
+func TestVerifyVersionedArtifactRejectsCompressedArchive(t *testing.T) {
+	t.Parallel()
+
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write(releaseArchive(t)); err != nil {
+		t.Fatalf("gzip Write() error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("gzip Close() error = %v", err)
+	}
+	assertArchiveInvalid(t, compressed.Bytes())
+}
+
+func TestVerifyVersionedArtifactRejectsNonRegularMember(t *testing.T) {
+	t.Parallel()
+
+	raw := tarArchive(t, []archiveMember{{path: "release-link", typeflag: tar.TypeSymlink, linkname: "release.json"}})
+	assertArchiveInvalid(t, raw)
+}
+
+func TestVerifyVersionedArtifactRejectsOversizedMember(t *testing.T) {
+	t.Parallel()
+
+	var buffer bytes.Buffer
+	writer := tar.NewWriter(&buffer)
+	if err := writer.WriteHeader(&tar.Header{
+		Name:     "oversized.bin",
+		Mode:     0o644,
+		Size:     MaxVersionedArtifactBytes + 1,
+		Typeflag: tar.TypeReg,
+	}); err != nil {
+		t.Fatalf("WriteHeader() error = %v", err)
+	}
+	assertArchiveInvalid(t, buffer.Bytes())
+}
+
+func TestVerifyVersionedArtifactRejectsTooManyEntries(t *testing.T) {
+	t.Parallel()
+
+	members := make([]archiveMember, MaxVersionedArtifactEntries+1)
+	for i := range members {
+		members[i] = archiveMember{path: fmt.Sprintf("entry-%03d", i), typeflag: tar.TypeReg}
+	}
+	assertArchiveInvalid(t, tarArchive(t, members))
+}
+
+func TestVerifyVersionedArtifactRejectsUnsafeMemberPaths(t *testing.T) {
+	t.Parallel()
+
+	paths := []string{
+		"/absolute/path",
+		"dir/../policy.json",
+		"two  spaces",
+		"line\nfeed",
+		"carriage\rreturn",
+		"control\x01character",
+	}
+	for _, memberPath := range paths {
+		t.Run(fmt.Sprintf("%q", memberPath), func(t *testing.T) {
+			t.Parallel()
+			assertArchiveInvalid(t, tarArchive(t, []archiveMember{{path: memberPath, content: "content", typeflag: tar.TypeReg}}))
+		})
+	}
+}
+
+func TestVerifyVersionedArtifactRejectsAggregateDigestCollisionPath(t *testing.T) {
+	t.Parallel()
+
+	legitimate := tarArchive(t, []archiveMember{
+		{path: "policy.json", content: "ALLOWLIST", typeflag: tar.TypeReg},
+		{path: "run.sh", content: "echo hi", typeflag: tar.TypeReg},
+	})
+	entries, err := readVersionedArtifactArchive(legitimate)
+	if err != nil {
+		t.Fatalf("readVersionedArtifactArchive(legitimate) error = %v", err)
+	}
+	expectedDigest := deriveAggregateDigest(entries)
+	policySum := sha256.Sum256([]byte("ALLOWLIST"))
+	craftedName := "policy.json  " + hex.EncodeToString(policySum[:]) + "\nrun.sh"
+	crafted := tarArchive(t, []archiveMember{{path: craftedName, content: "echo hi", typeflag: tar.TypeReg}})
+	store, request := artifactFixture(t, crafted)
+	request.ExpectedDigest = expectedDigest
+
+	artifact, err := VerifyVersionedArtifact(context.Background(), store, request)
 	if !errors.Is(err, ErrArtifactArchiveInvalid) {
 		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactArchiveInvalid", err)
 	}
@@ -209,55 +368,80 @@ func validArtifactRequest() VersionedArtifactRequest {
 	}
 }
 
-func verifiedObjectClient(t *testing.T) *fakeGetObjectClient {
+func artifactFixture(t *testing.T, raw []byte) (*objectstoretest.FakeStore, VersionedArtifactRequest) {
 	t.Helper()
-	return &fakeGetObjectClient{output: &s3.GetObjectOutput{
-		Body:      io.NopCloser(bytes.NewReader(releaseArchive(t))),
-		VersionId: awssdk.String("version-requested"),
-	}}
+	store := objectstoretest.NewStore()
+	ref, err := store.Put(context.Background(), objectstore.PutInput{
+		Ref:     objectstore.ObjectRef{Bucket: "artifacts", Key: "ns/demo/release.tar"},
+		Payload: raw,
+	})
+	if err != nil {
+		t.Fatalf("FakeStore.Put() error = %v", err)
+	}
+	return store, VersionedArtifactRequest{
+		Bucket:         ref.Bucket,
+		Key:            ref.Key,
+		VersionID:      ref.VersionID,
+		ExpectedDigest: verifiedFixtureDigest,
+	}
 }
 
-func assertVersionPinnedGetObject(t *testing.T, client *fakeGetObjectClient) {
+func assertVersionPinnedGet(t *testing.T, store *stubArtifactStore) {
 	t.Helper()
-	if client.calls != 1 {
-		t.Fatalf("GetObject calls = %d, want 1", client.calls)
+	if store.calls != 1 {
+		t.Fatalf("Store.Get calls = %d, want 1", store.calls)
 	}
-	if client.input == nil {
-		t.Fatal("GetObject input is nil")
+	if got := store.input.Ref; got != (objectstore.ObjectRef{Bucket: "artifacts", Key: "ns/demo/release.tar", VersionID: "version-requested"}) {
+		t.Fatalf("Store.Get Ref = %#v", got)
 	}
-	if got := awssdk.ToString(client.input.Bucket); got != "artifacts" {
-		t.Fatalf("GetObject Bucket = %q, want artifacts", got)
+	if store.input.MaxBytes != MaxVersionedArtifactBytes {
+		t.Fatalf("Store.Get MaxBytes = %d, want %d", store.input.MaxBytes, MaxVersionedArtifactBytes)
 	}
-	if got := awssdk.ToString(client.input.Key); got != "ns/demo/release.tar" {
-		t.Fatalf("GetObject Key = %q, want ns/demo/release.tar", got)
+}
+
+func assertArchiveInvalid(t *testing.T, raw []byte) {
+	t.Helper()
+	store, request := artifactFixture(t, raw)
+	artifact, err := VerifyVersionedArtifact(context.Background(), store, request)
+	if !errors.Is(err, ErrArtifactArchiveInvalid) {
+		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactArchiveInvalid", err)
 	}
-	if got := awssdk.ToString(client.input.VersionId); got != "version-requested" {
-		t.Fatalf("GetObject VersionId = %q, want version-requested", got)
+	if artifact.State != ArtifactVerificationArchiveInvalid {
+		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationArchiveInvalid)
 	}
+}
+
+type archiveMember struct {
+	path     string
+	content  string
+	typeflag byte
+	linkname string
 }
 
 func releaseArchive(t *testing.T) []byte {
 	t.Helper()
+	return tarArchive(t, []archiveMember{
+		{path: "release.json", content: `{"app":"demo"}`, typeflag: tar.TypeReg},
+		{path: "cdk/app.template.json", content: `{}`, typeflag: tar.TypeReg},
+	})
+}
+
+func tarArchive(t *testing.T, members []archiveMember) []byte {
+	t.Helper()
 	var buffer bytes.Buffer
 	writer := tar.NewWriter(&buffer)
-	files := []struct {
-		path    string
-		content string
-	}{
-		{path: "release.json", content: `{"app":"demo"}`},
-		{path: "cdk/app.template.json", content: `{}`},
-	}
-	for _, file := range files {
+	for _, member := range members {
 		if err := writer.WriteHeader(&tar.Header{
-			Name:     file.path,
+			Name:     member.path,
 			Mode:     0o644,
-			Size:     int64(len(file.content)),
-			Typeflag: tar.TypeReg,
+			Size:     int64(len(member.content)),
+			Typeflag: member.typeflag,
+			Linkname: member.linkname,
 		}); err != nil {
-			t.Fatalf("WriteHeader(%q) error = %v", file.path, err)
+			t.Fatalf("WriteHeader(%q) error = %v", member.path, err)
 		}
-		if _, err := writer.Write([]byte(file.content)); err != nil {
-			t.Fatalf("Write(%q) error = %v", file.path, err)
+		if _, err := writer.Write([]byte(member.content)); err != nil {
+			t.Fatalf("Write(%q) error = %v", member.path, err)
 		}
 	}
 	if err := writer.Close(); err != nil {

@@ -66,11 +66,17 @@ expected account IDs never broaden to the current/default account.
 
 ## Verify a version-pinned artifact
 
-`VerifyVersionedArtifact` accepts a narrow `GetObjectAPI` and a `VersionedArtifactRequest`. It has no unversioned
-fallback. The request must provide a non-empty `VersionID` and a lower-case `sha256:<hex>` aggregate digest.
+`VerifyVersionedArtifact` accepts AppTheory's existing `objectstore.Store` seam and a `VersionedArtifactRequest`. It has
+no unversioned fallback or second path to S3. The request must provide a non-empty, non-`null` `VersionID` and a
+lower-case `sha256:<hex>` aggregate digest.
 
 ```go
-artifact, err := runtimeaws.VerifyVersionedArtifact(ctx, s3Client, runtimeaws.VersionedArtifactRequest{
+artifactStore, err := objectstore.NewS3Store(ctx, objectstore.S3StoreConfig{})
+if err != nil {
+	return err
+}
+
+artifact, err := runtimeaws.VerifyVersionedArtifact(ctx, artifactStore, runtimeaws.VersionedArtifactRequest{
 	Bucket:         artifactBucket,
 	Key:            artifactKey,
 	VersionID:      artifactVersionID,
@@ -88,10 +94,13 @@ for _, entry := range artifact.Entries() {
 
 Verification always performs the F6 triple in order:
 
-1. `GetObject` is sent with the exact requested `VersionId`;
-2. the response's `VersionId` must equal the request exactly; and
+1. `objectstore.Store.Get` is sent with the exact requested `VersionID` and `MaxVersionedArtifactBytes` bound;
+2. the returned `GetOutput.Ref.VersionID` must equal the request exactly; and
 3. AppTheory reads a bounded uncompressed tar, hashes each regular-file member, derives the sorted
    `path<two spaces>sha256` aggregate digest, and requires it to match `ExpectedDigest`.
+
+Archive member paths reject absolute paths, parent (`..`) segments, control characters, and delimiter-ambiguous doubled
+spaces before aggregate hashing.
 
 The returned `VersionedArtifact.State` distinguishes `version_required`, `invalid_request`, `unavailable`,
 `version_mismatch`, `archive_invalid`, `digest_mismatch`, and `verified`. `ArchiveBytes`, `Entries`, and
