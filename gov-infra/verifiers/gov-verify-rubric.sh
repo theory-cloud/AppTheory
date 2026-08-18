@@ -791,8 +791,15 @@ osv_scan_lockfile() {
   set -e
   rm -f "${tmp_report}"
 
-  if [[ "${scan_status}" -eq 0 && "${filter_status}" -eq 0 ]]; then
-    echo "FAIL: vulnerability exception checker accepted an empty scanner report" >&2
+  if [[ "${exception_kind}" == "ts" ]]; then
+    if [[ "${scan_status}" -eq 0 && "${filter_status}" -eq 0 ]]; then
+      echo "FAIL: vulnerability exception checker accepted an empty scanner report" >&2
+      return 1
+    fi
+  elif [[ "${scan_status}" -ne 0 ]]; then
+    if [[ "${filter_status}" -eq 0 ]]; then
+      echo "FAIL: osv-scanner exited ${scan_status} without a reported finding" >&2
+    fi
     return 1
   fi
 
