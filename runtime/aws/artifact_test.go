@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/theory-cloud/apptheory/v3/pkg/objectstore"
@@ -137,6 +138,56 @@ func TestVerifyVersionedArtifactStoreError(t *testing.T) {
 	assertVersionPinnedGet(t, store)
 }
 
+func TestVerifyVersionedArtifactNilGetOutputFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	store := &stubArtifactStore{}
+	artifact, err := VerifyVersionedArtifact(context.Background(), store, validArtifactRequest())
+	if !errors.Is(err, ErrArtifactUnavailable) {
+		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactUnavailable", err)
+	}
+	if artifact.State != ArtifactVerificationUnavailable {
+		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationUnavailable)
+	}
+	assertVersionPinnedGet(t, store)
+}
+
+func TestVerifyVersionedArtifactRejectsInvalidPayloadSize(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		payload    []byte
+		wantReason string
+	}{
+		{name: "empty", wantReason: "fetched payload is empty"},
+		{
+			name:       "oversize",
+			payload:    make([]byte, MaxVersionedArtifactBytes+1),
+			wantReason: fmt.Sprintf("fetched payload exceeds %d bytes", MaxVersionedArtifactBytes),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := &stubArtifactStore{output: &objectstore.GetOutput{
+				Ref:     objectstore.ObjectRef{VersionID: "version-requested"},
+				Payload: test.payload,
+			}}
+			artifact, err := VerifyVersionedArtifact(context.Background(), store, validArtifactRequest())
+			if !errors.Is(err, ErrArtifactArchiveInvalid) {
+				t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactArchiveInvalid", err)
+			}
+			if !strings.Contains(err.Error(), test.wantReason) {
+				t.Fatalf("VerifyVersionedArtifact() error = %q, want reason %q", err, test.wantReason)
+			}
+			if artifact.State != ArtifactVerificationArchiveInvalid {
+				t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationArchiveInvalid)
+			}
+		})
+	}
+}
+
 func TestVerifyVersionedArtifactStoreEnforcesArchiveLimit(t *testing.T) {
 	t.Parallel()
 
@@ -180,6 +231,9 @@ func TestVerifyVersionedArtifactMissingReturnedVersionIsMismatch(t *testing.T) {
 	artifact, err := VerifyVersionedArtifact(context.Background(), store, validArtifactRequest())
 	if !errors.Is(err, ErrArtifactVersionMismatch) {
 		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactVersionMismatch", err)
+	}
+	if !strings.Contains(err.Error(), "response omitted VersionId") {
+		t.Fatalf("VerifyVersionedArtifact() error = %q, want omitted-VersionId reason", err)
 	}
 	if artifact.State != ArtifactVerificationVersionMismatch {
 		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationVersionMismatch)
@@ -277,7 +331,14 @@ func TestVerifyVersionedArtifactRejectsCompressedArchive(t *testing.T) {
 	if err := writer.Close(); err != nil {
 		t.Fatalf("gzip Close() error = %v", err)
 	}
-	assertArchiveInvalid(t, compressed.Bytes())
+	assertArchiveInvalidReason(t, compressed.Bytes(), "compressed archives are not accepted")
+}
+
+func TestVerifyVersionedArtifactRejectsArchiveWithoutRegularMembers(t *testing.T) {
+	t.Parallel()
+
+	raw := tarArchive(t, []archiveMember{{path: "empty/", typeflag: tar.TypeDir}})
+	assertArchiveInvalidReason(t, raw, "archive holds no regular-file members")
 }
 
 func TestVerifyVersionedArtifactRejectsNonRegularMember(t *testing.T) {
@@ -295,12 +356,20 @@ func TestVerifyVersionedArtifactRejectsOversizedMember(t *testing.T) {
 	if err := writer.WriteHeader(&tar.Header{
 		Name:     "oversized.bin",
 		Mode:     0o644,
-		Size:     MaxVersionedArtifactBytes + 1,
+		Size:     32 << 40,
 		Typeflag: tar.TypeReg,
+		Format:   tar.FormatGNU,
 	}); err != nil {
 		t.Fatalf("WriteHeader() error = %v", err)
 	}
-	assertArchiveInvalid(t, buffer.Bytes())
+	assertArchiveInvalidReason(t, buffer.Bytes(), `archive member "oversized.bin" has an invalid size`)
+}
+
+func TestVerifyVersionedArtifactRejectsTrailingArchivePayload(t *testing.T) {
+	t.Parallel()
+
+	raw := append(releaseArchive(t), []byte("smuggled payload after tar end marker")...)
+	assertArchiveInvalidReason(t, raw, "archive has trailing data after its end marker")
 }
 
 func TestVerifyVersionedArtifactRejectsTooManyEntries(t *testing.T) {
@@ -408,6 +477,24 @@ func assertArchiveInvalid(t *testing.T, raw []byte) {
 	}
 	if artifact.State != ArtifactVerificationArchiveInvalid {
 		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationArchiveInvalid)
+	}
+}
+
+func assertArchiveInvalidReason(t *testing.T, raw []byte, wantReason string) {
+	t.Helper()
+	store, request := artifactFixture(t, raw)
+	artifact, err := VerifyVersionedArtifact(context.Background(), store, request)
+	if !errors.Is(err, ErrArtifactArchiveInvalid) {
+		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactArchiveInvalid", err)
+	}
+	if !strings.Contains(err.Error(), wantReason) {
+		t.Fatalf("VerifyVersionedArtifact() error = %q, want reason %q", err, wantReason)
+	}
+	if artifact.State != ArtifactVerificationArchiveInvalid {
+		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationArchiveInvalid)
+	}
+	if got := artifact.ArchiveBytes(); got != nil {
+		t.Fatalf("ArchiveBytes() after invalid archive = %d bytes, want nil", len(got))
 	}
 }
 

@@ -142,9 +142,7 @@ func (s *s3Store) Get(ctx context.Context, input GetInput) (*GetOutput, error) {
 	}
 
 	ref := input.Ref
-	if out.VersionId != nil {
-		ref.VersionID = aws.ToString(out.VersionId)
-	}
+	ref.VersionID = aws.ToString(out.VersionId)
 	return &GetOutput{
 		Ref:         ref,
 		Payload:     payload,

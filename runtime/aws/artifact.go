@@ -146,6 +146,10 @@ func VerifyVersionedArtifact(
 	}
 
 	artifact.ReturnedVersionID = returnedVersionID
+	if artifact.ReturnedVersionID == "" {
+		artifact.State = ArtifactVerificationVersionMismatch
+		return artifact, fmt.Errorf("%w: response omitted VersionId", ErrArtifactVersionMismatch)
+	}
 	if artifact.ReturnedVersionID != artifact.RequestedVersionID {
 		artifact.State = ArtifactVerificationVersionMismatch
 		return artifact, ErrArtifactVersionMismatch
@@ -219,8 +223,11 @@ func fetchVersionedArtifact(
 	if output == nil {
 		return nil, "", ErrArtifactUnavailable
 	}
-	if len(output.Payload) == 0 || int64(len(output.Payload)) > MaxVersionedArtifactBytes {
-		return nil, "", ErrArtifactArchiveInvalid
+	if len(output.Payload) == 0 {
+		return nil, "", fmt.Errorf("%w: fetched payload is empty", ErrArtifactArchiveInvalid)
+	}
+	if int64(len(output.Payload)) > MaxVersionedArtifactBytes {
+		return nil, "", fmt.Errorf("%w: fetched payload exceeds %d bytes", ErrArtifactArchiveInvalid, MaxVersionedArtifactBytes)
 	}
 	return cloneArtifactBytes(output.Payload), strings.TrimSpace(output.Ref.VersionID), nil
 }
@@ -229,7 +236,8 @@ func readVersionedArtifactArchive(raw []byte) ([]ArtifactEntry, error) {
 	if compressedArtifact(raw) {
 		return nil, errors.New("compressed archives are not accepted")
 	}
-	reader := tar.NewReader(bytes.NewReader(raw))
+	source := bytes.NewReader(raw)
+	reader := tar.NewReader(source)
 	entries := make([]ArtifactEntry, 0)
 	members := 0
 	for {
@@ -251,6 +259,9 @@ func readVersionedArtifactArchive(raw []byte) ([]ArtifactEntry, error) {
 		if entry != nil {
 			entries = append(entries, *entry)
 		}
+	}
+	if source.Len() != 0 {
+		return nil, errors.New("archive has trailing data after its end marker")
 	}
 	if len(entries) == 0 {
 		return nil, errors.New("archive holds no regular-file members")

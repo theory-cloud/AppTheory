@@ -63,9 +63,12 @@ func TestAssertAccountExplicitStates(t *testing.T) {
 			wantErr:   ErrExpectedAccountNotConfigured,
 		},
 		{
-			name:      "identity API unavailable",
-			expected:  "111122223333",
-			client:    &fakeCallerIdentityClient{err: errors.New("sts unavailable")},
+			name:     "identity API unavailable",
+			expected: "111122223333",
+			client: &fakeCallerIdentityClient{
+				output: &sts.GetCallerIdentityOutput{Account: awssdk.String("111122223333")},
+				err:    errors.New("sts unavailable"),
+			},
 			wantState: AccountAssertionUnavailable,
 			wantErr:   ErrCallerIdentityUnavailable,
 		},
@@ -123,7 +126,8 @@ func TestAssertAccountExplicitStates(t *testing.T) {
 func TestAssumeFirstFailureDoesNotExposeCredentials(t *testing.T) {
 	t.Parallel()
 
-	assumer := &fakeAssumeRoleClient{err: errors.New("access denied")}
+	assumer := successfulAssumer()
+	assumer.err = errors.New("access denied")
 	factoryCalls := 0
 	result, err := AssumeFirst(
 		context.Background(),
@@ -149,6 +153,71 @@ func TestAssumeFirstFailureDoesNotExposeCredentials(t *testing.T) {
 	}
 	if factoryCalls != 0 {
 		t.Fatalf("identity factory calls = %d, want 0", factoryCalls)
+	}
+}
+
+func TestAssumeFirstRejectsMissingAssumeInputs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		assumer AssumeRoleAPI
+		request AssumeRoleRequest
+	}{
+		{
+			name: "nil assumer",
+			request: AssumeRoleRequest{
+				RoleARN:           "arn:aws:iam::111122223333:role/Deploy",
+				RoleSessionName:   "apptheory-test",
+				ExpectedAccountID: "111122223333",
+			},
+		},
+		{
+			name:    "empty role ARN",
+			assumer: successfulAssumer(),
+			request: AssumeRoleRequest{
+				RoleARN:           " ",
+				RoleSessionName:   "apptheory-test",
+				ExpectedAccountID: "111122223333",
+			},
+		},
+		{
+			name:    "empty role session name",
+			assumer: successfulAssumer(),
+			request: AssumeRoleRequest{
+				RoleARN:           "arn:aws:iam::111122223333:role/Deploy",
+				RoleSessionName:   " ",
+				ExpectedAccountID: "111122223333",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			result, err := AssumeFirst(
+				context.Background(),
+				test.assumer,
+				func(awssdk.CredentialsProvider) CallerIdentityAPI {
+					return &fakeCallerIdentityClient{output: &sts.GetCallerIdentityOutput{
+						Account: awssdk.String("111122223333"),
+					}}
+				},
+				test.request,
+			)
+			if !errors.Is(err, ErrAssumeRoleFailed) {
+				t.Fatalf("AssumeFirst() error = %v, want ErrAssumeRoleFailed", err)
+			}
+			if result.Assertion.State != AccountAssertionAssumeFailed {
+				t.Fatalf("AssumeFirst() state = %q, want %q", result.Assertion.State, AccountAssertionAssumeFailed)
+			}
+			if result.Credentials != nil {
+				t.Fatal("AssumeFirst() exposed credentials with missing assume inputs")
+			}
+			if assumer, ok := test.assumer.(*fakeAssumeRoleClient); ok && assumer.calls != 0 {
+				t.Fatalf("AssumeRole calls = %d, want 0", assumer.calls)
+			}
+		})
 	}
 }
 
