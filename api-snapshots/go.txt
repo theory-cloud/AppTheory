@@ -2772,6 +2772,137 @@ func (RealClock) Now() time.Time
 
 func (safeEventError) Error() string
 
+## github.com/theory-cloud/apptheory/v3/runtime/aws
+
+const AccountAssertionAssumeFailed AccountAssertionState = "assume_failed"
+
+const AccountAssertionMismatch AccountAssertionState = "mismatch"
+
+const AccountAssertionNotConfigured AccountAssertionState = "not_configured"
+
+const AccountAssertionUnavailable AccountAssertionState = "unavailable"
+
+const AccountAssertionVerified AccountAssertionState = "verified"
+
+const ArtifactVerificationArchiveInvalid ArtifactVerificationState = "archive_invalid"
+
+const ArtifactVerificationDigestMismatch ArtifactVerificationState = "digest_mismatch"
+
+const ArtifactVerificationInvalidRequest ArtifactVerificationState = "invalid_request"
+
+const ArtifactVerificationUnavailable ArtifactVerificationState = "unavailable"
+
+const ArtifactVerificationVerified ArtifactVerificationState = "verified"
+
+const ArtifactVerificationVersionMismatch ArtifactVerificationState = "version_mismatch"
+
+const ArtifactVerificationVersionRequired ArtifactVerificationState = "version_required"
+
+const MaxVersionedArtifactBytes int64 = 32 << 20
+
+const MaxVersionedArtifactEntries = 512
+
+var ErrAccountMismatch = errors.New("apptheory runtime aws: caller account does not match expected account")
+
+var ErrArtifactArchiveInvalid = errors.New("apptheory runtime aws: versioned artifact archive is invalid")
+
+var ErrArtifactDigestMismatch = errors.New("apptheory runtime aws: versioned artifact digest does not match expected digest")
+
+var ErrArtifactInvalidRequest = errors.New("apptheory runtime aws: invalid versioned artifact request")
+
+var ErrArtifactUnavailable = errors.New("apptheory runtime aws: versioned artifact is unavailable")
+
+var ErrArtifactVersionMismatch = errors.New("apptheory runtime aws: returned artifact version does not match requested version")
+
+var ErrArtifactVersionRequired = errors.New("apptheory runtime aws: artifact version is required")
+
+var ErrAssumeRoleFailed = errors.New("apptheory runtime aws: assume role failed")
+
+var ErrCallerIdentityUnavailable = errors.New("apptheory runtime aws: caller identity is unavailable")
+
+var ErrExpectedAccountNotConfigured = errors.New("apptheory runtime aws: expected account is not configured")
+
+type AccountAssertion struct {
+	State             AccountAssertionState
+	ExpectedAccountID string
+	ActualAccountID   string
+}
+
+type AccountAssertionState string
+
+type ArtifactEntry struct {
+	Path string
+	Mode int64
+
+	content []byte
+	digest  string
+}
+
+type ArtifactVerificationState string
+
+type AssumeFirstResult struct {
+	Assertion   AccountAssertion
+	Credentials awssdk.CredentialsProvider
+}
+
+type AssumeRoleAPI interface {
+	AssumeRole(context.Context, *sts.AssumeRoleInput, ...func(*sts.Options)) (*sts.AssumeRoleOutput, error)
+}
+
+type AssumeRoleRequest struct {
+	RoleARN           string
+	RoleSessionName   string
+	ExternalID        string
+	ExpectedAccountID string
+}
+
+type CallerIdentityAPI interface {
+	GetCallerIdentity(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error)
+}
+
+type CallerIdentityFactory func(awssdk.CredentialsProvider) CallerIdentityAPI
+
+type VersionedArtifact struct {
+	State              ArtifactVerificationState
+	RequestedVersionID string
+	ReturnedVersionID  string
+	ExpectedDigest     string
+	ActualDigest       string
+
+	archive []byte
+	entries []ArtifactEntry
+}
+
+type VersionedArtifactRequest struct {
+	Bucket         string
+	Key            string
+	VersionID      string
+	ExpectedDigest string
+}
+
+func AssertAccount(context.Context, CallerIdentityAPI, string) (AccountAssertion, error)
+
+func AssumeFirst(
+	context.Context,
+	AssumeRoleAPI,
+	CallerIdentityFactory,
+	AssumeRoleRequest,
+) (AssumeFirstResult, error)
+
+func VerifyVersionedArtifact(
+	context.Context,
+	objectstore.Store,
+	VersionedArtifactRequest,
+) (VersionedArtifact, error)
+
+func (ArtifactEntry) Bytes() []byte
+
+func (ArtifactEntry) SHA256() string
+
+func (VersionedArtifact) ArchiveBytes() []byte
+
+func (VersionedArtifact) Entries() []ArtifactEntry
+
 ## github.com/theory-cloud/apptheory/v3/runtime/mcp
 
 const CacheScopePrivate CacheScope = "private"

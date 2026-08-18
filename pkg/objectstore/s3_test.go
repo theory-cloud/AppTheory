@@ -92,6 +92,28 @@ func TestS3StoreGetBoundsAndClosesBody(t *testing.T) {
 	}
 }
 
+func TestS3StoreGetVersionIsResponseAttested(t *testing.T) {
+	client := &recordingS3Client{getBody: []byte("payload")}
+	store, err := newS3StoreWithClient(client, S3StoreConfig{})
+	if err != nil {
+		t.Fatalf("newS3StoreWithClient() error = %v", err)
+	}
+
+	got, err := store.Get(context.Background(), GetInput{
+		Ref:      ObjectRef{Bucket: "bucket-a", Key: "key", VersionID: "requested-version"},
+		MaxBytes: 7,
+	})
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.Ref.VersionID != "" {
+		t.Fatalf("Get() response VersionID = %q, want empty without S3 attestation", got.Ref.VersionID)
+	}
+	if aws.ToString(client.getInput.VersionId) != "requested-version" {
+		t.Fatalf("GetObject request VersionId = %q, want requested-version", aws.ToString(client.getInput.VersionId))
+	}
+}
+
 func TestS3StoreFailClosedValidation(t *testing.T) {
 	client := &recordingS3Client{}
 	store, err := newS3StoreWithClient(client, S3StoreConfig{})
@@ -161,12 +183,15 @@ func (c *recordingS3Client) PutObject(_ context.Context, params *s3.PutObjectInp
 func (c *recordingS3Client) GetObject(_ context.Context, params *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 	c.operations = append(c.operations, "GetObject")
 	c.getInput = params
-	return &s3.GetObjectOutput{
+	output := &s3.GetObjectOutput{
 		Body:        &trackingReadCloser{Reader: bytes.NewReader(c.getBody), closed: &c.bodyClosed},
-		VersionId:   aws.String(c.getVersionID),
 		ContentType: aws.String(c.contentType),
 		Metadata:    cloneMetadata(c.metadata),
-	}, nil
+	}
+	if c.getVersionID != "" {
+		output.VersionId = aws.String(c.getVersionID)
+	}
+	return output, nil
 }
 
 func (c *recordingS3Client) DeleteObject(_ context.Context, params *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {

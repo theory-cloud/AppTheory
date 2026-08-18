@@ -117,6 +117,7 @@ The full documentation site lives at **[apptheory.theorycloud.ai](https://appthe
 | API reference | [apptheory.theorycloud.ai/api-reference/](https://apptheory.theorycloud.ai/api-reference/) |
 | HTTP runtime tiers | [apptheory.theorycloud.ai/features/http-runtime/](https://apptheory.theorycloud.ai/features/http-runtime/) |
 | Event workloads | [apptheory.theorycloud.ai/features/event-workloads/](https://apptheory.theorycloud.ai/features/event-workloads/) |
+| AWS runtime hardening | [apptheory.theorycloud.ai/features/aws-runtime-hardening/](https://apptheory.theorycloud.ai/features/aws-runtime-hardening/) |
 | Logging profiles | [apptheory.theorycloud.ai/features/logging-profiles/](https://apptheory.theorycloud.ai/features/logging-profiles/) |
 | Source provenance | [apptheory.theorycloud.ai/features/source-provenance/](https://apptheory.theorycloud.ai/features/source-provenance/) |
 | Migration from Lift | [apptheory.theorycloud.ai/migration/from-lift/](https://apptheory.theorycloud.ai/migration/from-lift/) |
