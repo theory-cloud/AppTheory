@@ -1,0 +1,6 @@
+{
+  "id":"p2.secure_construction_invalid_tier","tier":"p2","name":"secure construction rejects an unknown tier independently",
+  "setup":{"secure_app":{"tier":"unknown"}},
+  "input":{"secure_steps":[{"name":"invalid-tier","operation":"construct"}]},
+  "expect":{"secure_steps":[{"name":"invalid-tier","construction_error":"apptheory: invalid secure configuration"}]}
+}

@@ -7,6 +7,10 @@ import { RandomIdGenerator, type IdGenerator } from "./ids.js";
 import { toBuffer } from "./internal/http.js";
 import { hasJSONContentType } from "./internal/response.js";
 import { normalizeSourceProvenance } from "./internal/source-provenance.js";
+import {
+  cloneSecurePrincipal,
+  type SecurePrincipal,
+} from "./secure-principal.js";
 import type { Headers, Query, Response, SourceProvenance } from "./types.js";
 
 /** Client shape used by WebSocketContext to manage API Gateway WebSocket connections. */
@@ -145,6 +149,7 @@ export class Context {
   private readonly _webSocket: WebSocketContext | null;
   private readonly _appSync: AppSyncContext | null;
   private readonly _values: Map<string, unknown>;
+  private _securePrincipal: SecurePrincipal | null;
 
   constructor(options: {
     request: Context["request"];
@@ -177,6 +182,7 @@ export class Context {
     this._webSocket = options.webSocket ?? null;
     this._appSync = options.appSync ?? null;
     this._values = new Map();
+    this._securePrincipal = null;
   }
 
   /** Returns the request clock time using the configured clock. */
@@ -246,6 +252,11 @@ export class Context {
   /** Returns AppSync resolver metadata for AppSync routes. */
   asAppSync(): AppSyncContext | null {
     return this._appSync;
+  }
+
+  /** Returns a defensive deep copy of the resolved secure principal. */
+  securePrincipal(): SecurePrincipal | null {
+    return cloneSecurePrincipal(this._securePrincipal);
   }
 }
 

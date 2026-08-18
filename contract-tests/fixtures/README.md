@@ -12,6 +12,9 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/routing/` — P0 fail-closed route registration setup errors for duplicate routes, invalid patterns, and nil/undefined/None handlers
 - `contract-tests/fixtures/openapi/` — P0 descriptive OpenAPI generation with byte-pinned canonical JSON output
 - `contract-tests/fixtures/middleware-guardrails/` — P1 request-id, tenant, auth, CORS, guardrails, and legacy flat-error behavior
+- `contract-tests/fixtures/secure-app-p0/` — SecureApp P0 posture-gate ordering without importing portable stages
+- `contract-tests/fixtures/secure-app-p1/` — SecureApp uniform, non-oracular P1 preflight behavior
+- `contract-tests/fixtures/secure-app-p2/` — SecureApp principal, scope, AppSync, WebSocket, introspection, and OpenAPI parity
 - `contract-tests/fixtures/appsync-observability-policies/` — P2 AppSync, logging profiles, rate-limit, and load-shed behavior
 - `contract-tests/fixtures/observability/` — P2 request duration, CloudWatch EMF, and trace-context propagation behavior
 - `contract-tests/fixtures/event-sources/` — M1 SQS, EventBridge, DynamoDB Streams, Kinesis, SNS, and non-HTTP middleware behavior
@@ -26,7 +29,7 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
 - `contract-tests/fixtures/vectorstore/` — SP14 semantic vector-store, Bedrock Titan embedding, metadata filter, and deterministic fake behavior
 
-Each fixture is a single JSON object. The current corpus contains 224 behavior fixtures plus the internal schema file. <!-- apptheory-fixture-count: 224 -->
+Each fixture is a single JSON object. The current corpus contains 261 behavior fixtures plus the internal schema file. <!-- apptheory-fixture-count: 261 -->
 
 ## Schema gate
 
@@ -60,6 +63,12 @@ while provider/runtime payload objects remain open so behavior-specific contract
     prototype-like keys such as `constructor` and `__proto__`.
 - `input.context` (object, optional): synthetic invocation context (portable subset).
 - `setup.routes[].auth_required` (boolean, optional): whether the route requires auth.
+- `setup.secure_app` (object, optional): closed SecureApp construction, posture-bearing cross-surface routes, and secure
+  OpenAPI input. Secure route records carry `surface`, posture, normalized scopes, and AppSync/WebSocket metadata.
+- `input.secure_steps` / `expect.secure_steps` (arrays, optional): ordered HTTP, AppSync, WebSocket, route-snapshot,
+  construction, and OpenAPI assertions. Steps carry resolver principals/errors, AppSync identity resolution, and
+  trusted WebSocket connection-store mutations; expected steps pin 401/403/500 distinctions, fixed-stage side
+  effects, principal copies, route surfaces, and canonical secure OpenAPI JSON.
 - `expect.response` (object): expected canonical response.
   - `chunks` (array, optional): expected streamed response chunks (when using the streaming test harness).
   - `stream_error_code` (string, optional): expected error code when an error occurs after streaming begins.

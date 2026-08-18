@@ -1,0 +1,50 @@
+{
+  "id": "p2.secure_authenticated_no_resolver",
+  "tier": "p2",
+  "name": "authenticated posture without a resolver fails unauthorized",
+  "setup": {
+    "secure_app": {
+      "tier": "p2",
+      "principal_resolver": false,
+      "routes": [
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/auth",
+          "handler": "secure_echo",
+          "posture": "authenticated"
+        }
+      ]
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "no-resolver",
+        "operation": "http",
+        "request": {
+          "method": "GET",
+          "path": "/auth",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "no-resolver",
+        "status": 401,
+        "error_code": "app.unauthorized",
+        "resolver_calls": 0,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      }
+    ]
+  }
+}

@@ -17,8 +17,11 @@ import (
 type WebSocketHandler func(*Context) (*Response, error)
 
 type webSocketRoute struct {
-	RouteKey string
-	Handler  WebSocketHandler
+	RouteKey       string
+	Handler        WebSocketHandler
+	Secure         bool
+	PosturePresent bool
+	Posture        AuthPosture
 }
 
 type WebSocketClientFactory func(context.Context, string) (streamer.Client, error)
@@ -53,6 +56,14 @@ func (a *App) WebSocket(routeKey string, handler WebSocketHandler) *App {
 }
 
 func (a *App) webSocketHandlerForRoute(routeKey string) WebSocketHandler {
+	route := a.webSocketRouteForRoute(routeKey)
+	if route == nil {
+		return nil
+	}
+	return route.Handler
+}
+
+func (a *App) webSocketRouteForRoute(routeKey string) *webSocketRoute {
 	if a == nil {
 		return nil
 	}
@@ -62,7 +73,8 @@ func (a *App) webSocketHandlerForRoute(routeKey string) WebSocketHandler {
 	}
 	for _, route := range a.webSocketRoutes {
 		if route.RouteKey == routeKey {
-			return route.Handler
+			routeCopy := route
+			return &routeCopy
 		}
 	}
 	return nil
@@ -255,6 +267,31 @@ func queryFromProxyEvent(single map[string]string, multi map[string][]string) ma
 	return out
 }
 
+func (a *App) webSocketErrorResponse(err error, requestID string) events.APIGatewayProxyResponse {
+	if a.tier == TierP0 {
+		return apigatewayProxyResponseFromResponse(responseForError(err))
+	}
+	return apigatewayProxyResponseFromResponse(responseForErrorWithRequestID(err, requestID))
+}
+
+func (a *App) webSocketInternalResponse(requestID string) events.APIGatewayProxyResponse {
+	return a.webSocketErrorResponse(&AppError{Code: errorCodeInternal, Message: errorMessageInternal}, requestID)
+}
+
+func (a *App) webSocketNotFoundResponse(requestID string) events.APIGatewayProxyResponse {
+	return a.webSocketErrorResponse(&AppError{Code: errorCodeNotFound, Message: errorMessageNotFound}, requestID)
+}
+
+func (a *App) secureWebSocketGate(route *webSocketRoute, requestCtx *Context) error {
+	if !a.secure {
+		return nil
+	}
+	if route == nil {
+		panic("apptheory: secure websocket route invariant")
+	}
+	return a.secureGate(routeToSecureGate(*route), requestCtx)
+}
+
 func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsocketProxyRequest) (proxy events.APIGatewayProxyResponse) {
 	if a == nil {
 		return apigatewayProxyResponseFromResponse(errorResponse(errorCodeInternal, errorMessageInternal, nil))
@@ -264,9 +301,10 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 	}
 
 	routeKey := strings.TrimSpace(event.RequestContext.RouteKey)
-	handler := a.webSocketHandlerForRoute(routeKey)
-	if handler != nil {
-		handler = WebSocketHandler(a.applyMiddlewares(Handler(handler)))
+	route := a.webSocketRouteForRoute(routeKey)
+	var handler WebSocketHandler
+	if route != nil {
+		handler = route.Handler
 	}
 
 	requestID := strings.TrimSpace(event.RequestContext.RequestID)
@@ -287,10 +325,7 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 
 	normalized, err := normalizeRequest(req)
 	if err != nil {
-		if a.tier == TierP0 {
-			return apigatewayProxyResponseFromResponse(responseForError(err))
-		}
-		return apigatewayProxyResponseFromResponse(responseForErrorWithRequestID(err, requestID))
+		return a.webSocketErrorResponse(err, requestID)
 	}
 
 	domainName := strings.TrimSpace(event.RequestContext.DomainName)
@@ -325,36 +360,28 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 		ws:          wsCtx,
 	}
 
-	if handler == nil {
-		if a.tier == TierP0 {
-			return apigatewayProxyResponseFromResponse(errorResponse(errorCodeNotFound, errorMessageNotFound, nil))
-		}
-		return apigatewayProxyResponseFromResponse(errorResponseWithRequestID(errorCodeNotFound, errorMessageNotFound, nil, requestID))
-	}
-
 	defer func() {
 		if r := recover(); r != nil {
-			if a.tier == TierP0 {
-				proxy = apigatewayProxyResponseFromResponse(errorResponse(errorCodeInternal, errorMessageInternal, nil))
-				return
-			}
-			proxy = apigatewayProxyResponseFromResponse(errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, requestID))
+			proxy = a.webSocketInternalResponse(requestID)
 		}
 	}()
 
+	if handler == nil {
+		return a.webSocketNotFoundResponse(requestID)
+	}
+
+	if err := a.secureWebSocketGate(route, requestCtx); err != nil {
+		return a.webSocketErrorResponse(err, requestID)
+	}
+	handler = WebSocketHandler(a.applyMiddlewares(Handler(handler)))
+
 	out, handlerErr := handler(requestCtx)
 	if handlerErr != nil {
-		if a.tier == TierP0 {
-			return apigatewayProxyResponseFromResponse(responseForError(handlerErr))
-		}
-		return apigatewayProxyResponseFromResponse(responseForErrorWithRequestID(handlerErr, requestID))
+		return a.webSocketErrorResponse(handlerErr, requestID)
 	}
 
 	if out == nil {
-		if a.tier == TierP0 {
-			return apigatewayProxyResponseFromResponse(errorResponse(errorCodeInternal, errorMessageInternal, nil))
-		}
-		return apigatewayProxyResponseFromResponse(errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, requestID))
+		return a.webSocketInternalResponse(requestID)
 	}
 
 	resp := normalizeResponse(out)

@@ -28,6 +28,9 @@ AppTheoryErrorDetails	type
 AppTheoryErrorOptions	type
 AtomicRateLimiter	interface
 AuthHook	type
+AuthPosture	interface
+AuthPostureKind	type
+Authenticated	function
 AuthorizationServerMetadata	interface
 BearerTokenClaims	interface
 BearerTokenClaimsValidator	type
@@ -117,6 +120,7 @@ IdGenerator	interface
 IdempotencyCreateOutcome	type
 IdempotencyStatus	type
 InspectSemaphoreInput	type
+InternalOnly	function
 JobLedgerError	class
 JobLedgerErrorType	type
 JobLock	type
@@ -394,6 +398,7 @@ ObjectStoreGetOutput	interface
 ObjectStoreOperation	type
 ObjectStorePutInput	interface
 ObservabilityHooks	interface
+OpenAPIAuthSchemes	interface
 OpenAPIDocument	type
 OpenAPIFieldSource	type
 OpenAPIFieldSpec	interface
@@ -403,11 +408,14 @@ OpenAPIResponseSpec	interface
 OpenAPIRouteSpec	interface
 OpenAPISpec	interface
 OpenAPIValidationRuleSpec	interface
+Optional	function
 PolicyDecision	interface
 PolicyHook	type
+PrincipalKind	type
 ProfileLogger	class
 ProfileLoggerOptions	interface
 ProtectedResourceMetadata	interface
+Public	function
 PutVectorsInput	interface
 Query	type
 QueryHit	interface
@@ -447,6 +455,13 @@ SQSEventResponse	interface
 SQSHandler	type
 SQSMessage	interface
 SSEEvent	interface
+SecureApp	class
+SecureOpenAPISpec	interface
+SecureOptions	interface
+SecurePrincipal	interface
+SecurePrincipalResolver	type
+SecureRoute	interface
+SecureRouteSurface	type
 SemanticIndex	class
 SemanticIndexConfig	interface
 SemanticRecord	interface

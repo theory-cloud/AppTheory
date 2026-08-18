@@ -69,6 +69,7 @@ class OpenAPISpec:
 
 
 def generate_openapi(spec: OpenAPISpec | Mapping[str, Any]) -> dict[str, Any]:
+    """Generate legacy OpenAPI; SecureApp adopters must use app.generate_openapi()."""
     raw_spec = _as_mapping(spec)
     title = str(raw_spec.get("title", "")).strip()
     version = str(raw_spec.get("version", "")).strip()
@@ -106,6 +107,7 @@ def generate_openapi(spec: OpenAPISpec | Mapping[str, Any]) -> dict[str, Any]:
 
 
 def generate_openapi_json(spec: OpenAPISpec | Mapping[str, Any]) -> str:
+    """Generate legacy OpenAPI JSON; SecureApp adopters must use app.generate_openapi_json()."""
     return _stable_json(generate_openapi(spec))
 
 

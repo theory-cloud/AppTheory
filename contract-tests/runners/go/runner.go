@@ -21,6 +21,9 @@ type actualResponseForCompare struct {
 }
 
 func runFixture(f Fixture) error {
+	if len(f.Input.SecureSteps) > 0 || len(f.Expect.SecureSteps) > 0 {
+		return runFixtureSecure(f)
+	}
 	if isOpenAPIContractFixture(f) {
 		return runFixtureOpenAPI(f)
 	}

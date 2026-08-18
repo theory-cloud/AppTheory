@@ -1,0 +1,439 @@
+{
+  "id": "p2.secure_websocket_sequence",
+  "tier": "p2",
+  "name": "secure WebSocket routes revalidate trusted connection principals per key",
+  "setup": {
+    "secure_app": {
+      "tier": "p2",
+      "websocket_support": true,
+      "middlewares": [
+        "record"
+      ],
+      "routes": [
+        {
+          "surface": "websocket",
+          "route_key": " $connect ",
+          "handler": "secure_echo",
+          "posture": "optional"
+        },
+        {
+          "surface": "websocket",
+          "route_key": "sendMessage",
+          "handler": "secure_echo",
+          "posture": "authenticated",
+          "scopes": [
+            "messages:write"
+          ]
+        },
+        {
+          "surface": "websocket",
+          "route_key": "internal",
+          "handler": "secure_echo",
+          "posture": "internal_only"
+        },
+        {
+          "surface": "websocket",
+          "route_key": "$disconnect",
+          "handler": "secure_echo",
+          "posture": "public"
+        },
+        {
+          "surface": "websocket",
+          "route_key": "$default",
+          "handler": "secure_echo",
+          "posture": "optional"
+        },
+        {
+          "surface": "websocket",
+          "route_key": "strict",
+          "handler": "secure_echo",
+          "posture": "authenticated",
+          "scopes": [
+            "messages:write",
+            "extra"
+          ]
+        }
+      ]
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "connect",
+        "operation": "websocket",
+        "persist_connection": true,
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [
+            "messages:write"
+          ],
+          "claims": {}
+        },
+        "aws_event": {
+          "source": "websocket",
+          "event": {
+            "requestContext": {
+              "routeKey": "$connect",
+              "connectionId": "c1",
+              "requestId": "r1",
+              "domainName": "api.example",
+              "stage": "prod",
+              "eventType": "CONNECT"
+            },
+            "headers": {
+              "authorization": "Bearer test"
+            },
+            "body": "",
+            "isBase64Encoded": false
+          }
+        }
+      },
+      {
+        "name": "message",
+        "operation": "websocket",
+        "aws_event": {
+          "source": "websocket",
+          "event": {
+            "requestContext": {
+              "routeKey": "sendMessage",
+              "connectionId": "c1",
+              "requestId": "r2",
+              "domainName": "api.example",
+              "stage": "prod",
+              "eventType": "MESSAGE"
+            },
+            "headers": {},
+            "body": "{\"identity\":\"attacker\"}",
+            "isBase64Encoded": false
+          }
+        }
+      },
+      {
+        "name": "optional-anonymous",
+        "operation": "websocket",
+        "aws_event": {
+          "source": "websocket",
+          "event": {
+            "requestContext": {
+              "routeKey": "$default",
+              "connectionId": "c2",
+              "requestId": "r2a",
+              "domainName": "api.example",
+              "stage": "prod",
+              "eventType": "MESSAGE"
+            },
+            "headers": {},
+            "body": "{}",
+            "isBase64Encoded": false
+          }
+        }
+      },
+      {
+        "name": "optional-unknown-kind",
+        "operation": "websocket",
+        "principal": {
+          "identity": "user",
+          "kind": "mystery",
+          "scopes": [],
+          "claims": {}
+        },
+        "aws_event": {
+          "source": "websocket",
+          "event": {
+            "requestContext": {
+              "routeKey": "$default",
+              "connectionId": "c2",
+              "requestId": "r2b",
+              "domainName": "api.example",
+              "stage": "prod",
+              "eventType": "MESSAGE"
+            },
+            "headers": {},
+            "body": "{}",
+            "isBase64Encoded": false
+          }
+        }
+      },
+      {
+        "name": "scoped-forbidden",
+        "operation": "websocket",
+        "aws_event": {
+          "source": "websocket",
+          "event": {
+            "requestContext": {
+              "routeKey": "strict",
+              "connectionId": "c1",
+              "requestId": "r2c",
+              "domainName": "api.example",
+              "stage": "prod",
+              "eventType": "MESSAGE"
+            },
+            "headers": {},
+            "body": "{}",
+            "isBase64Encoded": false
+          }
+        }
+      },
+      {
+        "name": "internal-success",
+        "operation": "websocket",
+        "principal": {
+          "identity": "svc",
+          "kind": "internal",
+          "scopes": [],
+          "claims": {}
+        },
+        "aws_event": {
+          "source": "websocket",
+          "event": {
+            "requestContext": {
+              "routeKey": "internal",
+              "connectionId": "c3",
+              "requestId": "r2d",
+              "domainName": "api.example",
+              "stage": "prod",
+              "eventType": "MESSAGE"
+            },
+            "headers": {},
+            "body": "{}",
+            "isBase64Encoded": false
+          }
+        }
+      },
+      {
+        "name": "resolver-error",
+        "operation": "websocket",
+        "resolver_error": {
+          "code": "app.conflict",
+          "message": "conflict"
+        },
+        "aws_event": {
+          "source": "websocket",
+          "event": {
+            "requestContext": {
+              "routeKey": "sendMessage",
+              "connectionId": "c1",
+              "requestId": "r2e",
+              "domainName": "api.example",
+              "stage": "prod",
+              "eventType": "MESSAGE"
+            },
+            "headers": {},
+            "body": "{}",
+            "isBase64Encoded": false
+          }
+        }
+      },
+      {
+        "name": "internal-denied",
+        "operation": "websocket",
+        "aws_event": {
+          "source": "websocket",
+          "event": {
+            "requestContext": {
+              "routeKey": "internal",
+              "connectionId": "c1",
+              "requestId": "r3",
+              "domainName": "api.example",
+              "stage": "prod",
+              "eventType": "MESSAGE"
+            },
+            "headers": {},
+            "body": "{}",
+            "isBase64Encoded": false
+          }
+        }
+      },
+      {
+        "name": "revoked",
+        "operation": "websocket",
+        "revoke_connection": true,
+        "aws_event": {
+          "source": "websocket",
+          "event": {
+            "requestContext": {
+              "routeKey": "sendMessage",
+              "connectionId": "c1",
+              "requestId": "r4",
+              "domainName": "api.example",
+              "stage": "prod",
+              "eventType": "MESSAGE"
+            },
+            "headers": {},
+            "body": "{}",
+            "isBase64Encoded": false
+          }
+        }
+      },
+      {
+        "name": "disconnect-public",
+        "operation": "websocket",
+        "aws_event": {
+          "source": "websocket",
+          "event": {
+            "requestContext": {
+              "routeKey": "$disconnect",
+              "connectionId": "c1",
+              "requestId": "r5",
+              "domainName": "api.example",
+              "stage": "prod",
+              "eventType": "DISCONNECT"
+            },
+            "headers": {},
+            "body": "",
+            "isBase64Encoded": false
+          }
+        }
+      },
+      {
+        "name": "routes",
+        "operation": "routes",
+        "mutate_routes": true
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "connect",
+        "status": 200,
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [
+            "messages:write"
+          ],
+          "claims": {}
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "message",
+        "status": 200,
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [
+            "messages:write"
+          ],
+          "claims": {}
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "optional-anonymous",
+        "status": 200,
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "optional-unknown-kind",
+        "status": 401,
+        "error_code": "app.unauthorized",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "scoped-forbidden",
+        "status": 403,
+        "error_code": "app.forbidden",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "internal-success",
+        "status": 200,
+        "principal": {
+          "identity": "svc",
+          "kind": "internal",
+          "scopes": [],
+          "claims": {}
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "resolver-error",
+        "status": 409,
+        "error_code": "app.conflict",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "internal-denied",
+        "status": 403,
+        "error_code": "app.forbidden",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "revoked",
+        "status": 401,
+        "error_code": "app.unauthorized",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "disconnect-public",
+        "status": 200,
+        "resolver_calls": 0,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "routes",
+        "routes": [
+          {
+            "surface": "websocket",
+            "posture": "optional",
+            "websocket_route_key": "$connect"
+          },
+          {
+            "surface": "websocket",
+            "posture": "authenticated",
+            "scopes": [
+              "messages:write"
+            ],
+            "websocket_route_key": "sendMessage"
+          },
+          {
+            "surface": "websocket",
+            "posture": "internal_only",
+            "websocket_route_key": "internal"
+          },
+          {
+            "surface": "websocket",
+            "posture": "public",
+            "websocket_route_key": "$disconnect"
+          },
+          {
+            "surface": "websocket",
+            "posture": "optional",
+            "websocket_route_key": "$default"
+          },
+          {
+            "surface": "websocket",
+            "posture": "authenticated",
+            "scopes": [
+              "messages:write",
+              "extra"
+            ],
+            "websocket_route_key": "strict"
+          }
+        ]
+      }
+    ]
+  }
+}

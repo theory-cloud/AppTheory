@@ -72,6 +72,9 @@ type OpenAPIValidationRule struct {
 }
 
 // GenerateOpenAPI returns the deterministic OpenAPI 3.1 document for an explicit OpenAPISpec route table.
+//
+// This free function cannot read SecureApp posture. SecureApp adopters must
+// use (*SecureApp).GenerateOpenAPI.
 func GenerateOpenAPI(spec OpenAPISpec) (map[string]any, error) {
 	title := strings.TrimSpace(spec.Title)
 	version := strings.TrimSpace(spec.Version)
@@ -142,6 +145,9 @@ func GenerateOpenAPI(spec OpenAPISpec) (map[string]any, error) {
 }
 
 // GenerateOpenAPIJSON returns the byte-stable canonical JSON encoding of GenerateOpenAPI.
+//
+// This free function cannot read SecureApp posture. SecureApp adopters must
+// use (*SecureApp).GenerateOpenAPIJSON.
 func GenerateOpenAPIJSON(spec OpenAPISpec) ([]byte, error) {
 	doc, err := GenerateOpenAPI(spec)
 	if err != nil {

@@ -29,23 +29,40 @@ export class Router {
             segments: parsed.segments,
             handler,
             authRequired: Boolean(options.authRequired),
+            secure: null,
             staticCount: parsed.staticCount,
             paramCount: parsed.paramCount,
             hasProxy: parsed.hasProxy,
             order: this._routes.length,
         });
     }
+    /** Registers one posture-bearing secure route. */
+    addSecure(method, pattern, handler, metadata) {
+        this.addStrict(method, pattern, handler, {});
+        const route = this._routes[this._routes.length - 1];
+        if (!route)
+            throw routeRegistrationError("secure route invariant");
+        route.secure = {
+            surface: metadata.surface,
+            posture: metadata.posture,
+            scopes: [...metadata.scopes],
+            posturePresent: Boolean(metadata.posturePresent),
+        };
+    }
     /** Registers a route using the fail-closed route-registration path. */
     add(method, pattern, handler, options = {}) {
         this.addStrict(method, pattern, handler, options);
     }
     /** Matches an HTTP method and path against registered routes. */
-    match(method, path) {
+    match(method, path, surface) {
         const normalizedMethod = normalizeMethod(method);
         const pathSegments = splitPath(normalizePath(path));
         const allowed = [];
         let best = null;
         for (const route of this._routes) {
+            if (surface && route.secure && route.secure.surface !== surface) {
+                continue;
+            }
             const params = matchRoute(route.segments, pathSegments);
             if (!params) {
                 continue;
