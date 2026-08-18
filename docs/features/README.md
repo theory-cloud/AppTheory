@@ -19,6 +19,7 @@ contract.
 - [Jobs Ledger](./jobs-ledger.md)
 - [Event Workload Contracts](./event-workloads.md)
 - [Object Store Helper](./object-store.md)
+- [AWS Runtime Hardening Helpers](./aws-runtime-hardening.md)
 - [AWS Lambda MicroVM Golden Path](./lambda-microvm-contract-foundation.md)
 
 ## Boundary

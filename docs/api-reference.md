@@ -361,6 +361,23 @@ storage SDK and does not expose list, presign, multipart, or raw-client escape h
 
 Guide: [Object Store Helper](./features/object-store.md)
 
+### AWS runtime hardening helpers (Go)
+
+The Go-only `runtime/aws` package centralizes two platform-Lambda invariants without changing the portable runtime
+contract. `AssumeFirst` uses `AssumeRoleAPI` plus `CallerIdentityFactory` to establish assumed authority, delegates the
+identity proof to `AssertAccount` through `CallerIdentityAPI`, and returns `AssumeFirstResult.Credentials` only for an
+`AccountAssertionVerified` result. `AccountAssertion`, `AccountAssertionState`, and `AssumeRoleRequest` preserve the
+explicit not-configured, assume-failed, unavailable, mismatch, and verified outcomes.
+
+`VerifyVersionedArtifact` accepts only `GetObjectAPI` and a fully pinned `VersionedArtifactRequest`. It requires the
+requested S3 `VersionId`, verifies the returned ID, and derives the aggregate digest from a bounded regular-file tar.
+`VersionedArtifact`, `ArtifactEntry`, and `ArtifactVerificationState` carry explicit evidence; verified bytes are exposed
+only through defensive-copy accessors. `MaxVersionedArtifactBytes` and `MaxVersionedArtifactEntries` are fixed ceilings.
+Stable errors distinguish invalid requests, missing versions, unavailable objects, version mismatches, invalid archives,
+and digest mismatches.
+
+Guide: [AWS Runtime Hardening Helpers](./features/aws-runtime-hardening.md)
+
 ### Semantic vector helpers
 
 AppTheory includes a narrow semantic-recall helper surface for S3 Vectors and Bedrock Titan embeddings. It is a
@@ -508,7 +525,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>958 exported top-level symbols</summary>
+<summary>997 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins, APIGatewayV2Request
@@ -686,6 +703,16 @@ WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter, WithRegistryCli
 WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata, WithSessionReconstructionClock
 WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamIDGenerator, WithStreamStore, WithTaskRuntime
 WithTier, WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
+AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured,
+AccountAssertionState, AccountAssertionUnavailable, AccountAssertionVerified, ArtifactEntry,
+ArtifactVerificationArchiveInvalid, ArtifactVerificationDigestMismatch, ArtifactVerificationInvalidRequest,
+ArtifactVerificationState, ArtifactVerificationUnavailable, ArtifactVerificationVerified,
+ArtifactVerificationVersionMismatch, ArtifactVerificationVersionRequired, AssertAccount, AssumeFirst,
+AssumeFirstResult, AssumeRoleAPI, AssumeRoleRequest, CallerIdentityAPI, CallerIdentityFactory, ErrAccountMismatch,
+ErrArtifactArchiveInvalid, ErrArtifactDigestMismatch, ErrArtifactInvalidRequest, ErrArtifactUnavailable,
+ErrArtifactVersionMismatch, ErrArtifactVersionRequired, ErrAssumeRoleFailed, ErrCallerIdentityUnavailable,
+ErrExpectedAccountNotConfigured, GetObjectAPI, MaxVersionedArtifactBytes, MaxVersionedArtifactEntries,
+VerifyVersionedArtifact, VersionedArtifact, VersionedArtifactRequest
 ```
 
 </details>
