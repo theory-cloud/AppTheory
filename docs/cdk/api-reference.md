@@ -18,6 +18,8 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryRemoteMcpServer`: REST API v1 `/mcp` with streaming for Remote MCP
 - `AppTheoryMcpProtectedResource`: deprecated URL-valued compatibility surface for a synth-time-static
   `/.well-known/oauth-protected-resource` document; `metadataPath` is its explicit static-route escape hatch
+- `AppTheoryInstallParameters`: ten required governed namespace `String` parameters, a caller-account CloudFormation
+  Rule, and typed `Ref` token accessors for consuming constructs
 - `AppTheoryJobsTable`: opinionated DynamoDB jobs ledger table
 - `AppTheoryS3Ingest`: secure S3 ingest front door with optional notifications
 - `AppTheoryVectorIndex`: S3 vector bucket/index plus vectorstore and Bedrock embedding env/grants
@@ -53,6 +55,19 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryPathRoutedFrontend`
 - `AppTheoryMediaCdn`
 - `AppTheoryWebSocketApi`
+
+## Governed namespace install parameters
+
+`AppTheoryInstallParameters` keeps namespace templates account-agnostic. It accepts no install identity as props;
+instead it emits `TargetAccountId`, `NamespaceSlug`, `AccountClass`, `TargetApplicationId`, `TenantId`, `DnsHost`,
+`Stage`, `PublicHostedZoneId`, `AuthorizationServerOrigin`, and `AutheoryJwksUrl` as required `String` parameters and
+exposes each value as a typed string token. `TargetAccountMatchesCaller` rejects a target account that differs from
+`AWS::AccountId`.
+
+Patterns and allowed values are evaluated by CloudFormation rather than duplicated at synthesis. CloudFormation Rules
+cannot use `Fn::Join`, so the governed install-profile validator retains the relational
+`DnsHost == cloud-keeper.<NamespaceSlug>.theorycloud.app` check; the parameter pattern still enforces the
+`theorycloud.app` suffix. See [Namespace Install Parameters](../features/install-parameters.md).
 
 ## Stable Lambda execution role names
 

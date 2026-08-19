@@ -11,6 +11,7 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryFunctionAlarms` (baseline alarms)
 - `AppTheoryHttpApi` (API Gateway v2 HTTP API + proxy routes)
 - `AppTheoryMcpServer` (API Gateway v2 HTTP API `POST /mcp` for MCP / Bedrock AgentCore)
+- `AppTheoryInstallParameters` (governed namespace CloudFormation parameters, caller-account rule, and typed tokens)
 - `AppTheoryRemoteMcpServer` (API Gateway REST API v1 streaming `/mcp` for Claude Remote MCP / Streamable HTTP)
 - `AppTheoryMcpProtectedResource` (API Gateway REST API v1 `/.well-known/oauth-protected-resource` for OAuth discovery)
 - `AppTheoryRestApi` (API Gateway REST API v1 + single-Lambda proxy routes)
@@ -44,6 +45,18 @@ AppTheory CDK exports constructs such as:
 - Higher-level "app"/SSR patterns now converge on the FaceTheory-first deployment contract rather than a weaker helper path
 
 For the exact list and prop types, read `cdk/lib/*.d.ts`.
+
+## Governed namespace install parameters
+
+`AppTheoryInstallParameters` emits the ten required namespace `String` parameters without defaults and exposes their
+`Ref` values as typed string tokens. It also emits `TargetAccountMatchesCaller`, which compares `TargetAccountId` with
+`AWS::AccountId`. CloudFormation owns pattern and allowed-value validation; invalid install values are not rejected by
+CDK synthesis.
+
+CloudFormation Rules cannot use `Fn::Join`. The governed install-profile validator therefore retains the relational
+`DnsHost == cloud-keeper.<NamespaceSlug>.theorycloud.app` check, while the `DnsHost` allowed pattern enforces the
+`theorycloud.app` suffix at stack evaluation. See the canonical
+[Namespace Install Parameters](../../docs/features/install-parameters.md) guide.
 
 ## Stable Lambda execution role names
 

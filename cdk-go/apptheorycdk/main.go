@@ -453,6 +453,30 @@ func init() {
 		reflect.TypeOf((*AppTheoryHttpIngestionEndpointStageOptions)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryInstallParameters",
+		reflect.TypeOf((*AppTheoryInstallParameters)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "accountClass", GoGetter: "AccountClass"},
+			_jsii_.MemberProperty{JsiiProperty: "autheoryJwksUrl", GoGetter: "AutheoryJwksUrl"},
+			_jsii_.MemberProperty{JsiiProperty: "authorizationServerOrigin", GoGetter: "AuthorizationServerOrigin"},
+			_jsii_.MemberProperty{JsiiProperty: "dnsHost", GoGetter: "DnsHost"},
+			_jsii_.MemberProperty{JsiiProperty: "namespaceSlug", GoGetter: "NamespaceSlug"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "publicHostedZoneId", GoGetter: "PublicHostedZoneId"},
+			_jsii_.MemberProperty{JsiiProperty: "stage", GoGetter: "Stage"},
+			_jsii_.MemberProperty{JsiiProperty: "targetAccountId", GoGetter: "TargetAccountId"},
+			_jsii_.MemberProperty{JsiiProperty: "targetApplicationId", GoGetter: "TargetApplicationId"},
+			_jsii_.MemberProperty{JsiiProperty: "tenantId", GoGetter: "TenantId"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryInstallParameters{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryJobsTable",
 		reflect.TypeOf((*AppTheoryJobsTable)(nil)).Elem(),
 		[]_jsii_.Member{

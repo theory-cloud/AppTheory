@@ -9,6 +9,7 @@ func TestBindingsIncludeNewConstructs(t *testing.T) {
 
 	_ = NewAppTheoryCodeBuildJobRunner
 	_ = NewAppTheoryEventBridgeRuleTarget
+	_ = NewAppTheoryInstallParameters
 	_ = NewAppTheoryJobsTable
 	_ = NewAppTheoryLambdaRole
 	_ = NewAppTheoryMediaCdn

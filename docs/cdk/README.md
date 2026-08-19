@@ -12,6 +12,7 @@ patterns and treat `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts` as the 
 
 - [Getting Started](./getting-started.md)
 - [API Reference](./api-reference.md)
+- [Namespace Install Parameters](../features/install-parameters.md)
 - [FaceTheory-First SSR Site](./ssr-site.md)
 - [AppSync Lambda Resolvers](./appsync-lambda-resolvers.md)
 - [REST API Router + Streaming](./rest-api-router-streaming.md)
@@ -33,6 +34,7 @@ These pages cover the canonical user-facing CDK patterns for:
 - HTTP and REST API routing
 - response streaming and SSE
 - MCP and OAuth discovery endpoints
+- governed namespace install parameters and caller-account assertion
 - import-pipeline infrastructure primitives
 - S3 Vectors semantic recall infrastructure
 - EventBridge bus and rule-target transport primitives

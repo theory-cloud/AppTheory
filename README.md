@@ -106,6 +106,9 @@ AppTheory includes a complete [Model Context Protocol](https://modelcontextproto
 - Namespace deployment: `AppTheoryMcpServer` wires the literal `/mcp` path, public runtime-served RFC 9728 discovery,
   and issuer/JWKS runtime config without accepting a protected-resource origin. Pair it with Go
   `oauth.RegisterMCPServer` for the fixed SecureApp authenticated/public posture split.
+- Namespace installation: `AppTheoryInstallParameters` emits the ten required governed CloudFormation parameters,
+  checks `TargetAccountId` against `AWS::AccountId`, and exposes their `Ref` tokens without baking per-install identity
+  into the template. See the [namespace install parameter guide](https://apptheory.theorycloud.ai/features/install-parameters/).
 - Streaming deployment: `AppTheoryRemoteMcpServer`; the URL-valued `AppTheoryMcpProtectedResource` static-document
   props remain only as deprecated compatibility surface.
 - [MCP server umbrella construct](https://apptheory.theorycloud.ai/features/mcp-server-construct/) — paths at synthesis,
