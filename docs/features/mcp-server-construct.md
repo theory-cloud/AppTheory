@@ -38,11 +38,19 @@ Supplying `authorizationServerIssuer` and `jwksUri` together enables:
 
 The issuer and JWKS values are ordinary construct props in this release. Literal issuer values are validated at
 synthesis as absolute HTTPS URLs with no userinfo, query, or fragment. Literal JWKS values must be absolute HTTPS URLs
-with no userinfo or fragment; queries are allowed. CDK tokens for either value are forwarded unparsed. `mcpPath` must be
-a synthesis-time literal absolute route path: it may contain only RFC 3986 path characters (with percent-encoding for
-whitespace and characters outside that set), must not contain `.` or `..` segments, and must already be in clean path
-form. The named CloudFormation install-parameter contract is a separate deployment-layer capability and is not emitted
-by this construct.
+with no userinfo or fragment; queries are allowed. Literal validation also requires an RFC 3986 authority with a
+non-empty, non-percent-encoded host, so WHATWG recovery forms such as `https:///jwks.json`, `https:jwks.json`, and
+percent-encoded hostnames fail at synthesis instead of later at Go runtime initialization. CDK tokens for either value
+are forwarded unparsed and remain subject to the same fail-closed Go initialization checks after resolution. WHATWG and
+Go parsing are not used to derive or compare the protected-resource origin: issuer and JWKS values are install config,
+while only the request-derived resource identifier participates in RFC 9728 resource string matching. The two parsers
+still differ in safe directions at their margins: CDK rejects an empty fragment marker and malformed numeric IPv4-like
+hosts such as `256.256.256.256` that Go can parse as host text. Runtime initialization remains the final RFC 3986 check
+for token-resolved values and any residual WHATWG/RFC 3986 difference. `mcpPath` must be a synthesis-time literal
+absolute route path: it may contain only RFC 3986 path characters (with percent-encoding for whitespace and characters
+outside that set), must not contain `.` or `..` segments, and must already be in clean path form. The named
+CloudFormation install-parameter contract is a separate deployment-layer capability and is not emitted by this
+construct.
 
 Omitting both auth props retains the previous POST-only AgentCore deployment shape for existing applications. Supplying
 only one fails synthesis; AppTheory does not deploy a half-configured discovery surface.
@@ -71,7 +79,15 @@ The discovery handler reconstructs the resource as `<request origin><MCP path>` 
 exactly `resource` and `authorization_servers`. The JWKS URI is forwarded to the handler as install configuration in
 `APPTHEORY_MCP_JWKS_URI` for the application's `SecurePrincipalResolver`; it is not published in the RFC 9728 document.
 The handler accepts HTTPS request origins and HTTP only for loopback smoke tests. Missing or unsafe hosts fail with
-`400`; missing or invalid install auth config fails application setup.
+`400`; missing or invalid install auth config fails application setup. Before resource construction, the request origin
+is canonicalized for RFC 9728 string matching: scheme and host are lowercased, a trailing DNS root dot is removed,
+default HTTPS `:443` and loopback HTTP `:80` ports are omitted, and non-default ports are preserved.
+
+Every response from these runtime-derived discovery routes, including `400` errors, carries `Cache-Control: no-store`.
+An edge cache or front proxy in front of them **MUST NOT** cache the response: `resource` is derived from the
+viewer-facing Host header, so caching it could let one request's host-derived identifier be served to other clients.
+The secondary static compatibility handler below serves configured metadata rather than Host-derived content, so this
+runtime no-store rule is intentionally scoped to `oauth.RegisterMCPServer` discovery.
 
 Use `AppTheoryMcpPaths` in CDK and the `runtime/oauth` path constants in Go instead of application-local literals. The
 canonical set includes the MCP path, generic and MCP-scoped RFC 9728 paths, and the MCP-scoped RFC 8414 authorization

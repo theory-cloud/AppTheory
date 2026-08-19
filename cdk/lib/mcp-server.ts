@@ -467,6 +467,7 @@ function normalizeAuthConfig(
     }
     if (
       !parsedIssuer
+      || !literalURLHasRFC3986Authority(literalIssuer)
       || parsedIssuer.protocol !== "https:"
       || !parsedIssuer.hostname
       || parsedIssuer.username !== ""
@@ -490,6 +491,7 @@ function normalizeAuthConfig(
     }
     if (
       !parsedJwksUri
+      || !literalURLHasRFC3986Authority(literalJwksUri)
       || parsedJwksUri.protocol !== "https:"
       || !parsedJwksUri.hostname
       || parsedJwksUri.username !== ""
@@ -503,6 +505,11 @@ function normalizeAuthConfig(
     }
   }
   return { authorizationServerIssuer, jwksUri };
+}
+
+function literalURLHasRFC3986Authority(value: string): boolean {
+  const authority = /^https:\/\/([^/?#]+)(?:[/?#]|$)/i.exec(value)?.[1];
+  return authority !== undefined && !authority.includes("%");
 }
 
 function literalURLAuthorityHasUserinfo(value: string): boolean {

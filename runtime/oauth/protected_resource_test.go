@@ -89,6 +89,21 @@ func TestMCPProtectedResourceDiscoveryHandlerDerivesRequestResource(t *testing.T
 			},
 			resource: "http://127.0.0.1:8080/mcp",
 		},
+		{
+			name: "canonical host root dot and default port",
+			headers: map[string][]string{
+				"host": {"ExAMPLE.com.:443"},
+			},
+			resource: "https://example.com/mcp",
+		},
+		{
+			name: "loopback http default port",
+			headers: map[string][]string{
+				"host":              {"LOCALHOST:80"},
+				"x-forwarded-proto": {"http"},
+			},
+			resource: "http://localhost/mcp",
+		},
 	}
 
 	for _, tt := range tests {
@@ -96,6 +111,7 @@ func TestMCPProtectedResourceDiscoveryHandlerDerivesRequestResource(t *testing.T
 			resp, handlerErr := handler(&apptheory.Context{Request: apptheory.Request{Headers: tt.headers}})
 			require.NoError(t, handlerErr)
 			require.Equal(t, http.StatusOK, resp.Status)
+			require.Equal(t, []string{"no-store"}, resp.Headers["cache-control"])
 			require.Equal(t, []string{"application/json"}, resp.Headers["content-type"])
 
 			var got ProtectedResourceMetadata
@@ -128,7 +144,44 @@ func TestMCPProtectedResourceDiscoveryHandlerRejectsUnsafeRequestOrigins(t *test
 		resp, handlerErr := handler(&apptheory.Context{Request: apptheory.Request{Headers: headers}})
 		require.NoError(t, handlerErr)
 		require.Equal(t, http.StatusBadRequest, resp.Status)
+		require.Equal(t, []string{"no-store"}, resp.Headers["cache-control"])
 		require.Equal(t, []string{"application/json"}, resp.Headers["content-type"])
+	}
+}
+
+func TestNormalizeRequestOriginCanonicalizesRFC3986Origin(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "scheme host case and root dot", raw: "HTTPS://ExAMPLE.com./", want: "https://example.com"},
+		{name: "https default port", raw: "https://example.com:443", want: "https://example.com"},
+		{name: "https non-default port", raw: "https://example.com:8443", want: "https://example.com:8443"},
+		{name: "loopback http default port", raw: "http://localhost:80", want: "http://localhost"},
+		{name: "loopback case folding", raw: "http://LOCALHOST:8080/", want: "http://localhost:8080"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := normalizeRequestOrigin(tt.raw)
+			require.True(t, ok)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestNormalizeRequestOriginPinsAuthorityAndEmptyQueryGuards(t *testing.T) {
+	for _, raw := range []string{
+		"https:///mcp",
+		"https://:443",
+		"https://example.com?",
+		"HTTPS://ExAMPLE.com./x",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			_, ok := normalizeRequestOrigin(raw)
+			require.False(t, ok)
+		})
 	}
 }
 
@@ -195,13 +248,22 @@ func TestMCPServerConfigFailsClosed(t *testing.T) {
 		{AuthorizationServerIssuer: "http://evil.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
 		{AuthorizationServerIssuer: "http://localhost", JWKSURI: "https://auth.example.com/jwks.json"},
 		{AuthorizationServerIssuer: "https://auth.example.com?x=1", JWKSURI: "https://auth.example.com/jwks.json"},
+		{AuthorizationServerIssuer: "https://auth.example.com?", JWKSURI: "https://auth.example.com/jwks.json"},
 		{AuthorizationServerIssuer: "https://auth.example.com#fragment", JWKSURI: "https://auth.example.com/jwks.json"},
 		{AuthorizationServerIssuer: "https://@auth.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
+		{AuthorizationServerIssuer: "https:///issuer", JWKSURI: "https://auth.example.com/jwks.json"},
+		{AuthorizationServerIssuer: "https:issuer", JWKSURI: "https://auth.example.com/jwks.json"},
+		{AuthorizationServerIssuer: "https://:443/issuer", JWKSURI: "https://auth.example.com/jwks.json"},
+		{AuthorizationServerIssuer: "https://%61uth.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
 		{AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "not-a-url"},
 		{AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "auth.example.com/jwks.json"},
 		{AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "http://evil.example.com/jwks.json"},
 		{AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "/jwks.json"},
 		{AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://@auth.example.com/jwks.json"},
+		{AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https:///jwks.json"},
+		{AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https:jwks.json"},
+		{AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://:443/jwks.json"},
+		{AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://%61uth.example.com/jwks.json"},
 		{AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://auth.example.com/jwks.json#fragment"},
 		{MCPPath: "https://resource.example.com/mcp", AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
 		{MCPPath: "/mcp/../admin", AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
