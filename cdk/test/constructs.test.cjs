@@ -6368,6 +6368,10 @@ test("AppTheoryMcpServer fails closed on partial auth config and non-literal pat
     "https://a.example.com#f",
     "https://auth.example.com?x=1",
     "https://@auth.example.com",
+    "https:///issuer",
+    "https:issuer",
+    "https://:443/issuer",
+    "https://%61uth.example.com",
   ].entries()) {
     const stack = new cdk.Stack(app, `InvalidIssuerStack${index}`);
     assert.throws(
@@ -6385,6 +6389,10 @@ test("AppTheoryMcpServer fails closed on partial auth config and non-literal pat
     "http://evil.example.com/jwks.json",
     "/jwks.json",
     "https://@auth.example.com/jwks.json",
+    "https:///jwks.json",
+    "https:jwks.json",
+    "https://:443/jwks.json",
+    "https://%61uth.example.com/jwks.json",
     "https://auth.example.com/jwks.json#fragment",
   ].entries()) {
     const stack = new cdk.Stack(app, `InvalidJwksUriStack${index}`);

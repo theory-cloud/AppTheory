@@ -167,9 +167,12 @@ func jsonResponse(status int, value any) (*apptheory.Response, error) {
 		return nil, err
 	}
 	return &apptheory.Response{
-		Status:  status,
-		Headers: map[string][]string{"content-type": {"application/json"}},
-		Body:    body,
+		Status: status,
+		Headers: map[string][]string{
+			"cache-control": {"no-store"},
+			"content-type":  {"application/json"},
+		},
+		Body: body,
 	}, nil
 }
 
@@ -236,7 +239,7 @@ var literalMCPRoutePathPattern = regexp.MustCompile(`^/(?:[A-Za-z0-9._~!$&'()*+,
 
 func normalizeRequestOrigin(raw string) (string, bool) {
 	u, ok := parseAbsoluteURL(raw)
-	if !ok || u.User != nil || u.Hostname() == "" || u.RawQuery != "" || u.Fragment != "" {
+	if !ok || u.User != nil || u.Hostname() == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return "", false
 	}
 	if u.Path != "" && u.Path != "/" {
@@ -245,9 +248,42 @@ func normalizeRequestOrigin(raw string) (string, bool) {
 	if !isAllowedDiscoveryScheme(u.Scheme, u.Hostname()) {
 		return "", false
 	}
+	if !canonicalizeRequestOriginAuthority(u) {
+		return "", false
+	}
 	u.Path = ""
 	u.RawPath = ""
-	return strings.TrimRight(u.String(), "/"), true
+	return u.String(), true
+}
+
+func canonicalizeRequestOriginAuthority(u *url.URL) bool {
+	hostname := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if hostname == "" {
+		return false
+	}
+	port := u.Port()
+	if port == defaultPortForScheme(u.Scheme) {
+		port = ""
+	}
+	host := hostname
+	if port != "" {
+		host = net.JoinHostPort(hostname, port)
+	} else if strings.Contains(hostname, ":") {
+		host = "[" + hostname + "]"
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	u.Host = host
+	return true
+}
+
+func defaultPortForScheme(scheme string) string {
+	if scheme == httpsScheme {
+		return "443"
+	}
+	if scheme == httpScheme {
+		return "80"
+	}
+	return ""
 }
 
 func isLoopbackHostname(host string) bool {
