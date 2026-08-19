@@ -88,6 +88,17 @@ export interface AppTheoryFunctionAliasOptions {
 }
 export interface AppTheoryFunctionProps extends lambda.FunctionProps {
     /**
+     * Stable physical name for the AppTheory-managed Lambda execution role.
+     *
+     * AppTheory renames the role created by the Lambda L2 so all CDK-computed
+     * managed policies are preserved, and fails synthesis if the requested name
+     * cannot be applied exactly. Do not combine this with the inherited `role`
+     * prop; caller-provided roles own their physical name.
+     *
+     * @default undefined
+     */
+    readonly roleName?: string;
+    /**
      * Optional AppTheory-managed Lambda alias.
      *
      * When set, the alias points at the function's current version and can also

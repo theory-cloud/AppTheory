@@ -1,6 +1,7 @@
 import { Duration } from "aws-cdk-lib";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as codedeploy from "aws-cdk-lib/aws-codedeploy";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
@@ -103,6 +104,18 @@ export interface AppTheoryFunctionAliasOptions {
 
 export interface AppTheoryFunctionProps extends lambda.FunctionProps {
   /**
+   * Stable physical name for the AppTheory-managed Lambda execution role.
+   *
+   * AppTheory renames the role created by the Lambda L2 so all CDK-computed
+   * managed policies are preserved, and fails synthesis if the requested name
+   * cannot be applied exactly. Do not combine this with the inherited `role`
+   * prop; caller-provided roles own their physical name.
+   *
+   * @default undefined
+   */
+  readonly roleName?: string;
+
+  /**
    * Optional AppTheory-managed Lambda alias.
    *
    * When set, the alias points at the function's current version and can also
@@ -122,8 +135,15 @@ export class AppTheoryFunction extends Construct {
   constructor(scope: Construct, id: string, props: AppTheoryFunctionProps) {
     super(scope, id);
 
-    const { alias, ...inputLambdaProps } = props;
+    const { alias, roleName, ...inputLambdaProps } = props;
     const lambdaProps: lambda.FunctionProps = { ...inputLambdaProps };
+    if (roleName !== undefined) {
+      if (lambdaProps.role) {
+        throw new Error(
+          "AppTheoryFunction cannot honor props.roleName when props.role supplies the execution role; omit props.role or configure its name where that role is created",
+        );
+      }
+    }
     const logRetention = lambdaProps.logRetention ?? logs.RetentionDays.ONE_MONTH;
     const logRemovalPolicy = lambdaProps.logRemovalPolicy;
     delete (lambdaProps as { logRetention?: logs.RetentionDays }).logRetention;
@@ -148,6 +168,25 @@ export class AppTheoryFunction extends Construct {
       memorySize: lambdaProps.memorySize ?? 256,
       timeout: lambdaProps.timeout ?? Duration.seconds(10),
     });
+
+    if (roleName !== undefined) {
+      if (!roleName.trim()) {
+        throw new Error("AppTheoryFunction roleName must not be empty");
+      }
+      if (roleName.length > 64) {
+        throw new Error("AppTheoryFunction roleName must not exceed 64 characters");
+      }
+      if (!/^[\w+=,.@-]+$/.test(roleName)) {
+        throw new Error("AppTheoryFunction roleName must match [\\w+=,.@-]+");
+      }
+      const roleResource = this.fn.role?.node.defaultChild;
+      if (!(roleResource instanceof iam.CfnRole)) {
+        throw new Error(
+          `AppTheoryFunction cannot apply the required stable roleName ${JSON.stringify(roleName)} because the Lambda execution role's default child is not an AWS::IAM::Role`,
+        );
+      }
+      roleResource.addPropertyOverride("RoleName", roleName);
+    }
 
     if (boundLogGroup) {
       (this as { logGroup?: logs.ILogGroupRef }).logGroup = boundLogGroup;

@@ -7,7 +7,7 @@ This document is the human-readable overview. The authoritative public surface i
 ## Constructs (inventory)
 
 AppTheory CDK exports constructs such as:
-- `AppTheoryFunction` (Lambda wrapper defaults)
+- `AppTheoryFunction` (Lambda wrapper defaults, including an optional fail-closed stable execution `roleName`)
 - `AppTheoryFunctionAlarms` (baseline alarms)
 - `AppTheoryHttpApi` (API Gateway v2 HTTP API + proxy routes)
 - `AppTheoryMcpServer` (API Gateway v2 HTTP API `POST /mcp` for MCP / Bedrock AgentCore)
@@ -44,6 +44,14 @@ AppTheory CDK exports constructs such as:
 - Higher-level "app"/SSR patterns now converge on the FaceTheory-first deployment contract rather than a weaker helper path
 
 For the exact list and prop types, read `cdk/lib/*.d.ts`.
+
+## Stable Lambda execution role names
+
+Set `roleName` on `AppTheoryFunction` or `AppTheoryApp` when the Lambda execution role needs a stable physical name.
+`AppTheoryApp` forwards the value unchanged to its function. The function lets the Lambda L2 create its execution role,
+preserving every CDK-computed managed policy, then applies the exact requested `AWS::IAM::Role.RoleName`. Synthesis fails
+if that generated role is not available for the rename; omitting the prop preserves CloudFormation-generated names.
+This supported prop supersedes direct CloudFormation property-override escape hatches for stable function role names.
 
 ## Kinesis and CloudWatch Logs path
 
