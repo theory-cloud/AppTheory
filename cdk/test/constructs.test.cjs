@@ -425,6 +425,39 @@ test("AppTheoryFunction fails closed when a stable role name cannot be honored",
   );
 });
 
+test("AppTheoryFunction fails closed when the generated role default child is not a CfnRole", () => {
+  const defaultChildDescriptor = Object.getOwnPropertyDescriptor(Node.prototype, "defaultChild");
+  assert.ok(defaultChildDescriptor?.get, "constructs.Node.defaultChild getter must be available");
+
+  Object.defineProperty(Node.prototype, "defaultChild", {
+    ...defaultChildDescriptor,
+    get() {
+      if (this.path === "TestStack/Fn/Function/ServiceRole") {
+        return {};
+      }
+      return defaultChildDescriptor.get.call(this);
+    },
+  });
+
+  try {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "TestStack");
+
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryFunction(stack, "Fn", {
+          runtime: lambda.Runtime.NODEJS_24_X,
+          handler: "index.handler",
+          code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+          roleName: "apptheory-required-runtime",
+        }),
+      /default child is not an AWS::IAM::Role/,
+    );
+  } finally {
+    Object.defineProperty(Node.prototype, "defaultChild", defaultChildDescriptor);
+  }
+});
+
 test("AppTheoryFunction fails closed for a token roleName when the generated role default child is not a CfnRole", () => {
   const defaultChildDescriptor = Object.getOwnPropertyDescriptor(Node.prototype, "defaultChild");
   assert.ok(defaultChildDescriptor?.get, "constructs.Node.defaultChild getter must be available");
