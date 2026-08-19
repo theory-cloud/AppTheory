@@ -7255,14 +7255,51 @@ test("AppTheoryInstallParameters leaves invalid literal values to CloudFormation
   assert.equal(template.Parameters.DnsHost.AllowedPattern, "^[a-z0-9][a-z0-9.-]{2,252}\\.theorycloud\\.app$");
 });
 
-test("AppTheoryInstallParameters parameter ID collisions fail closed", () => {
+test("AppTheoryInstallParameters rejects a second instance in the same stack", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
-  const parameters = new apptheory.AppTheoryInstallParameters(stack, "InstallParameters");
+
+  new apptheory.AppTheoryInstallParameters(stack, "InstallParametersOne");
+  new apptheory.AppTheoryInstallParameters(stack, "InstallParametersTwo");
 
   assert.throws(
-    () => new cdk.CfnParameter(parameters, "TargetAccountId"),
-    /There is already a Construct with name 'TargetAccountId'/,
+    () => assertions.Template.fromStack(stack).toJSON(),
+    {
+      name: "SectionAlreadyContains",
+      message: "section 'Parameters' already contains 'TargetAccountId'",
+    },
+  );
+});
+
+test("AppTheoryInstallParameters rejects a stack-level parameter logical-ID collision", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+
+  new apptheory.AppTheoryInstallParameters(stack, "InstallParameters");
+  new cdk.CfnParameter(stack, "TargetAccountId");
+
+  assert.throws(
+    () => assertions.Template.fromStack(stack).toJSON(),
+    {
+      name: "SectionAlreadyContains",
+      message: "section 'Parameters' already contains 'TargetAccountId'",
+    },
+  );
+});
+
+test("AppTheoryInstallParameters rejects a stack-level rule logical-ID collision", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+
+  new apptheory.AppTheoryInstallParameters(stack, "InstallParameters");
+  new cdk.CfnRule(stack, "TargetAccountMatchesCaller");
+
+  assert.throws(
+    () => assertions.Template.fromStack(stack).toJSON(),
+    {
+      name: "SectionAlreadyContains",
+      message: "section 'Rules' already contains 'TargetAccountMatchesCaller'",
+    },
   );
 });
 
