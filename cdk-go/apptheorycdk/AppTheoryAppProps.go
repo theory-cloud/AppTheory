@@ -1,6 +1,7 @@
 package apptheorycdk
 
 import (
+	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigatewayv2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
@@ -31,9 +32,17 @@ type AppTheoryAppProps struct {
 	Handler              *string                        `field:"optional" json:"handler" yaml:"handler"`
 	HostedZone           awsroute53.IHostedZone         `field:"optional" json:"hostedZone" yaml:"hostedZone"`
 	LogGroup             interfacesawslogs.ILogGroupRef `field:"optional" json:"logGroup" yaml:"logGroup"`
-	LogRetention         awslogs.RetentionDays          `field:"optional" json:"logRetention" yaml:"logRetention"`
-	MemorySize           *float64                       `field:"optional" json:"memorySize" yaml:"memorySize"`
-	RateLimitTableName   *string                        `field:"optional" json:"rateLimitTableName" yaml:"rateLimitTableName"`
+	// Removal policy for the app function's AppTheory-managed named log group.
+	//
+	// The value is forwarded unchanged to AppTheoryFunction. Supplying both
+	// `logGroup` and `logRemovalPolicy` fails synthesis because caller-provided
+	// log groups own their removal policy.
+	// Default: RemovalPolicy.DESTROY
+	//
+	LogRemovalPolicy   awscdk.RemovalPolicy  `field:"optional" json:"logRemovalPolicy" yaml:"logRemovalPolicy"`
+	LogRetention       awslogs.RetentionDays `field:"optional" json:"logRetention" yaml:"logRetention"`
+	MemorySize         *float64              `field:"optional" json:"memorySize" yaml:"memorySize"`
+	RateLimitTableName *string               `field:"optional" json:"rateLimitTableName" yaml:"rateLimitTableName"`
 	// Stable physical name for the app function's AppTheory-managed IAM role.
 	//
 	// The value is forwarded unchanged to AppTheoryFunction. Synthesis fails if

@@ -82,6 +82,12 @@ new AppTheoryHttpApi(stack, "Api", { handler: fn, apiName: "my-api" });
 * `AppTheoryFunctionProps.roleName` and `AppTheoryAppProps.roleName` are the
   supported, fail-closed path for stable Lambda execution role names. They
   supersede direct `CfnRole` property-override escape hatches.
+* `AppTheoryAppProps.logRemovalPolicy` forwards to the app function's named
+  log group. AppTheory-created named-function log groups default to
+  `RemovalPolicy.DESTROY` for the prototype's self-cleaning posture; set
+  `RemovalPolicy.RETAIN` explicitly when logs must survive stack deletion.
+  This supported surface supersedes direct `CfnLogGroup.applyRemovalPolicy`
+  escape hatches. Caller-provided log groups keep their own removal policy.
 * Regional WAF is supported only on `AppTheoryRestApi` and `AppTheoryRestApiRouter`
   because API Gateway REST API stages use the WAF-supported
   `/restapis/{apiId}/stages/{stageName}` ARN shape. `AppTheoryHttpApi` and
