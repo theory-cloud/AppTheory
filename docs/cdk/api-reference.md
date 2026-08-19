@@ -68,9 +68,13 @@ new AppTheoryApp(this, "Runtime", {
 });
 ```
 
-When `roleName` is omitted, CloudFormation continues to generate the role name. When it is requested, AppTheory fails
-synthesis rather than silently using an unnamed or differently named role. This prop supersedes direct
-`CfnRole.addPropertyOverride("RoleName", ...)` escape hatches for stable function role names.
+When `roleName` is omitted, CloudFormation continues to generate the role name. Concrete names are validated at
+synthesis against IAM's `[\w+=,.@-]+` character set and 64-character limit. Token-valued names are accepted and IAM
+validates their resolved value at deploy time, so a bad resolved name fails deployment rather than synthesis. The token
+exemption keeps account-agnostic synthesis representable for the THE-2861 token-valued-input failure class. AppTheory
+still fails synthesis rather than silently using an unnamed or differently named role when the generated role cannot
+be renamed. This prop supersedes direct `CfnRole.addPropertyOverride("RoleName", ...)` escape hatches for stable
+function role names.
 
 ## Named-function log removal policy
 

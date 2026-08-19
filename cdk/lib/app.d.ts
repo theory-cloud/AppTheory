@@ -39,8 +39,8 @@ export interface AppTheoryAppProps {
     /**
      * Stable physical name for the app function's AppTheory-managed IAM role.
      *
-     * The value is forwarded unchanged to AppTheoryFunction. Synthesis fails if
-     * AppTheory cannot apply the requested name exactly.
+     * AppTheoryFunction receives the value unchanged. Concrete names are synthesis-validated against IAM's `[\w+=,.@-]+` character set and 64-character limit; token-valued names are accepted and IAM validates the resolved value at deploy time, so an invalid resolved name fails deployment rather than synthesis.
+     * This exemption keeps account-agnostic synthesis representable for the THE-2861 token-valued-input failure class. Synthesis still fails if AppTheory cannot apply the requested name exactly.
      *
      * @default undefined
      */
