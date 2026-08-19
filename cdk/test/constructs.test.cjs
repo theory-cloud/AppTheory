@@ -560,6 +560,23 @@ test("AppTheoryFunction fails closed when its managed log group is not backed by
   }
 });
 
+test("AppTheoryFunction rejects SNAPSHOT for its managed log group", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryFunction(stack, "Fn", {
+        functionName: "apptheory-snapshot",
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        logRemovalPolicy: cdk.RemovalPolicy.SNAPSHOT,
+      }),
+    /cannot apply RemovalPolicy\.SNAPSHOT because AWS::Logs::LogGroup does not support snapshot removal policies/,
+  );
+});
+
 test("AppTheoryFunction uses caller-provided log groups for existing-stack adoption", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -2744,6 +2761,23 @@ test("AppTheoryApp allows RETAIN to override its self-cleaning log group default
   assert.ok(functionLogGroup, "Should synthesize the app function's named log group");
   assert.equal(functionLogGroup.DeletionPolicy, "Retain");
   assert.equal(functionLogGroup.UpdateReplacePolicy, "Retain");
+});
+
+test("AppTheoryApp rejects SNAPSHOT for its managed function log group", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryApp(stack, "App", {
+        appName: "apptheory-snapshot",
+        code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        logRemovalPolicy: cdk.RemovalPolicy.SNAPSHOT,
+      }),
+    /cannot apply RemovalPolicy\.SNAPSHOT because AWS::Logs::LogGroup does not support snapshot removal policies/,
+  );
 });
 
 test("AppTheoryApp exposes production deployment surface without raw CDK escape hatches", () => {

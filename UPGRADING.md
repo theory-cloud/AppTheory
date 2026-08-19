@@ -28,6 +28,22 @@ The generated CDK Go bindings move in the same release transaction. Replace the 
 CDK application's module. Runtime and CDK module tags continue to target the same immutable release commit; do not mix
 major lines or substitute registry-published artifacts.
 
+### Function log group removal policies
+
+Starting in v3.1.0, function log groups created by `AppTheoryFunction` and `AppTheoryApp` default to
+`RemovalPolicy.DESTROY` instead of the inherited CDK `RemovalPolicy.RETAIN` default. The first `cdk deploy` after
+upgrading changes those AppTheory-managed resources to delete on stack deletion or replacement. Applications that must
+retain their function logs must set `logRemovalPolicy: RemovalPolicy.RETAIN` explicitly.
+
+AppTheory also fails synthesis when `logGroup` and `logRemovalPolicy` are passed together. Earlier releases silently
+ignored `logRemovalPolicy` in that configuration. Existing callers that pass both must choose one ownership path:
+either omit `logGroup` and configure the AppTheory-managed group with `logRemovalPolicy`, or pass a caller-managed
+`logGroup`, omit `logRemovalPolicy`, and configure the removal policy where that group is created.
+
+The CDK TypeScript library, jsii metadata, and generated Go bindings must come from the same pinned AppTheory GitHub
+Release so this validation and default stay aligned; do not mix `cdk/lib`, `.jsii`, or `cdk-go` artifacts across
+versions.
+
 ### TableTheory v3 dependency floor
 
 The next AppTheory major line adopts TableTheory v3.0.2 in all three runtimes. This changes the Go type identity exposed

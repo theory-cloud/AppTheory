@@ -255,22 +255,26 @@ function createManagedFunctionLogGroup(
   scope: Construct,
   logGroupName: string,
   retention: logs.RetentionDays,
-  removalPolicy: RemovalPolicy | undefined,
+  removalPolicy: RemovalPolicy,
 ): logs.LogGroup {
+  if (removalPolicy === RemovalPolicy.SNAPSHOT) {
+    throw new Error(
+      "AppTheoryFunction cannot apply RemovalPolicy.SNAPSHOT because AWS::Logs::LogGroup does not support snapshot removal policies",
+    );
+  }
+
   const logGroup = new logs.LogGroup(scope, "LogGroup", {
     logGroupName,
     retention,
   });
 
-  if (removalPolicy !== undefined) {
-    const logGroupResource = logGroup.node.defaultChild;
-    if (!(logGroupResource instanceof logs.CfnLogGroup)) {
-      throw new Error(
-        `AppTheoryFunction cannot apply logRemovalPolicy ${JSON.stringify(removalPolicy)} because the AppTheory-managed log group's default child is not an AWS::Logs::LogGroup`,
-      );
-    }
-    logGroupResource.applyRemovalPolicy(removalPolicy);
+  const logGroupResource = logGroup.node.defaultChild;
+  if (!(logGroupResource instanceof logs.CfnLogGroup)) {
+    throw new Error(
+      `AppTheoryFunction cannot apply logRemovalPolicy ${JSON.stringify(removalPolicy)} because the AppTheory-managed log group's default child is not an AWS::Logs::LogGroup`,
+    );
   }
+  logGroupResource.applyRemovalPolicy(removalPolicy);
 
   return logGroup;
 }
