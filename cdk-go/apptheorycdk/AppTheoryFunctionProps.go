@@ -397,9 +397,10 @@ type AppTheoryFunctionProps struct {
 	Alias *AppTheoryFunctionAliasOptions `field:"optional" json:"alias" yaml:"alias"`
 	// Stable physical name for the AppTheory-managed Lambda execution role.
 	//
-	// AppTheory creates the role through AppTheoryLambdaRole and fails synthesis
-	// if the requested name cannot be applied exactly. Do not combine this with
-	// the inherited `role` prop; caller-provided roles own their physical name.
+	// AppTheory renames the role created by the Lambda L2 so all CDK-computed
+	// managed policies are preserved, and fails synthesis if the requested name
+	// cannot be applied exactly. Do not combine this with the inherited `role`
+	// prop; caller-provided roles own their physical name.
 	// Default: undefined.
 	//
 	RoleName *string `field:"optional" json:"roleName" yaml:"roleName"`

@@ -48,10 +48,10 @@ For the exact list and prop types, read `cdk/lib/*.d.ts`.
 ## Stable Lambda execution role names
 
 Set `roleName` on `AppTheoryFunction` or `AppTheoryApp` when the Lambda execution role needs a stable physical name.
-`AppTheoryApp` forwards the value unchanged to its function, and the function creates the role through
-`AppTheoryLambdaRole`. Synthesis fails if AppTheory cannot set `AWS::IAM::Role.RoleName` to the exact requested value;
-omitting the prop preserves CloudFormation-generated names. This supported prop supersedes direct CloudFormation
-property-override escape hatches for stable function role names.
+`AppTheoryApp` forwards the value unchanged to its function. The function lets the Lambda L2 create its execution role,
+preserving every CDK-computed managed policy, then applies the exact requested `AWS::IAM::Role.RoleName`. Synthesis fails
+if that generated role is not available for the rename; omitting the prop preserves CloudFormation-generated names.
+This supported prop supersedes direct CloudFormation property-override escape hatches for stable function role names.
 
 ## Kinesis and CloudWatch Logs path
 

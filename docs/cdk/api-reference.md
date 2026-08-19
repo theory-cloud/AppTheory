@@ -53,9 +53,9 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 
 ## Stable Lambda execution role names
 
-`AppTheoryFunctionProps.roleName` creates the function's execution role through the AppTheory role construct and sets
-the synthesized `AWS::IAM::Role.RoleName` to the exact requested value. `AppTheoryAppProps.roleName` forwards the same
-contract to its named function:
+`AppTheoryFunctionProps.roleName` lets the Lambda L2 create its execution role, preserving every CDK-computed managed
+policy, then sets the synthesized `AWS::IAM::Role.RoleName` to the exact requested value.
+`AppTheoryAppProps.roleName` forwards the same contract to its named function:
 
 ```ts
 new AppTheoryApp(this, "Runtime", {

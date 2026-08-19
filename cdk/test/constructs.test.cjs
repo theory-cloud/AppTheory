@@ -18,6 +18,7 @@ const lambda = require("aws-cdk-lib/aws-lambda");
 const logs = require("aws-cdk-lib/aws-logs");
 const route53 = require("aws-cdk-lib/aws-route53");
 const sqs = require("aws-cdk-lib/aws-sqs");
+const { Node } = require("constructs");
 
 const apptheory = require("../lib");
 const { restApiStreamingRouteStageVariableName } = require("../lib/private/rest-api-streaming");
@@ -215,6 +216,39 @@ test("AppTheoryFunction applies an exact stable execution role name", () => {
 
   assert.equal(roles.length, 1, "Should synthesize exactly one execution role");
   assert.equal(roles[0].Properties?.RoleName, "apptheory-stable-runtime");
+  assert.deepEqual(roles[0].Properties?.ManagedPolicyArns?.map(renderedString), [
+    "arn:{\"Ref\":\"AWS::Partition\"}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+  ]);
+});
+
+test("AppTheoryFunction preserves CDK-managed VPC policies when applying roleName", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const vpc = ec2.Vpc.fromVpcAttributes(stack, "Vpc", {
+    vpcId: "vpc-123456",
+    availabilityZones: ["us-east-1a"],
+    privateSubnetIds: ["subnet-private"],
+    privateSubnetRouteTableIds: ["rtb-private"],
+  });
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    vpc,
+    vpcSubnets: { subnets: vpc.privateSubnets },
+    roleName: "apptheory-vpc-runtime",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+
+  assert.equal(roles.length, 1, "Should synthesize exactly one execution role");
+  assert.equal(roles[0].Properties?.RoleName, "apptheory-vpc-runtime");
+  assert.deepEqual(roles[0].Properties?.ManagedPolicyArns?.map(renderedString), [
+    "arn:{\"Ref\":\"AWS::Partition\"}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+    "arn:{\"Ref\":\"AWS::Partition\"}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+  ]);
 });
 
 test("AppTheoryFunction leaves the execution role unnamed by default", () => {
@@ -254,6 +288,39 @@ test("AppTheoryFunction fails closed when a stable role name cannot be honored",
       }),
     /cannot honor props\.roleName when props\.role supplies the execution role/,
   );
+});
+
+test("AppTheoryFunction fails closed when the generated role default child is not a CfnRole", () => {
+  const defaultChildDescriptor = Object.getOwnPropertyDescriptor(Node.prototype, "defaultChild");
+  assert.ok(defaultChildDescriptor?.get, "constructs.Node.defaultChild getter must be available");
+
+  Object.defineProperty(Node.prototype, "defaultChild", {
+    ...defaultChildDescriptor,
+    get() {
+      if (this.path === "TestStack/Fn/Function/ServiceRole") {
+        return {};
+      }
+      return defaultChildDescriptor.get.call(this);
+    },
+  });
+
+  try {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "TestStack");
+
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryFunction(stack, "Fn", {
+          runtime: lambda.Runtime.NODEJS_24_X,
+          handler: "index.handler",
+          code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+          roleName: "apptheory-required-runtime",
+        }),
+      /default child is not an AWS::IAM::Role/,
+    );
+  } finally {
+    Object.defineProperty(Node.prototype, "defaultChild", defaultChildDescriptor);
+  }
 });
 
 test("AppTheoryFunction exposes log retention, VPC, alias, provisioned concurrency, and canary deploys", () => {
@@ -2415,12 +2482,20 @@ test("AppTheoryApp synthesizes expected template", () => {
 test("AppTheoryApp forwards an exact stable execution role name", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
+  const vpc = ec2.Vpc.fromVpcAttributes(stack, "Vpc", {
+    vpcId: "vpc-123456",
+    availabilityZones: ["us-east-1a"],
+    privateSubnetIds: ["subnet-private"],
+    privateSubnetRouteTableIds: ["rtb-private"],
+  });
 
   new apptheory.AppTheoryApp(stack, "App", {
     appName: "apptheory-stable-app",
     code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
     runtime: lambda.Runtime.NODEJS_24_X,
     handler: "index.handler",
+    vpc,
+    vpcSubnets: { subnets: vpc.privateSubnets },
     roleName: "apptheory-stable-app-runtime",
   });
 
@@ -2429,6 +2504,10 @@ test("AppTheoryApp forwards an exact stable execution role name", () => {
 
   assert.equal(roles.length, 1, "Should synthesize exactly one app execution role");
   assert.equal(roles[0].Properties?.RoleName, "apptheory-stable-app-runtime");
+  assert.deepEqual(roles[0].Properties?.ManagedPolicyArns?.map(renderedString), [
+    "arn:{\"Ref\":\"AWS::Partition\"}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+    "arn:{\"Ref\":\"AWS::Partition\"}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+  ]);
 });
 
 test("AppTheoryApp exposes production deployment surface without raw CDK escape hatches", () => {

@@ -13292,7 +13292,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/function.ts",
-          "line": 136
+          "line": 135
         },
         "parameters": [
           {
@@ -13318,7 +13318,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/function.ts",
-        "line": 130
+        "line": 129
       },
       "name": "AppTheoryFunction",
       "properties": [
@@ -13326,7 +13326,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 131
+            "line": 130
           },
           "name": "fn",
           "type": {
@@ -13337,7 +13337,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 133
+            "line": 132
           },
           "name": "alias",
           "optional": true,
@@ -13349,7 +13349,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 134
+            "line": 133
           },
           "name": "deploymentGroup",
           "optional": true,
@@ -13361,7 +13361,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 132
+            "line": 131
           },
           "name": "logGroup",
           "optional": true,
@@ -13509,7 +13509,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/function.ts",
-        "line": 81
+        "line": 79
       },
       "name": "AppTheoryFunctionAliasOptions",
       "properties": [
@@ -13522,7 +13522,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 104
+            "line": 102
           },
           "name": "deployment",
           "optional": true,
@@ -13539,7 +13539,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 92
+            "line": 90
           },
           "name": "description",
           "optional": true,
@@ -13556,7 +13556,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 86
+            "line": 84
           },
           "name": "name",
           "optional": true,
@@ -13573,7 +13573,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 98
+            "line": 96
           },
           "name": "provisionedConcurrentExecutions",
           "optional": true,
@@ -13594,7 +13594,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/function.ts",
-        "line": 34
+        "line": 32
       },
       "name": "AppTheoryFunctionDeploymentOptions",
       "properties": [
@@ -13607,7 +13607,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 57
+            "line": 55
           },
           "name": "alarms",
           "optional": true,
@@ -13629,7 +13629,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 75
+            "line": 73
           },
           "name": "autoRollback",
           "optional": true,
@@ -13646,7 +13646,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 51
+            "line": 49
           },
           "name": "interval",
           "optional": true,
@@ -13663,7 +13663,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 45
+            "line": 43
           },
           "name": "percentage",
           "optional": true,
@@ -13680,7 +13680,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 69
+            "line": 67
           },
           "name": "postHook",
           "optional": true,
@@ -13697,7 +13697,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 63
+            "line": 61
           },
           "name": "preHook",
           "optional": true,
@@ -13714,7 +13714,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 39
+            "line": 37
           },
           "name": "trafficShiftType",
           "optional": true,
@@ -13735,7 +13735,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/function.ts",
-        "line": 107
+        "line": 105
       },
       "name": "AppTheoryFunctionProps",
       "properties": [
@@ -13749,7 +13749,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 127
+            "line": 126
           },
           "name": "alias",
           "optional": true,
@@ -13761,13 +13761,13 @@
           "abstract": true,
           "docs": {
             "default": "undefined",
-            "remarks": "AppTheory creates the role through AppTheoryLambdaRole and fails synthesis\nif the requested name cannot be applied exactly. Do not combine this with\nthe inherited `role` prop; caller-provided roles own their physical name.",
+            "remarks": "AppTheory renames the role created by the Lambda L2 so all CDK-computed\nmanaged policies are preserved, and fails synthesis if the requested name\ncannot be applied exactly. Do not combine this with the inherited `role`\nprop; caller-provided roles own their physical name.",
             "summary": "Stable physical name for the AppTheory-managed Lambda execution role."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 117
+            "line": 116
           },
           "name": "roleName",
           "optional": true,
@@ -16971,7 +16971,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/function.ts",
-        "line": 14
+        "line": 12
       },
       "members": [
         {
@@ -27441,5 +27441,5 @@
     }
   },
   "version": "3.0.2",
-  "fingerprint": "cD2IRmDw2WL/xJ44J/AbBMtKzCUl/fthjz/wOW9/dMc="
+  "fingerprint": "dXU+soXwING9Cy1MpoHyQXcDmsyDx4nUgSou5myK97I="
 }
