@@ -44,6 +44,7 @@ The inventory below is generated from `cdk/lib/index.ts` exports. Run `./scripts
 * `AppTheoryRestApi` — exported from `cdk/lib/rest-api.ts`.
 * `AppTheoryRestApiRouter` — exported from `cdk/lib/rest-api-router.ts`.
 * `AppTheoryS3Ingest` — exported from `cdk/lib/s3-ingest.ts`.
+* `AppTheoryS3VersionedIngress` — exported from `cdk/lib/s3-versioned-ingress.ts`.
 * `AppTheoryVectorIndex` — exported from `cdk/lib/vector-index.ts`.
 * `AppTheoryWebSocketApi` — exported from `cdk/lib/websocket-api.ts`.
 * `AppTheorySsrSite` — exported from `cdk/lib/ssr-site.ts`.
@@ -83,6 +84,9 @@ new AppTheoryHttpApi(stack, "Api", { handler: fn, apiName: "my-api" });
 * `AppTheoryInstallParameters` is the required, account-agnostic namespace installation surface. It emits the ten
   governed `String` parameters and the `TargetAccountMatchesCaller` CloudFormation Rule; consuming constructs use its
   typed string-token accessors rather than accepting a second identity-injection path.
+* `AppTheoryS3VersionedIngress` is the fixed namespace artifact bucket surface. It always enables versioning,
+  public-access blocking, S3-managed encryption, and TLS enforcement, and its grants address one exact
+  `ns/<namespaceSlug>/<bundleId>` object without wildcards.
 * `AppTheoryFunctionProps.roleName` and `AppTheoryAppProps.roleName` are the
   supported, fail-closed path for stable Lambda execution role names. They
   supersede direct `CfnRole` property-override escape hatches.

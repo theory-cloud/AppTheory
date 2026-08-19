@@ -78,6 +78,21 @@ cannot express that relationship with `Fn::Join`, although the parameter pattern
 `theorycloud.app` suffix. Consume matching TypeScript/jsii and `cdk-go` artifacts from one immutable AppTheory GitHub
 Release so the parameter and accessor surfaces stay aligned.
 
+### Versioned namespace artifact ingress
+
+Starting in v3.1.0, operator-owned platform stacks can use `AppTheoryS3VersionedIngress` for the namespace release
+bucket. The construct fixes versioning, all four public-access-block settings, S3-managed encryption, TLS-only access,
+bucket-owner-enforced ownership, and retain semantics. It intentionally defines no lifecycle expiration because the
+namespace artifact contract does not yet authorize deletion of pinned versions.
+
+Use `grantUpload` for exact-key `s3:PutObject` and `grantVersionedRead` for exact-key `s3:GetObjectVersion`. Both helpers
+address `ns/<namespaceSlug>/<bundleId>` and reject invalid literals at synthesis. Token-valued slug and bundle inputs
+remain supported for account-agnostic templates; only value validation is deferred, while required-input checks and
+CloudFormation-safe key composition remain enforced. Consumers should replace copied `ns/` literals with
+`AppTheoryS3VersionedIngress.KEY_ROOT` or the instance `keyRoot` accessor when adopting the v3.1.0 release. AppTheory
+does not issue STS credentials or presigned requests and does not transfer platform provisioning authority to
+application stacks.
+
 ### TableTheory v3 dependency floor
 
 The next AppTheory major line adopts TableTheory v3.0.2 in all three runtimes. This changes the Go type identity exposed

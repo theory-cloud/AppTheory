@@ -25,6 +25,7 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryEventBridgeRuleTarget` (EventBridge rule → Lambda target; schedule XOR eventPattern)
 - `AppTheoryHttpIngestionEndpoint` (authenticated HTTP API v2 endpoint + Lambda request authorizer + stage throttling)
 - `AppTheoryS3Ingest` (secure S3 ingest bucket + optional EventBridge/SQS notifications)
+- `AppTheoryS3VersionedIngress` (versioned namespace artifact bucket + exact-object upload/read grants)
 - `AppTheoryVectorIndex` (S3 Vectors bucket/index plus AppTheory vectorstore env/grants)
 - `AppTheoryCodeBuildJobRunner` (CodeBuild project wrapper for batch steps; safe defaults + logs + state-change hook)
 - `AppTheoryDynamoDBStreamMapping` (Streams mapping + permissions)
@@ -57,6 +58,18 @@ CloudFormation Rules cannot use `Fn::Join`. The governed install-profile validat
 `DnsHost == cloud-keeper.<NamespaceSlug>.theorycloud.app` check, while the `DnsHost` allowed pattern enforces the
 `theorycloud.app` suffix at stack evaluation. See the canonical
 [Namespace Install Parameters](../../docs/features/install-parameters.md) guide.
+
+## Versioned namespace artifact ingress
+
+`AppTheoryS3VersionedIngress` owns the fixed namespace release bucket posture: enabled S3 versioning, all four public
+access blocks, S3-managed encryption, bucket-owner-enforced ownership, TLS-only access, and retain semantics. No
+lifecycle expiration is emitted because no governed retention decision exists for pinned artifact versions.
+
+The `grantUpload` and `grantVersionedRead` helpers grant only `s3:PutObject` and `s3:GetObjectVersion`, respectively,
+on one exact `ns/<namespaceSlug>/<bundleId>` ARN. Literal locations are synthesis-validated; unresolved tokens skip
+only value validation and remain CloudFormation-safe joins. Use the static `KEY_ROOT` or instance `keyRoot` accessor
+instead of copying `ns/`. See the canonical
+[S3 Versioned Artifact Ingress](../../docs/features/s3-versioned-ingress.md) guide.
 
 ## Stable Lambda execution role names
 

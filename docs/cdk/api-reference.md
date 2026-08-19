@@ -22,6 +22,7 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
   Rule, and typed `Ref` token accessors for consuming constructs
 - `AppTheoryJobsTable`: opinionated DynamoDB jobs ledger table
 - `AppTheoryS3Ingest`: secure S3 ingest front door with optional notifications
+- `AppTheoryS3VersionedIngress`: versioned namespace artifact bucket with fixed `ns/` layout and exact-object grants
 - `AppTheoryVectorIndex`: S3 vector bucket/index plus vectorstore and Bedrock embedding env/grants
 - `AppTheoryCodeBuildJobRunner`: batch-step runner for import pipelines
 - `AppTheoryEventBridgeBus`: custom EventBridge bus with explicit cross-account publish allowlist
@@ -68,6 +69,19 @@ Patterns and allowed values are evaluated by CloudFormation rather than duplicat
 cannot use `Fn::Join`, so the governed install-profile validator retains the relational
 `DnsHost == cloud-keeper.<NamespaceSlug>.theorycloud.app` check; the parameter pattern still enforces the
 `theorycloud.app` suffix. See [Namespace Install Parameters](../features/install-parameters.md).
+
+## Versioned namespace artifact ingress
+
+`AppTheoryS3VersionedIngress` creates the namespace release bucket with versioning enabled, all four public-access-block
+settings, S3-managed encryption, bucket-owner-enforced ownership, TLS enforcement, and retain semantics. It defines no
+lifecycle expiration because the governed artifact flow does not authorize deletion of pinned versions.
+
+`grantUpload` grants only `s3:PutObject`; `grantVersionedRead` grants only `s3:GetObjectVersion`. Each grant targets one
+`ns/<namespaceSlug>/<bundleId>` object ARN with no wildcard. Literal slugs and bundle IDs are synthesis-validated
+against the application-release patterns. Unresolved CDK tokens skip value validation but remain required and render
+through a CloudFormation-safe join. Bucket identity is exposed through `bucketName` and `bucketArn`; the canonical root
+is `AppTheoryS3VersionedIngress.KEY_ROOT` and the instance `keyRoot` accessor. See
+[S3 Versioned Artifact Ingress](../features/s3-versioned-ingress.md).
 
 ## Stable Lambda execution role names
 
