@@ -55,6 +55,7 @@ The inventory below is generated from `cdk/lib/index.ts` exports. Run `./scripts
 * `AppTheoryMicrovmImage` — exported from `cdk/lib/microvm-image.ts`.
 * `AppTheoryMicrovmController` — exported from `cdk/lib/microvm-controller.ts`.
 * `AppTheoryMcpServer` — exported from `cdk/lib/mcp-server.ts`.
+* `AppTheoryInstallParameters` — exported from `cdk/lib/install-parameters.ts`.
 * `AppTheoryMcpProtectedResource` — exported from `cdk/lib/mcp-protected-resource.ts`.
 * `AppTheoryRemoteMcpServer` — exported from `cdk/lib/remote-mcp-server.ts`.
 
@@ -79,6 +80,9 @@ new AppTheoryHttpApi(stack, "Api", { handler: fn, apiName: "my-api" });
 
 ## Production surface notes
 
+* `AppTheoryInstallParameters` is the required, account-agnostic namespace installation surface. It emits the ten
+  governed `String` parameters and the `TargetAccountMatchesCaller` CloudFormation Rule; consuming constructs use its
+  typed string-token accessors rather than accepting a second identity-injection path.
 * `AppTheoryFunctionProps.roleName` and `AppTheoryAppProps.roleName` are the
   supported, fail-closed path for stable Lambda execution role names. They
   supersede direct `CfnRole` property-override escape hatches.

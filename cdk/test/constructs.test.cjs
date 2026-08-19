@@ -18,7 +18,7 @@ const lambda = require("aws-cdk-lib/aws-lambda");
 const logs = require("aws-cdk-lib/aws-logs");
 const route53 = require("aws-cdk-lib/aws-route53");
 const sqs = require("aws-cdk-lib/aws-sqs");
-const { Node } = require("constructs");
+const { Construct, Node } = require("constructs");
 
 const apptheory = require("../lib");
 const { restApiStreamingRouteStageVariableName } = require("../lib/private/rest-api-streaming");
@@ -7120,4 +7120,157 @@ test("AppTheoryMcpProtectedResource URL-valued props carry jsii deprecation noti
     assert.match(docs.deprecated ?? "", /AppTheoryMcpServer/);
     assert.equal(docs.stability, "deprecated");
   }
+});
+
+// ============================================================================
+// AppTheoryInstallParameters tests
+// ============================================================================
+
+test("AppTheoryInstallParameters emits the exact governed parameter surface", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+
+  new apptheory.AppTheoryInstallParameters(stack, "InstallParameters");
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.deepEqual(template.Parameters, {
+    TargetAccountId: {
+      Type: "String",
+      Description: "Exact 12-digit namespace AWS account. Required at install; no default.",
+      AllowedPattern: "^[0-9]{12}$",
+    },
+    NamespaceSlug: {
+      Type: "String",
+      Description: "Theory Cloud namespace slug.",
+      AllowedPattern: "^[a-z0-9][a-z0-9-]{1,62}$",
+    },
+    AccountClass: {
+      Type: "String",
+      Description: "Installed AWS account class.",
+      AllowedValues: ["namespace_dedicated"],
+    },
+    TargetApplicationId: {
+      Type: "String",
+      Description: "Target Theory Cloud application identifier.",
+      AllowedPattern: "^app-[a-z0-9][a-z0-9-]{0,62}$",
+    },
+    TenantId: {
+      Type: "String",
+      Description: "Autheory tenant identifier for the namespace install.",
+      AllowedPattern: "^[A-Za-z0-9_.:-]{3,160}$",
+    },
+    DnsHost: {
+      Type: "String",
+      Description: "Exact Cloud Keeper DNS host under <namespace_slug>.theorycloud.app.",
+      AllowedPattern: "^[a-z0-9][a-z0-9.-]{2,252}\\.theorycloud\\.app$",
+    },
+    Stage: {
+      Type: "String",
+      Description: "Namespace install stage.",
+      AllowedValues: ["lab", "live"],
+    },
+    PublicHostedZoneId: {
+      Type: "String",
+      Description: "Exact Route 53 hosted-zone ID for <namespace_slug>.theorycloud.app.",
+      AllowedPattern: "^[A-Z0-9]{8,32}$",
+    },
+    AuthorizationServerOrigin: {
+      Type: "String",
+      Description: "Exact Autheory HTTPS authorization-server origin.",
+      AllowedPattern: "^https://[A-Za-z0-9.-]+$",
+    },
+    AutheoryJwksUrl: {
+      Type: "String",
+      Description: "Exact Autheory HTTPS JWKS URL.",
+      AllowedPattern: "^https://[A-Za-z0-9.-]+/[^?#]+$",
+    },
+  });
+});
+
+test("AppTheoryInstallParameters asserts the target account matches the caller", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+
+  new apptheory.AppTheoryInstallParameters(stack, "InstallParameters");
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.deepEqual(template.Rules, {
+    TargetAccountMatchesCaller: {
+      Assertions: [{
+        Assert: {
+          "Fn::Equals": [
+            { Ref: "TargetAccountId" },
+            { Ref: "AWS::AccountId" },
+          ],
+        },
+        AssertDescription: "TargetAccountId must equal the AWS account evaluating this stack",
+      }],
+    },
+  });
+});
+
+test("AppTheoryInstallParameters accessors resolve to parameter Ref tokens", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+  const parameters = new apptheory.AppTheoryInstallParameters(stack, "InstallParameters");
+  const accessors = {
+    TargetAccountId: parameters.targetAccountId,
+    NamespaceSlug: parameters.namespaceSlug,
+    AccountClass: parameters.accountClass,
+    TargetApplicationId: parameters.targetApplicationId,
+    TenantId: parameters.tenantId,
+    DnsHost: parameters.dnsHost,
+    Stage: parameters.stage,
+    PublicHostedZoneId: parameters.publicHostedZoneId,
+    AuthorizationServerOrigin: parameters.authorizationServerOrigin,
+    AutheoryJwksUrl: parameters.autheoryJwksUrl,
+  };
+
+  for (const [name, value] of Object.entries(accessors)) {
+    new cdk.CfnOutput(stack, `${name}Value`, { value });
+  }
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  for (const name of Object.keys(accessors)) {
+    assert.deepEqual(
+      template.Outputs[`${name}Value`].Value,
+      { Ref: name },
+      `${name} accessor should remain wired to its parameter`,
+    );
+  }
+});
+
+test("AppTheoryInstallParameters leaves invalid literal values to CloudFormation", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+  const parameters = new apptheory.AppTheoryInstallParameters(stack, "InstallParameters");
+
+  // A default is injected only for this proof: CDK synthesis intentionally
+  // does not evaluate CfnParameter AllowedPattern constraints.
+  parameters.node.findChild("DnsHost").default = "keeper.example.com";
+
+  assert.doesNotThrow(() => assertions.Template.fromStack(stack).toJSON());
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(template.Parameters.DnsHost.Default, "keeper.example.com");
+  assert.equal(template.Parameters.DnsHost.AllowedPattern, "^[a-z0-9][a-z0-9.-]{2,252}\\.theorycloud\\.app$");
+});
+
+test("AppTheoryInstallParameters parameter ID collisions fail closed", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+  const parameters = new apptheory.AppTheoryInstallParameters(stack, "InstallParameters");
+
+  assert.throws(
+    () => new cdk.CfnParameter(parameters, "TargetAccountId"),
+    /There is already a Construct with name 'TargetAccountId'/,
+  );
+});
+
+test("AppTheoryInstallParameters rejects a scope outside a Stack", () => {
+  const root = new Construct(undefined, "Root");
+
+  assert.throws(
+    () => new apptheory.AppTheoryInstallParameters(root, "InstallParameters"),
+    /CfnParameter at 'Root\/InstallParameters\/TargetAccountId' should be created in the scope of a Stack/,
+  );
 });

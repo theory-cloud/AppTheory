@@ -65,6 +65,19 @@ not the namespace deployment path. Migrate namespace applications to `AppTheoryM
 Regenerate or consume matching jsii and `cdk-go` bindings when adopting this surface. `AppTheoryMcpPaths` exports the
 canonical CDK path set, and `runtime/oauth` exports the matching Go constants.
 
+### Governed namespace install parameters
+
+Starting in v3.1.0, namespace stacks should instantiate `AppTheoryInstallParameters` and pass its typed tokens to
+consuming constructs. The construct emits the ten required governed CloudFormation parameters and the
+`TargetAccountMatchesCaller` rule without embedding account-, tenant-, stage-, or DNS-specific identity in the
+template. Deployment runners must inject every parameter because none has a default.
+
+Parameter patterns and allowed values are evaluated by CloudFormation, not at synthesis. The governed install-profile
+validator must continue enforcing `DnsHost == cloud-keeper.<NamespaceSlug>.theorycloud.app`: CloudFormation Rules
+cannot express that relationship with `Fn::Join`, although the parameter pattern still enforces the
+`theorycloud.app` suffix. Consume matching TypeScript/jsii and `cdk-go` artifacts from one immutable AppTheory GitHub
+Release so the parameter and accessor surfaces stay aligned.
+
 ### TableTheory v3 dependency floor
 
 The next AppTheory major line adopts TableTheory v3.0.2 in all three runtimes. This changes the Go type identity exposed

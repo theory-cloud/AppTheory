@@ -504,6 +504,7 @@ includes:
 - `AppTheoryMcpPaths`
 - `AppTheoryRemoteMcpServer`
 - `AppTheoryMcpProtectedResource` (deprecated URL-valued static-document props)
+- `AppTheoryInstallParameters`
 - `AppTheoryJobsTable`
 - `AppTheoryS3Ingest`
 - `AppTheoryVectorIndex`
@@ -520,6 +521,7 @@ Start with:
 - [CDK Getting Started](./cdk/getting-started.md)
 - [CDK API Reference](./cdk/api-reference.md)
 - [MCP Server Umbrella Construct](./features/mcp-server-construct.md)
+- [Namespace Install Parameters](./features/install-parameters.md)
 - [Kinesis + CloudWatch Logs](./cdk/kinesis-cloudwatch-logs.md)
 - [CDK Import Pipeline Guides](./cdk/import-pipeline.md)
 - [S3 Vector Index](./cdk/vector-index.md)

@@ -14,6 +14,7 @@ contract.
 
 - [SecureApp Closed-Default Routing](./secure-app.md)
 - [MCP Server Umbrella Construct](./mcp-server-construct.md)
+- [Namespace Install Parameters](./install-parameters.md)
 - [Sanitization](./sanitization.md)
 - [Observability Hooks](./observability.md)
 - [Logging Profiles](./logging-profiles.md)
