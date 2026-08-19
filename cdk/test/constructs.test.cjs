@@ -6352,6 +6352,32 @@ test("AppTheoryMcpServer fails closed on partial auth config and non-literal pat
       /mcpPath must be a literal absolute route path/,
     );
   }
+  for (const [index, mcpPath] of ["/mcp/../admin", "/.", "/..", "/mcp/./x", "/my mcp"].entries()) {
+    const stack = new cdk.Stack(app, `InvalidMcpPathStack${index}`);
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        mcpPath,
+      }),
+      /mcpPath must be a literal absolute route path/,
+    );
+  }
+  for (const [index, authorizationServerIssuer] of [
+    "not-a-url",
+    "http://evil.example.com",
+    "https://a.example.com#f",
+    "https://auth.example.com?x=1",
+  ].entries()) {
+    const stack = new cdk.Stack(app, `InvalidIssuerStack${index}`);
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        authorizationServerIssuer,
+        jwksUri: "https://auth.example.com/jwks.json",
+      }),
+      /authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment/,
+    );
+  }
 });
 
 test("AppTheoryMcpServer (with session table) synthesizes expected template", () => {

@@ -426,13 +426,12 @@ function normalizeRoutePath(value: string, propName: string): string {
   if (Token.isUnresolved(value)) {
     throw new Error(`AppTheoryMcpServer: ${propName} must be a synthesis-time literal path`);
   }
-  const routePath = String(value ?? "").trim();
+  const routePath = String(value ?? "");
+  // Literal MCP route paths use only RFC 3986 path characters, with percent-encoding required for whitespace and other characters outside that set.
+  const literalRoutePathPattern = /^\/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})+(?:\/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})+)*$/;
   if (
-    !routePath.startsWith("/")
-    || routePath === "/"
-    || routePath.endsWith("/")
-    || routePath.includes("//")
-    || /[?#{}]/.test(routePath)
+    !literalRoutePathPattern.test(routePath)
+    || routePath.split("/").some((segment) => segment === "." || segment === "..")
   ) {
     throw new Error(`AppTheoryMcpServer: ${propName} must be a literal absolute route path`);
   }
@@ -455,8 +454,27 @@ function normalizeAuthConfig(
 
   const authorizationServerIssuer = String(props.authorizationServerIssuer);
   const jwksUri = String(props.jwksUri);
-  if (!Token.isUnresolved(authorizationServerIssuer) && !authorizationServerIssuer.trim()) {
-    throw new Error("AppTheoryMcpServer: authorizationServerIssuer must not be empty");
+  if (!Token.isUnresolved(authorizationServerIssuer)) {
+    const literalIssuer = authorizationServerIssuer.trim();
+    let parsedIssuer: URL | undefined;
+    try {
+      parsedIssuer = new URL(literalIssuer);
+    } catch {
+      // The shared validation error below is the public synthesis contract.
+    }
+    if (
+      !parsedIssuer
+      || parsedIssuer.protocol !== "https:"
+      || !parsedIssuer.hostname
+      || parsedIssuer.username !== ""
+      || parsedIssuer.password !== ""
+      || literalIssuer.includes("?")
+      || literalIssuer.includes("#")
+    ) {
+      throw new Error(
+        "AppTheoryMcpServer: authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment",
+      );
+    }
   }
   if (!Token.isUnresolved(jwksUri) && !jwksUri.trim()) {
     throw new Error("AppTheoryMcpServer: jwksUri must not be empty");

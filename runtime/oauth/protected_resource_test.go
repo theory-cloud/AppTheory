@@ -59,7 +59,7 @@ func TestMCPServerPathConstants(t *testing.T) {
 func TestMCPProtectedResourceDiscoveryHandlerDerivesRequestResource(t *testing.T) {
 	handler, err := NewMCPProtectedResourceDiscoveryHandler(MCPServerConfig{
 		AuthorizationServerIssuer: "https://auth.example.com/",
-		JWKSURI:                   "https://auth.example.com/.well-known/jwks.json",
+		JWKSURI:                   "https://auth.example.com/.well-known/jwks.json?set=active",
 	})
 	require.NoError(t, err)
 
@@ -102,7 +102,11 @@ func TestMCPProtectedResourceDiscoveryHandlerDerivesRequestResource(t *testing.T
 			require.NoError(t, json.Unmarshal(resp.Body, &got))
 			require.Equal(t, tt.resource, got.Resource)
 			require.Equal(t, []string{"https://auth.example.com"}, got.AuthorizationServers)
-			require.Equal(t, "https://auth.example.com/.well-known/jwks.json", got.JWKSURI)
+
+			var document map[string]any
+			require.NoError(t, json.Unmarshal(resp.Body, &document))
+			require.Len(t, document, 2)
+			require.NotContains(t, document, "jwks_uri")
 		})
 	}
 }
@@ -188,8 +192,17 @@ func TestMCPServerConfigFailsClosed(t *testing.T) {
 		{JWKSURI: "https://auth.example.com/jwks.json"},
 		{AuthorizationServerIssuer: "https://auth.example.com"},
 		{AuthorizationServerIssuer: "not-absolute", JWKSURI: "https://auth.example.com/jwks.json"},
+		{AuthorizationServerIssuer: "http://evil.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
+		{AuthorizationServerIssuer: "http://localhost", JWKSURI: "https://auth.example.com/jwks.json"},
+		{AuthorizationServerIssuer: "https://auth.example.com?x=1", JWKSURI: "https://auth.example.com/jwks.json"},
+		{AuthorizationServerIssuer: "https://auth.example.com#fragment", JWKSURI: "https://auth.example.com/jwks.json"},
 		{AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "/jwks.json"},
 		{MCPPath: "https://resource.example.com/mcp", AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
+		{MCPPath: "/mcp/../admin", AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
+		{MCPPath: "/.", AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
+		{MCPPath: "/..", AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
+		{MCPPath: "/mcp/./x", AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
+		{MCPPath: "/my mcp", AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
 	}
 	for _, cfg := range tests {
 		require.Error(t, RegisterMCPServer(apptheory.NewSecure(apptheory.SecureOptions{}), handler, cfg))

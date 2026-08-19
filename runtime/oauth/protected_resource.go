@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 
 	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
@@ -44,7 +45,9 @@ type MCPServerConfig struct {
 	// issuer advertised by RFC 9728 discovery.
 	AuthorizationServerIssuer string
 
-	// JWKSURI is the configured JSON Web Key Set URL advertised by discovery.
+	// JWKSURI is the configured JSON Web Key Set URL used to validate access
+	// tokens. It is not the protected resource's own key set and is therefore
+	// not advertised by RFC 9728 discovery.
 	JWKSURI string
 }
 
@@ -153,7 +156,6 @@ func mcpProtectedResourceDiscoveryHandler(config MCPServerConfig) apptheory.Hand
 		metadata := &ProtectedResourceMetadata{
 			Resource:             requestOrigin + config.MCPPath,
 			AuthorizationServers: []string{config.AuthorizationServerIssuer},
-			JWKSURI:              config.JWKSURI,
 		}
 		return jsonResponse(200, metadata)
 	}
@@ -176,11 +178,11 @@ func normalizeMCPServerConfig(config MCPServerConfig) (MCPServerConfig, error) {
 	if !ok {
 		return MCPServerConfig{}, fmt.Errorf("oauth: MCP path must be a literal absolute route path")
 	}
-	issuer, ok := normalizeConfiguredURL(config.AuthorizationServerIssuer, true)
+	issuer, ok := normalizeConfiguredURL(config.AuthorizationServerIssuer, true, true)
 	if !ok {
 		return MCPServerConfig{}, fmt.Errorf("oauth: authorization server issuer must be an absolute HTTPS URL")
 	}
-	jwksURI, ok := normalizeConfiguredURL(config.JWKSURI, false)
+	jwksURI, ok := normalizeConfiguredURL(config.JWKSURI, false, false)
 	if !ok {
 		return MCPServerConfig{}, fmt.Errorf("oauth: JWKS URI must be an absolute HTTPS URL")
 	}
@@ -192,14 +194,14 @@ func normalizeMCPServerConfig(config MCPServerConfig) (MCPServerConfig, error) {
 }
 
 func normalizeMCPRoutePath(raw string) (string, bool) {
-	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		raw = MCPPath
 	}
-	if !strings.HasPrefix(raw, "/") || raw == "/" || strings.ContainsAny(raw, "?#{}") {
+	// Literal MCP route paths use only RFC 3986 path characters, with percent-encoding required for whitespace and other characters outside that set.
+	if !literalMCPRoutePathPattern.MatchString(raw) {
 		return "", false
 	}
-	if strings.Contains(raw, "//") || strings.HasSuffix(raw, "/") || path.Clean(raw) != raw {
+	if path.Clean(raw) != raw {
 		return "", false
 	}
 	u, err := url.ParseRequestURI(raw)
@@ -213,12 +215,15 @@ func protectedResourcePathForMCPPath(mcpPath string) string {
 	return OAuthProtectedResourcePath + mcpPath
 }
 
-func normalizeConfiguredURL(raw string, trimTrailingSlash bool) (string, bool) {
+func normalizeConfiguredURL(raw string, trimTrailingSlash, issuer bool) (string, bool) {
 	u, ok := parseAbsoluteURL(raw)
 	if !ok || u.User != nil || u.Fragment != "" || u.Hostname() == "" {
 		return "", false
 	}
 	if !isAllowedDiscoveryScheme(u.Scheme, u.Hostname()) {
+		return "", false
+	}
+	if issuer && (u.Scheme != httpsScheme || u.RawQuery != "" || u.ForceQuery) {
 		return "", false
 	}
 	if trimTrailingSlash {
@@ -227,6 +232,8 @@ func normalizeConfiguredURL(raw string, trimTrailingSlash bool) (string, bool) {
 	u.RawPath = ""
 	return u.String(), true
 }
+
+var literalMCPRoutePathPattern = regexp.MustCompile(`^/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})+(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})+)*$`)
 
 func normalizeRequestOrigin(raw string) (string, bool) {
 	u, ok := parseAbsoluteURL(raw)
