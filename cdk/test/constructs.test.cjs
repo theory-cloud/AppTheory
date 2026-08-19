@@ -487,6 +487,79 @@ test("AppTheoryFunction binds explicit-name log groups through the Lambda L2", (
   assert.deepEqual(fn.Properties?.LoggingConfig, { LogGroup: { Ref: logGroupId } });
 });
 
+test("AppTheoryFunction applies the requested removal policy to its named log group", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    functionName: "apptheory-retained",
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    logRemovalPolicy: cdk.RemovalPolicy.RETAIN,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const logGroups = resourcesOfType(template, "AWS::Logs::LogGroup");
+
+  assert.equal(logGroups.length, 1, "Should synthesize exactly one function log group");
+  assert.equal(logGroups[0].Properties?.LogGroupName, "/aws/lambda/apptheory-retained");
+  assert.equal(logGroups[0].DeletionPolicy, "Retain");
+  assert.equal(logGroups[0].UpdateReplacePolicy, "Retain");
+});
+
+test("AppTheoryFunction fails closed when logRemovalPolicy targets a caller-provided log group", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const logGroup = logs.LogGroup.fromLogGroupName(stack, "ExistingLogGroup", "/aws/lambda/existing-handler");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryFunction(stack, "Fn", {
+        functionName: "existing-handler",
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        logGroup,
+        logRemovalPolicy: cdk.RemovalPolicy.DESTROY,
+      }),
+    /cannot honor props\.logRemovalPolicy when props\.logGroup supplies the log group/,
+  );
+});
+
+test("AppTheoryFunction fails closed when its managed log group is not backed by a CfnLogGroup", () => {
+  const defaultChildDescriptor = Object.getOwnPropertyDescriptor(Node.prototype, "defaultChild");
+  assert.ok(defaultChildDescriptor?.get, "constructs.Node.defaultChild getter must be available");
+
+  Object.defineProperty(Node.prototype, "defaultChild", {
+    ...defaultChildDescriptor,
+    get() {
+      if (this.path === "TestStack/Fn/LogGroup") {
+        return {};
+      }
+      return defaultChildDescriptor.get.call(this);
+    },
+  });
+
+  try {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "TestStack");
+
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryFunction(stack, "Fn", {
+          functionName: "apptheory-required-logs",
+          runtime: lambda.Runtime.NODEJS_24_X,
+          handler: "index.handler",
+          code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        }),
+      /default child is not an AWS::Logs::LogGroup/,
+    );
+  } finally {
+    Object.defineProperty(Node.prototype, "defaultChild", defaultChildDescriptor);
+  }
+});
+
 test("AppTheoryFunction uses caller-provided log groups for existing-stack adoption", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -2604,6 +2677,73 @@ test("AppTheoryApp forwards an exact stable execution role name", () => {
     "arn:{\"Ref\":\"AWS::Partition\"}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
     "arn:{\"Ref\":\"AWS::Partition\"}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
   ]);
+});
+
+test("AppTheoryApp forwards logRemovalPolicy to its named function log group", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryApp(stack, "App", {
+    appName: "apptheory-retain-on-update",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    logRemovalPolicy: cdk.RemovalPolicy.RETAIN_ON_UPDATE_OR_DELETE,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const logGroups = resourcesOfType(template, "AWS::Logs::LogGroup");
+
+  assert.equal(logGroups.length, 1, "Should synthesize exactly one app function log group");
+  const functionLogGroup = logGroups.find(
+    (resource) => resource.Properties?.LogGroupName === "/aws/lambda/apptheory-retain-on-update",
+  );
+  assert.ok(functionLogGroup, "Should synthesize the app function's named log group");
+  assert.equal(functionLogGroup.DeletionPolicy, "RetainExceptOnCreate");
+  assert.equal(functionLogGroup.UpdateReplacePolicy, "Retain");
+});
+
+test("AppTheoryApp defaults its named function log group to DESTROY", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryApp(stack, "App", {
+    appName: "apptheory-self-cleaning",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const functionLogGroup = resourcesOfType(template, "AWS::Logs::LogGroup").find(
+    (resource) => resource.Properties?.LogGroupName === "/aws/lambda/apptheory-self-cleaning",
+  );
+
+  assert.ok(functionLogGroup, "Should synthesize the app function's named log group");
+  assert.equal(functionLogGroup.DeletionPolicy, "Delete");
+  assert.equal(functionLogGroup.UpdateReplacePolicy, "Delete");
+});
+
+test("AppTheoryApp allows RETAIN to override its self-cleaning log group default", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryApp(stack, "App", {
+    appName: "apptheory-retained",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    logRemovalPolicy: cdk.RemovalPolicy.RETAIN,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const functionLogGroup = resourcesOfType(template, "AWS::Logs::LogGroup").find(
+    (resource) => resource.Properties?.LogGroupName === "/aws/lambda/apptheory-retained",
+  );
+
+  assert.ok(functionLogGroup, "Should synthesize the app function's named log group");
+  assert.equal(functionLogGroup.DeletionPolicy, "Retain");
+  assert.equal(functionLogGroup.UpdateReplacePolicy, "Retain");
 });
 
 test("AppTheoryApp exposes production deployment surface without raw CDK escape hatches", () => {

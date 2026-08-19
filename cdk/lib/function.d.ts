@@ -86,6 +86,14 @@ export interface AppTheoryFunctionAliasOptions {
      */
     readonly deployment?: AppTheoryFunctionDeploymentOptions;
 }
+/**
+ * Properties for an AppTheory-managed Lambda function.
+ *
+ * AppTheory overrides the inherited `logRemovalPolicy` default for log groups
+ * it creates: they use `RemovalPolicy.DESTROY`. Combining an explicit
+ * `logRemovalPolicy` with a caller-provided `logGroup` fails synthesis because
+ * caller-provided resources own their removal policy.
+ */
 export interface AppTheoryFunctionProps extends lambda.FunctionProps {
     /**
      * Stable physical name for the AppTheory-managed Lambda execution role.

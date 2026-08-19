@@ -14,6 +14,12 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/interfaces/interfacesawslogs"
 )
 
+// Properties for an AppTheory-managed Lambda function.
+//
+// AppTheory overrides the inherited `logRemovalPolicy` default for log groups
+// it creates: they use `RemovalPolicy.DESTROY`. Combining an explicit
+// `logRemovalPolicy` with a caller-provided `logGroup` fails synthesis because
+// caller-provided resources own their removal policy.
 type AppTheoryFunctionProps struct {
 	// The maximum age of a request that Lambda sends to a function for processing.
 	//

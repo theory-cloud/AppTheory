@@ -1,4 +1,4 @@
-import { Duration } from "aws-cdk-lib";
+import { Duration, RemovalPolicy } from "aws-cdk-lib";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as codedeploy from "aws-cdk-lib/aws-codedeploy";
 import * as iam from "aws-cdk-lib/aws-iam";
@@ -102,6 +102,14 @@ export interface AppTheoryFunctionAliasOptions {
   readonly deployment?: AppTheoryFunctionDeploymentOptions;
 }
 
+/**
+ * Properties for an AppTheory-managed Lambda function.
+ *
+ * AppTheory overrides the inherited `logRemovalPolicy` default for log groups
+ * it creates: they use `RemovalPolicy.DESTROY`. Combining an explicit
+ * `logRemovalPolicy` with a caller-provided `logGroup` fails synthesis because
+ * caller-provided resources own their removal policy.
+ */
 export interface AppTheoryFunctionProps extends lambda.FunctionProps {
   /**
    * Stable physical name for the AppTheory-managed Lambda execution role.
@@ -145,7 +153,12 @@ export class AppTheoryFunction extends Construct {
       }
     }
     const logRetention = lambdaProps.logRetention ?? logs.RetentionDays.ONE_MONTH;
-    const logRemovalPolicy = lambdaProps.logRemovalPolicy;
+    const requestedLogRemovalPolicy = lambdaProps.logRemovalPolicy;
+    if (lambdaProps.logGroup && requestedLogRemovalPolicy !== undefined) {
+      throw new Error(
+        "AppTheoryFunction cannot honor props.logRemovalPolicy when props.logGroup supplies the log group; omit props.logRemovalPolicy or configure the removal policy where that log group is created",
+      );
+    }
     delete (lambdaProps as { logRetention?: logs.RetentionDays }).logRetention;
     delete (lambdaProps as { logRemovalPolicy?: unknown }).logRemovalPolicy;
     delete (lambdaProps as { logRetentionRetryOptions?: unknown }).logRetentionRetryOptions;
@@ -153,11 +166,12 @@ export class AppTheoryFunction extends Construct {
 
     let boundLogGroup = lambdaProps.logGroup;
     if (!boundLogGroup && lambdaProps.functionName) {
-      boundLogGroup = new logs.LogGroup(this, "LogGroup", {
-        logGroupName: `/aws/lambda/${lambdaProps.functionName}`,
-        retention: logRetention,
-        removalPolicy: logRemovalPolicy,
-      });
+      boundLogGroup = createManagedFunctionLogGroup(
+        this,
+        `/aws/lambda/${lambdaProps.functionName}`,
+        logRetention,
+        requestedLogRemovalPolicy ?? RemovalPolicy.DESTROY,
+      );
     }
 
     this.fn = new lambda.Function(this, "Function", {
@@ -195,11 +209,12 @@ export class AppTheoryFunction extends Construct {
       // the finite-retention log group, but require callers that need a
       // fail-safe existing-stack upgrade/adoption path to pass logGroup or a
       // concrete functionName so the Lambda L2 can bind the group up front.
-      const logGroup = new logs.LogGroup(this, "LogGroup", {
-        logGroupName: `/aws/lambda/${this.fn.functionName}`,
-        retention: logRetention,
-        removalPolicy: logRemovalPolicy,
-      });
+      const logGroup = createManagedFunctionLogGroup(
+        this,
+        `/aws/lambda/${this.fn.functionName}`,
+        logRetention,
+        requestedLogRemovalPolicy ?? RemovalPolicy.DESTROY,
+      );
       (this as { logGroup?: logs.ILogGroupRef }).logGroup = logGroup;
     }
 
@@ -234,6 +249,30 @@ export class AppTheoryFunction extends Construct {
       (this as { deploymentGroup?: codedeploy.LambdaDeploymentGroup }).deploymentGroup = deploymentGroup;
     }
   }
+}
+
+function createManagedFunctionLogGroup(
+  scope: Construct,
+  logGroupName: string,
+  retention: logs.RetentionDays,
+  removalPolicy: RemovalPolicy | undefined,
+): logs.LogGroup {
+  const logGroup = new logs.LogGroup(scope, "LogGroup", {
+    logGroupName,
+    retention,
+  });
+
+  if (removalPolicy !== undefined) {
+    const logGroupResource = logGroup.node.defaultChild;
+    if (!(logGroupResource instanceof logs.CfnLogGroup)) {
+      throw new Error(
+        `AppTheoryFunction cannot apply logRemovalPolicy ${JSON.stringify(removalPolicy)} because the AppTheory-managed log group's default child is not an AWS::Logs::LogGroup`,
+      );
+    }
+    logGroupResource.applyRemovalPolicy(removalPolicy);
+  }
+
+  return logGroup;
 }
 
 function deploymentConfigFor(scope: Construct, options: AppTheoryFunctionDeploymentOptions): codedeploy.ILambdaDeploymentConfig {

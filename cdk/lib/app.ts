@@ -1,4 +1,4 @@
-import { CfnOutput, Duration, Stack } from "aws-cdk-lib";
+import { CfnOutput, Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
@@ -29,6 +29,16 @@ export interface AppTheoryAppProps {
   readonly timeoutSeconds?: number;
   readonly logRetention?: logs.RetentionDays;
   readonly logGroup?: logs.ILogGroupRef;
+  /**
+   * Removal policy for the app function's AppTheory-managed named log group.
+   *
+   * The value is forwarded unchanged to AppTheoryFunction. Supplying both
+   * `logGroup` and `logRemovalPolicy` fails synthesis because caller-provided
+   * log groups own their removal policy.
+   *
+   * @default RemovalPolicy.DESTROY
+   */
+  readonly logRemovalPolicy?: RemovalPolicy;
   readonly vpc?: ec2.IVpc;
   readonly vpcSubnets?: ec2.SubnetSelection;
   readonly securityGroups?: ec2.ISecurityGroup[];
@@ -159,6 +169,7 @@ export class AppTheoryApp extends Construct {
       timeout: Duration.seconds(props.timeoutSeconds ?? 30),
       logRetention: props.logRetention,
       logGroup: props.logGroup,
+      logRemovalPolicy: props.logRemovalPolicy,
       vpc: props.vpc,
       vpcSubnets: props.vpcSubnets,
       securityGroups: props.securityGroups,
