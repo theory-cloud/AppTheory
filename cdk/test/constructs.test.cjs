@@ -6367,6 +6367,7 @@ test("AppTheoryMcpServer fails closed on partial auth config and non-literal pat
     "http://evil.example.com",
     "https://a.example.com#f",
     "https://auth.example.com?x=1",
+    "https://@auth.example.com",
   ].entries()) {
     const stack = new cdk.Stack(app, `InvalidIssuerStack${index}`);
     assert.throws(
@@ -6378,6 +6379,47 @@ test("AppTheoryMcpServer fails closed on partial auth config and non-literal pat
       /authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment/,
     );
   }
+  for (const [index, jwksUri] of [
+    "not-a-url",
+    "auth.example.com/jwks.json",
+    "http://evil.example.com/jwks.json",
+    "/jwks.json",
+    "https://@auth.example.com/jwks.json",
+    "https://auth.example.com/jwks.json#fragment",
+  ].entries()) {
+    const stack = new cdk.Stack(app, `InvalidJwksUriStack${index}`);
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        authorizationServerIssuer: "https://auth.example.com",
+        jwksUri,
+      }),
+      /jwksUri must be an absolute HTTPS URL with no userinfo or fragment/,
+    );
+  }
+});
+
+test("AppTheoryMcpServer accepts a query-bearing literal JWKS URL", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200 });"),
+  });
+
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: fn,
+    authorizationServerIssuer: "https://auth.example.com",
+    jwksUri: "https://auth.example.com/jwks.json?set=active",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const fnResource = resourcesOfType(template, "AWS::Lambda::Function")[0];
+  assert.equal(
+    fnResource.Properties.Environment.Variables.APPTHEORY_MCP_JWKS_URI,
+    "https://auth.example.com/jwks.json?set=active",
+  );
 });
 
 test("AppTheoryMcpServer (with session table) synthesizes expected template", () => {

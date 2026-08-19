@@ -36,9 +36,13 @@ Supplying `authorizationServerIssuer` and `jwksUri` together enables:
 - `APPTHEORY_MCP_PATH`, `APPTHEORY_MCP_PROTECTED_RESOURCE_PATH`,
   `APPTHEORY_MCP_AUTHORIZATION_SERVER_ISSUER`, and `APPTHEORY_MCP_JWKS_URI` on the Lambda.
 
-The issuer and JWKS values are ordinary construct props in this release. They may be CDK tokens because AppTheory
-forwards rather than parses them. The named CloudFormation install-parameter contract is a separate deployment-layer
-capability and is not emitted by this construct.
+The issuer and JWKS values are ordinary construct props in this release. Literal issuer values are validated at
+synthesis as absolute HTTPS URLs with no userinfo, query, or fragment. Literal JWKS values must be absolute HTTPS URLs
+with no userinfo or fragment; queries are allowed. CDK tokens for either value are forwarded unparsed. `mcpPath` must be
+a synthesis-time literal absolute route path: it may contain only RFC 3986 path characters (with percent-encoding for
+whitespace and characters outside that set), must not contain `.` or `..` segments, and must already be in clean path
+form. The named CloudFormation install-parameter contract is a separate deployment-layer capability and is not emitted
+by this construct.
 
 Omitting both auth props retains the previous POST-only AgentCore deployment shape for existing applications. Supplying
 only one fails synthesis; AppTheory does not deploy a half-configured discovery surface.
@@ -63,9 +67,11 @@ if err != nil {
 }
 ```
 
-The discovery handler reconstructs the resource as `<request origin><MCP path>`, advertises the configured issuer and
-JWKS URI, and returns `application/json`. It accepts HTTPS request origins and HTTP only for loopback smoke tests.
-Missing or unsafe hosts fail with `400`; missing or invalid install auth config fails application setup.
+The discovery handler reconstructs the resource as `<request origin><MCP path>` and returns `application/json` with
+exactly `resource` and `authorization_servers`. The JWKS URI is forwarded to the handler as install configuration in
+`APPTHEORY_MCP_JWKS_URI` for the application's `SecurePrincipalResolver`; it is not published in the RFC 9728 document.
+The handler accepts HTTPS request origins and HTTP only for loopback smoke tests. Missing or unsafe hosts fail with
+`400`; missing or invalid install auth config fails application setup.
 
 Use `AppTheoryMcpPaths` in CDK and the `runtime/oauth` path constants in Go instead of application-local literals. The
 canonical set includes the MCP path, generic and MCP-scoped RFC 9728 paths, and the MCP-scoped RFC 8414 authorization

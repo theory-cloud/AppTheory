@@ -216,14 +216,13 @@ func protectedResourcePathForMCPPath(mcpPath string) string {
 }
 
 func normalizeConfiguredURL(raw string, trimTrailingSlash, issuer bool) (string, bool) {
+	// Literal OAuth configuration URLs must be absolute HTTPS URLs without userinfo or fragments.
+	// Issuer URLs must also omit queries.
 	u, ok := parseAbsoluteURL(raw)
-	if !ok || u.User != nil || u.Fragment != "" || u.Hostname() == "" {
+	if !ok || u.Scheme != httpsScheme || u.User != nil || u.Fragment != "" || u.Hostname() == "" {
 		return "", false
 	}
-	if !isAllowedDiscoveryScheme(u.Scheme, u.Hostname()) {
-		return "", false
-	}
-	if issuer && (u.Scheme != httpsScheme || u.RawQuery != "" || u.ForceQuery) {
+	if issuer && (u.RawQuery != "" || u.ForceQuery) {
 		return "", false
 	}
 	if trimTrailingSlash {

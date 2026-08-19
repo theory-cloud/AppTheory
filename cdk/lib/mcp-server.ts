@@ -95,9 +95,9 @@ export interface AppTheoryMcpServerProps {
   /**
    * OAuth authorization server issuer passed to the Lambda runtime config.
    *
-   * AppTheory does not parse this value or use it to synthesize resource URLs.
-   * Supply `jwksUri` with this prop to enable the runtime-served RFC 9728
-   * discovery routes.
+   * Literal values must be absolute HTTPS URLs with no userinfo, query, or
+   * fragment. CDK tokens pass through unparsed. Supply `jwksUri` with this prop
+   * to enable the runtime-served RFC 9728 discovery routes.
    * @default undefined (legacy POST-only MCP route)
    */
   readonly authorizationServerIssuer?: string;
@@ -105,8 +105,9 @@ export interface AppTheoryMcpServerProps {
   /**
    * OAuth JSON Web Key Set URL passed to the Lambda runtime config.
    *
-   * Supply `authorizationServerIssuer` with this prop. CDK tokens are accepted
-   * because the value is forwarded, not parsed during synthesis.
+   * Literal values must be absolute HTTPS URLs with no userinfo or fragment;
+   * queries are allowed. CDK tokens pass through unparsed. Supply
+   * `authorizationServerIssuer` with this prop.
    * @default undefined (legacy POST-only MCP route)
    */
   readonly jwksUri?: string;
@@ -454,6 +455,8 @@ function normalizeAuthConfig(
 
   const authorizationServerIssuer = String(props.authorizationServerIssuer);
   const jwksUri = String(props.jwksUri);
+  // Literal OAuth configuration URLs must be absolute HTTPS URLs without userinfo or fragments.
+  // Issuer URLs must also omit queries.
   if (!Token.isUnresolved(authorizationServerIssuer)) {
     const literalIssuer = authorizationServerIssuer.trim();
     let parsedIssuer: URL | undefined;
@@ -468,6 +471,7 @@ function normalizeAuthConfig(
       || !parsedIssuer.hostname
       || parsedIssuer.username !== ""
       || parsedIssuer.password !== ""
+      || literalURLAuthorityHasUserinfo(literalIssuer)
       || literalIssuer.includes("?")
       || literalIssuer.includes("#")
     ) {
@@ -476,8 +480,32 @@ function normalizeAuthConfig(
       );
     }
   }
-  if (!Token.isUnresolved(jwksUri) && !jwksUri.trim()) {
-    throw new Error("AppTheoryMcpServer: jwksUri must not be empty");
+  if (!Token.isUnresolved(jwksUri)) {
+    const literalJwksUri = jwksUri.trim();
+    let parsedJwksUri: URL | undefined;
+    try {
+      parsedJwksUri = new URL(literalJwksUri);
+    } catch {
+      // The shared validation error below is the public synthesis contract.
+    }
+    if (
+      !parsedJwksUri
+      || parsedJwksUri.protocol !== "https:"
+      || !parsedJwksUri.hostname
+      || parsedJwksUri.username !== ""
+      || parsedJwksUri.password !== ""
+      || literalURLAuthorityHasUserinfo(literalJwksUri)
+      || literalJwksUri.includes("#")
+    ) {
+      throw new Error(
+        "AppTheoryMcpServer: jwksUri must be an absolute HTTPS URL with no userinfo or fragment",
+      );
+    }
   }
   return { authorizationServerIssuer, jwksUri };
+}
+
+function literalURLAuthorityHasUserinfo(value: string): boolean {
+  const authority = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/?#]*)/.exec(value)?.[1];
+  return authority?.includes("@") ?? false;
 }

@@ -14,9 +14,9 @@ type AppTheoryMcpServerProps struct {
 	ApiName *string `field:"optional" json:"apiName" yaml:"apiName"`
 	// OAuth authorization server issuer passed to the Lambda runtime config.
 	//
-	// AppTheory does not parse this value or use it to synthesize resource URLs.
-	// Supply `jwksUri` with this prop to enable the runtime-served RFC 9728
-	// discovery routes.
+	// Literal values must be absolute HTTPS URLs with no userinfo, query, or
+	// fragment. CDK tokens pass through unparsed. Supply `jwksUri` with this prop
+	// to enable the runtime-served RFC 9728 discovery routes.
 	// Default: undefined (legacy POST-only MCP route).
 	//
 	AuthorizationServerIssuer *string `field:"optional" json:"authorizationServerIssuer" yaml:"authorizationServerIssuer"`
@@ -30,8 +30,9 @@ type AppTheoryMcpServerProps struct {
 	EnableSessionTable *bool `field:"optional" json:"enableSessionTable" yaml:"enableSessionTable"`
 	// OAuth JSON Web Key Set URL passed to the Lambda runtime config.
 	//
-	// Supply `authorizationServerIssuer` with this prop. CDK tokens are accepted
-	// because the value is forwarded, not parsed during synthesis.
+	// Literal values must be absolute HTTPS URLs with no userinfo or fragment;
+	// queries are allowed. CDK tokens pass through unparsed. Supply
+	// `authorizationServerIssuer` with this prop.
 	// Default: undefined (legacy POST-only MCP route).
 	//
 	JwksUri *string `field:"optional" json:"jwksUri" yaml:"jwksUri"`
