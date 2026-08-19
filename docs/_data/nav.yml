@@ -46,6 +46,7 @@ groups:
 
   - label: MCP
     items:
+      - { id: feature-mcp-server,     title: MCP Server Construct,    url: /features/mcp-server-construct/, icon: package, surface: mcp, tag: new }
       - { id: int-mcp,                title: MCP Method Surface,      url: /integrations/mcp/,           icon: share,        surface: mcp,  tag: ga }
       - { id: int-remote-mcp,         title: Remote MCP,              url: /integrations/remote-mcp/,    icon: globe,        surface: mcp }
       - { id: int-agentcore,          title: AgentCore MCP,           url: /integrations/agentcore-mcp/, icon: cpu,          surface: mcp }

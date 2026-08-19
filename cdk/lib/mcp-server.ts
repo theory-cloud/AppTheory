@@ -1,4 +1,4 @@
-import { RemovalPolicy } from "aws-cdk-lib";
+import { RemovalPolicy, Token } from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
@@ -7,6 +7,8 @@ import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
+
+import { AppTheoryMcpPaths } from "./mcp-paths";
 
 /**
  * Custom domain configuration for the MCP server.
@@ -83,6 +85,33 @@ export interface AppTheoryMcpServerProps {
   readonly handler: lambda.IFunction;
 
   /**
+   * Literal route path for the MCP endpoint.
+   *
+   * This is a synthesis-time path, never an origin or full resource URL.
+   * @default AppTheoryMcpPaths.MCP
+   */
+  readonly mcpPath?: string;
+
+  /**
+   * OAuth authorization server issuer passed to the Lambda runtime config.
+   *
+   * AppTheory does not parse this value or use it to synthesize resource URLs.
+   * Supply `jwksUri` with this prop to enable the runtime-served RFC 9728
+   * discovery routes.
+   * @default undefined (legacy POST-only MCP route)
+   */
+  readonly authorizationServerIssuer?: string;
+
+  /**
+   * OAuth JSON Web Key Set URL passed to the Lambda runtime config.
+   *
+   * Supply `authorizationServerIssuer` with this prop. CDK tokens are accepted
+   * because the value is forwarded, not parsed during synthesis.
+   * @default undefined (legacy POST-only MCP route)
+   */
+  readonly jwksUri?: string;
+
+  /**
    * Optional API name.
    * @default undefined
    */
@@ -122,9 +151,13 @@ export interface AppTheoryMcpServerProps {
 }
 
 /**
- * An MCP (Model Context Protocol) server construct that provisions an HTTP API Gateway v2
- * with a Lambda integration on POST /mcp, optional DynamoDB session table, and optional
- * custom domain with Route53.
+ * Umbrella deployment contract for a namespace MCP server.
+ *
+ * The construct provisions an HTTP API Gateway v2 with a Lambda integration
+ * on the conventional POST /mcp path, optional runtime-served RFC 9728
+ * discovery routes, optional DynamoDB session state, and an optional custom
+ * domain. Resource origins are intentionally absent from the prop surface:
+ * the Go runtime derives the protected resource host from each request.
  *
  * @example
  * const server = new AppTheoryMcpServer(this, 'McpServer', {
@@ -145,9 +178,19 @@ export class AppTheoryMcpServer extends Construct {
   public readonly sessionTable?: dynamodb.ITable;
 
   /**
-   * The MCP endpoint URL (POST /mcp).
+   * The MCP endpoint URL.
    */
   public readonly endpoint: string;
+
+  /**
+   * Literal MCP endpoint route path.
+   */
+  public readonly mcpPath: string;
+
+  /**
+   * Path-scoped RFC 9728 discovery route for this MCP endpoint.
+   */
+  public readonly protectedResourceMetadataPath: string;
 
   /**
    * The custom domain name resource (if domain is configured).
@@ -172,6 +215,9 @@ export class AppTheoryMcpServer extends Construct {
   constructor(scope: Construct, id: string, props: AppTheoryMcpServerProps) {
     super(scope, id);
 
+    this.mcpPath = normalizeRoutePath(props.mcpPath ?? AppTheoryMcpPaths.MCP, "mcpPath");
+    this.protectedResourceMetadataPath = `${AppTheoryMcpPaths.OAUTH_PROTECTED_RESOURCE}${this.mcpPath}`;
+    const authConfig = normalizeAuthConfig(props);
     const stageOpts = props.stage ?? {};
     const stageName = stageOpts.stageName ?? "$default";
 
@@ -228,14 +274,45 @@ export class AppTheoryMcpServer extends Construct {
       stage = this.api.defaultStage;
     }
 
-    // Add POST /mcp route with Lambda integration
-    this.api.addRoutes({
-      path: "/mcp",
-      methods: [apigwv2.HttpMethod.POST],
-      integration: new apigwv2Integrations.HttpLambdaIntegration("McpHandler", props.handler, {
-        payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_2_0,
-      }),
+    const handlerIntegration = new apigwv2Integrations.HttpLambdaIntegration("McpHandler", props.handler, {
+      payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_2_0,
     });
+
+    // Route MCP protocol traffic to the application runtime.
+    this.api.addRoutes({
+      path: this.mcpPath,
+      methods: [apigwv2.HttpMethod.POST],
+      integration: handlerIntegration,
+    });
+
+    if (authConfig) {
+      // Discovery stays unauthenticated at API Gateway. The matching Go helper
+      // registers these routes with SecureApp Public posture while registering
+      // the MCP route as Authenticated.
+      this.api.addRoutes({
+        path: AppTheoryMcpPaths.OAUTH_PROTECTED_RESOURCE,
+        methods: [apigwv2.HttpMethod.GET],
+        integration: handlerIntegration,
+      });
+      this.api.addRoutes({
+        path: this.protectedResourceMetadataPath,
+        methods: [apigwv2.HttpMethod.GET],
+        integration: handlerIntegration,
+      });
+
+      this.addEnvironment(props.handler, "APPTHEORY_MCP_PATH", this.mcpPath);
+      this.addEnvironment(
+        props.handler,
+        "APPTHEORY_MCP_PROTECTED_RESOURCE_PATH",
+        this.protectedResourceMetadataPath,
+      );
+      this.addEnvironment(
+        props.handler,
+        "APPTHEORY_MCP_AUTHORIZATION_SERVER_ISSUER",
+        authConfig.authorizationServerIssuer,
+      );
+      this.addEnvironment(props.handler, "APPTHEORY_MCP_JWKS_URI", authConfig.jwksUri);
+    }
 
     // Optional session table
     if (props.enableSessionTable) {
@@ -266,13 +343,13 @@ export class AppTheoryMcpServer extends Construct {
         throw new Error("AppTheoryMcpServer: no stage available for domain mapping");
       }
       this.setupCustomDomain(props.domain, stage);
-      this.endpoint = `${stripTrailingSlash(`https://${props.domain.domainName}`)}/mcp`;
+      this.endpoint = `${stripTrailingSlash(`https://${props.domain.domainName}`)}${this.mcpPath}`;
     } else {
       // Compute execute-api endpoint URL (include stage path unless using $default).
       const baseUrl = (stageName === "$default")
         ? this.api.apiEndpoint
         : `${this.api.apiEndpoint}/${stageName}`;
-      this.endpoint = `${stripTrailingSlash(baseUrl)}/mcp`;
+      this.endpoint = `${stripTrailingSlash(baseUrl)}${this.mcpPath}`;
     }
 
     // Inject environment variables into the Lambda handler
@@ -343,4 +420,46 @@ function toRoute53RecordName(domainName: string, zone: route53.IHostedZone): str
 
 function stripTrailingSlash(url: string): string {
   return url.replace(/\/$/, "");
+}
+
+function normalizeRoutePath(value: string, propName: string): string {
+  if (Token.isUnresolved(value)) {
+    throw new Error(`AppTheoryMcpServer: ${propName} must be a synthesis-time literal path`);
+  }
+  const routePath = String(value ?? "").trim();
+  if (
+    !routePath.startsWith("/")
+    || routePath === "/"
+    || routePath.endsWith("/")
+    || routePath.includes("//")
+    || /[?#{}]/.test(routePath)
+  ) {
+    throw new Error(`AppTheoryMcpServer: ${propName} must be a literal absolute route path`);
+  }
+  return routePath;
+}
+
+function normalizeAuthConfig(
+  props: AppTheoryMcpServerProps,
+): { authorizationServerIssuer: string; jwksUri: string } | undefined {
+  const hasIssuer = props.authorizationServerIssuer !== undefined;
+  const hasJwksUri = props.jwksUri !== undefined;
+  if (hasIssuer !== hasJwksUri) {
+    throw new Error(
+      "AppTheoryMcpServer: authorizationServerIssuer and jwksUri must be supplied together",
+    );
+  }
+  if (!hasIssuer || !hasJwksUri) {
+    return undefined;
+  }
+
+  const authorizationServerIssuer = String(props.authorizationServerIssuer);
+  const jwksUri = String(props.jwksUri);
+  if (!Token.isUnresolved(authorizationServerIssuer) && !authorizationServerIssuer.trim()) {
+    throw new Error("AppTheoryMcpServer: authorizationServerIssuer must not be empty");
+  }
+  if (!Token.isUnresolved(jwksUri) && !jwksUri.trim()) {
+    throw new Error("AppTheoryMcpServer: jwksUri must not be empty");
+  }
+  return { authorizationServerIssuer, jwksUri };
 }

@@ -70,6 +70,30 @@ export interface AppTheoryMcpServerProps {
      */
     readonly handler: lambda.IFunction;
     /**
+     * Literal route path for the MCP endpoint.
+     *
+     * This is a synthesis-time path, never an origin or full resource URL.
+     * @default AppTheoryMcpPaths.MCP
+     */
+    readonly mcpPath?: string;
+    /**
+     * OAuth authorization server issuer passed to the Lambda runtime config.
+     *
+     * AppTheory does not parse this value or use it to synthesize resource URLs.
+     * Supply `jwksUri` with this prop to enable the runtime-served RFC 9728
+     * discovery routes.
+     * @default undefined (legacy POST-only MCP route)
+     */
+    readonly authorizationServerIssuer?: string;
+    /**
+     * OAuth JSON Web Key Set URL passed to the Lambda runtime config.
+     *
+     * Supply `authorizationServerIssuer` with this prop. CDK tokens are accepted
+     * because the value is forwarded, not parsed during synthesis.
+     * @default undefined (legacy POST-only MCP route)
+     */
+    readonly jwksUri?: string;
+    /**
      * Optional API name.
      * @default undefined
      */
@@ -103,9 +127,13 @@ export interface AppTheoryMcpServerProps {
     readonly stage?: AppTheoryMcpServerStageOptions;
 }
 /**
- * An MCP (Model Context Protocol) server construct that provisions an HTTP API Gateway v2
- * with a Lambda integration on POST /mcp, optional DynamoDB session table, and optional
- * custom domain with Route53.
+ * Umbrella deployment contract for a namespace MCP server.
+ *
+ * The construct provisions an HTTP API Gateway v2 with a Lambda integration
+ * on the conventional POST /mcp path, optional runtime-served RFC 9728
+ * discovery routes, optional DynamoDB session state, and an optional custom
+ * domain. Resource origins are intentionally absent from the prop surface:
+ * the Go runtime derives the protected resource host from each request.
  *
  * @example
  * const server = new AppTheoryMcpServer(this, 'McpServer', {
@@ -124,9 +152,17 @@ export declare class AppTheoryMcpServer extends Construct {
      */
     readonly sessionTable?: dynamodb.ITable;
     /**
-     * The MCP endpoint URL (POST /mcp).
+     * The MCP endpoint URL.
      */
     readonly endpoint: string;
+    /**
+     * Literal MCP endpoint route path.
+     */
+    readonly mcpPath: string;
+    /**
+     * Path-scoped RFC 9728 discovery route for this MCP endpoint.
+     */
+    readonly protectedResourceMetadataPath: string;
     /**
      * The custom domain name resource (if domain is configured).
      */

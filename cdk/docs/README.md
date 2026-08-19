@@ -24,7 +24,9 @@
 
 ### 🧭 Guides (copy/paste patterns)
 - [REST API v1 Router + Streaming](./rest-api-router-streaming.md) — multi-Lambda REST API v1 + full response streaming parity.
-- [MCP Server for Bedrock AgentCore](./mcp-server-agentcore.md) — deploy `POST /mcp` (HTTP API v2) for AgentCore tool calls.
+- [MCP Server Umbrella Construct](../../docs/features/mcp-server-construct.md) — deploy authenticated namespace MCP
+  routes with request-time RFC 9728 discovery and no protected-resource origin prop.
+- [MCP Server for Bedrock AgentCore](./mcp-server-agentcore.md) — retain the additive POST-only HTTP API v2 shape.
 - [MCP Server for Claude Remote MCP](./mcp-server-remote-mcp.md) — deploy Streamable HTTP `/mcp` (REST API v1 + streaming) for Claude connectors.
 - [MCP Protected Resource Metadata (OAuth)](./mcp-protected-resource.md) — add `/.well-known/oauth-protected-resource` (RFC9728) for Claude Remote MCP auth discovery.
 - [SQS Queue + Consumer Patterns](./sqs-queue-consumer.md) — queue-only, queue+consumer, and processor patterns (DLQs + partial batch failures).
@@ -71,7 +73,8 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
 
 - HTTP and routing: `AppTheoryHttpApi`, `AppTheoryRestApi`, `AppTheoryRestApiRouter`, domains, CORS, logging, and WAF
   guardrails.
-- MCP deployment: `AppTheoryMcpServer`, `AppTheoryRemoteMcpServer`, and `AppTheoryMcpProtectedResource`.
+- MCP deployment: `AppTheoryMcpServer`, canonical `AppTheoryMcpPaths`, `AppTheoryRemoteMcpServer`, and the deprecated
+  URL-valued compatibility props on `AppTheoryMcpProtectedResource`.
 - Event and ingestion surfaces: `AppTheoryQueue`, `AppTheoryEventBridgeBus`, `AppTheoryKinesisStream`,
   `AppTheoryCloudWatchLogsDestination`, `AppTheoryS3Ingest`, `AppTheoryVectorIndex`,
   `AppTheoryVectorIndexProps`, `AppTheoryVectorIndexBindOptions`, and `AppTheoryHttpIngestionEndpoint`.
@@ -86,7 +89,7 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `cdk/.jsii`.
 
 <details>
-<summary>136 exported top-level symbols</summary>
+<summary>137 exported top-level symbols</summary>
 
 ```text
 ApiBypassConfig, AppTheoryApiDomain, AppTheoryApiDomainProps, AppTheoryApp, AppTheoryAppProps
@@ -100,7 +103,7 @@ AppTheoryHostedZone, AppTheoryHostedZoneProps, AppTheoryHttpApi, AppTheoryHttpAp
 AppTheoryHttpApiProps, AppTheoryHttpApiStageOptions, AppTheoryHttpApiWafOptions, AppTheoryHttpIngestionEndpoint, AppTheoryHttpIngestionEndpointDomainOptions
 AppTheoryHttpIngestionEndpointProps, AppTheoryHttpIngestionEndpointStageOptions, AppTheoryJobsTable, AppTheoryJobsTableProps, AppTheoryKinesisStream
 AppTheoryKinesisStreamMapping, AppTheoryKinesisStreamMappingProps, AppTheoryKinesisStreamProps, AppTheoryKmsKey, AppTheoryKmsKeyProps
-AppTheoryLambdaRole, AppTheoryLambdaRoleProps, AppTheoryLambdaTrafficShiftType, AppTheoryMcpProtectedResource, AppTheoryMcpProtectedResourceProps
+AppTheoryLambdaRole, AppTheoryLambdaRoleProps, AppTheoryLambdaTrafficShiftType, AppTheoryMcpPaths, AppTheoryMcpProtectedResource, AppTheoryMcpProtectedResourceProps
 AppTheoryMcpServer, AppTheoryMcpServerDomainOptions, AppTheoryMcpServerProps, AppTheoryMcpServerStageOptions, AppTheoryMediaCdn
 AppTheoryMediaCdnProps, AppTheoryMicrovmController, AppTheoryMicrovmControllerFunctionProps, AppTheoryMicrovmControllerProps, AppTheoryMicrovmControllerStageOptions
 AppTheoryMicrovmHookMode, AppTheoryMicrovmImage, AppTheoryMicrovmImageBuildHooks, AppTheoryMicrovmImageCloudWatchLogging, AppTheoryMicrovmImageCodeArtifact

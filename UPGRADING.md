@@ -44,6 +44,27 @@ The CDK TypeScript library, jsii metadata, and generated Go bindings must come f
 Release so this validation and default stay aligned; do not mix `cdk/lib`, `.jsii`, or `cdk-go` artifacts across
 versions.
 
+### Namespace MCP server construct and static discovery deprecation
+
+`AppTheoryMcpServer` now owns the namespace MCP route bundle. Existing callers that omit
+`authorizationServerIssuer` and `jwksUri` keep the previous POST-only AgentCore template. Namespace applications
+should supply both props and register their Go handler through `oauth.RegisterMCPServer`; this produces an
+authenticated MCP route and public runtime-served RFC 9728 discovery routes. `mcpPath` is a literal synthesis-time
+path and defaults to `/mcp`.
+
+The namespace surface does not accept a protected-resource URL or origin. Discovery derives the resource host from
+each normalized request, while issuer and JWKS values are forwarded to the Lambda as runtime install config. Do not
+recreate a resource origin from API Gateway tokens at synthesis.
+
+The URL-valued `resource` and `authorizationServers` props on `AppTheoryMcpProtectedResource` are deprecated. The
+construct remains supported for existing synth-time-static REST API documents, and its optional `metadataPath` prop
+can select a literal static route without deriving that route from `resource`. This is a compatibility escape hatch,
+not the namespace deployment path. Migrate namespace applications to `AppTheoryMcpServer` plus
+`oauth.RegisterMCPServer`; no removal version is scheduled for the compatibility construct in the v3 line.
+
+Regenerate or consume matching jsii and `cdk-go` bindings when adopting this surface. `AppTheoryMcpPaths` exports the
+canonical CDK path set, and `runtime/oauth` exports the matching Go constants.
+
 ### TableTheory v3 dependency floor
 
 The next AppTheory major line adopts TableTheory v3.0.2 in all three runtimes. This changes the Go type identity exposed

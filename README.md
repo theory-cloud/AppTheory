@@ -103,7 +103,13 @@ AppTheory includes a complete [Model Context Protocol](https://modelcontextproto
 - [MCP integration guide](https://apptheory.theorycloud.ai/integrations/mcp/) — transport, JSON-RPC surface, registries, sessions, streaming
 - [Remote MCP deployment](https://apptheory.theorycloud.ai/integrations/remote-mcp/) — OAuth, protected resource metadata, Autheory integration
 - [MCP examples](examples/mcp/) — `tools-only`, `tools-resources-prompts`, `resumable-sse`
-- CDK constructs: `AppTheoryMcpServer`, `AppTheoryRemoteMcpServer`, `AppTheoryMcpProtectedResource`
+- Namespace deployment: `AppTheoryMcpServer` wires the literal `/mcp` path, public runtime-served RFC 9728 discovery,
+  and issuer/JWKS runtime config without accepting a protected-resource origin. Pair it with Go
+  `oauth.RegisterMCPServer` for the fixed SecureApp authenticated/public posture split.
+- Streaming deployment: `AppTheoryRemoteMcpServer`; the URL-valued `AppTheoryMcpProtectedResource` static-document
+  props remain only as deprecated compatibility surface.
+- [MCP server umbrella construct](https://apptheory.theorycloud.ai/features/mcp-server-construct/) — paths at synthesis,
+  hosts at request time, origins never
 
 ## Documentation
 

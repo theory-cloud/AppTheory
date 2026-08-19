@@ -6237,6 +6237,123 @@ test("AppTheoryMcpServer (basic) synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryMcpServer wires secure MCP and runtime discovery routes", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: fn,
+    authorizationServerIssuer: "https://auth.example.com",
+    jwksUri: "https://auth.example.com/.well-known/jwks.json",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const routes = resourcesOfType(template, "AWS::ApiGatewayV2::Route");
+  const routeByKey = new Map(routes.map((route) => [route.Properties?.RouteKey, route.Properties]));
+  for (const routeKey of [
+    "POST /mcp",
+    "GET /.well-known/oauth-protected-resource",
+    "GET /.well-known/oauth-protected-resource/mcp",
+  ]) {
+    assert.ok(routeByKey.has(routeKey), `Should wire ${routeKey}`);
+  }
+
+  const mcpRoute = routeByKey.get("POST /mcp");
+  const genericDiscovery = routeByKey.get("GET /.well-known/oauth-protected-resource");
+  const scopedDiscovery = routeByKey.get("GET /.well-known/oauth-protected-resource/mcp");
+  assert.equal(genericDiscovery.AuthorizationType, "NONE", "Discovery must stay unauthenticated at the edge");
+  assert.equal(scopedDiscovery.AuthorizationType, "NONE", "Path-scoped discovery must stay unauthenticated at the edge");
+  assert.deepEqual(genericDiscovery.Target, mcpRoute.Target, "Discovery and MCP must reach the same SecureApp handler");
+  assert.deepEqual(scopedDiscovery.Target, mcpRoute.Target, "Both discovery shapes must reach the SecureApp handler");
+
+  const fnResource = resourcesOfType(template, "AWS::Lambda::Function")[0];
+  const variables = fnResource.Properties.Environment.Variables;
+  assert.equal(variables.APPTHEORY_MCP_PATH, "/mcp");
+  assert.equal(variables.APPTHEORY_MCP_PROTECTED_RESOURCE_PATH, "/.well-known/oauth-protected-resource/mcp");
+  assert.equal(variables.APPTHEORY_MCP_AUTHORIZATION_SERVER_ISSUER, "https://auth.example.com");
+  assert.equal(variables.APPTHEORY_MCP_JWKS_URI, "https://auth.example.com/.well-known/jwks.json");
+  const parameterNames = new Set(Object.keys(template.Parameters ?? {}));
+  for (const a7Parameter of [
+    "TargetAccountId",
+    "NamespaceSlug",
+    "AuthorizationServerOrigin",
+    "AutheoryJwksUrl",
+  ]) {
+    assert.ok(!parameterNames.has(a7Parameter), `A6 must not emit A7 parameter ${a7Parameter}`);
+  }
+});
+
+test("AppTheoryMcpServer honors mcpPath without accepting a resource origin", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const server = new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: fn,
+    mcpPath: "/services/tools",
+    authorizationServerIssuer: "https://auth.example.com",
+    jwksUri: "https://auth.example.com/jwks.json",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const routeKeys = resourcesOfType(template, "AWS::ApiGatewayV2::Route")
+    .map((route) => route.Properties?.RouteKey);
+  assert.ok(routeKeys.includes("POST /services/tools"));
+  assert.ok(routeKeys.includes("GET /.well-known/oauth-protected-resource/services/tools"));
+  assert.ok(renderedString(server.endpoint).endsWith("/services/tools"));
+});
+
+test("AppTheoryMcpServerProps structurally excludes protected resource URL and origin props", () => {
+  const assembly = JSON.parse(fs.readFileSync(path.join(__dirname, "..", ".jsii"), "utf8"));
+  const props = assembly.types["@theory-cloud/apptheory-cdk.AppTheoryMcpServerProps"];
+  const names = new Set(props.properties.map((property) => property.name));
+  for (const forbidden of ["resource", "resourceUrl", "resourceOrigin", "origin", "url"]) {
+    assert.ok(!names.has(forbidden), `Namespace MCP surface must not expose ${forbidden}`);
+  }
+});
+
+test("AppTheoryMcpServer fails closed on partial auth config and non-literal paths", () => {
+  const app = new cdk.App();
+
+  function handler(stack) {
+    return new lambda.Function(stack, "Fn", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: "index.handler",
+      code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200 });"),
+    });
+  }
+
+  {
+    const stack = new cdk.Stack(app, "PartialAuthStack");
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        authorizationServerIssuer: "https://auth.example.com",
+      }),
+      /authorizationServerIssuer and jwksUri must be supplied together/,
+    );
+  }
+  {
+    const stack = new cdk.Stack(app, "OriginPathStack");
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        mcpPath: "https://resource.example.com/mcp",
+      }),
+      /mcpPath must be a literal absolute route path/,
+    );
+  }
+});
+
 test("AppTheoryMcpServer (with session table) synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -6801,5 +6918,39 @@ test("AppTheoryMcpProtectedResource synthesizes expected template", () => {
     writeSnapshot("mcp-protected-resource", template);
   } else {
     expectSnapshot("mcp-protected-resource", template);
+  }
+});
+
+test("AppTheoryMcpProtectedResource metadataPath selects the secondary static route", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-static-protected-resource-test",
+  });
+
+  new apptheory.AppTheoryMcpProtectedResource(stack, "Protected", {
+    router,
+    resource: cdk.Fn.join("", ["https://", "mcp.example.com/mcp"]),
+    authorizationServers: [cdk.Fn.join("", ["https://", "auth.example.com"])],
+    metadataPath: "/.well-known/oauth-protected-resource/custom-mcp",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.ok(
+    restApiMethodPaths(template).some(
+      (method) => method.method === "GET" && method.path === "/.well-known/oauth-protected-resource/custom-mcp",
+    ),
+    "Explicit metadataPath should own the secondary static document route",
+  );
+});
+
+test("AppTheoryMcpProtectedResource URL-valued props carry jsii deprecation notices", () => {
+  const assembly = JSON.parse(fs.readFileSync(path.join(__dirname, "..", ".jsii"), "utf8"));
+  const props = assembly.types["@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResourceProps"];
+  const byName = new Map(props.properties.map((property) => [property.name, property]));
+  for (const name of ["resource", "authorizationServers"]) {
+    const docs = byName.get(name)?.docs ?? {};
+    assert.match(docs.deprecated ?? "", /AppTheoryMcpServer/);
+    assert.equal(docs.stability, "deprecated");
   }
 });

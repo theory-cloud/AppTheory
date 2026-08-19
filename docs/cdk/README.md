@@ -15,6 +15,7 @@ patterns and treat `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts` as the 
 - [FaceTheory-First SSR Site](./ssr-site.md)
 - [AppSync Lambda Resolvers](./appsync-lambda-resolvers.md)
 - [REST API Router + Streaming](./rest-api-router-streaming.md)
+- [MCP Server Umbrella Construct](../features/mcp-server-construct.md)
 - [MCP Server for Bedrock AgentCore](./mcp-server-agentcore.md)
 - [Claude Remote MCP + Streaming](./mcp-server-remote-mcp.md)
 - [MCP Protected Resource Metadata](./mcp-protected-resource.md)

@@ -38,5 +38,6 @@ export * from "./microvm-network-connector";
 export * from "./microvm-image";
 export * from "./microvm-controller";
 export * from "./mcp-server";
+export * from "./mcp-paths";
 export * from "./mcp-protected-resource";
 export * from "./remote-mcp-server";

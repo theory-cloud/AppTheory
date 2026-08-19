@@ -1,4 +1,4 @@
-import { Stack } from "aws-cdk-lib";
+import { Stack, Token } from "aws-cdk-lib";
 import * as apigw from "aws-cdk-lib/aws-apigateway";
 import { Construct } from "constructs";
 
@@ -21,17 +21,34 @@ export interface AppTheoryMcpProtectedResourceProps {
   /**
    * The canonical protected resource identifier.
    *
-   * For Claude Remote MCP this should be your MCP endpoint URL (including `/mcp`),
-   * e.g. `https://mcp.example.com/mcp`.
+  * For Claude Remote MCP this should be your MCP endpoint URL (including `/mcp`),
+  * e.g. `https://mcp.example.com/mcp`.
+   *
+   * @deprecated Use AppTheoryMcpServer with runtime-served discovery. This
+   * URL-valued compatibility prop is retained for existing static documents.
    */
   readonly resource: string;
 
   /**
-   * One or more OAuth Authorization Server issuer/base URLs.
+  * One or more OAuth Authorization Server issuer/base URLs.
+  *
+  * Autheory should be the first (and usually only) entry.
    *
-   * Autheory should be the first (and usually only) entry.
+   * @deprecated Use AppTheoryMcpServer authorizationServerIssuer and jwksUri
+   * props with the Go runtime discovery helper.
    */
   readonly authorizationServers: string[];
+
+  /**
+   * Explicit literal route path for the secondary synth-time-static document.
+   *
+   * When omitted, the path is derived from a literal `resource` URL for full
+   * backwards compatibility. Set this only when a static mock integration is
+   * genuinely required; namespace applications should use AppTheoryMcpServer
+   * and runtime-served discovery instead.
+   * @default derived from resource
+   */
+  readonly metadataPath?: string;
 }
 
 /**
@@ -59,7 +76,9 @@ export class AppTheoryMcpProtectedResource extends Construct {
 
     const endpoint = ensureResourcePath(
       router.api.root,
-      metadataPathFromResourceURL(resource),
+      props.metadataPath === undefined
+        ? metadataPathFromResourceURL(resource)
+        : normalizeMetadataPath(props.metadataPath),
     );
 
     const body = Stack.of(this).toJsonString({
@@ -104,6 +123,23 @@ function metadataPathFromResourceURL(resource: string): string {
 
   const resourcePath = decodeURIComponent(parsed.pathname || "");
   return `/.well-known/oauth-protected-resource${resourcePath}`;
+}
+
+function normalizeMetadataPath(metadataPath: string): string {
+  if (Token.isUnresolved(metadataPath)) {
+    throw new Error("AppTheoryMcpProtectedResource: metadataPath must be a synthesis-time literal path");
+  }
+  const normalized = String(metadataPath ?? "").trim();
+  if (
+    !normalized.startsWith("/")
+    || normalized === "/"
+    || normalized.endsWith("/")
+    || normalized.includes("//")
+    || /[?#{}]/.test(normalized)
+  ) {
+    throw new Error("AppTheoryMcpProtectedResource: metadataPath must be a literal absolute route path");
+  }
+  return normalized;
 }
 
 function ensureResourcePath(root: apigw.IResource, path: string): apigw.IResource {

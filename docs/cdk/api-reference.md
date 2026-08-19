@@ -12,9 +12,12 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryHttpApi`: API Gateway HTTP API v2 plus Lambda proxy routes
 - `AppTheoryRestApi`: API Gateway REST API v1 plus single-Lambda proxy routes
 - `AppTheoryRestApiRouter`: REST API v1 multi-Lambda routing with streaming support
-- `AppTheoryMcpServer`: HTTP API v2 `POST /mcp` for Bedrock AgentCore
+- `AppTheoryMcpServer`: umbrella HTTP API v2 MCP route bundle with literal `mcpPath`, runtime-served RFC 9728 discovery,
+  and issuer/JWKS runtime config; omitting both auth props retains the existing POST-only AgentCore shape
+- `AppTheoryMcpPaths`: canonical MCP and OAuth discovery route paths
 - `AppTheoryRemoteMcpServer`: REST API v1 `/mcp` with streaming for Remote MCP
-- `AppTheoryMcpProtectedResource`: `/.well-known/oauth-protected-resource` metadata route
+- `AppTheoryMcpProtectedResource`: deprecated URL-valued compatibility surface for a synth-time-static
+  `/.well-known/oauth-protected-resource` document; `metadataPath` is its explicit static-route escape hatch
 - `AppTheoryJobsTable`: opinionated DynamoDB jobs ledger table
 - `AppTheoryS3Ingest`: secure S3 ingest front door with optional notifications
 - `AppTheoryVectorIndex`: S3 vector bucket/index plus vectorstore and Bedrock embedding env/grants
@@ -96,8 +99,11 @@ fails synthesis if an AppTheory-created log group is not backed by the expected 
 - Use `AppTheoryHttpApi` for the simplest HTTP API v2 deployment
 - Use `AppTheoryRestApi` when you need REST API v1 but not multi-Lambda routing
 - Use `AppTheoryRestApiRouter` when you need SSE or response streaming
-- Use `AppTheoryMcpServer` for Bedrock AgentCore
-- Use `AppTheoryRemoteMcpServer` plus `AppTheoryMcpProtectedResource` for Claude Remote MCP
+- Use `AppTheoryMcpServer` for namespace MCP applications and Bedrock AgentCore. Namespace applications supply
+  `authorizationServerIssuer` and `jwksUri`, then use the Go `oauth.RegisterMCPServer` helper so `/mcp` is
+  authenticated and discovery is public.
+- Use `AppTheoryRemoteMcpServer` when REST API v1 response streaming and resumable Remote MCP transport are required;
+  do not start new namespace applications on the URL-valued `AppTheoryMcpProtectedResource` compatibility construct.
 - Use `AppTheorySsrSite` when you need the canonical FaceTheory-first SSR/SSG/ISR deployment story
 - Use `AppTheoryJobsTable`, `AppTheoryS3Ingest`, and `AppTheoryCodeBuildJobRunner` for import pipelines
 - Use `AppTheoryVectorIndex` when an import pipeline or MCP tool needs S3 Vectors semantic recall

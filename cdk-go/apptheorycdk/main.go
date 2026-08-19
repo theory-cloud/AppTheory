@@ -575,6 +575,14 @@ func init() {
 		},
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpPaths",
+		reflect.TypeOf((*AppTheoryMcpPaths)(nil)).Elem(),
+		nil, // no members
+		func() interface{} {
+			return &jsiiProxy_AppTheoryMcpPaths{}
+		},
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResource",
 		reflect.TypeOf((*AppTheoryMcpProtectedResource)(nil)).Elem(),
 		[]_jsii_.Member{
@@ -602,7 +610,9 @@ func init() {
 			_jsii_.MemberProperty{JsiiProperty: "cnameRecord", GoGetter: "CnameRecord"},
 			_jsii_.MemberProperty{JsiiProperty: "domainName", GoGetter: "DomainName"},
 			_jsii_.MemberProperty{JsiiProperty: "endpoint", GoGetter: "Endpoint"},
+			_jsii_.MemberProperty{JsiiProperty: "mcpPath", GoGetter: "McpPath"},
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "protectedResourceMetadataPath", GoGetter: "ProtectedResourceMetadataPath"},
 			_jsii_.MemberProperty{JsiiProperty: "sessionTable", GoGetter: "SessionTable"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
 			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
