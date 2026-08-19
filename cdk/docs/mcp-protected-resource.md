@@ -2,7 +2,11 @@
 
 Claude Remote MCP (MCP auth `2025-06-18`) requires an OAuth **Protected Resource** metadata endpoint for discovery.
 
-This guide covers `AppTheoryMcpProtectedResource`, which adds:
+`AppTheoryMcpProtectedResource.resource` and `authorizationServers` are deprecated compatibility props for static
+documents. New namespace applications use `AppTheoryMcpServer` plus Go `oauth.RegisterMCPServer`, which derives the
+protected resource host from each request. See the [MCP Server Umbrella Construct](../../docs/features/mcp-server-construct.md).
+
+This compatibility construct adds:
 
 - `GET /.well-known/oauth-protected-resource/...resource path...`
 
@@ -60,6 +64,8 @@ new AppTheoryMcpProtectedResource(stack, "ProtectedResource", {
   `Authorization: Bearer ...` and emit the `WWW-Authenticate` challenge on 401.
 - The route is derived from `resource` per RFC9728, so a resource of
   `https://mcp.example.com/mcp` becomes `GET /.well-known/oauth-protected-resource/mcp`.
+- `metadataPath` may select an explicit literal static route when derivation is inappropriate. It does not make this
+  construct the namespace path and it does not change the deprecated URL-valued document props.
 - For AWS API Gateway REST APIs, `/.well-known/...` will be under the same stage/base-path
   as your `/mcp` route (matching what the client can reach).
 - For per-actor bundles (`/mcp/{actor}`), prefer `AppTheoryRemoteMcpServer({ actorPath: true })`,

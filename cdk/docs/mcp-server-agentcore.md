@@ -2,9 +2,13 @@
 
 This guide shows how to deploy an **MCP (Model Context Protocol)** endpoint for **Bedrock AgentCore** using **AppTheory CDK**.
 
-The construct you want is:
+For AgentCore's POST-only shape, use:
 
 - `AppTheoryMcpServer` — provisions an API Gateway v2 **HTTP API** with `POST /mcp` routed to your Lambda handler.
+
+For namespace applications, the same construct is the umbrella contract: supply `authorizationServerIssuer` and
+`jwksUri` together to add runtime-served RFC 9728 routes, then register the Go runtime with
+`oauth.RegisterMCPServer`. See the [MCP Server Umbrella Construct](../../docs/features/mcp-server-construct.md).
 
 It also supports:
 
@@ -185,7 +189,7 @@ When you’re using a custom domain, the construct maps the stage to the domain 
 
 ## Security note
 
-This construct wires a public HTTP endpoint by default. Secure it intentionally:
-
-- Enforce auth in your Lambda (shared secret header, JWT verification, etc.), and/or
-- Extend the API configuration in your own construct if you require authorizers/WAF/private networking.
+The legacy AgentCore shape is public when both auth props are omitted. Do not bolt on a parallel route or middleware
+path. Namespace applications use the single AppTheory path: supply `authorizationServerIssuer` and `jwksUri`, create a
+`SecureApp` with a principal resolver, and call `oauth.RegisterMCPServer`. That helper fixes the MCP endpoint at
+`Authenticated` posture and discovery at `Public` posture.

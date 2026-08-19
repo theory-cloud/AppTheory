@@ -4654,6 +4654,14 @@ const ContextKeyBearerClaims = "oauth.bearer_claims"
 
 const ContextKeyBearerToken = "oauth.bearer_token"
 
+const MCPPath = "/mcp"
+
+const OAuthAuthorizationServerMCPPath = "/.well-known/oauth-authorization-server/mcp"
+
+const OAuthProtectedResourceMCPPath = "/.well-known/oauth-protected-resource/mcp"
+
+const OAuthProtectedResourcePath = "/.well-known/oauth-protected-resource"
+
 var ErrAuthorizationCodeExpired = errors.New("authorization code expired")
 
 var ErrAuthorizationCodeNotFound = errors.New("authorization code not found")
@@ -4755,6 +4763,14 @@ type DynamicClientRegistrationResponse struct {
 	ClientSecretExpiresAt int64  `json:"client_secret_expires_at,omitempty"`
 }
 
+type MCPServerConfig struct {
+	MCPPath string
+
+	AuthorizationServerIssuer string
+
+	JWKSURI string
+}
+
 type MemoryAuthorizationCodeStore struct {
 	mu    sync.Mutex
 	codes map[string]*AuthorizationCodeRecord
@@ -4810,6 +4826,8 @@ func ClaudeDynamicClientRegistrationPolicy() DynamicClientRegistrationPolicy
 
 func NewAuthorizationServerMetadata(string) (*AuthorizationServerMetadata, error)
 
+func NewMCPProtectedResourceDiscoveryHandler(MCPServerConfig) (apptheory.Handler, error)
+
 func NewMemoryAuthorizationCodeStore() *MemoryAuthorizationCodeStore
 
 func NewMemoryBearerTokenValidator([]BearerTokenRecord, BearerTokenValidationOptions) BearerTokenClaimsValidator
@@ -4833,6 +4851,8 @@ func ProtectedResourceMetadataURLForRequest(map[string][]string) (string, bool)
 func ProtectedResourceWWWAuthenticate(string) string
 
 func RFC9728ResourceMetadataURL(string) (string, bool)
+
+func RegisterMCPServer(*apptheory.SecureApp, apptheory.Handler, MCPServerConfig) error
 
 func RequireBearerTokenMiddleware(RequireBearerTokenOptions) apptheory.Middleware
 

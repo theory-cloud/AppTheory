@@ -13,6 +13,7 @@ contract.
 ## Current feature guides
 
 - [SecureApp Closed-Default Routing](./secure-app.md)
+- [MCP Server Umbrella Construct](./mcp-server-construct.md)
 - [Sanitization](./sanitization.md)
 - [Observability Hooks](./observability.md)
 - [Logging Profiles](./logging-profiles.md)

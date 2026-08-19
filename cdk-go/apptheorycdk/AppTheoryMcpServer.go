@@ -12,7 +12,13 @@ import (
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3/internal"
 )
 
-// An MCP (Model Context Protocol) server construct that provisions an HTTP API Gateway v2 with a Lambda integration on POST /mcp, optional DynamoDB session table, and optional custom domain with Route53.
+// Umbrella deployment contract for a namespace MCP server.
+//
+// The construct provisions an HTTP API Gateway v2 with a Lambda integration
+// on the conventional POST /mcp path, optional runtime-served RFC 9728
+// discovery routes, optional DynamoDB session state, and an optional custom
+// domain. Resource origins are intentionally absent from the prop surface:
+// the Go runtime derives the protected resource host from each request.
 //
 // Example:
 //
@@ -33,10 +39,14 @@ type AppTheoryMcpServer interface {
 	CnameRecord() awsroute53.CnameRecord
 	// The custom domain name resource (if domain is configured).
 	DomainName() awsapigatewayv2.DomainName
-	// The MCP endpoint URL (POST /mcp).
+	// The MCP endpoint URL.
 	Endpoint() *string
+	// Literal MCP endpoint route path.
+	McpPath() *string
 	// The tree node.
 	Node() constructs.Node
+	// Path-scoped RFC 9728 discovery route for this MCP endpoint.
+	ProtectedResourceMetadataPath() *string
 	// The DynamoDB session table (if enableSessionTable is true).
 	SessionTable() awsdynamodb.ITable
 	// Returns a string representation of this construct.
@@ -117,11 +127,31 @@ func (j *jsiiProxy_AppTheoryMcpServer) Endpoint() *string {
 	return returns
 }
 
+func (j *jsiiProxy_AppTheoryMcpServer) McpPath() *string {
+	var returns *string
+	_jsii_.Get(
+		j,
+		"mcpPath",
+		&returns,
+	)
+	return returns
+}
+
 func (j *jsiiProxy_AppTheoryMcpServer) Node() constructs.Node {
 	var returns constructs.Node
 	_jsii_.Get(
 		j,
 		"node",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryMcpServer) ProtectedResourceMetadataPath() *string {
+	var returns *string
+	_jsii_.Get(
+		j,
+		"protectedResourceMetadataPath",
 		&returns,
 	)
 	return returns

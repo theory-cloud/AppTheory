@@ -463,7 +463,11 @@ here for operators who need implementation-level details:
 - `testkit/mcp`: deterministic in-process MCP client helpers (`NewClient`, `Initialize`, `ListTools`, `CallTool`,
   `ListResources`, `ReadResource`, `ListPrompts`, `GetPrompt`, `RawStream`, `ResumeStream`, `Stream.Response`,
   `Stream.Cancel`, `Stream.Next`, `Stream.ReadAll`) plus JSON-RPC request builders and assertions
-- `runtime/oauth`: protected-resource metadata, challenges, DCR, PKCE, and token-store helpers
+- `runtime/oauth`: protected-resource metadata, challenges, DCR, PKCE, token-store helpers, and the namespace MCP
+  bundle. `MCPServerConfig`, `RegisterMCPServer`, and `NewMCPProtectedResourceDiscoveryHandler` keep the MCP route
+  authenticated while registering request-host-derived RFC 9728 discovery with public SecureApp posture. Canonical
+  paths are exported as `MCPPath`, `OAuthProtectedResourcePath`, `OAuthProtectedResourceMCPPath`, and
+  `OAuthAuthorizationServerMCPPath`.
 - `testkit/oauth`: Claude-like end-to-end OAuth flow helpers for remote MCP tests (`NewClaudePublicClient`,
   `AuthorizeOptions`, `Authorize`)
 - TypeScript and Python expose matching MCP registries, server/test harnesses, in-memory/Dynamo stores, bearer-token
@@ -477,6 +481,8 @@ Remote MCP auth hardening notes:
 - Invalid-audience bearer tokens are intentionally fixture-pinned as authorization failures: AppTheory returns
   `403 app.forbidden` without a `WWW-Authenticate` challenge, matching insufficient-scope denial so a token bound to
   another resource is not treated as a rediscovery prompt. Missing or expired bearers remain `401` challenge cases.
+- Namespace deployments use `AppTheoryMcpServer` with `oauth.RegisterMCPServer`. Protected resource hosts are derived
+  from each request; neither CDK nor `MCPServerConfig` accepts a protected-resource origin.
 
 Related canonical integration guides:
 
@@ -495,8 +501,9 @@ includes:
 - `AppTheoryRestApi`
 - `AppTheoryRestApiRouter`
 - `AppTheoryMcpServer`
+- `AppTheoryMcpPaths`
 - `AppTheoryRemoteMcpServer`
-- `AppTheoryMcpProtectedResource`
+- `AppTheoryMcpProtectedResource` (deprecated URL-valued static-document props)
 - `AppTheoryJobsTable`
 - `AppTheoryS3Ingest`
 - `AppTheoryVectorIndex`
@@ -512,6 +519,7 @@ Start with:
 
 - [CDK Getting Started](./cdk/getting-started.md)
 - [CDK API Reference](./cdk/api-reference.md)
+- [MCP Server Umbrella Construct](./features/mcp-server-construct.md)
 - [Kinesis + CloudWatch Logs](./cdk/kinesis-cloudwatch-logs.md)
 - [CDK Import Pipeline Guides](./cdk/import-pipeline.md)
 - [S3 Vector Index](./cdk/vector-index.md)
@@ -526,7 +534,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>996 exported top-level symbols</summary>
+<summary>1003 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins, APIGatewayV2Request
@@ -714,6 +722,8 @@ ErrArtifactArchiveInvalid, ErrArtifactDigestMismatch, ErrArtifactInvalidRequest,
 ErrArtifactVersionMismatch, ErrArtifactVersionRequired, ErrAssumeRoleFailed, ErrCallerIdentityUnavailable,
 ErrExpectedAccountNotConfigured, MaxVersionedArtifactBytes, MaxVersionedArtifactEntries,
 VerifyVersionedArtifact, VersionedArtifact, VersionedArtifactRequest
+MCPPath, MCPServerConfig, NewMCPProtectedResourceDiscoveryHandler, OAuthAuthorizationServerMCPPath, OAuthProtectedResourceMCPPath
+OAuthProtectedResourcePath, RegisterMCPServer
 ```
 
 </details>

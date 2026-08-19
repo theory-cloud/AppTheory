@@ -6,7 +6,11 @@ title: MCP Protected Resource
 
 Claude Remote MCP requires an OAuth protected-resource metadata endpoint for discovery.
 
-This guide covers `AppTheoryMcpProtectedResource`, which adds:
+`AppTheoryMcpProtectedResource.resource` and `authorizationServers` are deprecated compatibility props for static
+documents. New namespace applications use `AppTheoryMcpServer` plus Go `oauth.RegisterMCPServer`, which derives the
+protected resource host from each request. See the [MCP Server Umbrella Construct](../features/mcp-server-construct.md).
+
+This compatibility construct adds:
 
 - `GET /.well-known/oauth-protected-resource/...resource path...`
 
@@ -63,6 +67,8 @@ new AppTheoryMcpProtectedResource(stack, "ProtectedResource", {
   `401`
 - the construct derives the metadata route from `resource` per RFC9728, so a resource of
   `https://mcp.example.com/mcp` becomes `GET /.well-known/oauth-protected-resource/mcp`
+- `metadataPath` may select an explicit literal static route when derivation is inappropriate; it remains secondary
+  compatibility behavior and does not accept a namespace protected-resource origin
 - the `resource` value should match the actual `/mcp` URL the client uses, including any custom domain or base path
 - for API Gateway REST APIs, `/.well-known/...` sits under the same stage or base path as your `/mcp` route
 - for per-actor bundles (`/mcp/{actor}`), prefer `AppTheoryRemoteMcpServer({ actorPath: true })`, which co-registers
