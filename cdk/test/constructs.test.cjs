@@ -221,6 +221,102 @@ test("AppTheoryFunction applies an exact stable execution role name", () => {
   ]);
 });
 
+test("AppTheoryFunction rejects an empty roleName", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryFunction(stack, "Fn", {
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        roleName: "",
+      }),
+    /roleName must not be empty/,
+  );
+});
+
+test("AppTheoryFunction rejects a whitespace-only roleName", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryFunction(stack, "Fn", {
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        roleName: "   ",
+      }),
+    /roleName must not be empty/,
+  );
+});
+
+test("AppTheoryFunction enforces the 64-character roleName limit", () => {
+  const app = new cdk.App();
+  const invalidStack = new cdk.Stack(app, "InvalidStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryFunction(invalidStack, "Fn", {
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        roleName: "r".repeat(65),
+      }),
+    /roleName must not exceed 64 characters/,
+  );
+
+  const validStack = new cdk.Stack(app, "ValidStack");
+  const roleName = "r".repeat(64);
+  new apptheory.AppTheoryFunction(validStack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    roleName,
+  });
+
+  const template = assertions.Template.fromStack(validStack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+  assert.equal(roles.length, 1, "Should synthesize exactly one execution role");
+  assert.equal(roles[0].Properties?.RoleName, roleName);
+});
+
+test("AppTheoryFunction rejects characters outside the IAM roleName pattern", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryFunction(stack, "Fn", {
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        roleName: "bad name/with*chars",
+      }),
+    /roleName must match \[\\w\+=,\.@-\]\+/,
+  );
+});
+
+test("AppTheoryFunction preserves every IAM roleName character class", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const roleName = "Role_Name+Equals=Comma,Dot.At@Hyphen-09";
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    roleName,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+  assert.equal(roles.length, 1, "Should synthesize exactly one execution role");
+  assert.equal(roles[0].Properties?.RoleName, roleName);
+});
+
 test("AppTheoryFunction preserves CDK-managed VPC policies when applying roleName", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");

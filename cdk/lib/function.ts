@@ -170,6 +170,15 @@ export class AppTheoryFunction extends Construct {
     });
 
     if (roleName !== undefined) {
+      if (!roleName.trim()) {
+        throw new Error("AppTheoryFunction roleName must not be empty");
+      }
+      if (roleName.length > 64) {
+        throw new Error("AppTheoryFunction roleName must not exceed 64 characters");
+      }
+      if (!/^[\w+=,.@-]+$/.test(roleName)) {
+        throw new Error("AppTheoryFunction roleName must match [\\w+=,.@-]+");
+      }
       const roleResource = this.fn.role?.node.defaultChild;
       if (!(roleResource instanceof iam.CfnRole)) {
         throw new Error(
