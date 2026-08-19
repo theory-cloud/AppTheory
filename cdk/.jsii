@@ -10179,7 +10179,7 @@
           "abstract": true,
           "docs": {
             "default": "undefined",
-            "remarks": "The value is forwarded unchanged to AppTheoryFunction. Synthesis fails if\nAppTheory cannot apply the requested name exactly.",
+            "remarks": "AppTheoryFunction receives the value unchanged. Concrete names are synthesis-validated against IAM's `[\\w+=,.@-]+` character set and 64-character limit; token-valued names are accepted and IAM validates the resolved value at deploy time, so an invalid resolved name fails deployment rather than synthesis.\nThis exemption keeps account-agnostic synthesis representable for the THE-2861 token-valued-input failure class. Synthesis still fails if AppTheory cannot apply the requested name exactly.",
             "summary": "Stable physical name for the app function's AppTheory-managed IAM role."
           },
           "immutable": true,
@@ -13783,7 +13783,7 @@
           "abstract": true,
           "docs": {
             "default": "undefined",
-            "remarks": "AppTheory renames the role created by the Lambda L2 so all CDK-computed\nmanaged policies are preserved, and fails synthesis if the requested name\ncannot be applied exactly. Do not combine this with the inherited `role`\nprop; caller-provided roles own their physical name.",
+            "remarks": "AppTheory preserves the Lambda L2's policies. Concrete names are synthesis-validated against IAM's `[\\w+=,.@-]+` character set and 64-character limit.\nToken-valued names are accepted and IAM validates the resolved value at deploy time, so an invalid resolved name fails deployment rather than synthesis.\nThis exemption keeps account-agnostic synthesis representable for the THE-2861 token-valued-input failure class. Do not combine this with the inherited `role`\nprop; caller-provided roles own their physical name.",
             "summary": "Stable physical name for the AppTheory-managed Lambda execution role."
           },
           "immutable": true,
@@ -27651,5 +27651,5 @@
     }
   },
   "version": "3.0.2",
-  "fingerprint": "u88fwu41pbVQIm2JByfACzW9f/putDLVr53dm6/Mt5M="
+  "fingerprint": "9VYRbHPU5rwzI+yKKYN6j8Pv3CKQFi7L3Btowiov8sk="
 }

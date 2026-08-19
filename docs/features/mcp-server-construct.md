@@ -43,10 +43,15 @@ non-empty, non-percent-encoded host, so WHATWG recovery forms such as `https:///
 percent-encoded hostnames fail at synthesis instead of later at Go runtime initialization. CDK tokens for either value
 are forwarded unparsed and remain subject to the same fail-closed Go initialization checks after resolution. WHATWG and
 Go parsing are not used to derive or compare the protected-resource origin: issuer and JWKS values are install config,
-while only the request-derived resource identifier participates in RFC 9728 resource string matching. The two parsers
-still differ in safe directions at their margins: CDK rejects an empty fragment marker and malformed numeric IPv4-like
-hosts such as `256.256.256.256` that Go can parse as host text. Runtime initialization remains the final RFC 3986 check
-for token-resolved values and any residual WHATWG/RFC 3986 difference. `mcpPath` must be a synthesis-time literal
+while only the request-derived resource identifier participates in RFC 9728 resource string matching. Residual parser
+differences include one measured dangerous-direction case: an embedded ASCII TAB, CR, or LF in a literal issuer or
+`jwksUri` (for example, `"https://auth.example.com\t/jwks.json"`) is accepted by CDK because WHATWG strips those
+characters anywhere in the input, but rejected by Go's `url.Parse`; this pre-existing case fails closed during runtime
+initialization. Safe-direction differences include CDK rejecting an empty fragment marker and malformed numeric
+IPv4-like hosts such as `256.256.256.256` that Go can parse as host text. The new percent-sign check also makes IPv6
+zone-id literals such as `https://[fe80::1%25eth0]/…` CDK-reject while Go accepts them. Runtime initialization remains
+the final RFC 3986 check for token-resolved values and any residual WHATWG/RFC 3986 difference. `mcpPath` must be a
+synthesis-time literal
 absolute route path: it may contain only RFC 3986 path characters (with percent-encoding for whitespace and characters
 outside that set), must not contain `.` or `..` segments, and must already be in clean path form. The named
 CloudFormation install-parameter contract is a separate deployment-layer capability and is not emitted by this
@@ -80,8 +85,10 @@ exactly `resource` and `authorization_servers`. The JWKS URI is forwarded to the
 `APPTHEORY_MCP_JWKS_URI` for the application's `SecurePrincipalResolver`; it is not published in the RFC 9728 document.
 The handler accepts HTTPS request origins and HTTP only for loopback smoke tests. Missing or unsafe hosts fail with
 `400`; missing or invalid install auth config fails application setup. Before resource construction, the request origin
-is canonicalized for RFC 9728 string matching: scheme and host are lowercased, a trailing DNS root dot is removed,
-default HTTPS `:443` and loopback HTTP `:80` ports are omitted, and non-default ports are preserved.
+is canonicalized for RFC 9728 string matching: scheme and host are lowercased, a trailing DNS root dot is removed for
+HTTPS, default HTTPS `:443` and loopback HTTP `:80` ports are omitted, and non-default ports are preserved. The loopback
+HTTP scheme check runs before canonicalization, so `http://localhost.` is rejected rather than having its root dot
+removed; the base implementation behaves identically.
 
 Every response from these runtime-derived discovery routes, including `400` errors, carries `Cache-Control: no-store`.
 An edge cache or front proxy in front of them **MUST NOT** cache the response: `resource` is derived from the

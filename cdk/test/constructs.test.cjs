@@ -221,6 +221,45 @@ test("AppTheoryFunction applies an exact stable execution role name", () => {
   ]);
 });
 
+test("AppTheoryFunction preserves an Fn.importValue token roleName", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    roleName: cdk.Fn.importValue("SharedExecutionRoleName"),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+
+  assert.equal(roles.length, 1, "Should synthesize exactly one execution role");
+  assert.deepEqual(roles[0].Properties?.RoleName, { "Fn::ImportValue": "SharedExecutionRoleName" });
+});
+
+test("AppTheoryFunction preserves a CfnParameter token roleName", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const roleName = new cdk.CfnParameter(stack, "ExecutionRoleName", { type: "String" });
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    roleName: roleName.valueAsString,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+  const parameters = Object.keys(template.Parameters ?? {});
+
+  assert.equal(roles.length, 1, "Should synthesize exactly one execution role");
+  assert.ok(parameters.includes("ExecutionRoleName"), "Should synthesize the role name parameter");
+  assert.deepEqual(roles[0].Properties?.RoleName, { Ref: "ExecutionRoleName" });
+});
+
 test("AppTheoryFunction rejects an empty roleName", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -386,7 +425,7 @@ test("AppTheoryFunction fails closed when a stable role name cannot be honored",
   );
 });
 
-test("AppTheoryFunction fails closed when the generated role default child is not a CfnRole", () => {
+test("AppTheoryFunction fails closed for a token roleName when the generated role default child is not a CfnRole", () => {
   const defaultChildDescriptor = Object.getOwnPropertyDescriptor(Node.prototype, "defaultChild");
   assert.ok(defaultChildDescriptor?.get, "constructs.Node.defaultChild getter must be available");
 
@@ -410,7 +449,7 @@ test("AppTheoryFunction fails closed when the generated role default child is no
           runtime: lambda.Runtime.NODEJS_24_X,
           handler: "index.handler",
           code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
-          roleName: "apptheory-required-runtime",
+          roleName: cdk.Fn.importValue("SharedExecutionRoleName"),
         }),
       /default child is not an AWS::IAM::Role/,
     );
@@ -2694,6 +2733,25 @@ test("AppTheoryApp forwards an exact stable execution role name", () => {
     "arn:{\"Ref\":\"AWS::Partition\"}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
     "arn:{\"Ref\":\"AWS::Partition\"}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
   ]);
+});
+
+test("AppTheoryApp forwards an Fn.importValue token execution role name", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryApp(stack, "App", {
+    appName: "apptheory-token-role-app",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    roleName: cdk.Fn.importValue("SharedAppExecutionRoleName"),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+
+  assert.equal(roles.length, 1, "Should synthesize exactly one app execution role");
+  assert.deepEqual(roles[0].Properties?.RoleName, { "Fn::ImportValue": "SharedAppExecutionRoleName" });
 });
 
 test("AppTheoryApp forwards logRemovalPolicy to its named function log group", () => {

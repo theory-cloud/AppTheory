@@ -1,4 +1,4 @@
-import { Duration, RemovalPolicy } from "aws-cdk-lib";
+import { Duration, RemovalPolicy, Token } from "aws-cdk-lib";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as codedeploy from "aws-cdk-lib/aws-codedeploy";
 import * as iam from "aws-cdk-lib/aws-iam";
@@ -114,9 +114,9 @@ export interface AppTheoryFunctionProps extends lambda.FunctionProps {
   /**
    * Stable physical name for the AppTheory-managed Lambda execution role.
    *
-   * AppTheory renames the role created by the Lambda L2 so all CDK-computed
-   * managed policies are preserved, and fails synthesis if the requested name
-   * cannot be applied exactly. Do not combine this with the inherited `role`
+   * AppTheory preserves the Lambda L2's policies. Concrete names are synthesis-validated against IAM's `[\w+=,.@-]+` character set and 64-character limit.
+   * Token-valued names are accepted and IAM validates the resolved value at deploy time, so an invalid resolved name fails deployment rather than synthesis.
+   * This exemption keeps account-agnostic synthesis representable for the THE-2861 token-valued-input failure class. Do not combine this with the inherited `role`
    * prop; caller-provided roles own their physical name.
    *
    * @default undefined
@@ -184,14 +184,16 @@ export class AppTheoryFunction extends Construct {
     });
 
     if (roleName !== undefined) {
-      if (!roleName.trim()) {
-        throw new Error("AppTheoryFunction roleName must not be empty");
-      }
-      if (roleName.length > 64) {
-        throw new Error("AppTheoryFunction roleName must not exceed 64 characters");
-      }
-      if (!/^[\w+=,.@-]+$/.test(roleName)) {
-        throw new Error("AppTheoryFunction roleName must match [\\w+=,.@-]+");
+      if (!Token.isUnresolved(roleName)) {
+        if (!roleName.trim()) {
+          throw new Error("AppTheoryFunction roleName must not be empty");
+        }
+        if (roleName.length > 64) {
+          throw new Error("AppTheoryFunction roleName must not exceed 64 characters");
+        }
+        if (!/^[\w+=,.@-]+$/.test(roleName)) {
+          throw new Error("AppTheoryFunction roleName must match [\\w+=,.@-]+");
+        }
       }
       const roleResource = this.fn.role?.node.defaultChild;
       if (!(roleResource instanceof iam.CfnRole)) {
