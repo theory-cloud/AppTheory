@@ -20,14 +20,13 @@ Notes:
 - `SEC-3` (supply-chain) may materialize Node dependencies with scripts disabled and scan `node_modules` lifecycle hooks,
   plus lightweight scans of `go.mod` and Python dependency files. Use the allowlist only with justification:
   `gov-infra/planning/apptheory-supply-chain-allowlist.txt`.
-- The former `SEC-2` exceptions for `GHSA-mh99-v99m-4gvg` are retired. The patched graph uses
-  `brace-expansion@1.1.17` in `ts/` and AWS CDK `2.263.0`, which bundles `brace-expansion@5.0.8`, in `cdk/` and the CDK
-  examples. The checkers now require both zero scanner findings and the exact patched graph; any package, parent,
-  version, path, or finding drift fails closed.
+- The former AWS CDK `SEC-2` exceptions are retired. The patched graph uses AWS CDK `2.265.0`, which bundles
+  `brace-expansion@5.0.9`, in `cdk/` and the scanned CDK examples. The AWS CDK checker now requires both zero scanner
+  findings and the exact patched graph; any package, parent, version, path, or finding drift fails closed.
 - The `ts/` SEC-2 gate currently depends on OSV serving the advisory's multi-range record, which identifies `1.1.17` as
   fixed. A stale single-range record (`introduced: 0`, `fixed: 5.0.8`) is a known flake vector: it misclassifies
   `brace-expansion@1.1.17` and fails closed with `unexpected vulnerability GHSA-mh99-v99m-4gvg in
-  brace-expansion@1.1.17`. The AWS CDK graph is unaffected because its bundled `5.0.8` is fixed in both record variants.
+  brace-expansion@1.1.17`. The AWS CDK graph is unaffected because its bundled `5.0.9` is fixed in both record variants.
 
 ## What’s In Here
 

@@ -3551,9 +3551,363 @@ def _empty_response() -> CanonicalResponse:
     )
 
 
+def _secure_fixture_posture(runtime: Any, route: dict[str, Any]) -> Any:
+    posture = str(route.get("posture", ""))
+    if posture == "public":
+        return runtime.public()
+    if posture == "optional":
+        return runtime.optional()
+    if posture == "authenticated":
+        return runtime.authenticated(*(route.get("scopes") or []))
+    if posture == "internal_only":
+        return runtime.internal_only()
+    return object()
+
+
+def _secure_construction_error_matches(expected: dict[str, Any], message: str) -> bool:
+    if expected.get("construction_error_present") and not message:
+        return False
+    if expected.get("construction_error") and message != str(expected["construction_error"]):
+        return False
+    if expected.get("construction_error_contains") and str(expected["construction_error_contains"]) not in message:
+        return False
+    if not any(
+        key in expected
+        for key in ("construction_error_present", "construction_error", "construction_error_contains")
+    ):
+        return not message
+    return True
+
+
+def _secure_openapi_error_matches(expected: dict[str, Any], message: str) -> bool:
+    exact = str(expected.get("openapi_error") or "")
+    contains = str(expected.get("openapi_error_contains") or "")
+    if not exact and not contains:
+        return not message
+    if not message or (exact and message != exact):
+        return False
+    return not contains or contains in message
+
+
+def _secure_response_matches(expected: dict[str, Any], actual: Any) -> bool:
+    if actual is None:
+        return False
+    expected_body = decode_fixture_body(expected.get("body")) if expected.get("body") else b""
+    return (
+        int(expected.get("status", 0)) == int(actual.status)
+        and canonicalize_headers(expected.get("headers") or {}) == canonicalize_headers(actual.headers or {})
+        and list(expected.get("cookies") or []) == list(actual.cookies or [])
+        and bool(expected.get("is_base64")) == bool(actual.is_base64)
+        and expected_body == bytes(actual.body)
+    )
+
+
+def _secure_error_code(body: Any) -> str:
+    try:
+        if isinstance(body, bytes):
+            body = body.decode("utf-8")
+        return str((json.loads(str(body or "")) or {}).get("error", {}).get("code", ""))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _secure_object_subset(expected: dict[str, Any], actual: dict[str, Any]) -> bool:
+    return all(actual.get(key) == value for key, value in expected.items())
+
+
+def _secure_array_subset(expected: list[dict[str, Any]], actual: list[dict[str, Any]]) -> bool:
+    return len(expected) == len(actual) and all(
+        _secure_object_subset(item, actual[index]) for index, item in enumerate(expected)
+    )
+
+
+def run_fixture_secure(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, CanonicalResponse, dict[str, Any], _DummyEffectsApp]:
+    runtime = _load_apptheory_runtime()
+    setup = (fixture.get("setup") or {}).get("secure_app") or {}
+    steps = (fixture.get("input") or {}).get("secure_steps") or []
+    expected_steps = (fixture.get("expect") or {}).get("secure_steps") or []
+    effects = _DummyEffectsApp()
+    empty = _empty_response()
+    if len(steps) != len(expected_steps):
+        return False, "secure step count mismatch", empty, {}, effects
+    if len(steps) == 1 and steps[0].get("operation") == "construct":
+        message = ""
+        try:
+            kwargs: dict[str, Any] = {
+                "tier": setup.get("tier"),
+                "websocket_client_factory": 7 if setup.get("invalid_websocket_factory") else None,
+            }
+            if setup.get("unknown_option"):
+                kwargs["unknown_option"] = True
+            app = runtime.SecureApp(**kwargs)
+            handler = lambda _ctx: runtime.json(200, {"ok": True})
+            for route in setup.get("routes") or []:
+                posture = _secure_fixture_posture(runtime, route)
+                if route.get("surface") == "http":
+                    app.handle(route.get("method", ""), route.get("path", ""), handler, posture)
+                elif route.get("surface") == "appsync":
+                    app.appsync_field(route.get("parent_type", ""), route.get("field", ""), handler, posture)
+                elif route.get("surface") == "websocket":
+                    app.websocket(route.get("route_key", ""), handler, posture)
+        except Exception as exc:  # noqa: BLE001
+            message = str(exc)
+        return (
+            _secure_construction_error_matches(expected_steps[0], message),
+            "secure construction error mismatch",
+            empty,
+            {},
+            effects,
+        )
+
+    state: dict[str, Any] = {
+        "current": None,
+        "resolver_calls": 0,
+        "policy_calls": 0,
+        "middleware_calls": 0,
+        "handler_calls": 0,
+        "trace": [],
+        "principal": None,
+    }
+    connections: dict[str, Any] = {}
+
+    def resolver(ctx: Any) -> Any:
+        state["resolver_calls"] += 1
+        current = state["current"] or {}
+        resolver_error = current.get("resolver_error")
+        if resolver_error:
+            raise runtime.AppError(resolver_error["code"], resolver_error["message"])
+        raw = current.get("principal")
+        if raw is not None:
+            return runtime.SecurePrincipal(
+                identity=str(raw.get("identity", "")),
+                kind=str(raw.get("kind", "")),
+                scopes=list(raw.get("scopes") or []),
+                claims=_clone_json(raw.get("claims") or {}),
+            )
+        if current.get("principal_from_appsync_identity"):
+            appsync = ctx.as_appsync()
+            identity = appsync.identity if appsync is not None else {}
+            scopes = identity.get("scopes") or []
+            return runtime.SecurePrincipal(
+                identity=str(identity.get("sub", "")),
+                kind="external",
+                scopes=[str(scope) for scope in scopes] if isinstance(scopes, list) else [],
+                claims={},
+            )
+        websocket = ctx.as_websocket()
+        if websocket is not None and websocket.route_key != "$connect":
+            stored = connections.get(websocket.connection_id)
+            if stored is not None:
+                return runtime.SecurePrincipal(**_clone_json(stored))
+        return None
+
+    def policy_hook(_ctx: Any) -> Any:
+        state["policy_calls"] += 1
+        return runtime.PolicyDecision(code="app.rate_limited", message="rate limited")
+
+    app_options: dict[str, Any] = {
+        "tier": setup.get("tier") or "p2",
+        "id_generator": _MCPFixedIdGenerator("req_test_123"),
+        "websocket_support": bool(setup.get("websocket_support")),
+    }
+    if setup.get("principal_resolver") is not False:
+        app_options["principal_resolver"] = resolver
+    if setup.get("policy_hook"):
+        app_options["policy_hook"] = policy_hook
+    app = runtime.SecureApp(**app_options)
+
+    def middleware(ctx: Any, next_handler: Any) -> Any:
+        state["middleware_calls"] += 1
+        return next_handler(ctx)
+
+    app.use(middleware)
+
+    def handler(ctx: Any) -> Any:
+        state["handler_calls"] += 1
+        state["trace"] = list(ctx.middleware_trace)
+        principal = ctx.secure_principal()
+        current = state["current"] or {}
+        if current.get("mutate_returned") and principal is not None:
+            principal.identity = "mutated"
+            if principal.scopes:
+                principal.scopes[0] = "mutated"
+            if isinstance(principal.claims.get("nested"), dict):
+                principal.claims["nested"]["value"] = "mutated"
+            principal = ctx.secure_principal()
+        if principal is None:
+            state["principal"] = None
+        else:
+            state["principal"] = {
+                "identity": principal.identity,
+                "kind": str(principal.kind),
+                "scopes": list(principal.scopes),
+                "claims": _clone_json(principal.claims),
+            }
+        websocket = ctx.as_websocket()
+        if current.get("persist_connection") and principal is not None and websocket is not None:
+            connections[websocket.connection_id] = _clone_json(state["principal"])
+        return runtime.json(200, {"ok": True})
+
+    for route in setup.get("routes") or []:
+        posture = (
+            runtime.public()
+            if setup.get("inject_posture_records") and route.get("posture") in {"missing", "invalid"}
+            else _secure_fixture_posture(runtime, route)
+        )
+        surface = route.get("surface")
+        if surface == "http":
+            app.handle(route.get("method", ""), route.get("path", ""), handler, posture)
+        elif surface == "appsync":
+            app.appsync_field(route.get("parent_type", ""), route.get("field", ""), handler, posture)
+        elif surface == "websocket":
+            app.websocket(route.get("route_key", ""), handler, posture)
+        else:
+            return False, "unknown secure route surface", empty, {}, effects
+
+    if setup.get("inject_posture_records"):
+        core = getattr(app, "_SecureApp__core")
+        http_index = 0
+        for route in setup.get("routes") or []:
+            if route.get("surface") == "websocket":
+                record = core._ws_routes.get(str(route.get("route_key", "")).strip())
+            else:
+                record = core._router._routes[http_index]
+                http_index += 1
+            if route.get("posture") == "missing":
+                record.posture_present = False
+            elif route.get("posture") == "invalid":
+                if route.get("surface") == "websocket":
+                    record.posture = "invalid"
+                else:
+                    record.secure_posture = "invalid"
+
+    for index, step in enumerate(steps):
+        expected = expected_steps[index]
+        state.update(
+            current=step,
+            resolver_calls=0,
+            policy_calls=0,
+            middleware_calls=0,
+            handler_calls=0,
+            trace=[],
+            principal=None,
+        )
+        event = (step.get("aws_event") or {}).get("event") or {}
+        if step.get("revoke_connection"):
+            connection_id = str((event.get("requestContext") or {}).get("connectionId", ""))
+            connections.pop(connection_id, None)
+
+        operation = step.get("operation")
+        result: dict[str, Any] = {"status": 0, "error_code": ""}
+        if operation == "http":
+            request = step.get("request") or {}
+            response = app.serve(
+                runtime.Request(
+                    method=request.get("method", ""),
+                    path=request.get("path", ""),
+                    query=request.get("query") or {},
+                    headers=request.get("headers") or {},
+                    body=decode_fixture_body(request.get("body")),
+                    is_base64=bool(request.get("is_base64")),
+                )
+            )
+            result.update(status=response.status, error_code=_secure_error_code(response.body), response=response)
+        elif operation == "appsync":
+            output = app.serve_appsync(event)
+            if isinstance(output, dict) and output.get("pay_theory_error") is True:
+                result.update(
+                    status=int((output.get("error_data") or {}).get("status_code", 500)),
+                    error_code=str((output.get("error_info") or {}).get("code", "")),
+                )
+            else:
+                result["status"] = 200
+        elif operation == "websocket":
+            output = app.serve_websocket(event)
+            result.update(
+                status=int(output.get("statusCode", 0)),
+                error_code=_secure_error_code(output.get("body", "")),
+            )
+        elif operation == "routes":
+            routes = [asdict(route) for route in app.routes()]
+            if step.get("mutate_routes") and routes:
+                routes[0]["path"] = "/mutated"
+                if routes[0].get("scopes"):
+                    routes[0]["scopes"][0] = "mutated"
+                routes = [asdict(route) for route in app.routes()]
+            result["routes"] = routes
+        elif operation == "openapi":
+            raw = step.get("openapi") or setup.get("openapi") or {}
+            try:
+                document = app.generate_openapi(raw)
+            except Exception as exc:  # noqa: BLE001
+                result["openapi_error"] = str(exc)
+            else:
+                paths = document.get("paths") or {}
+                result["openapi"] = {
+                    "x-apptheory-contract-mode": document.get("x-apptheory-contract-mode"),
+                    "http_route_count": len(paths),
+                    "has_appsync_path": "/note" in paths,
+                    "has_websocket_path": "/send" in paths,
+                    "proxy_path": "/files/{path}",
+                    "public_posture": (paths.get("/public") or {}).get("get", {}).get("x-apptheory-auth-posture"),
+                    "files_posture": (paths.get("/files/{path}") or {}).get("get", {}).get("x-apptheory-auth-posture"),
+                    "files_scopes": (paths.get("/files/{path}") or {}).get("get", {}).get("x-apptheory-required-scopes"),
+                    "optional_posture": (paths.get("/optional") or {}).get("get", {}).get("x-apptheory-auth-posture"),
+                    "optional_security": (paths.get("/optional") or {}).get("get", {}).get("security"),
+                    "internal_posture": (paths.get("/internal") or {}).get("post", {}).get("x-apptheory-auth-posture"),
+                    "internal_security": (paths.get("/internal") or {}).get("post", {}).get("security"),
+                }
+                result["openapi_json"] = app.generate_openapi_json(raw)
+
+        name = str(step.get("name", ""))
+        if int(expected.get("status", 0)) != int(result.get("status", 0)):
+            return False, f"secure {name} status mismatch", empty, {}, effects
+        if expected.get("error_code") and expected.get("error_code") != result.get("error_code"):
+            return False, f"secure {name} error mismatch", empty, {}, effects
+        if operation in {"http", "appsync", "websocket"}:
+            if (
+                state["resolver_calls"] != int(expected.get("resolver_calls", 0))
+                or state["policy_calls"] != int(expected.get("policy_calls", 0))
+                or state["middleware_calls"] != int(expected.get("middleware_calls", 0))
+                or state["handler_calls"] != int(expected.get("handler_calls", 0))
+            ):
+                return False, f"secure {name} side effects mismatch", empty, {}, effects
+            if "trace" in expected and expected["trace"] != state["trace"]:
+                return False, f"secure {name} trace mismatch", empty, {}, effects
+            if "principal" in expected and expected["principal"] != state["principal"]:
+                return False, f"secure {name} principal mismatch", empty, {}, effects
+            if expected.get("response") and not _secure_response_matches(expected["response"], result.get("response")):
+                return False, f"secure {name} response mismatch", empty, {}, effects
+        if operation == "routes" and not _secure_array_subset(expected.get("routes") or [], result.get("routes") or []):
+            return False, "secure routes mismatch", empty, {}, effects
+        if operation == "openapi" and not _secure_openapi_error_matches(
+            expected, str(result.get("openapi_error") or "")
+        ):
+            return False, "secure openapi error mismatch", empty, {}, effects
+        if operation == "openapi" and result.get("openapi_error"):
+            continue
+        if operation == "openapi" and not _secure_object_subset(
+            expected.get("openapi") or {}, result.get("openapi") or {}
+        ):
+            return False, "secure openapi projection mismatch", empty, {}, effects
+        if (
+            operation == "openapi"
+            and expected.get("openapi_json")
+            and expected.get("openapi_json") != result.get("openapi_json")
+        ):
+            return False, "secure openapi json mismatch", empty, {}, effects
+
+    return True, "", empty, {}, effects
+
+
+
 def run_fixture(
     fixture: dict[str, Any],
 ) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+    if isinstance((fixture.get("input") or {}).get("secure_steps"), list):
+        return run_fixture_secure(fixture)
     if is_openapi_contract_fixture(fixture):
         return compare_openapi_contract(fixture)
 

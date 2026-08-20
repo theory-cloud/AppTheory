@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import type { AppSyncResolverEvent } from "./aws-types.js";
 import { type Clock } from "./clock.js";
 import { type IdGenerator } from "./ids.js";
+import { type SecurePrincipal } from "./secure-principal.js";
 import type { Headers, Query, Response, SourceProvenance } from "./types.js";
 /** Client shape used by WebSocketContext to manage API Gateway WebSocket connections. */
 export interface WebSocketManagementClientLike {
@@ -62,6 +63,7 @@ export declare class Context {
     private readonly _webSocket;
     private readonly _appSync;
     private readonly _values;
+    private _securePrincipal;
     constructor(options: {
         request: Context["request"];
         params?: Record<string, string>;
@@ -99,6 +101,8 @@ export declare class Context {
     asWebSocket(): WebSocketContext | null;
     /** Returns AppSync resolver metadata for AppSync routes. */
     asAppSync(): AppSyncContext | null;
+    /** Returns a defensive deep copy of the resolved secure principal. */
+    securePrincipal(): SecurePrincipal | null;
 }
 /** AppTheory HTTP route handler. */
 export type Handler = (ctx: Context) => Response | Promise<Response>;

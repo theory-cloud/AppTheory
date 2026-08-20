@@ -73,6 +73,10 @@ type route struct {
 	OptionalAuth     bool
 	RequiredScopes   []string
 	RequiredAnyScope []string
+	Secure           bool
+	SecureSurface    SecureRouteSurface
+	PosturePresent   bool
+	Posture          AuthPosture
 
 	staticCount int
 	paramCount  int
@@ -93,6 +97,14 @@ func (r *router) add(method, pattern string, handler Handler, opts routeOptions)
 }
 
 func (r *router) addStrict(method, pattern string, handler Handler, opts routeOptions) error {
+	return r.addRecord(method, pattern, handler, opts, false, "", AuthPosture{}, false)
+}
+
+func (r *router) addSecure(method, pattern string, handler Handler, surface SecureRouteSurface, posture AuthPosture) error {
+	return r.addRecord(method, pattern, handler, routeOptions{}, true, surface, posture, true)
+}
+
+func (r *router) addRecord(method, pattern string, handler Handler, opts routeOptions, secure bool, surface SecureRouteSurface, posture AuthPosture, posturePresent bool) error {
 	if handler == nil {
 		return routeRegistrationError("route handler is nil")
 	}
@@ -138,6 +150,10 @@ func (r *router) addStrict(method, pattern string, handler Handler, opts routeOp
 		OptionalAuth:     opts.optionalAuth,
 		RequiredScopes:   append([]string(nil), opts.requiredScopes...),
 		RequiredAnyScope: append([]string(nil), opts.requiredAnyScope...),
+		Secure:           secure,
+		SecureSurface:    surface,
+		PosturePresent:   posturePresent,
+		Posture:          posture.copy(),
 		staticCount:      staticCount,
 		paramCount:       paramCount,
 		hasProxy:         hasProxy,
@@ -153,6 +169,10 @@ type routeMatch struct {
 }
 
 func (r *router) match(method, path string) (*routeMatch, []string) {
+	return r.matchSurface(method, path, "")
+}
+
+func (r *router) matchSurface(method, path string, surface SecureRouteSurface) (*routeMatch, []string) {
 	method = strings.ToUpper(strings.TrimSpace(method))
 	pathSegments := splitPath(path)
 
@@ -161,6 +181,9 @@ func (r *router) match(method, path string) (*routeMatch, []string) {
 	var bestRoute route
 
 	for _, candidate := range r.routes {
+		if surface != "" && candidate.Secure && candidate.SecureSurface != surface {
+			continue
+		}
 		params, ok := matchRoute(candidate.Segments, pathSegments)
 		if !ok {
 			continue

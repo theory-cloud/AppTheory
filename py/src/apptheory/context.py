@@ -11,6 +11,7 @@ from apptheory.clock import Clock, RealClock
 from apptheory.errors import AppError
 from apptheory.ids import IdGenerator, RealIdGenerator
 from apptheory.request import Request
+from apptheory.secure_types import SecurePrincipal, clone_secure_principal
 from apptheory.source_provenance import SourceProvenance, normalize_source_provenance, unknown_source_provenance
 
 
@@ -75,6 +76,7 @@ class Context:
     websocket: WebSocketContext | None
     appsync: AppSyncContext | None
     _values: dict[str, Any]
+    _secure_principal: SecurePrincipal | None
 
     def __init__(
         self,
@@ -107,6 +109,7 @@ class Context:
         self.websocket = websocket
         self.appsync = appsync
         self._values = {}
+        self._secure_principal = None
 
     def now(self) -> dt.datetime:
         """Return the request clock time using the configured clock."""
@@ -155,6 +158,10 @@ class Context:
     def as_appsync(self) -> AppSyncContext | None:
         """Return AppSync resolver metadata for AppSync routes."""
         return self.appsync
+
+    def secure_principal(self) -> SecurePrincipal | None:
+        """Return a defensive deep copy of the resolved secure principal."""
+        return clone_secure_principal(self._secure_principal)
 
     def json_value(self) -> Any:
         """Decode the request body as JSON after validating the content type."""

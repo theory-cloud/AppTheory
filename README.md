@@ -77,7 +77,7 @@ python -m pip install "./apptheory-${PYTHON_VERSION}-py3-none-any.whl"
 
 | | |
 |---|---|
-| **Contract test fixtures** | 245 total — Go, TypeScript, and Python execute all shared fixtures including MCP, OAuth, and objectstore | <!-- apptheory-fixture-count: 245 -->
+| **Contract test fixtures** | 262 total — Go, TypeScript, and Python execute all shared fixtures including MCP, OAuth, and objectstore | <!-- apptheory-fixture-count: 262 -->
 | **Runtimes** | Go · TypeScript · Python (peers, not ports) |
 | **Tiers** | P0 (core) · P1 (+request-id, auth, CORS, guardrails) · P2 (+duration-aware observability hooks, inbound trace recording, EMF metric sink path, rate limiting) — default P2 |
 | **Event sources** | Lambda Function URL · API Gateway v2 · ALB · AppSync · SQS · EventBridge · DynamoDB Streams · Kinesis · WebSockets |
@@ -90,7 +90,7 @@ python -m pip install "./apptheory-${PYTHON_VERSION}-py3-none-any.whl"
 Use AppTheory when you want AWS-Lambda-backed services that are:
 
 - **Serverless-first** — one unified `HandleLambda` entrypoint dispatches Lambda Function URL, API Gateway v2, ALB, AppSync, SQS, EventBridge, DynamoDB Streams, Kinesis, and WebSockets. The same handler shape covers every event source.
-- **Cross-language consistent** — one routing model, one middleware order, one error envelope — across three runtimes — with drift prevention on the full shared corpus. Go, TypeScript, and Python execute all [245 contract fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/), including MCP, OAuth, and objectstore. <!-- apptheory-fixture-count: 245 -->
+- **Cross-language consistent** — one routing model, one middleware order, one error envelope — across three runtimes — with drift prevention on the full shared corpus. Go, TypeScript, and Python execute all [262 contract fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/), including MCP, OAuth, and objectstore. <!-- apptheory-fixture-count: 262 -->
 - **Generative-coding friendly** — explicit tiers, canonical patterns, and strict verification so AI-generated code stays correct and maintainable.
 
 ✅ Treat routing, middleware, and event normalization as a contract
@@ -103,7 +103,21 @@ AppTheory includes a complete [Model Context Protocol](https://modelcontextproto
 - [MCP integration guide](https://apptheory.theorycloud.ai/integrations/mcp/) — transport, JSON-RPC surface, registries, sessions, streaming
 - [Remote MCP deployment](https://apptheory.theorycloud.ai/integrations/remote-mcp/) — OAuth, protected resource metadata, Autheory integration
 - [MCP examples](examples/mcp/) — `tools-only`, `tools-resources-prompts`, `resumable-sse`
-- CDK constructs: `AppTheoryMcpServer`, `AppTheoryRemoteMcpServer`, `AppTheoryMcpProtectedResource`
+- Namespace deployment: `AppTheoryMcpServer` wires the literal `/mcp` path, public runtime-served RFC 9728 discovery,
+  and issuer/JWKS runtime config without accepting a protected-resource origin. Pair it with Go
+  `oauth.RegisterMCPServer` for the fixed SecureApp authenticated/public posture split.
+- Namespace installation: `AppTheoryInstallParameters` emits the ten required governed CloudFormation parameters,
+  checks `TargetAccountId` against `AWS::AccountId`, and exposes their `Ref` tokens without baking per-install identity
+  into the template. See the [namespace install parameter guide](https://apptheory.theorycloud.ai/features/install-parameters/).
+- Artifact ingress: `AppTheoryS3VersionedIngress` owns the versioned, public-blocked, TLS-only `ns/` bucket shape, aborts
+  incomplete multipart uploads after 7 days, and provides one-action `PutObject` / `GetObjectVersion` grants. Literal
+  inputs are exact-key scoped. CloudFormation resolves token-valued inputs at deployment; AppTheory cannot guarantee
+  their exactness. See the
+  [S3 versioned artifact ingress guide](https://apptheory.theorycloud.ai/features/s3-versioned-ingress/).
+- Streaming deployment: `AppTheoryRemoteMcpServer`; the URL-valued `AppTheoryMcpProtectedResource` static-document
+  props remain only as deprecated compatibility surface.
+- [MCP server umbrella construct](https://apptheory.theorycloud.ai/features/mcp-server-construct/) — paths at synthesis,
+  hosts at request time, origins never
 
 ## Documentation
 
@@ -117,6 +131,7 @@ The full documentation site lives at **[apptheory.theorycloud.ai](https://appthe
 | API reference | [apptheory.theorycloud.ai/api-reference/](https://apptheory.theorycloud.ai/api-reference/) |
 | HTTP runtime tiers | [apptheory.theorycloud.ai/features/http-runtime/](https://apptheory.theorycloud.ai/features/http-runtime/) |
 | Event workloads | [apptheory.theorycloud.ai/features/event-workloads/](https://apptheory.theorycloud.ai/features/event-workloads/) |
+| AWS runtime hardening | [apptheory.theorycloud.ai/features/aws-runtime-hardening/](https://apptheory.theorycloud.ai/features/aws-runtime-hardening/) |
 | Logging profiles | [apptheory.theorycloud.ai/features/logging-profiles/](https://apptheory.theorycloud.ai/features/logging-profiles/) |
 | Source provenance | [apptheory.theorycloud.ai/features/source-provenance/](https://apptheory.theorycloud.ai/features/source-provenance/) |
 | Migration from Lift | [apptheory.theorycloud.ai/migration/from-lift/](https://apptheory.theorycloud.ai/migration/from-lift/) |
@@ -129,7 +144,7 @@ The full documentation site lives at **[apptheory.theorycloud.ai](https://appthe
 
 **Contract reference and feature pages:**
 
-- [Contract Fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/) — the 245-fixture covenant across Go, TypeScript, and Python, including MCP, OAuth, and objectstore <!-- apptheory-fixture-count: 245 -->
+- [Contract Fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/) — the 262-fixture covenant across Go, TypeScript, and Python, including MCP, OAuth, and objectstore <!-- apptheory-fixture-count: 262 -->
 - [Event Shape Dispatch](https://apptheory.theorycloud.ai/reference/event-shapes/) — which Lambda event shapes route to which handler
 - [HTTP Runtime](https://apptheory.theorycloud.ai/features/http-runtime/) — P0/P1/P2 tier surface
 - [Jobs Ledger](https://apptheory.theorycloud.ai/features/jobs-ledger/)
@@ -158,7 +173,7 @@ The full documentation site lives at **[apptheory.theorycloud.ai](https://appthe
 | `py/` | Python runtime (3.12+) |
 | `cdk/` | CDK constructs (jsii) — `AppTheoryHttpApi`, `AppTheoryMcpServer`, `AppTheoryQueue`, ... |
 | `cdk-go/` | Generated Go bindings for the jsii CDK package |
-| `contract-tests/` | Contract fixtures (245 total) + runners for Go, TS, Python; all three runtimes execute MCP, OAuth, and objectstore tiers | <!-- apptheory-fixture-count: 245 -->
+| `contract-tests/` | Contract fixtures (262 total) + runners for Go, TS, Python; all three runtimes execute MCP, OAuth, and objectstore tiers | <!-- apptheory-fixture-count: 262 -->
 | `api-snapshots/` | Public API surface lockfiles for each runtime — the release gate |
 | `examples/` | CDK + handler examples: `multilang`, `import-pipeline`, `ssr-site`, MCP, ... |
 | `.github/workflows/` | CI: rubric, release-please (stable + prerelease), Pages publish, subtree publish |

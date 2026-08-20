@@ -6,7 +6,7 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.263.0",
+    "aws-cdk-lib": "2.265.0",
     "constructs": "10.8.0"
   },
   "dependencyClosure": {
@@ -445,6 +445,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_artifact": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.Artifact"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.artifact"
+            },
+            "python": {
+              "module": "aws_cdk.aws_artifact"
+            }
+          }
+        },
         "aws-cdk-lib.aws_athena": {
           "targets": {
             "dotnet": {
@@ -572,6 +585,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_backupgateway"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_backupsearch": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.BackupSearch"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.backupsearch"
+            },
+            "python": {
+              "module": "aws_cdk.aws_backupsearch"
             }
           }
         },
@@ -1070,6 +1096,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_cognitosync": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.CognitoSync"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.cognitosync"
+            },
+            "python": {
+              "module": "aws_cdk.aws_cognitosync"
+            }
+          }
+        },
         "aws-cdk-lib.aws_comprehend": {
           "targets": {
             "dotnet": {
@@ -1210,19 +1249,6 @@
             },
             "python": {
               "module": "aws_cdk.aws_databrew"
-            }
-          }
-        },
-        "aws-cdk-lib.aws_dataexchange": {
-          "targets": {
-            "dotnet": {
-              "namespace": "Amazon.CDK.AWS.DataExchange"
-            },
-            "java": {
-              "package": "software.amazon.awscdk.services.dataexchange"
-            },
-            "python": {
-              "module": "aws_cdk.aws_dataexchange"
             }
           }
         },
@@ -2844,6 +2870,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_networkflowmonitor": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.NetworkFlowMonitor"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.networkflowmonitor"
+            },
+            "python": {
+              "module": "aws_cdk.aws_networkflowmonitor"
+            }
+          }
+        },
         "aws-cdk-lib.aws_networkmanager": {
           "targets": {
             "dotnet": {
@@ -3718,6 +3757,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_scn": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.SCN"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.scn"
+            },
+            "python": {
+              "module": "aws_cdk.aws_scn"
+            }
+          }
+        },
         "aws-cdk-lib.aws_sdb": {
           "targets": {
             "dotnet": {
@@ -4017,6 +4069,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_states": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.States"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.states"
+            },
+            "python": {
+              "module": "aws_cdk.aws_states"
+            }
+          }
+        },
         "aws-cdk-lib.aws_stepfunctions": {
           "targets": {
             "dotnet": {
@@ -4040,6 +4105,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_stepfunctions_tasks"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_storagegateway": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.StorageGateway"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.storagegateway"
+            },
+            "python": {
+              "module": "aws_cdk.aws_storagegateway"
             }
           }
         },
@@ -4082,6 +4160,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_thinclient": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.ThinClient"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.thinclient"
+            },
+            "python": {
+              "module": "aws_cdk.aws_thinclient"
+            }
+          }
+        },
         "aws-cdk-lib.aws_timestream": {
           "targets": {
             "dotnet": {
@@ -4095,6 +4186,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_transcribe": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.Transcribe"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.transcribe"
+            },
+            "python": {
+              "module": "aws_cdk.aws_transcribe"
+            }
+          }
+        },
         "aws-cdk-lib.aws_transfer": {
           "targets": {
             "dotnet": {
@@ -4105,6 +4209,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_transfer"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_usernotifications": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.UserNotifications"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.usernotifications"
+            },
+            "python": {
+              "module": "aws_cdk.aws_usernotifications"
             }
           }
         },
@@ -4196,6 +4313,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_wafv2"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_wellarchitected": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.WellArchitected"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.wellarchitected"
+            },
+            "python": {
+              "module": "aws_cdk.aws_wellarchitected"
             }
           }
         },
@@ -4701,6 +4831,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_artifact": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.Artifact"
+            },
+            "go": {
+              "packageName": "interfacesawsartifact"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.artifact"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_artifact"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_athena": {
           "targets": {
             "dotnet": {
@@ -4826,6 +4972,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_backupgateway"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_backupsearch": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.BackupSearch"
+            },
+            "go": {
+              "packageName": "interfacesawsbackupsearch"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.backupsearch"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_backupsearch"
             }
           }
         },
@@ -5405,6 +5567,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_cognitosync": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.CognitoSync"
+            },
+            "go": {
+              "packageName": "interfacesawscognitosync"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.cognitosync"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_cognitosync"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_comprehend": {
           "targets": {
             "dotnet": {
@@ -5578,22 +5756,6 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_databrew"
-            }
-          }
-        },
-        "aws-cdk-lib.interfaces.aws_dataexchange": {
-          "targets": {
-            "dotnet": {
-              "namespace": "Amazon.CDK.Interfaces.DataExchange"
-            },
-            "go": {
-              "packageName": "interfacesawsdataexchange"
-            },
-            "java": {
-              "package": "software.amazon.awscdk.interfaces.dataexchange"
-            },
-            "python": {
-              "module": "aws_cdk.interfaces.aws_dataexchange"
             }
           }
         },
@@ -7373,6 +7535,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_networkflowmonitor": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.NetworkFlowMonitor"
+            },
+            "go": {
+              "packageName": "interfacesawsnetworkflowmonitor"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.networkflowmonitor"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_networkflowmonitor"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_networkmanager": {
           "targets": {
             "dotnet": {
@@ -8333,6 +8511,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_scn": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.SCN"
+            },
+            "go": {
+              "packageName": "interfacesawsscn"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.scn"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_scn"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_sdb": {
           "targets": {
             "dotnet": {
@@ -8669,6 +8863,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_states": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.States"
+            },
+            "go": {
+              "packageName": "interfacesawsstates"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.states"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_states"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_stepfunctions": {
           "targets": {
             "dotnet": {
@@ -8682,6 +8892,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_stepfunctions"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_storagegateway": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.StorageGateway"
+            },
+            "go": {
+              "packageName": "interfacesawsstoragegateway"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.storagegateway"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_storagegateway"
             }
           }
         },
@@ -8733,6 +8959,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_thinclient": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.ThinClient"
+            },
+            "go": {
+              "packageName": "interfacesawsthinclient"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.thinclient"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_thinclient"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_timestream": {
           "targets": {
             "dotnet": {
@@ -8749,6 +8991,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_transcribe": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.Transcribe"
+            },
+            "go": {
+              "packageName": "interfacesawstranscribe"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.transcribe"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_transcribe"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_transfer": {
           "targets": {
             "dotnet": {
@@ -8762,6 +9020,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_transfer"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_usernotifications": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.UserNotifications"
+            },
+            "go": {
+              "packageName": "interfacesawsusernotifications"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.usernotifications"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_usernotifications"
             }
           }
         },
@@ -8874,6 +9148,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_wafv2"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_wellarchitected": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.WellArchitected"
+            },
+            "go": {
+              "packageName": "interfacesawswellarchitected"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.wellarchitected"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_wellarchitected"
             }
           }
         },
@@ -9104,7 +9394,7 @@
   },
   "name": "@theory-cloud/apptheory-cdk",
   "readme": {
-    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\nThe inventory below is generated from `cdk/lib/index.ts` exports. Run `./scripts/update-cdk-readme-inventory.sh` after adding or removing a construct export.\n\n<!-- apptheory-cdk-inventory:start -->\n<!-- Generated by scripts/update-cdk-readme-inventory.sh; do not edit this block by hand. -->\n- `AppTheoryFunction` — exported from `cdk/lib/function.ts`.\n- `AppTheoryFunctionAlarms` — exported from `cdk/lib/function-alarms.ts`.\n- `AppTheoryObservability` — exported from `cdk/lib/observability.ts`.\n- `AppTheoryHostedZone` — exported from `cdk/lib/hosted-zone.ts`.\n- `AppTheoryCertificate` — exported from `cdk/lib/certificate.ts`.\n- `AppTheoryApiDomain` — exported from `cdk/lib/api-domain.ts`.\n- `AppTheoryCodeBuildJobRunner` — exported from `cdk/lib/codebuild-job-runner.ts`.\n- `AppTheoryKmsKey` — exported from `cdk/lib/kms-key.ts`.\n- `AppTheoryEnhancedSecurity` — exported from `cdk/lib/enhanced-security.ts`.\n- `AppTheoryApp` — exported from `cdk/lib/app.ts`.\n- `AppTheoryDynamoDBStreamMapping` — exported from `cdk/lib/dynamodb-stream-mapping.ts`.\n- `AppTheoryEventBridgeBus` — exported from `cdk/lib/eventbridge-bus.ts`.\n- `AppTheoryEventBusTable` — exported from `cdk/lib/eventbus-table.ts`.\n- `AppTheoryDynamoTable` — exported from `cdk/lib/dynamo-table.ts`.\n- `AppTheoryEventBridgeHandler` — exported from `cdk/lib/eventbridge-handler.ts`.\n- `AppTheoryEventBridgeRuleTarget` — exported from `cdk/lib/eventbridge-rule-target.ts`.\n- `AppTheoryHttpApi` — exported from `cdk/lib/http-api.ts`.\n- `AppTheoryHttpIngestionEndpoint` — exported from `cdk/lib/http-ingestion-endpoint.ts`.\n- `AppTheoryJobsTable` — exported from `cdk/lib/jobs-table.ts`.\n- `AppTheoryKinesisStream` — exported from `cdk/lib/kinesis-stream.ts`.\n- `AppTheoryKinesisStreamMapping` — exported from `cdk/lib/kinesis-stream-mapping.ts`.\n- `AppTheoryCloudWatchLogsDestination` — exported from `cdk/lib/cloudwatch-logs-destination.ts`.\n- `AppTheoryCloudWatchLogsSubscription` — exported from `cdk/lib/cloudwatch-logs-subscription.ts`.\n- `AppTheoryQueue` — exported from `cdk/lib/queue.ts`.\n- `AppTheoryQueueConsumer` — exported from `cdk/lib/queue-consumer.ts`.\n- `AppTheoryQueueProcessor` — exported from `cdk/lib/queue-processor.ts`.\n- `AppTheoryRestApi` — exported from `cdk/lib/rest-api.ts`.\n- `AppTheoryRestApiRouter` — exported from `cdk/lib/rest-api-router.ts`.\n- `AppTheoryS3Ingest` — exported from `cdk/lib/s3-ingest.ts`.\n- `AppTheoryVectorIndex` — exported from `cdk/lib/vector-index.ts`.\n- `AppTheoryWebSocketApi` — exported from `cdk/lib/websocket-api.ts`.\n- `AppTheorySsrSite` — exported from `cdk/lib/ssr-site.ts`.\n- `AppTheoryPathRoutedFrontend` — exported from `cdk/lib/path-routed-frontend.ts`.\n- `AppTheoryMediaCdn` — exported from `cdk/lib/media-cdn.ts`.\n- `AppTheoryLambdaRole` — exported from `cdk/lib/lambda-role.ts`.\n- `AppTheoryMicrovmNetworkConnector` — exported from `cdk/lib/microvm-network-connector.ts`.\n- `AppTheoryMicrovmNetworkConnectorReference` — exported from `cdk/lib/microvm-network-connector.ts`.\n- `AppTheoryMicrovmImage` — exported from `cdk/lib/microvm-image.ts`.\n- `AppTheoryMicrovmController` — exported from `cdk/lib/microvm-controller.ts`.\n- `AppTheoryMcpServer` — exported from `cdk/lib/mcp-server.ts`.\n- `AppTheoryMcpProtectedResource` — exported from `cdk/lib/mcp-protected-resource.ts`.\n- `AppTheoryRemoteMcpServer` — exported from `cdk/lib/remote-mcp-server.ts`.\n<!-- apptheory-cdk-inventory:end -->\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Production surface notes\n\n- Regional WAF is supported only on `AppTheoryRestApi` and `AppTheoryRestApiRouter`\n  because API Gateway REST API stages use the WAF-supported\n  `/restapis/{apiId}/stages/{stageName}` ARN shape. `AppTheoryHttpApi` and\n  top-level `AppTheoryApp` fail closed if `waf` is supplied because API Gateway\n  v2 HTTP API `/apis/...` stages are not supported WAFv2 association targets.\n- `AppTheoryObservability` alarms query the runtime EMF schema with CloudWatch\n  Metrics Insights over dimensions `service`, `method`, `path`, `status`,\n  `tenant_id`, and `error_code`; dashboards retain SEARCH widgets for\n  exploration.\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
+    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\nThe inventory below is generated from `cdk/lib/index.ts` exports. Run `./scripts/update-cdk-readme-inventory.sh` after adding or removing a construct export.\n\n<!-- apptheory-cdk-inventory:start -->\n<!-- Generated by scripts/update-cdk-readme-inventory.sh; do not edit this block by hand. -->\n- `AppTheoryFunction` — exported from `cdk/lib/function.ts`.\n- `AppTheoryFunctionAlarms` — exported from `cdk/lib/function-alarms.ts`.\n- `AppTheoryObservability` — exported from `cdk/lib/observability.ts`.\n- `AppTheoryHostedZone` — exported from `cdk/lib/hosted-zone.ts`.\n- `AppTheoryCertificate` — exported from `cdk/lib/certificate.ts`.\n- `AppTheoryApiDomain` — exported from `cdk/lib/api-domain.ts`.\n- `AppTheoryCodeBuildJobRunner` — exported from `cdk/lib/codebuild-job-runner.ts`.\n- `AppTheoryKmsKey` — exported from `cdk/lib/kms-key.ts`.\n- `AppTheoryEnhancedSecurity` — exported from `cdk/lib/enhanced-security.ts`.\n- `AppTheoryApp` — exported from `cdk/lib/app.ts`.\n- `AppTheoryDynamoDBStreamMapping` — exported from `cdk/lib/dynamodb-stream-mapping.ts`.\n- `AppTheoryEventBridgeBus` — exported from `cdk/lib/eventbridge-bus.ts`.\n- `AppTheoryEventBusTable` — exported from `cdk/lib/eventbus-table.ts`.\n- `AppTheoryDynamoTable` — exported from `cdk/lib/dynamo-table.ts`.\n- `AppTheoryEventBridgeHandler` — exported from `cdk/lib/eventbridge-handler.ts`.\n- `AppTheoryEventBridgeRuleTarget` — exported from `cdk/lib/eventbridge-rule-target.ts`.\n- `AppTheoryHttpApi` — exported from `cdk/lib/http-api.ts`.\n- `AppTheoryHttpIngestionEndpoint` — exported from `cdk/lib/http-ingestion-endpoint.ts`.\n- `AppTheoryJobsTable` — exported from `cdk/lib/jobs-table.ts`.\n- `AppTheoryKinesisStream` — exported from `cdk/lib/kinesis-stream.ts`.\n- `AppTheoryKinesisStreamMapping` — exported from `cdk/lib/kinesis-stream-mapping.ts`.\n- `AppTheoryCloudWatchLogsDestination` — exported from `cdk/lib/cloudwatch-logs-destination.ts`.\n- `AppTheoryCloudWatchLogsSubscription` — exported from `cdk/lib/cloudwatch-logs-subscription.ts`.\n- `AppTheoryQueue` — exported from `cdk/lib/queue.ts`.\n- `AppTheoryQueueConsumer` — exported from `cdk/lib/queue-consumer.ts`.\n- `AppTheoryQueueProcessor` — exported from `cdk/lib/queue-processor.ts`.\n- `AppTheoryRestApi` — exported from `cdk/lib/rest-api.ts`.\n- `AppTheoryRestApiRouter` — exported from `cdk/lib/rest-api-router.ts`.\n- `AppTheoryS3Ingest` — exported from `cdk/lib/s3-ingest.ts`.\n- `AppTheoryS3VersionedIngress` — exported from `cdk/lib/s3-versioned-ingress.ts`.\n- `AppTheoryVectorIndex` — exported from `cdk/lib/vector-index.ts`.\n- `AppTheoryWebSocketApi` — exported from `cdk/lib/websocket-api.ts`.\n- `AppTheorySsrSite` — exported from `cdk/lib/ssr-site.ts`.\n- `AppTheoryPathRoutedFrontend` — exported from `cdk/lib/path-routed-frontend.ts`.\n- `AppTheoryMediaCdn` — exported from `cdk/lib/media-cdn.ts`.\n- `AppTheoryLambdaRole` — exported from `cdk/lib/lambda-role.ts`.\n- `AppTheoryMicrovmNetworkConnector` — exported from `cdk/lib/microvm-network-connector.ts`.\n- `AppTheoryMicrovmNetworkConnectorReference` — exported from `cdk/lib/microvm-network-connector.ts`.\n- `AppTheoryMicrovmImage` — exported from `cdk/lib/microvm-image.ts`.\n- `AppTheoryMicrovmController` — exported from `cdk/lib/microvm-controller.ts`.\n- `AppTheoryMcpServer` — exported from `cdk/lib/mcp-server.ts`.\n- `AppTheoryInstallParameters` — exported from `cdk/lib/install-parameters.ts`.\n- `AppTheoryMcpProtectedResource` — exported from `cdk/lib/mcp-protected-resource.ts`.\n- `AppTheoryRemoteMcpServer` — exported from `cdk/lib/remote-mcp-server.ts`.\n<!-- apptheory-cdk-inventory:end -->\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Production surface notes\n\n- `AppTheoryInstallParameters` is the required, account-agnostic namespace installation surface. It emits the ten\n  governed `String` parameters and the `TargetAccountMatchesCaller` CloudFormation Rule; consuming constructs use its\n  typed string-token accessors rather than accepting a second identity-injection path.\n- `AppTheoryS3VersionedIngress` is the fixed namespace artifact bucket surface. It always enables versioning,\n  public-access blocking, S3-managed encryption, TLS enforcement, and seven-day incomplete-multipart reaping. Each\n  helper grants one action (`s3:PutObject` or `s3:GetObjectVersion`) on one object resource. Literal inputs are exact\n  and wildcard-free. CloudFormation resolves token-valued inputs at deployment; AppTheory cannot guarantee their\n  exactness. `s3:PutObject` inherently covers multipart upload on that key but not the separate abort or part-listing\n  actions; the lifecycle rule prevents permanent incomplete-upload residue.\n- `AppTheoryFunctionProps.roleName` and `AppTheoryAppProps.roleName` are the\n  supported, fail-closed path for stable Lambda execution role names. They\n  require concrete values to be non-empty, no more than 64 characters, and to\n  match `^[\\w+=,.@-]+$`. Values for which `Token.isUnresolved(roleName)` is true\n  skip these value checks and remain subject to IAM validation at deployment.\n  When omitted, CloudFormation generates the role name. These props supersede\n  direct `CfnRole` property-override escape hatches.\n- `AppTheoryAppProps.logRemovalPolicy` forwards to the app function's\n  AppTheory-created log group. All AppTheory-created function log groups,\n  whether named explicitly or created through the anonymous path, default to\n  `RemovalPolicy.DESTROY` for the prototype's self-cleaning posture; set\n  `RemovalPolicy.RETAIN` explicitly when logs must survive stack deletion.\n  `RemovalPolicy.SNAPSHOT` fails synthesis because CloudWatch Logs groups do\n  not support snapshot removal policies. This supported surface supersedes\n  direct `CfnLogGroup.applyRemovalPolicy` escape hatches. Caller-provided log\n  groups keep their own removal policy.\n- Regional WAF is supported only on `AppTheoryRestApi` and `AppTheoryRestApiRouter`\n  because API Gateway REST API stages use the WAF-supported\n  `/restapis/{apiId}/stages/{stageName}` ARN shape. `AppTheoryHttpApi` and\n  top-level `AppTheoryApp` fail closed if `waf` is supplied because API Gateway\n  v2 HTTP API `/apis/...` stages are not supported WAFv2 association targets.\n- `AppTheoryObservability` alarms query the runtime EMF schema with CloudWatch\n  Metrics Insights over dimensions `service`, `method`, `path`, `status`,\n  `tenant_id`, and `error_code`; dashboards retain SEARCH widgets for\n  exploration.\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
   },
   "repository": {
     "directory": "cdk",
@@ -9441,7 +9731,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/app.ts",
-          "line": 76
+          "line": 95
         },
         "parameters": [
           {
@@ -9467,7 +9757,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/app.ts",
-        "line": 68
+        "line": 87
       },
       "name": "AppTheoryApp",
       "properties": [
@@ -9475,7 +9765,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 69
+            "line": 88
           },
           "name": "api",
           "type": {
@@ -9486,7 +9776,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 70
+            "line": 89
           },
           "name": "fn",
           "type": {
@@ -9497,7 +9787,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 74
+            "line": 93
           },
           "name": "alias",
           "optional": true,
@@ -9509,7 +9799,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 71
+            "line": 90
           },
           "name": "databaseTable",
           "optional": true,
@@ -9521,7 +9811,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 73
+            "line": 92
           },
           "name": "domain",
           "optional": true,
@@ -9533,7 +9823,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 72
+            "line": 91
           },
           "name": "rateLimitTable",
           "optional": true,
@@ -9572,7 +9862,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 37
+            "line": 56
           },
           "name": "alias",
           "optional": true,
@@ -9585,7 +9875,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 35
+            "line": 45
           },
           "name": "allowAllOutbound",
           "optional": true,
@@ -9598,7 +9888,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 36
+            "line": 46
           },
           "name": "allowPublicSubnet",
           "optional": true,
@@ -9611,7 +9901,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 49
+            "line": 68
           },
           "name": "certificateArn",
           "optional": true,
@@ -9650,7 +9940,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 51
+            "line": 70
           },
           "name": "cors",
           "optional": true,
@@ -9672,7 +9962,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 41
+            "line": 60
           },
           "name": "databasePartitionKey",
           "optional": true,
@@ -9685,7 +9975,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 42
+            "line": 61
           },
           "name": "databaseSortKey",
           "optional": true,
@@ -9698,7 +9988,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 43
+            "line": 62
           },
           "name": "databaseTable",
           "optional": true,
@@ -9711,7 +10001,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 40
+            "line": 59
           },
           "name": "databaseTableName",
           "optional": true,
@@ -9724,7 +10014,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 50
+            "line": 69
           },
           "name": "domain",
           "optional": true,
@@ -9737,7 +10027,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 48
+            "line": 67
           },
           "name": "domainName",
           "optional": true,
@@ -9750,7 +10040,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 39
+            "line": 58
           },
           "name": "enableDatabase",
           "optional": true,
@@ -9763,7 +10053,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 45
+            "line": 64
           },
           "name": "enableRateLimiting",
           "optional": true,
@@ -9807,7 +10097,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 64
+            "line": 83
           },
           "name": "hostedZone",
           "optional": true,
@@ -9826,6 +10116,24 @@
           "optional": true,
           "type": {
             "fqn": "aws-cdk-lib.interfaces.aws_logs.ILogGroupRef"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "RemovalPolicy.DESTROY",
+            "remarks": "The value is forwarded unchanged to AppTheoryFunction. Supplying both\n`logGroup` and `logRemovalPolicy` fails synthesis because caller-provided\nlog groups own their removal policy.",
+            "summary": "Removal policy for the app function's AppTheory-managed named log group."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 41
+          },
+          "name": "logRemovalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
           }
         },
         {
@@ -9859,9 +10167,27 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 46
+            "line": 65
           },
           "name": "rateLimitTableName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "AppTheoryFunction receives the value unchanged. Concrete names are synthesis-validated against IAM's `[\\w+=,.@-]+` character set and 64-character limit; token-valued names are accepted and IAM validates the resolved value at deploy time, so an invalid resolved name fails deployment rather than synthesis.\nThis exemption keeps account-agnostic synthesis representable for the THE-2861 token-valued-input failure class. Synthesis still fails if AppTheory cannot apply the requested name exactly.",
+            "summary": "Stable physical name for the app function's AppTheory-managed IAM role."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 55
+          },
+          "name": "roleName",
           "optional": true,
           "type": {
             "primitive": "string"
@@ -9885,7 +10211,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 34
+            "line": 44
           },
           "name": "securityGroups",
           "optional": true,
@@ -9903,7 +10229,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 65
+            "line": 84
           },
           "name": "stage",
           "optional": true,
@@ -9929,7 +10255,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 32
+            "line": 42
           },
           "name": "vpc",
           "optional": true,
@@ -9942,7 +10268,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 33
+            "line": 43
           },
           "name": "vpcSubnets",
           "optional": true,
@@ -9962,7 +10288,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 63
+            "line": 82
           },
           "name": "waf",
           "optional": true,
@@ -12984,7 +13310,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/function.ts",
-          "line": 122
+          "line": 143
         },
         "parameters": [
           {
@@ -13010,7 +13336,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/function.ts",
-        "line": 116
+        "line": 137
       },
       "name": "AppTheoryFunction",
       "properties": [
@@ -13018,7 +13344,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 117
+            "line": 138
           },
           "name": "fn",
           "type": {
@@ -13029,7 +13355,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 119
+            "line": 140
           },
           "name": "alias",
           "optional": true,
@@ -13041,7 +13367,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 120
+            "line": 141
           },
           "name": "deploymentGroup",
           "optional": true,
@@ -13053,7 +13379,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 118
+            "line": 139
           },
           "name": "logGroup",
           "optional": true,
@@ -13201,7 +13527,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/function.ts",
-        "line": 78
+        "line": 79
       },
       "name": "AppTheoryFunctionAliasOptions",
       "properties": [
@@ -13214,7 +13540,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 101
+            "line": 102
           },
           "name": "deployment",
           "optional": true,
@@ -13231,7 +13557,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 89
+            "line": 90
           },
           "name": "description",
           "optional": true,
@@ -13248,7 +13574,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 83
+            "line": 84
           },
           "name": "name",
           "optional": true,
@@ -13265,7 +13591,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 95
+            "line": 96
           },
           "name": "provisionedConcurrentExecutions",
           "optional": true,
@@ -13286,7 +13612,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/function.ts",
-        "line": 31
+        "line": 32
       },
       "name": "AppTheoryFunctionDeploymentOptions",
       "properties": [
@@ -13299,7 +13625,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 54
+            "line": 55
           },
           "name": "alarms",
           "optional": true,
@@ -13321,7 +13647,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 72
+            "line": 73
           },
           "name": "autoRollback",
           "optional": true,
@@ -13338,7 +13664,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 48
+            "line": 49
           },
           "name": "interval",
           "optional": true,
@@ -13355,7 +13681,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 42
+            "line": 43
           },
           "name": "percentage",
           "optional": true,
@@ -13372,7 +13698,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 66
+            "line": 67
           },
           "name": "postHook",
           "optional": true,
@@ -13389,7 +13715,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 60
+            "line": 61
           },
           "name": "preHook",
           "optional": true,
@@ -13406,7 +13732,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 36
+            "line": 37
           },
           "name": "trafficShiftType",
           "optional": true,
@@ -13420,6 +13746,10 @@
     "@theory-cloud/apptheory-cdk.AppTheoryFunctionProps": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "datatype": true,
+      "docs": {
+        "remarks": "AppTheory overrides the inherited `logRemovalPolicy` default for log groups\nit creates: they use `RemovalPolicy.DESTROY`. Combining an explicit\n`logRemovalPolicy` with a caller-provided `logGroup` fails synthesis because\ncaller-provided resources own their removal policy.",
+        "summary": "Properties for an AppTheory-managed Lambda function."
+      },
       "fqn": "@theory-cloud/apptheory-cdk.AppTheoryFunctionProps",
       "interfaces": [
         "aws-cdk-lib.aws_lambda.FunctionProps"
@@ -13427,7 +13757,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/function.ts",
-        "line": 104
+        "line": 113
       },
       "name": "AppTheoryFunctionProps",
       "properties": [
@@ -13441,12 +13771,30 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 113
+            "line": 134
           },
           "name": "alias",
           "optional": true,
           "type": {
             "fqn": "@theory-cloud/apptheory-cdk.AppTheoryFunctionAliasOptions"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "AppTheory preserves the Lambda L2's policies. Concrete names are synthesis-validated against IAM's `[\\w+=,.@-]+` character set and 64-character limit.\nToken-valued names are accepted and IAM validates the resolved value at deploy time, so an invalid resolved name fails deployment rather than synthesis.\nThis exemption keeps account-agnostic synthesis representable for the THE-2861 token-valued-input failure class. Do not combine this with the inherited `role`\nprop; caller-provided roles own their physical name.",
+            "summary": "Stable physical name for the AppTheory-managed Lambda execution role."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/function.ts",
+            "line": 124
+          },
+          "name": "roleName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
           }
         }
       ],
@@ -14919,6 +15267,184 @@
         }
       ],
       "symbolId": "lib/http-ingestion-endpoint:AppTheoryHttpIngestionEndpointStageOptions"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryInstallParameters": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "The construct keeps templates account-agnostic: every per-install identity\nvalue enters through one of the ten required stack parameters and is exposed\nas a string token for consuming constructs. Parameter patterns and allowed\nvalues are evaluated by CloudFormation, not duplicated as synthesis-time\nvalidation.\n\nCloudFormation Rules cannot use `Fn::Join`, so this construct cannot assert\nthat `DnsHost` equals\n`cloud-keeper.<NamespaceSlug>.theorycloud.app`. The governed install-profile\nvalidator owns that relational check; the `DnsHost` parameter pattern still\nenforces the `theorycloud.app` suffix during stack evaluation.",
+        "summary": "Governed CloudFormation install-parameter contract for a Theory Cloud namespace."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryInstallParameters",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/install-parameters.ts",
+          "line": 50
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/install-parameters.ts",
+        "line": 19
+      },
+      "name": "AppTheoryInstallParameters",
+      "properties": [
+        {
+          "docs": {
+            "summary": "Installed AWS account class token."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/install-parameters.ts",
+            "line": 27
+          },
+          "name": "accountClass",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "Autheory HTTPS JWKS URL token."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/install-parameters.ts",
+            "line": 48
+          },
+          "name": "autheoryJwksUrl",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "Autheory HTTPS authorization-server origin token."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/install-parameters.ts",
+            "line": 45
+          },
+          "name": "authorizationServerOrigin",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "Exact Cloud Keeper DNS host token."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/install-parameters.ts",
+            "line": 36
+          },
+          "name": "dnsHost",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "Theory Cloud namespace slug token."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/install-parameters.ts",
+            "line": 24
+          },
+          "name": "namespaceSlug",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "Route 53 public hosted-zone identifier token."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/install-parameters.ts",
+            "line": 42
+          },
+          "name": "publicHostedZoneId",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "Namespace install stage token."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/install-parameters.ts",
+            "line": 39
+          },
+          "name": "stage",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "Exact 12-digit namespace AWS account token."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/install-parameters.ts",
+            "line": 21
+          },
+          "name": "targetAccountId",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "Target Theory Cloud application identifier token."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/install-parameters.ts",
+            "line": 30
+          },
+          "name": "targetApplicationId",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "Autheory tenant identifier token."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/install-parameters.ts",
+            "line": 33
+          },
+          "name": "tenantId",
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/install-parameters:AppTheoryInstallParameters"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryJobsTable": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -16645,7 +17171,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/function.ts",
-        "line": 11
+        "line": 12
       },
       "members": [
         {
@@ -16670,6 +17196,89 @@
       "name": "AppTheoryLambdaTrafficShiftType",
       "symbolId": "lib/function:AppTheoryLambdaTrafficShiftType"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryMcpPaths": {
+      "abstract": true,
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "docs": {
+        "remarks": "These are paths, never origins or full URLs. Namespace applications derive\ntheir protected resource host from each request at runtime.",
+        "summary": "Canonical route paths for AppTheory MCP servers and OAuth discovery."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpPaths",
+      "initializer": {},
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/mcp-paths.ts",
+        "line": 7
+      },
+      "name": "AppTheoryMcpPaths",
+      "properties": [
+        {
+          "const": true,
+          "docs": {
+            "summary": "Conventional MCP endpoint path."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-paths.ts",
+            "line": 9
+          },
+          "name": "MCP",
+          "static": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "const": true,
+          "docs": {
+            "summary": "RFC 8414 authorization-server metadata path for an MCP resource."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-paths.ts",
+            "line": 18
+          },
+          "name": "OAUTH_AUTHORIZATION_SERVER_MCP",
+          "static": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "const": true,
+          "docs": {
+            "summary": "Generic RFC 9728 protected-resource metadata path."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-paths.ts",
+            "line": 12
+          },
+          "name": "OAUTH_PROTECTED_RESOURCE",
+          "static": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "const": true,
+          "docs": {
+            "summary": "RFC 9728 protected-resource metadata path for the conventional MCP endpoint."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-paths.ts",
+            "line": 15
+          },
+          "name": "OAUTH_PROTECTED_RESOURCE_MCP",
+          "static": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/mcp-paths:AppTheoryMcpPaths"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResource": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -16680,7 +17289,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/mcp-protected-resource.ts",
-          "line": 41
+          "line": 58
         },
         "parameters": [
           {
@@ -16706,7 +17315,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/mcp-protected-resource.ts",
-        "line": 40
+        "line": 57
       },
       "name": "AppTheoryMcpProtectedResource",
       "symbolId": "lib/mcp-protected-resource:AppTheoryMcpProtectedResource"
@@ -16729,13 +17338,15 @@
         {
           "abstract": true,
           "docs": {
+            "deprecated": "Use AppTheoryMcpServer authorizationServerIssuer and jwksUri\nprops with the Go runtime discovery helper.",
             "remarks": "Autheory should be the first (and usually only) entry.",
+            "stability": "deprecated",
             "summary": "One or more OAuth Authorization Server issuer/base URLs."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-protected-resource.ts",
-            "line": 34
+            "line": 40
           },
           "name": "authorizationServers",
           "type": {
@@ -16750,13 +17361,15 @@
         {
           "abstract": true,
           "docs": {
+            "deprecated": "Use AppTheoryMcpServer with runtime-served discovery. This\nURL-valued compatibility prop is retained for existing static documents.",
             "remarks": "For Claude Remote MCP this should be your MCP endpoint URL (including `/mcp`),\ne.g. `https://mcp.example.com/mcp`.",
+            "stability": "deprecated",
             "summary": "The canonical protected resource identifier."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-protected-resource.ts",
-            "line": 27
+            "line": 30
           },
           "name": "resource",
           "type": {
@@ -16777,6 +17390,24 @@
           "type": {
             "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouter"
           }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "derived from resource",
+            "remarks": "When omitted, the path is derived from a literal `resource` URL for full\nbackwards compatibility. Set this only when a static mock integration is\ngenuinely required; namespace applications should use AppTheoryMcpServer\nand runtime-served discovery instead.",
+            "summary": "Explicit literal route path for the secondary synth-time-static document."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-protected-resource.ts",
+            "line": 51
+          },
+          "name": "metadataPath",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
         }
       ],
       "symbolId": "lib/mcp-protected-resource:AppTheoryMcpProtectedResourceProps"
@@ -16786,13 +17417,14 @@
       "base": "constructs.Construct",
       "docs": {
         "example": "const server = new AppTheoryMcpServer(this, 'McpServer', {\n  handler: mcpFn,\n  enableSessionTable: true,\n  sessionTtlMinutes: 120,\n});",
-        "summary": "An MCP (Model Context Protocol) server construct that provisions an HTTP API Gateway v2 with a Lambda integration on POST /mcp, optional DynamoDB session table, and optional custom domain with Route53."
+        "remarks": "The construct provisions an HTTP API Gateway v2 with a Lambda integration\non the conventional POST /mcp path, optional runtime-served RFC 9728\ndiscovery routes, optional DynamoDB session state, and an optional custom\ndomain. Resource origins are intentionally absent from the prop surface:\nthe Go runtime derives the protected resource host from each request.",
+        "summary": "Umbrella deployment contract for a namespace MCP server."
       },
       "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpServer",
       "initializer": {
         "locationInModule": {
           "filename": "lib/mcp-server.ts",
-          "line": 172
+          "line": 216
         },
         "parameters": [
           {
@@ -16818,7 +17450,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 136
+        "line": 170
       },
       "name": "AppTheoryMcpServer",
       "properties": [
@@ -16829,7 +17461,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 140
+            "line": 174
           },
           "name": "api",
           "type": {
@@ -16838,14 +17470,42 @@
         },
         {
           "docs": {
-            "summary": "The MCP endpoint URL (POST /mcp)."
+            "summary": "The MCP endpoint URL."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 150
+            "line": 184
           },
           "name": "endpoint",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "Literal MCP endpoint route path."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 189
+          },
+          "name": "mcpPath",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "Path-scoped RFC 9728 discovery route for this MCP endpoint."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 194
+          },
+          "name": "protectedResourceMetadataPath",
           "type": {
             "primitive": "string"
           }
@@ -16857,7 +17517,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 170
+            "line": 214
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -16872,7 +17532,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 160
+            "line": 204
           },
           "name": "apiMapping",
           "optional": true,
@@ -16887,7 +17547,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 165
+            "line": 209
           },
           "name": "cnameRecord",
           "optional": true,
@@ -16902,7 +17562,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 155
+            "line": 199
           },
           "name": "domainName",
           "optional": true,
@@ -16917,7 +17577,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 145
+            "line": 179
           },
           "name": "sessionTable",
           "optional": true,
@@ -16938,7 +17598,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 14
+        "line": 16
       },
       "name": "AppTheoryMcpServerDomainOptions",
       "properties": [
@@ -16950,7 +17610,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 18
+            "line": 20
           },
           "name": "domainName",
           "type": {
@@ -16966,7 +17626,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 24
+            "line": 26
           },
           "name": "certificate",
           "optional": true,
@@ -16983,7 +17643,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 30
+            "line": 32
           },
           "name": "certificateArn",
           "optional": true,
@@ -17001,7 +17661,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 37
+            "line": 39
           },
           "name": "hostedZone",
           "optional": true,
@@ -17022,7 +17682,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 79
+        "line": 81
       },
       "name": "AppTheoryMcpServerProps",
       "properties": [
@@ -17034,7 +17694,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 83
+            "line": 85
           },
           "name": "handler",
           "type": {
@@ -17050,9 +17710,27 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 89
+            "line": 119
           },
           "name": "apiName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (legacy POST-only MCP route)",
+            "remarks": "Literal values must be absolute HTTPS URLs with no userinfo, query, or\nfragment. CDK tokens pass through unparsed. Supply `jwksUri` with this prop\nto enable the runtime-served RFC 9728 discovery routes.",
+            "summary": "OAuth authorization server issuer passed to the Lambda runtime config."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 103
+          },
+          "name": "authorizationServerIssuer",
           "optional": true,
           "type": {
             "primitive": "string"
@@ -17067,7 +17745,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 115
+            "line": 145
           },
           "name": "domain",
           "optional": true,
@@ -17084,12 +17762,48 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 95
+            "line": 125
           },
           "name": "enableSessionTable",
           "optional": true,
           "type": {
             "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (legacy POST-only MCP route)",
+            "remarks": "Literal values must be absolute HTTPS URLs with no userinfo or fragment;\nqueries are allowed. CDK tokens pass through unparsed. Supply\n`authorizationServerIssuer` with this prop.",
+            "summary": "OAuth JSON Web Key Set URL passed to the Lambda runtime config."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 113
+          },
+          "name": "jwksUri",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "AppTheoryMcpPaths.MCP",
+            "remarks": "This is a synthesis-time path, never an origin or full resource URL.",
+            "summary": "Literal route path for the MCP endpoint."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 93
+          },
+          "name": "mcpPath",
+          "optional": true,
+          "type": {
+            "primitive": "string"
           }
         },
         {
@@ -17102,7 +17816,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 102
+            "line": 132
           },
           "name": "sessionTableName",
           "optional": true,
@@ -17120,7 +17834,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 109
+            "line": 139
           },
           "name": "sessionTtlMinutes",
           "optional": true,
@@ -17137,7 +17851,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 121
+            "line": 151
           },
           "name": "stage",
           "optional": true,
@@ -17158,7 +17872,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 43
+        "line": 45
       },
       "name": "AppTheoryMcpServerStageOptions",
       "properties": [
@@ -17171,7 +17885,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 54
+            "line": 56
           },
           "name": "accessLogging",
           "optional": true,
@@ -17189,7 +17903,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 61
+            "line": 63
           },
           "name": "accessLogRetention",
           "optional": true,
@@ -17206,7 +17920,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 48
+            "line": 50
           },
           "name": "stageName",
           "optional": true,
@@ -17223,7 +17937,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 73
+            "line": 75
           },
           "name": "throttlingBurstLimit",
           "optional": true,
@@ -17240,7 +17954,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 67
+            "line": 69
           },
           "name": "throttlingRateLimit",
           "optional": true,
@@ -24352,6 +25066,218 @@
       ],
       "symbolId": "lib/s3-ingest:AppTheoryS3IngestProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryS3VersionedIngress": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "The construct owns one hardened, versioned bucket, its seven-day incomplete\nmultipart-upload reaping rule, and the one-action IAM grant path for\nnamespace bundles. Literal inputs produce exact-key grants. CloudFormation\nresolves unresolved token inputs at deployment; AppTheory cannot guarantee\nexactness for token-valued locations. It does not issue temporary\ncredentials, mint bundle identifiers, or define artifact URI schemes.",
+        "summary": "Version-pinned artifact ingress bucket for Theory Cloud namespace releases."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryS3VersionedIngress",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/s3-versioned-ingress.ts",
+          "line": 47
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "optional": true,
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryS3VersionedIngressProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/s3-versioned-ingress.ts",
+        "line": 32
+      },
+      "methods": [
+        {
+          "docs": {
+            "remarks": "`s3:PutObject` inherently covers multipart create, part upload, and\ncompletion on the same key; separate abort and part-listing actions remain\nungranted. Literal location values are validated at synthesis. CDK tokens\nskip literal value validation and are resolved by CloudFormation at\ndeployment; AppTheory cannot guarantee exactness for token-valued\nlocations. Missing inputs still fail closed before any grant is added.",
+            "summary": "Grant one principal `s3:PutObject` on one namespace bundle resource."
+          },
+          "locationInModule": {
+            "filename": "lib/s3-versioned-ingress.ts",
+            "line": 75
+          },
+          "name": "grantUpload",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              }
+            },
+            {
+              "name": "namespaceSlug",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "name": "bundleId",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_iam.Grant"
+            }
+          }
+        },
+        {
+          "docs": {
+            "remarks": "The grant includes only `s3:GetObjectVersion`. Literal inputs target one\nexact bundle key. CloudFormation resolves token inputs at deployment;\nAppTheory cannot guarantee exactness for token-valued locations.\nUnversioned reads and bucket listing remain ungranted.",
+            "summary": "Grant one principal permission to read one pinned namespace bundle version."
+          },
+          "locationInModule": {
+            "filename": "lib/s3-versioned-ingress.ts",
+            "line": 87
+          },
+          "name": "grantVersionedRead",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              }
+            },
+            {
+              "name": "namespaceSlug",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "name": "bundleId",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_iam.Grant"
+            }
+          }
+        }
+      ],
+      "name": "AppTheoryS3VersionedIngress",
+      "properties": [
+        {
+          "const": true,
+          "docs": {
+            "summary": "Canonical object-key root for every namespace release bundle."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-versioned-ingress.ts",
+            "line": 34
+          },
+          "name": "KEY_ROOT",
+          "static": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "CloudFormation-resolved bucket ARN."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-versioned-ingress.ts",
+            "line": 40
+          },
+          "name": "bucketArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "CloudFormation-resolved physical bucket name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-versioned-ingress.ts",
+            "line": 37
+          },
+          "name": "bucketName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "Canonical object-key root for every namespace release bundle."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-versioned-ingress.ts",
+            "line": 43
+          },
+          "name": "keyRoot",
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/s3-versioned-ingress:AppTheoryS3VersionedIngress"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryS3VersionedIngressProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Props for the AppTheoryS3VersionedIngress construct."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryS3VersionedIngressProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/s3-versioned-ingress.ts",
+        "line": 12
+      },
+      "name": "AppTheoryS3VersionedIngressProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (CloudFormation-generated name)",
+            "remarks": "Token-valued names pass through to the S3 construct unchanged.",
+            "summary": "Physical name for the artifact ingress bucket."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-versioned-ingress.ts",
+            "line": 19
+          },
+          "name": "bucketName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/s3-versioned-ingress:AppTheoryS3VersionedIngressProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheorySecretConfig": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "datatype": true,
@@ -27114,6 +28040,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "3.0.2-rc",
-  "fingerprint": "J+NF0ANWh8jbS1fIuug2yEFog28ypmoSOLGRjNaZJ/U="
+  "version": "3.0.2",
+  "fingerprint": "FTOfBmcO7x8e8O6l17l3XsSaXHjxp+pDVSIxiifueh4="
 }

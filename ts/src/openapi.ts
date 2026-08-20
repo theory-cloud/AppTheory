@@ -82,6 +82,12 @@ export interface OpenAPISpec {
 
 export type OpenAPIDocument = JsonObject;
 
+/**
+ * Generates a legacy descriptive OpenAPI document.
+ *
+ * @deprecated This function cannot read SecureApp posture. SecureApp adopters
+ * must use app.generateOpenAPI().
+ */
 export function generateOpenAPI(spec: OpenAPISpec): OpenAPIDocument {
   const title = spec.title.trim();
   const version = spec.version.trim();
@@ -131,6 +137,12 @@ export function generateOpenAPI(spec: OpenAPISpec): OpenAPIDocument {
   };
 }
 
+/**
+ * Generates legacy canonical OpenAPI JSON.
+ *
+ * @deprecated This function cannot read SecureApp posture. SecureApp adopters
+ * must use app.generateOpenAPIJSON().
+ */
 export function generateOpenAPIJSON(spec: OpenAPISpec): string {
   return stableStringify(generateOpenAPI(spec));
 }

@@ -152,6 +152,18 @@ type serveOptions struct {
 	configure         requestContextConfigurer
 	errorResponder    requestErrorResponder
 	fallbackRequestID string
+	surface           SecureRouteSurface
+}
+
+func (a *App) matchRoute(method, path string, opts serveOptions) (*routeMatch, []string) {
+	if a != nil && a.secure {
+		surface := opts.surface
+		if surface == "" {
+			surface = SecureRouteHTTP
+		}
+		return a.router.matchSurface(method, path, surface)
+	}
+	return a.router.match(method, path)
 }
 
 func (a *App) serveWithOptions(ctx context.Context, req Request, opts serveOptions) (resp Response) {
@@ -194,7 +206,7 @@ func (a *App) serveP0(ctx context.Context, req Request, opts serveOptions) (resp
 		return a.respondToServeError(opts, err, req, opts.fallbackRequestID)
 	}
 
-	match, allowed := a.router.match(normalized.Method, normalized.Path)
+	match, allowed := a.matchRoute(normalized.Method, normalized.Path, opts)
 	if match == nil {
 		if opts.errorResponder != nil {
 			if len(allowed) > 0 {
@@ -228,6 +240,12 @@ func (a *App) serveP0(ctx context.Context, req Request, opts serveOptions) (resp
 			resp = a.respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, normalized, opts.fallbackRequestID)
 		}
 	}()
+
+	if a.secure {
+		if denied, ok := a.authorizeSecureP0(match.Route, requestCtx, opts); ok {
+			return denied
+		}
+	}
 
 	handler := a.applyMiddlewares(match.Route.Handler)
 	out, handlerErr := handler(requestCtx)
@@ -330,28 +348,35 @@ func (a *App) servePortableCore(ctx context.Context, req Request, tier Tier, sta
 		return a.respondToServeError(opts, &AppError{Code: errorCodeTooLarge, Message: errorMessageRequestTooLarge}, normalized, state.requestID, state.traceID)
 	}
 
-	match, allowed := a.router.match(state.method, state.path)
+	match, allowed := a.matchRoute(state.method, state.path, opts)
 	if match == nil {
-		if opts.errorResponder != nil {
-			if len(allowed) > 0 {
-				state.errorCode = errorCodeMethodNotAllowed
-				return a.respondToServeError(opts, &AppError{Code: errorCodeMethodNotAllowed, Message: errorMessageMethodNotAllowed}, normalized, state.requestID, state.traceID)
-			}
-			state.errorCode = errorCodeNotFound
-			return a.respondToServeError(opts, &AppError{Code: errorCodeNotFound, Message: errorMessageNotFound}, normalized, state.requestID, state.traceID)
-		}
-		resp, errorCode := a.routeNotFoundResponse(allowed, state.requestID, state.traceID)
-		state.errorCode = errorCode
-		return resp
+		return a.portableRouteNotFound(normalized, allowed, state, opts)
 	}
 	requestCtx.Params = match.Params
+	return a.servePortableMatch(tier, normalized, match, requestCtx, state, opts)
+}
 
+func (a *App) portableRouteNotFound(normalized Request, allowed []string, state *portableServeState, opts serveOptions) Response {
+	if opts.errorResponder != nil {
+		if len(allowed) > 0 {
+			state.errorCode = errorCodeMethodNotAllowed
+			return a.respondToServeError(opts, &AppError{Code: errorCodeMethodNotAllowed, Message: errorMessageMethodNotAllowed}, normalized, state.requestID, state.traceID)
+		}
+		state.errorCode = errorCodeNotFound
+		return a.respondToServeError(opts, &AppError{Code: errorCodeNotFound, Message: errorMessageNotFound}, normalized, state.requestID, state.traceID)
+	}
+	resp, errorCode := a.routeNotFoundResponse(allowed, state.requestID, state.traceID)
+	state.errorCode = errorCode
+	return resp
+}
+
+func (a *App) servePortableMatch(tier Tier, normalized Request, match *routeMatch, requestCtx *Context, state *portableServeState, opts serveOptions) Response {
 	if resp, errorCode, ok := a.applyPolicy(tier, requestCtx, state.requestID, opts.errorResponder); ok {
 		state.errorCode = errorCode
 		return resp
 	}
 
-	if resp, errorCode, ok := a.authorize(match.Route, requestCtx, state.requestID, opts.errorResponder); ok {
+	if resp, errorCode, ok := a.authorizePortableRoute(match.Route, requestCtx, state.requestID, opts.errorResponder); ok {
 		state.errorCode = errorCode
 		return resp
 	}
@@ -378,6 +403,13 @@ func (a *App) servePortableCore(ctx context.Context, req Request, tier Tier, sta
 	resp = limitStreamedResponse(resp, a.limits.MaxResponseBytes)
 
 	return resp
+}
+
+func (a *App) authorizePortableRoute(matched route, requestCtx *Context, requestID string, errorResponder requestErrorResponder) (Response, string, bool) {
+	if a.secure {
+		return a.authorizeSecure(matched, requestCtx, requestID, errorResponder)
+	}
+	return a.authorize(matched, requestCtx, requestID, errorResponder)
 }
 
 func clockNow(clock Clock) time.Time {

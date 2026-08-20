@@ -249,6 +249,9 @@ FIXTURE_DOMAIN_TIERS = {
     "binding": "p0",
     "validation": "p0",
     "openapi": "p0",
+    "secure-app-p0": "p0",
+    "secure-app-p1": "p1",
+    "secure-app-p2": "p2",
 }
 
 

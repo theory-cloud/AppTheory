@@ -1,6 +1,7 @@
 package apptheorycdk
 
 import (
+	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigatewayv2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
@@ -31,15 +32,30 @@ type AppTheoryAppProps struct {
 	Handler              *string                        `field:"optional" json:"handler" yaml:"handler"`
 	HostedZone           awsroute53.IHostedZone         `field:"optional" json:"hostedZone" yaml:"hostedZone"`
 	LogGroup             interfacesawslogs.ILogGroupRef `field:"optional" json:"logGroup" yaml:"logGroup"`
-	LogRetention         awslogs.RetentionDays          `field:"optional" json:"logRetention" yaml:"logRetention"`
-	MemorySize           *float64                       `field:"optional" json:"memorySize" yaml:"memorySize"`
-	RateLimitTableName   *string                        `field:"optional" json:"rateLimitTableName" yaml:"rateLimitTableName"`
-	Runtime              awslambda.Runtime              `field:"optional" json:"runtime" yaml:"runtime"`
-	SecurityGroups       *[]awsec2.ISecurityGroup       `field:"optional" json:"securityGroups" yaml:"securityGroups"`
-	Stage                awsapigatewayv2.IStage         `field:"optional" json:"stage" yaml:"stage"`
-	TimeoutSeconds       *float64                       `field:"optional" json:"timeoutSeconds" yaml:"timeoutSeconds"`
-	Vpc                  awsec2.IVpc                    `field:"optional" json:"vpc" yaml:"vpc"`
-	VpcSubnets           *awsec2.SubnetSelection        `field:"optional" json:"vpcSubnets" yaml:"vpcSubnets"`
+	// Removal policy for the app function's AppTheory-managed named log group.
+	//
+	// The value is forwarded unchanged to AppTheoryFunction. Supplying both
+	// `logGroup` and `logRemovalPolicy` fails synthesis because caller-provided
+	// log groups own their removal policy.
+	// Default: RemovalPolicy.DESTROY
+	//
+	LogRemovalPolicy   awscdk.RemovalPolicy  `field:"optional" json:"logRemovalPolicy" yaml:"logRemovalPolicy"`
+	LogRetention       awslogs.RetentionDays `field:"optional" json:"logRetention" yaml:"logRetention"`
+	MemorySize         *float64              `field:"optional" json:"memorySize" yaml:"memorySize"`
+	RateLimitTableName *string               `field:"optional" json:"rateLimitTableName" yaml:"rateLimitTableName"`
+	// Stable physical name for the app function's AppTheory-managed IAM role.
+	//
+	// AppTheoryFunction receives the value unchanged. Concrete names are synthesis-validated against IAM's `[\w+=,.@-]+` character set and 64-character limit; token-valued names are accepted and IAM validates the resolved value at deploy time, so an invalid resolved name fails deployment rather than synthesis.
+	// This exemption keeps account-agnostic synthesis representable for the THE-2861 token-valued-input failure class. Synthesis still fails if AppTheory cannot apply the requested name exactly.
+	// Default: undefined.
+	//
+	RoleName       *string                  `field:"optional" json:"roleName" yaml:"roleName"`
+	Runtime        awslambda.Runtime        `field:"optional" json:"runtime" yaml:"runtime"`
+	SecurityGroups *[]awsec2.ISecurityGroup `field:"optional" json:"securityGroups" yaml:"securityGroups"`
+	Stage          awsapigatewayv2.IStage   `field:"optional" json:"stage" yaml:"stage"`
+	TimeoutSeconds *float64                 `field:"optional" json:"timeoutSeconds" yaml:"timeoutSeconds"`
+	Vpc            awsec2.IVpc              `field:"optional" json:"vpc" yaml:"vpc"`
+	VpcSubnets     *awsec2.SubnetSelection  `field:"optional" json:"vpcSubnets" yaml:"vpcSubnets"`
 	// Regional WAF attachment is intentionally unavailable on AppTheoryApp because this top-level construct deploys an API Gateway v2 HTTP API.
 	//
 	// Supplying this prop fails closed during synthesis instead of producing an

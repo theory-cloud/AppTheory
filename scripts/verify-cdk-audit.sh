@@ -28,16 +28,15 @@ npm --prefix cdk audit --audit-level=moderate --json >"${tmp_report}"
 audit_status=$?
 set -e
 
-# Fail closed with one intentionally narrow, visible exception for an upstream
-# AWS CDK bundled dependency. The shared checker pins the advisory, dependency
-# graph, lockfile path, and scanner-specific report shape.
+# Fail closed unless the AWS CDK bundled dependency graph is exactly patched
+# and npm audit reports no findings.
 set +e
 node scripts/check-visible-aws-cdk-finding.mjs npm "${tmp_report}" cdk/package-lock.json
 filter_status=$?
 set -e
 
-if [[ "${audit_status}" -eq 0 && "${filter_status}" -eq 0 ]]; then
-  echo "cdk-audit: FAIL (vulnerability exception checker accepted an empty audit report)" >&2
+if [[ "${audit_status}" -ne 0 ]]; then
+  echo "cdk-audit: FAIL (npm audit exited ${audit_status})" >&2
   exit 1
 fi
 

@@ -23,8 +23,9 @@ type Context struct {
 	RemainingMS     int
 	MiddlewareTrace []string
 
-	ws      *WebSocketContext
-	appsync *AppSyncContext
+	ws              *WebSocketContext
+	appsync         *AppSyncContext
+	securePrincipal *SecurePrincipal
 
 	values map[string]any
 }
@@ -157,6 +158,14 @@ func (c *Context) AsAppSync() *AppSyncContext {
 		return nil
 	}
 	return c.appsync
+}
+
+// SecurePrincipal returns a defensive deep copy of the resolved secure principal.
+func (c *Context) SecurePrincipal() *SecurePrincipal {
+	if c == nil {
+		return nil
+	}
+	return cloneSecurePrincipal(c.securePrincipal)
 }
 
 func (c *Context) Set(key string, value any) {

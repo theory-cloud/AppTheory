@@ -119,9 +119,10 @@ passed `npm audit` with zero vulnerabilities. The removal rationale was:
 - `yaml`: the TableTheory release asset now resolves `yaml@2.9.0`; AppTheory should not override TableTheory's
   transitive dependency unless a current advisory or contract gate requires it.
 
-AWS CDK `2.263.0` bundles patched `brace-expansion@5.0.8` inside its published tarball, resolving
-`GHSA-mh99-v99m-4gvg` without a local override. The CDK npm-audit and GovTheory OSV gates verify the exact bundled graph
-and require empty scanner reports; any AWS CDK, minimatch, brace-expansion, package-path, or finding drift fails closed.
+As of this changeset, the repository pins AWS CDK `2.265.0`, which bundles fixed `brace-expansion@5.0.9` inside its
+published tarball. Production `aws-cdk-lib` manifests at or above `2.265.0` carry no fixed-version `brace-expansion`
+findings. The CDK npm-audit and GovTheory OSV gates verify the exact bundled graph and require empty scanner reports;
+any AWS CDK, minimatch, brace-expansion, package-path, or finding drift fails closed.
 
 The TypeScript lint graph still requires `minimatch@3.1.4`, but its compatible `brace-expansion` range now resolves to
 patched `brace-expansion@1.1.17`, the first fixed 1.x release for `GHSA-mh99-v99m-4gvg`. The independently resolvable
@@ -131,5 +132,5 @@ requires an empty OSV report; any lint-parent, minimatch, package, advisory, or 
 The `ts/` SEC-2 gate's deterministic result currently depends on OSV serving the advisory's multi-range record, which
 identifies `1.1.17` as fixed. A stale single-range record (`introduced: 0`, `fixed: 5.0.8`) is a known flake vector: it
 misclassifies `brace-expansion@1.1.17`, so a clean tree fails closed with `unexpected vulnerability
-GHSA-mh99-v99m-4gvg in brace-expansion@1.1.17`. The AWS CDK gate is variant-independent because bundled `5.0.8` is
+GHSA-mh99-v99m-4gvg in brace-expansion@1.1.17`. The AWS CDK gate is variant-independent because bundled `5.0.9` is
 fixed in both record variants.

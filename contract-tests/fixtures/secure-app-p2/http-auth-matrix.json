@@ -1,0 +1,664 @@
+{
+  "id": "p2.secure_http_auth_matrix",
+  "tier": "p2",
+  "name": "secure HTTP postures classify principals and enforce all scopes before middleware",
+  "setup": {
+    "secure_app": {
+      "tier": "p2",
+      "middlewares": [
+        "record"
+      ],
+      "routes": [
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/public",
+          "handler": "secure_echo",
+          "posture": "public"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/optional",
+          "handler": "secure_echo",
+          "posture": "optional"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/authenticated",
+          "handler": "secure_echo",
+          "posture": "authenticated"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/scoped",
+          "handler": "secure_echo",
+          "posture": "authenticated",
+          "scopes": [
+            " read ",
+            "write",
+            "read"
+          ]
+        },
+        {
+          "surface": "http",
+          "method": "POST",
+          "path": "/internal",
+          "handler": "secure_echo",
+          "posture": "internal_only"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "files/:path+?ignored=true",
+          "handler": "secure_mutate_principal",
+          "posture": "authenticated"
+        }
+      ]
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "public",
+        "operation": "http",
+        "request": {
+          "method": "GET",
+          "path": "/public",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "optional-anonymous",
+        "operation": "http",
+        "request": {
+          "method": "GET",
+          "path": "/optional",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "optional-known-empty",
+        "operation": "http",
+        "principal": {
+          "identity": " ",
+          "kind": "external",
+          "scopes": [
+            " read "
+          ],
+          "claims": {}
+        },
+        "request": {
+          "method": "GET",
+          "path": "/optional",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "optional-resolver-error",
+        "operation": "http",
+        "resolver_error": {
+          "code": "app.conflict",
+          "message": "conflict"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/optional",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "optional-unknown-kind",
+        "operation": "http",
+        "principal": {
+          "identity": "",
+          "kind": "mystery",
+          "scopes": [],
+          "claims": {}
+        },
+        "request": {
+          "method": "GET",
+          "path": "/optional",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "authenticated-missing",
+        "operation": "http",
+        "request": {
+          "method": "GET",
+          "path": "/authenticated",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "authenticated-empty",
+        "operation": "http",
+        "principal": {
+          "identity": " ",
+          "kind": "external",
+          "scopes": [],
+          "claims": {}
+        },
+        "request": {
+          "method": "GET",
+          "path": "/authenticated",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "authenticated-unknown-kind",
+        "operation": "http",
+        "principal": {
+          "identity": "user",
+          "kind": "mystery",
+          "scopes": [],
+          "claims": {}
+        },
+        "request": {
+          "method": "GET",
+          "path": "/authenticated",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "authenticated-internal",
+        "operation": "http",
+        "principal": {
+          "identity": " svc ",
+          "kind": "internal",
+          "scopes": [],
+          "claims": {
+            "nested": {
+              "value": "kept"
+            }
+          }
+        },
+        "request": {
+          "method": "GET",
+          "path": "/authenticated",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "scoped-forbidden",
+        "operation": "http",
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [
+            "read"
+          ],
+          "claims": {}
+        },
+        "request": {
+          "method": "GET",
+          "path": "/scoped",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "scoped-success",
+        "operation": "http",
+        "principal": {
+          "identity": "user",
+          "kind": "",
+          "scopes": [
+            "write",
+            "read",
+            "write"
+          ],
+          "claims": {}
+        },
+        "request": {
+          "method": "GET",
+          "path": "/scoped",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "scoped-internal-success",
+        "operation": "http",
+        "principal": {
+          "identity": "svc",
+          "kind": "internal",
+          "scopes": [
+            "read",
+            "write"
+          ],
+          "claims": {}
+        },
+        "request": {
+          "method": "GET",
+          "path": "/scoped",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "internal-external",
+        "operation": "http",
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [],
+          "claims": {}
+        },
+        "request": {
+          "method": "POST",
+          "path": "/internal",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "internal-missing",
+        "operation": "http",
+        "request": {
+          "method": "POST",
+          "path": "/internal",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "internal-unknown-kind",
+        "operation": "http",
+        "principal": {
+          "identity": "svc",
+          "kind": "unknown",
+          "scopes": [],
+          "claims": {}
+        },
+        "request": {
+          "method": "POST",
+          "path": "/internal",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "internal-success",
+        "operation": "http",
+        "principal": {
+          "identity": "svc",
+          "kind": "internal",
+          "scopes": [],
+          "claims": {}
+        },
+        "request": {
+          "method": "POST",
+          "path": "/internal",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "defensive-copy",
+        "operation": "http",
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [
+            "a"
+          ],
+          "claims": {
+            "nested": {
+              "value": "original"
+            }
+          }
+        },
+        "mutate_returned": true,
+        "request": {
+          "method": "GET",
+          "path": "/files/a/b",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "routes-copy",
+        "operation": "routes",
+        "mutate_routes": true
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "public",
+        "status": 200,
+        "trace": [
+          "request_id",
+          "recovery",
+          "logging",
+          "handler"
+        ],
+        "resolver_calls": 0,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "optional-anonymous",
+        "status": 200,
+        "trace": [
+          "request_id",
+          "recovery",
+          "logging",
+          "auth",
+          "handler"
+        ],
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "optional-known-empty",
+        "status": 200,
+        "trace": [
+          "request_id",
+          "recovery",
+          "logging",
+          "auth",
+          "handler"
+        ],
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "optional-resolver-error",
+        "status": 409,
+        "error_code": "app.conflict",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "optional-unknown-kind",
+        "status": 401,
+        "error_code": "app.unauthorized",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "authenticated-missing",
+        "status": 401,
+        "error_code": "app.unauthorized",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "authenticated-empty",
+        "status": 401,
+        "error_code": "app.unauthorized",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "authenticated-unknown-kind",
+        "status": 401,
+        "error_code": "app.unauthorized",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "authenticated-internal",
+        "status": 200,
+        "trace": [
+          "request_id",
+          "recovery",
+          "logging",
+          "auth",
+          "handler"
+        ],
+        "principal": {
+          "identity": "svc",
+          "kind": "internal",
+          "scopes": [],
+          "claims": {
+            "nested": {
+              "value": "kept"
+            }
+          }
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "scoped-forbidden",
+        "status": 403,
+        "error_code": "app.forbidden",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "scoped-success",
+        "status": 200,
+        "trace": [
+          "request_id",
+          "recovery",
+          "logging",
+          "auth",
+          "handler"
+        ],
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [
+            "write",
+            "read"
+          ],
+          "claims": {}
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "scoped-internal-success",
+        "status": 200,
+        "principal": {
+          "identity": "svc",
+          "kind": "internal",
+          "scopes": [
+            "read",
+            "write"
+          ],
+          "claims": {}
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "internal-external",
+        "status": 403,
+        "error_code": "app.forbidden",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "internal-missing",
+        "status": 401,
+        "error_code": "app.unauthorized",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "internal-unknown-kind",
+        "status": 401,
+        "error_code": "app.unauthorized",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "internal-success",
+        "status": 200,
+        "principal": {
+          "identity": "svc",
+          "kind": "internal",
+          "scopes": [],
+          "claims": {}
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "defensive-copy",
+        "status": 200,
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [
+            "a"
+          ],
+          "claims": {
+            "nested": {
+              "value": "original"
+            }
+          }
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "routes-copy",
+        "routes": [
+          {
+            "surface": "http",
+            "method": "GET",
+            "path": "/public",
+            "posture": "public"
+          },
+          {
+            "surface": "http",
+            "method": "GET",
+            "path": "/optional",
+            "posture": "optional"
+          },
+          {
+            "surface": "http",
+            "method": "GET",
+            "path": "/authenticated",
+            "posture": "authenticated"
+          },
+          {
+            "surface": "http",
+            "method": "GET",
+            "path": "/scoped",
+            "posture": "authenticated",
+            "scopes": [
+              "read",
+              "write"
+            ]
+          },
+          {
+            "surface": "http",
+            "method": "POST",
+            "path": "/internal",
+            "posture": "internal_only"
+          },
+          {
+            "surface": "http",
+            "method": "GET",
+            "path": "/files/{path+}",
+            "posture": "authenticated"
+          }
+        ]
+      }
+    ]
+  }
+}

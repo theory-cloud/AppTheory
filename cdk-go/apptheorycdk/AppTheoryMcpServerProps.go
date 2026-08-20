@@ -12,6 +12,14 @@ type AppTheoryMcpServerProps struct {
 	// Default: undefined.
 	//
 	ApiName *string `field:"optional" json:"apiName" yaml:"apiName"`
+	// OAuth authorization server issuer passed to the Lambda runtime config.
+	//
+	// Literal values must be absolute HTTPS URLs with no userinfo, query, or
+	// fragment. CDK tokens pass through unparsed. Supply `jwksUri` with this prop
+	// to enable the runtime-served RFC 9728 discovery routes.
+	// Default: undefined (legacy POST-only MCP route).
+	//
+	AuthorizationServerIssuer *string `field:"optional" json:"authorizationServerIssuer" yaml:"authorizationServerIssuer"`
 	// Custom domain configuration.
 	// Default: undefined (no custom domain).
 	//
@@ -20,6 +28,20 @@ type AppTheoryMcpServerProps struct {
 	// Default: false.
 	//
 	EnableSessionTable *bool `field:"optional" json:"enableSessionTable" yaml:"enableSessionTable"`
+	// OAuth JSON Web Key Set URL passed to the Lambda runtime config.
+	//
+	// Literal values must be absolute HTTPS URLs with no userinfo or fragment;
+	// queries are allowed. CDK tokens pass through unparsed. Supply
+	// `authorizationServerIssuer` with this prop.
+	// Default: undefined (legacy POST-only MCP route).
+	//
+	JwksUri *string `field:"optional" json:"jwksUri" yaml:"jwksUri"`
+	// Literal route path for the MCP endpoint.
+	//
+	// This is a synthesis-time path, never an origin or full resource URL.
+	// Default: AppTheoryMcpPaths.MCP
+	//
+	McpPath *string `field:"optional" json:"mcpPath" yaml:"mcpPath"`
 	// Name for the session DynamoDB table.
 	//
 	// Only used when enableSessionTable is true.

@@ -7,10 +7,11 @@ This document is the human-readable overview. The authoritative public surface i
 ## Constructs (inventory)
 
 AppTheory CDK exports constructs such as:
-- `AppTheoryFunction` (Lambda wrapper defaults)
+- `AppTheoryFunction` (Lambda wrapper defaults, including an optional fail-closed stable execution `roleName`)
 - `AppTheoryFunctionAlarms` (baseline alarms)
 - `AppTheoryHttpApi` (API Gateway v2 HTTP API + proxy routes)
 - `AppTheoryMcpServer` (API Gateway v2 HTTP API `POST /mcp` for MCP / Bedrock AgentCore)
+- `AppTheoryInstallParameters` (governed namespace CloudFormation parameters, caller-account rule, and typed tokens)
 - `AppTheoryRemoteMcpServer` (API Gateway REST API v1 streaming `/mcp` for Claude Remote MCP / Streamable HTTP)
 - `AppTheoryMcpProtectedResource` (API Gateway REST API v1 `/.well-known/oauth-protected-resource` for OAuth discovery)
 - `AppTheoryRestApi` (API Gateway REST API v1 + single-Lambda proxy routes)
@@ -24,6 +25,7 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryEventBridgeRuleTarget` (EventBridge rule → Lambda target; schedule XOR eventPattern)
 - `AppTheoryHttpIngestionEndpoint` (authenticated HTTP API v2 endpoint + Lambda request authorizer + stage throttling)
 - `AppTheoryS3Ingest` (secure S3 ingest bucket + optional EventBridge/SQS notifications)
+- `AppTheoryS3VersionedIngress` (versioned namespace artifact bucket + exact-object upload/read grants)
 - `AppTheoryVectorIndex` (S3 Vectors bucket/index plus AppTheory vectorstore env/grants)
 - `AppTheoryCodeBuildJobRunner` (CodeBuild project wrapper for batch steps; safe defaults + logs + state-change hook)
 - `AppTheoryDynamoDBStreamMapping` (Streams mapping + permissions)
@@ -44,6 +46,47 @@ AppTheory CDK exports constructs such as:
 - Higher-level "app"/SSR patterns now converge on the FaceTheory-first deployment contract rather than a weaker helper path
 
 For the exact list and prop types, read `cdk/lib/*.d.ts`.
+
+## Governed namespace install parameters
+
+`AppTheoryInstallParameters` emits the ten required namespace `String` parameters without defaults and exposes their
+`Ref` values as typed string tokens. It also emits `TargetAccountMatchesCaller`, which compares `TargetAccountId` with
+`AWS::AccountId`. CloudFormation owns pattern and allowed-value validation; invalid install values are not rejected by
+CDK synthesis.
+
+CloudFormation Rules cannot use `Fn::Join`. The governed install-profile validator therefore retains the relational
+`DnsHost == cloud-keeper.<NamespaceSlug>.theorycloud.app` check, while the `DnsHost` allowed pattern enforces the
+`theorycloud.app` suffix at stack evaluation. See the canonical
+[Namespace Install Parameters](../../docs/features/install-parameters.md) guide.
+
+## Versioned namespace artifact ingress
+
+`AppTheoryS3VersionedIngress` owns the fixed namespace release bucket posture: enabled S3 versioning, all four public
+access blocks, S3-managed encryption, bucket-owner-enforced ownership, TLS-only access, retain semantics, and an enabled
+lifecycle rule that aborts incomplete multipart uploads after 7 days. No object expiration or noncurrent-version
+deletion is emitted because no governed retention decision exists for pinned artifact versions.
+
+The `grantUpload` and `grantVersionedRead` helpers each grant exactly one action, `s3:PutObject` and
+`s3:GetObjectVersion`, respectively. For literal inputs, each grant targets one exact
+`ns/<namespaceSlug>/<bundleId>` object ARN with no wildcard. `s3:PutObject` inherently covers multipart create, part
+upload, and completion on that key, but the helper does not grant the separate abort or part-listing actions; the
+lifecycle rule prevents permanent incomplete-upload residue. Literal locations are synthesis-validated; under the
+accepted Option A policy, unresolved tokens skip literal value validation, remain required, and render through
+CloudFormation-safe joins. CloudFormation resolves them at deployment; AppTheory cannot guarantee exactness for
+token-valued inputs. Use the static `KEY_ROOT` or instance `keyRoot` accessor instead of copying `ns/`. See the canonical
+[S3 Versioned Artifact Ingress](../../docs/features/s3-versioned-ingress.md) guide.
+
+## Stable Lambda execution role names
+
+Set `roleName` on `AppTheoryFunction` or `AppTheoryApp` when the Lambda execution role needs a stable physical name.
+`AppTheoryApp` forwards the value unchanged to its function. The function lets the Lambda L2 create its execution role,
+preserving every CDK-computed managed policy, then applies the exact requested `AWS::IAM::Role.RoleName`. Concrete names
+are validated at synthesis against IAM's `[\w+=,.@-]+` character set and 64-character limit. Token-valued names are
+accepted and IAM validates their resolved value at deploy time, so a bad resolved name fails deployment rather than
+synthesis. The token exemption keeps account-agnostic synthesis representable for the THE-2861 token-valued-input
+failure class. Synthesis still fails if the generated role is not available for the rename; omitting the prop preserves
+CloudFormation-generated names. This supported prop supersedes direct CloudFormation property-override escape hatches
+for stable function role names.
 
 ## Kinesis and CloudWatch Logs path
 

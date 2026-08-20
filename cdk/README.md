@@ -44,6 +44,7 @@ The inventory below is generated from `cdk/lib/index.ts` exports. Run `./scripts
 - `AppTheoryRestApi` — exported from `cdk/lib/rest-api.ts`.
 - `AppTheoryRestApiRouter` — exported from `cdk/lib/rest-api-router.ts`.
 - `AppTheoryS3Ingest` — exported from `cdk/lib/s3-ingest.ts`.
+- `AppTheoryS3VersionedIngress` — exported from `cdk/lib/s3-versioned-ingress.ts`.
 - `AppTheoryVectorIndex` — exported from `cdk/lib/vector-index.ts`.
 - `AppTheoryWebSocketApi` — exported from `cdk/lib/websocket-api.ts`.
 - `AppTheorySsrSite` — exported from `cdk/lib/ssr-site.ts`.
@@ -55,6 +56,7 @@ The inventory below is generated from `cdk/lib/index.ts` exports. Run `./scripts
 - `AppTheoryMicrovmImage` — exported from `cdk/lib/microvm-image.ts`.
 - `AppTheoryMicrovmController` — exported from `cdk/lib/microvm-controller.ts`.
 - `AppTheoryMcpServer` — exported from `cdk/lib/mcp-server.ts`.
+- `AppTheoryInstallParameters` — exported from `cdk/lib/install-parameters.ts`.
 - `AppTheoryMcpProtectedResource` — exported from `cdk/lib/mcp-protected-resource.ts`.
 - `AppTheoryRemoteMcpServer` — exported from `cdk/lib/remote-mcp-server.ts`.
 <!-- apptheory-cdk-inventory:end -->
@@ -78,6 +80,31 @@ new AppTheoryHttpApi(stack, "Api", { handler: fn, apiName: "my-api" });
 
 ## Production surface notes
 
+- `AppTheoryInstallParameters` is the required, account-agnostic namespace installation surface. It emits the ten
+  governed `String` parameters and the `TargetAccountMatchesCaller` CloudFormation Rule; consuming constructs use its
+  typed string-token accessors rather than accepting a second identity-injection path.
+- `AppTheoryS3VersionedIngress` is the fixed namespace artifact bucket surface. It always enables versioning,
+  public-access blocking, S3-managed encryption, TLS enforcement, and seven-day incomplete-multipart reaping. Each
+  helper grants one action (`s3:PutObject` or `s3:GetObjectVersion`) on one object resource. Literal inputs are exact
+  and wildcard-free. CloudFormation resolves token-valued inputs at deployment; AppTheory cannot guarantee their
+  exactness. `s3:PutObject` inherently covers multipart upload on that key but not the separate abort or part-listing
+  actions; the lifecycle rule prevents permanent incomplete-upload residue.
+- `AppTheoryFunctionProps.roleName` and `AppTheoryAppProps.roleName` are the
+  supported, fail-closed path for stable Lambda execution role names. They
+  require concrete values to be non-empty, no more than 64 characters, and to
+  match `^[\w+=,.@-]+$`. Values for which `Token.isUnresolved(roleName)` is true
+  skip these value checks and remain subject to IAM validation at deployment.
+  When omitted, CloudFormation generates the role name. These props supersede
+  direct `CfnRole` property-override escape hatches.
+- `AppTheoryAppProps.logRemovalPolicy` forwards to the app function's
+  AppTheory-created log group. All AppTheory-created function log groups,
+  whether named explicitly or created through the anonymous path, default to
+  `RemovalPolicy.DESTROY` for the prototype's self-cleaning posture; set
+  `RemovalPolicy.RETAIN` explicitly when logs must survive stack deletion.
+  `RemovalPolicy.SNAPSHOT` fails synthesis because CloudWatch Logs groups do
+  not support snapshot removal policies. This supported surface supersedes
+  direct `CfnLogGroup.applyRemovalPolicy` escape hatches. Caller-provided log
+  groups keep their own removal policy.
 - Regional WAF is supported only on `AppTheoryRestApi` and `AppTheoryRestApiRouter`
   because API Gateway REST API stages use the WAF-supported
   `/restapis/{apiId}/stages/{stageName}` ARN shape. `AppTheoryHttpApi` and

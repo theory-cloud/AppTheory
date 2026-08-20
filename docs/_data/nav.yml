@@ -32,6 +32,7 @@ groups:
   - label: HTTP & Runtime
     items:
       - { id: feature-http,           title: HTTP Runtime (P0–P2),    url: /features/http-runtime/,      icon: layers,       tag: ga }
+      - { id: feature-secure-app,     title: SecureApp Routing,       url: /features/secure-app/,        icon: shield-check, tag: new }
       - { id: feature-source,         title: Source Provenance,       url: /features/source-provenance/, icon: shield-check }
       - { id: feature-observability,  title: Observability Hooks,     url: /features/observability/,     icon: activity }
       - { id: feature-logging,        title: Logging Profiles,        url: /features/logging-profiles/,  icon: activity }
@@ -45,6 +46,7 @@ groups:
 
   - label: MCP
     items:
+      - { id: feature-mcp-server,     title: MCP Server Construct,    url: /features/mcp-server-construct/, icon: package, surface: mcp, tag: new }
       - { id: int-mcp,                title: MCP Method Surface,      url: /integrations/mcp/,           icon: share,        surface: mcp,  tag: ga }
       - { id: int-remote-mcp,         title: Remote MCP,              url: /integrations/remote-mcp/,    icon: globe,        surface: mcp }
       - { id: int-agentcore,          title: AgentCore MCP,           url: /integrations/agentcore-mcp/, icon: cpu,          surface: mcp }
@@ -55,6 +57,8 @@ groups:
       - { id: cdk-overview,           title: CDK Overview,            url: /cdk/,                                          icon: package }
       - { id: cdk-getting-started,    title: CDK Getting Started,     url: /cdk/getting-started/,                          icon: play }
       - { id: cdk-api,                title: CDK API Reference,       url: /cdk/api-reference/,                            icon: book }
+      - { id: cdk-install-parameters, title: Install Parameters,      url: /features/install-parameters/,                  icon: list-checks, tag: new }
+      - { id: cdk-versioned-ingress,  title: Versioned Ingress,       url: /features/s3-versioned-ingress/,                 icon: archive, tag: new }
       - { id: cdk-ssr,                title: SSR Site,                url: /cdk/ssr-site/,                                 icon: globe }
       - { id: cdk-mcp-remote,         title: Remote MCP Server,       url: /cdk/mcp-server-remote-mcp/,                    icon: share,        surface: mcp }
       - { id: cdk-mcp-agentcore,      title: AgentCore MCP Server,    url: /cdk/mcp-server-agentcore/,                     icon: cpu,          surface: mcp }
@@ -69,6 +73,7 @@ groups:
     items:
       - { id: mig-from-lift,          title: From Lift,               url: /migration/from-lift/,                          icon: arrow-right }
       - { id: mig-v1-security,        title: v1 Security Migration,   url: /migration/v1-security/,                        icon: shield-check }
+      - { id: mig-secure-app,         title: Migrate to SecureApp,    url: /migration/secure-app/,                         icon: shield-check, tag: new }
       - { id: mig-microvm-v2,         title: MicroVM Logging v2,      url: /migration/microvm-runtime-logging-v2/,          icon: activity, tag: new }
       - { id: mig-appsync,            title: AppSync Resolvers,       url: /migration/appsync-lambda-resolvers/,           icon: git-branch }
 
@@ -99,6 +104,7 @@ order:
   - runtime-ts
   - runtime-py
   - feature-http
+  - feature-secure-app
   - feature-source
   - feature-logging
   - feature-sanitization
@@ -112,6 +118,8 @@ order:
   - cdk-overview
   - cdk-getting-started
   - cdk-api
+  - cdk-install-parameters
+  - cdk-versioned-ingress
   - cdk-ssr
   - cdk-mcp-remote
   - cdk-mcp-agentcore
@@ -123,6 +131,7 @@ order:
   - cdk-appsync
   - mig-from-lift
   - mig-v1-security
+  - mig-secure-app
   - mig-microvm-v2
   - mig-appsync
   - testing-guide
@@ -149,6 +158,7 @@ url_to_id:
   /runtimes/typescript/:                        runtime-ts
   /runtimes/python/:                            runtime-py
   /features/http-runtime/:                      feature-http
+  /features/secure-app/:                        feature-secure-app
   /features/source-provenance/:                 feature-source
   /features/observability/:                     feature-observability
   /features/logging-profiles/:                  feature-logging
@@ -163,6 +173,8 @@ url_to_id:
   /cdk/:                                        cdk-overview
   /cdk/getting-started/:                        cdk-getting-started
   /cdk/api-reference/:                          cdk-api
+  /features/install-parameters/:                cdk-install-parameters
+  /features/s3-versioned-ingress/:              cdk-versioned-ingress
   /cdk/ssr-site/:                               cdk-ssr
   /cdk/mcp-server-remote-mcp/:                  cdk-mcp-remote
   /cdk/mcp-server-agentcore/:                   cdk-mcp-agentcore
@@ -174,6 +186,7 @@ url_to_id:
   /cdk/appsync-lambda-resolvers/:               cdk-appsync
   /migration/from-lift/:                        mig-from-lift
   /migration/v1-security/:                      mig-v1-security
+  /migration/secure-app/:                        mig-secure-app
   /migration/microvm-runtime-logging-v2/:        mig-microvm-v2
   /migration/appsync-lambda-resolvers/:         mig-appsync
   /testing-guide/:                              testing-guide
