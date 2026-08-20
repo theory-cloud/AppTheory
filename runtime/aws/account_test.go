@@ -419,6 +419,59 @@ func TestAssumeFirstMismatchAndVerified(t *testing.T) {
 	}
 }
 
+func TestAssumeFirstFixedCredentialsDoNotClaimRefresh(t *testing.T) {
+	t.Parallel()
+
+	expired := time.Now().Add(-time.Hour)
+	tests := []struct {
+		name       string
+		expiration *time.Time
+	}{
+		{name: "without STS expiration"},
+		{name: "with STS expiration", expiration: &expired},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			assumer := successfulAssumer()
+			assumer.output.Credentials.Expiration = test.expiration
+			result, err := AssumeFirst(
+				context.Background(),
+				assumer,
+				func(awssdk.CredentialsProvider) CallerIdentityAPI {
+					return &fakeCallerIdentityClient{output: &sts.GetCallerIdentityOutput{
+						Account: awssdk.String("111122223333"),
+					}}
+				},
+				AssumeRoleRequest{
+					RoleARN:           "arn:aws:iam::111122223333:role/Deploy",
+					RoleSessionName:   "apptheory-test",
+					ExpectedAccountID: "111122223333",
+				},
+			)
+			if err != nil {
+				t.Fatalf("AssumeFirst() error = %v", err)
+			}
+			for retrieve := 0; retrieve < 2; retrieve++ {
+				credentials, retrieveErr := result.Credentials.Retrieve(context.Background())
+				if retrieveErr != nil {
+					t.Fatalf("Retrieve(%d) error = %v", retrieve, retrieveErr)
+				}
+				if credentials.CanExpire {
+					t.Fatalf("Retrieve(%d) CanExpire = true for fixed credentials", retrieve)
+				}
+				if !credentials.Expires.IsZero() {
+					t.Fatalf("Retrieve(%d) Expires = %v, want zero for fixed credentials", retrieve, credentials.Expires)
+				}
+			}
+			if assumer.calls != 1 {
+				t.Fatalf("AssumeRole calls = %d, want 1", assumer.calls)
+			}
+		})
+	}
+}
+
 func TestAssumeFirstEmptyExpectedAccountSkipsSTS(t *testing.T) {
 	t.Parallel()
 

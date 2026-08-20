@@ -21,6 +21,11 @@ request/response contract and do not create a TypeScript- or Python-specific beh
 ephemeral assumed `aws.CredentialsProvider`; it must create the `CallerIdentityAPI` used for the proof from those
 credentials. The provider is returned only after `AssertAccount` reaches `AccountAssertionVerified`.
 
+The returned provider holds the one credential set obtained by the eager `AssumeRole` call; it does not perform another
+role assumption. Its cached credentials therefore report `CanExpire: false` even when STS supplied expiration metadata,
+rather than claiming a refresh capability the fixed provider does not have. A lifecycle owner that needs renewed
+credentials must run the full assume-then-assert flow again.
+
 ```go
 baseConfig, err := config.LoadDefaultConfig(ctx)
 if err != nil {

@@ -127,10 +127,6 @@ func AssumeFirst(
 		SessionToken:    strings.TrimSpace(awssdk.ToString(output.Credentials.SessionToken)),
 		Source:          "AppTheoryAssumeFirst",
 	}
-	if output.Credentials.Expiration != nil {
-		credentials.CanExpire = true
-		credentials.Expires = *output.Credentials.Expiration
-	}
 	provider := awssdk.NewCredentialsCache(awssdk.CredentialsProviderFunc(
 		func(context.Context) (awssdk.Credentials, error) {
 			return credentials, nil
