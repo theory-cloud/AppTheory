@@ -7400,6 +7400,18 @@ test("AppTheoryS3VersionedIngress synthesizes the pinned ingress bucket posture"
       Status: "Enabled",
     },
   });
+
+  const lifecycleRules = buckets[0].Properties?.LifecycleConfiguration?.Rules;
+  assert.equal(lifecycleRules.length, 1, "Ingress must own exactly one lifecycle rule");
+  assert.equal(lifecycleRules[0].AbortIncompleteMultipartUpload?.DaysAfterInitiation, 7);
+  assert.equal(lifecycleRules[0].Status, "Enabled");
+  assert.deepEqual(
+    Object.keys(lifecycleRules[0]).filter(
+      (key) => key === "Expiration" || key.startsWith("NoncurrentVersion"),
+    ),
+    [],
+    "Retention is operator-owned; ingress lifecycle must not expire current or noncurrent objects",
+  );
   assert.equal(buckets[0].DeletionPolicy, "Retain");
   assert.equal(buckets[0].UpdateReplacePolicy, "Retain");
 
