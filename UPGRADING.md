@@ -13,16 +13,33 @@ for `CHANGELOG.md`:
 Every minor release line that changes runtime behavior, deployment constructs, generated artifacts, dependency floors,
 or deprecation posture must add or update a section here before the release is promoted.
 
-## v4.x line
+## v3.x line
 
-The v4.0.0 release opens the v4 line. It carries the pending namespace, ingress, log-group, and artifact-attestation
-work drafted while the pending line was still expected to be v3.1.0; the versioned-artifact attestation member-mode
-change below is a breaking wire-format change, so the release line moved from v3.1.0 to v4.0.0 before any v3.1.0
-release existed.
+### Toolchain and CDK dependency floors
+
+The v3.x runtime requires Go 1.26.6 or newer, as declared by the root `go.mod`. Upgrade local toolchains and CI images
+before moving a Go application onto this line.
+
+The v3.x CDK package pins its `aws-cdk-lib` peer dependency exactly to 2.265.0 rather than accepting a version range.
+Align the consuming CDK application's `aws-cdk-lib` dependency to 2.265.0 before installing the matching AppTheory CDK
+GitHub Release asset; mixing CDK versions is outside the supported jsii surface.
+
+### Go module paths
+
+AppTheory v3 uses Go semantic import versioning. Replace the `/v2` suffix on every AppTheory runtime import with the
+canonical `github.com/theory-cloud/apptheory/v3` path, update the root module requirement to the pinned v3 release tag,
+and run `go mod tidy`. Do not retain both AppTheory major paths in one
+application: packages from `/v2` and `/v3` have distinct Go type identities even where their APIs are otherwise
+unchanged.
+
+The generated CDK Go bindings move in the same release transaction. Replace the bindings' `/v2` suffix with
+`github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3`, pin the matching `v3.x` tag, and run `go mod tidy` in the
+CDK application's module. Runtime and CDK module tags continue to target the same immutable release commit; do not mix
+major lines or substitute registry-published artifacts.
 
 ### Function log group removal policies
 
-Starting in v4.0.0, function log groups created by `AppTheoryFunction` and `AppTheoryApp` default to
+Starting in v3.1.0, function log groups created by `AppTheoryFunction` and `AppTheoryApp` default to
 `RemovalPolicy.DESTROY` instead of the inherited CDK `RemovalPolicy.RETAIN` default. The first `cdk deploy` after
 upgrading changes those AppTheory-managed resources to delete on stack deletion or replacement. Applications that must
 retain their function logs must set `logRemovalPolicy: RemovalPolicy.RETAIN` explicitly.
@@ -52,14 +69,14 @@ The URL-valued `resource` and `authorizationServers` props on `AppTheoryMcpProte
 construct remains supported for existing synth-time-static REST API documents, and its optional `metadataPath` prop
 can select a literal static route without deriving that route from `resource`. This is a compatibility escape hatch,
 not the namespace deployment path. Migrate namespace applications to `AppTheoryMcpServer` plus
-`oauth.RegisterMCPServer`; no removal version is scheduled for the compatibility construct in the v4 line.
+`oauth.RegisterMCPServer`; no removal version is scheduled for the compatibility construct in the v3 line.
 
 Regenerate or consume matching jsii and `cdk-go` bindings when adopting this surface. `AppTheoryMcpPaths` exports the
 canonical CDK path set, and `runtime/oauth` exports the matching Go constants.
 
 ### Governed namespace install parameters
 
-Starting in v4.0.0, namespace stacks should instantiate `AppTheoryInstallParameters` and pass its typed tokens to
+Starting in v3.1.0, namespace stacks should instantiate `AppTheoryInstallParameters` and pass its typed tokens to
 consuming constructs. The construct emits the ten required governed CloudFormation parameters and the
 `TargetAccountMatchesCaller` rule without embedding account-, tenant-, stage-, or DNS-specific identity in the
 template. Deployment runners must inject every parameter because none has a default.
@@ -72,7 +89,7 @@ Release so the parameter and accessor surfaces stay aligned.
 
 ### Versioned namespace artifact ingress
 
-Starting in v4.0.0, operator-owned platform stacks can use `AppTheoryS3VersionedIngress` for the namespace release
+Starting in v3.1.0, operator-owned platform stacks can use `AppTheoryS3VersionedIngress` for the namespace release
 bucket. The construct fixes versioning, all four public-access-block settings, S3-managed encryption, TLS-only access,
 bucket-owner-enforced ownership, retain semantics, and an enabled lifecycle rule that aborts incomplete multipart
 uploads after 7 days. It intentionally defines no object expiration or noncurrent-version deletion because the
@@ -83,13 +100,13 @@ address `ns/<namespaceSlug>/<bundleId>` and reject invalid literals at synthesis
 remain supported for account-agnostic templates. CloudFormation resolves them at deployment, and AppTheory cannot
 guarantee exactness for token-valued inputs; required-input checks and CloudFormation-safe key composition remain
 enforced. Consumers should replace copied `ns/` literals with
-`AppTheoryS3VersionedIngress.KEY_ROOT` or the instance `keyRoot` accessor when adopting the v4.0.0 release. AppTheory
+`AppTheoryS3VersionedIngress.KEY_ROOT` or the instance `keyRoot` accessor when adopting the v3.1.0 release. AppTheory
 does not issue STS credentials or presigned requests and does not transfer platform provisioning authority to
 application stacks.
 
 ### Versioned artifact attestation member modes
 
-Starting in v4.0.0, the aggregate digest for a verified versioned artifact includes each regular tar member's mode.
+Starting in v3.1.0, the aggregate digest for a verified versioned artifact includes each regular tar member's mode.
 Every sorted digest entry now has the fixed wire format
 `path<two spaces>four-digit-octal-mode<two spaces>content-sha256`, with the mode rendered using `%04o`. Attestations
 produced by the earlier path-and-content-only scheme do not verify under this scheme. Before upgrading, regenerate
@@ -99,30 +116,6 @@ or supplies `ExpectedDigest`.
 `ArtifactEntry.Mode` exposes the normalized value used by attestation, not the raw tar header value. AppTheory masks
 the header with `header.Mode & 0o7777`, so only the permission and special-mode bits (execute, setuid, setgid, and
 sticky) enter the digest; bits outside that mask are neither returned in `ArtifactEntry.Mode` nor attested.
-
-## v3.x line
-
-### Toolchain and CDK dependency floors
-
-The v3.x runtime requires Go 1.26.6 or newer, as declared by the root `go.mod`. Upgrade local toolchains and CI images
-before moving a Go application onto this line.
-
-The v3.x CDK package pins its `aws-cdk-lib` peer dependency exactly to 2.265.0 rather than accepting a version range.
-Align the consuming CDK application's `aws-cdk-lib` dependency to 2.265.0 before installing the matching AppTheory CDK
-GitHub Release asset; mixing CDK versions is outside the supported jsii surface.
-
-### Go module paths
-
-AppTheory v3 uses Go semantic import versioning. Replace the `/v2` suffix on every AppTheory runtime import with the
-canonical `github.com/theory-cloud/apptheory/v3` path, update the root module requirement to the pinned v3 release tag,
-and run `go mod tidy`. Do not retain both AppTheory major paths in one
-application: packages from `/v2` and `/v3` have distinct Go type identities even where their APIs are otherwise
-unchanged.
-
-The generated CDK Go bindings move in the same release transaction. Replace the bindings' `/v2` suffix with
-`github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3`, pin the matching `v3.x` tag, and run `go mod tidy` in the
-CDK application's module. Runtime and CDK module tags continue to target the same immutable release commit; do not mix
-major lines or substitute registry-published artifacts.
 
 ### TableTheory v3 dependency floor
 
