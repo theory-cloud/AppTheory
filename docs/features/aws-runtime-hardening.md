@@ -125,7 +125,9 @@ permission modes, and content bytes (and therefore content sizes), not unused ta
 trailing padding.
 Consumers that require fully content-digest-attested bytes must select them through `Entries` and
 `ArtifactEntry.Bytes`. Failed verification retains evidence fields but never exposes archive bytes. The object ceiling
-is `MaxVersionedArtifactBytes`; the member ceiling is `MaxVersionedArtifactEntries`.
+is `MaxVersionedArtifactBytes`; the member ceiling is `MaxVersionedArtifactEntries`; trailing tar padding is limited
+to 10,240 zero bytes (one GNU tar blocking-factor-20 record: 20 512-byte blocks), a conservative fail-closed cap
+that accepts GNU tar 1.35's maximum 9,728-byte post-EOF run and rejects anything larger or nonzero.
 
 Artifact fetch and archive-parse failures likewise preserve both the stable package sentinel and their wrapped cause for
 `errors.Is` checks.

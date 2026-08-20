@@ -210,7 +210,7 @@ func TestSecureGateRecordsMatchIntrospection(t *testing.T) {
 
 	var sawPublic, sawAppSyncMetadata bool
 	for _, route := range app.Routes() {
-		sawPublic = sawPublic || route.Posture == AuthPosturePublic
+		sawPublic = sawPublic || (route.Path == "/public" && route.Posture == AuthPosturePublic)
 		sawAppSyncMetadata = sawAppSyncMetadata || (route.Surface == SecureRouteAppSync &&
 			route.AppSyncParentType == "Mutation" && route.AppSyncField == "updateWidget")
 	}

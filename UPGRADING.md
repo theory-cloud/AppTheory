@@ -119,9 +119,9 @@ sticky) enter the digest; bits outside that mask are neither returned in `Artifa
 
 ### TableTheory v3 dependency floor
 
-The next AppTheory major line adopts TableTheory v3.0.2 in all three runtimes. This changes the Go type identity exposed
+The current AppTheory v3 line requires TableTheory v3.0.5 in all three runtimes. This changes the Go type identity exposed
 by AppTheory constructors and adapters that accept TableTheory interfaces: Go consumers must replace the previous
-TableTheory `/v2` import path with `github.com/theory-cloud/tabletheory/v3` and require v3.0.2 or later before upgrading
+TableTheory `/v2` import path with `github.com/theory-cloud/tabletheory/v3` and require v3.0.5 or later when upgrading
 AppTheory. Do not keep both TableTheory major paths in one application; their otherwise similar interfaces are distinct
 Go types.
 

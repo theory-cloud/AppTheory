@@ -22,7 +22,12 @@ const (
 	// MaxVersionedArtifactBytes is the hard ceiling for one fetched release archive.
 	MaxVersionedArtifactBytes int64 = 32 << 20
 	// MaxVersionedArtifactEntries is the hard ceiling for archive members.
-	MaxVersionedArtifactEntries  = 512
+	MaxVersionedArtifactEntries = 512
+	// maxArtifactTrailingZeroBytes bounds trailing tar padding to one GNU tar
+	// blocking-factor-20 record: 20 512-byte blocks, or 10,240 bytes. GNU tar
+	// 1.35 appends at most 19 zero blocks (9,728 bytes) after the EOF marker;
+	// this accepts one full zero record as a conservative fail-closed cap and
+	// rejects anything larger.
 	maxArtifactTrailingZeroBytes = 10_240
 )
 

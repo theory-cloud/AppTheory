@@ -268,7 +268,7 @@ func TestVerifyVersionedArtifactDigestMismatch(t *testing.T) {
 	}
 }
 
-func TestVerifyVersionedArtifactRejectsLegacyPathAndContentDigest(t *testing.T) {
+func TestVerifyVersionedArtifactRejectsPreModePathAndContentDigest(t *testing.T) {
 	t.Parallel()
 
 	raw := releaseArchive(t)
@@ -460,10 +460,13 @@ func TestVerifyVersionedArtifactRejectsTrailingArchivePayload(t *testing.T) {
 	assertArchiveInvalidReason(t, raw, "archive has trailing data after its end marker")
 }
 
-func TestVerifyVersionedArtifactAcceptsGNUDefaultTarPadding(t *testing.T) {
+func TestVerifyVersionedArtifactAcceptsDocumentedTrailingZeroBoundary(t *testing.T) {
 	t.Parallel()
 
-	raw := append(releaseArchive(t), make([]byte, maxArtifactTrailingZeroBytes)...)
+	// Keep the contract boundary literal-anchored so changing the production
+	// bound cannot make this test self-consistent.
+	const boundary = 10_240
+	raw := append(releaseArchive(t), make([]byte, boundary)...)
 	store, request := artifactFixture(t, raw)
 
 	artifact, err := VerifyVersionedArtifact(context.Background(), store, request)
@@ -481,7 +484,18 @@ func TestVerifyVersionedArtifactAcceptsGNUDefaultTarPadding(t *testing.T) {
 func TestVerifyVersionedArtifactRejectsExcessiveZeroPadding(t *testing.T) {
 	t.Parallel()
 
-	raw := append(releaseArchive(t), make([]byte, maxArtifactTrailingZeroBytes+1)...)
+	const boundaryPlusOne = 10_241
+	raw := append(releaseArchive(t), make([]byte, boundaryPlusOne)...)
+	assertArchiveInvalidReason(t, raw, "archive has trailing data after its end marker")
+}
+
+func TestVerifyVersionedArtifactRejectsNonzeroTrailingPaddingAtBoundary(t *testing.T) {
+	t.Parallel()
+
+	const boundary = 10_240
+	trailing := make([]byte, boundary)
+	trailing[boundary-1] = 1
+	raw := append(releaseArchive(t), trailing...)
 	assertArchiveInvalidReason(t, raw, "archive has trailing data after its end marker")
 }
 
