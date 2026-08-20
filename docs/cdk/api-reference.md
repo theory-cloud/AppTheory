@@ -110,7 +110,7 @@ so a bad token-resolved name fails deployment rather than synthesis. AppTheory s
 silently using an unnamed or differently named role when the generated role cannot be renamed. This prop supersedes
 direct `CfnRole.addPropertyOverride("RoleName", ...)` escape hatches for stable function role names.
 
-## Named-function log removal policy
+## Function log group removal policy
 
 `AppTheoryFunction` accepts the inherited `logRemovalPolicy` prop for log groups it creates, and
 `AppTheoryAppProps.logRemovalPolicy` forwards that contract to the app's named function:
@@ -123,10 +123,12 @@ new AppTheoryApp(this, "Runtime", {
 });
 ```
 
-AppTheory-created named-function log groups default to `RemovalPolicy.DESTROY`, matching the prototype's
-self-cleaning posture so failed deployments do not leave `/aws/lambda/<function-name>` behind and block a recreate.
-Set `RemovalPolicy.RETAIN` explicitly when the logs must survive stack deletion. The prop supersedes direct
-`CfnLogGroup.applyRemovalPolicy(...)` escape hatches for named-function log groups.
+All AppTheory-created function log groups default to `RemovalPolicy.DESTROY`, including the anonymous path whose
+function name CloudFormation generates. This matches the prototype's self-cleaning posture; for named functions it
+also prevents failed deployments from leaving `/aws/lambda/<function-name>` behind and blocking a recreate. Set
+`RemovalPolicy.RETAIN` explicitly when the logs must survive stack deletion. `RemovalPolicy.SNAPSHOT` fails synthesis
+because `AWS::Logs::LogGroup` does not support snapshot removal policies. The prop supersedes direct
+`CfnLogGroup.applyRemovalPolicy(...)` escape hatches for AppTheory-created function log groups.
 
 Caller-provided log groups remain caller-owned: AppTheory never changes their removal policy. Supplying both
 `logGroup` and `logRemovalPolicy` fails synthesis rather than silently ignoring the requested policy. AppTheory also
