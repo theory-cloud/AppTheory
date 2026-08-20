@@ -96,12 +96,15 @@ new AppTheoryHttpApi(stack, "Api", { handler: fn, apiName: "my-api" });
   skip these value checks and remain subject to IAM validation at deployment.
   When omitted, CloudFormation generates the role name. These props supersede
   direct `CfnRole` property-override escape hatches.
-- `AppTheoryAppProps.logRemovalPolicy` forwards to the app function's named
-  log group. AppTheory-created named-function log groups default to
+- `AppTheoryAppProps.logRemovalPolicy` forwards to the app function's
+  AppTheory-created log group. All AppTheory-created function log groups,
+  whether named explicitly or created through the anonymous path, default to
   `RemovalPolicy.DESTROY` for the prototype's self-cleaning posture; set
   `RemovalPolicy.RETAIN` explicitly when logs must survive stack deletion.
-  This supported surface supersedes direct `CfnLogGroup.applyRemovalPolicy`
-  escape hatches. Caller-provided log groups keep their own removal policy.
+  `RemovalPolicy.SNAPSHOT` fails synthesis because CloudWatch Logs groups do
+  not support snapshot removal policies. This supported surface supersedes
+  direct `CfnLogGroup.applyRemovalPolicy` escape hatches. Caller-provided log
+  groups keep their own removal policy.
 - Regional WAF is supported only on `AppTheoryRestApi` and `AppTheoryRestApiRouter`
   because API Gateway REST API stages use the WAF-supported
   `/restapis/{apiId}/stages/{stageName}` ARN shape. `AppTheoryHttpApi` and
