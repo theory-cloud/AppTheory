@@ -15,6 +15,15 @@ or deprecation posture must add or update a section here before the release is p
 
 ## v3.x line
 
+### Toolchain and CDK dependency floors
+
+The v3.x runtime requires Go 1.26.6 or newer, as declared by the root `go.mod`. Upgrade local toolchains and CI images
+before moving a Go application onto this line.
+
+The v3.x CDK package pins its `aws-cdk-lib` peer dependency exactly to 2.265.0 rather than accepting a version range.
+Align the consuming CDK application's `aws-cdk-lib` dependency to 2.265.0 before installing the matching AppTheory CDK
+GitHub Release asset; mixing CDK versions is outside the supported jsii surface.
+
 ### Go module paths
 
 AppTheory v3 uses Go semantic import versioning. Replace the `/v2` suffix on every AppTheory runtime import with the
