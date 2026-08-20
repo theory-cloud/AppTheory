@@ -76,11 +76,14 @@ cannot use `Fn::Join`, so the governed install-profile validator retains the rel
 settings, S3-managed encryption, bucket-owner-enforced ownership, TLS enforcement, and retain semantics. It defines no
 lifecycle expiration because the governed artifact flow does not authorize deletion of pinned versions.
 
-`grantUpload` grants only `s3:PutObject`; `grantVersionedRead` grants only `s3:GetObjectVersion`. Each grant targets one
-`ns/<namespaceSlug>/<bundleId>` object ARN with no wildcard. Literal slugs and bundle IDs are synthesis-validated
-against the application-release patterns. Unresolved CDK tokens skip value validation but remain required and render
-through a CloudFormation-safe join. Bucket identity is exposed through `bucketName` and `bucketArn`; the canonical root
-is `AppTheoryS3VersionedIngress.KEY_ROOT` and the instance `keyRoot` accessor. See
+`grantUpload` grants exactly one action, `s3:PutObject`; `grantVersionedRead` grants exactly one action,
+`s3:GetObjectVersion`. For literal inputs, each grant targets one exact `ns/<namespaceSlug>/<bundleId>` object ARN with
+no wildcard. `s3:PutObject` inherently covers multipart create, part upload, and completion on that key, but the helper
+does not grant the separate abort or part-listing actions. Literal slugs and bundle IDs are synthesis-validated against
+the application-release patterns. Under the accepted Option A policy, unresolved CDK tokens skip value validation but
+remain required, render through a CloudFormation-safe join, and defer exactness to deploy-time IAM evaluation. Bucket
+identity is exposed through `bucketName` and `bucketArn`; the canonical root is
+`AppTheoryS3VersionedIngress.KEY_ROOT` and the instance `keyRoot` accessor. See
 [S3 Versioned Artifact Ingress](../features/s3-versioned-ingress.md).
 
 ## Stable Lambda execution role names
