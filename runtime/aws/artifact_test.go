@@ -276,9 +276,9 @@ func TestVerifyVersionedArtifactRejectsPreModePathAndContentDigest(t *testing.T)
 	if err != nil {
 		t.Fatalf("readVersionedArtifactArchive() error = %v", err)
 	}
-	legacyDigest := deriveLegacyAggregateDigest(entries)
+	preModeDigest := derivePreModeAggregateDigest(entries)
 	store, request := artifactFixture(t, raw)
-	request.ExpectedDigest = legacyDigest
+	request.ExpectedDigest = preModeDigest
 	artifact, verifyErr := VerifyVersionedArtifact(context.Background(), store, request)
 	if !errors.Is(verifyErr, ErrArtifactDigestMismatch) {
 		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactDigestMismatch", verifyErr)
@@ -287,11 +287,11 @@ func TestVerifyVersionedArtifactRejectsPreModePathAndContentDigest(t *testing.T)
 		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationDigestMismatch)
 	}
 	if got := artifact.ArchiveBytes(); got != nil {
-		t.Fatalf("ArchiveBytes() after legacy digest rejection = %d bytes, want nil", len(got))
+		t.Fatalf("ArchiveBytes() after pre-mode digest rejection = %d bytes, want nil", len(got))
 	}
 }
 
-func deriveLegacyAggregateDigest(entries []ArtifactEntry) string {
+func derivePreModeAggregateDigest(entries []ArtifactEntry) string {
 	pairs := append([]ArtifactEntry(nil), entries...)
 	sort.Slice(pairs, func(i, j int) bool { return pairs[i].Path < pairs[j].Path })
 	lines := make([]string, 0, len(pairs))
