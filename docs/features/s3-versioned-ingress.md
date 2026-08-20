@@ -36,11 +36,13 @@ The construct always emits:
 - S3-managed server-side encryption (`AES256`), matching AppTheory's existing bucket default
 - bucket-owner-enforced object ownership
 - a bucket policy denying non-TLS access through `aws:SecureTransport`
+- an enabled lifecycle rule that aborts incomplete multipart uploads after 7 days
 - CloudFormation retain semantics on deletion and replacement
 
-The construct intentionally emits no lifecycle expiration or noncurrent-version deletion rule. Namespace deployment
+The construct intentionally emits no object-expiration or noncurrent-version-deletion rule. Namespace deployment
 requires pinned versions to remain readable, and the accepted artifact-flow contract does not define a quarantine
-retention period. Retention changes require an operator-owned contract decision rather than a caller-supplied bypass.
+retention period. Changing the incomplete-upload reaping window is a contract change, not a caller- or
+operator-supplied override.
 
 ## Exact-key grants
 
@@ -48,16 +50,18 @@ retention period. Retention changes require an operator-owned contract decision 
 `grantVersionedRead(...)` returns a separate grant containing exactly one action, `s3:GetObjectVersion`. For literal
 inputs, each grant targets exactly one bundle object ARN and grants neither bucket listing nor unversioned reads.
 `s3:PutObject` inherently authorizes `CreateMultipartUpload`, `UploadPart`, and `CompleteMultipartUpload` on that same
-key; the helper does not grant the separate `s3:AbortMultipartUpload` or `s3:ListMultipartUploadParts` actions. Cleanup
-of incomplete multipart uploads remains an operator-owned bucket lifecycle-policy concern outside these helpers.
+key; the helper does not grant the separate `s3:AbortMultipartUpload` or `s3:ListMultipartUploadParts` actions. The
+bucket's enabled lifecycle rule aborts incomplete multipart uploads after 7 days, so the omitted abort grant leaves no
+permanent incomplete-upload residue.
 
 Literal namespace slugs must match `^[a-z0-9][a-z0-9-]{1,62}$`. Literal bundle IDs must match
 `^rel_[0-9a-z]{26}$`. Invalid literals fail synthesis instead of being trimmed, lowercased, or broadened.
 
 CloudFormation token values follow AppTheory's accepted Option A token-policy convention: structural inputs remain
-required, while `Token.isUnresolved` skips only literal value validation. Literal inputs therefore remain exact and
-wildcard-free; exactness for token-valued inputs is deferred to deploy-time IAM evaluation. The object resource remains
-a CloudFormation-safe join of the bucket ARN, `ns/`, namespace token, slash, and bundle token.
+required, while `Token.isUnresolved` skips literal value validation. Literal inputs therefore remain exact and
+wildcard-free. CloudFormation resolves token values at deployment; AppTheory cannot guarantee exactness for
+token-valued inputs. The object resource remains a CloudFormation-safe join of the bucket ARN, `ns/`, namespace token,
+slash, and bundle token.
 
 ## Authority boundary
 

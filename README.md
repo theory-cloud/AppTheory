@@ -109,9 +109,10 @@ AppTheory includes a complete [Model Context Protocol](https://modelcontextproto
 - Namespace installation: `AppTheoryInstallParameters` emits the ten required governed CloudFormation parameters,
   checks `TargetAccountId` against `AWS::AccountId`, and exposes their `Ref` tokens without baking per-install identity
   into the template. See the [namespace install parameter guide](https://apptheory.theorycloud.ai/features/install-parameters/).
-- Artifact ingress: `AppTheoryS3VersionedIngress` owns the versioned, public-blocked, TLS-only `ns/` bucket shape and
-  one-action `PutObject` / `GetObjectVersion` grants. Literal inputs are exact-key scoped; token-valued inputs defer
-  exactness to deploy-time IAM. See the
+- Artifact ingress: `AppTheoryS3VersionedIngress` owns the versioned, public-blocked, TLS-only `ns/` bucket shape, aborts
+  incomplete multipart uploads after 7 days, and provides one-action `PutObject` / `GetObjectVersion` grants. Literal
+  inputs are exact-key scoped. CloudFormation resolves token-valued inputs at deployment; AppTheory cannot guarantee
+  their exactness. See the
   [S3 versioned artifact ingress guide](https://apptheory.theorycloud.ai/features/s3-versioned-ingress/).
 - Streaming deployment: `AppTheoryRemoteMcpServer`; the URL-valued `AppTheoryMcpProtectedResource` static-document
   props remain only as deprecated compatibility surface.

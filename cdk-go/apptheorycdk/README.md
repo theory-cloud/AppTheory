@@ -85,10 +85,11 @@ new AppTheoryHttpApi(stack, "Api", { handler: fn, apiName: "my-api" });
   governed `String` parameters and the `TargetAccountMatchesCaller` CloudFormation Rule; consuming constructs use its
   typed string-token accessors rather than accepting a second identity-injection path.
 * `AppTheoryS3VersionedIngress` is the fixed namespace artifact bucket surface. It always enables versioning,
-  public-access blocking, S3-managed encryption, and TLS enforcement. Each helper grants one action
-  (`s3:PutObject` or `s3:GetObjectVersion`) on one object resource. Literal inputs are exact and wildcard-free;
-  token-valued inputs defer exactness to deploy-time IAM. `s3:PutObject` inherently covers multipart upload on that
-  key but not the separate abort or part-listing actions.
+  public-access blocking, S3-managed encryption, TLS enforcement, and seven-day incomplete-multipart reaping. Each
+  helper grants one action (`s3:PutObject` or `s3:GetObjectVersion`) on one object resource. Literal inputs are exact
+  and wildcard-free. CloudFormation resolves token-valued inputs at deployment; AppTheory cannot guarantee their
+  exactness. `s3:PutObject` inherently covers multipart upload on that key but not the separate abort or part-listing
+  actions; the lifecycle rule prevents permanent incomplete-upload residue.
 * `AppTheoryFunctionProps.roleName` and `AppTheoryAppProps.roleName` are the
   supported, fail-closed path for stable Lambda execution role names. They
   supersede direct `CfnRole` property-override escape hatches.

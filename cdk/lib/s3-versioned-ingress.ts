@@ -1,4 +1,4 @@
-import { Fn, Token } from "aws-cdk-lib";
+import { Duration, Fn, Token } from "aws-cdk-lib";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
@@ -22,11 +22,12 @@ export interface AppTheoryS3VersionedIngressProps {
 /**
  * Version-pinned artifact ingress bucket for Theory Cloud namespace releases.
  *
- * The construct owns one hardened, versioned bucket and the one-action IAM
- * grant path for namespace bundles. Literal inputs produce exact-key grants;
- * unresolved token inputs defer exactness to deploy-time IAM evaluation. It
- * does not issue temporary credentials, mint bundle identifiers, or define
- * artifact URI schemes.
+ * The construct owns one hardened, versioned bucket, its seven-day incomplete
+ * multipart-upload reaping rule, and the one-action IAM grant path for
+ * namespace bundles. Literal inputs produce exact-key grants. CloudFormation
+ * resolves unresolved token inputs at deployment; AppTheory cannot guarantee
+ * exactness for token-valued locations. It does not issue temporary
+ * credentials, mint bundle identifiers, or define artifact URI schemes.
  */
 export class AppTheoryS3VersionedIngress extends Construct {
   /** Canonical object-key root for every namespace release bundle. */
@@ -52,6 +53,7 @@ export class AppTheoryS3VersionedIngress extends Construct {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
       enforceSSL: true,
+      lifecycleRules: [{ abortIncompleteMultipartUploadAfter: Duration.days(7), enabled: true }],
       objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
     });
 
@@ -66,8 +68,9 @@ export class AppTheoryS3VersionedIngress extends Construct {
    * `s3:PutObject` inherently covers multipart create, part upload, and
    * completion on the same key; separate abort and part-listing actions remain
    * ungranted. Literal location values are validated at synthesis. CDK tokens
-   * skip value validation and defer exactness to deploy-time IAM evaluation;
-   * missing inputs still fail closed before any grant is added.
+   * skip literal value validation and are resolved by CloudFormation at
+   * deployment; AppTheory cannot guarantee exactness for token-valued
+   * locations. Missing inputs still fail closed before any grant is added.
    */
   public grantUpload(grantee: iam.IGrantable, namespaceSlug: string, bundleId: string): iam.Grant {
     return this.grantExactObject(grantee, namespaceSlug, bundleId, "s3:PutObject");
@@ -77,8 +80,9 @@ export class AppTheoryS3VersionedIngress extends Construct {
    * Grant one principal permission to read one pinned namespace bundle version.
    *
    * The grant includes only `s3:GetObjectVersion`. Literal inputs target one
-   * exact bundle key; token inputs defer exactness to deploy-time IAM
-   * evaluation. Unversioned reads and bucket listing remain ungranted.
+   * exact bundle key. CloudFormation resolves token inputs at deployment;
+   * AppTheory cannot guarantee exactness for token-valued locations.
+   * Unversioned reads and bucket listing remain ungranted.
    */
   public grantVersionedRead(grantee: iam.IGrantable, namespaceSlug: string, bundleId: string): iam.Grant {
     return this.grantExactObject(grantee, namespaceSlug, bundleId, "s3:GetObjectVersion");
