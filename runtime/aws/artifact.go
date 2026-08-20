@@ -165,7 +165,7 @@ func VerifyVersionedArtifact(
 	entries, err := readVersionedArtifactArchive(raw)
 	if err != nil {
 		artifact.State = ArtifactVerificationArchiveInvalid
-		return artifact, fmt.Errorf("%w: %v", ErrArtifactArchiveInvalid, err)
+		return artifact, fmt.Errorf("%w: %w", ErrArtifactArchiveInvalid, err)
 	}
 	artifact.ActualDigest = deriveAggregateDigest(entries)
 	if artifact.ActualDigest != artifact.ExpectedDigest {
@@ -225,7 +225,7 @@ func fetchVersionedArtifact(
 		if errors.Is(err, objectstore.ErrObjectTooLarge) {
 			return nil, "", ErrArtifactArchiveInvalid
 		}
-		return nil, "", fmt.Errorf("%w: %v", ErrArtifactUnavailable, err)
+		return nil, "", fmt.Errorf("%w: %w", ErrArtifactUnavailable, err)
 	}
 	if output == nil {
 		return nil, "", ErrArtifactUnavailable

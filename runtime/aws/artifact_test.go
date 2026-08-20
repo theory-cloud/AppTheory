@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -127,10 +128,13 @@ func TestVerifyVersionedArtifactNilStoreFailsClosed(t *testing.T) {
 func TestVerifyVersionedArtifactStoreError(t *testing.T) {
 	t.Parallel()
 
-	store := &stubArtifactStore{err: errors.New("s3 unavailable")}
+	store := &stubArtifactStore{err: context.Canceled}
 	artifact, err := VerifyVersionedArtifact(context.Background(), store, validArtifactRequest())
 	if !errors.Is(err, ErrArtifactUnavailable) {
 		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactUnavailable", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("VerifyVersionedArtifact() error = %v, want context.Canceled", err)
 	}
 	if artifact.State != ArtifactVerificationUnavailable {
 		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationUnavailable)
@@ -352,7 +356,18 @@ func TestVerifyVersionedArtifactHappyPathUsesObjectStore(t *testing.T) {
 func TestVerifyVersionedArtifactRejectsInvalidArchive(t *testing.T) {
 	t.Parallel()
 
-	assertArchiveInvalid(t, []byte("not a tar archive"))
+	raw := []byte("not a tar archive")
+	store, request := artifactFixture(t, raw)
+	artifact, err := VerifyVersionedArtifact(context.Background(), store, request)
+	if !errors.Is(err, ErrArtifactArchiveInvalid) {
+		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactArchiveInvalid", err)
+	}
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("VerifyVersionedArtifact() error = %v, want io.ErrUnexpectedEOF", err)
+	}
+	if artifact.State != ArtifactVerificationArchiveInvalid {
+		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationArchiveInvalid)
+	}
 }
 
 func TestVerifyVersionedArtifactRejectsCompressedArchive(t *testing.T) {
