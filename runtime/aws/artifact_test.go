@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"testing"
 
@@ -200,6 +201,9 @@ func TestVerifyVersionedArtifactStoreEnforcesArchiveLimit(t *testing.T) {
 	if !errors.Is(err, ErrArtifactArchiveInvalid) {
 		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactArchiveInvalid", err)
 	}
+	if !errors.Is(err, objectstore.ErrObjectTooLarge) {
+		t.Fatalf("VerifyVersionedArtifact() error = %v, want objectstore.ErrObjectTooLarge", err)
+	}
 	if artifact.State != ArtifactVerificationArchiveInvalid {
 		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationArchiveInvalid)
 	}
@@ -262,6 +266,40 @@ func TestVerifyVersionedArtifactDigestMismatch(t *testing.T) {
 	if got := artifact.ArchiveBytes(); got != nil {
 		t.Fatalf("ArchiveBytes() after mismatch = %d bytes, want nil", len(got))
 	}
+}
+
+func TestVerifyVersionedArtifactRejectsPreModePathAndContentDigest(t *testing.T) {
+	t.Parallel()
+
+	raw := releaseArchive(t)
+	entries, err := readVersionedArtifactArchive(raw)
+	if err != nil {
+		t.Fatalf("readVersionedArtifactArchive() error = %v", err)
+	}
+	preModeDigest := derivePreModeAggregateDigest(entries)
+	store, request := artifactFixture(t, raw)
+	request.ExpectedDigest = preModeDigest
+	artifact, verifyErr := VerifyVersionedArtifact(context.Background(), store, request)
+	if !errors.Is(verifyErr, ErrArtifactDigestMismatch) {
+		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactDigestMismatch", verifyErr)
+	}
+	if artifact.State != ArtifactVerificationDigestMismatch {
+		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationDigestMismatch)
+	}
+	if got := artifact.ArchiveBytes(); got != nil {
+		t.Fatalf("ArchiveBytes() after pre-mode digest rejection = %d bytes, want nil", len(got))
+	}
+}
+
+func derivePreModeAggregateDigest(entries []ArtifactEntry) string {
+	pairs := append([]ArtifactEntry(nil), entries...)
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i].Path < pairs[j].Path })
+	lines := make([]string, 0, len(pairs))
+	for _, pair := range pairs {
+		lines = append(lines, pair.Path+"  "+pair.digest)
+	}
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func TestVerifyVersionedArtifactAttestsPermissionMode(t *testing.T) {
@@ -422,14 +460,57 @@ func TestVerifyVersionedArtifactRejectsTrailingArchivePayload(t *testing.T) {
 	assertArchiveInvalidReason(t, raw, "archive has trailing data after its end marker")
 }
 
-func TestVerifyVersionedArtifactAcceptsGNUDefaultTarPadding(t *testing.T) {
+func TestVerifyVersionedArtifactAcceptsGNUDefaultMaximumTrailingZeroPadding(t *testing.T) {
 	t.Parallel()
 
-	raw := releaseArchive(t)
-	if len(raw) >= 10_240 {
-		t.Fatalf("release archive = %d bytes, want room for GNU default padding", len(raw))
+	const (
+		payloadSize       = 8_705
+		tarBlockBytes     = 512
+		gnuBlockingFactor = 20
+		dataBlocks        = 18
+		eofBlocks         = 2
+		trailingBlocks    = 19
+	)
+	// One header + 18 payload blocks + two EOF blocks consumes 21 blocks.
+	// GNU's blocking factor 20 pads to 40 blocks, leaving 19 trailing blocks.
+	raw := tarArchive(t, []archiveMember{{
+		path:     "payload.bin",
+		content:  strings.Repeat("x", payloadSize),
+		typeflag: tar.TypeReg,
+	}})
+	if got, want := len(raw), (1+dataBlocks+eofBlocks)*tarBlockBytes; got != want {
+		t.Fatalf("unpadded archive length = %d, want %d", got, want)
 	}
-	raw = append(raw, make([]byte, 10_240-len(raw))...)
+	raw = append(raw, make([]byte, trailingBlocks*tarBlockBytes)...)
+	if got, want := len(raw), 2*gnuBlockingFactor*tarBlockBytes; got != want {
+		t.Fatalf("GNU blocking-factor-20 archive length = %d, want %d", got, want)
+	}
+	entries, err := readVersionedArtifactArchive(raw)
+	if err != nil {
+		t.Fatalf("readVersionedArtifactArchive() error = %v", err)
+	}
+	store, request := artifactFixture(t, raw)
+	request.ExpectedDigest = deriveAggregateDigest(entries)
+
+	artifact, err := VerifyVersionedArtifact(context.Background(), store, request)
+	if err != nil {
+		t.Fatalf("VerifyVersionedArtifact() error = %v", err)
+	}
+	if artifact.State != ArtifactVerificationVerified {
+		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationVerified)
+	}
+	if got := len(artifact.ArchiveBytes()); got != len(raw) {
+		t.Fatalf("ArchiveBytes() length = %d, want %d", got, len(raw))
+	}
+}
+
+func TestVerifyVersionedArtifactAcceptsDocumentedTrailingZeroBoundary(t *testing.T) {
+	t.Parallel()
+
+	// Keep the contract boundary literal-anchored so changing the production
+	// bound cannot make this test self-consistent.
+	const boundary = 10_240
+	raw := append(releaseArchive(t), make([]byte, boundary)...)
 	store, request := artifactFixture(t, raw)
 
 	artifact, err := VerifyVersionedArtifact(context.Background(), store, request)
@@ -439,9 +520,27 @@ func TestVerifyVersionedArtifactAcceptsGNUDefaultTarPadding(t *testing.T) {
 	if artifact.State != ArtifactVerificationVerified {
 		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationVerified)
 	}
-	if got := len(artifact.ArchiveBytes()); got != 10_240 {
-		t.Fatalf("ArchiveBytes() length = %d, want 10240", got)
+	if got := len(artifact.ArchiveBytes()); got != len(raw) {
+		t.Fatalf("ArchiveBytes() length = %d, want %d", got, len(raw))
 	}
+}
+
+func TestVerifyVersionedArtifactRejectsExcessiveZeroPadding(t *testing.T) {
+	t.Parallel()
+
+	const boundaryPlusOne = 10_241
+	raw := append(releaseArchive(t), make([]byte, boundaryPlusOne)...)
+	assertArchiveInvalidReason(t, raw, "archive has trailing data after its end marker")
+}
+
+func TestVerifyVersionedArtifactRejectsNonzeroTrailingPaddingAtBoundary(t *testing.T) {
+	t.Parallel()
+
+	const boundary = 10_240
+	trailing := make([]byte, boundary)
+	trailing[boundary-1] = 1
+	raw := append(releaseArchive(t), trailing...)
+	assertArchiveInvalidReason(t, raw, "archive has trailing data after its end marker")
 }
 
 func TestVerifyVersionedArtifactRejectsTooManyEntries(t *testing.T) {

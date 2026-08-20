@@ -55,7 +55,13 @@ function copyDir(src: string, dest: string): void {
 }
 
 function shouldSkipAssetEntry(name: string): boolean {
-  return name === "__pycache__" || name.endsWith(".pyc") || name.endsWith(".pyo") || name.endsWith(".egg-info");
+  return (
+    name === "__pycache__" ||
+    name.endsWith("_test.go") ||
+    name.endsWith(".pyc") ||
+    name.endsWith(".pyo") ||
+    name.endsWith(".egg-info")
+  );
 }
 
 function cleanOutputDir(outputDir: string): void {

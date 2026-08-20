@@ -2832,6 +2832,7 @@ type AccountAssertionState string
 
 type ArtifactEntry struct {
 	Path string
+
 	Mode int64
 
 	content []byte
