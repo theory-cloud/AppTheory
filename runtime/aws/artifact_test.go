@@ -463,7 +463,7 @@ func TestVerifyVersionedArtifactRejectsTrailingArchivePayload(t *testing.T) {
 func TestVerifyVersionedArtifactAcceptsGNUDefaultTarPadding(t *testing.T) {
 	t.Parallel()
 
-	raw := append(releaseArchive(t), make([]byte, MaxArtifactTrailingZeroBytes)...)
+	raw := append(releaseArchive(t), make([]byte, maxArtifactTrailingZeroBytes)...)
 	store, request := artifactFixture(t, raw)
 
 	artifact, err := VerifyVersionedArtifact(context.Background(), store, request)
@@ -481,7 +481,7 @@ func TestVerifyVersionedArtifactAcceptsGNUDefaultTarPadding(t *testing.T) {
 func TestVerifyVersionedArtifactRejectsExcessiveZeroPadding(t *testing.T) {
 	t.Parallel()
 
-	raw := append(releaseArchive(t), make([]byte, MaxArtifactTrailingZeroBytes+1)...)
+	raw := append(releaseArchive(t), make([]byte, maxArtifactTrailingZeroBytes+1)...)
 	assertArchiveInvalidReason(t, raw, "archive has trailing data after its end marker")
 }
 

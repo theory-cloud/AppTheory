@@ -22,9 +22,8 @@ const (
 	// MaxVersionedArtifactBytes is the hard ceiling for one fetched release archive.
 	MaxVersionedArtifactBytes int64 = 32 << 20
 	// MaxVersionedArtifactEntries is the hard ceiling for archive members.
-	MaxVersionedArtifactEntries = 512
-	// MaxArtifactTrailingZeroBytes is one GNU tar blocking-factor-20 record.
-	MaxArtifactTrailingZeroBytes = 10_240
+	MaxVersionedArtifactEntries  = 512
+	maxArtifactTrailingZeroBytes = 10_240
 )
 
 var (
@@ -279,7 +278,7 @@ func readVersionedArtifactArchive(raw []byte) ([]ArtifactEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("archive trailing data could not be read: %w", err)
 	}
-	if len(trailing) > MaxArtifactTrailingZeroBytes || !allZeroArtifactBytes(trailing) {
+	if len(trailing) > maxArtifactTrailingZeroBytes || !allZeroArtifactBytes(trailing) {
 		return nil, errors.New("archive has trailing data after its end marker")
 	}
 	if len(entries) == 0 {
