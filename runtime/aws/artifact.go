@@ -23,6 +23,12 @@ const (
 	MaxVersionedArtifactBytes int64 = 32 << 20
 	// MaxVersionedArtifactEntries is the hard ceiling for archive members.
 	MaxVersionedArtifactEntries = 512
+	// maxArtifactTrailingZeroBytes bounds trailing tar padding to one GNU tar
+	// blocking-factor-20 record: 20 512-byte blocks, or 10,240 bytes. GNU tar
+	// 1.35 appends at most 19 zero blocks (9,728 bytes) after the EOF marker;
+	// this accepts one full zero record as a conservative fail-closed cap and
+	// rejects anything larger.
+	maxArtifactTrailingZeroBytes = 10_240
 )
 
 var (
@@ -77,6 +83,7 @@ type VersionedArtifactRequest struct {
 // Content is available only through Bytes so callers cannot mutate the verified copy.
 type ArtifactEntry struct {
 	Path string
+	// Mode is the normalized permission-relevant mode value used by attestation.
 	Mode int64
 
 	content []byte
@@ -223,7 +230,7 @@ func fetchVersionedArtifact(
 	})
 	if err != nil {
 		if errors.Is(err, objectstore.ErrObjectTooLarge) {
-			return nil, "", ErrArtifactArchiveInvalid
+			return nil, "", fmt.Errorf("%w: %w", ErrArtifactArchiveInvalid, err)
 		}
 		return nil, "", fmt.Errorf("%w: %w", ErrArtifactUnavailable, err)
 	}
@@ -276,7 +283,7 @@ func readVersionedArtifactArchive(raw []byte) ([]ArtifactEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("archive trailing data could not be read: %w", err)
 	}
-	if !allZeroArtifactBytes(trailing) {
+	if len(trailing) > maxArtifactTrailingZeroBytes || !allZeroArtifactBytes(trailing) {
 		return nil, errors.New("archive has trailing data after its end marker")
 	}
 	if len(entries) == 0 {

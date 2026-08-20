@@ -204,8 +204,22 @@ func TestSecureRegistrationValidationAndIntrospection(t *testing.T) {
 func TestSecureGateRecordsMatchIntrospection(t *testing.T) {
 	app := NewSecure(SecureOptions{})
 	app.Get("/widgets/{id}", secureOKHandler, Authenticated("read", "write"))
+	app.Get("/public", secureOKHandler, Public())
 	app.AppSyncField("Mutation", "updateWidget", secureOKHandler, Optional())
 	app.WebSocket("updates", secureOKHandler, InternalOnly())
+
+	var sawPublic, sawAppSyncMetadata bool
+	for _, route := range app.Routes() {
+		sawPublic = sawPublic || (route.Path == "/public" && route.Posture == AuthPosturePublic)
+		sawAppSyncMetadata = sawAppSyncMetadata || (route.Surface == SecureRouteAppSync &&
+			route.AppSyncParentType == "Mutation" && route.AppSyncField == "updateWidget")
+	}
+	if !sawPublic {
+		t.Fatal("Routes() omitted the registered Public route")
+	}
+	if !sawAppSyncMetadata {
+		t.Fatal("Routes() omitted populated AppSync parent/field metadata")
+	}
 
 	gateRoutes := make(map[string]SecureRoute)
 	for _, registered := range app.core.router.routes {

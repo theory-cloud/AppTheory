@@ -14,7 +14,13 @@ import type { Construct } from "constructs";
 const titanTextEmbeddingModelId = "amazon.titan-embed-text-v2:0";
 
 function shouldSkipAssetEntry(name: string): boolean {
-  return name === "__pycache__" || name.endsWith(".pyc") || name.endsWith(".pyo") || name.endsWith(".egg-info");
+  return (
+    name === "__pycache__" ||
+    name.endsWith("_test.go") ||
+    name.endsWith(".pyc") ||
+    name.endsWith(".pyo") ||
+    name.endsWith(".egg-info")
+  );
 }
 
 function cleanOutputDir(outputDir: string): void {
