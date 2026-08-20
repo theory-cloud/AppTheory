@@ -686,7 +686,7 @@ gov_cmd_integration() {
 
 gov_cmd_fmt() {
   require_cmd_or_blocked gofmt || return $?
-  make fmt-check
+  scripts/fmt-check.sh
 }
 
 gov_cmd_lint() {
@@ -698,7 +698,9 @@ gov_cmd_lint() {
   # Ensure pinned golangci-lint is present so `scripts/verify-go-lint.sh` does not require a global install.
   ensure_golangci_lint_pinned || return $?
 
-  make lint
+  scripts/verify-go-lint.sh
+  scripts/verify-ts-lint.sh
+  scripts/verify-python-lint.sh
 }
 
 gov_cmd_contract() {

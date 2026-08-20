@@ -73,7 +73,7 @@ unset GOV_REPORT_TIMESTAMP
 # verifier must omit git_head unless its own REPO_ROOT is the resolved top level.
 enclosing_root="${tmpdir}/enclosing"
 mkdir -p "${enclosing_root}/scratch-copy"
-git -C "${enclosing_root}" init -q
+git -C "${enclosing_root}" init -q -b main
 blob="$(printf 'fixture\n' | git -C "${enclosing_root}" hash-object -w --stdin)"
 tree="$(printf '100644 blob %s\tfixture\n' "${blob}" | git -C "${enclosing_root}" mktree)"
 commit="$(printf 'fixture\n' | git -C "${enclosing_root}" -c user.name='Gov Infra Test' -c user.email='gov-infra@example.invalid' commit-tree "${tree}")"
