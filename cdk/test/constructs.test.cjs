@@ -2787,6 +2787,33 @@ test("AppTheoryApp forwards an Fn.importValue token execution role name", () => 
   assert.deepEqual(roles[0].Properties?.RoleName, { "Fn::ImportValue": "SharedAppExecutionRoleName" });
 });
 
+test("AppTheoryApp rejects invalid execution role names", () => {
+  const cases = [
+    ["empty", "", /roleName must not be empty/],
+    ["whitespace-only", "   ", /roleName must not be empty/],
+    ["over 64 characters", "r".repeat(65), /roleName must not exceed 64 characters/],
+    ["outside the IAM pattern", "bad name\/with*chars", /roleName must match \[\\w\+=,\.@-\]\+/],
+  ];
+
+  for (const [index, [name, roleName, expected]] of cases.entries()) {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "TestStack");
+
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryApp(stack, "App", {
+          appName: `apptheory-invalid-role-${index}`,
+          code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+          runtime: lambda.Runtime.NODEJS_24_X,
+          handler: "index.handler",
+          roleName,
+        }),
+      expected,
+      name,
+    );
+  }
+});
+
 test("AppTheoryApp forwards logRemovalPolicy to its named function log group", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
