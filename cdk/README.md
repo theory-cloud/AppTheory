@@ -91,7 +91,11 @@ new AppTheoryHttpApi(stack, "Api", { handler: fn, apiName: "my-api" });
   actions; the lifecycle rule prevents permanent incomplete-upload residue.
 - `AppTheoryFunctionProps.roleName` and `AppTheoryAppProps.roleName` are the
   supported, fail-closed path for stable Lambda execution role names. They
-  supersede direct `CfnRole` property-override escape hatches.
+  require concrete values to be non-empty, no more than 64 characters, and to
+  match `^[\w+=,.@-]+$`. Values for which `Token.isUnresolved(roleName)` is true
+  skip these value checks and remain subject to IAM validation at deployment.
+  When omitted, CloudFormation generates the role name. These props supersede
+  direct `CfnRole` property-override escape hatches.
 - `AppTheoryAppProps.logRemovalPolicy` forwards to the app function's named
   log group. AppTheory-created named-function log groups default to
   `RemovalPolicy.DESTROY` for the prototype's self-cleaning posture; set
