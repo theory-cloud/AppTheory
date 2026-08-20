@@ -40,7 +40,10 @@ var (
 	ErrArtifactDigestMismatch = errors.New("apptheory runtime aws: versioned artifact digest does not match expected digest")
 )
 
-var aggregateDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var (
+	aggregateDigestPattern         = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	driveLetterArtifactPathPattern = regexp.MustCompile(`^[A-Za-z]:`)
+)
 
 // ArtifactVerificationState is the explicit outcome of versioned-artifact verification.
 type ArtifactVerificationState string
@@ -314,6 +317,12 @@ func readVersionedArtifactEntry(reader *tar.Reader, header *tar.Header) (*Artifa
 }
 
 func validateArtifactMemberPath(name string) (string, error) {
+	if name != strings.TrimSpace(name) {
+		return "", fmt.Errorf("archive member path %q has surrounding whitespace", name)
+	}
+	if strings.Contains(name, `\`) {
+		return "", fmt.Errorf("archive member path %q contains a backslash", name)
+	}
 	if strings.Contains(name, "  ") {
 		return "", fmt.Errorf("archive member path %q contains doubled spaces", name)
 	}
@@ -322,14 +331,19 @@ func validateArtifactMemberPath(name string) (string, error) {
 			return "", fmt.Errorf("archive member path %q contains a control character", name)
 		}
 	}
-	normalized := strings.TrimSpace(name)
-	normalized = strings.TrimPrefix(normalized, "./")
+	normalized := strings.TrimPrefix(name, "./")
+	if driveLetterArtifactPathPattern.MatchString(normalized) {
+		return "", fmt.Errorf("archive member path %q has a drive-letter prefix", name)
+	}
 	if path.IsAbs(normalized) {
 		return "", fmt.Errorf("archive member path %q is absolute", name)
 	}
 	for _, segment := range strings.Split(normalized, "/") {
 		if segment == ".." {
 			return "", fmt.Errorf("archive member path %q contains a parent segment", name)
+		}
+		if segment == "." {
+			return "", fmt.Errorf("archive member path %q contains a residual current-directory segment", name)
 		}
 	}
 	return normalized, nil
