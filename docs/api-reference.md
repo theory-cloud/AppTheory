@@ -507,6 +507,7 @@ includes:
 - `AppTheoryInstallParameters`
 - `AppTheoryJobsTable`
 - `AppTheoryS3Ingest`
+- `AppTheoryS3VersionedIngress`
 - `AppTheoryVectorIndex`
 - `AppTheoryCodeBuildJobRunner`
 - `AppTheoryKinesisStream`
@@ -522,6 +523,7 @@ Start with:
 - [CDK API Reference](./cdk/api-reference.md)
 - [MCP Server Umbrella Construct](./features/mcp-server-construct.md)
 - [Namespace Install Parameters](./features/install-parameters.md)
+- [S3 Versioned Artifact Ingress](./features/s3-versioned-ingress.md)
 - [Kinesis + CloudWatch Logs](./cdk/kinesis-cloudwatch-logs.md)
 - [CDK Import Pipeline Guides](./cdk/import-pipeline.md)
 - [S3 Vector Index](./cdk/vector-index.md)

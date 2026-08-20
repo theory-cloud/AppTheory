@@ -7311,3 +7311,193 @@ test("AppTheoryInstallParameters rejects a scope outside a Stack", () => {
     /CfnParameter at 'Root\/InstallParameters\/TargetAccountId' should be created in the scope of a Stack/,
   );
 });
+
+// ============================================================================
+// AppTheoryS3VersionedIngress tests
+// ============================================================================
+
+test("AppTheoryS3VersionedIngress synthesizes the pinned ingress bucket posture", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+
+  new apptheory.AppTheoryS3VersionedIngress(stack, "Ingress", {
+    bucketName: "apptheory-artifact-ingress-test",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const buckets = resourcesOfType(template, "AWS::S3::Bucket");
+  assert.equal(buckets.length, 1, "Ingress must own exactly one bucket");
+  assert.deepEqual(buckets[0].Properties, {
+    BucketEncryption: {
+      ServerSideEncryptionConfiguration: [
+        {
+          ServerSideEncryptionByDefault: {
+            SSEAlgorithm: "AES256",
+          },
+        },
+      ],
+    },
+    BucketName: "apptheory-artifact-ingress-test",
+    OwnershipControls: {
+      Rules: [{ ObjectOwnership: "BucketOwnerEnforced" }],
+    },
+    PublicAccessBlockConfiguration: {
+      BlockPublicAcls: true,
+      BlockPublicPolicy: true,
+      IgnorePublicAcls: true,
+      RestrictPublicBuckets: true,
+    },
+    VersioningConfiguration: {
+      Status: "Enabled",
+    },
+  });
+  assert.equal(buckets[0].DeletionPolicy, "Retain");
+  assert.equal(buckets[0].UpdateReplacePolicy, "Retain");
+  assert.equal(buckets[0].Properties.LifecycleConfiguration, undefined, "Retention is operator-owned, not invented here");
+
+  const bucketPolicies = resourcesOfType(template, "AWS::S3::BucketPolicy");
+  assert.equal(bucketPolicies.length, 1, "Ingress must enforce TLS through one bucket policy");
+  const statements = bucketPolicies[0].Properties.PolicyDocument.Statement;
+  assert.equal(statements.length, 1);
+  assert.deepEqual(statements[0].Condition, { Bool: { "aws:SecureTransport": "false" } });
+  assert.equal(statements[0].Effect, "Deny");
+  assert.equal(statements[0].Action, "s3:*");
+  assert.deepEqual(statements[0].Principal, { AWS: "*" });
+  assert.equal(statements[0].Resource.length, 2, "TLS denial must cover the bucket and every object");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("s3-versioned-ingress", template);
+  } else {
+    expectSnapshot("s3-versioned-ingress", template);
+  }
+});
+
+test("AppTheoryS3VersionedIngress exposes bucket identity and the canonical key root", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+  const ingress = new apptheory.AppTheoryS3VersionedIngress(stack, "Ingress", {
+    bucketName: "apptheory-artifact-ingress-test",
+  });
+
+  assert.deepEqual(stack.resolve(ingress.bucketName), {
+    Ref: "IngressBucket08FFB5F0",
+  });
+  assert.equal(ingress.keyRoot, "ns/");
+  assert.equal(apptheory.AppTheoryS3VersionedIngress.KEY_ROOT, "ns/");
+  assert.deepEqual(stack.resolve(ingress.bucketArn), {
+    "Fn::GetAtt": ["IngressBucket08FFB5F0", "Arn"],
+  });
+});
+
+test("AppTheoryS3VersionedIngress grants only exact-key upload and versioned read", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+  const ingress = new apptheory.AppTheoryS3VersionedIngress(stack, "Ingress");
+  const role = new iam.Role(stack, "Role", {
+    assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
+  });
+  const bundleId = "rel_0123456789abcdefghijklmnop";
+
+  ingress.grantUpload(role, "acme", bundleId);
+  ingress.grantVersionedRead(role, "acme", bundleId);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const policies = resourcesOfType(template, "AWS::IAM::Policy");
+  assert.equal(policies.length, 1);
+  const statements = policies[0].Properties.PolicyDocument.Statement;
+  assert.equal(statements.length, 2, "Each helper must contribute exactly one statement");
+  assert.deepEqual(statements.map((statement) => statement.Action), ["s3:PutObject", "s3:GetObjectVersion"]);
+  for (const statement of statements) {
+    assert.equal(statement.Effect, "Allow");
+    assert.deepEqual(statement.Resource, {
+      "Fn::Join": [
+        "",
+        [
+          { "Fn::GetAtt": ["IngressBucket08FFB5F0", "Arn"] },
+          `/ns/acme/${bundleId}`,
+        ],
+      ],
+    });
+    assert.ok(!JSON.stringify(statement.Resource).includes("*"), "Exact bundle ARN must contain no wildcard");
+  }
+});
+
+test("AppTheoryS3VersionedIngress rejects invalid literal bundle locations", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+  const ingress = new apptheory.AppTheoryS3VersionedIngress(stack, "Ingress");
+  const role = new iam.Role(stack, "Role", {
+    assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
+  });
+  const validBundleId = "rel_0123456789abcdefghijklmnop";
+
+  for (const slug of ["a", "Acme", "-acme", "acme/other", "acme*"]) {
+    assert.throws(
+      () => ingress.grantUpload(role, slug, validBundleId),
+      /namespaceSlug must match \^\[a-z0-9\]/,
+    );
+  }
+  for (const bundleId of ["rel_short", "REL_0123456789ABCDEFGHIJKLMNOP", "rel_0123456789abcdefghijklmnopq", "rel_0123456789abcdefghijklmno*"]) {
+    assert.throws(
+      () => ingress.grantVersionedRead(role, "acme", bundleId),
+      /bundleId must match \^rel_/,
+    );
+  }
+});
+
+test("AppTheoryS3VersionedIngress accepts token locations and preserves the key join", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+  const ingress = new apptheory.AppTheoryS3VersionedIngress(stack, "Ingress");
+  const role = new iam.Role(stack, "Role", {
+    assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
+  });
+  const slug = new cdk.CfnParameter(stack, "NamespaceSlug", { type: "String" });
+  const bundleId = new cdk.CfnParameter(stack, "BundleId", { type: "String" });
+
+  ingress.grantUpload(role, slug.valueAsString, bundleId.valueAsString);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const statements = resourcesOfType(template, "AWS::IAM::Policy")[0].Properties.PolicyDocument.Statement;
+  assert.deepEqual(statements, [
+    {
+      Action: "s3:PutObject",
+      Effect: "Allow",
+      Resource: {
+        "Fn::Join": [
+          "",
+          [
+            { "Fn::GetAtt": ["IngressBucket08FFB5F0", "Arn"] },
+            "/ns/",
+            { Ref: "NamespaceSlug" },
+            "/",
+            { Ref: "BundleId" },
+          ],
+        ],
+      },
+    },
+  ]);
+});
+
+test("AppTheoryS3VersionedIngress keeps structural grant guards unconditional", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+  const ingress = new apptheory.AppTheoryS3VersionedIngress(stack, "Ingress");
+  const role = new iam.Role(stack, "Role", {
+    assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
+  });
+  const bundleId = "rel_0123456789abcdefghijklmnop";
+
+  assert.throws(() => ingress.grantUpload(undefined, "acme", bundleId), /requires a grantable principal/);
+  assert.throws(() => ingress.grantUpload(role, undefined, bundleId), /requires namespaceSlug/);
+  assert.throws(() => ingress.grantUpload(role, "acme", undefined), /requires bundleId/);
+});
+
+test("AppTheoryS3VersionedIngress rejects a scope outside a Stack", () => {
+  const root = new Construct(undefined, "Root");
+
+  assert.throws(
+    () => new apptheory.AppTheoryS3VersionedIngress(root, "Ingress"),
+    /CfnBucket at 'Root\/Ingress\/Bucket\/Resource' should be created in the scope of a Stack/,
+  );
+});

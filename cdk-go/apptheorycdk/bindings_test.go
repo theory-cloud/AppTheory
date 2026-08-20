@@ -19,4 +19,5 @@ func TestBindingsIncludeNewConstructs(t *testing.T) {
 	_ = NewAppTheoryQueueConsumer
 	_ = NewAppTheoryRestApiRouter
 	_ = NewAppTheoryS3Ingest
+	_ = NewAppTheoryS3VersionedIngress
 }

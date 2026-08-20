@@ -58,6 +58,7 @@ groups:
       - { id: cdk-getting-started,    title: CDK Getting Started,     url: /cdk/getting-started/,                          icon: play }
       - { id: cdk-api,                title: CDK API Reference,       url: /cdk/api-reference/,                            icon: book }
       - { id: cdk-install-parameters, title: Install Parameters,      url: /features/install-parameters/,                  icon: list-checks, tag: new }
+      - { id: cdk-versioned-ingress,  title: Versioned Ingress,       url: /features/s3-versioned-ingress/,                 icon: archive, tag: new }
       - { id: cdk-ssr,                title: SSR Site,                url: /cdk/ssr-site/,                                 icon: globe }
       - { id: cdk-mcp-remote,         title: Remote MCP Server,       url: /cdk/mcp-server-remote-mcp/,                    icon: share,        surface: mcp }
       - { id: cdk-mcp-agentcore,      title: AgentCore MCP Server,    url: /cdk/mcp-server-agentcore/,                     icon: cpu,          surface: mcp }
@@ -118,6 +119,7 @@ order:
   - cdk-getting-started
   - cdk-api
   - cdk-install-parameters
+  - cdk-versioned-ingress
   - cdk-ssr
   - cdk-mcp-remote
   - cdk-mcp-agentcore
@@ -172,6 +174,7 @@ url_to_id:
   /cdk/getting-started/:                        cdk-getting-started
   /cdk/api-reference/:                          cdk-api
   /features/install-parameters/:                cdk-install-parameters
+  /features/s3-versioned-ingress/:              cdk-versioned-ingress
   /cdk/ssr-site/:                               cdk-ssr
   /cdk/mcp-server-remote-mcp/:                  cdk-mcp-remote
   /cdk/mcp-server-agentcore/:                   cdk-mcp-agentcore

@@ -1117,6 +1117,29 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryS3IngestProps",
 		reflect.TypeOf((*AppTheoryS3IngestProps)(nil)).Elem(),
 	)
+	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryS3VersionedIngress",
+		reflect.TypeOf((*AppTheoryS3VersionedIngress)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "bucketArn", GoGetter: "BucketArn"},
+			_jsii_.MemberProperty{JsiiProperty: "bucketName", GoGetter: "BucketName"},
+			_jsii_.MemberMethod{JsiiMethod: "grantUpload", GoMethod: "GrantUpload"},
+			_jsii_.MemberMethod{JsiiMethod: "grantVersionedRead", GoMethod: "GrantVersionedRead"},
+			_jsii_.MemberProperty{JsiiProperty: "keyRoot", GoGetter: "KeyRoot"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryS3VersionedIngress{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryS3VersionedIngressProps",
+		reflect.TypeOf((*AppTheoryS3VersionedIngressProps)(nil)).Elem(),
+	)
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheorySecretConfig",
 		reflect.TypeOf((*AppTheorySecretConfig)(nil)).Elem(),
