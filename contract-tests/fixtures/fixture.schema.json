@@ -46,6 +46,123 @@
         "auth_required": { "type": "boolean" }
       }
     },
+    "securePrincipal": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "identity": { "type": "string" },
+        "kind": { "type": "string" },
+        "scopes": { "$ref": "#/$defs/stringArray" },
+        "claims": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "secureResolverError": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    },
+    "secureRoute": {
+      "type": "object",
+      "required": ["surface", "handler", "posture"],
+      "additionalProperties": false,
+      "properties": {
+        "surface": { "type": "string", "enum": ["http", "appsync", "websocket"] },
+        "method": { "type": "string" },
+        "path": { "type": "string" },
+        "parent_type": { "type": "string" },
+        "field": { "type": "string" },
+        "route_key": { "type": "string" },
+        "handler": { "type": "string", "minLength": 1 },
+        "posture": { "type": "string", "enum": ["public", "optional", "authenticated", "internal_only", "missing", "invalid"] },
+        "scopes": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "secureAuthSchemes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "authenticated": { "$ref": "#/$defs/stringArray" },
+        "internal_only": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "secureOpenAPISpec": {
+      "type": "object",
+      "required": ["title", "version", "routes"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string" },
+        "version": { "type": "string" },
+        "routes": { "type": "array", "items": { "$ref": "#/$defs/openapiRoute" } },
+        "security_schemes": {
+          "type": "object",
+          "additionalProperties": { "type": "object", "additionalProperties": true }
+        },
+        "auth_schemes": { "$ref": "#/$defs/secureAuthSchemes" }
+      }
+    },
+    "secureSetup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tier": { "type": "string" },
+        "websocket_support": { "type": "boolean" },
+        "invalid_websocket_factory": { "type": "boolean" },
+        "unknown_option": { "type": "boolean" },
+        "inject_posture_records": { "type": "boolean" },
+        "principal_resolver": { "type": "boolean" },
+        "policy_hook": { "type": "boolean" },
+        "routes": { "type": "array", "items": { "$ref": "#/$defs/secureRoute" } },
+        "middlewares": { "$ref": "#/$defs/stringArray" },
+        "openapi": { "$ref": "#/$defs/secureOpenAPISpec" }
+      }
+    },
+    "secureStep": {
+      "type": "object",
+      "required": ["name", "operation"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "operation": { "type": "string", "enum": ["http", "appsync", "websocket", "routes", "openapi", "construct"] },
+        "request": { "$ref": "#/$defs/request" },
+        "aws_event": { "$ref": "#/$defs/awsEvent" },
+        "principal": { "$ref": "#/$defs/securePrincipal" },
+        "resolver_error": { "$ref": "#/$defs/secureResolverError" },
+        "principal_from_appsync_identity": { "type": "boolean" },
+        "persist_connection": { "type": "boolean" },
+        "revoke_connection": { "type": "boolean" },
+        "mutate_returned": { "type": "boolean" },
+        "mutate_routes": { "type": "boolean" },
+        "openapi": { "$ref": "#/$defs/secureOpenAPISpec" }
+      }
+    },
+    "secureExpectedStep": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "type": "integer" },
+        "error_code": { "type": "string" },
+        "trace": { "$ref": "#/$defs/stringArray" },
+        "principal": { "$ref": "#/$defs/securePrincipal" },
+        "resolver_calls": { "type": "integer" },
+        "policy_calls": { "type": "integer" },
+        "middleware_calls": { "type": "integer" },
+        "handler_calls": { "type": "integer" },
+        "response": { "$ref": "#/$defs/response" },
+        "routes": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "openapi": { "type": "object", "additionalProperties": true },
+        "openapi_json": { "type": "string" },
+        "openapi_error": { "type": "string" },
+        "openapi_error_contains": { "type": "string" },
+        "construction_error": { "type": "string" },
+        "construction_error_contains": { "type": "string" },
+        "construction_error_present": { "type": "boolean" }
+      }
+    },
     "namedHandler": {
       "type": "object",
       "required": ["handler"],
@@ -93,7 +210,8 @@
         "mcp": { "$ref": "#/$defs/mcpSetup" },
         "oauth": { "$ref": "#/$defs/oauthSetup" },
         "objectstore": { "$ref": "#/$defs/objectstoreSetup" },
-        "vectorstore": { "$ref": "#/$defs/vectorstoreSetup" }
+        "vectorstore": { "$ref": "#/$defs/vectorstoreSetup" },
+        "secure_app": { "$ref": "#/$defs/secureSetup" }
       }
     },
     "objectstoreSetup": {
@@ -493,7 +611,8 @@
         "mcp": { "$ref": "#/$defs/mcpInput" },
         "oauth": { "$ref": "#/$defs/oauthInput" },
         "objectstore": { "$ref": "#/$defs/objectstoreInput" },
-        "vectorstore": { "$ref": "#/$defs/vectorstoreInput" }
+        "vectorstore": { "$ref": "#/$defs/vectorstoreInput" },
+        "secure_steps": { "type": "array", "items": { "$ref": "#/$defs/secureStep" } }
       }
     },
     "mcpInput": {
@@ -574,7 +693,8 @@
         "microvm_execution_role": { "type": "object", "additionalProperties": true },
         "microvm_runtime_logging": { "type": "object", "additionalProperties": true },
         "mcp": { "$ref": "#/$defs/mcpExpect" },
-        "oauth": { "$ref": "#/$defs/oauthExpect" }
+        "oauth": { "$ref": "#/$defs/oauthExpect" },
+        "secure_steps": { "type": "array", "items": { "$ref": "#/$defs/secureExpectedStep" } }
       }
     },
     "mcpExpect": {

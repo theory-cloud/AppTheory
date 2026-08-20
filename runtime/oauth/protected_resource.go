@@ -3,13 +3,53 @@ package oauth
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
+	"path"
+	"regexp"
 	"strings"
 
 	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 )
 
-const protectedResourceMetadataPath = "/.well-known/oauth-protected-resource"
+const (
+	httpsScheme = "https"
+	httpScheme  = "http"
+
+	// MCPPath is the conventional AppTheory MCP endpoint path.
+	MCPPath = "/mcp"
+
+	// OAuthProtectedResourcePath is the generic RFC 9728 protected-resource
+	// metadata path.
+	OAuthProtectedResourcePath = "/.well-known/oauth-protected-resource"
+
+	// OAuthProtectedResourceMCPPath is the RFC 9728 path-scoped metadata path
+	// for the conventional MCP endpoint.
+	OAuthProtectedResourceMCPPath = "/.well-known/oauth-protected-resource/mcp"
+
+	// OAuthAuthorizationServerMCPPath is the RFC 8414 path-scoped metadata path
+	// for an MCP authorization server.
+	OAuthAuthorizationServerMCPPath = "/.well-known/oauth-authorization-server/mcp"
+)
+
+const protectedResourceMetadataPath = OAuthProtectedResourcePath
+
+// MCPServerConfig configures AppTheory's secure MCP route bundle. The
+// protected resource origin is deliberately absent: discovery derives it from
+// each request while the authorization server and JWKS remain install config.
+type MCPServerConfig struct {
+	// MCPPath overrides the conventional /mcp endpoint path.
+	MCPPath string
+
+	// AuthorizationServerIssuer is the configured OAuth authorization server
+	// issuer advertised by RFC 9728 discovery.
+	AuthorizationServerIssuer string
+
+	// JWKSURI is the configured JSON Web Key Set URL used to validate access
+	// tokens. It is not the protected resource's own key set and is therefore
+	// not advertised by RFC 9728 discovery.
+	JWKSURI string
+}
 
 // ProtectedResourceMetadata is the RFC9728 discovery document hosted by a
 // protected resource server.
@@ -63,6 +103,200 @@ func (m *ProtectedResourceMetadata) MarshalJSONBytes() ([]byte, error) {
 // RFC9728 protected resource metadata document.
 func ProtectedResourceMetadataHandler(md *ProtectedResourceMetadata) apptheory.Handler {
 	return jsonBytesHandler(md.MarshalJSONBytes)
+}
+
+// NewMCPProtectedResourceDiscoveryHandler creates the request-time RFC 9728
+// discovery handler used by namespace MCP applications. The protected
+// resource URL is reconstructed from AppTheory's canonical request headers;
+// no resource origin is accepted in config.
+func NewMCPProtectedResourceDiscoveryHandler(config MCPServerConfig) (apptheory.Handler, error) {
+	normalized, err := normalizeMCPServerConfig(config)
+	if err != nil {
+		return nil, err
+	}
+	return mcpProtectedResourceDiscoveryHandler(normalized), nil
+}
+
+// RegisterMCPServer registers the conventional authenticated MCP POST route
+// and both public RFC 9728 discovery routes on a SecureApp. The fixed posture
+// split is deliberate: clients must fetch discovery before they have a token,
+// while the MCP endpoint uses SecureApp's authenticated posture.
+func RegisterMCPServer(app *apptheory.SecureApp, handler apptheory.Handler, config MCPServerConfig) error {
+	if app == nil {
+		return fmt.Errorf("oauth: secure app is required")
+	}
+	if handler == nil {
+		return fmt.Errorf("oauth: MCP handler is required")
+	}
+	normalized, err := normalizeMCPServerConfig(config)
+	if err != nil {
+		return err
+	}
+
+	discovery := mcpProtectedResourceDiscoveryHandler(normalized)
+	app.Post(normalized.MCPPath, handler, apptheory.Authenticated())
+	app.Get(OAuthProtectedResourcePath, discovery, apptheory.Public())
+	app.Get(protectedResourcePathForMCPPath(normalized.MCPPath), discovery, apptheory.Public())
+	return nil
+}
+
+func mcpProtectedResourceDiscoveryHandler(config MCPServerConfig) apptheory.Handler {
+	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		var headers map[string][]string
+		if ctx != nil {
+			headers = ctx.Request.Headers
+		}
+		requestOrigin, ok := normalizeRequestOrigin(apptheory.OriginURL(headers))
+		if !ok {
+			return jsonResponse(400, map[string]string{
+				"error": "request host is required for OAuth protected-resource discovery",
+			})
+		}
+
+		metadata := &ProtectedResourceMetadata{
+			Resource:             requestOrigin + config.MCPPath,
+			AuthorizationServers: []string{config.AuthorizationServerIssuer},
+		}
+		return jsonResponse(200, metadata)
+	}
+}
+
+func jsonResponse(status int, value any) (*apptheory.Response, error) {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return &apptheory.Response{
+		Status: status,
+		Headers: map[string][]string{
+			"cache-control": {"no-store"},
+			"content-type":  {"application/json"},
+		},
+		Body: body,
+	}, nil
+}
+
+func normalizeMCPServerConfig(config MCPServerConfig) (MCPServerConfig, error) {
+	mcpPath, ok := normalizeMCPRoutePath(config.MCPPath)
+	if !ok {
+		return MCPServerConfig{}, fmt.Errorf("oauth: MCP path must be a literal absolute route path")
+	}
+	issuer, ok := normalizeConfiguredURL(config.AuthorizationServerIssuer, true, true)
+	if !ok {
+		return MCPServerConfig{}, fmt.Errorf("oauth: authorization server issuer must be an absolute HTTPS URL")
+	}
+	jwksURI, ok := normalizeConfiguredURL(config.JWKSURI, false, false)
+	if !ok {
+		return MCPServerConfig{}, fmt.Errorf("oauth: JWKS URI must be an absolute HTTPS URL")
+	}
+	return MCPServerConfig{
+		MCPPath:                   mcpPath,
+		AuthorizationServerIssuer: issuer,
+		JWKSURI:                   jwksURI,
+	}, nil
+}
+
+func normalizeMCPRoutePath(raw string) (string, bool) {
+	if raw == "" {
+		raw = MCPPath
+	}
+	// Literal MCP route paths use only RFC 3986 path characters, with percent-encoding required for whitespace and other characters outside that set.
+	if !literalMCPRoutePathPattern.MatchString(raw) {
+		return "", false
+	}
+	if path.Clean(raw) != raw {
+		return "", false
+	}
+	u, err := url.ParseRequestURI(raw)
+	if err != nil || u.IsAbs() || u.Host != "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", false
+	}
+	return raw, true
+}
+
+func protectedResourcePathForMCPPath(mcpPath string) string {
+	return OAuthProtectedResourcePath + mcpPath
+}
+
+func normalizeConfiguredURL(raw string, trimTrailingSlash, issuer bool) (string, bool) {
+	// Literal OAuth configuration URLs must be absolute HTTPS URLs without userinfo or fragments.
+	// Issuer URLs must also omit queries.
+	u, ok := parseAbsoluteURL(raw)
+	if !ok || u.Scheme != httpsScheme || u.User != nil || u.Fragment != "" || u.Hostname() == "" {
+		return "", false
+	}
+	if issuer && (u.RawQuery != "" || u.ForceQuery) {
+		return "", false
+	}
+	if trimTrailingSlash {
+		u.Path = strings.TrimRight(u.Path, "/")
+	}
+	u.RawPath = ""
+	return u.String(), true
+}
+
+var literalMCPRoutePathPattern = regexp.MustCompile(`^/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})+(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})+)*$`)
+
+func normalizeRequestOrigin(raw string) (string, bool) {
+	u, ok := parseAbsoluteURL(raw)
+	if !ok || u.User != nil || u.Hostname() == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return "", false
+	}
+	if u.Path != "" && u.Path != "/" {
+		return "", false
+	}
+	if !isAllowedDiscoveryScheme(u.Scheme, u.Hostname()) {
+		return "", false
+	}
+	if !canonicalizeRequestOriginAuthority(u) {
+		return "", false
+	}
+	u.Path = ""
+	u.RawPath = ""
+	return u.String(), true
+}
+
+func canonicalizeRequestOriginAuthority(u *url.URL) bool {
+	hostname := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if hostname == "" {
+		return false
+	}
+	port := u.Port()
+	if port == defaultPortForScheme(u.Scheme) {
+		port = ""
+	}
+	host := hostname
+	if port != "" {
+		host = net.JoinHostPort(hostname, port)
+	} else if strings.Contains(hostname, ":") {
+		host = "[" + hostname + "]"
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	u.Host = host
+	return true
+}
+
+func defaultPortForScheme(scheme string) string {
+	if scheme == httpsScheme {
+		return "443"
+	}
+	if scheme == httpScheme {
+		return "80"
+	}
+	return ""
+}
+
+func isLoopbackHostname(host string) bool {
+	host = strings.TrimSpace(strings.ToLower(host))
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func isAllowedDiscoveryScheme(scheme, hostname string) bool {
+	return scheme == httpsScheme || (scheme == httpScheme && isLoopbackHostname(hostname))
 }
 
 // ProtectedResourceWWWAuthenticate builds the RFC9728 MCP-style discovery challenge.

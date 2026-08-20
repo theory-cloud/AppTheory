@@ -1,0 +1,190 @@
+{
+  "id": "p0.secure_ordering",
+  "tier": "p0",
+  "name": "secure P0 adds only posture and auth before user middleware",
+  "setup": {
+    "secure_app": {
+      "tier": "p0",
+      "middlewares": [
+        "record"
+      ],
+      "routes": [
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/auth",
+          "handler": "secure_echo",
+          "posture": "authenticated"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/public",
+          "handler": "secure_echo",
+          "posture": "public"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/optional",
+          "handler": "secure_echo",
+          "posture": "optional"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/internal",
+          "handler": "secure_echo",
+          "posture": "internal_only"
+        }
+      ],
+      "policy_hook": true
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "authenticated",
+        "operation": "http",
+        "principal": {
+          "identity": "u",
+          "kind": "external",
+          "scopes": [],
+          "claims": {}
+        },
+        "request": {
+          "method": "GET",
+          "path": "/auth",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "public",
+        "operation": "http",
+        "request": {
+          "method": "GET",
+          "path": "/public",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "optional-anonymous",
+        "operation": "http",
+        "request": {
+          "method": "GET",
+          "path": "/optional",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "internal-external",
+        "operation": "http",
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [],
+          "claims": {}
+        },
+        "request": {
+          "method": "GET",
+          "path": "/internal",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "p0-options-normal-route",
+        "operation": "http",
+        "request": {
+          "method": "OPTIONS",
+          "path": "/auth",
+          "headers": {
+            "origin": [
+              "https://x"
+            ],
+            "access-control-request-method": [
+              "GET"
+            ]
+          },
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "authenticated",
+        "status": 200,
+        "trace": [
+          "auth"
+        ],
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1,
+        "policy_calls": 0
+      },
+      {
+        "name": "public",
+        "status": 200,
+        "trace": [],
+        "resolver_calls": 0,
+        "middleware_calls": 1,
+        "handler_calls": 1,
+        "policy_calls": 0
+      },
+      {
+        "name": "optional-anonymous",
+        "status": 200,
+        "trace": [
+          "auth"
+        ],
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1,
+        "policy_calls": 0
+      },
+      {
+        "name": "internal-external",
+        "status": 403,
+        "error_code": "app.forbidden",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0,
+        "policy_calls": 0
+      },
+      {
+        "name": "p0-options-normal-route",
+        "status": 405,
+        "error_code": "app.method_not_allowed",
+        "resolver_calls": 0,
+        "middleware_calls": 0,
+        "handler_calls": 0,
+        "policy_calls": 0
+      }
+    ]
+  }
+}

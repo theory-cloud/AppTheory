@@ -2,6 +2,13 @@
 export interface RouteOptions {
     authRequired?: boolean;
 }
+/** Private metadata carried only by SecureApp registrations. */
+export interface SecureRouteMetadata {
+    surface: "http" | "appsync";
+    posture: "public" | "optional" | "authenticated" | "internal_only";
+    scopes: string[];
+    posturePresent: boolean;
+}
 interface ParsedRouteSegment {
     kind: "static" | "param" | "proxy";
     value: string;
@@ -12,6 +19,7 @@ interface Route<THandler> {
     segments: ParsedRouteSegment[];
     handler: THandler;
     authRequired: boolean;
+    secure: SecureRouteMetadata | null;
     staticCount: number;
     paramCount: number;
     hasProxy: boolean;
@@ -28,10 +36,12 @@ export declare class Router<THandler> {
     private readonly _routes;
     /** Registers a route through the deprecated strict compatibility path. */
     addStrict(method: string, pattern: string, handler: THandler, options?: RouteOptions): void;
+    /** Registers one posture-bearing secure route. */
+    addSecure(method: string, pattern: string, handler: THandler, metadata: SecureRouteMetadata): void;
     /** Registers a route using the fail-closed route-registration path. */
     add(method: string, pattern: string, handler: THandler, options?: RouteOptions): void;
     /** Matches an HTTP method and path against registered routes. */
-    match(method: string, path: string): {
+    match(method: string, path: string, surface?: "http" | "appsync"): {
         match: {
             route: Route<THandler>;
             params: Record<string, string>;

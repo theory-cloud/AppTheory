@@ -5,6 +5,7 @@ import { RandomIdGenerator } from "./ids.js";
 import { toBuffer } from "./internal/http.js";
 import { hasJSONContentType } from "./internal/response.js";
 import { normalizeSourceProvenance } from "./internal/source-provenance.js";
+import { cloneSecurePrincipal, } from "./secure-principal.js";
 /** AppSync resolver metadata exposed to AppTheory route handlers. */
 export class AppSyncContext {
     fieldName;
@@ -96,6 +97,7 @@ export class Context {
     _webSocket;
     _appSync;
     _values;
+    _securePrincipal;
     constructor(options) {
         this.ctx = options.ctx ?? null;
         this.request = options.request;
@@ -113,6 +115,7 @@ export class Context {
         this._webSocket = options.webSocket ?? null;
         this._appSync = options.appSync ?? null;
         this._values = new Map();
+        this._securePrincipal = null;
     }
     /** Returns the request clock time using the configured clock. */
     now() {
@@ -174,6 +177,10 @@ export class Context {
     /** Returns AppSync resolver metadata for AppSync routes. */
     asAppSync() {
         return this._appSync;
+    }
+    /** Returns a defensive deep copy of the resolved secure principal. */
+    securePrincipal() {
+        return cloneSecurePrincipal(this._securePrincipal);
     }
 }
 /** Context passed to non-HTTP event workload handlers. */

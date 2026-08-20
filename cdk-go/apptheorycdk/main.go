@@ -453,6 +453,30 @@ func init() {
 		reflect.TypeOf((*AppTheoryHttpIngestionEndpointStageOptions)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryInstallParameters",
+		reflect.TypeOf((*AppTheoryInstallParameters)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "accountClass", GoGetter: "AccountClass"},
+			_jsii_.MemberProperty{JsiiProperty: "autheoryJwksUrl", GoGetter: "AutheoryJwksUrl"},
+			_jsii_.MemberProperty{JsiiProperty: "authorizationServerOrigin", GoGetter: "AuthorizationServerOrigin"},
+			_jsii_.MemberProperty{JsiiProperty: "dnsHost", GoGetter: "DnsHost"},
+			_jsii_.MemberProperty{JsiiProperty: "namespaceSlug", GoGetter: "NamespaceSlug"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "publicHostedZoneId", GoGetter: "PublicHostedZoneId"},
+			_jsii_.MemberProperty{JsiiProperty: "stage", GoGetter: "Stage"},
+			_jsii_.MemberProperty{JsiiProperty: "targetAccountId", GoGetter: "TargetAccountId"},
+			_jsii_.MemberProperty{JsiiProperty: "targetApplicationId", GoGetter: "TargetApplicationId"},
+			_jsii_.MemberProperty{JsiiProperty: "tenantId", GoGetter: "TenantId"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryInstallParameters{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryJobsTable",
 		reflect.TypeOf((*AppTheoryJobsTable)(nil)).Elem(),
 		[]_jsii_.Member{
@@ -575,6 +599,14 @@ func init() {
 		},
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpPaths",
+		reflect.TypeOf((*AppTheoryMcpPaths)(nil)).Elem(),
+		nil, // no members
+		func() interface{} {
+			return &jsiiProxy_AppTheoryMcpPaths{}
+		},
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResource",
 		reflect.TypeOf((*AppTheoryMcpProtectedResource)(nil)).Elem(),
 		[]_jsii_.Member{
@@ -602,7 +634,9 @@ func init() {
 			_jsii_.MemberProperty{JsiiProperty: "cnameRecord", GoGetter: "CnameRecord"},
 			_jsii_.MemberProperty{JsiiProperty: "domainName", GoGetter: "DomainName"},
 			_jsii_.MemberProperty{JsiiProperty: "endpoint", GoGetter: "Endpoint"},
+			_jsii_.MemberProperty{JsiiProperty: "mcpPath", GoGetter: "McpPath"},
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "protectedResourceMetadataPath", GoGetter: "ProtectedResourceMetadataPath"},
 			_jsii_.MemberProperty{JsiiProperty: "sessionTable", GoGetter: "SessionTable"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
 			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
@@ -1082,6 +1116,29 @@ func init() {
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryS3IngestProps",
 		reflect.TypeOf((*AppTheoryS3IngestProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryS3VersionedIngress",
+		reflect.TypeOf((*AppTheoryS3VersionedIngress)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "bucketArn", GoGetter: "BucketArn"},
+			_jsii_.MemberProperty{JsiiProperty: "bucketName", GoGetter: "BucketName"},
+			_jsii_.MemberMethod{JsiiMethod: "grantUpload", GoMethod: "GrantUpload"},
+			_jsii_.MemberMethod{JsiiMethod: "grantVersionedRead", GoMethod: "GrantVersionedRead"},
+			_jsii_.MemberProperty{JsiiProperty: "keyRoot", GoGetter: "KeyRoot"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryS3VersionedIngress{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryS3VersionedIngressProps",
+		reflect.TypeOf((*AppTheoryS3VersionedIngressProps)(nil)).Elem(),
 	)
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheorySecretConfig",

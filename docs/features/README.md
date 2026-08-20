@@ -12,12 +12,17 @@ contract.
 
 ## Current feature guides
 
+- [SecureApp Closed-Default Routing](./secure-app.md)
+- [MCP Server Umbrella Construct](./mcp-server-construct.md)
+- [Namespace Install Parameters](./install-parameters.md)
+- [S3 Versioned Artifact Ingress](./s3-versioned-ingress.md)
 - [Sanitization](./sanitization.md)
 - [Observability Hooks](./observability.md)
 - [Logging Profiles](./logging-profiles.md)
 - [Jobs Ledger](./jobs-ledger.md)
 - [Event Workload Contracts](./event-workloads.md)
 - [Object Store Helper](./object-store.md)
+- [AWS Runtime Hardening Helpers](./aws-runtime-hardening.md)
 - [AWS Lambda MicroVM Golden Path](./lambda-microvm-contract-foundation.md)
 
 ## Boundary

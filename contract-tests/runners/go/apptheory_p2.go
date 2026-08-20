@@ -101,7 +101,7 @@ func runFixtureP2(f Fixture) error {
 
 	if f.Input.AWSEvent != nil {
 		source := strings.ToLower(strings.TrimSpace(f.Input.AWSEvent.Source))
-		if source != "appsync" {
+		if source != secureSurfaceAppSync {
 			return fmt.Errorf("unknown aws_event source %q", f.Input.AWSEvent.Source)
 		}
 		out, err := app.HandleLambda(context.Background(), f.Input.AWSEvent.Event)

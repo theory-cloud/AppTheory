@@ -14,6 +14,12 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/interfaces/interfacesawslogs"
 )
 
+// Properties for an AppTheory-managed Lambda function.
+//
+// AppTheory overrides the inherited `logRemovalPolicy` default for log groups
+// it creates: they use `RemovalPolicy.DESTROY`. Combining an explicit
+// `logRemovalPolicy` with a caller-provided `logGroup` fails synthesis because
+// caller-provided resources own their removal policy.
 type AppTheoryFunctionProps struct {
 	// The maximum age of a request that Lambda sends to a function for processing.
 	//
@@ -395,4 +401,13 @@ type AppTheoryFunctionProps struct {
 	// Default: undefined.
 	//
 	Alias *AppTheoryFunctionAliasOptions `field:"optional" json:"alias" yaml:"alias"`
+	// Stable physical name for the AppTheory-managed Lambda execution role.
+	//
+	// AppTheory preserves the Lambda L2's policies. Concrete names are synthesis-validated against IAM's `[\w+=,.@-]+` character set and 64-character limit.
+	// Token-valued names are accepted and IAM validates the resolved value at deploy time, so an invalid resolved name fails deployment rather than synthesis.
+	// This exemption keeps account-agnostic synthesis representable for the THE-2861 token-valued-input failure class. Do not combine this with the inherited `role`
+	// prop; caller-provided roles own their physical name.
+	// Default: undefined.
+	//
+	RoleName *string `field:"optional" json:"roleName" yaml:"roleName"`
 }

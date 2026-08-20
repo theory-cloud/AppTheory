@@ -1,0 +1,27 @@
+{
+  "id": "p2.secure_construction_unknown_option",
+  "tier": "p2",
+  "name": "secure construction rejects an unknown option independently",
+  "setup": {
+    "secure_app": {
+      "tier": "p2",
+      "unknown_option": true
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "unknown-option",
+        "operation": "construct"
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "unknown-option",
+        "construction_error_present": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,159 @@
+{
+  "id": "p2.secure_openapi_exact_join",
+  "tier": "p2",
+  "name": "secure OpenAPI joins exact HTTP routes and emits posture from route records",
+  "setup": {
+    "secure_app": {
+      "tier": "p2",
+      "routes": [
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/public",
+          "handler": "secure_echo",
+          "posture": "public"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/files/{path+}",
+          "handler": "secure_echo",
+          "posture": "authenticated",
+          "scopes": [
+            "files:read"
+          ]
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/optional",
+          "handler": "secure_echo",
+          "posture": "optional"
+        },
+        {
+          "surface": "http",
+          "method": "POST",
+          "path": "/internal",
+          "handler": "secure_echo",
+          "posture": "internal_only"
+        },
+        {
+          "surface": "appsync",
+          "parent_type": "Query",
+          "field": "note",
+          "handler": "secure_echo",
+          "posture": "authenticated"
+        },
+        {
+          "surface": "websocket",
+          "route_key": "send",
+          "handler": "secure_echo",
+          "posture": "internal_only"
+        }
+      ],
+      "openapi": {
+        "title": "Secure API",
+        "version": "1.0.0",
+        "security_schemes": {
+          "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT"
+          },
+          "ServiceAuth": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "x-service-key"
+          }
+        },
+        "auth_schemes": {
+          "authenticated": [
+            "BearerAuth"
+          ],
+          "internal_only": [
+            "ServiceAuth"
+          ]
+        },
+        "routes": [
+          {
+            "method": "GET",
+            "path": "/public",
+            "operation_id": "public",
+            "response": {
+              "description": "ok",
+              "fields": []
+            }
+          },
+          {
+            "method": "GET",
+            "path": "files/:path+",
+            "operation_id": "files",
+            "response": {
+              "description": "ok",
+              "fields": []
+            }
+          },
+          {
+            "method": "GET",
+            "path": "/optional",
+            "operation_id": "optional",
+            "response": {
+              "description": "ok",
+              "fields": []
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/internal",
+            "operation_id": "internal",
+            "response": {
+              "description": "ok",
+              "fields": []
+            }
+          }
+        ]
+      }
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "openapi",
+        "operation": "openapi"
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "openapi",
+        "openapi": {
+          "x-apptheory-contract-mode": "secure-v1",
+          "http_route_count": 4,
+          "has_appsync_path": false,
+          "has_websocket_path": false,
+          "proxy_path": "/files/{path}",
+          "public_posture": "public",
+          "files_posture": "authenticated",
+          "files_scopes": [
+            "files:read"
+          ],
+          "optional_posture": "optional",
+          "optional_security": [
+            {
+              "BearerAuth": []
+            },
+            {}
+          ],
+          "internal_posture": "internal_only",
+          "internal_security": [
+            {
+              "ServiceAuth": []
+            }
+          ]
+        },
+        "openapi_json": "{\"components\":{\"responses\":{\"AppBadRequest\":{\"content\":{\"application/json\":{\"schema\":{\"$ref\":\"#/components/schemas/AppTheoryError\"}}},\"description\":\"AppTheory bad request error envelope\"},\"AppValidationFailed\":{\"content\":{\"application/json\":{\"schema\":{\"$ref\":\"#/components/schemas/AppTheoryError\"}}},\"description\":\"AppTheory validation failure error envelope\"}},\"schemas\":{\"AppTheoryError\":{\"additionalProperties\":false,\"properties\":{\"error\":{\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"},\"details\":{\"additionalProperties\":true,\"type\":\"object\"},\"message\":{\"type\":\"string\"},\"request_id\":{\"type\":\"string\"}},\"required\":[\"code\",\"message\"],\"type\":\"object\"}},\"required\":[\"error\"],\"type\":\"object\"}},\"securitySchemes\":{\"BearerAuth\":{\"bearerFormat\":\"JWT\",\"scheme\":\"bearer\",\"type\":\"http\"},\"ServiceAuth\":{\"in\":\"header\",\"name\":\"x-service-key\",\"type\":\"apiKey\"}}},\"info\":{\"title\":\"Secure API\",\"version\":\"1.0.0\"},\"openapi\":\"3.1.0\",\"paths\":{\"/files/{path}\":{\"get\":{\"operationId\":\"files\",\"parameters\":[{\"in\":\"path\",\"name\":\"path\",\"required\":true,\"schema\":{\"type\":\"string\"}}],\"responses\":{\"200\":{\"description\":\"ok\"},\"400\":{\"$ref\":\"#/components/responses/AppBadRequest\"},\"422\":{\"$ref\":\"#/components/responses/AppValidationFailed\"}},\"security\":[{\"BearerAuth\":[\"files:read\"]}],\"x-apptheory-auth-posture\":\"authenticated\",\"x-apptheory-proxy\":true,\"x-apptheory-required-scopes\":[\"files:read\"]}},\"/internal\":{\"post\":{\"operationId\":\"internal\",\"responses\":{\"200\":{\"description\":\"ok\"},\"400\":{\"$ref\":\"#/components/responses/AppBadRequest\"},\"422\":{\"$ref\":\"#/components/responses/AppValidationFailed\"}},\"security\":[{\"ServiceAuth\":[]}],\"x-apptheory-auth-posture\":\"internal_only\"}},\"/optional\":{\"get\":{\"operationId\":\"optional\",\"responses\":{\"200\":{\"description\":\"ok\"},\"400\":{\"$ref\":\"#/components/responses/AppBadRequest\"},\"422\":{\"$ref\":\"#/components/responses/AppValidationFailed\"}},\"security\":[{\"BearerAuth\":[]},{}],\"x-apptheory-auth-posture\":\"optional\"}},\"/public\":{\"get\":{\"operationId\":\"public\",\"responses\":{\"200\":{\"description\":\"ok\"},\"400\":{\"$ref\":\"#/components/responses/AppBadRequest\"},\"422\":{\"$ref\":\"#/components/responses/AppValidationFailed\"}},\"security\":[],\"x-apptheory-auth-posture\":\"public\"}}},\"x-apptheory-contract-mode\":\"secure-v1\"}"
+      }
+    ]
+  }
+}

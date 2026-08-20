@@ -43,7 +43,19 @@ export interface OpenAPISpec {
     routes: readonly OpenAPIRouteSpec[];
 }
 export type OpenAPIDocument = JsonObject;
+/**
+ * Generates a legacy descriptive OpenAPI document.
+ *
+ * @deprecated This function cannot read SecureApp posture. SecureApp adopters
+ * must use app.generateOpenAPI().
+ */
 export declare function generateOpenAPI(spec: OpenAPISpec): OpenAPIDocument;
+/**
+ * Generates legacy canonical OpenAPI JSON.
+ *
+ * @deprecated This function cannot read SecureApp posture. SecureApp adopters
+ * must use app.generateOpenAPIJSON().
+ */
 export declare function generateOpenAPIJSON(spec: OpenAPISpec): string;
 export {};
 //# sourceMappingURL=openapi.d.ts.map

@@ -1,0 +1,38 @@
+{
+  "id": "p0.routing.registration_legacy_joined_params",
+  "tier": "p0",
+  "name": "Legacy registration accepts joined params and proxies",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/param/{a}{b}",
+        "handler": "static_pong"
+      },
+      {
+        "method": "GET",
+        "path": "/proxy/{a+}{b+}",
+        "handler": "static_pong"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/proxy/value/extra",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["text/plain; charset=utf-8"] },
+      "cookies": [],
+      "body": { "encoding": "utf8", "value": "pong" },
+      "is_base64": false
+    }
+  }
+}

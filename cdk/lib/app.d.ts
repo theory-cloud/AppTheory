@@ -1,3 +1,4 @@
+import { RemovalPolicy } from "aws-cdk-lib";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import type * as ec2 from "aws-cdk-lib/aws-ec2";
@@ -20,11 +21,30 @@ export interface AppTheoryAppProps {
     readonly timeoutSeconds?: number;
     readonly logRetention?: logs.RetentionDays;
     readonly logGroup?: logs.ILogGroupRef;
+    /**
+     * Removal policy for the app function's AppTheory-managed named log group.
+     *
+     * The value is forwarded unchanged to AppTheoryFunction. Supplying both
+     * `logGroup` and `logRemovalPolicy` fails synthesis because caller-provided
+     * log groups own their removal policy.
+     *
+     * @default RemovalPolicy.DESTROY
+     */
+    readonly logRemovalPolicy?: RemovalPolicy;
     readonly vpc?: ec2.IVpc;
     readonly vpcSubnets?: ec2.SubnetSelection;
     readonly securityGroups?: ec2.ISecurityGroup[];
     readonly allowAllOutbound?: boolean;
     readonly allowPublicSubnet?: boolean;
+    /**
+     * Stable physical name for the app function's AppTheory-managed IAM role.
+     *
+     * AppTheoryFunction receives the value unchanged. Concrete names are synthesis-validated against IAM's `[\w+=,.@-]+` character set and 64-character limit; token-valued names are accepted and IAM validates the resolved value at deploy time, so an invalid resolved name fails deployment rather than synthesis.
+     * This exemption keeps account-agnostic synthesis representable for the THE-2861 token-valued-input failure class. Synthesis still fails if AppTheory cannot apply the requested name exactly.
+     *
+     * @default undefined
+     */
+    readonly roleName?: string;
     readonly alias?: AppTheoryFunctionAliasOptions;
     readonly enableDatabase?: boolean;
     readonly databaseTableName?: string;

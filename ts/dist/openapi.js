@@ -1,5 +1,11 @@
 import { VALIDATION_RULE_ENUM, VALIDATION_RULE_MAX, VALIDATION_RULE_MAX_LENGTH, VALIDATION_RULE_MIN, VALIDATION_RULE_MIN_LENGTH, VALIDATION_RULE_PATTERN, VALIDATION_RULE_REQUIRED, } from "./validate.js";
 const JSON_NUMBER_PATTERN = /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/;
+/**
+ * Generates a legacy descriptive OpenAPI document.
+ *
+ * @deprecated This function cannot read SecureApp posture. SecureApp adopters
+ * must use app.generateOpenAPI().
+ */
 export function generateOpenAPI(spec) {
     const title = spec.title.trim();
     const version = spec.version.trim();
@@ -43,6 +49,12 @@ export function generateOpenAPI(spec) {
         paths,
     };
 }
+/**
+ * Generates legacy canonical OpenAPI JSON.
+ *
+ * @deprecated This function cannot read SecureApp posture. SecureApp adopters
+ * must use app.generateOpenAPIJSON().
+ */
 export function generateOpenAPIJSON(spec) {
     return stableStringify(generateOpenAPI(spec));
 }

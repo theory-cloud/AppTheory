@@ -1,0 +1,35 @@
+{
+  "id": "p2.secure_registration_malformed_joined_proxies",
+  "tier": "p2",
+  "name": "secure registration rejects malformed joined proxies",
+  "setup": {
+    "secure_app": {
+      "tier": "p2",
+      "routes": [
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/x/{a+}{b+}",
+          "handler": "secure_echo",
+          "posture": "public"
+        }
+      ]
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "malformed-route",
+        "operation": "construct"
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "malformed-route",
+        "construction_error_contains": "invalid route pattern"
+      }
+    ]
+  }
+}

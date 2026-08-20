@@ -91,7 +91,7 @@
       "Type": "AWS::IAM::Policy"
     },
     "FnLogGroup27CC2AC8": {
-      "DeletionPolicy": "Retain",
+      "DeletionPolicy": "Delete",
       "Properties": {
         "LogGroupName": {
           "Fn::Join": [
@@ -107,7 +107,7 @@
         "RetentionInDays": 30
       },
       "Type": "AWS::Logs::LogGroup",
-      "UpdateReplacePolicy": "Retain"
+      "UpdateReplacePolicy": "Delete"
     }
   },
   "Rules": {

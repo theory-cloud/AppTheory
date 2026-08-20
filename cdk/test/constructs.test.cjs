@@ -18,6 +18,7 @@ const lambda = require("aws-cdk-lib/aws-lambda");
 const logs = require("aws-cdk-lib/aws-logs");
 const route53 = require("aws-cdk-lib/aws-route53");
 const sqs = require("aws-cdk-lib/aws-sqs");
+const { Construct, Node } = require("constructs");
 
 const apptheory = require("../lib");
 const { restApiStreamingRouteStageVariableName } = require("../lib/private/rest-api-streaming");
@@ -199,6 +200,297 @@ test("AppTheoryFunction synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryFunction applies an exact stable execution role name", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    roleName: "apptheory-stable-runtime",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+
+  assert.equal(roles.length, 1, "Should synthesize exactly one execution role");
+  assert.equal(roles[0].Properties?.RoleName, "apptheory-stable-runtime");
+  assert.deepEqual(roles[0].Properties?.ManagedPolicyArns?.map(renderedString), [
+    "arn:{\"Ref\":\"AWS::Partition\"}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+  ]);
+});
+
+test("AppTheoryFunction preserves an Fn.importValue token roleName", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    roleName: cdk.Fn.importValue("SharedExecutionRoleName"),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+
+  assert.equal(roles.length, 1, "Should synthesize exactly one execution role");
+  assert.deepEqual(roles[0].Properties?.RoleName, { "Fn::ImportValue": "SharedExecutionRoleName" });
+});
+
+test("AppTheoryFunction preserves a CfnParameter token roleName", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const roleName = new cdk.CfnParameter(stack, "ExecutionRoleName", { type: "String" });
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    roleName: roleName.valueAsString,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+  const parameters = Object.keys(template.Parameters ?? {});
+
+  assert.equal(roles.length, 1, "Should synthesize exactly one execution role");
+  assert.ok(parameters.includes("ExecutionRoleName"), "Should synthesize the role name parameter");
+  assert.deepEqual(roles[0].Properties?.RoleName, { Ref: "ExecutionRoleName" });
+});
+
+test("AppTheoryFunction rejects an empty roleName", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryFunction(stack, "Fn", {
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        roleName: "",
+      }),
+    /roleName must not be empty/,
+  );
+});
+
+test("AppTheoryFunction rejects a whitespace-only roleName", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryFunction(stack, "Fn", {
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        roleName: "   ",
+      }),
+    /roleName must not be empty/,
+  );
+});
+
+test("AppTheoryFunction enforces the 64-character roleName limit", () => {
+  const app = new cdk.App();
+  const invalidStack = new cdk.Stack(app, "InvalidStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryFunction(invalidStack, "Fn", {
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        roleName: "r".repeat(65),
+      }),
+    /roleName must not exceed 64 characters/,
+  );
+
+  const validStack = new cdk.Stack(app, "ValidStack");
+  const roleName = "r".repeat(64);
+  new apptheory.AppTheoryFunction(validStack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    roleName,
+  });
+
+  const template = assertions.Template.fromStack(validStack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+  assert.equal(roles.length, 1, "Should synthesize exactly one execution role");
+  assert.equal(roles[0].Properties?.RoleName, roleName);
+});
+
+test("AppTheoryFunction rejects characters outside the IAM roleName pattern", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryFunction(stack, "Fn", {
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        roleName: "bad name/with*chars",
+      }),
+    /roleName must match \[\\w\+=,\.@-\]\+/,
+  );
+});
+
+test("AppTheoryFunction preserves every IAM roleName character class", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const roleName = "Role_Name+Equals=Comma,Dot.At@Hyphen-09";
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    roleName,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+  assert.equal(roles.length, 1, "Should synthesize exactly one execution role");
+  assert.equal(roles[0].Properties?.RoleName, roleName);
+});
+
+test("AppTheoryFunction preserves CDK-managed VPC policies when applying roleName", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const vpc = ec2.Vpc.fromVpcAttributes(stack, "Vpc", {
+    vpcId: "vpc-123456",
+    availabilityZones: ["us-east-1a"],
+    privateSubnetIds: ["subnet-private"],
+    privateSubnetRouteTableIds: ["rtb-private"],
+  });
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    vpc,
+    vpcSubnets: { subnets: vpc.privateSubnets },
+    roleName: "apptheory-vpc-runtime",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+
+  assert.equal(roles.length, 1, "Should synthesize exactly one execution role");
+  assert.equal(roles[0].Properties?.RoleName, "apptheory-vpc-runtime");
+  assert.deepEqual(roles[0].Properties?.ManagedPolicyArns?.map(renderedString), [
+    "arn:{\"Ref\":\"AWS::Partition\"}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+    "arn:{\"Ref\":\"AWS::Partition\"}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+  ]);
+});
+
+test("AppTheoryFunction leaves the execution role unnamed by default", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+
+  assert.equal(roles.length, 1, "Should synthesize exactly one execution role");
+  assert.equal(roles[0].Properties?.RoleName, undefined);
+});
+
+test("AppTheoryFunction fails closed when a stable role name cannot be honored", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const importedRole = iam.Role.fromRoleArn(
+    stack,
+    "ImportedRole",
+    "arn:aws:iam::123456789012:role/existing-runtime",
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryFunction(stack, "Fn", {
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        role: importedRole,
+        roleName: "apptheory-required-runtime",
+      }),
+    /cannot honor props\.roleName when props\.role supplies the execution role/,
+  );
+});
+
+test("AppTheoryFunction fails closed when the generated role default child is not a CfnRole", () => {
+  const defaultChildDescriptor = Object.getOwnPropertyDescriptor(Node.prototype, "defaultChild");
+  assert.ok(defaultChildDescriptor?.get, "constructs.Node.defaultChild getter must be available");
+
+  Object.defineProperty(Node.prototype, "defaultChild", {
+    ...defaultChildDescriptor,
+    get() {
+      if (this.path === "TestStack/Fn/Function/ServiceRole") {
+        return {};
+      }
+      return defaultChildDescriptor.get.call(this);
+    },
+  });
+
+  try {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "TestStack");
+
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryFunction(stack, "Fn", {
+          runtime: lambda.Runtime.NODEJS_24_X,
+          handler: "index.handler",
+          code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+          roleName: "apptheory-required-runtime",
+        }),
+      /default child is not an AWS::IAM::Role/,
+    );
+  } finally {
+    Object.defineProperty(Node.prototype, "defaultChild", defaultChildDescriptor);
+  }
+});
+
+test("AppTheoryFunction fails closed for a token roleName when the generated role default child is not a CfnRole", () => {
+  const defaultChildDescriptor = Object.getOwnPropertyDescriptor(Node.prototype, "defaultChild");
+  assert.ok(defaultChildDescriptor?.get, "constructs.Node.defaultChild getter must be available");
+
+  Object.defineProperty(Node.prototype, "defaultChild", {
+    ...defaultChildDescriptor,
+    get() {
+      if (this.path === "TestStack/Fn/Function/ServiceRole") {
+        return {};
+      }
+      return defaultChildDescriptor.get.call(this);
+    },
+  });
+
+  try {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "TestStack");
+
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryFunction(stack, "Fn", {
+          runtime: lambda.Runtime.NODEJS_24_X,
+          handler: "index.handler",
+          code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+          roleName: cdk.Fn.importValue("SharedExecutionRoleName"),
+        }),
+      /default child is not an AWS::IAM::Role/,
+    );
+  } finally {
+    Object.defineProperty(Node.prototype, "defaultChild", defaultChildDescriptor);
+  }
+});
+
 test("AppTheoryFunction exposes log retention, VPC, alias, provisioned concurrency, and canary deploys", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -265,6 +557,108 @@ test("AppTheoryFunction binds explicit-name log groups through the Lambda L2", (
   assert.equal(logGroup.Properties?.LogGroupName, "/aws/lambda/apptheory-named");
   assert.equal(logGroup.Properties?.RetentionInDays, 7);
   assert.deepEqual(fn.Properties?.LoggingConfig, { LogGroup: { Ref: logGroupId } });
+});
+
+test("AppTheoryFunction applies the requested removal policy to its named log group", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    functionName: "apptheory-retained",
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    logRemovalPolicy: cdk.RemovalPolicy.RETAIN,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const logGroups = resourcesOfType(template, "AWS::Logs::LogGroup");
+
+  assert.equal(logGroups.length, 1, "Should synthesize exactly one function log group");
+  assert.equal(logGroups[0].Properties?.LogGroupName, "/aws/lambda/apptheory-retained");
+  assert.equal(logGroups[0].DeletionPolicy, "Retain");
+  assert.equal(logGroups[0].UpdateReplacePolicy, "Retain");
+});
+
+test("AppTheoryFunction leaves a caller-provided log group untouched when rejecting logRemovalPolicy", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const logGroup = new logs.LogGroup(stack, "ExistingLogGroup", {
+    logGroupName: "/aws/lambda/existing-handler",
+    retention: logs.RetentionDays.THREE_MONTHS,
+    removalPolicy: cdk.RemovalPolicy.RETAIN,
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryFunction(stack, "Fn", {
+        functionName: "existing-handler",
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        logGroup,
+        logRemovalPolicy: cdk.RemovalPolicy.DESTROY,
+      }),
+    /cannot honor props\.logRemovalPolicy when props\.logGroup supplies the log group/,
+  );
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const logGroups = resourcesOfType(template, "AWS::Logs::LogGroup");
+  assert.equal(logGroups.length, 1, "Should preserve exactly the caller-owned log group");
+  assert.equal(logGroups[0].Properties?.LogGroupName, "/aws/lambda/existing-handler");
+  assert.equal(logGroups[0].Properties?.RetentionInDays, 90);
+  assert.equal(logGroups[0].DeletionPolicy, "Retain");
+  assert.equal(logGroups[0].UpdateReplacePolicy, "Retain");
+});
+
+test("AppTheoryFunction fails closed when its managed log group is not backed by a CfnLogGroup", () => {
+  const defaultChildDescriptor = Object.getOwnPropertyDescriptor(Node.prototype, "defaultChild");
+  assert.ok(defaultChildDescriptor?.get, "constructs.Node.defaultChild getter must be available");
+
+  Object.defineProperty(Node.prototype, "defaultChild", {
+    ...defaultChildDescriptor,
+    get() {
+      if (this.path === "TestStack/Fn/LogGroup") {
+        return {};
+      }
+      return defaultChildDescriptor.get.call(this);
+    },
+  });
+
+  try {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "TestStack");
+
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryFunction(stack, "Fn", {
+          functionName: "apptheory-required-logs",
+          runtime: lambda.Runtime.NODEJS_24_X,
+          handler: "index.handler",
+          code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        }),
+      /default child is not an AWS::Logs::LogGroup/,
+    );
+  } finally {
+    Object.defineProperty(Node.prototype, "defaultChild", defaultChildDescriptor);
+  }
+});
+
+test("AppTheoryFunction rejects SNAPSHOT for its managed log group", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryFunction(stack, "Fn", {
+        functionName: "apptheory-snapshot",
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        logRemovalPolicy: cdk.RemovalPolicy.SNAPSHOT,
+      }),
+    /cannot apply RemovalPolicy\.SNAPSHOT because AWS::Logs::LogGroup does not support snapshot removal policies/,
+  );
 });
 
 test("AppTheoryFunction uses caller-provided log groups for existing-stack adoption", () => {
@@ -2353,6 +2747,167 @@ test("AppTheoryApp synthesizes expected template", () => {
   } else {
     expectSnapshot("app", template);
   }
+});
+
+test("AppTheoryApp forwards an exact stable execution role name", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const vpc = ec2.Vpc.fromVpcAttributes(stack, "Vpc", {
+    vpcId: "vpc-123456",
+    availabilityZones: ["us-east-1a"],
+    privateSubnetIds: ["subnet-private"],
+    privateSubnetRouteTableIds: ["rtb-private"],
+  });
+
+  new apptheory.AppTheoryApp(stack, "App", {
+    appName: "apptheory-stable-app",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    vpc,
+    vpcSubnets: { subnets: vpc.privateSubnets },
+    roleName: "apptheory-stable-app-runtime",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+
+  assert.equal(roles.length, 1, "Should synthesize exactly one app execution role");
+  assert.equal(roles[0].Properties?.RoleName, "apptheory-stable-app-runtime");
+  assert.deepEqual(roles[0].Properties?.ManagedPolicyArns?.map(renderedString), [
+    "arn:{\"Ref\":\"AWS::Partition\"}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+    "arn:{\"Ref\":\"AWS::Partition\"}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+  ]);
+});
+
+test("AppTheoryApp forwards an Fn.importValue token execution role name", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryApp(stack, "App", {
+    appName: "apptheory-token-role-app",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    roleName: cdk.Fn.importValue("SharedAppExecutionRoleName"),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const roles = resourcesOfType(template, "AWS::IAM::Role");
+
+  assert.equal(roles.length, 1, "Should synthesize exactly one app execution role");
+  assert.deepEqual(roles[0].Properties?.RoleName, { "Fn::ImportValue": "SharedAppExecutionRoleName" });
+});
+
+test("AppTheoryApp rejects invalid execution role names", () => {
+  const cases = [
+    ["empty", "", /roleName must not be empty/],
+    ["whitespace-only", "   ", /roleName must not be empty/],
+    ["over 64 characters", "r".repeat(65), /roleName must not exceed 64 characters/],
+    ["outside the IAM pattern", "bad name\/with*chars", /roleName must match \[\\w\+=,\.@-\]\+/],
+  ];
+
+  for (const [index, [name, roleName, expected]] of cases.entries()) {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "TestStack");
+
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryApp(stack, "App", {
+          appName: `apptheory-invalid-role-${index}`,
+          code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+          runtime: lambda.Runtime.NODEJS_24_X,
+          handler: "index.handler",
+          roleName,
+        }),
+      expected,
+      name,
+    );
+  }
+});
+
+test("AppTheoryApp forwards logRemovalPolicy to its named function log group", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryApp(stack, "App", {
+    appName: "apptheory-retain-on-update",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    logRemovalPolicy: cdk.RemovalPolicy.RETAIN_ON_UPDATE_OR_DELETE,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const logGroups = resourcesOfType(template, "AWS::Logs::LogGroup");
+
+  assert.equal(logGroups.length, 1, "Should synthesize exactly one app function log group");
+  const functionLogGroup = logGroups.find(
+    (resource) => resource.Properties?.LogGroupName === "/aws/lambda/apptheory-retain-on-update",
+  );
+  assert.ok(functionLogGroup, "Should synthesize the app function's named log group");
+  assert.equal(functionLogGroup.DeletionPolicy, "RetainExceptOnCreate");
+  assert.equal(functionLogGroup.UpdateReplacePolicy, "Retain");
+});
+
+test("AppTheoryApp defaults its named function log group to DESTROY", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryApp(stack, "App", {
+    appName: "apptheory-self-cleaning",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const functionLogGroup = resourcesOfType(template, "AWS::Logs::LogGroup").find(
+    (resource) => resource.Properties?.LogGroupName === "/aws/lambda/apptheory-self-cleaning",
+  );
+
+  assert.ok(functionLogGroup, "Should synthesize the app function's named log group");
+  assert.equal(functionLogGroup.DeletionPolicy, "Delete");
+  assert.equal(functionLogGroup.UpdateReplacePolicy, "Delete");
+});
+
+test("AppTheoryApp allows RETAIN to override its self-cleaning log group default", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryApp(stack, "App", {
+    appName: "apptheory-retained",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    logRemovalPolicy: cdk.RemovalPolicy.RETAIN,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const functionLogGroup = resourcesOfType(template, "AWS::Logs::LogGroup").find(
+    (resource) => resource.Properties?.LogGroupName === "/aws/lambda/apptheory-retained",
+  );
+
+  assert.ok(functionLogGroup, "Should synthesize the app function's named log group");
+  assert.equal(functionLogGroup.DeletionPolicy, "Retain");
+  assert.equal(functionLogGroup.UpdateReplacePolicy, "Retain");
+});
+
+test("AppTheoryApp rejects SNAPSHOT for its managed function log group", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryApp(stack, "App", {
+        appName: "apptheory-snapshot",
+        code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+        runtime: lambda.Runtime.NODEJS_24_X,
+        handler: "index.handler",
+        logRemovalPolicy: cdk.RemovalPolicy.SNAPSHOT,
+      }),
+    /cannot apply RemovalPolicy\.SNAPSHOT because AWS::Logs::LogGroup does not support snapshot removal policies/,
+  );
 });
 
 test("AppTheoryApp exposes production deployment surface without raw CDK escape hatches", () => {
@@ -5812,6 +6367,199 @@ test("AppTheoryMcpServer (basic) synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryMcpServer wires secure MCP and runtime discovery routes", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: fn,
+    authorizationServerIssuer: "https://auth.example.com",
+    jwksUri: "https://auth.example.com/.well-known/jwks.json",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const routes = resourcesOfType(template, "AWS::ApiGatewayV2::Route");
+  const routeByKey = new Map(routes.map((route) => [route.Properties?.RouteKey, route.Properties]));
+  for (const routeKey of [
+    "POST /mcp",
+    "GET /.well-known/oauth-protected-resource",
+    "GET /.well-known/oauth-protected-resource/mcp",
+  ]) {
+    assert.ok(routeByKey.has(routeKey), `Should wire ${routeKey}`);
+  }
+
+  const mcpRoute = routeByKey.get("POST /mcp");
+  const genericDiscovery = routeByKey.get("GET /.well-known/oauth-protected-resource");
+  const scopedDiscovery = routeByKey.get("GET /.well-known/oauth-protected-resource/mcp");
+  assert.equal(genericDiscovery.AuthorizationType, "NONE", "Discovery must stay unauthenticated at the edge");
+  assert.equal(scopedDiscovery.AuthorizationType, "NONE", "Path-scoped discovery must stay unauthenticated at the edge");
+  assert.deepEqual(genericDiscovery.Target, mcpRoute.Target, "Discovery and MCP must reach the same SecureApp handler");
+  assert.deepEqual(scopedDiscovery.Target, mcpRoute.Target, "Both discovery shapes must reach the SecureApp handler");
+
+  const fnResource = resourcesOfType(template, "AWS::Lambda::Function")[0];
+  const variables = fnResource.Properties.Environment.Variables;
+  assert.equal(variables.APPTHEORY_MCP_PATH, "/mcp");
+  assert.equal(variables.APPTHEORY_MCP_PROTECTED_RESOURCE_PATH, "/.well-known/oauth-protected-resource/mcp");
+  assert.equal(variables.APPTHEORY_MCP_AUTHORIZATION_SERVER_ISSUER, "https://auth.example.com");
+  assert.equal(variables.APPTHEORY_MCP_JWKS_URI, "https://auth.example.com/.well-known/jwks.json");
+  const parameterNames = new Set(Object.keys(template.Parameters ?? {}));
+  for (const a7Parameter of [
+    "TargetAccountId",
+    "NamespaceSlug",
+    "AuthorizationServerOrigin",
+    "AutheoryJwksUrl",
+  ]) {
+    assert.ok(!parameterNames.has(a7Parameter), `A6 must not emit A7 parameter ${a7Parameter}`);
+  }
+});
+
+test("AppTheoryMcpServer honors mcpPath without accepting a resource origin", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const server = new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: fn,
+    mcpPath: "/services/tools",
+    authorizationServerIssuer: "https://auth.example.com",
+    jwksUri: "https://auth.example.com/jwks.json",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const routeKeys = resourcesOfType(template, "AWS::ApiGatewayV2::Route")
+    .map((route) => route.Properties?.RouteKey);
+  assert.ok(routeKeys.includes("POST /services/tools"));
+  assert.ok(routeKeys.includes("GET /.well-known/oauth-protected-resource/services/tools"));
+  assert.ok(renderedString(server.endpoint).endsWith("/services/tools"));
+});
+
+test("AppTheoryMcpServerProps structurally excludes protected resource URL and origin props", () => {
+  const assembly = JSON.parse(fs.readFileSync(path.join(__dirname, "..", ".jsii"), "utf8"));
+  const props = assembly.types["@theory-cloud/apptheory-cdk.AppTheoryMcpServerProps"];
+  const names = new Set(props.properties.map((property) => property.name));
+  for (const forbidden of ["resource", "resourceUrl", "resourceOrigin", "origin", "url"]) {
+    assert.ok(!names.has(forbidden), `Namespace MCP surface must not expose ${forbidden}`);
+  }
+});
+
+test("AppTheoryMcpServer fails closed on partial auth config and non-literal paths", () => {
+  const app = new cdk.App();
+
+  function handler(stack) {
+    return new lambda.Function(stack, "Fn", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: "index.handler",
+      code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200 });"),
+    });
+  }
+
+  {
+    const stack = new cdk.Stack(app, "PartialAuthStack");
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        authorizationServerIssuer: "https://auth.example.com",
+      }),
+      /authorizationServerIssuer and jwksUri must be supplied together/,
+    );
+  }
+  {
+    const stack = new cdk.Stack(app, "OriginPathStack");
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        mcpPath: "https://resource.example.com/mcp",
+      }),
+      /mcpPath must be a literal absolute route path/,
+    );
+  }
+  for (const [index, mcpPath] of ["/mcp/../admin", "/.", "/..", "/mcp/./x", "/my mcp"].entries()) {
+    const stack = new cdk.Stack(app, `InvalidMcpPathStack${index}`);
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        mcpPath,
+      }),
+      /mcpPath must be a literal absolute route path/,
+    );
+  }
+  for (const [index, authorizationServerIssuer] of [
+    "not-a-url",
+    "http://evil.example.com",
+    "https://a.example.com#f",
+    "https://auth.example.com?x=1",
+    "https://@auth.example.com",
+    "https:///issuer",
+    "https:issuer",
+    "https://:443/issuer",
+    "https://%61uth.example.com",
+  ].entries()) {
+    const stack = new cdk.Stack(app, `InvalidIssuerStack${index}`);
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        authorizationServerIssuer,
+        jwksUri: "https://auth.example.com/jwks.json",
+      }),
+      /authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment/,
+    );
+  }
+  for (const [index, jwksUri] of [
+    "not-a-url",
+    "auth.example.com/jwks.json",
+    "http://evil.example.com/jwks.json",
+    "/jwks.json",
+    "https://@auth.example.com/jwks.json",
+    "https:///jwks.json",
+    "https:jwks.json",
+    "https://:443/jwks.json",
+    "https://%61uth.example.com/jwks.json",
+    "https://auth.example.com/jwks.json#fragment",
+  ].entries()) {
+    const stack = new cdk.Stack(app, `InvalidJwksUriStack${index}`);
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        authorizationServerIssuer: "https://auth.example.com",
+        jwksUri,
+      }),
+      /jwksUri must be an absolute HTTPS URL with no userinfo or fragment/,
+    );
+  }
+});
+
+test("AppTheoryMcpServer accepts a query-bearing literal JWKS URL", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200 });"),
+  });
+
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: fn,
+    authorizationServerIssuer: "https://auth.example.com",
+    jwksUri: "https://auth.example.com/jwks.json?set=active",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const fnResource = resourcesOfType(template, "AWS::Lambda::Function")[0];
+  assert.equal(
+    fnResource.Properties.Environment.Variables.APPTHEORY_MCP_JWKS_URI,
+    "https://auth.example.com/jwks.json?set=active",
+  );
+});
+
 test("AppTheoryMcpServer (with session table) synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -6377,4 +7125,439 @@ test("AppTheoryMcpProtectedResource synthesizes expected template", () => {
   } else {
     expectSnapshot("mcp-protected-resource", template);
   }
+});
+
+test("AppTheoryMcpProtectedResource metadataPath selects the secondary static route", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-static-protected-resource-test",
+  });
+
+  new apptheory.AppTheoryMcpProtectedResource(stack, "Protected", {
+    router,
+    resource: cdk.Fn.join("", ["https://", "mcp.example.com/mcp"]),
+    authorizationServers: [cdk.Fn.join("", ["https://", "auth.example.com"])],
+    metadataPath: "/.well-known/oauth-protected-resource/custom-mcp",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.ok(
+    restApiMethodPaths(template).some(
+      (method) => method.method === "GET" && method.path === "/.well-known/oauth-protected-resource/custom-mcp",
+    ),
+    "Explicit metadataPath should own the secondary static document route",
+  );
+});
+
+test("AppTheoryMcpProtectedResource URL-valued props carry jsii deprecation notices", () => {
+  const assembly = JSON.parse(fs.readFileSync(path.join(__dirname, "..", ".jsii"), "utf8"));
+  const props = assembly.types["@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResourceProps"];
+  const byName = new Map(props.properties.map((property) => [property.name, property]));
+  for (const name of ["resource", "authorizationServers"]) {
+    const docs = byName.get(name)?.docs ?? {};
+    assert.match(docs.deprecated ?? "", /AppTheoryMcpServer/);
+    assert.equal(docs.stability, "deprecated");
+  }
+});
+
+// ============================================================================
+// AppTheoryInstallParameters tests
+// ============================================================================
+
+test("AppTheoryInstallParameters emits the exact governed parameter surface", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+
+  new apptheory.AppTheoryInstallParameters(stack, "InstallParameters");
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.deepEqual(template.Parameters, {
+    TargetAccountId: {
+      Type: "String",
+      Description: "Exact 12-digit namespace AWS account. Required at install; no default.",
+      AllowedPattern: "^[0-9]{12}$",
+    },
+    NamespaceSlug: {
+      Type: "String",
+      Description: "Theory Cloud namespace slug.",
+      AllowedPattern: "^[a-z0-9][a-z0-9-]{1,62}$",
+    },
+    AccountClass: {
+      Type: "String",
+      Description: "Installed AWS account class.",
+      AllowedValues: ["namespace_dedicated"],
+    },
+    TargetApplicationId: {
+      Type: "String",
+      Description: "Target Theory Cloud application identifier.",
+      AllowedPattern: "^app-[a-z0-9][a-z0-9-]{0,62}$",
+    },
+    TenantId: {
+      Type: "String",
+      Description: "Autheory tenant identifier for the namespace install.",
+      AllowedPattern: "^[A-Za-z0-9_.:-]{3,160}$",
+    },
+    DnsHost: {
+      Type: "String",
+      Description: "Exact Cloud Keeper DNS host under <namespace_slug>.theorycloud.app.",
+      AllowedPattern: "^[a-z0-9][a-z0-9.-]{2,252}\\.theorycloud\\.app$",
+    },
+    Stage: {
+      Type: "String",
+      Description: "Namespace install stage.",
+      AllowedValues: ["lab", "live"],
+    },
+    PublicHostedZoneId: {
+      Type: "String",
+      Description: "Exact Route 53 hosted-zone ID for <namespace_slug>.theorycloud.app.",
+      AllowedPattern: "^[A-Z0-9]{8,32}$",
+    },
+    AuthorizationServerOrigin: {
+      Type: "String",
+      Description: "Exact Autheory HTTPS authorization-server origin.",
+      AllowedPattern: "^https://[A-Za-z0-9.-]+$",
+    },
+    AutheoryJwksUrl: {
+      Type: "String",
+      Description: "Exact Autheory HTTPS JWKS URL.",
+      AllowedPattern: "^https://[A-Za-z0-9.-]+/[^?#]+$",
+    },
+  });
+});
+
+test("AppTheoryInstallParameters asserts the target account matches the caller", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+
+  new apptheory.AppTheoryInstallParameters(stack, "InstallParameters");
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.deepEqual(template.Rules, {
+    TargetAccountMatchesCaller: {
+      Assertions: [{
+        Assert: {
+          "Fn::Equals": [
+            { Ref: "TargetAccountId" },
+            { Ref: "AWS::AccountId" },
+          ],
+        },
+        AssertDescription: "TargetAccountId must equal the AWS account evaluating this stack",
+      }],
+    },
+  });
+});
+
+test("AppTheoryInstallParameters accessors resolve to parameter Ref tokens", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+  const parameters = new apptheory.AppTheoryInstallParameters(stack, "InstallParameters");
+  const accessors = {
+    TargetAccountId: parameters.targetAccountId,
+    NamespaceSlug: parameters.namespaceSlug,
+    AccountClass: parameters.accountClass,
+    TargetApplicationId: parameters.targetApplicationId,
+    TenantId: parameters.tenantId,
+    DnsHost: parameters.dnsHost,
+    Stage: parameters.stage,
+    PublicHostedZoneId: parameters.publicHostedZoneId,
+    AuthorizationServerOrigin: parameters.authorizationServerOrigin,
+    AutheoryJwksUrl: parameters.autheoryJwksUrl,
+  };
+
+  for (const [name, value] of Object.entries(accessors)) {
+    new cdk.CfnOutput(stack, `${name}Value`, { value });
+  }
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  for (const name of Object.keys(accessors)) {
+    assert.deepEqual(
+      template.Outputs[`${name}Value`].Value,
+      { Ref: name },
+      `${name} accessor should remain wired to its parameter`,
+    );
+  }
+});
+
+test("AppTheoryInstallParameters leaves invalid literal values to CloudFormation", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+  const parameters = new apptheory.AppTheoryInstallParameters(stack, "InstallParameters");
+
+  // A default is injected only for this proof: CDK synthesis intentionally
+  // does not evaluate CfnParameter AllowedPattern constraints.
+  parameters.node.findChild("DnsHost").default = "keeper.example.com";
+
+  assert.doesNotThrow(() => assertions.Template.fromStack(stack).toJSON());
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(template.Parameters.DnsHost.Default, "keeper.example.com");
+  assert.equal(template.Parameters.DnsHost.AllowedPattern, "^[a-z0-9][a-z0-9.-]{2,252}\\.theorycloud\\.app$");
+});
+
+test("AppTheoryInstallParameters rejects a second instance in the same stack", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+
+  new apptheory.AppTheoryInstallParameters(stack, "InstallParametersOne");
+  new apptheory.AppTheoryInstallParameters(stack, "InstallParametersTwo");
+
+  assert.throws(
+    () => assertions.Template.fromStack(stack).toJSON(),
+    {
+      name: "SectionAlreadyContains",
+      message: "section 'Parameters' already contains 'TargetAccountId'",
+    },
+  );
+});
+
+test("AppTheoryInstallParameters rejects a stack-level parameter logical-ID collision", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+
+  new apptheory.AppTheoryInstallParameters(stack, "InstallParameters");
+  new cdk.CfnParameter(stack, "TargetAccountId");
+
+  assert.throws(
+    () => assertions.Template.fromStack(stack).toJSON(),
+    {
+      name: "SectionAlreadyContains",
+      message: "section 'Parameters' already contains 'TargetAccountId'",
+    },
+  );
+});
+
+test("AppTheoryInstallParameters rejects a stack-level rule logical-ID collision", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+
+  new apptheory.AppTheoryInstallParameters(stack, "InstallParameters");
+  new cdk.CfnRule(stack, "TargetAccountMatchesCaller");
+
+  assert.throws(
+    () => assertions.Template.fromStack(stack).toJSON(),
+    {
+      name: "SectionAlreadyContains",
+      message: "section 'Rules' already contains 'TargetAccountMatchesCaller'",
+    },
+  );
+});
+
+test("AppTheoryInstallParameters rejects a scope outside a Stack", () => {
+  const root = new Construct(undefined, "Root");
+
+  assert.throws(
+    () => new apptheory.AppTheoryInstallParameters(root, "InstallParameters"),
+    /CfnParameter at 'Root\/InstallParameters\/TargetAccountId' should be created in the scope of a Stack/,
+  );
+});
+
+// ============================================================================
+// AppTheoryS3VersionedIngress tests
+// ============================================================================
+
+test("AppTheoryS3VersionedIngress synthesizes the pinned ingress bucket posture", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+
+  new apptheory.AppTheoryS3VersionedIngress(stack, "Ingress", {
+    bucketName: "apptheory-artifact-ingress-test",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const buckets = resourcesOfType(template, "AWS::S3::Bucket");
+  assert.equal(buckets.length, 1, "Ingress must own exactly one bucket");
+  assert.deepEqual(buckets[0].Properties, {
+    BucketEncryption: {
+      ServerSideEncryptionConfiguration: [
+        {
+          ServerSideEncryptionByDefault: {
+            SSEAlgorithm: "AES256",
+          },
+        },
+      ],
+    },
+    BucketName: "apptheory-artifact-ingress-test",
+    LifecycleConfiguration: {
+      Rules: [
+        {
+          AbortIncompleteMultipartUpload: {
+            DaysAfterInitiation: 7,
+          },
+          Status: "Enabled",
+        },
+      ],
+    },
+    OwnershipControls: {
+      Rules: [{ ObjectOwnership: "BucketOwnerEnforced" }],
+    },
+    PublicAccessBlockConfiguration: {
+      BlockPublicAcls: true,
+      BlockPublicPolicy: true,
+      IgnorePublicAcls: true,
+      RestrictPublicBuckets: true,
+    },
+    VersioningConfiguration: {
+      Status: "Enabled",
+    },
+  });
+
+  const lifecycleRules = buckets[0].Properties?.LifecycleConfiguration?.Rules;
+  assert.equal(lifecycleRules.length, 1, "Ingress must own exactly one lifecycle rule");
+  assert.equal(lifecycleRules[0].AbortIncompleteMultipartUpload?.DaysAfterInitiation, 7);
+  assert.equal(lifecycleRules[0].Status, "Enabled");
+  assert.deepEqual(
+    Object.keys(lifecycleRules[0]).filter(
+      (key) => key === "Expiration" || key.startsWith("NoncurrentVersion"),
+    ),
+    [],
+    "Retention is operator-owned; ingress lifecycle must not expire current or noncurrent objects",
+  );
+  assert.equal(buckets[0].DeletionPolicy, "Retain");
+  assert.equal(buckets[0].UpdateReplacePolicy, "Retain");
+
+  const bucketPolicies = resourcesOfType(template, "AWS::S3::BucketPolicy");
+  assert.equal(bucketPolicies.length, 1, "Ingress must enforce TLS through one bucket policy");
+  const statements = bucketPolicies[0].Properties.PolicyDocument.Statement;
+  assert.equal(statements.length, 1);
+  assert.deepEqual(statements[0].Condition, { Bool: { "aws:SecureTransport": "false" } });
+  assert.equal(statements[0].Effect, "Deny");
+  assert.equal(statements[0].Action, "s3:*");
+  assert.deepEqual(statements[0].Principal, { AWS: "*" });
+  assert.equal(statements[0].Resource.length, 2, "TLS denial must cover the bucket and every object");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("s3-versioned-ingress", template);
+  } else {
+    expectSnapshot("s3-versioned-ingress", template);
+  }
+});
+
+test("AppTheoryS3VersionedIngress exposes bucket identity and the canonical key root", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+  const ingress = new apptheory.AppTheoryS3VersionedIngress(stack, "Ingress", {
+    bucketName: "apptheory-artifact-ingress-test",
+  });
+
+  assert.deepEqual(stack.resolve(ingress.bucketName), {
+    Ref: "IngressBucket08FFB5F0",
+  });
+  assert.equal(ingress.keyRoot, "ns/");
+  assert.equal(apptheory.AppTheoryS3VersionedIngress.KEY_ROOT, "ns/");
+  assert.deepEqual(stack.resolve(ingress.bucketArn), {
+    "Fn::GetAtt": ["IngressBucket08FFB5F0", "Arn"],
+  });
+});
+
+test("AppTheoryS3VersionedIngress grants only exact-key upload and versioned read", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+  const ingress = new apptheory.AppTheoryS3VersionedIngress(stack, "Ingress");
+  const role = new iam.Role(stack, "Role", {
+    assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
+  });
+  const bundleId = "rel_0123456789abcdefghijklmnop";
+
+  ingress.grantUpload(role, "acme", bundleId);
+  ingress.grantVersionedRead(role, "acme", bundleId);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const policies = resourcesOfType(template, "AWS::IAM::Policy");
+  assert.equal(policies.length, 1);
+  const statements = policies[0].Properties.PolicyDocument.Statement;
+  assert.equal(statements.length, 2, "Each helper must contribute exactly one statement");
+  assert.deepEqual(statements.map((statement) => statement.Action), ["s3:PutObject", "s3:GetObjectVersion"]);
+  for (const statement of statements) {
+    assert.equal(statement.Effect, "Allow");
+    assert.deepEqual(statement.Resource, {
+      "Fn::Join": [
+        "",
+        [
+          { "Fn::GetAtt": ["IngressBucket08FFB5F0", "Arn"] },
+          `/ns/acme/${bundleId}`,
+        ],
+      ],
+    });
+    assert.ok(!JSON.stringify(statement.Resource).includes("*"), "Exact bundle ARN must contain no wildcard");
+  }
+});
+
+test("AppTheoryS3VersionedIngress rejects invalid literal bundle locations", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+  const ingress = new apptheory.AppTheoryS3VersionedIngress(stack, "Ingress");
+  const role = new iam.Role(stack, "Role", {
+    assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
+  });
+  const validBundleId = "rel_0123456789abcdefghijklmnop";
+
+  for (const slug of ["a", "Acme", "-acme", "acme/other", "acme*"]) {
+    assert.throws(
+      () => ingress.grantUpload(role, slug, validBundleId),
+      /namespaceSlug must match \^\[a-z0-9\]/,
+    );
+  }
+  for (const bundleId of ["rel_short", "REL_0123456789ABCDEFGHIJKLMNOP", "rel_0123456789abcdefghijklmnopq", "rel_0123456789abcdefghijklmno*"]) {
+    assert.throws(
+      () => ingress.grantVersionedRead(role, "acme", bundleId),
+      /bundleId must match \^rel_/,
+    );
+  }
+});
+
+test("AppTheoryS3VersionedIngress accepts token locations and preserves the key join", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+  const ingress = new apptheory.AppTheoryS3VersionedIngress(stack, "Ingress");
+  const role = new iam.Role(stack, "Role", {
+    assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
+  });
+  const slug = new cdk.CfnParameter(stack, "NamespaceSlug", { type: "String" });
+  const bundleId = new cdk.CfnParameter(stack, "BundleId", { type: "String" });
+
+  ingress.grantUpload(role, slug.valueAsString, bundleId.valueAsString);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const statements = resourcesOfType(template, "AWS::IAM::Policy")[0].Properties.PolicyDocument.Statement;
+  assert.deepEqual(statements, [
+    {
+      Action: "s3:PutObject",
+      Effect: "Allow",
+      Resource: {
+        "Fn::Join": [
+          "",
+          [
+            { "Fn::GetAtt": ["IngressBucket08FFB5F0", "Arn"] },
+            "/ns/",
+            { Ref: "NamespaceSlug" },
+            "/",
+            { Ref: "BundleId" },
+          ],
+        ],
+      },
+    },
+  ]);
+});
+
+test("AppTheoryS3VersionedIngress keeps structural grant guards unconditional", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
+  const ingress = new apptheory.AppTheoryS3VersionedIngress(stack, "Ingress");
+  const role = new iam.Role(stack, "Role", {
+    assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
+  });
+  const bundleId = "rel_0123456789abcdefghijklmnop";
+
+  assert.throws(() => ingress.grantUpload(undefined, "acme", bundleId), /requires a grantable principal/);
+  assert.throws(() => ingress.grantUpload(role, undefined, bundleId), /requires namespaceSlug/);
+  assert.throws(() => ingress.grantUpload(role, "acme", undefined), /requires bundleId/);
+});
+
+test("AppTheoryS3VersionedIngress rejects a scope outside a Stack", () => {
+  const root = new Construct(undefined, "Root");
+
+  assert.throws(
+    () => new apptheory.AppTheoryS3VersionedIngress(root, "Ingress"),
+    /CfnBucket at 'Root\/Ingress\/Bucket\/Resource' should be created in the scope of a Stack/,
+  );
 });

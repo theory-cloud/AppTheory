@@ -1,0 +1,17 @@
+{
+  "id":"p1.secure_preflight_uniform","tier":"p1","name":"secure portable preflight is byte-identical, uniform, and non-oracular",
+  "setup":{"secure_app":{"tier":"p1","middlewares":["record"],"routes":[
+    {"surface":"http","method":"GET","path":"/public","handler":"secure_echo","posture":"public"},
+    {"surface":"http","method":"GET","path":"/internal","handler":"secure_echo","posture":"internal_only"}
+  ]}},
+  "input":{"secure_steps":[
+    {"name":"public","operation":"http","request":{"method":"OPTIONS","path":"/public","headers":{"origin":["https://x"],"access-control-request-method":["GET"]},"body":{"encoding":"utf8","value":""},"is_base64":false}},
+    {"name":"internal","operation":"http","request":{"method":"OPTIONS","path":"/internal","headers":{"origin":["https://x"],"access-control-request-method":["GET"]},"body":{"encoding":"utf8","value":""},"is_base64":false}},
+    {"name":"unknown","operation":"http","request":{"method":"OPTIONS","path":"/unknown","headers":{"origin":["https://x"],"access-control-request-method":["GET"]},"body":{"encoding":"utf8","value":""},"is_base64":false}}
+  ]},
+  "expect":{"secure_steps":[
+    {"name":"public","status":204,"resolver_calls":0,"middleware_calls":0,"handler_calls":0,"response":{"status":204,"headers":{"access-control-allow-methods":["GET"],"access-control-allow-origin":["https://x"],"vary":["origin"],"x-request-id":["req_test_123"]},"cookies":[],"body":{"encoding":"utf8","value":""},"is_base64":false}},
+    {"name":"internal","status":204,"resolver_calls":0,"middleware_calls":0,"handler_calls":0,"response":{"status":204,"headers":{"access-control-allow-methods":["GET"],"access-control-allow-origin":["https://x"],"vary":["origin"],"x-request-id":["req_test_123"]},"cookies":[],"body":{"encoding":"utf8","value":""},"is_base64":false}},
+    {"name":"unknown","status":204,"resolver_calls":0,"middleware_calls":0,"handler_calls":0,"response":{"status":204,"headers":{"access-control-allow-methods":["GET"],"access-control-allow-origin":["https://x"],"vary":["origin"],"x-request-id":["req_test_123"]},"cookies":[],"body":{"encoding":"utf8","value":""},"is_base64":false}}
+  ]}
+}
