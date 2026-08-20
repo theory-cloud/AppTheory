@@ -41,8 +41,8 @@ The construct always emits:
 
 The construct intentionally emits no object-expiration or noncurrent-version-deletion rule. Namespace deployment
 requires pinned versions to remain readable, and the accepted artifact-flow contract does not define a quarantine
-retention period. Operators can tighten the incomplete-upload reaping window through governed provisioning, but
-retention changes require an operator-owned contract decision rather than a caller-supplied bypass.
+retention period. Changing the incomplete-upload reaping window is a contract change, not a caller- or
+operator-supplied override.
 
 ## Exact-key grants
 
