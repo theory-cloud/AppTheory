@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 	objectstoretest "github.com/theory-cloud/apptheory/v3/testkit/objectstore"
 )
 
-const verifiedFixtureDigest = "sha256:b7a08ec283db64788286788097854b24cba0095651252167f4e3e961e682412d"
+const verifiedFixtureDigest = "sha256:21914ff0cff97bc82c93b3e91887a223484060ab6e64add1fbd8600827ae3aa5"
 
 type stubArtifactStore struct {
 	output *objectstore.GetOutput
@@ -127,10 +128,13 @@ func TestVerifyVersionedArtifactNilStoreFailsClosed(t *testing.T) {
 func TestVerifyVersionedArtifactStoreError(t *testing.T) {
 	t.Parallel()
 
-	store := &stubArtifactStore{err: errors.New("s3 unavailable")}
+	store := &stubArtifactStore{err: context.Canceled}
 	artifact, err := VerifyVersionedArtifact(context.Background(), store, validArtifactRequest())
 	if !errors.Is(err, ErrArtifactUnavailable) {
 		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactUnavailable", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("VerifyVersionedArtifact() error = %v, want context.Canceled", err)
 	}
 	if artifact.State != ArtifactVerificationUnavailable {
 		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationUnavailable)
@@ -260,6 +264,41 @@ func TestVerifyVersionedArtifactDigestMismatch(t *testing.T) {
 	}
 }
 
+func TestVerifyVersionedArtifactAttestsPermissionMode(t *testing.T) {
+	t.Parallel()
+
+	base := tarArchive(t, []archiveMember{{path: "run.sh", mode: 0o644, content: "echo hi", typeflag: tar.TypeReg}})
+	baseEntries, err := readVersionedArtifactArchive(base)
+	if err != nil {
+		t.Fatalf("readVersionedArtifactArchive(base) error = %v", err)
+	}
+	baseDigest := deriveAggregateDigest(baseEntries)
+
+	for _, mode := range []int64{0o755, 0o4777} {
+		t.Run(fmt.Sprintf("%04o", mode), func(t *testing.T) {
+			t.Parallel()
+			raw := tarArchive(t, []archiveMember{{path: "run.sh", mode: mode, content: "echo hi", typeflag: tar.TypeReg}})
+			entries, readErr := readVersionedArtifactArchive(raw)
+			if readErr != nil {
+				t.Fatalf("readVersionedArtifactArchive() error = %v", readErr)
+			}
+			if got := deriveAggregateDigest(entries); got == baseDigest {
+				t.Fatalf("aggregate digest = %q for modes 0644 and %04o", got, mode)
+			}
+
+			store, request := artifactFixture(t, raw)
+			request.ExpectedDigest = baseDigest
+			artifact, verifyErr := VerifyVersionedArtifact(context.Background(), store, request)
+			if !errors.Is(verifyErr, ErrArtifactDigestMismatch) {
+				t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactDigestMismatch", verifyErr)
+			}
+			if artifact.State != ArtifactVerificationDigestMismatch {
+				t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationDigestMismatch)
+			}
+		})
+	}
+}
+
 func TestVerifyVersionedArtifactHappyPathUsesObjectStore(t *testing.T) {
 	t.Parallel()
 
@@ -317,7 +356,18 @@ func TestVerifyVersionedArtifactHappyPathUsesObjectStore(t *testing.T) {
 func TestVerifyVersionedArtifactRejectsInvalidArchive(t *testing.T) {
 	t.Parallel()
 
-	assertArchiveInvalid(t, []byte("not a tar archive"))
+	raw := []byte("not a tar archive")
+	store, request := artifactFixture(t, raw)
+	artifact, err := VerifyVersionedArtifact(context.Background(), store, request)
+	if !errors.Is(err, ErrArtifactArchiveInvalid) {
+		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactArchiveInvalid", err)
+	}
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("VerifyVersionedArtifact() error = %v, want io.ErrUnexpectedEOF", err)
+	}
+	if artifact.State != ArtifactVerificationArchiveInvalid {
+		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationArchiveInvalid)
+	}
 }
 
 func TestVerifyVersionedArtifactRejectsCompressedArchive(t *testing.T) {
@@ -372,6 +422,28 @@ func TestVerifyVersionedArtifactRejectsTrailingArchivePayload(t *testing.T) {
 	assertArchiveInvalidReason(t, raw, "archive has trailing data after its end marker")
 }
 
+func TestVerifyVersionedArtifactAcceptsGNUDefaultTarPadding(t *testing.T) {
+	t.Parallel()
+
+	raw := releaseArchive(t)
+	if len(raw) >= 10_240 {
+		t.Fatalf("release archive = %d bytes, want room for GNU default padding", len(raw))
+	}
+	raw = append(raw, make([]byte, 10_240-len(raw))...)
+	store, request := artifactFixture(t, raw)
+
+	artifact, err := VerifyVersionedArtifact(context.Background(), store, request)
+	if err != nil {
+		t.Fatalf("VerifyVersionedArtifact() error = %v", err)
+	}
+	if artifact.State != ArtifactVerificationVerified {
+		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationVerified)
+	}
+	if got := len(artifact.ArchiveBytes()); got != 10_240 {
+		t.Fatalf("ArchiveBytes() length = %d, want 10240", got)
+	}
+}
+
 func TestVerifyVersionedArtifactRejectsTooManyEntries(t *testing.T) {
 	t.Parallel()
 
@@ -382,12 +454,29 @@ func TestVerifyVersionedArtifactRejectsTooManyEntries(t *testing.T) {
 	assertArchiveInvalid(t, tarArchive(t, members))
 }
 
+func TestVerifyVersionedArtifactRejectsDuplicateMemberPaths(t *testing.T) {
+	t.Parallel()
+
+	raw := tarArchive(t, []archiveMember{
+		{path: "policy.json", content: "first", typeflag: tar.TypeReg},
+		{path: "policy.json", content: "second", typeflag: tar.TypeReg},
+	})
+	assertArchiveInvalidReason(t, raw, `archive contains duplicate member path "policy.json"`)
+}
+
 func TestVerifyVersionedArtifactRejectsUnsafeMemberPaths(t *testing.T) {
 	t.Parallel()
 
 	paths := []string{
 		"/absolute/path",
 		"dir/../policy.json",
+		`..\..\windows`,
+		`C:\windows\system32`,
+		"C:/windows/system32",
+		"././nested",
+		"nested/./policy.json",
+		" policy.json",
+		"policy.json ",
 		"two  spaces",
 		"line\nfeed",
 		"carriage\rreturn",
@@ -500,6 +589,7 @@ func assertArchiveInvalidReason(t *testing.T, raw []byte, wantReason string) {
 
 type archiveMember struct {
 	path     string
+	mode     int64
 	content  string
 	typeflag byte
 	linkname string
@@ -518,9 +608,13 @@ func tarArchive(t *testing.T, members []archiveMember) []byte {
 	var buffer bytes.Buffer
 	writer := tar.NewWriter(&buffer)
 	for _, member := range members {
+		mode := member.mode
+		if mode == 0 {
+			mode = 0o644
+		}
 		if err := writer.WriteHeader(&tar.Header{
 			Name:     member.path,
-			Mode:     0o644,
+			Mode:     mode,
 			Size:     int64(len(member.content)),
 			Typeflag: member.typeflag,
 			Linkname: member.linkname,

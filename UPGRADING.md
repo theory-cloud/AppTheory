@@ -15,6 +15,15 @@ or deprecation posture must add or update a section here before the release is p
 
 ## v3.x line
 
+### Toolchain and CDK dependency floors
+
+The v3.x runtime requires Go 1.26.6 or newer, as declared by the root `go.mod`. Upgrade local toolchains and CI images
+before moving a Go application onto this line.
+
+The v3.x CDK package pins its `aws-cdk-lib` peer dependency exactly to 2.265.0 rather than accepting a version range.
+Align the consuming CDK application's `aws-cdk-lib` dependency to 2.265.0 before installing the matching AppTheory CDK
+GitHub Release asset; mixing CDK versions is outside the supported jsii surface.
+
 ### Go module paths
 
 AppTheory v3 uses Go semantic import versioning. Replace the `/v2` suffix on every AppTheory runtime import with the
@@ -94,6 +103,19 @@ enforced. Consumers should replace copied `ns/` literals with
 `AppTheoryS3VersionedIngress.KEY_ROOT` or the instance `keyRoot` accessor when adopting the v3.1.0 release. AppTheory
 does not issue STS credentials or presigned requests and does not transfer platform provisioning authority to
 application stacks.
+
+### Versioned artifact attestation member modes
+
+Starting in v3.1.0, the aggregate digest for a verified versioned artifact includes each regular tar member's mode.
+Every sorted digest entry now has the fixed wire format
+`path<two spaces>four-digit-octal-mode<two spaces>content-sha256`, with the mode rendered using `%04o`. Attestations
+produced by the earlier path-and-content-only scheme do not verify under this scheme. Before upgrading, regenerate
+every stored artifact digest with the current derivation and re-pin the resulting digest anywhere the operator stores
+or supplies `ExpectedDigest`.
+
+`ArtifactEntry.Mode` exposes the normalized value used by attestation, not the raw tar header value. AppTheory masks
+the header with `header.Mode & 0o7777`, so only the permission and special-mode bits (execute, setuid, setgid, and
+sticky) enter the digest; bits outside that mask are neither returned in `ArtifactEntry.Mode` nor attested.
 
 ### TableTheory v3 dependency floor
 

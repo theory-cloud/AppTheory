@@ -54,6 +54,7 @@ func TestAssertAccountExplicitStates(t *testing.T) {
 		wantState  AccountAssertionState
 		wantActual string
 		wantErr    error
+		wantCause  error
 	}{
 		{
 			name:      "expected account not configured",
@@ -67,10 +68,11 @@ func TestAssertAccountExplicitStates(t *testing.T) {
 			expected: "111122223333",
 			client: &fakeCallerIdentityClient{
 				output: &sts.GetCallerIdentityOutput{Account: awssdk.String("111122223333")},
-				err:    errors.New("sts unavailable"),
+				err:    context.Canceled,
 			},
 			wantState: AccountAssertionUnavailable,
 			wantErr:   ErrCallerIdentityUnavailable,
+			wantCause: context.Canceled,
 		},
 		{
 			name:      "identity output unavailable",
@@ -103,6 +105,9 @@ func TestAssertAccountExplicitStates(t *testing.T) {
 			if !errors.Is(err, test.wantErr) {
 				t.Fatalf("AssertAccount() error = %v, want errors.Is(%v)", err, test.wantErr)
 			}
+			if test.wantCause != nil && !errors.Is(err, test.wantCause) {
+				t.Fatalf("AssertAccount() error = %v, want errors.Is(%v)", err, test.wantCause)
+			}
 			if assertion.State != test.wantState {
 				t.Fatalf("AssertAccount() state = %q, want %q", assertion.State, test.wantState)
 			}
@@ -127,7 +132,7 @@ func TestAssumeFirstFailureDoesNotExposeCredentials(t *testing.T) {
 	t.Parallel()
 
 	assumer := successfulAssumer()
-	assumer.err = errors.New("access denied")
+	assumer.err = context.Canceled
 	factoryCalls := 0
 	result, err := AssumeFirst(
 		context.Background(),
@@ -144,6 +149,9 @@ func TestAssumeFirstFailureDoesNotExposeCredentials(t *testing.T) {
 	)
 	if !errors.Is(err, ErrAssumeRoleFailed) {
 		t.Fatalf("AssumeFirst() error = %v, want ErrAssumeRoleFailed", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("AssumeFirst() error = %v, want context.Canceled", err)
 	}
 	if result.Assertion.State != AccountAssertionAssumeFailed {
 		t.Fatalf("AssumeFirst() state = %q, want %q", result.Assertion.State, AccountAssertionAssumeFailed)
@@ -406,6 +414,59 @@ func TestAssumeFirstMismatchAndVerified(t *testing.T) {
 			}
 			if awssdk.ToString(assumer.input.ExternalId) != "external-id" {
 				t.Fatalf("ExternalId = %q", awssdk.ToString(assumer.input.ExternalId))
+			}
+		})
+	}
+}
+
+func TestAssumeFirstFixedCredentialsDoNotClaimRefresh(t *testing.T) {
+	t.Parallel()
+
+	expired := time.Now().Add(-time.Hour)
+	tests := []struct {
+		name       string
+		expiration *time.Time
+	}{
+		{name: "without STS expiration"},
+		{name: "with STS expiration", expiration: &expired},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			assumer := successfulAssumer()
+			assumer.output.Credentials.Expiration = test.expiration
+			result, err := AssumeFirst(
+				context.Background(),
+				assumer,
+				func(awssdk.CredentialsProvider) CallerIdentityAPI {
+					return &fakeCallerIdentityClient{output: &sts.GetCallerIdentityOutput{
+						Account: awssdk.String("111122223333"),
+					}}
+				},
+				AssumeRoleRequest{
+					RoleARN:           "arn:aws:iam::111122223333:role/Deploy",
+					RoleSessionName:   "apptheory-test",
+					ExpectedAccountID: "111122223333",
+				},
+			)
+			if err != nil {
+				t.Fatalf("AssumeFirst() error = %v", err)
+			}
+			for retrieve := 0; retrieve < 2; retrieve++ {
+				credentials, retrieveErr := result.Credentials.Retrieve(context.Background())
+				if retrieveErr != nil {
+					t.Fatalf("Retrieve(%d) error = %v", retrieve, retrieveErr)
+				}
+				if credentials.CanExpire {
+					t.Fatalf("Retrieve(%d) CanExpire = true for fixed credentials", retrieve)
+				}
+				if !credentials.Expires.IsZero() {
+					t.Fatalf("Retrieve(%d) Expires = %v, want zero for fixed credentials", retrieve, credentials.Expires)
+				}
+			}
+			if assumer.calls != 1 {
+				t.Fatalf("AssumeRole calls = %d, want 1", assumer.calls)
 			}
 		})
 	}

@@ -40,7 +40,10 @@ var (
 	ErrArtifactDigestMismatch = errors.New("apptheory runtime aws: versioned artifact digest does not match expected digest")
 )
 
-var aggregateDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var (
+	aggregateDigestPattern         = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	driveLetterArtifactPathPattern = regexp.MustCompile(`^[A-Za-z]:`)
+)
 
 // ArtifactVerificationState is the explicit outcome of versioned-artifact verification.
 type ArtifactVerificationState string
@@ -102,7 +105,11 @@ type VersionedArtifact struct {
 	entries []ArtifactEntry
 }
 
-// ArchiveBytes returns a defensive copy of the verified S3 object bytes.
+// ArchiveBytes returns a defensive copy of the fetched tar retained after
+// successful member verification. The aggregate digest attests parsed member
+// paths, permission modes, and content bytes (and therefore content sizes), not
+// every tar header or padding byte. Use Entries and ArtifactEntry.Bytes when
+// consuming fully content-digest-attested member bytes.
 func (a VersionedArtifact) ArchiveBytes() []byte {
 	return cloneArtifactBytes(a.archive)
 }
@@ -158,7 +165,7 @@ func VerifyVersionedArtifact(
 	entries, err := readVersionedArtifactArchive(raw)
 	if err != nil {
 		artifact.State = ArtifactVerificationArchiveInvalid
-		return artifact, fmt.Errorf("%w: %v", ErrArtifactArchiveInvalid, err)
+		return artifact, fmt.Errorf("%w: %w", ErrArtifactArchiveInvalid, err)
 	}
 	artifact.ActualDigest = deriveAggregateDigest(entries)
 	if artifact.ActualDigest != artifact.ExpectedDigest {
@@ -218,7 +225,7 @@ func fetchVersionedArtifact(
 		if errors.Is(err, objectstore.ErrObjectTooLarge) {
 			return nil, "", ErrArtifactArchiveInvalid
 		}
-		return nil, "", fmt.Errorf("%w: %v", ErrArtifactUnavailable, err)
+		return nil, "", fmt.Errorf("%w: %w", ErrArtifactUnavailable, err)
 	}
 	if output == nil {
 		return nil, "", ErrArtifactUnavailable
@@ -239,6 +246,7 @@ func readVersionedArtifactArchive(raw []byte) ([]ArtifactEntry, error) {
 	source := bytes.NewReader(raw)
 	reader := tar.NewReader(source)
 	entries := make([]ArtifactEntry, 0)
+	entryPaths := make(map[string]struct{})
 	members := 0
 	for {
 		header, err := reader.Next()
@@ -257,16 +265,33 @@ func readVersionedArtifactArchive(raw []byte) ([]ArtifactEntry, error) {
 			return nil, err
 		}
 		if entry != nil {
+			if _, exists := entryPaths[entry.Path]; exists {
+				return nil, fmt.Errorf("archive contains duplicate member path %q", entry.Path)
+			}
+			entryPaths[entry.Path] = struct{}{}
 			entries = append(entries, *entry)
 		}
 	}
-	if source.Len() != 0 {
+	trailing, err := io.ReadAll(source)
+	if err != nil {
+		return nil, fmt.Errorf("archive trailing data could not be read: %w", err)
+	}
+	if !allZeroArtifactBytes(trailing) {
 		return nil, errors.New("archive has trailing data after its end marker")
 	}
 	if len(entries) == 0 {
 		return nil, errors.New("archive holds no regular-file members")
 	}
 	return entries, nil
+}
+
+func allZeroArtifactBytes(input []byte) bool {
+	for _, value := range input {
+		if value != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func readVersionedArtifactEntry(reader *tar.Reader, header *tar.Header) (*ArtifactEntry, error) {
@@ -290,13 +315,19 @@ func readVersionedArtifactEntry(reader *tar.Reader, header *tar.Header) (*Artifa
 	sum := sha256.Sum256(content)
 	return &ArtifactEntry{
 		Path:    name,
-		Mode:    header.Mode,
+		Mode:    header.Mode & 0o7777,
 		content: content,
 		digest:  hex.EncodeToString(sum[:]),
 	}, nil
 }
 
 func validateArtifactMemberPath(name string) (string, error) {
+	if name != strings.TrimSpace(name) {
+		return "", fmt.Errorf("archive member path %q has surrounding whitespace", name)
+	}
+	if strings.Contains(name, `\`) {
+		return "", fmt.Errorf("archive member path %q contains a backslash", name)
+	}
 	if strings.Contains(name, "  ") {
 		return "", fmt.Errorf("archive member path %q contains doubled spaces", name)
 	}
@@ -305,14 +336,19 @@ func validateArtifactMemberPath(name string) (string, error) {
 			return "", fmt.Errorf("archive member path %q contains a control character", name)
 		}
 	}
-	normalized := strings.TrimSpace(name)
-	normalized = strings.TrimPrefix(normalized, "./")
+	normalized := strings.TrimPrefix(name, "./")
+	if driveLetterArtifactPathPattern.MatchString(normalized) {
+		return "", fmt.Errorf("archive member path %q has a drive-letter prefix", name)
+	}
 	if path.IsAbs(normalized) {
 		return "", fmt.Errorf("archive member path %q is absolute", name)
 	}
 	for _, segment := range strings.Split(normalized, "/") {
 		if segment == ".." {
 			return "", fmt.Errorf("archive member path %q contains a parent segment", name)
+		}
+		if segment == "." {
+			return "", fmt.Errorf("archive member path %q contains a residual current-directory segment", name)
 		}
 	}
 	return normalized, nil
@@ -325,11 +361,14 @@ func deriveAggregateDigest(entries []ArtifactEntry) string {
 		if pairs[i].Path != pairs[j].Path {
 			return pairs[i].Path < pairs[j].Path
 		}
+		if pairs[i].Mode != pairs[j].Mode {
+			return pairs[i].Mode < pairs[j].Mode
+		}
 		return pairs[i].digest < pairs[j].digest
 	})
 	lines := make([]string, 0, len(pairs))
 	for _, pair := range pairs {
-		lines = append(lines, pair.Path+"  "+pair.digest)
+		lines = append(lines, fmt.Sprintf("%s  %04o  %s", pair.Path, pair.Mode, pair.digest))
 	}
 	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
 	return "sha256:" + hex.EncodeToString(sum[:])

@@ -580,10 +580,14 @@ test("AppTheoryFunction applies the requested removal policy to its named log gr
   assert.equal(logGroups[0].UpdateReplacePolicy, "Retain");
 });
 
-test("AppTheoryFunction fails closed when logRemovalPolicy targets a caller-provided log group", () => {
+test("AppTheoryFunction leaves a caller-provided log group untouched when rejecting logRemovalPolicy", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
-  const logGroup = logs.LogGroup.fromLogGroupName(stack, "ExistingLogGroup", "/aws/lambda/existing-handler");
+  const logGroup = new logs.LogGroup(stack, "ExistingLogGroup", {
+    logGroupName: "/aws/lambda/existing-handler",
+    retention: logs.RetentionDays.THREE_MONTHS,
+    removalPolicy: cdk.RemovalPolicy.RETAIN,
+  });
 
   assert.throws(
     () =>
@@ -597,6 +601,14 @@ test("AppTheoryFunction fails closed when logRemovalPolicy targets a caller-prov
       }),
     /cannot honor props\.logRemovalPolicy when props\.logGroup supplies the log group/,
   );
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const logGroups = resourcesOfType(template, "AWS::Logs::LogGroup");
+  assert.equal(logGroups.length, 1, "Should preserve exactly the caller-owned log group");
+  assert.equal(logGroups[0].Properties?.LogGroupName, "/aws/lambda/existing-handler");
+  assert.equal(logGroups[0].Properties?.RetentionInDays, 90);
+  assert.equal(logGroups[0].DeletionPolicy, "Retain");
+  assert.equal(logGroups[0].UpdateReplacePolicy, "Retain");
 });
 
 test("AppTheoryFunction fails closed when its managed log group is not backed by a CfnLogGroup", () => {
@@ -2785,6 +2797,33 @@ test("AppTheoryApp forwards an Fn.importValue token execution role name", () => 
 
   assert.equal(roles.length, 1, "Should synthesize exactly one app execution role");
   assert.deepEqual(roles[0].Properties?.RoleName, { "Fn::ImportValue": "SharedAppExecutionRoleName" });
+});
+
+test("AppTheoryApp rejects invalid execution role names", () => {
+  const cases = [
+    ["empty", "", /roleName must not be empty/],
+    ["whitespace-only", "   ", /roleName must not be empty/],
+    ["over 64 characters", "r".repeat(65), /roleName must not exceed 64 characters/],
+    ["outside the IAM pattern", "bad name\/with*chars", /roleName must match \[\\w\+=,\.@-\]\+/],
+  ];
+
+  for (const [index, [name, roleName, expected]] of cases.entries()) {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "TestStack");
+
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryApp(stack, "App", {
+          appName: `apptheory-invalid-role-${index}`,
+          code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+          runtime: lambda.Runtime.NODEJS_24_X,
+          handler: "index.handler",
+          roleName,
+        }),
+      expected,
+      name,
+    );
+  }
 });
 
 test("AppTheoryApp forwards logRemovalPolicy to its named function log group", () => {
@@ -7361,6 +7400,18 @@ test("AppTheoryS3VersionedIngress synthesizes the pinned ingress bucket posture"
       Status: "Enabled",
     },
   });
+
+  const lifecycleRules = buckets[0].Properties?.LifecycleConfiguration?.Rules;
+  assert.equal(lifecycleRules.length, 1, "Ingress must own exactly one lifecycle rule");
+  assert.equal(lifecycleRules[0].AbortIncompleteMultipartUpload?.DaysAfterInitiation, 7);
+  assert.equal(lifecycleRules[0].Status, "Enabled");
+  assert.deepEqual(
+    Object.keys(lifecycleRules[0]).filter(
+      (key) => key === "Expiration" || key.startsWith("NoncurrentVersion"),
+    ),
+    [],
+    "Retention is operator-owned; ingress lifecycle must not expire current or noncurrent objects",
+  );
   assert.equal(buckets[0].DeletionPolicy, "Retain");
   assert.equal(buckets[0].UpdateReplacePolicy, "Retain");
 

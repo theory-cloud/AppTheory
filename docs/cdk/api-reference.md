@@ -102,15 +102,15 @@ new AppTheoryApp(this, "Runtime", {
 });
 ```
 
-When `roleName` is omitted, CloudFormation continues to generate the role name. Concrete names are validated at
-synthesis against IAM's `[\w+=,.@-]+` character set and 64-character limit. Token-valued names are accepted and IAM
-validates their resolved value at deploy time, so a bad resolved name fails deployment rather than synthesis. The token
-exemption keeps account-agnostic synthesis representable for the THE-2861 token-valued-input failure class. AppTheory
-still fails synthesis rather than silently using an unnamed or differently named role when the generated role cannot
-be renamed. This prop supersedes direct `CfnRole.addPropertyOverride("RoleName", ...)` escape hatches for stable
-function role names.
+When `roleName` is omitted, CloudFormation generates the role name. Concrete values must be non-empty, no more than 64
+characters, and match IAM's `^[\w+=,.@-]+$` role-name pattern; AppTheory validates those constraints at synthesis.
+Values for which `Token.isUnresolved(roleName)` is true are exempt from value validation so account-agnostic synthesis
+remains representable for the THE-2861 token-valued-input failure class. IAM validates the resolved value at deployment,
+so a bad token-resolved name fails deployment rather than synthesis. AppTheory still fails synthesis rather than
+silently using an unnamed or differently named role when the generated role cannot be renamed. This prop supersedes
+direct `CfnRole.addPropertyOverride("RoleName", ...)` escape hatches for stable function role names.
 
-## Named-function log removal policy
+## Function log group removal policy
 
 `AppTheoryFunction` accepts the inherited `logRemovalPolicy` prop for log groups it creates, and
 `AppTheoryAppProps.logRemovalPolicy` forwards that contract to the app's named function:
@@ -123,14 +123,24 @@ new AppTheoryApp(this, "Runtime", {
 });
 ```
 
-AppTheory-created named-function log groups default to `RemovalPolicy.DESTROY`, matching the prototype's
-self-cleaning posture so failed deployments do not leave `/aws/lambda/<function-name>` behind and block a recreate.
-Set `RemovalPolicy.RETAIN` explicitly when the logs must survive stack deletion. The prop supersedes direct
-`CfnLogGroup.applyRemovalPolicy(...)` escape hatches for named-function log groups.
+All AppTheory-created function log groups default to `RemovalPolicy.DESTROY`, including the anonymous path whose
+function name CloudFormation generates. This matches the prototype's self-cleaning posture; for named functions it
+also prevents failed deployments from leaving `/aws/lambda/<function-name>` behind and blocking a recreate. Set
+`RemovalPolicy.RETAIN` explicitly when the logs must survive stack deletion. `RemovalPolicy.SNAPSHOT` fails synthesis
+because `AWS::Logs::LogGroup` does not support snapshot removal policies. The prop supersedes direct
+`CfnLogGroup.applyRemovalPolicy(...)` escape hatches for AppTheory-created function log groups.
 
 Caller-provided log groups remain caller-owned: AppTheory never changes their removal policy. Supplying both
 `logGroup` and `logRemovalPolicy` fails synthesis rather than silently ignoring the requested policy. AppTheory also
 fails synthesis if an AppTheory-created log group is not backed by the expected `AWS::Logs::LogGroup` resource.
+
+Stage access-log groups are intentionally outside this function-log policy. The auto-created access-log groups in
+`AppTheoryHttpApi`, `AppTheoryMcpServer`, `AppTheoryRestApiRouter`, `AppTheoryMicrovmController`, and
+`AppTheoryHttpIngestionEndpoint` omit `logGroupName` and deliberately retain the CDK removal-policy default.
+`AppTheoryWebSocketApi` is the sixth construct with an auto-created unnamed access-log group; it defaults to one-week
+retention and applies the caller-tunable `accessLogRemovalPolicy`, which defaults to `RemovalPolicy.RETAIN`. Because
+CloudFormation generates the physical names for all six groups, none can hit the fixed-name collision on redeploy that
+`RemovalPolicy.DESTROY` prevents for named Lambda log groups.
 
 ## Selection guide
 
