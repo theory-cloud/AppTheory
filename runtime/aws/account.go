@@ -112,7 +112,7 @@ func AssumeFirst(
 	output, err := assumer.AssumeRole(ctx, input)
 	if err != nil {
 		assertion.State = AccountAssertionAssumeFailed
-		return AssumeFirstResult{Assertion: assertion}, fmt.Errorf("%w: %v", ErrAssumeRoleFailed, err)
+		return AssumeFirstResult{Assertion: assertion}, fmt.Errorf("%w: %w", ErrAssumeRoleFailed, err)
 	}
 	if output == nil || output.Credentials == nil ||
 		strings.TrimSpace(awssdk.ToString(output.Credentials.AccessKeyId)) == "" ||
@@ -170,7 +170,7 @@ func AssertAccount(ctx context.Context, client CallerIdentityAPI, expectedAccoun
 	output, err := client.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 	if err != nil {
 		assertion.State = AccountAssertionUnavailable
-		return assertion, fmt.Errorf("%w: %v", ErrCallerIdentityUnavailable, err)
+		return assertion, fmt.Errorf("%w: %w", ErrCallerIdentityUnavailable, err)
 	}
 	if output == nil || strings.TrimSpace(awssdk.ToString(output.Account)) == "" {
 		assertion.State = AccountAssertionUnavailable

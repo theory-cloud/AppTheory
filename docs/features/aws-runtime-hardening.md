@@ -61,6 +61,9 @@ operational receipt needs the explicit outcome:
 | `mismatch` | Identity was established in a different account. | `ErrAccountMismatch` |
 | `verified` | Actual and expected account IDs matched exactly. | none |
 
+When an SDK or context error causes a stable failure, the returned error preserves both the stable package sentinel and
+the underlying cause for `errors.Is` checks.
+
 `AssertAccount` is the standalone identity check for a client that is already bound to the intended authority. Empty
 expected account IDs never broaden to the current/default account.
 
@@ -118,6 +121,9 @@ trailing padding.
 Consumers that require fully content-digest-attested bytes must select them through `Entries` and
 `ArtifactEntry.Bytes`. Failed verification retains evidence fields but never exposes archive bytes. The object ceiling
 is `MaxVersionedArtifactBytes`; the member ceiling is `MaxVersionedArtifactEntries`.
+
+Artifact fetch and archive-parse failures likewise preserve both the stable package sentinel and their wrapped cause for
+`errors.Is` checks.
 
 There is no unversioned mode, digest bypass, compressed-archive mode, or raw-client accessor. If a future release
 artifact contract needs another archive shape, grow this verifier and its tests rather than adding a caller-local
