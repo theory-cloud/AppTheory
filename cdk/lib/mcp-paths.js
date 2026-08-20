@@ -13,7 +13,7 @@ class AppTheoryMcpPaths {
 }
 exports.AppTheoryMcpPaths = AppTheoryMcpPaths;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryMcpPaths[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpPaths", version: "3.1.0" };
+AppTheoryMcpPaths[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpPaths", version: "3.1.1" };
 /** Conventional MCP endpoint path. */
 AppTheoryMcpPaths.MCP = "/mcp";
 /** Generic RFC 9728 protected-resource metadata path. */

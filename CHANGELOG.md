@@ -1,5 +1,31 @@
 # Changelog
 
+## [3.1.1](https://github.com/theory-cloud/AppTheory/compare/v3.1.0...v3.1.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* **cdk:** exclude test sources from asset hash ([22509dd](https://github.com/theory-cloud/AppTheory/commit/22509ddb02939fe09f73154782cab0529eaf9cc4))
+* **cdk:** exclude test sources from hello-world asset hash ([d78b765](https://github.com/theory-cloud/AppTheory/commit/d78b765f8a41ef242cadf0608893e8a257f69839))
+* **ci:** report every CDK synth drift ([369b39e](https://github.com/theory-cloud/AppTheory/commit/369b39e471542b5ee2400440539226267d579ba2))
+* **runtime/aws:** bound artifact tar padding ([5b6b112](https://github.com/theory-cloud/AppTheory/commit/5b6b1125402ccee6080d05e4836dcb76b9cd88a5))
+* **runtime/aws:** keep padding bound internal ([b33c68e](https://github.com/theory-cloud/AppTheory/commit/b33c68ead6030582aae70ceffe553cd1a6155abe))
+* **runtime/aws:** preserve oversized artifact cause ([4869eb5](https://github.com/theory-cloud/AppTheory/commit/4869eb5fb06a5b4c6a990accc64a1d9057334c9e))
+* **runtime:** pin artifact padding contract ([fffde1a](https://github.com/theory-cloud/AppTheory/commit/fffde1ac2723ba9aecf0d512fac0e9db85e8e1bd))
+
+## [3.1.1-rc](https://github.com/theory-cloud/AppTheory/compare/v3.1.0...v3.1.1-rc) (2026-08-20)
+
+
+### Bug Fixes
+
+* **cdk:** exclude test sources from asset hash ([22509dd](https://github.com/theory-cloud/AppTheory/commit/22509ddb02939fe09f73154782cab0529eaf9cc4))
+* **cdk:** exclude test sources from hello-world asset hash ([d78b765](https://github.com/theory-cloud/AppTheory/commit/d78b765f8a41ef242cadf0608893e8a257f69839))
+* **ci:** report every CDK synth drift ([369b39e](https://github.com/theory-cloud/AppTheory/commit/369b39e471542b5ee2400440539226267d579ba2))
+* **runtime/aws:** bound artifact tar padding ([5b6b112](https://github.com/theory-cloud/AppTheory/commit/5b6b1125402ccee6080d05e4836dcb76b9cd88a5))
+* **runtime/aws:** keep padding bound internal ([b33c68e](https://github.com/theory-cloud/AppTheory/commit/b33c68ead6030582aae70ceffe553cd1a6155abe))
+* **runtime/aws:** preserve oversized artifact cause ([4869eb5](https://github.com/theory-cloud/AppTheory/commit/4869eb5fb06a5b4c6a990accc64a1d9057334c9e))
+* **runtime:** pin artifact padding contract ([fffde1a](https://github.com/theory-cloud/AppTheory/commit/fffde1ac2723ba9aecf0d512fac0e9db85e8e1bd))
+
 ## [3.1.0](https://github.com/theory-cloud/AppTheory/compare/v3.0.2...v3.1.0) (2026-08-20)
 
 
