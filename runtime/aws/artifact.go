@@ -104,9 +104,9 @@ type VersionedArtifact struct {
 
 // ArchiveBytes returns a defensive copy of the fetched tar retained after
 // successful member verification. The aggregate digest attests parsed member
-// paths and content bytes (and therefore content sizes), not every tar header
-// or padding byte. Use Entries and ArtifactEntry.Bytes when consuming fully
-// content-digest-attested member bytes.
+// paths, permission modes, and content bytes (and therefore content sizes), not
+// every tar header or padding byte. Use Entries and ArtifactEntry.Bytes when
+// consuming fully content-digest-attested member bytes.
 func (a VersionedArtifact) ArchiveBytes() []byte {
 	return cloneArtifactBytes(a.archive)
 }
@@ -307,7 +307,7 @@ func readVersionedArtifactEntry(reader *tar.Reader, header *tar.Header) (*Artifa
 	sum := sha256.Sum256(content)
 	return &ArtifactEntry{
 		Path:    name,
-		Mode:    header.Mode,
+		Mode:    header.Mode & 0o7777,
 		content: content,
 		digest:  hex.EncodeToString(sum[:]),
 	}, nil
@@ -342,11 +342,14 @@ func deriveAggregateDigest(entries []ArtifactEntry) string {
 		if pairs[i].Path != pairs[j].Path {
 			return pairs[i].Path < pairs[j].Path
 		}
+		if pairs[i].Mode != pairs[j].Mode {
+			return pairs[i].Mode < pairs[j].Mode
+		}
 		return pairs[i].digest < pairs[j].digest
 	})
 	lines := make([]string, 0, len(pairs))
 	for _, pair := range pairs {
-		lines = append(lines, pair.Path+"  "+pair.digest)
+		lines = append(lines, fmt.Sprintf("%s  %04o  %s", pair.Path, pair.Mode, pair.digest))
 	}
 	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
 	return "sha256:" + hex.EncodeToString(sum[:])

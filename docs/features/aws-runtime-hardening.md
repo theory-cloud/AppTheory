@@ -97,7 +97,12 @@ Verification always performs the F6 triple in order:
 1. `objectstore.Store.Get` is sent with the exact requested `VersionID` and `MaxVersionedArtifactBytes` bound;
 2. the returned `GetOutput.Ref.VersionID` must equal the request exactly; and
 3. AppTheory reads a bounded uncompressed tar, hashes each regular-file member, derives the sorted
-   `path<two spaces>sha256` aggregate digest, and requires it to match `ExpectedDigest`.
+   `path<two spaces>four-digit-octal-mode<two spaces>sha256` aggregate digest, and requires it to match
+   `ExpectedDigest`. The mode is normalized to its permission-relevant `07777` bits, including execute, setuid,
+   setgid, and sticky bits.
+
+Permission mode is part of the aggregate-digest wire format. Pins made with the earlier path-and-content-only
+derivation are not compatible and must be regenerated with the current derivation before verification.
 
 Archive member paths reject absolute paths, parent (`..`) segments, control characters, and delimiter-ambiguous doubled
 spaces before aggregate hashing.
@@ -105,8 +110,9 @@ spaces before aggregate hashing.
 The returned `VersionedArtifact.State` distinguishes `version_required`, `invalid_request`, `unavailable`,
 `version_mismatch`, `archive_invalid`, `digest_mismatch`, and `verified`. `ArchiveBytes`, `Entries`, and
 `ArtifactEntry.Bytes` return defensive copies. `ArchiveBytes` retains the fetched tar only after successful member
-verification, but the raw tar container is not wholly digest-attested: digest entries attest parsed member paths and
-content bytes (and therefore content sizes), not unused tar-header regions or intra-member and trailing padding.
+verification, but the raw tar container is not wholly digest-attested: digest entries attest parsed member paths,
+permission modes, and content bytes (and therefore content sizes), not unused tar-header regions or intra-member and
+trailing padding.
 Consumers that require fully content-digest-attested bytes must select them through `Entries` and
 `ArtifactEntry.Bytes`. Failed verification retains evidence fields but never exposes archive bytes. The object ceiling
 is `MaxVersionedArtifactBytes`; the member ceiling is `MaxVersionedArtifactEntries`.
