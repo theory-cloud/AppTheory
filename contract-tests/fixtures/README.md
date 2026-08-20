@@ -29,7 +29,7 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
 - `contract-tests/fixtures/vectorstore/` — SP14 semantic vector-store, Bedrock Titan embedding, metadata filter, and deterministic fake behavior
 
-Each fixture is a single JSON object. The current corpus contains 261 behavior fixtures plus the internal schema file. <!-- apptheory-fixture-count: 261 -->
+Each fixture is a single JSON object. The current corpus contains 262 behavior fixtures plus the internal schema file. <!-- apptheory-fixture-count: 262 -->
 
 ## Schema gate
 
@@ -69,6 +69,12 @@ while provider/runtime payload objects remain open so behavior-specific contract
   construction, and OpenAPI assertions. Steps carry resolver principals/errors, AppSync identity resolution, and
   trusted WebSocket connection-store mutations; expected steps pin 401/403/500 distinctions, fixed-stage side
   effects, principal copies, route surfaces, and canonical secure OpenAPI JSON.
+
+The Go runner necessarily simulates the `unknown_option` and `invalid_websocket_factory` construction rejections:
+Go's closed `SecureOptions` struct makes unknown fields and non-callable factory values compile-time-inexpressible,
+while the TypeScript and Python runners pass those dynamic invalid values to the real constructors. The simulation
+preserves the shared expected error without implying that `NewSecure` runtime-validates Go values that cannot compile.
+
 - `expect.response` (object): expected canonical response.
   - `chunks` (array, optional): expected streamed response chunks (when using the streaming test harness).
   - `stream_error_code` (string, optional): expected error code when an error occurs after streaming begins.
