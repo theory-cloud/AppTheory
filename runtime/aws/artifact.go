@@ -260,13 +260,26 @@ func readVersionedArtifactArchive(raw []byte) ([]ArtifactEntry, error) {
 			entries = append(entries, *entry)
 		}
 	}
-	if source.Len() != 0 {
+	trailing, err := io.ReadAll(source)
+	if err != nil {
+		return nil, fmt.Errorf("archive trailing data could not be read: %w", err)
+	}
+	if !allZeroArtifactBytes(trailing) {
 		return nil, errors.New("archive has trailing data after its end marker")
 	}
 	if len(entries) == 0 {
 		return nil, errors.New("archive holds no regular-file members")
 	}
 	return entries, nil
+}
+
+func allZeroArtifactBytes(input []byte) bool {
+	for _, value := range input {
+		if value != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func readVersionedArtifactEntry(reader *tar.Reader, header *tar.Header) (*ArtifactEntry, error) {
