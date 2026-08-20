@@ -55,7 +55,7 @@ versions.
 
 ### Namespace MCP server construct and static discovery deprecation
 
-`AppTheoryMcpServer` now owns the namespace MCP route bundle. Existing callers that omit
+Starting in v3.1.0, `AppTheoryMcpServer` owns the namespace MCP route bundle. Existing callers that omit
 `authorizationServerIssuer` and `jwksUri` keep the previous POST-only AgentCore template. Namespace applications
 should supply both props and register their Go handler through `oauth.RegisterMCPServer`; this produces an
 authenticated MCP route and public runtime-served RFC 9728 discovery routes. `mcpPath` is a literal synthesis-time
