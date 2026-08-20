@@ -201,6 +201,60 @@ func TestSecureRegistrationValidationAndIntrospection(t *testing.T) {
 	})
 }
 
+func TestSecureGateRecordsMatchIntrospection(t *testing.T) {
+	app := NewSecure(SecureOptions{})
+	app.Get("/widgets/{id}", secureOKHandler, Authenticated("read", "write"))
+	app.AppSyncField("Mutation", "updateWidget", secureOKHandler, Optional())
+	app.WebSocket("updates", secureOKHandler, InternalOnly())
+
+	gateRoutes := make(map[string]SecureRoute)
+	for _, registered := range app.core.router.routes {
+		if !registered.Secure {
+			continue
+		}
+		route := SecureRoute{
+			Surface: registered.SecureSurface,
+			Method:  registered.Method,
+			Path:    registered.Pattern,
+			Posture: registered.Posture.kind,
+			Scopes:  append([]string(nil), registered.Posture.scopes...),
+		}
+		gateRoutes[string(route.Surface)+" "+route.Method+" "+route.Path] = route
+	}
+	for _, registered := range app.core.webSocketRoutes {
+		if !registered.Secure {
+			continue
+		}
+		route := SecureRoute{
+			Surface:           SecureRouteWebSocket,
+			Posture:           registered.Posture.kind,
+			Scopes:            append([]string(nil), registered.Posture.scopes...),
+			WebSocketRouteKey: registered.RouteKey,
+		}
+		gateRoutes[string(route.Surface)+" "+route.WebSocketRouteKey] = route
+	}
+
+	introspectionRoutes := make(map[string]SecureRoute)
+	for _, route := range app.Routes() {
+		// Parent and field are descriptive AppSync metadata; the gate consumes
+		// the shared transport, method, path, posture, and scopes projection.
+		route.AppSyncParentType = ""
+		route.AppSyncField = ""
+		key := string(route.Surface) + " " + route.Method + " " + route.Path
+		if route.Surface == SecureRouteWebSocket {
+			key = string(route.Surface) + " " + route.WebSocketRouteKey
+		}
+		if _, duplicate := introspectionRoutes[key]; duplicate {
+			t.Fatalf("duplicate introspection route %q", key)
+		}
+		introspectionRoutes[key] = route
+	}
+
+	if !reflect.DeepEqual(introspectionRoutes, gateRoutes) {
+		t.Fatalf("introspection routes = %#v, gate routes = %#v", introspectionRoutes, gateRoutes)
+	}
+}
+
 func TestSecureAuthorizationMatrix(t *testing.T) {
 	tests := []struct {
 		name      string
