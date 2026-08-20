@@ -200,6 +200,9 @@ func TestVerifyVersionedArtifactStoreEnforcesArchiveLimit(t *testing.T) {
 	if !errors.Is(err, ErrArtifactArchiveInvalid) {
 		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactArchiveInvalid", err)
 	}
+	if !errors.Is(err, objectstore.ErrObjectTooLarge) {
+		t.Fatalf("VerifyVersionedArtifact() error = %v, want objectstore.ErrObjectTooLarge", err)
+	}
 	if artifact.State != ArtifactVerificationArchiveInvalid {
 		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationArchiveInvalid)
 	}

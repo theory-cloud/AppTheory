@@ -223,7 +223,7 @@ func fetchVersionedArtifact(
 	})
 	if err != nil {
 		if errors.Is(err, objectstore.ErrObjectTooLarge) {
-			return nil, "", ErrArtifactArchiveInvalid
+			return nil, "", fmt.Errorf("%w: %w", ErrArtifactArchiveInvalid, err)
 		}
 		return nil, "", fmt.Errorf("%w: %w", ErrArtifactUnavailable, err)
 	}
