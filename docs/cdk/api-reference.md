@@ -136,9 +136,11 @@ fails synthesis if an AppTheory-created log group is not backed by the expected 
 
 Stage access-log groups are intentionally outside this function-log policy. The auto-created access-log groups in
 `AppTheoryHttpApi`, `AppTheoryMcpServer`, `AppTheoryRestApiRouter`, `AppTheoryMicrovmController`, and
-`AppTheoryHttpIngestionEndpoint` omit `logGroupName`, so CloudFormation generates their physical names. They therefore
-cannot hit the fixed-name collision on redeploy that `RemovalPolicy.DESTROY` prevents for named Lambda log groups, and
-retaining the CDK removal-policy default for those access-log resources is deliberate.
+`AppTheoryHttpIngestionEndpoint` omit `logGroupName` and deliberately retain the CDK removal-policy default.
+`AppTheoryWebSocketApi` is the sixth construct with an auto-created unnamed access-log group; it defaults to one-week
+retention and applies the caller-tunable `accessLogRemovalPolicy`, which defaults to `RemovalPolicy.RETAIN`. Because
+CloudFormation generates the physical names for all six groups, none can hit the fixed-name collision on redeploy that
+`RemovalPolicy.DESTROY` prevents for named Lambda log groups.
 
 ## Selection guide
 
