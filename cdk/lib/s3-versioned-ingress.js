@@ -75,7 +75,7 @@ class AppTheoryS3VersionedIngress extends constructs_1.Construct {
 }
 exports.AppTheoryS3VersionedIngress = AppTheoryS3VersionedIngress;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryS3VersionedIngress[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryS3VersionedIngress", version: "3.0.2" };
+AppTheoryS3VersionedIngress[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryS3VersionedIngress", version: "3.1.0-rc" };
 /** Canonical object-key root for every namespace release bundle. */
 AppTheoryS3VersionedIngress.KEY_ROOT = "ns/";
 function validateLocationValue(value, propName, pattern) {
