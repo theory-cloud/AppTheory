@@ -16,7 +16,7 @@ import (
 	objectstoretest "github.com/theory-cloud/apptheory/v3/testkit/objectstore"
 )
 
-const verifiedFixtureDigest = "sha256:b7a08ec283db64788286788097854b24cba0095651252167f4e3e961e682412d"
+const verifiedFixtureDigest = "sha256:21914ff0cff97bc82c93b3e91887a223484060ab6e64add1fbd8600827ae3aa5"
 
 type stubArtifactStore struct {
 	output *objectstore.GetOutput
@@ -257,6 +257,41 @@ func TestVerifyVersionedArtifactDigestMismatch(t *testing.T) {
 	}
 	if got := artifact.ArchiveBytes(); got != nil {
 		t.Fatalf("ArchiveBytes() after mismatch = %d bytes, want nil", len(got))
+	}
+}
+
+func TestVerifyVersionedArtifactAttestsPermissionMode(t *testing.T) {
+	t.Parallel()
+
+	base := tarArchive(t, []archiveMember{{path: "run.sh", mode: 0o644, content: "echo hi", typeflag: tar.TypeReg}})
+	baseEntries, err := readVersionedArtifactArchive(base)
+	if err != nil {
+		t.Fatalf("readVersionedArtifactArchive(base) error = %v", err)
+	}
+	baseDigest := deriveAggregateDigest(baseEntries)
+
+	for _, mode := range []int64{0o755, 0o4777} {
+		t.Run(fmt.Sprintf("%04o", mode), func(t *testing.T) {
+			t.Parallel()
+			raw := tarArchive(t, []archiveMember{{path: "run.sh", mode: mode, content: "echo hi", typeflag: tar.TypeReg}})
+			entries, readErr := readVersionedArtifactArchive(raw)
+			if readErr != nil {
+				t.Fatalf("readVersionedArtifactArchive() error = %v", readErr)
+			}
+			if got := deriveAggregateDigest(entries); got == baseDigest {
+				t.Fatalf("aggregate digest = %q for modes 0644 and %04o", got, mode)
+			}
+
+			store, request := artifactFixture(t, raw)
+			request.ExpectedDigest = baseDigest
+			artifact, verifyErr := VerifyVersionedArtifact(context.Background(), store, request)
+			if !errors.Is(verifyErr, ErrArtifactDigestMismatch) {
+				t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactDigestMismatch", verifyErr)
+			}
+			if artifact.State != ArtifactVerificationDigestMismatch {
+				t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationDigestMismatch)
+			}
+		})
 	}
 }
 
@@ -522,6 +557,7 @@ func assertArchiveInvalidReason(t *testing.T, raw []byte, wantReason string) {
 
 type archiveMember struct {
 	path     string
+	mode     int64
 	content  string
 	typeflag byte
 	linkname string
@@ -540,9 +576,13 @@ func tarArchive(t *testing.T, members []archiveMember) []byte {
 	var buffer bytes.Buffer
 	writer := tar.NewWriter(&buffer)
 	for _, member := range members {
+		mode := member.mode
+		if mode == 0 {
+			mode = 0o644
+		}
 		if err := writer.WriteHeader(&tar.Header{
 			Name:     member.path,
-			Mode:     0o644,
+			Mode:     mode,
 			Size:     int64(len(member.content)),
 			Typeflag: member.typeflag,
 			Linkname: member.linkname,
