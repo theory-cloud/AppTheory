@@ -7338,6 +7338,16 @@ test("AppTheoryS3VersionedIngress synthesizes the pinned ingress bucket posture"
       ],
     },
     BucketName: "apptheory-artifact-ingress-test",
+    LifecycleConfiguration: {
+      Rules: [
+        {
+          AbortIncompleteMultipartUpload: {
+            DaysAfterInitiation: 7,
+          },
+          Status: "Enabled",
+        },
+      ],
+    },
     OwnershipControls: {
       Rules: [{ ObjectOwnership: "BucketOwnerEnforced" }],
     },
@@ -7353,7 +7363,6 @@ test("AppTheoryS3VersionedIngress synthesizes the pinned ingress bucket posture"
   });
   assert.equal(buckets[0].DeletionPolicy, "Retain");
   assert.equal(buckets[0].UpdateReplacePolicy, "Retain");
-  assert.equal(buckets[0].Properties.LifecycleConfiguration, undefined, "Retention is operator-owned, not invented here");
 
   const bucketPolicies = resourcesOfType(template, "AWS::S3::BucketPolicy");
   assert.equal(bucketPolicies.length, 1, "Ingress must enforce TLS through one bucket policy");

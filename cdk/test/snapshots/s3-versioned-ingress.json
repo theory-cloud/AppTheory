@@ -13,6 +13,16 @@
           ]
         },
         "BucketName": "apptheory-artifact-ingress-test",
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "AbortIncompleteMultipartUpload": {
+                "DaysAfterInitiation": 7
+              },
+              "Status": "Enabled"
+            }
+          ]
+        },
         "OwnershipControls": {
           "Rules": [
             {
