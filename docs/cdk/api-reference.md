@@ -134,6 +134,12 @@ Caller-provided log groups remain caller-owned: AppTheory never changes their re
 `logGroup` and `logRemovalPolicy` fails synthesis rather than silently ignoring the requested policy. AppTheory also
 fails synthesis if an AppTheory-created log group is not backed by the expected `AWS::Logs::LogGroup` resource.
 
+Stage access-log groups are intentionally outside this function-log policy. The auto-created access-log groups in
+`AppTheoryHttpApi`, `AppTheoryMcpServer`, `AppTheoryRestApiRouter`, `AppTheoryMicrovmController`, and
+`AppTheoryHttpIngestionEndpoint` omit `logGroupName`, so CloudFormation generates their physical names. They therefore
+cannot hit the fixed-name collision on redeploy that `RemovalPolicy.DESTROY` prevents for named Lambda log groups, and
+retaining the CDK removal-policy default for those access-log resources is deliberate.
+
 ## Selection guide
 
 - Use `AppTheoryHttpApi` for the simplest HTTP API v2 deployment
