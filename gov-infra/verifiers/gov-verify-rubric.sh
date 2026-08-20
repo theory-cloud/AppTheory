@@ -222,6 +222,20 @@ initialize_report_provenance() {
   fi
 }
 
+require_intended_git_worktree_or_blocked() {
+  if ! command -v git >/dev/null 2>&1; then
+    echo "BLOCKED: git is unavailable; this check requires the intended Git worktree" >&2
+    return 2
+  fi
+
+  local git_toplevel
+  git_toplevel="$(git -C "${REPO_ROOT}" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -z "${git_toplevel}" || "${git_toplevel}" != "${REPO_ROOT}" ]]; then
+    echo "BLOCKED: repository root is not the intended Git worktree root" >&2
+    return 2
+  fi
+}
+
 if [[ "${GOV_RUBRIC_PROVENANCE_HELPER_ONLY:-}" == "1" ]]; then
   if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     echo "Internal test helper mode is only available when sourced by verifier tests." >&2
@@ -835,7 +849,7 @@ gov_cmd_vuln() {
 
 gov_cmd_p0() {
   # Treat deterministic builds as a P0 integrity gate.
-  require_cmd_or_blocked git || return $?
+  require_intended_git_worktree_or_blocked || return $?
   require_cmd_or_blocked go || return $?
   require_cmd_or_blocked node || return $?
   require_cmd_or_blocked npm || return $?
@@ -1300,10 +1314,7 @@ check_logging_ops_standards() {
     return 1
   fi
 
-  if ! command -v git >/dev/null 2>&1; then
-    echo "BLOCKED: git is required to deterministically enumerate in-scope files" >&2
-    return 2
-  fi
+  require_intended_git_worktree_or_blocked || return $?
 
   local files
   files="$(
@@ -1407,6 +1418,10 @@ check_doc_integrity() {
     return 1
   }
 
+  # The materialization tracking and ignore assertions below genuinely require
+  # the intended Git worktree; copied non-Git trees cannot prove either state.
+  require_intended_git_worktree_or_blocked || return $?
+
   local failures=0
   local materialized_surface
   for materialized_surface in \
@@ -1458,30 +1473,23 @@ check_file_budgets() {
 
   local max_go_lines=2000
 
+  # The budget applies to the tracked source surface, not every file that may
+  # happen to exist in a copied directory.
+  require_intended_git_worktree_or_blocked || return $?
+
   # Avoid scanning vendored/generated caches; keep deterministic signal.
   local tmp
   tmp="$(mktemp)"
   trap 'rm -f "${tmp}"' RETURN
 
-  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git ls-files '*.go' \
-      ':!:vendor/**' \
-      ':!:**/node_modules/**' \
-      ':!:**/dist/**' \
-      ':!:**/build/**' \
-      ':!:**/third_party/**' \
-      ':!:**/testdata/**' \
-      > "${tmp}"
-  else
-    find . -name '*.go' -type f \
-      -not -path './vendor/*' \
-      -not -path './node_modules/*' \
-      -not -path './dist/*' \
-      -not -path './build/*' \
-      -not -path './third_party/*' \
-      -not -path './testdata/*' \
-      > "${tmp}"
-  fi
+  git ls-files '*.go' \
+    ':!:vendor/**' \
+    ':!:**/node_modules/**' \
+    ':!:**/dist/**' \
+    ':!:**/build/**' \
+    ':!:**/third_party/**' \
+    ':!:**/testdata/**' \
+    > "${tmp}"
 
   if [[ ! -s "${tmp}" ]]; then
     echo "file-budgets: PASS (no Go files)"
@@ -2322,7 +2330,7 @@ check_supply_chain_apptheory() {
     "examples/cdk/lambda-role"
   )
 
-  require_cmd_or_blocked git || return $?
+  require_intended_git_worktree_or_blocked || return $?
   require_cmd_or_blocked tar || return $?
 
   local tmp_dir

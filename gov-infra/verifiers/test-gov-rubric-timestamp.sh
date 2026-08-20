@@ -36,6 +36,18 @@ assert_timestamp_shape() {
     || fail "timestamp is not UTC seconds precision: ${value}"
 }
 
+assert_grep_absent() {
+  local pattern="$1"
+  local file="$2"
+  local message="$3"
+  local status=0
+
+  grep -Eq -- "${pattern}" "${file}" || status=$?
+  if [[ "${status}" -ne 1 ]]; then
+    fail "${message}: expected grep exit 1, got ${status}"
+  fi
+}
+
 ORIGINAL_REPO_ROOT="${REPO_ROOT}"
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "${tmpdir}"' EXIT
@@ -77,15 +89,24 @@ mkdir -p "${REPO_ROOT}"
 initialize_report_provenance
 assert_eq "" "${REPORT_GIT_HEAD}" "non-git git_head omission"
 assert_eq "" "${REPORT_GIT_HEAD_JSON}" "non-git JSON omission"
+
+non_git_evidence="${tmpdir}/non-git-check.log"
+guard_status=0
+require_intended_git_worktree_or_blocked >"${non_git_evidence}" 2>&1 || guard_status=$?
+assert_eq "2" "${guard_status}" "non-git intended-worktree guard status"
+grep -Fq 'BLOCKED: repository root is not the intended Git worktree root' "${non_git_evidence}" \
+  || fail "non-git intended-worktree guard did not explain the BLOCKED result"
+assert_grep_absent 'fatal:' "${non_git_evidence}" "non-git intended-worktree guard leaked raw Git diagnostics"
 REPO_ROOT="${ORIGINAL_REPO_ROOT}"
 
 grep -Fq 'REPORT_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"' "${SCRIPT_DIR}/gov-verify-rubric.sh" \
   || fail "production verifier does not create a fresh run timestamp"
 grep -Fq '${REPORT_GIT_HEAD_JSON}  "pack": {' "${SCRIPT_DIR}/gov-verify-rubric.sh" \
   || fail "production report writer does not emit optional git_head provenance"
-if grep -Eq 'read_existing_report_timestamp|select_report_timestamp_value' "${SCRIPT_DIR}/gov-verify-rubric.sh"; then
-  fail "production verifier still reuses prior timestamp provenance"
-fi
+assert_grep_absent \
+  'read_existing_report_timestamp|select_report_timestamp_value' \
+  "${SCRIPT_DIR}/gov-verify-rubric.sh" \
+  "production verifier still reuses prior timestamp provenance"
 
 echo "gov-rubric provenance regression: PASS"
 echo "first_timestamp=${first_timestamp}"
@@ -93,3 +114,5 @@ echo "second_timestamp=${second_timestamp}"
 echo "git_head=${first_git_head}"
 echo "enclosing_non_root_git_head=omitted"
 echo "non_git_git_head=omitted"
+echo "non_git_guard_status=${guard_status}"
+echo "non_git_raw_fatal_lines=0"
