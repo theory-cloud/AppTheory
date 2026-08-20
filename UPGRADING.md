@@ -104,6 +104,19 @@ enforced. Consumers should replace copied `ns/` literals with
 does not issue STS credentials or presigned requests and does not transfer platform provisioning authority to
 application stacks.
 
+### Versioned artifact attestation member modes
+
+Starting in v3.1.0, the aggregate digest for a verified versioned artifact includes each regular tar member's mode.
+Every sorted digest entry now has the fixed wire format
+`path<two spaces>four-digit-octal-mode<two spaces>content-sha256`, with the mode rendered using `%04o`. Attestations
+produced by the earlier path-and-content-only scheme do not verify under this scheme. Before upgrading, regenerate
+every stored artifact digest with the current derivation and re-pin the resulting digest anywhere the operator stores
+or supplies `ExpectedDigest`.
+
+`ArtifactEntry.Mode` exposes the normalized value used by attestation, not the raw tar header value. AppTheory masks
+the header with `header.Mode & 0o7777`, so only the permission and special-mode bits (execute, setuid, setgid, and
+sticky) enter the digest; bits outside that mask are neither returned in `ArtifactEntry.Mode` nor attested.
+
 ### TableTheory v3 dependency floor
 
 The next AppTheory major line adopts TableTheory v3.0.2 in all three runtimes. This changes the Go type identity exposed
