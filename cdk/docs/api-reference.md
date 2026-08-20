@@ -65,10 +65,13 @@ CloudFormation Rules cannot use `Fn::Join`. The governed install-profile validat
 access blocks, S3-managed encryption, bucket-owner-enforced ownership, TLS-only access, and retain semantics. No
 lifecycle expiration is emitted because no governed retention decision exists for pinned artifact versions.
 
-The `grantUpload` and `grantVersionedRead` helpers grant only `s3:PutObject` and `s3:GetObjectVersion`, respectively,
-on one exact `ns/<namespaceSlug>/<bundleId>` ARN. Literal locations are synthesis-validated; unresolved tokens skip
-only value validation and remain CloudFormation-safe joins. Use the static `KEY_ROOT` or instance `keyRoot` accessor
-instead of copying `ns/`. See the canonical
+The `grantUpload` and `grantVersionedRead` helpers each grant exactly one action, `s3:PutObject` and
+`s3:GetObjectVersion`, respectively. For literal inputs, each grant targets one exact
+`ns/<namespaceSlug>/<bundleId>` object ARN with no wildcard. `s3:PutObject` inherently covers multipart create, part
+upload, and completion on that key, but the helper does not grant the separate abort or part-listing actions. Literal
+locations are synthesis-validated; under the accepted Option A policy, unresolved tokens skip only value validation,
+remain CloudFormation-safe joins, and defer exactness to deploy-time IAM evaluation. Use the static `KEY_ROOT` or
+instance `keyRoot` accessor instead of copying `ns/`. See the canonical
 [S3 Versioned Artifact Ingress](../../docs/features/s3-versioned-ingress.md) guide.
 
 ## Stable Lambda execution role names
