@@ -1,5 +1,54 @@
 # Changelog
 
+## [3.1.0](https://github.com/theory-cloud/AppTheory/compare/v3.0.2...v3.1.0) (2026-08-20)
+
+
+### Features
+
+* **cdk:** abort incomplete multipart uploads on ingress bucket ([db857c0](https://github.com/theory-cloud/AppTheory/commit/db857c0b88d1a7e85b929c215283e428b51a28a0))
+* **cdk:** abort incomplete multipart uploads on ingress bucket ([10267b0](https://github.com/theory-cloud/AppTheory/commit/10267b0ca4cc5c7fbed4676ca4ac8879b86fb753))
+* **cdk:** add AppTheoryInstallParameters construct ([9a67e48](https://github.com/theory-cloud/AppTheory/commit/9a67e48d4657621ad8a73cec392f760394f40024))
+* **cdk:** add AppTheoryInstallParameters construct ([0b4ef1b](https://github.com/theory-cloud/AppTheory/commit/0b4ef1b9629d9cacc993f585839d5fe7b8ac14d6))
+* **cdk:** add AppTheoryMcpServer umbrella construct ([d924cac](https://github.com/theory-cloud/AppTheory/commit/d924cac25250e2b3f8409950f114ea3fb7cf36c6))
+* **cdk:** add AppTheoryMcpServer umbrella construct ([0217dcd](https://github.com/theory-cloud/AppTheory/commit/0217dcdae3bd61def25fa9cd67f6d878b8f02f23))
+* **cdk:** add AppTheoryS3VersionedIngress construct ([ba2b089](https://github.com/theory-cloud/AppTheory/commit/ba2b08919feacb02ac70231503400b905895fcad))
+* **cdk:** add AppTheoryS3VersionedIngress construct ([8c713bc](https://github.com/theory-cloud/AppTheory/commit/8c713bc751397f1ad32e3d426d12064b6b01b824))
+* **cdk:** add roleName prop to app and function ([653c52d](https://github.com/theory-cloud/AppTheory/commit/653c52d77628c68d662a7f5292e6eec96d1941f0))
+* **cdk:** forward logRemovalPolicy and default logs to DESTROY ([5f43fb5](https://github.com/theory-cloud/AppTheory/commit/5f43fb592fafc8445b51ef07b5bf624ab530e9c2))
+* **cdk:** forward logRemovalPolicy and default logs to DESTROY ([a26afee](https://github.com/theory-cloud/AppTheory/commit/a26afee2b2f8c53fd19bda3db6dc78967dd5e207))
+* **cdk:** roleName prop for stable function role names ([f79661a](https://github.com/theory-cloud/AppTheory/commit/f79661a5bfd5485e5bee96ae1fd8c11a43fecf26))
+* **runtime:** add account-assertion and versioned-artifact helpers ([0282e6c](https://github.com/theory-cloud/AppTheory/commit/0282e6c78ebbd21716fee820d0506f1b2cfa1dbf))
+* **runtime:** add AWS hardening helpers ([3560fb9](https://github.com/theory-cloud/AppTheory/commit/3560fb973939a30885830d4b68a53b51c77c27cb))
+* **runtime:** add closed-default secure app routing ([50d914d](https://github.com/theory-cloud/AppTheory/commit/50d914d9b0057cc62d8eb72515e0cdd4a0cff6cb))
+* **runtime:** add closed-default secure app routing ([b6e7524](https://github.com/theory-cloud/AppTheory/commit/b6e7524d0e328df24a55f06b0b1ca618c560335d)), closes [#669](https://github.com/theory-cloud/AppTheory/issues/669)
+
+
+### Bug Fixes
+
+* **cdk:** accept token-valued roleName ([ac1e967](https://github.com/theory-cloud/AppTheory/commit/ac1e967a57afd1282520fe2e37a1085ce66e67a8))
+* **cdk:** accept token-valued roleName ([50b34ba](https://github.com/theory-cloud/AppTheory/commit/50b34ba64804416b0310b435ed515d77b4f04cb7))
+* **cdk:** converge MCP auth configuration ([fafb1a7](https://github.com/theory-cloud/AppTheory/commit/fafb1a70d2f04fb277ca163b215060b6be735273))
+* **cdk:** harden logRemovalPolicy guard and document default change ([bc8a8dd](https://github.com/theory-cloud/AppTheory/commit/bc8a8ddad6ab28f918da413bf2df8e4458224e88))
+* **cdk:** harden MCP discovery and auth URL validation ([827a124](https://github.com/theory-cloud/AppTheory/commit/827a124a27732e019960f6e92226e2723a62489d))
+* **cdk:** harden MCP discovery and auth URL validation ([25f1b70](https://github.com/theory-cloud/AppTheory/commit/25f1b70e092d0d89512cde50661a7f3f8056f878))
+* **cdk:** harden MCP discovery configuration ([efcc67b](https://github.com/theory-cloud/AppTheory/commit/efcc67bdf5e4d481d7703a5334b7b2dfd6508d19))
+* **cdk:** rename function role in place for roleName ([8252392](https://github.com/theory-cloud/AppTheory/commit/82523922301feaa4e006646f54577ea92c3500d7))
+* **cdk:** validate roleName before in-place rename ([a1692ea](https://github.com/theory-cloud/AppTheory/commit/a1692eadd35891f85467e138cbb45717699979cc))
+* **deps:** pin TableTheory v3.0.5 ([3408782](https://github.com/theory-cloud/AppTheory/commit/340878233d55854f8dd2cac606a0d7d76a6de6d3))
+* **deps:** pin TableTheory v3.0.5 and clear advisories ([c50734c](https://github.com/theory-cloud/AppTheory/commit/c50734ceaf6431cfcaf89db99d5f7275ad9d8273))
+* **deps:** repair security and deterministic gates ([1e8f041](https://github.com/theory-cloud/AppTheory/commit/1e8f0412b9f4149e312501e4bc80e75d52cd7690))
+* **deps:** resolve dependency advisories ([8197964](https://github.com/theory-cloud/AppTheory/commit/8197964b7fa1e24a35870d20073e11a3a6a8b146))
+* **deps:** update remaining CDK examples ([2bb4058](https://github.com/theory-cloud/AppTheory/commit/2bb405862ca0af7429563fb97f517a2706c06494))
+* **runtime/aws:** attest artifact versions and archive bounds ([64523b1](https://github.com/theory-cloud/AppTheory/commit/64523b1e0785dc6608ae7f47710f087e7ef521c5))
+* **runtime/aws:** close artifact verification gaps ([0834424](https://github.com/theory-cloud/AppTheory/commit/083442474ceafacdf679d2253366249da9315ef2))
+* **runtime:** A4-F5 attest artifact member modes ([76694aa](https://github.com/theory-cloud/AppTheory/commit/76694aa85de54285d36890ea7c85cf4c6271eaef))
+* **runtime:** A4-F6d reject duplicate artifact paths ([fb4066a](https://github.com/theory-cloud/AppTheory/commit/fb4066aa645882d72fb8c5de2b4d93cdb1998d23))
+* **runtime:** A4-F6v reject ambiguous artifact paths ([1e50aae](https://github.com/theory-cloud/AppTheory/commit/1e50aaece1921077aa4283b2d2a571b4bdc4e7cf))
+* **runtime:** A4-F7r accept zero-padded tar endings ([dc8f5ba](https://github.com/theory-cloud/AppTheory/commit/dc8f5ba585e0bedd523cba3fa2b7e14ccb9bb9b5))
+* **runtime:** A4-F7w preserve wrapped AWS causes ([5cdcd03](https://github.com/theory-cloud/AppTheory/commit/5cdcd0340686a47013e4385038b6cb1c22f6391f))
+* **runtime:** A4-F9 mark assumed credentials fixed ([42adbe1](https://github.com/theory-cloud/AppTheory/commit/42adbe18cd0d50e133d62423171c6bae40ca4730))
+* **runtime:** enforce secure app contract invariants ([9cc38a8](https://github.com/theory-cloud/AppTheory/commit/9cc38a8442985fe35a5959328376799bdfdd79bf))
+
 ## [3.1.0-rc](https://github.com/theory-cloud/AppTheory/compare/v3.0.2...v3.1.0-rc) (2026-08-20)
 
 
