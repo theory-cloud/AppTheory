@@ -107,6 +107,7 @@ derivation are not compatible and must be regenerated with the current derivatio
 Archive member paths reject absolute and drive-letter paths, backslashes, parent (`..`) and residual current-directory
 (`.`) segments, surrounding whitespace, control characters, and delimiter-ambiguous doubled spaces before aggregate
 hashing. A single leading `./` is normalized away; another current-directory segment is rejected rather than collapsed.
+Duplicate normalized regular-file paths are rejected, so archive order never defines member precedence.
 
 The returned `VersionedArtifact.State` distinguishes `version_required`, `invalid_request`, `unavailable`,
 `version_mismatch`, `archive_invalid`, `digest_mismatch`, and `verified`. `ArchiveBytes`, `Entries`, and

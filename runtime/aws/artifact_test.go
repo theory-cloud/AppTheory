@@ -439,6 +439,16 @@ func TestVerifyVersionedArtifactRejectsTooManyEntries(t *testing.T) {
 	assertArchiveInvalid(t, tarArchive(t, members))
 }
 
+func TestVerifyVersionedArtifactRejectsDuplicateMemberPaths(t *testing.T) {
+	t.Parallel()
+
+	raw := tarArchive(t, []archiveMember{
+		{path: "policy.json", content: "first", typeflag: tar.TypeReg},
+		{path: "policy.json", content: "second", typeflag: tar.TypeReg},
+	})
+	assertArchiveInvalidReason(t, raw, `archive contains duplicate member path "policy.json"`)
+}
+
 func TestVerifyVersionedArtifactRejectsUnsafeMemberPaths(t *testing.T) {
 	t.Parallel()
 

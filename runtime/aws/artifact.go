@@ -246,6 +246,7 @@ func readVersionedArtifactArchive(raw []byte) ([]ArtifactEntry, error) {
 	source := bytes.NewReader(raw)
 	reader := tar.NewReader(source)
 	entries := make([]ArtifactEntry, 0)
+	entryPaths := make(map[string]struct{})
 	members := 0
 	for {
 		header, err := reader.Next()
@@ -264,6 +265,10 @@ func readVersionedArtifactArchive(raw []byte) ([]ArtifactEntry, error) {
 			return nil, err
 		}
 		if entry != nil {
+			if _, exists := entryPaths[entry.Path]; exists {
+				return nil, fmt.Errorf("archive contains duplicate member path %q", entry.Path)
+			}
+			entryPaths[entry.Path] = struct{}{}
 			entries = append(entries, *entry)
 		}
 	}
