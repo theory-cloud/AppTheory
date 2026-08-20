@@ -580,10 +580,14 @@ test("AppTheoryFunction applies the requested removal policy to its named log gr
   assert.equal(logGroups[0].UpdateReplacePolicy, "Retain");
 });
 
-test("AppTheoryFunction fails closed when logRemovalPolicy targets a caller-provided log group", () => {
+test("AppTheoryFunction leaves a caller-provided log group untouched when rejecting logRemovalPolicy", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
-  const logGroup = logs.LogGroup.fromLogGroupName(stack, "ExistingLogGroup", "/aws/lambda/existing-handler");
+  const logGroup = new logs.LogGroup(stack, "ExistingLogGroup", {
+    logGroupName: "/aws/lambda/existing-handler",
+    retention: logs.RetentionDays.THREE_MONTHS,
+    removalPolicy: cdk.RemovalPolicy.RETAIN,
+  });
 
   assert.throws(
     () =>
@@ -597,6 +601,14 @@ test("AppTheoryFunction fails closed when logRemovalPolicy targets a caller-prov
       }),
     /cannot honor props\.logRemovalPolicy when props\.logGroup supplies the log group/,
   );
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const logGroups = resourcesOfType(template, "AWS::Logs::LogGroup");
+  assert.equal(logGroups.length, 1, "Should preserve exactly the caller-owned log group");
+  assert.equal(logGroups[0].Properties?.LogGroupName, "/aws/lambda/existing-handler");
+  assert.equal(logGroups[0].Properties?.RetentionInDays, 90);
+  assert.equal(logGroups[0].DeletionPolicy, "Retain");
+  assert.equal(logGroups[0].UpdateReplacePolicy, "Retain");
 });
 
 test("AppTheoryFunction fails closed when its managed log group is not backed by a CfnLogGroup", () => {
