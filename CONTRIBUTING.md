@@ -68,6 +68,12 @@ iteration; the underlying runners also accept `--id <fixture-id>` or `--filter <
 
 Keep PRs focused. One logical change per PR is easier to review than a bundle of unrelated changes.
 
+### Commit conventions
+
+- Commits use Conventional Commits (`feat:`, `fix:`, `test(cdk):`, `docs(contract):`, ...) and are signed.
+- One logical change per commit; a breaking change carries the `!` marker (e.g. `fix(runtime)!:`) and must be called out in the PR body.
+- Factory-assigned wave/sweep work carries a provenance trailer on its own line at the end of the commit message: `Refs Factory docs/058 <wave-or-task>.` (for example `Refs Factory docs/058 A5a.` or `Refs Factory docs/058 pre-A9 sweep.`).
+
 ### Authoring documentation
 
 The documentation site under `docs/` is published to <https://apptheory.theorycloud.ai/> on every push to `staging` by `.github/workflows/pages.yml`. The deployed site represents the staging integration documentation line; stable release authority remains the versioned packages, release notes, and API snapshots. The site is built with Jekyll; the layouts, includes, CSS, and JS are portable across all Theory Cloud frameworks.
