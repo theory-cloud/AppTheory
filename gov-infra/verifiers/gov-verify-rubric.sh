@@ -681,6 +681,10 @@ gov_cmd_integration() {
   require_cmd_or_blocked npm || return $?
   require_cmd_or_blocked python3 || return $?
   ensure_ts_runtime_deps_installed || return $?
+  if ! command -v go >/dev/null 2>&1; then
+    echo "examples: BLOCKED (go not found)" >&2
+    return 2
+  fi
   scripts/verify-testkit-examples.sh
 }
 
