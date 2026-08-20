@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"testing"
 
@@ -265,6 +266,40 @@ func TestVerifyVersionedArtifactDigestMismatch(t *testing.T) {
 	if got := artifact.ArchiveBytes(); got != nil {
 		t.Fatalf("ArchiveBytes() after mismatch = %d bytes, want nil", len(got))
 	}
+}
+
+func TestVerifyVersionedArtifactRejectsLegacyPathAndContentDigest(t *testing.T) {
+	t.Parallel()
+
+	raw := releaseArchive(t)
+	entries, err := readVersionedArtifactArchive(raw)
+	if err != nil {
+		t.Fatalf("readVersionedArtifactArchive() error = %v", err)
+	}
+	legacyDigest := deriveLegacyAggregateDigest(entries)
+	store, request := artifactFixture(t, raw)
+	request.ExpectedDigest = legacyDigest
+	artifact, verifyErr := VerifyVersionedArtifact(context.Background(), store, request)
+	if !errors.Is(verifyErr, ErrArtifactDigestMismatch) {
+		t.Fatalf("VerifyVersionedArtifact() error = %v, want ErrArtifactDigestMismatch", verifyErr)
+	}
+	if artifact.State != ArtifactVerificationDigestMismatch {
+		t.Fatalf("VerifyVersionedArtifact() state = %q, want %q", artifact.State, ArtifactVerificationDigestMismatch)
+	}
+	if got := artifact.ArchiveBytes(); got != nil {
+		t.Fatalf("ArchiveBytes() after legacy digest rejection = %d bytes, want nil", len(got))
+	}
+}
+
+func deriveLegacyAggregateDigest(entries []ArtifactEntry) string {
+	pairs := append([]ArtifactEntry(nil), entries...)
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i].Path < pairs[j].Path })
+	lines := make([]string, 0, len(pairs))
+	for _, pair := range pairs {
+		lines = append(lines, pair.Path+"  "+pair.digest)
+	}
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func TestVerifyVersionedArtifactAttestsPermissionMode(t *testing.T) {
