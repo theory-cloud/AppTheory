@@ -79,6 +79,7 @@ type VersionedArtifactRequest struct {
 // Content is available only through Bytes so callers cannot mutate the verified copy.
 type ArtifactEntry struct {
 	Path string
+	// Mode is the normalized permission-relevant mode value used by attestation.
 	Mode int64
 
 	content []byte
