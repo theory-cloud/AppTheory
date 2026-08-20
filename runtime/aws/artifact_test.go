@@ -445,6 +445,13 @@ func TestVerifyVersionedArtifactRejectsUnsafeMemberPaths(t *testing.T) {
 	paths := []string{
 		"/absolute/path",
 		"dir/../policy.json",
+		`..\..\windows`,
+		`C:\windows\system32`,
+		"C:/windows/system32",
+		"././nested",
+		"nested/./policy.json",
+		" policy.json",
+		"policy.json ",
 		"two  spaces",
 		"line\nfeed",
 		"carriage\rreturn",
