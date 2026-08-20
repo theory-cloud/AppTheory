@@ -102,7 +102,11 @@ type VersionedArtifact struct {
 	entries []ArtifactEntry
 }
 
-// ArchiveBytes returns a defensive copy of the verified S3 object bytes.
+// ArchiveBytes returns a defensive copy of the fetched tar retained after
+// successful member verification. The aggregate digest attests parsed member
+// paths and content bytes (and therefore content sizes), not every tar header
+// or padding byte. Use Entries and ArtifactEntry.Bytes when consuming fully
+// content-digest-attested member bytes.
 func (a VersionedArtifact) ArchiveBytes() []byte {
 	return cloneArtifactBytes(a.archive)
 }

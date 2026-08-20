@@ -9,8 +9,8 @@ description: Fail-closed Go helpers for assumed-account identity and version-pin
 planes. They centralize invariants that should not be reimplemented differently by every service:
 
 1. assume a role before doing work, resolve its STS caller identity, and require the expected account; and
-2. fetch an exact S3 object version, require S3 to return that version, and re-hash the fetched tar archive against its
-   pinned aggregate digest.
+2. fetch an exact S3 object version, require S3 to return that version, and derive the parsed tar members' aggregate
+   digest for comparison with its pin.
 
 These helpers are Go-only because their consumers are Go platform Lambdas. They do not alter AppTheory's portable
 request/response contract and do not create a TypeScript- or Python-specific behavior fork.
@@ -104,9 +104,12 @@ spaces before aggregate hashing.
 
 The returned `VersionedArtifact.State` distinguishes `version_required`, `invalid_request`, `unavailable`,
 `version_mismatch`, `archive_invalid`, `digest_mismatch`, and `verified`. `ArchiveBytes`, `Entries`, and
-`ArtifactEntry.Bytes` return defensive copies. Failed verification retains evidence fields but never exposes archive
-bytes as verified content. The object ceiling is `MaxVersionedArtifactBytes`; the member ceiling is
-`MaxVersionedArtifactEntries`.
+`ArtifactEntry.Bytes` return defensive copies. `ArchiveBytes` retains the fetched tar only after successful member
+verification, but the raw tar container is not wholly digest-attested: digest entries attest parsed member paths and
+content bytes (and therefore content sizes), not unused tar-header regions or intra-member and trailing padding.
+Consumers that require fully content-digest-attested bytes must select them through `Entries` and
+`ArtifactEntry.Bytes`. Failed verification retains evidence fields but never exposes archive bytes. The object ceiling
+is `MaxVersionedArtifactBytes`; the member ceiling is `MaxVersionedArtifactEntries`.
 
 There is no unversioned mode, digest bypass, compressed-archive mode, or raw-client accessor. If a future release
 artifact contract needs another archive shape, grow this verifier and its tests rather than adding a caller-local
