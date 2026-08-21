@@ -10,19 +10,19 @@ source "${SCRIPT_DIR}/lib/ts-runtime-deps.sh"
 cd "${REPO_ROOT}"
 
 if ! command -v go >/dev/null 2>&1; then
-  echo "examples: BLOCKED (go not found)" >&2
+  echo "BLOCKED: examples require go (not found)" >&2
   exit 2
 fi
 if ! command -v node >/dev/null 2>&1; then
-  echo "examples: BLOCKED (node not found)" >&2
+  echo "BLOCKED: examples require node (not found)" >&2
   exit 2
 fi
 if ! command -v npm >/dev/null 2>&1; then
-  echo "examples: BLOCKED (npm not found)" >&2
+  echo "BLOCKED: examples require npm (not found)" >&2
   exit 2
 fi
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "examples: BLOCKED (python3 not found)" >&2
+  echo "BLOCKED: examples require python3 (not found)" >&2
   exit 2
 fi
 
