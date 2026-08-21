@@ -31,6 +31,7 @@ AuthHook	type
 AuthPosture	interface
 AuthPostureKind	type
 Authenticated	function
+AuthenticatedAnyOf	function
 AuthorizationServerMetadata	interface
 BearerTokenClaims	interface
 BearerTokenClaimsValidator	type

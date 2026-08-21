@@ -45,7 +45,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 
 - Runtime app model: `App`, `create_app`, `Context`, `Request`, `Response`, `create_test_env`, middleware hooks, and
   response helpers.
-- Closed-default routing: `SecureApp`, `AuthPosture`, `public`, `optional`, `authenticated`, `internal_only`,
+- Closed-default routing: `SecureApp`, `AuthPosture`, `public`, `optional`, `authenticated`, `authenticated_any_of`, `internal_only`,
   `SecurePrincipal`, `SecurePrincipalResolver`, `routes`, and app-bound secure OpenAPI generation.
 - AWS adapters and test builders: `build_apigw_v2_request`, `build_lambda_function_url_request`,
   `build_appsync_event`, `build_sqs_event`, `build_kinesis_event`, and the corresponding `serve_*` entrypoints.
@@ -73,11 +73,11 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>650 exported top-level symbols</summary>
+<summary>651 exported top-level symbols</summary>
 
 ```text
 App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError
-AtomicRateLimiter, authenticated, authorization_server_metadata_handler, AuthorizationServerMetadata, AuthPosture
+AtomicRateLimiter, authenticated, authenticated_any_of, authorization_server_metadata_handler, AuthorizationServerMetadata, AuthPosture
 AuthPostureKind, AWSLambdaMicroVMClient, AWSLambdaMicroVMProvider, base_name, bearer_token_claims_from_context
 bearer_token_from_headers, BearerTokenClaims, BearerTokenClaimsValidator, BearerTokenRecord
 BearerTokenValidationOptions, BearerTokenValidator, binary, bind_handler, bind_request, BindConfig, BindField, body

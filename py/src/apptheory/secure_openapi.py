@@ -210,7 +210,7 @@ def generate_secure_openapi(  # noqa: C901
         if emitted_key in emitted:
             raise ValueError(f"apptheory: secure openapi emitted route {emitted_key} collides")
         emitted.add(emitted_key)
-        if route.posture in {"optional", "authenticated"} and not authenticated:
+        if route.posture in {"optional", "authenticated", "authenticated_any_of"} and not authenticated:
             raise ValueError("apptheory: secure openapi authenticated scheme binding is required")
         if route.posture == "internal_only" and not internal:
             raise ValueError("apptheory: secure openapi internal scheme binding is required")
@@ -260,8 +260,11 @@ def generate_secure_openapi(  # noqa: C901
         if proxy:
             operation["x-apptheory-proxy"] = True
         names = internal if route.posture == "internal_only" else authenticated
-        scopes = list(route.scopes) if route.posture == "authenticated" else []
-        security = [{name: list(scopes)} for name in names]
+        if route.posture == "authenticated_any_of":
+            security = [{name: [scope]} for name in names for scope in route.scopes]
+        else:
+            scopes = list(route.scopes) if route.posture == "authenticated" else []
+            security = [{name: list(scopes)} for name in names]
         if route.posture == "public":
             security = []
         elif route.posture == "optional":

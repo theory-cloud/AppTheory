@@ -1,0 +1,273 @@
+{
+  "id": "p2.secure_authenticated_any_of_scopes",
+  "tier": "p2",
+  "name": "authenticated any-of posture accepts any normalized alias scope and preserves authentication errors",
+  "setup": {
+    "secure_app": {
+      "tier": "p2",
+      "middlewares": [
+        "record"
+      ],
+      "routes": [
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/statuses",
+          "handler": "secure_echo",
+          "posture": "authenticated_any_of",
+          "scopes": [
+            " read:statuses ",
+            "read",
+            "read:statuses",
+            " "
+          ]
+        }
+      ]
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "unauthenticated",
+        "operation": "http",
+        "request": {
+          "method": "GET",
+          "path": "/statuses",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "zero-held",
+        "operation": "http",
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [],
+          "claims": {}
+        },
+        "request": {
+          "method": "GET",
+          "path": "/statuses",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "unrelated-held",
+        "operation": "http",
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [
+            "profile"
+          ],
+          "claims": {}
+        },
+        "request": {
+          "method": "GET",
+          "path": "/statuses",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "one-held-specific",
+        "operation": "http",
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [
+            " read:statuses "
+          ],
+          "claims": {}
+        },
+        "request": {
+          "method": "GET",
+          "path": "/statuses",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "one-held-alias",
+        "operation": "http",
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [
+            " read ",
+            "read"
+          ],
+          "claims": {}
+        },
+        "request": {
+          "method": "GET",
+          "path": "/statuses",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "several-held",
+        "operation": "http",
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [
+            " read ",
+            "read:statuses",
+            "read",
+            "read:statuses"
+          ],
+          "claims": {}
+        },
+        "request": {
+          "method": "GET",
+          "path": "/statuses",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "routes",
+        "operation": "routes",
+        "mutate_routes": true
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "unauthenticated",
+        "status": 401,
+        "error_code": "app.unauthorized",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "zero-held",
+        "status": 403,
+        "error_code": "app.forbidden",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "unrelated-held",
+        "status": 403,
+        "error_code": "app.forbidden",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "one-held-specific",
+        "status": 200,
+        "trace": [
+          "request_id",
+          "recovery",
+          "logging",
+          "auth",
+          "handler"
+        ],
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [
+            "read:statuses"
+          ],
+          "claims": {}
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "one-held-alias",
+        "status": 200,
+        "trace": [
+          "request_id",
+          "recovery",
+          "logging",
+          "auth",
+          "handler"
+        ],
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [
+            "read"
+          ],
+          "claims": {}
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "several-held",
+        "status": 200,
+        "trace": [
+          "request_id",
+          "recovery",
+          "logging",
+          "auth",
+          "handler"
+        ],
+        "principal": {
+          "identity": "user",
+          "kind": "external",
+          "scopes": [
+            "read",
+            "read:statuses"
+          ],
+          "claims": {}
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 1,
+        "handler_calls": 1
+      },
+      {
+        "name": "routes",
+        "routes": [
+          {
+            "surface": "http",
+            "method": "GET",
+            "path": "/statuses",
+            "posture": "authenticated_any_of",
+            "scopes": [
+              "read:statuses",
+              "read"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

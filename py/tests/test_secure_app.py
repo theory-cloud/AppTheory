@@ -55,6 +55,11 @@ class SecureAppTests(unittest.TestCase):
         app.get(" widgets/:id?ignored=true ", _ok, apptheory.authenticated(" read ", "write", "read"))
         app.appsync_field("Subscription", "changed", _ok, apptheory.optional())
         app.websocket(" $default ", _ok, apptheory.internal_only())
+        app.get(
+            "/statuses",
+            _ok,
+            apptheory.authenticated_any_of(" read:statuses ", "read", "read:statuses", " "),
+        )
 
         routes = app.routes()
         self.assertEqual(
@@ -63,6 +68,7 @@ class SecureAppTests(unittest.TestCase):
                 ("http", "GET", "/widgets/{id}", "authenticated", ["read", "write"]),
                 ("appsync", "GET", "/changed", "optional", []),
                 ("websocket", "", "", "internal_only", []),
+                ("http", "GET", "/statuses", "authenticated_any_of", ["read:statuses", "read"]),
             ],
         )
         self.assertEqual(routes[1].appsync_parent_type, "Subscription")
@@ -76,6 +82,10 @@ class SecureAppTests(unittest.TestCase):
             app.get("/zero", _ok, object())  # type: ignore[arg-type]
         with self.assertRaisesRegex(TypeError, "normalize to empty"):
             app.get("/empty", _ok, apptheory.authenticated(" "))
+        with self.assertRaisesRegex(TypeError, "normalize to empty"):
+            app.get("/empty-any", _ok, apptheory.authenticated_any_of())
+        with self.assertRaisesRegex(TypeError, "normalize to empty"):
+            app.get("/empty-any", _ok, apptheory.authenticated_any_of(" ", "\t"))
         with self.assertRaises(TypeError):
             app.get("/missing", _ok)  # type: ignore[call-arg]
         with self.assertRaisesRegex(apptheory.AppTheoryError, "duplicate route"):
@@ -137,6 +147,35 @@ class SecureAppTests(unittest.TestCase):
         self.assertEqual(app.serve(apptheory.Request(method="GET", path="/copy")).status, 200)
         self.assertEqual(source_claims, {"nested": {"values": ["original"]}})
 
+    def test_authenticated_any_of_authorization(self) -> None:
+        cases = [
+            ("unauthenticated", None, 401, "app.unauthorized"),
+            ("zero-held", apptheory.SecurePrincipal(identity="user", scopes=[]), 403, "app.forbidden"),
+            ("one-held", apptheory.SecurePrincipal(identity="user", scopes=["read"]), 200, ""),
+            (
+                "several-held",
+                apptheory.SecurePrincipal(identity="user", scopes=["read", "read:statuses"]),
+                200,
+                "",
+            ),
+        ]
+        for name, principal, status, code in cases:
+            with self.subTest(name=name):
+                app = apptheory.SecureApp(principal_resolver=lambda _ctx, value=principal: value)
+                app.get(
+                    "/statuses",
+                    _ok,
+                    apptheory.authenticated_any_of(" read:statuses ", "read", "read:statuses", " "),
+                )
+                response = app.serve(apptheory.Request(method="GET", path="/statuses"))
+                self.assertEqual(response.status, status)
+                if code:
+                    self.assertEqual(json.loads(response.body)["error"]["code"], code)
+
+                route = app.routes()[0]
+                self.assertEqual(route.posture, "authenticated_any_of")
+                self.assertEqual(route.scopes, ["read:statuses", "read"])
+
     def test_websocket_support_controls_lambda_recognition(self) -> None:
         event = {
             "requestContext": {
@@ -172,6 +211,43 @@ class SecureAppTests(unittest.TestCase):
         self.assertEqual(document["x-apptheory-contract-mode"], "secure-v1")
         self.assertEqual(operation["x-apptheory-auth-posture"], "authenticated")
         self.assertEqual(operation["security"], [{"Bearer": ["items:read"]}])
+
+        any_of_app = apptheory.SecureApp()
+        any_of_app.get(
+            "/statuses",
+            _ok,
+            apptheory.authenticated_any_of(" read:statuses ", "read", "read:statuses"),
+        )
+        any_of_document = any_of_app.generate_openapi(
+            {
+                "title": "Secure",
+                "version": "1.0.0",
+                "routes": [
+                    {
+                        "method": "GET",
+                        "path": "/statuses",
+                        "operation_id": "statuses",
+                        "response": {"description": "ok", "fields": []},
+                    }
+                ],
+                "security_schemes": {
+                    "Bearer": {"type": "http", "scheme": "bearer"},
+                    "Cookie": {"type": "apiKey", "in": "cookie", "name": "session"},
+                },
+                "auth_schemes": {"authenticated": ["Bearer", "Cookie"], "internal_only": []},
+            }
+        )
+        any_of_operation = any_of_document["paths"]["/statuses"]["get"]
+        self.assertEqual(any_of_operation["x-apptheory-auth-posture"], "authenticated_any_of")
+        self.assertEqual(
+            any_of_operation["security"],
+            [
+                {"Bearer": ["read:statuses"]},
+                {"Bearer": ["read"]},
+                {"Cookie": ["read:statuses"]},
+                {"Cookie": ["read"]},
+            ],
+        )
 
         missing = {**base, "routes": []}
         with self.assertRaisesRegex(ValueError, "missing route"):
