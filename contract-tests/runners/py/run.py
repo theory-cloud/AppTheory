@@ -3559,6 +3559,8 @@ def _secure_fixture_posture(runtime: Any, route: dict[str, Any]) -> Any:
         return runtime.optional()
     if posture == "authenticated":
         return runtime.authenticated(*(route.get("scopes") or []))
+    if posture == "authenticated_any_of":
+        return runtime.authenticated_any_of(*(route.get("scopes") or []))
     if posture == "internal_only":
         return runtime.internal_only()
     return object()

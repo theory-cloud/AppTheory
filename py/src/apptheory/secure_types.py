@@ -16,6 +16,7 @@ class AuthPostureKind(StrEnum):
     PUBLIC = "public"
     OPTIONAL = "optional"
     AUTHENTICATED = "authenticated"
+    AUTHENTICATED_ANY_OF = "authenticated_any_of"
     INTERNAL_ONLY = "internal_only"
 
 
@@ -69,6 +70,11 @@ def authenticated(*scopes: str) -> AuthPosture:
     return AuthPosture(_POSTURE_TOKEN, AuthPostureKind.AUTHENTICATED, _normalize_scopes(list(scopes)), bool(scopes))
 
 
+def authenticated_any_of(*scopes: str) -> AuthPosture:
+    """Create an authenticated posture requiring at least one normalized scope."""
+    return AuthPosture(_POSTURE_TOKEN, AuthPostureKind.AUTHENTICATED_ANY_OF, _normalize_scopes(list(scopes)), True)
+
+
 def internal_only() -> AuthPosture:
     """Create an internal-principal-only secure route posture."""
     return AuthPosture(_POSTURE_TOKEN, AuthPostureKind.INTERNAL_ONLY, [], False)
@@ -81,9 +87,10 @@ def decode_auth_posture(posture: AuthPosture) -> tuple[AuthPostureKind, list[str
     scopes = list(posture._scopes)
     if kind not in set(AuthPostureKind):
         raise TypeError("apptheory: invalid auth posture")
-    if kind != AuthPostureKind.AUTHENTICATED and (scopes or posture._scopes_supplied):
+    scoped = kind in {AuthPostureKind.AUTHENTICATED, AuthPostureKind.AUTHENTICATED_ANY_OF}
+    if not scoped and (scopes or posture._scopes_supplied):
         raise TypeError("apptheory: invalid auth posture")
-    if kind == AuthPostureKind.AUTHENTICATED and posture._scopes_supplied and not scopes:
+    if scoped and posture._scopes_supplied and not scopes:
         raise TypeError("apptheory: authenticated scopes normalize to empty")
     return kind, scopes
 
