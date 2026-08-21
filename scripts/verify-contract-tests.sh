@@ -3,6 +3,7 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+source "scripts/lib/ts-runtime-deps.sh"
 
 ./scripts/verify-fixture-schema.sh
 
@@ -25,7 +26,7 @@ fi
 
 go run ./contract-tests/runners/go
 
-(cd ts && npm ci >/dev/null)
+ensure_ts_runtime_deps_installed
 
 node contract-tests/runners/ts/run.cjs
 python3 contract-tests/runners/py/run.py

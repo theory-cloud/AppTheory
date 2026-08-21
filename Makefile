@@ -48,7 +48,7 @@ contract-one:
 	@if [ -z "$(ID)" ]; then echo "contract-one: FAIL (set ID=<fixture-id>)" >&2; exit 1; fi
 	@./scripts/verify-fixture-schema.sh
 	@go run ./contract-tests/runners/go --id "$(ID)"
-	@(cd ts && npm ci >/dev/null)
+	@bash -c 'source scripts/lib/ts-runtime-deps.sh && ensure_ts_runtime_deps_installed'
 	@node contract-tests/runners/ts/run.cjs --id "$(ID)"
 	@python3 contract-tests/runners/py/run.py --id "$(ID)"
 

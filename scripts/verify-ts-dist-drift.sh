@@ -3,6 +3,7 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+source "scripts/lib/ts-runtime-deps.sh"
 
 if ! command -v node >/dev/null 2>&1; then
   echo "ts-dist-drift: BLOCKED (node not found)" >&2
@@ -119,9 +120,7 @@ elif [[ -n "${1:-}" ]]; then
   exit 1
 fi
 
-if [[ ! -d "ts/node_modules" ]]; then
-  (cd ts && npm ci >/dev/null)
-fi
+ensure_ts_runtime_deps_installed
 
 (cd ts && npm run build >/dev/null)
 
