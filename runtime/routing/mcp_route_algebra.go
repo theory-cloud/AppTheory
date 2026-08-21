@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const mcpSegment = "mcp"
+
 const (
 	// ContractVersion is the MCP route-algebra contract implemented by this package.
 	ContractVersion = "m17.mcp-route-algebra/v1"
@@ -181,22 +183,22 @@ func ParseMCPPath(rawPath string) (EndpointPath, error) {
 
 	switch len(segments) {
 	case 2:
-		if segments[1] == "mcp" {
+		if segments[1] == mcpSegment {
 			endpoint = EndpointPath{Kind: EndpointKindNamespace, ClientNamespace: segments[0]}
 		}
 	case 4:
 		switch {
-		case segments[1] == "partners" && segments[3] == "mcp":
+		case segments[1] == "partners" && segments[3] == mcpSegment:
 			endpoint = EndpointPath{
 				Kind: EndpointKindPartnerNamespace, ClientNamespace: segments[0], PartnerID: segments[2],
 			}
-		case segments[1] == "agents" && segments[3] == "mcp":
+		case segments[1] == "agents" && segments[3] == mcpSegment:
 			endpoint = EndpointPath{
 				Kind: EndpointKindAgent, ClientNamespace: segments[0], AgentID: segments[2],
 			}
 		}
 	case 6:
-		if segments[1] == "partners" && segments[3] == "agents" && segments[5] == "mcp" {
+		if segments[1] == "partners" && segments[3] == "agents" && segments[5] == mcpSegment {
 			endpoint = EndpointPath{
 				Kind:            EndpointKindPartnerAgent,
 				ClientNamespace: segments[0],

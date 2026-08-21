@@ -63,7 +63,6 @@ func TestNormalizePath(t *testing.T) {
 		{input: "/../../a", want: "/a"},
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.input, func(t *testing.T) {
 			t.Parallel()
 			if got := normalizePath(test.input); got != test.want {
@@ -115,7 +114,6 @@ func TestPathDerivations(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			if got := ProtectedResourcePathForResourcePath(test.input); got != test.protected {
@@ -345,7 +343,6 @@ func TestEndpointPathValidateMatrix(t *testing.T) {
 		{name: "unknown kind", path: EndpointPath{Kind: "other", ClientNamespace: "acme"}, wantErr: true},
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			err := test.path.Validate()
