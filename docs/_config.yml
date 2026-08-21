@@ -165,7 +165,7 @@ tabletheory:
   stats:
     - label: Contract fixtures
       value: "264" # apptheory-fixture-count
-      sub: Go, TypeScript, and Python execute all shared fixtures
+      sub: 263 run in Go, TypeScript, and Python; route algebra runs in Go and CDK-TS
     - label: Runtimes
       value: "3"
       sub: Go · TypeScript · Python

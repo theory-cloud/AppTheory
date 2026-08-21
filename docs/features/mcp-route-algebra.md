@@ -38,6 +38,9 @@ contract beyond `theory-mcp-server`'s original reference implementation: distinc
 collapse onto one OAuth protected-resource identity. `theory-mcp-server` adopts this rule when it consumes the
 AppTheory contract in docs/061 change 7.
 
+Dot-segment rejection applies to identifier positions within a structurally matched pattern. A path whose scaffolding
+literals do not match a pattern is not parsed as that pattern at all, even if normalization later yields the same path.
+
 ## Go runtime
 
 Import `github.com/theory-cloud/apptheory/v3/runtime/mcproutes`. Route constants and `Supported*Templates` cover
