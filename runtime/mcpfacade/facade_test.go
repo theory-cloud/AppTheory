@@ -300,6 +300,44 @@ func TestRequestHostModeAllowsOnlyNormalizedAllowlistMatches(t *testing.T) {
 	require.Equal(t, `{"error":"invalid_request_host"}`, string(wrongPort.Body))
 }
 
+func TestAllowedHostnameDefaultPortNormalizationIsSchemeAgnostic(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{"edge.example.com:80", "edge.example.com:443"} {
+		normalized, ok := normalizeAllowedHostname(raw)
+		require.True(t, ok)
+		require.Equal(t, "edge.example.com", normalized)
+	}
+}
+
+func TestWildcardStyleAllowlistEntriesRegisterButFailClosed(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		allowedHost string
+		requestHost string
+	}{
+		{name: "bare wildcard", allowedHost: "*", requestHost: "tenant.example.com"},
+		{name: "wildcard prefix", allowedHost: "*.example.com", requestHost: "tenant.example.com"},
+		{name: "comma list", allowedHost: "a.example,b.example", requestHost: "a.example"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+			config := validConfig(URLModeRequestHost)
+			config.AllowedHostnames = []string{test.allowedHost}
+			_, err := RegisterMCPFacade(app, config)
+			require.NoError(t, err)
+
+			response := serve(app, "GET", "/.well-known/oauth-protected-resource/acme/mcp", map[string][]string{
+				"host": {test.requestHost}, "x-forwarded-proto": {"https"},
+			})
+			require.Equal(t, 400, response.Status)
+			require.Equal(t, `{"error":"invalid_request_host"}`, string(response.Body))
+		})
+	}
+}
+
 func TestEveryFacadeMetadataResponseIsNoStoreAndVariesOnOriginHeaders(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []URLMode{URLModePublicBaseURL, URLModeRequestHost} {
@@ -438,6 +476,17 @@ func TestInvalidDerivedInventoryFailsBeforeTargetRegistration(t *testing.T) {
 	for _, method := range []string{"POST", "GET", "DELETE"} {
 		require.Equal(t, 404, serve(app, method, "/acme/mcp", nil).Status)
 	}
+}
+
+func TestRouteInventoryValidationUsesTheScratchRouter(t *testing.T) {
+	t.Parallel()
+	handler := func(*apptheory.Context) (*apptheory.Response, error) { return apptheory.NoContent(), nil }
+	err := validateRouteRegistrations([]routeRegistration{{
+		method:  "GET",
+		pattern: "/{proxy+}/not-last",
+		handler: handler,
+	}})
+	require.ErrorContains(t, err, "invalid or duplicate route inventory entry")
 }
 
 func TestRouteInventoryDuplicatesAndRegisteredCollisionsReturnErrors(t *testing.T) {
@@ -597,6 +646,14 @@ func TestRegisterMCPFacadeValidatesConfigurationBeforeRegistration(t *testing.T)
 	}
 }
 
+func TestRequestHostAndPublicBaseMutualExclusionIsIndependentlyPinned(t *testing.T) {
+	t.Parallel()
+	config := validConfig(URLModeRequestHost)
+	config.PublicBaseURL = "https://front.example.com"
+	_, err := RegisterMCPFacade(apptheory.New(apptheory.WithTier(apptheory.TierP0)), config)
+	require.ErrorContains(t, err, "request-host mode cannot also configure a public base URL")
+}
+
 func TestPublicBaseURLPathConstraintIsExplicit(t *testing.T) {
 	t.Parallel()
 	config := validConfig(URLModePublicBaseURL)
@@ -642,6 +699,38 @@ func TestHelpersCanonicalizeURLsAndDefensivelyCloneInventory(t *testing.T) {
 	require.Equal(t, "POST", inventory.Routes[0].MCPMethods[0])
 	require.True(t, reflect.DeepEqual(indexFacadeTemplates(mcproutes.SupportedOAuthFacadeTemplates())[mcproutes.EndpointKindAgent].Kind, mcproutes.EndpointKindAgent))
 	require.Equal(t, mcproutes.EndpointKindPartnerAgent, indexDiscoveryTemplates(mcproutes.SupportedOAuthDiscoveryTemplates())[mcproutes.EndpointKindPartnerAgent].Kind)
+}
+
+func TestIPv6AllowedHostnameCanonicalizationKeepsBrackets(t *testing.T) {
+	t.Parallel()
+	host, ok := normalizeAllowedHostname("[::1]")
+	require.True(t, ok)
+	require.Equal(t, "[::1]", host)
+
+	host, ok = normalizeAllowedHostname("[::1]:8443")
+	require.True(t, ok)
+	require.Equal(t, "[::1]:8443", host)
+}
+
+func TestMetadataRequestFailuresPreserveTypeAndNilContextSemantics(t *testing.T) {
+	t.Parallel()
+	response, ok := metadataRequestFailure(fmt.Errorf("internal failure"))
+	require.False(t, ok)
+	require.Nil(t, response)
+
+	requestErr := &metadataRequestError{message: "request host is not allowlisted"}
+	require.Equal(t, "mcpfacade: request host is not allowlisted", requestErr.Error())
+	response, ok = metadataRequestFailure(requestErr)
+	require.True(t, ok)
+	require.Equal(t, 400, response.Status)
+	require.Equal(t, `{"error":"invalid_request_host"}`, string(response.Body))
+
+	config := normalizedConfig{urlMode: URLModeRequestHost}
+	_, err := config.absoluteURL(nil, "/acme/mcp")
+	require.EqualError(t, err, "mcpfacade: request context is required for request-host URL mode")
+	response, ok = metadataRequestFailure(err)
+	require.True(t, ok)
+	require.Equal(t, 400, response.Status)
 }
 
 func validConfig(mode URLMode) FacadeConfig {
