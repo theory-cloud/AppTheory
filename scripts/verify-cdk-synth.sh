@@ -30,15 +30,30 @@ examples=(
 
 if ! command -v node >/dev/null 2>&1; then
   echo "cdk-synth: BLOCKED (node not found)" >&2
-  exit 1
+  exit 2
 fi
 if ! command -v npm >/dev/null 2>&1; then
   echo "cdk-synth: BLOCKED (npm not found)" >&2
-  exit 1
+  exit 2
 fi
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
   echo "cdk-synth: BLOCKED (sha256sum/shasum not found)" >&2
+  exit 2
+fi
+if [[ ! -d "cdk" ]]; then
+  echo "cdk-synth: FAIL (missing cdk/)" >&2
   exit 1
+fi
+if [[ ! -f "cdk/package-lock.json" ]]; then
+  echo "cdk-synth: FAIL (missing cdk/package-lock.json)" >&2
+  exit 1
+fi
+if [[ ! -d "cdk/node_modules" ]]; then
+  echo "cdk-synth: installing CDK dependencies" >&2
+  if ! (cd cdk && npm ci --no-audit --no-fund >/dev/null); then
+    echo "cdk-synth: BLOCKED (failed to install CDK dependencies; check network/toolchain)" >&2
+    exit 2
+  fi
 fi
 
 failed=0

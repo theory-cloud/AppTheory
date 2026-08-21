@@ -7,7 +7,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 for cmd in go npm npx python3 rsync; do
   if ! command -v "${cmd}" >/dev/null 2>&1; then
     echo "cdk-go-major-version: BLOCKED (${cmd} not found)" >&2
-    exit 1
+    exit 2
   fi
 done
 

@@ -23,8 +23,8 @@ ensure_golangci_lint_pinned() {
   fi
 
   if ! command -v go >/dev/null 2>&1; then
-    echo "go-lint: FAIL (missing go; needed to install pinned golangci-lint ${v})" >&2
-    exit 1
+    echo "go-lint: BLOCKED (missing go; needed to install pinned golangci-lint ${v})" >&2
+    exit 2
   fi
 
   echo "go-lint: installing pinned golangci-lint ${v} into ${GOV_TOOLS_BIN}" >&2

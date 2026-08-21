@@ -122,12 +122,12 @@ verify_module_set() {
   local temporary
 
   if ! command -v go >/dev/null 2>&1; then
-    echo "go-module-probe: FAIL (go not found)" >&2
-    return 1
+    echo "go-module-probe: BLOCKED (go not found)" >&2
+    return 2
   fi
   if ! command -v python3 >/dev/null 2>&1; then
-    echo "go-module-probe: FAIL (python3 not found)" >&2
-    return 1
+    echo "go-module-probe: BLOCKED (python3 not found)" >&2
+    return 2
   fi
 
   go_release_validate_source_contract "${tag}" "${source_ref}" || return 1

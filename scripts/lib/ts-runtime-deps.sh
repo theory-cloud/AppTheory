@@ -2,16 +2,9 @@
 # Shared TypeScript runtime dependency installation contract.
 # Source this file from a script that has changed to the repository root.
 
-APPTHEORY_TS_RUNTIME_DEPS_STAMP="ts/node_modules/.gov-ts-runtime-deps.sha256"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/blocked.sh"
 
-require_cmd_or_blocked() {
-  local name="$1"
-  if ! command -v "${name}" >/dev/null 2>&1; then
-    echo "BLOCKED: missing required tool: ${name}" >&2
-    return 2
-  fi
-  return 0
-}
+APPTHEORY_TS_RUNTIME_DEPS_STAMP="ts/node_modules/.gov-ts-runtime-deps.sha256"
 
 sha256_stdin() {
   if command -v sha256sum >/dev/null 2>&1; then

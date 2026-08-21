@@ -8,11 +8,11 @@ gate_name="cdk-deprecation-warnings"
 
 if ! command -v node >/dev/null 2>&1; then
   echo "${gate_name}: BLOCKED (node not found)" >&2
-  exit 1
+  exit 2
 fi
 if ! command -v npm >/dev/null 2>&1; then
   echo "${gate_name}: BLOCKED (npm not found)" >&2
-  exit 1
+  exit 2
 fi
 if [[ ! -d "cdk" ]]; then
   echo "${gate_name}: FAIL (missing cdk/)" >&2
