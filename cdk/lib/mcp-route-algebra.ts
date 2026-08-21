@@ -49,9 +49,6 @@ export interface AppTheoryMcpOAuthDiscoveryTemplate {
   readonly suffixPattern: string;
 }
 
-const ASCII_WHITESPACE_TRIM_PATTERN =
-  /^[\u0009-\u000D\u0020]+|[\u0009-\u000D\u0020]+$/g;
-
 /**
  * AppTheory's canonical, versioned MCP route-algebra contract.
  *
@@ -416,7 +413,31 @@ function endpointFromSegments(
 }
 
 function trimASCIIWhitespace(value: string): string {
-  return value.replace(ASCII_WHITESPACE_TRIM_PATTERN, "");
+  let start = 0;
+  while (
+    start < value.length &&
+    isASCIIWhitespaceCode(value.charCodeAt(start))
+  ) {
+    start += 1;
+  }
+
+  let end = value.length;
+  while (end > start && isASCIIWhitespaceCode(value.charCodeAt(end - 1))) {
+    end -= 1;
+  }
+
+  return value.slice(start, end);
+}
+
+function isASCIIWhitespaceCode(code: number): boolean {
+  return (
+    code === 9 ||
+    code === 10 ||
+    code === 11 ||
+    code === 12 ||
+    code === 13 ||
+    code === 32
+  );
 }
 
 function normalizePath(rawPath: string): string {
