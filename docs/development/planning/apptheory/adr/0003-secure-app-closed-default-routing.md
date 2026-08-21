@@ -4,6 +4,10 @@ Status: proposed
 
 Issue: [theory-cloud/AppTheory#669](https://github.com/theory-cloud/AppTheory/issues/669)
 
+Amended 2026-08-21 by [#923](https://github.com/theory-cloud/AppTheory/issues/923) (PR #930):
+`AuthenticatedAnyOf` is now the first-class any-of posture. This supersedes the earlier deferral that existing
+`RequireAnyScope` was not a fifth posture and any-of requirements required a future contract proposal.
+
 ## Context
 
 AppTheory's current `App` route surface is intentionally permissive for compatibility. `Get`, `Post`, `Handle`, and
@@ -700,9 +704,11 @@ connect/message/disconnect sequences with a trusted connection-principal test st
 
 - `$connect`, `$disconnect`, `$default`, and a custom route key each require posture and appear as `websocket`
   entries in `Routes()`; invalid/missing posture, nil handlers, empty keys, and duplicate keys fail registration.
-- `Public` skips the resolver; `Optional`, `Authenticated`, scoped `Authenticated`, `AuthenticatedAnyOf`, and
-  `InternalOnly` reproduce the shared nil/error/unknown-kind/external/internal 401/403/success matrix and `"auth"`
-  trace rules.
+- `Public` skips the resolver; `Optional`, `Authenticated`, scoped `Authenticated`, and `InternalOnly` reproduce the
+  shared nil/error/unknown-kind/external/internal 401/403/success matrix and `"auth"` trace rules.
+- For `AuthenticatedAnyOf`, the HTTP contract fixture and the Go, TypeScript, and Python HTTP runtime suites pin
+  normalization, 401/403/success behavior, and `"auth"` trace rules. AppSync and WebSocket inherit the same shared
+  posture gate, but this amendment adds no any-of-specific non-HTTP fixtures or runtime-suite cases.
 - A denied WebSocket invocation proves no user `Use` middleware or handler ran; an accepted invocation proves
   posture gate -> user middleware -> handler ordering at P0/P1/P2.
 - `$connect` fixtures resolve handshake headers/query, expose the normalized principal before the handler, and persist
