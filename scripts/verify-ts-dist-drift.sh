@@ -7,11 +7,11 @@ source "scripts/lib/ts-runtime-deps.sh"
 
 if ! command -v node >/dev/null 2>&1; then
   echo "ts-dist-drift: BLOCKED (node not found)" >&2
-  exit 1
+  exit 2
 fi
 if ! command -v npm >/dev/null 2>&1; then
   echo "ts-dist-drift: BLOCKED (npm not found)" >&2
-  exit 1
+  exit 2
 fi
 if [[ ! -d "ts" ]]; then
   echo "ts-dist-drift: FAIL (missing ts/)" >&2

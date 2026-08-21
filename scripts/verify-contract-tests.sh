@@ -9,11 +9,11 @@ source "scripts/lib/ts-runtime-deps.sh"
 
 if ! command -v go >/dev/null 2>&1; then
   echo "contract-tests: BLOCKED (go not found)" >&2
-  exit 1
+  exit 2
 fi
 if ! command -v node >/dev/null 2>&1; then
   echo "contract-tests: BLOCKED (node not found)" >&2
-  exit 1
+  exit 2
 fi
 if ! command -v npm >/dev/null 2>&1; then
   echo "contract-tests: BLOCKED (npm not found)" >&2
@@ -21,7 +21,7 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 if ! command -v python3 >/dev/null 2>&1; then
   echo "contract-tests: BLOCKED (python3 not found)" >&2
-  exit 1
+  exit 2
 fi
 
 go run ./contract-tests/runners/go

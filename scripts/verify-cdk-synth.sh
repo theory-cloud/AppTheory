@@ -30,15 +30,15 @@ examples=(
 
 if ! command -v node >/dev/null 2>&1; then
   echo "cdk-synth: BLOCKED (node not found)" >&2
-  exit 1
+  exit 2
 fi
 if ! command -v npm >/dev/null 2>&1; then
   echo "cdk-synth: BLOCKED (npm not found)" >&2
-  exit 1
+  exit 2
 fi
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
   echo "cdk-synth: BLOCKED (sha256sum/shasum not found)" >&2
-  exit 1
+  exit 2
 fi
 
 failed=0

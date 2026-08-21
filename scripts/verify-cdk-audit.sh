@@ -6,7 +6,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 if ! command -v npm >/dev/null 2>&1; then
   echo "cdk-audit: BLOCKED (npm not found)" >&2
-  exit 1
+  exit 2
 fi
 if [[ ! -d "cdk" ]]; then
   echo "cdk-audit: FAIL (missing cdk/)" >&2

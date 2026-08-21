@@ -11,7 +11,7 @@ need_cmd() {
   local cmd="$1"
   if ! command -v "${cmd}" >/dev/null 2>&1; then
     echo "ssr-only-provided-assets-synth: BLOCKED (${cmd} not found)" >&2
-    exit 1
+    exit 2
   fi
 }
 
