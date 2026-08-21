@@ -50,7 +50,8 @@ and Python expose idiomatic equivalents with the same contract.
    paths, and one Lambda entry point. `SecureApp` is a non-embedding facade, not a second runtime.
 3. Require one opaque `AuthPosture` argument on every secure HTTP, AppSync field, and WebSocket route-key
    registration.
-4. Use the closed vocabulary `Public`, `Optional`, `Authenticated(scopes...)`, and `InternalOnly`.
+4. Use the closed vocabulary `Public`, `Optional`, `Authenticated(scopes...)`, `AuthenticatedAnyOf(scopes...)`, and
+   `InternalOnly`.
 5. Store posture presence separately from posture kind. A matched secure route without a posture record fails closed;
    absence never means `Public`.
 6. Enforce posture in the fixed framework auth stage, before every user `Use` middleware and handler. The stage runs
@@ -153,6 +154,7 @@ const (
 	AuthPosturePublic        AuthPostureKind = "public"
 	AuthPostureOptional      AuthPostureKind = "optional"
 	AuthPostureAuthenticated AuthPostureKind = "authenticated"
+	AuthPostureAuthenticatedAnyOf AuthPostureKind = "authenticated_any_of"
 	AuthPostureInternalOnly  AuthPostureKind = "internal_only"
 )
 
@@ -164,6 +166,7 @@ type AuthPosture struct {
 func Public() AuthPosture
 func Optional() AuthPosture
 func Authenticated(scopes ...string) AuthPosture
+func AuthenticatedAnyOf(scopes ...string) AuthPosture
 func InternalOnly() AuthPosture
 ```
 
@@ -179,9 +182,10 @@ AppSync identity. Calling the posture `Bearer` would claim a credential-scheme c
 and should not perform. This rationale is language-neutral and does not depend on Go's existing
 `WithAuthPrincipalHook` being present in the other runtimes.
 
-The final name is therefore `Authenticated(scopes...)`. OpenAPI scheme names are configured once at the document
-level. A future standardized bearer-only resolver would be a separate contract proposal and would not alter this
-posture's semantics.
+The all-of name is therefore `Authenticated(scopes...)`; the additive scope-alias posture is
+`AuthenticatedAnyOf(scopes...)`. OpenAPI scheme names are configured once at the document level. A future
+standardized bearer-only resolver would be a separate contract proposal and would not alter either posture's
+semantics.
 
 ### Additive principal classification
 
@@ -237,13 +241,14 @@ Normalization is exact:
 | `Optional()` | Invoke the resolver. | Continue only for nil or a known-kind result with empty identity. Resolver errors and unknown kinds fail; they never fall back to anonymous. | Normalize and attach the principal. |
 | `Authenticated()` | Invoke the resolver. | `401 app.unauthorized`, including when no resolver is configured. | Continue for an external or internal principal. |
 | `Authenticated(scopes...)` | Invoke the resolver. | `401 app.unauthorized`. | Require **all** normalized scopes; a missing scope is `403 app.forbidden`. |
+| `AuthenticatedAnyOf(scopes...)` | Invoke the resolver. | `401 app.unauthorized`. | Require **at least one** normalized scope; holding none is `403 app.forbidden`. |
 | `InternalOnly()` | Invoke the resolver. | `401 app.unauthorized`; an unknown kind is also 401 because the credential did not yield a valid principal. | Continue only for `internal`; a known external principal is `403 app.forbidden`. |
 
 `Authenticated()` with no scopes is identity-only authentication. If scopes were supplied but all normalize to empty
 strings, registration panics/throws. Duplicate scopes are removed while preserving first occurrence for
-introspection; enforcement is all-of, matching Go's existing non-empty `RequireScope` behavior. Existing
-`RequireAnyScope` is not a fifth posture. Any-of requirements require a future contract proposal rather than another
-option on this surface.
+introspection. `Authenticated` enforcement is all-of, matching Go's existing non-empty `RequireScope` behavior.
+`AuthenticatedAnyOf` requires a non-empty normalized scope list and provides the single framework-owned any-of path;
+callers do not duplicate `RequireAnyScope`-style checks in route handlers.
 
 ## 3. Registration and route surfaces
 
@@ -327,6 +332,7 @@ s := apptheory.NewSecure(apptheory.SecureOptions{
 s.Get("/timelines/public", publicTimeline, apptheory.Public())
 s.Get("/notes/{id}", note, apptheory.Optional())
 s.Get("/exports", export, apptheory.Authenticated("exports:read"))
+s.Get("/api/v1/timelines/home", homeTimeline, apptheory.AuthenticatedAnyOf("read:statuses", "read"))
 s.Post("/internal/deliver", deliver, apptheory.InternalOnly())
 s.AppSyncField("Query", "note", noteField, apptheory.Authenticated("notes:read"))
 s.WebSocket("$connect", connect, apptheory.Optional())
@@ -449,11 +455,11 @@ hook or raw-event bypass.
 For P1/P2, CORS preflight is protocol control traffic, not anonymous handler execution. The final design deliberately
 keeps the current uniform, non-oracular behavior: any syntactically recognized preflight returns the same existing
 204 response and requested-method header without route resolution, posture lookup, principal resolution, user
-middleware, or handler invocation. Registered `Public`, `Authenticated`, and `InternalOnly` paths and unknown paths
-are indistinguishable to an anonymous preflight caller. This avoids exposing the secure route inventory and avoids
-the earlier design's required relocation of preflight into the shared route-resolution path. Legacy and secure P1/P2
-preflight output remain byte-identical. Secure P0 retains P0's existing lack of a preflight short circuit and treats an
-OPTIONS request through ordinary P0 normalization/matching before the secure gate.
+middleware, or handler invocation. Registered `Public`, `Authenticated`, `AuthenticatedAnyOf`, and `InternalOnly`
+paths and unknown paths are indistinguishable to an anonymous preflight caller. This avoids exposing the secure route
+inventory and avoids the earlier design's required relocation of preflight into the shared route-resolution path.
+Legacy and secure P1/P2 preflight output remain byte-identical. Secure P0 retains P0's existing lack of a preflight
+short circuit and treats an OPTIONS request through ordinary P0 normalization/matching before the secure gate.
 
 ## 5. Canonical route keys and introspection
 
@@ -569,6 +575,7 @@ Generation follows this algorithm:
    - `Public`: explicit `security: []`;
    - `Optional`: configured authenticated alternatives plus the anonymous `{}` alternative;
    - `Authenticated`: configured authenticated alternatives and all registered scopes;
+   - `AuthenticatedAnyOf`: one authenticated alternative per registered scope alias;
    - `InternalOnly`: configured internal-only alternatives.
 7. Emit `x-apptheory-auth-posture` on every operation and `x-apptheory-required-scopes` when non-empty.
 8. Sort and encode with the existing deterministic OpenAPI rules.
@@ -656,6 +663,8 @@ connect/message/disconnect sequences with a trusted connection-principal test st
   external or internal principal continues.
 - `Authenticated(scopes...)` requires all normalized scopes, distinguishes 401 from 403, preserves first-occurrence
   scope order, and exposes scopes in introspection.
+- `AuthenticatedAnyOf(scopes...)` accepts one or several held aliases, returns the same 403 identity when none are
+  held, preserves normalization order, and rejects an empty normalized requirement at registration.
 - `InternalOnly` distinguishes anonymous/unknown-kind 401, known-external 403, and internal success.
 - A field-by-field normalization fixture proves `Kind` survives normalization in all three runtimes.
 - A denied request proves user `Use` middleware and handler did not run; accepted requests prove the fixed
@@ -691,8 +700,9 @@ connect/message/disconnect sequences with a trusted connection-principal test st
 
 - `$connect`, `$disconnect`, `$default`, and a custom route key each require posture and appear as `websocket`
   entries in `Routes()`; invalid/missing posture, nil handlers, empty keys, and duplicate keys fail registration.
-- `Public` skips the resolver; `Optional`, `Authenticated`, scoped `Authenticated`, and `InternalOnly` reproduce the
-  shared nil/error/unknown-kind/external/internal 401/403/success matrix and `"auth"` trace rules.
+- `Public` skips the resolver; `Optional`, `Authenticated`, scoped `Authenticated`, `AuthenticatedAnyOf`, and
+  `InternalOnly` reproduce the shared nil/error/unknown-kind/external/internal 401/403/success matrix and `"auth"`
+  trace rules.
 - A denied WebSocket invocation proves no user `Use` middleware or handler ran; an accepted invocation proves
   posture gate -> user middleware -> handler ordering at P0/P1/P2.
 - `$connect` fixtures resolve handshake headers/query, expose the normalized principal before the handler, and persist

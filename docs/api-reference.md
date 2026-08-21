@@ -74,7 +74,7 @@ Common helper exports:
 | Concern | Go | TypeScript | Python |
 | --- | --- | --- | --- |
 | Closed options | `SecureOptions` | `SecureOptions` | explicit `SecureApp(...)` keywords |
-| Postures | `Public`, `Optional`, `Authenticated`, `InternalOnly` | `Public`, `Optional`, `Authenticated`, `InternalOnly` | `public`, `optional`, `authenticated`, `internal_only` |
+| Postures | `Public`, `Optional`, `Authenticated`, `AuthenticatedAnyOf`, `InternalOnly` | `Public`, `Optional`, `Authenticated`, `AuthenticatedAnyOf`, `InternalOnly` | `public`, `optional`, `authenticated`, `authenticated_any_of`, `internal_only` |
 | Principal | `SecurePrincipal`, `PrincipalKind` | `SecurePrincipal`, `PrincipalKind` | `SecurePrincipal`, `PrincipalKind` |
 | Resolver | `SecurePrincipalResolver` | `SecurePrincipalResolver` | `SecurePrincipalResolver` |
 | Context accessor | `ctx.SecurePrincipal()` | `ctx.securePrincipal()` | `ctx.secure_principal()` |
@@ -84,9 +84,11 @@ Common helper exports:
 | Secure OpenAPI | `app.GenerateOpenAPI(...)` | `app.generateOpenAPI(...)` | `app.generate_openapi(...)` |
 
 All secure HTTP, AppSync, and WebSocket registrations require one posture. The fixed gate runs before user middleware;
-unknown principal kinds fail with 401; authenticated scopes are all-of. The secure OpenAPI method exact-joins only
-HTTP route records and emits the `secure-v1` contract marker. Legacy free OpenAPI functions cannot read secure
-posture and are unsupported for `SecureApp` adopters.
+unknown principal kinds fail with 401. `Authenticated` scopes are all-of; `AuthenticatedAnyOf` scopes are any-of and
+encode each scope alias as an OpenAPI security alternative. For example, Mastodon-compatible `read:statuses` OR
+`read` authorization belongs in `AuthenticatedAnyOf("read:statuses", "read")`, not in a route-local guard. The
+secure OpenAPI method exact-joins only HTTP route records and emits the `secure-v1` contract marker. Legacy free
+OpenAPI functions cannot read secure posture and are unsupported for `SecureApp` adopters.
 
 HTTP error compatibility:
 
@@ -538,15 +540,15 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1003 exported top-level symbols</summary>
+<summary>1005 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins, APIGatewayV2Request
 App, AppError, AppSyncContext, AppSyncEvent, AppSyncEventOptions, AppSyncResolverEvent, AppSyncResolverInfo
 AppSyncResolverRequest, AppTheoryError, AppTheoryErrorFromAppError, AsAppTheoryError, AssertError, AssertHasTools
-AssertToolResult, AtomicRateLimiter, AuthContext, Authenticated, AuthHook, AuthorizationCodeRecord
+AssertToolResult, AtomicRateLimiter, AuthContext, Authenticated, AuthenticatedAnyOf, AuthHook, AuthorizationCodeRecord
 AuthorizationCodeStore, AuthorizationServerMetadata, AuthorizationServerMetadataHandler, AuthorizeOptions, AuthPosture
-AuthPostureAuthenticated, AuthPostureInternalOnly, AuthPostureKind, AuthPostureOptional, AuthPosturePublic
+AuthPostureAuthenticated, AuthPostureAuthenticatedAnyOf, AuthPostureInternalOnly, AuthPostureKind, AuthPostureOptional, AuthPosturePublic
 AuthPrincipal, AWSLambdaMicroVMProvider, AWSLambdaMicroVMProviderID, AWSLambdaMicroVMProviderOption, BaseName
 BearerTokenClaims, BearerTokenClaimsFromContext, BearerTokenClaimsValidator, BearerTokenFromHeaders, BearerTokenRecord
 BearerTokenValidationOptions, BearerTokenValidator, BedrockRuntimeAPI, Binary, BindConfig, BodyStream
