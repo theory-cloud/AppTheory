@@ -130,8 +130,8 @@ grep -Fq 'BLOCKED: repository root is not the intended Git worktree root' "${non
   || fail "non-git intended-worktree guard did not explain the BLOCKED result"
 assert_grep_absent 'fatal:' "${non_git_evidence}" "non-git intended-worktree guard leaked raw Git diagnostics"
 non_git_guard_raw_fatal_lines="$(grep -Ec 'fatal:' "${non_git_evidence}" || true)"
-non_git_raw_fatal_lines="$((in_repo_probe_raw_fatal_lines + non_git_guard_raw_fatal_lines))"
-assert_eq "0" "${non_git_raw_fatal_lines}" "non-git captured output contained raw Git diagnostics"
+all_probe_raw_fatal_lines="$((in_repo_probe_raw_fatal_lines + non_git_guard_raw_fatal_lines))"
+assert_eq "0" "${all_probe_raw_fatal_lines}" "captured probe output contained raw Git diagnostics"
 REPO_ROOT="${ORIGINAL_REPO_ROOT}"
 
 grep -Fq 'REPORT_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"' "${SCRIPT_DIR}/gov-verify-rubric.sh" \
@@ -152,4 +152,4 @@ echo "in_repo_git_head_assertion_skips=${in_repo_git_head_assertion_skips}"
 echo "enclosing_non_root_git_head=omitted"
 echo "non_git_git_head=omitted"
 echo "non_git_guard_status=${guard_status}"
-echo "non_git_raw_fatal_lines=${non_git_raw_fatal_lines}"
+echo "all_probe_raw_fatal_lines=${all_probe_raw_fatal_lines}"

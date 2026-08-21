@@ -33,6 +33,7 @@ docs/.bundle/
 
 # GovTheory generated artifacts
 gov-infra/.tools/
+gov-infra/evidence/gov-rubric-report.json
 gov-infra/evidence/*-output.log
 gov-infra/evidence/DOC-5-parity.log
 gov-infra/evidence/go-coverage.out

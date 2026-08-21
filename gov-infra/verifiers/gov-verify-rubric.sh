@@ -655,6 +655,7 @@ ensure_py_runtime_deps_installed() {
 gov_cmd_unit() {
   require_cmd_or_blocked go || return $?
   require_cmd_or_blocked node || return $?
+  require_cmd_or_blocked npm || return $?
   require_cmd_or_blocked python3 || return $?
 
   # QUA-1 is the unit-test gate. The direct, uninstrumented contract suite runs
@@ -680,11 +681,6 @@ gov_cmd_integration() {
   require_cmd_or_blocked node || return $?
   require_cmd_or_blocked npm || return $?
   require_cmd_or_blocked python3 || return $?
-  ensure_ts_runtime_deps_installed || return $?
-  if ! command -v go >/dev/null 2>&1; then
-    echo "examples: BLOCKED (go not found)" >&2
-    return 2
-  fi
   scripts/verify-testkit-examples.sh
 }
 
@@ -710,6 +706,7 @@ gov_cmd_lint() {
 gov_cmd_contract() {
   require_cmd_or_blocked go || return $?
   require_cmd_or_blocked node || return $?
+  require_cmd_or_blocked npm || return $?
   require_cmd_or_blocked python3 || return $?
   ensure_ts_runtime_deps_installed || return $?
   scripts/verify-contract-tests.sh
