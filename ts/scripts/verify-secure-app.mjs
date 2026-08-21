@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   App,
   Authenticated,
+  AuthenticatedAnyOf,
   InternalOnly,
   Optional,
   Public,
@@ -67,6 +68,11 @@ routesApp.get(
 );
 routesApp.appSyncField("Subscription", "changed", ok, Optional());
 routesApp.webSocket(" $default ", ok, InternalOnly());
+routesApp.get(
+  "/statuses",
+  ok,
+  AuthenticatedAnyOf(" read:statuses ", "read", "read:statuses", " "),
+);
 assert.deepEqual(routesApp.routes(), [
   {
     surface: "http",
@@ -90,6 +96,13 @@ assert.deepEqual(routesApp.routes(), [
     posture: "internal_only",
     webSocketRouteKey: "$default",
   },
+  {
+    surface: "http",
+    method: "GET",
+    path: "/statuses",
+    posture: "authenticated_any_of",
+    scopes: ["read:statuses", "read"],
+  },
 ]);
 const mutatedRoutes = routesApp.routes();
 mutatedRoutes[0].path = "/mutated";
@@ -99,6 +112,14 @@ assert.deepEqual(routesApp.routes()[0].scopes, ["read", "write"]);
 assert.throws(() => routesApp.get("/zero", ok, {}), /invalid auth posture/);
 assert.throws(
   () => routesApp.get("/empty", ok, Authenticated(" ")),
+  /normalize to empty/,
+);
+assert.throws(
+  () => routesApp.get("/empty-any", ok, AuthenticatedAnyOf()),
+  /normalize to empty/,
+);
+assert.throws(
+  () => routesApp.get("/empty-any", ok, AuthenticatedAnyOf(" ", "\t")),
   /normalize to empty/,
 );
 assert.throws(
@@ -152,6 +173,47 @@ assert.equal(
   200,
 );
 assert.deepEqual(sourceClaims, { nested: { values: ["original"] } });
+
+async function anyOfResponse(principal) {
+  const app = new SecureApp({
+    principalResolver: async () => principal,
+  });
+  app.get(
+    "/statuses",
+    ok,
+    AuthenticatedAnyOf(" read:statuses ", "read", "read:statuses", " "),
+  );
+  return app.serve({
+    method: "GET",
+    path: "/statuses",
+    query: {},
+    headers: {},
+    body: Buffer.alloc(0),
+    isBase64: false,
+  });
+}
+
+for (const [name, principal, status, code] of [
+  ["unauthenticated", null, 401, "app.unauthorized"],
+  ["zero-held", { identity: "user", scopes: [] }, 403, "app.forbidden"],
+  ["one-held", { identity: "user", scopes: ["read"] }, 200, ""],
+  [
+    "several-held",
+    { identity: "user", scopes: ["read", "read:statuses"] },
+    200,
+    "",
+  ],
+]) {
+  const anyOf = await anyOfResponse(principal);
+  assert.equal(anyOf.status, status, name);
+  if (code) {
+    assert.equal(
+      JSON.parse(Buffer.from(anyOf.body).toString()).error.code,
+      code,
+      name,
+    );
+  }
+}
 
 const websocketEvent = {
   requestContext: {
@@ -227,6 +289,42 @@ const document = openapiApp.generateOpenAPI(baseSpec);
 assert.equal(document["x-apptheory-contract-mode"], "secure-v1");
 assert.deepEqual(document.paths["/items/{id}"].get.security, [
   { Bearer: ["items:read"] },
+]);
+const anyOfOpenAPIApp = new SecureApp();
+anyOfOpenAPIApp.get(
+  "/statuses",
+  ok,
+  AuthenticatedAnyOf(" read:statuses ", "read", "read:statuses"),
+);
+const anyOfDocument = anyOfOpenAPIApp.generateOpenAPI({
+  title: "Secure",
+  version: "1.0.0",
+  routes: [
+    {
+      method: "GET",
+      path: "/statuses",
+      operationId: "statuses",
+      response: { description: "ok", fields: [] },
+    },
+  ],
+  securitySchemes: {
+    Bearer: { type: "http", scheme: "bearer" },
+    Cookie: { type: "apiKey", in: "cookie", name: "session" },
+  },
+  authSchemes: {
+    authenticated: ["Bearer", "Cookie"],
+    internalOnly: [],
+  },
+});
+assert.equal(
+  anyOfDocument.paths["/statuses"].get["x-apptheory-auth-posture"],
+  "authenticated_any_of",
+);
+assert.deepEqual(anyOfDocument.paths["/statuses"].get.security, [
+  { Bearer: ["read:statuses"] },
+  { Bearer: ["read"] },
+  { Cookie: ["read:statuses"] },
+  { Cookie: ["read"] },
 ]);
 assert.throws(
   () => openapiApp.generateOpenAPI({ ...baseSpec, routes: [] }),
