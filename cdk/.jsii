@@ -17196,6 +17196,271 @@
       "name": "AppTheoryLambdaTrafficShiftType",
       "symbolId": "lib/function:AppTheoryLambdaTrafficShiftType"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryMcpEndpointPath": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "A concrete canonical MCP endpoint path."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpEndpointPath",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/mcp-route-algebra.ts",
+        "line": 2
+      },
+      "name": "AppTheoryMcpEndpointPath",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Client namespace path segment."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 7
+          },
+          "name": "clientNamespace",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Endpoint kind from the versioned route-algebra quartet."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 4
+          },
+          "name": "kind",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Agent identifier for agent endpoint kinds."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 13
+          },
+          "name": "agentId",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Partner identifier for partner-scoped endpoint kinds."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 10
+          },
+          "name": "partnerId",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/mcp-route-algebra:AppTheoryMcpEndpointPath"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMcpEndpointTemplate": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "A canonical MCP route template and its protected-resource route."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpEndpointTemplate",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/mcp-route-algebra.ts",
+        "line": 17
+      },
+      "name": "AppTheoryMcpEndpointTemplate",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Endpoint kind from the versioned route-algebra quartet."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 19
+          },
+          "name": "kind",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Canonical MCP route pattern."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 22
+          },
+          "name": "mcpPattern",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Derived RFC 9728 protected-resource route pattern."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 25
+          },
+          "name": "protectedResourcePath",
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/mcp-route-algebra:AppTheoryMcpEndpointTemplate"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMcpOAuthDiscoveryTemplate": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Canonical and suffix-compatible OAuth discovery patterns for an MCP endpoint kind."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpOAuthDiscoveryTemplate",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/mcp-route-algebra.ts",
+        "line": 41
+      },
+      "name": "AppTheoryMcpOAuthDiscoveryTemplate",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Derived canonical RFC 8414 discovery pattern."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 46
+          },
+          "name": "canonicalPattern",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Endpoint kind from the versioned route-algebra quartet."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 43
+          },
+          "name": "kind",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Derived suffix-compatible RFC 8414 discovery pattern."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 49
+          },
+          "name": "suffixPattern",
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/mcp-route-algebra:AppTheoryMcpOAuthDiscoveryTemplate"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMcpOAuthFacadeTemplate": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Derived OAuth authorization facade patterns for an MCP endpoint kind."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpOAuthFacadeTemplate",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/mcp-route-algebra.ts",
+        "line": 29
+      },
+      "name": "AppTheoryMcpOAuthFacadeTemplate",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Derived authorization endpoint pattern."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 34
+          },
+          "name": "authorizePattern",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Endpoint kind from the versioned route-algebra quartet."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 31
+          },
+          "name": "kind",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Derived token endpoint pattern."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 37
+          },
+          "name": "tokenPattern",
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/mcp-route-algebra:AppTheoryMcpOAuthFacadeTemplate"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryMcpPaths": {
       "abstract": true,
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -17411,6 +17676,621 @@
         }
       ],
       "symbolId": "lib/mcp-protected-resource:AppTheoryMcpProtectedResourceProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra": {
+      "abstract": true,
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "docs": {
+        "remarks": "Every OAuth route is derived from the four MCP patterns through the pure\nfunctions on this class. Concrete endpoint builders validate the same\nkind-to-identifier invariants as the Go runtime package.",
+        "summary": "AppTheory's canonical, versioned MCP route-algebra contract."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra",
+      "initializer": {},
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/mcp-route-algebra.ts",
+        "line": 59
+      },
+      "methods": [
+        {
+          "docs": {
+            "summary": "Derive the authorization facade path from a resource path."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 121
+          },
+          "name": "authorizationAuthorizePathForResourcePath",
+          "parameters": [
+            {
+              "name": "resourcePath",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "primitive": "string"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Derive the canonical RFC 8414 discovery path from a resource path."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 110
+          },
+          "name": "authorizationServerPathForResourcePath",
+          "parameters": [
+            {
+              "name": "resourcePath",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "primitive": "string"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Derive the suffix-compatible RFC 8414 discovery path from a resource path."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 135
+          },
+          "name": "authorizationServerSuffixPathForResourcePath",
+          "parameters": [
+            {
+              "name": "resourcePath",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "primitive": "string"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Derive the token facade path from a resource path."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 128
+          },
+          "name": "authorizationTokenPathForResourcePath",
+          "parameters": [
+            {
+              "name": "resourcePath",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "primitive": "string"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Build the concrete MCP path for an endpoint."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 287
+          },
+          "name": "mcpPath",
+          "parameters": [
+            {
+              "name": "endpoint",
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpEndpointPath"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "primitive": "string"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Build the endpoint's canonical RFC 8414 discovery path."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 315
+          },
+          "name": "oauthAuthorizationServerPath",
+          "parameters": [
+            {
+              "name": "endpoint",
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpEndpointPath"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "primitive": "string"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Build the endpoint's suffix-compatible RFC 8414 discovery path."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 338
+          },
+          "name": "oauthAuthorizationServerSuffixPath",
+          "parameters": [
+            {
+              "name": "endpoint",
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpEndpointPath"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "primitive": "string"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Build the endpoint's authorization facade path."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 324
+          },
+          "name": "oauthAuthorizePath",
+          "parameters": [
+            {
+              "name": "endpoint",
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpEndpointPath"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "primitive": "string"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Build the endpoint's token facade path."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 331
+          },
+          "name": "oauthTokenPath",
+          "parameters": [
+            {
+              "name": "endpoint",
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpEndpointPath"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "primitive": "string"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Parse a concrete MCP path after contract normalization."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 208
+          },
+          "name": "parseMcpPath",
+          "parameters": [
+            {
+              "name": "rawPath",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpEndpointPath"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Build the endpoint's RFC 9728 protected-resource path."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 306
+          },
+          "name": "protectedResourcePath",
+          "parameters": [
+            {
+              "name": "endpoint",
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpEndpointPath"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "primitive": "string"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Derive an RFC 9728 protected-resource path from a resource path."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 99
+          },
+          "name": "protectedResourcePathForResourcePath",
+          "parameters": [
+            {
+              "name": "resourcePath",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "primitive": "string"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Derive the protected-resource path for an MCP path."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 163
+          },
+          "name": "protectedResourcePathFromMcpPath",
+          "parameters": [
+            {
+              "name": "mcpPath",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "primitive": "string"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Recover a resource path from an RFC 9728 protected-resource path."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 146
+          },
+          "name": "resourcePathFromProtectedResourcePath",
+          "parameters": [
+            {
+              "name": "protectedResourcePath",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "primitive": "string"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Return every canonical MCP endpoint template in contract order."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 170
+          },
+          "name": "supportedEndpointTemplates",
+          "returns": {
+            "type": {
+              "collection": {
+                "elementtype": {
+                  "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpEndpointTemplate"
+                },
+                "kind": "array"
+              }
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Return every canonical OAuth discovery template in contract order."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 193
+          },
+          "name": "supportedOAuthDiscoveryTemplates",
+          "returns": {
+            "type": {
+              "collection": {
+                "elementtype": {
+                  "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpOAuthDiscoveryTemplate"
+                },
+                "kind": "array"
+              }
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Return every canonical OAuth authorization facade template in contract order."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 180
+          },
+          "name": "supportedOAuthFacadeTemplates",
+          "returns": {
+            "type": {
+              "collection": {
+                "elementtype": {
+                  "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpOAuthFacadeTemplate"
+                },
+                "kind": "array"
+              }
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Validate endpoint kind-to-identifier consistency and path-segment safety."
+          },
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 228
+          },
+          "name": "validateEndpointPath",
+          "parameters": [
+            {
+              "name": "endpoint",
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpEndpointPath"
+              }
+            }
+          ],
+          "static": true
+        }
+      ],
+      "name": "AppTheoryMcpRouteAlgebra",
+      "properties": [
+        {
+          "const": true,
+          "docs": {
+            "summary": "Canonical agent MCP route pattern."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 83
+          },
+          "name": "AGENT_MCP_PATTERN",
+          "static": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "const": true,
+          "docs": {
+            "summary": "RFC 8414 authorization-server metadata prefix."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 95
+          },
+          "name": "AUTHORIZATION_SERVER_PREFIX",
+          "static": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "const": true,
+          "docs": {
+            "summary": "MCP route-algebra contract version."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 61
+          },
+          "name": "CONTRACT_VERSION",
+          "static": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "const": true,
+          "docs": {
+            "summary": "Agent endpoint kind."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 70
+          },
+          "name": "ENDPOINT_KIND_AGENT",
+          "static": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "const": true,
+          "docs": {
+            "summary": "Namespace endpoint kind."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 64
+          },
+          "name": "ENDPOINT_KIND_NAMESPACE",
+          "static": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "const": true,
+          "docs": {
+            "summary": "Partner-scoped agent endpoint kind."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 73
+          },
+          "name": "ENDPOINT_KIND_PARTNER_AGENT",
+          "static": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "const": true,
+          "docs": {
+            "summary": "Partner-scoped namespace endpoint kind."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 67
+          },
+          "name": "ENDPOINT_KIND_PARTNER_NAMESPACE",
+          "static": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "const": true,
+          "docs": {
+            "summary": "Canonical namespace MCP route pattern."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 76
+          },
+          "name": "NAMESPACE_MCP_PATTERN",
+          "static": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "const": true,
+          "docs": {
+            "summary": "Canonical partner-scoped agent MCP route pattern."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 87
+          },
+          "name": "PARTNER_AGENT_MCP_PATTERN",
+          "static": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "const": true,
+          "docs": {
+            "summary": "Canonical partner-scoped namespace MCP route pattern."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 79
+          },
+          "name": "PARTNER_NAMESPACE_MCP_PATTERN",
+          "static": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "const": true,
+          "docs": {
+            "summary": "RFC 9728 protected-resource metadata prefix."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-route-algebra.ts",
+            "line": 91
+          },
+          "name": "PROTECTED_RESOURCE_PREFIX",
+          "static": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/mcp-route-algebra:AppTheoryMcpRouteAlgebra"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryMcpServer": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -28041,5 +28921,5 @@
     }
   },
   "version": "3.1.1",
-  "fingerprint": "WzjFk12Uloa5hHnTBt1wPm/z0e0awcn8u4CJgLC7UKI="
+  "fingerprint": "oTUWOZ42btcOw11q27LvpfKad5SZvE07Wg/WSzKuFYc="
 }

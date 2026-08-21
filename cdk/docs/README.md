@@ -26,6 +26,8 @@
 - [REST API v1 Router + Streaming](./rest-api-router-streaming.md) — multi-Lambda REST API v1 + full response streaming parity.
 - [MCP Server Umbrella Construct](../../docs/features/mcp-server-construct.md) — deploy authenticated namespace MCP
   routes with request-time RFC 9728 discovery and no protected-resource origin prop.
+- [MCP Route Algebra](../../docs/features/mcp-route-algebra.md) — consume the versioned endpoint quartet, OAuth
+  derivations, templates, parser, validator, and concrete-path builders without copying route literals.
 - [Namespace Install Parameters](../../docs/features/install-parameters.md) — emit the governed account-agnostic
   CloudFormation parameter surface and typed tokens.
 - [S3 Versioned Artifact Ingress](../../docs/features/s3-versioned-ingress.md) — own the versioned namespace release
@@ -78,7 +80,9 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
 - HTTP and routing: `AppTheoryHttpApi`, `AppTheoryRestApi`, `AppTheoryRestApiRouter`, domains, CORS, logging, and WAF
   guardrails.
 - MCP and namespace deployment: `AppTheoryMcpServer`, `AppTheoryInstallParameters`,
-  `AppTheoryS3VersionedIngress`, canonical `AppTheoryMcpPaths`,
+  `AppTheoryS3VersionedIngress`, canonical `AppTheoryMcpPaths`, the additive `AppTheoryMcpRouteAlgebra` contract and
+  its `AppTheoryMcpEndpointPath`, `AppTheoryMcpEndpointTemplate`, `AppTheoryMcpOAuthFacadeTemplate`, and
+  `AppTheoryMcpOAuthDiscoveryTemplate` data interfaces,
   `AppTheoryRemoteMcpServer`, and the deprecated URL-valued compatibility props on
   `AppTheoryMcpProtectedResource`.
 - Event and ingestion surfaces: `AppTheoryQueue`, `AppTheoryEventBridgeBus`, `AppTheoryKinesisStream`,
@@ -95,7 +99,7 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `cdk/.jsii`.
 
 <details>
-<summary>140 exported top-level symbols</summary>
+<summary>145 exported top-level symbols</summary>
 
 ```text
 ApiBypassConfig, AppTheoryApiDomain, AppTheoryApiDomainProps, AppTheoryApp, AppTheoryAppProps
@@ -127,6 +131,7 @@ AppTheorySsrSiteBearerFunctionUrlOrigin, AppTheorySsrSiteMode, AppTheorySsrSiteP
 AppTheoryVectorIndexProps, AppTheoryVpcEndpointConfig, AppTheoryWafRuleConfig, AppTheoryWebSocketApi, AppTheoryWebSocketApiProps
 IAppTheoryMicrovmImage, IAppTheoryMicrovmNetworkConnector, MediaCdnDomainConfig, PathRoutedFrontendDomainConfig, PrivateMediaConfig
 SpaOriginConfig
+AppTheoryMcpEndpointPath, AppTheoryMcpEndpointTemplate, AppTheoryMcpOAuthDiscoveryTemplate, AppTheoryMcpOAuthFacadeTemplate, AppTheoryMcpRouteAlgebra
 ```
 
 </details>

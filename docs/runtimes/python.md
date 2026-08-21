@@ -5,7 +5,7 @@ description: The Python implementation of the AppTheory contract — typed, asyn
 
 # Python Runtime
 
-The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes all [263 contract fixtures](../reference/contract-fixtures.md), including the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier. <!-- apptheory-fixture-count: 263 -->
+The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the 263 generic runner fixtures in the [264-vector corpus](../reference/contract-fixtures.md), including the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the Go/CDK-TS MCP route algebra is explicitly outside Python's scope. <!-- apptheory-fixture-count: 264 -->
 
 ## Install
 
@@ -118,7 +118,7 @@ Applies to HTTP error serialization only.
 
 ## What's verified
 
-The Python runtime passes the full contract corpus on every commit. <!-- apptheory-fixture-count: 263 --> The runner loads and executes the full 263-fixture tree, including the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
+The Python runner passes all 263 generic fixtures in the 264-vector corpus on every commit. <!-- apptheory-fixture-count: 264 --> It includes the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the nested route-algebra table is consumed only by Go and CDK-TS. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
 
 ## Next reads
 

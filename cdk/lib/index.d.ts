@@ -40,6 +40,7 @@ export * from "./microvm-image";
 export * from "./microvm-controller";
 export * from "./mcp-server";
 export * from "./mcp-paths";
+export * from "./mcp-route-algebra";
 export * from "./install-parameters";
 export * from "./mcp-protected-resource";
 export * from "./remote-mcp-server";
