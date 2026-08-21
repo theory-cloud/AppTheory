@@ -31,6 +31,7 @@ EVIDENCE_DIR="${GOV_INFRA}/evidence"
 REPORT_PATH="${EVIDENCE_DIR}/gov-rubric-report.json"
 
 # shellcheck source=scripts/lib/ts-runtime-deps.sh
+source "${REPO_ROOT}/scripts/lib/blocked.sh"
 source "${REPO_ROOT}/scripts/lib/ts-runtime-deps.sh"
 
 # Always run checks from repo root so relative commands are stable.
