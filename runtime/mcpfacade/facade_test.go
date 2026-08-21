@@ -359,6 +359,18 @@ func TestWildcardStyleAllowlistEntriesRegisterAsLiteralKeys(t *testing.T) {
 				"host": {"not-allowlisted.example.com"}, "forwarded": {"for=192.0.2.1;host=*.EXAMPLE.COM.:443;proto=https"},
 			},
 		},
+		{
+			name: "apptheory original host trailing dot variant",
+			headers: map[string][]string{
+				"host": {"not-allowlisted.example.com"}, "x-apptheory-original-host": {"*.EXAMPLE.COM."}, "x-forwarded-proto": {"https"},
+			},
+		},
+		{
+			name: "facetheory original host default port variant",
+			headers: map[string][]string{
+				"host": {"not-allowlisted.example.com"}, "x-facetheory-original-host": {"*.EXAMPLE.COM.:443"}, "x-forwarded-proto": {"https"},
+			},
+		},
 	}
 	for _, test := range literalMatches {
 		t.Run(test.name, func(t *testing.T) {

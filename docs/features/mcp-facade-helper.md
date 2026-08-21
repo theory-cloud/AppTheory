@@ -96,8 +96,9 @@ the recommended mode for CloudFront, CDN, and other front-door deployments, incl
 
 Request-host mode rejects a simultaneous `PublicBaseURL` and fails configuration when `AllowedHostnames` is empty.
 Configuration entries normalize case, trailing dots, and default ports scheme-agnostically. Request authorities
-normalize default ports against the request's scheme. Every reconstructed authority must exact-match a normalized
-allowlist entry. Missing, unsafe, or non-allowlisted request hosts return HTTP 400. `OriginURL` deliberately gives
+normalize case and trailing dots too, but strip only the request scheme's own default port. Every reconstructed
+authority must exact-match a normalized allowlist entry. Missing, unsafe, or non-allowlisted request hosts return HTTP
+400. `OriginURL` deliberately gives
 `x-apptheory-original-host`, `x-facetheory-original-host`, `x-forwarded-host`, and `Forwarded: host=` precedence over
 `Host`. Those forwarding headers are attacker-controlled unless the edge removes viewer-supplied copies and writes
 trusted values. **The edge must strip spoofed forwarding/original-host headers.** The allowlist is the enforcement
