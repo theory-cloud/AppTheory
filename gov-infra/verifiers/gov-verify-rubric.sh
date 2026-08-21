@@ -1548,14 +1548,7 @@ allowlist_has_id() {
 sha256_12() {
   local s="$1"
   local hash=""
-  if command -v sha256sum >/dev/null 2>&1; then
-    hash="$(printf '%s' "${s}" | sha256sum | awk '{print $1}')"
-  elif command -v shasum >/dev/null 2>&1; then
-    hash="$(printf '%s' "${s}" | shasum -a 256 | awk '{print $1}')"
-  else
-    echo "BLOCKED: sha256 tool missing (need sha256sum or shasum)" >&2
-    return 2
-  fi
+  hash="$(printf '%s' "${s}" | sha256_stdin)" || return $?
   printf '%s' "${hash:0:12}"
   return 0
 }

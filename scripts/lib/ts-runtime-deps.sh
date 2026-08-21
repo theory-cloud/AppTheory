@@ -13,16 +13,20 @@ require_cmd_or_blocked() {
   return 0
 }
 
-file_sha256() {
-  local file_path="$1"
+sha256_stdin() {
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "${file_path}" | awk '{print $1}'
+    sha256sum | awk '{print $1}'
   elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "${file_path}" | awk '{print $1}'
+    shasum -a 256 | awk '{print $1}'
   else
     echo "BLOCKED: sha256 tool missing (need sha256sum or shasum)" >&2
     return 2
   fi
+}
+
+file_sha256() {
+  local file_path="$1"
+  sha256_stdin <"${file_path}"
 }
 
 ensure_ts_runtime_deps_installed() {
