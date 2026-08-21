@@ -15,6 +15,12 @@ const (
 const (
 	// ContractVersion is the MCP route-algebra contract implemented by this package.
 	ContractVersion = "m17.mcp-route-algebra/v1"
+	// ParamClientNamespace is the canonical client-namespace route parameter name.
+	ParamClientNamespace = "client_namespace"
+	// ParamPartnerID is the canonical partner route parameter name.
+	ParamPartnerID = "partner_id"
+	// ParamAgentID is the canonical agent route parameter name.
+	ParamAgentID = "agent_id"
 
 	// ProtectedResourcePrefix is the RFC 9728 protected-resource metadata prefix.
 	ProtectedResourcePrefix = "/.well-known/oauth-protected-resource"

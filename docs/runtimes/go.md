@@ -23,6 +23,8 @@ Module layout (see `api-snapshots/go.txt` for the exact exported surface):
 | --- | --- |
 | `github.com/theory-cloud/apptheory/v3/runtime` | Core runtime: `apptheory.New`, `Context`, `Request`, `Response`, route registration, middleware. |
 | `github.com/theory-cloud/apptheory/v3/runtime/mcp` | MCP Streamable HTTP transport, sessions, resumable SSE. |
+| `github.com/theory-cloud/apptheory/v3/runtime/mcproutes` | Versioned MCP endpoint and OAuth route algebra. |
+| `github.com/theory-cloud/apptheory/v3/runtime/mcpfacade` | Golden-path MCP/OAuth facade registration and metadata composition. |
 | `github.com/theory-cloud/apptheory/v3/runtime/oauth` | OAuth protected-resource metadata, PKCE, DCR, token-store helpers. |
 | `github.com/theory-cloud/apptheory/v3/testkit` | Deterministic test environment (clock, ID queue, event builders). |
 | `github.com/theory-cloud/apptheory/v3/testkit/mcp` | In-process MCP client for unit tests. |
@@ -109,6 +111,12 @@ if _, err := app.GetStrict("/users/{id}", h); err != nil {
 ```
 
 TypeScript and Python follow the same fail-closed registration contract.
+
+For the parameterized four-kind MCP OAuth surface, use `mcpfacade.RegisterMCPFacade` rather than copying route
+patterns. `FacadeConfig` requires per-kind scopes, an application-owned MCP handler, and one explicit absolute-URL
+mode. `URLModePublicBaseURL` is for front-door/CDN deployments; `URLModeRequestHost` derives scheme and host from each
+request for direct API Gateway custom domains and tests. Optional `HandlerFactory` plug points attach app-owned
+authorize/token behavior as a pair. See [Go MCP Facade Helper](../features/mcp-facade-helper.md).
 
 ## HTTP error format
 

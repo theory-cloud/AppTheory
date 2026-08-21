@@ -904,5 +904,87 @@
       "token_path": "/.well-known/oauth-authorization-server/acme/partners/pay/agents/bot/mcp/token",
       "authorization_server_suffix_path": "/acme/partners/pay/agents/bot/mcp/.well-known/oauth-authorization-server"
     }
+  ],
+  "documents": [
+    {
+      "name": "public_base_url namespace",
+      "mode": "public_base_url",
+      "kind": "namespace",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/mcp",
+      "authorization_server_suffix_path": "/acme/mcp/.well-known/oauth-authorization-server",
+      "protected_resource_document": "{\"resource\":\"https://front.example.com/acme/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"namespace:use\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/authorize\",\"token_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"namespace:use\"]}"
+    },
+    {
+      "name": "public_base_url partner_namespace",
+      "mode": "public_base_url",
+      "kind": "partner_namespace",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/partners/reseller/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/partners/reseller/mcp",
+      "authorization_server_suffix_path": "/acme/partners/reseller/mcp/.well-known/oauth-authorization-server",
+      "protected_resource_document": "{\"resource\":\"https://front.example.com/acme/partners/reseller/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"partner_namespace:use\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/mcp/authorize\",\"token_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"partner_namespace:use\"]}"
+    },
+    {
+      "name": "public_base_url agent",
+      "mode": "public_base_url",
+      "kind": "agent",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/agents/helper/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/agents/helper/mcp",
+      "authorization_server_suffix_path": "/acme/agents/helper/mcp/.well-known/oauth-authorization-server",
+      "protected_resource_document": "{\"resource\":\"https://front.example.com/acme/agents/helper/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"agent:use\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/authorize\",\"token_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"agent:use\"]}"
+    },
+    {
+      "name": "public_base_url partner_agent",
+      "mode": "public_base_url",
+      "kind": "partner_agent",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/partners/reseller/agents/helper/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp",
+      "authorization_server_suffix_path": "/acme/partners/reseller/agents/helper/mcp/.well-known/oauth-authorization-server",
+      "protected_resource_document": "{\"resource\":\"https://front.example.com/acme/partners/reseller/agents/helper/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"partner_agent:use\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp/authorize\",\"token_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"partner_agent:use\"]}"
+    },
+    {
+      "name": "request_host namespace",
+      "mode": "request_host",
+      "kind": "namespace",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/mcp",
+      "authorization_server_suffix_path": "/acme/mcp/.well-known/oauth-authorization-server",
+      "protected_resource_document": "{\"resource\":\"https://direct.example.com/acme/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"namespace:use\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/mcp/authorize\",\"token_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"namespace:use\"]}"
+    },
+    {
+      "name": "request_host partner_namespace",
+      "mode": "request_host",
+      "kind": "partner_namespace",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/partners/reseller/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/partners/reseller/mcp",
+      "authorization_server_suffix_path": "/acme/partners/reseller/mcp/.well-known/oauth-authorization-server",
+      "protected_resource_document": "{\"resource\":\"https://direct.example.com/acme/partners/reseller/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"partner_namespace:use\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/mcp/authorize\",\"token_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"partner_namespace:use\"]}"
+    },
+    {
+      "name": "request_host agent",
+      "mode": "request_host",
+      "kind": "agent",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/agents/helper/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/agents/helper/mcp",
+      "authorization_server_suffix_path": "/acme/agents/helper/mcp/.well-known/oauth-authorization-server",
+      "protected_resource_document": "{\"resource\":\"https://direct.example.com/acme/agents/helper/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"agent:use\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/authorize\",\"token_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"agent:use\"]}"
+    },
+    {
+      "name": "request_host partner_agent",
+      "mode": "request_host",
+      "kind": "partner_agent",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/partners/reseller/agents/helper/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp",
+      "authorization_server_suffix_path": "/acme/partners/reseller/agents/helper/mcp/.well-known/oauth-authorization-server",
+      "protected_resource_document": "{\"resource\":\"https://direct.example.com/acme/partners/reseller/agents/helper/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"partner_agent:use\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp/authorize\",\"token_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"partner_agent:use\"]}"
+    }
   ]
 }

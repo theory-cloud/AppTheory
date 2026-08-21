@@ -3663,6 +3663,81 @@ func (dynamoTaskRecord) TableName() string
 
 func (sessionRecord) TableName() string
 
+## github.com/theory-cloud/apptheory/v3/runtime/mcpfacade
+
+const URLModePublicBaseURL URLMode = "public_base_url"
+
+const URLModeRequestHost URLMode = "request_host"
+
+type Capabilities struct {
+	ResponseTypes            []string
+	GrantTypes               []string
+	TokenEndpointAuthMethods []string
+	CodeChallengeMethods     []string
+}
+
+type FacadeConfig struct {
+	IssuerURL string
+
+	JWKSURI string
+
+	RegistrationEndpointURL string
+
+	URLMode       URLMode
+	PublicBaseURL string
+
+	AllowedHostnames []string
+
+	Scopes map[mcproutes.EndpointKind][]string
+
+	Capabilities Capabilities
+
+	MCPHandler apptheory.Handler
+
+	AuthorizeHandler HandlerFactory
+	TokenHandler     HandlerFactory
+
+	RootAuthorizationServer *RootDiscoveryConfig
+}
+
+type HandlerFactory func(mcproutes.EndpointKind) apptheory.Handler
+
+type RootDiscoveryConfig struct {
+	IssuerURL                string
+	AuthorizationEndpointURL string
+	TokenEndpointURL         string
+	RegistrationEndpointURL  string
+	JWKSURI                  string
+	Scopes                   []string
+}
+
+type Route struct {
+	Kind                        mcproutes.EndpointKind
+	MCPPattern                  string
+	MCPMethods                  []string
+	ProtectedResourcePattern    string
+	DiscoveryCanonicalPattern   string
+	DiscoverySuffixPattern      string
+	AuthorizePattern            string
+	TokenPattern                string
+	AuthorizationRoutesAttached bool
+}
+
+type RouteInventory struct {
+	ContractVersion                 string
+	Routes                          []Route
+	RootAuthorizationServerPattern  string
+	RootAuthorizationServerAttached bool
+}
+
+type URLMode string
+
+func DefaultCapabilities() Capabilities
+
+func RegisterMCPFacade(*apptheory.App, FacadeConfig) (*RouteInventory, error)
+
+func (*metadataRequestError) Error() string
+
 ## github.com/theory-cloud/apptheory/v3/runtime/mcproutes
 
 const AgentMCPPattern = "/{client_namespace}/agents/{agent_id}/mcp"
@@ -3680,6 +3755,12 @@ const EndpointKindPartnerAgent EndpointKind = "partner_agent"
 const EndpointKindPartnerNamespace EndpointKind = "partner_namespace"
 
 const NamespaceMCPPattern = "/{client_namespace}/mcp"
+
+const ParamAgentID = "agent_id"
+
+const ParamClientNamespace = "client_namespace"
+
+const ParamPartnerID = "partner_id"
 
 const PartnerAgentMCPPattern = "/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
 
@@ -4931,6 +5012,8 @@ func NewOpaqueToken() (string, error)
 func NewPKCECodeVerifier() (string, error)
 
 func NewProtectedResourceMetadata(string, []string) (*ProtectedResourceMetadata, error)
+
+func NormalizeRequestOrigin(string) (string, bool)
 
 func PKCEChallengeS256(string) (string, error)
 
