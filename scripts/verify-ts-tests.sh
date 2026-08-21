@@ -10,7 +10,7 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 if ! command -v npm >/dev/null 2>&1; then
   echo "ts-tests: BLOCKED (npm not found)" >&2
-  exit 1
+  exit 2
 fi
 if [[ ! -d "ts" ]]; then
   echo "ts-tests: FAIL (missing ts/)" >&2
