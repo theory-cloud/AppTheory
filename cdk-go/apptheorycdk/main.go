@@ -598,6 +598,22 @@ func init() {
 			"LINEAR":      AppTheoryLambdaTrafficShiftType_LINEAR,
 		},
 	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpEndpointPath",
+		reflect.TypeOf((*AppTheoryMcpEndpointPath)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpEndpointTemplate",
+		reflect.TypeOf((*AppTheoryMcpEndpointTemplate)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpOAuthDiscoveryTemplate",
+		reflect.TypeOf((*AppTheoryMcpOAuthDiscoveryTemplate)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpOAuthFacadeTemplate",
+		reflect.TypeOf((*AppTheoryMcpOAuthFacadeTemplate)(nil)).Elem(),
+	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpPaths",
 		reflect.TypeOf((*AppTheoryMcpPaths)(nil)).Elem(),
@@ -623,6 +639,14 @@ func init() {
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResourceProps",
 		reflect.TypeOf((*AppTheoryMcpProtectedResourceProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra",
+		reflect.TypeOf((*AppTheoryMcpRouteAlgebra)(nil)).Elem(),
+		nil, // no members
+		func() interface{} {
+			return &jsiiProxy_AppTheoryMcpRouteAlgebra{}
+		},
 	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpServer",
