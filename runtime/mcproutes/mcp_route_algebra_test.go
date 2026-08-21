@@ -135,6 +135,38 @@ func loadExpectations(t *testing.T) routeAlgebraExpectations {
 	return expectations
 }
 
+func TestSharedExpectationRowCounts(t *testing.T) {
+	t.Parallel()
+	expected := loadExpectations(t)
+	sections := []struct {
+		name string
+		got  int
+		want int
+	}{
+		{name: "contract.patterns", got: len(expected.Contract.Patterns), want: 4},
+		{name: "normalization", got: len(expected.Normalization), want: 8},
+		{name: "derivations", got: len(expected.Derivations), want: 3},
+		{name: "parser.accept", got: len(expected.Parser.Accept), want: 4},
+		{name: "parser.reject", got: len(expected.Parser.Reject), want: 23},
+		{name: "validation", got: len(expected.Validation), want: 23},
+		{name: "whitespace_boundary", got: len(expected.WhitespaceBoundary), want: 26},
+		{name: "protected_resource_inverse.accept", got: len(expected.ProtectedResourceInverse.Accept), want: 3},
+		{name: "protected_resource_inverse.reject", got: len(expected.ProtectedResourceInverse.Reject), want: 3},
+		{name: "builders", got: len(expected.Builders), want: 4},
+	}
+
+	total := 0
+	for _, section := range sections {
+		if section.got != section.want {
+			t.Errorf("%s rows = %d, want %d", section.name, section.got, section.want)
+		}
+		total += section.got
+	}
+	if total != 101 {
+		t.Errorf("total expectation rows = %d, want 101", total)
+	}
+}
+
 func TestSharedContractConstantsAndTemplates(t *testing.T) {
 	t.Parallel()
 	expected := loadExpectations(t).Contract

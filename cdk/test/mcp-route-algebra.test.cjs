@@ -34,6 +34,36 @@ function protectedPathForNormalized(normalized) {
     : expectations.contract.protected_resource_prefix + normalized;
 }
 
+test("shared expectations pin every section row count", () => {
+  const sections = [
+    ["contract.patterns", expectations.contract.patterns, 4],
+    ["normalization", expectations.normalization, 8],
+    ["derivations", expectations.derivations, 3],
+    ["parser.accept", expectations.parser.accept, 4],
+    ["parser.reject", expectations.parser.reject, 23],
+    ["validation", expectations.validation, 23],
+    ["whitespace_boundary", expectations.whitespace_boundary, 26],
+    [
+      "protected_resource_inverse.accept",
+      expectations.protected_resource_inverse.accept,
+      3,
+    ],
+    [
+      "protected_resource_inverse.reject",
+      expectations.protected_resource_inverse.reject,
+      3,
+    ],
+    ["builders", expectations.builders, 4],
+  ];
+
+  let total = 0;
+  for (const [name, rows, expectedCount] of sections) {
+    assert.equal(rows.length, expectedCount, `${name} row count`);
+    total += rows.length;
+  }
+  assert.equal(total, 101, "total expectation row count");
+});
+
 test("shared expectations pin constants and every template derivation", () => {
   const contract = expectations.contract;
   assert.equal(Algebra.CONTRACT_VERSION, contract.version);
