@@ -19,11 +19,6 @@ if ! command -v npm >/dev/null 2>&1; then
   echo "contract-tests: BLOCKED (npm not found)" >&2
   exit 2
 fi
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "contract-tests: BLOCKED (python3 not found)" >&2
-  exit 2
-fi
-
 go run ./contract-tests/runners/go
 
 ensure_ts_runtime_deps_installed
