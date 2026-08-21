@@ -146,7 +146,7 @@ func mcpProtectedResourceDiscoveryHandler(config MCPServerConfig) apptheory.Hand
 		if ctx != nil {
 			headers = ctx.Request.Headers
 		}
-		requestOrigin, ok := normalizeRequestOrigin(apptheory.OriginURL(headers))
+		requestOrigin, ok := NormalizeRequestOrigin(apptheory.OriginURL(headers))
 		if !ok {
 			return jsonResponse(400, map[string]string{
 				"error": "request host is required for OAuth protected-resource discovery",
@@ -237,15 +237,18 @@ func normalizeConfiguredURL(raw string, trimTrailingSlash, issuer bool) (string,
 
 var literalMCPRoutePathPattern = regexp.MustCompile(`^/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})+(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})+)*$`)
 
-func normalizeRequestOrigin(raw string) (string, bool) {
+// NormalizeRequestOrigin validates and canonicalizes a request-derived origin.
+// It accepts HTTPS, plus HTTP only for loopback hosts, and removes scheme-
+// default ports.
+func NormalizeRequestOrigin(raw string) (string, bool) {
 	u, ok := parseAbsoluteURL(raw)
-	if !ok || u.User != nil || u.Hostname() == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+	if !ok || u.User != nil || u.Hostname() == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" {
 		return "", false
 	}
 	if u.Path != "" && u.Path != "/" {
 		return "", false
 	}
-	if !isAllowedDiscoveryScheme(u.Scheme, u.Hostname()) {
+	if !isAllowedDiscoveryScheme(strings.ToLower(u.Scheme), u.Hostname()) {
 		return "", false
 	}
 	if !canonicalizeRequestOriginAuthority(u) {
@@ -262,7 +265,7 @@ func canonicalizeRequestOriginAuthority(u *url.URL) bool {
 		return false
 	}
 	port := u.Port()
-	if port == defaultPortForScheme(u.Scheme) {
+	if port == defaultPortForScheme(strings.ToLower(u.Scheme)) {
 		port = ""
 	}
 	host := hostname

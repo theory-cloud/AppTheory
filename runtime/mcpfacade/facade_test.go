@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"testing"
 
@@ -19,6 +20,23 @@ var testEndpoints = []mcproutes.EndpointPath{
 	{Kind: mcproutes.EndpointKindPartnerNamespace, ClientNamespace: "acme", PartnerID: "reseller"},
 	{Kind: mcproutes.EndpointKindAgent, ClientNamespace: "acme", AgentID: "helper"},
 	{Kind: mcproutes.EndpointKindPartnerAgent, ClientNamespace: "acme", PartnerID: "reseller", AgentID: "helper"},
+}
+
+const documentExpectationsPath = "../../contract-tests/fixtures/routing/mcp-route-algebra/expectations.json"
+
+type documentFixture struct {
+	Name                          string                 `json:"name"`
+	Mode                          URLMode                `json:"mode"`
+	Kind                          mcproutes.EndpointKind `json:"kind"`
+	ProtectedResourcePath         string                 `json:"protected_resource_path"`
+	AuthorizationServerPath       string                 `json:"authorization_server_path"`
+	AuthorizationServerSuffixPath string                 `json:"authorization_server_suffix_path"`
+	ProtectedResourceDocument     string                 `json:"protected_resource_document"`
+	AuthorizationServerDocument   string                 `json:"authorization_server_document"`
+}
+
+type documentFixtureFile struct {
+	Documents []documentFixture `json:"documents"`
 }
 
 func TestRegisterMCPFacadeRegistersCompleteContractSurface(t *testing.T) {
@@ -87,7 +105,7 @@ func TestMetadataDocumentsAreByteExactForEveryKindAndURLMode(t *testing.T) {
 		headers    map[string][]string
 		publicBase string
 	}{
-		{name: "install time public base URL", mode: URLModePublicBaseURL, publicBase: "https://front.example.com/base/"},
+		{name: "install time public base URL", mode: URLModePublicBaseURL, publicBase: "https://front.example.com/"},
 		{name: "request host", mode: URLModeRequestHost, headers: map[string][]string{"host": {"Direct.Example.com.:443"}, "x-forwarded-proto": {"https"}}},
 	}
 	for _, test := range tests {
@@ -101,7 +119,7 @@ func TestMetadataDocumentsAreByteExactForEveryKindAndURLMode(t *testing.T) {
 
 			base := "https://direct.example.com"
 			if test.mode == URLModePublicBaseURL {
-				base = "https://front.example.com/base"
+				base = "https://front.example.com"
 			}
 			for _, endpoint := range testEndpoints {
 				mcpPath := mustPath(t, endpoint.MCPPath)
@@ -122,6 +140,38 @@ func TestMetadataDocumentsAreByteExactForEveryKindAndURLMode(t *testing.T) {
 				require.Equal(t, 200, suffix.Status)
 				require.Equal(t, expectedDiscovery, string(suffix.Body))
 			}
+		})
+	}
+}
+
+func TestSharedFixturePinsRoutedDocumentBytesPerKindAndMode(t *testing.T) {
+	t.Parallel()
+	contents, err := os.ReadFile(documentExpectationsPath)
+	require.NoError(t, err)
+	var fixtures documentFixtureFile
+	require.NoError(t, json.Unmarshal(contents, &fixtures))
+	require.Len(t, fixtures.Documents, 8)
+
+	for _, fixture := range fixtures.Documents {
+		t.Run(fixture.Name, func(t *testing.T) {
+			t.Parallel()
+			app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+			_, registerErr := RegisterMCPFacade(app, validConfig(fixture.Mode))
+			require.NoError(t, registerErr)
+			headers := map[string][]string(nil)
+			if fixture.Mode == URLModeRequestHost {
+				headers = map[string][]string{"host": {"direct.example.com"}, "x-forwarded-proto": {"https"}}
+			}
+
+			protected := serve(app, "GET", fixture.ProtectedResourcePath, headers)
+			require.Equal(t, 200, protected.Status)
+			require.Equal(t, fixture.ProtectedResourceDocument, string(protected.Body))
+			canonical := serve(app, "GET", fixture.AuthorizationServerPath, headers)
+			require.Equal(t, 200, canonical.Status)
+			require.Equal(t, fixture.AuthorizationServerDocument, string(canonical.Body))
+			suffix := serve(app, "GET", fixture.AuthorizationServerSuffixPath, headers)
+			require.Equal(t, 200, suffix.Status)
+			require.Equal(t, fixture.AuthorizationServerDocument, string(suffix.Body))
 		})
 	}
 }
@@ -148,8 +198,8 @@ func TestDiscoveryRebuildsPathParameterIdentityForEveryKind(t *testing.T) {
 			require.NoError(t, json.Unmarshal(response.Body, &body))
 			authorizePath := mustPath(t, endpoint.OAuthAuthorizePath)
 			tokenPath := mustPath(t, endpoint.OAuthTokenPath)
-			require.Equal(t, "https://front.example.com/base"+authorizePath, body.AuthorizationEndpoint)
-			require.Equal(t, "https://front.example.com/base"+tokenPath, body.TokenEndpoint)
+			require.Equal(t, "https://front.example.com"+authorizePath, body.AuthorizationEndpoint)
+			require.Equal(t, "https://front.example.com"+tokenPath, body.TokenEndpoint)
 		}
 	}
 }
@@ -178,6 +228,147 @@ func TestRequestHostModeUsesNormalizedAPIGatewayEventHeaders(t *testing.T) {
 	require.Equal(t, expectedProtectedResourceJSON("https://api.example.com/acme/mcp", mcproutes.EndpointKindNamespace), response.Body)
 }
 
+func TestRequestHostModeFailsClosedForSpoofedHigherPrecedenceHosts(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		headers map[string][]string
+	}{
+		{
+			name: "x forwarded host",
+			headers: map[string][]string{
+				"host": {"direct.example.com"}, "x-forwarded-host": {"evil.example"}, "x-forwarded-proto": {"https"},
+			},
+		},
+		{
+			name: "x apptheory original host",
+			headers: map[string][]string{
+				"host": {"direct.example.com"}, "x-apptheory-original-host": {"evil.example"}, "x-forwarded-proto": {"https"},
+			},
+		},
+		{
+			name: "x facetheory original host",
+			headers: map[string][]string{
+				"host": {"direct.example.com"}, "x-facetheory-original-host": {"evil.example"}, "x-forwarded-proto": {"https"},
+			},
+		},
+		{
+			name: "forwarded host",
+			headers: map[string][]string{
+				"host": {"direct.example.com"}, "forwarded": {"for=192.0.2.1;host=evil.example;proto=https"},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+			_, err := RegisterMCPFacade(app, validConfig(URLModeRequestHost))
+			require.NoError(t, err)
+			response := serve(app, "GET", "/.well-known/oauth-authorization-server/acme/mcp", test.headers)
+			require.Equal(t, 400, response.Status)
+			require.Equal(t, `{"error":"invalid_request_host"}`, string(response.Body))
+			assertMetadataHeaders(t, response)
+		})
+	}
+}
+
+func TestRequestHostModeAllowsOnlyNormalizedAllowlistMatches(t *testing.T) {
+	t.Parallel()
+	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	config := validConfig(URLModeRequestHost)
+	config.AllowedHostnames = []string{"DIRECT.EXAMPLE.COM.:443", "edge.example.com"}
+	_, err := RegisterMCPFacade(app, config)
+	require.NoError(t, err)
+
+	legit := serve(app, "GET", "/.well-known/oauth-protected-resource/acme/mcp", map[string][]string{
+		"host": {"direct.example.com:443"}, "x-forwarded-proto": {"https"},
+	})
+	require.Equal(t, 200, legit.Status)
+	require.Equal(t, expectedProtectedResourceJSON("https://direct.example.com/acme/mcp", mcproutes.EndpointKindNamespace), string(legit.Body))
+
+	forwarded := serve(app, "GET", "/.well-known/oauth-protected-resource/acme/mcp", map[string][]string{
+		"host": {"direct.example.com"}, "x-forwarded-host": {"EDGE.EXAMPLE.COM.:443"}, "x-forwarded-proto": {"https"},
+	})
+	require.Equal(t, 200, forwarded.Status)
+	require.Equal(t, expectedProtectedResourceJSON("https://edge.example.com/acme/mcp", mcproutes.EndpointKindNamespace), string(forwarded.Body))
+}
+
+func TestEveryFacadeMetadataResponseIsNoStoreAndVariesOnOriginHeaders(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []URLMode{URLModePublicBaseURL, URLModeRequestHost} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+			config := validConfig(mode)
+			config.RootAuthorizationServer = validRootDiscoveryConfig()
+			_, err := RegisterMCPFacade(app, config)
+			require.NoError(t, err)
+			headers := map[string][]string(nil)
+			if mode == URLModeRequestHost {
+				headers = map[string][]string{"host": {"direct.example.com"}, "x-forwarded-proto": {"https"}}
+			}
+			for _, endpoint := range testEndpoints {
+				for _, pathBuilder := range []func() (string, error){
+					endpoint.ProtectedResourcePath,
+					endpoint.OAuthAuthorizationServerPath,
+					endpoint.OAuthAuthorizationServerSuffixPath,
+				} {
+					response := serve(app, "GET", mustPath(t, pathBuilder), headers)
+					require.Equal(t, 200, response.Status)
+					assertMetadataHeaders(t, response)
+				}
+			}
+			root := serve(app, "GET", mcproutes.AuthorizationServerPathForResourcePath("/"), headers)
+			require.Equal(t, 200, root.Status)
+			assertMetadataHeaders(t, root)
+		})
+	}
+}
+
+func TestRootAuthorizationServerDiscoveryIsOptInAndStatic(t *testing.T) {
+	t.Parallel()
+	withoutRoot := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	inventory, err := RegisterMCPFacade(withoutRoot, validConfig(URLModePublicBaseURL))
+	require.NoError(t, err)
+	require.False(t, inventory.RootAuthorizationServerAttached)
+	require.Equal(t, mcproutes.AuthorizationServerPathForResourcePath("/"), inventory.RootAuthorizationServerPattern)
+	require.Equal(t, 404, serve(withoutRoot, "GET", inventory.RootAuthorizationServerPattern, nil).Status)
+
+	withRoot := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	config := validConfig(URLModePublicBaseURL)
+	config.RootAuthorizationServer = validRootDiscoveryConfig()
+	inventory, err = RegisterMCPFacade(withRoot, config)
+	require.NoError(t, err)
+	require.True(t, inventory.RootAuthorizationServerAttached)
+	response := serve(withRoot, "GET", inventory.RootAuthorizationServerPattern, nil)
+	require.Equal(t, 200, response.Status)
+	require.Equal(t, `{"issuer":"https://accounts.example.com","authorization_endpoint":"https://accounts.example.com/authorize","token_endpoint":"https://accounts.example.com/token","registration_endpoint":"https://accounts.example.com/register","jwks_uri":"https://accounts.example.com/.well-known/jwks.json","response_types_supported":["code"],"grant_types_supported":["authorization_code","refresh_token"],"token_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":["openid","offline_access","mcp:tools"]}`, string(response.Body))
+
+	// Root is separate from the four-kind canonical/suffix loop.
+	require.Len(t, inventory.Routes, 4)
+	for _, route := range inventory.Routes {
+		require.NotEqual(t, inventory.RootAuthorizationServerPattern, route.DiscoveryCanonicalPattern)
+		require.NotEqual(t, inventory.RootAuthorizationServerPattern, route.DiscoverySuffixPattern)
+	}
+}
+
+func TestRouteInventoryDuplicatesAndRegisteredCollisionsReturnErrors(t *testing.T) {
+	t.Parallel()
+	handler := func(*apptheory.Context) (*apptheory.Response, error) { return apptheory.NoContent(), nil }
+	registrations := []routeRegistration{
+		{method: "GET", pattern: "/duplicate", handler: handler},
+		{method: "get", pattern: "/duplicate", handler: handler},
+	}
+	require.ErrorContains(t, validateRouteRegistrations(registrations), "duplicate route inventory entry")
+
+	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	app.Post(mcproutes.NamespaceMCPPattern, handler)
+	_, err := RegisterMCPFacade(app, validConfig(URLModePublicBaseURL))
+	require.ErrorContains(t, err, "register POST "+mcproutes.NamespaceMCPPattern)
+	require.Equal(t, 405, serve(app, "GET", "/acme/mcp", nil).Status)
+}
+
 func TestScopesCapabilitiesAndRegistrationEndpointAreApplicationOwned(t *testing.T) {
 	t.Parallel()
 	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
@@ -196,7 +387,7 @@ func TestScopesCapabilitiesAndRegistrationEndpointAreApplicationOwned(t *testing
 	protected := serve(app, "GET", "/.well-known/oauth-protected-resource/acme/agents/helper/mcp", nil)
 	require.Contains(t, string(protected.Body), `"scopes_supported":["custom:read","custom:write"]`)
 	discovery := serve(app, "GET", "/.well-known/oauth-authorization-server/acme/agents/helper/mcp", nil)
-	require.Equal(t, `{"issuer":"https://issuer.example.com","authorization_endpoint":"https://front.example.com/base/.well-known/oauth-authorization-server/acme/agents/helper/mcp/authorize","token_endpoint":"https://front.example.com/base/.well-known/oauth-authorization-server/acme/agents/helper/mcp/token","registration_endpoint":"https://accounts.example.com/custom-register","jwks_uri":"https://issuer.example.com/jwks.json?set=active","response_types_supported":["device_code"],"grant_types_supported":["urn:custom:grant"],"token_endpoint_auth_methods_supported":["client_secret_post"],"code_challenge_methods_supported":["plain"],"scopes_supported":["custom:read","custom:write"]}`, string(discovery.Body))
+	require.Equal(t, `{"issuer":"https://issuer.example.com","authorization_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/authorize","token_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/token","registration_endpoint":"https://accounts.example.com/custom-register","jwks_uri":"https://issuer.example.com/jwks.json?set=active","response_types_supported":["device_code"],"grant_types_supported":["urn:custom:grant"],"token_endpoint_auth_methods_supported":["client_secret_post"],"code_challenge_methods_supported":["plain"],"scopes_supported":["custom:read","custom:write"]}`, string(discovery.Body))
 }
 
 func TestMissingPlugPointsLeaveAuthorizationRoutesUnregistered(t *testing.T) {
@@ -234,8 +425,8 @@ func TestMalformedAndUnknownPathsFailClosed(t *testing.T) {
 	hostApp := apptheory.New(apptheory.WithTier(apptheory.TierP0))
 	_, err = RegisterMCPFacade(hostApp, validConfig(URLModeRequestHost))
 	require.NoError(t, err)
-	require.Equal(t, 500, serve(hostApp, "GET", "/.well-known/oauth-protected-resource/acme/mcp", nil).Status)
-	require.Equal(t, 500, serve(hostApp, "GET", "/.well-known/oauth-authorization-server/acme/mcp", map[string][]string{"host": {"evil.example"}, "x-forwarded-proto": {"http"}}).Status)
+	require.Equal(t, 400, serve(hostApp, "GET", "/.well-known/oauth-protected-resource/acme/mcp", nil).Status)
+	require.Equal(t, 400, serve(hostApp, "GET", "/.well-known/oauth-authorization-server/acme/mcp", map[string][]string{"host": {"evil.example"}, "x-forwarded-proto": {"http"}}).Status)
 
 	_, err = endpointFromMCPRequest(nil)
 	require.Error(t, err)
@@ -243,7 +434,7 @@ func TestMalformedAndUnknownPathsFailClosed(t *testing.T) {
 	require.Error(t, err)
 	_, err = endpointFromDiscoveryRequest(nil, mcproutes.EndpointKindNamespace)
 	require.Error(t, err)
-	_, err = endpointFromDiscoveryRequest(&apptheory.Context{Request: apptheory.Request{Path: "/wrong"}, Params: map[string]string{"client_namespace": "acme"}}, mcproutes.EndpointKindNamespace)
+	_, err = endpointFromDiscoveryRequest(&apptheory.Context{Request: apptheory.Request{Path: "/wrong"}, Params: map[string]string{mcproutes.ParamClientNamespace: "acme"}}, mcproutes.EndpointKindNamespace)
 	require.Error(t, err)
 	_, err = endpointFromRouteParams(nil, mcproutes.EndpointKindNamespace)
 	require.Error(t, err)
@@ -265,7 +456,18 @@ func TestRegisterMCPFacadeValidatesConfigurationBeforeRegistration(t *testing.T)
 		{name: "missing URL mode", mutate: func(config *FacadeConfig) { config.URLMode = "" }},
 		{name: "missing public base", mutate: func(config *FacadeConfig) { config.PublicBaseURL = "" }},
 		{name: "public base query", mutate: func(config *FacadeConfig) { config.PublicBaseURL += "?bad=1" }},
+		{name: "public base path", mutate: func(config *FacadeConfig) { config.PublicBaseURL = "https://front.example.com/base" }},
+		{name: "public base with allowlist", mutate: func(config *FacadeConfig) { config.AllowedHostnames = []string{"front.example.com"} }},
 		{name: "request host with public base", mutate: func(config *FacadeConfig) { config.URLMode = URLModeRequestHost }},
+		{name: "request host without allowlist", mutate: func(config *FacadeConfig) {
+			config.URLMode = URLModeRequestHost
+			config.PublicBaseURL = ""
+		}},
+		{name: "request host invalid allowlist", mutate: func(config *FacadeConfig) {
+			config.URLMode = URLModeRequestHost
+			config.PublicBaseURL = ""
+			config.AllowedHostnames = []string{"https://front.example.com"}
+		}},
 		{name: "missing scopes", mutate: func(config *FacadeConfig) { delete(config.Scopes, mcproutes.EndpointKindAgent) }},
 		{name: "empty scope", mutate: func(config *FacadeConfig) { config.Scopes[mcproutes.EndpointKindAgent] = []string{" "} }},
 		{name: "unknown scope kind", mutate: func(config *FacadeConfig) { config.Scopes["unknown"] = []string{"scope"} }},
@@ -280,6 +482,14 @@ func TestRegisterMCPFacadeValidatesConfigurationBeforeRegistration(t *testing.T)
 		{name: "nil token result", mutate: func(config *FacadeConfig) {
 			config.AuthorizeHandler = kindHandlerFactory("authorize")
 			config.TokenHandler = func(mcproutes.EndpointKind) apptheory.Handler { return nil }
+		}},
+		{name: "incomplete root discovery", mutate: func(config *FacadeConfig) {
+			config.RootAuthorizationServer = validRootDiscoveryConfig()
+			config.RootAuthorizationServer.TokenEndpointURL = ""
+		}},
+		{name: "empty root scopes", mutate: func(config *FacadeConfig) {
+			config.RootAuthorizationServer = validRootDiscoveryConfig()
+			config.RootAuthorizationServer.Scopes = nil
 		}},
 	}
 	for _, test := range tests {
@@ -300,6 +510,14 @@ func TestRegisterMCPFacadeValidatesConfigurationBeforeRegistration(t *testing.T)
 	}
 }
 
+func TestPublicBaseURLPathConstraintIsExplicit(t *testing.T) {
+	t.Parallel()
+	config := validConfig(URLModePublicBaseURL)
+	config.PublicBaseURL = "https://front.example.com/base"
+	_, err := RegisterMCPFacade(apptheory.New(apptheory.WithTier(apptheory.TierP0)), config)
+	require.ErrorContains(t, err, "without a path")
+}
+
 func TestHelpersCanonicalizeURLsAndDefensivelyCloneInventory(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, Capabilities{
@@ -309,9 +527,9 @@ func TestHelpersCanonicalizeURLsAndDefensivelyCloneInventory(t *testing.T) {
 		CodeChallengeMethods:     []string{"S256"},
 	}, DefaultCapabilities())
 
-	base, ok := normalizePublicBaseURL("http://LOCALHOST:80/api/")
+	base, ok := normalizePublicBaseURL("http://LOCALHOST:80/")
 	require.True(t, ok)
-	require.Equal(t, "http://localhost/api", base)
+	require.Equal(t, "http://localhost", base)
 	base, ok = normalizePublicBaseURL("http://[::1]:8080/")
 	require.True(t, ok)
 	require.Equal(t, "http://[::1]:8080", base)
@@ -319,11 +537,7 @@ func TestHelpersCanonicalizeURLsAndDefensivelyCloneInventory(t *testing.T) {
 	require.False(t, ok)
 	_, ok = normalizePublicBaseURL("https://user@example.com")
 	require.False(t, ok)
-
-	origin, ok := normalizeRequestOrigin("https://EXAMPLE.com.:443/")
-	require.True(t, ok)
-	require.Equal(t, "https://example.com", origin)
-	_, ok = normalizeRequestOrigin("https://example.com/path")
+	_, ok = normalizePublicBaseURL("https://example.com/path")
 	require.False(t, ok)
 
 	absolute, ok := absoluteURLForPath("https://example.com/base?discard=yes", "/route")
@@ -334,7 +548,7 @@ func TestHelpersCanonicalizeURLsAndDefensivelyCloneInventory(t *testing.T) {
 	_, ok = absoluteURLForPath("https://example.com", "relative")
 	require.False(t, ok)
 
-	inventory, err := buildInventory(true)
+	inventory, err := buildInventory(true, false)
 	require.NoError(t, err)
 	cloned := cloneInventory(inventory)
 	cloned.Routes[0].MCPMethods[0] = "PATCH"
@@ -348,7 +562,7 @@ func validConfig(mode URLMode) FacadeConfig {
 		IssuerURL:     "https://issuer.example.com/",
 		JWKSURI:       "https://issuer.example.com/jwks.json?set=active",
 		URLMode:       mode,
-		PublicBaseURL: "https://front.example.com/base/",
+		PublicBaseURL: "https://front.example.com/",
 		Scopes: map[mcproutes.EndpointKind][]string{
 			mcproutes.EndpointKindNamespace:        {"namespace:use"},
 			mcproutes.EndpointKindPartnerNamespace: {"partner_namespace:use"},
@@ -361,15 +575,33 @@ func validConfig(mode URLMode) FacadeConfig {
 	}
 	if mode == URLModeRequestHost {
 		config.PublicBaseURL = ""
+		config.AllowedHostnames = []string{"direct.example.com", "api.example.com"}
 	}
 	return config
 }
 
+func validRootDiscoveryConfig() *RootDiscoveryConfig {
+	return &RootDiscoveryConfig{
+		IssuerURL:                "https://accounts.example.com",
+		AuthorizationEndpointURL: "https://accounts.example.com/authorize",
+		TokenEndpointURL:         "https://accounts.example.com/token",
+		RegistrationEndpointURL:  "https://accounts.example.com/register",
+		JWKSURI:                  "https://accounts.example.com/.well-known/jwks.json",
+		Scopes:                   []string{"openid", "offline_access", "mcp:tools"},
+	}
+}
+
 func cloneConfig(config FacadeConfig) FacadeConfig {
 	clone := config
+	clone.AllowedHostnames = append([]string(nil), config.AllowedHostnames...)
 	clone.Scopes = make(map[mcproutes.EndpointKind][]string, len(config.Scopes))
 	for kind, scopes := range config.Scopes {
 		clone.Scopes[kind] = append([]string(nil), scopes...)
+	}
+	if config.RootAuthorizationServer != nil {
+		root := *config.RootAuthorizationServer
+		root.Scopes = append([]string(nil), config.RootAuthorizationServer.Scopes...)
+		clone.RootAuthorizationServer = &root
 	}
 	return clone
 }
@@ -399,4 +631,10 @@ func expectedProtectedResourceJSON(resource string, kind mcproutes.EndpointKind)
 
 func expectedAuthorizationServerJSON(authorizeURL, tokenURL string, kind mcproutes.EndpointKind) string {
 	return fmt.Sprintf(`{"issuer":"https://issuer.example.com","authorization_endpoint":%q,"token_endpoint":%q,"registration_endpoint":"https://issuer.example.com/register","jwks_uri":"https://issuer.example.com/jwks.json?set=active","response_types_supported":["code"],"grant_types_supported":["authorization_code","refresh_token"],"token_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":[%q]}`, authorizeURL, tokenURL, string(kind)+":use")
+}
+
+func assertMetadataHeaders(t *testing.T, response apptheory.Response) {
+	t.Helper()
+	require.Equal(t, []string{"no-store"}, response.Headers["cache-control"])
+	require.Equal(t, []string{metadataVaryHeader}, response.Headers["vary"])
 }

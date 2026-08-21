@@ -3686,6 +3686,8 @@ type FacadeConfig struct {
 	URLMode       URLMode
 	PublicBaseURL string
 
+	AllowedHostnames []string
+
 	Scopes map[mcproutes.EndpointKind][]string
 
 	Capabilities Capabilities
@@ -3694,9 +3696,20 @@ type FacadeConfig struct {
 
 	AuthorizeHandler HandlerFactory
 	TokenHandler     HandlerFactory
+
+	RootAuthorizationServer *RootDiscoveryConfig
 }
 
 type HandlerFactory func(mcproutes.EndpointKind) apptheory.Handler
+
+type RootDiscoveryConfig struct {
+	IssuerURL                string
+	AuthorizationEndpointURL string
+	TokenEndpointURL         string
+	RegistrationEndpointURL  string
+	JWKSURI                  string
+	Scopes                   []string
+}
 
 type Route struct {
 	Kind                        mcproutes.EndpointKind
@@ -3711,8 +3724,10 @@ type Route struct {
 }
 
 type RouteInventory struct {
-	ContractVersion string
-	Routes          []Route
+	ContractVersion                 string
+	Routes                          []Route
+	RootAuthorizationServerPattern  string
+	RootAuthorizationServerAttached bool
 }
 
 type URLMode string
@@ -3720,6 +3735,8 @@ type URLMode string
 func DefaultCapabilities() Capabilities
 
 func RegisterMCPFacade(*apptheory.App, FacadeConfig) (*RouteInventory, error)
+
+func (*metadataRequestError) Error() string
 
 ## github.com/theory-cloud/apptheory/v3/runtime/mcproutes
 
@@ -3738,6 +3755,12 @@ const EndpointKindPartnerAgent EndpointKind = "partner_agent"
 const EndpointKindPartnerNamespace EndpointKind = "partner_namespace"
 
 const NamespaceMCPPattern = "/{client_namespace}/mcp"
+
+const ParamAgentID = "agent_id"
+
+const ParamClientNamespace = "client_namespace"
+
+const ParamPartnerID = "partner_id"
 
 const PartnerAgentMCPPattern = "/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
 
@@ -4989,6 +5012,8 @@ func NewOpaqueToken() (string, error)
 func NewPKCECodeVerifier() (string, error)
 
 func NewProtectedResourceMetadata(string, []string) (*ProtectedResourceMetadata, error)
+
+func NormalizeRequestOrigin(string) (string, bool)
 
 func PKCEChallengeS256(string) (string, error)
 

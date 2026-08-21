@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	httpsScheme = "https"
-	httpScheme  = "http"
+	httpsScheme        = "https"
+	httpScheme         = "http"
+	metadataVaryHeader = "Host, X-Forwarded-Host, X-AppTheory-Original-Host, X-FaceTheory-Original-Host, Forwarded, CloudFront-Forwarded-Proto, X-Forwarded-Proto"
 )
 
 // URLMode selects the source of absolute URLs in facade metadata documents.
@@ -39,6 +40,18 @@ type Capabilities struct {
 	GrantTypes               []string
 	TokenEndpointAuthMethods []string
 	CodeChallengeMethods     []string
+}
+
+// RootDiscoveryConfig configures the optional, unscoped authorization-server
+// discovery document. Unlike routed discovery, every endpoint is fixed at
+// registration time and belongs to the upstream authorization server.
+type RootDiscoveryConfig struct {
+	IssuerURL                string
+	AuthorizationEndpointURL string
+	TokenEndpointURL         string
+	RegistrationEndpointURL  string
+	JWKSURI                  string
+	Scopes                   []string
 }
 
 // DefaultCapabilities returns the golden-path OAuth capabilities: code
@@ -67,6 +80,10 @@ type FacadeConfig struct {
 
 	URLMode       URLMode
 	PublicBaseURL string
+	// AllowedHostnames is required in request-host mode. The request-derived
+	// authority must exact-match one entry after case and default-port
+	// normalization or metadata fails with HTTP 400.
+	AllowedHostnames []string
 
 	// Scopes must contain a non-empty scope set for every contract endpoint
 	// kind. Scope policy remains application-owned.
@@ -80,6 +97,10 @@ type FacadeConfig struct {
 	// mounts the derived paths; all authorization behavior remains app-owned.
 	AuthorizeHandler HandlerFactory
 	TokenHandler     HandlerFactory
+
+	// RootAuthorizationServer optionally installs one static GET at the
+	// algebra-derived root authorization-server discovery path.
+	RootAuthorizationServer *RootDiscoveryConfig
 }
 
 // Route describes one endpoint-kind route family installed by the helper.
@@ -97,8 +118,10 @@ type Route struct {
 
 // RouteInventory is a defensive snapshot of the installed facade surface.
 type RouteInventory struct {
-	ContractVersion string
-	Routes          []Route
+	ContractVersion                 string
+	Routes                          []Route
+	RootAuthorizationServerPattern  string
+	RootAuthorizationServerAttached bool
 }
 
 type normalizedConfig struct {
@@ -107,11 +130,20 @@ type normalizedConfig struct {
 	registrationEndpointURL string
 	urlMode                 URLMode
 	publicBaseURL           string
+	allowedHostnames        map[string]struct{}
 	scopes                  map[mcproutes.EndpointKind][]string
 	capabilities            Capabilities
 	mcpHandler              apptheory.Handler
 	authorizeHandlers       map[mcproutes.EndpointKind]apptheory.Handler
 	tokenHandlers           map[mcproutes.EndpointKind]apptheory.Handler
+	rootAuthorizationServer *oauth.AuthorizationServerMetadata
+	rootDiscoveryPath       string
+}
+
+type routeRegistration struct {
+	method  string
+	pattern string
+	handler apptheory.Handler
 }
 
 // RegisterMCPFacade installs the complete MCP OAuth facade described by
@@ -126,26 +158,16 @@ func RegisterMCPFacade(app *apptheory.App, config FacadeConfig) (*RouteInventory
 	if err != nil {
 		return nil, err
 	}
-	inventory, err := buildInventory(normalized.authorizeHandlers != nil)
+	inventory, err := buildInventory(normalized.authorizeHandlers != nil, normalized.rootAuthorizationServer != nil)
 	if err != nil {
 		return nil, err
 	}
-
-	for _, route := range inventory.Routes {
-		mcpHandler := checkedMCPHandler(route.Kind, normalized.mcpHandler)
-		app.Post(route.MCPPattern, mcpHandler)
-		app.Get(route.MCPPattern, mcpHandler)
-		app.Delete(route.MCPPattern, mcpHandler)
-		app.Get(route.ProtectedResourcePattern, protectedResourceHandler(normalized, route.Kind))
-
-		discoveryHandler := authorizationServerHandler(normalized, route.Kind)
-		app.Get(route.DiscoveryCanonicalPattern, discoveryHandler)
-		app.Get(route.DiscoverySuffixPattern, discoveryHandler)
-
-		if route.AuthorizationRoutesAttached {
-			app.Get(route.AuthorizePattern, checkedOAuthFacadeHandler(route.Kind, true, normalized.authorizeHandlers[route.Kind]))
-			app.Post(route.TokenPattern, checkedOAuthFacadeHandler(route.Kind, false, normalized.tokenHandlers[route.Kind]))
-		}
+	registrations, err := buildRegistrations(normalized, inventory)
+	if err != nil {
+		return nil, err
+	}
+	if err := registerRoutes(app, registrations); err != nil {
+		return nil, err
 	}
 
 	return cloneInventory(inventory), nil
@@ -171,19 +193,9 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 		return normalizedConfig{}, fmt.Errorf("mcpfacade: registration endpoint URL must be an absolute HTTPS URL without fragment")
 	}
 
-	var publicBaseURL string
-	switch config.URLMode {
-	case URLModePublicBaseURL:
-		publicBaseURL, ok = normalizePublicBaseURL(config.PublicBaseURL)
-		if !ok {
-			return normalizedConfig{}, fmt.Errorf("mcpfacade: public base URL mode requires an absolute HTTPS URL or loopback HTTP URL without query or fragment")
-		}
-	case URLModeRequestHost:
-		if strings.TrimSpace(config.PublicBaseURL) != "" {
-			return normalizedConfig{}, fmt.Errorf("mcpfacade: request-host mode cannot also configure a public base URL")
-		}
-	default:
-		return normalizedConfig{}, fmt.Errorf("mcpfacade: URL mode must be public_base_url or request_host")
+	publicBaseURL, allowedHostnames, err := normalizeURLMode(config)
+	if err != nil {
+		return normalizedConfig{}, err
 	}
 
 	scopes, err := normalizeScopes(config.Scopes)
@@ -200,21 +212,29 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 		return normalizedConfig{}, err
 	}
 
+	rootAuthorizationServer, rootDiscoveryPath, err := normalizeRootDiscoveryConfig(config.RootAuthorizationServer)
+	if err != nil {
+		return normalizedConfig{}, err
+	}
+
 	return normalizedConfig{
 		issuerURL:               issuerURL,
 		jwksURI:                 jwksURI,
 		registrationEndpointURL: registrationEndpointURL,
 		urlMode:                 config.URLMode,
 		publicBaseURL:           publicBaseURL,
+		allowedHostnames:        allowedHostnames,
 		scopes:                  scopes,
 		capabilities:            capabilities,
 		mcpHandler:              config.MCPHandler,
 		authorizeHandlers:       authorizeHandlers,
 		tokenHandlers:           tokenHandlers,
+		rootAuthorizationServer: rootAuthorizationServer,
+		rootDiscoveryPath:       rootDiscoveryPath,
 	}, nil
 }
 
-func buildInventory(attachAuthorization bool) (*RouteInventory, error) {
+func buildInventory(attachAuthorization, attachRootDiscovery bool) (*RouteInventory, error) {
 	endpoints := mcproutes.SupportedEndpointTemplates()
 	facades := indexFacadeTemplates(mcproutes.SupportedOAuthFacadeTemplates())
 	discovery := indexDiscoveryTemplates(mcproutes.SupportedOAuthDiscoveryTemplates())
@@ -222,7 +242,13 @@ func buildInventory(attachAuthorization bool) (*RouteInventory, error) {
 		return nil, fmt.Errorf("mcpfacade: incomplete %s route template inventory", mcproutes.ContractVersion)
 	}
 
-	inventory := &RouteInventory{ContractVersion: mcproutes.ContractVersion, Routes: make([]Route, 0, len(endpoints))}
+	rootPath := mcproutes.AuthorizationServerPathForResourcePath("/")
+	inventory := &RouteInventory{
+		ContractVersion:                 mcproutes.ContractVersion,
+		Routes:                          make([]Route, 0, len(endpoints)),
+		RootAuthorizationServerPattern:  rootPath,
+		RootAuthorizationServerAttached: attachRootDiscovery,
+	}
 	for _, endpoint := range endpoints {
 		facade, facadeOK := facades[endpoint.Kind]
 		discoveryTemplate, discoveryOK := discovery[endpoint.Kind]
@@ -242,6 +268,112 @@ func buildInventory(attachAuthorization bool) (*RouteInventory, error) {
 		})
 	}
 	return inventory, nil
+}
+
+func normalizeURLMode(config FacadeConfig) (string, map[string]struct{}, error) {
+	switch config.URLMode {
+	case URLModePublicBaseURL:
+		publicBaseURL, ok := normalizePublicBaseURL(config.PublicBaseURL)
+		if !ok {
+			return "", nil, fmt.Errorf("mcpfacade: public base URL mode requires an absolute HTTPS URL or loopback HTTP URL without a path, query, or fragment")
+		}
+		if len(config.AllowedHostnames) != 0 {
+			return "", nil, fmt.Errorf("mcpfacade: public base URL mode cannot configure allowed hostnames")
+		}
+		return publicBaseURL, nil, nil
+	case URLModeRequestHost:
+		if strings.TrimSpace(config.PublicBaseURL) != "" {
+			return "", nil, fmt.Errorf("mcpfacade: request-host mode cannot also configure a public base URL")
+		}
+		allowedHostnames, err := normalizeAllowedHostnames(config.AllowedHostnames)
+		return "", allowedHostnames, err
+	default:
+		return "", nil, fmt.Errorf("mcpfacade: URL mode must be public_base_url or request_host")
+	}
+}
+
+func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]routeRegistration, error) {
+	registrations := make([]routeRegistration, 0, len(inventory.Routes)*8+1)
+	for _, route := range inventory.Routes {
+		mcpHandler := checkedMCPHandler(route.Kind, config.mcpHandler)
+		registrations = append(registrations,
+			routeRegistration{method: "POST", pattern: route.MCPPattern, handler: mcpHandler},
+			routeRegistration{method: "GET", pattern: route.MCPPattern, handler: mcpHandler},
+			routeRegistration{method: "DELETE", pattern: route.MCPPattern, handler: mcpHandler},
+			routeRegistration{method: "GET", pattern: route.ProtectedResourcePattern, handler: protectedResourceHandler(config, route.Kind)},
+		)
+
+		discoveryHandler := authorizationServerHandler(config, route.Kind)
+		registrations = append(registrations,
+			routeRegistration{method: "GET", pattern: route.DiscoveryCanonicalPattern, handler: discoveryHandler},
+			routeRegistration{method: "GET", pattern: route.DiscoverySuffixPattern, handler: discoveryHandler},
+		)
+
+		if route.AuthorizationRoutesAttached {
+			registrations = append(registrations,
+				routeRegistration{method: "GET", pattern: route.AuthorizePattern, handler: checkedOAuthFacadeHandler(route.Kind, true, config.authorizeHandlers[route.Kind])},
+				routeRegistration{method: "POST", pattern: route.TokenPattern, handler: checkedOAuthFacadeHandler(route.Kind, false, config.tokenHandlers[route.Kind])},
+			)
+		}
+	}
+	if inventory.RootAuthorizationServerAttached {
+		if config.rootAuthorizationServer == nil || config.rootDiscoveryPath != inventory.RootAuthorizationServerPattern {
+			return nil, fmt.Errorf("mcpfacade: root authorization-server inventory is inconsistent")
+		}
+		registrations = append(registrations, routeRegistration{
+			method:  "GET",
+			pattern: inventory.RootAuthorizationServerPattern,
+			handler: withMetadataHeaders(oauth.AuthorizationServerMetadataHandler(config.rootAuthorizationServer)),
+		})
+	}
+	if err := validateRouteRegistrations(registrations); err != nil {
+		return nil, err
+	}
+	return registrations, nil
+}
+
+func validateRouteRegistrations(registrations []routeRegistration) error {
+	seen := make(map[string]struct{}, len(registrations))
+	probe := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	for _, registration := range registrations {
+		method := strings.ToUpper(strings.TrimSpace(registration.method))
+		key := method + " " + registration.pattern
+		if method == "" || registration.pattern == "" || registration.handler == nil {
+			return fmt.Errorf("mcpfacade: invalid route inventory entry %q", key)
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return fmt.Errorf("mcpfacade: duplicate route inventory entry %s", key)
+		}
+		seen[key] = struct{}{}
+		if err := handleRoute(probe, method, registration.pattern, registration.handler); err != nil {
+			return fmt.Errorf("mcpfacade: invalid or duplicate route inventory entry %s: %w", key, err)
+		}
+	}
+	return nil
+}
+
+func registerRoutes(app *apptheory.App, registrations []routeRegistration) error {
+	for _, registration := range registrations {
+		if err := handleRoute(app, registration.method, registration.pattern, registration.handler); err != nil {
+			return fmt.Errorf("mcpfacade: register %s %s: %w", registration.method, registration.pattern, err)
+		}
+	}
+	return nil
+}
+
+func handleRoute(app *apptheory.App, method, pattern string, handler apptheory.Handler) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			switch value := recovered.(type) {
+			case error:
+				err = value
+			default:
+				err = fmt.Errorf("route registration panic: %v", value)
+			}
+		}
+	}()
+	app.Handle(method, pattern, handler)
+	return nil
 }
 
 func indexFacadeTemplates(templates []mcproutes.OAuthFacadeTemplate) map[mcproutes.EndpointKind]mcproutes.OAuthFacadeTemplate {
@@ -278,6 +410,64 @@ func buildApplicationHandlers(authorizeFactory, tokenFactory HandlerFactory) (ma
 		}
 	}
 	return authorizeHandlers, tokenHandlers, nil
+}
+
+func normalizeAllowedHostnames(configured []string) (map[string]struct{}, error) {
+	if len(configured) == 0 {
+		return nil, fmt.Errorf("mcpfacade: request-host mode requires at least one allowed hostname")
+	}
+	normalized := make(map[string]struct{}, len(configured))
+	for _, raw := range configured {
+		hostname, ok := normalizeAllowedHostname(raw)
+		if !ok {
+			return nil, fmt.Errorf("mcpfacade: allowed hostname %q must be a hostname or hostname:port", raw)
+		}
+		normalized[hostname] = struct{}{}
+	}
+	return normalized, nil
+}
+
+func normalizeRootDiscoveryConfig(config *RootDiscoveryConfig) (*oauth.AuthorizationServerMetadata, string, error) {
+	if config == nil {
+		return nil, "", nil
+	}
+	issuer, ok := normalizeHTTPSURL(config.IssuerURL, true)
+	if !ok {
+		return nil, "", fmt.Errorf("mcpfacade: root discovery issuer URL must be an absolute HTTPS URL without query or fragment")
+	}
+	authorize, ok := normalizeHTTPSURL(config.AuthorizationEndpointURL, false)
+	if !ok {
+		return nil, "", fmt.Errorf("mcpfacade: root discovery authorization endpoint URL must be an absolute HTTPS URL without fragment")
+	}
+	token, ok := normalizeHTTPSURL(config.TokenEndpointURL, false)
+	if !ok {
+		return nil, "", fmt.Errorf("mcpfacade: root discovery token endpoint URL must be an absolute HTTPS URL without fragment")
+	}
+	registration, ok := normalizeHTTPSURL(config.RegistrationEndpointURL, false)
+	if !ok {
+		return nil, "", fmt.Errorf("mcpfacade: root discovery registration endpoint URL must be an absolute HTTPS URL without fragment")
+	}
+	jwks, ok := normalizeHTTPSURL(config.JWKSURI, false)
+	if !ok {
+		return nil, "", fmt.Errorf("mcpfacade: root discovery JWKS URI must be an absolute HTTPS URL without fragment")
+	}
+	scopes, err := normalizeNonEmptyList("root discovery scope", config.Scopes)
+	if err != nil {
+		return nil, "", fmt.Errorf("mcpfacade: %w", err)
+	}
+	capabilities := DefaultCapabilities()
+	return &oauth.AuthorizationServerMetadata{
+		Issuer:                            issuer,
+		AuthorizationEndpoint:             authorize,
+		TokenEndpoint:                     token,
+		RegistrationEndpoint:              registration,
+		JWKSURI:                           jwks,
+		ResponseTypesSupported:            capabilities.ResponseTypes,
+		GrantTypesSupported:               capabilities.GrantTypes,
+		TokenEndpointAuthMethodsSupported: capabilities.TokenEndpointAuthMethods,
+		CodeChallengeMethodsSupported:     capabilities.CodeChallengeMethods,
+		ScopesSupported:                   scopes,
+	}, mcproutes.AuthorizationServerPathForResourcePath("/"), nil
 }
 
 func normalizeScopes(configured map[mcproutes.EndpointKind][]string) (map[mcproutes.EndpointKind][]string, error) {
@@ -395,6 +585,9 @@ func protectedResourceHandler(config normalizedConfig, kind mcproutes.EndpointKi
 		}
 		resourceURL, err := config.absoluteURL(ctx, mcpPath)
 		if err != nil {
+			if response, ok := metadataRequestFailure(err); ok {
+				return response, nil
+			}
 			return nil, err
 		}
 		metadata := &oauth.ProtectedResourceMetadata{
@@ -403,7 +596,7 @@ func protectedResourceHandler(config normalizedConfig, kind mcproutes.EndpointKi
 			JWKSURI:              config.jwksURI,
 			ScopesSupported:      append([]string(nil), config.scopes[kind]...),
 		}
-		return oauth.ProtectedResourceMetadataHandler(metadata)(ctx)
+		return withMetadataHeaders(oauth.ProtectedResourceMetadataHandler(metadata))(ctx)
 	}
 }
 
@@ -423,10 +616,16 @@ func authorizationServerHandler(config normalizedConfig, kind mcproutes.Endpoint
 		}
 		authorizeURL, err := config.absoluteURL(ctx, authorizePath)
 		if err != nil {
+			if response, ok := metadataRequestFailure(err); ok {
+				return response, nil
+			}
 			return nil, err
 		}
 		tokenURL, err := config.absoluteURL(ctx, tokenPath)
 		if err != nil {
+			if response, ok := metadataRequestFailure(err); ok {
+				return response, nil
+			}
 			return nil, err
 		}
 		metadata := &oauth.AuthorizationServerMetadata{
@@ -441,7 +640,7 @@ func authorizationServerHandler(config normalizedConfig, kind mcproutes.Endpoint
 			CodeChallengeMethodsSupported:     append([]string(nil), config.capabilities.CodeChallengeMethods...),
 			ScopesSupported:                   append([]string(nil), config.scopes[kind]...),
 		}
-		return oauth.AuthorizationServerMetadataHandler(metadata)(ctx)
+		return withMetadataHeaders(oauth.AuthorizationServerMetadataHandler(metadata))(ctx)
 	}
 }
 
@@ -488,9 +687,9 @@ func endpointFromRouteParams(ctx *apptheory.Context, kind mcproutes.EndpointKind
 	}
 	candidate := mcproutes.EndpointPath{
 		Kind:            kind,
-		ClientNamespace: ctx.Param("client_namespace"),
-		PartnerID:       ctx.Param("partner_id"),
-		AgentID:         ctx.Param("agent_id"),
+		ClientNamespace: ctx.Param(mcproutes.ParamClientNamespace),
+		PartnerID:       ctx.Param(mcproutes.ParamPartnerID),
+		AgentID:         ctx.Param(mcproutes.ParamAgentID),
 	}
 	mcpPath, err := candidate.MCPPath()
 	if err != nil {
@@ -507,12 +706,19 @@ func (config normalizedConfig) absoluteURL(ctx *apptheory.Context, routePath str
 	baseURL := config.publicBaseURL
 	if config.urlMode == URLModeRequestHost {
 		if ctx == nil {
-			return "", fmt.Errorf("mcpfacade: request context is required for request-host URL mode")
+			return "", &metadataRequestError{message: "request context is required for request-host URL mode"}
 		}
 		var ok bool
-		baseURL, ok = normalizeRequestOrigin(apptheory.OriginURL(ctx.Request.Headers))
+		baseURL, ok = oauth.NormalizeRequestOrigin(apptheory.OriginURL(ctx.Request.Headers))
 		if !ok {
-			return "", fmt.Errorf("mcpfacade: request host is required for request-host URL mode")
+			return "", &metadataRequestError{message: "request host is missing or unsafe"}
+		}
+		origin, ok := parseAbsoluteURL(baseURL)
+		if !ok {
+			return "", fmt.Errorf("mcpfacade: normalized request origin is invalid")
+		}
+		if _, allowed := config.allowedHostnames[origin.Host]; !allowed {
+			return "", &metadataRequestError{message: "request host is not allowlisted"}
 		}
 	}
 	absolute, ok := absoluteURLForPath(baseURL, routePath)
@@ -520,6 +726,44 @@ func (config normalizedConfig) absoluteURL(ctx *apptheory.Context, routePath str
 		return "", fmt.Errorf("mcpfacade: cannot build absolute URL for route path %q", routePath)
 	}
 	return absolute, nil
+}
+
+type metadataRequestError struct {
+	message string
+}
+
+func (err *metadataRequestError) Error() string {
+	return "mcpfacade: " + err.message
+}
+
+func metadataRequestFailure(err error) (*apptheory.Response, bool) {
+	if _, ok := err.(*metadataRequestError); !ok {
+		return nil, false
+	}
+	return &apptheory.Response{
+		Status: 400,
+		Headers: map[string][]string{
+			"cache-control": {"no-store"},
+			"content-type":  {"application/json; charset=utf-8"},
+			"vary":          {metadataVaryHeader},
+		},
+		Body: []byte(`{"error":"invalid_request_host"}`),
+	}, true
+}
+
+func withMetadataHeaders(next apptheory.Handler) apptheory.Handler {
+	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		response, err := next(ctx)
+		if err != nil || response == nil {
+			return response, err
+		}
+		if response.Headers == nil {
+			response.Headers = make(map[string][]string)
+		}
+		response.Headers["cache-control"] = []string{"no-store"}
+		response.Headers["vary"] = []string{metadataVaryHeader}
+		return response, nil
+	}
 }
 
 func normalizeHTTPSURL(raw string, issuer bool) (string, bool) {
@@ -543,39 +787,26 @@ func normalizeHTTPSURL(raw string, issuer bool) (string, bool) {
 }
 
 func normalizePublicBaseURL(raw string) (string, bool) {
-	u, ok := parseAbsoluteURL(raw)
-	if !ok || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" {
-		return "", false
-	}
-	u.Scheme = strings.ToLower(u.Scheme)
-	if !isAllowedPublicScheme(u.Scheme, u.Hostname()) {
-		return "", false
-	}
-	u.Host = canonicalAuthority(u)
-	if u.Host == "" {
-		return "", false
-	}
-	u.Path = strings.TrimRight(u.Path, "/")
-	u.RawPath = ""
-	return u.String(), true
+	return oauth.NormalizeRequestOrigin(raw)
 }
 
-func normalizeRequestOrigin(raw string) (string, bool) {
-	u, ok := parseAbsoluteURL(raw)
-	if !ok || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+func normalizeAllowedHostname(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.Contains(raw, "/") || strings.ContainsAny(raw, "?#@") {
 		return "", false
 	}
-	u.Scheme = strings.ToLower(u.Scheme)
-	if !isAllowedPublicScheme(u.Scheme, u.Hostname()) {
+	u, err := url.Parse("//" + raw)
+	if err != nil || u.Host == "" || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 		return "", false
 	}
-	u.Host = canonicalAuthority(u)
-	if u.Host == "" {
-		return "", false
+	u.Scheme = httpsScheme
+	port := u.Port()
+	if port == "80" || port == "443" {
+		u.Host = canonicalHostname(u.Hostname())
+	} else {
+		u.Host = canonicalAuthority(u)
 	}
-	u.Path = ""
-	u.RawPath = ""
-	return u.String(), true
+	return u.Host, u.Host != ""
 }
 
 func parseAbsoluteURL(raw string) (*url.URL, bool) {
@@ -587,34 +818,29 @@ func parseAbsoluteURL(raw string) (*url.URL, bool) {
 }
 
 func canonicalAuthority(u *url.URL) string {
-	hostname := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if u == nil {
+		return ""
+	}
+	hostname := canonicalHostname(u.Hostname())
 	if hostname == "" {
 		return ""
 	}
 	port := u.Port()
-	if (u.Scheme == httpsScheme && port == "443") || (u.Scheme == httpScheme && port == "80") {
+	if (strings.EqualFold(u.Scheme, httpsScheme) && port == "443") || (strings.EqualFold(u.Scheme, httpScheme) && port == "80") {
 		port = ""
 	}
 	if port != "" {
-		return net.JoinHostPort(hostname, port)
-	}
-	if strings.Contains(hostname, ":") {
-		return "[" + hostname + "]"
+		return net.JoinHostPort(strings.Trim(hostname, "[]"), port)
 	}
 	return hostname
 }
 
-func isLoopbackHostname(hostname string) bool {
-	hostname = strings.ToLower(strings.TrimSpace(hostname))
-	if hostname == "localhost" {
-		return true
+func canonicalHostname(hostname string) string {
+	hostname = strings.ToLower(strings.TrimSuffix(hostname, "."))
+	if strings.Contains(hostname, ":") {
+		return "[" + hostname + "]"
 	}
-	ip := net.ParseIP(hostname)
-	return ip != nil && ip.IsLoopback()
-}
-
-func isAllowedPublicScheme(scheme, hostname string) bool {
-	return scheme == httpsScheme || scheme == httpScheme && isLoopbackHostname(hostname)
+	return hostname
 }
 
 func absoluteURLForPath(baseURL, routePath string) (string, bool) {
@@ -632,7 +858,12 @@ func absoluteURLForPath(baseURL, routePath string) (string, bool) {
 }
 
 func cloneInventory(inventory *RouteInventory) *RouteInventory {
-	clone := &RouteInventory{ContractVersion: inventory.ContractVersion, Routes: make([]Route, len(inventory.Routes))}
+	clone := &RouteInventory{
+		ContractVersion:                 inventory.ContractVersion,
+		Routes:                          make([]Route, len(inventory.Routes)),
+		RootAuthorizationServerPattern:  inventory.RootAuthorizationServerPattern,
+		RootAuthorizationServerAttached: inventory.RootAuthorizationServerAttached,
+	}
 	copy(clone.Routes, inventory.Routes)
 	for index := range clone.Routes {
 		clone.Routes[index].MCPMethods = append([]string(nil), inventory.Routes[index].MCPMethods...)
