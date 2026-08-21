@@ -157,7 +157,7 @@ func secureOpenAPIJoins(registered map[string]SecureRoute, described map[string]
 			description.Path = emittedPath
 			description.Request.Fields = secureEnsureProxyField(description.Request.Fields, proxyName)
 		}
-		if route.Posture == AuthPostureOptional || route.Posture == AuthPostureAuthenticated {
+		if route.Posture == AuthPostureOptional || route.Posture == AuthPostureAuthenticated || route.Posture == AuthPostureAuthenticatedAnyOf {
 			if len(authenticatedSchemes) == 0 {
 				return nil, nil, errors.New("apptheory: secure openapi authenticated scheme binding is required")
 			}
@@ -234,6 +234,12 @@ func secureOperationSecurity(route SecureRoute, authenticated, internal []string
 		return append(out, map[string]any{})
 	case AuthPostureAuthenticated:
 		appendSchemes(authenticated, route.Scopes)
+	case AuthPostureAuthenticatedAnyOf:
+		for _, name := range authenticated {
+			for _, scope := range route.Scopes {
+				out = append(out, map[string]any{name: []string{scope}})
+			}
+		}
 	case AuthPostureInternalOnly:
 		appendSchemes(internal, nil)
 	}

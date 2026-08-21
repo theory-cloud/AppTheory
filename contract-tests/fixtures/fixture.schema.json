@@ -76,7 +76,7 @@
         "field": { "type": "string" },
         "route_key": { "type": "string" },
         "handler": { "type": "string", "minLength": 1 },
-        "posture": { "type": "string", "enum": ["public", "optional", "authenticated", "internal_only", "missing", "invalid"] },
+        "posture": { "type": "string", "enum": ["public", "optional", "authenticated", "authenticated_any_of", "internal_only", "missing", "invalid"] },
         "scopes": { "$ref": "#/$defs/stringArray" }
       }
     },
