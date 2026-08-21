@@ -1787,6 +1787,8 @@ func (*TitanEmbedder) EmbedBatch(context.Context, []string) ([][]float32, error)
 
 const AuthPostureAuthenticated AuthPostureKind = "authenticated"
 
+const AuthPostureAuthenticatedAnyOf AuthPostureKind = "authenticated_any_of"
+
 const AuthPostureInternalOnly AuthPostureKind = "internal_only"
 
 const AuthPostureOptional AuthPostureKind = "optional"
@@ -2405,6 +2407,8 @@ func AppTheoryErrorFromAppError(*AppError) *AppTheoryError
 func AsAppTheoryError(error) (*AppTheoryError, bool)
 
 func Authenticated(...string) AuthPosture
+
+func AuthenticatedAnyOf(...string) AuthPosture
 
 func Binary(int, []byte, string) *Response
 
