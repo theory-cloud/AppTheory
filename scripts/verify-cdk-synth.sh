@@ -55,8 +55,14 @@ if [[ ! -d "cdk/node_modules" ]]; then
     exit 2
   fi
 fi
-if [[ ! -f "cdk/node_modules/constructs/package.json" ]]; then
-  echo "cdk-synth: FAIL (CDK dependencies incomplete: missing constructs module; run 'cd cdk && npm ci' or remove stale cdk/node_modules/)" >&2
+missing_cdk_deps=()
+for module in constructs aws-cdk-lib; do
+  if [[ ! -f "cdk/node_modules/${module}/package.json" ]]; then
+    missing_cdk_deps+=("${module}")
+  fi
+done
+if [[ "${#missing_cdk_deps[@]}" -ne 0 ]]; then
+  echo "cdk-synth: FAIL (CDK dependencies incomplete: missing ${missing_cdk_deps[*]} module(s); run 'cd cdk && npm ci' or remove stale cdk/node_modules/)" >&2
   exit 1
 fi
 
