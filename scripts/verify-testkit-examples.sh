@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-# shellcheck source=scripts/lib/ts-runtime-deps.sh
+# shellcheck source=lib/ts-runtime-deps.sh
 source "${SCRIPT_DIR}/lib/ts-runtime-deps.sh"
 
 cd "${REPO_ROOT}"
