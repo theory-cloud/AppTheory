@@ -292,6 +292,12 @@ func TestRequestHostModeAllowsOnlyNormalizedAllowlistMatches(t *testing.T) {
 	})
 	require.Equal(t, 200, forwarded.Status)
 	require.Equal(t, expectedProtectedResourceJSON("https://edge.example.com/acme/mcp", mcproutes.EndpointKindNamespace), string(forwarded.Body))
+
+	wrongPort := serve(app, "GET", "/.well-known/oauth-protected-resource/acme/mcp", map[string][]string{
+		"host": {"edge.example.com:8443"}, "x-forwarded-proto": {"https"},
+	})
+	require.Equal(t, 400, wrongPort.Status)
+	require.Equal(t, `{"error":"invalid_request_host"}`, string(wrongPort.Body))
 }
 
 func TestEveryFacadeMetadataResponseIsNoStoreAndVariesOnOriginHeaders(t *testing.T) {
@@ -350,6 +356,87 @@ func TestRootAuthorizationServerDiscoveryIsOptInAndStatic(t *testing.T) {
 	for _, route := range inventory.Routes {
 		require.NotEqual(t, inventory.RootAuthorizationServerPattern, route.DiscoveryCanonicalPattern)
 		require.NotEqual(t, inventory.RootAuthorizationServerPattern, route.DiscoverySuffixPattern)
+	}
+}
+
+func TestRootAuthorizationServerRejectsEveryUnsafeURLField(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		mutate     func(*RootDiscoveryConfig)
+		errorField string
+	}{
+		{
+			name: "issuer query",
+			mutate: func(config *RootDiscoveryConfig) {
+				config.IssuerURL = "https://accounts.example.com?tenant=acme"
+			},
+			errorField: "issuer URL",
+		},
+		{
+			name: "authorization endpoint scheme",
+			mutate: func(config *RootDiscoveryConfig) {
+				config.AuthorizationEndpointURL = "javascript:alert(1)"
+			},
+			errorField: "authorization endpoint URL",
+		},
+		{
+			name: "token endpoint host",
+			mutate: func(config *RootDiscoveryConfig) {
+				config.TokenEndpointURL = "https:///token"
+			},
+			errorField: "token endpoint URL",
+		},
+		{
+			name: "registration endpoint userinfo",
+			mutate: func(config *RootDiscoveryConfig) {
+				config.RegistrationEndpointURL = "https://operator@accounts.example.com/register"
+			},
+			errorField: "registration endpoint URL",
+		},
+		{
+			name: "JWKS fragment",
+			mutate: func(config *RootDiscoveryConfig) {
+				config.JWKSURI = "https://accounts.example.com/.well-known/jwks.json#active"
+			},
+			errorField: "JWKS URI",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+			config := validConfig(URLModePublicBaseURL)
+			config.RootAuthorizationServer = validRootDiscoveryConfig()
+			test.mutate(config.RootAuthorizationServer)
+
+			inventory, err := RegisterMCPFacade(app, config)
+			require.Nil(t, inventory)
+			require.ErrorContains(t, err, test.errorField)
+			require.Equal(t, 404, serve(app, "POST", "/acme/mcp", nil).Status)
+			require.Equal(t, 404, serve(app, "GET", mcproutes.AuthorizationServerPathForResourcePath("/"), nil).Status)
+		})
+	}
+}
+
+func TestInvalidDerivedInventoryFailsBeforeTargetRegistration(t *testing.T) {
+	t.Parallel()
+	normalized, err := normalizeConfig(validConfig(URLModePublicBaseURL))
+	require.NoError(t, err)
+	inventory, err := buildInventory(false, false)
+	require.NoError(t, err)
+	inventory.Routes[1].MCPPattern = inventory.Routes[0].MCPPattern
+
+	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	registrations, err := buildRegistrations(normalized, inventory)
+	if err == nil {
+		err = registerRoutes(app, registrations)
+	}
+	require.Nil(t, registrations)
+	require.ErrorContains(t, err, "duplicate route inventory entry POST /{client_namespace}/mcp")
+	for _, method := range []string{"POST", "GET", "DELETE"} {
+		require.Equal(t, 404, serve(app, method, "/acme/mcp", nil).Status)
 	}
 }
 
@@ -636,5 +723,5 @@ func expectedAuthorizationServerJSON(authorizeURL, tokenURL string, kind mcprout
 func assertMetadataHeaders(t *testing.T, response apptheory.Response) {
 	t.Helper()
 	require.Equal(t, []string{"no-store"}, response.Headers["cache-control"])
-	require.Equal(t, []string{metadataVaryHeader}, response.Headers["vary"])
+	require.Equal(t, []string{"Host, X-Forwarded-Host, X-AppTheory-Original-Host, X-FaceTheory-Original-Host, Forwarded, CloudFront-Forwarded-Proto, X-Forwarded-Proto"}, response.Headers["vary"])
 }
