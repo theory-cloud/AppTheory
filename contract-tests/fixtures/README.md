@@ -29,7 +29,7 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
 - `contract-tests/fixtures/vectorstore/` — SP14 semantic vector-store, Bedrock Titan embedding, metadata filter, and deterministic fake behavior
 
-Each fixture is a single JSON object. The current corpus contains 262 behavior fixtures plus the internal schema file. <!-- apptheory-fixture-count: 262 -->
+Each fixture is a single JSON object. The current corpus contains 263 behavior fixtures plus the internal schema file. <!-- apptheory-fixture-count: 263 -->
 
 ## Schema gate
 
