@@ -55,6 +55,10 @@ if [[ ! -d "cdk/node_modules" ]]; then
     exit 2
   fi
 fi
+if [[ ! -f "cdk/node_modules/constructs/package.json" ]]; then
+  echo "cdk-synth: FAIL (CDK dependencies incomplete: missing constructs module; run 'cd cdk && npm ci' or remove stale cdk/node_modules/)" >&2
+  exit 1
+fi
 
 failed=0
 for entry in "${examples[@]}"; do
