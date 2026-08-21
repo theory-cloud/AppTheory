@@ -34,6 +34,7 @@ REPORT_PATH="${EVIDENCE_DIR}/gov-rubric-report.json"
 source "${REPO_ROOT}/scripts/lib/blocked.sh"
 # shellcheck source=scripts/lib/ts-runtime-deps.sh
 source "${REPO_ROOT}/scripts/lib/ts-runtime-deps.sh"
+source "${REPO_ROOT}/scripts/lib/cdk-runtime-deps.sh"
 
 # Always run checks from repo root so relative commands are stable.
 cd "${REPO_ROOT}"
@@ -485,7 +486,7 @@ ensure_cdk_dist_go_bindings_generated() {
     return 1
   fi
 
-  (cd cdk && npm ci >/dev/null)
+  ensure_cdk_runtime_deps_installed || return $?
   (cd cdk && npm run build >/dev/null)
   (cd cdk && npx jsii-pacmak -t go --code-only -o dist/go --force-subdirectory false --force >/dev/null)
 
