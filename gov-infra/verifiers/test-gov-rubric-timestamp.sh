@@ -56,7 +56,39 @@ initialize_report_provenance
 first_timestamp="${REPORT_TIMESTAMP}"
 first_git_head="${REPORT_GIT_HEAD}"
 assert_timestamp_shape "${first_timestamp}"
-assert_eq "$(git -C "${ORIGINAL_REPO_ROOT}" rev-parse HEAD)" "${first_git_head}" "in-repo git_head"
+
+in_repo_probe_head="${tmpdir}/in-repo-git-head.txt"
+in_repo_probe_status=0
+if in_repo_probe_output="$({
+  intended_root_status=0
+  require_intended_git_worktree_or_blocked || intended_root_status=$?
+  if [[ "${intended_root_status}" -ne 0 ]]; then
+    exit "${intended_root_status}"
+  fi
+  git -C "${ORIGINAL_REPO_ROOT}" rev-parse --verify HEAD >"${in_repo_probe_head}"
+} 2>&1)"; then
+  in_repo_probe_status=0
+else
+  in_repo_probe_status=$?
+fi
+in_repo_probe_raw_fatal_lines="$(printf '%s\n' "${in_repo_probe_output}" | grep -Ec 'fatal:' || true)"
+assert_eq "0" "${in_repo_probe_raw_fatal_lines}" "in-repo git_head probe leaked raw Git diagnostics"
+
+case "${in_repo_probe_status}" in
+  0)
+    expected_git_head="$(cat "${in_repo_probe_head}")"
+    assert_eq "${expected_git_head}" "${first_git_head}" "in-repo git_head"
+    in_repo_git_head_assertion="PASS"
+    in_repo_git_head_assertion_skips=0
+    ;;
+  2)
+    in_repo_git_head_assertion="SKIP"
+    in_repo_git_head_assertion_skips=1
+    ;;
+  *)
+    fail "in-repo git_head probe failed with exit ${in_repo_probe_status}"
+    ;;
+esac
 
 # A report timestamp is run provenance. It must be regenerated rather than
 # inherited from the environment or a previous report.
@@ -97,6 +129,9 @@ assert_eq "2" "${guard_status}" "non-git intended-worktree guard status"
 grep -Fq 'BLOCKED: repository root is not the intended Git worktree root' "${non_git_evidence}" \
   || fail "non-git intended-worktree guard did not explain the BLOCKED result"
 assert_grep_absent 'fatal:' "${non_git_evidence}" "non-git intended-worktree guard leaked raw Git diagnostics"
+non_git_guard_raw_fatal_lines="$(grep -Ec 'fatal:' "${non_git_evidence}" || true)"
+non_git_raw_fatal_lines="$((in_repo_probe_raw_fatal_lines + non_git_guard_raw_fatal_lines))"
+assert_eq "0" "${non_git_raw_fatal_lines}" "non-git captured output contained raw Git diagnostics"
 REPO_ROOT="${ORIGINAL_REPO_ROOT}"
 
 grep -Fq 'REPORT_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"' "${SCRIPT_DIR}/gov-verify-rubric.sh" \
@@ -112,7 +147,9 @@ echo "gov-rubric provenance regression: PASS"
 echo "first_timestamp=${first_timestamp}"
 echo "second_timestamp=${second_timestamp}"
 echo "git_head=${first_git_head}"
+echo "in_repo_git_head_assertion=${in_repo_git_head_assertion}"
+echo "in_repo_git_head_assertion_skips=${in_repo_git_head_assertion_skips}"
 echo "enclosing_non_root_git_head=omitted"
 echo "non_git_git_head=omitted"
 echo "non_git_guard_status=${guard_status}"
-echo "non_git_raw_fatal_lines=0"
+echo "non_git_raw_fatal_lines=${non_git_raw_fatal_lines}"
