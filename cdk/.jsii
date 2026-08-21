@@ -17689,7 +17689,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/mcp-route-algebra.ts",
-        "line": 59
+        "line": 62
       },
       "methods": [
         {
@@ -17698,7 +17698,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 117
+            "line": 124
           },
           "name": "authorizationAuthorizePathForResourcePath",
           "parameters": [
@@ -17722,7 +17722,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 108
+            "line": 113
           },
           "name": "authorizationServerPathForResourcePath",
           "parameters": [
@@ -17746,7 +17746,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 127
+            "line": 138
           },
           "name": "authorizationServerSuffixPathForResourcePath",
           "parameters": [
@@ -17770,7 +17770,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 122
+            "line": 131
           },
           "name": "authorizationTokenPathForResourcePath",
           "parameters": [
@@ -17794,7 +17794,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 282
+            "line": 290
           },
           "name": "mcpPath",
           "parameters": [
@@ -17818,7 +17818,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 306
+            "line": 318
           },
           "name": "oauthAuthorizationServerPath",
           "parameters": [
@@ -17842,7 +17842,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 327
+            "line": 341
           },
           "name": "oauthAuthorizationServerSuffixPath",
           "parameters": [
@@ -17866,7 +17866,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 313
+            "line": 327
           },
           "name": "oauthAuthorizePath",
           "parameters": [
@@ -17890,7 +17890,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 320
+            "line": 334
           },
           "name": "oauthTokenPath",
           "parameters": [
@@ -17914,7 +17914,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 186
+            "line": 211
           },
           "name": "parseMcpPath",
           "parameters": [
@@ -17938,7 +17938,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 299
+            "line": 309
           },
           "name": "protectedResourcePath",
           "parameters": [
@@ -17962,7 +17962,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 99
+            "line": 102
           },
           "name": "protectedResourcePathForResourcePath",
           "parameters": [
@@ -17986,7 +17986,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 149
+            "line": 166
           },
           "name": "protectedResourcePathFromMcpPath",
           "parameters": [
@@ -18010,7 +18010,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 136
+            "line": 149
           },
           "name": "resourcePathFromProtectedResourcePath",
           "parameters": [
@@ -18034,7 +18034,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 154
+            "line": 173
           },
           "name": "supportedEndpointTemplates",
           "returns": {
@@ -18055,7 +18055,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 175
+            "line": 196
           },
           "name": "supportedOAuthDiscoveryTemplates",
           "returns": {
@@ -18076,7 +18076,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 164
+            "line": 183
           },
           "name": "supportedOAuthFacadeTemplates",
           "returns": {
@@ -18097,7 +18097,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 237
+            "line": 231
           },
           "name": "validateEndpointPath",
           "parameters": [
@@ -18121,7 +18121,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 83
+            "line": 86
           },
           "name": "AGENT_MCP_PATTERN",
           "static": true,
@@ -18137,7 +18137,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 95
+            "line": 98
           },
           "name": "AUTHORIZATION_SERVER_PREFIX",
           "static": true,
@@ -18153,7 +18153,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 61
+            "line": 64
           },
           "name": "CONTRACT_VERSION",
           "static": true,
@@ -18169,7 +18169,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 70
+            "line": 73
           },
           "name": "ENDPOINT_KIND_AGENT",
           "static": true,
@@ -18185,7 +18185,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 64
+            "line": 67
           },
           "name": "ENDPOINT_KIND_NAMESPACE",
           "static": true,
@@ -18201,7 +18201,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 73
+            "line": 76
           },
           "name": "ENDPOINT_KIND_PARTNER_AGENT",
           "static": true,
@@ -18217,7 +18217,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 67
+            "line": 70
           },
           "name": "ENDPOINT_KIND_PARTNER_NAMESPACE",
           "static": true,
@@ -18233,7 +18233,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 76
+            "line": 79
           },
           "name": "NAMESPACE_MCP_PATTERN",
           "static": true,
@@ -18249,7 +18249,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 87
+            "line": 90
           },
           "name": "PARTNER_AGENT_MCP_PATTERN",
           "static": true,
@@ -18265,7 +18265,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 79
+            "line": 82
           },
           "name": "PARTNER_NAMESPACE_MCP_PATTERN",
           "static": true,
@@ -18281,7 +18281,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 91
+            "line": 94
           },
           "name": "PROTECTED_RESOURCE_PREFIX",
           "static": true,
@@ -28921,5 +28921,5 @@
     }
   },
   "version": "3.1.1",
-  "fingerprint": "qoKgp3jHPUvq3x20VgQ4PZElHWg29PIb4HlCEHK6BMc="
+  "fingerprint": "j5Vdx6QiqZ2bSMJylZRnX1poT2qShDiYE4RoC+Tvj9o="
 }

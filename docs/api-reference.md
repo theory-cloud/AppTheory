@@ -470,7 +470,7 @@ here for operators who need implementation-level details:
   authenticated while registering request-host-derived RFC 9728 discovery with public SecureApp posture. Canonical
   paths are exported as `MCPPath`, `OAuthProtectedResourcePath`, `OAuthProtectedResourceMCPPath`, and
   `OAuthAuthorizationServerMCPPath`.
-- `runtime/routing`: the additive `m17.mcp-route-algebra/v1` contract. `EndpointPath`, `ParseMCPPath`, the
+- `runtime/mcproutes`: the additive `m17.mcp-route-algebra/v1` contract. `EndpointPath`, `ParseMCPPath`, the
   `SupportedEndpointTemplates`, `SupportedOAuthFacadeTemplates`, and `SupportedOAuthDiscoveryTemplates` enumerations,
   and pure protected-resource/authorization-server derivations define the namespace, partner-namespace, agent, and
   partner-agent golden path without rewiring the existing OAuth or CDK construct surfaces.

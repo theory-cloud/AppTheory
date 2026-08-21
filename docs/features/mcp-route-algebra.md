@@ -27,17 +27,25 @@ OAuth protected-resource paths use `/.well-known/oauth-protected-resource` as a 
 authorization, and token paths use `/.well-known/oauth-authorization-server` before the normalized MCP resource path.
 The algebra also derives the suffix-compatible discovery form after the resource path.
 
-Inputs are trimmed, forced to an absolute path, duplicate slashes are collapsed, RFC 3986 dot segments are removed,
-and a trailing slash is removed except at root. Root derivations return the bare well-known prefix.
+Inputs are trimmed over exactly the ASCII code points U+0009 (tab), U+000A (line feed), U+000B (vertical tab),
+U+000C (form feed), U+000D (carriage return), and U+0020 (space). No other Unicode whitespace is trimmed. The same
+six-code-point definition determines whether an identifier is an empty path segment. Paths are then forced to an
+absolute form, duplicate slashes are collapsed, RFC 3986 dot segments are removed, and a trailing slash is removed
+except at root. Root derivations return the bare well-known prefix.
+
+Identifier validation rejects `.` and `..` after applying that ASCII-only trim. This deliberately hardens the
+contract beyond `theory-mcp-server`'s original reference implementation: distinct endpoint identifiers must not
+collapse onto one OAuth protected-resource identity. `theory-mcp-server` adopts this rule when it consumes the
+AppTheory contract in docs/061 change 7.
 
 ## Go runtime
 
-Import `github.com/theory-cloud/apptheory/v3/runtime/routing`. Route constants and `Supported*Templates` cover
+Import `github.com/theory-cloud/apptheory/v3/runtime/mcproutes`. Route constants and `Supported*Templates` cover
 pattern-level registration. `ParseMCPPath` returns a validated `EndpointPath`, whose builder methods derive every
 concrete MCP and OAuth path.
 
 ```go
-endpoint, err := routing.ParseMCPPath("/acme/partners/pay/agents/bot/mcp")
+endpoint, err := mcproutes.ParseMCPPath("/acme/partners/pay/agents/bot/mcp")
 if err != nil {
     return err
 }
@@ -62,3 +70,8 @@ This additive contract does not define HTTP methods, streaming or gateway-auth f
 download/GitHub/grant application routes, or root-level route registrations. It does not add runtime SDK surfaces in
 `ts/src` or `py/src`. It does not rewire or alter `AppTheoryMcpServer`, `AppTheoryMcpPaths`, or the existing
 `runtime/oauth` constants; integration of those existing surfaces is a separate contract change.
+
+`ParseMCPPath` is intentionally stricter than the original `theory-mcp-server` reference parser. It validates every
+recognized identifier segment and rejects whitespace-only and dot-segment identifiers instead of accepting a path
+that later normalization could reinterpret as another endpoint kind. This is fail-closed parser behavior, not an
+alternate normalization mode.

@@ -49,6 +49,9 @@ export interface AppTheoryMcpOAuthDiscoveryTemplate {
   readonly suffixPattern: string;
 }
 
+const ASCII_WHITESPACE_TRIM_PATTERN =
+  /^[\u0009-\u000D\u0020]+|[\u0009-\u000D\u0020]+$/g;
+
 /**
  * AppTheory's canonical, versioned MCP route-algebra contract.
  *
@@ -96,7 +99,9 @@ export abstract class AppTheoryMcpRouteAlgebra {
     "/.well-known/oauth-authorization-server";
 
   /** Derive an RFC 9728 protected-resource path from a resource path. */
-  public static protectedResourcePathForResourcePath(resourcePath: string): string {
+  public static protectedResourcePathForResourcePath(
+    resourcePath: string,
+  ): string {
     const normalized = normalizePath(resourcePath);
     if (normalized === "/") {
       return AppTheoryMcpRouteAlgebra.PROTECTED_RESOURCE_PREFIX;
@@ -105,7 +110,9 @@ export abstract class AppTheoryMcpRouteAlgebra {
   }
 
   /** Derive the canonical RFC 8414 discovery path from a resource path. */
-  public static authorizationServerPathForResourcePath(resourcePath: string): string {
+  public static authorizationServerPathForResourcePath(
+    resourcePath: string,
+  ): string {
     const normalized = normalizePath(resourcePath);
     if (normalized === "/") {
       return AppTheoryMcpRouteAlgebra.AUTHORIZATION_SERVER_PREFIX;
@@ -114,17 +121,23 @@ export abstract class AppTheoryMcpRouteAlgebra {
   }
 
   /** Derive the authorization facade path from a resource path. */
-  public static authorizationAuthorizePathForResourcePath(resourcePath: string): string {
+  public static authorizationAuthorizePathForResourcePath(
+    resourcePath: string,
+  ): string {
     return `${AppTheoryMcpRouteAlgebra.authorizationServerPathForResourcePath(resourcePath)}/authorize`;
   }
 
   /** Derive the token facade path from a resource path. */
-  public static authorizationTokenPathForResourcePath(resourcePath: string): string {
+  public static authorizationTokenPathForResourcePath(
+    resourcePath: string,
+  ): string {
     return `${AppTheoryMcpRouteAlgebra.authorizationServerPathForResourcePath(resourcePath)}/token`;
   }
 
   /** Derive the suffix-compatible RFC 8414 discovery path from a resource path. */
-  public static authorizationServerSuffixPathForResourcePath(resourcePath: string): string {
+  public static authorizationServerSuffixPathForResourcePath(
+    resourcePath: string,
+  ): string {
     const normalized = normalizePath(resourcePath);
     if (normalized === "/") {
       return AppTheoryMcpRouteAlgebra.AUTHORIZATION_SERVER_PREFIX;
@@ -133,21 +146,27 @@ export abstract class AppTheoryMcpRouteAlgebra {
   }
 
   /** Recover a resource path from an RFC 9728 protected-resource path. */
-  public static resourcePathFromProtectedResourcePath(protectedResourcePath: string): string {
+  public static resourcePathFromProtectedResourcePath(
+    protectedResourcePath: string,
+  ): string {
     const normalized = normalizePath(protectedResourcePath);
     const prefix = AppTheoryMcpRouteAlgebra.PROTECTED_RESOURCE_PREFIX;
     if (normalized === prefix) {
       return "/";
     }
     if (!normalized.startsWith(`${prefix}/`)) {
-      throw new Error(`routing: unsupported protected resource path ${JSON.stringify(normalized)}`);
+      throw new Error(
+        `mcproutes: unsupported protected resource path ${JSON.stringify(normalized)}`,
+      );
     }
     return normalizePath(normalized.slice(prefix.length));
   }
 
   /** Derive the protected-resource path for an MCP path. */
   public static protectedResourcePathFromMcpPath(mcpPath: string): string {
-    return AppTheoryMcpRouteAlgebra.protectedResourcePathForResourcePath(mcpPath);
+    return AppTheoryMcpRouteAlgebra.protectedResourcePathForResourcePath(
+      mcpPath,
+    );
   }
 
   /** Return every canonical MCP endpoint template in contract order. */
@@ -165,7 +184,9 @@ export abstract class AppTheoryMcpRouteAlgebra {
     return endpointTemplateSeeds().map(({ kind, pattern }) => ({
       kind,
       authorizePattern:
-        AppTheoryMcpRouteAlgebra.authorizationAuthorizePathForResourcePath(pattern),
+        AppTheoryMcpRouteAlgebra.authorizationAuthorizePathForResourcePath(
+          pattern,
+        ),
       tokenPattern:
         AppTheoryMcpRouteAlgebra.authorizationTokenPathForResourcePath(pattern),
     }));
@@ -176,58 +197,31 @@ export abstract class AppTheoryMcpRouteAlgebra {
     return endpointTemplateSeeds().map(({ kind, pattern }) => ({
       kind,
       canonicalPattern:
-        AppTheoryMcpRouteAlgebra.authorizationServerPathForResourcePath(pattern),
+        AppTheoryMcpRouteAlgebra.authorizationServerPathForResourcePath(
+          pattern,
+        ),
       suffixPattern:
-        AppTheoryMcpRouteAlgebra.authorizationServerSuffixPathForResourcePath(pattern),
+        AppTheoryMcpRouteAlgebra.authorizationServerSuffixPathForResourcePath(
+          pattern,
+        ),
     }));
   }
 
   /** Parse a concrete MCP path after contract normalization. */
   public static parseMcpPath(rawPath: string): AppTheoryMcpEndpointPath {
-    const segments = splitPath(normalizePath(rawPath));
-    let endpoint: AppTheoryMcpEndpointPath | undefined;
-
-    if (segments.length === 2 && segments[1] === "mcp") {
-      endpoint = {
-        kind: AppTheoryMcpRouteAlgebra.ENDPOINT_KIND_NAMESPACE,
-        clientNamespace: segments[0],
-      };
-    } else if (
-      segments.length === 4 &&
-      segments[1] === "partners" &&
-      segments[3] === "mcp"
-    ) {
-      endpoint = {
-        kind: AppTheoryMcpRouteAlgebra.ENDPOINT_KIND_PARTNER_NAMESPACE,
-        clientNamespace: segments[0],
-        partnerId: segments[2],
-      };
-    } else if (
-      segments.length === 4 &&
-      segments[1] === "agents" &&
-      segments[3] === "mcp"
-    ) {
-      endpoint = {
-        kind: AppTheoryMcpRouteAlgebra.ENDPOINT_KIND_AGENT,
-        clientNamespace: segments[0],
-        agentId: segments[2],
-      };
-    } else if (
-      segments.length === 6 &&
-      segments[1] === "partners" &&
-      segments[3] === "agents" &&
-      segments[5] === "mcp"
-    ) {
-      endpoint = {
-        kind: AppTheoryMcpRouteAlgebra.ENDPOINT_KIND_PARTNER_AGENT,
-        clientNamespace: segments[0],
-        partnerId: segments[2],
-        agentId: segments[4],
-      };
+    const unnormalizedEndpoint = endpointFromSegments(
+      splitPathBeforeDotNormalization(rawPath),
+    );
+    if (unnormalizedEndpoint !== undefined) {
+      AppTheoryMcpRouteAlgebra.validateEndpointPath(unnormalizedEndpoint);
+      return unnormalizedEndpoint;
     }
 
+    const endpoint = endpointFromSegments(splitPath(normalizePath(rawPath)));
     if (endpoint === undefined) {
-      throw new Error(`routing: unsupported MCP path ${JSON.stringify(rawPath)}`);
+      throw new Error(
+        `mcproutes: unsupported MCP path ${JSON.stringify(rawPath)}`,
+      );
     }
     AppTheoryMcpRouteAlgebra.validateEndpointPath(endpoint);
     return endpoint;
@@ -236,7 +230,9 @@ export abstract class AppTheoryMcpRouteAlgebra {
   /** Validate endpoint kind-to-identifier consistency and path-segment safety. */
   public static validateEndpointPath(endpoint: AppTheoryMcpEndpointPath): void {
     if (!isPathSegment(endpoint.clientNamespace)) {
-      throw new Error("routing: clientNamespace must be a non-empty path segment");
+      throw new Error(
+        "mcproutes: clientNamespace must be a non-empty path segment",
+      );
     }
 
     const partnerId = endpoint.partnerId ?? "";
@@ -245,36 +241,48 @@ export abstract class AppTheoryMcpRouteAlgebra {
       case AppTheoryMcpRouteAlgebra.ENDPOINT_KIND_NAMESPACE:
         if (partnerId !== "" || agentId !== "") {
           throw new Error(
-            "routing: namespace endpoint cannot include partner or agent identifiers",
+            "mcproutes: namespace endpoint cannot include partner or agent identifiers",
           );
         }
         return;
       case AppTheoryMcpRouteAlgebra.ENDPOINT_KIND_PARTNER_NAMESPACE:
         if (!isPathSegment(partnerId)) {
-          throw new Error("routing: partnerId must be a non-empty path segment");
+          throw new Error(
+            "mcproutes: partnerId must be a non-empty path segment",
+          );
         }
         if (agentId !== "") {
-          throw new Error("routing: partner namespace endpoint cannot include agentId");
+          throw new Error(
+            "mcproutes: partner namespace endpoint cannot include agentId",
+          );
         }
         return;
       case AppTheoryMcpRouteAlgebra.ENDPOINT_KIND_AGENT:
         if (!isPathSegment(agentId)) {
-          throw new Error("routing: agentId must be a non-empty path segment");
+          throw new Error(
+            "mcproutes: agentId must be a non-empty path segment",
+          );
         }
         if (partnerId !== "") {
-          throw new Error("routing: agent endpoint cannot include partnerId");
+          throw new Error("mcproutes: agent endpoint cannot include partnerId");
         }
         return;
       case AppTheoryMcpRouteAlgebra.ENDPOINT_KIND_PARTNER_AGENT:
         if (!isPathSegment(partnerId)) {
-          throw new Error("routing: partnerId must be a non-empty path segment");
+          throw new Error(
+            "mcproutes: partnerId must be a non-empty path segment",
+          );
         }
         if (!isPathSegment(agentId)) {
-          throw new Error("routing: agentId must be a non-empty path segment");
+          throw new Error(
+            "mcproutes: agentId must be a non-empty path segment",
+          );
         }
         return;
       default:
-        throw new Error(`routing: unsupported endpoint kind ${JSON.stringify(endpoint.kind)}`);
+        throw new Error(
+          `mcproutes: unsupported endpoint kind ${JSON.stringify(endpoint.kind)}`,
+        );
     }
   }
 
@@ -291,19 +299,25 @@ export abstract class AppTheoryMcpRouteAlgebra {
       case AppTheoryMcpRouteAlgebra.ENDPOINT_KIND_PARTNER_AGENT:
         return `/${endpoint.clientNamespace}/partners/${endpoint.partnerId}/agents/${endpoint.agentId}/mcp`;
       default:
-        throw new Error(`routing: unsupported endpoint kind ${JSON.stringify(endpoint.kind)}`);
+        throw new Error(
+          `mcproutes: unsupported endpoint kind ${JSON.stringify(endpoint.kind)}`,
+        );
     }
   }
 
   /** Build the endpoint's RFC 9728 protected-resource path. */
-  public static protectedResourcePath(endpoint: AppTheoryMcpEndpointPath): string {
+  public static protectedResourcePath(
+    endpoint: AppTheoryMcpEndpointPath,
+  ): string {
     return AppTheoryMcpRouteAlgebra.protectedResourcePathForResourcePath(
       AppTheoryMcpRouteAlgebra.mcpPath(endpoint),
     );
   }
 
   /** Build the endpoint's canonical RFC 8414 discovery path. */
-  public static oauthAuthorizationServerPath(endpoint: AppTheoryMcpEndpointPath): string {
+  public static oauthAuthorizationServerPath(
+    endpoint: AppTheoryMcpEndpointPath,
+  ): string {
     return AppTheoryMcpRouteAlgebra.authorizationServerPathForResourcePath(
       AppTheoryMcpRouteAlgebra.mcpPath(endpoint),
     );
@@ -324,7 +338,9 @@ export abstract class AppTheoryMcpRouteAlgebra {
   }
 
   /** Build the endpoint's suffix-compatible RFC 8414 discovery path. */
-  public static oauthAuthorizationServerSuffixPath(endpoint: AppTheoryMcpEndpointPath): string {
+  public static oauthAuthorizationServerSuffixPath(
+    endpoint: AppTheoryMcpEndpointPath,
+  ): string {
     return AppTheoryMcpRouteAlgebra.authorizationServerSuffixPathForResourcePath(
       AppTheoryMcpRouteAlgebra.mcpPath(endpoint),
     );
@@ -352,8 +368,59 @@ function endpointTemplateSeeds(): Array<{ kind: string; pattern: string }> {
   ];
 }
 
+function endpointFromSegments(
+  segments: string[],
+): AppTheoryMcpEndpointPath | undefined {
+  if (segments.length === 2 && segments[1] === "mcp") {
+    return {
+      kind: AppTheoryMcpRouteAlgebra.ENDPOINT_KIND_NAMESPACE,
+      clientNamespace: segments[0],
+    };
+  }
+  if (
+    segments.length === 4 &&
+    segments[1] === "partners" &&
+    segments[3] === "mcp"
+  ) {
+    return {
+      kind: AppTheoryMcpRouteAlgebra.ENDPOINT_KIND_PARTNER_NAMESPACE,
+      clientNamespace: segments[0],
+      partnerId: segments[2],
+    };
+  }
+  if (
+    segments.length === 4 &&
+    segments[1] === "agents" &&
+    segments[3] === "mcp"
+  ) {
+    return {
+      kind: AppTheoryMcpRouteAlgebra.ENDPOINT_KIND_AGENT,
+      clientNamespace: segments[0],
+      agentId: segments[2],
+    };
+  }
+  if (
+    segments.length === 6 &&
+    segments[1] === "partners" &&
+    segments[3] === "agents" &&
+    segments[5] === "mcp"
+  ) {
+    return {
+      kind: AppTheoryMcpRouteAlgebra.ENDPOINT_KIND_PARTNER_AGENT,
+      clientNamespace: segments[0],
+      partnerId: segments[2],
+      agentId: segments[4],
+    };
+  }
+  return undefined;
+}
+
+function trimASCIIWhitespace(value: string): string {
+  return value.replace(ASCII_WHITESPACE_TRIM_PATTERN, "");
+}
+
 function normalizePath(rawPath: string): string {
-  let normalized = rawPath.trim();
+  let normalized = trimASCIIWhitespace(rawPath);
   if (normalized === "") {
     return "/";
   }
@@ -375,10 +442,22 @@ function normalizePath(rawPath: string): string {
   return segments.length === 0 ? "/" : `/${segments.join("/")}`;
 }
 
+function splitPathBeforeDotNormalization(rawPath: string): string[] {
+  return trimASCIIWhitespace(rawPath)
+    .split("/")
+    .filter((segment) => segment !== "");
+}
+
 function splitPath(normalizedPath: string): string[] {
   return normalizedPath === "/" ? [] : normalizedPath.slice(1).split("/");
 }
 
 function isPathSegment(value: string): boolean {
-  return value.trim() !== "" && !value.includes("/");
+  const trimmed = trimASCIIWhitespace(value);
+  return (
+    trimmed !== "" &&
+    trimmed !== "." &&
+    trimmed !== ".." &&
+    !value.includes("/")
+  );
 }

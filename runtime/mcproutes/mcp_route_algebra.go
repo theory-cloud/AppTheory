@@ -1,5 +1,5 @@
-// Package routing defines AppTheory's versioned MCP route algebra.
-package routing
+// Package mcproutes defines AppTheory's versioned MCP route algebra.
+package mcproutes
 
 import (
 	"fmt"
@@ -7,7 +7,10 @@ import (
 	"strings"
 )
 
-const mcpSegment = "mcp"
+const (
+	mcpSegment                = "mcp"
+	asciiWhitespaceTrimCutset = "\t\n\v\f\r "
+)
 
 const (
 	// ContractVersion is the MCP route-algebra contract implemented by this package.
@@ -166,7 +169,7 @@ func ResourcePathFromProtectedResourcePath(protectedResourcePath string) (string
 		return "/", nil
 	}
 	if !strings.HasPrefix(protectedResourcePath, ProtectedResourcePrefix+"/") {
-		return "", fmt.Errorf("routing: unsupported protected resource path %q", protectedResourcePath)
+		return "", fmt.Errorf("mcproutes: unsupported protected resource path %q", protectedResourcePath)
 	}
 	return normalizePath(strings.TrimPrefix(protectedResourcePath, ProtectedResourcePrefix)), nil
 }
@@ -178,7 +181,24 @@ func ProtectedResourcePathFromMCPPath(mcpPath string) string {
 
 // ParseMCPPath parses a concrete MCP path after contract normalization.
 func ParseMCPPath(rawPath string) (EndpointPath, error) {
-	segments := splitPath(normalizePath(rawPath))
+	if endpoint, matched := endpointFromSegments(splitPathBeforeDotNormalization(rawPath)); matched {
+		if err := endpoint.Validate(); err != nil {
+			return EndpointPath{}, fmt.Errorf("mcproutes: invalid MCP path %q: %w", rawPath, err)
+		}
+		return endpoint, nil
+	}
+
+	endpoint, matched := endpointFromSegments(splitPath(normalizePath(rawPath)))
+	if !matched {
+		return EndpointPath{}, fmt.Errorf("mcproutes: unsupported MCP path %q", rawPath)
+	}
+	if err := endpoint.Validate(); err != nil {
+		return EndpointPath{}, fmt.Errorf("mcproutes: invalid MCP path %q: %w", rawPath, err)
+	}
+	return endpoint, nil
+}
+
+func endpointFromSegments(segments []string) (EndpointPath, bool) {
 	var endpoint EndpointPath
 
 	switch len(segments) {
@@ -208,49 +228,43 @@ func ParseMCPPath(rawPath string) (EndpointPath, error) {
 		}
 	}
 
-	if endpoint.Kind == "" {
-		return EndpointPath{}, fmt.Errorf("routing: unsupported MCP path %q", rawPath)
-	}
-	if err := endpoint.Validate(); err != nil {
-		return EndpointPath{}, fmt.Errorf("routing: invalid MCP path %q: %w", rawPath, err)
-	}
-	return endpoint, nil
+	return endpoint, endpoint.Kind != ""
 }
 
 // Validate verifies kind-to-identifier consistency and path-segment safety.
 func (e EndpointPath) Validate() error {
 	if !isPathSegment(e.ClientNamespace) {
-		return fmt.Errorf("routing: client_namespace must be a non-empty path segment")
+		return fmt.Errorf("mcproutes: client_namespace must be a non-empty path segment")
 	}
 
 	switch e.Kind {
 	case EndpointKindNamespace:
 		if e.PartnerID != "" || e.AgentID != "" {
-			return fmt.Errorf("routing: namespace endpoint cannot include partner or agent identifiers")
+			return fmt.Errorf("mcproutes: namespace endpoint cannot include partner or agent identifiers")
 		}
 	case EndpointKindPartnerNamespace:
 		if !isPathSegment(e.PartnerID) {
-			return fmt.Errorf("routing: partner_id must be a non-empty path segment")
+			return fmt.Errorf("mcproutes: partner_id must be a non-empty path segment")
 		}
 		if e.AgentID != "" {
-			return fmt.Errorf("routing: partner namespace endpoint cannot include agent_id")
+			return fmt.Errorf("mcproutes: partner namespace endpoint cannot include agent_id")
 		}
 	case EndpointKindAgent:
 		if !isPathSegment(e.AgentID) {
-			return fmt.Errorf("routing: agent_id must be a non-empty path segment")
+			return fmt.Errorf("mcproutes: agent_id must be a non-empty path segment")
 		}
 		if e.PartnerID != "" {
-			return fmt.Errorf("routing: agent endpoint cannot include partner_id")
+			return fmt.Errorf("mcproutes: agent endpoint cannot include partner_id")
 		}
 	case EndpointKindPartnerAgent:
 		if !isPathSegment(e.PartnerID) {
-			return fmt.Errorf("routing: partner_id must be a non-empty path segment")
+			return fmt.Errorf("mcproutes: partner_id must be a non-empty path segment")
 		}
 		if !isPathSegment(e.AgentID) {
-			return fmt.Errorf("routing: agent_id must be a non-empty path segment")
+			return fmt.Errorf("mcproutes: agent_id must be a non-empty path segment")
 		}
 	default:
-		return fmt.Errorf("routing: unsupported endpoint kind %q", e.Kind)
+		return fmt.Errorf("mcproutes: unsupported endpoint kind %q", e.Kind)
 	}
 
 	return nil
@@ -272,7 +286,7 @@ func (e EndpointPath) MCPPath() (string, error) {
 	case EndpointKindPartnerAgent:
 		return "/" + e.ClientNamespace + "/partners/" + e.PartnerID + "/agents/" + e.AgentID + "/mcp", nil
 	default:
-		return "", fmt.Errorf("routing: unsupported endpoint kind %q", e.Kind)
+		return "", fmt.Errorf("mcproutes: unsupported endpoint kind %q", e.Kind)
 	}
 }
 
@@ -310,7 +324,7 @@ func (e EndpointPath) derive(derivation func(string) string) (string, error) {
 }
 
 func normalizePath(rawPath string) string {
-	rawPath = strings.TrimSpace(rawPath)
+	rawPath = strings.Trim(rawPath, asciiWhitespaceTrimCutset)
 	if rawPath == "" {
 		return "/"
 	}
@@ -324,6 +338,17 @@ func normalizePath(rawPath string) string {
 	return cleaned
 }
 
+func splitPathBeforeDotNormalization(rawPath string) []string {
+	rawPath = strings.Trim(rawPath, asciiWhitespaceTrimCutset)
+	segments := make([]string, 0)
+	for _, segment := range strings.Split(rawPath, "/") {
+		if segment != "" {
+			segments = append(segments, segment)
+		}
+	}
+	return segments
+}
+
 func splitPath(rawPath string) []string {
 	rawPath = strings.TrimPrefix(rawPath, "/")
 	if rawPath == "" {
@@ -333,6 +358,6 @@ func splitPath(rawPath string) []string {
 }
 
 func isPathSegment(value string) bool {
-	value = strings.TrimSpace(value)
-	return value != "" && !strings.Contains(value, "/")
+	trimmed := strings.Trim(value, asciiWhitespaceTrimCutset)
+	return trimmed != "" && trimmed != "." && trimmed != ".." && !strings.Contains(value, "/")
 }
