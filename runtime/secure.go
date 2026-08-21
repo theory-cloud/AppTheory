@@ -274,6 +274,17 @@ func securePrincipalScopeSet(principal *SecurePrincipal) map[string]struct{} {
 	return set
 }
 
+func securePrincipalSatisfiesScopes(principal *SecurePrincipal, posture AuthPosture) bool {
+	switch posture.kind {
+	case AuthPostureAuthenticated:
+		return securePrincipalHasAllScopes(principal, posture.scopes)
+	case AuthPostureAuthenticatedAnyOf:
+		return securePrincipalHasAnyScope(principal, posture.scopes)
+	default:
+		return true
+	}
+}
+
 // SecureRouteSurface identifies the transport registry that owns a secure route.
 type SecureRouteSurface string
 
@@ -516,10 +527,7 @@ func (a *App) secureGate(route route, requestCtx *Context) error {
 	if principal.Claims != nil {
 		requestCtx.AuthPrincipal.Claims = cloneSecureClaims(principal.Claims)
 	}
-	if posture.kind == AuthPostureAuthenticated && !securePrincipalHasAllScopes(principal, posture.scopes) {
-		return &AppError{Code: errorCodeForbidden, Message: errorMessageForbidden}
-	}
-	if posture.kind == AuthPostureAuthenticatedAnyOf && !securePrincipalHasAnyScope(principal, posture.scopes) {
+	if !securePrincipalSatisfiesScopes(principal, posture) {
 		return &AppError{Code: errorCodeForbidden, Message: errorMessageForbidden}
 	}
 	if posture.kind == AuthPostureInternalOnly && principal.Kind != PrincipalInternal {
