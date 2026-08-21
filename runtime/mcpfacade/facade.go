@@ -80,9 +80,11 @@ type FacadeConfig struct {
 
 	URLMode       URLMode
 	PublicBaseURL string
-	// AllowedHostnames is required in request-host mode. The request-derived
-	// authority must exact-match one entry after case and default-port
-	// normalization or metadata fails with HTTP 400.
+	// AllowedHostnames is required in request-host mode. Configuration entries
+	// normalize case, trailing dots, and default ports scheme-agnostically;
+	// request authorities normalize default ports against the request's scheme.
+	// The normalized request authority must exact-match an entry or metadata
+	// fails with HTTP 400.
 	AllowedHostnames []string
 
 	// Scopes must contain a non-empty scope set for every contract endpoint

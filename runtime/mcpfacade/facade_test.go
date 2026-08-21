@@ -309,7 +309,7 @@ func TestAllowedHostnameDefaultPortNormalizationIsSchemeAgnostic(t *testing.T) {
 	}
 }
 
-func TestWildcardStyleAllowlistEntriesRegisterButFailClosed(t *testing.T) {
+func TestWildcardStyleAllowlistEntriesRegisterAsLiteralKeys(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name        string
@@ -334,6 +334,44 @@ func TestWildcardStyleAllowlistEntriesRegisterButFailClosed(t *testing.T) {
 			})
 			require.Equal(t, 400, response.Status)
 			require.Equal(t, `{"error":"invalid_request_host"}`, string(response.Body))
+		})
+	}
+
+	literalMatches := []struct {
+		name    string
+		headers map[string][]string
+	}{
+		{
+			name: "host case variant",
+			headers: map[string][]string{
+				"host": {"*.EXAMPLE.COM"}, "x-forwarded-proto": {"https"},
+			},
+		},
+		{
+			name: "forwarded host trailing dot variant",
+			headers: map[string][]string{
+				"host": {"not-allowlisted.example.com"}, "x-forwarded-host": {"*.example.com."}, "x-forwarded-proto": {"https"},
+			},
+		},
+		{
+			name: "forwarded header default port variant",
+			headers: map[string][]string{
+				"host": {"not-allowlisted.example.com"}, "forwarded": {"for=192.0.2.1;host=*.EXAMPLE.COM.:443;proto=https"},
+			},
+		},
+	}
+	for _, test := range literalMatches {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+			config := validConfig(URLModeRequestHost)
+			config.AllowedHostnames = []string{"*.example.com"}
+			_, err := RegisterMCPFacade(app, config)
+			require.NoError(t, err)
+
+			response := serve(app, "GET", "/.well-known/oauth-protected-resource/acme/mcp", test.headers)
+			require.Equal(t, 200, response.Status)
+			require.Equal(t, expectedProtectedResourceJSON("https://*.example.com/acme/mcp", mcproutes.EndpointKindNamespace), string(response.Body))
 		})
 	}
 }
