@@ -3663,6 +3663,64 @@ func (dynamoTaskRecord) TableName() string
 
 func (sessionRecord) TableName() string
 
+## github.com/theory-cloud/apptheory/v3/runtime/mcpfacade
+
+const URLModePublicBaseURL URLMode = "public_base_url"
+
+const URLModeRequestHost URLMode = "request_host"
+
+type Capabilities struct {
+	ResponseTypes            []string
+	GrantTypes               []string
+	TokenEndpointAuthMethods []string
+	CodeChallengeMethods     []string
+}
+
+type FacadeConfig struct {
+	IssuerURL string
+
+	JWKSURI string
+
+	RegistrationEndpointURL string
+
+	URLMode       URLMode
+	PublicBaseURL string
+
+	Scopes map[mcproutes.EndpointKind][]string
+
+	Capabilities Capabilities
+
+	MCPHandler apptheory.Handler
+
+	AuthorizeHandler HandlerFactory
+	TokenHandler     HandlerFactory
+}
+
+type HandlerFactory func(mcproutes.EndpointKind) apptheory.Handler
+
+type Route struct {
+	Kind                        mcproutes.EndpointKind
+	MCPPattern                  string
+	MCPMethods                  []string
+	ProtectedResourcePattern    string
+	DiscoveryCanonicalPattern   string
+	DiscoverySuffixPattern      string
+	AuthorizePattern            string
+	TokenPattern                string
+	AuthorizationRoutesAttached bool
+}
+
+type RouteInventory struct {
+	ContractVersion string
+	Routes          []Route
+}
+
+type URLMode string
+
+func DefaultCapabilities() Capabilities
+
+func RegisterMCPFacade(*apptheory.App, FacadeConfig) (*RouteInventory, error)
+
 ## github.com/theory-cloud/apptheory/v3/runtime/mcproutes
 
 const AgentMCPPattern = "/{client_namespace}/agents/{agent_id}/mcp"

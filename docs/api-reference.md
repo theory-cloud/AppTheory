@@ -474,6 +474,12 @@ here for operators who need implementation-level details:
   `SupportedEndpointTemplates`, `SupportedOAuthFacadeTemplates`, and `SupportedOAuthDiscoveryTemplates` enumerations,
   and pure protected-resource/authorization-server derivations define the namespace, partner-namespace, agent, and
   partner-agent golden path without rewiring the existing OAuth or CDK construct surfaces.
+- `runtime/mcpfacade`: the Go composition helper over that contract. `RegisterMCPFacade` accepts `FacadeConfig`,
+  registers the four MCP method families and both OAuth metadata documents, and returns a versioned `RouteInventory`.
+  The `URLMode` values `URLModePublicBaseURL` and `URLModeRequestHost` select fixed front-door/CDN origins or derive
+  each origin from the incoming request. `DefaultCapabilities` supplies the fixed defaults, while `Capabilities`,
+  per-kind scope sets, and paired application-owned `HandlerFactory` authorize/token plug points remain explicit
+  config. Each installed `Route` records its methods and derived paths.
 - `testkit/oauth`: Claude-like end-to-end OAuth flow helpers for remote MCP tests (`NewClaudePublicClient`,
   `AuthorizeOptions`, `Authorize`)
 - TypeScript and Python expose matching MCP registries, server/test harnesses, in-memory/Dynamo stores, bearer-token
@@ -498,6 +504,7 @@ Related canonical integration guides:
 - [Remote MCP + Autheory](./integrations/remote-mcp-autheory.md)
 - [MCP Method Surface](./integrations/mcp.md)
 - [MCP Route Algebra](./features/mcp-route-algebra.md)
+- [Go MCP Facade Helper](./features/mcp-facade-helper.md)
 
 ## CDK construct overview
 
@@ -545,7 +552,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1031 exported top-level symbols</summary>
+<summary>1041 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins, APIGatewayV2Request
@@ -735,6 +742,8 @@ ErrExpectedAccountNotConfigured, MaxVersionedArtifactBytes, MaxVersionedArtifact
 VerifyVersionedArtifact, VersionedArtifact, VersionedArtifactRequest
 MCPPath, MCPServerConfig, NewMCPProtectedResourceDiscoveryHandler, OAuthAuthorizationServerMCPPath, OAuthProtectedResourceMCPPath
 OAuthProtectedResourcePath, RegisterMCPServer
+Capabilities, DefaultCapabilities, FacadeConfig, HandlerFactory, RegisterMCPFacade, Route, RouteInventory, URLMode
+URLModePublicBaseURL, URLModeRequestHost
 AgentMCPPattern, AuthorizationAuthorizePathForResourcePath, AuthorizationServerPathForResourcePath, AuthorizationServerPrefix, AuthorizationServerSuffixPathForResourcePath, AuthorizationTokenPathForResourcePath, EndpointKind, EndpointKindAgent, EndpointKindNamespace, EndpointKindPartnerAgent, EndpointKindPartnerNamespace, EndpointPath, EndpointTemplate, NamespaceMCPPattern, OAuthDiscoveryTemplate, OAuthFacadeTemplate, ParseMCPPath, PartnerAgentMCPPattern, PartnerNamespaceMCPPattern, ProtectedResourcePathForResourcePath, ProtectedResourcePathFromMCPPath, ProtectedResourcePrefix, ResourcePathFromProtectedResourcePath, SupportedEndpointTemplates, SupportedOAuthDiscoveryTemplates, SupportedOAuthFacadeTemplates
 ```
 
