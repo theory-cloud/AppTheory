@@ -142,7 +142,7 @@ See [CDK Getting Started](../cdk/getting-started.md).
 
 ## What's verified
 
-The TypeScript runtime passes all 263 generic runner fixtures in the 264-vector corpus on every commit. <!-- apptheory-fixture-count: 264 --> The runner includes the SP09 MCP tier and SP13 objectstore tier; CDK-TS tests load the remaining route-algebra table directly. The `ts/dist/` build output is checked in and gated by `make rubric`.
+The TypeScript runtime passes all 263 generic runner fixtures in the 264-vector corpus on every commit. <!-- apptheory-fixture-count: 264 --> The runner includes the SP09 MCP, SP12 OAuth, and SP13 objectstore tiers; CDK-TS tests load the remaining route-algebra table directly. The `ts/dist/` build output is checked in and gated by `make rubric`.
 
 ## Next reads
 
