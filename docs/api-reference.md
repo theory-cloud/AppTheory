@@ -470,6 +470,10 @@ here for operators who need implementation-level details:
   authenticated while registering request-host-derived RFC 9728 discovery with public SecureApp posture. Canonical
   paths are exported as `MCPPath`, `OAuthProtectedResourcePath`, `OAuthProtectedResourceMCPPath`, and
   `OAuthAuthorizationServerMCPPath`.
+- `runtime/routing`: the additive `m17.mcp-route-algebra/v1` contract. `EndpointPath`, `ParseMCPPath`, the
+  `SupportedEndpointTemplates`, `SupportedOAuthFacadeTemplates`, and `SupportedOAuthDiscoveryTemplates` enumerations,
+  and pure protected-resource/authorization-server derivations define the namespace, partner-namespace, agent, and
+  partner-agent golden path without rewiring the existing OAuth or CDK construct surfaces.
 - `testkit/oauth`: Claude-like end-to-end OAuth flow helpers for remote MCP tests (`NewClaudePublicClient`,
   `AuthorizeOptions`, `Authorize`)
 - TypeScript and Python expose matching MCP registries, server/test harnesses, in-memory/Dynamo stores, bearer-token
@@ -493,6 +497,7 @@ Related canonical integration guides:
 - [Remote MCP](./integrations/remote-mcp.md)
 - [Remote MCP + Autheory](./integrations/remote-mcp-autheory.md)
 - [MCP Method Surface](./integrations/mcp.md)
+- [MCP Route Algebra](./features/mcp-route-algebra.md)
 
 ## CDK construct overview
 
@@ -540,7 +545,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1005 exported top-level symbols</summary>
+<summary>1031 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins, APIGatewayV2Request
@@ -730,6 +735,7 @@ ErrExpectedAccountNotConfigured, MaxVersionedArtifactBytes, MaxVersionedArtifact
 VerifyVersionedArtifact, VersionedArtifact, VersionedArtifactRequest
 MCPPath, MCPServerConfig, NewMCPProtectedResourceDiscoveryHandler, OAuthAuthorizationServerMCPPath, OAuthProtectedResourceMCPPath
 OAuthProtectedResourcePath, RegisterMCPServer
+AgentMCPPattern, AuthorizationAuthorizePathForResourcePath, AuthorizationServerPathForResourcePath, AuthorizationServerPrefix, AuthorizationServerSuffixPathForResourcePath, AuthorizationTokenPathForResourcePath, EndpointKind, EndpointKindAgent, EndpointKindNamespace, EndpointKindPartnerAgent, EndpointKindPartnerNamespace, EndpointPath, EndpointTemplate, NamespaceMCPPattern, OAuthDiscoveryTemplate, OAuthFacadeTemplate, ParseMCPPath, PartnerAgentMCPPattern, PartnerNamespaceMCPPattern, ProtectedResourcePathForResourcePath, ProtectedResourcePathFromMCPPath, ProtectedResourcePrefix, ResourcePathFromProtectedResourcePath, SupportedEndpointTemplates, SupportedOAuthDiscoveryTemplates, SupportedOAuthFacadeTemplates
 ```
 
 </details>

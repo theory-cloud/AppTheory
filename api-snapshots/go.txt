@@ -4883,6 +4883,93 @@ func (*MemoryRefreshTokenStore) Put(context.Context, *RefreshTokenRecord) error
 
 func (*ProtectedResourceMetadata) MarshalJSONBytes() ([]byte, error)
 
+## github.com/theory-cloud/apptheory/v3/runtime/routing
+
+const AgentMCPPattern = "/{client_namespace}/agents/{agent_id}/mcp"
+
+const AuthorizationServerPrefix = "/.well-known/oauth-authorization-server"
+
+const ContractVersion = "m17.mcp-route-algebra/v1"
+
+const EndpointKindAgent EndpointKind = "agent"
+
+const EndpointKindNamespace EndpointKind = "namespace"
+
+const EndpointKindPartnerAgent EndpointKind = "partner_agent"
+
+const EndpointKindPartnerNamespace EndpointKind = "partner_namespace"
+
+const NamespaceMCPPattern = "/{client_namespace}/mcp"
+
+const PartnerAgentMCPPattern = "/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
+
+const PartnerNamespaceMCPPattern = "/{client_namespace}/partners/{partner_id}/mcp"
+
+const ProtectedResourcePrefix = "/.well-known/oauth-protected-resource"
+
+type EndpointKind string
+
+type EndpointPath struct {
+	Kind            EndpointKind
+	ClientNamespace string
+	PartnerID       string
+	AgentID         string
+}
+
+type EndpointTemplate struct {
+	Kind                  EndpointKind
+	MCPPattern            string
+	ProtectedResourcePath string
+}
+
+type OAuthDiscoveryTemplate struct {
+	Kind             EndpointKind
+	CanonicalPattern string
+	SuffixPattern    string
+}
+
+type OAuthFacadeTemplate struct {
+	Kind             EndpointKind
+	AuthorizePattern string
+	TokenPattern     string
+}
+
+func AuthorizationAuthorizePathForResourcePath(string) string
+
+func AuthorizationServerPathForResourcePath(string) string
+
+func AuthorizationServerSuffixPathForResourcePath(string) string
+
+func AuthorizationTokenPathForResourcePath(string) string
+
+func ParseMCPPath(string) (EndpointPath, error)
+
+func ProtectedResourcePathForResourcePath(string) string
+
+func ProtectedResourcePathFromMCPPath(string) string
+
+func ResourcePathFromProtectedResourcePath(string) (string, error)
+
+func SupportedEndpointTemplates() []EndpointTemplate
+
+func SupportedOAuthDiscoveryTemplates() []OAuthDiscoveryTemplate
+
+func SupportedOAuthFacadeTemplates() []OAuthFacadeTemplate
+
+func (EndpointPath) MCPPath() (string, error)
+
+func (EndpointPath) OAuthAuthorizationServerPath() (string, error)
+
+func (EndpointPath) OAuthAuthorizationServerSuffixPath() (string, error)
+
+func (EndpointPath) OAuthAuthorizePath() (string, error)
+
+func (EndpointPath) OAuthTokenPath() (string, error)
+
+func (EndpointPath) ProtectedResourcePath() (string, error)
+
+func (EndpointPath) Validate() error
+
 ## github.com/theory-cloud/apptheory/v3/testkit
 
 type AppSyncEventOptions struct {
