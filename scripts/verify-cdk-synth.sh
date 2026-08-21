@@ -59,7 +59,15 @@ if [[ -d "cdk/node_modules" ]]; then
   done
 fi
 if [[ "${#missing_cdk_deps[@]}" -ne 0 ]]; then
-  echo "cdk-synth: FAIL (CDK dependencies incomplete: missing ${missing_cdk_deps[*]} module(s); run 'cd cdk && npm ci' or remove stale cdk/node_modules/)" >&2
+  missing_cdk_deps_list="${missing_cdk_deps[0]}"
+  for module in "${missing_cdk_deps[@]:1}"; do
+    missing_cdk_deps_list+=", ${module}"
+  done
+  missing_cdk_deps_noun="module"
+  if [[ "${#missing_cdk_deps[@]}" -ne 1 ]]; then
+    missing_cdk_deps_noun="modules"
+  fi
+  echo "cdk-synth: FAIL (CDK dependencies incomplete: missing required CDK ${missing_cdk_deps_noun}: ${missing_cdk_deps_list}; run 'cd cdk && npm ci' or remove stale cdk/node_modules/)" >&2
   exit 1
 fi
 ensure_cdk_runtime_deps_installed || exit $?
