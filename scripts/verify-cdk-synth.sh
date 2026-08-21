@@ -3,6 +3,7 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+source "scripts/lib/cdk-runtime-deps.sh"
 
 epoch="${SOURCE_DATE_EPOCH:-}"
 if [[ -z "${epoch}" ]]; then
@@ -48,17 +49,19 @@ if [[ ! -f "cdk/package-lock.json" ]]; then
   echo "cdk-synth: FAIL (missing cdk/package-lock.json)" >&2
   exit 1
 fi
-if [[ ! -d "cdk/node_modules" ]]; then
-  echo "cdk-synth: installing CDK dependencies" >&2
-  if ! (cd cdk && npm ci --no-audit --no-fund >/dev/null); then
-    echo "cdk-synth: BLOCKED (failed to install CDK dependencies; check network/toolchain)" >&2
-    exit 2
-  fi
+missing_cdk_deps=()
+if [[ -d "cdk/node_modules" ]]; then
+  for module in constructs aws-cdk-lib; do
+    if [[ ! -f "cdk/node_modules/${module}/package.json" ]]; then
+      missing_cdk_deps+=("${module}")
+    fi
+  done
 fi
-if [[ ! -f "cdk/node_modules/constructs/package.json" ]]; then
-  echo "cdk-synth: FAIL (CDK dependencies incomplete: missing constructs module; run 'cd cdk && npm ci' or remove stale cdk/node_modules/)" >&2
+if [[ "${#missing_cdk_deps[@]}" -ne 0 ]]; then
+  echo "cdk-synth: FAIL (CDK dependencies incomplete: missing ${missing_cdk_deps[*]} module(s); run 'cd cdk && npm ci' or remove stale cdk/node_modules/)" >&2
   exit 1
 fi
+ensure_cdk_runtime_deps_installed || exit $?
 
 failed=0
 for entry in "${examples[@]}"; do
