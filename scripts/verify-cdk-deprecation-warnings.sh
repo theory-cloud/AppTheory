@@ -3,6 +3,7 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# shellcheck source=lib/cdk-runtime-deps.sh
 source "scripts/lib/cdk-runtime-deps.sh"
 
 gate_name="cdk-deprecation-warnings"
