@@ -9,22 +9,10 @@ source "${SCRIPT_DIR}/lib/ts-runtime-deps.sh"
 
 cd "${REPO_ROOT}"
 
-if ! command -v go >/dev/null 2>&1; then
-  echo "BLOCKED: examples require go (not found)" >&2
-  exit 2
-fi
-if ! command -v node >/dev/null 2>&1; then
-  echo "BLOCKED: examples require node (not found)" >&2
-  exit 2
-fi
-if ! command -v npm >/dev/null 2>&1; then
-  echo "BLOCKED: examples require npm (not found)" >&2
-  exit 2
-fi
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "BLOCKED: examples require python3 (not found)" >&2
-  exit 2
-fi
+require_cmd_or_blocked go || exit $?
+require_cmd_or_blocked node || exit $?
+require_cmd_or_blocked npm || exit $?
+require_cmd_or_blocked python3 || exit $?
 
 ensure_ts_runtime_deps_installed
 
