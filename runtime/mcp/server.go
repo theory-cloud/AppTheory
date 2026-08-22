@@ -65,6 +65,12 @@ const (
 )
 
 const (
+	httpMethodPOST   = "POST"
+	httpMethodGET    = "GET"
+	httpMethodDELETE = "DELETE"
+)
+
+const (
 	defaultInitialSessionListenerSafetyBuffer = 5 * time.Second
 	defaultInitialSessionListenerMaxDuration  = 25 * time.Second
 )
@@ -298,11 +304,11 @@ func (s *Server) Prompts() *PromptRegistry {
 func (s *Server) Handler() apptheory.Handler {
 	return func(c *apptheory.Context) (*apptheory.Response, error) {
 		switch strings.ToUpper(strings.TrimSpace(c.Request.Method)) {
-		case "POST":
+		case httpMethodPOST:
 			return s.handlePOST(c)
-		case "GET":
+		case httpMethodGET:
 			return s.handleGET(c)
-		case "DELETE":
+		case httpMethodDELETE:
 			return s.handleDELETE(c)
 		default:
 			return methodNotAllowed(), nil
