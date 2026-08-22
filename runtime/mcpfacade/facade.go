@@ -82,7 +82,8 @@ type FacadeConfig struct {
 	PublicBaseURL string
 	// AllowedHostnames is required in request-host mode. Configuration entries
 	// normalize case, trailing dots, and default ports scheme-agnostically;
-	// request authorities normalize default ports against the request's scheme.
+	// request authorities normalize case and trailing dots too, but strip only
+	// the request scheme's own default port.
 	// The normalized request authority must exact-match an entry or metadata
 	// fails with HTTP 400.
 	AllowedHostnames []string

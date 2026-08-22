@@ -1,0 +1,67 @@
+{
+  "contract_version": "m17.mcp-route-algebra/v1",
+  "routes": [
+    {
+      "kind": "namespace",
+      "mcp_pattern": "/{client_namespace}/mcp",
+      "mcp_methods": [
+        "POST",
+        "GET",
+        "DELETE"
+      ],
+      "protected_resource_pattern": "/.well-known/oauth-protected-resource/{client_namespace}/mcp",
+      "discovery_canonical_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/mcp",
+      "discovery_suffix_pattern": "/{client_namespace}/mcp/.well-known/oauth-authorization-server",
+      "authorize_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/mcp/authorize",
+      "token_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/mcp/token",
+      "authorization_routes_attached": true
+    },
+    {
+      "kind": "partner_namespace",
+      "mcp_pattern": "/{client_namespace}/partners/{partner_id}/mcp",
+      "mcp_methods": [
+        "POST",
+        "GET",
+        "DELETE"
+      ],
+      "protected_resource_pattern": "/.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/mcp",
+      "discovery_canonical_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp",
+      "discovery_suffix_pattern": "/{client_namespace}/partners/{partner_id}/mcp/.well-known/oauth-authorization-server",
+      "authorize_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/authorize",
+      "token_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/token",
+      "authorization_routes_attached": true
+    },
+    {
+      "kind": "agent",
+      "mcp_pattern": "/{client_namespace}/agents/{agent_id}/mcp",
+      "mcp_methods": [
+        "POST",
+        "GET",
+        "DELETE"
+      ],
+      "protected_resource_pattern": "/.well-known/oauth-protected-resource/{client_namespace}/agents/{agent_id}/mcp",
+      "discovery_canonical_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp",
+      "discovery_suffix_pattern": "/{client_namespace}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server",
+      "authorize_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/authorize",
+      "token_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/token",
+      "authorization_routes_attached": true
+    },
+    {
+      "kind": "partner_agent",
+      "mcp_pattern": "/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+      "mcp_methods": [
+        "POST",
+        "GET",
+        "DELETE"
+      ],
+      "protected_resource_pattern": "/.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+      "discovery_canonical_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+      "discovery_suffix_pattern": "/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server",
+      "authorize_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/authorize",
+      "token_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/token",
+      "authorization_routes_attached": true
+    }
+  ],
+  "root_authorization_server_pattern": "/.well-known/oauth-authorization-server",
+  "root_authorization_server_attached": false
+}

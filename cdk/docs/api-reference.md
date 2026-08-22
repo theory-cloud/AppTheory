@@ -10,7 +10,7 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryFunction` (Lambda wrapper defaults, including an optional fail-closed stable execution `roleName`)
 - `AppTheoryFunctionAlarms` (baseline alarms)
 - `AppTheoryHttpApi` (API Gateway v2 HTTP API + proxy routes)
-- `AppTheoryMcpServer` (API Gateway v2 HTTP API `POST /mcp` for MCP / Bedrock AgentCore)
+- `AppTheoryMcpServer` (attach-first HTTP API v2 canonical four-kind MCP/OAuth route-family facade)
 - `AppTheoryInstallParameters` (governed namespace CloudFormation parameters, caller-account rule, and typed tokens)
 - `AppTheoryRemoteMcpServer` (API Gateway REST API v1 streaming `/mcp` for Claude Remote MCP / Streamable HTTP)
 - `AppTheoryMcpProtectedResource` (API Gateway REST API v1 `/.well-known/oauth-protected-resource` for OAuth discovery)

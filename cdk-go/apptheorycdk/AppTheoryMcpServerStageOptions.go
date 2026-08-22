@@ -4,28 +4,30 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
 )
 
-// Stage configuration for the MCP server API Gateway.
+// Stage configuration for an AppTheory-owned MCP HTTP API.
 type AppTheoryMcpServerStageOptions struct {
-	// Enable CloudWatch access logging for the stage.
-	// Default: false.
+	// Default: true.
 	//
 	AccessLogging *bool `field:"optional" json:"accessLogging" yaml:"accessLogging"`
-	// Retention period for auto-created access log group.
+	// Retention period for the access log group.
 	//
-	// Only applies when accessLogging is true.
+	// Valid only when access logging
+	// is enabled.
 	// Default: logs.RetentionDays.ONE_MONTH
 	//
 	AccessLogRetention awslogs.RetentionDays `field:"optional" json:"accessLogRetention" yaml:"accessLogRetention"`
-	// Stage name.
 	// Default: "$default".
 	//
 	StageName *string `field:"optional" json:"stageName" yaml:"stageName"`
-	// Throttling burst limit for the stage.
-	// Default: undefined (no throttling).
+	// Default-stage burst limit.
+	// Default: 200.
 	//
 	ThrottlingBurstLimit *float64 `field:"optional" json:"throttlingBurstLimit" yaml:"throttlingBurstLimit"`
-	// Throttling rate limit (requests per second) for the stage.
-	// Default: undefined (no throttling).
+	// Default: true.
+	//
+	ThrottlingEnabled *bool `field:"optional" json:"throttlingEnabled" yaml:"throttlingEnabled"`
+	// Default-stage rate limit in requests per second.
+	// Default: 100.
 	//
 	ThrottlingRateLimit *float64 `field:"optional" json:"throttlingRateLimit" yaml:"throttlingRateLimit"`
 }

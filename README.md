@@ -77,7 +77,7 @@ python -m pip install "./apptheory-${PYTHON_VERSION}-py3-none-any.whl"
 
 | | |
 |---|---|
-| **Contract test fixtures** | 264 total — 263 shared runtime fixtures plus one Go/CDK-TS MCP route-algebra expectation table | <!-- apptheory-fixture-count: 264 -->
+| **Contract test fixtures** | 265 total — 263 shared runtime fixtures plus two Go/CDK-TS MCP route/facade expectation tables | <!-- apptheory-fixture-count: 265 -->
 | **Runtimes** | Go · TypeScript · Python (peers, not ports) |
 | **Tiers** | P0 (core) · P1 (+request-id, auth, CORS, guardrails) · P2 (+duration-aware observability hooks, inbound trace recording, EMF metric sink path, rate limiting) — default P2 |
 | **Event sources** | Lambda Function URL · API Gateway v2 · ALB · AppSync · SQS · EventBridge · DynamoDB Streams · Kinesis · WebSockets |
@@ -90,7 +90,7 @@ python -m pip install "./apptheory-${PYTHON_VERSION}-py3-none-any.whl"
 Use AppTheory when you want AWS-Lambda-backed services that are:
 
 - **Serverless-first** — one unified `HandleLambda` entrypoint dispatches Lambda Function URL, API Gateway v2, ALB, AppSync, SQS, EventBridge, DynamoDB Streams, Kinesis, and WebSockets. The same handler shape covers every event source.
-- **Cross-language consistent** — one routing model, one middleware order, one error envelope — across three runtimes — with drift prevention on the full shared corpus. Go, TypeScript, and Python execute 263 shared runtime fixtures, including MCP, OAuth, and objectstore; the [264th contract vector](https://apptheory.theorycloud.ai/reference/contract-fixtures/) pins the deliberately two-leg Go/CDK-TS MCP route algebra. <!-- apptheory-fixture-count: 264 -->
+- **Cross-language consistent** — one routing model, one middleware order, one error envelope — across three runtimes — with drift prevention on the full shared corpus. Go, TypeScript, and Python execute 263 shared runtime fixtures, including MCP, OAuth, and objectstore; the two remaining contract vectors pin the deliberately two-leg Go/CDK-TS MCP route algebra and facade inventory. <!-- apptheory-fixture-count: 265 -->
 - **Generative-coding friendly** — explicit tiers, canonical patterns, and strict verification so AI-generated code stays correct and maintainable.
 
 ✅ Treat routing, middleware, and event normalization as a contract
@@ -103,9 +103,10 @@ AppTheory includes a complete [Model Context Protocol](https://modelcontextproto
 - [MCP integration guide](https://apptheory.theorycloud.ai/integrations/mcp/) — transport, JSON-RPC surface, registries, sessions, streaming
 - [Remote MCP deployment](https://apptheory.theorycloud.ai/integrations/remote-mcp/) — OAuth, protected resource metadata, Autheory integration
 - [MCP examples](examples/mcp/) — `tools-only`, `tools-resources-prompts`, `resumable-sse`
-- Namespace deployment: `AppTheoryMcpServer` wires the literal `/mcp` path, public runtime-served RFC 9728 discovery,
-  and issuer/JWKS runtime config without accepting a protected-resource origin. Pair it with Go
-  `oauth.RegisterMCPServer` for the fixed SecureApp authenticated/public posture split.
+- Namespace deployment: `AppTheoryMcpServer` attaches the route-algebra MCP family to a shared `IHttpApi` or creates
+  the standalone specialization. It wires MCP `POST`/`GET`/`DELETE`, protected-resource metadata, both discovery
+  forms, and application-owned authorize/token routes by default. Pair it with Go `mcpfacade.RegisterMCPFacade`;
+  issuer, JWKS, scopes, and OAuth handlers remain explicit app-owned runtime config rather than construct env vars.
 - Namespace installation: `AppTheoryInstallParameters` emits the ten required governed CloudFormation parameters,
   checks `TargetAccountId` against `AWS::AccountId`, and exposes their `Ref` tokens without baking per-install identity
   into the template. See the [namespace install parameter guide](https://apptheory.theorycloud.ai/features/install-parameters/).
@@ -117,7 +118,7 @@ AppTheory includes a complete [Model Context Protocol](https://modelcontextproto
 - Streaming deployment: `AppTheoryRemoteMcpServer`; the URL-valued `AppTheoryMcpProtectedResource` static-document
   props remain only as deprecated compatibility surface.
 - [MCP server umbrella construct](https://apptheory.theorycloud.ai/features/mcp-server-construct/) — paths at synthesis,
-  hosts at request time, origins never
+  route families, attach-first deployment, authenticated and production defaults, origins never
 
 ## Documentation
 
@@ -144,7 +145,7 @@ The full documentation site lives at **[apptheory.theorycloud.ai](https://appthe
 
 **Contract reference and feature pages:**
 
-- [Contract Fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/) — 264 contract vectors: 263 across Go/TypeScript/Python plus the Go/CDK-TS MCP route algebra <!-- apptheory-fixture-count: 264 -->
+- [Contract Fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/) — 265 contract vectors: 263 across Go/TypeScript/Python plus two Go/CDK-TS MCP route/facade tables <!-- apptheory-fixture-count: 265 -->
 - [Event Shape Dispatch](https://apptheory.theorycloud.ai/reference/event-shapes/) — which Lambda event shapes route to which handler
 - [HTTP Runtime](https://apptheory.theorycloud.ai/features/http-runtime/) — P0/P1/P2 tier surface
 - [Jobs Ledger](https://apptheory.theorycloud.ai/features/jobs-ledger/)
@@ -173,7 +174,7 @@ The full documentation site lives at **[apptheory.theorycloud.ai](https://appthe
 | `py/` | Python runtime (3.12+) |
 | `cdk/` | CDK constructs (jsii) — `AppTheoryHttpApi`, `AppTheoryMcpServer`, `AppTheoryQueue`, ... |
 | `cdk-go/` | Generated Go bindings for the jsii CDK package |
-| `contract-tests/` | 264 contract vectors: 263 runner fixtures for Go/TS/Python plus one shared Go/CDK-TS route-algebra table | <!-- apptheory-fixture-count: 264 -->
+| `contract-tests/` | 265 contract vectors: 263 runner fixtures for Go/TS/Python plus two shared Go/CDK-TS route/facade tables | <!-- apptheory-fixture-count: 265 -->
 | `api-snapshots/` | Public API surface lockfiles for each runtime — the release gate |
 | `examples/` | CDK + handler examples: `multilang`, `import-pipeline`, `ssr-site`, MCP, ... |
 | `.github/workflows/` | CI: rubric, release-please (stable + prerelease), Pages publish, subtree publish |

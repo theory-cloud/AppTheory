@@ -12,8 +12,11 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryHttpApi`: API Gateway HTTP API v2 plus Lambda proxy routes
 - `AppTheoryRestApi`: API Gateway REST API v1 plus single-Lambda proxy routes
 - `AppTheoryRestApiRouter`: REST API v1 multi-Lambda routing with streaming support
-- `AppTheoryMcpServer`: umbrella HTTP API v2 MCP route bundle with literal `mcpPath`, runtime-served RFC 9728 discovery,
-  and issuer/JWKS runtime config; omitting both auth props retains the existing POST-only AgentCore shape
+- `AppTheoryMcpServer`: attach-first HTTP API v2 route-family facade with MCP `POST`/`GET`/`DELETE`, RFC 9728,
+  canonical and suffix RFC 8414 discovery, and application-owned authorize/token routes; owned API, session state,
+  logging, and throttling are the standalone specialization with production defaults
+- `AppTheoryMcpRouteAlgebra`: versioned MCP patterns and every protected-resource, discovery, authorize, and token
+  derivation consumed by the construct and mirrored Go runtime helper
 - `AppTheoryMcpPaths`: canonical MCP and OAuth discovery route paths
 - `AppTheoryRemoteMcpServer`: REST API v1 `/mcp` with streaming for Remote MCP
 - `AppTheoryMcpProtectedResource`: deprecated URL-valued compatibility surface for a synth-time-static
@@ -147,9 +150,9 @@ CloudFormation generates the physical names for all six groups, none can hit the
 - Use `AppTheoryHttpApi` for the simplest HTTP API v2 deployment
 - Use `AppTheoryRestApi` when you need REST API v1 but not multi-Lambda routing
 - Use `AppTheoryRestApiRouter` when you need SSE or response streaming
-- Use `AppTheoryMcpServer` for namespace MCP applications and Bedrock AgentCore. Namespace applications supply
-  `authorizationServerIssuer` and `jwksUri`, then use the Go `oauth.RegisterMCPServer` helper so `/mcp` is
-  authenticated and discovery is public.
+- Use `AppTheoryMcpServer` for the route-algebra MCP facade. Supply `api` for a shared front door or omit it for the
+  standalone owned API; then use Go `mcpfacade.RegisterMCPFacade` with explicit app-owned issuer, JWKS, scopes,
+  capabilities, and handlers. Public unauthenticated MCP requires the explicit `unauthenticatedMcp` opt-out.
 - Use `AppTheoryRemoteMcpServer` when REST API v1 response streaming and resumable Remote MCP transport are required;
   do not start new namespace applications on the URL-valued `AppTheoryMcpProtectedResource` compatibility construct.
 - Use `AppTheorySsrSite` when you need the canonical FaceTheory-first SSR/SSG/ISR deployment story

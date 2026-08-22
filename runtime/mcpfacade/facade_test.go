@@ -23,6 +23,26 @@ var testEndpoints = []mcproutes.EndpointPath{
 }
 
 const documentExpectationsPath = "../../contract-tests/fixtures/routing/mcp-route-algebra/expectations.json"
+const routeInventoryExpectationsPath = "../../contract-tests/fixtures/routing/mcp-route-algebra/facade-route-inventory.json"
+
+type routeInventoryFixture struct {
+	ContractVersion                 string         `json:"contract_version"`
+	Routes                          []routeFixture `json:"routes"`
+	RootAuthorizationServerPattern  string         `json:"root_authorization_server_pattern"`
+	RootAuthorizationServerAttached bool           `json:"root_authorization_server_attached"`
+}
+
+type routeFixture struct {
+	Kind                        mcproutes.EndpointKind `json:"kind"`
+	MCPPattern                  string                 `json:"mcp_pattern"`
+	MCPMethods                  []string               `json:"mcp_methods"`
+	ProtectedResourcePattern    string                 `json:"protected_resource_pattern"`
+	DiscoveryCanonicalPattern   string                 `json:"discovery_canonical_pattern"`
+	DiscoverySuffixPattern      string                 `json:"discovery_suffix_pattern"`
+	AuthorizePattern            string                 `json:"authorize_pattern"`
+	TokenPattern                string                 `json:"token_pattern"`
+	AuthorizationRoutesAttached bool                   `json:"authorization_routes_attached"`
+}
 
 type documentFixture struct {
 	Name                          string                 `json:"name"`
@@ -94,6 +114,39 @@ func TestRegisterMCPFacadeRegistersCompleteContractSurface(t *testing.T) {
 		tokenResponse := serve(app, "POST", tokenPath, nil)
 		require.Equal(t, 200, tokenResponse.Status)
 		require.Equal(t, "token:"+string(endpoint.Kind), string(tokenResponse.Body))
+	}
+}
+
+func TestRegisterMCPFacadeInventoryMatchesSharedConstructFixture(t *testing.T) {
+	t.Parallel()
+	contents, err := os.ReadFile(routeInventoryExpectationsPath)
+	require.NoError(t, err)
+	var fixture routeInventoryFixture
+	require.NoError(t, json.Unmarshal(contents, &fixture))
+
+	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	config := validConfig(URLModePublicBaseURL)
+	config.AuthorizeHandler = kindHandlerFactory("authorize")
+	config.TokenHandler = kindHandlerFactory("token")
+	inventory, err := RegisterMCPFacade(app, config)
+	require.NoError(t, err)
+
+	require.Equal(t, fixture.ContractVersion, inventory.ContractVersion)
+	require.Equal(t, fixture.RootAuthorizationServerPattern, inventory.RootAuthorizationServerPattern)
+	require.Equal(t, fixture.RootAuthorizationServerAttached, inventory.RootAuthorizationServerAttached)
+	require.Len(t, inventory.Routes, len(fixture.Routes))
+	for index, expected := range fixture.Routes {
+		require.Equal(t, expected, routeFixture{
+			Kind:                        inventory.Routes[index].Kind,
+			MCPPattern:                  inventory.Routes[index].MCPPattern,
+			MCPMethods:                  inventory.Routes[index].MCPMethods,
+			ProtectedResourcePattern:    inventory.Routes[index].ProtectedResourcePattern,
+			DiscoveryCanonicalPattern:   inventory.Routes[index].DiscoveryCanonicalPattern,
+			DiscoverySuffixPattern:      inventory.Routes[index].DiscoverySuffixPattern,
+			AuthorizePattern:            inventory.Routes[index].AuthorizePattern,
+			TokenPattern:                inventory.Routes[index].TokenPattern,
+			AuthorizationRoutesAttached: inventory.Routes[index].AuthorizationRoutesAttached,
+		})
 	}
 }
 
@@ -357,6 +410,18 @@ func TestWildcardStyleAllowlistEntriesRegisterAsLiteralKeys(t *testing.T) {
 			name: "forwarded header default port variant",
 			headers: map[string][]string{
 				"host": {"not-allowlisted.example.com"}, "forwarded": {"for=192.0.2.1;host=*.EXAMPLE.COM.:443;proto=https"},
+			},
+		},
+		{
+			name: "apptheory original host trailing dot variant",
+			headers: map[string][]string{
+				"host": {"not-allowlisted.example.com"}, "x-apptheory-original-host": {"*.EXAMPLE.COM."}, "x-forwarded-proto": {"https"},
+			},
+		},
+		{
+			name: "facetheory original host default port variant",
+			headers: map[string][]string{
+				"host": {"not-allowlisted.example.com"}, "x-facetheory-original-host": {"*.EXAMPLE.COM.:443"}, "x-forwarded-proto": {"https"},
 			},
 		},
 	}

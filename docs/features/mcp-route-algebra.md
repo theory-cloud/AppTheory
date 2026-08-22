@@ -69,10 +69,10 @@ const tokenPath = AppTheoryMcpRouteAlgebra.oauthTokenPath(endpoint);
 
 ## Non-goals
 
-This additive contract does not define HTTP methods, streaming or gateway-auth flags, authorization scopes or logic,
-download/GitHub/grant application routes, or root-level route registrations. It does not add runtime SDK surfaces in
-`ts/src` or `py/src`. It does not rewire or alter `AppTheoryMcpServer`, `AppTheoryMcpPaths`, or the existing
-`runtime/oauth` constants; integration of those existing surfaces is a separate contract change.
+The algebra does not define streaming, gateway-auth policy, authorization scopes or logic, or download/GitHub/grant
+application routes. It does not add runtime SDK surfaces in `ts/src` or `py/src`. `AppTheoryMcpServer` consumes these
+pure derivations to wire its route family, while `runtime/mcpfacade` consumes the mirrored Go contract. Root discovery
+remains an explicit optional registration derived from the same root-path function.
 
 `ParseMCPPath` is intentionally stricter than the original `theory-mcp-server` reference parser. It validates every
 recognized identifier segment and rejects whitespace-only and dot-segment identifiers instead of accepting a path
