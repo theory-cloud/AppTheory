@@ -513,4 +513,12 @@ test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => 
   );
   assert.match(installParameters, /app-owned values into `mcpfacade\.FacadeConfig\.IssuerURL` and `\.JWKSURI`/);
   assert.doesNotMatch(installParameters, /\b(?:authorizationServerIssuer|jwksUri)\s*:/);
+
+  const conceptMap = fs.readFileSync(path.resolve(__dirname, "../docs/_concepts.yaml"), "utf8");
+  const agentCoreConcept = conceptMap.match(/  mcp_server_agentcore:\n[\s\S]*?(?=\n  \S)/)?.[0];
+  assert.ok(agentCoreConcept, "CDK concepts must describe AppTheoryMcpServer");
+  assert.match(agentCoreConcept, /canonical four-kind route family and its full OAuth facade by default/);
+  assert.match(agentCoreConcept, /session_state_enabled_by_default/);
+  assert.doesNotMatch(agentCoreConcept, /Provision an HTTP API `POST \/mcp` endpoint/);
+  assert.doesNotMatch(agentCoreConcept, /optional_session_table/);
 });
