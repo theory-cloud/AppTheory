@@ -19,23 +19,26 @@
 #   1. Resolve the release tag — from the `release` event payload, or (on
 #      workflow_dispatch) the latest published non-prerelease release via
 #      `gh release view`. The build NEVER runs from a branch head.
-#   2. Generate docs/_config_versions.yml from the resolved tag: the version
-#      pill and the FULL tabletheory.runtimes array — Jekyll deep-merges
-#      config hashes but REPLACES arrays wholesale, so the override must carry
-#      every runtime entry — with every version inside each install command
-#      replaced by the tag (`v${TAG}` where a tag is referenced, and
-#      `${TAG#v}` in asset filenames).
-#   3. The AppTheory landing page renders its install commands from
-#      site.data.runtimes (docs/_data/runtimes.yml), not from
-#      tabletheory.runtimes, so the same stamping is applied to that data file
-#      at build time. Checked-in docs/_config.yml and docs/_data/runtimes.yml
-#      stay untouched and remain the local-preview fallback; the generated
-#      override wins in CI.
+#   2. Generate docs/_config_versions.yml from the resolved tag via
+#      scripts/generate-docs-version-override.rb: the version pill and the
+#      FULL tabletheory.runtimes array — Jekyll deep-merges config hashes but
+#      REPLACES arrays wholesale, so the override must carry every runtime
+#      entry — with every version inside each install command replaced by the
+#      tag (`v${TAG}` where a tag is referenced, and `${TAG#v}` in asset
+#      filenames). Checked-in docs/_config.yml stays untouched and remains the
+#      local-preview fallback; the generated override wins in CI.
+#   3. The landing page (docs/index.html) renders each runtime's install
+#      command from site.tabletheory.runtimes (by-id lookup), falling back to
+#      docs/_data/runtimes.yml, so the override's stamped installs are
+#      load-bearing instead of dead weight.
 #   4. Build with `jekyll build --config _config.yml,_config_versions.yml`.
 #
-# The github-pages environment's deployment policy already accepts `v*` tag
-# refs, so no repo settings work is needed. A docs-only fix that does not ship
-# a release waits for the next release; deploy it early with workflow_dispatch.
+# The github-pages environment's deployment policy accepts `v*` tag refs and
+# the `staging` branch only, so no repo settings work is needed. A manual
+# `workflow_dispatch` must be run from a ref that policy allows — the
+# `staging` branch or a `v*` tag — or the deploy job is rejected by the
+# environment policy. A docs-only fix that does not ship a release waits for
+# the next release; deploy it early with workflow_dispatch from `staging`.
 #
 # Security invariants: the workflow token stays read-only except the
 # pages write + id-token granted to the deploy job; the override is generated
@@ -84,6 +87,8 @@ jobs:
       - name: Resolve release tag
         id: resolve
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
             tag="$(jq -r .release.tag_name "$GITHUB_EVENT_PATH")"
@@ -109,26 +114,10 @@ jobs:
           working-directory: docs
 
       - name: Generate version config override
-        working-directory: docs
         env:
           RELEASE_TAG: ${{ steps.resolve.outputs.tag }}
         run: |
-          cat > "$RUNNER_TEMP/apptheory-docs-version-override.rb" <<'RUBY'
-          require "yaml"
-          tag  = ENV.fetch("RELEASE_TAG")
-          bare = tag.delete_prefix("v")
-          v_tag_re = /v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?/
-          bare_tag_re = /(?<!v)[0-9]+\.[0-9]+\.[0-9]+/
-          stamp = ->(text) { text.gsub(v_tag_re) { tag }.gsub(bare_tag_re) { bare } }
-          cfg = YAML.load_file("_config.yml")
-          runtimes = cfg.fetch("tabletheory").fetch("runtimes").map do |rt|
-            rt.merge("install" => stamp.call(rt.fetch("install")))
-          end
-          File.write("_config_versions.yml", { "tabletheory" => { "version_pill" => tag, "runtimes" => runtimes } }.to_yaml)
-          lines = File.readlines("_data/runtimes.yml")
-          File.write("_data/runtimes.yml", lines.map { |l| l.match?(/^\s*install:/) ? stamp.call(l) : l }.join)
-          RUBY
-          ruby "$RUNNER_TEMP/apptheory-docs-version-override.rb"
+          ruby scripts/generate-docs-version-override.rb --tag "$RELEASE_TAG"
 
       - name: Jekyll build
         working-directory: docs

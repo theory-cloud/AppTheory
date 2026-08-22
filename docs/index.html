@@ -98,8 +98,12 @@ edit_on_github: false
   {% for r in site.data.runtimes %}
     <div class="runtime-block__pane" data-runtime-pane="{{ r.id }}" {% unless forloop.first %}hidden{% endunless %}>
 
+  {%- comment -%} Install strings are stamped from the release-tagged config
+  override (pages.yml → scripts/generate-docs-version-override.rb); the static
+  _data copy above carries only the tab chrome (icon/lang/snippet). {%- endcomment -%}
+  {%- assign rt = site.tabletheory.runtimes | where: "id", r.id | first -%}
   <p class="tc-body-sm" style="color: var(--tc-fg-dim); font-family: var(--tc-font-mono); margin: 4px 0 12px;">
-    {{ r.install }}
+    {{ rt.install | default: r.install }}
   </p>
 
 ```{{ r.lang }}

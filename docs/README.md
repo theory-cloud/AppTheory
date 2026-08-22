@@ -18,8 +18,9 @@ This directory contains the OFFICIAL documentation for AppTheory.
 `docs/` is the canonical documentation root for AppTheory. Use the pages in this directory for user-facing guidance,
 AI ingestion, and migration-safe references.
 
-The hosted Pages site at <https://apptheory.theorycloud.ai/> is intentionally published from the `staging` integration
-branch. Treat it as the integration documentation line, not as proof that a stable release has completed.
+The hosted Pages site at <https://apptheory.theorycloud.ai/> is intentionally published when a stable GitHub release is
+published; `workflow_dispatch` from a deployment-policy-allowed ref (the `staging` branch or a `v*` tag) re-deploys on
+demand. Treat it as the released documentation line — integration-only content appears only once it ships in a release.
 
 All public AppTheory functionality should be represented either in the fixed ingestible set below or in one of the
 sanctioned category roots. Avoid adding new root-level feature guides when a category root already exists.
