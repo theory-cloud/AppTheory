@@ -483,6 +483,12 @@ for (const item of [
     error: /authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment/,
   },
   {
+    name: "issuer URL with a single-slash authority",
+    authorizationServerIssuer: "https:/auth.example.com",
+    jwksUri: "https://auth.example.com/jwks.json",
+    error: /authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment/,
+  },
+  {
     name: "issuer URL with an out-of-range port",
     authorizationServerIssuer: "https://host:99999",
     jwksUri: "https://auth.example.com/jwks.json",
