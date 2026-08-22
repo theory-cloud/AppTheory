@@ -18359,7 +18359,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/mcp-server.ts",
-          "line": 262
+          "line": 269
         },
         "parameters": [
           {
@@ -18385,7 +18385,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 237
+        "line": 244
       },
       "name": "AppTheoryMcpServer",
       "properties": [
@@ -18393,7 +18393,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 240
+            "line": 247
           },
           "name": "api",
           "type": {
@@ -18408,7 +18408,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 249
+            "line": 256
           },
           "name": "endpoint",
           "type": {
@@ -18419,7 +18419,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 243
+            "line": 250
           },
           "name": "endpoints",
           "type": {
@@ -18439,7 +18439,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 252
+            "line": 259
           },
           "name": "mcpPath",
           "type": {
@@ -18450,7 +18450,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 244
+            "line": 251
           },
           "name": "mcpPaths",
           "type": {
@@ -18470,7 +18470,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 255
+            "line": 262
           },
           "name": "protectedResourceMetadataPath",
           "type": {
@@ -18481,7 +18481,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 245
+            "line": 252
           },
           "name": "protectedResourceMetadataPaths",
           "type": {
@@ -18497,7 +18497,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 246
+            "line": 253
           },
           "name": "routeInventory",
           "type": {
@@ -18508,7 +18508,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 260
+            "line": 267
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -18520,7 +18520,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 258
+            "line": 265
           },
           "name": "apiMapping",
           "optional": true,
@@ -18532,7 +18532,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 259
+            "line": 266
           },
           "name": "cnameRecord",
           "optional": true,
@@ -18544,7 +18544,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 257
+            "line": 264
           },
           "name": "domainName",
           "optional": true,
@@ -18556,7 +18556,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 241
+            "line": 248
           },
           "name": "ownedApi",
           "optional": true,
@@ -18568,7 +18568,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 242
+            "line": 249
           },
           "name": "sessionTable",
           "optional": true,
@@ -18903,7 +18903,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 204
+            "line": 211
           },
           "name": "apiName",
           "optional": true,
@@ -18921,7 +18921,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 194
+            "line": 201
           },
           "name": "authorizationServerIssuer",
           "optional": true,
@@ -18938,7 +18938,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 220
+            "line": 227
           },
           "name": "domain",
           "optional": true,
@@ -18955,7 +18955,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 209
+            "line": 216
           },
           "name": "enableSessionTable",
           "optional": true,
@@ -18973,7 +18973,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 201
+            "line": 208
           },
           "name": "jwksUri",
           "optional": true,
@@ -18991,7 +18991,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 187
+            "line": 194
           },
           "name": "mcpPath",
           "optional": true,
@@ -19009,7 +19009,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 180
+            "line": 187
           },
           "name": "ownedApi",
           "optional": true,
@@ -19021,12 +19021,13 @@
           "abstract": true,
           "docs": {
             "default": "AppTheoryMcpRouteAlgebra.supportedEndpointTemplates()",
+            "remarks": "Go `runtime/mcpfacade.RegisterMCPFacade` serves only the canonical default\nfamily. Noncanonical patterns require app-owned runtime route registration\nthat matches the construct's `routeInventory`.",
             "summary": "Ordered MCP route family."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 161
+            "line": 165
           },
           "name": "routeFamily",
           "optional": true,
@@ -19044,7 +19045,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 174
+            "line": 181
           },
           "name": "sessionState",
           "optional": true,
@@ -19061,7 +19062,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 212
+            "line": 219
           },
           "name": "sessionTableName",
           "optional": true,
@@ -19078,7 +19079,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 215
+            "line": 222
           },
           "name": "sessionTtlMinutes",
           "optional": true,
@@ -19095,7 +19096,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 225
+            "line": 232
           },
           "name": "stage",
           "optional": true,
@@ -19107,13 +19108,13 @@
           "abstract": true,
           "docs": {
             "default": "false",
-            "remarks": "This cannot be combined with legacy authorization props or root discovery.",
+            "remarks": "This cannot be combined with legacy authorization props or root discovery.\n`runtime/mcpfacade.RegisterMCPFacade` always installs the authenticated\ncanonical facade, so applications using this opt-out must own runtime\nregistration for the transport routes.",
             "summary": "Explicitly opt out of the OAuth facade and wire only MCP transport routes."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 168
+            "line": 175
           },
           "name": "unauthenticatedMcp",
           "optional": true,
@@ -29474,5 +29475,5 @@
     }
   },
   "version": "3.1.1",
-  "fingerprint": "WMK9PA5+VPtevkpl5PdtPDXn9Rh4kv579fgswvNEtME="
+  "fingerprint": "LIxRksnAEdPIMuKGxt3aeCeQfInhrgluSQrwIIcR3HI="
 }

@@ -156,6 +156,10 @@ export interface AppTheoryMcpServerProps {
 
   /**
    * Ordered MCP route family.
+   *
+   * Go `runtime/mcpfacade.RegisterMCPFacade` serves only the canonical default
+   * family. Noncanonical patterns require app-owned runtime route registration
+   * that matches the construct's `routeInventory`.
    * @default AppTheoryMcpRouteAlgebra.supportedEndpointTemplates()
    */
   readonly routeFamily?: AppTheoryMcpRouteFamily;
@@ -163,6 +167,9 @@ export interface AppTheoryMcpServerProps {
   /**
    * Explicitly opt out of the OAuth facade and wire only MCP transport routes.
    * This cannot be combined with legacy authorization props or root discovery.
+   * `runtime/mcpfacade.RegisterMCPFacade` always installs the authenticated
+   * canonical facade, so applications using this opt-out must own runtime
+   * registration for the transport routes.
    * @default false
    */
   readonly unauthenticatedMcp?: boolean;

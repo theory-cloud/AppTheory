@@ -50,14 +50,11 @@ tests, so dropping a pattern, transport method, or facade route fails the reposi
 `routeFamily.rootAuthorizationServerDiscovery: true` only when the runtime also supplies
 `FacadeConfig.RootAuthorizationServer`; both sides then install the algebra-derived root discovery route.
 
-A custom singleton stays on the same derivation path:
-
-```ts
-new AppTheoryMcpServer(this, "StandaloneMcp", {
-  handler,
-  routeFamily: { patterns: ["/mcp"] },
-});
-```
+`runtime/mcpfacade.RegisterMCPFacade` serves exactly this canonical four-pattern family. A noncanonical `routeFamily`
+still uses the construct's route algebra, but it is runtime-bring-your-own-registration: the application must register
+handlers for every entry in `routeInventory` and must not assume `RegisterMCPFacade` can be configured with those
+patterns. This boundary keeps the shipped helper and the deployed routes congruent instead of presenting a facade
+that returns 404 for every configured path.
 
 ## Attach mode and owned mode
 
@@ -89,7 +86,6 @@ Owned mode is the standalone specialization. Omit `api` and optionally configure
 ```ts
 new AppTheoryMcpServer(this, "StandaloneMcp", {
   handler,
-  routeFamily: { patterns: ["/mcp"] },
   ownedApi: {
     apiName: "cloud-keeper-mcp",
     stage: { stageName: "live" },
@@ -108,10 +104,11 @@ belong to the AppTheory runtime composition helper. Applications must call `Regi
 scopes and an application-owned authorize/token handler pair. The helper fails closed if that pair is partial and does
 not install authorize/token runtime routes when both are absent.
 
-For a genuinely public MCP application, `unauthenticatedMcp: true` is the explicit opt-out. It wires only the three MCP
-transport methods and no OAuth facade. It cannot be combined with root discovery or the deprecated issuer/JWKS props.
-Omitting runtime auth config is not an opt-out: the default CDK facade remains present and the runtime must initialize
-its explicit `FacadeConfig` successfully.
+For a genuinely public MCP application, `unauthenticatedMcp: true` is the explicit CDK opt-out. It wires only the three
+MCP transport methods and no OAuth facade. It cannot be combined with root discovery or the deprecated issuer/JWKS
+props. `RegisterMCPFacade` has no unauthenticated mode and therefore is not the runtime counterpart for this opt-out;
+the application must own transport-route registration. Omitting runtime auth config is not an opt-out: the default CDK
+facade remains present and the runtime must initialize its explicit `FacadeConfig` successfully.
 
 The v3.1.x `authorizationServerIssuer` and `jwksUri` props are deprecated together. They remain pair-validated for
 migration safety but no longer control facade wiring and no longer become environment variables. Move them into

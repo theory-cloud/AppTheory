@@ -437,3 +437,29 @@ test("AppTheoryMcpServer v3.1.x A6 props and accessors carry migration notices",
     assert.match(accessors.get(name)?.docs?.deprecated ?? "", /Use/, `${name} migration pointer`);
   }
 });
+
+test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => {
+  const assembly = JSON.parse(fs.readFileSync(path.join(__dirname, "..", ".jsii"), "utf8"));
+  const props = assembly.types["@theory-cloud/apptheory-cdk.AppTheoryMcpServerProps"];
+  const propsByName = new Map(props.properties.map((property) => [property.name, property]));
+  assert.match(
+    propsByName.get("routeFamily").docs.remarks,
+    /RegisterMCPFacade.*only the canonical default\s+family/s,
+  );
+  assert.match(
+    propsByName.get("unauthenticatedMcp").docs.remarks,
+    /RegisterMCPFacade.*always installs the authenticated\s+canonical facade/s,
+  );
+
+  const guide = fs.readFileSync(
+    path.resolve(__dirname, "../../docs/features/mcp-server-construct.md"),
+    "utf8",
+  );
+  assert.match(guide, /RegisterMCPFacade` serves exactly this canonical four-pattern family/);
+  assert.match(guide, /RegisterMCPFacade` has no unauthenticated mode/);
+  assert.doesNotMatch(
+    guide,
+    /routeFamily:\s*\{\s*patterns:\s*\[\s*["']\/mcp["']\s*\]\s*\}/s,
+    "the shipped guide must not pair the canonical-only helper with a singleton family",
+  );
+});
