@@ -15,9 +15,17 @@ build_once() {
   local out_file="$1"
   local tmp_dir
   local log_file
-  local ec
   tmp_dir="$(mktemp -d)"
   log_file="${tmp_dir}/build.log"
+
+  # Fail the current pass with the failing command's own exit code and a log tail.
+  fail_build() {
+    local cmd="$1"
+    local ec="$2"
+    echo "verify-builds: FAIL (${cmd} exited ${ec}; tail of build log follows, full log: ${log_file})" >&2
+    tail -n 120 "${log_file}" >&2 || true
+    exit "${ec}"
+  }
 
   # Snapshot the repo contents deterministically from the working tree (tracked + non-ignored).
   #
@@ -33,15 +41,13 @@ build_once() {
   (
     cd "${tmp_dir}"
     export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
-    scripts/verify-release-gates.sh > "${log_file}" 2>&1
-    scripts/generate-checksums.sh >> "${log_file}" 2>&1
-    cat dist/SHA256SUMS.txt > "${out_file}"
-  ) || {
-    ec=$?
-    echo "verify-builds: FAIL (inner gate exited ${ec}; tail of build log follows, full log: ${log_file})" >&2
-    tail -n 120 "${log_file}" >&2 || true
-    exit "${ec}"
-  }
+    # Guard each inner command individually: a subshell on the left of `||` disables
+    # errexit for everything inside it, so a single `( ... ) || fail` wrapper would
+    # let a post-dist gate failure slide through as a silent PASS.
+    scripts/verify-release-gates.sh > "${log_file}" 2>&1 || fail_build "verify-release-gates.sh" "$?"
+    scripts/generate-checksums.sh >> "${log_file}" 2>&1 || fail_build "generate-checksums.sh" "$?"
+    cat dist/SHA256SUMS.txt > "${out_file}" || fail_build "checksums cat" "$?"
+  )
 
   rm -rf "${tmp_dir}"
 }
