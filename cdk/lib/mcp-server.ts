@@ -1,4 +1,4 @@
-import { RemovalPolicy, Token } from "aws-cdk-lib";
+import { RemovalPolicy, Stack, Token } from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
@@ -393,7 +393,8 @@ export class AppTheoryMcpServer extends Construct {
       this.setupCustomDomain(ownedOptions.domain, ownedStage);
       endpointBase = `https://${ownedOptions.domain.domainName}`;
     } else if (props.api) {
-      endpointBase = this.api.apiEndpoint;
+      const stack = Stack.of(this);
+      endpointBase = `https://${this.api.apiId}.execute-api.${stack.region}.${stack.urlSuffix}`;
     } else {
       endpointBase = ownedStageName === "$default"
         ? this.api.apiEndpoint

@@ -141,6 +141,24 @@ test("AppTheoryMcpServer attach mode wires the runtime inventory without owning 
   assert.ok(keys.has("POST /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/token"));
 });
 
+test("AppTheoryMcpServer attach mode synthesizes an API imported by id only", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "IdOnlyAttachStack");
+  const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
+    httpApiId: "abc123",
+  });
+  const server = new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack),
+    api: importedApi,
+    sessionState: { enabled: false },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(resourcesOfType(template, "AWS::ApiGatewayV2::Api").length, 0);
+  assert.deepEqual(routeKeys(template), fixtureRouteKeys());
+  assert.equal(server.endpoints.length, fixture.routes.length);
+});
+
 test("AppTheoryMcpServer derives every facade route for parameterized family members through the algebra", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "ParameterizedStack");
