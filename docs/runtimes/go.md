@@ -5,7 +5,7 @@ description: The Go implementation of the AppTheory contract — routing, middle
 
 # Go Runtime
 
-The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — the [262 contract fixtures](../reference/contract-fixtures.md) arbitrate when the three runtimes disagree. <!-- apptheory-fixture-count -->
+The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — 263 single-envelope [contract fixtures](../reference/contract-fixtures.md) run in Go, TypeScript, and Python, while the remaining two route-algebra and facade-inventory vectors are loaded by Go and CDK-TS tests only. <!-- apptheory-fixture-count: 265 -->
 
 ## Install
 
@@ -23,6 +23,8 @@ Module layout (see `api-snapshots/go.txt` for the exact exported surface):
 | --- | --- |
 | `github.com/theory-cloud/apptheory/v3/runtime` | Core runtime: `apptheory.New`, `Context`, `Request`, `Response`, route registration, middleware. |
 | `github.com/theory-cloud/apptheory/v3/runtime/mcp` | MCP Streamable HTTP transport, sessions, resumable SSE. |
+| `github.com/theory-cloud/apptheory/v3/runtime/mcproutes` | Versioned MCP endpoint and OAuth route algebra. |
+| `github.com/theory-cloud/apptheory/v3/runtime/mcpfacade` | Golden-path MCP/OAuth facade registration and metadata composition. |
 | `github.com/theory-cloud/apptheory/v3/runtime/oauth` | OAuth protected-resource metadata, PKCE, DCR, token-store helpers. |
 | `github.com/theory-cloud/apptheory/v3/testkit` | Deterministic test environment (clock, ID queue, event builders). |
 | `github.com/theory-cloud/apptheory/v3/testkit/mcp` | In-process MCP client for unit tests. |
@@ -110,6 +112,12 @@ if _, err := app.GetStrict("/users/{id}", h); err != nil {
 
 TypeScript and Python follow the same fail-closed registration contract.
 
+For the parameterized four-kind MCP OAuth surface, use `mcpfacade.RegisterMCPFacade` rather than copying route
+patterns. `FacadeConfig` requires per-kind scopes, an application-owned MCP handler, and one explicit absolute-URL
+mode. `URLModePublicBaseURL` is for front-door/CDN deployments; `URLModeRequestHost` derives scheme and host from each
+request for direct API Gateway custom domains and tests. Optional `HandlerFactory` plug points attach app-owned
+authorize/token behavior as a pair. See [Go MCP Facade Helper](../features/mcp-facade-helper.md).
+
 ## HTTP error format
 
 Default HTTP error envelopes are nested under `error`. `AppTheoryError` is the canonical client-safe error type for new code; `AppError` remains supported for code/message compatibility. Any HTTP error whose code string is `EMPTY_BODY` or `INVALID_JSON` is remapped by the default nested envelope to `app.bad_request`. To match Lift's flat shape and preserve those legacy codes/messages:
@@ -161,11 +169,11 @@ See the [MCP Method Surface](../integrations/mcp.md) for the full Streamable HTT
 
 ## What's verified
 
-The Go runtime passes all 262 contract fixtures on every commit. <!-- apptheory-fixture-count --> Any behavioral divergence between Go, TypeScript, and Python is treated as a contract bug — fix the implementation, or update the fixture and prove the change holds in all three runtimes.
+The Go runtime passes the 263 generic runner fixtures and directly consumes the MCP route-algebra and facade-inventory tables, covering all 265 contract vectors on every commit. <!-- apptheory-fixture-count: 265 --> Any behavioral divergence on a shared surface is treated as a contract bug — fix the implementation, or update the fixture and prove the change holds across every participating runtime.
 
 ## Next reads
 
 - [API Reference](../api-reference.md) — full surface table
 - [HTTP Runtime tiers](../features/http-runtime.md) — P0 / P1 / P2
 - [Event Shape Dispatch](../reference/event-shapes.md) — when `HandleLambda` calls what
-- [Contract Fixtures](../reference/contract-fixtures.md) — the 262-fixture covenant <!-- apptheory-fixture-count -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — the 265-fixture covenant <!-- apptheory-fixture-count: 265 -->

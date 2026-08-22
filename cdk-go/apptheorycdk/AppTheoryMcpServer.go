@@ -12,42 +12,46 @@ import (
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3/internal"
 )
 
-// Umbrella deployment contract for a namespace MCP server.
+// Contract-first MCP facade deployment construct.
 //
-// The construct provisions an HTTP API Gateway v2 with a Lambda integration
-// on the conventional POST /mcp path, optional runtime-served RFC 9728
-// discovery routes, optional DynamoDB session state, and an optional custom
-// domain. Resource origins are intentionally absent from the prop surface:
-// the Go runtime derives the protected resource host from each request.
-//
-// Example:
-//
-//	const server = new AppTheoryMcpServer(this, 'McpServer', {
-//	  handler: mcpFn,
-//	  enableSessionTable: true,
-//	  sessionTtlMinutes: 120,
-//	});
+// The primary mode attaches the complete route-algebra family to a supplied
+// HTTP API. Omitting `api` specializes the same path into a standalone owned
+// API. The construct routes only: OAuth metadata, scopes, capabilities, and
+// authorize/token behavior remain application-owned through Go
+// `mcpfacade.RegisterMCPFacade`.
 type AppTheoryMcpServer interface {
 	constructs.Construct
-	// The access log group (if access logging is enabled).
 	AccessLogGroup() awslogs.ILogGroup
-	// The underlying HTTP API Gateway v2.
-	Api() awsapigatewayv2.HttpApi
-	// The API mapping for the custom domain (if domain is configured).
+	Api() awsapigatewayv2.IHttpApi
 	ApiMapping() awsapigatewayv2.ApiMapping
-	// The Route53 CNAME record (if domain and hostedZone are configured).
 	CnameRecord() awsroute53.CnameRecord
-	// The custom domain name resource (if domain is configured).
 	DomainName() awsapigatewayv2.DomainName
-	// The MCP endpoint URL.
+	// First derived endpoint template.
+	//
+	// In attach mode an `apiEndpoint` supplied through
+	// `HttpApi.fromHttpApiAttributes` is never consulted. This value is an
+	// execute-api origin template derived by the same rules as `endpoints`, not
+	// the front door's public authority.
+	// Deprecated: Use `endpoints`.
 	Endpoint() *string
-	// Literal MCP endpoint route path.
+	// Derived endpoint templates for the ordered MCP route family.
+	//
+	// In attach mode these are execute-api origin templates, not declarations of
+	// public authority. An `apiEndpoint` supplied through
+	// `HttpApi.fromHttpApiAttributes` is never consulted; the origin is derived
+	// from `apiId`, the stack region and URL suffix, plus
+	// `attachedApiStageName` when supplied.
+	Endpoints() *[]*string
+	// Deprecated: Use `mcpPaths`.
 	McpPath() *string
+	McpPaths() *[]*string
 	// The tree node.
 	Node() constructs.Node
-	// Path-scoped RFC 9728 discovery route for this MCP endpoint.
+	OwnedApi() awsapigatewayv2.HttpApi
+	// Deprecated: Use `protectedResourceMetadataPaths` or `routeInventory`.
 	ProtectedResourceMetadataPath() *string
-	// The DynamoDB session table (if enableSessionTable is true).
+	ProtectedResourceMetadataPaths() *[]*string
+	RouteInventory() *AppTheoryMcpServerRouteInventory
 	SessionTable() awsdynamodb.ITable
 	// Returns a string representation of this construct.
 	ToString() *string
@@ -77,8 +81,8 @@ func (j *jsiiProxy_AppTheoryMcpServer) AccessLogGroup() awslogs.ILogGroup {
 	return returns
 }
 
-func (j *jsiiProxy_AppTheoryMcpServer) Api() awsapigatewayv2.HttpApi {
-	var returns awsapigatewayv2.HttpApi
+func (j *jsiiProxy_AppTheoryMcpServer) Api() awsapigatewayv2.IHttpApi {
+	var returns awsapigatewayv2.IHttpApi
 	_jsii_.Get(
 		j,
 		"api",
@@ -127,11 +131,31 @@ func (j *jsiiProxy_AppTheoryMcpServer) Endpoint() *string {
 	return returns
 }
 
+func (j *jsiiProxy_AppTheoryMcpServer) Endpoints() *[]*string {
+	var returns *[]*string
+	_jsii_.Get(
+		j,
+		"endpoints",
+		&returns,
+	)
+	return returns
+}
+
 func (j *jsiiProxy_AppTheoryMcpServer) McpPath() *string {
 	var returns *string
 	_jsii_.Get(
 		j,
 		"mcpPath",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryMcpServer) McpPaths() *[]*string {
+	var returns *[]*string
+	_jsii_.Get(
+		j,
+		"mcpPaths",
 		&returns,
 	)
 	return returns
@@ -147,11 +171,41 @@ func (j *jsiiProxy_AppTheoryMcpServer) Node() constructs.Node {
 	return returns
 }
 
+func (j *jsiiProxy_AppTheoryMcpServer) OwnedApi() awsapigatewayv2.HttpApi {
+	var returns awsapigatewayv2.HttpApi
+	_jsii_.Get(
+		j,
+		"ownedApi",
+		&returns,
+	)
+	return returns
+}
+
 func (j *jsiiProxy_AppTheoryMcpServer) ProtectedResourceMetadataPath() *string {
 	var returns *string
 	_jsii_.Get(
 		j,
 		"protectedResourceMetadataPath",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryMcpServer) ProtectedResourceMetadataPaths() *[]*string {
+	var returns *[]*string
+	_jsii_.Get(
+		j,
+		"protectedResourceMetadataPaths",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryMcpServer) RouteInventory() *AppTheoryMcpServerRouteInventory {
+	var returns *AppTheoryMcpServerRouteInventory
+	_jsii_.Get(
+		j,
+		"routeInventory",
 		&returns,
 	)
 	return returns

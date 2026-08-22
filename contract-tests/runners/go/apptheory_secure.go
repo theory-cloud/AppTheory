@@ -266,6 +266,8 @@ func secureFixturePosture(route FixtureSecureRoute) apptheory.AuthPosture {
 		return apptheory.Optional()
 	case "authenticated":
 		return apptheory.Authenticated(route.Scopes...)
+	case "authenticated_any_of":
+		return apptheory.AuthenticatedAnyOf(route.Scopes...)
 	case "internal_only":
 		return apptheory.InternalOnly()
 	default:

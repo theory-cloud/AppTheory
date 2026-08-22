@@ -27,7 +27,7 @@ fi
 for cmd in go node npm python3; do
   if ! command -v "${cmd}" >/dev/null 2>&1; then
     echo "scaffold: BLOCKED (${cmd} not found)" >&2
-    exit 1
+    exit 2
   fi
 done
 

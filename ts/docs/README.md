@@ -51,7 +51,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 
 - Runtime app model: `App`, `createApp`, `Context`, `Request`, `Response`, middleware hooks, and response helpers.
 - Closed-default routing: `SecureApp`, `SecureOptions`, `AuthPosture`, `Public`, `Optional`, `Authenticated`,
-  `InternalOnly`, `SecurePrincipal`, `SecurePrincipalResolver`, `routes`, and app-bound secure OpenAPI generation.
+  `AuthenticatedAnyOf`, `InternalOnly`, `SecurePrincipal`, `SecurePrincipalResolver`, `routes`, and app-bound secure OpenAPI generation.
 - AWS adapters and test builders: `buildAPIGatewayV2Request`, `buildLambdaFunctionURLRequest`, `buildAppSyncEvent`,
   `buildSQSEvent`, `buildKinesisEvent`, and the corresponding `serve*` entrypoints.
 - MCP/OAuth surfaces: `McpServer`, registries, in-memory/Dynamo stores, bearer-token middleware, metadata handlers,
@@ -78,13 +78,13 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>710 exported top-level symbols</summary>
+<summary>711 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest
 APIGatewayProxyResponse, APIGatewayV2HTTPRequest, APIGatewayV2HTTPResponse, APIGatewayWebSocketProxyRequest, App
 AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError
-AppTheoryErrorDetails, appTheoryErrorFromAppError, AppTheoryErrorOptions, AtomicRateLimiter, Authenticated, AuthHook
+AppTheoryErrorDetails, appTheoryErrorFromAppError, AppTheoryErrorOptions, AtomicRateLimiter, Authenticated, AuthenticatedAnyOf, AuthHook
 AuthorizationServerMetadata, authorizationServerMetadataHandler, AuthPosture, AuthPostureKind
 AWSLambdaMicroVMClientOptions, AWSLambdaMicroVMProvider, AWSLambdaMicroVMProviderOptions, baseName, BearerTokenClaims
 bearerTokenClaimsFromContext, BearerTokenClaimsValidator, bearerTokenFromHeaders, BearerTokenRecord

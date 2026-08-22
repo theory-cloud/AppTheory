@@ -3,6 +3,8 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# shellcheck source=lib/cdk-runtime-deps.sh
+source "scripts/lib/cdk-runtime-deps.sh"
 
 if ! command -v npm >/dev/null 2>&1; then
   echo "update-cdk-generated: FAIL (npm not found)" >&2
@@ -49,7 +51,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-(cd cdk && npm ci >/dev/null)
+ensure_cdk_runtime_deps_installed || exit $?
 (cd cdk && npm run build >/dev/null)
 (cd cdk && npx jsii-pacmak -t go --code-only -o "${tmp_dir}" --force-subdirectory false --force >/dev/null)
 

@@ -6,7 +6,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "fixture-schema: BLOCKED (python3 not found)" >&2
-  exit 1
+  exit 2
 fi
 
 schema_path="contract-tests/fixtures/fixture.schema.json"

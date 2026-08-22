@@ -301,6 +301,7 @@ export type AuthPostureKind =
   | "public"
   | "optional"
   | "authenticated"
+  | "authenticated_any_of"
   | "internal_only";
 
 type InternalAuthPosture = AuthPosture & {
@@ -345,14 +346,21 @@ function decodeAuthPosture(posture: AuthPosture): InternalAuthPosture {
   );
   const supplied = Boolean(value.scopesSupplied);
   if (
-    !["public", "optional", "authenticated", "internal_only"].includes(kind)
+    ![
+      "public",
+      "optional",
+      "authenticated",
+      "authenticated_any_of",
+      "internal_only",
+    ].includes(kind)
   ) {
     throw new Error("apptheory: invalid auth posture");
   }
-  if (kind !== "authenticated" && (scopes.length > 0 || supplied)) {
+  const scoped = kind === "authenticated" || kind === "authenticated_any_of";
+  if (!scoped && (scopes.length > 0 || supplied)) {
     throw new Error("apptheory: invalid auth posture");
   }
-  if (kind === "authenticated" && supplied && scopes.length === 0) {
+  if (scoped && supplied && scopes.length === 0) {
     throw new Error("apptheory: authenticated scopes normalize to empty");
   }
   return {
@@ -376,6 +384,11 @@ export function Optional(): AuthPosture {
 /** Creates an authenticated secure route posture requiring all supplied scopes. */
 export function Authenticated(...scopes: string[]): AuthPosture {
   return createAuthPosture("authenticated", scopes, scopes.length > 0);
+}
+
+/** Creates an authenticated secure route posture requiring at least one supplied scope. */
+export function AuthenticatedAnyOf(...scopes: string[]): AuthPosture {
+  return createAuthPosture("authenticated_any_of", scopes, true);
 }
 
 /** Creates an internal-principal-only secure route posture. */
@@ -837,9 +850,13 @@ export class App {
     }
     const posture = secureRoute.posture;
     if (
-      !["public", "optional", "authenticated", "internal_only"].includes(
-        posture,
-      )
+      ![
+        "public",
+        "optional",
+        "authenticated",
+        "authenticated_any_of",
+        "internal_only",
+      ].includes(posture)
     ) {
       throw new AppError("app.internal", "internal error");
     }
@@ -865,6 +882,12 @@ export class App {
     if (
       posture === "authenticated" &&
       secureRoute.scopes.some((scope) => !principal.scopes.includes(scope))
+    ) {
+      throw new AppError("app.forbidden", "forbidden");
+    }
+    if (
+      posture === "authenticated_any_of" &&
+      !secureRoute.scopes.some((scope) => principal.scopes.includes(scope))
     ) {
       throw new AppError("app.forbidden", "forbidden");
     }

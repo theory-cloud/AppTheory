@@ -5,7 +5,7 @@ export interface RouteOptions {
 /** Private metadata carried only by SecureApp registrations. */
 export interface SecureRouteMetadata {
     surface: "http" | "appsync";
-    posture: "public" | "optional" | "authenticated" | "internal_only";
+    posture: "public" | "optional" | "authenticated" | "authenticated_any_of" | "internal_only";
     scopes: string[];
     posturePresent: boolean;
 }

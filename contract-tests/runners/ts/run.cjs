@@ -3320,6 +3320,9 @@ function secureFixturePosture(runtime, route, injectPostureRecords = false) {
   if (route.posture === "authenticated") {
     return runtime.Authenticated(...(route.scopes ?? []));
   }
+  if (route.posture === "authenticated_any_of") {
+    return runtime.AuthenticatedAnyOf(...(route.scopes ?? []));
+  }
   if (route.posture === "internal_only") return runtime.InternalOnly();
   return {};
 }

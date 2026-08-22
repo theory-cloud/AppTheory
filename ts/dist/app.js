@@ -59,13 +59,20 @@ function decodeAuthPosture(posture) {
     const kind = String(value.kind ?? "");
     const scopes = normalizeScopeList(Array.isArray(value.scopes) ? value.scopes : []);
     const supplied = Boolean(value.scopesSupplied);
-    if (!["public", "optional", "authenticated", "internal_only"].includes(kind)) {
+    if (![
+        "public",
+        "optional",
+        "authenticated",
+        "authenticated_any_of",
+        "internal_only",
+    ].includes(kind)) {
         throw new Error("apptheory: invalid auth posture");
     }
-    if (kind !== "authenticated" && (scopes.length > 0 || supplied)) {
+    const scoped = kind === "authenticated" || kind === "authenticated_any_of";
+    if (!scoped && (scopes.length > 0 || supplied)) {
         throw new Error("apptheory: invalid auth posture");
     }
-    if (kind === "authenticated" && supplied && scopes.length === 0) {
+    if (scoped && supplied && scopes.length === 0) {
         throw new Error("apptheory: authenticated scopes normalize to empty");
     }
     return {
@@ -86,6 +93,10 @@ export function Optional() {
 /** Creates an authenticated secure route posture requiring all supplied scopes. */
 export function Authenticated(...scopes) {
     return createAuthPosture("authenticated", scopes, scopes.length > 0);
+}
+/** Creates an authenticated secure route posture requiring at least one supplied scope. */
+export function AuthenticatedAnyOf(...scopes) {
+    return createAuthPosture("authenticated_any_of", scopes, true);
 }
 /** Creates an internal-principal-only secure route posture. */
 export function InternalOnly() {
@@ -376,7 +387,13 @@ export class App {
             throw new AppError("app.internal", "internal error");
         }
         const posture = secureRoute.posture;
-        if (!["public", "optional", "authenticated", "internal_only"].includes(posture)) {
+        if (![
+            "public",
+            "optional",
+            "authenticated",
+            "authenticated_any_of",
+            "internal_only",
+        ].includes(posture)) {
             throw new AppError("app.internal", "internal error");
         }
         if (posture === "public")
@@ -400,6 +417,10 @@ export class App {
         requestCtx.authIdentity = principal.identity;
         if (posture === "authenticated" &&
             secureRoute.scopes.some((scope) => !principal.scopes.includes(scope))) {
+            throw new AppError("app.forbidden", "forbidden");
+        }
+        if (posture === "authenticated_any_of" &&
+            !secureRoute.scopes.some((scope) => principal.scopes.includes(scope))) {
             throw new AppError("app.forbidden", "forbidden");
         }
         if (posture === "internal_only" && principal.kind !== "internal") {

@@ -6,17 +6,18 @@ title: AgentCore MCP Server
 
 This guide shows how to deploy an MCP endpoint for Bedrock AgentCore using AppTheory CDK.
 
-For AgentCore's POST-only shape, use:
+`AppTheoryMcpServer` defaults to the canonical four-kind route family and its full OAuth facade. AgentCore's
+singleton, POST-only client shape must select `routeFamily: { patterns: ["/mcp"] }` explicitly and use
+application-owned runtime registration. `runtime/mcpfacade.RegisterMCPFacade` serves only the canonical four-pattern
+family; it is not configurable as the singleton runtime counterpart. See the
+[MCP Server Facade Construct](../features/mcp-server-construct.md).
 
-- `AppTheoryMcpServer` - provisions an API Gateway v2 HTTP API with `POST /mcp` routed to your Lambda handler
-
-For namespace applications, the same construct is the umbrella contract: supply `authorizationServerIssuer` and
-`jwksUri` together to add runtime-served RFC 9728 routes, then register the Go runtime with
-`oauth.RegisterMCPServer`. See the [MCP Server Umbrella Construct](../features/mcp-server-construct.md).
+The minimal examples below also set `unauthenticatedMcp: true` because their application registers only `POST /mcp`.
+That flag removes the CDK OAuth facade; it does not authenticate the route. Authentication remains application-owned.
 
 It also supports:
 
-- optional DynamoDB session table (TTL + permissions + env vars)
+- configurable DynamoDB session state, enabled by default (TTL + permissions + env vars)
 - optional custom domain + Route53 CNAME
 - optional stage options (name, access logs, throttling)
 
@@ -60,19 +61,21 @@ export class AgentCoreMcpStack extends cdk.Stack {
 
     const mcp = new AppTheoryMcpServer(this, "McpServer", {
       handler,
+      routeFamily: { patterns: ["/mcp"] },
+      unauthenticatedMcp: true,
     });
 
-    new cdk.CfnOutput(this, "McpEndpoint", { value: mcp.endpoint });
+    new cdk.CfnOutput(this, "McpEndpoint", { value: mcp.endpoints[0] });
   }
 }
 ```
 
-This deploys:
+This deploys an HTTP API v2 with the `/mcp` transport routes and no OAuth facade. AgentCore calls `POST /mcp`; the
+application must register the matching runtime handler, for example `app.Post("/mcp", srv.Handler())`. The construct
+writes `MCP_ENDPOINT` in owned mode, and `mcp.endpoints[0]` is the URL to configure in AgentCore.
 
-- HTTP API Gateway v2
-- `POST /mcp` route -> your Lambda
-- Lambda env var `MCP_ENDPOINT` pointing at the resolved `/mcp` URL
-- output `mcp.endpoint` (the URL you configure in AgentCore)
+If the singleton needs the full OAuth facade, omit `unauthenticatedMcp` and register handlers for every derived entry
+in `mcp.routeInventory` in application code. Do not pair that singleton deployment with `RegisterMCPFacade`.
 
 ---
 
@@ -87,7 +90,7 @@ from aws_cdk import (
 from aws_cdk import aws_lambda as _lambda
 from constructs import Construct
 
-from apptheory_cdk import AppTheoryMcpServer
+from apptheory_cdk import AppTheoryMcpRouteFamily, AppTheoryMcpServer
 
 
 class AgentCoreMcpStack(Stack):
@@ -104,21 +107,28 @@ class AgentCoreMcpStack(Stack):
             timeout=Duration.seconds(30),
         )
 
-        mcp = AppTheoryMcpServer(self, "McpServer", handler=handler)
-        CfnOutput(self, "McpEndpoint", value=mcp.endpoint)
+        mcp = AppTheoryMcpServer(
+            self,
+            "McpServer",
+            handler=handler,
+            route_family=AppTheoryMcpRouteFamily(patterns=["/mcp"]),
+            unauthenticated_mcp=True,
+        )
+        CfnOutput(self, "McpEndpoint", value=mcp.endpoints[0])
 ```
 
 ---
 
-## Sessions (optional DynamoDB table)
+## Session state (DynamoDB enabled by default)
 
-To enable a DynamoDB session table:
+To configure the default DynamoDB session table:
 
 ```ts
 const mcp = new AppTheoryMcpServer(this, "McpServer", {
   handler,
-  enableSessionTable: true,
-  sessionTtlMinutes: 60,
+  routeFamily: { patterns: ["/mcp"] },
+  unauthenticatedMcp: true,
+  sessionState: { enabled: true, ttlMinutes: 60 },
 });
 ```
 
@@ -152,10 +162,14 @@ const cert = acm.Certificate.fromCertificateArn(this, "Cert", "arn:aws:acm:...")
 
 const mcp = new AppTheoryMcpServer(this, "McpServer", {
   handler,
-  domain: {
-    domainName: "mcp.example.com",
-    certificate: cert,
-    hostedZone: zone,
+  routeFamily: { patterns: ["/mcp"] },
+  unauthenticatedMcp: true,
+  ownedApi: {
+    domain: {
+      domainName: "mcp.example.com",
+      certificate: cert,
+      hostedZone: zone,
+    },
   },
 });
 ```
@@ -177,11 +191,15 @@ To create an explicit stage and enable access logs or throttling:
 ```ts
 const mcp = new AppTheoryMcpServer(this, "McpServer", {
   handler,
-  stage: {
-    stageName: "prod",
-    accessLogging: true,
-    throttlingRateLimit: 50,
-    throttlingBurstLimit: 100,
+  routeFamily: { patterns: ["/mcp"] },
+  unauthenticatedMcp: true,
+  ownedApi: {
+    stage: {
+      stageName: "prod",
+      accessLogging: true,
+      throttlingRateLimit: 50,
+      throttlingBurstLimit: 100,
+    },
   },
 });
 ```
@@ -196,9 +214,14 @@ When you're using a custom domain, the construct maps the stage to the domain ro
 
 ---
 
-## Security note
+## Security and migration note
 
-The legacy AgentCore shape is public when both auth props are omitted. Do not bolt on a parallel route or middleware
-path. Namespace applications use the single AppTheory path: supply `authorizationServerIssuer` and `jwksUri`, create a
-`SecureApp` with a principal resolver, and call `oauth.RegisterMCPServer`. That helper fixes the MCP endpoint at
-`Authenticated` posture and discovery at `Public` posture.
+`unauthenticatedMcp: true` is a deployment-facade opt-out, not an instruction to ship an open tool endpoint. Protect
+the application-owned `POST /mcp` registration through the normal AppTheory middleware chain. If the application owns
+a singleton OAuth facade, it must register every route in `routeInventory`; `RegisterMCPFacade` remains canonical-family
+only.
+
+The v3.1.x issuer/JWKS construct props no longer configure runtime discovery or emit environment variables. Move
+those values into application-owned `mcpfacade.FacadeConfig` for the canonical family, or into the singleton's own
+runtime registration. See the [redesign guide](../features/mcp-server-construct.md) and the
+[UPGRADING migration note](../../UPGRADING.md#mcp-server-facade-redesign-and-a6-deprecation).

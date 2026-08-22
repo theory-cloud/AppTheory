@@ -12,15 +12,22 @@ parameters; the synthesized template stays account-agnostic.
 ```ts
 const install = new AppTheoryInstallParameters(this, "InstallParameters");
 
+// These names belong to this application, not to AppTheoryMcpServer.
+handler.addEnvironment("APP_AUTHORIZATION_SERVER_ORIGIN", install.authorizationServerOrigin);
+handler.addEnvironment("APP_AUTHEORY_JWKS_URL", install.autheoryJwksUrl);
+
 new AppTheoryMcpServer(this, "McpServer", {
   handler,
-  authorizationServerIssuer: install.authorizationServerOrigin,
-  jwksUri: install.autheoryJwksUrl,
 });
 ```
 
-The construct has no literal-value props and no alternate configuration path. The deployment runner supplies all ten
-parameters when it creates or updates the stack.
+Application code reads those app-owned values into `mcpfacade.FacadeConfig.IssuerURL` and `.JWKSURI`. The MCP
+construct does not consume issuer/JWKS props or emit their retired environment variables. The v3.1.x prop flow is
+deprecated and inert; see the [MCP server redesign](mcp-server-construct.md) and the
+[UPGRADING migration note](../../UPGRADING.md#mcp-server-facade-redesign-and-a6-deprecation).
+
+`AppTheoryInstallParameters` has no literal-value props and no alternate configuration path. The deployment runner
+supplies all ten parameters when it creates or updates the stack.
 
 ## Governed surface
 

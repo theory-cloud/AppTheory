@@ -2,20 +2,19 @@
 # Purpose: verify AppTheory testkit examples compile and pass.
 set -euo pipefail
 
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=lib/ts-runtime-deps.sh
+source "${SCRIPT_DIR}/lib/ts-runtime-deps.sh"
 
-if ! command -v node >/dev/null 2>&1; then
-  echo "examples: BLOCKED (node not found)" >&2
-  exit 1
-fi
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "examples: BLOCKED (python3 not found)" >&2
-  exit 1
-fi
-if ! command -v go >/dev/null 2>&1; then
-  echo "examples: BLOCKED (go not found)" >&2
-  exit 1
-fi
+cd "${REPO_ROOT}"
+
+require_cmd_or_blocked go || exit $?
+require_cmd_or_blocked node || exit $?
+require_cmd_or_blocked npm || exit $?
+require_cmd_or_blocked python3 || exit $?
+
+ensure_ts_runtime_deps_installed
 
 node examples/testkit/ts.mjs
 node examples/testkit/ts-streaming.mjs

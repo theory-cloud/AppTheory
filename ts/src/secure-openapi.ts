@@ -180,6 +180,11 @@ function operationSecurity(
 ): unknown[] {
   if (route.posture === "public") return [];
   const names = route.posture === "internal_only" ? internal : authenticated;
+  if (route.posture === "authenticated_any_of") {
+    return names.flatMap((name) =>
+      (route.scopes ?? []).map((scope) => ({ [name]: [scope] })),
+    );
+  }
   const scopes =
     route.posture === "authenticated" ? [...(route.scopes ?? [])] : [];
   const out: unknown[] = names.map((name) => ({ [name]: scopes }));
@@ -250,7 +255,9 @@ export function generateSecureOpenAPI(
       );
     emitted.add(emittedKey);
     if (
-      (route.posture === "optional" || route.posture === "authenticated") &&
+      (route.posture === "optional" ||
+        route.posture === "authenticated" ||
+        route.posture === "authenticated_any_of") &&
       authenticated.length === 0
     ) {
       throw new Error(

@@ -74,7 +74,7 @@ Common helper exports:
 | Concern | Go | TypeScript | Python |
 | --- | --- | --- | --- |
 | Closed options | `SecureOptions` | `SecureOptions` | explicit `SecureApp(...)` keywords |
-| Postures | `Public`, `Optional`, `Authenticated`, `InternalOnly` | `Public`, `Optional`, `Authenticated`, `InternalOnly` | `public`, `optional`, `authenticated`, `internal_only` |
+| Postures | `Public`, `Optional`, `Authenticated`, `AuthenticatedAnyOf`, `InternalOnly` | `Public`, `Optional`, `Authenticated`, `AuthenticatedAnyOf`, `InternalOnly` | `public`, `optional`, `authenticated`, `authenticated_any_of`, `internal_only` |
 | Principal | `SecurePrincipal`, `PrincipalKind` | `SecurePrincipal`, `PrincipalKind` | `SecurePrincipal`, `PrincipalKind` |
 | Resolver | `SecurePrincipalResolver` | `SecurePrincipalResolver` | `SecurePrincipalResolver` |
 | Context accessor | `ctx.SecurePrincipal()` | `ctx.securePrincipal()` | `ctx.secure_principal()` |
@@ -84,9 +84,11 @@ Common helper exports:
 | Secure OpenAPI | `app.GenerateOpenAPI(...)` | `app.generateOpenAPI(...)` | `app.generate_openapi(...)` |
 
 All secure HTTP, AppSync, and WebSocket registrations require one posture. The fixed gate runs before user middleware;
-unknown principal kinds fail with 401; authenticated scopes are all-of. The secure OpenAPI method exact-joins only
-HTTP route records and emits the `secure-v1` contract marker. Legacy free OpenAPI functions cannot read secure
-posture and are unsupported for `SecureApp` adopters.
+unknown principal kinds fail with 401. `Authenticated` scopes are all-of; `AuthenticatedAnyOf` scopes are any-of and
+encode each scope alias as an OpenAPI security alternative. For example, Mastodon-compatible `read:statuses` OR
+`read` authorization belongs in `AuthenticatedAnyOf("read:statuses", "read")`, not in a route-local guard. The
+secure OpenAPI method exact-joins only HTTP route records and emits the `secure-v1` contract marker. Legacy free
+OpenAPI functions cannot read secure posture and are unsupported for `SecureApp` adopters.
 
 HTTP error compatibility:
 
@@ -467,7 +469,19 @@ here for operators who need implementation-level details:
   bundle. `MCPServerConfig`, `RegisterMCPServer`, and `NewMCPProtectedResourceDiscoveryHandler` keep the MCP route
   authenticated while registering request-host-derived RFC 9728 discovery with public SecureApp posture. Canonical
   paths are exported as `MCPPath`, `OAuthProtectedResourcePath`, `OAuthProtectedResourceMCPPath`, and
-  `OAuthAuthorizationServerMCPPath`.
+  `OAuthAuthorizationServerMCPPath`. `NormalizeRequestOrigin` is the shared fail-closed request-origin normalizer.
+- `runtime/mcproutes`: the `m17.mcp-route-algebra/v1` contract. `EndpointPath`, `ParseMCPPath`, the
+  `SupportedEndpointTemplates`, `SupportedOAuthFacadeTemplates`, and `SupportedOAuthDiscoveryTemplates` enumerations,
+  and pure protected-resource/authorization-server derivations define the namespace, partner-namespace, agent, and
+  partner-agent golden path consumed by both `AppTheoryMcpServer` and `runtime/mcpfacade`. `ParamClientNamespace`,
+  `ParamPartnerID`, and `ParamAgentID` pin the canonical router parameter names used by those templates.
+- `runtime/mcpfacade`: the Go composition helper over that contract. `RegisterMCPFacade` accepts `FacadeConfig`,
+  registers the four MCP method families and both OAuth metadata documents, and returns a versioned `RouteInventory`.
+  The `URLMode` values `URLModePublicBaseURL` and `URLModeRequestHost` select fixed front-door/CDN origins or derive
+  each origin from the incoming request. `DefaultCapabilities` supplies the fixed defaults, while `Capabilities`,
+  per-kind scope sets, and paired application-owned `HandlerFactory` authorize/token plug points remain explicit
+  config. Optional `RootDiscoveryConfig` installs the static upstream authorization-server root document. Each
+  installed `Route` records its methods and derived paths.
 - `testkit/oauth`: Claude-like end-to-end OAuth flow helpers for remote MCP tests (`NewClaudePublicClient`,
   `AuthorizeOptions`, `Authorize`)
 - TypeScript and Python expose matching MCP registries, server/test harnesses, in-memory/Dynamo stores, bearer-token
@@ -481,8 +495,9 @@ Remote MCP auth hardening notes:
 - Invalid-audience bearer tokens are intentionally fixture-pinned as authorization failures: AppTheory returns
   `403 app.forbidden` without a `WWW-Authenticate` challenge, matching insufficient-scope denial so a token bound to
   another resource is not treated as a rediscovery prompt. Missing or expired bearers remain `401` challenge cases.
-- Namespace deployments use `AppTheoryMcpServer` with `oauth.RegisterMCPServer`. Protected resource hosts are derived
-  from each request; neither CDK nor `MCPServerConfig` accepts a protected-resource origin.
+- Namespace deployments use attach-first `AppTheoryMcpServer` with `mcpfacade.RegisterMCPFacade`. The construct
+  derives every API Gateway route through `AppTheoryMcpRouteAlgebra`; issuer, JWKS, scopes, URL mode, and handlers stay
+  in explicit `FacadeConfig`. Neither CDK nor the helper accepts a protected-resource origin as route configuration.
 
 Related canonical integration guides:
 
@@ -491,6 +506,9 @@ Related canonical integration guides:
 - [Remote MCP](./integrations/remote-mcp.md)
 - [Remote MCP + Autheory](./integrations/remote-mcp-autheory.md)
 - [MCP Method Surface](./integrations/mcp.md)
+- [MCP Route Algebra](./features/mcp-route-algebra.md)
+- [Go MCP Facade Helper](./features/mcp-facade-helper.md)
+- [MCP Server Facade Construct](./features/mcp-server-construct.md)
 
 ## CDK construct overview
 
@@ -501,6 +519,7 @@ includes:
 - `AppTheoryRestApi`
 - `AppTheoryRestApiRouter`
 - `AppTheoryMcpServer`
+- `AppTheoryMcpRouteAlgebra`
 - `AppTheoryMcpPaths`
 - `AppTheoryRemoteMcpServer`
 - `AppTheoryMcpProtectedResource` (deprecated URL-valued static-document props)
@@ -538,15 +557,15 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1003 exported top-level symbols</summary>
+<summary>1046 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins, APIGatewayV2Request
 App, AppError, AppSyncContext, AppSyncEvent, AppSyncEventOptions, AppSyncResolverEvent, AppSyncResolverInfo
 AppSyncResolverRequest, AppTheoryError, AppTheoryErrorFromAppError, AsAppTheoryError, AssertError, AssertHasTools
-AssertToolResult, AtomicRateLimiter, AuthContext, Authenticated, AuthHook, AuthorizationCodeRecord
+AssertToolResult, AtomicRateLimiter, AuthContext, Authenticated, AuthenticatedAnyOf, AuthHook, AuthorizationCodeRecord
 AuthorizationCodeStore, AuthorizationServerMetadata, AuthorizationServerMetadataHandler, AuthorizeOptions, AuthPosture
-AuthPostureAuthenticated, AuthPostureInternalOnly, AuthPostureKind, AuthPostureOptional, AuthPosturePublic
+AuthPostureAuthenticated, AuthPostureAuthenticatedAnyOf, AuthPostureInternalOnly, AuthPostureKind, AuthPostureOptional, AuthPosturePublic
 AuthPrincipal, AWSLambdaMicroVMProvider, AWSLambdaMicroVMProviderID, AWSLambdaMicroVMProviderOption, BaseName
 BearerTokenClaims, BearerTokenClaimsFromContext, BearerTokenClaimsValidator, BearerTokenFromHeaders, BearerTokenRecord
 BearerTokenValidationOptions, BearerTokenValidator, BedrockRuntimeAPI, Binary, BindConfig, BodyStream
@@ -726,8 +745,11 @@ ErrArtifactArchiveInvalid, ErrArtifactDigestMismatch, ErrArtifactInvalidRequest,
 ErrArtifactVersionMismatch, ErrArtifactVersionRequired, ErrAssumeRoleFailed, ErrCallerIdentityUnavailable,
 ErrExpectedAccountNotConfigured, MaxVersionedArtifactBytes, MaxVersionedArtifactEntries,
 VerifyVersionedArtifact, VersionedArtifact, VersionedArtifactRequest
-MCPPath, MCPServerConfig, NewMCPProtectedResourceDiscoveryHandler, OAuthAuthorizationServerMCPPath, OAuthProtectedResourceMCPPath
+MCPPath, MCPServerConfig, NewMCPProtectedResourceDiscoveryHandler, NormalizeRequestOrigin, OAuthAuthorizationServerMCPPath, OAuthProtectedResourceMCPPath
 OAuthProtectedResourcePath, RegisterMCPServer
+Capabilities, DefaultCapabilities, FacadeConfig, HandlerFactory, RegisterMCPFacade, RootDiscoveryConfig, Route, RouteInventory, URLMode
+URLModePublicBaseURL, URLModeRequestHost
+AgentMCPPattern, AuthorizationAuthorizePathForResourcePath, AuthorizationServerPathForResourcePath, AuthorizationServerPrefix, AuthorizationServerSuffixPathForResourcePath, AuthorizationTokenPathForResourcePath, EndpointKind, EndpointKindAgent, EndpointKindNamespace, EndpointKindPartnerAgent, EndpointKindPartnerNamespace, EndpointPath, EndpointTemplate, NamespaceMCPPattern, OAuthDiscoveryTemplate, OAuthFacadeTemplate, ParamAgentID, ParamClientNamespace, ParamPartnerID, ParseMCPPath, PartnerAgentMCPPattern, PartnerNamespaceMCPPattern, ProtectedResourcePathForResourcePath, ProtectedResourcePathFromMCPPath, ProtectedResourcePrefix, ResourcePathFromProtectedResourcePath, SupportedEndpointTemplates, SupportedOAuthDiscoveryTemplates, SupportedOAuthFacadeTemplates
 ```
 
 </details>

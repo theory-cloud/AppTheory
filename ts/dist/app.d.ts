@@ -98,13 +98,15 @@ declare const authPostureBrand: unique symbol;
 export interface AuthPosture {
     readonly [authPostureBrand]: true;
 }
-export type AuthPostureKind = "public" | "optional" | "authenticated" | "internal_only";
+export type AuthPostureKind = "public" | "optional" | "authenticated" | "authenticated_any_of" | "internal_only";
 /** Creates an anonymous secure route posture. */
 export declare function Public(): AuthPosture;
 /** Creates an optional-principal secure route posture. */
 export declare function Optional(): AuthPosture;
 /** Creates an authenticated secure route posture requiring all supplied scopes. */
 export declare function Authenticated(...scopes: string[]): AuthPosture;
+/** Creates an authenticated secure route posture requiring at least one supplied scope. */
+export declare function AuthenticatedAnyOf(...scopes: string[]): AuthPosture;
 /** Creates an internal-principal-only secure route posture. */
 export declare function InternalOnly(): AuthPosture;
 export type SecurePrincipalResolver = (ctx: Context) => SecurePrincipal | null | undefined | Promise<SecurePrincipal | null | undefined>;

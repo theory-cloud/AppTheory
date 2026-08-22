@@ -46,12 +46,25 @@ unknown option keys and invalid dynamic values. Python uses explicit keyword par
 | `Public()` / `public()` | Resolver is not called | Continue anonymously | Principal context is not enriched |
 | `Optional()` / `optional()` | Resolver is called | Continue only for nil or a known-kind empty identity | Attach normalized principal |
 | `Authenticated(scopes...)` / `authenticated(*scopes)` | Resolver is called | `401 app.unauthorized` | Require identity and every normalized scope |
+| `AuthenticatedAnyOf(scopes...)` / `authenticated_any_of(*scopes)` | Resolver is called | `401 app.unauthorized` | Require identity and at least one normalized scope |
 | `InternalOnly()` / `internal_only()` | Resolver is called | `401 app.unauthorized` | Require `kind == internal`; external is 403 |
 
-TypeScript uses `Public`, `Optional`, `Authenticated`, and `InternalOnly`. Python uses the lower-case equivalents.
-Scope normalization trims values, removes empty entries and duplicates, and preserves first occurrence. Supplying
-scopes that all normalize empty fails registration. Scope enforcement is all-of; a valid identity missing any scope
-receives `403 app.forbidden`.
+TypeScript uses `Public`, `Optional`, `Authenticated`, `AuthenticatedAnyOf`, and `InternalOnly`. Python uses the
+lower-case equivalents. Scope normalization trims values, removes empty entries and duplicates, and preserves first
+occurrence. Supplying only scopes that normalize empty fails registration; `AuthenticatedAnyOf` also rejects an
+omitted scope list. `Authenticated` remains all-of. `AuthenticatedAnyOf` is any-of: a valid identity missing every
+registered scope receives the same `403 app.forbidden` envelope as the all-of path.
+
+Use the any-of posture for established scope aliases. For example, a Mastodon-compatible timeline may accept either
+the specific `read:statuses` scope or the broader `read` scope without moving authorization into the handler:
+
+```go
+app.Get("/api/v1/timelines/home", timelineHandler,
+    apptheory.AuthenticatedAnyOf("read:statuses", "read"))
+```
+
+TypeScript uses `AuthenticatedAnyOf("read:statuses", "read")`; Python uses
+`authenticated_any_of("read:statuses", "read")`.
 
 Resolvers return `SecurePrincipal` values with `identity`, `scopes`, `claims`, and `kind`. Empty kind normalizes to
 `external` for legacy-hook migration. The only recognized non-empty kinds are `external` and `internal`. Unknown kinds
@@ -81,6 +94,7 @@ Posture is a mandatory, non-variadic argument on HTTP, AppSync, and WebSocket re
 app.Get("/public", publicHandler, apptheory.Public())
 app.Get("/notes/{id}", noteHandler, apptheory.Optional())
 app.Post("/exports", exportHandler, apptheory.Authenticated("exports:write"))
+app.Get("/api/v1/timelines/home", timelineHandler, apptheory.AuthenticatedAnyOf("read:statuses", "read"))
 app.Post("/internal/deliver", deliverHandler, apptheory.InternalOnly())
 app.AppSyncField("Query", "note", noteHandler, apptheory.Authenticated("notes:read"))
 app.WebSocket("$connect", connectHandler, apptheory.Optional())
@@ -183,6 +197,8 @@ read only from the registered route record; per-route security overrides and ign
 Every document emits `x-apptheory-contract-mode: secure-v1`; every operation emits
 `x-apptheory-auth-posture`, and scoped routes emit `x-apptheory-required-scopes`. Final proxy routes such as
 `/files/{path+}` emit as `/files/{path}` with a required path parameter and `x-apptheory-proxy: true`.
+`Authenticated` emits all required scopes in each configured authenticated security requirement.
+`AuthenticatedAnyOf` emits one security requirement per scheme/scope pair, preserving OpenAPI's OR semantics.
 Security-scheme values are recursively copied and accept only null, booleans, strings, arrays, and string-keyed
 objects. Numbers, undefined/sentinel values, cycles, and runtime-specific objects fail closed. Canonical secure JSON
 is byte-stable across Go, TypeScript, and Python.

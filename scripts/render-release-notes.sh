@@ -77,8 +77,8 @@ cat >"${output_dir}/RELEASE_NOTES.md" <<EOF
 
 ## Highlights
 - Multi-language runtime (Go/TypeScript/Python) with fixture-backed contract tests.
-- Opt-in SecureApp routing requires Public, Optional, Authenticated, or InternalOnly posture on every HTTP, AppSync,
-  and WebSocket route while leaving legacy App behavior unchanged.
+- Opt-in SecureApp routing requires Public, Optional, Authenticated, AuthenticatedAnyOf, or InternalOnly posture on
+  every HTTP, AppSync, and WebSocket route while leaving legacy App behavior unchanged.
 - TypeScript and Python gain normalized principal/scopes, optional authentication, and principal classification;
   secure P0 adds only the fixed posture gate, and WebSocket posture is enforced from the initial secure surface.
 - Lift-compatible AppSync Lambda resolver support across Go, TypeScript, and Python.

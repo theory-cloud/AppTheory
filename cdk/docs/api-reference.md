@@ -10,7 +10,7 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryFunction` (Lambda wrapper defaults, including an optional fail-closed stable execution `roleName`)
 - `AppTheoryFunctionAlarms` (baseline alarms)
 - `AppTheoryHttpApi` (API Gateway v2 HTTP API + proxy routes)
-- `AppTheoryMcpServer` (API Gateway v2 HTTP API `POST /mcp` for MCP / Bedrock AgentCore)
+- `AppTheoryMcpServer` (attach-first HTTP API v2 canonical four-kind MCP/OAuth route-family facade)
 - `AppTheoryInstallParameters` (governed namespace CloudFormation parameters, caller-account rule, and typed tokens)
 - `AppTheoryRemoteMcpServer` (API Gateway REST API v1 streaming `/mcp` for Claude Remote MCP / Streamable HTTP)
 - `AppTheoryMcpProtectedResource` (API Gateway REST API v1 `/.well-known/oauth-protected-resource` for OAuth discovery)
@@ -46,6 +46,15 @@ AppTheory CDK exports constructs such as:
 - Higher-level "app"/SSR patterns now converge on the FaceTheory-first deployment contract rather than a weaker helper path
 
 For the exact list and prop types, read `cdk/lib/*.d.ts`.
+
+## Versioned MCP route algebra
+
+`AppTheoryMcpRouteAlgebra` is the additive `m17.mcp-route-algebra/v1` static helper surface for the canonical
+namespace, partner-namespace, agent, and partner-agent route quartet. It derives protected-resource, authorization
+server, authorization, token, and suffix-compatible discovery paths from the MCP patterns; enumerates jsii-safe
+templates; and parses, validates, and builds concrete `AppTheoryMcpEndpointPath` values. It does not alter
+`AppTheoryMcpServer`, `AppTheoryMcpPaths`, or the existing runtime OAuth constants. See the canonical
+[MCP Route Algebra](../../docs/features/mcp-route-algebra.md) guide.
 
 ## Governed namespace install parameters
 
