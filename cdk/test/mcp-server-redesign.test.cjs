@@ -201,7 +201,11 @@ test("AppTheoryMcpServer attach mode includes a known foreign API stage in endpo
     server.endpoints[0],
     /^https:\/\/abc123\.execute-api\.us-east-1\.[^/]+\/prod\/\{client_namespace\}\/mcp$/,
   );
-  assert.ok(!server.endpoints[0].includes("frontdoor.example.com"));
+  assert.ok(
+    server.endpoints.every((endpoint) =>
+      new URL(endpoint.replace(cdk.Aws.URL_SUFFIX, "amazonaws.com")).host
+        === "abc123.execute-api.us-east-1.amazonaws.com"),
+  );
 });
 
 test("AppTheoryMcpServer fails closed on an indeterminate attached API stage", () => {
