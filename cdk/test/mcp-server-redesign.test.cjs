@@ -70,8 +70,8 @@ function inventoryFromFixture() {
 function literalSingletonRouteFamilies(document) {
   const singletons = [];
   for (const fence of document.matchAll(/```[^\n]*\n([\s\S]*?)```/g)) {
-    if (!/\brouteFamily\s*:/.test(fence[1])) continue;
-    for (const patterns of fence[1].matchAll(/\bpatterns\s*:\s*\[([\s\S]*?)\]/g)) {
+    if (!/\b(?:routeFamily|route_family)\s*[:=]/.test(fence[1])) continue;
+    for (const patterns of fence[1].matchAll(/\bpatterns\s*[:=]\s*\[([\s\S]*?)\]/g)) {
       if (/^\s*["'][^"']+["']\s*,?\s*$/.test(patterns[1])) {
         singletons.push(patterns[0]);
       }
@@ -462,6 +462,52 @@ test("AppTheoryMcpServer rejects invalid deprecated issuer and JWKS pairs", () =
     );
   }
 });
+
+for (const item of [
+  {
+    name: "issuer URL with userinfo",
+    authorizationServerIssuer: "https://user:password@auth.example.com",
+    jwksUri: "https://auth.example.com/jwks.json",
+    error: /authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment/,
+  },
+  {
+    name: "issuer URL with query",
+    authorizationServerIssuer: "https://auth.example.com?tenant=example",
+    jwksUri: "https://auth.example.com/jwks.json",
+    error: /authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment/,
+  },
+  {
+    name: "issuer URL with fragment",
+    authorizationServerIssuer: "https://auth.example.com#issuer",
+    jwksUri: "https://auth.example.com/jwks.json",
+    error: /authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment/,
+  },
+  {
+    name: "JWKS URL with userinfo",
+    authorizationServerIssuer: "https://auth.example.com",
+    jwksUri: "https://user:password@auth.example.com/jwks.json",
+    error: /jwksUri must be an absolute HTTPS URL with no userinfo or fragment/,
+  },
+  {
+    name: "JWKS URL with fragment",
+    authorizationServerIssuer: "https://auth.example.com",
+    jwksUri: "https://auth.example.com/jwks.json#keys",
+    error: /jwksUri must be an absolute HTTPS URL with no userinfo or fragment/,
+  },
+]) {
+  test(`AppTheoryMcpServer rejects deprecated ${item.name}`, () => {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "LegacyAuthURLValidation");
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        authorizationServerIssuer: item.authorizationServerIssuer,
+        jwksUri: item.jwksUri,
+      }),
+      item.error,
+    );
+  });
+}
 
 test("AppTheoryMcpServer validates every explicit opt-out", () => {
   const cases = [
