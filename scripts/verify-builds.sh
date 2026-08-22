@@ -14,7 +14,10 @@ export SOURCE_DATE_EPOCH="${epoch}"
 build_once() {
   local out_file="$1"
   local tmp_dir
+  local log_file
+  local ec
   tmp_dir="$(mktemp -d)"
+  log_file="${tmp_dir}/build.log"
 
   # Snapshot the repo contents deterministically from the working tree (tracked + non-ignored).
   #
@@ -30,10 +33,15 @@ build_once() {
   (
     cd "${tmp_dir}"
     export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
-    scripts/verify-release-gates.sh >/dev/null
-    scripts/generate-checksums.sh >/dev/null
+    scripts/verify-release-gates.sh > "${log_file}" 2>&1
+    scripts/generate-checksums.sh >> "${log_file}" 2>&1
     cat dist/SHA256SUMS.txt > "${out_file}"
-  )
+  ) || {
+    ec=$?
+    echo "verify-builds: FAIL (inner gate exited ${ec}; tail of build log follows, full log: ${log_file})" >&2
+    tail -n 120 "${log_file}" >&2 || true
+    exit "${ec}"
+  }
 
   rm -rf "${tmp_dir}"
 }
