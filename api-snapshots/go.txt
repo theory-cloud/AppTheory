@@ -3291,6 +3291,7 @@ type Server struct {
 	loggingLevelHook        LoggingLevelHook
 	promptCompletionHook    CompletionHook
 	resourceCompletionHook  CompletionHook
+	toolContextHook         ToolContextHook
 	taskRuntime             taskRuntimeConfig
 	taskExecutions          *taskExecutionTracker
 
@@ -3404,6 +3405,8 @@ type ToolAnnotations struct {
 	IdempotentHint  *bool  `json:"idempotentHint,omitempty"`
 	OpenWorldHint   *bool  `json:"openWorldHint,omitempty"`
 }
+
+type ToolContextHook func(*apptheory.Context, context.Context) context.Context
 
 type ToolDef struct {
 	Name        string           `json:"name"`
@@ -3549,6 +3552,8 @@ func WithStreamIDGenerator(apptheory.IDGenerator) MemoryStreamStoreOption
 func WithStreamStore(StreamStore) ServerOption
 
 func WithTaskRuntime(TaskRuntimeOptions) ServerOption
+
+func WithToolContextHook(ToolContextHook) ServerOption
 
 func WrapStreamingTool[Args any](
 	ToolLifecycleOptions[Args],

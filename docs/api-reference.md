@@ -557,7 +557,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1046 exported top-level symbols</summary>
+<summary>1048 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins, APIGatewayV2Request
@@ -709,7 +709,7 @@ TableTheorySessionRegistry, Task, TaskListRequest, TaskListResult, TaskLookup, T
 TaskRuntimeOptions, TaskStatus, TaskStatusCanceled, TaskStatusCompleted, TaskStatusFailed, TaskStatusInputRequired
 TaskStatusWorking, TaskStore, TaskSupport, TaskSupportForbidden, TaskSupportOptional, TaskSupportRequired
 TenantBindingRule, TestLogger, Text, Tier, TierP0, TierP1, TierP2, TimeoutConfig, TimeoutMiddleware, TimeWindow
-TitanEmbedder, TokenIssuanceContract, TokenResponse, ToolAnnotations, ToolDef, ToolExecution, ToolHandler, ToolInput
+TitanEmbedder, TokenIssuanceContract, TokenResponse, ToolAnnotations, ToolContextHook, ToolDef, ToolExecution, ToolHandler, ToolInput
 ToolInputFromContext, ToolLifecycleFinish, ToolLifecycleOptions, ToolLifecycleOutcome
 ToolLifecycleOutcomeContextCanceled, ToolLifecycleOutcomeHandledError, ToolLifecycleOutcomeInvalidParams
 ToolLifecycleOutcomePanic, ToolLifecycleOutcomeSuccess, ToolLifecycleOutcomeTimeout
@@ -734,7 +734,7 @@ WithLogger, WithLoggingLevelHook, WithObservability, WithOriginValidator, WithPo
 WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter, WithRegistryClientTTL, WithResourceSubscriptionHooks
 WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata, WithSessionReconstructionClock
 WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamIDGenerator, WithStreamStore, WithTaskRuntime
-WithTier, WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
+WithTier, WithToolContextHook, WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured,
 AccountAssertionState, AccountAssertionUnavailable, AccountAssertionVerified, ArtifactEntry,
 ArtifactVerificationArchiveInvalid, ArtifactVerificationDigestMismatch, ArtifactVerificationInvalidRequest,
