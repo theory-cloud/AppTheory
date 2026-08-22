@@ -67,6 +67,51 @@ function inventoryFromFixture() {
   };
 }
 
+test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL authority", () => {
+  const assembly = JSON.parse(fs.readFileSync(path.join(__dirname, "..", ".jsii"), "utf8"));
+  const expectedProps = {
+    AppTheoryMcpServerProps: [
+      "api",
+      "apiName",
+      "authorizationServerIssuer",
+      "domain",
+      "enableSessionTable",
+      "handler",
+      "jwksUri",
+      "mcpPath",
+      "ownedApi",
+      "routeFamily",
+      "sessionState",
+      "sessionTableName",
+      "sessionTtlMinutes",
+      "stage",
+      "unauthenticatedMcp",
+    ],
+    AppTheoryMcpRouteFamily: ["patterns", "rootAuthorizationServerDiscovery"],
+    AppTheoryMcpServerOwnedApiOptions: ["apiName", "domain", "stage"],
+    AppTheoryMcpSessionStateOptions: ["enabled", "removalPolicy", "tableName", "ttlMinutes"],
+    AppTheoryMcpServerDomainOptions: ["certificate", "certificateArn", "domainName", "hostedZone"],
+    AppTheoryMcpServerStageOptions: [
+      "accessLogRetention",
+      "accessLogging",
+      "stageName",
+      "throttlingBurstLimit",
+      "throttlingEnabled",
+      "throttlingRateLimit",
+    ],
+  };
+
+  for (const [typeName, expectedNames] of Object.entries(expectedProps)) {
+    const type = assembly.types[`@theory-cloud/apptheory-cdk.${typeName}`];
+    const actualNames = type.properties.map((property) => property.name).sort();
+    assert.deepEqual(
+      actualNames,
+      expectedNames,
+      `${typeName} must not acquire an unreviewed token, origin, or URL-valued prop`,
+    );
+  }
+});
+
 test("AppTheoryMcpServer attach mode wires the runtime inventory without owning an API", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "AttachStack");
