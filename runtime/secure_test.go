@@ -300,6 +300,78 @@ func TestSecureAuthorizationMatrix(t *testing.T) {
 	}
 }
 
+func TestSecureAuthenticatedAnyOfAuthorizationAndNormalization(t *testing.T) {
+	for _, posture := range []AuthPosture{AuthenticatedAnyOf(), AuthenticatedAnyOf(" ", "\t")} {
+		requireSecurePanic(t, "apptheory: authenticated scopes normalize to empty", func() {
+			NewSecure(SecureOptions{}).Get("/empty", secureOKHandler, posture)
+		})
+	}
+
+	tests := []struct {
+		name      string
+		principal *SecurePrincipal
+		status    int
+		code      string
+	}{
+		{name: "unauthenticated", status: 401, code: "app.unauthorized"},
+		{name: "zero held", principal: &SecurePrincipal{Identity: "user", Scopes: []string{}}, status: 403, code: "app.forbidden"},
+		{name: "one held", principal: &SecurePrincipal{Identity: "user", Scopes: []string{"read"}}, status: 200},
+		{name: "several held", principal: &SecurePrincipal{Identity: "user", Scopes: []string{"read", "read:statuses"}}, status: 200},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			app := NewSecure(SecureOptions{PrincipalResolver: func(*Context) (*SecurePrincipal, error) {
+				return test.principal, nil
+			}})
+			app.Get("/statuses", secureOKHandler, AuthenticatedAnyOf(" read:statuses ", "read", "read:statuses", " "))
+			response := app.Serve(context.Background(), Request{Method: "GET", Path: "/statuses"})
+			if response.Status != test.status {
+				t.Fatalf("status = %d, want %d: %s", response.Status, test.status, response.Body)
+			}
+			if test.code != "" && !strings.Contains(string(response.Body), `"code":"`+test.code+`"`) {
+				t.Fatalf("response = %s, want code %q", response.Body, test.code)
+			}
+			route := app.Routes()[0]
+			if route.Posture != AuthPostureAuthenticatedAnyOf || !reflect.DeepEqual(route.Scopes, []string{"read:statuses", "read"}) {
+				t.Fatalf("route = %#v", route)
+			}
+		})
+	}
+}
+
+func TestSecureAuthenticatedAnyOfOpenAPI(t *testing.T) {
+	app := NewSecure(SecureOptions{})
+	app.Get("/statuses", secureOKHandler, AuthenticatedAnyOf(" read:statuses ", "read", "read:statuses"))
+	doc, err := app.GenerateOpenAPI(SecureOpenAPISpec{
+		Title: "Secure", Version: "1.0.0",
+		Routes: []OpenAPIRouteSpec{{
+			Method: "GET", Path: "/statuses", OperationID: "statuses",
+			Response: OpenAPIResponseSpec{Description: "ok"},
+		}},
+		SecuritySchemes: map[string]map[string]any{
+			"Bearer": {"type": "http", "scheme": "bearer"},
+			"Cookie": {"type": "apiKey", "in": "cookie", "name": "session"},
+		},
+		AuthSchemes: OpenAPIAuthSchemes{Authenticated: []string{"Bearer", "Cookie"}},
+	})
+	if err != nil {
+		t.Fatalf("GenerateOpenAPI: %v", err)
+	}
+	operation := secureOpenAPIOperation(t, doc, "/statuses", "get")
+	if operation["x-apptheory-auth-posture"] != "authenticated_any_of" {
+		t.Fatalf("posture extension = %#v", operation["x-apptheory-auth-posture"])
+	}
+	wantSecurity := []any{
+		map[string]any{"Bearer": []string{"read:statuses"}},
+		map[string]any{"Bearer": []string{"read"}},
+		map[string]any{"Cookie": []string{"read:statuses"}},
+		map[string]any{"Cookie": []string{"read"}},
+	}
+	if !reflect.DeepEqual(operation["security"], wantSecurity) {
+		t.Fatalf("security = %#v, want %#v", operation["security"], wantSecurity)
+	}
+}
+
 func TestSecureMatchedRoutesWithoutPostureFailClosed(t *testing.T) {
 	app := NewSecure(SecureOptions{Tier: TierP0})
 	if err := app.core.router.add("GET", "/synthetic", secureOKHandler, routeOptions{}); err != nil {

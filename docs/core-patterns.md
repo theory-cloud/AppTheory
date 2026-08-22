@@ -157,7 +157,9 @@ requirements.
 
 CORRECT:
 
-- use `AppTheoryMcpServer` for AgentCore or other POST-only MCP clients on HTTP API v2
+- for AgentCore or another POST-only MCP client, explicitly select `routeFamily: { patterns: ["/mcp"] }`, set
+  `unauthenticatedMcp: true` when the application does not register a singleton OAuth facade, and own runtime
+  registration for that noncanonical family; `RegisterMCPFacade` serves only the canonical four-pattern family
 - use `AppTheoryRemoteMcpServer` plus `AppTheoryMcpProtectedResource` for Claude Remote MCP when you need
   `POST/GET/DELETE /mcp`, OAuth protected-resource discovery, and a REST API v1 streaming edge
 - wire `mcp.NewDynamoStreamStore(db)` or another persistent `StreamStore` in application code if replay must survive

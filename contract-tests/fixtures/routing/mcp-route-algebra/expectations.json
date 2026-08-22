@@ -1,0 +1,990 @@
+{
+  "contract": {
+    "version": "m17.mcp-route-algebra/v1",
+    "ascii_trim_code_points": [
+      "U+0009",
+      "U+000A",
+      "U+000B",
+      "U+000C",
+      "U+000D",
+      "U+0020"
+    ],
+    "excluded_whitespace_code_points": [
+      "U+0085",
+      "U+00A0",
+      "U+1680",
+      "U+2000",
+      "U+2001",
+      "U+2002",
+      "U+2003",
+      "U+2004",
+      "U+2005",
+      "U+2006",
+      "U+2007",
+      "U+2008",
+      "U+2009",
+      "U+200A",
+      "U+2028",
+      "U+2029",
+      "U+202F",
+      "U+205F",
+      "U+3000",
+      "U+FEFF"
+    ],
+    "protected_resource_prefix": "/.well-known/oauth-protected-resource",
+    "authorization_server_prefix": "/.well-known/oauth-authorization-server",
+    "endpoint_kinds": [
+      "namespace",
+      "partner_namespace",
+      "agent",
+      "partner_agent"
+    ],
+    "patterns": [
+      {
+        "kind": "namespace",
+        "mcp_pattern": "/{client_namespace}/mcp",
+        "protected_resource_path": "/.well-known/oauth-protected-resource/{client_namespace}/mcp",
+        "authorization_server_path": "/.well-known/oauth-authorization-server/{client_namespace}/mcp",
+        "authorize_path": "/.well-known/oauth-authorization-server/{client_namespace}/mcp/authorize",
+        "token_path": "/.well-known/oauth-authorization-server/{client_namespace}/mcp/token",
+        "authorization_server_suffix_path": "/{client_namespace}/mcp/.well-known/oauth-authorization-server"
+      },
+      {
+        "kind": "partner_namespace",
+        "mcp_pattern": "/{client_namespace}/partners/{partner_id}/mcp",
+        "protected_resource_path": "/.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/mcp",
+        "authorization_server_path": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp",
+        "authorize_path": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/authorize",
+        "token_path": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/token",
+        "authorization_server_suffix_path": "/{client_namespace}/partners/{partner_id}/mcp/.well-known/oauth-authorization-server"
+      },
+      {
+        "kind": "agent",
+        "mcp_pattern": "/{client_namespace}/agents/{agent_id}/mcp",
+        "protected_resource_path": "/.well-known/oauth-protected-resource/{client_namespace}/agents/{agent_id}/mcp",
+        "authorization_server_path": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp",
+        "authorize_path": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/authorize",
+        "token_path": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/token",
+        "authorization_server_suffix_path": "/{client_namespace}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server"
+      },
+      {
+        "kind": "partner_agent",
+        "mcp_pattern": "/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+        "protected_resource_path": "/.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+        "authorization_server_path": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+        "authorize_path": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/authorize",
+        "token_path": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/token",
+        "authorization_server_suffix_path": "/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server"
+      }
+    ]
+  },
+  "normalization": [
+    {
+      "name": "relative",
+      "input": "mcp",
+      "normalized": "/mcp"
+    },
+    {
+      "name": "trailing slash",
+      "input": "/mcp/",
+      "normalized": "/mcp"
+    },
+    {
+      "name": "duplicate slashes",
+      "input": "//a//b//",
+      "normalized": "/a/b"
+    },
+    {
+      "name": "dot segments",
+      "input": "/a/./b/../c",
+      "normalized": "/a/c"
+    },
+    {
+      "name": "root",
+      "input": "/",
+      "normalized": "/"
+    },
+    {
+      "name": "ascii spaces",
+      "input": "  /acme/mcp/  ",
+      "normalized": "/acme/mcp"
+    },
+    {
+      "name": "ascii whitespace only",
+      "input": "\t\n\u000b\f\r ",
+      "normalized": "/"
+    },
+    {
+      "name": "above root",
+      "input": "/../../a",
+      "normalized": "/a"
+    }
+  ],
+  "derivations": [
+    {
+      "name": "root",
+      "input": "/",
+      "normalized": "/",
+      "protected_resource_path": "/.well-known/oauth-protected-resource",
+      "authorization_server_path": "/.well-known/oauth-authorization-server",
+      "authorize_path": "/.well-known/oauth-authorization-server/authorize",
+      "token_path": "/.well-known/oauth-authorization-server/token",
+      "authorization_server_suffix_path": "/.well-known/oauth-authorization-server"
+    },
+    {
+      "name": "trailing slash",
+      "input": "/acme/mcp/",
+      "normalized": "/acme/mcp",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/mcp",
+      "authorize_path": "/.well-known/oauth-authorization-server/acme/mcp/authorize",
+      "token_path": "/.well-known/oauth-authorization-server/acme/mcp/token",
+      "authorization_server_suffix_path": "/acme/mcp/.well-known/oauth-authorization-server"
+    },
+    {
+      "name": "nested normalized",
+      "input": "  //acme//partners/./pay/agents/old/../bot/mcp//  ",
+      "normalized": "/acme/partners/pay/agents/bot/mcp",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/partners/pay/agents/bot/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/partners/pay/agents/bot/mcp",
+      "authorize_path": "/.well-known/oauth-authorization-server/acme/partners/pay/agents/bot/mcp/authorize",
+      "token_path": "/.well-known/oauth-authorization-server/acme/partners/pay/agents/bot/mcp/token",
+      "authorization_server_suffix_path": "/acme/partners/pay/agents/bot/mcp/.well-known/oauth-authorization-server"
+    }
+  ],
+  "parser": {
+    "accept": [
+      {
+        "name": "namespace",
+        "input": "/acme/mcp",
+        "endpoint": {
+          "kind": "namespace",
+          "client_namespace": "acme"
+        }
+      },
+      {
+        "name": "partner namespace normalized",
+        "input": " acme//partners/pay/mcp/ ",
+        "endpoint": {
+          "kind": "partner_namespace",
+          "client_namespace": "acme",
+          "partner_id": "pay"
+        }
+      },
+      {
+        "name": "agent dot normalization",
+        "input": "/acme/old/../agents/bot/mcp",
+        "endpoint": {
+          "kind": "agent",
+          "client_namespace": "acme",
+          "agent_id": "bot"
+        }
+      },
+      {
+        "name": "partner agent duplicate slashes",
+        "input": "//acme/partners/pay/agents/bot/mcp//",
+        "endpoint": {
+          "kind": "partner_agent",
+          "client_namespace": "acme",
+          "partner_id": "pay",
+          "agent_id": "bot"
+        }
+      }
+    ],
+    "reject": [
+      {
+        "name": "root",
+        "input": "/"
+      },
+      {
+        "name": "missing mcp",
+        "input": "/acme"
+      },
+      {
+        "name": "extra segment",
+        "input": "/acme/mcp/extra"
+      },
+      {
+        "name": "partner wrong suffix",
+        "input": "/acme/partners/pay/other"
+      },
+      {
+        "name": "agent wrong suffix",
+        "input": "/acme/agents/bot/other"
+      },
+      {
+        "name": "partner agent wrong suffix",
+        "input": "/acme/partners/pay/agents/bot/other"
+      },
+      {
+        "name": "unsupported shape",
+        "input": "/acme/agents/bot/agents/other/mcp"
+      },
+      {
+        "name": "ascii-only namespace",
+        "input": "/ /mcp"
+      },
+      {
+        "name": "ascii-only partner",
+        "input": "/acme/partners/ /mcp"
+      },
+      {
+        "name": "ascii-only agent",
+        "input": "/acme/agents/ /mcp"
+      },
+      {
+        "name": "ascii-only partner-agent agent",
+        "input": "/acme/partners/pay/agents/ /mcp"
+      },
+      {
+        "name": "nel leading extra segment",
+        "input": "\u0085/ns/mcp"
+      },
+      {
+        "name": "bom leading extra segment",
+        "input": "\ufeff/ns/mcp"
+      },
+      {
+        "name": "client namespace dot",
+        "input": "/./mcp"
+      },
+      {
+        "name": "client namespace dot-dot",
+        "input": "/../mcp"
+      },
+      {
+        "name": "partner id dot",
+        "input": "/acme/partners/./mcp"
+      },
+      {
+        "name": "partner id dot-dot",
+        "input": "/acme/partners/../mcp"
+      },
+      {
+        "name": "agent id dot",
+        "input": "/acme/agents/./mcp"
+      },
+      {
+        "name": "agent id dot-dot",
+        "input": "/acme/agents/../mcp"
+      },
+      {
+        "name": "partner-agent partner id dot",
+        "input": "/acme/partners/./agents/bot/mcp"
+      },
+      {
+        "name": "partner-agent partner id dot-dot",
+        "input": "/acme/partners/../agents/bot/mcp"
+      },
+      {
+        "name": "partner-agent agent id dot",
+        "input": "/acme/partners/pay/agents/./mcp"
+      },
+      {
+        "name": "partner-agent agent id dot-dot",
+        "input": "/acme/partners/pay/agents/../mcp"
+      }
+    ]
+  },
+  "validation": [
+    {
+      "name": "namespace valid",
+      "endpoint": {
+        "kind": "namespace",
+        "client_namespace": "acme"
+      },
+      "valid": true
+    },
+    {
+      "name": "namespace missing namespace",
+      "endpoint": {
+        "kind": "namespace",
+        "client_namespace": ""
+      },
+      "valid": false
+    },
+    {
+      "name": "namespace extra partner",
+      "endpoint": {
+        "kind": "namespace",
+        "client_namespace": "acme",
+        "partner_id": "pay"
+      },
+      "valid": false
+    },
+    {
+      "name": "namespace extra agent",
+      "endpoint": {
+        "kind": "namespace",
+        "client_namespace": "acme",
+        "agent_id": "bot"
+      },
+      "valid": false
+    },
+    {
+      "name": "partner namespace valid",
+      "endpoint": {
+        "kind": "partner_namespace",
+        "client_namespace": "acme",
+        "partner_id": "pay"
+      },
+      "valid": true
+    },
+    {
+      "name": "partner namespace missing partner",
+      "endpoint": {
+        "kind": "partner_namespace",
+        "client_namespace": "acme"
+      },
+      "valid": false
+    },
+    {
+      "name": "partner namespace forbidden agent",
+      "endpoint": {
+        "kind": "partner_namespace",
+        "client_namespace": "acme",
+        "partner_id": "pay",
+        "agent_id": "bot"
+      },
+      "valid": false
+    },
+    {
+      "name": "agent valid",
+      "endpoint": {
+        "kind": "agent",
+        "client_namespace": "acme",
+        "agent_id": "bot"
+      },
+      "valid": true
+    },
+    {
+      "name": "agent missing agent",
+      "endpoint": {
+        "kind": "agent",
+        "client_namespace": "acme"
+      },
+      "valid": false
+    },
+    {
+      "name": "agent forbidden partner",
+      "endpoint": {
+        "kind": "agent",
+        "client_namespace": "acme",
+        "partner_id": "pay",
+        "agent_id": "bot"
+      },
+      "valid": false
+    },
+    {
+      "name": "partner agent valid",
+      "endpoint": {
+        "kind": "partner_agent",
+        "client_namespace": "acme",
+        "partner_id": "pay",
+        "agent_id": "bot"
+      },
+      "valid": true
+    },
+    {
+      "name": "partner agent missing partner",
+      "endpoint": {
+        "kind": "partner_agent",
+        "client_namespace": "acme",
+        "agent_id": "bot"
+      },
+      "valid": false
+    },
+    {
+      "name": "partner agent missing agent",
+      "endpoint": {
+        "kind": "partner_agent",
+        "client_namespace": "acme",
+        "partner_id": "pay"
+      },
+      "valid": false
+    },
+    {
+      "name": "namespace slash",
+      "endpoint": {
+        "kind": "namespace",
+        "client_namespace": "acme/bad"
+      },
+      "valid": false
+    },
+    {
+      "name": "partner slash",
+      "endpoint": {
+        "kind": "partner_namespace",
+        "client_namespace": "acme",
+        "partner_id": "pay/bad"
+      },
+      "valid": false
+    },
+    {
+      "name": "agent slash",
+      "endpoint": {
+        "kind": "agent",
+        "client_namespace": "acme",
+        "agent_id": "bot/bad"
+      },
+      "valid": false
+    },
+    {
+      "name": "unknown kind",
+      "endpoint": {
+        "kind": "other",
+        "client_namespace": "acme"
+      },
+      "valid": false
+    },
+    {
+      "name": "client namespace .",
+      "endpoint": {
+        "kind": "namespace",
+        "client_namespace": "."
+      },
+      "valid": false
+    },
+    {
+      "name": "client namespace ..",
+      "endpoint": {
+        "kind": "namespace",
+        "client_namespace": ".."
+      },
+      "valid": false
+    },
+    {
+      "name": "partner id .",
+      "endpoint": {
+        "kind": "partner_namespace",
+        "client_namespace": "acme",
+        "partner_id": "."
+      },
+      "valid": false
+    },
+    {
+      "name": "partner id ..",
+      "endpoint": {
+        "kind": "partner_namespace",
+        "client_namespace": "acme",
+        "partner_id": ".."
+      },
+      "valid": false
+    },
+    {
+      "name": "agent id .",
+      "endpoint": {
+        "kind": "agent",
+        "client_namespace": "acme",
+        "agent_id": "."
+      },
+      "valid": false
+    },
+    {
+      "name": "agent id ..",
+      "endpoint": {
+        "kind": "agent",
+        "client_namespace": "acme",
+        "agent_id": ".."
+      },
+      "valid": false
+    }
+  ],
+  "whitespace_boundary": [
+    {
+      "code_point": "U+0009",
+      "character": "\t",
+      "in_trim_set": true,
+      "normalization_input": "\t/acme/mcp\t",
+      "normalized": "/acme/mcp",
+      "parser_input": "\t/acme/mcp\t",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "acme"
+      },
+      "segment_valid": false
+    },
+    {
+      "code_point": "U+000A",
+      "character": "\n",
+      "in_trim_set": true,
+      "normalization_input": "\n/acme/mcp\n",
+      "normalized": "/acme/mcp",
+      "parser_input": "\n/acme/mcp\n",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "acme"
+      },
+      "segment_valid": false
+    },
+    {
+      "code_point": "U+000B",
+      "character": "\u000b",
+      "in_trim_set": true,
+      "normalization_input": "\u000b/acme/mcp\u000b",
+      "normalized": "/acme/mcp",
+      "parser_input": "\u000b/acme/mcp\u000b",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "acme"
+      },
+      "segment_valid": false
+    },
+    {
+      "code_point": "U+000C",
+      "character": "\f",
+      "in_trim_set": true,
+      "normalization_input": "\f/acme/mcp\f",
+      "normalized": "/acme/mcp",
+      "parser_input": "\f/acme/mcp\f",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "acme"
+      },
+      "segment_valid": false
+    },
+    {
+      "code_point": "U+000D",
+      "character": "\r",
+      "in_trim_set": true,
+      "normalization_input": "\r/acme/mcp\r",
+      "normalized": "/acme/mcp",
+      "parser_input": "\r/acme/mcp\r",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "acme"
+      },
+      "segment_valid": false
+    },
+    {
+      "code_point": "U+0020",
+      "character": " ",
+      "in_trim_set": true,
+      "normalization_input": " /acme/mcp ",
+      "normalized": "/acme/mcp",
+      "parser_input": " /acme/mcp ",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "acme"
+      },
+      "segment_valid": false
+    },
+    {
+      "code_point": "U+0085",
+      "character": "\u0085",
+      "in_trim_set": false,
+      "normalization_input": "\u0085/acme/mcp\u0085",
+      "normalized": "/\u0085/acme/mcp\u0085",
+      "parser_input": "/\u0085/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u0085"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+00A0",
+      "character": "\u00a0",
+      "in_trim_set": false,
+      "normalization_input": "\u00a0/acme/mcp\u00a0",
+      "normalized": "/\u00a0/acme/mcp\u00a0",
+      "parser_input": "/\u00a0/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u00a0"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+1680",
+      "character": "\u1680",
+      "in_trim_set": false,
+      "normalization_input": "\u1680/acme/mcp\u1680",
+      "normalized": "/\u1680/acme/mcp\u1680",
+      "parser_input": "/\u1680/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u1680"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+2000",
+      "character": "\u2000",
+      "in_trim_set": false,
+      "normalization_input": "\u2000/acme/mcp\u2000",
+      "normalized": "/\u2000/acme/mcp\u2000",
+      "parser_input": "/\u2000/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u2000"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+2001",
+      "character": "\u2001",
+      "in_trim_set": false,
+      "normalization_input": "\u2001/acme/mcp\u2001",
+      "normalized": "/\u2001/acme/mcp\u2001",
+      "parser_input": "/\u2001/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u2001"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+2002",
+      "character": "\u2002",
+      "in_trim_set": false,
+      "normalization_input": "\u2002/acme/mcp\u2002",
+      "normalized": "/\u2002/acme/mcp\u2002",
+      "parser_input": "/\u2002/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u2002"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+2003",
+      "character": "\u2003",
+      "in_trim_set": false,
+      "normalization_input": "\u2003/acme/mcp\u2003",
+      "normalized": "/\u2003/acme/mcp\u2003",
+      "parser_input": "/\u2003/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u2003"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+2004",
+      "character": "\u2004",
+      "in_trim_set": false,
+      "normalization_input": "\u2004/acme/mcp\u2004",
+      "normalized": "/\u2004/acme/mcp\u2004",
+      "parser_input": "/\u2004/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u2004"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+2005",
+      "character": "\u2005",
+      "in_trim_set": false,
+      "normalization_input": "\u2005/acme/mcp\u2005",
+      "normalized": "/\u2005/acme/mcp\u2005",
+      "parser_input": "/\u2005/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u2005"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+2006",
+      "character": "\u2006",
+      "in_trim_set": false,
+      "normalization_input": "\u2006/acme/mcp\u2006",
+      "normalized": "/\u2006/acme/mcp\u2006",
+      "parser_input": "/\u2006/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u2006"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+2007",
+      "character": "\u2007",
+      "in_trim_set": false,
+      "normalization_input": "\u2007/acme/mcp\u2007",
+      "normalized": "/\u2007/acme/mcp\u2007",
+      "parser_input": "/\u2007/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u2007"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+2008",
+      "character": "\u2008",
+      "in_trim_set": false,
+      "normalization_input": "\u2008/acme/mcp\u2008",
+      "normalized": "/\u2008/acme/mcp\u2008",
+      "parser_input": "/\u2008/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u2008"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+2009",
+      "character": "\u2009",
+      "in_trim_set": false,
+      "normalization_input": "\u2009/acme/mcp\u2009",
+      "normalized": "/\u2009/acme/mcp\u2009",
+      "parser_input": "/\u2009/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u2009"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+200A",
+      "character": "\u200a",
+      "in_trim_set": false,
+      "normalization_input": "\u200a/acme/mcp\u200a",
+      "normalized": "/\u200a/acme/mcp\u200a",
+      "parser_input": "/\u200a/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u200a"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+2028",
+      "character": "\u2028",
+      "in_trim_set": false,
+      "normalization_input": "\u2028/acme/mcp\u2028",
+      "normalized": "/\u2028/acme/mcp\u2028",
+      "parser_input": "/\u2028/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u2028"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+2029",
+      "character": "\u2029",
+      "in_trim_set": false,
+      "normalization_input": "\u2029/acme/mcp\u2029",
+      "normalized": "/\u2029/acme/mcp\u2029",
+      "parser_input": "/\u2029/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u2029"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+202F",
+      "character": "\u202f",
+      "in_trim_set": false,
+      "normalization_input": "\u202f/acme/mcp\u202f",
+      "normalized": "/\u202f/acme/mcp\u202f",
+      "parser_input": "/\u202f/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u202f"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+205F",
+      "character": "\u205f",
+      "in_trim_set": false,
+      "normalization_input": "\u205f/acme/mcp\u205f",
+      "normalized": "/\u205f/acme/mcp\u205f",
+      "parser_input": "/\u205f/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u205f"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+3000",
+      "character": "\u3000",
+      "in_trim_set": false,
+      "normalization_input": "\u3000/acme/mcp\u3000",
+      "normalized": "/\u3000/acme/mcp\u3000",
+      "parser_input": "/\u3000/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\u3000"
+      },
+      "segment_valid": true
+    },
+    {
+      "code_point": "U+FEFF",
+      "character": "\ufeff",
+      "in_trim_set": false,
+      "normalization_input": "\ufeff/acme/mcp\ufeff",
+      "normalized": "/\ufeff/acme/mcp\ufeff",
+      "parser_input": "/\ufeff/mcp",
+      "parser_endpoint": {
+        "kind": "namespace",
+        "client_namespace": "\ufeff"
+      },
+      "segment_valid": true
+    }
+  ],
+  "protected_resource_inverse": {
+    "accept": [
+      {
+        "input": "/.well-known/oauth-protected-resource",
+        "resource_path": "/"
+      },
+      {
+        "input": " /.well-known/oauth-protected-resource/acme/mcp/ ",
+        "resource_path": "/acme/mcp"
+      },
+      {
+        "input": "//.well-known//oauth-protected-resource//acme//mcp",
+        "resource_path": "/acme/mcp"
+      }
+    ],
+    "reject": [
+      "/",
+      "/.well-known/oauth-protected-resources/acme/mcp",
+      "/x/.well-known/oauth-protected-resource/acme/mcp"
+    ]
+  },
+  "builders": [
+    {
+      "endpoint": {
+        "kind": "namespace",
+        "client_namespace": "acme"
+      },
+      "mcp_path": "/acme/mcp",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/mcp",
+      "authorize_path": "/.well-known/oauth-authorization-server/acme/mcp/authorize",
+      "token_path": "/.well-known/oauth-authorization-server/acme/mcp/token",
+      "authorization_server_suffix_path": "/acme/mcp/.well-known/oauth-authorization-server"
+    },
+    {
+      "endpoint": {
+        "kind": "partner_namespace",
+        "client_namespace": "acme",
+        "partner_id": "pay"
+      },
+      "mcp_path": "/acme/partners/pay/mcp",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/partners/pay/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/partners/pay/mcp",
+      "authorize_path": "/.well-known/oauth-authorization-server/acme/partners/pay/mcp/authorize",
+      "token_path": "/.well-known/oauth-authorization-server/acme/partners/pay/mcp/token",
+      "authorization_server_suffix_path": "/acme/partners/pay/mcp/.well-known/oauth-authorization-server"
+    },
+    {
+      "endpoint": {
+        "kind": "agent",
+        "client_namespace": "acme",
+        "agent_id": "bot"
+      },
+      "mcp_path": "/acme/agents/bot/mcp",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/agents/bot/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/agents/bot/mcp",
+      "authorize_path": "/.well-known/oauth-authorization-server/acme/agents/bot/mcp/authorize",
+      "token_path": "/.well-known/oauth-authorization-server/acme/agents/bot/mcp/token",
+      "authorization_server_suffix_path": "/acme/agents/bot/mcp/.well-known/oauth-authorization-server"
+    },
+    {
+      "endpoint": {
+        "kind": "partner_agent",
+        "client_namespace": "acme",
+        "partner_id": "pay",
+        "agent_id": "bot"
+      },
+      "mcp_path": "/acme/partners/pay/agents/bot/mcp",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/partners/pay/agents/bot/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/partners/pay/agents/bot/mcp",
+      "authorize_path": "/.well-known/oauth-authorization-server/acme/partners/pay/agents/bot/mcp/authorize",
+      "token_path": "/.well-known/oauth-authorization-server/acme/partners/pay/agents/bot/mcp/token",
+      "authorization_server_suffix_path": "/acme/partners/pay/agents/bot/mcp/.well-known/oauth-authorization-server"
+    }
+  ],
+  "documents": [
+    {
+      "name": "public_base_url namespace",
+      "mode": "public_base_url",
+      "kind": "namespace",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/mcp",
+      "authorization_server_suffix_path": "/acme/mcp/.well-known/oauth-authorization-server",
+      "protected_resource_document": "{\"resource\":\"https://front.example.com/acme/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"namespace:use\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/authorize\",\"token_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"namespace:use\"]}"
+    },
+    {
+      "name": "public_base_url partner_namespace",
+      "mode": "public_base_url",
+      "kind": "partner_namespace",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/partners/reseller/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/partners/reseller/mcp",
+      "authorization_server_suffix_path": "/acme/partners/reseller/mcp/.well-known/oauth-authorization-server",
+      "protected_resource_document": "{\"resource\":\"https://front.example.com/acme/partners/reseller/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"partner_namespace:use\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/mcp/authorize\",\"token_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"partner_namespace:use\"]}"
+    },
+    {
+      "name": "public_base_url agent",
+      "mode": "public_base_url",
+      "kind": "agent",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/agents/helper/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/agents/helper/mcp",
+      "authorization_server_suffix_path": "/acme/agents/helper/mcp/.well-known/oauth-authorization-server",
+      "protected_resource_document": "{\"resource\":\"https://front.example.com/acme/agents/helper/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"agent:use\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/authorize\",\"token_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"agent:use\"]}"
+    },
+    {
+      "name": "public_base_url partner_agent",
+      "mode": "public_base_url",
+      "kind": "partner_agent",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/partners/reseller/agents/helper/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp",
+      "authorization_server_suffix_path": "/acme/partners/reseller/agents/helper/mcp/.well-known/oauth-authorization-server",
+      "protected_resource_document": "{\"resource\":\"https://front.example.com/acme/partners/reseller/agents/helper/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"partner_agent:use\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp/authorize\",\"token_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"partner_agent:use\"]}"
+    },
+    {
+      "name": "request_host namespace",
+      "mode": "request_host",
+      "kind": "namespace",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/mcp",
+      "authorization_server_suffix_path": "/acme/mcp/.well-known/oauth-authorization-server",
+      "protected_resource_document": "{\"resource\":\"https://direct.example.com/acme/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"namespace:use\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/mcp/authorize\",\"token_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"namespace:use\"]}"
+    },
+    {
+      "name": "request_host partner_namespace",
+      "mode": "request_host",
+      "kind": "partner_namespace",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/partners/reseller/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/partners/reseller/mcp",
+      "authorization_server_suffix_path": "/acme/partners/reseller/mcp/.well-known/oauth-authorization-server",
+      "protected_resource_document": "{\"resource\":\"https://direct.example.com/acme/partners/reseller/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"partner_namespace:use\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/mcp/authorize\",\"token_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"partner_namespace:use\"]}"
+    },
+    {
+      "name": "request_host agent",
+      "mode": "request_host",
+      "kind": "agent",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/agents/helper/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/agents/helper/mcp",
+      "authorization_server_suffix_path": "/acme/agents/helper/mcp/.well-known/oauth-authorization-server",
+      "protected_resource_document": "{\"resource\":\"https://direct.example.com/acme/agents/helper/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"agent:use\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/authorize\",\"token_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"agent:use\"]}"
+    },
+    {
+      "name": "request_host partner_agent",
+      "mode": "request_host",
+      "kind": "partner_agent",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/partners/reseller/agents/helper/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp",
+      "authorization_server_suffix_path": "/acme/partners/reseller/agents/helper/mcp/.well-known/oauth-authorization-server",
+      "protected_resource_document": "{\"resource\":\"https://direct.example.com/acme/partners/reseller/agents/helper/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"partner_agent:use\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp/authorize\",\"token_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"partner_agent:use\"]}"
+    }
+  ]
+}

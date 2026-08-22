@@ -15,6 +15,11 @@
 #   0 - All rubric items PASS
 #   1 - One or more rubric items FAIL or BLOCKED
 #   2 - Script error (missing dependencies, invalid config, etc.)
+#
+# Provenance note: git_head is emitted only when this repository is the resolved
+# Git worktree root and HEAD is a 40-hex SHA-1 object ID. It is omitted when
+# git/the intended Git tree is unavailable and in SHA-256 object-format
+# repositories, whose longer object IDs are not yet in the schema.
 
 set -euo pipefail
 
@@ -24,6 +29,13 @@ GOV_INFRA="${REPO_ROOT}/gov-infra"
 PLANNING_DIR="${GOV_INFRA}/planning"
 EVIDENCE_DIR="${GOV_INFRA}/evidence"
 REPORT_PATH="${EVIDENCE_DIR}/gov-rubric-report.json"
+
+# shellcheck source=../../scripts/lib/blocked.sh
+source "${REPO_ROOT}/scripts/lib/blocked.sh"
+# shellcheck source=../../scripts/lib/ts-runtime-deps.sh
+source "${REPO_ROOT}/scripts/lib/ts-runtime-deps.sh"
+# shellcheck source=../../scripts/lib/cdk-runtime-deps.sh
+source "${REPO_ROOT}/scripts/lib/cdk-runtime-deps.sh"
 
 # Always run checks from repo root so relative commands are stable.
 cd "${REPO_ROOT}"
@@ -35,78 +47,6 @@ json_escape() {
   s="${s//$'\n'/\\n}"
   s="${s//$'\r'/\\r}"
   printf '%s' "$s"
-}
-
-is_valid_report_timestamp() {
-  local value="$1"
-
-  [[ "${value}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
-
-  if command -v python3 >/dev/null 2>&1; then
-    python3 - "${value}" <<'PY'
-from datetime import datetime
-import sys
-
-value = sys.argv[1]
-try:
-    parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
-except ValueError:
-    sys.exit(1)
-
-if parsed.strftime("%Y-%m-%dT%H:%M:%SZ") != value:
-    sys.exit(1)
-PY
-    return $?
-  fi
-
-  # The shape check above excludes JSON metacharacter injection. Calendar
-  # validation is applied when python3 is available, which the verifier's
-  # runtime gates require.
-  return 0
-}
-
-read_existing_report_timestamp() {
-  local report_path="$1"
-
-  [[ -f "${report_path}" ]] || return 0
-
-  python3 - "${report_path}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-try:
-    value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("timestamp", "")
-except Exception:
-    value = ""
-if isinstance(value, str):
-    print(value)
-PY
-}
-
-select_report_timestamp_value() {
-  local supplied_timestamp="$1"
-  local existing_timestamp="$2"
-  local generated_timestamp="${3:-}"
-
-  if is_valid_report_timestamp "${supplied_timestamp}"; then
-    printf '%s' "${supplied_timestamp}"
-    return 0
-  fi
-
-  if is_valid_report_timestamp "${existing_timestamp}"; then
-    printf '%s' "${existing_timestamp}"
-    return 0
-  fi
-
-  if [[ -z "${generated_timestamp}" ]]; then
-    generated_timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  fi
-  if ! is_valid_report_timestamp "${generated_timestamp}"; then
-    echo "Internal error: generated report timestamp is invalid: ${generated_timestamp}" >&2
-    return 2
-  fi
-  printf '%s' "${generated_timestamp}"
 }
 
 validate_report_json() {
@@ -152,7 +92,7 @@ except Exception as exc:
     print(f"FAIL: generated rubric report is not valid JSON: {exc}", file=sys.stderr)
     sys.exit(1)
 
-allowed_top_level = {"$schema", "schemaVersion", "timestamp", "pack", "project", "summary", "results"}
+allowed_top_level = {"$schema", "schemaVersion", "timestamp", "git_head", "pack", "project", "summary", "results"}
 allowed_result_keys = {"id", "category", "status", "message", "evidencePath"}
 allowed_categories = {
     "Quality",
@@ -179,6 +119,10 @@ if report.get("$schema") != "https://gov.pai.dev/schemas/gov-rubric-report.schem
     errors.append("unexpected $schema value")
 if report.get("schemaVersion") != 1:
     errors.append("schemaVersion must be 1")
+if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", str(report.get("timestamp", ""))):
+    errors.append("timestamp must be UTC seconds precision")
+if "git_head" in report and not re.fullmatch(r"[0-9a-fA-F]{40}", str(report["git_head"])):
+    errors.append("git_head must be a 40-hex SHA-1 object ID when present")
 
 pack = report.get("pack")
 if not isinstance(pack, dict):
@@ -269,7 +213,37 @@ if errors:
 PY
 }
 
-if [[ "${GOV_RUBRIC_TIMESTAMP_HELPER_ONLY:-}" == "1" ]]; then
+initialize_report_provenance() {
+  REPORT_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  REPORT_GIT_HEAD=""
+  if command -v git >/dev/null 2>&1; then
+    REPORT_GIT_HEAD_CANDIDATE="$(git -C "${REPO_ROOT}" rev-parse --verify HEAD 2>/dev/null || true)"
+    REPORT_GIT_TOPLEVEL="$(git -C "${REPO_ROOT}" rev-parse --show-toplevel 2>/dev/null || true)"
+    if [[ "${REPORT_GIT_TOPLEVEL}" == "${REPO_ROOT}" && "${REPORT_GIT_HEAD_CANDIDATE}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+      REPORT_GIT_HEAD="${REPORT_GIT_HEAD_CANDIDATE}"
+    fi
+  fi
+  REPORT_GIT_HEAD_JSON=""
+  if [[ -n "${REPORT_GIT_HEAD}" ]]; then
+    printf -v REPORT_GIT_HEAD_JSON '  "git_head": "%s",\n' "${REPORT_GIT_HEAD}"
+  fi
+}
+
+require_intended_git_worktree_or_blocked() {
+  if ! command -v git >/dev/null 2>&1; then
+    echo "BLOCKED: git is unavailable; this check requires the intended Git worktree" >&2
+    return 2
+  fi
+
+  local git_toplevel
+  git_toplevel="$(git -C "${REPO_ROOT}" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -z "${git_toplevel}" || "${git_toplevel}" != "${REPO_ROOT}" ]]; then
+    echo "BLOCKED: repository root is not the intended Git worktree root" >&2
+    return 2
+  fi
+}
+
+if [[ "${GOV_RUBRIC_PROVENANCE_HELPER_ONLY:-}" == "1" ]]; then
   if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     echo "Internal test helper mode is only available when sourced by verifier tests." >&2
     exit 2
@@ -307,11 +281,6 @@ COV_THRESHOLD="90"
 # Ensure evidence directory exists
 mkdir -p "${EVIDENCE_DIR}"
 
-EXISTING_REPORT_TIMESTAMP=""
-if [[ -f "${REPORT_PATH}" ]]; then
-  EXISTING_REPORT_TIMESTAMP="$(read_existing_report_timestamp "${REPORT_PATH}" 2>/dev/null || true)"
-fi
-
 # Clean previous run outputs to prevent stale evidence from being misattributed.
 rm -f \
   "${REPORT_PATH}" \
@@ -325,7 +294,7 @@ rm -f \
 
 # Initialize report structure
 REPORT_SCHEMA_VERSION=1
-REPORT_TIMESTAMP="$(select_report_timestamp_value "${GOV_REPORT_TIMESTAMP:-}" "${EXISTING_REPORT_TIMESTAMP}")"
+initialize_report_provenance
 PASS_COUNT=0
 FAIL_COUNT=0
 BLOCKED_COUNT=0
@@ -380,15 +349,6 @@ is_unset_token() {
   [[ "$v" == "BLOCKED:"* ]] && return 0
   [[ "$v" == "{{"* ]] && return 0
   return 1
-}
-
-require_cmd_or_blocked() {
-  local name="$1"
-  if ! command -v "$name" >/dev/null 2>&1; then
-    echo "BLOCKED: missing required tool: ${name}" >&2
-    return 2
-  fi
-  return 0
 }
 
 normalize_feature_flags() {
@@ -527,7 +487,7 @@ ensure_cdk_dist_go_bindings_generated() {
     return 1
   fi
 
-  (cd cdk && npm ci >/dev/null)
+  ensure_cdk_runtime_deps_installed || return $?
   (cd cdk && npm run build >/dev/null)
   (cd cdk && npx jsii-pacmak -t go --code-only -o dist/go --force-subdirectory false --force >/dev/null)
 
@@ -539,53 +499,6 @@ ensure_cdk_dist_go_bindings_generated() {
   # Pacmak output can require a tidy pass to ensure the module graph is complete.
   (cd cdk/dist/go/apptheorycdk && go mod tidy >/dev/null)
 
-  return 0
-}
-
-file_sha256() {
-  local file_path="$1"
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "${file_path}" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "${file_path}" | awk '{print $1}'
-  else
-    echo "BLOCKED: sha256 tool missing (need sha256sum or shasum)" >&2
-    return 2
-  fi
-}
-
-ensure_ts_runtime_deps_installed() {
-  require_cmd_or_blocked node || return $?
-  require_cmd_or_blocked npm || return $?
-
-  if [[ ! -d "ts" ]]; then
-    echo "FAIL: expected TypeScript project missing: ts/" >&2
-    return 1
-  fi
-  if [[ ! -f "ts/package.json" ]]; then
-    echo "FAIL: expected TypeScript package missing: ts/package.json" >&2
-    return 1
-  fi
-  if [[ ! -f "ts/package-lock.json" ]]; then
-    echo "FAIL: expected TypeScript lockfile missing: ts/package-lock.json" >&2
-    return 1
-  fi
-
-  local lock_hash
-  lock_hash="$(file_sha256 "ts/package-lock.json")" || return $?
-
-  local stamp="ts/node_modules/.gov-ts-runtime-deps.sha256"
-  if [[ -d "ts/node_modules" && -f "${stamp}" ]] && grep -Fxq "${lock_hash}" "${stamp}" 2>/dev/null; then
-    return 0
-  fi
-
-  echo "Installing TypeScript runtime deps into ts/node_modules..." >&2
-  if ! (cd ts && npm ci --no-audit --no-fund >/dev/null); then
-    echo "BLOCKED: failed to install TypeScript runtime dependencies (check network/toolchain)" >&2
-    return 2
-  fi
-
-  printf '%s\n' "${lock_hash}" > "${stamp}"
   return 0
 }
 
@@ -693,6 +606,7 @@ ensure_py_runtime_deps_installed() {
 gov_cmd_unit() {
   require_cmd_or_blocked go || return $?
   require_cmd_or_blocked node || return $?
+  require_cmd_or_blocked npm || return $?
   require_cmd_or_blocked python3 || return $?
 
   # QUA-1 is the unit-test gate. The direct, uninstrumented contract suite runs
@@ -718,13 +632,12 @@ gov_cmd_integration() {
   require_cmd_or_blocked node || return $?
   require_cmd_or_blocked npm || return $?
   require_cmd_or_blocked python3 || return $?
-  ensure_ts_runtime_deps_installed || return $?
   scripts/verify-testkit-examples.sh
 }
 
 gov_cmd_fmt() {
   require_cmd_or_blocked gofmt || return $?
-  make fmt-check
+  scripts/fmt-check.sh
 }
 
 gov_cmd_lint() {
@@ -736,12 +649,15 @@ gov_cmd_lint() {
   # Ensure pinned golangci-lint is present so `scripts/verify-go-lint.sh` does not require a global install.
   ensure_golangci_lint_pinned || return $?
 
-  make lint
+  scripts/verify-go-lint.sh
+  scripts/verify-ts-lint.sh
+  scripts/verify-python-lint.sh
 }
 
 gov_cmd_contract() {
   require_cmd_or_blocked go || return $?
   require_cmd_or_blocked node || return $?
+  require_cmd_or_blocked npm || return $?
   require_cmd_or_blocked python3 || return $?
   ensure_ts_runtime_deps_installed || return $?
   scripts/verify-contract-tests.sh
@@ -887,7 +803,7 @@ gov_cmd_vuln() {
 
 gov_cmd_p0() {
   # Treat deterministic builds as a P0 integrity gate.
-  require_cmd_or_blocked git || return $?
+  require_intended_git_worktree_or_blocked || return $?
   require_cmd_or_blocked go || return $?
   require_cmd_or_blocked node || return $?
   require_cmd_or_blocked npm || return $?
@@ -1352,10 +1268,7 @@ check_logging_ops_standards() {
     return 1
   fi
 
-  if ! command -v git >/dev/null 2>&1; then
-    echo "BLOCKED: git is required to deterministically enumerate in-scope files" >&2
-    return 2
-  fi
+  require_intended_git_worktree_or_blocked || return $?
 
   local files
   files="$(
@@ -1459,6 +1372,10 @@ check_doc_integrity() {
     return 1
   }
 
+  # The materialization tracking and ignore assertions below genuinely require
+  # the intended Git worktree; copied non-Git trees cannot prove either state.
+  require_intended_git_worktree_or_blocked || return $?
+
   local failures=0
   local materialized_surface
   for materialized_surface in \
@@ -1510,30 +1427,23 @@ check_file_budgets() {
 
   local max_go_lines=2000
 
+  # The budget applies to the tracked source surface, not every file that may
+  # happen to exist in a copied directory.
+  require_intended_git_worktree_or_blocked || return $?
+
   # Avoid scanning vendored/generated caches; keep deterministic signal.
   local tmp
   tmp="$(mktemp)"
   trap 'rm -f "${tmp}"' RETURN
 
-  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git ls-files '*.go' \
-      ':!:vendor/**' \
-      ':!:**/node_modules/**' \
-      ':!:**/dist/**' \
-      ':!:**/build/**' \
-      ':!:**/third_party/**' \
-      ':!:**/testdata/**' \
-      > "${tmp}"
-  else
-    find . -name '*.go' -type f \
-      -not -path './vendor/*' \
-      -not -path './node_modules/*' \
-      -not -path './dist/*' \
-      -not -path './build/*' \
-      -not -path './third_party/*' \
-      -not -path './testdata/*' \
-      > "${tmp}"
-  fi
+  git ls-files '*.go' \
+    ':!:vendor/**' \
+    ':!:**/node_modules/**' \
+    ':!:**/dist/**' \
+    ':!:**/build/**' \
+    ':!:**/third_party/**' \
+    ':!:**/testdata/**' \
+    > "${tmp}"
 
   if [[ ! -s "${tmp}" ]]; then
     echo "file-budgets: PASS (no Go files)"
@@ -1642,14 +1552,7 @@ allowlist_has_id() {
 sha256_12() {
   local s="$1"
   local hash=""
-  if command -v sha256sum >/dev/null 2>&1; then
-    hash="$(printf '%s' "${s}" | sha256sum | awk '{print $1}')"
-  elif command -v shasum >/dev/null 2>&1; then
-    hash="$(printf '%s' "${s}" | shasum -a 256 | awk '{print $1}')"
-  else
-    echo "BLOCKED: sha256 tool missing (need sha256sum or shasum)" >&2
-    return 2
-  fi
+  hash="$(printf '%s' "${s}" | sha256_stdin)" || return $?
   printf '%s' "${hash:0:12}"
   return 0
 }
@@ -2374,7 +2277,7 @@ check_supply_chain_apptheory() {
     "examples/cdk/lambda-role"
   )
 
-  require_cmd_or_blocked git || return $?
+  require_intended_git_worktree_or_blocked || return $?
   require_cmd_or_blocked tar || return $?
 
   local tmp_dir
@@ -2665,7 +2568,7 @@ cat > "${REPORT_PATH}" <<EOF
   "\$schema": "https://gov.pai.dev/schemas/gov-rubric-report.schema.json",
   "schemaVersion": ${REPORT_SCHEMA_VERSION},
   "timestamp": "$(json_escape "$REPORT_TIMESTAMP")",
-  "pack": {
+${REPORT_GIT_HEAD_JSON}  "pack": {
     "version": "2ba585f48951",
     "digest": "22406dbb1031ebc4dcd83e02912bbc307ab0983629463aa6106b76415e6280af"
   },

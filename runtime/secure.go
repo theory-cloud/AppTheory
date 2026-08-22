@@ -14,14 +14,15 @@ import (
 type AuthPostureKind string
 
 const (
-	AuthPosturePublic        AuthPostureKind = "public"
-	AuthPostureOptional      AuthPostureKind = "optional"
-	AuthPostureAuthenticated AuthPostureKind = "authenticated"
-	AuthPostureInternalOnly  AuthPostureKind = "internal_only"
+	AuthPosturePublic             AuthPostureKind = "public"
+	AuthPostureOptional           AuthPostureKind = "optional"
+	AuthPostureAuthenticated      AuthPostureKind = "authenticated"
+	AuthPostureAuthenticatedAnyOf AuthPostureKind = "authenticated_any_of"
+	AuthPostureInternalOnly       AuthPostureKind = "internal_only"
 )
 
 // AuthPosture is an opaque secure-route posture. Use Public, Optional,
-// Authenticated, or InternalOnly to construct one.
+// Authenticated, AuthenticatedAnyOf, or InternalOnly to construct one.
 type AuthPosture struct {
 	kind           AuthPostureKind
 	scopes         []string
@@ -38,7 +39,7 @@ func (p AuthPosture) validate() error {
 		if len(p.scopes) != 0 || p.scopesSupplied {
 			return errors.New("apptheory: invalid auth posture")
 		}
-	case AuthPostureAuthenticated:
+	case AuthPostureAuthenticated, AuthPostureAuthenticatedAnyOf:
 		if p.scopesSupplied && len(p.scopes) == 0 {
 			return errors.New("apptheory: authenticated scopes normalize to empty")
 		}
@@ -57,6 +58,11 @@ func Optional() AuthPosture { return AuthPosture{kind: AuthPostureOptional} }
 // Authenticated requires a valid principal and all supplied normalized scopes.
 func Authenticated(scopes ...string) AuthPosture {
 	return AuthPosture{kind: AuthPostureAuthenticated, scopes: normalizeScopeList(scopes), scopesSupplied: len(scopes) > 0}
+}
+
+// AuthenticatedAnyOf requires a valid principal and at least one supplied normalized scope.
+func AuthenticatedAnyOf(scopes ...string) AuthPosture {
+	return AuthPosture{kind: AuthPostureAuthenticatedAnyOf, scopes: normalizeScopeList(scopes), scopesSupplied: true}
 }
 
 // InternalOnly requires a valid principal classified as internal.
@@ -238,16 +244,45 @@ func securePrincipalHasAllScopes(principal *SecurePrincipal, scopes []string) bo
 	if principal == nil {
 		return false
 	}
-	set := make(map[string]struct{}, len(principal.Scopes))
-	for _, scope := range principal.Scopes {
-		set[scope] = struct{}{}
-	}
+	set := securePrincipalScopeSet(principal)
 	for _, scope := range scopes {
 		if _, ok := set[scope]; !ok {
 			return false
 		}
 	}
 	return true
+}
+
+func securePrincipalHasAnyScope(principal *SecurePrincipal, scopes []string) bool {
+	if principal == nil {
+		return false
+	}
+	set := securePrincipalScopeSet(principal)
+	for _, scope := range scopes {
+		if _, ok := set[scope]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func securePrincipalScopeSet(principal *SecurePrincipal) map[string]struct{} {
+	set := make(map[string]struct{}, len(principal.Scopes))
+	for _, scope := range principal.Scopes {
+		set[scope] = struct{}{}
+	}
+	return set
+}
+
+func securePrincipalSatisfiesScopes(principal *SecurePrincipal, posture AuthPosture) bool {
+	switch posture.kind {
+	case AuthPostureAuthenticated:
+		return securePrincipalHasAllScopes(principal, posture.scopes)
+	case AuthPostureAuthenticatedAnyOf:
+		return securePrincipalHasAnyScope(principal, posture.scopes)
+	default:
+		return true
+	}
 }
 
 // SecureRouteSurface identifies the transport registry that owns a secure route.
@@ -492,7 +527,7 @@ func (a *App) secureGate(route route, requestCtx *Context) error {
 	if principal.Claims != nil {
 		requestCtx.AuthPrincipal.Claims = cloneSecureClaims(principal.Claims)
 	}
-	if posture.kind == AuthPostureAuthenticated && !securePrincipalHasAllScopes(principal, posture.scopes) {
+	if !securePrincipalSatisfiesScopes(principal, posture) {
 		return &AppError{Code: errorCodeForbidden, Message: errorMessageForbidden}
 	}
 	if posture.kind == AuthPostureInternalOnly && principal.Kind != PrincipalInternal {

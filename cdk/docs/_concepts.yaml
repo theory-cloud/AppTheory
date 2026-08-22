@@ -16,14 +16,18 @@ concepts:
 
   mcp_server_agentcore:
     type: construct
-    purpose: "Provision an HTTP API `POST /mcp` endpoint for MCP / Bedrock AgentCore tool calls."
+    purpose: "Provision the canonical four-kind route family and its full OAuth facade by default; AgentCore singleton deployments explicitly select `/mcp`, opt out with `unauthenticatedMcp`, and register the route in application code."
     provides:
-      - http_api_v2_route
-      - optional_session_table
+      - canonical_route_family_by_default
+      - full_oauth_facade_by_default
+      - session_state_enabled_by_default
+      - explicit_agentcore_singleton_family
       - optional_custom_domain
       - optional_stage_logging_throttling
     related_docs:
       - cdk/docs/mcp-server-agentcore.md
+      - docs/integrations/agentcore-mcp.md
+      - docs/features/mcp-server-construct.md
 
   eventbridge_rule_target:
     type: construct

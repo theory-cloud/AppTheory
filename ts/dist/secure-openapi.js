@@ -138,6 +138,9 @@ function operationSecurity(route, authenticated, internal) {
     if (route.posture === "public")
         return [];
     const names = route.posture === "internal_only" ? internal : authenticated;
+    if (route.posture === "authenticated_any_of") {
+        return names.flatMap((name) => (route.scopes ?? []).map((scope) => ({ [name]: [scope] })));
+    }
     const scopes = route.posture === "authenticated" ? [...(route.scopes ?? [])] : [];
     const out = names.map((name) => ({ [name]: scopes }));
     if (route.posture === "optional")
@@ -191,7 +194,9 @@ export function generateSecureOpenAPI(routes, spec) {
         if (emitted.has(emittedKey))
             throw new Error(`apptheory: secure openapi emitted route ${emittedKey} collides`);
         emitted.add(emittedKey);
-        if ((route.posture === "optional" || route.posture === "authenticated") &&
+        if ((route.posture === "optional" ||
+            route.posture === "authenticated" ||
+            route.posture === "authenticated_any_of") &&
             authenticated.length === 0) {
             throw new Error("apptheory: secure openapi authenticated scheme binding is required");
         }

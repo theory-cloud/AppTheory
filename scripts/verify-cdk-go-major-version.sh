@@ -7,7 +7,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 for cmd in go npm npx python3 rsync; do
   if ! command -v "${cmd}" >/dev/null 2>&1; then
     echo "cdk-go-major-version: BLOCKED (${cmd} not found)" >&2
-    exit 1
+    exit 2
   fi
 done
 
@@ -21,7 +21,7 @@ trap cleanup EXIT
 
 fixture_root="${tmp_dir}/fixture"
 baseline_root="${tmp_dir}/baseline"
-mkdir -p "${fixture_root}/scripts" "${baseline_root}/cdk" "${baseline_root}/cdk-go"
+mkdir -p "${fixture_root}/scripts/lib" "${baseline_root}/cdk" "${baseline_root}/cdk-go"
 
 rsync -a \
   --exclude node_modules \
@@ -35,6 +35,11 @@ cp \
   scripts/update-cdk-generated.sh \
   scripts/verify-cdk-go.sh \
   "${fixture_root}/scripts/"
+cp \
+  scripts/lib/blocked.sh \
+  scripts/lib/runtime-deps.sh \
+  scripts/lib/cdk-runtime-deps.sh \
+  "${fixture_root}/scripts/lib/"
 
 python3 - "${fixture_root}" "${synthetic_version}" <<'PY'
 import json

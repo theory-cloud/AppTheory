@@ -3,8 +3,9 @@
 Claude Remote MCP (MCP auth `2025-06-18`) requires an OAuth **Protected Resource** metadata endpoint for discovery.
 
 `AppTheoryMcpProtectedResource.resource` and `authorizationServers` are deprecated compatibility props for static
-documents. New namespace applications use `AppTheoryMcpServer` plus Go `oauth.RegisterMCPServer`, which derives the
-protected resource host from each request. See the [MCP Server Umbrella Construct](../../docs/features/mcp-server-construct.md).
+documents. New namespace applications use the canonical `AppTheoryMcpServer` family plus Go
+`mcpfacade.RegisterMCPFacade`, which derives the protected resource host from each request. See the
+[MCP Server Facade Construct](../../docs/features/mcp-server-construct.md).
 
 This compatibility construct adds:
 

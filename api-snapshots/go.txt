@@ -1787,6 +1787,8 @@ func (*TitanEmbedder) EmbedBatch(context.Context, []string) ([][]float32, error)
 
 const AuthPostureAuthenticated AuthPostureKind = "authenticated"
 
+const AuthPostureAuthenticatedAnyOf AuthPostureKind = "authenticated_any_of"
+
 const AuthPostureInternalOnly AuthPostureKind = "internal_only"
 
 const AuthPostureOptional AuthPostureKind = "optional"
@@ -2405,6 +2407,8 @@ func AppTheoryErrorFromAppError(*AppError) *AppTheoryError
 func AsAppTheoryError(error) (*AppTheoryError, bool)
 
 func Authenticated(...string) AuthPosture
+
+func AuthenticatedAnyOf(...string) AuthPosture
 
 func Binary(int, []byte, string) *Response
 
@@ -3659,6 +3663,174 @@ func (dynamoTaskRecord) TableName() string
 
 func (sessionRecord) TableName() string
 
+## github.com/theory-cloud/apptheory/v3/runtime/mcpfacade
+
+const URLModePublicBaseURL URLMode = "public_base_url"
+
+const URLModeRequestHost URLMode = "request_host"
+
+type Capabilities struct {
+	ResponseTypes            []string
+	GrantTypes               []string
+	TokenEndpointAuthMethods []string
+	CodeChallengeMethods     []string
+}
+
+type FacadeConfig struct {
+	IssuerURL string
+
+	JWKSURI string
+
+	RegistrationEndpointURL string
+
+	URLMode       URLMode
+	PublicBaseURL string
+
+	AllowedHostnames []string
+
+	Scopes map[mcproutes.EndpointKind][]string
+
+	Capabilities Capabilities
+
+	MCPHandler apptheory.Handler
+
+	AuthorizeHandler HandlerFactory
+	TokenHandler     HandlerFactory
+
+	RootAuthorizationServer *RootDiscoveryConfig
+}
+
+type HandlerFactory func(mcproutes.EndpointKind) apptheory.Handler
+
+type RootDiscoveryConfig struct {
+	IssuerURL                string
+	AuthorizationEndpointURL string
+	TokenEndpointURL         string
+	RegistrationEndpointURL  string
+	JWKSURI                  string
+	Scopes                   []string
+}
+
+type Route struct {
+	Kind                        mcproutes.EndpointKind
+	MCPPattern                  string
+	MCPMethods                  []string
+	ProtectedResourcePattern    string
+	DiscoveryCanonicalPattern   string
+	DiscoverySuffixPattern      string
+	AuthorizePattern            string
+	TokenPattern                string
+	AuthorizationRoutesAttached bool
+}
+
+type RouteInventory struct {
+	ContractVersion                 string
+	Routes                          []Route
+	RootAuthorizationServerPattern  string
+	RootAuthorizationServerAttached bool
+}
+
+type URLMode string
+
+func DefaultCapabilities() Capabilities
+
+func RegisterMCPFacade(*apptheory.App, FacadeConfig) (*RouteInventory, error)
+
+func (*metadataRequestError) Error() string
+
+## github.com/theory-cloud/apptheory/v3/runtime/mcproutes
+
+const AgentMCPPattern = "/{client_namespace}/agents/{agent_id}/mcp"
+
+const AuthorizationServerPrefix = "/.well-known/oauth-authorization-server"
+
+const ContractVersion = "m17.mcp-route-algebra/v1"
+
+const EndpointKindAgent EndpointKind = "agent"
+
+const EndpointKindNamespace EndpointKind = "namespace"
+
+const EndpointKindPartnerAgent EndpointKind = "partner_agent"
+
+const EndpointKindPartnerNamespace EndpointKind = "partner_namespace"
+
+const NamespaceMCPPattern = "/{client_namespace}/mcp"
+
+const ParamAgentID = "agent_id"
+
+const ParamClientNamespace = "client_namespace"
+
+const ParamPartnerID = "partner_id"
+
+const PartnerAgentMCPPattern = "/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
+
+const PartnerNamespaceMCPPattern = "/{client_namespace}/partners/{partner_id}/mcp"
+
+const ProtectedResourcePrefix = "/.well-known/oauth-protected-resource"
+
+type EndpointKind string
+
+type EndpointPath struct {
+	Kind            EndpointKind
+	ClientNamespace string
+	PartnerID       string
+	AgentID         string
+}
+
+type EndpointTemplate struct {
+	Kind                  EndpointKind
+	MCPPattern            string
+	ProtectedResourcePath string
+}
+
+type OAuthDiscoveryTemplate struct {
+	Kind             EndpointKind
+	CanonicalPattern string
+	SuffixPattern    string
+}
+
+type OAuthFacadeTemplate struct {
+	Kind             EndpointKind
+	AuthorizePattern string
+	TokenPattern     string
+}
+
+func AuthorizationAuthorizePathForResourcePath(string) string
+
+func AuthorizationServerPathForResourcePath(string) string
+
+func AuthorizationServerSuffixPathForResourcePath(string) string
+
+func AuthorizationTokenPathForResourcePath(string) string
+
+func ParseMCPPath(string) (EndpointPath, error)
+
+func ProtectedResourcePathForResourcePath(string) string
+
+func ProtectedResourcePathFromMCPPath(string) string
+
+func ResourcePathFromProtectedResourcePath(string) (string, error)
+
+func SupportedEndpointTemplates() []EndpointTemplate
+
+func SupportedOAuthDiscoveryTemplates() []OAuthDiscoveryTemplate
+
+func SupportedOAuthFacadeTemplates() []OAuthFacadeTemplate
+
+func (EndpointPath) MCPPath() (string, error)
+
+func (EndpointPath) OAuthAuthorizationServerPath() (string, error)
+
+func (EndpointPath) OAuthAuthorizationServerSuffixPath() (string, error)
+
+func (EndpointPath) OAuthAuthorizePath() (string, error)
+
+func (EndpointPath) OAuthTokenPath() (string, error)
+
+func (EndpointPath) ProtectedResourcePath() (string, error)
+
+func (EndpointPath) Validate() error
+
 ## github.com/theory-cloud/apptheory/v3/runtime/microvm
 
 const AWSLambdaMicroVMProviderID = "aws.lambda.microvm"
@@ -4840,6 +5012,8 @@ func NewOpaqueToken() (string, error)
 func NewPKCECodeVerifier() (string, error)
 
 func NewProtectedResourceMetadata(string, []string) (*ProtectedResourceMetadata, error)
+
+func NormalizeRequestOrigin(string) (string, bool)
 
 func PKCEChallengeS256(string) (string, error)
 

@@ -3,21 +3,23 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# shellcheck source=lib/cdk-runtime-deps.sh
+source "scripts/lib/cdk-runtime-deps.sh"
 
 if ! command -v node >/dev/null 2>&1; then
   echo "cdk-constructs: BLOCKED (node not found)" >&2
-  exit 1
+  exit 2
 fi
 if ! command -v npm >/dev/null 2>&1; then
   echo "cdk-constructs: BLOCKED (npm not found)" >&2
-  exit 1
+  exit 2
 fi
 if [[ ! -d "cdk" ]]; then
   echo "cdk-constructs: FAIL (missing cdk/)" >&2
   exit 1
 fi
 
-(cd cdk && npm ci >/dev/null)
+ensure_cdk_runtime_deps_installed || exit $?
 
 tmp_log="$(mktemp)"
 cleanup() { rm -f "${tmp_log}"; }
@@ -30,4 +32,3 @@ if ! (cd cdk && npm test >/dev/null 2>"${tmp_log}"); then
 fi
 
 echo "cdk-constructs: PASS"
-

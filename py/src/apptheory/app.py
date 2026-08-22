@@ -864,6 +864,10 @@ class App:
         required_scopes = list(scopes or [])
         if kind == AuthPostureKind.AUTHENTICATED and any(scope not in principal.scopes for scope in required_scopes):
             raise AppError("app.forbidden", "forbidden")
+        if kind == AuthPostureKind.AUTHENTICATED_ANY_OF and not any(
+            scope in principal.scopes for scope in required_scopes
+        ):
+            raise AppError("app.forbidden", "forbidden")
         if kind == AuthPostureKind.INTERNAL_ONLY and str(principal.kind) != PrincipalKind.INTERNAL.value:
             raise AppError("app.forbidden", "forbidden")
 

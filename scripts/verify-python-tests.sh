@@ -6,7 +6,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "python-tests: BLOCKED (python3 not found)" >&2
-  exit 1
+  exit 2
 fi
 if [[ ! -d "py" ]]; then
   echo "python-tests: FAIL (missing py/)" >&2

@@ -3,6 +3,8 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# shellcheck source=lib/cdk-runtime-deps.sh
+source "scripts/lib/cdk-runtime-deps.sh"
 
 epoch="${SOURCE_DATE_EPOCH:-}"
 if [[ -z "${epoch}" ]]; then
@@ -30,16 +32,45 @@ examples=(
 
 if ! command -v node >/dev/null 2>&1; then
   echo "cdk-synth: BLOCKED (node not found)" >&2
-  exit 1
+  exit 2
 fi
 if ! command -v npm >/dev/null 2>&1; then
   echo "cdk-synth: BLOCKED (npm not found)" >&2
-  exit 1
+  exit 2
 fi
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
   echo "cdk-synth: BLOCKED (sha256sum/shasum not found)" >&2
+  exit 2
+fi
+if [[ ! -d "cdk" ]]; then
+  echo "cdk-synth: FAIL (missing cdk/)" >&2
   exit 1
 fi
+if [[ ! -f "cdk/package-lock.json" ]]; then
+  echo "cdk-synth: FAIL (missing cdk/package-lock.json)" >&2
+  exit 1
+fi
+missing_cdk_deps=()
+if [[ -d "cdk/node_modules" ]]; then
+  for module in constructs aws-cdk-lib; do
+    if [[ ! -f "cdk/node_modules/${module}/package.json" ]]; then
+      missing_cdk_deps+=("${module}")
+    fi
+  done
+fi
+if [[ "${#missing_cdk_deps[@]}" -ne 0 ]]; then
+  missing_cdk_deps_list="${missing_cdk_deps[0]}"
+  for module in "${missing_cdk_deps[@]:1}"; do
+    missing_cdk_deps_list+=", ${module}"
+  done
+  missing_cdk_deps_noun="module"
+  if [[ "${#missing_cdk_deps[@]}" -ne 1 ]]; then
+    missing_cdk_deps_noun="modules"
+  fi
+  echo "cdk-synth: FAIL (CDK dependencies incomplete: missing required CDK ${missing_cdk_deps_noun}: ${missing_cdk_deps_list}; run 'cd cdk && npm ci' or remove stale cdk/node_modules/)" >&2
+  exit 1
+fi
+ensure_cdk_runtime_deps_installed || exit $?
 
 failed=0
 for entry in "${examples[@]}"; do

@@ -164,7 +164,7 @@ func TestNormalizeRequestOriginCanonicalizesRFC3986Origin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := normalizeRequestOrigin(tt.raw)
+			got, ok := NormalizeRequestOrigin(tt.raw)
 			require.True(t, ok)
 			require.Equal(t, tt.want, got)
 		})
@@ -179,7 +179,7 @@ func TestNormalizeRequestOriginPinsAuthorityAndEmptyQueryGuards(t *testing.T) {
 		"HTTPS://ExAMPLE.com./x",
 	} {
 		t.Run(raw, func(t *testing.T) {
-			_, ok := normalizeRequestOrigin(raw)
+			_, ok := NormalizeRequestOrigin(raw)
 			require.False(t, ok)
 		})
 	}

@@ -35,10 +35,13 @@ Map existing behavior as follows:
 | Optional verified principal | `Optional()` / `optional()` |
 | Required identity | `Authenticated()` / `authenticated()` |
 | Required all-of scopes | `Authenticated(scopes...)` / `authenticated(*scopes)` |
+| Required any-of alias scopes | `AuthenticatedAnyOf(scopes...)` / `authenticated_any_of(*scopes)` |
 | Verified service or instance credential | `InternalOnly()` / `internal_only()` |
 
 Do not infer `InternalOnly` from a claim or powerful scope. The resolver may return `internal` only after the
-application verifies the service credential.
+application verifies the service credential. For a Mastodon-compatible route that accepts `read:statuses` OR
+`read`, register `AuthenticatedAnyOf("read:statuses", "read")` (or Python's
+`authenticated_any_of("read:statuses", "read")`) instead of duplicating a route-local guard.
 
 ## 3. Convert the resolver
 
