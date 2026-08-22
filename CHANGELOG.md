@@ -1,5 +1,25 @@
 # Changelog
 
+## [3.3.0-rc](https://github.com/theory-cloud/AppTheory/compare/v3.2.0...v3.3.0-rc) (2026-08-22)
+
+
+### Features
+
+* **py:** add revocation and device endpoints to RFC 8414 metadata ([7f27b2e](https://github.com/theory-cloud/AppTheory/commit/7f27b2e29e75dc9850a2ffe941bdac28a763e44c))
+* **runtime:** add revocation and device authorization endpoints to RFC 8414 metadata ([707d981](https://github.com/theory-cloud/AppTheory/commit/707d9810822e5dfd6ce7b80ac4b88d051e4446ba))
+* **runtime:** add revocation and device authorization endpoints to RFC 8414 metadata ([cb8b9a4](https://github.com/theory-cloud/AppTheory/commit/cb8b9a44e3b11f4e827080d6b87ecd933ca28cd2))
+* **runtime:** support context pipe into MCP tool handlers ([a99048e](https://github.com/theory-cloud/AppTheory/commit/a99048edb05abcc4c55537d5612e1ca59dd1f6f5))
+* **runtime:** supported context pipe into MCP tool handlers ([6e7957c](https://github.com/theory-cloud/AppTheory/commit/6e7957ce87fd88ebed6eb9f7f94ee020f679f199))
+* **ts:** add revocation and device endpoints to RFC 8414 metadata ([ec9f7b8](https://github.com/theory-cloud/AppTheory/commit/ec9f7b8365f5838838c3596da6aa115201fbcf2e))
+
+
+### Bug Fixes
+
+* **runtime:** constantize MCP HTTP method literals ([f2a63b4](https://github.com/theory-cloud/AppTheory/commit/f2a63b4c3c533cd5dfeeb4e3d12dae490da31a10))
+* **runtime:** harden RFC 8414 metadata option handling ([985c4f2](https://github.com/theory-cloud/AppTheory/commit/985c4f246110db68465902291458ec7ce622c196))
+* **scripts:** guard verify-builds inner gates individually ([0e8765b](https://github.com/theory-cloud/AppTheory/commit/0e8765bc30d161313c1aa7053d9abcc9cedddd15))
+* **scripts:** surface inner gate output on verify-builds failure ([7a02d7a](https://github.com/theory-cloud/AppTheory/commit/7a02d7a27d7451d7a7fb0d2299b37249e9ad30dd))
+
 ## [3.2.0](https://github.com/theory-cloud/AppTheory/compare/v3.1.1...v3.2.0) (2026-08-22)
 
 
