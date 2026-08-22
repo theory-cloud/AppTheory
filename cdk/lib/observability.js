@@ -52,7 +52,7 @@ class AppTheoryObservability extends constructs_1.Construct {
 }
 exports.AppTheoryObservability = AppTheoryObservability;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryObservability[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryObservability", version: "3.2.0-rc" };
+AppTheoryObservability[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryObservability", version: "3.2.0" };
 function metricInsights(namespace, dimensions, metricName, aggregate, period) {
     return new cloudwatch.MathExpression({
         expression: metricInsightsQuery(namespace, dimensions, metricName, aggregate),

@@ -1,5 +1,63 @@
 # Changelog
 
+## [3.2.0](https://github.com/theory-cloud/AppTheory/compare/v3.1.1...v3.2.0) (2026-08-22)
+
+
+### Features
+
+* add versioned MCP route algebra contract ([4f7cdea](https://github.com/theory-cloud/AppTheory/commit/4f7cdea64abe07b48c481df8cf20ab4be6969d72))
+* **cdk:** mirror MCP route algebra ([84f4d81](https://github.com/theory-cloud/AppTheory/commit/84f4d81adc03107147094e40127a5523942a47c9))
+* **cdk:** redesign AppTheoryMcpServer facade ([c3acfd7](https://github.com/theory-cloud/AppTheory/commit/c3acfd70d6627f04b70888970d824eeec50b81c2))
+* **cdk:** redesign MCP server facade construct ([66f2986](https://github.com/theory-cloud/AppTheory/commit/66f29869d2a1c3068fd32e61ddae79f6523a369f))
+* **runtime:** add authenticated any-of scope posture ([30a2f82](https://github.com/theory-cloud/AppTheory/commit/30a2f82f6ce2c087d7626cc583de8950c82babbd))
+* **runtime:** add Go authenticated any-of posture ([fc088ee](https://github.com/theory-cloud/AppTheory/commit/fc088eeecfd37e8ce2ec4e69ae3bc932ae6e8c74))
+* **runtime:** add MCP route algebra ([cad2fae](https://github.com/theory-cloud/AppTheory/commit/cad2faeb92d66a64c3a55f638dd10f0d90ccc620))
+* **runtime:** add Python authenticated any-of posture ([8d08988](https://github.com/theory-cloud/AppTheory/commit/8d089888b4e5e951378b40089e77dffc07b5e80f))
+* **runtime:** add TypeScript authenticated any-of posture ([fc3f85f](https://github.com/theory-cloud/AppTheory/commit/fc3f85f82265fd763f277e3afb6ee0f9e56aa923))
+* **runtime:** compose routed MCP OAuth facades ([3377c6f](https://github.com/theory-cloud/AppTheory/commit/3377c6f4b59910d5807a2ac67af7b7ef04725c7c))
+* **runtime:** compose routed MCP OAuth facades ([e3af395](https://github.com/theory-cloud/AppTheory/commit/e3af3957af7a0ecd2affbd48d2ea31db38e9eaf7))
+
+
+### Bug Fixes
+
+* **cdk:** complete MCP redesign follow-up hardening ([e366032](https://github.com/theory-cloud/AppTheory/commit/e36603259b68c187997998c6661aa8d0b3090f1c))
+* **cdk:** include attached stages in MCP endpoints ([517c947](https://github.com/theory-cloud/AppTheory/commit/517c947590eaffc35c286709206a4ea8371aa396))
+* **cdk:** synthesize id-only MCP API attachments ([8073448](https://github.com/theory-cloud/AppTheory/commit/807344821b4affe8f780f200a242dcdbc64159aa))
+* **deps:** pin TableTheory v3.0.6 ([4f1d074](https://github.com/theory-cloud/AppTheory/commit/4f1d074cfcfd6979c8e47481c377b3bdbd8b1058))
+* **deps:** pin TableTheory v3.0.6 ([0364c0f](https://github.com/theory-cloud/AppTheory/commit/0364c0f3f51357aa237d41b774d500a9c12ccb65))
+* **deps:** regenerate CDK synth snapshots ([d10de76](https://github.com/theory-cloud/AppTheory/commit/d10de76ee8400b3386f7bfa8e15e20c5d3120cb9))
+* **gov-infra:** align blocked-tool rubric paths ([6388531](https://github.com/theory-cloud/AppTheory/commit/63885317607c2505207529036e83264b361a7f56))
+* **gov-infra:** annotate CDK dependency sources ([5e246ed](https://github.com/theory-cloud/AppTheory/commit/5e246ed123cdef8f9c5b67d0bec43fd58173041f))
+* **gov-infra:** broaden incomplete CDK dependency checks ([fbea604](https://github.com/theory-cloud/AppTheory/commit/fbea60448b6586a24f9adbd5491e93efa2a8685e))
+* **gov-infra:** cache CDK runtime dependencies ([b8a3c10](https://github.com/theory-cloud/AppTheory/commit/b8a3c101a78c70a143107971d0ef7767a487910b))
+* **gov-infra:** clarify incomplete CDK dependency message ([af2de15](https://github.com/theory-cloud/AppTheory/commit/af2de15a78052ddbbb14d8580edddb3c130065ac))
+* **gov-infra:** classify missing Go examples as blocked ([4d003e5](https://github.com/theory-cloud/AppTheory/commit/4d003e5ce06df36d57d0cd7436b016c04ede14f3))
+* **gov-infra:** close K-Q through K-T follow-ups ([37e7b06](https://github.com/theory-cloud/AppTheory/commit/37e7b06945db329df60ca4aade91d475360f3766))
+* **gov-infra:** close K-series verifier findings ([b176e8a](https://github.com/theory-cloud/AppTheory/commit/b176e8a8a39a25ff7cd9c09e9897edd634aa0903))
+* **gov-infra:** close K-V and K-W review findings ([0b15f95](https://github.com/theory-cloud/AppTheory/commit/0b15f9570c18063fe5f18bc39922112bd4d8556b))
+* **gov-infra:** complete K-series verifier follow-through ([48ed09a](https://github.com/theory-cloud/AppTheory/commit/48ed09aafa21d6ae69bf2180abf8f2497a936f7e))
+* **gov-infra:** correct shellcheck source bindings ([4c6e3e0](https://github.com/theory-cloud/AppTheory/commit/4c6e3e02e86d920aca870d6bc88e018a73814ea7))
+* **gov-infra:** diagnose incomplete CDK dependencies ([acf6d8c](https://github.com/theory-cloud/AppTheory/commit/acf6d8cceaa6ba7073a06906a4ad5cb54fa40e7a))
+* **gov-infra:** enforce rubric provenance checks ([7c89565](https://github.com/theory-cloud/AppTheory/commit/7c8956590b58ef1f1bbcf2af53ff6daafc7f86df))
+* **gov-infra:** make CDK synth gate self-contained ([c8a866e](https://github.com/theory-cloud/AppTheory/commit/c8a866e953d52689b8925ff98e38d71366412ad1))
+* **gov-infra:** make timestamp regression reporting honest ([13febbe](https://github.com/theory-cloud/AppTheory/commit/13febbe397cd570e1d0189f51627b0b64925649c))
+* **gov-infra:** make verifier status claims honest ([2b93e74](https://github.com/theory-cloud/AppTheory/commit/2b93e743c02a8211aa0471ded79b098b6a3ccb05))
+* **gov-infra:** normalize shellcheck source paths ([d0d9beb](https://github.com/theory-cloud/AppTheory/commit/d0d9beb92b7bae2b60369a8965a36f1a196d7627))
+* **gov-infra:** preserve TypeScript dependency cache ([cb3d9f6](https://github.com/theory-cloud/AppTheory/commit/cb3d9f6f90feba5aa1d4f76969365f7479a11ba6))
+* **gov-infra:** remove shadowed Python guard ([03aad7f](https://github.com/theory-cloud/AppTheory/commit/03aad7fdc6df73a07cb9aa18f44b320d8bc7f977))
+* **gov-infra:** reserve exit 2 for missing example tools ([7d71ad4](https://github.com/theory-cloud/AppTheory/commit/7d71ad4babd6646007bd9523fa93541d2033f6d5))
+* **gov-infra:** reserve exit 2 for missing npm ([9774c5e](https://github.com/theory-cloud/AppTheory/commit/9774c5e61cbeeda2013a3887408cc28f323000a7))
+* **gov-infra:** reserve exit 2 for missing tools ([cea6765](https://github.com/theory-cloud/AppTheory/commit/cea67657f9ca58d4b12c749f7f3b7d92be858de7))
+* **gov-infra:** reuse missing-tool diagnostic ([59397ef](https://github.com/theory-cloud/AppTheory/commit/59397ef04edfd667d788e507d63643c9cdacad1f))
+* **gov-infra:** single-path dependency install behavior ([30553fa](https://github.com/theory-cloud/AppTheory/commit/30553fa2a9fe3a857512846130e655aa68fe5d3e))
+* **gov-infra:** single-path the example Go guard ([784c4c0](https://github.com/theory-cloud/AppTheory/commit/784c4c03c7e86f682c93902ac6e13af126c96713))
+* **gov-infra:** single-path TypeScript dependency installs ([b39f91b](https://github.com/theory-cloud/AppTheory/commit/b39f91b5fb23ef60554e3abefeb00b5a9b75de3c))
+* **gov-infra:** unify example BLOCKED messages ([e251f91](https://github.com/theory-cloud/AppTheory/commit/e251f9156866ccf26db11f1065a84dd3868aada3))
+* **mcp:** eliminate regex from ASCII trim ([e583928](https://github.com/theory-cloud/AppTheory/commit/e583928b35d969a446e0120b925ff03f6e37e6dc))
+* **mcp:** harden route algebra contract ([7379c87](https://github.com/theory-cloud/AppTheory/commit/7379c872831d79b813510205b687db7ad99a1865))
+* **runtime:** harden MCP facade metadata ([4342fbc](https://github.com/theory-cloud/AppTheory/commit/4342fbc6515a8c2074bb6cf30e2d0eac55273cd3))
+* **runtime:** satisfy route algebra lint ([0f90534](https://github.com/theory-cloud/AppTheory/commit/0f90534b9afad1385cddbb49065956e3ca14cbdf))
+
 ## [3.2.0-rc](https://github.com/theory-cloud/AppTheory/compare/v3.1.1...v3.2.0-rc) (2026-08-22)
 
 
