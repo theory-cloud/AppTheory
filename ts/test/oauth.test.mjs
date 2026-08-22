@@ -5,6 +5,7 @@ import {
   ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE,
   OAuthBearerError,
   bearerTokenClaimsFromContext,
+  newAuthorizationServerMetadata,
   newMemoryBearerTokenValidator,
   newProtectedResourceMetadata,
   pkceChallengeS256,
@@ -103,6 +104,65 @@ test("OAuth bearer middleware distinguishes unauthorized and forbidden", async (
   assert.deepEqual(bearerTokenClaimsFromContext(acceptedCtx).scopes, [
     "mcp:read",
   ]);
+});
+
+test("OAuth authorization server metadata supports opt-in revocation/device endpoints", () => {
+  const plain = newAuthorizationServerMetadata("https://auth.example.com/base/path");
+  assert.equal(JSON.stringify(plain).includes("revocation_endpoint"), false);
+  assert.equal(
+    JSON.stringify(plain).includes("device_authorization_endpoint"),
+    false,
+  );
+  assert.deepEqual(plain, {
+    issuer: "https://auth.example.com/base/path",
+    authorization_endpoint: "https://auth.example.com/base/path/authorize",
+    token_endpoint: "https://auth.example.com/base/path/token",
+    registration_endpoint: "https://auth.example.com/base/path/register",
+    jwks_uri: "https://auth.example.com/base/path/.well-known/jwks.json",
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
+    token_endpoint_auth_methods_supported: ["none"],
+    code_challenge_methods_supported: ["S256"],
+  });
+
+  const derived = newAuthorizationServerMetadata(
+    "https://auth.example.com/base/path",
+    { revocationEndpoint: true, deviceAuthorizationEndpoint: true },
+  );
+  assert.equal(derived.revocation_endpoint, "https://auth.example.com/base/path/revoke");
+  assert.equal(
+    derived.device_authorization_endpoint,
+    "https://auth.example.com/base/path/device",
+  );
+  assert.equal(
+    JSON.parse(JSON.stringify(derived)).revocation_endpoint,
+    "https://auth.example.com/base/path/revoke",
+  );
+
+  const explicit = newAuthorizationServerMetadata("https://auth.example.com", {
+    revocationEndpoint: "https://auth.example.com/oauth/revoke",
+    deviceAuthorizationEndpoint: "https://device.example.com/device_authorization",
+  });
+  assert.equal(explicit.revocation_endpoint, "https://auth.example.com/oauth/revoke");
+  assert.equal(
+    explicit.device_authorization_endpoint,
+    "https://device.example.com/device_authorization",
+  );
+
+  assert.throws(
+    () =>
+      newAuthorizationServerMetadata("https://auth.example.com", {
+        revocationEndpoint: "not a url",
+      }),
+    /invalid url/,
+  );
+  assert.throws(
+    () =>
+      newAuthorizationServerMetadata("https://auth.example.com", {
+        deviceAuthorizationEndpoint: "/device",
+      }),
+    /invalid url/,
+  );
 });
 
 test("OAuth DCR policy and PKCE verifier are pinned", () => {

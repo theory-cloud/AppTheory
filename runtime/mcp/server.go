@@ -65,6 +65,12 @@ const (
 )
 
 const (
+	httpMethodPOST   = "POST"
+	httpMethodGET    = "GET"
+	httpMethodDELETE = "DELETE"
+)
+
+const (
 	defaultInitialSessionListenerSafetyBuffer = 5 * time.Second
 	defaultInitialSessionListenerMaxDuration  = 25 * time.Second
 )
@@ -93,6 +99,7 @@ type Server struct {
 	loggingLevelHook        LoggingLevelHook
 	promptCompletionHook    CompletionHook
 	resourceCompletionHook  CompletionHook
+	toolContextHook         ToolContextHook
 	taskRuntime             taskRuntimeConfig
 	taskExecutions          *taskExecutionTracker
 
@@ -191,6 +198,29 @@ func WithCompletionHooks(promptHook, resourceHook CompletionHook) ServerOption {
 	}
 }
 
+// WithToolContextHook installs a hook that derives the stdlib context handed to
+// MCP method handlers from the request's *apptheory.Context.
+//
+// Tool handlers only receive a context.Context, so middleware that
+// authenticates a caller has no supported way to make the principal visible to
+// them through apptheory.Context alone. With this hook, middleware can store
+// the principal on the request context (Set/Get or the AuthPrincipal field)
+// and pipe it into the handler context, for example:
+//
+//	WithToolContextHook(func(c *apptheory.Context, ctx context.Context) context.Context {
+//		return context.WithValue(ctx, principalKey{}, c.Get("principal"))
+//	})
+//
+// The option is opt-in: without it, handlers receive the unmodified request
+// context and behavior is unchanged. The hook runs once per POST request after
+// origin and header validation; its result must be derived from the provided
+// ctx, and a nil result keeps the original context.
+func WithToolContextHook(hook ToolContextHook) ServerOption {
+	return func(s *Server) {
+		s.toolContextHook = hook
+	}
+}
+
 // WithTaskRuntime enables MCP task operations through an explicit TaskStore.
 //
 // Tasks are experimental in MCP 2025-11-25 and remain opt-in. AppTheory only
@@ -274,11 +304,11 @@ func (s *Server) Prompts() *PromptRegistry {
 func (s *Server) Handler() apptheory.Handler {
 	return func(c *apptheory.Context) (*apptheory.Response, error) {
 		switch strings.ToUpper(strings.TrimSpace(c.Request.Method)) {
-		case "POST":
+		case httpMethodPOST:
 			return s.handlePOST(c)
-		case "GET":
+		case httpMethodGET:
 			return s.handleGET(c)
-		case "DELETE":
+		case httpMethodDELETE:
 			return s.handleDELETE(c)
 		default:
 			return methodNotAllowed(), nil
@@ -294,6 +324,11 @@ func (s *Server) handlePOST(c *apptheory.Context) (*apptheory.Response, error) {
 	}
 	if resp := validatePOSTHeaders(c.Request.Headers); resp != nil {
 		return resp, nil
+	}
+	if s.toolContextHook != nil {
+		if hooked := s.toolContextHook(c, ctx); hooked != nil {
+			ctx = hooked
+		}
 	}
 
 	body := c.Request.Body

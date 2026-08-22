@@ -22,6 +22,8 @@ export interface AuthorizationServerMetadata {
     token_endpoint?: string;
     registration_endpoint?: string;
     jwks_uri?: string;
+    revocation_endpoint?: string;
+    device_authorization_endpoint?: string;
     response_types_supported?: string[];
     grant_types_supported?: string[];
     token_endpoint_auth_methods_supported?: string[];
@@ -29,6 +31,22 @@ export interface AuthorizationServerMetadata {
     scopes_supported?: string[];
     subject_types_supported?: string[];
     id_token_signing_alg_values_supported?: string[];
+}
+export interface AuthorizationServerMetadataOptions {
+    /**
+     * Opts into the RFC 8414 revocation_endpoint. `true` derives the
+     * conventional `/revoke` path from the issuer base URL; a string must be an
+     * absolute URL and is used verbatim. Absent means the document does not
+     * advertise a revocation endpoint.
+     */
+    revocationEndpoint?: string | true;
+    /**
+     * Opts into the RFC 8628 device_authorization_endpoint. `true` derives the
+     * conventional `/device` path from the issuer base URL; a string must be an
+     * absolute URL and is used verbatim. Absent means the document does not
+     * advertise a device authorization endpoint.
+     */
+    deviceAuthorizationEndpoint?: string | true;
 }
 export interface DynamicClientRegistrationRequest {
     client_name?: string;
@@ -76,7 +94,7 @@ export declare class OAuthBearerError extends Error {
     constructor(oauthCode: string, message?: string);
 }
 export declare function newProtectedResourceMetadata(resource: string, authorizationServers: string[]): ProtectedResourceMetadata;
-export declare function newAuthorizationServerMetadata(issuer: string): AuthorizationServerMetadata;
+export declare function newAuthorizationServerMetadata(issuer: string, options?: AuthorizationServerMetadataOptions): AuthorizationServerMetadata;
 export declare function protectedResourceMetadataHandler(metadata: ProtectedResourceMetadata): Handler;
 export declare function authorizationServerMetadataHandler(metadata: AuthorizationServerMetadata): Handler;
 export declare function protectedResourceWWWAuthenticate(resourceMetadataURL: string): string;

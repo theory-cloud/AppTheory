@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+
+	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
 )
 
 // ToolDef defines an MCP tool's metadata and input schema.
@@ -43,6 +45,19 @@ type Icon struct {
 
 // ToolHandler is the function signature for tool implementations.
 type ToolHandler func(ctx context.Context, args json.RawMessage) (*ToolResult, error)
+
+// ToolContextHook derives the stdlib context handed to MCP method handlers from
+// the request's *apptheory.Context. Tool handlers only receive a
+// context.Context, so this hook is the supported way for app middleware to make
+// request-scoped values (for example the authenticated principal) visible
+// inside a tool handler without touching framework internals.
+//
+// The hook runs once per POST request, after origin and header validation, and
+// its result becomes the request context for every method handler — covering
+// both buffered and streaming tools/call invocations. The result must be
+// derived from the provided ctx; returning ctx unchanged is a no-op, and a nil
+// result keeps the original context.
+type ToolContextHook func(c *apptheory.Context, ctx context.Context) context.Context
 
 // InputRequest is a server-initiated request that a 2026-07-28 client must
 // fulfill before retrying the original tool call.

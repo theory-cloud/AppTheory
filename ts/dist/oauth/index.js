@@ -30,7 +30,7 @@ export function newProtectedResourceMetadata(resource, authorizationServers) {
     }
     return { resource: canonicalResource, authorization_servers: servers };
 }
-export function newAuthorizationServerMetadata(issuer) {
+export function newAuthorizationServerMetadata(issuer, options) {
     const url = absoluteURL(issuer);
     if (!url)
         throw new Error(`${ERR_INVALID_URL}: issuer must be an absolute URL`);
@@ -45,7 +45,7 @@ export function newAuthorizationServerMetadata(issuer) {
         out.hash = "";
         return out.toString();
     };
-    return {
+    const metadata = {
         issuer: canonicalIssuer,
         authorization_endpoint: endpoint("/authorize"),
         token_endpoint: endpoint("/token"),
@@ -56,6 +56,20 @@ export function newAuthorizationServerMetadata(issuer) {
         token_endpoint_auth_methods_supported: ["none"],
         code_challenge_methods_supported: ["S256"],
     };
+    const opts = options ?? {};
+    if (opts.revocationEndpoint !== undefined) {
+        metadata.revocation_endpoint =
+            opts.revocationEndpoint === true
+                ? endpoint("/revoke")
+                : absoluteURLValue(opts.revocationEndpoint, "revocation endpoint");
+    }
+    if (opts.deviceAuthorizationEndpoint !== undefined) {
+        metadata.device_authorization_endpoint =
+            opts.deviceAuthorizationEndpoint === true
+                ? endpoint("/device")
+                : absoluteURLValue(opts.deviceAuthorizationEndpoint, "device authorization endpoint");
+    }
+    return metadata;
 }
 export function protectedResourceMetadataHandler(metadata) {
     return () => json(200, metadata);
@@ -322,6 +336,12 @@ function absoluteURL(raw) {
 }
 function isAbsoluteURL(raw) {
     return absoluteURL(raw) !== null;
+}
+function absoluteURLValue(raw, label) {
+    const url = absoluteURL(String(raw ?? ""));
+    if (!url)
+        throw new Error(`${ERR_INVALID_URL}: ${label} must be an absolute URL`);
+    return url.toString();
 }
 function trimTrailingSlash(pathname) {
     const value = String(pathname ?? "");
