@@ -110,8 +110,13 @@ patterns:
       - name: "Treating a REST streaming compatibility stack as the route-family golden path"
         why: "The HTTP API v2 construct and `mcpfacade.RegisterMCPFacade` own the canonical family; static URL-valued discovery is deprecated."
         incorrect_example: |
-          # INCORRECT
-          new AppTheoryMcpServer(stack, "McpServer", { handler })
+          # INCORRECT: choosing the REST v1 static-discovery stack when the client does not require resumable SSE.
+          const mcp = new AppTheoryRemoteMcpServer(stack, "RemoteMcp", { handler })
+          new AppTheoryMcpProtectedResource(stack, "ProtectedResource", {
+            router: mcp.router,
+            resource: mcp.endpoint,
+            authorizationServers: ["https://auth.example.com"],
+          })
         consequences:
           - "Duplicated route algebra"
           - "Construct/runtime facade drift"
