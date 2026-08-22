@@ -26,7 +26,7 @@ by the framework.
 
 - **One path to runtime behavior.** [AppTheory](https://github.com/theory-cloud/AppTheory) provides a single
   application model for AWS Lambda: routing, middleware, error handling, and event normalization. The same handler
-  code in Go, TypeScript, or Python produces the same HTTP response, verified by the contract fixture corpus. <!-- apptheory-fixture-count: 264 -->
+  code in Go, TypeScript, or Python produces the same HTTP response, verified by the contract fixture corpus. <!-- apptheory-fixture-count: 265 -->
   That corpus includes first-class SP09 MCP, SP12 OAuth, and SP13 objectstore tiers executed by all three runtimes.
 
 - **One path to client delivery.** [FaceTheory](https://github.com/theory-cloud/FaceTheory) provides a single model

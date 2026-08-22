@@ -648,6 +648,10 @@ func init() {
 			return &jsiiProxy_AppTheoryMcpRouteAlgebra{}
 		},
 	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteFamily",
+		reflect.TypeOf((*AppTheoryMcpRouteFamily)(nil)).Elem(),
+	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpServer",
 		reflect.TypeOf((*AppTheoryMcpServer)(nil)).Elem(),
@@ -658,9 +662,14 @@ func init() {
 			_jsii_.MemberProperty{JsiiProperty: "cnameRecord", GoGetter: "CnameRecord"},
 			_jsii_.MemberProperty{JsiiProperty: "domainName", GoGetter: "DomainName"},
 			_jsii_.MemberProperty{JsiiProperty: "endpoint", GoGetter: "Endpoint"},
+			_jsii_.MemberProperty{JsiiProperty: "endpoints", GoGetter: "Endpoints"},
 			_jsii_.MemberProperty{JsiiProperty: "mcpPath", GoGetter: "McpPath"},
+			_jsii_.MemberProperty{JsiiProperty: "mcpPaths", GoGetter: "McpPaths"},
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "ownedApi", GoGetter: "OwnedApi"},
 			_jsii_.MemberProperty{JsiiProperty: "protectedResourceMetadataPath", GoGetter: "ProtectedResourceMetadataPath"},
+			_jsii_.MemberProperty{JsiiProperty: "protectedResourceMetadataPaths", GoGetter: "ProtectedResourceMetadataPaths"},
+			_jsii_.MemberProperty{JsiiProperty: "routeInventory", GoGetter: "RouteInventory"},
 			_jsii_.MemberProperty{JsiiProperty: "sessionTable", GoGetter: "SessionTable"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
 			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
@@ -676,12 +685,28 @@ func init() {
 		reflect.TypeOf((*AppTheoryMcpServerDomainOptions)(nil)).Elem(),
 	)
 	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpServerFacadeRoute",
+		reflect.TypeOf((*AppTheoryMcpServerFacadeRoute)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpServerOwnedApiOptions",
+		reflect.TypeOf((*AppTheoryMcpServerOwnedApiOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpServerProps",
 		reflect.TypeOf((*AppTheoryMcpServerProps)(nil)).Elem(),
 	)
 	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpServerRouteInventory",
+		reflect.TypeOf((*AppTheoryMcpServerRouteInventory)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpServerStageOptions",
 		reflect.TypeOf((*AppTheoryMcpServerStageOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpSessionStateOptions",
+		reflect.TypeOf((*AppTheoryMcpSessionStateOptions)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryMediaCdn",

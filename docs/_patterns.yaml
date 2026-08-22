@@ -99,7 +99,7 @@ patterns:
   mcp_deployment_shape:
     name: "Choose the MCP deployment shape by client and transport requirements"
     problem: "Bedrock AgentCore and Claude Remote MCP do not have the same transport, streaming, or OAuth discovery requirements."
-    solution: "Use `AppTheoryMcpServer` on HTTP API v2 for AgentCore-style POST-only deployments. Use `AppTheoryRemoteMcpServer` plus `AppTheoryMcpProtectedResource` when you need Streamable HTTP `POST/GET/DELETE /mcp`, OAuth protected-resource discovery, and a streaming-capable REST API v1 edge. Durable replay still requires application code to provide a persistent `StreamStore`."
+    solution: "Use `AppTheoryMcpServer` on HTTP API v2 for the contract route family and complete OAuth facade, attaching to a shared front door or owning the standalone API. Use `AppTheoryRemoteMcpServer` plus the deprecated static `AppTheoryMcpProtectedResource` only for existing REST API v1 streaming compatibility deployments. Durable replay still requires application code to provide a persistent `StreamStore`."
     correct_example: |
       # CORRECT: choose the Remote MCP stack when the client needs resumable SSE.
       new AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
@@ -107,14 +107,14 @@ patterns:
         enableSessionTable: true,
       })
     anti_patterns:
-      - name: "Using the AgentCore construct as a drop-in Remote MCP edge"
-        why: "HTTP API v2 POST-only deployments do not provide the same transport surface or streaming behavior as the Remote MCP stack."
+      - name: "Treating a REST streaming compatibility stack as the route-family golden path"
+        why: "The HTTP API v2 construct and `mcpfacade.RegisterMCPFacade` own the canonical family; static URL-valued discovery is deprecated."
         incorrect_example: |
           # INCORRECT
           new AppTheoryMcpServer(stack, "McpServer", { handler })
         consequences:
-          - "Missing GET /mcp and DELETE /mcp support"
-          - "Remote-MCP reconnect and replay gaps"
+          - "Duplicated route algebra"
+          - "Construct/runtime facade drift"
 
   sanitize_before_logging:
     name: "Sanitize payloads before logging"

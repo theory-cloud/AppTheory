@@ -81,6 +81,10 @@ new AppTheoryHttpApi(stack, "Api", { handler: fn, apiName: "my-api" });
 
 ## Production surface notes
 
+* `AppTheoryMcpServer` attaches an ordered route-algebra family to a supplied `IHttpApi` or creates the standalone
+  specialization. The complete OAuth facade and DynamoDB session state default on; owned APIs also default access
+  logging and throttling on. Go `mcpfacade.RegisterMCPFacade` owns explicit issuer/JWKS/scope/handler configuration.
+  The v3.1.x singleton, auth-env, and flat owned-resource props carry jsii deprecation notices and migration pointers.
 * `AppTheoryInstallParameters` is the required, account-agnostic namespace installation surface. It emits the ten
   governed `String` parameters and the `TargetAccountMatchesCaller` CloudFormation Rule; consuming constructs use its
   typed string-token accessors rather than accepting a second identity-injection path.

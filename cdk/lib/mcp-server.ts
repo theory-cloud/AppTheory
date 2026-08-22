@@ -8,440 +8,700 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
 
-import { AppTheoryMcpPaths } from "./mcp-paths";
+import { AppTheoryMcpRouteAlgebra } from "./mcp-route-algebra";
 
-/**
- * Custom domain configuration for the MCP server.
- */
+const DEFAULT_THROTTLING_RATE_LIMIT = 100;
+const DEFAULT_THROTTLING_BURST_LIMIT = 200;
+const DEFAULT_SESSION_TTL_MINUTES = 60;
+
+/** Custom domain configuration for an AppTheory-owned MCP HTTP API. */
 export interface AppTheoryMcpServerDomainOptions {
-  /**
-   * The custom domain name (e.g., "mcp.example.com").
-   */
+  /** The custom domain name (for example, `mcp.example.com`). */
   readonly domainName: string;
 
-  /**
-   * ACM certificate for the domain.
-   * Provide either certificate or certificateArn.
-   */
+  /** ACM certificate for the domain. Provide this or `certificateArn`. */
   readonly certificate?: acm.ICertificate;
 
-  /**
-   * ACM certificate ARN.
-   * Provide either certificate or certificateArn.
-   */
+  /** ACM certificate ARN. Provide this or `certificate`. */
   readonly certificateArn?: string;
 
   /**
-   * Route53 hosted zone for automatic DNS record creation.
-   * If provided, a CNAME record will be created pointing to the API Gateway domain.
-   * @default undefined (no DNS record created)
+   * Route53 hosted zone for an automatically created CNAME record.
+   * @default undefined
    */
   readonly hostedZone?: route53.IHostedZone;
 }
 
-/**
- * Stage configuration for the MCP server API Gateway.
- */
+/** Stage configuration for an AppTheory-owned MCP HTTP API. */
 export interface AppTheoryMcpServerStageOptions {
-  /**
-   * Stage name.
-   * @default "$default"
-   */
+  /** @default "$default" */
   readonly stageName?: string;
 
-  /**
-   * Enable CloudWatch access logging for the stage.
-   * @default false
-   */
+  /** @default true */
   readonly accessLogging?: boolean;
 
   /**
-   * Retention period for auto-created access log group.
-   * Only applies when accessLogging is true.
+   * Retention period for the access log group. Valid only when access logging
+   * is enabled.
    * @default logs.RetentionDays.ONE_MONTH
    */
   readonly accessLogRetention?: logs.RetentionDays;
 
+  /** @default true */
+  readonly throttlingEnabled?: boolean;
+
   /**
-   * Throttling rate limit (requests per second) for the stage.
-   * @default undefined (no throttling)
+   * Default-stage rate limit in requests per second.
+   * @default 100
    */
   readonly throttlingRateLimit?: number;
 
   /**
-   * Throttling burst limit for the stage.
-   * @default undefined (no throttling)
+   * Default-stage burst limit.
+   * @default 200
    */
   readonly throttlingBurstLimit?: number;
 }
 
-/**
- * Props for the AppTheoryMcpServer construct.
- */
-export interface AppTheoryMcpServerProps {
+/** Owned-API specialization for standalone MCP servers. */
+export interface AppTheoryMcpServerOwnedApiOptions {
+  /** Optional API name. */
+  readonly apiName?: string;
+
+  /** Optional custom domain owned by this construct. */
+  readonly domain?: AppTheoryMcpServerDomainOptions;
+
   /**
-   * The Lambda function handling MCP requests.
+   * Stage configuration. Access logging and throttling default on.
+   * @default production defaults
    */
+  readonly stage?: AppTheoryMcpServerStageOptions;
+}
+
+/** Ordered MCP route-pattern family wired as one facade. */
+export interface AppTheoryMcpRouteFamily {
+  /**
+   * Ordered synthesis-time MCP route patterns.
+   *
+   * Each segment is either a literal RFC 3986 path segment or a complete
+   * `{parameter_name}` segment. CDK tokens, origins, empty segments, dot
+   * segments, greedy parameters, and duplicate patterns are rejected.
+   */
+  readonly patterns: string[];
+
+  /**
+   * Wire the algebra-derived unscoped authorization-server discovery route.
+   * The runtime must supply `FacadeConfig.RootAuthorizationServer` too.
+   * @default false
+   */
+  readonly rootAuthorizationServerDiscovery?: boolean;
+}
+
+/** DynamoDB-backed MCP session-state configuration. */
+export interface AppTheoryMcpSessionStateOptions {
+  /** @default true */
+  readonly enabled?: boolean;
+
+  /**
+   * Session table name. Valid only when session state is enabled.
+   * @default auto-generated
+   */
+  readonly tableName?: string;
+
+  /**
+   * TTL in minutes for session records. Valid only when session state is
+   * enabled.
+   * @default 60
+   */
+  readonly ttlMinutes?: number;
+
+  /**
+   * Session table removal policy. Valid only when session state is enabled.
+   * @default RemovalPolicy.RETAIN
+   */
+  readonly removalPolicy?: RemovalPolicy;
+}
+
+/** One derived MCP OAuth facade route family. */
+export interface AppTheoryMcpServerFacadeRoute {
+  readonly mcpPattern: string;
+  readonly mcpMethods: string[];
+  readonly protectedResourcePattern: string;
+  readonly discoveryCanonicalPattern: string;
+  readonly discoverySuffixPattern: string;
+  readonly authorizePattern: string;
+  readonly tokenPattern: string;
+  readonly authorizationRoutesAttached: boolean;
+}
+
+/** Defensive snapshot of the construct's derived facade inventory. */
+export interface AppTheoryMcpServerRouteInventory {
+  readonly contractVersion: string;
+  readonly routes: AppTheoryMcpServerFacadeRoute[];
+  readonly rootAuthorizationServerPattern: string;
+  readonly rootAuthorizationServerAttached: boolean;
+}
+
+/** Props for the AppTheoryMcpServer construct. */
+export interface AppTheoryMcpServerProps {
+  /** Lambda function handling the runtime-composed MCP facade. */
   readonly handler: lambda.IFunction;
 
   /**
-   * Literal route path for the MCP endpoint.
-   *
-   * This is a synthesis-time path, never an origin or full resource URL.
-   * @default AppTheoryMcpPaths.MCP
+   * Existing HTTP API to attach to. Attach mode is the primary front-door
+   * topology and never creates an `AWS::ApiGatewayV2::Api` resource.
+   * @default a construct-owned HttpApi
+   */
+  readonly api?: apigwv2.IHttpApi;
+
+  /**
+   * Ordered MCP route family.
+   * @default AppTheoryMcpRouteAlgebra.supportedEndpointTemplates()
+   */
+  readonly routeFamily?: AppTheoryMcpRouteFamily;
+
+  /**
+   * Explicitly opt out of the OAuth facade and wire only MCP transport routes.
+   * This cannot be combined with legacy authorization props or root discovery.
+   * @default false
+   */
+  readonly unauthenticatedMcp?: boolean;
+
+  /**
+   * Session-state table configuration. The table defaults on.
+   * @default enabled with production defaults
+   */
+  readonly sessionState?: AppTheoryMcpSessionStateOptions;
+
+  /**
+   * Owned-API configuration for standalone mode. Invalid with `api`.
+   * @default production-owned API defaults
+   */
+  readonly ownedApi?: AppTheoryMcpServerOwnedApiOptions;
+
+  /**
+   * Single MCP route path from the v3.1.x A6 surface.
+   * @deprecated Use `routeFamily.patterns`. The new default is the canonical
+   * four-pattern family; use `{ patterns: ['/mcp'] }` for the old singleton.
    */
   readonly mcpPath?: string;
 
   /**
-   * OAuth authorization server issuer passed to the Lambda runtime config.
-   *
-   * Literal values must be absolute HTTPS URLs with no userinfo, query, or
-   * fragment. CDK tokens pass through unparsed. Supply `jwksUri` with this prop
-   * to enable the runtime-served RFC 9728 discovery routes.
-   * @default undefined (legacy POST-only MCP route)
+   * Authorization-server issuer from the v3.1.x A6 environment contract.
+   * @deprecated Configure `runtime/mcpfacade.FacadeConfig.IssuerURL` in the
+   * application. The construct no longer injects issuer environment values.
    */
   readonly authorizationServerIssuer?: string;
 
   /**
-   * OAuth JSON Web Key Set URL passed to the Lambda runtime config.
-   *
-   * Literal values must be absolute HTTPS URLs with no userinfo or fragment;
-   * queries are allowed. CDK tokens pass through unparsed. Supply
-   * `authorizationServerIssuer` with this prop.
-   * @default undefined (legacy POST-only MCP route)
+   * JWKS URI from the v3.1.x A6 environment contract.
+   * @deprecated Configure `runtime/mcpfacade.FacadeConfig.JWKSURI` in the
+   * application. The construct no longer injects JWKS environment values.
    */
   readonly jwksUri?: string;
 
-  /**
-   * Optional API name.
-   * @default undefined
-   */
+  /** @deprecated Use `ownedApi.apiName`. */
   readonly apiName?: string;
 
   /**
-   * Create a DynamoDB table for session state storage.
-   * @default false
+   * @deprecated Use `sessionState.enabled`. Session state now defaults on.
    */
   readonly enableSessionTable?: boolean;
 
-  /**
-   * Name for the session DynamoDB table.
-   * Only used when enableSessionTable is true.
-   * @default undefined (auto-generated)
-   */
+  /** @deprecated Use `sessionState.tableName`. */
   readonly sessionTableName?: string;
 
-  /**
-   * TTL in minutes for session records.
-   * Only used when enableSessionTable is true.
-   * @default 60
-   */
+  /** @deprecated Use `sessionState.ttlMinutes`. */
   readonly sessionTtlMinutes?: number;
 
   /**
-   * Custom domain configuration.
-   * @default undefined (no custom domain)
+   * @deprecated Use `ownedApi.domain`. Domains are invalid in attach mode.
    */
   readonly domain?: AppTheoryMcpServerDomainOptions;
 
   /**
-   * Stage configuration.
-   * @default undefined (defaults applied)
+   * @deprecated Use `ownedApi.stage`. Stage options are invalid in attach mode.
    */
   readonly stage?: AppTheoryMcpServerStageOptions;
 }
 
 /**
- * Umbrella deployment contract for a namespace MCP server.
+ * Contract-first MCP facade deployment construct.
  *
- * The construct provisions an HTTP API Gateway v2 with a Lambda integration
- * on the conventional POST /mcp path, optional runtime-served RFC 9728
- * discovery routes, optional DynamoDB session state, and an optional custom
- * domain. Resource origins are intentionally absent from the prop surface:
- * the Go runtime derives the protected resource host from each request.
- *
- * @example
- * const server = new AppTheoryMcpServer(this, 'McpServer', {
- *   handler: mcpFn,
- *   enableSessionTable: true,
- *   sessionTtlMinutes: 120,
- * });
+ * The primary mode attaches the complete route-algebra family to a supplied
+ * HTTP API. Omitting `api` specializes the same path into a standalone owned
+ * API. The construct routes only: OAuth metadata, scopes, capabilities, and
+ * authorize/token behavior remain application-owned through Go
+ * `mcpfacade.RegisterMCPFacade`.
  */
 export class AppTheoryMcpServer extends Construct {
-  /**
-   * The underlying HTTP API Gateway v2.
-   */
-  public readonly api: apigwv2.HttpApi;
+  private routeSequence = 0;
 
-  /**
-   * The DynamoDB session table (if enableSessionTable is true).
-   */
+  public readonly api: apigwv2.IHttpApi;
+  public readonly ownedApi?: apigwv2.HttpApi;
   public readonly sessionTable?: dynamodb.ITable;
+  public readonly endpoints: string[];
+  public readonly mcpPaths: string[];
+  public readonly protectedResourceMetadataPaths: string[];
+  public readonly routeInventory: AppTheoryMcpServerRouteInventory;
 
-  /**
-   * The MCP endpoint URL.
-   */
+  /** @deprecated Use `endpoints`. */
   public readonly endpoint: string;
 
-  /**
-   * Literal MCP endpoint route path.
-   */
+  /** @deprecated Use `mcpPaths`. */
   public readonly mcpPath: string;
 
-  /**
-   * Path-scoped RFC 9728 discovery route for this MCP endpoint.
-   */
+  /** @deprecated Use `protectedResourceMetadataPaths` or `routeInventory`. */
   public readonly protectedResourceMetadataPath: string;
 
-  /**
-   * The custom domain name resource (if domain is configured).
-   */
   public readonly domainName?: apigwv2.DomainName;
-
-  /**
-   * The API mapping for the custom domain (if domain is configured).
-   */
   public readonly apiMapping?: apigwv2.ApiMapping;
-
-  /**
-   * The Route53 CNAME record (if domain and hostedZone are configured).
-   */
   public readonly cnameRecord?: route53.CnameRecord;
-
-  /**
-   * The access log group (if access logging is enabled).
-   */
   public readonly accessLogGroup?: logs.ILogGroup;
 
   constructor(scope: Construct, id: string, props: AppTheoryMcpServerProps) {
     super(scope, id);
 
-    this.mcpPath = normalizeRoutePath(props.mcpPath ?? AppTheoryMcpPaths.MCP, "mcpPath");
-    this.protectedResourceMetadataPath = `${AppTheoryMcpPaths.OAUTH_PROTECTED_RESOURCE}${this.mcpPath}`;
-    const authConfig = normalizeAuthConfig(props);
-    const stageOpts = props.stage ?? {};
-    const stageName = stageOpts.stageName ?? "$default";
+    validateOwningMode(props);
+    normalizeLegacyAuthConfig(props);
+    const routeFamily = normalizeRouteFamily(props);
+    const unauthenticatedMcp = props.unauthenticatedMcp ?? false;
+    if (
+      unauthenticatedMcp
+      && (props.authorizationServerIssuer !== undefined || props.jwksUri !== undefined)
+    ) {
+      throw new Error(
+        "AppTheoryMcpServer: unauthenticatedMcp cannot be combined with authorizationServerIssuer or jwksUri",
+      );
+    }
+    if (unauthenticatedMcp && routeFamily.rootAuthorizationServerDiscovery) {
+      throw new Error(
+        "AppTheoryMcpServer: unauthenticatedMcp cannot enable rootAuthorizationServerDiscovery",
+      );
+    }
 
-    const needsExplicitStage = stageName !== "$default"
-      || stageOpts.accessLogging
-      || stageOpts.throttlingRateLimit !== undefined
-      || stageOpts.throttlingBurstLimit !== undefined;
+    this.mcpPaths = [...routeFamily.patterns];
+    this.routeInventory = buildRouteInventory(
+      this.mcpPaths,
+      !unauthenticatedMcp,
+      routeFamily.rootAuthorizationServerDiscovery,
+    );
+    validateRouteInventory(this.routeInventory, unauthenticatedMcp);
+    this.protectedResourceMetadataPaths = this.routeInventory.routes.map(
+      (route) => route.protectedResourcePattern,
+    );
+    this.mcpPath = this.mcpPaths[0];
+    this.protectedResourceMetadataPath = this.protectedResourceMetadataPaths[0];
 
-    // Create HTTP API with default stage
-    this.api = new apigwv2.HttpApi(this, "Api", {
-      apiName: props.apiName,
-      createDefaultStage: !needsExplicitStage,
-    });
+    const ownedOptions = normalizeOwnedApiOptions(props);
+    let ownedStage: apigwv2.IStage | undefined;
+    let ownedStageName = "$default";
+    if (props.api) {
+      this.api = props.api;
+    } else {
+      const stageOptions = normalizeStageOptions(ownedOptions.stage);
+      ownedStageName = stageOptions.stageName;
+      const api = new apigwv2.HttpApi(this, "Api", {
+        apiName: ownedOptions.apiName,
+        createDefaultStage: false,
+      });
+      (this as { ownedApi?: apigwv2.HttpApi }).ownedApi = api;
+      this.api = api;
 
-    // If custom stage options, create the stage explicitly
-    let stage: apigwv2.IStage | undefined;
-    if (needsExplicitStage) {
-      stage = new apigwv2.HttpStage(this, "Stage", {
-        httpApi: this.api,
-        stageName,
+      const stage = new apigwv2.HttpStage(this, "Stage", {
+        httpApi: api,
+        stageName: stageOptions.stageName,
         autoDeploy: true,
-        throttle: (stageOpts.throttlingRateLimit !== undefined || stageOpts.throttlingBurstLimit !== undefined)
+        throttle: stageOptions.throttlingEnabled
           ? {
-            rateLimit: stageOpts.throttlingRateLimit,
-            burstLimit: stageOpts.throttlingBurstLimit,
+            rateLimit: stageOptions.throttlingRateLimit,
+            burstLimit: stageOptions.throttlingBurstLimit,
           }
           : undefined,
       });
+      ownedStage = stage;
 
-      // Set up access logging if enabled
-      if (stageOpts.accessLogging) {
+      if (stageOptions.accessLogging) {
         const logGroup = new logs.LogGroup(this, "AccessLogs", {
-          retention: stageOpts.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
+          retention: stageOptions.accessLogRetention,
         });
         (this as { accessLogGroup?: logs.ILogGroup }).accessLogGroup = logGroup;
-
         const cfnStage = stage.node.defaultChild as apigwv2.CfnStage;
         cfnStage.accessLogSettings = {
           destinationArn: logGroup.logGroupArn,
-          format: JSON.stringify({
-            requestId: "$context.requestId",
-            ip: "$context.identity.sourceIp",
-            requestTime: "$context.requestTime",
-            httpMethod: "$context.httpMethod",
-            routeKey: "$context.routeKey",
-            status: "$context.status",
-            protocol: "$context.protocol",
-            responseLength: "$context.responseLength",
-            integrationLatency: "$context.integrationLatency",
-          }),
+          format: accessLogFormat(),
         };
       }
-    } else {
-      stage = this.api.defaultStage;
     }
 
-    const handlerIntegration = new apigwv2Integrations.HttpLambdaIntegration("McpHandler", props.handler, {
-      payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_2_0,
-    });
-
-    // Route MCP protocol traffic to the application runtime.
-    this.api.addRoutes({
-      path: this.mcpPath,
-      methods: [apigwv2.HttpMethod.POST],
-      integration: handlerIntegration,
-    });
-
-    if (authConfig) {
-      // Discovery stays unauthenticated at API Gateway. The matching Go helper
-      // registers these routes with SecureApp Public posture while registering
-      // the MCP route as Authenticated.
-      this.api.addRoutes({
-        path: AppTheoryMcpPaths.OAUTH_PROTECTED_RESOURCE,
-        methods: [apigwv2.HttpMethod.GET],
-        integration: handlerIntegration,
-      });
-      this.api.addRoutes({
-        path: this.protectedResourceMetadataPath,
-        methods: [apigwv2.HttpMethod.GET],
-        integration: handlerIntegration,
-      });
-
-      this.addEnvironment(props.handler, "APPTHEORY_MCP_PATH", this.mcpPath);
-      this.addEnvironment(
-        props.handler,
-        "APPTHEORY_MCP_PROTECTED_RESOURCE_PATH",
-        this.protectedResourceMetadataPath,
+    const integration = new apigwv2Integrations.HttpLambdaIntegration(
+      "McpHandler",
+      props.handler,
+      { payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_2_0 },
+    );
+    const runtimeOwnedAuth = new apigwv2.HttpNoneAuthorizer();
+    for (const route of this.routeInventory.routes) {
+      for (const method of route.mcpMethods) {
+        this.addRuntimeRoute(route.mcpPattern, toHttpMethod(method), integration, runtimeOwnedAuth);
+      }
+      if (!unauthenticatedMcp) {
+        this.addRuntimeRoute(route.protectedResourcePattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
+        this.addRuntimeRoute(route.discoveryCanonicalPattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
+        this.addRuntimeRoute(route.discoverySuffixPattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
+        this.addRuntimeRoute(route.authorizePattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
+        this.addRuntimeRoute(route.tokenPattern, apigwv2.HttpMethod.POST, integration, runtimeOwnedAuth);
+      }
+    }
+    if (this.routeInventory.rootAuthorizationServerAttached) {
+      this.addRuntimeRoute(
+        this.routeInventory.rootAuthorizationServerPattern,
+        apigwv2.HttpMethod.GET,
+        integration,
+        runtimeOwnedAuth,
       );
-      this.addEnvironment(
-        props.handler,
-        "APPTHEORY_MCP_AUTHORIZATION_SERVER_ISSUER",
-        authConfig.authorizationServerIssuer,
-      );
-      this.addEnvironment(props.handler, "APPTHEORY_MCP_JWKS_URI", authConfig.jwksUri);
     }
 
-    // Optional session table
-    if (props.enableSessionTable) {
+    const sessionState = normalizeSessionState(props);
+    if (sessionState.enabled) {
       const table = new dynamodb.Table(this, "SessionTable", {
-        tableName: props.sessionTableName,
+        tableName: sessionState.tableName,
         billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
         partitionKey: { name: "sessionId", type: dynamodb.AttributeType.STRING },
         timeToLiveAttribute: "expiresAt",
-        removalPolicy: RemovalPolicy.DESTROY,
-        pointInTimeRecoverySpecification: {
-          pointInTimeRecoveryEnabled: true,
-        },
+        removalPolicy: sessionState.removalPolicy,
+        pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
         encryption: dynamodb.TableEncryption.AWS_MANAGED,
       });
-
       table.grantReadWriteData(props.handler);
       this.sessionTable = table;
+      this.addEnvironment(props.handler, "MCP_SESSION_TABLE", table.tableName);
+      this.addEnvironment(props.handler, "MCP_SESSION_TTL_MINUTES", String(sessionState.ttlMinutes));
     }
 
-    if (this.sessionTable) {
-      this.addEnvironment(props.handler, "MCP_SESSION_TABLE", this.sessionTable.tableName);
-      this.addEnvironment(props.handler, "MCP_SESSION_TTL_MINUTES", String(props.sessionTtlMinutes ?? 60));
-    }
-
-    // Optional custom domain
-    if (props.domain) {
-      if (!stage) {
-        throw new Error("AppTheoryMcpServer: no stage available for domain mapping");
+    let endpointBase: string;
+    if (ownedOptions.domain) {
+      if (!ownedStage) {
+        throw new Error("AppTheoryMcpServer: domain configuration requires construct-owned API mode");
       }
-      this.setupCustomDomain(props.domain, stage);
-      this.endpoint = `${stripTrailingSlash(`https://${props.domain.domainName}`)}${this.mcpPath}`;
+      this.setupCustomDomain(ownedOptions.domain, ownedStage);
+      endpointBase = `https://${ownedOptions.domain.domainName}`;
+    } else if (props.api) {
+      endpointBase = this.api.apiEndpoint;
     } else {
-      // Compute execute-api endpoint URL (include stage path unless using $default).
-      const baseUrl = (stageName === "$default")
+      endpointBase = ownedStageName === "$default"
         ? this.api.apiEndpoint
-        : `${this.api.apiEndpoint}/${stageName}`;
-      this.endpoint = `${stripTrailingSlash(baseUrl)}${this.mcpPath}`;
+        : `${this.api.apiEndpoint}/${ownedStageName}`;
     }
+    this.endpoints = this.mcpPaths.map(
+      (pattern) => `${stripTrailingSlash(endpointBase)}${pattern}`,
+    );
+    this.endpoint = this.endpoints[0];
 
-    // Inject environment variables into the Lambda handler
-    this.addEnvironment(props.handler, "MCP_ENDPOINT", this.endpoint);
+    // Attach-mode public authority belongs to the front door. Do not smuggle
+    // it into this construct as an origin prop.
+    if (!props.api) {
+      this.addEnvironment(props.handler, "MCP_ENDPOINT", this.endpoint);
+    }
   }
 
-  /**
-   * Add an environment variable to the Lambda function.
-   * Uses addEnvironment if available (Function), otherwise uses L1 override.
-   */
+  private addRuntimeRoute(
+    path: string,
+    method: apigwv2.HttpMethod,
+    integration: apigwv2Integrations.HttpLambdaIntegration,
+    authorizer: apigwv2.HttpNoneAuthorizer,
+  ): void {
+    new apigwv2.HttpRoute(this, `Route${this.routeSequence++}`, {
+      httpApi: this.api,
+      routeKey: apigwv2.HttpRouteKey.with(path, method),
+      integration,
+      authorizer,
+    });
+  }
+
   private addEnvironment(handler: lambda.IFunction, key: string, value: string): void {
     if ("addEnvironment" in handler && typeof handler.addEnvironment === "function") {
       handler.addEnvironment(key, value);
     }
   }
 
-  /**
-   * Set up custom domain with optional Route53 record.
-   */
-  private setupCustomDomain(domainOpts: AppTheoryMcpServerDomainOptions, stage: apigwv2.IStage): void {
-    const certificate = domainOpts.certificate ?? (domainOpts.certificateArn
-      ? acm.Certificate.fromCertificateArn(this, "ImportedCert", domainOpts.certificateArn) as acm.ICertificate
+  private setupCustomDomain(
+    options: AppTheoryMcpServerDomainOptions,
+    stage: apigwv2.IStage,
+  ): void {
+    const certificate = options.certificate ?? (options.certificateArn
+      ? acm.Certificate.fromCertificateArn(this, "ImportedCert", options.certificateArn) as acm.ICertificate
       : undefined);
-
     if (!certificate) {
-      throw new Error("AppTheoryMcpServer: domain requires either certificate or certificateArn");
+      throw new Error(
+        "AppTheoryMcpServer: ownedApi.domain requires either certificate or certificateArn",
+      );
     }
-
-    const dmn = new apigwv2.DomainName(this, "DomainName", {
-      domainName: domainOpts.domainName,
+    const domainName = new apigwv2.DomainName(this, "DomainName", {
+      domainName: options.domainName,
       certificate,
     });
-    (this as { domainName?: apigwv2.DomainName }).domainName = dmn;
-
-    const mapping = new apigwv2.ApiMapping(this, "ApiMapping", {
+    (this as { domainName?: apigwv2.DomainName }).domainName = domainName;
+    const apiMapping = new apigwv2.ApiMapping(this, "ApiMapping", {
       api: this.api,
-      domainName: dmn,
+      domainName,
       stage,
     });
-    (this as { apiMapping?: apigwv2.ApiMapping }).apiMapping = mapping;
-
-    if (domainOpts.hostedZone) {
-      const recordName = toRoute53RecordName(domainOpts.domainName, domainOpts.hostedZone);
-      const record = new route53.CnameRecord(this, "CnameRecord", {
-        zone: domainOpts.hostedZone,
-        recordName,
-        domainName: dmn.regionalDomainName,
+    (this as { apiMapping?: apigwv2.ApiMapping }).apiMapping = apiMapping;
+    if (options.hostedZone) {
+      const cnameRecord = new route53.CnameRecord(this, "CnameRecord", {
+        zone: options.hostedZone,
+        recordName: toRoute53RecordName(options.domainName, options.hostedZone),
+        domainName: domainName.regionalDomainName,
       });
-      (this as { cnameRecord?: route53.CnameRecord }).cnameRecord = record;
+      (this as { cnameRecord?: route53.CnameRecord }).cnameRecord = cnameRecord;
     }
   }
 }
 
-/**
- * Convert a domain name to a Route53 record name relative to the zone.
- */
-function toRoute53RecordName(domainName: string, zone: route53.IHostedZone): string {
-  const fqdn = String(domainName ?? "").trim().replace(/\.$/, "");
-  const zoneName = String(zone.zoneName ?? "").trim().replace(/\.$/, "");
-  if (!zoneName) return fqdn;
-  if (fqdn === zoneName) return "";
-  const suffix = `.${zoneName}`;
-  if (fqdn.endsWith(suffix)) {
-    return fqdn.slice(0, -suffix.length);
-  }
-  return fqdn;
+interface NormalizedRouteFamily {
+  readonly patterns: string[];
+  readonly rootAuthorizationServerDiscovery: boolean;
 }
 
-function stripTrailingSlash(url: string): string {
-  return url.replace(/\/$/, "");
+interface NormalizedOwnedApiOptions {
+  readonly apiName?: string;
+  readonly domain?: AppTheoryMcpServerDomainOptions;
+  readonly stage?: AppTheoryMcpServerStageOptions;
+}
+
+interface NormalizedStageOptions {
+  readonly stageName: string;
+  readonly accessLogging: boolean;
+  readonly accessLogRetention: logs.RetentionDays;
+  readonly throttlingEnabled: boolean;
+  readonly throttlingRateLimit: number;
+  readonly throttlingBurstLimit: number;
+}
+
+interface NormalizedSessionState {
+  readonly enabled: boolean;
+  readonly tableName?: string;
+  readonly ttlMinutes: number;
+  readonly removalPolicy: RemovalPolicy;
+}
+
+function normalizeRouteFamily(props: AppTheoryMcpServerProps): NormalizedRouteFamily {
+  if (props.routeFamily !== undefined && props.mcpPath !== undefined) {
+    throw new Error(
+      "AppTheoryMcpServer: routeFamily and deprecated mcpPath cannot be supplied together",
+    );
+  }
+  const rawPatterns = props.routeFamily?.patterns
+    ?? (props.mcpPath !== undefined
+      ? [props.mcpPath]
+      : AppTheoryMcpRouteAlgebra.supportedEndpointTemplates().map(
+        (template) => template.mcpPattern,
+      ));
+  if (rawPatterns.length === 0) {
+    throw new Error("AppTheoryMcpServer: routeFamily.patterns must not be empty");
+  }
+  const patterns = rawPatterns.map((pattern, index) =>
+    normalizeRoutePath(pattern, `routeFamily.patterns[${index}]`));
+  const seen = new Set<string>();
+  for (const pattern of patterns) {
+    if (seen.has(pattern)) {
+      throw new Error(
+        `AppTheoryMcpServer: routeFamily.patterns contains duplicate pattern ${JSON.stringify(pattern)}`,
+      );
+    }
+    seen.add(pattern);
+  }
+  return {
+    patterns,
+    rootAuthorizationServerDiscovery:
+      props.routeFamily?.rootAuthorizationServerDiscovery ?? false,
+  };
 }
 
 function normalizeRoutePath(value: string, propName: string): string {
   if (Token.isUnresolved(value)) {
-    throw new Error(`AppTheoryMcpServer: ${propName} must be a synthesis-time literal path`);
+    throw new Error(
+      `AppTheoryMcpServer: ${propName} must be a synthesis-time literal route pattern`,
+    );
   }
   const routePath = String(value ?? "");
-  // Literal MCP route paths use only RFC 3986 path characters, with percent-encoding required for whitespace and other characters outside that set.
-  const literalRoutePathPattern = /^\/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})+(?:\/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})+)*$/;
-  if (
-    !literalRoutePathPattern.test(routePath)
-    || routePath.split("/").some((segment) => segment === "." || segment === "..")
-  ) {
-    throw new Error(`AppTheoryMcpServer: ${propName} must be a literal absolute route path`);
+  if (!routePath.startsWith("/")) throw invalidRoutePattern(propName);
+  const segments = routePath.slice(1).split("/");
+  if (segments.length === 0 || segments.some((segment) => segment === "")) {
+    throw invalidRoutePattern(propName);
+  }
+  const literal = /^(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})+$/;
+  const parameter = /^\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
+  for (const segment of segments) {
+    if (segment === "." || segment === "..") throw invalidRoutePattern(propName);
+    if (parameter.test(segment)) continue;
+    if (!literal.test(segment) || segment.includes("{") || segment.includes("}")) {
+      throw invalidRoutePattern(propName);
+    }
   }
   return routePath;
 }
 
-function normalizeAuthConfig(
-  props: AppTheoryMcpServerProps,
-): { authorizationServerIssuer: string; jwksUri: string } | undefined {
+function invalidRoutePattern(propName: string): Error {
+  return new Error(
+    `AppTheoryMcpServer: ${propName} must be an absolute synthesis-time route pattern with non-empty literal or {parameter_name} segments and no dot segments`,
+  );
+}
+
+function buildRouteInventory(
+  patterns: string[],
+  authorizationRoutesAttached: boolean,
+  rootAuthorizationServerAttached: boolean,
+): AppTheoryMcpServerRouteInventory {
+  return {
+    contractVersion: AppTheoryMcpRouteAlgebra.CONTRACT_VERSION,
+    routes: patterns.map((mcpPattern) => ({
+      mcpPattern,
+      mcpMethods: ["POST", "GET", "DELETE"],
+      protectedResourcePattern:
+        AppTheoryMcpRouteAlgebra.protectedResourcePathForResourcePath(mcpPattern),
+      discoveryCanonicalPattern:
+        AppTheoryMcpRouteAlgebra.authorizationServerPathForResourcePath(mcpPattern),
+      discoverySuffixPattern:
+        AppTheoryMcpRouteAlgebra.authorizationServerSuffixPathForResourcePath(mcpPattern),
+      authorizePattern:
+        AppTheoryMcpRouteAlgebra.authorizationAuthorizePathForResourcePath(mcpPattern),
+      tokenPattern:
+        AppTheoryMcpRouteAlgebra.authorizationTokenPathForResourcePath(mcpPattern),
+      authorizationRoutesAttached,
+    })),
+    rootAuthorizationServerPattern:
+      AppTheoryMcpRouteAlgebra.authorizationServerPathForResourcePath("/"),
+    rootAuthorizationServerAttached,
+  };
+}
+
+function validateRouteInventory(
+  inventory: AppTheoryMcpServerRouteInventory,
+  unauthenticatedMcp: boolean,
+): void {
+  const seen = new Set<string>();
+  const add = (method: string, path: string): void => {
+    const key = `${method} ${path}`;
+    if (seen.has(key)) {
+      throw new Error(`AppTheoryMcpServer: derived route family collides at ${key}`);
+    }
+    seen.add(key);
+  };
+  for (const route of inventory.routes) {
+    for (const method of route.mcpMethods) add(method, route.mcpPattern);
+    if (!unauthenticatedMcp) {
+      add("GET", route.protectedResourcePattern);
+      add("GET", route.discoveryCanonicalPattern);
+      add("GET", route.discoverySuffixPattern);
+      add("GET", route.authorizePattern);
+      add("POST", route.tokenPattern);
+    }
+  }
+  if (inventory.rootAuthorizationServerAttached) {
+    add("GET", inventory.rootAuthorizationServerPattern);
+  }
+}
+
+function validateOwningMode(props: AppTheoryMcpServerProps): void {
+  if (!props.api) return;
+  const invalid: string[] = [];
+  if (props.ownedApi !== undefined) invalid.push("ownedApi");
+  if (props.apiName !== undefined) invalid.push("apiName");
+  if (props.domain !== undefined) invalid.push("domain");
+  if (props.stage !== undefined) invalid.push("stage");
+  if (invalid.length !== 0) {
+    throw new Error(
+      `AppTheoryMcpServer: attach mode with api cannot configure owned-API props: ${invalid.join(", ")}`,
+    );
+  }
+}
+
+function normalizeOwnedApiOptions(props: AppTheoryMcpServerProps): NormalizedOwnedApiOptions {
+  if (props.ownedApi?.apiName !== undefined && props.apiName !== undefined) {
+    throw new Error(
+      "AppTheoryMcpServer: ownedApi.apiName and deprecated apiName cannot be supplied together",
+    );
+  }
+  if (props.ownedApi?.domain !== undefined && props.domain !== undefined) {
+    throw new Error(
+      "AppTheoryMcpServer: ownedApi.domain and deprecated domain cannot be supplied together",
+    );
+  }
+  if (props.ownedApi?.stage !== undefined && props.stage !== undefined) {
+    throw new Error(
+      "AppTheoryMcpServer: ownedApi.stage and deprecated stage cannot be supplied together",
+    );
+  }
+  return {
+    apiName: props.ownedApi?.apiName ?? props.apiName,
+    domain: props.ownedApi?.domain ?? props.domain,
+    stage: props.ownedApi?.stage ?? props.stage,
+  };
+}
+
+function normalizeStageOptions(options?: AppTheoryMcpServerStageOptions): NormalizedStageOptions {
+  const accessLogging = options?.accessLogging ?? true;
+  if (!accessLogging && options?.accessLogRetention !== undefined) {
+    throw new Error(
+      "AppTheoryMcpServer: ownedApi.stage.accessLogRetention requires accessLogging to be enabled",
+    );
+  }
+  const throttlingEnabled = options?.throttlingEnabled ?? true;
+  if (
+    !throttlingEnabled
+    && (options?.throttlingRateLimit !== undefined || options?.throttlingBurstLimit !== undefined)
+  ) {
+    throw new Error(
+      "AppTheoryMcpServer: ownedApi.stage throttling limits require throttlingEnabled to be true",
+    );
+  }
+  const rateLimit = options?.throttlingRateLimit ?? DEFAULT_THROTTLING_RATE_LIMIT;
+  const burstLimit = options?.throttlingBurstLimit ?? DEFAULT_THROTTLING_BURST_LIMIT;
+  validatePositiveNumber(rateLimit, "ownedApi.stage.throttlingRateLimit");
+  validatePositiveNumber(burstLimit, "ownedApi.stage.throttlingBurstLimit");
+  return {
+    stageName: options?.stageName ?? "$default",
+    accessLogging,
+    accessLogRetention: options?.accessLogRetention ?? logs.RetentionDays.ONE_MONTH,
+    throttlingEnabled,
+    throttlingRateLimit: rateLimit,
+    throttlingBurstLimit: burstLimit,
+  };
+}
+
+function normalizeSessionState(props: AppTheoryMcpServerProps): NormalizedSessionState {
+  const hasLegacy = props.enableSessionTable !== undefined
+    || props.sessionTableName !== undefined
+    || props.sessionTtlMinutes !== undefined;
+  if (props.sessionState !== undefined && hasLegacy) {
+    throw new Error(
+      "AppTheoryMcpServer: sessionState cannot be combined with deprecated session-table props",
+    );
+  }
+  const enabled = props.sessionState?.enabled ?? props.enableSessionTable ?? true;
+  const tableName = props.sessionState?.tableName ?? props.sessionTableName;
+  const ttlMinutes = props.sessionState?.ttlMinutes
+    ?? props.sessionTtlMinutes
+    ?? DEFAULT_SESSION_TTL_MINUTES;
+  const removalPolicy = props.sessionState?.removalPolicy ?? RemovalPolicy.RETAIN;
+  if (
+    !enabled
+    && (tableName !== undefined
+      || props.sessionState?.ttlMinutes !== undefined
+      || props.sessionState?.removalPolicy !== undefined
+      || props.sessionTableName !== undefined
+      || props.sessionTtlMinutes !== undefined)
+  ) {
+    throw new Error(
+      "AppTheoryMcpServer: disabled session state cannot configure tableName, ttlMinutes, or removalPolicy",
+    );
+  }
+  validatePositiveInteger(ttlMinutes, "sessionState.ttlMinutes");
+  return { enabled, tableName, ttlMinutes, removalPolicy };
+}
+
+function normalizeLegacyAuthConfig(props: AppTheoryMcpServerProps): void {
   const hasIssuer = props.authorizationServerIssuer !== undefined;
   const hasJwksUri = props.jwksUri !== undefined;
   if (hasIssuer !== hasJwksUri) {
@@ -449,62 +709,95 @@ function normalizeAuthConfig(
       "AppTheoryMcpServer: authorizationServerIssuer and jwksUri must be supplied together",
     );
   }
-  if (!hasIssuer || !hasJwksUri) {
-    return undefined;
-  }
-
-  const authorizationServerIssuer = String(props.authorizationServerIssuer);
+  if (!hasIssuer || !hasJwksUri) return;
+  const issuer = String(props.authorizationServerIssuer);
   const jwksUri = String(props.jwksUri);
-  // Literal OAuth configuration URLs must be absolute HTTPS URLs without userinfo or fragments.
-  // Issuer URLs must also omit queries.
-  if (!Token.isUnresolved(authorizationServerIssuer)) {
-    const literalIssuer = authorizationServerIssuer.trim();
-    let parsedIssuer: URL | undefined;
-    try {
-      parsedIssuer = new URL(literalIssuer);
-    } catch {
-      // The shared validation error below is the public synthesis contract.
-    }
-    if (
-      !parsedIssuer
-      || !literalURLHasRFC3986Authority(literalIssuer)
-      || parsedIssuer.protocol !== "https:"
-      || !parsedIssuer.hostname
-      || parsedIssuer.username !== ""
-      || parsedIssuer.password !== ""
-      || literalURLAuthorityHasUserinfo(literalIssuer)
-      || literalIssuer.includes("?")
-      || literalIssuer.includes("#")
-    ) {
-      throw new Error(
-        "AppTheoryMcpServer: authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment",
-      );
-    }
+  if (!Token.isUnresolved(issuer)) {
+    validateLiteralOAuthURL(
+      issuer,
+      false,
+      "authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment",
+    );
   }
   if (!Token.isUnresolved(jwksUri)) {
-    const literalJwksUri = jwksUri.trim();
-    let parsedJwksUri: URL | undefined;
-    try {
-      parsedJwksUri = new URL(literalJwksUri);
-    } catch {
-      // The shared validation error below is the public synthesis contract.
-    }
-    if (
-      !parsedJwksUri
-      || !literalURLHasRFC3986Authority(literalJwksUri)
-      || parsedJwksUri.protocol !== "https:"
-      || !parsedJwksUri.hostname
-      || parsedJwksUri.username !== ""
-      || parsedJwksUri.password !== ""
-      || literalURLAuthorityHasUserinfo(literalJwksUri)
-      || literalJwksUri.includes("#")
-    ) {
-      throw new Error(
-        "AppTheoryMcpServer: jwksUri must be an absolute HTTPS URL with no userinfo or fragment",
-      );
-    }
+    validateLiteralOAuthURL(
+      jwksUri,
+      true,
+      "jwksUri must be an absolute HTTPS URL with no userinfo or fragment",
+    );
   }
-  return { authorizationServerIssuer, jwksUri };
+}
+
+function validateLiteralOAuthURL(value: string, allowQuery: boolean, message: string): void {
+  const literal = value.trim();
+  let parsed: URL | undefined;
+  try {
+    parsed = new URL(literal);
+  } catch {
+    // The shared validation error below is the public synthesis contract.
+  }
+  if (
+    !parsed
+    || !literalURLHasRFC3986Authority(literal)
+    || parsed.protocol !== "https:"
+    || !parsed.hostname
+    || parsed.username !== ""
+    || parsed.password !== ""
+    || literalURLAuthorityHasUserinfo(literal)
+    || (!allowQuery && literal.includes("?"))
+    || literal.includes("#")
+  ) {
+    throw new Error(`AppTheoryMcpServer: ${message}`);
+  }
+}
+
+function toHttpMethod(method: string): apigwv2.HttpMethod {
+  switch (method) {
+    case "POST": return apigwv2.HttpMethod.POST;
+    case "GET": return apigwv2.HttpMethod.GET;
+    case "DELETE": return apigwv2.HttpMethod.DELETE;
+    default:
+      throw new Error(`AppTheoryMcpServer: unsupported runtime MCP method ${method}`);
+  }
+}
+
+function validatePositiveNumber(value: number, propName: string): void {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`AppTheoryMcpServer: ${propName} must be greater than zero`);
+  }
+}
+
+function validatePositiveInteger(value: number, propName: string): void {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`AppTheoryMcpServer: ${propName} must be a positive integer`);
+  }
+}
+
+function accessLogFormat(): string {
+  return JSON.stringify({
+    requestId: "$context.requestId",
+    ip: "$context.identity.sourceIp",
+    requestTime: "$context.requestTime",
+    httpMethod: "$context.httpMethod",
+    routeKey: "$context.routeKey",
+    status: "$context.status",
+    protocol: "$context.protocol",
+    responseLength: "$context.responseLength",
+    integrationLatency: "$context.integrationLatency",
+  });
+}
+
+function toRoute53RecordName(domainName: string, zone: route53.IHostedZone): string {
+  const fqdn = String(domainName ?? "").trim().replace(/\.$/, "");
+  const zoneName = String(zone.zoneName ?? "").trim().replace(/\.$/, "");
+  if (!zoneName) return fqdn;
+  if (fqdn === zoneName) return "";
+  const suffix = `.${zoneName}`;
+  return fqdn.endsWith(suffix) ? fqdn.slice(0, -suffix.length) : fqdn;
+}
+
+function stripTrailingSlash(url: string): string {
+  return url.replace(/\/$/, "");
 }
 
 function literalURLHasRFC3986Authority(value: string): boolean {

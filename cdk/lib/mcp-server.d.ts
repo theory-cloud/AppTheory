@@ -1,3 +1,4 @@
+import { RemovalPolicy } from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
@@ -5,189 +6,211 @@ import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
-/**
- * Custom domain configuration for the MCP server.
- */
+/** Custom domain configuration for an AppTheory-owned MCP HTTP API. */
 export interface AppTheoryMcpServerDomainOptions {
-    /**
-     * The custom domain name (e.g., "mcp.example.com").
-     */
+    /** The custom domain name (for example, `mcp.example.com`). */
     readonly domainName: string;
-    /**
-     * ACM certificate for the domain.
-     * Provide either certificate or certificateArn.
-     */
+    /** ACM certificate for the domain. Provide this or `certificateArn`. */
     readonly certificate?: acm.ICertificate;
-    /**
-     * ACM certificate ARN.
-     * Provide either certificate or certificateArn.
-     */
+    /** ACM certificate ARN. Provide this or `certificate`. */
     readonly certificateArn?: string;
     /**
-     * Route53 hosted zone for automatic DNS record creation.
-     * If provided, a CNAME record will be created pointing to the API Gateway domain.
-     * @default undefined (no DNS record created)
+     * Route53 hosted zone for an automatically created CNAME record.
+     * @default undefined
      */
     readonly hostedZone?: route53.IHostedZone;
 }
-/**
- * Stage configuration for the MCP server API Gateway.
- */
+/** Stage configuration for an AppTheory-owned MCP HTTP API. */
 export interface AppTheoryMcpServerStageOptions {
-    /**
-     * Stage name.
-     * @default "$default"
-     */
+    /** @default "$default" */
     readonly stageName?: string;
-    /**
-     * Enable CloudWatch access logging for the stage.
-     * @default false
-     */
+    /** @default true */
     readonly accessLogging?: boolean;
     /**
-     * Retention period for auto-created access log group.
-     * Only applies when accessLogging is true.
+     * Retention period for the access log group. Valid only when access logging
+     * is enabled.
      * @default logs.RetentionDays.ONE_MONTH
      */
     readonly accessLogRetention?: logs.RetentionDays;
+    /** @default true */
+    readonly throttlingEnabled?: boolean;
     /**
-     * Throttling rate limit (requests per second) for the stage.
-     * @default undefined (no throttling)
+     * Default-stage rate limit in requests per second.
+     * @default 100
      */
     readonly throttlingRateLimit?: number;
     /**
-     * Throttling burst limit for the stage.
-     * @default undefined (no throttling)
+     * Default-stage burst limit.
+     * @default 200
      */
     readonly throttlingBurstLimit?: number;
 }
-/**
- * Props for the AppTheoryMcpServer construct.
- */
-export interface AppTheoryMcpServerProps {
+/** Owned-API specialization for standalone MCP servers. */
+export interface AppTheoryMcpServerOwnedApiOptions {
+    /** Optional API name. */
+    readonly apiName?: string;
+    /** Optional custom domain owned by this construct. */
+    readonly domain?: AppTheoryMcpServerDomainOptions;
     /**
-     * The Lambda function handling MCP requests.
+     * Stage configuration. Access logging and throttling default on.
+     * @default production defaults
      */
+    readonly stage?: AppTheoryMcpServerStageOptions;
+}
+/** Ordered MCP route-pattern family wired as one facade. */
+export interface AppTheoryMcpRouteFamily {
+    /**
+     * Ordered synthesis-time MCP route patterns.
+     *
+     * Each segment is either a literal RFC 3986 path segment or a complete
+     * `{parameter_name}` segment. CDK tokens, origins, empty segments, dot
+     * segments, greedy parameters, and duplicate patterns are rejected.
+     */
+    readonly patterns: string[];
+    /**
+     * Wire the algebra-derived unscoped authorization-server discovery route.
+     * The runtime must supply `FacadeConfig.RootAuthorizationServer` too.
+     * @default false
+     */
+    readonly rootAuthorizationServerDiscovery?: boolean;
+}
+/** DynamoDB-backed MCP session-state configuration. */
+export interface AppTheoryMcpSessionStateOptions {
+    /** @default true */
+    readonly enabled?: boolean;
+    /**
+     * Session table name. Valid only when session state is enabled.
+     * @default auto-generated
+     */
+    readonly tableName?: string;
+    /**
+     * TTL in minutes for session records. Valid only when session state is
+     * enabled.
+     * @default 60
+     */
+    readonly ttlMinutes?: number;
+    /**
+     * Session table removal policy. Valid only when session state is enabled.
+     * @default RemovalPolicy.RETAIN
+     */
+    readonly removalPolicy?: RemovalPolicy;
+}
+/** One derived MCP OAuth facade route family. */
+export interface AppTheoryMcpServerFacadeRoute {
+    readonly mcpPattern: string;
+    readonly mcpMethods: string[];
+    readonly protectedResourcePattern: string;
+    readonly discoveryCanonicalPattern: string;
+    readonly discoverySuffixPattern: string;
+    readonly authorizePattern: string;
+    readonly tokenPattern: string;
+    readonly authorizationRoutesAttached: boolean;
+}
+/** Defensive snapshot of the construct's derived facade inventory. */
+export interface AppTheoryMcpServerRouteInventory {
+    readonly contractVersion: string;
+    readonly routes: AppTheoryMcpServerFacadeRoute[];
+    readonly rootAuthorizationServerPattern: string;
+    readonly rootAuthorizationServerAttached: boolean;
+}
+/** Props for the AppTheoryMcpServer construct. */
+export interface AppTheoryMcpServerProps {
+    /** Lambda function handling the runtime-composed MCP facade. */
     readonly handler: lambda.IFunction;
     /**
-     * Literal route path for the MCP endpoint.
-     *
-     * This is a synthesis-time path, never an origin or full resource URL.
-     * @default AppTheoryMcpPaths.MCP
+     * Existing HTTP API to attach to. Attach mode is the primary front-door
+     * topology and never creates an `AWS::ApiGatewayV2::Api` resource.
+     * @default a construct-owned HttpApi
+     */
+    readonly api?: apigwv2.IHttpApi;
+    /**
+     * Ordered MCP route family.
+     * @default AppTheoryMcpRouteAlgebra.supportedEndpointTemplates()
+     */
+    readonly routeFamily?: AppTheoryMcpRouteFamily;
+    /**
+     * Explicitly opt out of the OAuth facade and wire only MCP transport routes.
+     * This cannot be combined with legacy authorization props or root discovery.
+     * @default false
+     */
+    readonly unauthenticatedMcp?: boolean;
+    /**
+     * Session-state table configuration. The table defaults on.
+     * @default enabled with production defaults
+     */
+    readonly sessionState?: AppTheoryMcpSessionStateOptions;
+    /**
+     * Owned-API configuration for standalone mode. Invalid with `api`.
+     * @default production-owned API defaults
+     */
+    readonly ownedApi?: AppTheoryMcpServerOwnedApiOptions;
+    /**
+     * Single MCP route path from the v3.1.x A6 surface.
+     * @deprecated Use `routeFamily.patterns`. The new default is the canonical
+     * four-pattern family; use `{ patterns: ['/mcp'] }` for the old singleton.
      */
     readonly mcpPath?: string;
     /**
-     * OAuth authorization server issuer passed to the Lambda runtime config.
-     *
-     * Literal values must be absolute HTTPS URLs with no userinfo, query, or
-     * fragment. CDK tokens pass through unparsed. Supply `jwksUri` with this prop
-     * to enable the runtime-served RFC 9728 discovery routes.
-     * @default undefined (legacy POST-only MCP route)
+     * Authorization-server issuer from the v3.1.x A6 environment contract.
+     * @deprecated Configure `runtime/mcpfacade.FacadeConfig.IssuerURL` in the
+     * application. The construct no longer injects issuer environment values.
      */
     readonly authorizationServerIssuer?: string;
     /**
-     * OAuth JSON Web Key Set URL passed to the Lambda runtime config.
-     *
-     * Literal values must be absolute HTTPS URLs with no userinfo or fragment;
-     * queries are allowed. CDK tokens pass through unparsed. Supply
-     * `authorizationServerIssuer` with this prop.
-     * @default undefined (legacy POST-only MCP route)
+     * JWKS URI from the v3.1.x A6 environment contract.
+     * @deprecated Configure `runtime/mcpfacade.FacadeConfig.JWKSURI` in the
+     * application. The construct no longer injects JWKS environment values.
      */
     readonly jwksUri?: string;
-    /**
-     * Optional API name.
-     * @default undefined
-     */
+    /** @deprecated Use `ownedApi.apiName`. */
     readonly apiName?: string;
     /**
-     * Create a DynamoDB table for session state storage.
-     * @default false
+     * @deprecated Use `sessionState.enabled`. Session state now defaults on.
      */
     readonly enableSessionTable?: boolean;
-    /**
-     * Name for the session DynamoDB table.
-     * Only used when enableSessionTable is true.
-     * @default undefined (auto-generated)
-     */
+    /** @deprecated Use `sessionState.tableName`. */
     readonly sessionTableName?: string;
-    /**
-     * TTL in minutes for session records.
-     * Only used when enableSessionTable is true.
-     * @default 60
-     */
+    /** @deprecated Use `sessionState.ttlMinutes`. */
     readonly sessionTtlMinutes?: number;
     /**
-     * Custom domain configuration.
-     * @default undefined (no custom domain)
+     * @deprecated Use `ownedApi.domain`. Domains are invalid in attach mode.
      */
     readonly domain?: AppTheoryMcpServerDomainOptions;
     /**
-     * Stage configuration.
-     * @default undefined (defaults applied)
+     * @deprecated Use `ownedApi.stage`. Stage options are invalid in attach mode.
      */
     readonly stage?: AppTheoryMcpServerStageOptions;
 }
 /**
- * Umbrella deployment contract for a namespace MCP server.
+ * Contract-first MCP facade deployment construct.
  *
- * The construct provisions an HTTP API Gateway v2 with a Lambda integration
- * on the conventional POST /mcp path, optional runtime-served RFC 9728
- * discovery routes, optional DynamoDB session state, and an optional custom
- * domain. Resource origins are intentionally absent from the prop surface:
- * the Go runtime derives the protected resource host from each request.
- *
- * @example
- * const server = new AppTheoryMcpServer(this, 'McpServer', {
- *   handler: mcpFn,
- *   enableSessionTable: true,
- *   sessionTtlMinutes: 120,
- * });
+ * The primary mode attaches the complete route-algebra family to a supplied
+ * HTTP API. Omitting `api` specializes the same path into a standalone owned
+ * API. The construct routes only: OAuth metadata, scopes, capabilities, and
+ * authorize/token behavior remain application-owned through Go
+ * `mcpfacade.RegisterMCPFacade`.
  */
 export declare class AppTheoryMcpServer extends Construct {
-    /**
-     * The underlying HTTP API Gateway v2.
-     */
-    readonly api: apigwv2.HttpApi;
-    /**
-     * The DynamoDB session table (if enableSessionTable is true).
-     */
+    private routeSequence;
+    readonly api: apigwv2.IHttpApi;
+    readonly ownedApi?: apigwv2.HttpApi;
     readonly sessionTable?: dynamodb.ITable;
-    /**
-     * The MCP endpoint URL.
-     */
+    readonly endpoints: string[];
+    readonly mcpPaths: string[];
+    readonly protectedResourceMetadataPaths: string[];
+    readonly routeInventory: AppTheoryMcpServerRouteInventory;
+    /** @deprecated Use `endpoints`. */
     readonly endpoint: string;
-    /**
-     * Literal MCP endpoint route path.
-     */
+    /** @deprecated Use `mcpPaths`. */
     readonly mcpPath: string;
-    /**
-     * Path-scoped RFC 9728 discovery route for this MCP endpoint.
-     */
+    /** @deprecated Use `protectedResourceMetadataPaths` or `routeInventory`. */
     readonly protectedResourceMetadataPath: string;
-    /**
-     * The custom domain name resource (if domain is configured).
-     */
     readonly domainName?: apigwv2.DomainName;
-    /**
-     * The API mapping for the custom domain (if domain is configured).
-     */
     readonly apiMapping?: apigwv2.ApiMapping;
-    /**
-     * The Route53 CNAME record (if domain and hostedZone are configured).
-     */
     readonly cnameRecord?: route53.CnameRecord;
-    /**
-     * The access log group (if access logging is enabled).
-     */
     readonly accessLogGroup?: logs.ILogGroup;
     constructor(scope: Construct, id: string, props: AppTheoryMcpServerProps);
-    /**
-     * Add an environment variable to the Lambda function.
-     * Uses addEnvironment if available (Function), otherwise uses L1 override.
-     */
+    private addRuntimeRoute;
     private addEnvironment;
-    /**
-     * Set up custom domain with optional Route53 record.
-     */
     private setupCustomDomain;
 }

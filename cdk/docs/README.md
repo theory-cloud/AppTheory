@@ -79,7 +79,9 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
 
 - HTTP and routing: `AppTheoryHttpApi`, `AppTheoryRestApi`, `AppTheoryRestApiRouter`, domains, CORS, logging, and WAF
   guardrails.
-- MCP and namespace deployment: `AppTheoryMcpServer`, `AppTheoryInstallParameters`,
+- MCP and namespace deployment: attach-first `AppTheoryMcpServer`, its `AppTheoryMcpRouteFamily`,
+  `AppTheoryMcpServerOwnedApiOptions`, `AppTheoryMcpSessionStateOptions`, and route-inventory data interfaces,
+  `AppTheoryInstallParameters`,
   `AppTheoryS3VersionedIngress`, canonical `AppTheoryMcpPaths`, the additive `AppTheoryMcpRouteAlgebra` contract and
   its `AppTheoryMcpEndpointPath`, `AppTheoryMcpEndpointTemplate`, `AppTheoryMcpOAuthFacadeTemplate`, and
   `AppTheoryMcpOAuthDiscoveryTemplate` data interfaces,
@@ -99,7 +101,7 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `cdk/.jsii`.
 
 <details>
-<summary>145 exported top-level symbols</summary>
+<summary>150 exported top-level symbols</summary>
 
 ```text
 ApiBypassConfig, AppTheoryApiDomain, AppTheoryApiDomainProps, AppTheoryApp, AppTheoryAppProps
@@ -114,7 +116,8 @@ AppTheoryHttpApiProps, AppTheoryHttpApiStageOptions, AppTheoryHttpApiWafOptions,
 AppTheoryHttpIngestionEndpointProps, AppTheoryHttpIngestionEndpointStageOptions, AppTheoryInstallParameters, AppTheoryJobsTable, AppTheoryJobsTableProps, AppTheoryKinesisStream
 AppTheoryKinesisStreamMapping, AppTheoryKinesisStreamMappingProps, AppTheoryKinesisStreamProps, AppTheoryKmsKey, AppTheoryKmsKeyProps
 AppTheoryLambdaRole, AppTheoryLambdaRoleProps, AppTheoryLambdaTrafficShiftType, AppTheoryMcpPaths, AppTheoryMcpProtectedResource, AppTheoryMcpProtectedResourceProps
-AppTheoryMcpServer, AppTheoryMcpServerDomainOptions, AppTheoryMcpServerProps, AppTheoryMcpServerStageOptions, AppTheoryMediaCdn
+AppTheoryMcpRouteFamily, AppTheoryMcpServer, AppTheoryMcpServerDomainOptions, AppTheoryMcpServerFacadeRoute, AppTheoryMcpServerOwnedApiOptions
+AppTheoryMcpServerProps, AppTheoryMcpServerRouteInventory, AppTheoryMcpServerStageOptions, AppTheoryMcpSessionStateOptions, AppTheoryMediaCdn
 AppTheoryMediaCdnProps, AppTheoryMicrovmController, AppTheoryMicrovmControllerFunctionProps, AppTheoryMicrovmControllerProps, AppTheoryMicrovmControllerStageOptions
 AppTheoryMicrovmHookMode, AppTheoryMicrovmImage, AppTheoryMicrovmImageBuildHooks, AppTheoryMicrovmImageCloudWatchLogging, AppTheoryMicrovmImageCodeArtifact
 AppTheoryMicrovmImageCpuArchitecture, AppTheoryMicrovmImageCpuConfiguration, AppTheoryMicrovmImageEnvironmentVariable, AppTheoryMicrovmImageHooks, AppTheoryMicrovmImageLogging

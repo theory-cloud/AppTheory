@@ -470,10 +470,10 @@ here for operators who need implementation-level details:
   authenticated while registering request-host-derived RFC 9728 discovery with public SecureApp posture. Canonical
   paths are exported as `MCPPath`, `OAuthProtectedResourcePath`, `OAuthProtectedResourceMCPPath`, and
   `OAuthAuthorizationServerMCPPath`. `NormalizeRequestOrigin` is the shared fail-closed request-origin normalizer.
-- `runtime/mcproutes`: the additive `m17.mcp-route-algebra/v1` contract. `EndpointPath`, `ParseMCPPath`, the
+- `runtime/mcproutes`: the `m17.mcp-route-algebra/v1` contract. `EndpointPath`, `ParseMCPPath`, the
   `SupportedEndpointTemplates`, `SupportedOAuthFacadeTemplates`, and `SupportedOAuthDiscoveryTemplates` enumerations,
   and pure protected-resource/authorization-server derivations define the namespace, partner-namespace, agent, and
-  partner-agent golden path without rewiring the existing OAuth or CDK construct surfaces. `ParamClientNamespace`,
+  partner-agent golden path consumed by both `AppTheoryMcpServer` and `runtime/mcpfacade`. `ParamClientNamespace`,
   `ParamPartnerID`, and `ParamAgentID` pin the canonical router parameter names used by those templates.
 - `runtime/mcpfacade`: the Go composition helper over that contract. `RegisterMCPFacade` accepts `FacadeConfig`,
   registers the four MCP method families and both OAuth metadata documents, and returns a versioned `RouteInventory`.
@@ -495,8 +495,9 @@ Remote MCP auth hardening notes:
 - Invalid-audience bearer tokens are intentionally fixture-pinned as authorization failures: AppTheory returns
   `403 app.forbidden` without a `WWW-Authenticate` challenge, matching insufficient-scope denial so a token bound to
   another resource is not treated as a rediscovery prompt. Missing or expired bearers remain `401` challenge cases.
-- Namespace deployments use `AppTheoryMcpServer` with `oauth.RegisterMCPServer`. Protected resource hosts are derived
-  from each request; neither CDK nor `MCPServerConfig` accepts a protected-resource origin.
+- Namespace deployments use attach-first `AppTheoryMcpServer` with `mcpfacade.RegisterMCPFacade`. The construct
+  derives every API Gateway route through `AppTheoryMcpRouteAlgebra`; issuer, JWKS, scopes, URL mode, and handlers stay
+  in explicit `FacadeConfig`. Neither CDK nor the helper accepts a protected-resource origin as route configuration.
 
 Related canonical integration guides:
 
@@ -507,6 +508,7 @@ Related canonical integration guides:
 - [MCP Method Surface](./integrations/mcp.md)
 - [MCP Route Algebra](./features/mcp-route-algebra.md)
 - [Go MCP Facade Helper](./features/mcp-facade-helper.md)
+- [MCP Server Facade Construct](./features/mcp-server-construct.md)
 
 ## CDK construct overview
 
@@ -517,6 +519,7 @@ includes:
 - `AppTheoryRestApi`
 - `AppTheoryRestApiRouter`
 - `AppTheoryMcpServer`
+- `AppTheoryMcpRouteAlgebra`
 - `AppTheoryMcpPaths`
 - `AppTheoryRemoteMcpServer`
 - `AppTheoryMcpProtectedResource` (deprecated URL-valued static-document props)

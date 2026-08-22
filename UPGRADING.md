@@ -53,26 +53,39 @@ The CDK TypeScript library, jsii metadata, and generated Go bindings must come f
 Release so this validation and default stay aligned; do not mix `cdk/lib`, `.jsii`, or `cdk-go` artifacts across
 versions.
 
-### Namespace MCP server construct and static discovery deprecation
+### MCP server facade redesign and A6 deprecation
 
-Starting in v3.1.0, `AppTheoryMcpServer` owns the namespace MCP route bundle. Existing callers that omit
-`authorizationServerIssuer` and `jwksUri` keep the previous POST-only AgentCore template. Namespace applications
-should supply both props and register their Go handler through `oauth.RegisterMCPServer`; this produces an
-authenticated MCP route and public runtime-served RFC 9728 discovery routes. `mcpPath` is a literal synthesis-time
-path and defaults to `/mcp`.
+The next v3 minor redesigns `AppTheoryMcpServer` around the route-algebra facade. The default changes intentionally:
 
-The namespace surface does not accept a protected-resource URL or origin. Discovery derives the resource host from
-each normalized request, while issuer and JWKS values are forwarded to the Lambda as runtime install config. Do not
-recreate a resource origin from API Gateway tokens at synthesis.
+- the default route family is the four canonical parameterized MCP patterns rather than singleton `POST /mcp`;
+- `POST`, `GET`, and `DELETE` MCP transport plus protected-resource, canonical/suffix discovery, authorize, and token
+  routes are wired by default;
+- the session table defaults on with retain semantics, and owned APIs default access logging and throttling on;
+- omitting issuer/JWKS no longer means unauthenticated MCP; use `unauthenticatedMcp: true` for the validated no-facade
+  opt-out;
+- issuer/JWKS are no longer injected into `APPTHEORY_MCP_*` environment variables. Configure the explicit Go
+  `mcpfacade.FacadeConfig`, including per-kind scopes and application-owned authorize/token handlers.
 
-The URL-valued `resource` and `authorizationServers` props on `AppTheoryMcpProtectedResource` are deprecated. The
-construct remains supported for existing synth-time-static REST API documents, and its optional `metadataPath` prop
-can select a literal static route without deriving that route from `resource`. This is a compatibility escape hatch,
-not the namespace deployment path. Migrate namespace applications to `AppTheoryMcpServer` plus
-`oauth.RegisterMCPServer`; no removal version is scheduled for the compatibility construct in the v3 line.
+Attach mode is now primary. Pass `api: IHttpApi` to add the complete family to a shared HTTP API without creating an
+`AWS::ApiGatewayV2::Api`. The supplied API owns its stage, access logs, throttling, domain, CDN, and public authority;
+therefore `ownedApi` and the deprecated `apiName`, `domain`, and `stage` props fail synthesis in attach mode. Omit `api`
+for the standalone specialization and configure those resources under `ownedApi`.
 
-Regenerate or consume matching jsii and `cdk-go` bindings when adopting this surface. `AppTheoryMcpPaths` exports the
-canonical CDK path set, and `runtime/oauth` exports the matching Go constants.
+Every v3.1.x A6 prop except `handler` is deprecated in place: move `mcpPath` to `routeFamily.patterns`, `apiName` /
+`domain` / `stage` under `ownedApi`, and `enableSessionTable` / `sessionTableName` / `sessionTtlMinutes` under
+`sessionState`. Move `authorizationServerIssuer` and `jwksUri` into `FacadeConfig.IssuerURL` and `.JWKSURI`. The
+`endpoint`, `mcpPath`, and `protectedResourceMetadataPath` accessors are deprecated in favor of their ordered plural
+forms and `routeInventory`. The `api` accessor remains but is generalized to `IHttpApi`.
+
+`MCP_SESSION_TABLE` and `MCP_SESSION_TTL_MINUTES` remain construct-managed when session state is enabled.
+`MCP_ENDPOINT` is written only in owned mode, where the construct knows the public endpoint it owns. Attach-mode
+applications behind a front door or CDN must configure the correct request-specific bearer challenge in app-owned
+runtime configuration; the construct does not accept an origin prop. Review the complete migration table in
+[the MCP server facade guide](docs/features/mcp-server-construct.md) before upgrading.
+
+`AppTheoryMcpProtectedResource` remains supported only for existing synth-time-static REST API documents. Its
+URL-valued `resource` and `authorizationServers` props stay deprecated; it is not a parallel namespace deployment
+path.
 
 ### Governed namespace install parameters
 

@@ -36,13 +36,13 @@ decisions:
   choose_mcp_deployment_shape:
     question: "Which MCP deployment shape should I choose?"
     decision_tree:
-      - condition: "The client is Bedrock AgentCore or another POST-only MCP caller."
-        check: "Do you only need the simpler HTTP API v2 edge and not Streamable HTTP replay semantics?"
+      - condition: "The application serves the AppTheory route-algebra MCP facade on HTTP API v2."
+        check: "Does it attach to a shared front door or own the standalone API specialization?"
         if_yes:
           choice: "Use AppTheoryMcpServer"
-          reason: "It provisions the AgentCore-oriented POST /mcp edge with optional session storage and domain mapping."
+          reason: "It derives the complete route family, defaults auth/session/logging/throttling on, and supports both attach and owned modes."
           example: |
-            new AppTheoryMcpServer(this, "McpServer", { handler })
+            new AppTheoryMcpServer(this, "McpServer", { handler, api: publicHttpApi })
         if_no:
           choice: "Use AppTheoryRemoteMcpServer plus AppTheoryMcpProtectedResource"
           reason: "Claude Remote MCP needs Streamable HTTP POST/GET/DELETE, OAuth protected-resource discovery, and a streaming-capable REST API v1 edge."
