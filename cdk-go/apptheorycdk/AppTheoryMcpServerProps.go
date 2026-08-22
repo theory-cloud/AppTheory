@@ -18,6 +18,14 @@ type AppTheoryMcpServerProps struct {
 	Api awsapigatewayv2.IHttpApi `field:"optional" json:"api" yaml:"api"`
 	// Deprecated: Use `ownedApi.apiName`.
 	ApiName *string `field:"optional" json:"apiName" yaml:"apiName"`
+	// Stage name used when deriving attach-mode execute-api endpoint templates.
+	//
+	// Use `$default` for the API Gateway default stage. When omitted, the stage
+	// is not determinable and the templates retain the bare execute-api origin.
+	// This prop does not create, import, or mutate a stage.
+	// Default: undefined.
+	//
+	AttachedApiStageName *string `field:"optional" json:"attachedApiStageName" yaml:"attachedApiStageName"`
 	// Authorization-server issuer from the v3.1.x A6 environment contract.
 	// Deprecated: Configure `runtime/mcpfacade.FacadeConfig.IssuerURL` in the
 	// application. The construct no longer injects issuer environment values.

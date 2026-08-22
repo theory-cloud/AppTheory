@@ -81,6 +81,13 @@ deprecated top-level `apiName`, `domain`, and `stage` props, are invalid with `a
 prop. This is the topology needed for a control plane such as `theory-mcp-server`, where MCP, OAuth, downloads,
 webhooks, and control-plane routes share one front door.
 
+Attach-mode `endpoint` and `endpoints` values are execute-api origin templates, not declarations of that public
+authority. The construct derives their origin from `api.apiId`, the stack region, and the AWS URL suffix; it never
+consults an `apiEndpoint` supplied through `HttpApi.fromHttpApiAttributes`. Set `attachedApiStageName` when the intended
+stage is known so a non-`$default` stage such as `prod` appears in each template. If the stage is not supplied, the
+construct cannot determine it and retains the bare execute-api origin. This accessor behavior does not change the
+front door's ownership of its public URL.
+
 Owned mode is the standalone specialization. Omit `api` and optionally configure `ownedApi`:
 
 ```ts
@@ -93,8 +100,10 @@ new AppTheoryMcpServer(this, "StandaloneMcp", {
 });
 ```
 
-Only owned mode may configure a custom domain or stage. `endpoints` returns one execute-api or owned-domain template per
-family member; parameterized values remain templates until request time.
+Only owned mode may create or configure a custom domain or stage. `attachedApiStageName` only identifies an existing
+attach-mode stage for endpoint-template derivation; it does not create, import, or mutate that stage. `endpoints`
+returns one execute-api or owned-domain template per family member; parameterized values remain templates until
+request time.
 
 ## Authenticated by default
 

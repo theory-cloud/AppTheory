@@ -73,6 +73,7 @@ test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL author
     AppTheoryMcpServerProps: [
       "api",
       "apiName",
+      "attachedApiStageName",
       "authorizationServerIssuer",
       "domain",
       "enableSessionTable",
@@ -157,6 +158,61 @@ test("AppTheoryMcpServer attach mode synthesizes an API imported by id only", ()
   assert.equal(resourcesOfType(template, "AWS::ApiGatewayV2::Api").length, 0);
   assert.deepEqual(routeKeys(template), fixtureRouteKeys());
   assert.equal(server.endpoints.length, fixture.routes.length);
+});
+
+test("AppTheoryMcpServer attach mode includes a known foreign API stage in endpoint templates", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "StagedAttachStack", {
+    env: { account: "123456789012", region: "us-east-1" },
+  });
+  const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
+    httpApiId: "abc123",
+    apiEndpoint: "https://frontdoor.example.com",
+  });
+  const server = new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack),
+    api: importedApi,
+    attachedApiStageName: "prod",
+    sessionState: { enabled: false },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(resourcesOfType(template, "AWS::ApiGatewayV2::Api").length, 0);
+  assert.deepEqual(routeKeys(template), fixtureRouteKeys());
+  assert.match(
+    server.endpoints[0],
+    /^https:\/\/abc123\.execute-api\.us-east-1\.[^/]+\/prod\/\{client_namespace\}\/mcp$/,
+  );
+  assert.ok(!server.endpoints[0].includes("frontdoor.example.com"));
+});
+
+test("AppTheoryMcpServer fails closed on an indeterminate attached API stage", () => {
+  {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "OwnedAttachedStageStack");
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        attachedApiStageName: "prod",
+      }),
+      /attachedApiStageName requires attach mode with api/,
+    );
+  }
+  for (const [index, stageName] of ["prod/path", cdk.Fn.ref("StageName")].entries()) {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, `InvalidAttachedStageStack${index}`);
+    const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
+      httpApiId: "abc123",
+    });
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        api: importedApi,
+        attachedApiStageName: stageName,
+      }),
+      /attachedApiStageName must be a synthesis-time literal API Gateway stage name/,
+    );
+  }
 });
 
 test("AppTheoryMcpServer derives every facade route for parameterized family members through the algebra", () => {
@@ -454,6 +510,13 @@ test("AppTheoryMcpServer v3.1.x A6 props and accessors carry migration notices",
     assert.equal(accessors.get(name)?.docs?.stability, "deprecated", `${name} stability`);
     assert.match(accessors.get(name)?.docs?.deprecated ?? "", /Use/, `${name} migration pointer`);
   }
+  for (const name of ["endpoint", "endpoints"]) {
+    assert.match(
+      accessors.get(name)?.docs?.remarks ?? "",
+      /apiEndpoint.*never consulted/s,
+      `${name} attach-mode apiEndpoint behavior`,
+    );
+  }
 });
 
 test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => {
@@ -480,6 +543,8 @@ test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => 
     /routeFamily:\s*\{\s*patterns:\s*\[\s*["']\/mcp["']\s*\]\s*\}/s,
     "the shipped guide must not pair the canonical-only helper with a singleton family",
   );
+  assert.match(guide, /never\s+consults an `apiEndpoint` supplied through `HttpApi\.fromHttpApiAttributes`/s);
+  assert.match(guide, /Set `attachedApiStageName`.*non-`\$default` stage.*appears in each template/s);
 
   const agentCoreGuides = [
     "../../docs/integrations/agentcore-mcp.md",

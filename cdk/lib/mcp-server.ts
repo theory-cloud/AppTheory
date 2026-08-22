@@ -155,6 +155,15 @@ export interface AppTheoryMcpServerProps {
   readonly api?: apigwv2.IHttpApi;
 
   /**
+   * Stage name used when deriving attach-mode execute-api endpoint templates.
+   * Use `$default` for the API Gateway default stage. When omitted, the stage
+   * is not determinable and the templates retain the bare execute-api origin.
+   * This prop does not create, import, or mutate a stage.
+   * @default undefined
+   */
+  readonly attachedApiStageName?: string;
+
+  /**
    * Ordered MCP route family.
    *
    * Go `runtime/mcpfacade.RegisterMCPFacade` serves only the canonical default
@@ -247,12 +256,29 @@ export class AppTheoryMcpServer extends Construct {
   public readonly api: apigwv2.IHttpApi;
   public readonly ownedApi?: apigwv2.HttpApi;
   public readonly sessionTable?: dynamodb.ITable;
+  /**
+   * Derived endpoint templates for the ordered MCP route family.
+   *
+   * In attach mode these are execute-api origin templates, not declarations of
+   * public authority. An `apiEndpoint` supplied through
+   * `HttpApi.fromHttpApiAttributes` is never consulted; the origin is derived
+   * from `apiId`, the stack region and URL suffix, plus
+   * `attachedApiStageName` when supplied.
+   */
   public readonly endpoints: string[];
   public readonly mcpPaths: string[];
   public readonly protectedResourceMetadataPaths: string[];
   public readonly routeInventory: AppTheoryMcpServerRouteInventory;
 
-  /** @deprecated Use `endpoints`. */
+  /**
+   * First derived endpoint template.
+   *
+   * In attach mode an `apiEndpoint` supplied through
+   * `HttpApi.fromHttpApiAttributes` is never consulted. This value is an
+   * execute-api origin template derived by the same rules as `endpoints`, not
+   * the front door's public authority.
+   * @deprecated Use `endpoints`.
+   */
   public readonly endpoint: string;
 
   /** @deprecated Use `mcpPaths`. */
@@ -394,7 +420,10 @@ export class AppTheoryMcpServer extends Construct {
       endpointBase = `https://${ownedOptions.domain.domainName}`;
     } else if (props.api) {
       const stack = Stack.of(this);
-      endpointBase = `https://${this.api.apiId}.execute-api.${stack.region}.${stack.urlSuffix}`;
+      const executeApiOrigin = `https://${this.api.apiId}.execute-api.${stack.region}.${stack.urlSuffix}`;
+      endpointBase = props.attachedApiStageName === undefined || props.attachedApiStageName === "$default"
+        ? executeApiOrigin
+        : `${executeApiOrigin}/${props.attachedApiStageName}`;
     } else {
       endpointBase = ownedStageName === "$default"
         ? this.api.apiEndpoint
@@ -612,7 +641,23 @@ function validateRouteInventory(
 }
 
 function validateOwningMode(props: AppTheoryMcpServerProps): void {
-  if (!props.api) return;
+  if (!props.api) {
+    if (props.attachedApiStageName !== undefined) {
+      throw new Error(
+        "AppTheoryMcpServer: attachedApiStageName requires attach mode with api",
+      );
+    }
+    return;
+  }
+  if (
+    props.attachedApiStageName !== undefined
+    && (Token.isUnresolved(props.attachedApiStageName)
+      || !/^(?:\$default|[A-Za-z0-9_-]{1,128})$/.test(props.attachedApiStageName))
+  ) {
+    throw new Error(
+      "AppTheoryMcpServer: attachedApiStageName must be a synthesis-time literal API Gateway stage name",
+    );
+  }
   const invalid: string[] = [];
   if (props.ownedApi !== undefined) invalid.push("ownedApi");
   if (props.apiName !== undefined) invalid.push("apiName");

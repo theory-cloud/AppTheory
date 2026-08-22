@@ -26,8 +26,21 @@ type AppTheoryMcpServer interface {
 	ApiMapping() awsapigatewayv2.ApiMapping
 	CnameRecord() awsroute53.CnameRecord
 	DomainName() awsapigatewayv2.DomainName
+	// First derived endpoint template.
+	//
+	// In attach mode an `apiEndpoint` supplied through
+	// `HttpApi.fromHttpApiAttributes` is never consulted. This value is an
+	// execute-api origin template derived by the same rules as `endpoints`, not
+	// the front door's public authority.
 	// Deprecated: Use `endpoints`.
 	Endpoint() *string
+	// Derived endpoint templates for the ordered MCP route family.
+	//
+	// In attach mode these are execute-api origin templates, not declarations of
+	// public authority. An `apiEndpoint` supplied through
+	// `HttpApi.fromHttpApiAttributes` is never consulted; the origin is derived
+	// from `apiId`, the stack region and URL suffix, plus
+	// `attachedApiStageName` when supplied.
 	Endpoints() *[]*string
 	// Deprecated: Use `mcpPaths`.
 	McpPath() *string
