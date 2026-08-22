@@ -26,20 +26,11 @@ func TestAuthorizationServerMetadataJSONEndpointFields(t *testing.T) {
 
 	// The default document must stay byte-identical to the pre-948 wire shape:
 	// revocation_endpoint and device_authorization_endpoint are unset and
-	// omitted by omitempty.
+	// omitted by omitempty. Pinned byte-exact, matching mcpfacade's golden
+	// response assertions.
 	b, err := json.Marshal(md)
 	require.NoError(t, err)
-	require.JSONEq(t, `{
-		"issuer": "https://auth.example.com",
-		"authorization_endpoint": "https://auth.example.com/authorize",
-		"token_endpoint": "https://auth.example.com/token",
-		"registration_endpoint": "https://auth.example.com/register",
-		"jwks_uri": "https://auth.example.com/.well-known/jwks.json",
-		"response_types_supported": ["code"],
-		"grant_types_supported": ["authorization_code", "refresh_token"],
-		"token_endpoint_auth_methods_supported": ["none"],
-		"code_challenge_methods_supported": ["S256"]
-	}`, string(b))
+	require.Equal(t, `{"issuer":"https://auth.example.com","authorization_endpoint":"https://auth.example.com/authorize","token_endpoint":"https://auth.example.com/token","registration_endpoint":"https://auth.example.com/register","jwks_uri":"https://auth.example.com/.well-known/jwks.json","response_types_supported":["code"],"grant_types_supported":["authorization_code","refresh_token"],"token_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"]}`, string(b))
 
 	// Set fields appear in the JSON document.
 	md.RevocationEndpoint = "https://auth.example.com/revoke"
@@ -87,6 +78,25 @@ func TestAuthorizationServerMetadataEndpointOptions(t *testing.T) {
 	_, err = NewAuthorizationServerMetadata("https://auth.example.com", WithRevocationEndpoint("not a url"))
 	require.ErrorIs(t, err, ErrInvalidURL)
 	_, err = NewAuthorizationServerMetadata("https://auth.example.com", WithDeviceAuthorizationEndpoint("/device"))
+	require.ErrorIs(t, err, ErrInvalidURL)
+
+	// nil options are skipped, matching the repo's option-loop idiom
+	// (runtime/apptheory.go, runtime/serve.go); the real options still apply.
+	md, err = NewAuthorizationServerMetadata(
+		"https://auth.example.com",
+		nil,
+		WithRevocationEndpoint(),
+		nil,
+		WithDeviceAuthorizationEndpoint(),
+	)
+	require.NoError(t, err)
+	require.Equal(t, "https://auth.example.com/revoke", md.RevocationEndpoint)
+	require.Equal(t, "https://auth.example.com/device", md.DeviceAuthorizationEndpoint)
+
+	// More than one explicit URL is rejected rather than silently dropped.
+	_, err = NewAuthorizationServerMetadata("https://auth.example.com", WithRevocationEndpoint("https://auth.example.com/revoke", "https://auth.example.com/revoke2"))
+	require.ErrorIs(t, err, ErrInvalidURL)
+	_, err = NewAuthorizationServerMetadata("https://auth.example.com", WithDeviceAuthorizationEndpoint("https://auth.example.com/device", "https://auth.example.com/device2"))
 	require.ErrorIs(t, err, ErrInvalidURL)
 }
 

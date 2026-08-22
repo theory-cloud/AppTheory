@@ -56,6 +56,9 @@ func NewAuthorizationServerMetadata(issuer string, opts ...AuthorizationServerMe
 		CodeChallengeMethodsSupported:     []string{"S256"},
 	}
 	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
 		if err := opt(md, &canon); err != nil {
 			return nil, err
 		}
@@ -71,12 +74,16 @@ type AuthorizationServerMetadataOption func(*AuthorizationServerMetadata, *url.U
 
 // WithRevocationEndpoint adds the RFC 8414 revocation_endpoint to the metadata
 // document. With no argument it derives the conventional /revoke path from the
-// issuer base URL; pass an explicit absolute URL to point at a
-// non-conventional path. The framework implements no revocation endpoint, so
-// this option is opt-in: the default document does not advertise one.
+// issuer base URL; pass exactly one explicit absolute URL to point at a
+// non-conventional path. Passing more than one explicit URL is rejected with
+// ErrInvalidURL. The framework implements no revocation endpoint, so this
+// option is opt-in: the default document does not advertise one.
 func WithRevocationEndpoint(explicit ...string) AuthorizationServerMetadataOption {
 	return func(md *AuthorizationServerMetadata, base *url.URL) error {
-		if len(explicit) > 0 {
+		if len(explicit) > 1 {
+			return fmt.Errorf("%w: revocation endpoint accepts at most one explicit URL", ErrInvalidURL)
+		}
+		if len(explicit) == 1 {
 			u, ok := parseAbsoluteURL(explicit[0])
 			if !ok {
 				return fmt.Errorf("%w: revocation endpoint must be an absolute URL", ErrInvalidURL)
@@ -91,12 +98,16 @@ func WithRevocationEndpoint(explicit ...string) AuthorizationServerMetadataOptio
 
 // WithDeviceAuthorizationEndpoint adds the RFC 8628 device_authorization_endpoint
 // to the metadata document. With no argument it derives the conventional
-// /device path from the issuer base URL; pass an explicit absolute URL to point
-// at a non-conventional path. The framework implements no device-flow endpoint,
+// /device path from the issuer base URL; pass exactly one explicit absolute URL
+// to point at a non-conventional path. Passing more than one explicit URL is
+// rejected with ErrInvalidURL. The framework implements no device-flow endpoint,
 // so this option is opt-in: the default document does not advertise one.
 func WithDeviceAuthorizationEndpoint(explicit ...string) AuthorizationServerMetadataOption {
 	return func(md *AuthorizationServerMetadata, base *url.URL) error {
-		if len(explicit) > 0 {
+		if len(explicit) > 1 {
+			return fmt.Errorf("%w: device authorization endpoint accepts at most one explicit URL", ErrInvalidURL)
+		}
+		if len(explicit) == 1 {
 			u, ok := parseAbsoluteURL(explicit[0])
 			if !ok {
 				return fmt.Errorf("%w: device authorization endpoint must be an absolute URL", ErrInvalidURL)
