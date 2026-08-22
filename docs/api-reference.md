@@ -557,14 +557,14 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1048 exported top-level symbols</summary>
+<summary>1051 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins, APIGatewayV2Request
 App, AppError, AppSyncContext, AppSyncEvent, AppSyncEventOptions, AppSyncResolverEvent, AppSyncResolverInfo
 AppSyncResolverRequest, AppTheoryError, AppTheoryErrorFromAppError, AsAppTheoryError, AssertError, AssertHasTools
 AssertToolResult, AtomicRateLimiter, AuthContext, Authenticated, AuthenticatedAnyOf, AuthHook, AuthorizationCodeRecord
-AuthorizationCodeStore, AuthorizationServerMetadata, AuthorizationServerMetadataHandler, AuthorizeOptions, AuthPosture
+AuthorizationCodeStore, AuthorizationServerMetadata, AuthorizationServerMetadataHandler, AuthorizationServerMetadataOption, AuthorizeOptions, AuthPosture
 AuthPostureAuthenticated, AuthPostureAuthenticatedAnyOf, AuthPostureInternalOnly, AuthPostureKind, AuthPostureOptional, AuthPosturePublic
 AuthPrincipal, AWSLambdaMicroVMProvider, AWSLambdaMicroVMProviderID, AWSLambdaMicroVMProviderOption, BaseName
 BearerTokenClaims, BearerTokenClaimsFromContext, BearerTokenClaimsValidator, BearerTokenFromHeaders, BearerTokenRecord
@@ -727,12 +727,12 @@ WebSocketEventOptions, WebSocketHandler, WindowConfig, WindowLimit, WithAPI, Wit
 WithAWSConfig, WithAWSLambdaMicroVMClock, WithAWSLambdaMicroVMRegion, WithCacheableResultConfig, WithCapabilityConfig
 WithClock, WithCompletionHooks, WithControllerClock, WithControllerDeploymentDefaults, WithControllerExecutionRoleArn
 WithControllerID, WithControllerIDGenerator, WithControllerLogging, WithControllerProviderID, WithControllerSessionTTL
-WithCORS, WithEMFClock, WithEMFNamespace, WithEMFService, WithEMFWriter, WithEnvironmentErrorNotifications
+WithCORS, WithDeviceAuthorizationEndpoint, WithEMFClock, WithEMFNamespace, WithEMFService, WithEMFWriter, WithEnvironmentErrorNotifications
 WithErrorNotifier, WithExtensionCapabilities, WithHTTPErrorFormat, WithIdentifier, WithIDGenerator
 WithInitialSessionListenerBudget, WithLegacyHTTPErrorShape, WithLifecycleContract, WithLifecycleHandler, WithLimits
 WithLogger, WithLoggingLevelHook, WithObservability, WithOriginValidator, WithPolicyHook, WithProfileClock
 WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter, WithRegistryClientTTL, WithResourceSubscriptionHooks
-WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata, WithSessionReconstructionClock
+WithRevocationEndpoint, WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata, WithSessionReconstructionClock
 WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamIDGenerator, WithStreamStore, WithTaskRuntime
 WithTier, WithToolContextHook, WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured,
