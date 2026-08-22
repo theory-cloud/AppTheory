@@ -3291,6 +3291,7 @@ type Server struct {
 	loggingLevelHook        LoggingLevelHook
 	promptCompletionHook    CompletionHook
 	resourceCompletionHook  CompletionHook
+	toolContextHook         ToolContextHook
 	taskRuntime             taskRuntimeConfig
 	taskExecutions          *taskExecutionTracker
 
@@ -3404,6 +3405,8 @@ type ToolAnnotations struct {
 	IdempotentHint  *bool  `json:"idempotentHint,omitempty"`
 	OpenWorldHint   *bool  `json:"openWorldHint,omitempty"`
 }
+
+type ToolContextHook func(*apptheory.Context, context.Context) context.Context
 
 type ToolDef struct {
 	Name        string           `json:"name"`
@@ -3549,6 +3552,8 @@ func WithStreamIDGenerator(apptheory.IDGenerator) MemoryStreamStoreOption
 func WithStreamStore(StreamStore) ServerOption
 
 func WithTaskRuntime(TaskRuntimeOptions) ServerOption
+
+func WithToolContextHook(ToolContextHook) ServerOption
 
 func WrapStreamingTool[Args any](
 	ToolLifecycleOptions[Args],
@@ -4878,6 +4883,8 @@ type AuthorizationServerMetadata struct {
 	TokenEndpoint                     string   `json:"token_endpoint,omitempty"`
 	RegistrationEndpoint              string   `json:"registration_endpoint,omitempty"`
 	JWKSURI                           string   `json:"jwks_uri,omitempty"`
+	RevocationEndpoint                string   `json:"revocation_endpoint,omitempty"`
+	DeviceAuthorizationEndpoint       string   `json:"device_authorization_endpoint,omitempty"`
 	ResponseTypesSupported            []string `json:"response_types_supported,omitempty"`
 	GrantTypesSupported               []string `json:"grant_types_supported,omitempty"`
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported,omitempty"`
@@ -4886,6 +4893,8 @@ type AuthorizationServerMetadata struct {
 	SubjectTypesSupported             []string `json:"subject_types_supported,omitempty"`
 	IDTokenSigningAlgValuesSupported  []string `json:"id_token_signing_alg_values_supported,omitempty"`
 }
+
+type AuthorizationServerMetadataOption func(*AuthorizationServerMetadata, *url.URL) error
 
 type BearerTokenClaims struct {
 	Subject   string
@@ -4997,7 +5006,7 @@ func CanonicalizeIssuerURL(string) (string, bool)
 
 func ClaudeDynamicClientRegistrationPolicy() DynamicClientRegistrationPolicy
 
-func NewAuthorizationServerMetadata(string) (*AuthorizationServerMetadata, error)
+func NewAuthorizationServerMetadata(string, ...AuthorizationServerMetadataOption) (*AuthorizationServerMetadata, error)
 
 func NewMCPProtectedResourceDiscoveryHandler(MCPServerConfig) (apptheory.Handler, error)
 
@@ -5036,6 +5045,10 @@ func ResourceMetadataURLFromMcpEndpoint(string) (string, bool)
 func ValidateDynamicClientRegistrationRequest(*DynamicClientRegistrationRequest, DynamicClientRegistrationPolicy) error
 
 func ValidatePKCECodeVerifier(string) error
+
+func WithDeviceAuthorizationEndpoint(...string) AuthorizationServerMetadataOption
+
+func WithRevocationEndpoint(...string) AuthorizationServerMetadataOption
 
 func (*AuthorizationServerMetadata) MarshalJSONBytes() ([]byte, error)
 

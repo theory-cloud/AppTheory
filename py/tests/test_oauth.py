@@ -124,6 +124,40 @@ class OAuthRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             new_authorization_server_metadata("not-a-url")
 
+    def test_authorization_server_metadata_endpoint_options(self) -> None:
+        default = new_authorization_server_metadata("https://auth.example.com/base/path")
+        self.assertNotIn("revocation_endpoint", default.to_json())
+        self.assertNotIn("device_authorization_endpoint", default.to_json())
+
+        derived = new_authorization_server_metadata(
+            "https://auth.example.com/base/path",
+            revocation_endpoint=True,
+            device_authorization_endpoint=True,
+        )
+        self.assertEqual(derived.revocation_endpoint, "https://auth.example.com/base/path/revoke")
+        self.assertEqual(derived.device_authorization_endpoint, "https://auth.example.com/base/path/device")
+        self.assertEqual(derived.to_json()["revocation_endpoint"], "https://auth.example.com/base/path/revoke")
+        self.assertEqual(
+            derived.to_json()["device_authorization_endpoint"],
+            "https://auth.example.com/base/path/device",
+        )
+
+        explicit = new_authorization_server_metadata(
+            "https://auth.example.com",
+            revocation_endpoint="https://auth.example.com/oauth/revoke",
+            device_authorization_endpoint="https://device.example.com/device_authorization",
+        )
+        self.assertEqual(explicit.revocation_endpoint, "https://auth.example.com/oauth/revoke")
+        self.assertEqual(
+            explicit.device_authorization_endpoint,
+            "https://device.example.com/device_authorization",
+        )
+
+        with self.assertRaises(ValueError):
+            new_authorization_server_metadata("https://auth.example.com", revocation_endpoint="not a url")
+        with self.assertRaises(ValueError):
+            new_authorization_server_metadata("https://auth.example.com", device_authorization_endpoint="/device")
+
     def test_bearer_middleware_distinguishes_unauthorized_and_forbidden(self) -> None:
         validator = new_memory_bearer_token_validator(
             [

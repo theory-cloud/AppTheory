@@ -33,6 +33,7 @@ AuthPostureKind	type
 Authenticated	function
 AuthenticatedAnyOf	function
 AuthorizationServerMetadata	interface
+AuthorizationServerMetadataOptions	interface
 BearerTokenClaims	interface
 BearerTokenClaimsValidator	type
 BearerTokenRecord	interface

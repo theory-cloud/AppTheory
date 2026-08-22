@@ -509,6 +509,23 @@ srv := mcp.NewServer("my-mcp-server", "dev",
 specific reference type has no configured hook, AppTheory returns JSON-RPC invalid params instead of broadening to a
 fallback hook.
 
+Tool context hook:
+
+```go
+srv := mcp.NewServer("my-mcp-server", "dev",
+  mcp.WithToolContextHook(func(c *apptheory.Context, ctx context.Context) context.Context {
+    return context.WithValue(ctx, principalKey{}, c.Get("principal"))
+  }),
+)
+```
+
+Tool handlers only receive a `context.Context`, so authenticated middleware has no supported way to make the request
+principal visible to them through `apptheory.Context` alone. `WithToolContextHook` installs an opt-in hook that derives
+the stdlib context handed to method handlers from the request's `*apptheory.Context`. It runs once per `POST /mcp`
+request, after origin and header validation, and reaches both the buffered `tools/call` path and the streaming
+`tools/call` path, plus task-augmented and batch invocations. A nil hook result keeps the original context, and without
+the option handlers receive the unmodified request context.
+
 ---
 
 ## Tools
