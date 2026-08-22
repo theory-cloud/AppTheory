@@ -12,7 +12,10 @@ AppTheory provides two building blocks:
 - **Runtime (Go):** `github.com/theory-cloud/apptheory/v3/runtime/mcp` — a dual-version MCP JSON-RPC handler
   (`server/discover`, `initialize`, `tools/*`, plus optional `resources/*` and `prompts/*`), registries, sessions, and
   optional SSE progress streaming.
-- **CDK (TypeScript/Python):** `AppTheoryMcpServer` — an API Gateway v2 HTTP API with `POST /mcp` → Lambda, optional session table, optional custom domain, and optional stage logging/throttling.
+- **CDK (TypeScript/Python):** `AppTheoryMcpServer` — an API Gateway v2 route-family facade. Its default is the
+  canonical four-kind family with MCP `POST`/`GET`/`DELETE` plus the full OAuth facade. AgentCore's singleton shape is
+  an explicit specialization. Session state is on by default and configured through `sessionState`; owned domains and
+  stages are configured under `ownedApi`.
 
 For the full MCP method surface (including `resources/*` and `prompts/*`), see `docs/integrations/mcp.md`.
 
@@ -23,14 +26,16 @@ If you’re trying to answer “what do I deploy and what code do I write?”, s
 ## What you deploy (high level)
 
 ```
-Bedrock AgentCore  ──HTTP POST /mcp──>  API Gateway (HTTP API)  ──>  Lambda (Go)
-                                                              └──>  AppTheory route POST /mcp
-                                                                   └──> MCP server (tools registry)
+Bedrock AgentCore  ──HTTP POST /mcp──>  explicit singleton route family  ──>  Lambda (Go)
+                                                                           └──>  app.Post("/mcp", ...)
+                                                                                 └──> MCP server (tools registry)
 ```
 
 Key details:
 
-- The MCP endpoint is **`POST /mcp`**.
+- AgentCore calls **`POST /mcp`** only when the deployment explicitly selects `routeFamily: { patterns: ["/mcp"] }`.
+- This noncanonical family requires application-owned runtime registration. `runtime/mcpfacade.RegisterMCPFacade` serves
+  only the canonical four-pattern family and cannot be configured as the singleton runtime counterpart.
 - The payload is **JSON-RPC 2.0** (`jsonrpc: "2.0"`) with an `id`, `method`, and optional `params`.
 - Existing `2025-11-25` clients initialize and track session state with **`Mcp-Session-Id`**.
 - Final `2026-07-28` clients use stateless POST requests and do not initialize or send a session id.
@@ -41,7 +46,8 @@ Key details:
 
 ## Quick start (Go runtime)
 
-Deploy an HTTP API with `POST /mcp` and point AgentCore at the resulting `/mcp` URL.
+Deploy the explicit singleton route family described below, register `POST /mcp` in the application, and point
+AgentCore at the resulting `/mcp` URL.
 
 ```go
 package main
@@ -105,7 +111,21 @@ func main() {
 
 ## Deploy with AppTheory CDK (`AppTheoryMcpServer`)
 
-Use the CDK construct to provision the HTTP API + `POST /mcp` route + optional session table and domain.
+Use an explicit noncanonical family for the application-owned `POST /mcp` registration shown above:
+
+```ts
+const mcp = new AppTheoryMcpServer(this, "McpServer", {
+  handler,
+  routeFamily: { patterns: ["/mcp"] },
+  // No OAuth facade is deployed; authentication remains application-owned.
+  unauthenticatedMcp: true,
+});
+```
+
+The construct wires the MCP transport methods for `/mcp`; AgentCore uses `POST`, and the application registers the
+matching runtime handler. If a singleton deployment needs the full OAuth facade instead, omit `unauthenticatedMcp`
+and register every derived `routeInventory` entry in application code. Do not use `RegisterMCPFacade`: it serves only
+the canonical default family.
 
 See: `docs/cdk/mcp-server-agentcore.md`.
 
@@ -122,7 +142,7 @@ AppTheory’s MCP server implements these JSON-RPC methods:
 
 AgentCore typically uses only the tools surface. AppTheory also supports additional MCP methods for non-AgentCore clients (`resources/*`, `prompts/*`) — see `docs/integrations/mcp.md`.
 
-AppTheory serves two protocol shapes through the same `POST /mcp` route:
+The application-owned singleton handler above serves two protocol shapes through its `POST /mcp` registration:
 
 | Protocol | Client behavior |
 | --- | --- |
@@ -254,7 +274,7 @@ func buildMcpServerWithDynamoSessions() (*mcp.Server, error) {
 
 Notes:
 
-- If you deploy the CDK `enableSessionTable` option, the construct sets `MCP_SESSION_TABLE` and grants read/write permissions.
+- If you deploy with `sessionState.enabled`, the construct sets `MCP_SESSION_TABLE` and grants read/write permissions.
 - Your code still needs to choose the Dynamo-backed store (`NewDynamoSessionStore`) to actually persist sessions.
 
 ---
@@ -361,7 +381,8 @@ server successfully.
 
 ### 404 / “not found”
 
-- Ensure the deployed route is **`POST /mcp`**.
+- Ensure the construct selects `routeFamily: { patterns: ["/mcp"] }` and the application registers
+  `app.Post("/mcp", ...)`.
 - If you’re not using a custom domain and your stage name is not `$default`, the URL is:
   - `https://{apiId}.execute-api.{region}.amazonaws.com/{stageName}/mcp`
 

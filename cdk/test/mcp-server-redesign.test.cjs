@@ -480,4 +480,37 @@ test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => 
     /routeFamily:\s*\{\s*patterns:\s*\[\s*["']\/mcp["']\s*\]\s*\}/s,
     "the shipped guide must not pair the canonical-only helper with a singleton family",
   );
+
+  const agentCoreGuides = [
+    "../../docs/integrations/agentcore-mcp.md",
+    "../../docs/cdk/mcp-server-agentcore.md",
+    "../docs/mcp-server-agentcore.md",
+  ].map((relativePath) => fs.readFileSync(path.resolve(__dirname, relativePath), "utf8"));
+  for (const agentCoreGuide of agentCoreGuides) {
+    assert.match(agentCoreGuide, /application-owned runtime registration/);
+    assert.match(agentCoreGuide, /RegisterMCPFacade`\s+serves\s+only the canonical four-pattern\s+family/s);
+    assert.doesNotMatch(agentCoreGuide, /\b(?:authorizationServerIssuer|jwksUri)\s*:/);
+
+    const constructBlocks = [...agentCoreGuide.matchAll(/```(?:ts|py)\n([\s\S]*?)```/g)]
+      .map((match) => match[1])
+      .filter((block) => block.includes("AppTheoryMcpServer"));
+    assert.ok(constructBlocks.length > 0, "AgentCore guides must show an explicit singleton construct");
+    for (const block of constructBlocks) {
+      assert.match(block, /(?:routeFamily|route_family)[\s\S]*patterns[\s\S]*["']\/mcp["']/);
+      assert.match(block, /(?:unauthenticatedMcp|unauthenticated_mcp)[\s=:]+true/i);
+    }
+  }
+
+  const corePatterns = fs.readFileSync(path.resolve(__dirname, "../../docs/core-patterns.md"), "utf8");
+  assert.match(
+    corePatterns,
+    /POST-only MCP client[\s\S]*routeFamily[\s\S]*application[\s\S]*RegisterMCPFacade[\s\S]*canonical four-pattern family/,
+  );
+
+  const installParameters = fs.readFileSync(
+    path.resolve(__dirname, "../../docs/features/install-parameters.md"),
+    "utf8",
+  );
+  assert.match(installParameters, /app-owned values into `mcpfacade\.FacadeConfig\.IssuerURL` and `\.JWKSURI`/);
+  assert.doesNotMatch(installParameters, /\b(?:authorizationServerIssuer|jwksUri)\s*:/);
 });
