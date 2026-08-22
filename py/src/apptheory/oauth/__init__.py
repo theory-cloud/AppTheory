@@ -9,7 +9,7 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from apptheory.context import Context
@@ -62,6 +62,8 @@ class AuthorizationServerMetadata:
     token_endpoint: str = ""
     registration_endpoint: str = ""
     jwks_uri: str = ""
+    revocation_endpoint: str = ""
+    device_authorization_endpoint: str = ""
     response_types_supported: list[str] = dataclasses.field(default_factory=list)
     grant_types_supported: list[str] = dataclasses.field(default_factory=list)
     token_endpoint_auth_methods_supported: list[str] = dataclasses.field(default_factory=list)
@@ -77,6 +79,8 @@ class AuthorizationServerMetadata:
             "token_endpoint",
             "registration_endpoint",
             "jwks_uri",
+            "revocation_endpoint",
+            "device_authorization_endpoint",
         ):
             value = getattr(self, key)
             if value:
@@ -177,7 +181,18 @@ def new_protected_resource_metadata(resource: str, authorization_servers: list[s
     return ProtectedResourceMetadata(resource=value, authorization_servers=servers)
 
 
-def new_authorization_server_metadata(issuer: str) -> AuthorizationServerMetadata:
+def new_authorization_server_metadata(
+    issuer: str,
+    *,
+    revocation_endpoint: str | Literal[True] | None = None,
+    device_authorization_endpoint: str | Literal[True] | None = None,
+) -> AuthorizationServerMetadata:
+    """Build the RFC 8414 document; pass True to derive the conventional
+    /revoke or /device path, or an absolute URL to set it explicitly.
+
+    Absent (None) leaves the member unset so the default document never
+    advertises endpoints the framework does not implement.
+    """
     parsed = urlparse(str(issuer or "").strip())
     if not parsed.scheme or not parsed.netloc:
         raise ValueError(f"{ERR_INVALID_URL}: issuer must be an absolute URL")
@@ -188,7 +203,7 @@ def new_authorization_server_metadata(issuer: str) -> AuthorizationServerMetadat
         joined = _join_url_path(p.path, suffix)
         return p._replace(path=joined, params="", query="", fragment="").geturl()
 
-    return AuthorizationServerMetadata(
+    metadata = AuthorizationServerMetadata(
         issuer=canonical,
         authorization_endpoint=endpoint("/authorize"),
         token_endpoint=endpoint("/token"),
@@ -199,6 +214,19 @@ def new_authorization_server_metadata(issuer: str) -> AuthorizationServerMetadat
         token_endpoint_auth_methods_supported=["none"],
         code_challenge_methods_supported=["S256"],
     )
+    if revocation_endpoint is True:
+        metadata.revocation_endpoint = endpoint("/revoke")
+    elif revocation_endpoint is not None:
+        if not isinstance(revocation_endpoint, str) or not _is_absolute_url(revocation_endpoint):
+            raise ValueError(f"{ERR_INVALID_URL}: revocation endpoint must be an absolute URL")
+        metadata.revocation_endpoint = revocation_endpoint.strip()
+    if device_authorization_endpoint is True:
+        metadata.device_authorization_endpoint = endpoint("/device")
+    elif device_authorization_endpoint is not None:
+        if not isinstance(device_authorization_endpoint, str) or not _is_absolute_url(device_authorization_endpoint):
+            raise ValueError(f"{ERR_INVALID_URL}: device authorization endpoint must be an absolute URL")
+        metadata.device_authorization_endpoint = device_authorization_endpoint.strip()
+    return metadata
 
 
 def protected_resource_metadata_handler(metadata: ProtectedResourceMetadata):
