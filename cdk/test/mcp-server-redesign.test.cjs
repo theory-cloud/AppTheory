@@ -471,6 +471,36 @@ for (const item of [
     error: /authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment/,
   },
   {
+    name: "issuer URL with empty userinfo",
+    authorizationServerIssuer: "https://@auth.example.com",
+    jwksUri: "https://auth.example.com/jwks.json",
+    error: /authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment/,
+  },
+  {
+    name: "issuer URL with percent-encoded authority",
+    authorizationServerIssuer: "https://%61uth.example.com",
+    jwksUri: "https://auth.example.com/jwks.json",
+    error: /authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment/,
+  },
+  {
+    name: "issuer URL with an out-of-range port",
+    authorizationServerIssuer: "https://host:99999",
+    jwksUri: "https://auth.example.com/jwks.json",
+    error: /authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment/,
+  },
+  {
+    name: "issuer URL with a space in the authority",
+    authorizationServerIssuer: "https://exa mple.com",
+    jwksUri: "https://auth.example.com/jwks.json",
+    error: /authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment/,
+  },
+  {
+    name: "issuer URL with an empty host and explicit port",
+    authorizationServerIssuer: "https://:8080",
+    jwksUri: "https://auth.example.com/jwks.json",
+    error: /authorizationServerIssuer must be an absolute HTTPS URL with no query or fragment/,
+  },
+  {
     name: "issuer URL with query",
     authorizationServerIssuer: "https://auth.example.com?tenant=example",
     jwksUri: "https://auth.example.com/jwks.json",
