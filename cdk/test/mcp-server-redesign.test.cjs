@@ -67,12 +67,26 @@ function inventoryFromFixture() {
   };
 }
 
+function literalSingletonRouteFamilies(document) {
+  const singletons = [];
+  for (const fence of document.matchAll(/```[^\n]*\n([\s\S]*?)```/g)) {
+    if (!/\brouteFamily\s*:/.test(fence[1])) continue;
+    for (const patterns of fence[1].matchAll(/\bpatterns\s*:\s*\[([\s\S]*?)\]/g)) {
+      if (/^\s*["'][^"']+["']\s*,?\s*$/.test(patterns[1])) {
+        singletons.push(patterns[0]);
+      }
+    }
+  }
+  return singletons;
+}
+
 test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL authority", () => {
   const assembly = JSON.parse(fs.readFileSync(path.join(__dirname, "..", ".jsii"), "utf8"));
   const expectedProps = {
     AppTheoryMcpServerProps: [
       "api",
       "apiName",
+      "attachedApiStageName",
       "authorizationServerIssuer",
       "domain",
       "enableSessionTable",
@@ -103,6 +117,11 @@ test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL author
 
   for (const [typeName, expectedNames] of Object.entries(expectedProps)) {
     const type = assembly.types[`@theory-cloud/apptheory-cdk.${typeName}`];
+    assert.equal(
+      type.interfaces,
+      undefined,
+      `${typeName} must not inherit an unreviewed token, origin, or URL-valued prop`,
+    );
     const actualNames = type.properties.map((property) => property.name).sort();
     assert.deepEqual(
       actualNames,
@@ -157,6 +176,65 @@ test("AppTheoryMcpServer attach mode synthesizes an API imported by id only", ()
   assert.equal(resourcesOfType(template, "AWS::ApiGatewayV2::Api").length, 0);
   assert.deepEqual(routeKeys(template), fixtureRouteKeys());
   assert.equal(server.endpoints.length, fixture.routes.length);
+});
+
+test("AppTheoryMcpServer attach mode includes a known foreign API stage in endpoint templates", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "StagedAttachStack", {
+    env: { account: "123456789012", region: "us-east-1" },
+  });
+  const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
+    httpApiId: "abc123",
+    apiEndpoint: "https://frontdoor.example.com",
+  });
+  const server = new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack),
+    api: importedApi,
+    attachedApiStageName: "prod",
+    sessionState: { enabled: false },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(resourcesOfType(template, "AWS::ApiGatewayV2::Api").length, 0);
+  assert.deepEqual(routeKeys(template), fixtureRouteKeys());
+  assert.match(
+    server.endpoints[0],
+    /^https:\/\/abc123\.execute-api\.us-east-1\.[^/]+\/prod\/\{client_namespace\}\/mcp$/,
+  );
+  assert.ok(
+    server.endpoints.every((endpoint) =>
+      new URL(endpoint.replace(cdk.Aws.URL_SUFFIX, "amazonaws.com")).host
+        === "abc123.execute-api.us-east-1.amazonaws.com"),
+  );
+});
+
+test("AppTheoryMcpServer fails closed on an indeterminate attached API stage", () => {
+  {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "OwnedAttachedStageStack");
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        attachedApiStageName: "prod",
+      }),
+      /attachedApiStageName requires attach mode with api/,
+    );
+  }
+  for (const [index, stageName] of ["prod/path", cdk.Fn.ref("StageName")].entries()) {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, `InvalidAttachedStageStack${index}`);
+    const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
+      httpApiId: "abc123",
+    });
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        api: importedApi,
+        attachedApiStageName: stageName,
+      }),
+      /attachedApiStageName must be a synthesis-time literal API Gateway stage name/,
+    );
+  }
 });
 
 test("AppTheoryMcpServer derives every facade route for parameterized family members through the algebra", () => {
@@ -341,6 +419,50 @@ test("AppTheoryMcpServer validates parameter segments, tokens, and family collis
   }
 });
 
+test("AppTheoryMcpServer rejects algebra-derived route collisions at synthesis", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "DerivedCollisionStack");
+  assert.throws(
+    () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+      handler: handler(stack),
+      routeFamily: {
+        patterns: ["/a/mcp", "/.well-known/oauth-authorization-server/a/mcp"],
+      },
+    }),
+    /derived route family collides at GET \/\.well-known\/oauth-authorization-server\/a\/mcp/,
+  );
+});
+
+test("AppTheoryMcpServer rejects invalid deprecated issuer and JWKS pairs", () => {
+  const cases = [
+    {
+      name: "partial pair",
+      props: { authorizationServerIssuer: "https://auth.example.com" },
+      error: /authorizationServerIssuer and jwksUri must be supplied together/,
+    },
+    {
+      name: "insecure HTTP URLs",
+      props: {
+        authorizationServerIssuer: "http://auth.example.com",
+        jwksUri: "http://auth.example.com/jwks.json",
+      },
+      error: /authorizationServerIssuer must be an absolute HTTPS URL/,
+    },
+  ];
+  for (const [index, item] of cases.entries()) {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, `LegacyAuthValidation${index}`);
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        ...item.props,
+      }),
+      item.error,
+      item.name,
+    );
+  }
+});
+
 test("AppTheoryMcpServer validates every explicit opt-out", () => {
   const cases = [
     {
@@ -454,6 +576,13 @@ test("AppTheoryMcpServer v3.1.x A6 props and accessors carry migration notices",
     assert.equal(accessors.get(name)?.docs?.stability, "deprecated", `${name} stability`);
     assert.match(accessors.get(name)?.docs?.deprecated ?? "", /Use/, `${name} migration pointer`);
   }
+  for (const name of ["endpoint", "endpoints"]) {
+    assert.match(
+      accessors.get(name)?.docs?.remarks ?? "",
+      /apiEndpoint.*never consulted/s,
+      `${name} attach-mode apiEndpoint behavior`,
+    );
+  }
 });
 
 test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => {
@@ -475,11 +604,13 @@ test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => 
   );
   assert.match(guide, /RegisterMCPFacade` serves exactly this canonical four-pattern family/);
   assert.match(guide, /RegisterMCPFacade` has no unauthenticated mode/);
-  assert.doesNotMatch(
-    guide,
-    /routeFamily:\s*\{\s*patterns:\s*\[\s*["']\/mcp["']\s*\]\s*\}/s,
-    "the shipped guide must not pair the canonical-only helper with a singleton family",
+  assert.deepEqual(
+    literalSingletonRouteFamilies(guide),
+    [],
+    "the canonical-only helper guide must not recommend any literal singleton route family",
   );
+  assert.match(guide, /never\s+consults an `apiEndpoint` supplied through `HttpApi\.fromHttpApiAttributes`/s);
+  assert.match(guide, /Set `attachedApiStageName`.*non-`\$default` stage.*appears in each template/s);
 
   const agentCoreGuides = [
     "../../docs/integrations/agentcore-mcp.md",
@@ -489,7 +620,11 @@ test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => 
   for (const agentCoreGuide of agentCoreGuides) {
     assert.match(agentCoreGuide, /application-owned runtime registration/);
     assert.match(agentCoreGuide, /RegisterMCPFacade`\s+serves\s+only the canonical four-pattern\s+family/s);
-    assert.doesNotMatch(agentCoreGuide, /\b(?:authorizationServerIssuer|jwksUri)\s*:/);
+    assert.doesNotMatch(
+      agentCoreGuide,
+      /\b(?:authorizationServerIssuer|jwksUri|authorization_server_issuer|jwks_uri)\b/i,
+    );
+    assert.doesNotMatch(agentCoreGuide, /oauth\.RegisterMCPServer/);
 
     const constructBlocks = [...agentCoreGuide.matchAll(/```(?:ts|py)\n([\s\S]*?)```/g)]
       .map((match) => match[1])
@@ -500,6 +635,16 @@ test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => 
       assert.match(block, /(?:unauthenticatedMcp|unauthenticated_mcp)[\s=:]+true/i);
     }
   }
+  assert.match(
+    agentCoreGuides[0],
+    /Bedrock AgentCore[\s\S]*explicit singleton route family[\s\S]*Lambda \(Go\)[\s\S]*app\.Post\("\/mcp", \.\.\.\)/,
+    "the integration diagram must show the explicit singleton and app-owned route",
+  );
+  assert.match(
+    agentCoreGuides[0],
+    /AgentCore calls \*\*`POST \/mcp`\*\* only when the deployment explicitly selects `routeFamily:/,
+    "the endpoint claim must remain qualified by explicit singleton selection",
+  );
 
   const corePatterns = fs.readFileSync(path.resolve(__dirname, "../../docs/core-patterns.md"), "utf8");
   assert.match(
@@ -521,4 +666,25 @@ test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => 
   assert.match(agentCoreConcept, /session_state_enabled_by_default/);
   assert.doesNotMatch(agentCoreConcept, /Provision an HTTP API `POST \/mcp` endpoint/);
   assert.doesNotMatch(agentCoreConcept, /optional_session_table/);
+
+  const patternMap = fs.readFileSync(path.resolve(__dirname, "../../docs/_patterns.yaml"), "utf8");
+  const deploymentShape = patternMap.match(/  mcp_deployment_shape:\n[\s\S]*?(?=\n  \S)/)?.[0];
+  assert.ok(deploymentShape, "docs patterns must describe the MCP deployment shape");
+  assert.match(
+    deploymentShape,
+    /solution:.*AppTheoryMcpServer.*HTTP API v2.*complete OAuth facade/,
+  );
+  const incorrectExample = deploymentShape.match(
+    /incorrect_example: \|\n([\s\S]*?)(?=\n        consequences:)/,
+  )?.[1];
+  assert.ok(incorrectExample, "MCP deployment anti-pattern must carry an incorrect example");
+  assert.match(incorrectExample, /new AppTheoryRemoteMcpServer/);
+  assert.match(incorrectExample, /new AppTheoryMcpProtectedResource/);
+  assert.match(incorrectExample, /resource: mcp\.endpoint/);
+  assert.match(incorrectExample, /authorizationServers:/);
+  assert.doesNotMatch(
+    incorrectExample,
+    /new AppTheoryMcpServer/,
+    "the anti-pattern must not depict the blessed canonical default",
+  );
 });

@@ -124,6 +124,14 @@ export interface AppTheoryMcpServerProps {
      */
     readonly api?: apigwv2.IHttpApi;
     /**
+     * Stage name used when deriving attach-mode execute-api endpoint templates.
+     * Use `$default` for the API Gateway default stage. When omitted, the stage
+     * is not determinable and the templates retain the bare execute-api origin.
+     * This prop does not create, import, or mutate a stage.
+     * @default undefined
+     */
+    readonly attachedApiStageName?: string;
+    /**
      * Ordered MCP route family.
      *
      * Go `runtime/mcpfacade.RegisterMCPFacade` serves only the canonical default
@@ -202,11 +210,28 @@ export declare class AppTheoryMcpServer extends Construct {
     readonly api: apigwv2.IHttpApi;
     readonly ownedApi?: apigwv2.HttpApi;
     readonly sessionTable?: dynamodb.ITable;
+    /**
+     * Derived endpoint templates for the ordered MCP route family.
+     *
+     * In attach mode these are execute-api origin templates, not declarations of
+     * public authority. An `apiEndpoint` supplied through
+     * `HttpApi.fromHttpApiAttributes` is never consulted; the origin is derived
+     * from `apiId`, the stack region and URL suffix, plus
+     * `attachedApiStageName` when supplied.
+     */
     readonly endpoints: string[];
     readonly mcpPaths: string[];
     readonly protectedResourceMetadataPaths: string[];
     readonly routeInventory: AppTheoryMcpServerRouteInventory;
-    /** @deprecated Use `endpoints`. */
+    /**
+     * First derived endpoint template.
+     *
+     * In attach mode an `apiEndpoint` supplied through
+     * `HttpApi.fromHttpApiAttributes` is never consulted. This value is an
+     * execute-api origin template derived by the same rules as `endpoints`, not
+     * the front door's public authority.
+     * @deprecated Use `endpoints`.
+     */
     readonly endpoint: string;
     /** @deprecated Use `mcpPaths`. */
     readonly mcpPath: string;
