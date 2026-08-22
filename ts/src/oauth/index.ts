@@ -31,6 +31,8 @@ export interface AuthorizationServerMetadata {
   token_endpoint?: string;
   registration_endpoint?: string;
   jwks_uri?: string;
+  revocation_endpoint?: string;
+  device_authorization_endpoint?: string;
   response_types_supported?: string[];
   grant_types_supported?: string[];
   token_endpoint_auth_methods_supported?: string[];
@@ -38,6 +40,23 @@ export interface AuthorizationServerMetadata {
   scopes_supported?: string[];
   subject_types_supported?: string[];
   id_token_signing_alg_values_supported?: string[];
+}
+
+export interface AuthorizationServerMetadataOptions {
+  /**
+   * Opts into the RFC 8414 revocation_endpoint. `true` derives the
+   * conventional `/revoke` path from the issuer base URL; a string must be an
+   * absolute URL and is used verbatim. Absent means the document does not
+   * advertise a revocation endpoint.
+   */
+  revocationEndpoint?: string | true;
+  /**
+   * Opts into the RFC 8628 device_authorization_endpoint. `true` derives the
+   * conventional `/device` path from the issuer base URL; a string must be an
+   * absolute URL and is used verbatim. Absent means the document does not
+   * advertise a device authorization endpoint.
+   */
+  deviceAuthorizationEndpoint?: string | true;
 }
 
 export interface DynamicClientRegistrationRequest {
@@ -127,6 +146,7 @@ export function newProtectedResourceMetadata(
 
 export function newAuthorizationServerMetadata(
   issuer: string,
+  options?: AuthorizationServerMetadataOptions,
 ): AuthorizationServerMetadata {
   const url = absoluteURL(issuer);
   if (!url)
@@ -142,7 +162,7 @@ export function newAuthorizationServerMetadata(
     out.hash = "";
     return out.toString();
   };
-  return {
+  const metadata: AuthorizationServerMetadata = {
     issuer: canonicalIssuer,
     authorization_endpoint: endpoint("/authorize"),
     token_endpoint: endpoint("/token"),
@@ -153,6 +173,23 @@ export function newAuthorizationServerMetadata(
     token_endpoint_auth_methods_supported: ["none"],
     code_challenge_methods_supported: ["S256"],
   };
+  const opts = options ?? {};
+  if (opts.revocationEndpoint !== undefined) {
+    metadata.revocation_endpoint =
+      opts.revocationEndpoint === true
+        ? endpoint("/revoke")
+        : absoluteURLValue(opts.revocationEndpoint, "revocation endpoint");
+  }
+  if (opts.deviceAuthorizationEndpoint !== undefined) {
+    metadata.device_authorization_endpoint =
+      opts.deviceAuthorizationEndpoint === true
+        ? endpoint("/device")
+        : absoluteURLValue(
+            opts.deviceAuthorizationEndpoint,
+            "device authorization endpoint",
+          );
+  }
+  return metadata;
 }
 
 export function protectedResourceMetadataHandler(
@@ -473,6 +510,13 @@ function absoluteURL(raw: string): URL | null {
 
 function isAbsoluteURL(raw: string): boolean {
   return absoluteURL(raw) !== null;
+}
+
+function absoluteURLValue(raw: string, label: string): string {
+  const url = absoluteURL(String(raw ?? ""));
+  if (!url)
+    throw new Error(`${ERR_INVALID_URL}: ${label} must be an absolute URL`);
+  return url.toString();
 }
 
 function trimTrailingSlash(pathname: string): string {
