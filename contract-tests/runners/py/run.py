@@ -4808,6 +4808,64 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
 
         return handler
 
+    if name == "sse_stream_two_events":
+
+        def handler(_ctx):
+            def gen():
+                yield b'id: 1\nevent: message\ndata: {"ok":true}\n\n'
+                yield b'id: 2\nevent: message\ndata: {"ok":false}\n\n'
+
+            return runtime.Response(
+                status=200,
+                headers={
+                    "content-type": ["text/event-stream"],
+                    "cache-control": ["no-cache"],
+                    "connection": ["keep-alive"],
+                },
+                cookies=[],
+                body=b"",
+                body_stream=gen(),
+                is_base64=False,
+            )
+
+        return handler
+
+    if name == "sse_stream_live":
+
+        def handler(_ctx):
+            def gen():
+                yield b'id: 1\nevent: message\ndata: {"ok":true}\n\n'
+                # Never returns: a live listener.
+                threading.Event().wait()
+
+            return runtime.Response(
+                status=200,
+                headers={"content-type": ["text/event-stream"]},
+                cookies=[],
+                body=b"",
+                body_stream=gen(),
+                is_base64=False,
+            )
+
+        return handler
+
+    if name == "sse_stream_overrun":
+
+        def handler(_ctx):
+            def gen():
+                yield b"x" * (4 * 1024 * 1024 + 1)
+
+            return runtime.Response(
+                status=200,
+                headers={"content-type": ["text/event-stream"]},
+                cookies=[],
+                body=b"",
+                body_stream=gen(),
+                is_base64=False,
+            )
+
+        return handler
+
     if name == "safe_json_for_html":
 
         def handler(_ctx):
