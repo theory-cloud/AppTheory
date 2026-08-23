@@ -385,11 +385,11 @@ export class App {
     // successfully, so a decode failure (for example an invalid query string in
     // an HTTP API v2 or Function URL event) previously produced an error response
     // with no Log/Metric/Span record. The hook fires for the same P2 tier that
-    // the portable path observes, using the error's code and the response status.
-    _recordAdapterDecodeError(method, path, err, status) {
+    // the portable path observes, using the error's code and the response status,
+    // with the real duration measured from the adapter entry timestamp.
+    _recordAdapterDecodeError(method, path, err, status, durationMs) {
         if (this._tier !== "p2")
             return;
-        const startedAtMs = this._clock.now().valueOf();
         recordObservability(this._observability, {
             method,
             path,
@@ -398,7 +398,7 @@ export class App {
             traceId: "",
             status,
             errorCode: errorCodeFrom(err),
-            durationMs: durationMs(startedAtMs, this._clock.now().valueOf()),
+            durationMs,
         });
     }
     _responseForHTTPErrorWithRequestIdTraceId(err, requestId, traceId) {
@@ -742,13 +742,14 @@ export class App {
     }
     /** Serves an API Gateway HTTP API v2 event. */
     async serveAPIGatewayV2(event, ctx) {
+        const startedAtMs = this._clock.now().valueOf();
         let request;
         try {
             request = requestFromAPIGatewayV2(event);
         }
         catch (err) {
             const resp = this._responseForHTTPError(err);
-            this._recordAdapterDecodeError(String(event.requestContext?.http?.method ?? ""), String(event.requestContext?.http?.path ?? "/"), err, resp.status);
+            this._recordAdapterDecodeError(String(event.requestContext?.http?.method ?? ""), String(event.requestContext?.http?.path ?? "/"), err, resp.status, durationMs(startedAtMs, this._clock.now().valueOf()));
             return await apigatewayV2ResponseFromResponse(resp);
         }
         const resp = await this.serve(request, ctx);
@@ -756,13 +757,14 @@ export class App {
     }
     /** Serves a Lambda Function URL event. */
     async serveLambdaFunctionURL(event, ctx) {
+        const startedAtMs = this._clock.now().valueOf();
         let request;
         try {
             request = requestFromLambdaFunctionURL(event);
         }
         catch (err) {
             const resp = this._responseForHTTPError(err);
-            this._recordAdapterDecodeError(String(event.requestContext?.http?.method ?? ""), String(event.requestContext?.http?.path ?? "/"), err, resp.status);
+            this._recordAdapterDecodeError(String(event.requestContext?.http?.method ?? ""), String(event.requestContext?.http?.path ?? "/"), err, resp.status, durationMs(startedAtMs, this._clock.now().valueOf()));
             return await lambdaFunctionURLResponseFromResponse(resp);
         }
         const resp = await this.serve(request, ctx);
@@ -794,6 +796,7 @@ export class App {
     }
     /** Serves an AppSync direct Lambda resolver event. */
     async serveAppSync(event, ctx) {
+        const startedAtMs = this._clock.now().valueOf();
         const fallbackRequestId = appSyncRequestIdFromContext(ctx);
         const requestMetadata = appSyncRequestFromEvent(event);
         let request;
@@ -802,7 +805,7 @@ export class App {
         }
         catch (err) {
             const resp = appSyncErrorResponse(err, requestMetadata, fallbackRequestId);
-            this._recordAdapterDecodeError(String(event?.info?.parentTypeName ?? ""), `/${String(event?.info?.fieldName ?? "")}`, err, resp.status);
+            this._recordAdapterDecodeError(String(event?.info?.parentTypeName ?? ""), `/${String(event?.info?.fieldName ?? "")}`, err, resp.status, durationMs(startedAtMs, this._clock.now().valueOf()));
             return appSyncPayloadFromResponse(resp);
         }
         let resp = null;
@@ -836,6 +839,7 @@ export class App {
     }
     /** Serves an API Gateway WebSocket event. */
     async serveWebSocket(event, ctx) {
+        const startedAtMs = this._clock.now().valueOf();
         const route = this._webSocketRouteForEvent(event);
         let handler = route?.handler ?? null;
         let requestId = String(event?.requestContext?.requestId ?? "").trim();
@@ -855,7 +859,7 @@ export class App {
             const resp = this._tier === "p0"
                 ? responseForError(err)
                 : responseForErrorWithRequestId(err, requestId);
-            this._recordAdapterDecodeError(String(event?.requestContext?.routeKey ?? ""), String(event?.path ?? "/"), err, resp.status);
+            this._recordAdapterDecodeError(String(event?.requestContext?.routeKey ?? ""), String(event?.path ?? "/"), err, resp.status, durationMs(startedAtMs, this._clock.now().valueOf()));
             return apigatewayProxyResponseFromResponse(resp);
         }
         const domainName = String(event?.requestContext?.domainName ?? "").trim();

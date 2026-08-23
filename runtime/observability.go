@@ -3,6 +3,7 @@ package apptheory
 import (
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -133,11 +134,21 @@ type eventObservation struct {
 // HTTP API v2 or Function URL event) previously produced an error response with
 // no Log/Metric/Span record. The hook fires for the same P2 tier that the
 // portable path observes, using the error's code and the response status.
-func (a *App) recordAdapterDecodeError(method, path string, err error, status int) {
+// adapterEntryTime captures the adapter entry timestamp used to measure the
+// decode-failure observability duration. It is nil-safe like the record call
+// itself: a nil app yields a zero time, which durationMS reports as 0.
+func adapterEntryTime(a *App) time.Time {
+	if a == nil {
+		return time.Time{}
+	}
+	return clockNow(a.clock)
+}
+
+func (a *App) recordAdapterDecodeError(startedAt time.Time, method, path string, err error, status int) {
 	if a == nil || a.tier != TierP2 {
 		return
 	}
-	a.recordObservability(method, path, "", "", "", status, errorCodeForError(err), 0)
+	a.recordObservability(method, path, "", "", "", status, errorCodeForError(err), durationMS(startedAt, clockNow(a.clock)))
 }
 
 func (a *App) recordEventObservability(observation eventObservation, outcome string, errorCode string) {

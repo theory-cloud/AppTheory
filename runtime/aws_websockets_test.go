@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 
@@ -203,5 +205,61 @@ func TestServeWebSocket_InvalidBase64Body(t *testing.T) {
 
 	if out.StatusCode != 400 {
 		t.Fatalf("expected 400, got %d", out.StatusCode)
+	}
+}
+
+// advancingClock is a deterministic test clock that advances by a fixed step
+// on every read, so decode-observability durations are observable in tests.
+type advancingClock struct {
+	mu   sync.Mutex
+	now  time.Time
+	step time.Duration
+}
+
+func (c *advancingClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cur := c.now
+	c.now = c.now.Add(c.step)
+	return cur
+}
+
+func TestServeWebSocket_DecodeFailureObservabilityUsesRouteKey(t *testing.T) {
+	var gotLog *LogRecord
+	app := New(
+		WithTier(TierP2),
+		WithClock(&advancingClock{now: time.Unix(0, 0).UTC(), step: 5 * time.Millisecond}),
+		WithObservability(ObservabilityHooks{
+			Log: func(r LogRecord) {
+				copy := r
+				gotLog = &copy
+			},
+		}),
+	)
+
+	out := app.ServeWebSocket(context.Background(), events.APIGatewayWebsocketProxyRequest{
+		HTTPMethod:      "GET",
+		Path:            "/",
+		Body:            "not base64",
+		IsBase64Encoded: true,
+		RequestContext: events.APIGatewayWebsocketProxyRequestContext{
+			RouteKey:  "$connect",
+			RequestID: "req_1",
+		},
+	})
+
+	if out.StatusCode != 400 {
+		t.Fatalf("expected 400, got %d", out.StatusCode)
+	}
+	if gotLog == nil {
+		t.Fatal("expected decode failure to emit a log record")
+	}
+	// The decode-observability method dimension is the WebSocket route key
+	// (aligned with TS and Py), not the handshake HTTP method.
+	if gotLog.Method != "$connect" || gotLog.Path != "/" {
+		t.Fatalf("unexpected method/path: %q %q", gotLog.Method, gotLog.Path)
+	}
+	if gotLog.DurationMS <= 0 {
+		t.Fatalf("expected real decode duration, got %d", gotLog.DurationMS)
 	}
 }

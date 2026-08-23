@@ -299,6 +299,7 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	startedAt := adapterEntryTime(a)
 
 	routeKey := strings.TrimSpace(event.RequestContext.RouteKey)
 	route := a.webSocketRouteForRoute(routeKey)
@@ -326,7 +327,7 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 	normalized, err := normalizeRequest(req)
 	if err != nil {
 		resp := a.webSocketErrorResponse(err, requestID)
-		a.recordAdapterDecodeError(event.HTTPMethod, event.Path, err, resp.StatusCode)
+		a.recordAdapterDecodeError(startedAt, event.RequestContext.RouteKey, event.Path, err, resp.StatusCode)
 		return resp
 	}
 

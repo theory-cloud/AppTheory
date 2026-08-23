@@ -526,3 +526,40 @@ func TestServeAppSync_DualBodyFailsClosedThroughEnvelope(t *testing.T) {
 		t.Fatalf("unexpected observability status: %d", gotLog.Status)
 	}
 }
+
+func TestServeAppSync_DecodeFailureObservabilityUsesParentTypeName(t *testing.T) {
+	var gotLog *LogRecord
+	app := New(
+		WithTier(TierP2),
+		WithClock(&advancingClock{now: time.Unix(0, 0).UTC(), step: 5 * time.Millisecond}),
+		WithObservability(ObservabilityHooks{
+			Log: func(r LogRecord) {
+				copy := r
+				gotLog = &copy
+			},
+		}),
+	)
+
+	out := app.ServeAppSync(context.Background(), AppSyncResolverEvent{
+		Info: AppSyncResolverInfo{
+			FieldName:      "",
+			ParentTypeName: "Query",
+		},
+	})
+
+	if _, ok := out.(map[string]any); !ok {
+		t.Fatalf("expected appsync error payload, got %T", out)
+	}
+	if gotLog == nil {
+		t.Fatal("expected decode failure to emit a log record")
+	}
+	// The decode-observability method dimension is the raw GraphQL parent
+	// type name (Query/Mutation, aligned with TS and Py), not the derived
+	// GET/POST verb.
+	if gotLog.Method != "Query" || gotLog.Path != "/" {
+		t.Fatalf("unexpected method/path: %q %q", gotLog.Method, gotLog.Path)
+	}
+	if gotLog.DurationMS <= 0 {
+		t.Fatalf("expected real decode duration, got %d", gotLog.DurationMS)
+	}
+}

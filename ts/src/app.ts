@@ -830,15 +830,16 @@ export class App {
   // successfully, so a decode failure (for example an invalid query string in
   // an HTTP API v2 or Function URL event) previously produced an error response
   // with no Log/Metric/Span record. The hook fires for the same P2 tier that
-  // the portable path observes, using the error's code and the response status.
+  // the portable path observes, using the error's code and the response status,
+  // with the real duration measured from the adapter entry timestamp.
   private _recordAdapterDecodeError(
     method: string,
     path: string,
     err: unknown,
     status: number,
+    durationMs: number,
   ): void {
     if (this._tier !== "p2") return;
-    const startedAtMs = this._clock.now().valueOf();
     recordObservability(this._observability, {
       method,
       path,
@@ -847,7 +848,7 @@ export class App {
       traceId: "",
       status,
       errorCode: errorCodeFrom(err),
-      durationMs: durationMs(startedAtMs, this._clock.now().valueOf()),
+      durationMs,
     });
   }
 
@@ -1412,6 +1413,7 @@ export class App {
     event: APIGatewayV2HTTPRequest,
     ctx?: unknown,
   ): Promise<APIGatewayV2HTTPResponse> {
+    const startedAtMs = this._clock.now().valueOf();
     let request: Request;
     try {
       request = requestFromAPIGatewayV2(event);
@@ -1422,6 +1424,7 @@ export class App {
         String(event.requestContext?.http?.path ?? "/"),
         err,
         resp.status,
+        durationMs(startedAtMs, this._clock.now().valueOf()),
       );
       return await apigatewayV2ResponseFromResponse(resp);
     }
@@ -1434,6 +1437,7 @@ export class App {
     event: LambdaFunctionURLRequest,
     ctx?: unknown,
   ): Promise<LambdaFunctionURLResponse> {
+    const startedAtMs = this._clock.now().valueOf();
     let request: Request;
     try {
       request = requestFromLambdaFunctionURL(event);
@@ -1444,6 +1448,7 @@ export class App {
         String(event.requestContext?.http?.path ?? "/"),
         err,
         resp.status,
+        durationMs(startedAtMs, this._clock.now().valueOf()),
       );
       return await lambdaFunctionURLResponseFromResponse(resp);
     }
@@ -1490,6 +1495,7 @@ export class App {
     event: AppSyncResolverEvent,
     ctx?: unknown,
   ): Promise<unknown> {
+    const startedAtMs = this._clock.now().valueOf();
     const fallbackRequestId = appSyncRequestIdFromContext(ctx);
     const requestMetadata = appSyncRequestFromEvent(event);
     let request: Request;
@@ -1506,6 +1512,7 @@ export class App {
         `/${String(event?.info?.fieldName ?? "")}`,
         err,
         resp.status,
+        durationMs(startedAtMs, this._clock.now().valueOf()),
       );
       return appSyncPayloadFromResponse(resp);
     }
@@ -1552,6 +1559,7 @@ export class App {
     event: APIGatewayWebSocketProxyRequest,
     ctx?: unknown,
   ): Promise<APIGatewayProxyResponse> {
+    const startedAtMs = this._clock.now().valueOf();
     const route = this._webSocketRouteForEvent(event);
     let handler = route?.handler ?? null;
 
@@ -1579,6 +1587,7 @@ export class App {
         String(event?.path ?? "/"),
         err,
         resp.status,
+        durationMs(startedAtMs, this._clock.now().valueOf()),
       );
       return apigatewayProxyResponseFromResponse(resp);
     }

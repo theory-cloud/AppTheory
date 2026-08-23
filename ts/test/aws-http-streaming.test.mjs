@@ -223,3 +223,38 @@ test("adapter decode failures stay silent below P2", async () => {
 
   assert.equal(logs.length, 0);
 });
+
+test("websocket decode failures use the route key in observability", async () => {
+  // The WebSocket decode-observability method dimension is the route key
+  // ($connect, ...), aligned with Go and Py; it must not be the handshake
+  // HTTP method (always GET). The record also carries the real decode
+  // duration instead of a hardcoded 0.
+  const logs = [];
+  let now = new Date(0);
+  const app = createApp({
+    tier: "p2",
+    clock: {
+      now: () => {
+        const cur = now;
+        now = new Date(now.getTime() + 5);
+        return cur;
+      },
+    },
+    observability: {
+      log: (r) => logs.push(r),
+    },
+  });
+
+  const out = await app.serveWebSocket({
+    requestContext: { routeKey: "$connect" },
+    path: "/",
+    isBase64Encoded: true,
+    body: "not base64",
+  });
+
+  assert.equal(out.statusCode, 400);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].method, "$connect");
+  assert.equal(logs[0].path, "/");
+  assert.equal(logs[0].durationMs, 5);
+});

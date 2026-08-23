@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import datetime as dt
 import json
 import sys
 import unittest
@@ -36,6 +37,18 @@ from apptheory.testkit import create_test_env  # noqa: E402
 
 def _ok(_ctx) -> Response:
     return Response(status=200, headers={}, cookies=[], body=b"ok", is_base64=False)
+
+
+class _AdvancingClock:
+    """Deterministic clock that advances 5ms on every read."""
+
+    def __init__(self) -> None:
+        self._now = dt.datetime.fromtimestamp(0, tz=dt.UTC)
+
+    def now(self) -> dt.datetime:
+        cur = self._now
+        self._now = self._now + dt.timedelta(milliseconds=5)
+        return cur
 
 
 class TestApp(unittest.TestCase):
@@ -435,6 +448,55 @@ class TestApp(unittest.TestCase):
         self.assertEqual(len(logs), 1)
         self.assertEqual(logs[0].method, "Query")
         self.assertEqual(logs[0].path, "/getThing")
+
+    def test_appsync_decode_failure_uses_parent_type_name_label(self) -> None:
+        # The AppSync decode-observability method dimension is the raw GraphQL
+        # parent type name (Query/Mutation), aligned with TS; it must not be
+        # mapped to the derived GET/POST verb. The record also carries the real
+        # decode duration instead of a hardcoded 0.
+        logs = []
+        app = create_app(
+            tier="p2",
+            clock=_AdvancingClock(),
+            observability=ObservabilityHooks(log=lambda r: logs.append(r)),
+        )
+        out = app.serve_appsync(
+            {
+                "arguments": {},
+                "info": {"fieldName": "", "parentTypeName": "Query"},
+            }
+        )
+        self.assertEqual(out["pay_theory_error"], True)
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0].method, "Query")
+        self.assertEqual(logs[0].path, "/")
+        self.assertGreater(logs[0].duration_ms, 0)
+
+    def test_websocket_decode_failure_uses_route_key_label(self) -> None:
+        # The WebSocket decode-observability method dimension is the route key
+        # ($connect, ...), aligned with TS and Go; it must not be the handshake
+        # HTTP method (always GET). The record also carries the real decode
+        # duration instead of a hardcoded 0.
+        logs = []
+        app = create_app(
+            tier="p2",
+            clock=_AdvancingClock(),
+            observability=ObservabilityHooks(log=lambda r: logs.append(r)),
+        )
+
+        class ObjectEvent:
+            requestContext = {"routeKey": "$connect"}
+            path = "/"
+
+            def get(self, key, default=None):
+                raise AttributeError(key)
+
+        out = app.serve_websocket(ObjectEvent())  # type: ignore[arg-type]
+        self.assertEqual(out["statusCode"], 500)
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0].method, "$connect")
+        self.assertEqual(logs[0].path, "/")
+        self.assertGreater(logs[0].duration_ms, 0)
 
     def test_remaining_ms_is_applied_and_observability_hooks_fire(self) -> None:
         logs = []

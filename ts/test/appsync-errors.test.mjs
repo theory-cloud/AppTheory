@@ -134,3 +134,34 @@ test("serveAppSync maps a dual-body response to the AppSync envelope with P2 err
   assert.equal(logs[0].status, 500);
   assert.equal(logs[0].method, "POST");
 });
+
+test("serveAppSync decode failures use the raw parent type name in observability", async () => {
+  // The AppSync decode-observability method dimension is the raw GraphQL
+  // parent type name (Query/Mutation), aligned with Go and Py; it must not be
+  // mapped to the derived GET/POST verb. The record also carries the real
+  // decode duration instead of a hardcoded 0.
+  const logs = [];
+  let now = new Date(0);
+  const app = createApp({
+    tier: "p2",
+    clock: {
+      now: () => {
+        const cur = now;
+        now = new Date(now.getTime() + 5);
+        return cur;
+      },
+    },
+    observability: { log: (r) => logs.push(r) },
+  });
+
+  const out = await app.serveAppSync({
+    arguments: {},
+    info: { fieldName: "", parentTypeName: "Query" },
+  });
+
+  assert.equal(out.pay_theory_error, true);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].method, "Query");
+  assert.equal(logs[0].path, "/");
+  assert.equal(logs[0].durationMs, 5);
+});
