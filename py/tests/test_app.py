@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import datetime as dt
 import json
 import sys
 import unittest
@@ -36,6 +37,18 @@ from apptheory.testkit import create_test_env  # noqa: E402
 
 def _ok(_ctx) -> Response:
     return Response(status=200, headers={}, cookies=[], body=b"ok", is_base64=False)
+
+
+class _AdvancingClock:
+    """Deterministic clock that advances 5ms on every read."""
+
+    def __init__(self) -> None:
+        self._now = dt.datetime.fromtimestamp(0, tz=dt.UTC)
+
+    def now(self) -> dt.datetime:
+        cur = self._now
+        self._now = self._now + dt.timedelta(milliseconds=5)
+        return cur
 
 
 class TestApp(unittest.TestCase):
@@ -353,6 +366,138 @@ class TestApp(unittest.TestCase):
         bad_norm = limited_resp.serve(Request(method="GET", path="/", body={"bad": True}))
         self.assertEqual(bad_norm.status, 500)
 
+    def test_dual_body_response_fails_closed(self) -> None:
+        # A response carrying both a non-empty buffered body and a body_stream
+        # is divergent: the buffered adapters drain the stream and replace the
+        # buffered body, while the v1 proxy/streaming adapters handle the stream
+        # differently. The normalizer must fail closed on the ambiguous shape
+        # instead of letting adapters silently pick one representation.
+        app = create_app(tier="p2")
+
+        def dual_body(_ctx) -> Response:
+            return Response(
+                status=200,
+                headers={"content-type": ["text/html; charset=utf-8"]},
+                cookies=[],
+                body=b"buffered",
+                is_base64=False,
+                body_stream=iter([b"streamed"]),
+            )
+
+        app.get("/dual", dual_body)
+        resp = app.serve(Request(method="GET", path="/dual", body=""))
+        self.assertEqual(resp.status, 500)
+        err = json.loads(resp.body.decode("utf-8"))["error"]
+        self.assertEqual(err["code"], "app.internal")
+        self.assertEqual(err["message"], "internal error")
+
+    def test_serve_appsync_dual_body_fails_closed_through_envelope(self) -> None:
+        # The fail-closed dual-body response must produce the AppSync error
+        # envelope (pay_theory_error, SYSTEM_ERROR) and a P2 observability
+        # record with error_code app.internal: the serve path routes the
+        # normalizer failure through the error pipeline, exactly like a raised
+        # handler error.
+        logs = []
+        app = create_app(tier="p2", observability=ObservabilityHooks(log=lambda r: logs.append(r)))
+
+        def dual_body(_ctx) -> Response:
+            return Response(
+                status=200,
+                headers={"content-type": ["text/html; charset=utf-8"]},
+                cookies=[],
+                body=b"buffered",
+                is_base64=False,
+                body_stream=iter([b"streamed"]),
+            )
+
+        app.post("/createThing", dual_body)
+        out = app.serve_appsync(
+            {
+                "arguments": {"id": "thing_123"},
+                "info": {"fieldName": "createThing", "parentTypeName": "Mutation"},
+            }
+        )
+        self.assertEqual(out["pay_theory_error"], True)
+        self.assertEqual(out["error_message"], "internal error")
+        self.assertEqual(out["error_type"], "SYSTEM_ERROR")
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0].event, "request.completed")
+        self.assertEqual(logs[0].error_code, "app.internal")
+        self.assertEqual(logs[0].status, 500)
+        self.assertEqual(logs[0].method, "POST")
+
+    def test_appsync_decode_failure_uses_object_event_info_labels(self) -> None:
+        # Object-style AppSync events (non-dict) must still contribute their
+        # .info parentTypeName/fieldName to the decode-observability labels.
+        # The style commit 2b0326b4 dropped the getattr fallback and flattened
+        # the labels to method="" path="/" for object events; restore parity
+        # with dict events.
+        logs = []
+
+        class ObjectEvent:
+            def __init__(self) -> None:
+                self.info = {"parentTypeName": "Query", "fieldName": "getThing"}
+
+            def get(self, key, default=None):
+                return default
+
+        app = create_app(tier="p2", observability=ObservabilityHooks(log=lambda r: logs.append(r)))
+        out = app.serve_appsync(ObjectEvent())  # type: ignore[arg-type]
+        self.assertEqual(out["pay_theory_error"], True)
+        self.assertEqual(out["error_type"], "CLIENT_ERROR")
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0].method, "Query")
+        self.assertEqual(logs[0].path, "/getThing")
+
+    def test_appsync_decode_failure_uses_parent_type_name_label(self) -> None:
+        # The AppSync decode-observability method dimension is the raw GraphQL
+        # parent type name (Query/Mutation), aligned with TS; it must not be
+        # mapped to the derived GET/POST verb. The record also carries the real
+        # decode duration instead of a hardcoded 0.
+        logs = []
+        app = create_app(
+            tier="p2",
+            clock=_AdvancingClock(),
+            observability=ObservabilityHooks(log=lambda r: logs.append(r)),
+        )
+        out = app.serve_appsync(
+            {
+                "arguments": {},
+                "info": {"fieldName": "", "parentTypeName": "Query"},
+            }
+        )
+        self.assertEqual(out["pay_theory_error"], True)
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0].method, "Query")
+        self.assertEqual(logs[0].path, "/")
+        self.assertGreater(logs[0].duration_ms, 0)
+
+    def test_websocket_decode_failure_uses_route_key_label(self) -> None:
+        # The WebSocket decode-observability method dimension is the route key
+        # ($connect, ...), aligned with TS and Go; it must not be the handshake
+        # HTTP method (always GET). The record also carries the real decode
+        # duration instead of a hardcoded 0.
+        logs = []
+        app = create_app(
+            tier="p2",
+            clock=_AdvancingClock(),
+            observability=ObservabilityHooks(log=lambda r: logs.append(r)),
+        )
+
+        class ObjectEvent:
+            requestContext = {"routeKey": "$connect"}
+            path = "/"
+
+            def get(self, key, default=None):
+                raise AttributeError(key)
+
+        out = app.serve_websocket(ObjectEvent())  # type: ignore[arg-type]
+        self.assertEqual(out["statusCode"], 500)
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0].method, "$connect")
+        self.assertEqual(logs[0].path, "/")
+        self.assertGreater(logs[0].duration_ms, 0)
+
     def test_remaining_ms_is_applied_and_observability_hooks_fire(self) -> None:
         logs = []
         metrics = []
@@ -443,6 +588,26 @@ class TestApp(unittest.TestCase):
         self.assertEqual(app.serve_lambda_function_url(None)["statusCode"], 500)  # type: ignore[arg-type]
         self.assertEqual(app.serve_apigw_proxy(None)["statusCode"], 500)  # type: ignore[arg-type]
         self.assertEqual(app.serve_alb(None)["statusCode"], 500)  # type: ignore[arg-type]
+
+    def test_adapter_decode_failures_emit_observability(self) -> None:
+        # A malformed event fails request decoding before the portable path
+        # records observability; the adapter must still emit a record so decode
+        # failures are not silent.
+        logs = []
+        app = create_app(tier="p2", observability=ObservabilityHooks(log=lambda r: logs.append(r)))
+
+        out = app.serve_apigw_v2(None)  # type: ignore[arg-type]
+        self.assertEqual(out["statusCode"], 500)
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0].event, "request.completed")
+        self.assertEqual(logs[0].status, 500)
+        self.assertEqual(logs[0].error_code, "app.internal")
+
+    def test_adapter_decode_failures_stay_silent_below_p2(self) -> None:
+        logs = []
+        app = create_app(tier="p1", observability=ObservabilityHooks(log=lambda r: logs.append(r)))
+        app.serve_apigw_v2(None)  # type: ignore[arg-type]
+        self.assertEqual(len(logs), 0)
 
     def test_legacy_http_error_format_preserves_flat_error_body(self) -> None:
         app = create_app(tier="p2", http_error_format="flat_legacy")
@@ -769,6 +934,39 @@ class TestApp(unittest.TestCase):
             "https://example.com/socket",
         )
 
+    def test_websocket_dual_body_fails_closed(self) -> None:
+        # A dual-body response (non-empty buffered body + body_stream) is
+        # divergent across adapters; the WS serve path must route the normalize
+        # failure through the same error handling as a raised handler error
+        # (clean nested 500), aligned with Go and TS.
+        app = create_app(tier="p2")
+
+        def dual_body(_ctx) -> Response:
+            return Response(
+                status=200,
+                headers={"content-type": ["text/html; charset=utf-8"]},
+                cookies=[],
+                body=b"buffered",
+                is_base64=False,
+                body_stream=iter([b"streamed"]),
+            )
+
+        app.websocket("$default", dual_body)
+        resp = app.serve_websocket(
+            {
+                "httpMethod": "GET",
+                "path": "/",
+                "headers": {},
+                "body": "",
+                "isBase64Encoded": False,
+                "requestContext": {"routeKey": "$default", "requestId": "req_ws_dual_1"},
+            }
+        )
+        self.assertEqual(resp["statusCode"], 500)
+        err = json.loads(resp["body"])["error"]
+        self.assertEqual(err["code"], "app.internal")
+        self.assertEqual(err["message"], "internal error")
+
     def test_lambda_event_routing_and_failure_shapes(self) -> None:
         app = create_app(tier="p2")
 
@@ -825,3 +1023,62 @@ class TestApp(unittest.TestCase):
         self.assertEqual(_kinesis_stream_name_from_arn("arn:aws:kinesis:us-east-1:0:stream/s"), "s")
         self.assertEqual(_sns_topic_name_from_arn("arn:aws:sns:us-east-1:0:t"), "t")
         self.assertEqual(_eventbridge_rule_name_from_arn("arn:aws:events:us-east-1:0:rule/r"), "r")
+
+    def test_handle_lambda_maps_panicking_sns_handler_to_event_workload_error(self) -> None:
+        app = create_app(tier="p2")
+
+        def boom(_ctx, _record):
+            raise RuntimeError("boom")
+
+        app.sns("topic1", boom)
+        event = {
+            "Records": [
+                {"EventSource": "aws:sns", "Sns": {"TopicArn": "arn:aws:sns:us-east-1:123:topic1"}},
+            ]
+        }
+        with self.assertRaisesRegex(RuntimeError, "apptheory: event workload failed"):
+            app.handle_lambda(event)
+
+    def test_handle_lambda_isolates_panicking_sqs_handler_per_record(self) -> None:
+        app = create_app(tier="p2")
+
+        def boom(_ctx, record):
+            if str(record.get("messageId")) == "2":
+                raise RuntimeError("boom")
+            return None
+
+        app.sqs("queue1", boom)
+        event = {
+            "Records": [
+                {"eventSource": "aws:sqs", "eventSourceARN": "arn:aws:sqs:us-east-1:123:queue1", "messageId": "1"},
+                {"eventSource": "aws:sqs", "eventSourceARN": "arn:aws:sqs:us-east-1:123:queue1", "messageId": "2"},
+            ]
+        }
+        out = app.handle_lambda(event)
+        self.assertEqual(out, {"batchItemFailures": [{"itemIdentifier": "2"}]})
+
+    def test_handle_lambda_isolates_panicking_kinesis_handler_per_record(self) -> None:
+        app = create_app(tier="p2")
+
+        def boom(_ctx, record):
+            if str(record.get("kinesis", {}).get("sequenceNumber")) == "seq-2":
+                raise RuntimeError("boom")
+            return None
+
+        app.kinesis("stream1", boom)
+        event = {
+            "Records": [
+                {
+                    "eventSource": "aws:kinesis",
+                    "eventSourceARN": "arn:aws:kinesis:us-east-1:123:stream/stream1",
+                    "kinesis": {"sequenceNumber": "seq-1"},
+                },
+                {
+                    "eventSource": "aws:kinesis",
+                    "eventSourceARN": "arn:aws:kinesis:us-east-1:123:stream/stream1",
+                    "kinesis": {"sequenceNumber": "seq-2"},
+                },
+            ]
+        }
+        out = app.handle_lambda(event)
+        self.assertEqual(out, {"batchItemFailures": [{"itemIdentifier": "seq-2"}]})

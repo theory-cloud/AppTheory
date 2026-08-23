@@ -255,7 +255,11 @@ func (a *App) serveP0(ctx context.Context, req Request, opts serveOptions) (resp
 	if out == nil {
 		return a.respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, normalized, opts.fallbackRequestID)
 	}
-	return normalizeResponse(out)
+	resp, normErr := normalizeResponse(out)
+	if normErr != nil {
+		return a.respondToServeError(opts, normErr, normalized, opts.fallbackRequestID)
+	}
+	return resp
 }
 
 func (a *App) serveP1(ctx context.Context, req Request, opts serveOptions) (resp Response) {
@@ -395,7 +399,15 @@ func (a *App) servePortableMatch(tier Tier, normalized Request, match *routeMatc
 		return a.respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, normalized, state.requestID, state.traceID)
 	}
 
-	resp := normalizeResponse(out)
+	resp, normErr := normalizeResponse(out)
+	if normErr != nil {
+		// The normalizer signaled a fail-closed response-shape violation (dual
+		// buffered + streaming body). Route it through the serve-error pipeline
+		// like the TS throw and Py raise so request id, the error responder
+		// (AppSync envelope), and P2 observability all observe app.internal.
+		state.errorCode = errorCodeForError(normErr)
+		return a.respondToServeError(opts, normErr, normalized, state.requestID, state.traceID)
+	}
 	if maxBytes := a.limits.MaxResponseBytes; maxBytes > 0 && len(resp.Body) > maxBytes {
 		state.errorCode = errorCodeTooLarge
 		return a.respondToServeError(opts, &AppError{Code: errorCodeTooLarge, Message: errorMessageResponseTooLarge}, normalized, state.requestID, state.traceID)

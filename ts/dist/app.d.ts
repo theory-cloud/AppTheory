@@ -221,6 +221,7 @@ export declare class App {
     private _httpErrorResponse;
     private _httpErrorResponseWithRequestIdTraceId;
     private _responseForHTTPError;
+    private _recordAdapterDecodeError;
     private _responseForHTTPErrorWithRequestIdTraceId;
     private _authorizeSecure;
     /** Registers a WebSocket route handler by route key. */

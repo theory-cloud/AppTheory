@@ -21,6 +21,9 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - name: Checkout (for tag-triggered assets)
         if: startsWith(github.ref, 'refs/tags/') || inputs.tag_name != ''
@@ -168,3 +171,29 @@ jobs:
 
           export TAG_NAME
           scripts/diagnose-release-state.sh --tag "${TAG_NAME}"
+
+  # Hands docs publication off to pages.yml. Releases are published with the
+  # default GITHUB_TOKEN, whose events can never trigger other workflows —
+  # but workflow_dispatch is explicitly allowed, so this job dispatches
+  # pages.yml on the just-published tag instead of relying on release events.
+  # Runs only after the release-please job (including asset publish and the
+  # publication-closure postcondition) has completed successfully.
+  pages-dispatch:
+    name: Dispatch docs deploy
+    needs: release-please
+    if: github.ref == 'refs/heads/main' && inputs.tag_name == '' && needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch pages deploy for the published tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${TAG_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "pages-dispatch: SKIP (${TAG_NAME:-<empty>} is not a stable tag)"
+            exit 0
+          fi
+          gh workflow run pages.yml --ref "${TAG_NAME}" -f tag="${TAG_NAME}"

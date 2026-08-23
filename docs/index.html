@@ -19,7 +19,7 @@ edit_on_github: false
     One application model. Three runtimes. {{ site.tabletheory.framework_name }} keeps
     Go, TypeScript, and Python in lock-step on the shared Lambda contract — routing,
     middleware, error envelope, AppSync, WebSockets, and event workloads — verified on
-    every commit by the full fixture corpus. <!-- apptheory-fixture-count: 265 -->
+    every commit by the full fixture corpus. <!-- apptheory-fixture-count: 272 -->
     The corpus includes MCP fixtures for the Streamable HTTP surface and OAuth fixtures
     for protected-resource flows used by Remote MCP deployments.
   </p>
@@ -98,8 +98,19 @@ edit_on_github: false
   {% for r in site.data.runtimes %}
     <div class="runtime-block__pane" data-runtime-pane="{{ r.id }}" {% unless forloop.first %}hidden{% endunless %}>
 
+  {%- comment -%} Install strings come from the release-tagged config override
+  (pages.yml → scripts/generate-docs-version-override.rb) when it is present.
+  With only the checked-in docs/_config.yml (literal vX.Y.Z / X.Y.Z
+  placeholders), the pinned versions in docs/_data/runtimes.yml render instead,
+  so local preview shows real versions. {%- endcomment -%}
+  {%- assign rt = site.tabletheory.runtimes | where: "id", r.id | first -%}
+  {%- if rt.install == nil or rt.install contains "X.Y.Z" -%}
+    {%- assign rt_install = r.install -%}
+  {%- else -%}
+    {%- assign rt_install = rt.install -%}
+  {%- endif -%}
   <p class="tc-body-sm" style="color: var(--tc-fg-dim); font-family: var(--tc-font-mono); margin: 4px 0 12px;">
-    {{ r.install }}
+    {{ rt_install }}
   </p>
 
 ```{{ r.lang }}

@@ -379,6 +379,28 @@ export class App {
     _responseForHTTPError(err) {
         return responseForErrorWithFormat(this._httpErrorFormat, err);
     }
+    // _recordAdapterDecodeError routes an adapter-level request decode failure
+    // through the observability hooks without changing admission behavior. The
+    // portable path records observability only after a request decodes
+    // successfully, so a decode failure (for example an invalid query string in
+    // an HTTP API v2 or Function URL event) previously produced an error response
+    // with no Log/Metric/Span record. The hook fires for the same P2 tier that
+    // the portable path observes, using the error's code and the response status,
+    // with the real duration measured from the adapter entry timestamp.
+    _recordAdapterDecodeError(method, path, err, status, durationMs) {
+        if (this._tier !== "p2")
+            return;
+        recordObservability(this._observability, {
+            method,
+            path,
+            requestId: "",
+            tenantId: "",
+            traceId: "",
+            status,
+            errorCode: errorCodeFrom(err),
+            durationMs,
+        });
+    }
     _responseForHTTPErrorWithRequestIdTraceId(err, requestId, traceId) {
         return responseForErrorWithRequestIdTraceIdAndFormat(this._httpErrorFormat, err, requestId, traceId);
     }
@@ -720,27 +742,33 @@ export class App {
     }
     /** Serves an API Gateway HTTP API v2 event. */
     async serveAPIGatewayV2(event, ctx) {
+        const startedAtMs = this._clock.now().valueOf();
         let request;
         try {
             request = requestFromAPIGatewayV2(event);
         }
         catch (err) {
-            return apigatewayV2ResponseFromResponse(this._responseForHTTPError(err));
+            const resp = this._responseForHTTPError(err);
+            this._recordAdapterDecodeError(String(event.requestContext?.http?.method ?? ""), String(event.requestContext?.http?.path ?? "/"), err, resp.status, durationMs(startedAtMs, this._clock.now().valueOf()));
+            return await apigatewayV2ResponseFromResponse(resp);
         }
         const resp = await this.serve(request, ctx);
-        return apigatewayV2ResponseFromResponse(resp);
+        return await apigatewayV2ResponseFromResponse(resp);
     }
     /** Serves a Lambda Function URL event. */
     async serveLambdaFunctionURL(event, ctx) {
+        const startedAtMs = this._clock.now().valueOf();
         let request;
         try {
             request = requestFromLambdaFunctionURL(event);
         }
         catch (err) {
-            return lambdaFunctionURLResponseFromResponse(this._responseForHTTPError(err));
+            const resp = this._responseForHTTPError(err);
+            this._recordAdapterDecodeError(String(event.requestContext?.http?.method ?? ""), String(event.requestContext?.http?.path ?? "/"), err, resp.status, durationMs(startedAtMs, this._clock.now().valueOf()));
+            return await lambdaFunctionURLResponseFromResponse(resp);
         }
         const resp = await this.serve(request, ctx);
-        return lambdaFunctionURLResponseFromResponse(resp);
+        return await lambdaFunctionURLResponseFromResponse(resp);
     }
     /** Serves an API Gateway REST proxy event. */
     async serveAPIGatewayProxy(event, ctx) {
@@ -768,6 +796,7 @@ export class App {
     }
     /** Serves an AppSync direct Lambda resolver event. */
     async serveAppSync(event, ctx) {
+        const startedAtMs = this._clock.now().valueOf();
         const fallbackRequestId = appSyncRequestIdFromContext(ctx);
         const requestMetadata = appSyncRequestFromEvent(event);
         let request;
@@ -775,7 +804,9 @@ export class App {
             request = requestFromAppSync(event);
         }
         catch (err) {
-            return appSyncPayloadFromResponse(appSyncErrorResponse(err, requestMetadata, fallbackRequestId));
+            const resp = appSyncErrorResponse(err, requestMetadata, fallbackRequestId);
+            this._recordAdapterDecodeError(String(event?.info?.parentTypeName ?? ""), `/${String(event?.info?.fieldName ?? "")}`, err, resp.status, durationMs(startedAtMs, this._clock.now().valueOf()));
+            return appSyncPayloadFromResponse(resp);
         }
         let resp = null;
         try {
@@ -808,6 +839,7 @@ export class App {
     }
     /** Serves an API Gateway WebSocket event. */
     async serveWebSocket(event, ctx) {
+        const startedAtMs = this._clock.now().valueOf();
         const route = this._webSocketRouteForEvent(event);
         let handler = route?.handler ?? null;
         let requestId = String(event?.requestContext?.requestId ?? "").trim();
@@ -824,10 +856,11 @@ export class App {
             request = requestFromWebSocketEvent(event);
         }
         catch (err) {
-            if (this._tier === "p0") {
-                return apigatewayProxyResponseFromResponse(responseForError(err));
-            }
-            return apigatewayProxyResponseFromResponse(responseForErrorWithRequestId(err, requestId));
+            const resp = this._tier === "p0"
+                ? responseForError(err)
+                : responseForErrorWithRequestId(err, requestId);
+            this._recordAdapterDecodeError(String(event?.requestContext?.routeKey ?? ""), String(event?.path ?? "/"), err, resp.status, durationMs(startedAtMs, this._clock.now().valueOf()));
+            return apigatewayProxyResponseFromResponse(resp);
         }
         const domainName = String(event?.requestContext?.domainName ?? "").trim();
         const stage = String(event?.requestContext?.stage ?? "").trim();
@@ -900,7 +933,20 @@ export class App {
             }
             return apigatewayProxyResponseFromResponse(errorResponseWithRequestId("app.internal", "internal error", {}, requestId));
         }
-        return apigatewayProxyResponseFromResponse(normalizeResponse(resp));
+        // A dual-body response (non-empty buffered body + bodyStream) is divergent
+        // across adapters, so the normalizer fails closed on the ambiguous shape.
+        // Route that failure through the same error handling as a thrown handler
+        // error so the WS serve path never lets the TypeError escape (aligned with
+        // Go and Py).
+        try {
+            return apigatewayProxyResponseFromResponse(normalizeResponse(resp));
+        }
+        catch (err) {
+            if (this._tier === "p0") {
+                return apigatewayProxyResponseFromResponse(responseForError(err));
+            }
+            return apigatewayProxyResponseFromResponse(responseForErrorWithRequestId(err, requestId));
+        }
     }
     _eventContext(ctx) {
         const requestId = ctx &&
@@ -1030,7 +1076,15 @@ export class App {
         const out = [];
         const wrapped = this._applyEventMiddlewares(handler);
         for (const record of records) {
-            out.push(await (wrapped ?? handler)(eventCtx, record));
+            try {
+                out.push(await (wrapped ?? handler)(eventCtx, record));
+            }
+            catch (err) {
+                // A panicking / throwing user callback must not take down the SNS
+                // adapter path with an arbitrary error; map it to the established
+                // event-workload failure shape (same as the EventBridge adapter).
+                throw sanitizeEventWorkloadError(err);
+            }
         }
         return out;
     }

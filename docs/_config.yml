@@ -133,15 +133,15 @@ tabletheory:
   runtimes:
     - id: go
       label: Go
-      install: "go get github.com/theory-cloud/apptheory/v3@v3.0.0-rc"
+      install: "go get github.com/theory-cloud/apptheory/v3@vX.Y.Z"
       docs_path: runtimes/go
     - id: ts
       label: TypeScript
-      install: "gh release download v1.14.0 --repo theory-cloud/AppTheory --pattern theory-cloud-apptheory-1.14.0.tgz --pattern SHA256SUMS.txt --clobber && grep ' theory-cloud-apptheory-1.14.0.tgz$' SHA256SUMS.txt | sha256sum -c - && npm install ./theory-cloud-apptheory-1.14.0.tgz"
+      install: "gh release download vX.Y.Z --repo theory-cloud/AppTheory --pattern theory-cloud-apptheory-X.Y.Z.tgz --pattern SHA256SUMS.txt --clobber && grep ' theory-cloud-apptheory-X.Y.Z.tgz$' SHA256SUMS.txt | sha256sum -c - && npm install ./theory-cloud-apptheory-X.Y.Z.tgz"
       docs_path: runtimes/typescript
     - id: python
       label: Python
-      install: "gh release download v1.14.0 --repo theory-cloud/AppTheory --pattern apptheory-1.14.0-py3-none-any.whl --pattern SHA256SUMS.txt --clobber && grep ' apptheory-1.14.0-py3-none-any.whl$' SHA256SUMS.txt | sha256sum -c - && python -m pip install ./apptheory-1.14.0-py3-none-any.whl"
+      install: "gh release download vX.Y.Z --repo theory-cloud/AppTheory --pattern apptheory-X.Y.Z-py3-none-any.whl --pattern SHA256SUMS.txt --clobber && grep ' apptheory-X.Y.Z-py3-none-any.whl$' SHA256SUMS.txt | sha256sum -c - && python -m pip install ./apptheory-X.Y.Z-py3-none-any.whl"
       docs_path: runtimes/python
   surfaces:
     - id: core
@@ -164,8 +164,8 @@ tabletheory:
       cta: See event workloads
   stats:
     - label: Contract fixtures
-      value: "265" # apptheory-fixture-count
-      sub: 263 run in all runtimes; route algebra and facade inventory run in Go and CDK-TS
+      value: "272" # apptheory-fixture-count
+      sub: 270 run in all runtimes; route algebra and facade inventory run in Go and CDK-TS
     - label: Runtimes
       value: "3"
       sub: Go · TypeScript · Python

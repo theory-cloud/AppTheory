@@ -6633,6 +6633,45 @@ function builtInAppTheoryHandler(runtime, name, effects) {
             yield Buffer.from("Hello</h1>", "utf8");
           })(),
         );
+    case "sse_stream_two_events":
+      return () => ({
+        status: 200,
+        headers: {
+          "content-type": ["text/event-stream"],
+          "cache-control": ["no-cache"],
+          connection: ["keep-alive"],
+        },
+        cookies: [],
+        body: Buffer.alloc(0),
+        bodyStream: (async function* () {
+          yield Buffer.from('id: 1\nevent: message\ndata: {"ok":true}\n\n', "utf8");
+          yield Buffer.from('id: 2\nevent: message\ndata: {"ok":false}\n\n', "utf8");
+        })(),
+        isBase64: false,
+      });
+    case "sse_stream_live":
+      return () => ({
+        status: 200,
+        headers: { "content-type": ["text/event-stream"] },
+        cookies: [],
+        body: Buffer.alloc(0),
+        bodyStream: (async function* () {
+          yield Buffer.from('id: 1\nevent: message\ndata: {"ok":true}\n\n', "utf8");
+          await new Promise(() => {});
+        })(),
+        isBase64: false,
+      });
+    case "sse_stream_overrun":
+      return () => ({
+        status: 200,
+        headers: { "content-type": ["text/event-stream"] },
+        cookies: [],
+        body: Buffer.alloc(0),
+        bodyStream: (async function* () {
+          yield Buffer.alloc(4 * 1024 * 1024 + 1, 0x61);
+        })(),
+        isBase64: false,
+      });
     case "safe_json_for_html":
       return () =>
         runtime.text(

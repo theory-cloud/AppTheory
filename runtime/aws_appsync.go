@@ -412,10 +412,13 @@ func appSyncErrorPayloadForResponse(err error, request Request, requestID string
 
 // ServeAppSync adapts an AppSync Lambda resolver event into AppTheory routing semantics.
 func (a *App) ServeAppSync(ctx context.Context, event AppSyncResolverEvent) any {
+	startedAt := adapterEntryTime(a)
 	requestID := appSyncRequestIDFromContext(ctx)
 	requestMeta := appSyncRequestForEvent(event)
 	request, err := requestFromAppSync(event)
 	if err != nil {
+		resp := a.responseForHTTPError(err)
+		a.recordAdapterDecodeError(startedAt, event.Info.ParentTypeName, "/"+event.Info.FieldName, err, resp.Status)
 		return appSyncErrorPayloadForResponse(err, requestMeta, requestID)
 	}
 

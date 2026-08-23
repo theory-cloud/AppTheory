@@ -79,6 +79,11 @@ func TestStateless20260728DoesNotCreateOrRequireSession(t *testing.T) {
 	if deleteResp.Status != 405 {
 		t.Fatalf("delete status = %d, body = %s", deleteResp.Status, deleteResp.Body)
 	}
+	// RFC 9110 15.5.5: the stateless 2026-07-28 shape permits only POST, so the
+	// 405 must carry Allow: POST.
+	if got := deleteResp.Headers["allow"]; len(got) != 1 || got[0] != "POST" {
+		t.Fatalf("delete allow header = %v, want [POST]", got)
+	}
 
 	if sessionID := initializeSession(t, s); sessionID != "session-after-stateless" {
 		t.Fatalf("legacy session id = %q", sessionID)

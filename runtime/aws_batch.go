@@ -15,7 +15,7 @@ func batchItemFailures[Record any, Failure any](
 	failures := make([]Failure, 0, len(records))
 	for _, record := range records {
 		if handler != nil {
-			if err := handler(record); err == nil {
+			if err := runRecordHandlerWithRecover(handler, record); err == nil {
 				continue
 			}
 		}
@@ -27,6 +27,19 @@ func batchItemFailures[Record any, Failure any](
 		failures = append(failures, failureForID(id))
 	}
 	return failures
+}
+
+// runRecordHandlerWithRecover invokes a per-record event handler and converts a
+// panicking callback into the established event-workload failure error, so a
+// user callback panic cannot take down the batch adapter / request path. This
+// mirrors the per-record recovery used by the DynamoDB Streams adapter.
+func runRecordHandlerWithRecover[Record any](handler func(Record) error, record Record) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = eventWorkloadFailedError()
+		}
+	}()
+	return handler(record)
 }
 
 func serveBatchItemFailures[Record any, Failure any](

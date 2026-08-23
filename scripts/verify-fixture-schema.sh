@@ -230,6 +230,7 @@ def assert_supported_schema_keywords(schema: Any, path: str = "$") -> None:
 
 FIXTURE_DOMAIN_TIERS = {
     "http-core": "p0",
+    "http-core-v2-streaming": "p0",
     "middleware-guardrails": "p1",
     "appsync-observability-policies": "p2",
     "observability": "p2",

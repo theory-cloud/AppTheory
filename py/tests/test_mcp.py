@@ -261,6 +261,8 @@ class McpRuntimeTests(unittest.TestCase):
             }
         )
         self.assertEqual(deleted.status, 405)
+        # RFC 9110 15.5.5: the stateless 2026-07-28 shape permits only POST.
+        self.assertEqual(deleted.headers.get("allow"), ["POST"])
 
         legacy = server.serve(
             {
@@ -534,6 +536,8 @@ class McpRuntimeTests(unittest.TestCase):
 
         unsupported_method = server.serve({"method": "PUT", "headers": {}, "body": ""})
         self.assertEqual(unsupported_method.status, 405)
+        # RFC 9110 15.5.5: the MCP endpoint registers GET, POST, DELETE.
+        self.assertEqual(unsupported_method.headers.get("allow"), ["DELETE, GET, POST"])
 
     def test_jsonrpc_errors_notifications_and_protocol_headers(self) -> None:
         server = create_mcp_server("PyMCP", "test", {"id_generator": sequence_mcp_id_generator(["sess-json"])})
