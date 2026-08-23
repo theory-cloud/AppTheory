@@ -31,11 +31,35 @@ pin the matching v4 module tag, and run `go mod tidy` in the CDK application's m
 continue to target the same immutable release commit; do not mix major lines or substitute registry-published
 artifacts.
 
-The v4.0.0-rc tag is the first v4 release; pin the exact v4 release or RC tag you are moving to. v4.0.0-rc carries no
-Go API behavior change beyond the import-path migration: the api-snapshot diff between v3.3.0 and the v4 line is
-header-path-only, and the contract-test fixtures are byte-untouched. Do not retain both AppTheory major paths in one
-application: packages from `/v3` and `/v4` have distinct Go type identities even where their APIs are otherwise
-unchanged.
+The v4.0.0-rc tag is the first v4 release; pin the exact v4 release or RC tag you are moving to. Within the /v3→/v4
+module migration itself, the Go API surface is unchanged beyond import paths: the api-snapshot diff between v3.3.0 and
+the v4 line is header-path-only. Do not retain both AppTheory major paths in one application: packages from `/v3` and
+`/v4` have distinct Go type identities even where their APIs are otherwise unchanged.
+
+### Breaking runtime behavior changes
+
+The v4 line is a major release for more than its import paths: the v3.3.0→v4 range also ships Go-runtime-observable
+breaking wire changes from the [#956](https://github.com/theory-cloud/AppTheory/pull/956) and
+[#957](https://github.com/theory-cloud/AppTheory/pull/957) trains:
+
+- Streaming responses on the HTTP API v2 and buffered Function URL adapters are no longer silently dropped. A
+  terminating stream is drained into the buffered body within a bounded budget (4 MiB / 5 s), and a stream that does
+  not terminate in time or exceeds the byte budget fails closed with the documented HTTP 500 JSON error instead of
+  reaching clients as a 200 with an empty body and immediate EOF.
+- A streamed-body drain byte overrun maps to HTTP 413 payload too large with the `app.too_large` error shape, matching
+  the buffered-body size semantics, instead of the generic 500 fail-closed shape. The 500 shape is retained only for
+  non-size drain failures such as non-termination and stream errors.
+- A response carrying both a non-empty buffered body and a streaming body is rejected and fails closed, because
+  different adapters previously picked different representations and produced divergent wire bytes for the same
+  response.
+- MCP method-not-allowed responses now carry the RFC 9110 `Allow` header: `Allow: POST` on the stateless shape,
+  `Allow: DELETE, GET, POST` on the session-ful transport.
+- Panicking event callbacks on the SQS, Kinesis, and SNS adapters are recovered into the established event-workload
+  failure shape instead of crashing the invocation; a panicking SQS/Kinesis record no longer aborts the whole batch.
+
+These are wire-contract changes, not source-level API changes: after the import-path migration, Go code that compiles
+on v3 compiles on v4, but the wire behavior an application observes can differ. See `CHANGELOG.md` and the v4 release
+notes for the complete commit-level detail in this range.
 
 ## v3.x line
 
