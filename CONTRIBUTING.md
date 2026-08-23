@@ -76,7 +76,7 @@ Keep PRs focused. One logical change per PR is easier to review than a bundle of
 
 ### Authoring documentation
 
-The documentation site under `docs/` is published to <https://apptheory.theorycloud.ai/> by `.github/workflows/pages.yml` whenever a stable GitHub release is published; a manual `workflow_dispatch` from a deployment-policy-allowed ref (the `staging` branch or a `v*` tag) re-deploys the site on demand. The deployed site always reflects the released tag; stable release authority remains the versioned packages, release notes, and API snapshots. The site is built with Jekyll; the layouts, includes, CSS, and JS are portable across all Theory Cloud frameworks.
+The documentation site under `docs/` is published to <https://apptheory.theorycloud.ai/> by `.github/workflows/pages.yml` on every push to `staging` and, automatically, right after each stable release publishes (the release workflow dispatches pages.yml with the exact tag, so the deployed docs and install commands always match the release that just shipped — never the previous one). The version pill and install commands are stamped from the release tag at build time; a manual `workflow_dispatch` from a deployment-policy-allowed ref (the `staging` branch or a `v*` tag) re-deploys on demand. Stable release authority remains the versioned packages, release notes, and API snapshots. The site is built with Jekyll; the layouts, includes, CSS, and JS are portable across all Theory Cloud frameworks.
 
 When adding or modifying a documentation page:
 

@@ -3,74 +3,72 @@
 #
 # Builds the Jekyll site under docs/ and deploys it to GitHub Pages.
 #
-# TRIGGER POLICY (aligned with the repo's publishing-workflow pattern):
-#   - release.yml / release-pr.yml ........................ triggers on `main`
-#   - prerelease.yml / prerelease-pr.yml .................. triggers on `premain`
-#   - theorycloud-apptheory-subtree-publish.yml ........... triggers on `premain` AND `main`
-#   - pages.yml (this file) ............................... `release` published + manual `workflow_dispatch`
+# TRIGGER POLICY:
+#   - push to `staging`: republish the integration docs line from the
+#     staging head, stamped with the latest published stable release.
+#   - `workflow_dispatch` with an explicit `tag` input: dispatched by
+#     release.yml immediately after it publishes a stable release, so the
+#     site deploys the just-published tag's docs stamped with that tag —
+#     never the previous release. Manual dispatch works too: pass `tag` to
+#     deploy a specific stable release, or omit it to redeploy the current
+#     ref's docs stamped with the latest stable release.
 #
-# Pages deploy is release-EVENT driven, not branch-push driven. A branch-push
-# trigger races release-please and builds the site from a mutable branch head,
-# so the version pill and the runtime install pins in the rendered site always
-# lag one release behind (e.g. the site showed v1.14.0 installs while the
-# latest release was v3.3.0). Instead, this workflow checks out the published
-# release tag and stamps the site from it:
+# Why not `release: published`? Releases here are published by
+# release-please with the default GITHUB_TOKEN (no PAT secret exists, and
+# none may be introduced), and GitHub never triggers new workflow runs from
+# GITHUB_TOKEN-created events — a release-event trigger would never fire
+# and the site would only update via manual dispatch. workflow_dispatch is
+# one of the two event kinds the built-in token IS allowed to create, so
+# release.yml hands off explicitly:
+# `gh workflow run pages.yml --ref <tag> -f tag=<tag>` from a job holding
+# only `actions: write`. No secrets, no manual steps.
 #
-#   1. Resolve the release tag — from the `release` event payload, or (on
-#      workflow_dispatch) the latest published non-prerelease release via
-#      `gh release view`. The build NEVER runs from a branch head.
-#   2. Generate docs/_config_versions.yml from the resolved tag via
-#      scripts/generate-docs-version-override.rb: the version pill and the
-#      FULL tabletheory.runtimes array — Jekyll deep-merges config hashes but
-#      REPLACES arrays wholesale, so the override must carry every runtime
-#      entry — with every version inside each install command replaced by the
-#      tag (`v${TAG}` where a tag is referenced, and `${TAG#v}` in asset
-#      filenames). Checked-in docs/_config.yml stays untouched and remains the
-#      local-preview fallback; the generated override wins in CI.
-#      The generator itself is materialized from THIS WORKFLOW'S OWN REF (a
-#      `git fetch` of ${GITHUB_REF_NAME} plus a `git show` of the script to
-#      /tmp), never read from the tag checkout: release tags cut before this
-#      workflow promoted do not contain the script, and fetching the promoting
-#      tag later is a no-op safeguard. The override is still generated only
-#      from the release event payload or the resolved release tag.
-#   3. The landing page (docs/index.html) renders each runtime's install
-#      command from site.tabletheory.runtimes (by-id lookup), falling back to
-#      docs/_data/runtimes.yml, so the override's stamped installs are
-#      load-bearing instead of dead weight.
-#   4. Build with `jekyll build --config _config.yml,_config_versions.yml`.
+# Version stamping: the build resolves a tag — the `tag` input, or (push /
+# bare manual dispatch) the latest published non-prerelease release via
+# `gh release view` — then generates docs/_config_versions.yml via
+# scripts/generate-docs-version-override.rb and builds with
+# `--config _config.yml,_config_versions.yml`. Jekyll deep-merges config
+# hashes but REPLACES arrays wholesale, so the override carries the complete
+# tabletheory.runtimes array with every `vX.Y.Z` / `X.Y.Z` placeholder in
+# each install string stamped (asset filenames strip the leading `v`). The
+# checked-in docs/_config.yml keeps the placeholders and remains the
+# local-preview fallback; the override is git-ignored.
 #
-# The github-pages environment's deployment policy accepts `v*` tag refs and
-# the `staging` branch only, so no repo settings work is needed. A manual
-# `workflow_dispatch` must be run from a ref that policy allows — the
-# `staging` branch or a `v*` tag — or the deploy job is rejected by the
-# environment policy. A docs-only fix that does not ship a release waits for
-# the next release; deploy it early with workflow_dispatch from `staging`.
+# The generator runs from the checkout: it is present on `staging` and on
+# every release tag cut after this workflow lands. Dispatching with a tag
+# older than that fails fast in the generator step — deploy such tags by
+# dispatching without `tag` instead.
+#
+# The github-pages environment's deployment policy accepts the `staging`
+# branch and `v*` tag refs, which covers every trigger above; a manual
+# dispatch from any other ref is rejected by the environment policy.
 #
 # Security invariants: the workflow token stays read-only except the
-# pages write + id-token granted to the deploy job; the override is generated
-# only from the release event payload or the resolved release tag; no secrets
-# are introduced.
+# pages write + id-token granted to the deploy job; the override is
+# generated only from the dispatch tag input or the resolved release tag;
+# no secrets are introduced.
 # =============================================================
 name: pages
 
 on:
-  # Primary path: publish the docs site when a release is published.
-  # Non-prerelease only — enforced by the job-level `if:` guards below.
-  release:
-    types: [published]
-  # Manual re-deploy (e.g. after rotating the Pages environment, or to
-  # republish after a docs-only fix). Resolves the latest published
-  # non-prerelease release tag — never a branch head.
+  push:
+    branches: [staging]
+  # Explicit stable tag deploy (release.yml handoff) or manual re-deploy.
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Stable release tag to deploy (e.g. v3.4.0). Set by release.yml after publishing; leave empty to redeploy this ref's docs stamped with the latest stable release."
+        required: false
+        type: string
 
 # Default workflow token stays read-only. Pages/id-token privileges are
 # granted only to the deploy job after the docs build artifact exists.
 permissions:
   contents: read
 
-# Coalesce in-flight deploys: if a second release publish (or manual
-# re-deploy) lands before the previous deploy finishes, queue it (don't
-# cancel) so we never skip a release's publish.
+# Coalesce in-flight deploys: if a second push or release dispatch lands
+# before the previous deploy finishes, queue it (don't cancel) so we never
+# skip a publish.
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -85,32 +83,48 @@ jobs:
       BUNDLE_DEPLOYMENT: "true"
       BUNDLE_FROZEN: "true"
       BUNDLE_PATH: vendor/bundle
-    # Deploy only for published non-prerelease releases or manual re-deploys.
-    # Prerelease publishes and any other event (e.g. branch pushes) must
-    # never build or publish the site.
-    if: (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch'
+    # Pushes deploy from staging only (defense in depth behind the branch
+    # trigger); dispatches are ref-gated by the environment policy.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/staging') || github.event_name == 'workflow_dispatch'
     steps:
-      - name: Resolve release tag
+      - name: Resolve deploy tag and checkout ref
         id: resolve
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG_INPUT: ${{ inputs.tag }}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
-            tag="$(jq -r .release.tag_name "$GITHUB_EVENT_PATH")"
+          set -euo pipefail
+          if [[ -n "${TAG_INPUT}" ]]; then
+            # release.yml hands off the tag it just published; manual
+            # dispatch may name any stable tag. Prereleases never publish.
+            if [[ ! "${TAG_INPUT}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "tag input '${TAG_INPUT}' is not a stable vX.Y.Z tag" >&2
+              exit 1
+            fi
+            tag="${TAG_INPUT}"
+            checkout_ref="${TAG_INPUT}"
           else
+            # Push or bare manual dispatch: build this ref's docs and stamp
+            # them with the latest published non-prerelease release
+            # (`gh release view` resolves GitHub's "latest" release, which
+            # excludes drafts and prereleases).
             tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+            checkout_ref=""
           fi
           if [[ -z "${tag}" || "${tag}" == "null" ]]; then
             echo "could not resolve a published release tag" >&2
             exit 1
           fi
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout release tag
+      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ steps.resolve.outputs.tag }}
+          # Explicit tag deploys build the release tag; everything else
+          # builds the triggering ref's head (empty = default).
+          ref: ${{ steps.resolve.outputs.checkout_ref }}
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
@@ -120,14 +134,14 @@ jobs:
           working-directory: docs
 
       - name: Generate version override
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           set -euo pipefail
-          # The generator ships with this workflow's ref — release tags cut before
-          # this workflow promoted do NOT contain it, so never read it from the
-          # tag checkout.
-          git fetch origin "${GITHUB_REF_NAME}" --depth=1
-          git show "FETCH_HEAD:scripts/generate-docs-version-override.rb" > /tmp/generate-docs-version-override.rb
-          ruby /tmp/generate-docs-version-override.rb --tag "${{ steps.resolve.outputs.tag }}" --config docs/_config.yml --output docs/_config_versions.yml
+          ruby scripts/generate-docs-version-override.rb \
+            --tag "${TAG}" \
+            --config docs/_config.yml \
+            --output docs/_config_versions.yml
 
       - name: Jekyll build
         working-directory: docs
@@ -139,6 +153,20 @@ jobs:
             --source . \
             --destination ./_site \
             --baseurl ""
+
+      - name: Verify stamped version in built site
+        working-directory: docs
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          if ! grep -qF "theory-cloud-apptheory-${TAG#v}.tgz" _site/index.html; then
+            echo "homepage does not show the stamped TypeScript install URL for tag ${TAG}" >&2
+            exit 1
+          fi
+          if grep -qF 'vX.Y.Z' _site/index.html; then
+            echo "homepage still contains un-stamped vX.Y.Z placeholder install URLs" >&2
+            exit 1
+          fi
 
       - name: Verify custom-domain root paths
         working-directory: docs
@@ -161,9 +189,8 @@ jobs:
       contents: read
       pages: write
       id-token: write
-    # Same guard as the build job: never deploy from prereleases or
-    # non-release events (e.g. branch pushes).
-    if: (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch'
+    # Same guard as the build job.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/staging') || github.event_name == 'workflow_dispatch'
     environment:
       name: github-pages
       url: https://apptheory.theorycloud.ai/

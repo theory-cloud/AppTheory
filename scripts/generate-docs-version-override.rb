@@ -6,41 +6,30 @@
 #
 # Writes docs/_config_versions.yml — a Jekyll config override that stamps the
 # docs site with a real release tag. .github/workflows/pages.yml resolves the
-# release tag (release event payload, or the latest published non-prerelease
-# tag for workflow_dispatch), calls this script, and builds with
+# deploy tag (the workflow_dispatch `tag` input handed off by release.yml
+# after a stable publish, or the latest published non-prerelease tag for
+# pushes and bare manual dispatch), calls this script, and builds with
 # `--config _config.yml,_config_versions.yml`, so the site's version pill and
-# runtime install commands always match the latest published release instead of
-# the hand-maintained pins in docs/_config.yml (`version_pill: "v1.x"`,
-# `v3.0.0-rc` / `v1.14.0` install pins).
+# runtime install commands always match the deployed release instead of the
+# placeholders in docs/_config.yml.
 #
-# INTENTIONAL DIFFERENCE from the sibling frameworks (TableTheory PR #562,
-# FaceTheory PR #452, same wave): those frameworks' docs/_config.yml carries
-# `vX.Y.Z` PLACEHOLDER install URLs and the script does a literal
-# `gsub("vX.Y.Z", tag).gsub("X.Y.Z", bare)`. AppTheory's docs/_config.yml
-# carries REAL pinned versions, so this script keeps REGEX stamping instead.
+# AppTheory's docs/_config.yml carries `vX.Y.Z` / `X.Y.Z` LITERAL PLACEHOLDER
+# tokens in its install strings — the same convention as the sibling
+# frameworks (TableTheory, FaceTheory) — so stamping is a plain literal
+# substitution with no regex and no order dependence on real version numbers.
+# (An earlier revision regex-stamped real pinned versions; that approach
+# corrupted on multi-digit version components and was replaced by the
+# placeholder convention.)
 #
 # Jekyll config merging (`jekyll build --config a,b`) deep-merges hashes but
 # REPLACES arrays wholesale — the override therefore carries the COMPLETE
-# tabletheory.runtimes array from docs/_config.yml, with every version inside
-# each install string replaced by the tag (asset filenames strip the leading
-# `v`). The landing page (docs/index.html) renders each install command from
-# site.tabletheory.runtimes (by-id lookup) with a `| default: r.install`
-# fallback to docs/_data/runtimes.yml, so the override's runtimes array is
-# load-bearing instead of dead weight. docs/_config.yml itself is never
-# modified and remains the local-preview fallback; docs/_config_versions.yml is
-# a CI/local-gate generated artifact and is git-ignored.
+# tabletheory.runtimes array from docs/_config.yml, with every `vX.Y.Z` /
+# `X.Y.Z` occurrence in each install string replaced by the tag (asset
+# filenames strip the leading `v`). docs/_config.yml itself is never modified
+# and remains the local-preview fallback; docs/_config_versions.yml is a
+# CI/local-gate generated artifact and is git-ignored.
 #
-# Regex-stamping ORDER is load-bearing (LOW-1 regression): the BARE `X.Y.Z`
-# pass runs FIRST and the `v`-prefixed pass SECOND. The bare pass's `(?<!v)`
-# lookbehind skips `vX.Y.Z` tag references — the digit after `v` is guarded and
-# no partial `X.Y.Z` match can start inside them — so with a >=2-digit major
-# tag (e.g. v10.2.3) the bare pass can never re-match inside the v-prefixed
-# stamp and produce `v110.2.3`. Filenames like
-# theory-cloud-apptheory-1.14.0.tgz stamp bare; the v-pass then stamps every
-# `vX.Y.Z` token (e.g. `download v1.14.0`) and drops any pre-release suffix
-# (`v3.0.0-rc` → the tag verbatim).
-#
-# The override is generated only from the release tag — no secrets, no
+# The override is generated only from the deploy tag — no secrets, no
 # branch-state input.
 # =============================================================
 
@@ -50,14 +39,11 @@ require "yaml"
 DEFAULT_CONFIG = "docs/_config.yml"
 DEFAULT_OUTPUT = "docs/_config_versions.yml"
 
-# Replace every version occurrence in an install string with the release tag:
-# `vX.Y.Z` tag references become the tag verbatim, bare `X.Y.Z` tokens (asset
-# filenames) become the tag without the leading `v`. Order is load-bearing —
-# bare pass first, v-prefixed pass second (see header).
+# Replace every `vX.Y.Z` / `X.Y.Z` placeholder occurrence in an install string
+# with the release tag. Asset filenames use the bare version (no leading `v`),
+# so the longer `vX.Y.Z` token is stamped first and the bare `X.Y.Z` second.
 def stamp_install(install, tag, bare)
-  bare_tag_re = /(?<!v)[0-9]+\.[0-9]+\.[0-9]+/
-  v_tag_re = /v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?/
-  install.gsub(bare_tag_re) { bare }.gsub(v_tag_re) { tag }
+  install.gsub("vX.Y.Z", tag).gsub("X.Y.Z", bare)
 end
 
 def main(argv)
@@ -67,7 +53,7 @@ def main(argv)
     opts.on("--config PATH", "Source Jekyll config (default: #{DEFAULT_CONFIG})") do |path|
       options[:config] = path
     end
-    opts.on("--tag TAG", "Release tag to stamp (e.g. v3.3.0)") do |tag|
+    opts.on("--tag TAG", "Release tag to stamp (e.g. v3.4.0)") do |tag|
       options[:tag] = tag
     end
     opts.on("--output PATH", "Output override path (default: #{DEFAULT_OUTPUT})") do |path|
@@ -79,7 +65,7 @@ def main(argv)
   tag = options[:tag]
   output_path = options[:output] || DEFAULT_OUTPUT
 
-  abort "error: --tag is required (e.g. v3.3.0)" if tag.nil? || tag.empty?
+  abort "error: --tag is required (e.g. v3.4.0)" if tag.nil? || tag.empty?
   abort "error: config not found: #{config_path}" unless File.file?(config_path)
 
   config = YAML.safe_load(File.read(config_path))
