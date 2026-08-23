@@ -469,6 +469,26 @@ class TestApp(unittest.TestCase):
         self.assertEqual(app.serve_apigw_proxy(None)["statusCode"], 500)  # type: ignore[arg-type]
         self.assertEqual(app.serve_alb(None)["statusCode"], 500)  # type: ignore[arg-type]
 
+    def test_adapter_decode_failures_emit_observability(self) -> None:
+        # A malformed event fails request decoding before the portable path
+        # records observability; the adapter must still emit a record so decode
+        # failures are not silent.
+        logs = []
+        app = create_app(tier="p2", observability=ObservabilityHooks(log=lambda r: logs.append(r)))
+
+        out = app.serve_apigw_v2(None)  # type: ignore[arg-type]
+        self.assertEqual(out["statusCode"], 500)
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0].event, "request.completed")
+        self.assertEqual(logs[0].status, 500)
+        self.assertEqual(logs[0].error_code, "app.internal")
+
+    def test_adapter_decode_failures_stay_silent_below_p2(self) -> None:
+        logs = []
+        app = create_app(tier="p1", observability=ObservabilityHooks(log=lambda r: logs.append(r)))
+        app.serve_apigw_v2(None)  # type: ignore[arg-type]
+        self.assertEqual(len(logs), 0)
+
     def test_legacy_http_error_format_preserves_flat_error_body(self) -> None:
         app = create_app(tier="p2", http_error_format="flat_legacy")
 

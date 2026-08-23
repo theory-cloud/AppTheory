@@ -416,6 +416,8 @@ func (a *App) ServeAppSync(ctx context.Context, event AppSyncResolverEvent) any 
 	requestMeta := appSyncRequestForEvent(event)
 	request, err := requestFromAppSync(event)
 	if err != nil {
+		resp := a.responseForHTTPError(err)
+		a.recordAdapterDecodeError(appSyncMethod(event.Info.ParentTypeName), "/"+event.Info.FieldName, err, resp.Status)
 		return appSyncErrorPayloadForResponse(err, requestMeta, requestID)
 	}
 

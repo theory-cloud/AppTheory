@@ -71,7 +71,9 @@ func isStreamingBodySizeError(err error) bool {
 func (a *App) ServeAPIGatewayV2(ctx context.Context, event events.APIGatewayV2HTTPRequest) events.APIGatewayV2HTTPResponse {
 	req, err := requestFromAPIGatewayV2(event)
 	if err != nil {
-		return apigatewayV2ResponseFromResponse(ctx, a.responseForHTTPError(err))
+		resp := a.responseForHTTPError(err)
+		a.recordAdapterDecodeError(event.RequestContext.HTTP.Method, event.RequestContext.HTTP.Path, err, resp.Status)
+		return apigatewayV2ResponseFromResponse(ctx, resp)
 	}
 	return apigatewayV2ResponseFromResponse(ctx, a.Serve(ctx, req))
 }
@@ -79,7 +81,9 @@ func (a *App) ServeAPIGatewayV2(ctx context.Context, event events.APIGatewayV2HT
 func (a *App) ServeLambdaFunctionURL(ctx context.Context, event events.LambdaFunctionURLRequest) events.LambdaFunctionURLResponse {
 	req, err := requestFromLambdaFunctionURL(event)
 	if err != nil {
-		return lambdaFunctionURLResponseFromResponse(ctx, a.responseForHTTPError(err))
+		resp := a.responseForHTTPError(err)
+		a.recordAdapterDecodeError(event.RequestContext.HTTP.Method, event.RequestContext.HTTP.Path, err, resp.Status)
+		return lambdaFunctionURLResponseFromResponse(ctx, resp)
 	}
 	return lambdaFunctionURLResponseFromResponse(ctx, a.Serve(ctx, req))
 }

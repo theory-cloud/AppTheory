@@ -1190,12 +1190,35 @@ class App:
                 )
             )
 
+    def _record_adapter_decode_error(self, method: str, path: str, exc: Exception, status: int) -> None:
+        """Route an adapter-level request decode failure through observability.
+
+        The portable path records observability only after a request decodes
+        successfully, so a decode failure (for example an invalid query string
+        in an HTTP API v2 or Function URL event) previously produced an error
+        response with no Log/Metric/Span record. The hook fires for the same P2
+        tier that the portable path observes, using the error's code and the
+        response status.
+        """
+        if self._tier != "p2":
+            return
+        error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
+        self._record_observability(method, path, "", "", "", status, error_code, 0)
+
     def serve_apigw_v2(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
         """Serve an API Gateway HTTP API v2 event."""
         try:
             request = request_from_apigw_v2(event)
         except Exception as exc:  # noqa: BLE001
-            return apigw_v2_response_from_response(self._response_for_http_error(exc))
+            resp = self._response_for_http_error(exc)
+            request_context_http = ((event or {}).get("requestContext") or {}).get("http") or {}
+            self._record_adapter_decode_error(
+                str(request_context_http.get("method") or ""),
+                str(request_context_http.get("path") or "/"),
+                exc,
+                resp.status,
+            )
+            return apigw_v2_response_from_response(resp)
 
         resp = self.serve(request, ctx)
         return apigw_v2_response_from_response(resp)
@@ -1205,7 +1228,15 @@ class App:
         try:
             request = request_from_lambda_function_url(event)
         except Exception as exc:  # noqa: BLE001
-            return lambda_function_url_response_from_response(self._response_for_http_error(exc))
+            resp = self._response_for_http_error(exc)
+            request_context_http = ((event or {}).get("requestContext") or {}).get("http") or {}
+            self._record_adapter_decode_error(
+                str(request_context_http.get("method") or ""),
+                str(request_context_http.get("path") or "/"),
+                exc,
+                resp.status,
+            )
+            return lambda_function_url_response_from_response(resp)
 
         resp = self.serve(request, ctx)
         return lambda_function_url_response_from_response(resp)
@@ -1237,7 +1268,15 @@ class App:
         try:
             request = _request_from_appsync_event(event)
         except Exception as exc:  # noqa: BLE001
-            return _appsync_payload_from_response(_appsync_error_response(exc, request_metadata, fallback_request_id))
+            resp = _appsync_error_response(exc, request_metadata, fallback_request_id)
+            event_info = (event or {}).get("info") or {} if isinstance(event, dict) else getattr(event, "info", None) or {}
+            self._record_adapter_decode_error(
+                str(event_info.get("parentTypeName") or "") if isinstance(event_info, dict) else "",
+                f"/{str(event_info.get('fieldName') or '')}" if isinstance(event_info, dict) else "/",
+                exc,
+                resp.status,
+            )
+            return _appsync_payload_from_response(resp)
 
         resp: Response | None = None
         try:
@@ -1265,7 +1304,14 @@ class App:
         try:
             request = _request_from_websocket_event(event)
         except Exception as exc:  # noqa: BLE001
-            return apigw_proxy_response_from_response(response_for_error(exc))
+            resp = response_for_error(exc)
+            self._record_adapter_decode_error(
+                str((event or {}).get("httpMethod") or ""),
+                str((event or {}).get("path") or "/"),
+                exc,
+                resp.status,
+            )
+            return apigw_proxy_response_from_response(resp)
 
         try:
             normalized = normalize_request(request)

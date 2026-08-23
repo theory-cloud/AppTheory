@@ -379,6 +379,28 @@ export class App {
     _responseForHTTPError(err) {
         return responseForErrorWithFormat(this._httpErrorFormat, err);
     }
+    // _recordAdapterDecodeError routes an adapter-level request decode failure
+    // through the observability hooks without changing admission behavior. The
+    // portable path records observability only after a request decodes
+    // successfully, so a decode failure (for example an invalid query string in
+    // an HTTP API v2 or Function URL event) previously produced an error response
+    // with no Log/Metric/Span record. The hook fires for the same P2 tier that
+    // the portable path observes, using the error's code and the response status.
+    _recordAdapterDecodeError(method, path, err, status) {
+        if (this._tier !== "p2")
+            return;
+        const startedAtMs = this._clock.now().valueOf();
+        recordObservability(this._observability, {
+            method,
+            path,
+            requestId: "",
+            tenantId: "",
+            traceId: "",
+            status,
+            errorCode: errorCodeFrom(err),
+            durationMs: durationMs(startedAtMs, this._clock.now().valueOf()),
+        });
+    }
     _responseForHTTPErrorWithRequestIdTraceId(err, requestId, traceId) {
         return responseForErrorWithRequestIdTraceIdAndFormat(this._httpErrorFormat, err, requestId, traceId);
     }
@@ -725,7 +747,9 @@ export class App {
             request = requestFromAPIGatewayV2(event);
         }
         catch (err) {
-            return await apigatewayV2ResponseFromResponse(this._responseForHTTPError(err));
+            const resp = this._responseForHTTPError(err);
+            this._recordAdapterDecodeError(String(event.requestContext?.http?.method ?? ""), String(event.requestContext?.http?.path ?? "/"), err, resp.status);
+            return await apigatewayV2ResponseFromResponse(resp);
         }
         const resp = await this.serve(request, ctx);
         return await apigatewayV2ResponseFromResponse(resp);
@@ -737,7 +761,9 @@ export class App {
             request = requestFromLambdaFunctionURL(event);
         }
         catch (err) {
-            return await lambdaFunctionURLResponseFromResponse(this._responseForHTTPError(err));
+            const resp = this._responseForHTTPError(err);
+            this._recordAdapterDecodeError(String(event.requestContext?.http?.method ?? ""), String(event.requestContext?.http?.path ?? "/"), err, resp.status);
+            return await lambdaFunctionURLResponseFromResponse(resp);
         }
         const resp = await this.serve(request, ctx);
         return await lambdaFunctionURLResponseFromResponse(resp);
@@ -775,7 +801,9 @@ export class App {
             request = requestFromAppSync(event);
         }
         catch (err) {
-            return appSyncPayloadFromResponse(appSyncErrorResponse(err, requestMetadata, fallbackRequestId));
+            const resp = appSyncErrorResponse(err, requestMetadata, fallbackRequestId);
+            this._recordAdapterDecodeError(String(event?.info?.parentTypeName ?? ""), `/${String(event?.info?.fieldName ?? "")}`, err, resp.status);
+            return appSyncPayloadFromResponse(resp);
         }
         let resp = null;
         try {
@@ -824,10 +852,11 @@ export class App {
             request = requestFromWebSocketEvent(event);
         }
         catch (err) {
-            if (this._tier === "p0") {
-                return apigatewayProxyResponseFromResponse(responseForError(err));
-            }
-            return apigatewayProxyResponseFromResponse(responseForErrorWithRequestId(err, requestId));
+            const resp = this._tier === "p0"
+                ? responseForError(err)
+                : responseForErrorWithRequestId(err, requestId);
+            this._recordAdapterDecodeError(String(event?.requestContext?.routeKey ?? ""), String(event?.path ?? "/"), err, resp.status);
+            return apigatewayProxyResponseFromResponse(resp);
         }
         const domainName = String(event?.requestContext?.domainName ?? "").trim();
         const stage = String(event?.requestContext?.stage ?? "").trim();

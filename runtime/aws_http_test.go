@@ -268,6 +268,105 @@ func TestAPIGatewayV2ResponseFromResponse_BodyStreamErrorFailsClosed(t *testing.
 	requireAPIGatewayV2StreamingError(t, out)
 }
 
+func TestServeAPIGatewayV2_DecodeFailureEmitsObservability(t *testing.T) {
+	var gotLog *LogRecord
+	app := New(
+		WithTier(TierP2),
+		WithObservability(ObservabilityHooks{
+			Log: func(r LogRecord) {
+				copy := r
+				gotLog = &copy
+			},
+		}),
+	)
+
+	// Invalid raw query string: requestFromAPIGatewayV2 fails before the
+	// portable path records observability. The adapter must still emit a
+	// record so decode failures are not silent.
+	out := app.ServeAPIGatewayV2(context.Background(), events.APIGatewayV2HTTPRequest{
+		RawPath:        "/x",
+		RawQueryString: "%zz",
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{Method: "GET", Path: "/x"},
+		},
+	})
+
+	if out.StatusCode != 400 {
+		t.Fatalf("expected 400, got %d", out.StatusCode)
+	}
+	if gotLog == nil {
+		t.Fatal("expected decode failure to emit a log record")
+	}
+	if gotLog.Event != "request.completed" {
+		t.Fatalf("unexpected log event: %q", gotLog.Event)
+	}
+	if gotLog.Method != "GET" || gotLog.Path != "/x" {
+		t.Fatalf("unexpected method/path: %q %q", gotLog.Method, gotLog.Path)
+	}
+	if gotLog.Status != 400 || gotLog.ErrorCode != errorCodeBadRequest {
+		t.Fatalf("unexpected status/code: %d %q", gotLog.Status, gotLog.ErrorCode)
+	}
+}
+
+func TestServeLambdaFunctionURL_DecodeFailureEmitsObservability(t *testing.T) {
+	var gotLog *LogRecord
+	app := New(
+		WithTier(TierP2),
+		WithObservability(ObservabilityHooks{
+			Log: func(r LogRecord) {
+				copy := r
+				gotLog = &copy
+			},
+		}),
+	)
+
+	out := app.ServeLambdaFunctionURL(context.Background(), events.LambdaFunctionURLRequest{
+		RawPath:        "/y",
+		RawQueryString: "%zz",
+		RequestContext: events.LambdaFunctionURLRequestContext{
+			HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "POST", Path: "/y"},
+		},
+	})
+
+	if out.StatusCode != 400 {
+		t.Fatalf("expected 400, got %d", out.StatusCode)
+	}
+	if gotLog == nil {
+		t.Fatal("expected decode failure to emit a log record")
+	}
+	if gotLog.Method != "POST" || gotLog.Path != "/y" {
+		t.Fatalf("unexpected method/path: %q %q", gotLog.Method, gotLog.Path)
+	}
+	if gotLog.Status != 400 || gotLog.ErrorCode != errorCodeBadRequest {
+		t.Fatalf("unexpected status/code: %d %q", gotLog.Status, gotLog.ErrorCode)
+	}
+}
+
+func TestServeAPIGatewayV2_DecodeFailureNoObservabilityBelowP2(t *testing.T) {
+	var gotLog *LogRecord
+	app := New(
+		WithTier(TierP1),
+		WithObservability(ObservabilityHooks{
+			Log: func(r LogRecord) {
+				copy := r
+				gotLog = &copy
+			},
+		}),
+	)
+
+	app.ServeAPIGatewayV2(context.Background(), events.APIGatewayV2HTTPRequest{
+		RawPath:        "/x",
+		RawQueryString: "%zz",
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{Method: "GET", Path: "/x"},
+		},
+	})
+
+	if gotLog != nil {
+		t.Fatalf("expected no decode-failure record below P2, got %+v", gotLog)
+	}
+}
+
 func TestServeAPIGatewayV2_StreamingHandlerDeliversBufferedBody(t *testing.T) {
 	app := New()
 	app.Get("/sse", func(c *Context) (*Response, error) {

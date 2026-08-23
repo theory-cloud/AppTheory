@@ -126,6 +126,20 @@ type eventObservation struct {
 	EventName     string
 }
 
+// recordAdapterDecodeError routes an adapter-level request decode failure
+// through the observability hooks without changing admission behavior. The
+// portable path records observability only after a request decodes
+// successfully, so a decode failure (for example an invalid query string in an
+// HTTP API v2 or Function URL event) previously produced an error response with
+// no Log/Metric/Span record. The hook fires for the same P2 tier that the
+// portable path observes, using the error's code and the response status.
+func (a *App) recordAdapterDecodeError(method, path string, err error, status int) {
+	if a == nil || a.tier != TierP2 {
+		return
+	}
+	a.recordObservability(method, path, "", "", "", status, errorCodeForError(err), 0)
+}
+
 func (a *App) recordEventObservability(observation eventObservation, outcome string, errorCode string) {
 	if a == nil {
 		return

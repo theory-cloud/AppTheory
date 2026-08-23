@@ -325,7 +325,9 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 
 	normalized, err := normalizeRequest(req)
 	if err != nil {
-		return a.webSocketErrorResponse(err, requestID)
+		resp := a.webSocketErrorResponse(err, requestID)
+		a.recordAdapterDecodeError(event.HTTPMethod, event.Path, err, resp.StatusCode)
+		return resp
 	}
 
 	domainName := strings.TrimSpace(event.RequestContext.DomainName)

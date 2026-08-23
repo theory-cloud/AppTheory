@@ -164,3 +164,62 @@ test("lambda function url adapter fails closed on a streaming body error", async
 
   assertStreamingError(out, LAMBDA_FUNCTION_URL_STREAMING_ERROR_MESSAGE);
 });
+
+test("adapter decode failures emit observability records", async () => {
+  // An invalid raw query string fails request decoding before the portable
+  // path records observability; the adapter must still emit a record so
+  // decode failures are not silent.
+  const logs = [];
+  const app = createApp({
+    tier: "p2",
+    observability: {
+      log: (r) => logs.push(r),
+    },
+  });
+
+  const out = await app.serveAPIGatewayV2({
+    version: "2.0",
+    routeKey: "$default",
+    rawPath: "/x",
+    rawQueryString: "%zz",
+    cookies: [],
+    headers: {},
+    queryStringParameters: null,
+    requestContext: { http: { method: "GET", path: "/x" } },
+    body: "",
+    isBase64Encoded: false,
+  });
+
+  assert.equal(out.statusCode, 400);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].event, "request.completed");
+  assert.equal(logs[0].method, "GET");
+  assert.equal(logs[0].path, "/x");
+  assert.equal(logs[0].status, 400);
+  assert.equal(logs[0].errorCode, "app.bad_request");
+});
+
+test("adapter decode failures stay silent below P2", async () => {
+  const logs = [];
+  const app = createApp({
+    tier: "p1",
+    observability: {
+      log: (r) => logs.push(r),
+    },
+  });
+
+  await app.serveAPIGatewayV2({
+    version: "2.0",
+    routeKey: "$default",
+    rawPath: "/x",
+    rawQueryString: "%zz",
+    cookies: [],
+    headers: {},
+    queryStringParameters: null,
+    requestContext: { http: { method: "GET", path: "/x" } },
+    body: "",
+    isBase64Encoded: false,
+  });
+
+  assert.equal(logs.length, 0);
+});
