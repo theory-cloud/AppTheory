@@ -540,10 +540,11 @@ func TestServeAppSync_DecodeFailureObservabilityUsesParentTypeName(t *testing.T)
 		}),
 	)
 
+	const parentTypeQuery = "Query"
 	out := app.ServeAppSync(context.Background(), AppSyncResolverEvent{
 		Info: AppSyncResolverInfo{
 			FieldName:      "",
-			ParentTypeName: "Query",
+			ParentTypeName: parentTypeQuery,
 		},
 	})
 
@@ -556,7 +557,7 @@ func TestServeAppSync_DecodeFailureObservabilityUsesParentTypeName(t *testing.T)
 	// The decode-observability method dimension is the raw GraphQL parent
 	// type name (Query/Mutation, aligned with TS and Py), not the derived
 	// GET/POST verb.
-	if gotLog.Method != "Query" || gotLog.Path != "/" {
+	if gotLog.Method != parentTypeQuery || gotLog.Path != "/" {
 		t.Fatalf("unexpected method/path: %q %q", gotLog.Method, gotLog.Path)
 	}
 	if gotLog.DurationMS <= 0 {
