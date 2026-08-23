@@ -96,7 +96,7 @@ func TestLambdaFunctionURLResponseFromResponse_JoinsMultiHeaders(t *testing.T) {
 		Headers: map[string][]string{"x-test": {"a", "b"}},
 		Body:    []byte("ok"),
 	}
-	out := lambdaFunctionURLResponseFromResponse(resp)
+	out := lambdaFunctionURLResponseFromResponse(context.Background(), resp)
 	if out.StatusCode != 201 {
 		t.Fatalf("unexpected status: %d", out.StatusCode)
 	}
@@ -279,4 +279,136 @@ func TestServeAPIGatewayV2_LiveStreamingHandlerFailsClosed(t *testing.T) {
 		t.Fatalf("live stream did not fail closed promptly (elapsed %s)", elapsed)
 	}
 	requireAPIGatewayV2StreamingError(t, out)
+}
+
+func requireLambdaFunctionURLStreamingError(t *testing.T, out events.LambdaFunctionURLResponse) {
+	t.Helper()
+	if out.StatusCode != 500 {
+		t.Fatalf("expected fail-closed status 500, got %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if ct := out.Headers["content-type"]; !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("expected JSON error content type, got %q", ct)
+	}
+	if !strings.Contains(out.Body, `"error"`) {
+		t.Fatalf("expected nested AppTheory error body, got %q", out.Body)
+	}
+	if !strings.Contains(out.Body, lambdaFunctionURLStreamingBodyErrorMessage) {
+		t.Fatalf("expected documented streaming error message in body, got %q", out.Body)
+	}
+}
+
+func TestLambdaFunctionURLResponseFromResponse_BuffersTerminatingBodyReader(t *testing.T) {
+	resp := Response{
+		Status:     200,
+		Headers:    map[string][]string{"content-type": {"text/event-stream"}},
+		BodyReader: strings.NewReader("data: hello\n\n"),
+	}
+	out := lambdaFunctionURLResponseFromResponse(context.Background(), resp)
+	if out.StatusCode != 200 {
+		t.Fatalf("unexpected status: %d", out.StatusCode)
+	}
+	if out.Body != "data: hello\n\n" {
+		t.Fatalf("expected drained body, got %q", out.Body)
+	}
+	if out.Headers["content-type"] != "text/event-stream" {
+		t.Fatalf("expected content-type preserved, got %#v", out.Headers)
+	}
+}
+
+func TestLambdaFunctionURLResponseFromResponse_NonTerminatingBodyReaderFailsClosed(t *testing.T) {
+	pr, _ := io.Pipe() // never written, never closed: a live stream
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	out := lambdaFunctionURLResponseFromResponse(ctx, Response{Status: 200, BodyReader: pr})
+	elapsed := time.Since(start)
+
+	if elapsed > 2*time.Second {
+		t.Fatalf("non-terminating body did not fail closed promptly (elapsed %s)", elapsed)
+	}
+	requireLambdaFunctionURLStreamingError(t, out)
+}
+
+func TestLambdaFunctionURLResponseFromResponse_BodyReaderOverrunFailsClosed(t *testing.T) {
+	over := bytes.NewReader(make([]byte, apigatewayV2StreamingBodyMaxBytes+1))
+	out := lambdaFunctionURLResponseFromResponse(context.Background(), Response{Status: 200, BodyReader: over})
+	requireLambdaFunctionURLStreamingError(t, out)
+}
+
+func TestLambdaFunctionURLResponseFromResponse_DrainsBodyStream(t *testing.T) {
+	resp := Response{
+		Status:     200,
+		Headers:    map[string][]string{"content-type": {"text/html; charset=utf-8"}},
+		BodyStream: StreamBytes([]byte("a"), []byte("b")),
+	}
+	out := lambdaFunctionURLResponseFromResponse(context.Background(), resp)
+	if out.StatusCode != 200 {
+		t.Fatalf("unexpected status: %d", out.StatusCode)
+	}
+	if out.Body != "ab" {
+		t.Fatalf("expected drained stream body, got %q", out.Body)
+	}
+}
+
+func TestLambdaFunctionURLResponseFromResponse_BodyStreamErrorFailsClosed(t *testing.T) {
+	resp := Response{Status: 200, BodyStream: StreamError(errors.New("boom"))}
+	out := lambdaFunctionURLResponseFromResponse(context.Background(), resp)
+	requireLambdaFunctionURLStreamingError(t, out)
+}
+
+func TestServeLambdaFunctionURL_StreamingHandlerDeliversBufferedBody(t *testing.T) {
+	app := New()
+	app.Get("/sse", func(c *Context) (*Response, error) {
+		ch := make(chan SSEEvent, 2)
+		ch <- SSEEvent{ID: "1", Data: "first"}
+		ch <- SSEEvent{ID: "2", Data: "second"}
+		close(ch)
+		return SSEStreamResponse(c.Context(), 200, ch)
+	})
+
+	out := app.ServeLambdaFunctionURL(context.Background(), events.LambdaFunctionURLRequest{
+		RawPath: "/sse",
+		RequestContext: events.LambdaFunctionURLRequestContext{
+			HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "GET", Path: "/sse"},
+		},
+	})
+
+	if out.StatusCode != 200 {
+		t.Fatalf("unexpected status: %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if ct := out.Headers["content-type"]; !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("expected text/event-stream content type, got %q", ct)
+	}
+	if out.Body == "" {
+		t.Fatal("expected non-empty SSE body: the Function URL adapter must not silently drop a BodyReader payload")
+	}
+	if !strings.Contains(out.Body, "first") || !strings.Contains(out.Body, "second") {
+		t.Fatalf("expected drained SSE events in body, got %q", out.Body)
+	}
+}
+
+func TestServeLambdaFunctionURL_LiveStreamingHandlerFailsClosed(t *testing.T) {
+	app := New()
+	app.Get("/live", func(c *Context) (*Response, error) {
+		ch := make(chan SSEEvent) // never written, never closed: a live listener
+		return SSEStreamResponse(c.Context(), 200, ch)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	out := app.ServeLambdaFunctionURL(ctx, events.LambdaFunctionURLRequest{
+		RawPath: "/live",
+		RequestContext: events.LambdaFunctionURLRequestContext{
+			HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "GET", Path: "/live"},
+		},
+	})
+	elapsed := time.Since(start)
+
+	if elapsed > 2*time.Second {
+		t.Fatalf("live stream did not fail closed promptly (elapsed %s)", elapsed)
+	}
+	requireLambdaFunctionURLStreamingError(t, out)
 }

@@ -32,7 +32,20 @@ const (
 	// error for a streaming response body the HTTP API v2 adapter cannot
 	// deliver. It is returned as HTTP 500 with the nested AppTheory error body.
 	apigatewayV2StreamingBodyErrorMessage = "streaming response body cannot be delivered by the HTTP API v2 adapter"
+
+	// lambdaFunctionURLStreamingBodyErrorMessage is the documented
+	// client-visible error for a streaming response body the buffered Lambda
+	// Function URL adapter cannot deliver. It is returned as HTTP 500 with the
+	// nested AppTheory error body, matching the HTTP API v2 fail-closed shape
+	// with the adapter named in the message.
+	lambdaFunctionURLStreamingBodyErrorMessage = "streaming response body cannot be delivered by the Function URL adapter"
 )
+
+// The HTTP API v2 and Lambda Function URL adapters both deliver buffered
+// responses only, so they share the same bounded drain budget
+// (apigatewayV2StreamingBodyMaxBytes / apigatewayV2StreamingBodyTimeout) and
+// the same fail-closed semantics; only the client-visible error message names
+// the adapter that could not deliver the body.
 
 var errAPIGatewayV2StreamingBodyTooLarge = errors.New("apptheory: streaming response body exceeds HTTP API v2 adapter budget")
 
@@ -47,9 +60,9 @@ func (a *App) ServeAPIGatewayV2(ctx context.Context, event events.APIGatewayV2HT
 func (a *App) ServeLambdaFunctionURL(ctx context.Context, event events.LambdaFunctionURLRequest) events.LambdaFunctionURLResponse {
 	req, err := requestFromLambdaFunctionURL(event)
 	if err != nil {
-		return lambdaFunctionURLResponseFromResponse(a.responseForHTTPError(err))
+		return lambdaFunctionURLResponseFromResponse(ctx, a.responseForHTTPError(err))
 	}
-	return lambdaFunctionURLResponseFromResponse(a.Serve(ctx, req))
+	return lambdaFunctionURLResponseFromResponse(ctx, a.Serve(ctx, req))
 }
 
 func requestFromAPIGatewayV2(event events.APIGatewayV2HTTPRequest) (Request, error) {
@@ -307,7 +320,31 @@ func drainBodyStreamForAPIGatewayV2(ctx context.Context, stream BodyStream) ([]b
 	}
 }
 
-func lambdaFunctionURLResponseFromResponse(resp Response) events.LambdaFunctionURLResponse {
+// lambdaFunctionURLResponseFromResponse converts a canonical Response into the
+// buffered Lambda Function URL shape.
+//
+// A Function URL invocation can be served in streaming mode, but this buffered
+// adapter cannot deliver incremental responses, so a streaming body
+// (BodyReader / BodyStream) is drained into the buffered body with the same
+// bounded byte and time budget as the HTTP API v2 adapter
+// (drainStreamingBodyForAPIGatewayV2). A terminating stream is delivered as
+// content; a stream that does not terminate within the budget fails closed
+// with a documented error instead of silently returning an empty 200.
+func lambdaFunctionURLResponseFromResponse(ctx context.Context, resp Response) events.LambdaFunctionURLResponse {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if resp.BodyReader != nil || resp.BodyStream != nil {
+		drained, err := drainStreamingBodyForAPIGatewayV2(ctx, resp)
+		if err != nil {
+			return lambdaFunctionURLResponseFromResponse(
+				ctx,
+				errorResponse(errorCodeInternal, lambdaFunctionURLStreamingBodyErrorMessage, nil),
+			)
+		}
+		resp = drained
+	}
+
 	out := events.LambdaFunctionURLResponse{
 		StatusCode:      resp.Status,
 		Headers:         map[string]string{},
