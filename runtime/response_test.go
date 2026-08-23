@@ -2,6 +2,7 @@ package apptheory
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -120,5 +121,30 @@ func TestNormalizeResponse(t *testing.T) {
 	in.Cookies[0] = "mutated"
 	if n.Cookies[0] == "mutated" {
 		t.Fatal("expected normalizeResponse to copy cookies slice")
+	}
+}
+
+func TestNormalizeResponse_FailsClosedOnDualBodyDivergence(t *testing.T) {
+	// A response carrying both a non-empty buffered body and a streaming body
+	// is divergent: the buffered adapters drain the stream and replace the
+	// buffered body, while the v1 streaming adapter composes Body + BodyReader
+	// and ignores BodyStream. The normalizer must fail closed instead of
+	// letting adapters silently pick one representation.
+	for _, tc := range []struct {
+		name string
+		in   *Response
+	}{
+		{name: "body plus body reader", in: &Response{Status: 200, Body: []byte("head"), BodyReader: strings.NewReader("tail")}},
+		{name: "body plus body stream", in: &Response{Status: 200, Body: []byte("head"), BodyStream: StreamBytes([]byte("tail"))}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := normalizeResponse(tc.in)
+			if out.Status != 500 {
+				t.Fatalf("expected fail-closed status 500, got %d", out.Status)
+			}
+			if got := string(out.Body); !strings.Contains(got, `"app.internal"`) {
+				t.Fatalf("expected app.internal error body, got %q", got)
+			}
+		})
 	}
 }

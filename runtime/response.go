@@ -106,6 +106,16 @@ func normalizeResponse(in *Response) Response {
 	if out.Status == 0 {
 		out.Status = 200
 	}
+	// A response must carry exactly one body representation. A buffered body
+	// combined with a streaming body is divergent: the buffered adapters drain
+	// the stream and replace the buffered body, while the v1 streaming adapter
+	// composes Body + BodyReader and ignores BodyStream entirely. The same
+	// handler response would produce different wire bytes on different
+	// adapters, so the normalizer fails closed on the ambiguous shape instead
+	// of letting adapters silently pick one representation.
+	if len(out.Body) > 0 && (out.BodyReader != nil || out.BodyStream != nil) {
+		return errorResponse(errorCodeInternal, errorMessageInternal, nil)
+	}
 	out.Headers = canonicalizeHeaders(out.Headers)
 	if setCookies := out.Headers["set-cookie"]; len(setCookies) > 0 {
 		out.Cookies = append(append([]string(nil), out.Cookies...), setCookies...)

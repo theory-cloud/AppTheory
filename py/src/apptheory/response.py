@@ -118,6 +118,15 @@ def normalize_response(resp: Response) -> Response:
                 yield to_bytes(chunk)
 
         body_stream = gen()
+    # A response must carry exactly one body representation. A non-empty
+    # buffered body combined with a streaming body is divergent: the buffered
+    # adapters drain the stream and replace the buffered body, while the v1
+    # proxy/streaming adapters handle the stream differently (or not at all).
+    # The same handler response would produce different wire bytes on different
+    # adapters, so the normalizer fails closed on the ambiguous shape instead
+    # of letting adapters silently pick one representation.
+    if body and body_stream is not None:
+        raise ValueError("body_stream cannot be used with a non-empty body")
     return Response(
         status=status,
         headers=headers,

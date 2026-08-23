@@ -353,6 +353,31 @@ class TestApp(unittest.TestCase):
         bad_norm = limited_resp.serve(Request(method="GET", path="/", body={"bad": True}))
         self.assertEqual(bad_norm.status, 500)
 
+    def test_dual_body_response_fails_closed(self) -> None:
+        # A response carrying both a non-empty buffered body and a body_stream
+        # is divergent: the buffered adapters drain the stream and replace the
+        # buffered body, while the v1 proxy/streaming adapters handle the stream
+        # differently. The normalizer must fail closed on the ambiguous shape
+        # instead of letting adapters silently pick one representation.
+        app = create_app(tier="p2")
+
+        def dual_body(_ctx) -> Response:
+            return Response(
+                status=200,
+                headers={"content-type": ["text/html; charset=utf-8"]},
+                cookies=[],
+                body=b"buffered",
+                is_base64=False,
+                body_stream=iter([b"streamed"]),
+            )
+
+        app.get("/dual", dual_body)
+        resp = app.serve(Request(method="GET", path="/dual", body=""))
+        self.assertEqual(resp.status, 500)
+        err = json.loads(resp.body.decode("utf-8"))["error"]
+        self.assertEqual(err["code"], "app.internal")
+        self.assertEqual(err["message"], "internal error")
+
     def test_remaining_ms_is_applied_and_observability_hooks_fire(self) -> None:
         logs = []
         metrics = []
