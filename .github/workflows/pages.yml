@@ -27,6 +27,12 @@
 #      tag (`v${TAG}` where a tag is referenced, and `${TAG#v}` in asset
 #      filenames). Checked-in docs/_config.yml stays untouched and remains the
 #      local-preview fallback; the generated override wins in CI.
+#      The generator itself is materialized from THIS WORKFLOW'S OWN REF (a
+#      `git fetch` of ${GITHUB_REF_NAME} plus a `git show` of the script to
+#      /tmp), never read from the tag checkout: release tags cut before this
+#      workflow promoted do not contain the script, and fetching the promoting
+#      tag later is a no-op safeguard. The override is still generated only
+#      from the release event payload or the resolved release tag.
 #   3. The landing page (docs/index.html) renders each runtime's install
 #      command from site.tabletheory.runtimes (by-id lookup), falling back to
 #      docs/_data/runtimes.yml, so the override's stamped installs are
@@ -113,11 +119,15 @@ jobs:
           bundler-cache: true
           working-directory: docs
 
-      - name: Generate version config override
-        env:
-          RELEASE_TAG: ${{ steps.resolve.outputs.tag }}
+      - name: Generate version override
         run: |
-          ruby scripts/generate-docs-version-override.rb --tag "$RELEASE_TAG"
+          set -euo pipefail
+          # The generator ships with this workflow's ref — release tags cut before
+          # this workflow promoted do NOT contain it, so never read it from the
+          # tag checkout.
+          git fetch origin "${GITHUB_REF_NAME}" --depth=1
+          git show "FETCH_HEAD:scripts/generate-docs-version-override.rb" > /tmp/generate-docs-version-override.rb
+          ruby /tmp/generate-docs-version-override.rb --tag "${{ steps.resolve.outputs.tag }}" --config docs/_config.yml --output docs/_config_versions.yml
 
       - name: Jekyll build
         working-directory: docs
