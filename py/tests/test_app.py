@@ -413,6 +413,29 @@ class TestApp(unittest.TestCase):
         self.assertEqual(logs[0].status, 500)
         self.assertEqual(logs[0].method, "POST")
 
+    def test_appsync_decode_failure_uses_object_event_info_labels(self) -> None:
+        # Object-style AppSync events (non-dict) must still contribute their
+        # .info parentTypeName/fieldName to the decode-observability labels.
+        # The style commit 2b0326b4 dropped the getattr fallback and flattened
+        # the labels to method="" path="/" for object events; restore parity
+        # with dict events.
+        logs = []
+
+        class ObjectEvent:
+            def __init__(self) -> None:
+                self.info = {"parentTypeName": "Query", "fieldName": "getThing"}
+
+            def get(self, key, default=None):
+                return default
+
+        app = create_app(tier="p2", observability=ObservabilityHooks(log=lambda r: logs.append(r)))
+        out = app.serve_appsync(ObjectEvent())  # type: ignore[arg-type]
+        self.assertEqual(out["pay_theory_error"], True)
+        self.assertEqual(out["error_type"], "CLIENT_ERROR")
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0].method, "Query")
+        self.assertEqual(logs[0].path, "/getThing")
+
     def test_remaining_ms_is_applied_and_observability_hooks_fire(self) -> None:
         logs = []
         metrics = []
