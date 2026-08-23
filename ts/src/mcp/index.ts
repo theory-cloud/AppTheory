@@ -3568,9 +3568,13 @@ function jsonBytesResponse(
 // 2026-07-28 shape). The header value follows the framework's Allow formatting
 // (uppercase, sorted, comma-space joined).
 function methodNotAllowedResponse(allow: string): Response {
-  return jsonBytesResponse(405, { error: "method not allowed" }, {
-    allow: [allow],
-  });
+  return jsonBytesResponse(
+    405,
+    { error: "method not allowed" },
+    {
+      allow: [allow],
+    },
+  );
 }
 
 function emptyResponse(status: number): Response {

@@ -69,9 +69,7 @@ def _is_streaming_body_size_error(exc: Exception) -> bool:
     """
     if isinstance(exc, _StreamingBodyTooLargeError):
         return True
-    if isinstance(exc, AppError) and getattr(exc, "code", None) == "app.too_large":
-        return True
-    return False
+    return isinstance(exc, AppError) and getattr(exc, "code", None) == "app.too_large"
 
 
 def _read_all_bounded(body_stream: Any, max_bytes: int) -> bytes:

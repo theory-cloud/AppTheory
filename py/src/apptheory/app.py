@@ -1269,10 +1269,12 @@ class App:
             request = _request_from_appsync_event(event)
         except Exception as exc:  # noqa: BLE001
             resp = _appsync_error_response(exc, request_metadata, fallback_request_id)
-            event_info = (event or {}).get("info") or {} if isinstance(event, dict) else getattr(event, "info", None) or {}
+            event_info = (event or {}).get("info") or {} if isinstance(event, dict) else {}
+            parent_type = str(event_info.get("parentTypeName") or "") if isinstance(event_info, dict) else ""
+            field_name = str(event_info.get("fieldName") or "") if isinstance(event_info, dict) else ""
             self._record_adapter_decode_error(
-                str(event_info.get("parentTypeName") or "") if isinstance(event_info, dict) else "",
-                f"/{str(event_info.get('fieldName') or '')}" if isinstance(event_info, dict) else "/",
+                parent_type,
+                f"/{field_name}" if field_name else "/",
                 exc,
                 resp.status,
             )

@@ -1496,7 +1496,11 @@ export class App {
     try {
       request = requestFromAppSync(event);
     } catch (err) {
-      const resp = appSyncErrorResponse(err, requestMetadata, fallbackRequestId);
+      const resp = appSyncErrorResponse(
+        err,
+        requestMetadata,
+        fallbackRequestId,
+      );
       this._recordAdapterDecodeError(
         String(event?.info?.parentTypeName ?? ""),
         `/${String(event?.info?.fieldName ?? "")}`,
