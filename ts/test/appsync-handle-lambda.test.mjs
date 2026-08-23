@@ -122,3 +122,33 @@ test("handleLambda isolates a panicking SQS handler per record", async () => {
 
   assert.deepEqual(out, { batchItemFailures: [{ itemIdentifier: "2" }] });
 });
+
+test("handleLambda isolates a panicking Kinesis handler per record", async () => {
+  // Mirrors the Go and Py Kinesis panic-isolation tests: a panicking record
+  // handler must not take down the whole batch; the panicking record is
+  // reported as a batch failure and healthy sibling records still process.
+  const app = new App({ tier: "p2" });
+  app.kinesis("stream1", (ctx, record) => {
+    if (String(record.kinesis?.sequenceNumber) === "seq-2") {
+      throw new Error("boom");
+    }
+    return undefined;
+  });
+
+  const out = await app.handleLambda({
+    Records: [
+      {
+        eventSource: "aws:kinesis",
+        eventSourceARN: "arn:aws:kinesis:us-east-1:123:stream/stream1",
+        kinesis: { sequenceNumber: "seq-1" },
+      },
+      {
+        eventSource: "aws:kinesis",
+        eventSourceARN: "arn:aws:kinesis:us-east-1:123:stream/stream1",
+        kinesis: { sequenceNumber: "seq-2" },
+      },
+    ],
+  });
+
+  assert.deepEqual(out, { batchItemFailures: [{ itemIdentifier: "seq-2" }] });
+});
