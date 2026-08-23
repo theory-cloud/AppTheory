@@ -69,6 +69,18 @@ function assertStreamingError(response, message) {
   assert.deepEqual(body, { error: { code: "app.internal", message } });
 }
 
+// assertStreamingTooLarge asserts the size-semantics denial shape: a streaming
+// body over the byte budget maps to 413 app.too_large, not the 500
+// delivery-failure shape used for non-termination and stream errors.
+function assertStreamingTooLarge(response) {
+  assert.equal(response.statusCode, 413);
+  assert.match(response.headers["content-type"] ?? "", /^application\/json/);
+  const body = JSON.parse(response.body);
+  assert.deepEqual(body, {
+    error: { code: "app.too_large", message: "response too large" },
+  });
+}
+
 test("apigateway v2 adapter delivers a terminating streaming body as buffered content", async () => {
   const app = createApp();
   app.get("/sse", () =>
@@ -92,14 +104,14 @@ test("apigateway v2 adapter fails closed on a live streaming body", async () => 
   assertStreamingError(out, APIGATEWAY_V2_STREAMING_ERROR_MESSAGE);
 });
 
-test("apigateway v2 adapter fails closed on a streaming body over the byte budget", async () => {
+test("apigateway v2 adapter maps a streaming body over the byte budget to 413", async () => {
   const app = createApp();
   const oversized = Buffer.alloc(STREAMING_BODY_MAX_BYTES + 1, 0x61);
   app.get("/big", () => htmlStream(200, sseChunks(oversized)));
 
   const out = await app.serveAPIGatewayV2(apigwV2Event("/big"));
 
-  assertStreamingError(out, APIGATEWAY_V2_STREAMING_ERROR_MESSAGE);
+  assertStreamingTooLarge(out);
 });
 
 test("apigateway v2 adapter fails closed on a streaming body error", async () => {
@@ -134,14 +146,14 @@ test("lambda function url adapter fails closed on a live streaming body", async 
   assertStreamingError(out, LAMBDA_FUNCTION_URL_STREAMING_ERROR_MESSAGE);
 });
 
-test("lambda function url adapter fails closed on a streaming body over the byte budget", async () => {
+test("lambda function url adapter maps a streaming body over the byte budget to 413", async () => {
   const app = createApp();
   const oversized = Buffer.alloc(STREAMING_BODY_MAX_BYTES + 1, 0x61);
   app.get("/big", () => htmlStream(200, sseChunks(oversized)));
 
   const out = await app.serveLambdaFunctionURL(lambdaFunctionURLEvent("/big"));
 
-  assertStreamingError(out, LAMBDA_FUNCTION_URL_STREAMING_ERROR_MESSAGE);
+  assertStreamingTooLarge(out);
 });
 
 test("lambda function url adapter fails closed on a streaming body error", async () => {

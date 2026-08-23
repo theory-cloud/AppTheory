@@ -29,15 +29,19 @@ _APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES = 4 * 1024 * 1024
 _APIGATEWAY_V2_STREAMING_BODY_TIMEOUT = 5.0
 
 # _APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE is the documented client-visible
-# error for a streaming response body the HTTP API v2 adapter cannot deliver.
-# It is returned as HTTP 500 with the nested AppTheory error body.
+# error for a streaming response body the HTTP API v2 adapter cannot deliver for
+# a non-size reason (it did not terminate within the budget, or the stream
+# errored). It is returned as HTTP 500 with the nested AppTheory error body. A
+# body that merely exceeds the byte budget maps to 413 (app.too_large) instead,
+# matching the framework's size semantics.
 _APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE = "streaming response body cannot be delivered by the HTTP API v2 adapter"
 
 # _LAMBDA_FUNCTION_URL_STREAMING_BODY_ERROR_MESSAGE is the documented
 # client-visible error for a streaming response body the buffered Lambda
-# Function URL adapter cannot deliver. It is returned as HTTP 500 with the
-# nested AppTheory error body, matching the HTTP API v2 fail-closed shape with
-# the adapter named in the message.
+# Function URL adapter cannot deliver for a non-size reason. It is returned as
+# HTTP 500 with the nested AppTheory error body, matching the HTTP API v2
+# fail-closed shape with the adapter named in the message. A body that merely
+# exceeds the byte budget maps to 413 (app.too_large) instead.
 _LAMBDA_FUNCTION_URL_STREAMING_BODY_ERROR_MESSAGE = (
     "streaming response body cannot be delivered by the Function URL adapter"
 )
@@ -47,6 +51,29 @@ class _StreamingBodyBudgetError(Exception):
     """Marker for a streaming body the buffered adapter cannot deliver."""
 
 
+class _StreamingBodyTooLargeError(_StreamingBodyBudgetError):
+    """Marker for a size violation: the streaming body exceeded a byte budget.
+
+    Size violations map to 413 (app.too_large) per the framework's size
+    semantics; delivery failures (non-termination, stream errors) keep the
+    documented 500 fail-closed shape.
+    """
+
+
+def _is_streaming_body_size_error(exc: Exception) -> bool:
+    """Report whether a drain failure is a size violation rather than a delivery failure.
+
+    Both the adapter's own byte budget (_StreamingBodyTooLargeError) and the
+    framework's MaxResponseBytes limiter (an AppError with code app.too_large)
+    are size errors and must map to 413.
+    """
+    if isinstance(exc, _StreamingBodyTooLargeError):
+        return True
+    if isinstance(exc, AppError) and getattr(exc, "code", None) == "app.too_large":
+        return True
+    return False
+
+
 def _read_all_bounded(body_stream: Any, max_bytes: int) -> bytes:
     chunks: list[bytes] = []
     total = 0
@@ -54,7 +81,7 @@ def _read_all_bounded(body_stream: Any, max_bytes: int) -> bytes:
         data = bytes(chunk or b"")
         total += len(data)
         if total > max_bytes:
-            raise _StreamingBodyBudgetError("streaming body exceeds the adapter budget")
+            raise _StreamingBodyTooLargeError()
         chunks.append(data)
     return b"".join(chunks)
 
@@ -106,7 +133,9 @@ def _with_drained_streaming_body(
         return resp
     try:
         drained = _drain_streaming_body(resp.body_stream, max_bytes, timeout)
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        if _is_streaming_body_size_error(exc):
+            return error_response("app.too_large", "response too large")
         return error_response("app.internal", error_message)
     return Response(
         status=resp.status,

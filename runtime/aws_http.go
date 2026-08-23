@@ -30,14 +30,18 @@ const (
 
 	// apigatewayV2StreamingBodyErrorMessage is the documented client-visible
 	// error for a streaming response body the HTTP API v2 adapter cannot
-	// deliver. It is returned as HTTP 500 with the nested AppTheory error body.
+	// deliver for a non-size reason (a stream that did not terminate in time or
+	// one that errored). It is returned as HTTP 500 with the nested AppTheory
+	// error body. A body that merely exceeds the byte budget maps to 413
+	// (errorCodeTooLarge) instead, matching the framework's size semantics.
 	apigatewayV2StreamingBodyErrorMessage = "streaming response body cannot be delivered by the HTTP API v2 adapter"
 
 	// lambdaFunctionURLStreamingBodyErrorMessage is the documented
 	// client-visible error for a streaming response body the buffered Lambda
-	// Function URL adapter cannot deliver. It is returned as HTTP 500 with the
-	// nested AppTheory error body, matching the HTTP API v2 fail-closed shape
-	// with the adapter named in the message.
+	// Function URL adapter cannot deliver for a non-size reason. It is returned
+	// as HTTP 500 with the nested AppTheory error body, matching the HTTP API
+	// v2 fail-closed shape with the adapter named in the message. A body that
+	// merely exceeds the byte budget maps to 413 (errorCodeTooLarge) instead.
 	lambdaFunctionURLStreamingBodyErrorMessage = "streaming response body cannot be delivered by the Function URL adapter"
 )
 
@@ -48,6 +52,21 @@ const (
 // the adapter that could not deliver the body.
 
 var errAPIGatewayV2StreamingBodyTooLarge = errors.New("apptheory: streaming response body exceeds HTTP API v2 adapter budget")
+
+// isStreamingBodySizeError reports whether a drain failure is a size violation
+// (the streaming body exceeded a byte budget) rather than a delivery failure
+// (non-termination or a stream error). Size violations map to 413
+// (errorCodeTooLarge) per the framework's size semantics; delivery failures
+// keep the documented 500 fail-closed shape. Both the adapter's own byte
+// budget (errAPIGatewayV2StreamingBodyTooLarge) and the framework's
+// MaxResponseBytes limiter (an AppError with errorCodeTooLarge) are size
+// errors and must map to 413.
+func isStreamingBodySizeError(err error) bool {
+	if errors.Is(err, errAPIGatewayV2StreamingBodyTooLarge) {
+		return true
+	}
+	return errorCodeForError(err) == errorCodeTooLarge
+}
 
 func (a *App) ServeAPIGatewayV2(ctx context.Context, event events.APIGatewayV2HTTPRequest) events.APIGatewayV2HTTPResponse {
 	req, err := requestFromAPIGatewayV2(event)
@@ -186,6 +205,12 @@ func apigatewayV2ResponseFromResponse(ctx context.Context, resp Response) events
 	if resp.BodyReader != nil || resp.BodyStream != nil {
 		drained, err := drainStreamingBodyForAPIGatewayV2(ctx, resp)
 		if err != nil {
+			if isStreamingBodySizeError(err) {
+				return apigatewayV2ResponseFromResponse(
+					ctx,
+					errorResponse(errorCodeTooLarge, errorMessageResponseTooLarge, nil),
+				)
+			}
 			return apigatewayV2ResponseFromResponse(
 				ctx,
 				errorResponse(errorCodeInternal, apigatewayV2StreamingBodyErrorMessage, nil),
@@ -373,6 +398,12 @@ func lambdaFunctionURLResponseFromResponse(ctx context.Context, resp Response) e
 	if resp.BodyReader != nil || resp.BodyStream != nil {
 		drained, err := drainStreamingBodyForAPIGatewayV2(ctx, resp)
 		if err != nil {
+			if isStreamingBodySizeError(err) {
+				return lambdaFunctionURLResponseFromResponse(
+					ctx,
+					errorResponse(errorCodeTooLarge, errorMessageResponseTooLarge, nil),
+				)
+			}
 			return lambdaFunctionURLResponseFromResponse(
 				ctx,
 				errorResponse(errorCodeInternal, lambdaFunctionURLStreamingBodyErrorMessage, nil),

@@ -165,6 +165,26 @@ func requireAPIGatewayV2StreamingError(t *testing.T, out events.APIGatewayV2HTTP
 	}
 }
 
+// requireAPIGatewayV2TooLarge asserts the size-semantics mapping for a
+// streaming body that exceeds the drain byte budget: HTTP 413 with the
+// framework's app.too_large error shape instead of the 500 fail-closed shape
+// used for non-size drain failures (non-termination, stream errors).
+func requireAPIGatewayV2TooLarge(t *testing.T, out events.APIGatewayV2HTTPResponse) {
+	t.Helper()
+	if out.StatusCode != 413 {
+		t.Fatalf("expected payload-too-large status 413, got %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if ct := out.Headers["content-type"]; !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("expected JSON error content type, got %q", ct)
+	}
+	if !strings.Contains(out.Body, errorMessageResponseTooLarge) {
+		t.Fatalf("expected response-too-large message in body, got %q", out.Body)
+	}
+	if !strings.Contains(out.Body, `"app.too_large"`) {
+		t.Fatalf("expected app.too_large error code in body, got %q", out.Body)
+	}
+}
+
 func TestAPIGatewayV2ResponseFromResponse_BuffersTerminatingBodyReader(t *testing.T) {
 	resp := Response{
 		Status:     200,
@@ -201,7 +221,30 @@ func TestAPIGatewayV2ResponseFromResponse_NonTerminatingBodyReaderFailsClosed(t 
 func TestAPIGatewayV2ResponseFromResponse_BodyReaderOverrunFailsClosed(t *testing.T) {
 	over := bytes.NewReader(make([]byte, apigatewayV2StreamingBodyMaxBytes+1))
 	out := apigatewayV2ResponseFromResponse(context.Background(), Response{Status: 200, BodyReader: over})
-	requireAPIGatewayV2StreamingError(t, out)
+	requireAPIGatewayV2TooLarge(t, out)
+}
+
+func TestAPIGatewayV2ResponseFromResponse_BodyStreamOverrunIsTooLarge(t *testing.T) {
+	// Denial-shape test for the size-semantics mapping: a streamed body that
+	// exceeds the drain byte budget must map to 413 app.too_large, not the 500
+	// delivery-failure shape used for non-termination and stream errors.
+	over := StreamBytes(make([]byte, apigatewayV2StreamingBodyMaxBytes+1))
+	out := apigatewayV2ResponseFromResponse(context.Background(), Response{Status: 200, BodyStream: over})
+	requireAPIGatewayV2TooLarge(t, out)
+}
+
+func TestLambdaFunctionURLResponseFromResponse_BodyStreamOverrunIsTooLarge(t *testing.T) {
+	over := StreamBytes(make([]byte, apigatewayV2StreamingBodyMaxBytes+1))
+	out := lambdaFunctionURLResponseFromResponse(context.Background(), Response{Status: 200, BodyStream: over})
+	if out.StatusCode != 413 {
+		t.Fatalf("expected payload-too-large status 413, got %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if !strings.Contains(out.Body, errorMessageResponseTooLarge) {
+		t.Fatalf("expected response-too-large message in body, got %q", out.Body)
+	}
+	if !strings.Contains(out.Body, `"app.too_large"`) {
+		t.Fatalf("expected app.too_large error code in body, got %q", out.Body)
+	}
 }
 
 func TestAPIGatewayV2ResponseFromResponse_DrainsBodyStream(t *testing.T) {
@@ -333,7 +376,15 @@ func TestLambdaFunctionURLResponseFromResponse_NonTerminatingBodyReaderFailsClos
 func TestLambdaFunctionURLResponseFromResponse_BodyReaderOverrunFailsClosed(t *testing.T) {
 	over := bytes.NewReader(make([]byte, apigatewayV2StreamingBodyMaxBytes+1))
 	out := lambdaFunctionURLResponseFromResponse(context.Background(), Response{Status: 200, BodyReader: over})
-	requireLambdaFunctionURLStreamingError(t, out)
+	if out.StatusCode != 413 {
+		t.Fatalf("expected payload-too-large status 413, got %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if !strings.Contains(out.Body, errorMessageResponseTooLarge) {
+		t.Fatalf("expected response-too-large message in body, got %q", out.Body)
+	}
+	if !strings.Contains(out.Body, `"app.too_large"`) {
+		t.Fatalf("expected app.too_large error code in body, got %q", out.Body)
+	}
 }
 
 func TestLambdaFunctionURLResponseFromResponse_DrainsBodyStream(t *testing.T) {

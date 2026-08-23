@@ -64,6 +64,21 @@ def _assert_streaming_error(testcase: unittest.TestCase, out: dict, message: str
     )
 
 
+def _assert_streaming_too_large(testcase: unittest.TestCase, out: dict) -> None:
+    """Assert the size-semantics denial shape for a body over the byte budget.
+
+    A streaming body that exceeds the drain byte budget maps to 413
+    (app.too_large), not the 500 delivery-failure shape used for
+    non-termination and stream errors.
+    """
+    testcase.assertEqual(out["statusCode"], 413)
+    testcase.assertIn("application/json", out["headers"]["content-type"])
+    testcase.assertEqual(
+        json.loads(out["body"]),
+        {"error": {"code": "app.too_large", "message": "response too large"}},
+    )
+
+
 class TestStreamingAdapters(unittest.TestCase):
     def setUp(self) -> None:
         # Shorten the drain deadline so live-stream fail-closed tests stay
@@ -87,11 +102,11 @@ class TestStreamingAdapters(unittest.TestCase):
         out = apigw_v2_response_from_response(_streaming_response(_live_stream(b"data: first\n\n")))
         _assert_streaming_error(self, out, V2_ERROR_MESSAGE)
 
-    def test_apigw_v2_overrun_stream_fails_closed(self) -> None:
+    def test_apigw_v2_overrun_stream_maps_to_413(self) -> None:
         out = apigw_v2_response_from_response(
             _streaming_response(_terminating_stream(b"x" * (_APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES + 1)))
         )
-        _assert_streaming_error(self, out, V2_ERROR_MESSAGE)
+        _assert_streaming_too_large(self, out)
 
     def test_apigw_v2_stream_error_fails_closed(self) -> None:
         out = apigw_v2_response_from_response(_streaming_response(_error_stream()))
@@ -110,11 +125,11 @@ class TestStreamingAdapters(unittest.TestCase):
         out = lambda_function_url_response_from_response(_streaming_response(_live_stream(b"data: first\n\n")))
         _assert_streaming_error(self, out, URL_ERROR_MESSAGE)
 
-    def test_lambda_function_url_overrun_stream_fails_closed(self) -> None:
+    def test_lambda_function_url_overrun_stream_maps_to_413(self) -> None:
         out = lambda_function_url_response_from_response(
             _streaming_response(_terminating_stream(b"x" * (_APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES + 1)))
         )
-        _assert_streaming_error(self, out, URL_ERROR_MESSAGE)
+        _assert_streaming_too_large(self, out)
 
     def test_lambda_function_url_stream_error_fails_closed(self) -> None:
         out = lambda_function_url_response_from_response(_streaming_response(_error_stream()))

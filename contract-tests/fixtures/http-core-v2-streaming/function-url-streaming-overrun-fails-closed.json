@@ -1,7 +1,7 @@
 {
   "id": "p0.adapter.lambda_function_url.streaming_overrun_fails_closed",
   "tier": "p0",
-  "name": "Lambda Function URL: streaming body over the 4 MiB budget fails closed with the documented 500",
+  "name": "Lambda Function URL: streaming body over the 4 MiB budget maps to 413 payload too large",
   "setup": {
     "routes": [
       { "method": "GET", "path": "/big", "handler": "sse_stream_overrun" }
@@ -25,13 +25,13 @@
   },
   "expect": {
     "response": {
-      "status": 500,
+      "status": 413,
       "headers": { "content-type": ["application/json; charset=utf-8"] },
       "cookies": [],
       "body_json": {
         "error": {
-          "code": "app.internal",
-          "message": "streaming response body cannot be delivered by the Function URL adapter"
+          "code": "app.too_large",
+          "message": "response too large"
         }
       },
       "is_base64": false

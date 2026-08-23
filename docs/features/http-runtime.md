@@ -164,10 +164,13 @@ into the buffered body with a bounded budget instead of silently dropping it:
   (bounded to 4 MiB / 5 seconds; the byte budget and time budget are identical in
   all three runtimes);
 - a stream that does **not terminate within the budget** (a live session listener,
-  an open replay), a stream whose total length **exceeds 4 MiB**, or a stream that
-  **errors** fails closed with HTTP 500 and the nested AppTheory error body:
+  an open replay) or a stream that **errors** fails closed with HTTP 500 and the
+  nested AppTheory error body:
   `{"error":{"code":"app.internal","message":"streaming response body cannot be delivered by the HTTP API v2 adapter"}}`
   (the Function URL adapter names itself: `"...cannot be delivered by the Function URL adapter"`);
+- a stream whose total length **exceeds 4 MiB** maps to HTTP 413 payload too large
+  with the framework's size error body: `{"error":{"code":"app.too_large","message":"response too large"}}`,
+  matching the `MaxResponseBytes` size semantics used elsewhere in the runtime;
 - a stream that closes empty only because the deadline fired fails closed as well,
   so the empty-`200` reconnect loop cannot reappear at the deadline boundary.
 
