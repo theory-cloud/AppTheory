@@ -5,7 +5,7 @@ description: The TypeScript implementation of the AppTheory contract — bundled
 
 # TypeScript Runtime
 
-The TypeScript runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the 263 generic runner fixtures in the [265-vector corpus](../reference/contract-fixtures.md), including the SP09 MCP fixture tier for JSON-RPC, registries, sessions, Streamable HTTP, resumable SSE, task stores, the SP12 OAuth tier, and the SP13 objectstore tier. The CDK-TS package separately consumes the remaining MCP route-algebra and facade-inventory vectors. <!-- apptheory-fixture-count: 265 -->
+The TypeScript runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the 269 generic runner fixtures in the [271-vector corpus](../reference/contract-fixtures.md), including the SP09 MCP fixture tier for JSON-RPC, registries, sessions, Streamable HTTP, resumable SSE, task stores, the SP12 OAuth tier, and the SP13 objectstore tier. The CDK-TS package separately consumes the remaining MCP route-algebra and facade-inventory vectors. <!-- apptheory-fixture-count: 271 -->
 
 ## Install
 
@@ -134,6 +134,8 @@ export const handler = createLambdaFunctionURLStreamingHandler(app);
 
 Use this when latency-to-first-byte matters more than buffered responses; the standard `handleLambda` export does not stream.
 
+The buffered Function URL adapter (the standard `handleLambda` path) never silently drops a streaming body: it drains a terminating stream into the buffered response (bounded to 4 MiB / 5 seconds) and fails closed with HTTP 500 and a JSON error body when the stream does not terminate in time, exceeds the budget, or errors — the same semantics as the HTTP API v2 adapter.
+
 ## CDK constructs (jsii)
 
 CDK constructs live in the separate `@theory-cloud/apptheory-cdk` package (jsii). The TS source under `cdk/lib/` is the canonical implementation; Go bindings under `cdk-go/` are generated.
@@ -142,7 +144,7 @@ See [CDK Getting Started](../cdk/getting-started.md).
 
 ## What's verified
 
-The TypeScript runtime passes all 263 generic runner fixtures in the 265-vector corpus on every commit. <!-- apptheory-fixture-count: 265 --> The runner includes the SP09 MCP, SP12 OAuth, and SP13 objectstore tiers; CDK-TS tests load the remaining route-algebra and facade-inventory tables directly. The `ts/dist/` build output is checked in and gated by `make rubric`.
+The TypeScript runtime passes all 269 generic runner fixtures in the 271-vector corpus on every commit. <!-- apptheory-fixture-count: 271 --> The runner includes the SP09 MCP, SP12 OAuth, and SP13 objectstore tiers; CDK-TS tests load the remaining route-algebra and facade-inventory tables directly. The `ts/dist/` build output is checked in and gated by `make rubric`.
 
 ## Next reads
 

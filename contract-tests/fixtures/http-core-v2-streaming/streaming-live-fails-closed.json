@@ -1,0 +1,41 @@
+{
+  "id": "p0.adapter.apigw_v2.streaming_live_fails_closed",
+  "tier": "p0",
+  "name": "HTTP API v2: live streaming body fails closed with the documented 500",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/live", "handler": "sse_stream_live" }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "apigw_v2",
+      "event": {
+        "version": "2.0",
+        "routeKey": "$default",
+        "rawPath": "/live",
+        "rawQueryString": "",
+        "cookies": [],
+        "headers": {},
+        "queryStringParameters": null,
+        "requestContext": { "http": { "method": "GET", "path": "/live" } },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 500,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.internal",
+          "message": "streaming response body cannot be delivered by the HTTP API v2 adapter"
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

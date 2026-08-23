@@ -2,14 +2,121 @@ from __future__ import annotations
 
 import base64
 import http
+import threading
 import urllib.parse
 from typing import Any
 
-from apptheory.errors import AppError
+from apptheory.errors import AppError, error_response
 from apptheory.request import Request
 from apptheory.response import Response
 from apptheory.source_provenance import source_provenance_from_provider_request_context
 from apptheory.util import normalize_path, to_bytes
+
+# _APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES bounds how many bytes of a streaming
+# response body the buffered HTTP API v2 / Function URL adapters drain before
+# failing closed. HTTP API v2 (payload format 2.0) and the buffered Function
+# URL path deliver buffered responses only, so the adapters drain terminating
+# streams into the buffered body up to this budget instead of silently
+# dropping them.
+_APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES = 4 * 1024 * 1024
+
+# _APIGATEWAY_V2_STREAMING_BODY_TIMEOUT bounds how long the buffered adapters
+# wait for a streaming response body to terminate before failing closed. A
+# never-terminating stream (for example a live SSE session listener) must not
+# hold the Lambda until the provider buffering ceiling; failing loudly and
+# cheaply lets clients surface the transport mismatch instead of spinning on
+# an empty 200.
+_APIGATEWAY_V2_STREAMING_BODY_TIMEOUT = 5.0
+
+# _APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE is the documented client-visible
+# error for a streaming response body the HTTP API v2 adapter cannot deliver.
+# It is returned as HTTP 500 with the nested AppTheory error body.
+_APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE = "streaming response body cannot be delivered by the HTTP API v2 adapter"
+
+# _LAMBDA_FUNCTION_URL_STREAMING_BODY_ERROR_MESSAGE is the documented
+# client-visible error for a streaming response body the buffered Lambda
+# Function URL adapter cannot deliver. It is returned as HTTP 500 with the
+# nested AppTheory error body, matching the HTTP API v2 fail-closed shape with
+# the adapter named in the message.
+_LAMBDA_FUNCTION_URL_STREAMING_BODY_ERROR_MESSAGE = (
+    "streaming response body cannot be delivered by the Function URL adapter"
+)
+
+
+class _StreamingBodyBudgetError(Exception):
+    """Marker for a streaming body the buffered adapter cannot deliver."""
+
+
+def _read_all_bounded(body_stream: Any, max_bytes: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    for chunk in body_stream:
+        data = bytes(chunk or b"")
+        total += len(data)
+        if total > max_bytes:
+            raise _StreamingBodyBudgetError("streaming body exceeds the adapter budget")
+        chunks.append(data)
+    return b"".join(chunks)
+
+
+def _drain_streaming_body(body_stream: Any, max_bytes: int, timeout: float) -> bytes:
+    """Drain a streaming body under a bounded byte and time budget.
+
+    The drain runs in a daemon worker thread so a never-terminating stream
+    (a live listener) cannot hold the invocation: ``join(timeout)`` enforces
+    the budget and the adapter fails closed. When the deadline fires the worker
+    is abandoned, bounded by the Lambda lifecycle — the Python counterpart of
+    the Go adapter abandoning a non-pipe reader — and a stream that closed
+    empty only because the deadline fired fails closed deterministically.
+    """
+    box: dict[str, Any] = {}
+
+    def _run() -> None:
+        try:
+            box["body"] = _read_all_bounded(body_stream, max_bytes)
+        except Exception as exc:  # noqa: BLE001
+            box["error"] = exc
+
+    worker = threading.Thread(
+        target=_run,
+        name="apptheory-v2-streaming-drain",
+        daemon=True,
+    )
+    worker.start()
+    worker.join(timeout=timeout)
+    if worker.is_alive():
+        raise _StreamingBodyBudgetError("streaming body did not terminate within the adapter budget")
+    error = box.get("error")
+    if error is not None:
+        raise error
+    body = box.get("body")
+    if body is None:
+        raise _StreamingBodyBudgetError("streaming body did not terminate within the adapter budget")
+    return body
+
+
+def _with_drained_streaming_body(
+    resp: Response,
+    *,
+    error_message: str,
+    max_bytes: int,
+    timeout: float,
+) -> Response:
+    if resp.body_stream is None:
+        return resp
+    try:
+        drained = _drain_streaming_body(resp.body_stream, max_bytes, timeout)
+    except Exception:  # noqa: BLE001
+        return error_response("app.internal", error_message)
+    return Response(
+        status=resp.status,
+        headers=resp.headers,
+        cookies=resp.cookies,
+        body=drained,
+        is_base64=resp.is_base64,
+        body_stream=None,
+    )
+
 
 _REMOTE_MCP_APIGW_CANONICAL_RESOURCES = frozenset(
     {
@@ -84,6 +191,12 @@ def request_from_alb_target_group(event: dict[str, Any]) -> Request:
 
 
 def apigw_v2_response_from_response(resp: Response) -> dict[str, Any]:
+    resp = _with_drained_streaming_body(
+        resp,
+        error_message=_APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE,
+        max_bytes=_APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES,
+        timeout=_APIGATEWAY_V2_STREAMING_BODY_TIMEOUT,
+    )
     headers: dict[str, str] = {}
     multi: dict[str, list[str]] = {}
     for key, values in (resp.headers or {}).items():
@@ -107,6 +220,12 @@ def apigw_v2_response_from_response(resp: Response) -> dict[str, Any]:
 
 
 def lambda_function_url_response_from_response(resp: Response) -> dict[str, Any]:
+    resp = _with_drained_streaming_body(
+        resp,
+        error_message=_LAMBDA_FUNCTION_URL_STREAMING_BODY_ERROR_MESSAGE,
+        max_bytes=_APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES,
+        timeout=_APIGATEWAY_V2_STREAMING_BODY_TIMEOUT,
+    )
     headers: dict[str, str] = {}
     for key, values in (resp.headers or {}).items():
         if not values:

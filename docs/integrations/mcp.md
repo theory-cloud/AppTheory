@@ -652,7 +652,9 @@ Important deployment note:
 - true incremental SSE delivery requires a response-streaming adapter
 - AppTheory's `SSEStreamResponse` is supported by the API Gateway REST API v1 adapter (`ServeAPIGatewayProxy` via
   `HandleLambda`)
-- if you're behind an adapter that buffers responses, clients may receive progress only after completion
+- the HTTP API v2 adapter cannot stream: it drains a terminating streaming body into the buffered response (bounded to
+  4 MiB / 5 seconds) and fails closed with HTTP 500 and a JSON error body when the stream does not terminate in time,
+  instead of returning a silent empty `200`
 
 ### Resumability
 

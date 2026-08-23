@@ -725,10 +725,10 @@ export class App {
             request = requestFromAPIGatewayV2(event);
         }
         catch (err) {
-            return apigatewayV2ResponseFromResponse(this._responseForHTTPError(err));
+            return await apigatewayV2ResponseFromResponse(this._responseForHTTPError(err));
         }
         const resp = await this.serve(request, ctx);
-        return apigatewayV2ResponseFromResponse(resp);
+        return await apigatewayV2ResponseFromResponse(resp);
     }
     /** Serves a Lambda Function URL event. */
     async serveLambdaFunctionURL(event, ctx) {
@@ -737,10 +737,10 @@ export class App {
             request = requestFromLambdaFunctionURL(event);
         }
         catch (err) {
-            return lambdaFunctionURLResponseFromResponse(this._responseForHTTPError(err));
+            return await lambdaFunctionURLResponseFromResponse(this._responseForHTTPError(err));
         }
         const resp = await this.serve(request, ctx);
-        return lambdaFunctionURLResponseFromResponse(resp);
+        return await lambdaFunctionURLResponseFromResponse(resp);
     }
     /** Serves an API Gateway REST proxy event. */
     async serveAPIGatewayProxy(event, ctx) {

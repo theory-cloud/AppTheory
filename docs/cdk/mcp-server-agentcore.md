@@ -25,8 +25,12 @@ If you're looking for the Go runtime implementation (tools + handler), see `docs
 
 Note on SSE progress streaming:
 
-- this construct uses HTTP API v2, so many deployments will buffer responses and not deliver incremental SSE progress
-- if you require true response streaming, use an API Gateway REST API v1 streaming pattern
+- this construct serves HTTP API v2, which delivers buffered responses only: it cannot stream SSE incrementally
+- the v2 adapter drains a terminating streaming body into the buffered response (bounded to 4 MiB / 5 seconds), so a
+  short-lived response such as the initial `GET /mcp` keepalive is delivered as a body instead of a silent empty `200`
+- a streaming body that does not terminate within that budget (for example a long-lived session listener or a live
+  replay) fails closed with HTTP 500 and a JSON error body, so clients get a signal instead of an EOF reconnect loop
+- if you require true incremental SSE streaming, use an API Gateway REST API v1 streaming pattern
 - for Claude Remote MCP, use `AppTheoryRemoteMcpServer` instead
 
 Related docs:
