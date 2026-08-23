@@ -263,3 +263,48 @@ func TestServeWebSocket_DecodeFailureObservabilityUsesRouteKey(t *testing.T) {
 		t.Fatalf("expected real decode duration, got %d", gotLog.DurationMS)
 	}
 }
+
+func TestServeWebSocket_DualBodyFailsClosed(t *testing.T) {
+	// A dual-body response (non-empty buffered body + streaming body) is
+	// divergent across adapters; the WS serve path must fail closed with the
+	// clean nested 500, routing the normalize failure through the serve-error
+	// pipeline exactly like a handler error (reference shape for TS and Py).
+	app := New(WithTier(TierP2))
+	app.WebSocket("$default", func(_ *Context) (*Response, error) {
+		return &Response{
+			Status:     200,
+			Headers:    map[string][]string{"content-type": {"text/html; charset=utf-8"}},
+			Body:       []byte("buffered"),
+			BodyStream: StreamBytes([]byte("streamed")),
+		}, nil
+	})
+
+	out := app.ServeWebSocket(context.Background(), events.APIGatewayWebsocketProxyRequest{
+		HTTPMethod: "GET",
+		Path:       "/",
+		RequestContext: events.APIGatewayWebsocketProxyRequestContext{
+			RouteKey:   "$default",
+			RequestID:  "req_ws_dual_1",
+			DomainName: "example.com",
+			Stage:      "dev",
+		},
+	})
+
+	if out.StatusCode != 500 {
+		t.Fatalf("expected fail-closed status 500, got %d (%s)", out.StatusCode, out.Body)
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(out.Body), &body); err != nil {
+		t.Fatalf("unmarshal error body: %v", err)
+	}
+	errorBody, ok := body["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested error body, got %#v", body)
+	}
+	if errorBody["code"] != errorCodeInternal || errorBody["message"] != errorMessageInternal {
+		t.Fatalf("unexpected error body: %#v", errorBody)
+	}
+	if errorBody["request_id"] != "req_ws_dual_1" {
+		t.Fatalf("expected request_id in error body, got %#v", errorBody)
+	}
+}

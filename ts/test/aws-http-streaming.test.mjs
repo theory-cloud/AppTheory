@@ -280,3 +280,32 @@ test("websocket decode failures use the route key in observability", async () =>
   assert.equal(logs[0].path, "/");
   assert.equal(logs[0].durationMs, 5);
 });
+
+test("serveWebSocket fails closed on a dual-body response", async () => {
+  // A dual-body response (non-empty buffered body + bodyStream) is divergent
+  // across adapters; the WS serve path must route the normalize failure
+  // through the same error handling as a thrown handler error (clean nested
+  // 500), aligned with Go and Py.
+  const app = createApp({ tier: "p2" });
+  app.webSocket("$default", () => ({
+    status: 200,
+    headers: { "content-type": ["text/html; charset=utf-8"] },
+    cookies: [],
+    body: Buffer.from("buffered", "utf8"),
+    bodyStream: (async function* () {
+      yield Buffer.from("streamed", "utf8");
+    })(),
+    isBase64: false,
+  }));
+
+  const out = await app.serveWebSocket({
+    requestContext: { routeKey: "$default", requestId: "req_ws_dual_1" },
+    path: "/",
+  });
+
+  assert.equal(out.statusCode, 500);
+  const error = JSON.parse(out.body).error;
+  assert.equal(error.code, "app.internal");
+  assert.equal(error.message, "internal error");
+  assert.equal(error.request_id, "req_ws_dual_1");
+});

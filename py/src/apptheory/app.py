@@ -1418,7 +1418,19 @@ class App:
                 response_for_error_with_request_id_and_format(self._http_error_format, exc, request_id)
             )
 
-        return apigw_proxy_response_from_response(normalize_response(resp))
+        # A dual-body response (non-empty buffered body + body_stream) is
+        # divergent across adapters, so the normalizer fails closed on the
+        # ambiguous shape. Route that failure through the same error handling
+        # as a raised handler error so the WS serve path never lets the
+        # ValueError escape (aligned with Go and TS).
+        try:
+            return apigw_proxy_response_from_response(normalize_response(resp))
+        except Exception as exc:  # noqa: BLE001
+            if not self._secure or self._tier == "p0":
+                return apigw_proxy_response_from_response(response_for_error(exc))
+            return apigw_proxy_response_from_response(
+                response_for_error_with_request_id_and_format(self._http_error_format, exc, request_id)
+            )
 
     def _event_context(self, ctx: Any | None) -> EventContext:
         request_id = ""

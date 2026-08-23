@@ -934,6 +934,39 @@ class TestApp(unittest.TestCase):
             "https://example.com/socket",
         )
 
+    def test_websocket_dual_body_fails_closed(self) -> None:
+        # A dual-body response (non-empty buffered body + body_stream) is
+        # divergent across adapters; the WS serve path must route the normalize
+        # failure through the same error handling as a raised handler error
+        # (clean nested 500), aligned with Go and TS.
+        app = create_app(tier="p2")
+
+        def dual_body(_ctx) -> Response:
+            return Response(
+                status=200,
+                headers={"content-type": ["text/html; charset=utf-8"]},
+                cookies=[],
+                body=b"buffered",
+                is_base64=False,
+                body_stream=iter([b"streamed"]),
+            )
+
+        app.websocket("$default", dual_body)
+        resp = app.serve_websocket(
+            {
+                "httpMethod": "GET",
+                "path": "/",
+                "headers": {},
+                "body": "",
+                "isBase64Encoded": False,
+                "requestContext": {"routeKey": "$default", "requestId": "req_ws_dual_1"},
+            }
+        )
+        self.assertEqual(resp["statusCode"], 500)
+        err = json.loads(resp["body"])["error"]
+        self.assertEqual(err["code"], "app.internal")
+        self.assertEqual(err["message"], "internal error")
+
     def test_lambda_event_routing_and_failure_shapes(self) -> None:
         app = create_app(tier="p2")
 

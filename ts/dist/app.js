@@ -933,7 +933,20 @@ export class App {
             }
             return apigatewayProxyResponseFromResponse(errorResponseWithRequestId("app.internal", "internal error", {}, requestId));
         }
-        return apigatewayProxyResponseFromResponse(normalizeResponse(resp));
+        // A dual-body response (non-empty buffered body + bodyStream) is divergent
+        // across adapters, so the normalizer fails closed on the ambiguous shape.
+        // Route that failure through the same error handling as a thrown handler
+        // error so the WS serve path never lets the TypeError escape (aligned with
+        // Go and Py).
+        try {
+            return apigatewayProxyResponseFromResponse(normalizeResponse(resp));
+        }
+        catch (err) {
+            if (this._tier === "p0") {
+                return apigatewayProxyResponseFromResponse(responseForError(err));
+            }
+            return apigatewayProxyResponseFromResponse(responseForErrorWithRequestId(err, requestId));
+        }
     }
     _eventContext(ctx) {
         const requestId = ctx &&
