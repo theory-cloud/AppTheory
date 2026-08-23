@@ -239,6 +239,24 @@ func drainStreamingBodyForAPIGatewayV2(ctx context.Context, resp Response) (Resp
 	return resp, nil
 }
 
+// deadlineReachedByWallClock reports whether ctx's deadline has been reached by
+// wall clock, independent of whether cancellation has propagated to ctx.Err()
+// yet. It is the deterministic counterpart of ctx.Err() != nil for the
+// empty-EOF-at-deadline guard: when the drain deadline and the producer's
+// unwind coincide (the request context and the drain context share the earlier
+// of the two deadlines, so they expire at the same instant), the pipe writer's
+// EOF can win the drain select while ctx.Err() is still nil, because the
+// parent-cancel propagation runs on a different core than the writer/reader
+// chain. Comparing against ctx.Deadline() — the exact instant the context's
+// timer fires — closes that window in every configuration (a parent carrying
+// an earlier deadline, or the drain's own budget expiring). A context without
+// a deadline (ok == false) never triggers the wall-clock branch; the guard
+// then relies on ctx.Err() alone, matching the pre-fix behavior.
+func deadlineReachedByWallClock(ctx context.Context) bool {
+	d, ok := ctx.Deadline()
+	return ok && !time.Now().Before(d)
+}
+
 func drainBodyReaderForAPIGatewayV2(ctx context.Context, reader io.Reader) ([]byte, error) {
 	type readResult struct {
 		body []byte
@@ -253,11 +271,22 @@ func drainBodyReaderForAPIGatewayV2(ctx context.Context, reader io.Reader) ([]by
 
 	select {
 	case res := <-done:
-		// A reader that ended with an empty body because the drain deadline
-		// fired is a non-terminating stream, not a legitimate empty response:
-		// fail closed so the caller cannot ship the silent empty 200.
-		if res.err == nil && len(res.body) == 0 && ctx.Err() != nil {
-			return nil, ctx.Err()
+		// A reader that ended with an empty body on or after the drain
+		// deadline is a non-terminating stream, not a legitimate empty
+		// response: fail closed so the caller cannot ship the silent empty
+		// 200. The wall-clock deadline comparison (deadlineReachedByWallClock)
+		// keeps the guard deterministic even when the pipe writer's unwind
+		// EOF wins the select inside the parent-cancel propagation window,
+		// where ctx.Err() is still nil; the ctx.Err() branch additionally
+		// covers a parent cancel that fires before the drain deadline (for
+		// example the MCP session-listener unwind after its request context
+		// expires). A legitimately empty terminating stream that ends before
+		// the deadline still returns its empty body.
+		if res.err == nil && len(res.body) == 0 && (ctx.Err() != nil || deadlineReachedByWallClock(ctx)) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return nil, context.DeadlineExceeded
 		}
 		return res.body, res.err
 	case <-ctx.Done():
@@ -302,10 +331,17 @@ func drainBodyStreamForAPIGatewayV2(ctx context.Context, stream BodyStream) ([]b
 			return nil, ctx.Err()
 		case chunk, ok := <-stream:
 			if !ok {
-				// Same deadline guard as the reader path: a stream that closed
-				// empty because the drain deadline fired is non-terminating.
-				if len(body) == 0 && ctx.Err() != nil {
-					return nil, ctx.Err()
+				// Same deadline guard as the reader path: a stream that
+				// closed empty on or after the drain deadline is
+				// non-terminating and must fail closed even when ctx.Err()
+				// has not propagated yet; a legitimately empty terminating
+				// stream that ends before the deadline still returns its
+				// empty body.
+				if len(body) == 0 && (ctx.Err() != nil || deadlineReachedByWallClock(ctx)) {
+					if err := ctx.Err(); err != nil {
+						return nil, err
+					}
+					return nil, context.DeadlineExceeded
 				}
 				return body, nil
 			}

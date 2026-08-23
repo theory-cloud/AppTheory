@@ -412,3 +412,150 @@ func TestServeLambdaFunctionURL_LiveStreamingHandlerFailsClosed(t *testing.T) {
 	}
 	requireLambdaFunctionURLStreamingError(t, out)
 }
+
+// deadlineCtxWithNilError is a context whose Deadline() is already in the past
+// but whose Err() stays nil and whose Done() never fires. It models the exact
+// guard-check instant inside the parent-cancel propagation window: the drain
+// deadline has been reached by wall clock, but cancellation has not made
+// itself observable through ctx.Err() yet. The pre-fix guard (ctx.Err() != nil
+// only) misses on this context and returns the silent empty body; the
+// wall-clock deadline comparison catches it deterministically.
+type deadlineCtxWithNilError struct {
+	context.Context // delegates Value() to context.Background()
+	deadline        time.Time
+}
+
+func (d deadlineCtxWithNilError) Deadline() (time.Time, bool) { return d.deadline, true }
+func (d deadlineCtxWithNilError) Done() <-chan struct{}       { return nil }
+func (d deadlineCtxWithNilError) Err() error                  { return nil }
+
+// TestDrainBodyReaderForAPIGatewayV2_EmptyEOFAtDeadlineFailsClosed pins the
+// fail-closed guard against the parent-cancel propagation race: an empty EOF
+// that lands in the drain select while ctx.Err() is still nil must fail closed
+// when the drain deadline has been reached by wall clock. No sleeps, no timing
+// dependence: the deadline is pinned to the past and the context never fires.
+func TestDrainBodyReaderForAPIGatewayV2_EmptyEOFAtDeadlineFailsClosed(t *testing.T) {
+	pr, pw := io.Pipe()
+	if err := pw.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
+
+	// The pipe writer already unwound (reader sees an empty EOF) and the drain
+	// deadline is already in the past: the guard-check instant is the one where
+	// the parent-cancel propagation has not made ctx.Err() observable yet.
+	ctx := deadlineCtxWithNilError{context.Background(), time.Now().Add(-time.Second)}
+	body, err := drainBodyReaderForAPIGatewayV2(ctx, pr)
+	if err == nil {
+		t.Fatalf("empty EOF at the drain deadline must fail closed, got body %q with nil error (silent empty 200)", body)
+	}
+	if len(body) != 0 {
+		t.Fatalf("fail-closed drain must not return content, got %q", body)
+	}
+}
+
+// TestDrainBodyReaderForAPIGatewayV2_EmptyEOFBeforeDeadlineIsLegitimate pins
+// the no-false-positive invariant: a legitimately empty terminating stream
+// that ends before the drain deadline still returns its empty body (empty 200,
+// not a 500).
+func TestDrainBodyReaderForAPIGatewayV2_EmptyEOFBeforeDeadlineIsLegitimate(t *testing.T) {
+	pr, pw := io.Pipe()
+	if err := pw.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Hour))
+	defer cancel()
+	body, err := drainBodyReaderForAPIGatewayV2(ctx, pr)
+	if err != nil {
+		t.Fatalf("empty EOF before the deadline is a legitimate empty response, got error %v", err)
+	}
+	if len(body) != 0 {
+		t.Fatalf("expected empty body, got %q", body)
+	}
+}
+
+// TestDrainBodyReaderForAPIGatewayV2_EmptyEOFAfterParentCancelFailsClosed pins
+// the early parent-cancel branch of the guard (the MCP session-listener unwind
+// after its request context expires): an empty EOF must fail closed even when
+// the wall clock is still before the drain deadline.
+func TestDrainBodyReaderForAPIGatewayV2_EmptyEOFAfterParentCancelFailsClosed(t *testing.T) {
+	pr, pw := io.Pipe()
+	if err := pw.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the parent request context already fired
+	body, err := drainBodyReaderForAPIGatewayV2(ctx, pr)
+	if err == nil {
+		t.Fatalf("empty EOF after parent cancel must fail closed, got body %q with nil error (silent empty 200)", body)
+	}
+	if len(body) != 0 {
+		t.Fatalf("fail-closed drain must not return content, got %q", body)
+	}
+}
+
+// TestDrainBodyReaderForAPIGatewayV2_NonEmptyEOFDelivered pins the
+// non-empty-completed-drain invariant: content read before termination is
+// delivered regardless of the deadline, so legitimate content never turns into
+// a false 500.
+func TestDrainBodyReaderForAPIGatewayV2_NonEmptyEOFDelivered(t *testing.T) {
+	pr, pw := io.Pipe()
+	// io.Pipe writes are synchronous and block until the reader consumes
+	// them, so the producer writes and closes from a goroutine while the
+	// drain reads.
+	go func() {
+		if _, err := pw.Write([]byte("data: hello\n\n")); err != nil {
+			t.Errorf("write pipe: %v", err)
+		}
+		if err := pw.Close(); err != nil {
+			t.Errorf("close pipe writer: %v", err)
+		}
+	}()
+
+	// Even with the deadline already reached, non-empty content must pass
+	// through: the guard only treats an empty EOF as non-terminating.
+	ctx := deadlineCtxWithNilError{context.Background(), time.Now().Add(-time.Second)}
+	body, err := drainBodyReaderForAPIGatewayV2(ctx, pr)
+	if err != nil {
+		t.Fatalf("non-empty completed drain must be delivered, got error %v", err)
+	}
+	if string(body) != "data: hello\n\n" {
+		t.Fatalf("expected drained content, got %q", body)
+	}
+}
+
+// TestDrainBodyStreamForAPIGatewayV2_EmptyCloseAtDeadlineFailsClosed pins the
+// same propagation-window guard on the BodyStream path: a stream that closed
+// empty while ctx.Err() is still nil must fail closed when the drain deadline
+// has been reached by wall clock.
+func TestDrainBodyStreamForAPIGatewayV2_EmptyCloseAtDeadlineFailsClosed(t *testing.T) {
+	ch := make(chan StreamChunk)
+	close(ch) // the producer unwound and closed the stream empty
+
+	ctx := deadlineCtxWithNilError{context.Background(), time.Now().Add(-time.Second)}
+	body, err := drainBodyStreamForAPIGatewayV2(ctx, ch)
+	if err == nil {
+		t.Fatalf("empty stream close at the drain deadline must fail closed, got body %q with nil error (silent empty 200)", body)
+	}
+	if len(body) != 0 {
+		t.Fatalf("fail-closed drain must not return content, got %q", body)
+	}
+}
+
+// TestDrainBodyStreamForAPIGatewayV2_EmptyCloseBeforeDeadlineIsLegitimate pins
+// the no-false-positive invariant on the BodyStream path.
+func TestDrainBodyStreamForAPIGatewayV2_EmptyCloseBeforeDeadlineIsLegitimate(t *testing.T) {
+	ch := make(chan StreamChunk)
+	close(ch)
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Hour))
+	defer cancel()
+	body, err := drainBodyStreamForAPIGatewayV2(ctx, ch)
+	if err != nil {
+		t.Fatalf("empty stream close before the deadline is a legitimate empty response, got error %v", err)
+	}
+	if len(body) != 0 {
+		t.Fatalf("expected empty body, got %q", body)
+	}
+}
