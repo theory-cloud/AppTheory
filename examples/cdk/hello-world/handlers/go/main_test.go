@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	"github.com/theory-cloud/apptheory/v3/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	"github.com/theory-cloud/apptheory/v4/testkit"
 )
 
 func TestHelloWorldRoutes(t *testing.T) {

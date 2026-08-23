@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
 
 func validatePOSTRequestProtocol(

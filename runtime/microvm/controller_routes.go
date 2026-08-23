@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
 
 // RegisterControllerRoutes registers the canonical M16 MicroVM controller HTTP routes on an AppTheory app.

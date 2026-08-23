@@ -7,7 +7,7 @@ import (
 	"path"
 	"strings"
 
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
 
 // AuthorizationServerMetadata is the RFC8414 Authorization Server metadata document.

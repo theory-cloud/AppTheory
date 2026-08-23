@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
 
 // ToolDef defines an MCP tool's metadata and input schema.
