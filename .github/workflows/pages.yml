@@ -16,6 +16,13 @@
 #     the tag ref and pass `tag`, or omit `tag` to redeploy the current
 #     ref's docs stamped with the latest stable release.
 #
+# TRANSITION WINDOW: the release.yml pages-dispatch handoff reaches `main`
+# only via the staging → premain → main promotion train. A stable release
+# published from main before this workflow promotes dispatches nothing (main
+# still runs the old release.yml), and tags cut before this workflow lands
+# carry the old pages.yml with no `tag` input — deploy those refs by
+# dispatching from staging without `tag` until the train completes.
+#
 # Why not `release: published`? Releases here are published by
 # release-please with the default GITHUB_TOKEN (no PAT secret exists, and
 # none may be introduced), and GitHub never triggers new workflow runs from
@@ -37,8 +44,9 @@
 # hashes but REPLACES arrays wholesale, so the override carries the complete
 # tabletheory.runtimes array with every `vX.Y.Z` / `X.Y.Z` placeholder in
 # each install string stamped (asset filenames strip the leading `v`). The
-# checked-in docs/_config.yml keeps the placeholders and remains the
-# local-preview fallback; the override is git-ignored.
+# checked-in docs/_config.yml keeps the placeholders; without the override,
+# docs/index.html falls back to the pinned versions in docs/_data/runtimes.yml,
+# so local preview shows real versions. The override is git-ignored.
 #
 # The generator runs from the checkout: it is present on `staging` and on
 # every release tag cut after this workflow lands. Dispatching with a tag
@@ -75,9 +83,11 @@ on:
 permissions:
   contents: read
 
-# Coalesce in-flight deploys: if a second push or release dispatch lands
-# before the previous deploy finishes, queue it (don't cancel) so we never
-# skip a publish.
+# Coalesce in-flight deploys: cancel-in-progress: false never cancels a
+# running deploy, but if multiple runs queue behind it only the newest
+# pending run is kept — older pending runs are cancelled, so superseded
+# intermediate refs are not individually published. The site always
+# converges to the latest queued ref.
 concurrency:
   group: pages
   cancel-in-progress: false
