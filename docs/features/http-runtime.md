@@ -5,7 +5,7 @@ description: Tiered middleware, routing, normalization, and the AppTheory error 
 
 # HTTP Runtime (P0–P2)
 
-The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [265-vector corpus](../reference/contract-fixtures.md) includes 263 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the two Go/CDK-TS MCP route/facade tables. <!-- apptheory-fixture-count: 265 -->
+The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [271-vector corpus](../reference/contract-fixtures.md) includes 269 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the two Go/CDK-TS MCP route/facade tables. <!-- apptheory-fixture-count: 271 -->
 
 The runtime is **tiered.** You opt into a tier when you create the app:
 
@@ -153,6 +153,28 @@ You almost never need these directly — use `HandleLambda` / `handleLambda` / `
 | API Gateway v1 (REST proxy) | `ServeAPIGatewayProxy` | `serveAPIGatewayProxy` | `serve_apigw_proxy` |
 | ALB target group | `ServeALB` | `serveALB` | `serve_alb` |
 
+## Streaming responses through buffered adapters
+
+HTTP API v2 (payload format 2.0) and the buffered Lambda Function URL path deliver
+buffered responses only — they cannot stream incrementally. The adapters therefore
+drain a streaming response body (`BodyReader`/`BodyStream`/`bodyStream`/`body_stream`)
+into the buffered body with a bounded budget instead of silently dropping it:
+
+- a **terminating stream** is drained and delivered as the buffered response body
+  (bounded to 4 MiB / 5 seconds; the byte budget and time budget are identical in
+  all three runtimes);
+- a stream that does **not terminate within the budget** (a live session listener,
+  an open replay), a stream whose total length **exceeds 4 MiB**, or a stream that
+  **errors** fails closed with HTTP 500 and the nested AppTheory error body:
+  `{"error":{"code":"app.internal","message":"streaming response body cannot be delivered by the HTTP API v2 adapter"}}`
+  (the Function URL adapter names itself: `"...cannot be delivered by the Function URL adapter"`);
+- a stream that closes empty only because the deadline fired fails closed as well,
+  so the empty-`200` reconnect loop cannot reappear at the deadline boundary.
+
+No adapter performs an unbounded read, and none of the budgets are configurable:
+a handler that wants true incremental SSE must use a response-streaming adapter
+(API Gateway REST v1, or the Lambda Function URL streaming handler), not HTTP API v2.
+
 ## Header canonicalization
 
 `Request.Headers` and `Response.Headers` keys are lower-cased. Look-ups are case-insensitive at the boundary, but if you iterate the map you see the canonical (lower-case) form.
@@ -170,4 +192,4 @@ You almost never need these directly — use `HandleLambda` / `handleLambda` / `
 - [Logging Profiles](logging-profiles.md) — profile-backed structured JSON log output
 - [Sanitization](sanitization.md) — safe logging helpers
 - [Event Workloads](event-workloads.md) — the non-HTTP side of the runtime
-- [Contract Fixtures](../reference/contract-fixtures.md) — 265 vectors: 263 generic fixtures across Go/TS/Python plus two Go/CDK-TS MCP route/facade tables <!-- apptheory-fixture-count: 265 -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — 271 vectors: 269 generic fixtures across Go/TS/Python plus two Go/CDK-TS MCP route/facade tables <!-- apptheory-fixture-count: 271 -->
