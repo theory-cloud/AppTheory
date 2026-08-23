@@ -122,7 +122,7 @@ AppTheory includes a complete [Model Context Protocol](https://modelcontextproto
 
 ## Documentation
 
-The full documentation site lives at **[apptheory.theorycloud.ai](https://apptheory.theorycloud.ai/)**. It is published from the `staging` integration branch; stable release authority remains the versioned packages, release notes, and API snapshots.
+The full documentation site lives at **[apptheory.theorycloud.ai](https://apptheory.theorycloud.ai/)**. It is published from the `staging` integration branch (every push redeploys), and once the pages workflow is promoted to `main`, each stable release also deploys its tag's docs stamped with the release version; stable release authority remains the versioned packages, release notes, and API snapshots.
 
 **Most-used entry points:**
 
