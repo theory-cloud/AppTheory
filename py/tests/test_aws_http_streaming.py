@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "py" / "src"))
 
 import apptheory.aws_http as aws_http  # noqa: E402
-from apptheory.app import create_app  # noqa: E402
+from apptheory.app import Limits, create_app  # noqa: E402
 from apptheory.aws_http import (  # noqa: E402
     _APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES,
     _APIGATEWAY_V2_STREAMING_BODY_TIMEOUT,
@@ -169,6 +169,22 @@ class TestStreamingThroughApp(unittest.TestCase):
         app.get("/live", lambda _ctx: _streaming_response(_live_stream(b"data: first\n\n")))
         out = app.serve_lambda_function_url(build_lambda_function_url_request("GET", "/live"))
         _assert_streaming_error(self, out, URL_ERROR_MESSAGE)
+
+    def test_serve_apigw_v2_max_response_bytes_limiter_overrun_maps_to_413(self) -> None:
+        # The MaxResponseBytes limiter wraps the stream in the portable serve
+        # path; when the adapter drains a stream that trips the limiter, the
+        # overrun must map to 413 app.too_large (same size semantics as the
+        # drain byte-budget overrun), not the 500 delivery-failure shape.
+        app = create_app(limits=Limits(max_response_bytes=8))
+        app.get("/big", lambda _ctx: _streaming_response(_terminating_stream(b"abcdefghij")))
+        out = app.serve_apigw_v2(build_apigw_v2_request("GET", "/big"))
+        _assert_streaming_too_large(self, out)
+
+    def test_serve_lambda_function_url_max_response_bytes_limiter_overrun_maps_to_413(self) -> None:
+        app = create_app(limits=Limits(max_response_bytes=8))
+        app.get("/big", lambda _ctx: _streaming_response(_terminating_stream(b"abcdefghij")))
+        out = app.serve_lambda_function_url(build_lambda_function_url_request("GET", "/big"))
+        _assert_streaming_too_large(self, out)
 
 
 if __name__ == "__main__":

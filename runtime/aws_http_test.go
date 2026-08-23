@@ -247,6 +247,57 @@ func TestLambdaFunctionURLResponseFromResponse_BodyStreamOverrunIsTooLarge(t *te
 	}
 }
 
+func TestServeAPIGatewayV2_StreamingResponseOverMaxResponseBytesIsTooLarge(t *testing.T) {
+	// The MaxResponseBytes limiter wraps the stream in the portable serve
+	// path; when the adapter drains a stream that trips the limiter, the
+	// overrun must map to 413 app.too_large (the same size semantics as the
+	// drain byte-budget overrun), not the 500 delivery-failure shape.
+	app := New(WithLimits(Limits{MaxResponseBytes: 8}))
+	app.Get("/big", func(_ *Context) (*Response, error) {
+		return &Response{
+			Status:     200,
+			Headers:    map[string][]string{"content-type": {"text/html; charset=utf-8"}},
+			BodyStream: StreamBytes([]byte("abcdefghij")),
+		}, nil
+	})
+
+	out := app.ServeAPIGatewayV2(context.Background(), events.APIGatewayV2HTTPRequest{
+		RawPath:        "/big",
+		RawQueryString: "",
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{Method: "GET", Path: "/big"},
+		},
+	})
+
+	requireAPIGatewayV2TooLarge(t, out)
+}
+
+func TestServeLambdaFunctionURL_StreamingResponseOverMaxResponseBytesIsTooLarge(t *testing.T) {
+	app := New(WithLimits(Limits{MaxResponseBytes: 8}))
+	app.Get("/big", func(_ *Context) (*Response, error) {
+		return &Response{
+			Status:     200,
+			Headers:    map[string][]string{"content-type": {"text/html; charset=utf-8"}},
+			BodyStream: StreamBytes([]byte("abcdefghij")),
+		}, nil
+	})
+
+	out := app.ServeLambdaFunctionURL(context.Background(), events.LambdaFunctionURLRequest{
+		RawPath:        "/big",
+		RawQueryString: "",
+		RequestContext: events.LambdaFunctionURLRequestContext{
+			HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "GET", Path: "/big"},
+		},
+	})
+
+	if out.StatusCode != 413 {
+		t.Fatalf("expected payload-too-large status 413, got %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if !strings.Contains(out.Body, `"app.too_large"`) {
+		t.Fatalf("expected app.too_large error code in body, got %q", out.Body)
+	}
+}
+
 func TestAPIGatewayV2ResponseFromResponse_DrainsBodyStream(t *testing.T) {
 	resp := Response{
 		Status:     200,

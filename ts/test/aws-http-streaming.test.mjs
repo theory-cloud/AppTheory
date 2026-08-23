@@ -156,6 +156,28 @@ test("lambda function url adapter maps a streaming body over the byte budget to 
   assertStreamingTooLarge(out);
 });
 
+test("apigateway v2 adapter maps a streaming body over MaxResponseBytes to 413", async () => {
+  // The MaxResponseBytes limiter wraps the stream in the portable serve
+  // path; when the adapter drains a stream that trips the limiter, the
+  // overrun must map to 413 app.too_large (same size semantics as the drain
+  // byte-budget overrun), not the 500 delivery-failure shape.
+  const app = createApp({ limits: { maxResponseBytes: 8 } });
+  app.get("/big", () => htmlStream(200, sseChunks(Buffer.from("abcdefghij", "utf8"))));
+
+  const out = await app.serveAPIGatewayV2(apigwV2Event("/big"));
+
+  assertStreamingTooLarge(out);
+});
+
+test("lambda function url adapter maps a streaming body over MaxResponseBytes to 413", async () => {
+  const app = createApp({ limits: { maxResponseBytes: 8 } });
+  app.get("/big", () => htmlStream(200, sseChunks(Buffer.from("abcdefghij", "utf8"))));
+
+  const out = await app.serveLambdaFunctionURL(lambdaFunctionURLEvent("/big"));
+
+  assertStreamingTooLarge(out);
+});
+
 test("lambda function url adapter fails closed on a streaming body error", async () => {
   const app = createApp();
   app.get("/err", () => htmlStream(200, errorStream()));
