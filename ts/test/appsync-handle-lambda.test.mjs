@@ -78,3 +78,77 @@ test("handleLambda does not treat blank AppSync field names as AppSync events", 
     /unknown event type/,
   );
 });
+
+test("handleLambda maps a panicking SNS handler to the event-workload error shape", async () => {
+  const app = new App({ tier: "p2" });
+  app.sns("topic1", () => {
+    throw new Error("boom");
+  });
+
+  await assert.rejects(
+    app.handleLambda({
+      Records: [
+        {
+          EventSource: "aws:sns",
+          Sns: { TopicArn: "arn:aws:sns:us-east-1:123:topic1" },
+        },
+      ],
+    }),
+    (err) => {
+      // A panicking / throwing user callback must not take down the SNS
+      // adapter path with an arbitrary error; it maps to the established
+      // event-workload failure shape.
+      assert.equal(err.message, "apptheory: event workload failed");
+      return true;
+    },
+  );
+});
+
+test("handleLambda isolates a panicking SQS handler per record", async () => {
+  const app = new App({ tier: "p2" });
+  app.sqs("queue1", (ctx, record) => {
+    if (String(record.messageId) === "2") {
+      throw new Error("boom");
+    }
+    return undefined;
+  });
+
+  const out = await app.handleLambda({
+    Records: [
+      { eventSource: "aws:sqs", messageId: "1", eventSourceARN: "arn:aws:sqs:us-east-1:123:queue1" },
+      { eventSource: "aws:sqs", messageId: "2", eventSourceARN: "arn:aws:sqs:us-east-1:123:queue1" },
+    ],
+  });
+
+  assert.deepEqual(out, { batchItemFailures: [{ itemIdentifier: "2" }] });
+});
+
+test("handleLambda isolates a panicking Kinesis handler per record", async () => {
+  // Mirrors the Go and Py Kinesis panic-isolation tests: a panicking record
+  // handler must not take down the whole batch; the panicking record is
+  // reported as a batch failure and healthy sibling records still process.
+  const app = new App({ tier: "p2" });
+  app.kinesis("stream1", (ctx, record) => {
+    if (String(record.kinesis?.sequenceNumber) === "seq-2") {
+      throw new Error("boom");
+    }
+    return undefined;
+  });
+
+  const out = await app.handleLambda({
+    Records: [
+      {
+        eventSource: "aws:kinesis",
+        eventSourceARN: "arn:aws:kinesis:us-east-1:123:stream/stream1",
+        kinesis: { sequenceNumber: "seq-1" },
+      },
+      {
+        eventSource: "aws:kinesis",
+        eventSourceARN: "arn:aws:kinesis:us-east-1:123:stream/stream1",
+        kinesis: { sequenceNumber: "seq-2" },
+      },
+    ],
+  });
+
+  assert.deepEqual(out, { batchItemFailures: [{ itemIdentifier: "seq-2" }] });
+});

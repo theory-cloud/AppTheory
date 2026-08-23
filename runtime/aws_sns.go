@@ -83,11 +83,28 @@ func (a *App) ServeSNS(ctx context.Context, event events.SNSEvent) ([]any, error
 	evtCtx := a.eventContext(ctx)
 	outputs := make([]any, 0, len(event.Records))
 	for _, record := range event.Records {
-		out, err := handler(evtCtx, record)
+		out, err := runSNSRecordHandlerWithRecover(evtCtx, record, handler)
 		if err != nil {
 			return nil, err
 		}
 		outputs = append(outputs, out)
 	}
 	return outputs, nil
+}
+
+// runSNSRecordHandlerWithRecover invokes the SNS record handler and converts a
+// panicking callback into the established event-workload failure error, so a
+// user callback panic cannot take down the SNS adapter path.
+func runSNSRecordHandlerWithRecover(
+	evtCtx *EventContext,
+	record events.SNSEventRecord,
+	handler SNSHandler,
+) (out any, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			out = nil
+			err = eventWorkloadFailedError()
+		}
+	}()
+	return handler(evtCtx, record)
 }

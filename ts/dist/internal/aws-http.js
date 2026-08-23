@@ -1,4 +1,5 @@
 import { STATUS_CODES } from "node:http";
+import { AppError } from "../errors.js";
 import { headersFromSingle, normalizePath, parseRawQueryString, queryFromSingle, toBuffer, } from "./http.js";
 import { normalizeRequest } from "./request.js";
 import { errorResponse, normalizeResponse } from "./response.js";
@@ -18,20 +19,46 @@ const APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES = 4 * 1024 * 1024;
 // spinning on an empty 200.
 const APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS = 5000;
 // APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE is the documented client-visible
-// error for a streaming response body the HTTP API v2 adapter cannot deliver.
-// It is returned as HTTP 500 with the nested AppTheory error body.
+// error for a streaming response body the HTTP API v2 adapter cannot deliver
+// for a non-size reason (it did not terminate within the budget, or the stream
+// errored). It is returned as HTTP 500 with the nested AppTheory error body. A
+// body that merely exceeds the byte budget maps to 413 (app.too_large) instead,
+// matching the framework's size semantics.
 const APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE = "streaming response body cannot be delivered by the HTTP API v2 adapter";
 // LAMBDA_FUNCTION_URL_STREAMING_BODY_ERROR_MESSAGE is the documented
 // client-visible error for a streaming response body the buffered Lambda
-// Function URL adapter cannot deliver. It is returned as HTTP 500 with the
-// nested AppTheory error body, matching the HTTP API v2 fail-closed shape with
-// the adapter named in the message.
+// Function URL adapter cannot deliver for a non-size reason. It is returned as
+// HTTP 500 with the nested AppTheory error body, matching the HTTP API v2
+// fail-closed shape with the adapter named in the message. A body that merely
+// exceeds the byte budget maps to 413 (app.too_large) instead.
 const LAMBDA_FUNCTION_URL_STREAMING_BODY_ERROR_MESSAGE = "streaming response body cannot be delivered by the Function URL adapter";
 class StreamingBodyBudgetError extends Error {
     constructor(message) {
         super(message);
         this.name = "StreamingBodyBudgetError";
     }
+}
+// StreamingBodyTooLargeError marks a drain failure caused by a size violation
+// (the streaming body exceeded a byte budget) rather than a delivery failure
+// (non-termination or a stream error). Size violations map to 413
+// (app.too_large) per the framework's size semantics; delivery failures keep
+// the documented 500 fail-closed shape.
+class StreamingBodyTooLargeError extends StreamingBodyBudgetError {
+    constructor() {
+        super("streaming body exceeds the adapter budget");
+        this.name = "StreamingBodyTooLargeError";
+    }
+}
+// isStreamingBodySizeError reports whether a drain failure is a size violation
+// rather than a delivery failure. Both the adapter's own byte budget
+// (StreamingBodyTooLargeError) and the framework's MaxResponseBytes limiter
+// (an AppError with code app.too_large) are size errors and must map to 413.
+function isStreamingBodySizeError(err) {
+    if (err instanceof StreamingBodyTooLargeError)
+        return true;
+    if (err instanceof AppError && err.code === "app.too_large")
+        return true;
+    return false;
 }
 export function requestFromWebSocketEvent(event) {
     const headers = {};
@@ -321,13 +348,27 @@ async function drainStreamingBodyForBufferedAdapter(bodyStream, maxBytes, timeou
         total += chunk.length;
         if (total > maxBytes) {
             unblockStreamingBody(bodyStream);
-            throw new StreamingBodyBudgetError("streaming body exceeds the adapter budget");
+            throw new StreamingBodyTooLargeError();
         }
         chunks.push(chunk);
     }
 }
 function streamingBodyErrorResponse(message) {
     const normalized = errorResponse("app.internal", message);
+    return {
+        status: normalized.status,
+        headers: normalized.headers,
+        cookies: normalized.cookies,
+        body: normalized.body,
+    };
+}
+// streamingBodySizeErrorResponse builds the size-semantics denial shape for a
+// streaming body that exceeded a byte budget: HTTP 413 with the framework's
+// app.too_large error body, matching what MaxResponseBytes overruns produce on
+// the portable path. Delivery failures (non-termination, stream errors) keep
+// the documented 500 fail-closed shape instead.
+function streamingBodySizeErrorResponse() {
+    const normalized = errorResponse("app.too_large", "response too large");
     return {
         status: normalized.status,
         headers: normalized.headers,
@@ -351,8 +392,10 @@ export async function apigatewayV2ResponseFromResponse(resp) {
         try {
             bodyBytes = await drainStreamingBodyForBufferedAdapter(normalized.bodyStream, APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES, APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS);
         }
-        catch {
-            const error = streamingBodyErrorResponse(APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE);
+        catch (err) {
+            const error = isStreamingBodySizeError(err)
+                ? streamingBodySizeErrorResponse()
+                : streamingBodyErrorResponse(APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE);
             const errorHeaders = {};
             for (const [key, values] of Object.entries(error.headers ?? {})) {
                 if (!values || values.length === 0)
@@ -394,8 +437,10 @@ export async function lambdaFunctionURLResponseFromResponse(resp) {
         try {
             bodyBytes = await drainStreamingBodyForBufferedAdapter(normalized.bodyStream, APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES, APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS);
         }
-        catch {
-            const error = streamingBodyErrorResponse(LAMBDA_FUNCTION_URL_STREAMING_BODY_ERROR_MESSAGE);
+        catch (err) {
+            const error = isStreamingBodySizeError(err)
+                ? streamingBodySizeErrorResponse()
+                : streamingBodyErrorResponse(LAMBDA_FUNCTION_URL_STREAMING_BODY_ERROR_MESSAGE);
             const errorHeaders = {};
             for (const [key, values] of Object.entries(error.headers ?? {})) {
                 if (!values || values.length === 0)

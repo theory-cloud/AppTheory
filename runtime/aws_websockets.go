@@ -299,6 +299,7 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	startedAt := adapterEntryTime(a)
 
 	routeKey := strings.TrimSpace(event.RequestContext.RouteKey)
 	route := a.webSocketRouteForRoute(routeKey)
@@ -325,7 +326,9 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 
 	normalized, err := normalizeRequest(req)
 	if err != nil {
-		return a.webSocketErrorResponse(err, requestID)
+		resp := a.webSocketErrorResponse(err, requestID)
+		a.recordAdapterDecodeError(startedAt, event.RequestContext.RouteKey, event.Path, err, resp.StatusCode)
+		return resp
 	}
 
 	domainName := strings.TrimSpace(event.RequestContext.DomainName)
@@ -384,6 +387,9 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 		return a.webSocketInternalResponse(requestID)
 	}
 
-	resp := normalizeResponse(out)
+	resp, normErr := normalizeResponse(out)
+	if normErr != nil {
+		return a.webSocketErrorResponse(normErr, requestID)
+	}
 	return apigatewayProxyResponseFromResponse(resp)
 }

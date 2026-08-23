@@ -131,6 +131,11 @@ func TestHandler_UnknownHTTPMethod_Returns405(t *testing.T) {
 	if got := string(resp.Body); got != `{"error":"method not allowed"}` {
 		t.Fatalf("body: got %s", got)
 	}
+	// RFC 9110 15.5.5: a 405 must carry an Allow header listing the permitted
+	// methods. The MCP endpoint registers GET, POST, and DELETE.
+	if got := resp.Headers["allow"]; len(got) != 1 || got[0] != "DELETE, GET, POST" {
+		t.Fatalf("allow header: got %v want [DELETE, GET, POST]", got)
+	}
 }
 
 func TestPOST_AcceptsJSONRPCResponses_Returns202(t *testing.T) {

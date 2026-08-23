@@ -5,7 +5,7 @@ description: Tiered middleware, routing, normalization, and the AppTheory error 
 
 # HTTP Runtime (P0–P2)
 
-The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [271-vector corpus](../reference/contract-fixtures.md) includes 269 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the two Go/CDK-TS MCP route/facade tables. <!-- apptheory-fixture-count: 271 -->
+The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [272-vector corpus](../reference/contract-fixtures.md) includes 270 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the two Go/CDK-TS MCP route/facade tables. <!-- apptheory-fixture-count: 272 -->
 
 The runtime is **tiered.** You opt into a tier when you create the app:
 
@@ -164,10 +164,13 @@ into the buffered body with a bounded budget instead of silently dropping it:
   (bounded to 4 MiB / 5 seconds; the byte budget and time budget are identical in
   all three runtimes);
 - a stream that does **not terminate within the budget** (a live session listener,
-  an open replay), a stream whose total length **exceeds 4 MiB**, or a stream that
-  **errors** fails closed with HTTP 500 and the nested AppTheory error body:
+  an open replay) or a stream that **errors** fails closed with HTTP 500 and the
+  nested AppTheory error body:
   `{"error":{"code":"app.internal","message":"streaming response body cannot be delivered by the HTTP API v2 adapter"}}`
   (the Function URL adapter names itself: `"...cannot be delivered by the Function URL adapter"`);
+- a stream whose total length **exceeds 4 MiB** maps to HTTP 413 payload too large
+  with the framework's size error body: `{"error":{"code":"app.too_large","message":"response too large"}}`,
+  matching the `MaxResponseBytes` size semantics used elsewhere in the runtime;
 - a stream that closes empty only because the deadline fired fails closed as well,
   so the empty-`200` reconnect loop cannot reappear at the deadline boundary.
 
@@ -192,4 +195,4 @@ a handler that wants true incremental SSE must use a response-streaming adapter
 - [Logging Profiles](logging-profiles.md) — profile-backed structured JSON log output
 - [Sanitization](sanitization.md) — safe logging helpers
 - [Event Workloads](event-workloads.md) — the non-HTTP side of the runtime
-- [Contract Fixtures](../reference/contract-fixtures.md) — 271 vectors: 269 generic fixtures across Go/TS/Python plus two Go/CDK-TS MCP route/facade tables <!-- apptheory-fixture-count: 271 -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — 272 vectors: 270 generic fixtures across Go/TS/Python plus two Go/CDK-TS MCP route/facade tables <!-- apptheory-fixture-count: 272 -->

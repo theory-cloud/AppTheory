@@ -5,7 +5,7 @@ description: The Python implementation of the AppTheory contract — typed, asyn
 
 # Python Runtime
 
-The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the 269 generic runner fixtures in the [271-vector corpus](../reference/contract-fixtures.md), including the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the two Go/CDK-TS MCP route/facade tables are explicitly outside Python's scope. <!-- apptheory-fixture-count: 271 -->
+The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the 270 generic runner fixtures in the [272-vector corpus](../reference/contract-fixtures.md), including the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the two Go/CDK-TS MCP route/facade tables are explicitly outside Python's scope. <!-- apptheory-fixture-count: 272 -->
 
 ## Install
 
@@ -118,7 +118,7 @@ Applies to HTTP error serialization only.
 
 ## What's verified
 
-The Python runner passes all 269 generic fixtures in the 271-vector corpus on every commit. <!-- apptheory-fixture-count: 271 --> It includes the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the nested route-algebra and facade-inventory tables are consumed only by Go and CDK-TS. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
+The Python runner passes all 270 generic fixtures in the 272-vector corpus on every commit. <!-- apptheory-fixture-count: 272 --> It includes the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the nested route-algebra and facade-inventory tables are consumed only by Go and CDK-TS. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
 
 ## Next reads
 

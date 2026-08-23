@@ -1390,7 +1390,7 @@ export class McpServer {
     if (normalizedMethod === "DELETE") {
       return this.handleDelete(headers, body);
     }
-    return jsonBytesResponse(405, { error: "method not allowed" });
+    return methodNotAllowedResponse("DELETE, GET, POST");
   }
 
   private async handlePost(
@@ -1570,7 +1570,7 @@ export class McpServer {
       detectMcpProtocolVersion(headers, new Uint8Array()) ===
       MCP_PROTOCOL_SHAPE_2026_07_28
     ) {
-      return jsonBytesResponse(405, { error: "method not allowed" });
+      return methodNotAllowedResponse("POST");
     }
     const headerResponse = validateGetHeaders(headers);
     if (headerResponse) {
@@ -1632,7 +1632,7 @@ export class McpServer {
     if (
       detectMcpProtocolVersion(headers, body) === MCP_PROTOCOL_SHAPE_2026_07_28
     ) {
-      return jsonBytesResponse(405, { error: "method not allowed" });
+      return methodNotAllowedResponse("POST");
     }
     const sessionId = firstHeader(headers, MCP_HEADER_SESSION_ID);
     if (!sessionId) {
@@ -3547,14 +3547,34 @@ function internalServerError(): Response {
   return jsonBytesResponse(500, { error: "internal server error" });
 }
 
-function jsonBytesResponse(status: number, value: unknown): Response {
+function jsonBytesResponse(
+  status: number,
+  value: unknown,
+  headers?: Headers,
+): Response {
   return {
     status,
-    headers: { "content-type": ["application/json"] },
+    headers: { "content-type": ["application/json"], ...(headers ?? {}) },
     cookies: [],
     body: Buffer.from(JSON.stringify(value), "utf8"),
     isBase64: false,
   };
+}
+
+// methodNotAllowedResponse builds the 405 response for the MCP endpoint. Per
+// RFC 9110 section 15.5.5 a method-not-allowed response must carry an Allow
+// header listing the methods the target resource supports; the caller supplies
+// the allowed set (all transport methods, or only POST for the stateless
+// 2026-07-28 shape). The header value follows the framework's Allow formatting
+// (uppercase, sorted, comma-space joined).
+function methodNotAllowedResponse(allow: string): Response {
+  return jsonBytesResponse(
+    405,
+    { error: "method not allowed" },
+    {
+      allow: [allow],
+    },
+  );
 }
 
 function emptyResponse(status: number): Response {

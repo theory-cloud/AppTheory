@@ -89,13 +89,19 @@ of) a buffered body.
 
 Portable shape (conceptual):
 
-- `body`: bytes (optional, treated as a prefix when streaming)
+- `body`: bytes (optional)
 - `body_stream`: stream-of-bytes (optional, yields ordered chunks)
 
-Concatenation rules:
+Representation rule:
 
-- The effective response body bytes MUST be `body` (prefix) concatenated with each streamed chunk in order.
-- Streamed chunks MUST be treated as raw bytes (fixtures encode bytes as `utf8` or `base64` values in JSON).
+- A response MUST carry exactly one body representation. A non-empty buffered
+  `body` combined with a `body_stream` is divergent: the buffered adapters drain
+  the stream and replace the buffered body, while the streaming adapters compose
+  or ignore the buffered part differently. The normalizer therefore fails closed
+  on the ambiguous shape instead of letting adapters silently pick one
+  representation (fixture-backed denial shape).
+
+Streamed chunks MUST be treated as raw bytes (fixtures encode bytes as `utf8` or `base64` values in JSON).
 
 Header/cookie finalization rules:
 

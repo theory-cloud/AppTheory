@@ -824,6 +824,34 @@ export class App {
     return responseForErrorWithFormat(this._httpErrorFormat, err);
   }
 
+  // _recordAdapterDecodeError routes an adapter-level request decode failure
+  // through the observability hooks without changing admission behavior. The
+  // portable path records observability only after a request decodes
+  // successfully, so a decode failure (for example an invalid query string in
+  // an HTTP API v2 or Function URL event) previously produced an error response
+  // with no Log/Metric/Span record. The hook fires for the same P2 tier that
+  // the portable path observes, using the error's code and the response status,
+  // with the real duration measured from the adapter entry timestamp.
+  private _recordAdapterDecodeError(
+    method: string,
+    path: string,
+    err: unknown,
+    status: number,
+    durationMs: number,
+  ): void {
+    if (this._tier !== "p2") return;
+    recordObservability(this._observability, {
+      method,
+      path,
+      requestId: "",
+      tenantId: "",
+      traceId: "",
+      status,
+      errorCode: errorCodeFrom(err),
+      durationMs,
+    });
+  }
+
   private _responseForHTTPErrorWithRequestIdTraceId(
     err: unknown,
     requestId: string,
@@ -1385,13 +1413,20 @@ export class App {
     event: APIGatewayV2HTTPRequest,
     ctx?: unknown,
   ): Promise<APIGatewayV2HTTPResponse> {
+    const startedAtMs = this._clock.now().valueOf();
     let request: Request;
     try {
       request = requestFromAPIGatewayV2(event);
     } catch (err) {
-      return await apigatewayV2ResponseFromResponse(
-        this._responseForHTTPError(err),
+      const resp = this._responseForHTTPError(err);
+      this._recordAdapterDecodeError(
+        String(event.requestContext?.http?.method ?? ""),
+        String(event.requestContext?.http?.path ?? "/"),
+        err,
+        resp.status,
+        durationMs(startedAtMs, this._clock.now().valueOf()),
       );
+      return await apigatewayV2ResponseFromResponse(resp);
     }
     const resp = await this.serve(request, ctx);
     return await apigatewayV2ResponseFromResponse(resp);
@@ -1402,13 +1437,20 @@ export class App {
     event: LambdaFunctionURLRequest,
     ctx?: unknown,
   ): Promise<LambdaFunctionURLResponse> {
+    const startedAtMs = this._clock.now().valueOf();
     let request: Request;
     try {
       request = requestFromLambdaFunctionURL(event);
     } catch (err) {
-      return await lambdaFunctionURLResponseFromResponse(
-        this._responseForHTTPError(err),
+      const resp = this._responseForHTTPError(err);
+      this._recordAdapterDecodeError(
+        String(event.requestContext?.http?.method ?? ""),
+        String(event.requestContext?.http?.path ?? "/"),
+        err,
+        resp.status,
+        durationMs(startedAtMs, this._clock.now().valueOf()),
       );
+      return await lambdaFunctionURLResponseFromResponse(resp);
     }
     const resp = await this.serve(request, ctx);
     return await lambdaFunctionURLResponseFromResponse(resp);
@@ -1453,15 +1495,26 @@ export class App {
     event: AppSyncResolverEvent,
     ctx?: unknown,
   ): Promise<unknown> {
+    const startedAtMs = this._clock.now().valueOf();
     const fallbackRequestId = appSyncRequestIdFromContext(ctx);
     const requestMetadata = appSyncRequestFromEvent(event);
     let request: Request;
     try {
       request = requestFromAppSync(event);
     } catch (err) {
-      return appSyncPayloadFromResponse(
-        appSyncErrorResponse(err, requestMetadata, fallbackRequestId),
+      const resp = appSyncErrorResponse(
+        err,
+        requestMetadata,
+        fallbackRequestId,
       );
+      this._recordAdapterDecodeError(
+        String(event?.info?.parentTypeName ?? ""),
+        `/${String(event?.info?.fieldName ?? "")}`,
+        err,
+        resp.status,
+        durationMs(startedAtMs, this._clock.now().valueOf()),
+      );
+      return appSyncPayloadFromResponse(resp);
     }
 
     let resp: Response | null = null;
@@ -1506,6 +1559,7 @@ export class App {
     event: APIGatewayWebSocketProxyRequest,
     ctx?: unknown,
   ): Promise<APIGatewayProxyResponse> {
+    const startedAtMs = this._clock.now().valueOf();
     const route = this._webSocketRouteForEvent(event);
     let handler = route?.handler ?? null;
 
@@ -1524,12 +1578,18 @@ export class App {
     try {
       request = requestFromWebSocketEvent(event);
     } catch (err) {
-      if (this._tier === "p0") {
-        return apigatewayProxyResponseFromResponse(responseForError(err));
-      }
-      return apigatewayProxyResponseFromResponse(
-        responseForErrorWithRequestId(err, requestId),
+      const resp =
+        this._tier === "p0"
+          ? responseForError(err)
+          : responseForErrorWithRequestId(err, requestId);
+      this._recordAdapterDecodeError(
+        String(event?.requestContext?.routeKey ?? ""),
+        String(event?.path ?? "/"),
+        err,
+        resp.status,
+        durationMs(startedAtMs, this._clock.now().valueOf()),
       );
+      return apigatewayProxyResponseFromResponse(resp);
     }
 
     const domainName = String(event?.requestContext?.domainName ?? "").trim();
@@ -1632,7 +1692,21 @@ export class App {
       );
     }
 
-    return apigatewayProxyResponseFromResponse(normalizeResponse(resp));
+    // A dual-body response (non-empty buffered body + bodyStream) is divergent
+    // across adapters, so the normalizer fails closed on the ambiguous shape.
+    // Route that failure through the same error handling as a thrown handler
+    // error so the WS serve path never lets the TypeError escape (aligned with
+    // Go and Py).
+    try {
+      return apigatewayProxyResponseFromResponse(normalizeResponse(resp));
+    } catch (err) {
+      if (this._tier === "p0") {
+        return apigatewayProxyResponseFromResponse(responseForError(err));
+      }
+      return apigatewayProxyResponseFromResponse(
+        responseForErrorWithRequestId(err, requestId),
+      );
+    }
   }
 
   private _eventContext(ctx?: unknown): EventContext {
@@ -1780,7 +1854,14 @@ export class App {
 
     const wrapped = this._applyEventMiddlewares(handler);
     for (const record of records) {
-      out.push(await (wrapped ?? handler)(eventCtx, record));
+      try {
+        out.push(await (wrapped ?? handler)(eventCtx, record));
+      } catch (err) {
+        // A panicking / throwing user callback must not take down the SNS
+        // adapter path with an arbitrary error; map it to the established
+        // event-workload failure shape (same as the EventBridge adapter).
+        throw sanitizeEventWorkloadError(err);
+      }
     }
 
     return out;

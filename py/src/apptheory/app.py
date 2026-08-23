@@ -1190,22 +1190,62 @@ class App:
                 )
             )
 
+    def _record_adapter_decode_error(
+        self, method: str, path: str, exc: Exception, status: int, started_at: dt.datetime
+    ) -> None:
+        """Route an adapter-level request decode failure through observability.
+
+        The portable path records observability only after a request decodes
+        successfully, so a decode failure (for example an invalid query string
+        in an HTTP API v2 or Function URL event) previously produced an error
+        response with no Log/Metric/Span record. The hook fires for the same P2
+        tier that the portable path observes, using the error's code, the
+        response status, and the real duration measured from the adapter entry
+        timestamp.
+        """
+        if self._tier != "p2":
+            return
+        error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
+        self._record_observability(
+            method, path, "", "", "", status, error_code, _duration_ms(started_at, self._clock.now())
+        )
+
     def serve_apigw_v2(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
         """Serve an API Gateway HTTP API v2 event."""
+        started_at = self._clock.now()
         try:
             request = request_from_apigw_v2(event)
         except Exception as exc:  # noqa: BLE001
-            return apigw_v2_response_from_response(self._response_for_http_error(exc))
+            resp = self._response_for_http_error(exc)
+            request_context_http = ((event or {}).get("requestContext") or {}).get("http") or {}
+            self._record_adapter_decode_error(
+                str(request_context_http.get("method") or ""),
+                str(request_context_http.get("path") or "/"),
+                exc,
+                resp.status,
+                started_at,
+            )
+            return apigw_v2_response_from_response(resp)
 
         resp = self.serve(request, ctx)
         return apigw_v2_response_from_response(resp)
 
     def serve_lambda_function_url(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
         """Serve a Lambda Function URL event."""
+        started_at = self._clock.now()
         try:
             request = request_from_lambda_function_url(event)
         except Exception as exc:  # noqa: BLE001
-            return lambda_function_url_response_from_response(self._response_for_http_error(exc))
+            resp = self._response_for_http_error(exc)
+            request_context_http = ((event or {}).get("requestContext") or {}).get("http") or {}
+            self._record_adapter_decode_error(
+                str(request_context_http.get("method") or ""),
+                str(request_context_http.get("path") or "/"),
+                exc,
+                resp.status,
+                started_at,
+            )
+            return lambda_function_url_response_from_response(resp)
 
         resp = self.serve(request, ctx)
         return lambda_function_url_response_from_response(resp)
@@ -1232,12 +1272,27 @@ class App:
 
     def serve_appsync(self, event: AppSyncResolverEvent, ctx: Any | None = None) -> Any:
         """Serve an AppSync direct Lambda resolver event."""
+        started_at = self._clock.now()
         fallback_request_id = _appsync_request_id_from_ctx(ctx)
         request_metadata = _appsync_request_from_event(event)
         try:
             request = _request_from_appsync_event(event)
         except Exception as exc:  # noqa: BLE001
-            return _appsync_payload_from_response(_appsync_error_response(exc, request_metadata, fallback_request_id))
+            resp = _appsync_error_response(exc, request_metadata, fallback_request_id)
+            if isinstance(event, dict):
+                event_info = (event or {}).get("info") or {}
+            else:
+                event_info = getattr(event, "info", None) or {}
+            parent_type = str(event_info.get("parentTypeName") or "") if isinstance(event_info, dict) else ""
+            field_name = str(event_info.get("fieldName") or "") if isinstance(event_info, dict) else ""
+            self._record_adapter_decode_error(
+                parent_type,
+                f"/{field_name}" if field_name else "/",
+                exc,
+                resp.status,
+                started_at,
+            )
+            return _appsync_payload_from_response(resp)
 
         resp: Response | None = None
         try:
@@ -1262,10 +1317,31 @@ class App:
 
     def serve_websocket(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
         """Serve an API Gateway WebSocket event."""
+        started_at = self._clock.now()
         try:
             request = _request_from_websocket_event(event)
         except Exception as exc:  # noqa: BLE001
-            return apigw_proxy_response_from_response(response_for_error(exc))
+            resp = response_for_error(exc)
+            # The decode-observability method dimension is the WebSocket route
+            # key (matching TS and Go): the route key identifies the failing
+            # surface, while the HTTP method of a WebSocket handshake is always
+            # GET and carries no information.
+            if isinstance(event, dict):
+                request_context = (event or {}).get("requestContext") or {}
+                event_path = (event or {}).get("path") or "/"
+            else:
+                request_context = getattr(event, "requestContext", None) or {}
+                event_path = getattr(event, "path", "") or "/"
+            if not isinstance(request_context, dict):
+                request_context = {}
+            self._record_adapter_decode_error(
+                str(request_context.get("routeKey") or ""),
+                str(event_path),
+                exc,
+                resp.status,
+                started_at,
+            )
+            return apigw_proxy_response_from_response(resp)
 
         try:
             normalized = normalize_request(request)
@@ -1342,7 +1418,19 @@ class App:
                 response_for_error_with_request_id_and_format(self._http_error_format, exc, request_id)
             )
 
-        return apigw_proxy_response_from_response(normalize_response(resp))
+        # A dual-body response (non-empty buffered body + body_stream) is
+        # divergent across adapters, so the normalizer fails closed on the
+        # ambiguous shape. Route that failure through the same error handling
+        # as a raised handler error so the WS serve path never lets the
+        # ValueError escape (aligned with Go and TS).
+        try:
+            return apigw_proxy_response_from_response(normalize_response(resp))
+        except Exception as exc:  # noqa: BLE001
+            if not self._secure or self._tier == "p0":
+                return apigw_proxy_response_from_response(response_for_error(exc))
+            return apigw_proxy_response_from_response(
+                response_for_error_with_request_id_and_format(self._http_error_format, exc, request_id)
+            )
 
     def _event_context(self, ctx: Any | None) -> EventContext:
         request_id = ""
@@ -1560,7 +1648,14 @@ class App:
         for record in records:
             if not isinstance(record, dict):
                 continue
-            outputs.append(_resolve(wrapped(evt_ctx, record)))
+            try:
+                outputs.append(_resolve(wrapped(evt_ctx, record)))
+            except Exception as exc:  # noqa: BLE001
+                # A panicking / raising user callback must not take down the
+                # SNS adapter path with an arbitrary error; map it to the
+                # established event-workload failure shape (same as the
+                # EventBridge adapter).
+                raise _sanitize_event_workload_error(exc) from None
 
         return outputs
 

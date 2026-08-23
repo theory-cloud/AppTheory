@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 
@@ -203,5 +205,106 @@ func TestServeWebSocket_InvalidBase64Body(t *testing.T) {
 
 	if out.StatusCode != 400 {
 		t.Fatalf("expected 400, got %d", out.StatusCode)
+	}
+}
+
+// advancingClock is a deterministic test clock that advances by a fixed step
+// on every read, so decode-observability durations are observable in tests.
+type advancingClock struct {
+	mu   sync.Mutex
+	now  time.Time
+	step time.Duration
+}
+
+func (c *advancingClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cur := c.now
+	c.now = c.now.Add(c.step)
+	return cur
+}
+
+func TestServeWebSocket_DecodeFailureObservabilityUsesRouteKey(t *testing.T) {
+	var gotLog *LogRecord
+	app := New(
+		WithTier(TierP2),
+		WithClock(&advancingClock{now: time.Unix(0, 0).UTC(), step: 5 * time.Millisecond}),
+		WithObservability(ObservabilityHooks{
+			Log: func(r LogRecord) {
+				copy := r
+				gotLog = &copy
+			},
+		}),
+	)
+
+	out := app.ServeWebSocket(context.Background(), events.APIGatewayWebsocketProxyRequest{
+		HTTPMethod:      "GET",
+		Path:            "/",
+		Body:            "not base64",
+		IsBase64Encoded: true,
+		RequestContext: events.APIGatewayWebsocketProxyRequestContext{
+			RouteKey:  "$connect",
+			RequestID: "req_1",
+		},
+	})
+
+	if out.StatusCode != 400 {
+		t.Fatalf("expected 400, got %d", out.StatusCode)
+	}
+	if gotLog == nil {
+		t.Fatal("expected decode failure to emit a log record")
+	}
+	// The decode-observability method dimension is the WebSocket route key
+	// (aligned with TS and Py), not the handshake HTTP method.
+	if gotLog.Method != "$connect" || gotLog.Path != "/" {
+		t.Fatalf("unexpected method/path: %q %q", gotLog.Method, gotLog.Path)
+	}
+	if gotLog.DurationMS <= 0 {
+		t.Fatalf("expected real decode duration, got %d", gotLog.DurationMS)
+	}
+}
+
+func TestServeWebSocket_DualBodyFailsClosed(t *testing.T) {
+	// A dual-body response (non-empty buffered body + streaming body) is
+	// divergent across adapters; the WS serve path must fail closed with the
+	// clean nested 500, routing the normalize failure through the serve-error
+	// pipeline exactly like a handler error (reference shape for TS and Py).
+	app := New(WithTier(TierP2))
+	app.WebSocket("$default", func(_ *Context) (*Response, error) {
+		return &Response{
+			Status:     200,
+			Headers:    map[string][]string{"content-type": {"text/html; charset=utf-8"}},
+			Body:       []byte("buffered"),
+			BodyStream: StreamBytes([]byte("streamed")),
+		}, nil
+	})
+
+	out := app.ServeWebSocket(context.Background(), events.APIGatewayWebsocketProxyRequest{
+		HTTPMethod: "GET",
+		Path:       "/",
+		RequestContext: events.APIGatewayWebsocketProxyRequestContext{
+			RouteKey:   "$default",
+			RequestID:  "req_ws_dual_1",
+			DomainName: "example.com",
+			Stage:      "dev",
+		},
+	})
+
+	if out.StatusCode != 500 {
+		t.Fatalf("expected fail-closed status 500, got %d (%s)", out.StatusCode, out.Body)
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(out.Body), &body); err != nil {
+		t.Fatalf("unmarshal error body: %v", err)
+	}
+	errorBody, ok := body["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested error body, got %#v", body)
+	}
+	if errorBody["code"] != errorCodeInternal || errorBody["message"] != errorMessageInternal {
+		t.Fatalf("unexpected error body: %#v", errorBody)
+	}
+	if errorBody["request_id"] != "req_ws_dual_1" {
+		t.Fatalf("expected request_id in error body, got %#v", errorBody)
 	}
 }

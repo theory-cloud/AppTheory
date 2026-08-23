@@ -165,6 +165,26 @@ func requireAPIGatewayV2StreamingError(t *testing.T, out events.APIGatewayV2HTTP
 	}
 }
 
+// requireAPIGatewayV2TooLarge asserts the size-semantics mapping for a
+// streaming body that exceeds the drain byte budget: HTTP 413 with the
+// framework's app.too_large error shape instead of the 500 fail-closed shape
+// used for non-size drain failures (non-termination, stream errors).
+func requireAPIGatewayV2TooLarge(t *testing.T, out events.APIGatewayV2HTTPResponse) {
+	t.Helper()
+	if out.StatusCode != 413 {
+		t.Fatalf("expected payload-too-large status 413, got %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if ct := out.Headers["content-type"]; !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("expected JSON error content type, got %q", ct)
+	}
+	if !strings.Contains(out.Body, errorMessageResponseTooLarge) {
+		t.Fatalf("expected response-too-large message in body, got %q", out.Body)
+	}
+	if !strings.Contains(out.Body, `"app.too_large"`) {
+		t.Fatalf("expected app.too_large error code in body, got %q", out.Body)
+	}
+}
+
 func TestAPIGatewayV2ResponseFromResponse_BuffersTerminatingBodyReader(t *testing.T) {
 	resp := Response{
 		Status:     200,
@@ -201,7 +221,81 @@ func TestAPIGatewayV2ResponseFromResponse_NonTerminatingBodyReaderFailsClosed(t 
 func TestAPIGatewayV2ResponseFromResponse_BodyReaderOverrunFailsClosed(t *testing.T) {
 	over := bytes.NewReader(make([]byte, apigatewayV2StreamingBodyMaxBytes+1))
 	out := apigatewayV2ResponseFromResponse(context.Background(), Response{Status: 200, BodyReader: over})
-	requireAPIGatewayV2StreamingError(t, out)
+	requireAPIGatewayV2TooLarge(t, out)
+}
+
+func TestAPIGatewayV2ResponseFromResponse_BodyStreamOverrunIsTooLarge(t *testing.T) {
+	// Denial-shape test for the size-semantics mapping: a streamed body that
+	// exceeds the drain byte budget must map to 413 app.too_large, not the 500
+	// delivery-failure shape used for non-termination and stream errors.
+	over := StreamBytes(make([]byte, apigatewayV2StreamingBodyMaxBytes+1))
+	out := apigatewayV2ResponseFromResponse(context.Background(), Response{Status: 200, BodyStream: over})
+	requireAPIGatewayV2TooLarge(t, out)
+}
+
+func TestLambdaFunctionURLResponseFromResponse_BodyStreamOverrunIsTooLarge(t *testing.T) {
+	over := StreamBytes(make([]byte, apigatewayV2StreamingBodyMaxBytes+1))
+	out := lambdaFunctionURLResponseFromResponse(context.Background(), Response{Status: 200, BodyStream: over})
+	if out.StatusCode != 413 {
+		t.Fatalf("expected payload-too-large status 413, got %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if !strings.Contains(out.Body, errorMessageResponseTooLarge) {
+		t.Fatalf("expected response-too-large message in body, got %q", out.Body)
+	}
+	if !strings.Contains(out.Body, `"app.too_large"`) {
+		t.Fatalf("expected app.too_large error code in body, got %q", out.Body)
+	}
+}
+
+func TestServeAPIGatewayV2_StreamingResponseOverMaxResponseBytesIsTooLarge(t *testing.T) {
+	// The MaxResponseBytes limiter wraps the stream in the portable serve
+	// path; when the adapter drains a stream that trips the limiter, the
+	// overrun must map to 413 app.too_large (the same size semantics as the
+	// drain byte-budget overrun), not the 500 delivery-failure shape.
+	app := New(WithLimits(Limits{MaxResponseBytes: 8}))
+	app.Get("/big", func(_ *Context) (*Response, error) {
+		return &Response{
+			Status:     200,
+			Headers:    map[string][]string{"content-type": {"text/html; charset=utf-8"}},
+			BodyStream: StreamBytes([]byte("abcdefghij")),
+		}, nil
+	})
+
+	out := app.ServeAPIGatewayV2(context.Background(), events.APIGatewayV2HTTPRequest{
+		RawPath:        "/big",
+		RawQueryString: "",
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{Method: "GET", Path: "/big"},
+		},
+	})
+
+	requireAPIGatewayV2TooLarge(t, out)
+}
+
+func TestServeLambdaFunctionURL_StreamingResponseOverMaxResponseBytesIsTooLarge(t *testing.T) {
+	app := New(WithLimits(Limits{MaxResponseBytes: 8}))
+	app.Get("/big", func(_ *Context) (*Response, error) {
+		return &Response{
+			Status:     200,
+			Headers:    map[string][]string{"content-type": {"text/html; charset=utf-8"}},
+			BodyStream: StreamBytes([]byte("abcdefghij")),
+		}, nil
+	})
+
+	out := app.ServeLambdaFunctionURL(context.Background(), events.LambdaFunctionURLRequest{
+		RawPath:        "/big",
+		RawQueryString: "",
+		RequestContext: events.LambdaFunctionURLRequestContext{
+			HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "GET", Path: "/big"},
+		},
+	})
+
+	if out.StatusCode != 413 {
+		t.Fatalf("expected payload-too-large status 413, got %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if !strings.Contains(out.Body, `"app.too_large"`) {
+		t.Fatalf("expected app.too_large error code in body, got %q", out.Body)
+	}
 }
 
 func TestAPIGatewayV2ResponseFromResponse_DrainsBodyStream(t *testing.T) {
@@ -223,6 +317,105 @@ func TestAPIGatewayV2ResponseFromResponse_BodyStreamErrorFailsClosed(t *testing.
 	resp := Response{Status: 200, BodyStream: StreamError(errors.New("boom"))}
 	out := apigatewayV2ResponseFromResponse(context.Background(), resp)
 	requireAPIGatewayV2StreamingError(t, out)
+}
+
+func TestServeAPIGatewayV2_DecodeFailureEmitsObservability(t *testing.T) {
+	var gotLog *LogRecord
+	app := New(
+		WithTier(TierP2),
+		WithObservability(ObservabilityHooks{
+			Log: func(r LogRecord) {
+				copy := r
+				gotLog = &copy
+			},
+		}),
+	)
+
+	// Invalid raw query string: requestFromAPIGatewayV2 fails before the
+	// portable path records observability. The adapter must still emit a
+	// record so decode failures are not silent.
+	out := app.ServeAPIGatewayV2(context.Background(), events.APIGatewayV2HTTPRequest{
+		RawPath:        "/x",
+		RawQueryString: "%zz",
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{Method: "GET", Path: "/x"},
+		},
+	})
+
+	if out.StatusCode != 400 {
+		t.Fatalf("expected 400, got %d", out.StatusCode)
+	}
+	if gotLog == nil {
+		t.Fatal("expected decode failure to emit a log record")
+	}
+	if gotLog.Event != "request.completed" {
+		t.Fatalf("unexpected log event: %q", gotLog.Event)
+	}
+	if gotLog.Method != "GET" || gotLog.Path != "/x" {
+		t.Fatalf("unexpected method/path: %q %q", gotLog.Method, gotLog.Path)
+	}
+	if gotLog.Status != 400 || gotLog.ErrorCode != errorCodeBadRequest {
+		t.Fatalf("unexpected status/code: %d %q", gotLog.Status, gotLog.ErrorCode)
+	}
+}
+
+func TestServeLambdaFunctionURL_DecodeFailureEmitsObservability(t *testing.T) {
+	var gotLog *LogRecord
+	app := New(
+		WithTier(TierP2),
+		WithObservability(ObservabilityHooks{
+			Log: func(r LogRecord) {
+				copy := r
+				gotLog = &copy
+			},
+		}),
+	)
+
+	out := app.ServeLambdaFunctionURL(context.Background(), events.LambdaFunctionURLRequest{
+		RawPath:        "/y",
+		RawQueryString: "%zz",
+		RequestContext: events.LambdaFunctionURLRequestContext{
+			HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "POST", Path: "/y"},
+		},
+	})
+
+	if out.StatusCode != 400 {
+		t.Fatalf("expected 400, got %d", out.StatusCode)
+	}
+	if gotLog == nil {
+		t.Fatal("expected decode failure to emit a log record")
+	}
+	if gotLog.Method != "POST" || gotLog.Path != "/y" {
+		t.Fatalf("unexpected method/path: %q %q", gotLog.Method, gotLog.Path)
+	}
+	if gotLog.Status != 400 || gotLog.ErrorCode != errorCodeBadRequest {
+		t.Fatalf("unexpected status/code: %d %q", gotLog.Status, gotLog.ErrorCode)
+	}
+}
+
+func TestServeAPIGatewayV2_DecodeFailureNoObservabilityBelowP2(t *testing.T) {
+	var gotLog *LogRecord
+	app := New(
+		WithTier(TierP1),
+		WithObservability(ObservabilityHooks{
+			Log: func(r LogRecord) {
+				copy := r
+				gotLog = &copy
+			},
+		}),
+	)
+
+	app.ServeAPIGatewayV2(context.Background(), events.APIGatewayV2HTTPRequest{
+		RawPath:        "/x",
+		RawQueryString: "%zz",
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{Method: "GET", Path: "/x"},
+		},
+	})
+
+	if gotLog != nil {
+		t.Fatalf("expected no decode-failure record below P2, got %+v", gotLog)
+	}
 }
 
 func TestServeAPIGatewayV2_StreamingHandlerDeliversBufferedBody(t *testing.T) {
@@ -333,7 +526,15 @@ func TestLambdaFunctionURLResponseFromResponse_NonTerminatingBodyReaderFailsClos
 func TestLambdaFunctionURLResponseFromResponse_BodyReaderOverrunFailsClosed(t *testing.T) {
 	over := bytes.NewReader(make([]byte, apigatewayV2StreamingBodyMaxBytes+1))
 	out := lambdaFunctionURLResponseFromResponse(context.Background(), Response{Status: 200, BodyReader: over})
-	requireLambdaFunctionURLStreamingError(t, out)
+	if out.StatusCode != 413 {
+		t.Fatalf("expected payload-too-large status 413, got %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if !strings.Contains(out.Body, errorMessageResponseTooLarge) {
+		t.Fatalf("expected response-too-large message in body, got %q", out.Body)
+	}
+	if !strings.Contains(out.Body, `"app.too_large"`) {
+		t.Fatalf("expected app.too_large error code in body, got %q", out.Body)
+	}
 }
 
 func TestLambdaFunctionURLResponseFromResponse_DrainsBodyStream(t *testing.T) {
