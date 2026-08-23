@@ -2,9 +2,19 @@ package apptheory
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 )
+
+// errDualBodyResponse is the sentinel error normalizeResponse returns when a
+// handler response carries both a non-empty buffered body and a streaming
+// body. The serve path routes it through respondToServeError (exactly like the
+// TS normalizeResponse throw and the Py normalize_response raise), so the
+// fail-closed response is produced by the error pipeline with the request id,
+// the AppSync envelope when serving AppSync, and P2 observability — not by an
+// inline errorResponse that bypasses all three.
+var errDualBodyResponse = errors.New("apptheory: response cannot carry both a buffered body and a streaming body")
 
 // Response is the canonical HTTP response model returned by AppTheory handlers.
 type Response struct {
@@ -98,9 +108,9 @@ func (r *Response) SetHeader(name string, value string) *Response {
 	return r
 }
 
-func normalizeResponse(in *Response) Response {
+func normalizeResponse(in *Response) (Response, error) {
 	if in == nil {
-		return errorResponse(errorCodeInternal, errorMessageInternal, nil)
+		return errorResponse(errorCodeInternal, errorMessageInternal, nil), nil
 	}
 	out := *in
 	if out.Status == 0 {
@@ -112,9 +122,12 @@ func normalizeResponse(in *Response) Response {
 	// composes Body + BodyReader and ignores BodyStream entirely. The same
 	// handler response would produce different wire bytes on different
 	// adapters, so the normalizer fails closed on the ambiguous shape instead
-	// of letting adapters silently pick one representation.
+	// of letting adapters silently pick one representation. The failure is
+	// signaled as a sentinel error so the serve path routes it through the
+	// established serve-error pipeline (request id, AppSync envelope, P2
+	// observability), mirroring the TS throw and Py raise on the same shape.
 	if len(out.Body) > 0 && (out.BodyReader != nil || out.BodyStream != nil) {
-		return errorResponse(errorCodeInternal, errorMessageInternal, nil)
+		return Response{}, errDualBodyResponse
 	}
 	out.Headers = canonicalizeHeaders(out.Headers)
 	if setCookies := out.Headers["set-cookie"]; len(setCookies) > 0 {
@@ -125,5 +138,5 @@ func normalizeResponse(in *Response) Response {
 	if out.Cookies != nil {
 		out.Cookies = append([]string(nil), out.Cookies...)
 	}
-	return out
+	return out, nil
 }

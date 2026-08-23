@@ -378,6 +378,41 @@ class TestApp(unittest.TestCase):
         self.assertEqual(err["code"], "app.internal")
         self.assertEqual(err["message"], "internal error")
 
+    def test_serve_appsync_dual_body_fails_closed_through_envelope(self) -> None:
+        # The fail-closed dual-body response must produce the AppSync error
+        # envelope (pay_theory_error, SYSTEM_ERROR) and a P2 observability
+        # record with error_code app.internal: the serve path routes the
+        # normalizer failure through the error pipeline, exactly like a raised
+        # handler error.
+        logs = []
+        app = create_app(tier="p2", observability=ObservabilityHooks(log=lambda r: logs.append(r)))
+
+        def dual_body(_ctx) -> Response:
+            return Response(
+                status=200,
+                headers={"content-type": ["text/html; charset=utf-8"]},
+                cookies=[],
+                body=b"buffered",
+                is_base64=False,
+                body_stream=iter([b"streamed"]),
+            )
+
+        app.post("/createThing", dual_body)
+        out = app.serve_appsync(
+            {
+                "arguments": {"id": "thing_123"},
+                "info": {"fieldName": "createThing", "parentTypeName": "Mutation"},
+            }
+        )
+        self.assertEqual(out["pay_theory_error"], True)
+        self.assertEqual(out["error_message"], "internal error")
+        self.assertEqual(out["error_type"], "SYSTEM_ERROR")
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0].event, "request.completed")
+        self.assertEqual(logs[0].error_code, "app.internal")
+        self.assertEqual(logs[0].status, 500)
+        self.assertEqual(logs[0].method, "POST")
+
     def test_remaining_ms_is_applied_and_observability_hooks_fire(self) -> None:
         logs = []
         metrics = []

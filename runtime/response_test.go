@@ -1,7 +1,9 @@
 package apptheory
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -86,7 +88,10 @@ func TestBinaryCopiesBody(t *testing.T) {
 }
 
 func TestNormalizeResponse(t *testing.T) {
-	out := normalizeResponse(nil)
+	out, err := normalizeResponse(nil)
+	if err != nil {
+		t.Fatalf("unexpected error for nil response: %v", err)
+	}
 	if out.Status != 500 {
 		t.Fatalf("expected status 500 for nil response, got %d", out.Status)
 	}
@@ -100,7 +105,10 @@ func TestNormalizeResponse(t *testing.T) {
 		Cookies: []string{"e=f; Path=/"},
 		Body:    []byte("hi"),
 	}
-	n := normalizeResponse(in)
+	n, err := normalizeResponse(in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if n.Status != 200 {
 		t.Fatalf("expected default status 200, got %d", n.Status)
 	}
@@ -138,13 +146,78 @@ func TestNormalizeResponse_FailsClosedOnDualBodyDivergence(t *testing.T) {
 		{name: "body plus body stream", in: &Response{Status: 200, Body: []byte("head"), BodyStream: StreamBytes([]byte("tail"))}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out := normalizeResponse(tc.in)
-			if out.Status != 500 {
-				t.Fatalf("expected fail-closed status 500, got %d", out.Status)
+			out, err := normalizeResponse(tc.in)
+			if !errors.Is(err, errDualBodyResponse) {
+				t.Fatalf("expected errDualBodyResponse sentinel, got %v", err)
 			}
-			if got := string(out.Body); !strings.Contains(got, `"app.internal"`) {
-				t.Fatalf("expected app.internal error body, got %q", got)
+			// The serve path turns the sentinel into the established error
+			// shape; the normalizer itself signals rather than formatting.
+			if out.Status != 0 {
+				t.Fatalf("expected zero-value response on sentinel error, got %#v", out)
+			}
+			if code := errorCodeForError(err); code != errorCodeInternal {
+				t.Fatalf("expected app.internal code from sentinel, got %q", code)
 			}
 		})
+	}
+}
+
+func TestServe_DualBodyFailsClosedThroughServeErrorPipeline(t *testing.T) {
+	// The fail-closed dual-body response must route through the serve-error
+	// pipeline exactly like the TS throw and Py raise: the portable error body
+	// carries the request id, and P2 observability records errorCode
+	// app.internal instead of the empty string the inline errorResponse
+	// produced at PR head.
+	var gotLog *LogRecord
+	app := New(
+		WithTier(TierP2),
+		WithObservability(ObservabilityHooks{
+			Log: func(r LogRecord) {
+				copy := r
+				gotLog = &copy
+			},
+		}),
+	)
+	app.Get("/dual", func(_ *Context) (*Response, error) {
+		return &Response{
+			Status:     200,
+			Headers:    map[string][]string{"content-type": {"text/html; charset=utf-8"}},
+			Body:       []byte("buffered"),
+			BodyStream: StreamBytes([]byte("streamed")),
+		}, nil
+	})
+
+	resp := app.Serve(context.Background(), Request{
+		Method:  "GET",
+		Path:    "/dual",
+		Headers: map[string][]string{"x-request-id": {"req_dual_1"}},
+	})
+
+	if resp.Status != 500 {
+		t.Fatalf("expected fail-closed status 500, got %d", resp.Status)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(resp.Body, &body); err != nil {
+		t.Fatalf("unmarshal error body: %v", err)
+	}
+	errorBody, ok := body["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested error body, got %#v", body)
+	}
+	if errorBody["code"] != errorCodeInternal || errorBody["message"] != errorMessageInternal {
+		t.Fatalf("unexpected error body: %#v", errorBody)
+	}
+	if errorBody["request_id"] != "req_dual_1" {
+		t.Fatalf("expected request_id in portable error body, got %#v", errorBody)
+	}
+
+	if gotLog == nil {
+		t.Fatal("expected P2 observability record for dual-body failure")
+	}
+	if gotLog.ErrorCode != errorCodeInternal {
+		t.Fatalf("expected observability errorCode app.internal, got %q", gotLog.ErrorCode)
+	}
+	if gotLog.Status != 500 || gotLog.Method != "GET" || gotLog.Path != "/dual" {
+		t.Fatalf("unexpected observability record: %+v", gotLog)
 	}
 }

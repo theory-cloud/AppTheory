@@ -386,6 +386,9 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 		return a.webSocketInternalResponse(requestID)
 	}
 
-	resp := normalizeResponse(out)
+	resp, normErr := normalizeResponse(out)
+	if normErr != nil {
+		return a.webSocketErrorResponse(normErr, requestID)
+	}
 	return apigatewayProxyResponseFromResponse(resp)
 }
