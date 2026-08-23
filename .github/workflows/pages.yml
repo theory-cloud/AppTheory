@@ -9,8 +9,11 @@
 #   - `workflow_dispatch` with an explicit `tag` input: dispatched by
 #     release.yml immediately after it publishes a stable release, so the
 #     site deploys the just-published tag's docs stamped with that tag —
-#     never the previous release. Manual dispatch works too: pass `tag` to
-#     deploy a specific stable release, or omit it to redeploy the current
+#     never the previous release. The dispatch must target the tag ref
+#     itself (release.yml hands off with `--ref <tag>`); the resolve step
+#     enforces that the tag input matches the run ref and names a
+#     published stable release. Manual dispatch works too: dispatch from
+#     the tag ref and pass `tag`, or omit `tag` to redeploy the current
 #     ref's docs stamped with the latest stable release.
 #
 # Why not `release: published`? Releases here are published by
@@ -27,7 +30,10 @@
 # bare manual dispatch) the latest published non-prerelease release via
 # `gh release view` — then generates docs/_config_versions.yml via
 # scripts/generate-docs-version-override.rb and builds with
-# `--config _config.yml,_config_versions.yml`. Jekyll deep-merges config
+# `--config _config.yml,_config_versions.yml`. The build tree is always
+# the run's own ref (github.sha): the dispatch tag input is never used as
+# a checkout ref (an input-derived checkout is a cache-poisoning risk), so
+# the resolve step instead enforces tag == run ref. Jekyll deep-merges config
 # hashes but REPLACES arrays wholesale, so the override carries the complete
 # tabletheory.runtimes array with every `vX.Y.Z` / `X.Y.Z` placeholder in
 # each install string stamped (asset filenames strip the leading `v`). The
@@ -44,10 +50,12 @@
 # dispatch from any other ref is rejected by the environment policy.
 #
 # Security invariants: the workflow token stays read-only except the
-# pages write + id-token granted to the deploy job; the override is
-# generated only from a published stable dispatch tag (never a draft or
-# prerelease) or the resolved release tag; no secrets are introduced;
-# checkout credentials are not persisted and the build writes no caches.
+# pages write + id-token granted to the deploy job; the build checks out
+# the run's own ref only, and the dispatch tag is validated to match the
+# run ref and to name a published stable release (never a draft or
+# prerelease); the override is generated only from that validated tag or
+# the resolved release tag; no secrets are introduced; checkout
+# credentials are not persisted and the build writes no caches.
 # =============================================================
 name: pages
 
@@ -88,7 +96,7 @@ jobs:
     # trigger); dispatches are ref-gated by the environment policy.
     if: (github.event_name == 'push' && github.ref == 'refs/heads/staging') || github.event_name == 'workflow_dispatch'
     steps:
-      - name: Resolve deploy tag and checkout ref
+      - name: Resolve deploy tag
         id: resolve
         shell: bash
         env:
@@ -103,39 +111,47 @@ jobs:
               echo "tag input '${TAG_INPUT}' is not a stable vX.Y.Z tag" >&2
               exit 1
             fi
-            # The dispatch input selects the checkout ref while the build
-            # writes state, so CodeQL flags it as a cache-poisoning risk
-            # unless the tag is proven to be a real published stable
-            # release. `gh release view` fails for missing tags (set -e
-            # aborts); drafts and prereleases are refused explicitly.
+            # The build checks out the run's own ref (github.sha), never
+            # the tag input — CodeQL treats an input-derived checkout ref
+            # as untrusted even when regex-validated. The tag input must
+            # therefore BE the run's ref tag: release.yml dispatches with
+            # --ref <tag>, so this holds automatically; manual dispatches
+            # must target the tag ref too.
+            if [[ "${GITHUB_REF_TYPE}" != "tag" || "${GITHUB_REF_NAME}" != "${TAG_INPUT}" ]]; then
+              echo "tag input '${TAG_INPUT}' does not match the run ref (${GITHUB_REF_TYPE} ${GITHUB_REF_NAME}); dispatch this workflow from the ${TAG_INPUT} tag instead (gh workflow run pages.yml --ref ${TAG_INPUT} -f tag=${TAG_INPUT})" >&2
+              exit 1
+            fi
+            # The dispatch tag must name a real published stable release:
+            # `gh release view` fails for missing tags (set -e aborts);
+            # drafts and prereleases are refused explicitly.
             release_meta="$(gh release view "${TAG_INPUT}" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease)"
             if [[ "$(jq -r '.isDraft' <<<"${release_meta}")" == "true" || "$(jq -r '.isPrerelease' <<<"${release_meta}")" == "true" ]]; then
               echo "tag input '${TAG_INPUT}' is a draft or prerelease release; refusing to deploy" >&2
               exit 1
             fi
             tag="${TAG_INPUT}"
-            checkout_ref="${TAG_INPUT}"
           else
             # Push or bare manual dispatch: build this ref's docs and stamp
             # them with the latest published non-prerelease release
             # (`gh release view` resolves GitHub's "latest" release, which
             # excludes drafts and prereleases).
             tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
-            checkout_ref=""
           fi
           if [[ -z "${tag}" || "${tag}" == "null" ]]; then
             echo "could not resolve a published release tag" >&2
             exit 1
           fi
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          echo "checkout_ref=${checkout_ref}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Explicit tag deploys build the release tag; everything else
-          # builds the triggering ref's head (empty = default).
-          ref: ${{ steps.resolve.outputs.checkout_ref }}
+          # Build the run's own ref: the dispatch tag's commit (release
+          # handoff) or the triggering branch head. An input-derived
+          # checkout ref is a cache-poisoning risk — CodeQL flags it even
+          # when regex-validated — so the tag input never selects the
+          # tree; the resolve step enforces tag == run ref instead.
+          ref: ${{ github.sha }}
           # The workflow never pushes git; dropping persisted credentials
           # keeps the scoped token from leaking into any build step.
           persist-credentials: false
