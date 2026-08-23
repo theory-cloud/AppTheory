@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/theory-cloud/apptheory/v3/pkg/objectstore"
-	objectstoretest "github.com/theory-cloud/apptheory/v3/testkit/objectstore"
+	"github.com/theory-cloud/apptheory/v4/pkg/objectstore"
+	objectstoretest "github.com/theory-cloud/apptheory/v4/testkit/objectstore"
 )
 
 const verifiedFixtureDigest = "sha256:21914ff0cff97bc82c93b3e91887a223484060ab6e64add1fbd8600827ae3aa5"

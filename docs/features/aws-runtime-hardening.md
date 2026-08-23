@@ -5,7 +5,7 @@ description: Fail-closed Go helpers for assumed-account identity and version-pin
 
 # AWS Runtime Hardening Helpers
 
-`github.com/theory-cloud/apptheory/v3/runtime/aws` provides two Go-only platform-service helpers for Lambda control
+`github.com/theory-cloud/apptheory/v4/runtime/aws` provides two Go-only platform-service helpers for Lambda control
 planes. They centralize invariants that should not be reimplemented differently by every service:
 
 1. assume a role before doing work, resolve its STS caller identity, and require the expected account; and

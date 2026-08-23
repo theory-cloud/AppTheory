@@ -188,14 +188,14 @@ run_self_test() {
   if ! (
     cd "${work}"
     git checkout -q -b main
-    printf '%s\n' "3.0.0-rc" >VERSION
+    printf '%s\n' "4.0.0-rc" >VERSION
     printf '%s\n' \
-      "module github.com/theory-cloud/apptheory/v3" \
+      "module github.com/theory-cloud/apptheory/v4" \
       "" \
       "go 1.23" >go.mod
     mkdir -p cdk-go/apptheorycdk
     printf '%s\n' \
-      "module github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3" \
+      "module github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v4" \
       "" \
       "go 1.23" >cdk-go/apptheorycdk/go.mod
     printf '%s\n' "package apptheory" >apptheory.go
@@ -204,7 +204,7 @@ run_self_test() {
     git \
       -c user.name="AppTheory Go Probe Self Test" \
       -c user.email="apptheory-go-probe-self-test@example.invalid" \
-      commit -q -m "chore: seed v3 release"
+      commit -q -m "chore: seed v4 release"
     source_commit="$(git rev-parse HEAD)"
 
     printf '%s\n' "other" >other.txt
@@ -217,9 +217,9 @@ run_self_test() {
 
     git remote add origin "${remote}"
     git push -q origin HEAD:refs/heads/main
-    git --git-dir="${remote}" update-ref refs/tags/v3.0.0-rc "${source_commit}"
+    git --git-dir="${remote}" update-ref refs/tags/v4.0.0-rc "${source_commit}"
     git --git-dir="${remote}" update-ref \
-      refs/tags/cdk-go/apptheorycdk/v3.0.0-rc \
+      refs/tags/cdk-go/apptheorycdk/v4.0.0-rc \
       "${source_commit}"
 
     instead_of="file://${remote}"
@@ -227,24 +227,24 @@ run_self_test() {
       GIT_CONFIG_KEY_0="url.${instead_of}.insteadOf" \
       GIT_CONFIG_VALUE_0="https://github.com/theory-cloud/apptheory" \
       GO_MODULE_PROBE_ATTEMPTS=1 \
-      verify_module_set origin "v3.0.0-rc" "${source_commit}" >/dev/null
+      verify_module_set origin "v4.0.0-rc" "${source_commit}" >/dev/null
     echo "go-module-probe self-test: PASS exact root and nested resolution"
 
     git --git-dir="${remote}" update-ref \
-      refs/tags/cdk-go/apptheorycdk/v3.0.0-rc \
+      refs/tags/cdk-go/apptheorycdk/v4.0.0-rc \
       "${other_commit}"
     if output="$(
       GIT_CONFIG_COUNT=1 \
         GIT_CONFIG_KEY_0="url.${instead_of}.insteadOf" \
         GIT_CONFIG_VALUE_0="https://github.com/theory-cloud/apptheory" \
         GO_MODULE_PROBE_ATTEMPTS=1 \
-        verify_module_set origin "v3.0.0-rc" "${source_commit}" 2>&1
+        verify_module_set origin "v4.0.0-rc" "${source_commit}" 2>&1
     )"; then
       echo "go-module-probe self-test: FAIL (conflicting nested target was accepted)" >&2
       exit 1
     fi
     grep -Fq \
-      "cdk-go/apptheorycdk/v3.0.0-rc targets ${other_commit}; expected ${source_commit}" \
+      "cdk-go/apptheorycdk/v4.0.0-rc targets ${other_commit}; expected ${source_commit}" \
       <<<"${output}"
     echo "go-module-probe self-test: PASS conflicting target fails closed"
   ); then

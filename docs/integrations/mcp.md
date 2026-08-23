@@ -7,7 +7,7 @@ render_with_liquid: false
 
 This document describes AppTheory's fixture-backed MCP server method surface: transport behavior, JSON-RPC methods,
 registries, sessions, streaming, and test helpers. Go implementation package paths such as
-`github.com/theory-cloud/apptheory/v3/runtime/mcp` are listed where operators need source-level details; TypeScript and
+`github.com/theory-cloud/apptheory/v4/runtime/mcp` are listed where operators need source-level details; TypeScript and
 Python expose the matching runtime/test surfaces through their package API snapshots.
 
 If you're specifically integrating with Bedrock AgentCore, start with `docs/integrations/agentcore-mcp.md`.
@@ -30,7 +30,7 @@ This milestone closes the audited `2026-07-28` conformance gap list; it does not
 
 OAuth helper surfaces used by Remote MCP deployments and Autheory are in:
 
-- `github.com/theory-cloud/apptheory/v3/runtime/oauth`
+- `github.com/theory-cloud/apptheory/v4/runtime/oauth`
 
 ---
 

@@ -11,8 +11,8 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/stretchr/testify/require"
 
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	"github.com/theory-cloud/apptheory/v3/runtime/mcproutes"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	"github.com/theory-cloud/apptheory/v4/runtime/mcproutes"
 )
 
 var testEndpoints = []mcproutes.EndpointPath{

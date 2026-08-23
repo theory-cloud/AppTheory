@@ -12,8 +12,8 @@ import (
 
 	"github.com/aws/aws-lambda-go/lambda"
 
-	"github.com/theory-cloud/apptheory/v3/pkg/vectorstore"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	"github.com/theory-cloud/apptheory/v4/pkg/vectorstore"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
 
 const (

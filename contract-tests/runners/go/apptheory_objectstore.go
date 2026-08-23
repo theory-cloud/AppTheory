@@ -11,8 +11,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	store "github.com/theory-cloud/apptheory/v3/pkg/objectstore"
-	storetest "github.com/theory-cloud/apptheory/v3/testkit/objectstore"
+	store "github.com/theory-cloud/apptheory/v4/pkg/objectstore"
+	storetest "github.com/theory-cloud/apptheory/v4/testkit/objectstore"
 )
 
 const fixtureBackendFake = "fake"

@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v3/testkit"
-	mcptestkit "github.com/theory-cloud/apptheory/v3/testkit/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v4/testkit"
+	mcptestkit "github.com/theory-cloud/apptheory/v4/testkit/mcp"
 )
 
 // newSampleServer creates an MCP server with a sample "echo" tool for testing.

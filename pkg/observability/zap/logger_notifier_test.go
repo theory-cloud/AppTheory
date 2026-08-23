@@ -10,7 +10,7 @@ import (
 	ubzap "go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/theory-cloud/apptheory/v3/pkg/observability"
+	"github.com/theory-cloud/apptheory/v4/pkg/observability"
 )
 
 type recordingNotifier struct {

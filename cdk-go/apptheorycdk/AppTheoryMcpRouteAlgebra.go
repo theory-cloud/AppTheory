@@ -2,7 +2,7 @@ package apptheorycdk
 
 import (
 	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
-	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3/jsii"
+	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v4/jsii"
 )
 
 // AppTheory's canonical, versioned MCP route-algebra contract.

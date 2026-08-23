@@ -6,8 +6,8 @@ import (
 	"log"
 	"testing"
 
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	"github.com/theory-cloud/apptheory/v3/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	"github.com/theory-cloud/apptheory/v4/testkit"
 )
 
 const testStreamARN = "arn:aws:kinesis:us-east-1:111122223333:stream/apptheory-example-cloudwatch-logs"

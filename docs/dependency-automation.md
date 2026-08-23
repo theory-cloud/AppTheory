@@ -27,7 +27,7 @@ Put this in `renovate.json` (or merge the same fields into your existing Renovat
       ],
       "matchStrings": [
         "github\\.com/theory-cloud/AppTheory/releases/download/v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc(?:\\.\\d+)?)?)",
-        "github\\.com/theory-cloud/apptheory/v3\\s+v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc(?:\\.\\d+)?)?)"
+        "github\\.com/theory-cloud/apptheory/v4\\s+v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc(?:\\.\\d+)?)?)"
       ],
       "depNameTemplate": "theory-cloud/AppTheory",
       "datasourceTemplate": "github-releases",
@@ -61,7 +61,7 @@ Put this in `renovate.json` (or merge the same fields into your existing Renovat
 This config intentionally matches both direct release assets and Go module requirements:
 
 ```text
-github.com/theory-cloud/apptheory/v3 v3.0.0-rc
+github.com/theory-cloud/apptheory/v4 v4.0.0-rc
 https://github.com/theory-cloud/AppTheory/releases/download/v3.0.0-rc/theory-cloud-apptheory-3.0.0-rc.tgz
 https://github.com/theory-cloud/AppTheory/releases/download/v3.0.0-rc/theory-cloud-apptheory-cdk-3.0.0-rc.tgz
 https://github.com/theory-cloud/AppTheory/releases/download/v3.0.0-rc/apptheory-3.0.0rc0-py3-none-any.whl

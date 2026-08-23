@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/theory-cloud/apptheory/v3/pkg/limited"
+	"github.com/theory-cloud/apptheory/v4/pkg/limited"
 )
 
 type atomicStub struct {
