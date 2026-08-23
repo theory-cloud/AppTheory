@@ -870,3 +870,62 @@ class TestApp(unittest.TestCase):
         self.assertEqual(_kinesis_stream_name_from_arn("arn:aws:kinesis:us-east-1:0:stream/s"), "s")
         self.assertEqual(_sns_topic_name_from_arn("arn:aws:sns:us-east-1:0:t"), "t")
         self.assertEqual(_eventbridge_rule_name_from_arn("arn:aws:events:us-east-1:0:rule/r"), "r")
+
+    def test_handle_lambda_maps_panicking_sns_handler_to_event_workload_error(self) -> None:
+        app = create_app(tier="p2")
+
+        def boom(_ctx, _record):
+            raise RuntimeError("boom")
+
+        app.sns("topic1", boom)
+        event = {
+            "Records": [
+                {"EventSource": "aws:sns", "Sns": {"TopicArn": "arn:aws:sns:us-east-1:123:topic1"}},
+            ]
+        }
+        with self.assertRaisesRegex(RuntimeError, "apptheory: event workload failed"):
+            app.handle_lambda(event)
+
+    def test_handle_lambda_isolates_panicking_sqs_handler_per_record(self) -> None:
+        app = create_app(tier="p2")
+
+        def boom(_ctx, record):
+            if str(record.get("messageId")) == "2":
+                raise RuntimeError("boom")
+            return None
+
+        app.sqs("queue1", boom)
+        event = {
+            "Records": [
+                {"eventSource": "aws:sqs", "eventSourceARN": "arn:aws:sqs:us-east-1:123:queue1", "messageId": "1"},
+                {"eventSource": "aws:sqs", "eventSourceARN": "arn:aws:sqs:us-east-1:123:queue1", "messageId": "2"},
+            ]
+        }
+        out = app.handle_lambda(event)
+        self.assertEqual(out, {"batchItemFailures": [{"itemIdentifier": "2"}]})
+
+    def test_handle_lambda_isolates_panicking_kinesis_handler_per_record(self) -> None:
+        app = create_app(tier="p2")
+
+        def boom(_ctx, record):
+            if str(record.get("kinesis", {}).get("sequenceNumber")) == "seq-2":
+                raise RuntimeError("boom")
+            return None
+
+        app.kinesis("stream1", boom)
+        event = {
+            "Records": [
+                {
+                    "eventSource": "aws:kinesis",
+                    "eventSourceARN": "arn:aws:kinesis:us-east-1:123:stream/stream1",
+                    "kinesis": {"sequenceNumber": "seq-1"},
+                },
+                {
+                    "eventSource": "aws:kinesis",
+                    "eventSourceARN": "arn:aws:kinesis:us-east-1:123:stream/stream1",
+                    "kinesis": {"sequenceNumber": "seq-2"},
+                },
+            ]
+        }
+        out = app.handle_lambda(event)
+        self.assertEqual(out, {"batchItemFailures": [{"itemIdentifier": "seq-2"}]})

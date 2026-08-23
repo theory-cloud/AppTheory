@@ -1827,7 +1827,14 @@ export class App {
 
     const wrapped = this._applyEventMiddlewares(handler);
     for (const record of records) {
-      out.push(await (wrapped ?? handler)(eventCtx, record));
+      try {
+        out.push(await (wrapped ?? handler)(eventCtx, record));
+      } catch (err) {
+        // A panicking / throwing user callback must not take down the SNS
+        // adapter path with an arbitrary error; map it to the established
+        // event-workload failure shape (same as the EventBridge adapter).
+        throw sanitizeEventWorkloadError(err);
+      }
     }
 
     return out;

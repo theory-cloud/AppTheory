@@ -1606,7 +1606,14 @@ class App:
         for record in records:
             if not isinstance(record, dict):
                 continue
-            outputs.append(_resolve(wrapped(evt_ctx, record)))
+            try:
+                outputs.append(_resolve(wrapped(evt_ctx, record)))
+            except Exception as exc:  # noqa: BLE001
+                # A panicking / raising user callback must not take down the
+                # SNS adapter path with an arbitrary error; map it to the
+                # established event-workload failure shape (same as the
+                # EventBridge adapter).
+                raise _sanitize_event_workload_error(exc) from None
 
         return outputs
 
