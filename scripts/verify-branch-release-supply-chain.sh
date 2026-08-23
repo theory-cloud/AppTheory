@@ -349,9 +349,9 @@ grep -Fq "scripts/render-release-artifact-sync-plan.py" "scripts/sync-release-pr
   echo "branch-release: generated artifact sync must use the shared GitHub commit plan renderer"
   failures=$((failures + 1))
 }
-grep -Fq "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3" \
+grep -Fq "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v4" \
   "scripts/verify-cdk-go-major-version.sh" || {
-  echo "branch-release: synthetic CDK Go verifier must pin the canonical v3 module"
+  echo "branch-release: synthetic CDK Go verifier must pin the canonical v4 module"
   failures=$((failures + 1))
 }
 grep -Fq "bash ./scripts/verify-cdk-go-major-version.sh" "scripts/verify-cdk-go-drift.sh" || {
