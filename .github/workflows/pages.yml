@@ -165,6 +165,14 @@ jobs:
           # cache poisoning. The slower bundle install is accepted.
           working-directory: docs
 
+      - name: Install Jekyll dependencies
+        working-directory: docs
+        # BUNDLE_DEPLOYMENT/BUNDLE_FROZEN are set at the job level, so this
+        # installs the locked gems into vendor/bundle and bundle exec (below)
+        # refuses to run against an incomplete or uninstalled lockfile. A
+        # cold runner must not reach the build without this step.
+        run: bundle install
+
       - name: Generate version override
         env:
           TAG: ${{ steps.resolve.outputs.tag }}
