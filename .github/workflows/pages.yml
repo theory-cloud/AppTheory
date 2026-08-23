@@ -45,8 +45,9 @@
 #
 # Security invariants: the workflow token stays read-only except the
 # pages write + id-token granted to the deploy job; the override is
-# generated only from the dispatch tag input or the resolved release tag;
-# no secrets are introduced.
+# generated only from a published stable dispatch tag (never a draft or
+# prerelease) or the resolved release tag; no secrets are introduced;
+# checkout credentials are not persisted and the build writes no caches.
 # =============================================================
 name: pages
 
@@ -102,6 +103,16 @@ jobs:
               echo "tag input '${TAG_INPUT}' is not a stable vX.Y.Z tag" >&2
               exit 1
             fi
+            # The dispatch input selects the checkout ref while the build
+            # writes state, so CodeQL flags it as a cache-poisoning risk
+            # unless the tag is proven to be a real published stable
+            # release. `gh release view` fails for missing tags (set -e
+            # aborts); drafts and prereleases are refused explicitly.
+            release_meta="$(gh release view "${TAG_INPUT}" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease)"
+            if [[ "$(jq -r '.isDraft' <<<"${release_meta}")" == "true" || "$(jq -r '.isPrerelease' <<<"${release_meta}")" == "true" ]]; then
+              echo "tag input '${TAG_INPUT}' is a draft or prerelease release; refusing to deploy" >&2
+              exit 1
+            fi
             tag="${TAG_INPUT}"
             checkout_ref="${TAG_INPUT}"
           else
@@ -125,12 +136,17 @@ jobs:
           # Explicit tag deploys build the release tag; everything else
           # builds the triggering ref's head (empty = default).
           ref: ${{ steps.resolve.outputs.checkout_ref }}
+          # The workflow never pushes git; dropping persisted credentials
+          # keeps the scoped token from leaking into any build step.
+          persist-credentials: false
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
         with:
           ruby-version: "3.3"
-          bundler-cache: true
+          # No bundler cache: this job checks out an input-derived ref, and
+          # writing a cache under it is exactly what CodeQL flags as
+          # cache poisoning. The slower bundle install is accepted.
           working-directory: docs
 
       - name: Generate version override
