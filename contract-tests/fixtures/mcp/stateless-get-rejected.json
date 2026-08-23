@@ -42,6 +42,9 @@
         {
           "status": 405,
           "headers": {
+            "allow": [
+              "POST"
+            ],
             "content-type": [
               "application/json"
             ],

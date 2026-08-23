@@ -1106,7 +1106,7 @@ class McpServer:
             return self._handle_get(headers)
         if normalized_method == "DELETE":
             return self._handle_delete(headers, _to_bytes(body))
-        return _json_bytes_response(405, {"error": "method not allowed"})
+        return _method_not_allowed_response("DELETE, GET, POST")
 
     def _handle_post(self, headers: dict[str, Any], body: bytes) -> Response:
         origin_response = self._validate_origin(headers)
@@ -1205,7 +1205,7 @@ class McpServer:
         if origin_response is not None:
             return origin_response
         if detect_mcp_protocol_version(headers, b"") == MCP_PROTOCOL_SHAPE_2026_07_28:
-            return _json_bytes_response(405, {"error": "method not allowed"})
+            return _method_not_allowed_response("POST")
         header_response = _validate_get_headers(headers)
         if header_response is not None:
             return header_response
@@ -1236,7 +1236,7 @@ class McpServer:
         if origin_response is not None:
             return origin_response
         if detect_mcp_protocol_version(headers, body) == MCP_PROTOCOL_SHAPE_2026_07_28:
-            return _json_bytes_response(405, {"error": "method not allowed"})
+            return _method_not_allowed_response("POST")
         session_id = _first_header(headers, MCP_HEADER_SESSION_ID)
         if not session_id:
             return _bad_request("missing Mcp-Session-Id")
@@ -2502,14 +2502,29 @@ def _internal_server_error() -> Response:
     return _json_bytes_response(500, {"error": "internal server error"})
 
 
-def _json_bytes_response(status: int, value: Any) -> Response:
+def _json_bytes_response(status: int, value: Any, headers: dict[str, Any] | None = None) -> Response:
+    merged = {"content-type": ["application/json"]}
+    if headers:
+        merged.update(headers)
     return Response(
         status=status,
-        headers={"content-type": ["application/json"]},
+        headers=merged,
         cookies=[],
         body=_json_bytes(value),
         is_base64=False,
     )
+
+
+def _method_not_allowed_response(allow: str) -> Response:
+    """Build the 405 response for the MCP endpoint.
+
+    Per RFC 9110 section 15.5.5 a method-not-allowed response must carry an
+    Allow header listing the methods the target resource supports; the caller
+    supplies the allowed set (all transport methods, or only POST for the
+    stateless 2026-07-28 shape). The header value follows the framework's Allow
+    formatting (uppercase, sorted, comma-space joined).
+    """
+    return _json_bytes_response(405, {"error": "method not allowed"}, headers={"allow": [allow]})
 
 
 def _empty_response(status: int) -> Response:
