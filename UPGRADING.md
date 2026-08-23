@@ -13,6 +13,30 @@ for `CHANGELOG.md`:
 Every minor release line that changes runtime behavior, deployment constructs, generated artifacts, dependency floors,
 or deprecation posture must add or update a section here before the release is promoted.
 
+## v4.x line
+
+### Go module import paths
+
+AppTheory v4 moves the Go runtime and the generated CDK Go bindings onto the next semantic import version. Replace the
+`/v3` suffix on every AppTheory runtime import with the canonical `github.com/theory-cloud/apptheory/v4` path, pin the
+v4 module tag, and run `go mod tidy`:
+
+```bash
+go get github.com/theory-cloud/apptheory/v4@v4.0.0-rc
+```
+
+Update the generated CDK Go bindings in the same release transaction: replace
+`github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3` with `github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v4`,
+pin the matching v4 module tag, and run `go mod tidy` in the CDK application's module. Runtime and CDK module tags
+continue to target the same immutable release commit; do not mix major lines or substitute registry-published
+artifacts.
+
+The v4.0.0-rc tag is the first v4 release; pin the exact v4 release or RC tag you are moving to. v4.0.0-rc carries no
+Go API behavior change beyond the import-path migration: the api-snapshot diff between v3.3.0 and the v4 line is
+header-path-only, and the contract-test fixtures are byte-untouched. Do not retain both AppTheory major paths in one
+application: packages from `/v3` and `/v4` have distinct Go type identities even where their APIs are otherwise
+unchanged.
+
 ## v3.x line
 
 ### Toolchain and CDK dependency floors
