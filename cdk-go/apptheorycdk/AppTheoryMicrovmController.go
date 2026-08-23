@@ -2,7 +2,7 @@ package apptheorycdk
 
 import (
 	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
-	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3/jsii"
+	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v4/jsii"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigatewayv2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigatewayv2authorizers"
@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
 	"github.com/aws/constructs-go/constructs/v10"
-	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3/internal"
+	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v4/internal"
 )
 
 // AppTheory CDK construct for the first-class Lambda MicroVM controller deployment surface.
