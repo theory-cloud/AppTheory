@@ -1,8 +1,38 @@
 import { STATUS_CODES } from "node:http";
 import { headersFromSingle, normalizePath, parseRawQueryString, queryFromSingle, toBuffer, } from "./http.js";
 import { normalizeRequest } from "./request.js";
-import { normalizeResponse } from "./response.js";
+import { errorResponse, normalizeResponse } from "./response.js";
 import { sourceProvenanceFromProviderRequestContext } from "./source-provenance.js";
+// APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES bounds how many bytes of a streaming
+// response body the buffered HTTP API v2 / Function URL adapters drain before
+// failing closed. HTTP API v2 (payload format 2.0) and the buffered Function
+// URL path deliver buffered responses only, so the adapters drain terminating
+// streams into the buffered body up to this budget instead of silently
+// dropping them.
+const APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES = 4 * 1024 * 1024;
+// APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS bounds how long the buffered
+// adapters wait for a streaming response body to terminate before failing
+// closed. A never-terminating stream (for example a live SSE session listener)
+// must not hold the Lambda until the provider buffering ceiling; failing
+// loudly and cheaply lets clients surface the transport mismatch instead of
+// spinning on an empty 200.
+const APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS = 5000;
+// APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE is the documented client-visible
+// error for a streaming response body the HTTP API v2 adapter cannot deliver.
+// It is returned as HTTP 500 with the nested AppTheory error body.
+const APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE = "streaming response body cannot be delivered by the HTTP API v2 adapter";
+// LAMBDA_FUNCTION_URL_STREAMING_BODY_ERROR_MESSAGE is the documented
+// client-visible error for a streaming response body the buffered Lambda
+// Function URL adapter cannot deliver. It is returned as HTTP 500 with the
+// nested AppTheory error body, matching the HTTP API v2 fail-closed shape with
+// the adapter named in the message.
+const LAMBDA_FUNCTION_URL_STREAMING_BODY_ERROR_MESSAGE = "streaming response body cannot be delivered by the Function URL adapter";
+class StreamingBodyBudgetError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = "StreamingBodyBudgetError";
+    }
+}
 export function requestFromWebSocketEvent(event) {
     const headers = {};
     for (const [key, values] of Object.entries(event.multiValueHeaders ?? {})) {
@@ -215,7 +245,97 @@ export function requestFromLambdaFunctionURL(event) {
         sourceProvenance: sourceProvenanceFromProviderRequestContext("lambda-url", event.requestContext?.http?.sourceIp),
     };
 }
-export function apigatewayV2ResponseFromResponse(resp) {
+// unblockStreamingBody best-effort unblocks a pending async read so the drain
+// can exit instead of lingering until the producer writes or closes. It is the
+// TS-idiomatic counterpart of the Go adapter closing only *io.PipeReader:
+// a Node.js Readable is destroyed; an async generator object is asked to
+// unwind (fire-and-forget). A generator blocked inside a producer await that
+// never resolves stays pending, bounded by the Lambda lifecycle.
+function unblockStreamingBody(bodyStream) {
+    const unblockable = bodyStream;
+    if (unblockable === null || unblockable === undefined)
+        return;
+    if (typeof unblockable.destroy === "function") {
+        try {
+            unblockable.destroy();
+            return;
+        }
+        catch {
+            // fall through to iterator.return()
+        }
+    }
+    if (typeof unblockable.return === "function") {
+        try {
+            const result = unblockable.return();
+            if (result && typeof result.catch === "function") {
+                result.catch(() => { });
+            }
+        }
+        catch {
+            // best-effort unblock
+        }
+    }
+}
+// withDeadline races a pending promise against a timer, rejecting with a
+// StreamingBodyBudgetError when the deadline fires first. The raced promise
+// keeps its settled handlers, so a late resolution is dropped without an
+// unhandled rejection; the timer is cleared as soon as either side wins.
+function withDeadline(promise, ms) {
+    let timer;
+    const timeout = new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {
+            reject(new StreamingBodyBudgetError("streaming body deadline exceeded"));
+        }, ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+        if (timer !== undefined)
+            clearTimeout(timer);
+    });
+}
+// drainStreamingBodyForBufferedAdapter drains a terminating async streaming
+// body into a single buffer under a bounded byte and time budget, throwing
+// StreamingBodyBudgetError when the stream does not terminate in time,
+// exceeds the byte budget, or reports an error. The empty-EOF-at-deadline
+// guard (a stream that closed with no bytes at/after the deadline) makes the
+// fail-closed deterministic against the handler-unwind race.
+async function drainStreamingBodyForBufferedAdapter(bodyStream, maxBytes, timeoutMs) {
+    const iterator = bodyStream[Symbol.asyncIterator]();
+    const deadline = Date.now() + timeoutMs;
+    const chunks = [];
+    let total = 0;
+    for (;;) {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) {
+            unblockStreamingBody(bodyStream);
+            throw new StreamingBodyBudgetError("streaming body did not terminate within the adapter budget");
+        }
+        const next = await withDeadline(iterator.next(), remainingMs);
+        if (next.done) {
+            if (total === 0 && Date.now() >= deadline) {
+                unblockStreamingBody(bodyStream);
+                throw new StreamingBodyBudgetError("streaming body did not terminate within the adapter budget");
+            }
+            return Buffer.concat(chunks);
+        }
+        const chunk = Buffer.from(next.value);
+        total += chunk.length;
+        if (total > maxBytes) {
+            unblockStreamingBody(bodyStream);
+            throw new StreamingBodyBudgetError("streaming body exceeds the adapter budget");
+        }
+        chunks.push(chunk);
+    }
+}
+function streamingBodyErrorResponse(message) {
+    const normalized = errorResponse("app.internal", message);
+    return {
+        status: normalized.status,
+        headers: normalized.headers,
+        cookies: normalized.cookies,
+        body: normalized.body,
+    };
+}
+export async function apigatewayV2ResponseFromResponse(resp) {
     const normalized = normalizeResponse(resp);
     const headers = {};
     const multiValueHeaders = {};
@@ -225,8 +345,30 @@ export function apigatewayV2ResponseFromResponse(resp) {
         headers[key] = String(values[0]);
         multiValueHeaders[key] = values.map((v) => String(v));
     }
-    const bodyBytes = toBuffer(normalized.body);
+    let bodyBytes = toBuffer(normalized.body);
     const isBase64Encoded = Boolean(normalized.isBase64);
+    if (normalized.bodyStream) {
+        try {
+            bodyBytes = await drainStreamingBodyForBufferedAdapter(normalized.bodyStream, APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES, APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS);
+        }
+        catch {
+            const error = streamingBodyErrorResponse(APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE);
+            const errorHeaders = {};
+            for (const [key, values] of Object.entries(error.headers ?? {})) {
+                if (!values || values.length === 0)
+                    continue;
+                errorHeaders[key] = String(values[0]);
+            }
+            return {
+                statusCode: error.status,
+                headers: errorHeaders,
+                multiValueHeaders: {},
+                body: error.body.toString("utf8"),
+                isBase64Encoded: false,
+                cookies: [...error.cookies],
+            };
+        }
+    }
     return {
         statusCode: normalized.status,
         headers,
@@ -238,7 +380,7 @@ export function apigatewayV2ResponseFromResponse(resp) {
         cookies: [...normalized.cookies],
     };
 }
-export function lambdaFunctionURLResponseFromResponse(resp) {
+export async function lambdaFunctionURLResponseFromResponse(resp) {
     const normalized = normalizeResponse(resp);
     const headers = {};
     for (const [key, values] of Object.entries(normalized.headers ?? {})) {
@@ -246,8 +388,29 @@ export function lambdaFunctionURLResponseFromResponse(resp) {
             continue;
         headers[key] = values.map((v) => String(v)).join(",");
     }
-    const bodyBytes = toBuffer(normalized.body);
+    let bodyBytes = toBuffer(normalized.body);
     const isBase64Encoded = Boolean(normalized.isBase64);
+    if (normalized.bodyStream) {
+        try {
+            bodyBytes = await drainStreamingBodyForBufferedAdapter(normalized.bodyStream, APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES, APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS);
+        }
+        catch {
+            const error = streamingBodyErrorResponse(LAMBDA_FUNCTION_URL_STREAMING_BODY_ERROR_MESSAGE);
+            const errorHeaders = {};
+            for (const [key, values] of Object.entries(error.headers ?? {})) {
+                if (!values || values.length === 0)
+                    continue;
+                errorHeaders[key] = values.map((v) => String(v)).join(",");
+            }
+            return {
+                statusCode: error.status,
+                headers: errorHeaders,
+                body: error.body.toString("utf8"),
+                isBase64Encoded: false,
+                cookies: [...error.cookies],
+            };
+        }
+    }
     return {
         statusCode: normalized.status,
         headers,
