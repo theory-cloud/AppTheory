@@ -12,8 +12,8 @@ import (
 	"github.com/theory-cloud/tabletheory/v3"
 	"github.com/theory-cloud/tabletheory/v3/pkg/session"
 
-	"github.com/theory-cloud/apptheory/v3/pkg/limited"
-	limitedmw "github.com/theory-cloud/apptheory/v3/pkg/limited/middleware"
+	"github.com/theory-cloud/apptheory/v4/pkg/limited"
+	limitedmw "github.com/theory-cloud/apptheory/v4/pkg/limited/middleware"
 )
 
 func resolveRegion(getenv func(string) string) string {

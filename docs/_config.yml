@@ -133,7 +133,11 @@ tabletheory:
   runtimes:
     - id: go
       label: Go
-      install: "go get github.com/theory-cloud/apptheory/v3@vX.Y.Z"
+      # The module major is derived from the deploy tag at Pages build time
+      # (pages.yml) because Go semantic import versioning bakes it into the
+      # path (/v3, /v4, ...). This /v4 path is a placeholder default only —
+      # the generated docs/_config_versions.yml carries the real /v<major>.
+      install: "go get github.com/theory-cloud/apptheory/v4@vX.Y.Z"
       docs_path: runtimes/go
     - id: ts
       label: TypeScript

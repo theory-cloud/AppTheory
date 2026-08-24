@@ -1,4 +1,4 @@
-module github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3
+module github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v4
 
 go 1.25.0
 

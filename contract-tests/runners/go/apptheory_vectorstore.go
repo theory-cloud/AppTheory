@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 
-	vstore "github.com/theory-cloud/apptheory/v3/pkg/vectorstore"
+	vstore "github.com/theory-cloud/apptheory/v4/pkg/vectorstore"
 )
 
 type FixtureVectorStoreSetup struct {

@@ -43,7 +43,7 @@ literals do not match a pattern is not parsed as that pattern at all, even if no
 
 ## Go runtime
 
-Import `github.com/theory-cloud/apptheory/v3/runtime/mcproutes`. Route constants and `Supported*Templates` cover
+Import `github.com/theory-cloud/apptheory/v4/runtime/mcproutes`. Route constants and `Supported*Templates` cover
 pattern-level registration. `ParseMCPPath` returns a validated `EndpointPath`, whose builder methods derive every
 concrete MCP and OAuth path.
 

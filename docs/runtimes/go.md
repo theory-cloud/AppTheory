@@ -11,26 +11,38 @@ The Go runtime is the most complete implementation of the AppTheory contract and
 
 The Go toolchain resolves modules from the immutable git tag — no registry is involved beyond Go's standard proxy.
 
+{%- assign go_rt = site.tabletheory.runtimes | where: "id", "go" | first -%}
+{%- if go_rt.install == nil or go_rt.install contains "X.Y.Z" -%}
+  {%- assign go_fallback = site.data.runtimes | where: "id", "go" | first -%}
+  {%- assign go_install_cmd = go_fallback.install -%}
+{%- else -%}
+  {%- assign go_install_cmd = go_rt.install -%}
+{%- endif -%}
+
 ```bash
-go get github.com/theory-cloud/apptheory/v3@v3.0.0-rc
+{{ go_install_cmd }}
 ```
 
-Pin a specific release tag from the [releases page](https://github.com/theory-cloud/AppTheory/releases). AppTheory does not publish to the npm or PyPI registries; the Go module is the only language artifact that ships through Go's normal toolchain path.
+The command is stamped from the latest published release at Pages build time (pages.yml resolves it with
+`gh release view`), so the module path and version always match a release that actually exists. Pin a specific release
+tag from the [releases page](https://github.com/theory-cloud/AppTheory/releases) when you need a different line.
+AppTheory does not publish to the npm or PyPI registries; the Go module is the only language artifact that ships through
+Go's normal toolchain path.
 
 Module layout (see `api-snapshots/go.txt` for the exact exported surface):
 
 | Package | Purpose |
 | --- | --- |
-| `github.com/theory-cloud/apptheory/v3/runtime` | Core runtime: `apptheory.New`, `Context`, `Request`, `Response`, route registration, middleware. |
-| `github.com/theory-cloud/apptheory/v3/runtime/mcp` | MCP Streamable HTTP transport, sessions, resumable SSE. |
-| `github.com/theory-cloud/apptheory/v3/runtime/mcproutes` | Versioned MCP endpoint and OAuth route algebra. |
-| `github.com/theory-cloud/apptheory/v3/runtime/mcpfacade` | Golden-path MCP/OAuth facade registration and metadata composition. |
-| `github.com/theory-cloud/apptheory/v3/runtime/oauth` | OAuth protected-resource metadata, PKCE, DCR, token-store helpers. |
-| `github.com/theory-cloud/apptheory/v3/testkit` | Deterministic test environment (clock, ID queue, event builders). |
-| `github.com/theory-cloud/apptheory/v3/testkit/mcp` | In-process MCP client for unit tests. |
-| `github.com/theory-cloud/apptheory/v3/pkg/limited` | DynamoDB-backed cross-instance rate limiter. |
-| `github.com/theory-cloud/apptheory/v3/pkg/jobs` | Jobs-ledger primitives. |
-| `github.com/theory-cloud/apptheory/v3/pkg/sanitization` | Safe logging helpers. |
+| `github.com/theory-cloud/apptheory/v4/runtime` | Core runtime: `apptheory.New`, `Context`, `Request`, `Response`, route registration, middleware. |
+| `github.com/theory-cloud/apptheory/v4/runtime/mcp` | MCP Streamable HTTP transport, sessions, resumable SSE. |
+| `github.com/theory-cloud/apptheory/v4/runtime/mcproutes` | Versioned MCP endpoint and OAuth route algebra. |
+| `github.com/theory-cloud/apptheory/v4/runtime/mcpfacade` | Golden-path MCP/OAuth facade registration and metadata composition. |
+| `github.com/theory-cloud/apptheory/v4/runtime/oauth` | OAuth protected-resource metadata, PKCE, DCR, token-store helpers. |
+| `github.com/theory-cloud/apptheory/v4/testkit` | Deterministic test environment (clock, ID queue, event builders). |
+| `github.com/theory-cloud/apptheory/v4/testkit/mcp` | In-process MCP client for unit tests. |
+| `github.com/theory-cloud/apptheory/v4/pkg/limited` | DynamoDB-backed cross-instance rate limiter. |
+| `github.com/theory-cloud/apptheory/v4/pkg/jobs` | Jobs-ledger primitives. |
+| `github.com/theory-cloud/apptheory/v4/pkg/sanitization` | Safe logging helpers. |
 
 ## Minimal app
 
@@ -42,7 +54,7 @@ import (
     "encoding/json"
 
     "github.com/aws/aws-lambda-go/lambda"
-    apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+    apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
 
 func main() {
@@ -137,8 +149,8 @@ import (
     "context"
     "encoding/json"
 
-    apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-    "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+    apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+    "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
 
 srv := mcp.NewServer("example", "1.0.0")

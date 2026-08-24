@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v3/testkit"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v4/testkit"
 )
 
 func TestClient_RawStream_AndResumeStream(t *testing.T) {

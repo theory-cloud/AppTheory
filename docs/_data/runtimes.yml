@@ -2,12 +2,24 @@
 # Landing-page runtime tabs — Go / TypeScript / Python snippets.
 # Each block is rendered inside the .runtime-block UI on the home
 # page. `lang` matches the Rouge highlighter id.
+#
+# This file is the checked-in LOCAL-PREVIEW FALLBACK for the landing
+# page's install strings. The release-tagged config override (pages.yml
+# -> scripts/generate-docs-version-override.rb -> docs/_config_versions.yml)
+# replaces site.tabletheory.runtimes at build time, and docs/index.html
+# falls back to the pinned installs below when the override is absent.
+# The pins must therefore describe the LATEST ACTUALLY PUBLISHED release —
+# never an unpublished or in-flight tag — so local previews never instruct
+# fetching a nonexistent version. Go pins additionally carry the module
+# major that matches the release (Go semantic import versioning: a v3.x.y
+# release lives on the /v3 path); pages.yml derives the live Go install
+# from the deploy tag at build time.
 # =============================================================
 
 - id: go
   label: Go
   icon: go-mark
-  install: "go get github.com/theory-cloud/apptheory/v3@v3.0.0-rc"
+  install: "go get github.com/theory-cloud/apptheory/v3@v3.3.0"
   lang: go
   snippet: |
     package main
@@ -17,7 +29,7 @@
         "encoding/json"
 
         "github.com/aws/aws-lambda-go/lambda"
-        apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+        apptheory "github.com/theory-cloud/apptheory/v4/runtime"
     )
 
     func main() {

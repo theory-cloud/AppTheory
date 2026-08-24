@@ -155,14 +155,14 @@ run_self_test() {
   if ! (
     cd "${work}"
     git checkout -q -b main
-    printf '%s\n' "3.0.0-rc" >VERSION
+    printf '%s\n' "4.0.0-rc" >VERSION
     printf '%s\n' \
-      "module github.com/theory-cloud/apptheory/v3" \
+      "module github.com/theory-cloud/apptheory/v4" \
       "" \
       "go 1.23" >go.mod
     mkdir -p cdk-go/apptheorycdk
     printf '%s\n' \
-      "module github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3" \
+      "module github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v4" \
       "" \
       "go 1.23" >cdk-go/apptheorycdk/go.mod
     printf '%s\n' "package apptheory" >apptheory.go
@@ -171,7 +171,7 @@ run_self_test() {
     git \
       -c user.name="AppTheory Go Tag Self Test" \
       -c user.email="apptheory-go-tag-self-test@example.invalid" \
-      commit -q -m "chore: seed v3 release"
+      commit -q -m "chore: seed v4 release"
     source_commit="$(git rev-parse HEAD)"
 
     commit_fixture_change "chore: create conflicting target" "other.txt" "other"
@@ -179,61 +179,61 @@ run_self_test() {
     git remote add origin "${remote}"
     git push -q origin HEAD:refs/heads/main
 
-    publish_tag_set origin "v3.0.0-rc" "${source_commit}" >/dev/null
-    [[ "$(git --git-dir="${remote}" rev-parse refs/tags/v3.0.0-rc)" == "${source_commit}" ]]
+    publish_tag_set origin "v4.0.0-rc" "${source_commit}" >/dev/null
+    [[ "$(git --git-dir="${remote}" rev-parse refs/tags/v4.0.0-rc)" == "${source_commit}" ]]
     [[ "$(
-      git --git-dir="${remote}" rev-parse refs/tags/cdk-go/apptheorycdk/v3.0.0-rc
+      git --git-dir="${remote}" rev-parse refs/tags/cdk-go/apptheorycdk/v4.0.0-rc
     )" == "${source_commit}" ]]
     echo "go-module-tags self-test: PASS absent refs are created"
 
-    output="$(publish_tag_set origin "v3.0.0-rc" "${source_commit}")"
-    grep -Fq "KEEP (v3.0.0-rc already targets ${source_commit})" <<<"${output}"
+    output="$(publish_tag_set origin "v4.0.0-rc" "${source_commit}")"
+    grep -Fq "KEEP (v4.0.0-rc already targets ${source_commit})" <<<"${output}"
     grep -Fq \
-      "KEEP (cdk-go/apptheorycdk/v3.0.0-rc already targets ${source_commit})" \
+      "KEEP (cdk-go/apptheorycdk/v4.0.0-rc already targets ${source_commit})" \
       <<<"${output}"
     echo "go-module-tags self-test: PASS same-SHA refs are idempotent"
 
     git --git-dir="${remote}" update-ref -d \
-      refs/tags/cdk-go/apptheorycdk/v3.0.0-rc
-    output="$(publish_tag_set origin "v3.0.0-rc" "${source_commit}")"
-    grep -Fq "KEEP (v3.0.0-rc already targets ${source_commit})" <<<"${output}"
+      refs/tags/cdk-go/apptheorycdk/v4.0.0-rc
+    output="$(publish_tag_set origin "v4.0.0-rc" "${source_commit}")"
+    grep -Fq "KEEP (v4.0.0-rc already targets ${source_commit})" <<<"${output}"
     grep -Fq \
-      "CREATE (cdk-go/apptheorycdk/v3.0.0-rc -> ${source_commit})" \
+      "CREATE (cdk-go/apptheorycdk/v4.0.0-rc -> ${source_commit})" \
       <<<"${output}"
-    [[ "$(git --git-dir="${remote}" rev-parse refs/tags/v3.0.0-rc)" == "${source_commit}" ]]
+    [[ "$(git --git-dir="${remote}" rev-parse refs/tags/v4.0.0-rc)" == "${source_commit}" ]]
     [[ "$(
-      git --git-dir="${remote}" rev-parse refs/tags/cdk-go/apptheorycdk/v3.0.0-rc
+      git --git-dir="${remote}" rev-parse refs/tags/cdk-go/apptheorycdk/v4.0.0-rc
     )" == "${source_commit}" ]]
     echo "go-module-tags self-test: PASS partial root-only state is repaired create-only"
 
     git --git-dir="${remote}" update-ref \
-      refs/tags/cdk-go/apptheorycdk/v3.0.0-rc \
+      refs/tags/cdk-go/apptheorycdk/v4.0.0-rc \
       "${other_commit}"
-    git --git-dir="${remote}" update-ref -d refs/tags/v3.0.0-rc
-    if output="$(publish_tag_set origin "v3.0.0-rc" "${source_commit}" 2>&1)"; then
+    git --git-dir="${remote}" update-ref -d refs/tags/v4.0.0-rc
+    if output="$(publish_tag_set origin "v4.0.0-rc" "${source_commit}" 2>&1)"; then
       echo "go-module-tags self-test: FAIL (conflicting nested tag was accepted)" >&2
       exit 1
     fi
     grep -Fq "refs are immutable" <<<"${output}"
-    if git --git-dir="${remote}" show-ref --verify --quiet refs/tags/v3.0.0-rc; then
+    if git --git-dir="${remote}" show-ref --verify --quiet refs/tags/v4.0.0-rc; then
       echo "go-module-tags self-test: FAIL (root tag was created after a known nested conflict)" >&2
       exit 1
     fi
     [[ "$(
-      git --git-dir="${remote}" rev-parse refs/tags/cdk-go/apptheorycdk/v3.0.0-rc
+      git --git-dir="${remote}" rev-parse refs/tags/cdk-go/apptheorycdk/v4.0.0-rc
     )" == "${other_commit}" ]]
     echo "go-module-tags self-test: PASS known nested conflict fails before either ref mutates"
 
     git --git-dir="${remote}" update-ref \
-      refs/tags/cdk-go/apptheorycdk/v3.0.0-rc \
+      refs/tags/cdk-go/apptheorycdk/v4.0.0-rc \
       "${source_commit}"
-    git --git-dir="${remote}" update-ref refs/tags/v3.0.0-rc "${other_commit}"
-    if output="$(publish_tag_set origin "v3.0.0-rc" "${source_commit}" 2>&1)"; then
+    git --git-dir="${remote}" update-ref refs/tags/v4.0.0-rc "${other_commit}"
+    if output="$(publish_tag_set origin "v4.0.0-rc" "${source_commit}" 2>&1)"; then
       echo "go-module-tags self-test: FAIL (conflicting root tag was accepted)" >&2
       exit 1
     fi
     grep -Fq "refs are immutable" <<<"${output}"
-    [[ "$(git --git-dir="${remote}" rev-parse refs/tags/v3.0.0-rc)" == "${other_commit}" ]]
+    [[ "$(git --git-dir="${remote}" rev-parse refs/tags/v4.0.0-rc)" == "${other_commit}" ]]
     echo "go-module-tags self-test: PASS conflicting root ref fails without mutation"
   ); then
     rm -rf "${temporary}"

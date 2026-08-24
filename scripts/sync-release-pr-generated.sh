@@ -363,7 +363,7 @@ run_artifact_plan_self_test() {
     "${worktree_root}/cdk-go/apptheorycdk"
   printf '%s\n' "module github.com/theory-cloud/apptheory/cdk-go" >"${baseline_root}/cdk-go/go.mod"
   printf '%s\n' "legacy sum" >"${baseline_root}/cdk-go/go.sum"
-  printf '%s\n' "module github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3" \
+  printf '%s\n' "module github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v4" \
     >"${worktree_root}/cdk-go/apptheorycdk/go.mod"
   printf '%s\n' "canonical sum" >"${worktree_root}/cdk-go/apptheorycdk/go.sum"
 

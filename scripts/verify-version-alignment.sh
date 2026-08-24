@@ -152,38 +152,38 @@ PY
 
   prerelease_split_dir="${tmp_dir}/prerelease-split"
   copy_fixture "${prerelease_split_dir}"
-  write_version_state "${prerelease_split_dir}" "3.0.0-rc" "2.0.2" "3.0.0-rc"
-  run_self_test_case "prerelease manifest split" "${prerelease_split_dir}" 0 "version-alignment: PASS (3.0.0-rc)"
+  write_version_state "${prerelease_split_dir}" "4.0.0-rc" "2.0.2" "4.0.0-rc"
+  run_self_test_case "prerelease manifest split" "${prerelease_split_dir}" 0 "version-alignment: PASS (4.0.0-rc)"
 
   wrong_premain_dir="${tmp_dir}/wrong-premain"
   copy_fixture "${wrong_premain_dir}"
-  write_version_state "${wrong_premain_dir}" "3.0.0-rc" "2.0.2" "2.0.2"
+  write_version_state "${wrong_premain_dir}" "4.0.0-rc" "2.0.2" "2.0.2"
   run_self_test_case "wrong prerelease premain manifest" "${wrong_premain_dir}" 1 ".release-please-manifest.premain.json"
 
   stable_manifest_skew_dir="${tmp_dir}/stable-manifest-skew"
   copy_fixture "${stable_manifest_skew_dir}"
-  write_version_state "${stable_manifest_skew_dir}" "3.0.0" "2.0.2" "3.0.0"
+  write_version_state "${stable_manifest_skew_dir}" "4.0.0" "2.0.2" "4.0.0"
   run_self_test_case "stable manifest skew" "${stable_manifest_skew_dir}" 1 ".release-please-manifest.json"
 
-  staged_v3_dir="${tmp_dir}/staged-v3"
-  copy_fixture "${staged_v3_dir}"
-  write_version_state "${staged_v3_dir}" "2.0.2" "2.0.2" "2.0.2" "3"
-  run_self_test_case "staged v3 module" "${staged_v3_dir}" 0 \
-    "go module state staged-next-major (github.com/theory-cloud/apptheory/v3; VERSION 2.0.2)"
+  staged_v4_dir="${tmp_dir}/staged-v4"
+  copy_fixture "${staged_v4_dir}"
+  write_version_state "${staged_v4_dir}" "3.0.0" "3.0.0" "3.0.0" "4"
+  run_self_test_case "staged v4 module" "${staged_v4_dir}" 0 \
+    "go module state staged-next-major (github.com/theory-cloud/apptheory/v4; VERSION 3.0.0)"
 
-  released_v3_dir="${tmp_dir}/released-v3"
-  copy_fixture "${released_v3_dir}"
-  write_version_state "${released_v3_dir}" "3.0.0-rc" "2.0.2" "3.0.0-rc"
-  run_self_test_case "released v3 module" "${released_v3_dir}" 0 \
-    "go module state released-major (github.com/theory-cloud/apptheory/v3; VERSION 3.0.0-rc)"
+  released_v4_dir="${tmp_dir}/released-v4"
+  copy_fixture "${released_v4_dir}"
+  write_version_state "${released_v4_dir}" "4.0.0-rc" "2.0.2" "4.0.0-rc"
+  run_self_test_case "released v4 module" "${released_v4_dir}" 0 \
+    "go module state released-major (github.com/theory-cloud/apptheory/v4; VERSION 4.0.0-rc)"
 
-  legacy_cdk_in_v3_dir="${tmp_dir}/legacy-cdk-in-v3"
-  copy_fixture "${legacy_cdk_in_v3_dir}"
-  write_version_state "${legacy_cdk_in_v3_dir}" "3.0.0-rc" "2.0.2" "3.0.0-rc"
+  legacy_cdk_in_v4_dir="${tmp_dir}/legacy-cdk-in-v4"
+  copy_fixture "${legacy_cdk_in_v4_dir}"
+  write_version_state "${legacy_cdk_in_v4_dir}" "4.0.0-rc" "2.0.2" "4.0.0-rc"
   cp \
-    "${legacy_cdk_in_v3_dir}/cdk-go/apptheorycdk/go.mod" \
-    "${legacy_cdk_in_v3_dir}/cdk-go/go.mod"
-  run_self_test_case "legacy CDK module retained in v3" "${legacy_cdk_in_v3_dir}" 1 \
+    "${legacy_cdk_in_v4_dir}/cdk-go/apptheorycdk/go.mod" \
+    "${legacy_cdk_in_v4_dir}/cdk-go/go.mod"
+  run_self_test_case "legacy CDK module retained in v4" "${legacy_cdk_in_v4_dir}" 1 \
     "must not retain legacy cdk-go/go.mod or cdk-go/go.sum"
 
   wrong_module_dir="${tmp_dir}/wrong-module"
@@ -196,7 +196,7 @@ path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 path.write_text(
     text.replace(
-        "module github.com/theory-cloud/apptheory/v3\n",
+        "module github.com/theory-cloud/apptheory/v4\n",
         "module github.com/theory-cloud/apptheory\n",
         1,
     ),
@@ -204,13 +204,13 @@ path.write_text(
 )
 PY
   run_self_test_case "unsuffixed root module" "${wrong_module_dir}" 1 \
-    "go.mod module 'github.com/theory-cloud/apptheory' != 'github.com/theory-cloud/apptheory/v3'"
+    "go.mod module 'github.com/theory-cloud/apptheory' != 'github.com/theory-cloud/apptheory/v4'"
 
   wrong_module_major_dir="${tmp_dir}/wrong-module-major"
   copy_fixture "${wrong_module_major_dir}"
-  write_version_state "${wrong_module_major_dir}" "4.0.0" "4.0.0" "4.0.0"
+  write_version_state "${wrong_module_major_dir}" "5.0.0" "5.0.0" "5.0.0" "4"
   run_self_test_case "unsupported VERSION major" "${wrong_module_major_dir}" 1 \
-    "VERSION major 4 is incompatible with Go module major 3"
+    "VERSION major 5 is incompatible with Go module major 4"
 
   stale_import_dir="${tmp_dir}/stale-import"
   copy_fixture "${stale_import_dir}"
@@ -227,8 +227,8 @@ GO
   exit 0
 fi
 
-expected_module="github.com/theory-cloud/apptheory/v3"
-expected_module_major=3
+expected_module="github.com/theory-cloud/apptheory/v4"
+expected_module_major=4
 
 if [[ ! -f "VERSION" ]]; then
   echo "version-alignment: FAIL (missing VERSION)"
@@ -276,7 +276,22 @@ import sys
 from pathlib import Path
 
 root_module = "github.com/theory-cloud/apptheory"
-allowed_suffixes = ("/v3", "/cdk-go")
+allowed_suffixes = ("/v4", "/cdk-go")
+# Release-pinned documentation (docs/_config_versions.yml) documents the
+# released v3.3.0 version, whose /v3 module path is historically accurate
+# and remains fetchable; the release PR advances it to /v4 with the v4.0.0
+# bump. docs/_data/runtimes.yml is that mechanism's checked-in local-preview
+# fallback: it pins the latest published release (today v3.3.0 on the /v3
+# module path) so local previews never advertise an unpublished tag, and
+# pages.yml derives the live Go install from the deploy tag at build time.
+# cmd/apptheory-init/main_test.go pins a v3.0.0-rc scaffold to prove
+# the version->module-major derivation still maps v3-era pins to /v3.
+# Everything else must reference the staged /v4 import path.
+skip_files = {
+    Path("cmd/apptheory-init/main_test.go"),
+    Path("docs/_config_versions.yml"),
+    Path("docs/_data/runtimes.yml"),
+}
 skip_parts = {
     ".git",
     ".jekyll-cache",
@@ -315,7 +330,7 @@ for root in (
 errors: list[str] = []
 boundary = set("/@=`\"' \t\r\n)")
 for path in sorted(candidate_paths):
-    if not path.exists():
+    if not path.exists() or path in skip_files:
         continue
     try:
         text = path.read_text(encoding="utf-8")
