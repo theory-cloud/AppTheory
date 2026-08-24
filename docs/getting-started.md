@@ -36,7 +36,7 @@ go mod download
 AppTheory release artifacts are also published via GitHub Releases. Pin and verify the release you consume:
 
 ```bash
-VERSION=3.0.0-rc
+VERSION=4.0.0
 TAG="v${VERSION}"
 REPO="theory-cloud/AppTheory"
 PYTHON_VERSION="${VERSION/-rc/rc0}"
