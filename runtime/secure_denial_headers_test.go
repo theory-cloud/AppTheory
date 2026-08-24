@@ -161,3 +161,99 @@ func TestAppTheoryErrorHeadersRender(t *testing.T) {
 		t.Fatalf("unexpected body: %s", resp.Body)
 	}
 }
+
+// TestErrorRenderersRelocateSetCookie pins that every Go error renderer
+// relocates a non-empty set-cookie into Cookies exactly like normalizeResponse
+// (and like the TS/Py normalizers), so no renderer leaks set-cookie into
+// Headers while its siblings relocate it. An empty set-cookie list stays in
+// Headers and yields no cookies, matching the guarded Go/TS behavior.
+func TestErrorRenderersRelocateSetCookie(t *testing.T) {
+	t.Parallel()
+
+	const (
+		cookieA   = "a=1; Path=/"
+		cookieB   = "b=2; Path=/"
+		challenge = `Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"`
+	)
+
+	renderers := []struct {
+		name   string
+		render func(headers map[string][]string) Response
+	}{
+		{
+			name: "errorResponseWithFormat",
+			render: func(headers map[string][]string) Response {
+				return errorResponseWithFormat(HTTPErrorFormatNested, errorCodeUnauthorized, errorMessageUnauthorized, headers)
+			},
+		},
+		{
+			name: "errorResponseFromAppTheoryErrorWithFormat",
+			render: func(headers map[string][]string) Response {
+				return errorResponseFromAppTheoryErrorWithFormat(
+					HTTPErrorFormatNested,
+					NewAppTheoryError(errorCodeUnauthorized, errorMessageUnauthorized),
+					headers,
+					"req_denial",
+				)
+			},
+		},
+		{
+			name: "errorResponseWithRequestIDTraceIDAndFormat",
+			render: func(headers map[string][]string) Response {
+				return errorResponseWithRequestIDTraceIDAndFormat(HTTPErrorFormatNested, errorCodeUnauthorized, errorMessageUnauthorized, headers, "req_denial", "")
+			},
+		},
+	}
+
+	tests := []struct {
+		name        string
+		headers     map[string][]string
+		wantCookies []string
+	}{
+		{
+			name: "non-empty set-cookie relocates into cookies",
+			headers: map[string][]string{
+				"set-cookie":       {cookieA, cookieB},
+				"www-authenticate": {challenge},
+			},
+			wantCookies: []string{cookieA, cookieB},
+		},
+		{
+			name: "empty set-cookie stays in headers",
+			headers: map[string][]string{
+				"set-cookie": {},
+			},
+			wantCookies: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, r := range renderers {
+				t.Run(r.name, func(t *testing.T) {
+					t.Parallel()
+					resp := r.render(tc.headers)
+					if len(resp.Cookies) != len(tc.wantCookies) {
+						t.Fatalf("cookies = %#v, want %#v", resp.Cookies, tc.wantCookies)
+					}
+					for i := range tc.wantCookies {
+						if resp.Cookies[i] != tc.wantCookies[i] {
+							t.Fatalf("cookies = %#v, want %#v", resp.Cookies, tc.wantCookies)
+						}
+					}
+					if len(tc.wantCookies) > 0 {
+						if _, ok := resp.Headers["set-cookie"]; ok {
+							t.Fatalf("set-cookie must be relocated out of headers: %#v", resp.Headers["set-cookie"])
+						}
+					} else if _, ok := resp.Headers["set-cookie"]; !ok {
+						t.Fatalf("empty set-cookie must stay in headers")
+					}
+					if got := resp.Headers["content-type"]; len(got) != 1 || got[0] != "application/json; charset=utf-8" {
+						t.Fatalf("content-type = %#v", got)
+					}
+				})
+			}
+		})
+	}
+}

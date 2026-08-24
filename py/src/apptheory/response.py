@@ -105,9 +105,13 @@ def normalize_response(resp: Response) -> Response:
     """Canonicalize headers, cookies, body bytes, and stream chunks."""
     status = int(resp.status or 200)
     headers = canonicalize_headers(resp.headers)
-    set_cookies = headers.pop("set-cookie", [])
     cookies = [str(c) for c in (resp.cookies or [])]
-    cookies.extend([str(c) for c in (set_cookies or [])])
+    # Relocate a non-empty set-cookie header into cookies, matching Go and TS:
+    # an empty set-cookie list stays in headers and yields no cookies.
+    set_cookies = headers.get("set-cookie", [])
+    if set_cookies:
+        headers.pop("set-cookie")
+        cookies.extend([str(c) for c in set_cookies])
     body = to_bytes(resp.body)
     body_stream_raw = getattr(resp, "body_stream", None)
     body_stream = None
