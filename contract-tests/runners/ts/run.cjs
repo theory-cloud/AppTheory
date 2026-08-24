@@ -3165,9 +3165,30 @@ async function runFixtureSecure(fixture) {
     options.principalResolver = async (ctx) => {
       resolverCalls += 1;
       if (current?.resolver_error) {
+        const resolverError = current.resolver_error;
+        const hasExtra =
+          resolverError.status_code != null ||
+          (resolverError.headers &&
+            Object.keys(resolverError.headers).length > 0);
+        if (hasExtra) {
+          const err = new runtime.AppTheoryError(
+            resolverError.code,
+            resolverError.message,
+            {
+              statusCode:
+                typeof resolverError.status_code === "number"
+                  ? resolverError.status_code
+                  : undefined,
+            },
+          );
+          if (resolverError.headers) {
+            err.withHeaders(structuredClone(resolverError.headers));
+          }
+          throw err;
+        }
         throw new runtime.AppError(
-          current.resolver_error.code,
-          current.resolver_error.message,
+          resolverError.code,
+          resolverError.message,
         );
       }
       if (current?.principal) return cloneSecureFixtureValue(current.principal);

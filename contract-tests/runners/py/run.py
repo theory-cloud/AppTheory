@@ -3679,6 +3679,18 @@ def run_fixture_secure(
         current = state["current"] or {}
         resolver_error = current.get("resolver_error")
         if resolver_error:
+            has_extra = resolver_error.get("status_code") is not None or bool(
+                resolver_error.get("headers")
+            )
+            if has_extra:
+                exc = runtime.AppTheoryError(
+                    code=resolver_error["code"],
+                    message=resolver_error["message"],
+                    status_code=resolver_error.get("status_code"),
+                )
+                if resolver_error.get("headers"):
+                    exc = exc.with_headers(dict(resolver_error["headers"]))
+                raise exc
             raise runtime.AppError(resolver_error["code"], resolver_error["message"])
         raw = current.get("principal")
         if raw is not None:

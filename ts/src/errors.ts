@@ -1,3 +1,5 @@
+import type { Headers } from "./types.js";
+
 /**
  * Legacy portable, client-safe error with a stable error code.
  *
@@ -24,6 +26,7 @@ export type AppTheoryErrorOptions = {
   traceId?: string;
   timestamp?: string | Date;
   stackTrace?: string;
+  headers?: Headers;
   cause?: unknown;
 };
 
@@ -33,6 +36,12 @@ export type AppTheoryErrorOptions = {
  * Return AppTheoryError from framework and application code when the runtime
  * should preserve status, details, request, trace, timestamp, stack, or cause
  * metadata in the AppTheory error envelope.
+ *
+ * `headers` carries a bounded caller-supplied response header set. The HTTP
+ * error renderer merges them (canonicalized) into the error response, so a
+ * SecureApp principal resolver can attach a WWW-Authenticate challenge to a
+ * 401/403 denial. The existing response vocabulary is unchanged: an omitted
+ * or empty `headers` renders byte-identical to before.
  */
 export class AppTheoryError extends Error {
   code: string;
@@ -42,6 +51,7 @@ export class AppTheoryError extends Error {
   traceId?: string;
   timestamp?: string;
   stackTrace?: string;
+  headers?: Headers;
   override cause?: unknown;
 
   constructor(
@@ -72,6 +82,9 @@ export class AppTheoryError extends Error {
     }
     if (options.stackTrace !== undefined) {
       this.stackTrace = options.stackTrace;
+    }
+    if (options.headers !== undefined) {
+      this.headers = options.headers;
     }
     if (options.cause !== undefined) {
       this.cause = options.cause;
@@ -106,6 +119,12 @@ export class AppTheoryError extends Error {
 
   withStatusCode(statusCode: number): this {
     this.statusCode = statusCode;
+    return this;
+  }
+
+  /** Sets caller-supplied response headers rendered on the HTTP error response. */
+  withHeaders(headers: Headers): this {
+    this.headers = headers;
     return this;
   }
 

@@ -15,7 +15,7 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/middleware-guardrails/` — P1 request-id, tenant, auth, CORS, guardrails, and legacy flat-error behavior
 - `contract-tests/fixtures/secure-app-p0/` — SecureApp P0 posture-gate ordering without importing portable stages
 - `contract-tests/fixtures/secure-app-p1/` — SecureApp uniform, non-oracular P1 preflight behavior
-- `contract-tests/fixtures/secure-app-p2/` — SecureApp principal, scope, AppSync, WebSocket, introspection, and OpenAPI parity
+- `contract-tests/fixtures/secure-app-p2/` — SecureApp principal, scope, AppSync, WebSocket, introspection, OpenAPI, and denial-challenge-header parity. Resolver denials may carry bounded response headers (for example `WWW-Authenticate`) through `AppTheoryError.Headers`; plain denials stay byte-identical without challenge headers.
 - `contract-tests/fixtures/appsync-observability-policies/` — P2 AppSync, logging profiles, rate-limit, and load-shed behavior
 - `contract-tests/fixtures/observability/` — P2 request duration, CloudWatch EMF, and trace-context propagation behavior
 - `contract-tests/fixtures/event-sources/` — M1 SQS, EventBridge, DynamoDB Streams, Kinesis, SNS, and non-HTTP middleware behavior
@@ -30,7 +30,7 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
 - `contract-tests/fixtures/vectorstore/` — SP14 semantic vector-store, Bedrock Titan embedding, metadata filter, and deterministic fake behavior
 
-The current corpus contains 271 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 271 -->
+The current corpus contains 273 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 273 -->
 Of those, 269 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners. The nested
 `routing/mcp-route-algebra/expectations.json` and `facade-route-inventory.json` tables are deliberate exceptions: the
 generic harness assumes all three runtime legs participate and only discovers one directory level, while these
@@ -74,7 +74,9 @@ while provider/runtime payload objects remain open so behavior-specific contract
 - `input.secure_steps` / `expect.secure_steps` (arrays, optional): ordered HTTP, AppSync, WebSocket, route-snapshot,
   construction, and OpenAPI assertions. Steps carry resolver principals/errors, AppSync identity resolution, and
   trusted WebSocket connection-store mutations; expected steps pin 401/403/500 distinctions, fixed-stage side
-  effects, principal copies, route surfaces, and canonical secure OpenAPI JSON.
+  effects, principal copies, route surfaces, and canonical secure OpenAPI JSON. A step's `resolver_error` may carry
+  optional `status_code` and `headers`; the runners construct the portable error with them so expected steps can pin
+  challenge headers (for example `WWW-Authenticate`) on the rendered 401/403.
 
 The Go runner necessarily simulates the `unknown_option` and `invalid_websocket_factory` construction rejections:
 Go's closed `SecureOptions` struct makes unknown fields and non-callable factory values compile-time-inexpressible,

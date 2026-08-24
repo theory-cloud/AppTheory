@@ -196,4 +196,4 @@ jobs:
             echo "pages-dispatch: SKIP (${TAG_NAME:-<empty>} is not a stable tag)"
             exit 0
           fi
-          gh workflow run pages.yml --ref "${TAG_NAME}" -f tag="${TAG_NAME}"
+          gh workflow run pages.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG_NAME}" -f tag="${TAG_NAME}"

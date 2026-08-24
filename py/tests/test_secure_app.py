@@ -286,6 +286,75 @@ class SecureAppTests(unittest.TestCase):
                 }
             )
 
+    def test_denial_challenge_headers_render_on_secure_denials(self) -> None:
+        challenge = 'Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"'
+
+        class FixedIds:
+            def new_id(self) -> str:
+                return "req_denial"
+
+        def denied(_ctx: apptheory.Context) -> None:
+            raise apptheory.AppTheoryError("app.unauthorized", "unauthorized").with_headers(
+                {"WWW-Authenticate": [challenge]}
+            )
+
+        app = apptheory.SecureApp(id_generator=FixedIds(), principal_resolver=denied)
+        app.get("/mcp", _ok, apptheory.authenticated())
+
+        response = app.serve(apptheory.Request(method="GET", path="/mcp", headers={}, body=b"", is_base64=False))
+
+        self.assertEqual(response.status, 401)
+        self.assertEqual(response.headers["www-authenticate"], [challenge])
+        self.assertEqual(response.headers["content-type"], ["application/json; charset=utf-8"])
+        self.assertEqual(response.headers["x-request-id"], ["req_denial"])
+        body = json.loads(bytes(response.body))
+        self.assertEqual(
+            body,
+            {
+                "error": {
+                    "code": "app.unauthorized",
+                    "message": "unauthorized",
+                    "request_id": "req_denial",
+                }
+            },
+        )
+
+    def test_plain_denial_renders_without_challenge_headers(self) -> None:
+        def denied(_ctx: apptheory.Context) -> None:
+            raise apptheory.AppError("app.unauthorized", "unauthorized")
+
+        app = apptheory.SecureApp(principal_resolver=denied)
+        app.get("/mcp", _ok, apptheory.authenticated())
+
+        response = app.serve(apptheory.Request(method="GET", path="/mcp", headers={}, body=b"", is_base64=False))
+
+        self.assertEqual(response.status, 401)
+        self.assertNotIn("www-authenticate", response.headers)
+        body = json.loads(bytes(response.body))
+        self.assertEqual(body["error"]["code"], "app.unauthorized")
+
+    def test_forbidden_denial_carries_bounded_arbitrary_headers(self) -> None:
+        challenge = 'Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"'
+
+        def denied(_ctx: apptheory.Context) -> None:
+            raise apptheory.AppTheoryError("app.forbidden", "forbidden").with_headers(
+                {
+                    "WWW-Authenticate": [challenge],
+                    "X-Denial-Reason": ["insufficient_scope"],
+                }
+            )
+
+        app = apptheory.SecureApp(principal_resolver=denied)
+        app.get("/scoped", _ok, apptheory.authenticated("write"))
+
+        response = app.serve(apptheory.Request(method="GET", path="/scoped", headers={}, body=b"", is_base64=False))
+
+        self.assertEqual(response.status, 403)
+        self.assertEqual(response.headers["www-authenticate"], [challenge])
+        self.assertEqual(response.headers["x-denial-reason"], ["insufficient_scope"])
+        body = json.loads(bytes(response.body))
+        self.assertEqual(body["error"]["code"], "app.forbidden")
+
 
 if __name__ == "__main__":
     unittest.main()
