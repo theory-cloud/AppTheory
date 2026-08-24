@@ -1,5 +1,22 @@
 # Changelog
 
+## [4.1.0](https://github.com/theory-cloud/AppTheory/compare/v4.0.0...v4.1.0) (2026-08-24)
+
+
+### Features
+
+* **runtime:** let SecureApp denials carry WWW-Authenticate challenge headers ([11696f0](https://github.com/theory-cloud/AppTheory/commit/11696f06d2889c61b79f8aee9074a01789d6f258))
+* **runtime:** let SecureApp denials carry WWW-Authenticate challenge headers ([145f74f](https://github.com/theory-cloud/AppTheory/commit/145f74ffb2ba9ba4644d47b804b881f6f093b964))
+
+
+### Bug Fixes
+
+* **release:** scope pages dispatch to the repository so gh runs without a checkout ([bba6f47](https://github.com/theory-cloud/AppTheory/commit/bba6f476d024f7b5d5537536707213665e043426))
+* **release:** scope pages dispatch to the repository so gh runs without a checkout ([77ce739](https://github.com/theory-cloud/AppTheory/commit/77ce739f5a29daf137c5202ddc67a563ee4422c7))
+* **runtime:** refresh hello-world py synth snapshot and pin policy set-cookie path ([84e9596](https://github.com/theory-cloud/AppTheory/commit/84e95969ead7d4a3d4c42d8204805f3f5e50fbd2))
+* **runtime:** relocate denial set-cookie into cookies for parity ([ec22bc2](https://github.com/theory-cloud/AppTheory/commit/ec22bc2c73681049688273e0c0ca69d362fadb42))
+* **runtime:** share denial set-cookie relocation across all error renderers ([82fdee5](https://github.com/theory-cloud/AppTheory/commit/82fdee58169cadff7a7a5ff2059c6a508089bc75))
+
 ## [4.1.0-rc](https://github.com/theory-cloud/AppTheory/compare/v4.0.0...v4.1.0-rc) (2026-08-24)
 
 
