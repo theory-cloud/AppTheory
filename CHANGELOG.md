@@ -1,5 +1,44 @@
 # Changelog
 
+## [4.0.0-rc](https://github.com/theory-cloud/AppTheory/compare/v3.3.0...v4.0.0-rc) (2026-08-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **runtime:** fail closed on dual-body response divergence
+* **runtime:** map streamed-body drain byte overrun to 413
+* **py:** never silently drop streaming bodies in the v2 and Function URL adapters
+* **ts:** never silently drop streaming bodies in the v2 and Function URL adapters
+* **runtime:** never silently drop streaming bodies in the Function URL buffered adapter
+* **runtime:** never silently drop streaming bodies in the HTTP API v2 adapter
+
+### Bug Fixes
+
+* **ci:** align pages.yml header and concurrency comments with behavior ([2bf1f3a](https://github.com/theory-cloud/AppTheory/commit/2bf1f3a55b342c6dfa563fdddeee53a1068a77b0))
+* **ci:** build pages deploy from the run ref, not the dispatch input ([ee8dcca](https://github.com/theory-cloud/AppTheory/commit/ee8dcca23209a80cfa03439ff5f0f00cef82d7a3))
+* **ci:** harden pages dispatch against cache-poisoning alerts ([75458dd](https://github.com/theory-cloud/AppTheory/commit/75458dd8fd080e46b4e8eb701afdf58524d1d5ad))
+* **ci:** run bundle install before the Jekyll build in pages.yml ([326364e](https://github.com/theory-cloud/AppTheory/commit/326364e0d12804582bde28b1656197e6634768a8))
+* **docs:** document release-tag deploys of the docs site ([84237a4](https://github.com/theory-cloud/AppTheory/commit/84237a4abf9fd59b7b58cf9bed2557d5766515f2))
+* **docs:** render pinned runtime versions in local preview ([daa7f72](https://github.com/theory-cloud/AppTheory/commit/daa7f7259e6c0d6c8aa908b52f9a09280b94be6c))
+* **docs:** stamp Go install snippet from the latest release at Pages build time ([2eaae99](https://github.com/theory-cloud/AppTheory/commit/2eaae99095577aa6ac1eae520a4243ba4c1395f6))
+* **docs:** stamp Go install snippet from the latest release at Pages build time ([06a76c4](https://github.com/theory-cloud/AppTheory/commit/06a76c41e7ccf217b1e5e3b0fc8dc064470c4b9b))
+* **py:** never silently drop streaming bodies in the v2 and Function URL adapters ([ad677a4](https://github.com/theory-cloud/AppTheory/commit/ad677a40e9c72bbe865e478bf3ca97b1e324fc0e))
+* **py:** restore AppSync decode-observability info fallback for object events ([620c197](https://github.com/theory-cloud/AppTheory/commit/620c197bc55eaa310c3845638c4983a16bbfeb4f))
+* **runtime,ts,py:** align adapter decode-observability dimensions ([d39819e](https://github.com/theory-cloud/AppTheory/commit/d39819e73b5134f8e345b6799355ca29d027261b))
+* **runtime:** add Allow header to MCP method-not-allowed responses ([0b47efe](https://github.com/theory-cloud/AppTheory/commit/0b47efee0d634a0f4d7bda6ad916b7b33ca4c784))
+* **runtime:** emit observability for adapter decode failures ([8d6ba55](https://github.com/theory-cloud/AppTheory/commit/8d6ba557774d5473719ae61a8f5facc5e9d46a59))
+* **runtime:** fail closed on dual-body response divergence ([d06fdc2](https://github.com/theory-cloud/AppTheory/commit/d06fdc2b9ea1ee2ea775c2e99dd8b29b47074a57))
+* **runtime:** make the v2/Function URL drain fail-closed deterministic at the deadline ([256c0e4](https://github.com/theory-cloud/AppTheory/commit/256c0e42ee86f446981bc3a1ba790e5548b8ffdc))
+* **runtime:** map streamed-body drain byte overrun to 413 ([445bfce](https://github.com/theory-cloud/AppTheory/commit/445bfcec154783d66bc29a99e34d5a2655382e21))
+* **runtime:** never silently drop streaming bodies in the Function URL buffered adapter ([1e0d823](https://github.com/theory-cloud/AppTheory/commit/1e0d8239f2730a4981b223a0b745c5eec68301ed))
+* **runtime:** never silently drop streaming bodies in the HTTP API v2 adapter ([ab769f5](https://github.com/theory-cloud/AppTheory/commit/ab769f51db91ad109593b575448fc65bfe80c854))
+* **runtime:** recover panicking event callbacks into the established error shape ([5db91cb](https://github.com/theory-cloud/AppTheory/commit/5db91cb01bb68509a311aa5009e15523e6b2e9be))
+* **runtime:** route dual-body fail-closed through the serve error pipeline ([4256b91](https://github.com/theory-cloud/AppTheory/commit/4256b91274a07c88933c6bf2112f9e115188736e))
+* **runtime:** satisfy goconst in appsync decode-observability test ([d57a26f](https://github.com/theory-cloud/AppTheory/commit/d57a26f26f194c117d6f89bc79b61fec4dc2e989))
+* **ts,py:** route WebSocket normalize failure through serve error pipeline ([42ccdf8](https://github.com/theory-cloud/AppTheory/commit/42ccdf8cb6d01ceea16c6e7ebe8f4f0f70bbff2c))
+* **ts:** add Kinesis panic-isolation coverage ([a7fc4fa](https://github.com/theory-cloud/AppTheory/commit/a7fc4fae0e01681aba4db81b3b5b78f0b822c61a))
+* **ts:** never silently drop streaming bodies in the v2 and Function URL adapters ([6b0942d](https://github.com/theory-cloud/AppTheory/commit/6b0942d34da6ead0f3d6efbd3c9203a0888d9628))
+
 ## [3.3.0](https://github.com/theory-cloud/AppTheory/compare/v3.2.0...v3.3.0) (2026-08-22)
 
 
