@@ -118,7 +118,7 @@ The default denial vocabulary is unchanged. The 401/403 status is still derived 
 releases: the same `{"error": {...}}` envelope, `content-type`, and request-id headers, with no `WWW-Authenticate`.
 Header names are canonicalized to lowercase through the existing header pipeline, and the error renderer continues to
 own `content-type`. On the P1/P2 portable serve path, `x-request-id` and any CORS headers are force-set after the
-caller headers are merged, so denial headers cannot spoof them; the P0 path never emits those headers. Denials
+caller headers are merged, so denial headers cannot spoof them; the P0 path does not force-set them, so it offers no such spoof protection. Denials
 synthesized by the gate itself (missing principal, unknown kind, missing scope) never carry headers; only the
 resolver's own returned error can attach them, keeping the closed surface explicit.
 
