@@ -61,11 +61,11 @@ Put this in `renovate.json` (or merge the same fields into your existing Renovat
 This config intentionally matches both direct release assets and Go module requirements:
 
 ```text
-github.com/theory-cloud/apptheory/v4 v4.0.0-rc
-https://github.com/theory-cloud/AppTheory/releases/download/v3.0.0-rc/theory-cloud-apptheory-3.0.0-rc.tgz
-https://github.com/theory-cloud/AppTheory/releases/download/v3.0.0-rc/theory-cloud-apptheory-cdk-3.0.0-rc.tgz
-https://github.com/theory-cloud/AppTheory/releases/download/v3.0.0-rc/apptheory-3.0.0rc0-py3-none-any.whl
-https://github.com/theory-cloud/AppTheory/releases/download/v3.0.0-rc/apptheory_cdk-3.0.0rc0-py3-none-any.whl
+github.com/theory-cloud/apptheory/v4 v4.0.0
+https://github.com/theory-cloud/AppTheory/releases/download/v4.0.0/theory-cloud-apptheory-4.0.0.tgz
+https://github.com/theory-cloud/AppTheory/releases/download/v4.0.0/theory-cloud-apptheory-cdk-4.0.0.tgz
+https://github.com/theory-cloud/AppTheory/releases/download/v4.0.0/apptheory-4.0.0-py3-none-any.whl
+https://github.com/theory-cloud/AppTheory/releases/download/v4.0.0/apptheory_cdk-4.0.0-py3-none-any.whl
 ```
 
 When Renovate opens a bump PR, keep AppTheory's runtime package, CDK package, and generated lockfiles in the same PR.
