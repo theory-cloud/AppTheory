@@ -82,7 +82,15 @@ func (h *secureFixtureHarness) applyPolicy(*apptheory.Context) (*apptheory.Polic
 func (h *secureFixtureHarness) resolvePrincipal(ctx *apptheory.Context) (*apptheory.SecurePrincipal, error) {
 	h.resolverCalls++
 	if h.current != nil && h.current.ResolverError != nil {
-		return nil, apptheory.NewAppTheoryError(h.current.ResolverError.Code, h.current.ResolverError.Message)
+		resolverErr := h.current.ResolverError
+		err := apptheory.NewAppTheoryError(resolverErr.Code, resolverErr.Message)
+		if resolverErr.StatusCode > 0 {
+			err = err.WithStatusCode(resolverErr.StatusCode)
+		}
+		if len(resolverErr.Headers) > 0 {
+			err = err.WithHeaders(resolverErr.Headers)
+		}
+		return nil, err
 	}
 	if h.current != nil && h.current.Principal != nil {
 		return secureFixturePrincipal(h.current.Principal), nil

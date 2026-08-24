@@ -5,7 +5,7 @@ description: The Go implementation of the AppTheory contract — routing, middle
 
 # Go Runtime
 
-The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — 270 single-envelope [contract fixtures](../reference/contract-fixtures.md) run in Go, TypeScript, and Python, while the remaining two route-algebra and facade-inventory vectors are loaded by Go and CDK-TS tests only. <!-- apptheory-fixture-count: 272 -->
+The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — 271 single-envelope [contract fixtures](../reference/contract-fixtures.md) run in Go, TypeScript, and Python, while the remaining two route-algebra and facade-inventory vectors are loaded by Go and CDK-TS tests only. <!-- apptheory-fixture-count: 273 -->
 
 ## Install
 
@@ -181,11 +181,11 @@ See the [MCP Method Surface](../integrations/mcp.md) for the full Streamable HTT
 
 ## What's verified
 
-The Go runtime passes the 270 generic runner fixtures and directly consumes the MCP route-algebra and facade-inventory tables, covering all 272 contract vectors on every commit. <!-- apptheory-fixture-count: 272 --> Any behavioral divergence on a shared surface is treated as a contract bug — fix the implementation, or update the fixture and prove the change holds across every participating runtime.
+The Go runtime passes the 271 generic runner fixtures and directly consumes the MCP route-algebra and facade-inventory tables, covering all 273 contract vectors on every commit. <!-- apptheory-fixture-count: 273 --> Any behavioral divergence on a shared surface is treated as a contract bug — fix the implementation, or update the fixture and prove the change holds across every participating runtime.
 
 ## Next reads
 
 - [API Reference](../api-reference.md) — full surface table
 - [HTTP Runtime tiers](../features/http-runtime.md) — P0 / P1 / P2
 - [Event Shape Dispatch](../reference/event-shapes.md) — when `HandleLambda` calls what
-- [Contract Fixtures](../reference/contract-fixtures.md) — the 272-fixture covenant <!-- apptheory-fixture-count: 272 -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — the 273-fixture covenant <!-- apptheory-fixture-count: 273 -->

@@ -75,6 +75,20 @@ func canonicalRuntimeErrorCode(code string) string {
 	}
 }
 
+// relocateSetCookieHeaders moves a non-empty set-cookie out of headers into
+// the response Cookies list, mirroring normalizeResponse's key handling and
+// ordering so every error renderer relocates it exactly once and never
+// doubles it on the wire. An empty or missing set-cookie is left in headers
+// and yields nil cookies.
+func relocateSetCookieHeaders(headers map[string][]string) []string {
+	var cookies []string
+	if setCookies := headers["set-cookie"]; len(setCookies) > 0 {
+		cookies = append([]string(nil), setCookies...)
+		delete(headers, "set-cookie")
+	}
+	return cookies
+}
+
 func errorResponse(code, message string, headers map[string][]string) Response {
 	return errorResponseWithFormat(HTTPErrorFormatNested, code, message, headers)
 }
@@ -95,7 +109,7 @@ func errorResponseWithFormat(format HTTPErrorFormat, code, message string, heade
 	return Response{
 		Status:   statusForErrorCode(canonicalRuntimeErrorCode(code)),
 		Headers:  headers,
-		Cookies:  nil,
+		Cookies:  relocateSetCookieHeaders(headers),
 		Body:     body,
 		IsBase64: false,
 	}
@@ -113,6 +127,11 @@ func errorResponseFromAppTheoryErrorWithFormat(
 ) Response {
 	headers = canonicalizeHeaders(headers)
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
+
+	// Relocate set-cookie into Cookies exactly like normalizeResponse does for
+	// handler output, so denial headers render identically across runtimes:
+	// same key handling, same ordering, and never doubled on the wire.
+	cookies := relocateSetCookieHeaders(headers)
 
 	code := err.Code
 	if code == "" {
@@ -160,7 +179,7 @@ func errorResponseFromAppTheoryErrorWithFormat(
 	return Response{
 		Status:   status,
 		Headers:  headers,
-		Cookies:  nil,
+		Cookies:  cookies,
 		Body:     body,
 		IsBase64: false,
 	}
@@ -210,7 +229,7 @@ func errorResponseWithRequestIDTraceIDAndFormat(
 	return Response{
 		Status:   statusForErrorCode(canonicalRuntimeErrorCode(code)),
 		Headers:  headers,
-		Cookies:  nil,
+		Cookies:  relocateSetCookieHeaders(headers),
 		Body:     body,
 		IsBase64: false,
 	}
@@ -223,7 +242,7 @@ func responseForError(err error) Response {
 func responseForErrorWithFormat(format HTTPErrorFormat, err error) Response {
 	var portableErr *AppTheoryError
 	if errors.As(err, &portableErr) {
-		return errorResponseFromAppTheoryErrorWithFormat(format, portableErr, nil, "")
+		return errorResponseFromAppTheoryErrorWithFormat(format, portableErr, portableErr.Headers, "")
 	}
 	var appErr *AppError
 	if errors.As(err, &appErr) {
@@ -248,7 +267,7 @@ func responseForErrorWithRequestIDTraceIDAndFormat(format HTTPErrorFormat, err e
 			copied.TraceID = strings.TrimSpace(traceID)
 			portableErr = &copied
 		}
-		return errorResponseFromAppTheoryErrorWithFormat(format, portableErr, nil, requestID)
+		return errorResponseFromAppTheoryErrorWithFormat(format, portableErr, portableErr.Headers, requestID)
 	}
 	var appErr *AppError
 	if errors.As(err, &appErr) {

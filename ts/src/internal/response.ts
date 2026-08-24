@@ -334,7 +334,11 @@ export function responseForErrorWithFormat(
   err: unknown,
 ): NormalizedResponse {
   if (err instanceof AppTheoryError) {
-    return errorResponseFromAppTheoryErrorWithFormat(format, err);
+    return errorResponseFromAppTheoryErrorWithFormat(
+      format,
+      err,
+      err.headers ?? {},
+    );
   }
   if (err instanceof AppError) {
     return errorResponseWithFormat(format, err.code, err.message);
@@ -376,7 +380,7 @@ export function responseForErrorWithRequestIdTraceIdAndFormat(
     return errorResponseFromAppTheoryErrorWithFormat(
       format,
       err,
-      {},
+      err.headers ?? {},
       requestId,
       traceId,
     );
