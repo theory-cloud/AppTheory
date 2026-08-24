@@ -177,7 +177,7 @@ class AppTheoryMcpRouteAlgebra {
 }
 exports.AppTheoryMcpRouteAlgebra = AppTheoryMcpRouteAlgebra;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryMcpRouteAlgebra[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra", version: "3.3.0" };
+AppTheoryMcpRouteAlgebra[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra", version: "4.0.0" };
 /** MCP route-algebra contract version. */
 AppTheoryMcpRouteAlgebra.CONTRACT_VERSION = "m17.mcp-route-algebra/v1";
 /** Namespace endpoint kind. */
