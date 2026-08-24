@@ -8,7 +8,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
 
 func TestBuiltInAppTheoryHandler_TrimsAndRejectsEmpty(t *testing.T) {

@@ -9,8 +9,8 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	"github.com/theory-cloud/apptheory/v3/runtime/microvm"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	"github.com/theory-cloud/apptheory/v4/runtime/microvm"
 )
 
 func TestHandleLambdaRunsCanonicalControllerRoutes(t *testing.T) {

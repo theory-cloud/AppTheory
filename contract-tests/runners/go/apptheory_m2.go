@@ -9,9 +9,9 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	"github.com/theory-cloud/apptheory/v3/pkg/streamer"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	"github.com/theory-cloud/apptheory/v3/testkit"
+	"github.com/theory-cloud/apptheory/v4/pkg/streamer"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	"github.com/theory-cloud/apptheory/v4/testkit"
 )
 
 func runFixtureM2(f Fixture) error {

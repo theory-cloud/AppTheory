@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
 
 // protocolVersion is the latest session-ful MCP protocol version supported by this server.
@@ -311,7 +311,7 @@ func (s *Server) Handler() apptheory.Handler {
 		case httpMethodDELETE:
 			return s.handleDELETE(c)
 		default:
-			return methodNotAllowed(), nil
+			return methodNotAllowed("DELETE, GET, POST"), nil
 		}
 	}
 }
@@ -481,7 +481,7 @@ func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
 		return resp, nil
 	}
 	if DetectProtocolVersion(c.Request.Headers, nil) == ProtocolShape20260728 {
-		return methodNotAllowed(), nil
+		return methodNotAllowed("POST"), nil
 	}
 	if resp := validateGETHeaders(c.Request.Headers); resp != nil {
 		return resp, nil
@@ -642,7 +642,7 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 		return resp, nil
 	}
 	if DetectProtocolVersion(c.Request.Headers, c.Request.Body) == ProtocolShape20260728 {
-		return methodNotAllowed(), nil
+		return methodNotAllowed("POST"), nil
 	}
 
 	sessionID := firstHeader(c.Request.Headers, headerMcpSessionID)
@@ -1911,11 +1911,18 @@ func badRequest(msg string) *apptheory.Response {
 	}
 }
 
-func methodNotAllowed() *apptheory.Response {
+// methodNotAllowed builds the 405 response for the MCP endpoint. Per RFC 9110
+// section 15.5.5 a method-not-allowed response must carry an Allow header
+// listing the methods the target resource supports; the caller supplies the
+// allowed set (all transport methods, or only POST for the stateless
+// 2026-07-28 shape). The header value follows the framework's Allow formatting
+// (uppercase, sorted, comma-space joined).
+func methodNotAllowed(allow string) *apptheory.Response {
 	return &apptheory.Response{
 		Status: 405,
 		Headers: map[string][]string{
 			"content-type": {"application/json"},
+			"allow":        {allow},
 		},
 		Body: []byte(`{"error":"method not allowed"}`),
 	}

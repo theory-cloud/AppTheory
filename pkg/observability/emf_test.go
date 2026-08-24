@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
 
 func TestEMFMetricSink_EncodesRequestMetric(t *testing.T) {

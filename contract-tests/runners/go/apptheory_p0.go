@@ -13,9 +13,9 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	"github.com/theory-cloud/apptheory/v3/pkg/naming"
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-	"github.com/theory-cloud/apptheory/v3/testkit"
+	"github.com/theory-cloud/apptheory/v4/pkg/naming"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	"github.com/theory-cloud/apptheory/v4/testkit"
 )
 
 func runFixtureP0(f Fixture) error {
@@ -770,6 +770,41 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 	},
 	"html_stream_two_chunks": func(_ *apptheory.Context) (*apptheory.Response, error) {
 		return apptheory.HTMLStream(200, apptheory.StreamBytes([]byte("<h1>"), []byte("Hello</h1>"))), nil
+	},
+	"sse_stream_two_events": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		ch := make(chan apptheory.StreamChunk, 2)
+		ch <- apptheory.StreamChunk{Bytes: []byte("id: 1\nevent: message\ndata: {\"ok\":true}\n\n")}
+		ch <- apptheory.StreamChunk{Bytes: []byte("id: 2\nevent: message\ndata: {\"ok\":false}\n\n")}
+		close(ch)
+		return &apptheory.Response{
+			Status:     200,
+			Headers:    map[string][]string{"content-type": {"text/event-stream"}, "cache-control": {"no-cache"}, "connection": {"keep-alive"}},
+			Cookies:    nil,
+			Body:       nil,
+			IsBase64:   false,
+			BodyStream: ch,
+		}, nil
+	},
+	"sse_stream_live": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		// A live listener: never written, never closed.
+		return &apptheory.Response{
+			Status:     200,
+			Headers:    map[string][]string{"content-type": {"text/event-stream"}},
+			Cookies:    nil,
+			Body:       nil,
+			IsBase64:   false,
+			BodyStream: make(chan apptheory.StreamChunk),
+		}, nil
+	},
+	"sse_stream_overrun": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return &apptheory.Response{
+			Status:     200,
+			Headers:    map[string][]string{"content-type": {"text/event-stream"}},
+			Cookies:    nil,
+			Body:       nil,
+			IsBase64:   false,
+			BodyStream: apptheory.StreamBytes(make([]byte, 4*1024*1024+1)),
+		}, nil
 	},
 	"safe_json_for_html": func(_ *apptheory.Context) (*apptheory.Response, error) {
 		out, err := apptheory.SafeJSONForHTML(map[string]any{

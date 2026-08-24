@@ -1,8 +1,14 @@
 package apptheory
 
 import (
+	"bytes"
+	"context"
 	"encoding/base64"
+	"errors"
+	"io"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 )
@@ -72,7 +78,7 @@ func TestAPIGatewayV2ResponseFromResponse_Base64(t *testing.T) {
 		Body:     []byte{0x01, 0x02},
 		IsBase64: true,
 	}
-	out := apigatewayV2ResponseFromResponse(resp)
+	out := apigatewayV2ResponseFromResponse(context.Background(), resp)
 	if out.StatusCode != 200 || !out.IsBase64Encoded {
 		t.Fatalf("unexpected apigw v2 response: %#v", out)
 	}
@@ -90,7 +96,7 @@ func TestLambdaFunctionURLResponseFromResponse_JoinsMultiHeaders(t *testing.T) {
 		Headers: map[string][]string{"x-test": {"a", "b"}},
 		Body:    []byte("ok"),
 	}
-	out := lambdaFunctionURLResponseFromResponse(resp)
+	out := lambdaFunctionURLResponseFromResponse(context.Background(), resp)
 	if out.StatusCode != 201 {
 		t.Fatalf("unexpected status: %d", out.StatusCode)
 	}
@@ -140,5 +146,617 @@ func TestRequestFromAPIGatewayV2AndLambdaURL(t *testing.T) {
 	}
 	if req.Path != "/url" || req.Method != "POST" || req.Query["a"][0] != "1" {
 		t.Fatalf("unexpected request: %#v", req)
+	}
+}
+
+func requireAPIGatewayV2StreamingError(t *testing.T, out events.APIGatewayV2HTTPResponse) {
+	t.Helper()
+	if out.StatusCode != 500 {
+		t.Fatalf("expected fail-closed status 500, got %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if ct := out.Headers["content-type"]; !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("expected JSON error content type, got %q", ct)
+	}
+	if !strings.Contains(out.Body, `"error"`) {
+		t.Fatalf("expected nested AppTheory error body, got %q", out.Body)
+	}
+	if !strings.Contains(out.Body, apigatewayV2StreamingBodyErrorMessage) {
+		t.Fatalf("expected documented streaming error message in body, got %q", out.Body)
+	}
+}
+
+// requireAPIGatewayV2TooLarge asserts the size-semantics mapping for a
+// streaming body that exceeds the drain byte budget: HTTP 413 with the
+// framework's app.too_large error shape instead of the 500 fail-closed shape
+// used for non-size drain failures (non-termination, stream errors).
+func requireAPIGatewayV2TooLarge(t *testing.T, out events.APIGatewayV2HTTPResponse) {
+	t.Helper()
+	if out.StatusCode != 413 {
+		t.Fatalf("expected payload-too-large status 413, got %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if ct := out.Headers["content-type"]; !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("expected JSON error content type, got %q", ct)
+	}
+	if !strings.Contains(out.Body, errorMessageResponseTooLarge) {
+		t.Fatalf("expected response-too-large message in body, got %q", out.Body)
+	}
+	if !strings.Contains(out.Body, `"app.too_large"`) {
+		t.Fatalf("expected app.too_large error code in body, got %q", out.Body)
+	}
+}
+
+func TestAPIGatewayV2ResponseFromResponse_BuffersTerminatingBodyReader(t *testing.T) {
+	resp := Response{
+		Status:     200,
+		Headers:    map[string][]string{"content-type": {"text/event-stream"}},
+		BodyReader: strings.NewReader("data: hello\n\n"),
+	}
+	out := apigatewayV2ResponseFromResponse(context.Background(), resp)
+	if out.StatusCode != 200 {
+		t.Fatalf("unexpected status: %d", out.StatusCode)
+	}
+	if out.Body != "data: hello\n\n" {
+		t.Fatalf("expected drained body, got %q", out.Body)
+	}
+	if out.Headers["content-type"] != "text/event-stream" {
+		t.Fatalf("expected content-type preserved, got %#v", out.Headers)
+	}
+}
+
+func TestAPIGatewayV2ResponseFromResponse_NonTerminatingBodyReaderFailsClosed(t *testing.T) {
+	pr, _ := io.Pipe() // never written, never closed: a live stream
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	out := apigatewayV2ResponseFromResponse(ctx, Response{Status: 200, BodyReader: pr})
+	elapsed := time.Since(start)
+
+	if elapsed > 2*time.Second {
+		t.Fatalf("non-terminating body did not fail closed promptly (elapsed %s)", elapsed)
+	}
+	requireAPIGatewayV2StreamingError(t, out)
+}
+
+func TestAPIGatewayV2ResponseFromResponse_BodyReaderOverrunFailsClosed(t *testing.T) {
+	over := bytes.NewReader(make([]byte, apigatewayV2StreamingBodyMaxBytes+1))
+	out := apigatewayV2ResponseFromResponse(context.Background(), Response{Status: 200, BodyReader: over})
+	requireAPIGatewayV2TooLarge(t, out)
+}
+
+func TestAPIGatewayV2ResponseFromResponse_BodyStreamOverrunIsTooLarge(t *testing.T) {
+	// Denial-shape test for the size-semantics mapping: a streamed body that
+	// exceeds the drain byte budget must map to 413 app.too_large, not the 500
+	// delivery-failure shape used for non-termination and stream errors.
+	over := StreamBytes(make([]byte, apigatewayV2StreamingBodyMaxBytes+1))
+	out := apigatewayV2ResponseFromResponse(context.Background(), Response{Status: 200, BodyStream: over})
+	requireAPIGatewayV2TooLarge(t, out)
+}
+
+func TestLambdaFunctionURLResponseFromResponse_BodyStreamOverrunIsTooLarge(t *testing.T) {
+	over := StreamBytes(make([]byte, apigatewayV2StreamingBodyMaxBytes+1))
+	out := lambdaFunctionURLResponseFromResponse(context.Background(), Response{Status: 200, BodyStream: over})
+	if out.StatusCode != 413 {
+		t.Fatalf("expected payload-too-large status 413, got %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if !strings.Contains(out.Body, errorMessageResponseTooLarge) {
+		t.Fatalf("expected response-too-large message in body, got %q", out.Body)
+	}
+	if !strings.Contains(out.Body, `"app.too_large"`) {
+		t.Fatalf("expected app.too_large error code in body, got %q", out.Body)
+	}
+}
+
+func TestServeAPIGatewayV2_StreamingResponseOverMaxResponseBytesIsTooLarge(t *testing.T) {
+	// The MaxResponseBytes limiter wraps the stream in the portable serve
+	// path; when the adapter drains a stream that trips the limiter, the
+	// overrun must map to 413 app.too_large (the same size semantics as the
+	// drain byte-budget overrun), not the 500 delivery-failure shape.
+	app := New(WithLimits(Limits{MaxResponseBytes: 8}))
+	app.Get("/big", func(_ *Context) (*Response, error) {
+		return &Response{
+			Status:     200,
+			Headers:    map[string][]string{"content-type": {"text/html; charset=utf-8"}},
+			BodyStream: StreamBytes([]byte("abcdefghij")),
+		}, nil
+	})
+
+	out := app.ServeAPIGatewayV2(context.Background(), events.APIGatewayV2HTTPRequest{
+		RawPath:        "/big",
+		RawQueryString: "",
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{Method: "GET", Path: "/big"},
+		},
+	})
+
+	requireAPIGatewayV2TooLarge(t, out)
+}
+
+func TestServeLambdaFunctionURL_StreamingResponseOverMaxResponseBytesIsTooLarge(t *testing.T) {
+	app := New(WithLimits(Limits{MaxResponseBytes: 8}))
+	app.Get("/big", func(_ *Context) (*Response, error) {
+		return &Response{
+			Status:     200,
+			Headers:    map[string][]string{"content-type": {"text/html; charset=utf-8"}},
+			BodyStream: StreamBytes([]byte("abcdefghij")),
+		}, nil
+	})
+
+	out := app.ServeLambdaFunctionURL(context.Background(), events.LambdaFunctionURLRequest{
+		RawPath:        "/big",
+		RawQueryString: "",
+		RequestContext: events.LambdaFunctionURLRequestContext{
+			HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "GET", Path: "/big"},
+		},
+	})
+
+	if out.StatusCode != 413 {
+		t.Fatalf("expected payload-too-large status 413, got %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if !strings.Contains(out.Body, `"app.too_large"`) {
+		t.Fatalf("expected app.too_large error code in body, got %q", out.Body)
+	}
+}
+
+func TestAPIGatewayV2ResponseFromResponse_DrainsBodyStream(t *testing.T) {
+	resp := Response{
+		Status:     200,
+		Headers:    map[string][]string{"content-type": {"text/html; charset=utf-8"}},
+		BodyStream: StreamBytes([]byte("a"), []byte("b")),
+	}
+	out := apigatewayV2ResponseFromResponse(context.Background(), resp)
+	if out.StatusCode != 200 {
+		t.Fatalf("unexpected status: %d", out.StatusCode)
+	}
+	if out.Body != "ab" {
+		t.Fatalf("expected drained stream body, got %q", out.Body)
+	}
+}
+
+func TestAPIGatewayV2ResponseFromResponse_BodyStreamErrorFailsClosed(t *testing.T) {
+	resp := Response{Status: 200, BodyStream: StreamError(errors.New("boom"))}
+	out := apigatewayV2ResponseFromResponse(context.Background(), resp)
+	requireAPIGatewayV2StreamingError(t, out)
+}
+
+func TestServeAPIGatewayV2_DecodeFailureEmitsObservability(t *testing.T) {
+	var gotLog *LogRecord
+	app := New(
+		WithTier(TierP2),
+		WithObservability(ObservabilityHooks{
+			Log: func(r LogRecord) {
+				copy := r
+				gotLog = &copy
+			},
+		}),
+	)
+
+	// Invalid raw query string: requestFromAPIGatewayV2 fails before the
+	// portable path records observability. The adapter must still emit a
+	// record so decode failures are not silent.
+	out := app.ServeAPIGatewayV2(context.Background(), events.APIGatewayV2HTTPRequest{
+		RawPath:        "/x",
+		RawQueryString: "%zz",
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{Method: "GET", Path: "/x"},
+		},
+	})
+
+	if out.StatusCode != 400 {
+		t.Fatalf("expected 400, got %d", out.StatusCode)
+	}
+	if gotLog == nil {
+		t.Fatal("expected decode failure to emit a log record")
+	}
+	if gotLog.Event != "request.completed" {
+		t.Fatalf("unexpected log event: %q", gotLog.Event)
+	}
+	if gotLog.Method != "GET" || gotLog.Path != "/x" {
+		t.Fatalf("unexpected method/path: %q %q", gotLog.Method, gotLog.Path)
+	}
+	if gotLog.Status != 400 || gotLog.ErrorCode != errorCodeBadRequest {
+		t.Fatalf("unexpected status/code: %d %q", gotLog.Status, gotLog.ErrorCode)
+	}
+}
+
+func TestServeLambdaFunctionURL_DecodeFailureEmitsObservability(t *testing.T) {
+	var gotLog *LogRecord
+	app := New(
+		WithTier(TierP2),
+		WithObservability(ObservabilityHooks{
+			Log: func(r LogRecord) {
+				copy := r
+				gotLog = &copy
+			},
+		}),
+	)
+
+	out := app.ServeLambdaFunctionURL(context.Background(), events.LambdaFunctionURLRequest{
+		RawPath:        "/y",
+		RawQueryString: "%zz",
+		RequestContext: events.LambdaFunctionURLRequestContext{
+			HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "POST", Path: "/y"},
+		},
+	})
+
+	if out.StatusCode != 400 {
+		t.Fatalf("expected 400, got %d", out.StatusCode)
+	}
+	if gotLog == nil {
+		t.Fatal("expected decode failure to emit a log record")
+	}
+	if gotLog.Method != "POST" || gotLog.Path != "/y" {
+		t.Fatalf("unexpected method/path: %q %q", gotLog.Method, gotLog.Path)
+	}
+	if gotLog.Status != 400 || gotLog.ErrorCode != errorCodeBadRequest {
+		t.Fatalf("unexpected status/code: %d %q", gotLog.Status, gotLog.ErrorCode)
+	}
+}
+
+func TestServeAPIGatewayV2_DecodeFailureNoObservabilityBelowP2(t *testing.T) {
+	var gotLog *LogRecord
+	app := New(
+		WithTier(TierP1),
+		WithObservability(ObservabilityHooks{
+			Log: func(r LogRecord) {
+				copy := r
+				gotLog = &copy
+			},
+		}),
+	)
+
+	app.ServeAPIGatewayV2(context.Background(), events.APIGatewayV2HTTPRequest{
+		RawPath:        "/x",
+		RawQueryString: "%zz",
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{Method: "GET", Path: "/x"},
+		},
+	})
+
+	if gotLog != nil {
+		t.Fatalf("expected no decode-failure record below P2, got %+v", gotLog)
+	}
+}
+
+func TestServeAPIGatewayV2_StreamingHandlerDeliversBufferedBody(t *testing.T) {
+	app := New()
+	app.Get("/sse", func(c *Context) (*Response, error) {
+		ch := make(chan SSEEvent, 2)
+		ch <- SSEEvent{ID: "1", Data: "first"}
+		ch <- SSEEvent{ID: "2", Data: "second"}
+		close(ch)
+		return SSEStreamResponse(c.Context(), 200, ch)
+	})
+
+	out := app.ServeAPIGatewayV2(context.Background(), events.APIGatewayV2HTTPRequest{
+		RawPath: "/sse",
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{Method: "GET", Path: "/sse"},
+		},
+	})
+
+	if out.StatusCode != 200 {
+		t.Fatalf("unexpected status: %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if ct := out.Headers["content-type"]; !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("expected text/event-stream content type, got %q", ct)
+	}
+	if out.Body == "" {
+		t.Fatal("expected non-empty SSE body: the v2 adapter must not silently drop a BodyReader payload")
+	}
+	if !strings.Contains(out.Body, "first") || !strings.Contains(out.Body, "second") {
+		t.Fatalf("expected drained SSE events in body, got %q", out.Body)
+	}
+}
+
+func TestServeAPIGatewayV2_LiveStreamingHandlerFailsClosed(t *testing.T) {
+	app := New()
+	app.Get("/live", func(c *Context) (*Response, error) {
+		ch := make(chan SSEEvent) // never written, never closed: a live listener
+		return SSEStreamResponse(c.Context(), 200, ch)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	out := app.ServeAPIGatewayV2(ctx, events.APIGatewayV2HTTPRequest{
+		RawPath: "/live",
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{Method: "GET", Path: "/live"},
+		},
+	})
+	elapsed := time.Since(start)
+
+	if elapsed > 2*time.Second {
+		t.Fatalf("live stream did not fail closed promptly (elapsed %s)", elapsed)
+	}
+	requireAPIGatewayV2StreamingError(t, out)
+}
+
+func requireLambdaFunctionURLStreamingError(t *testing.T, out events.LambdaFunctionURLResponse) {
+	t.Helper()
+	if out.StatusCode != 500 {
+		t.Fatalf("expected fail-closed status 500, got %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if ct := out.Headers["content-type"]; !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("expected JSON error content type, got %q", ct)
+	}
+	if !strings.Contains(out.Body, `"error"`) {
+		t.Fatalf("expected nested AppTheory error body, got %q", out.Body)
+	}
+	if !strings.Contains(out.Body, lambdaFunctionURLStreamingBodyErrorMessage) {
+		t.Fatalf("expected documented streaming error message in body, got %q", out.Body)
+	}
+}
+
+func TestLambdaFunctionURLResponseFromResponse_BuffersTerminatingBodyReader(t *testing.T) {
+	resp := Response{
+		Status:     200,
+		Headers:    map[string][]string{"content-type": {"text/event-stream"}},
+		BodyReader: strings.NewReader("data: hello\n\n"),
+	}
+	out := lambdaFunctionURLResponseFromResponse(context.Background(), resp)
+	if out.StatusCode != 200 {
+		t.Fatalf("unexpected status: %d", out.StatusCode)
+	}
+	if out.Body != "data: hello\n\n" {
+		t.Fatalf("expected drained body, got %q", out.Body)
+	}
+	if out.Headers["content-type"] != "text/event-stream" {
+		t.Fatalf("expected content-type preserved, got %#v", out.Headers)
+	}
+}
+
+func TestLambdaFunctionURLResponseFromResponse_NonTerminatingBodyReaderFailsClosed(t *testing.T) {
+	pr, _ := io.Pipe() // never written, never closed: a live stream
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	out := lambdaFunctionURLResponseFromResponse(ctx, Response{Status: 200, BodyReader: pr})
+	elapsed := time.Since(start)
+
+	if elapsed > 2*time.Second {
+		t.Fatalf("non-terminating body did not fail closed promptly (elapsed %s)", elapsed)
+	}
+	requireLambdaFunctionURLStreamingError(t, out)
+}
+
+func TestLambdaFunctionURLResponseFromResponse_BodyReaderOverrunFailsClosed(t *testing.T) {
+	over := bytes.NewReader(make([]byte, apigatewayV2StreamingBodyMaxBytes+1))
+	out := lambdaFunctionURLResponseFromResponse(context.Background(), Response{Status: 200, BodyReader: over})
+	if out.StatusCode != 413 {
+		t.Fatalf("expected payload-too-large status 413, got %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if !strings.Contains(out.Body, errorMessageResponseTooLarge) {
+		t.Fatalf("expected response-too-large message in body, got %q", out.Body)
+	}
+	if !strings.Contains(out.Body, `"app.too_large"`) {
+		t.Fatalf("expected app.too_large error code in body, got %q", out.Body)
+	}
+}
+
+func TestLambdaFunctionURLResponseFromResponse_DrainsBodyStream(t *testing.T) {
+	resp := Response{
+		Status:     200,
+		Headers:    map[string][]string{"content-type": {"text/html; charset=utf-8"}},
+		BodyStream: StreamBytes([]byte("a"), []byte("b")),
+	}
+	out := lambdaFunctionURLResponseFromResponse(context.Background(), resp)
+	if out.StatusCode != 200 {
+		t.Fatalf("unexpected status: %d", out.StatusCode)
+	}
+	if out.Body != "ab" {
+		t.Fatalf("expected drained stream body, got %q", out.Body)
+	}
+}
+
+func TestLambdaFunctionURLResponseFromResponse_BodyStreamErrorFailsClosed(t *testing.T) {
+	resp := Response{Status: 200, BodyStream: StreamError(errors.New("boom"))}
+	out := lambdaFunctionURLResponseFromResponse(context.Background(), resp)
+	requireLambdaFunctionURLStreamingError(t, out)
+}
+
+func TestServeLambdaFunctionURL_StreamingHandlerDeliversBufferedBody(t *testing.T) {
+	app := New()
+	app.Get("/sse", func(c *Context) (*Response, error) {
+		ch := make(chan SSEEvent, 2)
+		ch <- SSEEvent{ID: "1", Data: "first"}
+		ch <- SSEEvent{ID: "2", Data: "second"}
+		close(ch)
+		return SSEStreamResponse(c.Context(), 200, ch)
+	})
+
+	out := app.ServeLambdaFunctionURL(context.Background(), events.LambdaFunctionURLRequest{
+		RawPath: "/sse",
+		RequestContext: events.LambdaFunctionURLRequestContext{
+			HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "GET", Path: "/sse"},
+		},
+	})
+
+	if out.StatusCode != 200 {
+		t.Fatalf("unexpected status: %d (body: %q)", out.StatusCode, out.Body)
+	}
+	if ct := out.Headers["content-type"]; !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("expected text/event-stream content type, got %q", ct)
+	}
+	if out.Body == "" {
+		t.Fatal("expected non-empty SSE body: the Function URL adapter must not silently drop a BodyReader payload")
+	}
+	if !strings.Contains(out.Body, "first") || !strings.Contains(out.Body, "second") {
+		t.Fatalf("expected drained SSE events in body, got %q", out.Body)
+	}
+}
+
+func TestServeLambdaFunctionURL_LiveStreamingHandlerFailsClosed(t *testing.T) {
+	app := New()
+	app.Get("/live", func(c *Context) (*Response, error) {
+		ch := make(chan SSEEvent) // never written, never closed: a live listener
+		return SSEStreamResponse(c.Context(), 200, ch)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	out := app.ServeLambdaFunctionURL(ctx, events.LambdaFunctionURLRequest{
+		RawPath: "/live",
+		RequestContext: events.LambdaFunctionURLRequestContext{
+			HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{Method: "GET", Path: "/live"},
+		},
+	})
+	elapsed := time.Since(start)
+
+	if elapsed > 2*time.Second {
+		t.Fatalf("live stream did not fail closed promptly (elapsed %s)", elapsed)
+	}
+	requireLambdaFunctionURLStreamingError(t, out)
+}
+
+// deadlineCtxWithNilError is a context whose Deadline() is already in the past
+// but whose Err() stays nil and whose Done() never fires. It models the exact
+// guard-check instant inside the parent-cancel propagation window: the drain
+// deadline has been reached by wall clock, but cancellation has not made
+// itself observable through ctx.Err() yet. The pre-fix guard (ctx.Err() != nil
+// only) misses on this context and returns the silent empty body; the
+// wall-clock deadline comparison catches it deterministically.
+type deadlineCtxWithNilError struct {
+	context.Context // delegates Value() to context.Background()
+	deadline        time.Time
+}
+
+func (d deadlineCtxWithNilError) Deadline() (time.Time, bool) { return d.deadline, true }
+func (d deadlineCtxWithNilError) Done() <-chan struct{}       { return nil }
+func (d deadlineCtxWithNilError) Err() error                  { return nil }
+
+// TestDrainBodyReaderForAPIGatewayV2_EmptyEOFAtDeadlineFailsClosed pins the
+// fail-closed guard against the parent-cancel propagation race: an empty EOF
+// that lands in the drain select while ctx.Err() is still nil must fail closed
+// when the drain deadline has been reached by wall clock. No sleeps, no timing
+// dependence: the deadline is pinned to the past and the context never fires.
+func TestDrainBodyReaderForAPIGatewayV2_EmptyEOFAtDeadlineFailsClosed(t *testing.T) {
+	pr, pw := io.Pipe()
+	if err := pw.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
+
+	// The pipe writer already unwound (reader sees an empty EOF) and the drain
+	// deadline is already in the past: the guard-check instant is the one where
+	// the parent-cancel propagation has not made ctx.Err() observable yet.
+	ctx := deadlineCtxWithNilError{context.Background(), time.Now().Add(-time.Second)}
+	body, err := drainBodyReaderForAPIGatewayV2(ctx, pr)
+	if err == nil {
+		t.Fatalf("empty EOF at the drain deadline must fail closed, got body %q with nil error (silent empty 200)", body)
+	}
+	if len(body) != 0 {
+		t.Fatalf("fail-closed drain must not return content, got %q", body)
+	}
+}
+
+// TestDrainBodyReaderForAPIGatewayV2_EmptyEOFBeforeDeadlineIsLegitimate pins
+// the no-false-positive invariant: a legitimately empty terminating stream
+// that ends before the drain deadline still returns its empty body (empty 200,
+// not a 500).
+func TestDrainBodyReaderForAPIGatewayV2_EmptyEOFBeforeDeadlineIsLegitimate(t *testing.T) {
+	pr, pw := io.Pipe()
+	if err := pw.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Hour))
+	defer cancel()
+	body, err := drainBodyReaderForAPIGatewayV2(ctx, pr)
+	if err != nil {
+		t.Fatalf("empty EOF before the deadline is a legitimate empty response, got error %v", err)
+	}
+	if len(body) != 0 {
+		t.Fatalf("expected empty body, got %q", body)
+	}
+}
+
+// TestDrainBodyReaderForAPIGatewayV2_EmptyEOFAfterParentCancelFailsClosed pins
+// the early parent-cancel branch of the guard (the MCP session-listener unwind
+// after its request context expires): an empty EOF must fail closed even when
+// the wall clock is still before the drain deadline.
+func TestDrainBodyReaderForAPIGatewayV2_EmptyEOFAfterParentCancelFailsClosed(t *testing.T) {
+	pr, pw := io.Pipe()
+	if err := pw.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the parent request context already fired
+	body, err := drainBodyReaderForAPIGatewayV2(ctx, pr)
+	if err == nil {
+		t.Fatalf("empty EOF after parent cancel must fail closed, got body %q with nil error (silent empty 200)", body)
+	}
+	if len(body) != 0 {
+		t.Fatalf("fail-closed drain must not return content, got %q", body)
+	}
+}
+
+// TestDrainBodyReaderForAPIGatewayV2_NonEmptyEOFDelivered pins the
+// non-empty-completed-drain invariant: content read before termination is
+// delivered regardless of the deadline, so legitimate content never turns into
+// a false 500.
+func TestDrainBodyReaderForAPIGatewayV2_NonEmptyEOFDelivered(t *testing.T) {
+	pr, pw := io.Pipe()
+	// io.Pipe writes are synchronous and block until the reader consumes
+	// them, so the producer writes and closes from a goroutine while the
+	// drain reads.
+	go func() {
+		if _, err := pw.Write([]byte("data: hello\n\n")); err != nil {
+			t.Errorf("write pipe: %v", err)
+		}
+		if err := pw.Close(); err != nil {
+			t.Errorf("close pipe writer: %v", err)
+		}
+	}()
+
+	// Even with the deadline already reached, non-empty content must pass
+	// through: the guard only treats an empty EOF as non-terminating.
+	ctx := deadlineCtxWithNilError{context.Background(), time.Now().Add(-time.Second)}
+	body, err := drainBodyReaderForAPIGatewayV2(ctx, pr)
+	if err != nil {
+		t.Fatalf("non-empty completed drain must be delivered, got error %v", err)
+	}
+	if string(body) != "data: hello\n\n" {
+		t.Fatalf("expected drained content, got %q", body)
+	}
+}
+
+// TestDrainBodyStreamForAPIGatewayV2_EmptyCloseAtDeadlineFailsClosed pins the
+// same propagation-window guard on the BodyStream path: a stream that closed
+// empty while ctx.Err() is still nil must fail closed when the drain deadline
+// has been reached by wall clock.
+func TestDrainBodyStreamForAPIGatewayV2_EmptyCloseAtDeadlineFailsClosed(t *testing.T) {
+	ch := make(chan StreamChunk)
+	close(ch) // the producer unwound and closed the stream empty
+
+	ctx := deadlineCtxWithNilError{context.Background(), time.Now().Add(-time.Second)}
+	body, err := drainBodyStreamForAPIGatewayV2(ctx, ch)
+	if err == nil {
+		t.Fatalf("empty stream close at the drain deadline must fail closed, got body %q with nil error (silent empty 200)", body)
+	}
+	if len(body) != 0 {
+		t.Fatalf("fail-closed drain must not return content, got %q", body)
+	}
+}
+
+// TestDrainBodyStreamForAPIGatewayV2_EmptyCloseBeforeDeadlineIsLegitimate pins
+// the no-false-positive invariant on the BodyStream path.
+func TestDrainBodyStreamForAPIGatewayV2_EmptyCloseBeforeDeadlineIsLegitimate(t *testing.T) {
+	ch := make(chan StreamChunk)
+	close(ch)
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Hour))
+	defer cancel()
+	body, err := drainBodyStreamForAPIGatewayV2(ctx, ch)
+	if err != nil {
+		t.Fatalf("empty stream close before the deadline is a legitimate empty response, got error %v", err)
+	}
+	if len(body) != 0 {
+		t.Fatalf("expected empty body, got %q", body)
 	}
 }

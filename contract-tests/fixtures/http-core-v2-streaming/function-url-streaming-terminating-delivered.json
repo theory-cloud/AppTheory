@@ -1,0 +1,42 @@
+{
+  "id": "p0.adapter.lambda_function_url.streaming_terminating_delivered",
+  "tier": "p0",
+  "name": "Lambda Function URL: terminating streaming body is drained into the buffered response",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/sse", "handler": "sse_stream_two_events" }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "lambda_function_url",
+      "event": {
+        "version": "2.0",
+        "rawPath": "/sse",
+        "rawQueryString": "",
+        "cookies": [],
+        "headers": {},
+        "queryStringParameters": null,
+        "requestContext": { "http": { "method": "GET", "path": "/sse" } },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["text/event-stream"],
+        "cache-control": ["no-cache"],
+        "connection": ["keep-alive"]
+      },
+      "cookies": [],
+      "body": {
+        "encoding": "utf8",
+        "value": "id: 1\nevent: message\ndata: {\"ok\":true}\n\nid: 2\nevent: message\ndata: {\"ok\":false}\n\n"
+      },
+      "is_base64": false
+    }
+  }
+}

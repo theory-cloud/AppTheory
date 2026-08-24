@@ -474,3 +474,93 @@ func TestAppSyncDirectErrorHelpers(t *testing.T) {
 		t.Fatalf("unexpected error payload for response: %#v", payload)
 	}
 }
+
+func TestServeAppSync_DualBodyFailsClosedThroughEnvelope(t *testing.T) {
+	// The fail-closed dual-body response must produce the AppSync error
+	// envelope (pay_theory_error, SYSTEM_ERROR) exactly like the TS throw and
+	// Py raise do — at PR head Go emitted the portable {"error":{...}} shape
+	// because normalizeResponse formatted the error inline instead of routing
+	// it through the serve-error pipeline.
+	var gotLog *LogRecord
+	app := New(
+		WithTier(TierP2),
+		WithObservability(ObservabilityHooks{
+			Log: func(r LogRecord) {
+				copy := r
+				gotLog = &copy
+			},
+		}),
+	)
+	app.Post("/createThing", func(_ *Context) (*Response, error) {
+		return &Response{
+			Status:     200,
+			Headers:    map[string][]string{"content-type": {"text/html; charset=utf-8"}},
+			Body:       []byte("buffered"),
+			BodyStream: StreamBytes([]byte("streamed")),
+		}, nil
+	})
+
+	lc := &lambdacontext.LambdaContext{AwsRequestID: "aws_req_dual"}
+	out := app.ServeAppSync(lambdacontext.NewContext(context.Background(), lc), AppSyncResolverEvent{
+		Info: AppSyncResolverInfo{
+			FieldName:      "createThing",
+			ParentTypeName: "Mutation",
+		},
+	})
+
+	payload, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("expected appsync error payload, got %T", out)
+	}
+	if payload["pay_theory_error"] != true || payload["error_message"] != errorMessageInternal || payload["error_type"] != appSyncErrorTypeSystem {
+		t.Fatalf("unexpected appsync dual-body envelope: %#v", payload)
+	}
+
+	if gotLog == nil {
+		t.Fatal("expected P2 observability record for appsync dual-body failure")
+	}
+	if gotLog.ErrorCode != errorCodeInternal {
+		t.Fatalf("expected observability errorCode app.internal, got %q", gotLog.ErrorCode)
+	}
+	if gotLog.Status != 500 {
+		t.Fatalf("unexpected observability status: %d", gotLog.Status)
+	}
+}
+
+func TestServeAppSync_DecodeFailureObservabilityUsesParentTypeName(t *testing.T) {
+	var gotLog *LogRecord
+	app := New(
+		WithTier(TierP2),
+		WithClock(&advancingClock{now: time.Unix(0, 0).UTC(), step: 5 * time.Millisecond}),
+		WithObservability(ObservabilityHooks{
+			Log: func(r LogRecord) {
+				copy := r
+				gotLog = &copy
+			},
+		}),
+	)
+
+	const parentTypeQuery = "Query"
+	out := app.ServeAppSync(context.Background(), AppSyncResolverEvent{
+		Info: AppSyncResolverInfo{
+			FieldName:      "",
+			ParentTypeName: parentTypeQuery,
+		},
+	})
+
+	if _, ok := out.(map[string]any); !ok {
+		t.Fatalf("expected appsync error payload, got %T", out)
+	}
+	if gotLog == nil {
+		t.Fatal("expected decode failure to emit a log record")
+	}
+	// The decode-observability method dimension is the raw GraphQL parent
+	// type name (Query/Mutation, aligned with TS and Py), not the derived
+	// GET/POST verb.
+	if gotLog.Method != parentTypeQuery || gotLog.Path != "/" {
+		t.Fatalf("unexpected method/path: %q %q", gotLog.Method, gotLog.Path)
+	}
+	if gotLog.DurationMS <= 0 {
+		t.Fatalf("expected real decode duration, got %d", gotLog.DurationMS)
+	}
+}

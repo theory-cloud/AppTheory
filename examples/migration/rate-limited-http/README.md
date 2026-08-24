@@ -7,8 +7,8 @@ This example represents a common Lift-era pattern:
 
 The goal is to demonstrate an **end-to-end migration** of rate limiting to AppTheory’s TableTheory-backed port:
 
-- `github.com/theory-cloud/apptheory/v3/pkg/limited`
-- `github.com/theory-cloud/apptheory/v3/pkg/limited/middleware`
+- `github.com/theory-cloud/apptheory/v4/pkg/limited`
+- `github.com/theory-cloud/apptheory/v4/pkg/limited/middleware`
 
 ## Files
 

@@ -341,3 +341,73 @@ func TestServeSNS_ReturnsHandlerError(t *testing.T) {
 		t.Fatal("expected handler error to be returned")
 	}
 }
+
+func TestServeSQS_PanickingHandlerFailsClosedPerRecord(t *testing.T) {
+	t.Parallel()
+
+	app := New()
+	app.SQS("queue1", func(_ *EventContext, msg events.SQSMessage) error {
+		if msg.MessageId == "2" {
+			panic("boom")
+		}
+		return nil
+	})
+
+	out := app.ServeSQS(context.Background(), events.SQSEvent{
+		Records: []events.SQSMessage{
+			{MessageId: "1", EventSourceARN: "arn:aws:sqs:us-east-1:123:queue1"},
+			{MessageId: "2", EventSourceARN: "arn:aws:sqs:us-east-1:123:queue1"},
+		},
+	})
+
+	// A panicking record handler must not take down the whole batch: the
+	// panicking record is reported as a batch failure and the healthy record
+	// still succeeds.
+	if len(out.BatchItemFailures) != 1 || out.BatchItemFailures[0].ItemIdentifier != "2" {
+		t.Fatalf("unexpected failures: %#v", out.BatchItemFailures)
+	}
+}
+
+func TestServeKinesis_PanickingHandlerFailsClosedPerRecord(t *testing.T) {
+	t.Parallel()
+
+	app := New()
+	app.Kinesis("stream1", func(_ *EventContext, record events.KinesisEventRecord) error {
+		if record.Kinesis.SequenceNumber == "seq-2" {
+			panic("boom")
+		}
+		return nil
+	})
+
+	out := app.ServeKinesis(context.Background(), events.KinesisEvent{
+		Records: []events.KinesisEventRecord{
+			{Kinesis: events.KinesisRecord{SequenceNumber: "seq-1"}, EventSourceArn: "arn:aws:kinesis:us-east-1:123:stream/stream1"},
+			{Kinesis: events.KinesisRecord{SequenceNumber: "seq-2"}, EventSourceArn: "arn:aws:kinesis:us-east-1:123:stream/stream1"},
+		},
+	})
+
+	if len(out.BatchItemFailures) != 1 || out.BatchItemFailures[0].ItemIdentifier != "seq-2" {
+		t.Fatalf("unexpected failures: %#v", out.BatchItemFailures)
+	}
+}
+
+func TestServeSNS_PanickingHandlerMapsToEventWorkloadError(t *testing.T) {
+	t.Parallel()
+
+	app := New()
+	app.SNS("topic1", func(_ *EventContext, _ events.SNSEventRecord) (any, error) {
+		panic("boom")
+	})
+
+	_, err := app.ServeSNS(context.Background(), events.SNSEvent{
+		Records: []events.SNSEventRecord{
+			{SNS: events.SNSEntity{TopicArn: "arn:aws:sns:us-east-1:123:topic1"}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected panicking SNS handler to map to an error")
+	}
+	if err.Error() != eventWorkloadFailedMessage {
+		t.Fatalf("expected established event-workload error, got %q", err.Error())
+	}
+}

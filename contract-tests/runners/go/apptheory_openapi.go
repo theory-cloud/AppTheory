@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
 
 func isOpenAPIContractFixture(f Fixture) bool {

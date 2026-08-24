@@ -60,7 +60,7 @@ REPO="theory-cloud/AppTheory"
 PYTHON_VERSION="${VERSION/-rc/rc0}"
 
 # Go resolves the immutable git tag.
-go get "github.com/theory-cloud/apptheory/v3@${TAG}"
+go get "github.com/theory-cloud/apptheory/v4@${TAG}"
 
 # TypeScript and Python install from verified GitHub Release assets.
 gh release download "${TAG}" --repo "${REPO}" \
@@ -77,7 +77,7 @@ python -m pip install "./apptheory-${PYTHON_VERSION}-py3-none-any.whl"
 
 | | |
 |---|---|
-| **Contract test fixtures** | 265 total — 263 shared runtime fixtures plus two Go/CDK-TS MCP route/facade expectation tables | <!-- apptheory-fixture-count: 265 -->
+| **Contract test fixtures** | 272 total — 270 shared runtime fixtures plus two Go/CDK-TS MCP route/facade expectation tables | <!-- apptheory-fixture-count: 272 -->
 | **Runtimes** | Go · TypeScript · Python (peers, not ports) |
 | **Tiers** | P0 (core) · P1 (+request-id, auth, CORS, guardrails) · P2 (+duration-aware observability hooks, inbound trace recording, EMF metric sink path, rate limiting) — default P2 |
 | **Event sources** | Lambda Function URL · API Gateway v2 · ALB · AppSync · SQS · EventBridge · DynamoDB Streams · Kinesis · WebSockets |
@@ -90,7 +90,7 @@ python -m pip install "./apptheory-${PYTHON_VERSION}-py3-none-any.whl"
 Use AppTheory when you want AWS-Lambda-backed services that are:
 
 - **Serverless-first** — one unified `HandleLambda` entrypoint dispatches Lambda Function URL, API Gateway v2, ALB, AppSync, SQS, EventBridge, DynamoDB Streams, Kinesis, and WebSockets. The same handler shape covers every event source.
-- **Cross-language consistent** — one routing model, one middleware order, one error envelope — across three runtimes — with drift prevention on the full shared corpus. Go, TypeScript, and Python execute 263 shared runtime fixtures, including MCP, OAuth, and objectstore; the two remaining contract vectors pin the deliberately two-leg Go/CDK-TS MCP route algebra and facade inventory. <!-- apptheory-fixture-count: 265 -->
+- **Cross-language consistent** — one routing model, one middleware order, one error envelope — across three runtimes — with drift prevention on the full shared corpus. Go, TypeScript, and Python execute 270 shared runtime fixtures, including MCP, OAuth, and objectstore; the two remaining contract vectors pin the deliberately two-leg Go/CDK-TS MCP route algebra and facade inventory. <!-- apptheory-fixture-count: 272 -->
 - **Generative-coding friendly** — explicit tiers, canonical patterns, and strict verification so AI-generated code stays correct and maintainable.
 
 ✅ Treat routing, middleware, and event normalization as a contract
@@ -122,7 +122,7 @@ AppTheory includes a complete [Model Context Protocol](https://modelcontextproto
 
 ## Documentation
 
-The full documentation site lives at **[apptheory.theorycloud.ai](https://apptheory.theorycloud.ai/)**. It is published from the `staging` integration branch; stable release authority remains the versioned packages, release notes, and API snapshots.
+The full documentation site lives at **[apptheory.theorycloud.ai](https://apptheory.theorycloud.ai/)**. It is published from the `staging` integration branch (every push redeploys), and once the pages workflow is promoted to `main`, each stable release also deploys its tag's docs stamped with the release version; stable release authority remains the versioned packages, release notes, and API snapshots.
 
 **Most-used entry points:**
 
@@ -145,7 +145,7 @@ The full documentation site lives at **[apptheory.theorycloud.ai](https://appthe
 
 **Contract reference and feature pages:**
 
-- [Contract Fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/) — 265 contract vectors: 263 across Go/TypeScript/Python plus two Go/CDK-TS MCP route/facade tables <!-- apptheory-fixture-count: 265 -->
+- [Contract Fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/) — 272 contract vectors: 270 across Go/TypeScript/Python plus two Go/CDK-TS MCP route/facade tables <!-- apptheory-fixture-count: 272 -->
 - [Event Shape Dispatch](https://apptheory.theorycloud.ai/reference/event-shapes/) — which Lambda event shapes route to which handler
 - [HTTP Runtime](https://apptheory.theorycloud.ai/features/http-runtime/) — P0/P1/P2 tier surface
 - [Jobs Ledger](https://apptheory.theorycloud.ai/features/jobs-ledger/)
@@ -174,7 +174,7 @@ The full documentation site lives at **[apptheory.theorycloud.ai](https://appthe
 | `py/` | Python runtime (3.12+) |
 | `cdk/` | CDK constructs (jsii) — `AppTheoryHttpApi`, `AppTheoryMcpServer`, `AppTheoryQueue`, ... |
 | `cdk-go/` | Generated Go bindings for the jsii CDK package |
-| `contract-tests/` | 265 contract vectors: 263 runner fixtures for Go/TS/Python plus two shared Go/CDK-TS route/facade tables | <!-- apptheory-fixture-count: 265 -->
+| `contract-tests/` | 272 contract vectors: 270 runner fixtures for Go/TS/Python plus two shared Go/CDK-TS route/facade tables | <!-- apptheory-fixture-count: 272 -->
 | `api-snapshots/` | Public API surface lockfiles for each runtime — the release gate |
 | `examples/` | CDK + handler examples: `multilang`, `import-pipeline`, `ssr-site`, MCP, ... |
 | `.github/workflows/` | CI: rubric, release-please (stable + prerelease), Pages publish, subtree publish |
@@ -209,7 +209,7 @@ import (
     "encoding/json"
 
     "github.com/aws/aws-lambda-go/lambda"
-    apptheory "github.com/theory-cloud/apptheory/v3/runtime"
+    apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
 
 func main() {

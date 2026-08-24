@@ -3,7 +3,7 @@ package mcp
 import (
 	"encoding/json"
 
-	mcpruntime "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+	mcpruntime "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
 
 // InitializeRequest builds a JSON-RPC initialize request.

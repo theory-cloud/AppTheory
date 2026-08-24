@@ -50,6 +50,18 @@ export function normalizeResponse(
     throw new TypeError("bodyStream cannot be used with isBase64=true");
   }
 
+  // A response must carry exactly one body representation. A non-empty
+  // buffered body combined with a streaming body is divergent: the buffered
+  // adapters drain the stream and replace the buffered body, while the v1
+  // proxy adapter ignores bodyStream entirely and the v1 streaming adapter
+  // composes only body + BodyReader. The same handler response would produce
+  // different wire bytes on different adapters, so the normalizer fails
+  // closed on the ambiguous shape instead of letting adapters silently pick
+  // one representation.
+  if (body.length > 0 && bodyStream) {
+    throw new TypeError("bodyStream cannot be used with a non-empty body");
+  }
+
   return { status, headers, cookies, body, bodyStream, isBase64 };
 }
 

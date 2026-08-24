@@ -1,4 +1,4 @@
-module github.com/theory-cloud/apptheory/v3
+module github.com/theory-cloud/apptheory/v4
 
 go 1.26.6
 

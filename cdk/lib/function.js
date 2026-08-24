@@ -118,7 +118,7 @@ class AppTheoryFunction extends constructs_1.Construct {
 }
 exports.AppTheoryFunction = AppTheoryFunction;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryFunction[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryFunction", version: "3.3.0" };
+AppTheoryFunction[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryFunction", version: "4.0.0-rc" };
 function createManagedFunctionLogGroup(scope, logGroupName, retention, removalPolicy) {
     if (removalPolicy === aws_cdk_lib_1.RemovalPolicy.SNAPSHOT) {
         throw new Error("AppTheoryFunction cannot apply RemovalPolicy.SNAPSHOT because AWS::Logs::LogGroup does not support snapshot removal policies");

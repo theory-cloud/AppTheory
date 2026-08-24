@@ -1,0 +1,40 @@
+{
+  "id": "p0.adapter.lambda_function_url.streaming_overrun_fails_closed",
+  "tier": "p0",
+  "name": "Lambda Function URL: streaming body over the 4 MiB budget maps to 413 payload too large",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/big", "handler": "sse_stream_overrun" }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "lambda_function_url",
+      "event": {
+        "version": "2.0",
+        "rawPath": "/big",
+        "rawQueryString": "",
+        "cookies": [],
+        "headers": {},
+        "queryStringParameters": null,
+        "requestContext": { "http": { "method": "GET", "path": "/big" } },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 413,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.too_large",
+          "message": "response too large"
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

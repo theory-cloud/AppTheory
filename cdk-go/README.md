@@ -1,17 +1,17 @@
 # AppTheory CDK Go bindings
 
 `cdk-go/` contains the jsii-generated AppTheory CDK bindings. Runtime-only Go consumers depend on the repository root
-module (`github.com/theory-cloud/apptheory/v3`) and do not pull `aws-cdk-go`, `constructs-go`, or `jsii-runtime-go`
+module (`github.com/theory-cloud/apptheory/v4`) and do not pull `aws-cdk-go`, `constructs-go`, or `jsii-runtime-go`
 through the root `go.mod`.
 
 AppTheory v2 CDK consumers pin the independently tagged nested module and use its single canonical import path:
 
 ```bash
-go get github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3@v3.0.0-rc
+go get github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v4@v4.0.0-rc
 ```
 
 ```go
-import "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3"
+import "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v4"
 ```
 
 Each v2+ GitHub Release has two create-only Git refs at the same signed release commit:
@@ -23,7 +23,7 @@ The Go command derives the nested tag prefix from the module directory, so consu
 version suffix:
 
 ```bash
-go get github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v3@v3.0.0
+go get github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v4@v4.0.0
 ```
 
 The serialized prerelease/stable publisher creates only absent refs, accepts an existing ref only when it already

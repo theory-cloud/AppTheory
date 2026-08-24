@@ -9,7 +9,7 @@ This guide explains how to expose an **MCP (Model Context Protocol)** server fro
 
 AppTheory provides two building blocks:
 
-- **Runtime (Go):** `github.com/theory-cloud/apptheory/v3/runtime/mcp` — a dual-version MCP JSON-RPC handler
+- **Runtime (Go):** `github.com/theory-cloud/apptheory/v4/runtime/mcp` — a dual-version MCP JSON-RPC handler
   (`server/discover`, `initialize`, `tools/*`, plus optional `resources/*` and `prompts/*`), registries, sessions, and
   optional SSE progress streaming.
 - **CDK (TypeScript/Python):** `AppTheoryMcpServer` — an API Gateway v2 route-family facade. Its default is the
@@ -61,8 +61,8 @@ import (
   "github.com/aws/aws-lambda-go/events"
   "github.com/aws/aws-lambda-go/lambda"
 
-  apptheory "github.com/theory-cloud/apptheory/v3/runtime"
-  "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+  apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+  "github.com/theory-cloud/apptheory/v4/runtime/mcp"
 )
 
 func serviceVersion() string {
@@ -250,7 +250,7 @@ For persistent session storage, use the DynamoDB-backed store:
 import (
   "os"
 
-  "github.com/theory-cloud/apptheory/v3/runtime/mcp"
+  "github.com/theory-cloud/apptheory/v4/runtime/mcp"
   "github.com/theory-cloud/tabletheory/v3"
   "github.com/theory-cloud/tabletheory/v3/pkg/session"
 )
@@ -292,7 +292,11 @@ Important adapter note:
 
 - True incremental SSE streaming requires a response-streaming adapter.
   AppTheory’s streaming response (`SSEStreamResponse`) is supported by the API Gateway **REST API v1** adapter (`ServeAPIGatewayProxy` via `HandleLambda`).
-  If you deploy behind an adapter that buffers (common with HTTP API v2), clients may only receive progress once the tool finishes.
+- The HTTP API v2 adapter cannot stream: it drains a streaming body only when the stream terminates within a bounded
+  budget (4 MiB / 5 seconds) and otherwise fails closed with HTTP 500
+  (`{"error":{"code":"app.internal","message":"streaming response body cannot be delivered by the HTTP API v2 adapter"}}`).
+  A long-running streaming tool served through HTTP API v2 therefore receives an explicit error instead of a silent
+  empty `200`.
 
 ### Implement a streaming tool
 
@@ -354,8 +358,8 @@ import (
   "context"
   "testing"
 
-  mcptest "github.com/theory-cloud/apptheory/v3/testkit/mcp"
-  "github.com/theory-cloud/apptheory/v3/testkit"
+  mcptest "github.com/theory-cloud/apptheory/v4/testkit/mcp"
+  "github.com/theory-cloud/apptheory/v4/testkit"
 )
 
 func TestMcpServer(t *testing.T) {

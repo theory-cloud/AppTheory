@@ -195,6 +195,8 @@ test("mcp 2026-07-28 requests stay stateless", async () => {
     headers: { [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION_2026_07_28] },
   });
   assert.equal(deleted.status, 405);
+  // RFC 9110 15.5.5: the stateless 2026-07-28 shape permits only POST.
+  assert.deepEqual(deleted.headers["allow"], ["POST"]);
 });
 
 test("mcp 2026-07-28 tools support multi-round input_required results", async () => {
@@ -494,7 +496,10 @@ test("mcp server handles core HTTP, registry, and session paths", async () => {
     messages: [{ role: "user", content: textBlock(`Hello ${args.name}`) }],
   }));
 
-  assert.equal((await server.serve({ method: "PATCH" })).status, 405);
+  const patched = await server.serve({ method: "PATCH" });
+  assert.equal(patched.status, 405);
+  // RFC 9110 15.5.5: the MCP endpoint registers GET, POST, DELETE.
+  assert.deepEqual(patched.headers["allow"], ["DELETE, GET, POST"]);
   assert.equal((await post(server, rpc("x", "ping"), { origin: ["https://blocked.example"] })).status, 403);
   assert.match(JSON.stringify(await json(await server.serve({ method: "POST", headers: { accept: ["application/json, text/event-stream"] }, body: "{}" }))), /Content-Type/);
   assert.match(JSON.stringify(await json(await server.serve({ method: "POST", headers: { "content-type": ["application/json"], accept: ["application/json"] }, body: "{}" }))), /Accept/);
