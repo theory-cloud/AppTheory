@@ -1909,6 +1909,7 @@ type AppTheoryError struct {
 	TraceID    string
 	Timestamp  time.Time
 	StackTrace string
+	Headers    map[string][]string
 	Cause      error
 }
 
@@ -2639,6 +2640,8 @@ func (*AppTheoryError) Unwrap() error
 func (*AppTheoryError) WithCause(error) *AppTheoryError
 
 func (*AppTheoryError) WithDetails(map[string]any) *AppTheoryError
+
+func (*AppTheoryError) WithHeaders(map[string][]string) *AppTheoryError
 
 func (*AppTheoryError) WithRequestID(string) *AppTheoryError
 

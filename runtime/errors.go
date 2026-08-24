@@ -223,7 +223,7 @@ func responseForError(err error) Response {
 func responseForErrorWithFormat(format HTTPErrorFormat, err error) Response {
 	var portableErr *AppTheoryError
 	if errors.As(err, &portableErr) {
-		return errorResponseFromAppTheoryErrorWithFormat(format, portableErr, nil, "")
+		return errorResponseFromAppTheoryErrorWithFormat(format, portableErr, portableErr.Headers, "")
 	}
 	var appErr *AppError
 	if errors.As(err, &appErr) {
@@ -248,7 +248,7 @@ func responseForErrorWithRequestIDTraceIDAndFormat(format HTTPErrorFormat, err e
 			copied.TraceID = strings.TrimSpace(traceID)
 			portableErr = &copied
 		}
-		return errorResponseFromAppTheoryErrorWithFormat(format, portableErr, nil, requestID)
+		return errorResponseFromAppTheoryErrorWithFormat(format, portableErr, portableErr.Headers, requestID)
 	}
 	var appErr *AppError
 	if errors.As(err, &appErr) {

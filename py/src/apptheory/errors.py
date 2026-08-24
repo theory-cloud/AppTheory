@@ -40,6 +40,12 @@ class AppTheoryError(Exception):
     Return AppTheoryError from framework and application code when the runtime
     should preserve status, details, request, trace, timestamp, stack, or cause
     metadata in the AppTheory error envelope.
+
+    ``headers`` carries a bounded caller-supplied response header set. The HTTP
+    error renderer merges them (canonicalized) into the error response, so a
+    SecureApp principal resolver can attach a ``WWW-Authenticate`` challenge to
+    a 401/403 denial. The existing response vocabulary is unchanged: ``None``
+    or empty ``headers`` renders byte-identical to before.
     """
 
     code: str
@@ -50,10 +56,15 @@ class AppTheoryError(Exception):
     trace_id: str = ""
     timestamp: str = ""
     stack_trace: str = ""
+    headers: dict[str, Any] | None = None
     cause: Exception | None = None
 
     def __str__(self) -> str:
         return f"{self.code}: {self.message}"
+
+    def with_headers(self, headers: dict[str, Any]) -> AppTheoryError:
+        self.headers = headers
+        return self
 
     def with_details(self, details: dict[str, Any]) -> AppTheoryError:
         self.details = details
@@ -302,7 +313,7 @@ def response_for_error(exc: Exception) -> Response:
 
 def response_for_error_with_format(error_format: str, exc: Exception) -> Response:
     if isinstance(exc, AppTheoryError):
-        return error_response_from_app_theory_error_with_format(error_format, exc)
+        return error_response_from_app_theory_error_with_format(error_format, exc, headers=exc.headers)
     if isinstance(exc, AppError):
         return error_response_with_format(error_format, exc.code, exc.message)
     return error_response_with_format(error_format, "app.internal", "internal error")
@@ -326,6 +337,7 @@ def response_for_error_with_request_id_trace_id_and_format(
         return error_response_from_app_theory_error_with_format(
             error_format,
             exc,
+            headers=exc.headers,
             request_id=request_id,
             trace_id=trace_id,
         )
