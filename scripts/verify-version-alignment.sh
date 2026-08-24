@@ -280,12 +280,17 @@ allowed_suffixes = ("/v4", "/cdk-go")
 # Release-pinned documentation (docs/_config_versions.yml) documents the
 # released v3.3.0 version, whose /v3 module path is historically accurate
 # and remains fetchable; the release PR advances it to /v4 with the v4.0.0
-# bump. cmd/apptheory-init/main_test.go pins a v3.0.0-rc scaffold to prove
+# bump. docs/_data/runtimes.yml is that mechanism's checked-in local-preview
+# fallback: it pins the latest published release (today v3.3.0 on the /v3
+# module path) so local previews never advertise an unpublished tag, and
+# pages.yml derives the live Go install from the deploy tag at build time.
+# cmd/apptheory-init/main_test.go pins a v3.0.0-rc scaffold to prove
 # the version->module-major derivation still maps v3-era pins to /v3.
 # Everything else must reference the staged /v4 import path.
 skip_files = {
     Path("cmd/apptheory-init/main_test.go"),
     Path("docs/_config_versions.yml"),
+    Path("docs/_data/runtimes.yml"),
 }
 skip_parts = {
     ".git",

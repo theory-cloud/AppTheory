@@ -11,11 +11,23 @@ The Go runtime is the most complete implementation of the AppTheory contract and
 
 The Go toolchain resolves modules from the immutable git tag — no registry is involved beyond Go's standard proxy.
 
+{%- assign go_rt = site.tabletheory.runtimes | where: "id", "go" | first -%}
+{%- if go_rt.install == nil or go_rt.install contains "X.Y.Z" -%}
+  {%- assign go_fallback = site.data.runtimes | where: "id", "go" | first -%}
+  {%- assign go_install_cmd = go_fallback.install -%}
+{%- else -%}
+  {%- assign go_install_cmd = go_rt.install -%}
+{%- endif -%}
+
 ```bash
-go get github.com/theory-cloud/apptheory/v4@v4.0.0-rc
+{{ go_install_cmd }}
 ```
 
-Pin a specific release tag from the [releases page](https://github.com/theory-cloud/AppTheory/releases). AppTheory does not publish to the npm or PyPI registries; the Go module is the only language artifact that ships through Go's normal toolchain path.
+The command is stamped from the latest published release at Pages build time (pages.yml resolves it with
+`gh release view`), so the module path and version always match a release that actually exists. Pin a specific release
+tag from the [releases page](https://github.com/theory-cloud/AppTheory/releases) when you need a different line.
+AppTheory does not publish to the npm or PyPI registries; the Go module is the only language artifact that ships through
+Go's normal toolchain path.
 
 Module layout (see `api-snapshots/go.txt` for the exact exported surface):
 

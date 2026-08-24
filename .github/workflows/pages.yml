@@ -48,6 +48,15 @@
 # docs/index.html falls back to the pinned versions in docs/_data/runtimes.yml,
 # so local preview shows real versions. The override is git-ignored.
 #
+# The Go install string is the one runtime snippet the placeholders cannot
+# express: Go semantic import versioning bakes the module major into the path
+# (/v3, /v4, ...), which is a function of the release, not a constant. The
+# derive step below rewrites the override's Go install from the deploy tag, so
+# the live docs can never advertise a Go module version/tag that has not been
+# published (for example the staged /v4 path paired with a v3 tag, or an
+# in-flight RC tag). docs/_data/runtimes.yml pins the same derived shape for
+# the latest published release as the checked-in local-preview fallback.
+#
 # The generator runs from the checkout: it is present on `staging` and on
 # every release tag cut after this workflow lands. Dispatching with a tag
 # older than that fails fast in the generator step — deploy such tags by
@@ -193,6 +202,43 @@ jobs:
             --config docs/_config.yml \
             --output docs/_config_versions.yml
 
+      - name: Derive Go install from deploy tag
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Go semantic import versioning bakes the module major into the
+          # import path (/v3, /v4, ...), so the Go install cannot be a
+          # constant the generator stamps. Derive it from the resolved deploy
+          # tag: the module path carries the tag's major and the pinned
+          # version IS the tag. The resolve step only ever produces a
+          # published stable release (gh release view excludes drafts and
+          # prereleases; the tag input path refuses them explicitly), so the
+          # stamped Go install can never advertise an unpublished version.
+          go_major="${TAG#v}"
+          go_major="${go_major%%.*}"
+          if [[ ! "${go_major}" =~ ^[0-9]+$ ]]; then
+            echo "could not derive Go module major from tag '${TAG}'" >&2
+            exit 1
+          fi
+          ruby -ryaml -e '
+            path = ARGV[0]
+            tag = ARGV[1]
+            go_major = ARGV[2]
+            override = YAML.safe_load(File.read(path)) or {}
+            runtimes = override.dig("tabletheory", "runtimes")
+            abort "error: #{path} has no tabletheory.runtimes array" unless runtimes.is_a?(Array)
+            go = runtimes.find { |rt| rt.is_a?(Hash) && rt["id"] == "go" }
+            abort "error: #{path} has no go runtime entry" if go.nil?
+            install = go["install"]
+            unless install.is_a?(String) && install.include?("@#{tag}")
+              abort "error: go install in #{path} does not reference the deploy tag #{tag}: #{install.inspect}"
+            end
+            go["install"] = "go get github.com/theory-cloud/apptheory/v#{go_major}@#{tag}"
+            File.write(path, YAML.dump(override, line_width: -1))
+            puts "go install stamped to #{go["install"]}"
+          ' docs/_config_versions.yml "${TAG}" "${go_major}"
+
       - name: Jekyll build
         working-directory: docs
         env:
@@ -209,8 +255,18 @@ jobs:
         env:
           TAG: ${{ steps.resolve.outputs.tag }}
         run: |
+          go_major="${TAG#v}"
+          go_major="${go_major%%.*}"
           if ! grep -qF "theory-cloud-apptheory-${TAG#v}.tgz" _site/index.html; then
             echo "homepage does not show the stamped TypeScript install URL for tag ${TAG}" >&2
+            exit 1
+          fi
+          if ! grep -qF "go get github.com/theory-cloud/apptheory/v${go_major}@${TAG}" _site/index.html; then
+            echo "homepage does not show the stamped Go install URL for tag ${TAG}" >&2
+            exit 1
+          fi
+          if ! grep -qF "go get github.com/theory-cloud/apptheory/v${go_major}@${TAG}" _site/runtimes/go/index.html; then
+            echo "Go runtime page does not show the stamped Go install URL for tag ${TAG}" >&2
             exit 1
           fi
           if grep -qF 'vX.Y.Z' _site/index.html; then
