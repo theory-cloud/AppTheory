@@ -44,8 +44,8 @@ breaking wire changes from the [#956](https://github.com/theory-cloud/AppTheory/
 
 - Streaming responses on the HTTP API v2 and buffered Function URL adapters are no longer silently dropped. A
   terminating stream is drained into the buffered body within a bounded budget (4 MiB / 5 s), and a stream that does
-  not terminate in time or exceeds the byte budget fails closed with the documented HTTP 500 JSON error instead of
-  reaching clients as a 200 with an empty body and immediate EOF.
+  not terminate in time fails closed with the documented HTTP 500 JSON error instead of reaching clients as a 200
+  with an empty body and immediate EOF.
 - A streamed-body drain byte overrun maps to HTTP 413 payload too large with the `app.too_large` error shape, matching
   the buffered-body size semantics, instead of the generic 500 fail-closed shape. The 500 shape is retained only for
   non-size drain failures such as non-termination and stream errors.
