@@ -86,6 +86,42 @@ func resolvePrincipal(ctx *apptheory.Context) (*apptheory.SecurePrincipal, error
 Handlers read the result through `ctx.SecurePrincipal()`, `ctx.securePrincipal()`, or `ctx.secure_principal()`.
 Every call returns a new deep copy. Mutating it cannot change gate state, later dispatch, or another accessor result.
 
+## Denial response headers
+
+A `SecurePrincipalResolver` denial rendered through the portable error path can carry a bounded caller-supplied
+response header set on the resulting 401/403. Return `AppTheoryError` with `Headers` (Go), `headers` (TypeScript), or
+`headers` (Python) set, and the error renderer merges the canonicalized headers into the response. The driving case is
+MCP OAuth discovery: a protected resource must challenge the client with
+`WWW-Authenticate: Bearer resource_metadata="..."` (MCP spec 2025-06-18, RFC 9728) on a 401.
+
+```go
+return nil, apptheory.NewAppTheoryError("app.unauthorized", "unauthorized").
+    WithHeaders(map[string][]string{
+        "WWW-Authenticate": {oauth.ProtectedResourceWWWAuthenticate(metaURL)},
+    })
+```
+
+```ts
+throw new AppTheoryError("app.unauthorized", "unauthorized").withHeaders({
+  "WWW-Authenticate": [`Bearer resource_metadata="${metaURL}"`],
+});
+```
+
+```py
+raise AppTheoryError("app.unauthorized", "unauthorized").with_headers(
+    {"WWW-Authenticate": [f'Bearer resource_metadata="{meta_url}"']}
+)
+```
+
+The default denial vocabulary is unchanged. The 401/403 status is still derived from the error code
+(`app.unauthorized` → 401, `app.forbidden` → 403), and a denial without `Headers` renders byte-identical to previous
+releases: the same `{"error": {...}}` envelope, `content-type`, and request-id headers, with no `WWW-Authenticate`.
+Header names are canonicalized to lowercase through the existing header pipeline, and the error renderer continues to
+own `content-type`. On the P1/P2 portable serve path, `x-request-id` and any CORS headers are force-set after the
+caller headers are merged, so denial headers cannot spoof them; the P0 path does not force-set them, so it offers no such spoof protection. Denials
+synthesized by the gate itself (missing principal, unknown kind, missing scope) never carry headers; only the
+resolver's own returned error can attach them, keeping the closed surface explicit.
+
 ## Register routes
 
 Posture is a mandatory, non-variadic argument on HTTP, AppSync, and WebSocket registrations.

@@ -11,6 +11,12 @@ import (
 // Return AppTheoryError from framework and application code when the runtime
 // should preserve status, details, request, trace, timestamp, stack, or cause
 // metadata in the AppTheory error envelope.
+//
+// Headers carries a bounded caller-supplied response header set. The HTTP
+// error renderer merges them (canonicalized) into the error response, so a
+// SecureApp principal resolver can attach a WWW-Authenticate challenge to a
+// 401/403 denial. The existing response vocabulary is unchanged: a nil or
+// empty Headers renders byte-identical to today.
 type AppTheoryError struct {
 	Code       string
 	Message    string
@@ -20,6 +26,7 @@ type AppTheoryError struct {
 	TraceID    string
 	Timestamp  time.Time
 	StackTrace string
+	Headers    map[string][]string
 	Cause      error
 }
 
@@ -101,6 +108,16 @@ func (e *AppTheoryError) WithStatusCode(statusCode int) *AppTheoryError {
 		return nil
 	}
 	e.StatusCode = statusCode
+	return e
+}
+
+// WithHeaders sets the caller-supplied response headers rendered on the HTTP
+// error response, for example a WWW-Authenticate challenge on a 401 denial.
+func (e *AppTheoryError) WithHeaders(headers map[string][]string) *AppTheoryError {
+	if e == nil {
+		return nil
+	}
+	e.Headers = headers
 	return e
 }
 

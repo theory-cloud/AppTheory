@@ -203,7 +203,7 @@ export function responseForError(err) {
 }
 export function responseForErrorWithFormat(format, err) {
     if (err instanceof AppTheoryError) {
-        return errorResponseFromAppTheoryErrorWithFormat(format, err);
+        return errorResponseFromAppTheoryErrorWithFormat(format, err, err.headers ?? {});
     }
     if (err instanceof AppError) {
         return errorResponseWithFormat(format, err.code, err.message);
@@ -218,7 +218,7 @@ export function responseForErrorWithRequestIdAndFormat(format, err, requestId) {
 }
 export function responseForErrorWithRequestIdTraceIdAndFormat(format, err, requestId, traceId) {
     if (err instanceof AppTheoryError) {
-        return errorResponseFromAppTheoryErrorWithFormat(format, err, {}, requestId, traceId);
+        return errorResponseFromAppTheoryErrorWithFormat(format, err, err.headers ?? {}, requestId, traceId);
     }
     if (err instanceof AppError) {
         return errorResponseWithRequestIdTraceIdAndFormat(format, err.code, err.message, {}, requestId, traceId);

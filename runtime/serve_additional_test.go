@@ -209,6 +209,40 @@ func TestPortableServe_PolicyAndAuth_ErrorBranches(t *testing.T) {
 	})
 }
 
+func TestServePortable_PolicyDenialRelocatesSetCookie(t *testing.T) {
+	t.Parallel()
+
+	app := New(
+		WithTier(TierP2),
+		WithIDGenerator(fixedIDGenerator("req_1")),
+		WithPolicyHook(func(*Context) (*PolicyDecision, error) {
+			return &PolicyDecision{
+				Code:    errorCodeForbidden,
+				Message: "policy denied",
+				Headers: map[string][]string{
+					"Set-Cookie":  {"session=a; Path=/", "flash=done; Path=/; HttpOnly"},
+					"Retry-After": {"30"},
+				},
+			}, nil
+		}),
+	)
+	app.Get("/ok", func(*Context) (*Response, error) { return Text(200, "ok"), nil })
+
+	resp := app.Serve(context.Background(), Request{Method: "GET", Path: "/ok"})
+	if resp.Status != 403 {
+		t.Fatalf("expected 403 from policy denial, got %d", resp.Status)
+	}
+	if got := resp.Cookies; len(got) != 2 || got[0] != "session=a; Path=/" || got[1] != "flash=done; Path=/; HttpOnly" {
+		t.Fatalf("set-cookie must land in Cookies with order preserved, got %v", got)
+	}
+	if got, ok := resp.Headers["set-cookie"]; ok {
+		t.Fatalf("set-cookie must be absent from Headers, got %v", got)
+	}
+	if got := resp.Headers["retry-after"]; len(got) != 1 || got[0] != "30" {
+		t.Fatalf("non-cookie decision header must survive, got %v", got)
+	}
+}
+
 func TestPortableServe_MethodNotAllowed_WhenRouteExists(t *testing.T) {
 	t.Parallel()
 

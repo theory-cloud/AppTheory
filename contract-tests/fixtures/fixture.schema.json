@@ -61,7 +61,9 @@
       "additionalProperties": false,
       "properties": {
         "code": { "type": "string" },
-        "message": { "type": "string" }
+        "message": { "type": "string" },
+        "status_code": { "type": "integer" },
+        "headers": { "type": "object", "additionalProperties": true }
       }
     },
     "secureRoute": {

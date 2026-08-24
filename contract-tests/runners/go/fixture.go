@@ -178,8 +178,10 @@ type FixtureSecurePrincipal struct {
 }
 
 type FixtureSecureResolverError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code       string              `json:"code"`
+	Message    string              `json:"message"`
+	StatusCode int                 `json:"status_code,omitempty"`
+	Headers    map[string][]string `json:"headers,omitempty"`
 }
 
 type FixtureSecureStep struct {

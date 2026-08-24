@@ -1,0 +1,267 @@
+{
+  "id": "p2.secure_denial_challenge_headers",
+  "tier": "p2",
+  "name": "secure resolver denials can carry WWW-Authenticate challenge headers",
+  "setup": {
+    "secure_app": {
+      "tier": "p2",
+      "routes": [
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/mcp",
+          "handler": "secure_echo",
+          "posture": "authenticated"
+        },
+        {
+          "surface": "http",
+          "method": "GET",
+          "path": "/scoped",
+          "handler": "secure_echo",
+          "posture": "authenticated",
+          "scopes": [
+            "write"
+          ]
+        }
+      ]
+    }
+  },
+  "input": {
+    "secure_steps": [
+      {
+        "name": "plain-denial-no-challenge",
+        "operation": "http",
+        "resolver_error": {
+          "code": "app.unauthorized",
+          "message": "unauthorized"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "portable-denial-no-challenge",
+        "operation": "http",
+        "resolver_error": {
+          "code": "app.unauthorized",
+          "message": "unauthorized",
+          "status_code": 401
+        },
+        "request": {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "denial-carries-www-authenticate",
+        "operation": "http",
+        "resolver_error": {
+          "code": "app.unauthorized",
+          "message": "unauthorized",
+          "headers": {
+            "WWW-Authenticate": [
+              "Bearer resource_metadata=\"https://mcp.example.com/.well-known/oauth-protected-resource\""
+            ]
+          }
+        },
+        "request": {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "forbidden-denial-carries-bounded-headers",
+        "operation": "http",
+        "resolver_error": {
+          "code": "app.forbidden",
+          "message": "forbidden",
+          "headers": {
+            "WWW-Authenticate": [
+              "Bearer resource_metadata=\"https://mcp.example.com/.well-known/oauth-protected-resource\""
+            ],
+            "X-Denial-Reason": [
+              "insufficient_scope"
+            ]
+          }
+        },
+        "request": {
+          "method": "GET",
+          "path": "/scoped",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      },
+      {
+        "name": "denial-set-cookie-relocates-to-cookies",
+        "operation": "http",
+        "resolver_error": {
+          "code": "app.unauthorized",
+          "message": "unauthorized",
+          "headers": {
+            "Set-Cookie": [
+              "a=1; Path=/",
+              "b=2; Path=/"
+            ]
+          }
+        },
+        "request": {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
+      }
+    ]
+  },
+  "expect": {
+    "secure_steps": [
+      {
+        "name": "plain-denial-no-challenge",
+        "status": 401,
+        "error_code": "app.unauthorized",
+        "response": {
+          "status": 401,
+          "headers": {
+            "content-type": [
+              "application/json; charset=utf-8"
+            ],
+            "x-request-id": [
+              "req_test_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body": {
+            "encoding": "utf8",
+            "value": "{\"error\":{\"code\":\"app.unauthorized\",\"message\":\"unauthorized\",\"request_id\":\"req_test_123\"}}"
+          }
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "portable-denial-no-challenge",
+        "status": 401,
+        "error_code": "app.unauthorized",
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "denial-carries-www-authenticate",
+        "status": 401,
+        "error_code": "app.unauthorized",
+        "response": {
+          "status": 401,
+          "headers": {
+            "content-type": [
+              "application/json; charset=utf-8"
+            ],
+            "x-request-id": [
+              "req_test_123"
+            ],
+            "www-authenticate": [
+              "Bearer resource_metadata=\"https://mcp.example.com/.well-known/oauth-protected-resource\""
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body": {
+            "encoding": "utf8",
+            "value": "{\"error\":{\"code\":\"app.unauthorized\",\"message\":\"unauthorized\",\"request_id\":\"req_test_123\"}}"
+          }
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "forbidden-denial-carries-bounded-headers",
+        "status": 403,
+        "error_code": "app.forbidden",
+        "response": {
+          "status": 403,
+          "headers": {
+            "content-type": [
+              "application/json; charset=utf-8"
+            ],
+            "www-authenticate": [
+              "Bearer resource_metadata=\"https://mcp.example.com/.well-known/oauth-protected-resource\""
+            ],
+            "x-denial-reason": [
+              "insufficient_scope"
+            ],
+            "x-request-id": [
+              "req_test_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body": {
+            "encoding": "utf8",
+            "value": "{\"error\":{\"code\":\"app.forbidden\",\"message\":\"forbidden\",\"request_id\":\"req_test_123\"}}"
+          }
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "denial-set-cookie-relocates-to-cookies",
+        "status": 401,
+        "error_code": "app.unauthorized",
+        "response": {
+          "status": 401,
+          "headers": {
+            "content-type": [
+              "application/json; charset=utf-8"
+            ],
+            "x-request-id": [
+              "req_test_123"
+            ]
+          },
+          "cookies": [
+            "a=1; Path=/",
+            "b=2; Path=/"
+          ],
+          "is_base64": false,
+          "body": {
+            "encoding": "utf8",
+            "value": "{\"error\":{\"code\":\"app.unauthorized\",\"message\":\"unauthorized\",\"request_id\":\"req_test_123\"}}"
+          }
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      }
+    ]
+  }
+}
