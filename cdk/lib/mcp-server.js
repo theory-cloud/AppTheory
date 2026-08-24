@@ -188,7 +188,7 @@ class AppTheoryMcpServer extends constructs_1.Construct {
 }
 exports.AppTheoryMcpServer = AppTheoryMcpServer;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryMcpServer[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpServer", version: "4.0.0-rc" };
+AppTheoryMcpServer[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpServer", version: "4.0.0" };
 function normalizeRouteFamily(props) {
     if (props.routeFamily !== undefined && props.mcpPath !== undefined) {
         throw new Error("AppTheoryMcpServer: routeFamily and deprecated mcpPath cannot be supplied together");
