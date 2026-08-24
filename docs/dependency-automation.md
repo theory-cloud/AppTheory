@@ -78,7 +78,7 @@ Renovate can move URLs, but it cannot prove that your downloaded release assets 
 checksum verification step from the install docs in your CI or bootstrap script:
 
 ```bash
-VERSION=3.0.0-rc
+VERSION=4.0.0
 TAG="v${VERSION}"
 PYTHON_VERSION="${VERSION/-rc/rc0}"
 gh release download "${TAG}" --repo theory-cloud/AppTheory --pattern "SHA256SUMS.txt" --clobber
