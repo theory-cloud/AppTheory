@@ -113,6 +113,30 @@
           },
           "is_base64": false
         }
+      },
+      {
+        "name": "denial-set-cookie-relocates-to-cookies",
+        "operation": "http",
+        "resolver_error": {
+          "code": "app.unauthorized",
+          "message": "unauthorized",
+          "headers": {
+            "Set-Cookie": [
+              "a=1; Path=/",
+              "b=2; Path=/"
+            ]
+          }
+        },
+        "request": {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {},
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          },
+          "is_base64": false
+        }
       }
     ]
   },
@@ -204,6 +228,34 @@
           "body": {
             "encoding": "utf8",
             "value": "{\"error\":{\"code\":\"app.forbidden\",\"message\":\"forbidden\",\"request_id\":\"req_test_123\"}}"
+          }
+        },
+        "resolver_calls": 1,
+        "middleware_calls": 0,
+        "handler_calls": 0
+      },
+      {
+        "name": "denial-set-cookie-relocates-to-cookies",
+        "status": 401,
+        "error_code": "app.unauthorized",
+        "response": {
+          "status": 401,
+          "headers": {
+            "content-type": [
+              "application/json; charset=utf-8"
+            ],
+            "x-request-id": [
+              "req_test_123"
+            ]
+          },
+          "cookies": [
+            "a=1; Path=/",
+            "b=2; Path=/"
+          ],
+          "is_base64": false,
+          "body": {
+            "encoding": "utf8",
+            "value": "{\"error\":{\"code\":\"app.unauthorized\",\"message\":\"unauthorized\",\"request_id\":\"req_test_123\"}}"
           }
         },
         "resolver_calls": 1,

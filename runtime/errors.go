@@ -114,6 +114,15 @@ func errorResponseFromAppTheoryErrorWithFormat(
 	headers = canonicalizeHeaders(headers)
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
+	// Relocate set-cookie into Cookies exactly like normalizeResponse does for
+	// handler output, so denial headers render identically across runtimes:
+	// same key handling, same ordering, and never doubled on the wire.
+	var cookies []string
+	if setCookies := headers["set-cookie"]; len(setCookies) > 0 {
+		cookies = append([]string(nil), setCookies...)
+		delete(headers, "set-cookie")
+	}
+
 	code := err.Code
 	if code == "" {
 		code = errorCodeInternal
@@ -160,7 +169,7 @@ func errorResponseFromAppTheoryErrorWithFormat(
 	return Response{
 		Status:   status,
 		Headers:  headers,
-		Cookies:  nil,
+		Cookies:  cookies,
 		Body:     body,
 		IsBase64: false,
 	}

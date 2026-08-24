@@ -90,7 +90,7 @@ The 273 contract vectors span these behavior areas (counts approximate; see `con
 ./scripts/verify-contract-tests.sh
 ```
 
-This validates the 270 generic fixture envelopes and runs the Go, TypeScript, and Python runners against that tree. The Go and CDK unit suites load the two nested route-algebra/facade tables directly. `make rubric` runs all of these gates alongside lint, build, API snapshots, and example synthesis. <!-- apptheory-fixture-count: 273 -->
+This validates the 271 generic fixture envelopes and runs the Go, TypeScript, and Python runners against that tree. The Go and CDK unit suites load the two nested route-algebra/facade tables directly. `make rubric` runs all of these gates alongside lint, build, API snapshots, and example synthesis. <!-- apptheory-fixture-count: 273 -->
 
 For single-runtime debugging from the repository root:
 

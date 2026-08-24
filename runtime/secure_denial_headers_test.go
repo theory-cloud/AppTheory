@@ -16,10 +16,11 @@ func TestSecureDenialChallengeHeaders(t *testing.T) {
 	const challenge = `Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"`
 
 	tests := []struct {
-		name      string
-		resolver  SecurePrincipalResolver
-		wantBody  string
-		wantExtra map[string][]string
+		name        string
+		resolver    SecurePrincipalResolver
+		wantBody    string
+		wantExtra   map[string][]string
+		wantCookies []string
 	}{
 		{
 			name: "plain denial renders without challenge headers",
@@ -61,6 +62,18 @@ func TestSecureDenialChallengeHeaders(t *testing.T) {
 				"x-denial-reason":  {"insufficient_scope"},
 			},
 		},
+		{
+			name: "denial set-cookie relocates into cookies",
+			resolver: func(*Context) (*SecurePrincipal, error) {
+				return nil, NewAppTheoryError(errorCodeUnauthorized, errorMessageUnauthorized).
+					WithHeaders(map[string][]string{"set-cookie": {"a=1; Path=/", "b=2; Path=/"}})
+			},
+			wantBody: `{"error":{"code":"app.unauthorized","message":"unauthorized","request_id":"req_denial"}}`,
+			wantCookies: []string{
+				"a=1; Path=/",
+				"b=2; Path=/",
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -86,6 +99,17 @@ func TestSecureDenialChallengeHeaders(t *testing.T) {
 			}
 			if _, ok := resp.Headers["www-authenticate"]; ok && len(tc.wantExtra) == 0 {
 				t.Fatalf("unexpected www-authenticate header: %#v", resp.Headers["www-authenticate"])
+			}
+			if _, ok := resp.Headers["set-cookie"]; ok {
+				t.Fatalf("set-cookie must be relocated out of headers: %#v", resp.Headers["set-cookie"])
+			}
+			if len(resp.Cookies) != len(tc.wantCookies) {
+				t.Fatalf("cookies = %#v, want %#v", resp.Cookies, tc.wantCookies)
+			}
+			for i := range tc.wantCookies {
+				if resp.Cookies[i] != tc.wantCookies[i] {
+					t.Fatalf("cookies = %#v, want %#v", resp.Cookies, tc.wantCookies)
+				}
 			}
 			for key, want := range tc.wantExtra {
 				got := resp.Headers[key]

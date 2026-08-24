@@ -5,7 +5,7 @@ description: Tiered middleware, routing, normalization, and the AppTheory error 
 
 # HTTP Runtime (P0–P2)
 
-The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [272-vector corpus](../reference/contract-fixtures.md) includes 270 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the two Go/CDK-TS MCP route/facade tables. <!-- apptheory-fixture-count: 273 -->
+The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [273-vector corpus](../reference/contract-fixtures.md) includes 271 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the two Go/CDK-TS MCP route/facade tables. <!-- apptheory-fixture-count: 273 -->
 
 The runtime is **tiered.** You opt into a tier when you create the app:
 
