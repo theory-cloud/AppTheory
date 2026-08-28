@@ -109,3 +109,44 @@ deployment-owned choice. See the canonical
 - `resources` must contain exactly one entry because the AWS resource currently allows one `Resources` item.
 - `egressNetworkConnectors` requires one to ten `AppTheoryMicrovmNetworkConnector` references.
 - Environment variables are rendered as AWS `Key`/`Value` entries and duplicate keys fail closed.
+
+## Version pruning
+
+Every deployment that touches the image prunes old image versions. This is always-on encoded
+behavior with no deploy-time knobs.
+
+The construct synthesizes a custom resource whose inline Node handler talks to the Lambda MicroVMs
+control plane:
+
+- `ListMicrovmImageVersions` — `GET /2025-09-09/microvm-images/{imageIdentifier}/versions`
+- `DeleteMicrovmImageVersion` — `DELETE /2025-09-09/microvm-images/{imageIdentifier}/versions/{imageVersion}`
+
+requests are SigV4-signed with signing name `lambda` against `lambda.{region}.amazonaws.com`.
+
+### Semantics
+
+- The prune custom resource mirrors the image's rendered CloudFormation properties, so it is
+  re-invoked exactly when the `AWS::Lambda::MicrovmImage` resource would be updated, and the image
+  resource carries an explicit `DependsOn` on the prune custom resource. CloudFormation therefore
+  prunes BEFORE the image update creates a new version.
+- The handler keeps the two newest versions whose status is `ACTIVE` and attempts to delete every
+  other version. Keeping the previous ACTIVE version as a safety copy protects MicroVMs that may
+  still be running against it, without relying on service-side refusal (409) alone. Steady state is
+  bounded: everything older than the previous active version is pruned on the next deploy before the
+  new version is created, so an image never accumulates versions past the service quota.
+- On a fresh stack CREATE the image does not exist yet, so the version list returns 404
+  (`ResourceNotFoundException`); the handler treats a 404 on the list as nothing to prune and the
+  create succeeds. On stack DELETE the handler returns success without pruning because
+  CloudFormation deletes the whole image; pruning never blocks or fails deletion.
+- The prune handler's execution role is least privilege: exactly `lambda:ListMicrovmImageVersions`
+  and `lambda:DeleteMicrovmImageVersion` on the specific image ARN. No wildcard service permissions.
+
+### Failure semantics
+
+- A list failure (authentication, transport, service error) fails the deployment loudly. Silent quota
+  debt is exactly the failure mode this behavior exists to prevent. The one exception: a 404
+  (`ResourceNotFoundException`) from the version list means the image does not exist yet (fresh stack
+  CREATE) and is treated as nothing to prune.
+- A per-version delete refusal — for example a version still in use by running MicroVMs — is logged
+  with a visible line and skipped; the deployment continues. The next deployment retries the version.
+- Every run logs a one-line summary: versions seen, deleted, and skipped.

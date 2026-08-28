@@ -5721,6 +5721,75 @@ test("AppTheoryMicrovmImage supports endpoint-dispatched no-hook images", () => 
   );
 });
 
+test("AppTheoryMicrovmImage wires always-on version pruning", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const connector = importedMicrovmConnector(stack);
+
+  new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = template.Resources;
+  const imageEntry = Object.entries(resources).find(([, r]) => r.Type === "AWS::Lambda::MicrovmImage");
+  assert.ok(imageEntry, "Should synthesize one Lambda MicroVM image");
+  const imageResource = imageEntry[1];
+
+  // Ordering is the whole point: the image depends on the prune custom resource,
+  // so CloudFormation prunes BEFORE the image update creates a new version.
+  assert.ok(Array.isArray(imageResource.DependsOn), "image must carry DependsOn on the prune custom resource");
+  const pruneLogicalId = imageResource.DependsOn.find(
+    (id) => resources[id] && resources[id].Type === "AWS::CloudFormation::CustomResource",
+  );
+  assert.ok(pruneLogicalId, "image DependsOn must reference the prune custom resource");
+
+  // The prune custom resource mirrors the rendered image properties so it is
+  // re-invoked exactly when the image resource would be updated.
+  const pruneResource = resources[pruneLogicalId];
+  assert.deepEqual(
+    pruneResource.Properties.MicrovmImageProperties,
+    imageResource.Properties,
+    "prune custom resource must mirror the image properties",
+  );
+
+  // The prune handler is inline Node code with the image ARN and region in env.
+  const handlerEntry = Object.entries(resources).find(
+    ([, r]) => r.Type === "AWS::Lambda::Function" && r.Properties.Handler === "index.handler",
+  );
+  assert.ok(handlerEntry, "prune handler function must exist");
+  const handlerResource = handlerEntry[1];
+  assert.equal(handlerResource.Properties.Runtime, "nodejs24.x");
+  assert.ok(handlerResource.Properties.Code.ZipFile, "prune handler code must be inline");
+  const pruneEnv = handlerResource.Properties.Environment.Variables;
+  assert.match(
+    renderedString(pruneEnv.APPTHEORY_MICROVM_IMAGE_ARN),
+    /microvm-image\/apptheory-microvm-image$/,
+    "handler env must carry the image ARN",
+  );
+  assert.ok(
+    pruneEnv.APPTHEORY_MICROVM_IMAGE_REGION !== undefined,
+    "handler env must carry the deployment region",
+  );
+
+  // Least privilege: exactly the two microvm list/delete actions on the image
+  // ARN. No wildcard service permissions.
+  const prunePolicies = Object.entries(resources).filter(([, r]) =>
+    r.Type === "AWS::IAM::Policy" &&
+    JSON.stringify(r.Properties.PolicyDocument).includes("lambda:ListMicrovmImageVersions"),
+  );
+  assert.equal(prunePolicies.length, 1, "exactly one prune IAM policy");
+  const statement = prunePolicies[0][1].Properties.PolicyDocument.Statement[0];
+  assert.deepEqual(
+    [...statement.Action].sort(),
+    ["lambda:DeleteMicrovmImageVersion", "lambda:ListMicrovmImageVersions"],
+  );
+  assert.equal(statement.Effect, "Allow");
+  assert.match(renderedString(statement.Resource), /microvm-image\/apptheory-microvm-image$/);
+  assert.ok(
+    !statement.Action.some((action) => action.includes("*")),
+    "prune policy must not contain wildcard service actions",
+  );
+});
+
 test("AppTheoryMicrovmImage fails closed on invalid props", () => {
   const app = new cdk.App();
 
