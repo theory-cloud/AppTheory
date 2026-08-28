@@ -11,10 +11,17 @@
 // - DeleteMicrovmImageVersion: DELETE /2025-09-09/microvm-images/{imageIdentifier}/versions/{imageVersion}
 //
 // with SigV4 signing name `lambda` on host `lambda.{region}.amazonaws.com`.
+//
+// The SigV4 golden values asserted below (canonical request + signature) were
+// derived by running the real pinned `lambdamicrovms` v1.0.0 client and signer
+// (aws-sdk-go-v2 v1.43.5) with a recording transport and LogSigning at the same
+// fixed timestamp; they are hardcoded so the test cannot share the handler's
+// canonicalization assumption. The SDK signer re-escapes the already-escaped
+// wire path for the canonical URI (`escapePath(uriPath, false)`), so the wire
+// path stays single-encoded while the canonical URI is double-encoded.
 "use strict";
 
 const assert = require("node:assert/strict");
-const crypto = require("node:crypto");
 const test = require("node:test");
 
 const { MICROVM_IMAGE_PRUNE_HANDLER_SOURCE } = require("../lib/private/microvm-image-prune-handler");
@@ -114,78 +121,6 @@ function deleteRoute(status = 200, body = {}) {
   };
 }
 
-function sha256Hex(data) {
-  return crypto.createHash("sha256").update(data, "utf8").digest("hex");
-}
-
-function hmac(key, data) {
-  return crypto.createHmac("sha256", key).update(data, "utf8").digest();
-}
-
-function hmacHex(key, data) {
-  return crypto.createHmac("sha256", key).update(data, "utf8").digest("hex");
-}
-
-function rfc3986(value) {
-  let out = "";
-  for (const ch of String(value)) {
-    const code = ch.charCodeAt(0);
-    if (
-      (code >= 65 && code <= 90) ||
-      (code >= 97 && code <= 122) ||
-      (code >= 48 && code <= 57) ||
-      code === 45 ||
-      code === 46 ||
-      code === 95 ||
-      code === 126
-    ) {
-      out += ch;
-    } else {
-      out += `%${code.toString(16).toUpperCase().padStart(2, "0")}`;
-    }
-  }
-  return out;
-}
-
-// Independent SigV4 reference implementation written from the AWS Signature
-// Version 4 process; used as a golden check against the handler's own signer.
-function referenceSignV4({ method, path, query, host, region, now, payloadHash, service }) {
-  const amzDate = now.toISOString().replace(/[:-]/g, "").replace(/\.\d{3}/g, "");
-  const dateStamp = amzDate.slice(0, 8);
-  const headers = {
-    host,
-    "x-amz-content-sha256": payloadHash,
-    "x-amz-date": amzDate,
-  };
-  if (ENV.AWS_SESSION_TOKEN) {
-    headers["x-amz-security-token"] = ENV.AWS_SESSION_TOKEN;
-  }
-  const queryString = Object.keys(query)
-    .sort()
-    .map((key) => `${rfc3986(key)}=${rfc3986(query[key])}`)
-    .join("&");
-  const canonicalHeaders = Object.keys(headers)
-    .sort()
-    .map((key) => `${key}:${String(headers[key]).trim()}\n`)
-    .join("");
-  const signedHeaders = Object.keys(headers).sort().join(";");
-  const canonicalRequest = [method, path, queryString, canonicalHeaders, signedHeaders, payloadHash].join("\n");
-  const scope = `${dateStamp}/${region}/${service}/aws4_request`;
-  const stringToSign = ["AWS4-HMAC-SHA256", amzDate, scope, sha256Hex(canonicalRequest)].join("\n");
-  const dateKey = hmac("AWS4" + ENV.AWS_SECRET_ACCESS_KEY, dateStamp);
-  const regionKey = hmac(dateKey, region);
-  const serviceKey = hmac(regionKey, service);
-  const signingKey = hmac(serviceKey, "aws4_request");
-  const signature = hmacHex(signingKey, stringToSign);
-  return {
-    amzDate,
-    scope,
-    signedHeaders,
-    signature,
-    canonicalRequest,
-  };
-}
-
 const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 test("prune: no versions is a no-op success", async () => {
@@ -222,7 +157,7 @@ test("prune: single active version is a no-op", async () => {
   assert.equal(calls.filter((c) => c.options.method === "DELETE").length, 0);
 });
 
-test("prune: deletes every non-latest-active version", async () => {
+test("prune: deletes every version older than the two newest active", async () => {
   const { pruneMicrovmImageVersions } = loadHandlerModule();
   const versions = [
     { imageVersion: "1", status: "INACTIVE", createdAt: 100 },
@@ -241,22 +176,21 @@ test("prune: deletes every non-latest-active version", async () => {
       logImpl: (message) => logs.push(message),
     }),
   );
-  assert.deepEqual(summary, { versionsSeen: 4, versionsDeleted: 3, versionsSkipped: 0 });
+  assert.deepEqual(summary, { versionsSeen: 4, versionsDeleted: 2, versionsSkipped: 0 });
   const deleted = calls.filter((c) => c.options.method === "DELETE");
-  assert.equal(deleted.length, 3);
+  assert.equal(deleted.length, 2);
   assert.deepEqual(
     deleted.map((c) => c.url),
     [
       `https://lambda.${REGION}.amazonaws.com/2025-09-09/microvm-images/${ESCAPED_IMAGE_ARN}/versions/1`,
       `https://lambda.${REGION}.amazonaws.com/2025-09-09/microvm-images/${ESCAPED_IMAGE_ARN}/versions/2`,
-      `https://lambda.${REGION}.amazonaws.com/2025-09-09/microvm-images/${ESCAPED_IMAGE_ARN}/versions/3`,
     ],
-    "version 4 (latest active) must not be deleted",
+    "versions 3 and 4 (the two newest active) must not be deleted",
   );
-  assert.ok(logs.some((line) => line.includes("versions seen=4 deleted=3 skipped=0 kept=4")));
+  assert.ok(logs.some((line) => line.includes("versions seen=4 deleted=2 skipped=0 kept=4,3")));
 });
 
-test("prune: multiple active versions keeps only the newest", async () => {
+test("prune: two active versions are both kept (safety copy)", async () => {
   const { pruneMicrovmImageVersions } = loadHandlerModule();
   const versions = [
     { imageVersion: "1", status: "ACTIVE", createdAt: 100 },
@@ -271,15 +205,14 @@ test("prune: multiple active versions keeps only the newest", async () => {
       fetchImpl: impl,
     }),
   );
-  assert.deepEqual(summary, { versionsSeen: 2, versionsDeleted: 1, versionsSkipped: 0 });
-  const deleted = calls.filter((c) => c.options.method === "DELETE");
-  assert.equal(deleted.length, 1);
-  assert.ok(deleted[0].url.endsWith("/versions/1"), "older active version is pruned");
+  assert.deepEqual(summary, { versionsSeen: 2, versionsDeleted: 0, versionsSkipped: 0 });
+  assert.equal(calls.filter((c) => c.options.method === "DELETE").length, 0, "both active versions are kept");
 });
 
-test("prune: same-second versions tiebreak on version number", async () => {
+test("prune: same-second active versions tiebreak on version number for the second keep slot", async () => {
   const { pruneMicrovmImageVersions } = loadHandlerModule();
   const versions = [
+    { imageVersion: "8", status: "ACTIVE", createdAt: 100 },
     { imageVersion: "10", status: "ACTIVE", createdAt: 200 },
     { imageVersion: "9", status: "ACTIVE", createdAt: 200 },
   ];
@@ -292,10 +225,10 @@ test("prune: same-second versions tiebreak on version number", async () => {
       fetchImpl: impl,
     }),
   );
-  assert.deepEqual(summary, { versionsSeen: 2, versionsDeleted: 1, versionsSkipped: 0 });
+  assert.deepEqual(summary, { versionsSeen: 3, versionsDeleted: 1, versionsSkipped: 0 });
   const deleted = calls.filter((c) => c.options.method === "DELETE");
   assert.equal(deleted.length, 1);
-  assert.ok(deleted[0].url.endsWith("/versions/9"), "version 10 is the latest active");
+  assert.ok(deleted[0].url.endsWith("/versions/8"), "keeps versions 10 and 9; prunes 8");
 });
 
 test("prune: no active version attempts to delete everything", async () => {
@@ -368,6 +301,35 @@ test("prune: list failure fails loudly", async () => {
     /HTTP 403/,
   );
   assert.equal(calls.filter((c) => c.options.method === "DELETE").length, 0, "no deletes after a failed list");
+});
+
+test("prune: 404 on the version list is nothing to prune", async () => {
+  const { pruneMicrovmImageVersions } = loadHandlerModule();
+  const notFoundList = {
+    match: (url, options) => options.method === "GET",
+    respond: () =>
+      new Response(
+        JSON.stringify({
+          message: "MicrovmImageNotFoundException",
+          __type: "ResourceNotFoundException",
+        }),
+        { status: 404, headers: { "content-type": "application/json" } },
+      ),
+  };
+  const { calls, impl } = mockFetch([notFoundList]);
+  const logs = [];
+  const summary = await withEnv(ENV, () =>
+    pruneMicrovmImageVersions({
+      imageIdentifier: IMAGE_ARN,
+      region: REGION,
+      now: FIXED_NOW,
+      fetchImpl: impl,
+      logImpl: (message) => logs.push(message),
+    }),
+  );
+  assert.deepEqual(summary, { versionsSeen: 0, versionsDeleted: 0, versionsSkipped: 0 });
+  assert.equal(calls.length, 1, "one list call, no delete calls");
+  assert.ok(logs.some((line) => line.includes("versions seen=0 deleted=0 skipped=0 kept=<none>")));
 });
 
 test("prune: transport failure on list fails loudly", async () => {
@@ -474,19 +436,9 @@ test("request shape: delete version DELETE with version in path and no query", a
   assert.match(call.options.headers.authorization, /Credential=AKIDEXAMPLE\/20260828\/us-east-1\/lambda\/aws4_request/);
 });
 
-test("request shape: SigV4 signature matches an independent reference implementation", async () => {
-  const { pruneMicrovmImageVersions } = loadHandlerModule();
-  const { calls, impl } = mockFetch([listRoute([])]);
-  await withEnv(ENV, () =>
-    pruneMicrovmImageVersions({
-      imageIdentifier: IMAGE_ARN,
-      region: REGION,
-      now: FIXED_NOW,
-      fetchImpl: impl,
-    }),
-  );
-  const headers = calls[0].options.headers;
-  const reference = referenceSignV4({
+test("request shape: SigV4 canonical URI is double-encoded (pinned to the real SDK signer)", async () => {
+  const { signV4 } = loadHandlerModule();
+  const signed = signV4({
     method: "GET",
     path: `/2025-09-09/microvm-images/${ESCAPED_IMAGE_ARN}/versions`,
     query: { maxResults: "100" },
@@ -494,11 +446,63 @@ test("request shape: SigV4 signature matches an independent reference implementa
     region: REGION,
     now: FIXED_NOW,
     payloadHash: EMPTY_SHA256,
-    service: "lambda",
+    credentials: {
+      accessKeyId: ENV.AWS_ACCESS_KEY_ID,
+      secretAccessKey: ENV.AWS_SECRET_ACCESS_KEY,
+      sessionToken: ENV.AWS_SESSION_TOKEN,
+    },
   });
-  const signature = headers.authorization.match(/Signature=([0-9a-f]{64})/)[1];
-  assert.equal(signature, reference.signature);
-  assert.equal(headers["x-amz-date"], reference.amzDate);
+  // Golden canonical request and signature emitted by the REAL
+  // lambdamicrovms v1.0.0 signer (aws-sdk-go-v2 v1.43.5, smithy
+  // httpbinding.EscapePath(uriPath, false)) with LogSigning at the same
+  // fixed timestamp. The SDK re-escapes the already-escaped wire path for
+  // the canonical URI: the single-encoded wire path `arn%3A...%2F...`
+  // signs as the double-encoded `arn%253A...%252F...`. These values are
+  // hardcoded so the test cannot share the implementation's assumption.
+  const goldenCanonicalRequest = [
+    "GET",
+    "/2025-09-09/microvm-images/arn%253Aaws%253Alambda%253Aus-east-1%253A123456789012%253Amicrovm-image%252Fapptheory-microvm-image/versions",
+    "maxResults=100",
+    "host:lambda.us-east-1.amazonaws.com",
+    "x-amz-content-sha256:" + EMPTY_SHA256,
+    "x-amz-date:20260828T123456Z",
+    "x-amz-security-token:" + ENV.AWS_SESSION_TOKEN,
+    "",
+    "host;x-amz-content-sha256;x-amz-date;x-amz-security-token",
+    EMPTY_SHA256,
+  ].join("\n");
+  assert.equal(signed.canonicalRequest, goldenCanonicalRequest);
+  const signature = signed.headers.authorization.match(/Signature=([0-9a-f]{64})/)[1];
+  assert.equal(signature, "77c3bd655d9ffcfddb400d1beb1cc7991ccd29f2cd80fba73c0d9759ab18bc0d");
+  assert.equal(signed.headers.authorization, [
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260828/us-east-1/lambda/aws4_request",
+    "SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token",
+    "Signature=77c3bd655d9ffcfddb400d1beb1cc7991ccd29f2cd80fba73c0d9759ab18bc0d",
+  ].join(", "));
+});
+
+test("request shape: delete SigV4 canonical URI is double-encoded (pinned to the real SDK signer)", async () => {
+  const { signV4 } = loadHandlerModule();
+  const signed = signV4({
+    method: "DELETE",
+    path: `/2025-09-09/microvm-images/${ESCAPED_IMAGE_ARN}/versions/1`,
+    query: {},
+    host: `lambda.${REGION}.amazonaws.com`,
+    region: REGION,
+    now: FIXED_NOW,
+    payloadHash: EMPTY_SHA256,
+    credentials: {
+      accessKeyId: ENV.AWS_ACCESS_KEY_ID,
+      secretAccessKey: ENV.AWS_SECRET_ACCESS_KEY,
+      sessionToken: ENV.AWS_SESSION_TOKEN,
+    },
+  });
+  assert.equal(
+    signed.canonicalRequest.split("\n")[1],
+    "/2025-09-09/microvm-images/arn%253Aaws%253Alambda%253Aus-east-1%253A123456789012%253Amicrovm-image%252Fapptheory-microvm-image/versions/1",
+  );
+  const signature = signed.headers.authorization.match(/Signature=([0-9a-f]{64})/)[1];
+  assert.equal(signature, "5dbd62e24896e34ce54a1b495e024909c3a2c0b80fe78e4af9709836da93f986");
 });
 
 test("request shape: escaping matches the SDK Amazon path-escape style", async () => {
@@ -536,6 +540,39 @@ test("handler: Create/Update prune and return a summary in Data", async () => {
   );
   assert.deepEqual(result.Data, { VersionsSeen: 1, VersionsDeleted: 0, VersionsSkipped: 0 });
   assert.equal(calls.length, 1, "Create prunes once");
+});
+
+test("handler: Create against a 404 version list succeeds (image does not exist yet)", async () => {
+  const notFoundList = {
+    match: (url, options) => options.method === "GET",
+    respond: () =>
+      new Response(
+        JSON.stringify({
+          message: "MicrovmImageNotFoundException",
+          __type: "ResourceNotFoundException",
+        }),
+        { status: 404, headers: { "content-type": "application/json" } },
+      ),
+  };
+  const { calls, impl } = mockFetch([notFoundList]);
+  const { handler } = loadHandlerModule(impl);
+  const result = await withEnv(
+    {
+      ...ENV,
+      APPTHEORY_MICROVM_IMAGE_ARN: IMAGE_ARN,
+      APPTHEORY_MICROVM_IMAGE_REGION: REGION,
+      AWS_REGION: REGION,
+    },
+    () =>
+      handler({
+        RequestType: "Create",
+        RequestId: "req-1",
+        LogicalResourceId: "ImagePrune",
+        ResourceProperties: {},
+      }),
+  );
+  assert.deepEqual(result.Data, { VersionsSeen: 0, VersionsDeleted: 0, VersionsSkipped: 0 });
+  assert.equal(calls.filter((c) => c.options.method === "DELETE").length, 0, "no deletes when the image does not exist");
 });
 
 test("handler: Create without the image ARN env fails loudly", async () => {

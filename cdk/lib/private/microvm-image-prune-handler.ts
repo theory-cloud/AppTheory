@@ -20,7 +20,14 @@
  * SigV4 signing name is `lambda` and the endpoint host is `lambda.{region}.amazonaws.com`,
  * both taken from the pinned SDK (service auth trait and endpoint ruleset).
  * Path parameters are escaped with the SDK's Amazon path-escape style (every byte
- * outside `A-Za-z0-9-._~` percent-encoded, including `/`).
+ * outside `A-Za-z0-9-._~` percent-encoded, including `/`). The SigV4 canonical URI is
+ * the SDK's DOUBLE-encoded form: the signer re-escapes the already-escaped wire path
+ * (`escapePath(uriPath, false)`), so `%3A` in the wire path becomes `%253A` in the
+ * canonical request; the wire path sent to the service stays single-encoded.
+ *
+ * A 404 (`ResourceNotFoundException`) from the version list means the image does not
+ * exist yet (fresh stack CREATE runs the prune before `AWS::Lambda::MicrovmImage` is
+ * created) and is treated as nothing to prune.
  *
  * This module is internal to the CDK package and intentionally NOT exported from
  * `index.ts`, so it never appears in the jsii assembly or generated bindings. The
@@ -80,6 +87,25 @@ function escapePathComponent(value) {
       out += value[i];
     } else {
       out += '%' + c.toString(16).toUpperCase().padStart(2, '0');
+    }
+  }
+  return out;
+}
+
+function canonicalUriPath(path) {
+  // SigV4 canonical URI: the SDK signer re-escapes the already-escaped wire
+  // path (httpbinding.EscapePath(uriPath, false)): '/' separators are left
+  // as-is and every other byte outside A-Za-z0-9-._~ is percent-encoded, so
+  // the '%' of an existing escape becomes '%25' (double-encoded). The wire
+  // path is unchanged. The wire path is pure ASCII at this point, so a
+  // per-code-unit pass is byte-accurate.
+  var out = '';
+  for (var i = 0; i < path.length; i++) {
+    var c = path[i];
+    if (c === '/') {
+      out += c;
+    } else {
+      out += escapePathComponent(c);
     }
   }
   return out;
@@ -149,7 +175,7 @@ function signV4(options) {
     signingHeaders['x-amz-security-token'] = options.credentials.sessionToken;
   }
   var queryString = canonicalQuery(options.query);
-  var canonical = canonicalRequest(options.method, options.path, queryString, signingHeaders, options.payloadHash);
+  var canonical = canonicalRequest(options.method, canonicalUriPath(options.path), queryString, signingHeaders, options.payloadHash);
   var scope = dateStamp + '/' + options.region + '/' + SERVICE_NAME + '/aws4_request';
   var stringToSign = 'AWS4-HMAC-SHA256\\n' + amzDate + '\\n' + scope + '\\n' + sha256Hex(canonical);
   var dateKey = hmacSha256('AWS4' + options.credentials.secretAccessKey, dateStamp);
@@ -163,7 +189,8 @@ function signV4(options) {
       authorization: 'AWS4-HMAC-SHA256 Credential=' + options.credentials.accessKeyId + '/' + scope +
         ', SignedHeaders=' + signedHeaders + ', Signature=' + signature
     }),
-    queryString: queryString
+    queryString: queryString,
+    canonicalRequest: canonical
   };
 }
 
@@ -220,14 +247,29 @@ async function listMicrovmImageVersions(options) {
     query.nextToken = options.nextToken;
   }
   var path = API_PATH_PREFIX + '/' + escapePathComponent(options.imageIdentifier) + '/versions';
-  var parsed = await microvmRequest({
-    method: 'GET',
-    path: path,
-    query: query,
-    region: options.region,
-    now: options.now,
-    fetchImpl: options.fetchImpl
-  });
+  var parsed;
+  try {
+    parsed = await microvmRequest({
+      method: 'GET',
+      path: path,
+      query: query,
+      region: options.region,
+      now: options.now,
+      fetchImpl: options.fetchImpl
+    });
+  } catch (err) {
+    // A fresh stack CREATE runs the prune custom resource before
+    // AWS::Lambda::MicrovmImage exists, so the control plane answers the
+    // version list with 404 (ResourceNotFoundException). There is nothing
+    // to prune yet: treat a 404 on the list as success with zero versions.
+    // This is deliberately not a blanket Create skip, so a re-invocation
+    // after partial state (image exists, list succeeds) still prunes.
+    // Any other list failure (auth, transport, service) still fails loudly.
+    if (err && err.statusCode === 404) {
+      return { items: [], nextToken: undefined };
+    }
+    throw err;
+  }
   return {
     items: parsed && Array.isArray(parsed.items) ? parsed.items : [],
     nextToken: parsed && parsed.nextToken ? parsed.nextToken : undefined
@@ -306,8 +348,13 @@ function compareVersions(a, b) {
   return a < b ? -1 : 1;
 }
 
-function latestActiveVersion(versions) {
-  var best = undefined;
+function keepActiveVersions(versions) {
+  // Keeps the two newest ACTIVE versions (newest first). Running MicroVMs may
+  // still reference the previously active version, so keeping only the newest
+  // would rely entirely on service-side refusal (409) to protect running VMs;
+  // keeping the previous ACTIVE version as a safety copy still bounds the
+  // version count (everything older is pruned on every deploy).
+  var active = [];
   for (var i = 0; i < versions.length; i++) {
     var item = versions[i];
     if (!item) {
@@ -316,27 +363,36 @@ function latestActiveVersion(versions) {
     if (String(item.status || '').toUpperCase() !== 'ACTIVE') {
       continue;
     }
-    if (best === undefined) {
-      best = item;
-      continue;
-    }
-    var itemCreated = createdAtEpochSeconds(item);
-    var bestCreated = createdAtEpochSeconds(best);
-    if (itemCreated > bestCreated || (itemCreated === bestCreated && compareVersions(String(item.imageVersion || ''), String(best.imageVersion || '')) > 0)) {
-      best = item;
-    }
+    active.push(item);
   }
-  return best;
+  active.sort(function (a, b) {
+    var ac = createdAtEpochSeconds(a);
+    var bc = createdAtEpochSeconds(b);
+    if (ac !== bc) {
+      return bc - ac;
+    }
+    // Same createdAt: higher version number first.
+    return compareVersions(String(b.imageVersion || ''), String(a.imageVersion || ''));
+  });
+  return active.slice(0, 2);
 }
 
 async function pruneMicrovmImageVersions(options) {
   // options: imageIdentifier, region, now, fetchImpl, logImpl
   var logImpl = options.logImpl || log;
   // A list failure (auth, transport, service) must fail the deployment loudly;
-  // silent quota debt is the failure mode this handler exists to prevent.
+  // silent quota debt is the failure mode this handler exists to prevent. The
+  // single exception is a 404 on the list, handled inside listMicrovmImageVersions:
+  // the image does not exist yet (fresh stack CREATE) and there is nothing to prune.
   var versions = await listAllVersions(options);
-  var keep = latestActiveVersion(versions);
-  var keepVersion = keep ? String(keep.imageVersion || '') : '';
+  var keep = keepActiveVersions(versions);
+  var keepSet = {};
+  var keptLabel = '<none>';
+  for (var j = 0; j < keep.length; j++) {
+    var keptVersion = String(keep[j].imageVersion || '');
+    keepSet[keptVersion] = true;
+    keptLabel = keptLabel === '<none>' ? keptVersion : keptLabel + ',' + keptVersion;
+  }
   var deleted = 0;
   var skipped = 0;
   for (var i = 0; i < versions.length; i++) {
@@ -348,7 +404,7 @@ async function pruneMicrovmImageVersions(options) {
     if (!version) {
       continue;
     }
-    if (version === keepVersion) {
+    if (keepSet[version]) {
       continue;
     }
     try {
@@ -373,13 +429,16 @@ async function pruneMicrovmImageVersions(options) {
     versionsDeleted: deleted,
     versionsSkipped: skipped
   };
-  logImpl('prune summary: versions seen=' + summary.versionsSeen + ' deleted=' + summary.versionsDeleted + ' skipped=' + summary.versionsSkipped + ' kept=' + (keepVersion || '<none>'));
+  logImpl('prune summary: versions seen=' + summary.versionsSeen + ' deleted=' + summary.versionsDeleted + ' skipped=' + summary.versionsSkipped + ' kept=' + keptLabel);
   return summary;
 }
 
 async function handler(event) {
   // Delete runs while CloudFormation deletes the whole image, so there is
   // nothing to prune and pruning must never block or fail deletion.
+  // Create/Update both run the prune: on a fresh stack CREATE the image does
+  // not exist yet, the version list 404s, and that is treated as nothing to
+  // prune, so the create succeeds.
   if (event && event.RequestType === 'Delete') {
     return {};
   }
@@ -406,8 +465,10 @@ module.exports = {
   pruneMicrovmImageVersions: pruneMicrovmImageVersions,
   listMicrovmImageVersions: listMicrovmImageVersions,
   deleteMicrovmImageVersion: deleteMicrovmImageVersion,
-  latestActiveVersion: latestActiveVersion,
+  keepActiveVersions: keepActiveVersions,
   signV4: signV4,
+  canonicalRequest: canonicalRequest,
+  canonicalUriPath: canonicalUriPath,
   escapePathComponent: escapePathComponent
 };
 `;

@@ -325,11 +325,12 @@ export declare class AppTheoryMicrovmImage extends Construct implements IAppTheo
      * change to the mirrored image properties — runs the prune handler BEFORE the
      * `AWS::Lambda::MicrovmImage` update creates a new version: the image resource
      * carries an explicit `DependsOn` on the prune custom resource so CloudFormation
-     * orders the prune first. A list/describe failure fails the deployment loudly;
-     * a per-version delete refusal is logged and skipped. On stack DELETE the
-     * handler returns success without pruning because CloudFormation deletes the
-     * whole image. There are no deploy-time knobs: pruning is always-on encoded
-     * behavior.
+     * orders the prune first. A list/describe failure fails the deployment loudly,
+     * except a 404 on the version list (the image does not exist yet on a fresh
+     * stack CREATE), which is treated as nothing to prune; a per-version delete
+     * refusal is logged and skipped. On stack DELETE the handler returns success
+     * without pruning because CloudFormation deletes the whole image. There are no
+     * deploy-time knobs: pruning is always-on encoded behavior.
      *
      * The handler env and IAM policy reference the image ARN constructed from
      * pseudo-parameters (`Stack.formatArn`) rather than from `ImageArn` GetAtt:
