@@ -41,7 +41,10 @@ var crypto = require('node:crypto');
 
 var SERVICE_NAME = 'lambda';
 var API_PATH_PREFIX = '/2025-09-09/microvm-images';
-var MAX_RESULTS = 100;
+// The live Lambda MicroVMs control plane caps ListMicrovmImageVersions
+// maxResults at 50 and rejects larger values with HTTP 400. Stay at or
+// below the cap; the handler already paginates via nextToken.
+var MAX_RESULTS = 50;
 var EMPTY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
 function log(message) {
@@ -238,7 +241,8 @@ async function microvmRequest(options) {
 }
 
 async function listMicrovmImageVersions(options) {
-  // options: imageIdentifier, region, now, fetchImpl, nextToken, maxResults
+  // options: imageIdentifier, region, now, fetchImpl, nextToken, maxResults, logImpl
+  var logImpl = options.logImpl || log;
   var query = {};
   if (options.maxResults !== undefined && options.maxResults !== null) {
     query.maxResults = String(options.maxResults);
@@ -266,6 +270,7 @@ async function listMicrovmImageVersions(options) {
     // after partial state (image exists, list succeeds) still prunes.
     // Any other list failure (auth, transport, service) still fails loudly.
     if (err && err.statusCode === 404) {
+      logImpl('list returned 404: image not present; nothing to prune');
       return { items: [], nextToken: undefined };
     }
     throw err;
@@ -304,7 +309,8 @@ async function listAllVersions(options) {
       now: options.now,
       fetchImpl: options.fetchImpl,
       nextToken: nextToken,
-      maxResults: MAX_RESULTS
+      maxResults: MAX_RESULTS,
+      logImpl: options.logImpl
     });
     versions = versions.concat(page.items || []);
     nextToken = page.nextToken;
