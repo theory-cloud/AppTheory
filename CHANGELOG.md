@@ -1,5 +1,31 @@
 # Changelog
 
+## [4.2.0](https://github.com/theory-cloud/AppTheory/compare/v4.1.0...v4.2.0) (2026-08-28)
+
+
+### Features
+
+* **cdk:** prune MicrovmImage versions on every deployment ([12c3774](https://github.com/theory-cloud/AppTheory/commit/12c37740147b4b82202354db3b6c19745df89f0c))
+* **cdk:** prune MicrovmImage versions on every deployment ([c2e06aa](https://github.com/theory-cloud/AppTheory/commit/c2e06aae2733ee0f3960626ca3153a7243df3975))
+
+
+### Bug Fixes
+
+* **cdk:** address GLM-5.3 review findings on MicrovmImage version pruning ([a28026f](https://github.com/theory-cloud/AppTheory/commit/a28026f7063dab053dc975f847e1540738d7a217))
+
+## [4.2.0-rc](https://github.com/theory-cloud/AppTheory/compare/v4.1.0...v4.2.0-rc) (2026-08-28)
+
+
+### Features
+
+* **cdk:** prune MicrovmImage versions on every deployment ([12c3774](https://github.com/theory-cloud/AppTheory/commit/12c37740147b4b82202354db3b6c19745df89f0c))
+* **cdk:** prune MicrovmImage versions on every deployment ([c2e06aa](https://github.com/theory-cloud/AppTheory/commit/c2e06aae2733ee0f3960626ca3153a7243df3975))
+
+
+### Bug Fixes
+
+* **cdk:** address GLM-5.3 review findings on MicrovmImage version pruning ([a28026f](https://github.com/theory-cloud/AppTheory/commit/a28026f7063dab053dc975f847e1540738d7a217))
+
 ## [4.1.0](https://github.com/theory-cloud/AppTheory/compare/v4.0.0...v4.1.0) (2026-08-24)
 
 
