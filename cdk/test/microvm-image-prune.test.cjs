@@ -329,6 +329,7 @@ test("prune: 404 on the version list is nothing to prune", async () => {
   );
   assert.deepEqual(summary, { versionsSeen: 0, versionsDeleted: 0, versionsSkipped: 0 });
   assert.equal(calls.length, 1, "one list call, no delete calls");
+  assert.ok(logs.some((line) => line.includes("list returned 404: image not present; nothing to prune")));
   assert.ok(logs.some((line) => line.includes("versions seen=0 deleted=0 skipped=0 kept=<none>")));
 });
 
@@ -379,8 +380,9 @@ test("prune: paginates with nextToken", async () => {
   assert.deepEqual(summary, { versionsSeen: 2, versionsDeleted: 1, versionsSkipped: 0 });
   const lists = calls.filter((c) => c.options.method === "GET");
   assert.equal(lists.length, 2);
-  assert.ok(lists[1].url.includes("nextToken=page-2-token"));
-  assert.ok(lists[0].url.includes("maxResults=100"));
+  assert.ok(lists[0].url.endsWith("?maxResults=50"), "first page carries maxResults=50 and no nextToken");
+  assert.ok(lists[1].url.includes("maxResults=50&nextToken=page-2-token"), "second page keeps maxResults=50 alongside nextToken");
+  assert.ok(lists[1].url.endsWith("?maxResults=50&nextToken=page-2-token"));
 });
 
 test("request shape: list versions GET against the verified API path", async () => {
@@ -398,7 +400,7 @@ test("request shape: list versions GET against the verified API path", async () 
   assert.equal(call.options.method, "GET");
   assert.equal(
     call.url,
-    `https://lambda.${REGION}.amazonaws.com/2025-09-09/microvm-images/${ESCAPED_IMAGE_ARN}/versions?maxResults=100`,
+    `https://lambda.${REGION}.amazonaws.com/2025-09-09/microvm-images/${ESCAPED_IMAGE_ARN}/versions?maxResults=50`,
   );
   const headers = call.options.headers;
   assert.equal(headers.host, `lambda.${REGION}.amazonaws.com`);
