@@ -1,7 +1,11 @@
-import { CfnResource, Token } from "aws-cdk-lib";
+import { CfnResource, CustomResource, Duration, Stack, Token } from "aws-cdk-lib";
+import * as iam from "aws-cdk-lib/aws-iam";
+import * as lambda from "aws-cdk-lib/aws-lambda";
+import { Provider } from "aws-cdk-lib/custom-resources";
 import { Construct } from "constructs";
 
 import type { IAppTheoryMicrovmNetworkConnector } from "./microvm-network-connector";
+import { MICROVM_IMAGE_PRUNE_HANDLER_SOURCE } from "./private/microvm-image-prune-handler";
 
 /**
  * Reference to a Lambda MicroVM image usable by MicroVM controller constructs.
@@ -393,24 +397,26 @@ export class AppTheoryMicrovmImage extends Construct implements IAppTheoryMicrov
     const cpuConfigurations = renderCpuConfigurations(props.cpuConfigurations);
     const environmentVariables = renderEnvironmentVariables(props.environmentVariables);
 
+    const renderedImageProperties = {
+      AdditionalOsCapabilities: additionalOsCapabilities,
+      BaseImageArn: baseImageArn,
+      BaseImageVersion: baseImageVersion,
+      BuildRoleArn: buildRoleArn,
+      CodeArtifact: codeArtifact,
+      CpuConfigurations: cpuConfigurations,
+      Description: description,
+      EgressNetworkConnectors: egressNetworkConnectors,
+      EnvironmentVariables: environmentVariables,
+      Hooks: hooks,
+      Logging: renderLogging(logging),
+      Name: name,
+      Resources: resources,
+      Tags: renderTags(props.tags),
+    };
+
     this.microvmImage = new CfnResource(this, "MicrovmImage", {
       type: "AWS::Lambda::MicrovmImage",
-      properties: {
-        AdditionalOsCapabilities: additionalOsCapabilities,
-        BaseImageArn: baseImageArn,
-        BaseImageVersion: baseImageVersion,
-        BuildRoleArn: buildRoleArn,
-        CodeArtifact: codeArtifact,
-        CpuConfigurations: cpuConfigurations,
-        Description: description,
-        EgressNetworkConnectors: egressNetworkConnectors,
-        EnvironmentVariables: environmentVariables,
-        Hooks: hooks,
-        Logging: renderLogging(logging),
-        Name: name,
-        Resources: resources,
-        Tags: renderTags(props.tags),
-      },
+      properties: renderedImageProperties,
     });
 
     this.microvmImageName = this.microvmImage.ref;
@@ -421,6 +427,74 @@ export class AppTheoryMicrovmImage extends Construct implements IAppTheoryMicrov
     this.latestFailedImageVersion = this.microvmImage.getAtt("LatestFailedImageVersion").toString();
     this.createdAt = this.microvmImage.getAtt("CreatedAt").toString();
     this.updatedAt = this.microvmImage.getAtt("UpdatedAt").toString();
+
+    this.wireVersionPruning(renderedImageProperties, name);
+  }
+
+  /**
+   * Wires the always-on version-pruning custom resource.
+   *
+   * Every CloudFormation create/update that touches the image — signaled by a
+   * change to the mirrored image properties — runs the prune handler BEFORE the
+   * `AWS::Lambda::MicrovmImage` update creates a new version: the image resource
+   * carries an explicit `DependsOn` on the prune custom resource so CloudFormation
+   * orders the prune first. A list/describe failure fails the deployment loudly;
+   * a per-version delete refusal is logged and skipped. On stack DELETE the
+   * handler returns success without pruning because CloudFormation deletes the
+   * whole image. There are no deploy-time knobs: pruning is always-on encoded
+   * behavior.
+   *
+   * The handler env and IAM policy reference the image ARN constructed from
+   * pseudo-parameters (`Stack.formatArn`) rather than from `ImageArn` GetAtt:
+   * the handler function is downstream of the prune custom resource, so a
+   * GetAtt-based reference would make the handler depend on the image and close
+   * a CloudFormation dependency cycle (image → prune → handler → image).
+   */
+  private wireVersionPruning(renderedImageProperties: Record<string, unknown>, imageName: string): void {
+    const pruneImageArn = Stack.of(this).formatArn({
+      service: "lambda",
+      resource: "microvm-image",
+      resourceName: imageName,
+    });
+
+    const pruneHandler = new lambda.Function(this, "MicrovmImagePruneHandler", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: "index.handler",
+      code: lambda.Code.fromInline(MICROVM_IMAGE_PRUNE_HANDLER_SOURCE),
+      timeout: Duration.minutes(1),
+      memorySize: 128,
+      environment: {
+        APPTHEORY_MICROVM_IMAGE_ARN: pruneImageArn,
+        APPTHEORY_MICROVM_IMAGE_REGION: Stack.of(this).region,
+      },
+    });
+
+    // Least privilege: exactly the two microvm list/delete actions on this
+    // image ARN and nothing else. No wildcard service permissions.
+    pruneHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["lambda:ListMicrovmImageVersions", "lambda:DeleteMicrovmImageVersion"],
+        resources: [pruneImageArn],
+      }),
+    );
+
+    const pruneProvider = new Provider(this, "MicrovmImagePruneProvider", {
+      onEventHandler: pruneHandler,
+    });
+
+    const prune = new CustomResource(this, "MicrovmImagePrune", {
+      serviceToken: pruneProvider.serviceToken,
+      properties: {
+        // Mirrors the image's rendered properties so the prune custom resource
+        // is re-invoked exactly when the image resource itself would be updated
+        // by CloudFormation. The prune handler reads the image ARN from its own
+        // environment rather than from these properties, so the custom resource
+        // never creates an implicit dependency that would reverse the ordering.
+        MicrovmImageProperties: renderedImageProperties,
+      },
+    });
+
+    this.microvmImage.node.addDependency(prune);
   }
 }
 

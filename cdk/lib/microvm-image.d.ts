@@ -318,4 +318,24 @@ export declare class AppTheoryMicrovmImage extends Construct implements IAppTheo
      */
     readonly updatedAt: string;
     constructor(scope: Construct, id: string, props: AppTheoryMicrovmImageProps);
+    /**
+     * Wires the always-on version-pruning custom resource.
+     *
+     * Every CloudFormation create/update that touches the image — signaled by a
+     * change to the mirrored image properties — runs the prune handler BEFORE the
+     * `AWS::Lambda::MicrovmImage` update creates a new version: the image resource
+     * carries an explicit `DependsOn` on the prune custom resource so CloudFormation
+     * orders the prune first. A list/describe failure fails the deployment loudly;
+     * a per-version delete refusal is logged and skipped. On stack DELETE the
+     * handler returns success without pruning because CloudFormation deletes the
+     * whole image. There are no deploy-time knobs: pruning is always-on encoded
+     * behavior.
+     *
+     * The handler env and IAM policy reference the image ARN constructed from
+     * pseudo-parameters (`Stack.formatArn`) rather than from `ImageArn` GetAtt:
+     * the handler function is downstream of the prune custom resource, so a
+     * GetAtt-based reference would make the handler depend on the image and close
+     * a CloudFormation dependency cycle (image → prune → handler → image).
+     */
+    private wireVersionPruning;
 }
