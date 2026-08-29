@@ -138,8 +138,12 @@ requests are SigV4-signed with signing name `lambda` against `lambda.{region}.am
   (`ResourceNotFoundException`); the handler treats a 404 on the list as nothing to prune and the
   create succeeds. On stack DELETE the handler returns success without pruning because
   CloudFormation deletes the whole image; pruning never blocks or fails deletion.
-- The prune handler's execution role is least privilege: exactly `lambda:ListMicrovmImageVersions`
-  and `lambda:DeleteMicrovmImageVersion` on the specific image ARN. No wildcard service permissions.
+- The prune handler's execution role grants exactly `lambda:ListMicrovmImageVersions`
+  and `lambda:DeleteMicrovmImageVersion` on `*`. Lambda MicroVM image-version operations are
+  currently permission-only actions: the service does not honor resource-level scoping for
+  them, and a grant scoped to the image ARN is rejected at runtime with HTTP 403 (observed
+  live on the deploy runner). The actual constraint is the handler env: the binary only ever
+  targets the single image ARN from `APPTHEORY_MICROVM_IMAGE_ARN`. No wildcard service actions.
 
 ### Failure semantics
 

@@ -5770,20 +5770,26 @@ test("AppTheoryMicrovmImage wires always-on version pruning", () => {
     "handler env must carry the deployment region",
   );
 
-  // Least privilege: exactly the two microvm list/delete actions on the image
-  // ARN. No wildcard service permissions.
+  // Exactly the two microvm list/delete actions on "*": Lambda MicroVM
+  // image-version operations are currently permission-only actions, and the
+  // service does not honor resource-level scoping for them (a grant scoped to
+  // the image ARN is rejected live with HTTP 403). The handler binary itself
+  // only ever targets the single image ARN from its env, which is the actual
+  // constraint. Still no wildcard service actions, still a single statement.
   const prunePolicies = Object.entries(resources).filter(([, r]) =>
     r.Type === "AWS::IAM::Policy" &&
     JSON.stringify(r.Properties.PolicyDocument).includes("lambda:ListMicrovmImageVersions"),
   );
   assert.equal(prunePolicies.length, 1, "exactly one prune IAM policy");
-  const statement = prunePolicies[0][1].Properties.PolicyDocument.Statement[0];
+  const prunePolicyDocument = prunePolicies[0][1].Properties.PolicyDocument;
+  assert.equal(prunePolicyDocument.Statement.length, 1, "prune policy must be a single statement");
+  const statement = prunePolicyDocument.Statement[0];
   assert.deepEqual(
     [...statement.Action].sort(),
     ["lambda:DeleteMicrovmImageVersion", "lambda:ListMicrovmImageVersions"],
   );
   assert.equal(statement.Effect, "Allow");
-  assert.match(renderedString(statement.Resource), /microvm-image\/apptheory-microvm-image$/);
+  assert.equal(renderedString(statement.Resource), "*");
   assert.ok(
     !statement.Action.some((action) => action.includes("*")),
     "prune policy must not contain wildcard service actions",

@@ -1530,26 +1530,7 @@
                 "lambda:DeleteMicrovmImageVersion"
               ],
               "Effect": "Allow",
-              "Resource": {
-                "Fn::Join": [
-                  "",
-                  [
-                    "arn:",
-                    {
-                      "Ref": "AWS::Partition"
-                    },
-                    ":lambda:",
-                    {
-                      "Ref": "AWS::Region"
-                    },
-                    ":",
-                    {
-                      "Ref": "AWS::AccountId"
-                    },
-                    ":microvm-image/apptheory-microvm-image"
-                  ]
-                ]
-              }
+              "Resource": "*"
             }
           ],
           "Version": "2012-10-17"
