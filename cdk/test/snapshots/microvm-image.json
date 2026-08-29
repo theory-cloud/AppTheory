@@ -247,7 +247,7 @@
                   {
                     "Ref": "AWS::AccountId"
                   },
-                  ":microvm-image/apptheory-microvm-image"
+                  ":microvm-image:apptheory-microvm-image"
                 ]
               ]
             },

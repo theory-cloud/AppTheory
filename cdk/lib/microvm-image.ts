@@ -1,4 +1,4 @@
-import { CfnResource, CustomResource, Duration, Stack, Token } from "aws-cdk-lib";
+import { ArnFormat, CfnResource, CustomResource, Duration, Stack, Token } from "aws-cdk-lib";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import { Provider } from "aws-cdk-lib/custom-resources";
@@ -449,13 +449,18 @@ export class AppTheoryMicrovmImage extends Construct implements IAppTheoryMicrov
    * pseudo-parameters (`Stack.formatArn`) rather than from `ImageArn` GetAtt:
    * the handler function is downstream of the prune custom resource, so a
    * GetAtt-based reference would make the handler depend on the image and close
-   * a CloudFormation dependency cycle (image → prune → handler → image).
+   * a CloudFormation dependency cycle (image → prune → handler → image). The
+   * ARN is built in the canonical colon form: the Lambda MicroVMs control plane
+   * authorizes `arn:aws:lambda:<region>:<account>:microvm-image:<name>` only,
+   * and rejects the slash form (`...:microvm-image/<name>`) with HTTP 403
+   * AccessDenied regardless of IAM (live-verified).
    */
   private wireVersionPruning(renderedImageProperties: Record<string, unknown>, imageName: string): void {
     const pruneImageArn = Stack.of(this).formatArn({
       service: "lambda",
       resource: "microvm-image",
       resourceName: imageName,
+      arnFormat: ArnFormat.COLON_RESOURCE_NAME,
     });
 
     const pruneHandler = new lambda.Function(this, "MicrovmImagePruneHandler", {
@@ -470,14 +475,14 @@ export class AppTheoryMicrovmImage extends Construct implements IAppTheoryMicrov
       },
     });
 
-    // Exactly the two microvm list/delete actions on "*". Lambda MicroVM
-    // image-version operations are currently permission-only actions: the
-    // service does not honor resource-level scoping for them, so a grant
-    // scoped to the image ARN is rejected at runtime with HTTP 403 (observed
-    // live: "is not authorized to perform: lambda:ListMicrovmImageVersions on
-    // resource: arn:aws:lambda:...:microvm-image/<image>"). The handler
-    // binary itself only ever targets the single image ARN from its
-    // APPTHEORY_MICROVM_IMAGE_ARN env, which is the actual constraint.
+    // Exactly the two microvm list/delete actions on "*". The Lambda MicroVMs
+    // control plane authorizes the canonical colon-form image ARN
+    // (`...:microvm-image:<name>`); the slash form (`...:microvm-image/<name>`)
+    // is rejected with HTTP 403 AccessDenied regardless of IAM (live-verified,
+    // byte-identical message to the deploy failures this fix addresses).
+    // Resource-level IAM scoping support remains untested, so the grant stays
+    // on "*"; the handler binary itself only ever targets the single image ARN
+    // from its APPTHEORY_MICROVM_IMAGE_ARN env, which is the actual constraint.
     pruneHandler.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["lambda:ListMicrovmImageVersions", "lambda:DeleteMicrovmImageVersion"],
