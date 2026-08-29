@@ -26,9 +26,9 @@ const test = require("node:test");
 
 const { MICROVM_IMAGE_PRUNE_HANDLER_SOURCE } = require("../lib/private/microvm-image-prune-handler");
 
-const IMAGE_ARN = "arn:aws:lambda:us-east-1:123456789012:microvm-image/apptheory-microvm-image";
+const IMAGE_ARN = "arn:aws:lambda:us-east-1:123456789012:microvm-image:apptheory-microvm-image";
 const ESCAPED_IMAGE_ARN =
-  "arn%3Aaws%3Alambda%3Aus-east-1%3A123456789012%3Amicrovm-image%2Fapptheory-microvm-image";
+  "arn%3Aaws%3Alambda%3Aus-east-1%3A123456789012%3Amicrovm-image%3Aapptheory-microvm-image";
 const REGION = "us-east-1";
 const FIXED_NOW = new Date("2026-08-28T12:34:56.789Z");
 
@@ -458,12 +458,12 @@ test("request shape: SigV4 canonical URI is double-encoded (pinned to the real S
   // lambdamicrovms v1.0.0 signer (aws-sdk-go-v2 v1.43.5, smithy
   // httpbinding.EscapePath(uriPath, false)) with LogSigning at the same
   // fixed timestamp. The SDK re-escapes the already-escaped wire path for
-  // the canonical URI: the single-encoded wire path `arn%3A...%2F...`
-  // signs as the double-encoded `arn%253A...%252F...`. These values are
+  // the canonical URI: the single-encoded wire path `arn%3A...%3A...`
+  // signs as the double-encoded `arn%253A...%253A...`. These values are
   // hardcoded so the test cannot share the implementation's assumption.
   const goldenCanonicalRequest = [
     "GET",
-    "/2025-09-09/microvm-images/arn%253Aaws%253Alambda%253Aus-east-1%253A123456789012%253Amicrovm-image%252Fapptheory-microvm-image/versions",
+    "/2025-09-09/microvm-images/arn%253Aaws%253Alambda%253Aus-east-1%253A123456789012%253Amicrovm-image%253Aapptheory-microvm-image/versions",
     "maxResults=100",
     "host:lambda.us-east-1.amazonaws.com",
     "x-amz-content-sha256:" + EMPTY_SHA256,
@@ -475,11 +475,11 @@ test("request shape: SigV4 canonical URI is double-encoded (pinned to the real S
   ].join("\n");
   assert.equal(signed.canonicalRequest, goldenCanonicalRequest);
   const signature = signed.headers.authorization.match(/Signature=([0-9a-f]{64})/)[1];
-  assert.equal(signature, "77c3bd655d9ffcfddb400d1beb1cc7991ccd29f2cd80fba73c0d9759ab18bc0d");
+  assert.equal(signature, "47c9fec7874b48f813d35eeb4b2fbc5ad29a9bf4a210ca965cef21c19be649a3");
   assert.equal(signed.headers.authorization, [
     "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260828/us-east-1/lambda/aws4_request",
     "SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token",
-    "Signature=77c3bd655d9ffcfddb400d1beb1cc7991ccd29f2cd80fba73c0d9759ab18bc0d",
+    "Signature=47c9fec7874b48f813d35eeb4b2fbc5ad29a9bf4a210ca965cef21c19be649a3",
   ].join(", "));
 });
 
@@ -501,10 +501,10 @@ test("request shape: delete SigV4 canonical URI is double-encoded (pinned to the
   });
   assert.equal(
     signed.canonicalRequest.split("\n")[1],
-    "/2025-09-09/microvm-images/arn%253Aaws%253Alambda%253Aus-east-1%253A123456789012%253Amicrovm-image%252Fapptheory-microvm-image/versions/1",
+    "/2025-09-09/microvm-images/arn%253Aaws%253Alambda%253Aus-east-1%253A123456789012%253Amicrovm-image%253Aapptheory-microvm-image/versions/1",
   );
   const signature = signed.headers.authorization.match(/Signature=([0-9a-f]{64})/)[1];
-  assert.equal(signature, "5dbd62e24896e34ce54a1b495e024909c3a2c0b80fe78e4af9709836da93f986");
+  assert.equal(signature, "fc3b675b26eeb00f58fa76b40fe6c850d882ed366cc92a32d0c788c01718f021");
 });
 
 test("request shape: escaping matches the SDK Amazon path-escape style", async () => {
