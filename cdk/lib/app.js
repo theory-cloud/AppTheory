@@ -119,7 +119,7 @@ class AppTheoryApp extends constructs_1.Construct {
 }
 exports.AppTheoryApp = AppTheoryApp;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryApp[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryApp", version: "4.2.2-rc" };
+AppTheoryApp[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryApp", version: "4.2.2" };
 function normalizeDomainOptions(scope, props) {
     if (props.domain && (props.domainName || props.certificateArn || props.hostedZone || props.stage)) {
         throw new Error("AppTheoryApp custom domain must use either props.domain or legacy domainName/certificateArn props");

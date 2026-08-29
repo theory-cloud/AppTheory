@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.2.2](https://github.com/theory-cloud/AppTheory/compare/v4.2.1...v4.2.2) (2026-08-29)
+
+
+### Bug Fixes
+
+* **cdk:** grant prune handler microvm image-version actions on * ([0416af1](https://github.com/theory-cloud/AppTheory/commit/0416af16bec9288f17e33e0a983d69d73ffef5aa))
+* **cdk:** grant prune handler microvm image-version actions on * ([48d166d](https://github.com/theory-cloud/AppTheory/commit/48d166df1a20774e4940d3206f3edf69567c4c72))
+
 ## [4.2.2-rc](https://github.com/theory-cloud/AppTheory/compare/v4.2.1...v4.2.2-rc) (2026-08-29)
 
 
