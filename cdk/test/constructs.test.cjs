@@ -5762,20 +5762,21 @@ test("AppTheoryMicrovmImage wires always-on version pruning", () => {
   const pruneEnv = handlerResource.Properties.Environment.Variables;
   assert.match(
     renderedString(pruneEnv.APPTHEORY_MICROVM_IMAGE_ARN),
-    /microvm-image\/apptheory-microvm-image$/,
-    "handler env must carry the image ARN",
+    /microvm-image:apptheory-microvm-image$/,
+    "handler env must carry the image ARN in the canonical colon form",
   );
   assert.ok(
     pruneEnv.APPTHEORY_MICROVM_IMAGE_REGION !== undefined,
     "handler env must carry the deployment region",
   );
 
-  // Exactly the two microvm list/delete actions on "*": Lambda MicroVM
-  // image-version operations are currently permission-only actions, and the
-  // service does not honor resource-level scoping for them (a grant scoped to
-  // the image ARN is rejected live with HTTP 403). The handler binary itself
-  // only ever targets the single image ARN from its env, which is the actual
-  // constraint. Still no wildcard service actions, still a single statement.
+  // Exactly the two microvm list/delete actions on "*". The Lambda MicroVMs
+  // control plane authorizes the canonical colon-form image ARN and rejects
+  // the slash form with HTTP 403 AccessDenied regardless of IAM (live-verified);
+  // resource-level IAM scoping support remains untested, so the grant stays on
+  // "*". The handler binary itself only ever targets the single image ARN from
+  // its env, which is the actual constraint. Still no wildcard service actions,
+  // still a single statement.
   const prunePolicies = Object.entries(resources).filter(([, r]) =>
     r.Type === "AWS::IAM::Policy" &&
     JSON.stringify(r.Properties.PolicyDocument).includes("lambda:ListMicrovmImageVersions"),

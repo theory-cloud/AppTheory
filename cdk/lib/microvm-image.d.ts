@@ -336,7 +336,11 @@ export declare class AppTheoryMicrovmImage extends Construct implements IAppTheo
      * pseudo-parameters (`Stack.formatArn`) rather than from `ImageArn` GetAtt:
      * the handler function is downstream of the prune custom resource, so a
      * GetAtt-based reference would make the handler depend on the image and close
-     * a CloudFormation dependency cycle (image → prune → handler → image).
+     * a CloudFormation dependency cycle (image → prune → handler → image). The
+     * ARN is built in the canonical colon form: the Lambda MicroVMs control plane
+     * authorizes `arn:aws:lambda:<region>:<account>:microvm-image:<name>` only,
+     * and rejects the slash form (`...:microvm-image/<name>`) with HTTP 403
+     * AccessDenied regardless of IAM (live-verified).
      */
     private wireVersionPruning;
 }
