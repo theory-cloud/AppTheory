@@ -470,12 +470,18 @@ export class AppTheoryMicrovmImage extends Construct implements IAppTheoryMicrov
       },
     });
 
-    // Least privilege: exactly the two microvm list/delete actions on this
-    // image ARN and nothing else. No wildcard service permissions.
+    // Exactly the two microvm list/delete actions on "*". Lambda MicroVM
+    // image-version operations are currently permission-only actions: the
+    // service does not honor resource-level scoping for them, so a grant
+    // scoped to the image ARN is rejected at runtime with HTTP 403 (observed
+    // live: "is not authorized to perform: lambda:ListMicrovmImageVersions on
+    // resource: arn:aws:lambda:...:microvm-image/<image>"). The handler
+    // binary itself only ever targets the single image ARN from its
+    // APPTHEORY_MICROVM_IMAGE_ARN env, which is the actual constraint.
     pruneHandler.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["lambda:ListMicrovmImageVersions", "lambda:DeleteMicrovmImageVersion"],
-        resources: [pruneImageArn],
+        resources: ["*"],
       }),
     );
 
