@@ -279,7 +279,7 @@ class AppTheoryMicrovmController extends constructs_1.Construct {
 }
 exports.AppTheoryMicrovmController = AppTheoryMicrovmController;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryMicrovmController[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmController", version: "4.2.2" };
+AppTheoryMicrovmController[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmController", version: "4.2.3-rc" };
 function needsExplicitStage(stageOpts, stageName) {
     return stageName !== "$default"
         || stageOpts.accessLogging === true
