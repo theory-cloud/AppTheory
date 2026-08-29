@@ -1,5 +1,21 @@
 # Changelog
 
+## [4.2.1](https://github.com/theory-cloud/AppTheory/compare/v4.2.0...v4.2.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* **cdk:** cap microvm image prune list page size at 50 ([f360688](https://github.com/theory-cloud/AppTheory/commit/f360688318512232f162d9ba74e63a9adad644c7))
+* **cdk:** cap microvm image prune list page size at 50 ([29a1423](https://github.com/theory-cloud/AppTheory/commit/29a1423b4debd2ef76f826877abf07a4795ecb4b))
+
+## [4.2.1-rc](https://github.com/theory-cloud/AppTheory/compare/v4.2.0...v4.2.1-rc) (2026-08-28)
+
+
+### Bug Fixes
+
+* **cdk:** cap microvm image prune list page size at 50 ([f360688](https://github.com/theory-cloud/AppTheory/commit/f360688318512232f162d9ba74e63a9adad644c7))
+* **cdk:** cap microvm image prune list page size at 50 ([29a1423](https://github.com/theory-cloud/AppTheory/commit/29a1423b4debd2ef76f826877abf07a4795ecb4b))
+
 ## [4.2.0](https://github.com/theory-cloud/AppTheory/compare/v4.1.0...v4.2.0) (2026-08-28)
 
 
