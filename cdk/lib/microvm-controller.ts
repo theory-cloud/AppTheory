@@ -545,11 +545,14 @@ export class AppTheoryMicrovmController extends Construct {
           "lambda:SuspendMicrovm",
           "lambda:TerminateMicrovm",
         ],
-        // Lambda MicroVM control-plane operations are currently permission-only
-        // actions. AppTheory constrains which image/connectors/role may be used
-        // through typed construct props, fail-closed controller env, and scoped
-        // iam:PassRole rather than pretending the service supports per-MicroVM
-        // resource ARNs for these actions.
+        // Lambda MicroVM resource-level IAM scoping for these actions remains
+        // untested, so the grant stays on "*". The one live observation (the
+        // image-version list/delete operations) shows the control plane
+        // authorizes the canonical colon-form image ARN (`...:microvm-image:<name>`)
+        // and rejects the slash form with HTTP 403 AccessDenied regardless of
+        // IAM (live-verified). AppTheory constrains which image/connectors/role
+        // may be used through typed construct props, fail-closed controller env,
+        // and scoped iam:PassRole rather than re-scoping these resource grants.
         resources: ["*"],
       }),
     );
