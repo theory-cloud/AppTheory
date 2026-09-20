@@ -691,32 +691,48 @@ osv_scan_lockfile() {
 
   local tmp_report
   tmp_report="$(mktemp)"
+  local tmp_marker
+  tmp_marker="$(mktemp)"
 
   set +e
   osv-scanner scan --lockfile="${lf}" --format=json >"${tmp_report}"
   local scan_status=$?
   set -e
 
+  local filter_status=0
+  local exception_marker=""
   set +e
   if [[ "${exception_kind}" == "ts" ]]; then
     check_visible_ts_brace_finding "${tmp_report}" "${lf}"
+    filter_status=$?
   else
-    node scripts/check-visible-aws-cdk-finding.mjs osv "${tmp_report}" "${lf}"
+    node scripts/check-visible-aws-cdk-finding.mjs osv "${tmp_report}" "${lf}" >"${tmp_marker}"
+    filter_status=$?
+    exception_marker="$(cat "${tmp_marker}")"
+    [[ -z "${exception_marker}" ]] || printf '%s\n' "${exception_marker}"
   fi
-  local filter_status=$?
   set -e
-  rm -f "${tmp_report}"
+  rm -f "${tmp_report}" "${tmp_marker}"
 
   if [[ "${exception_kind}" == "ts" ]]; then
     if [[ "${scan_status}" -eq 0 && "${filter_status}" -eq 0 ]]; then
       echo "FAIL: vulnerability exception checker accepted an empty scanner report" >&2
       return 1
     fi
-  elif [[ "${scan_status}" -ne 0 ]]; then
-    if [[ "${filter_status}" -eq 0 ]]; then
-      echo "FAIL: osv-scanner exited ${scan_status} without a reported finding" >&2
+  else
+    # The aws-cdk graph carries one reviewed, self-expiring stream-json exception
+    # (see scripts/check-visible-aws-cdk-finding.mjs). osv-scanner exits non-zero
+    # when it reports findings, so a non-zero status is accepted only when the
+    # exception checker passed AND printed the machine marker proving that this
+    # exact reviewed finding caused it; any other finding or scanner error still
+    # fails closed.
+    if [[ "${filter_status}" -ne 0 ]]; then
+      return "${filter_status}"
     fi
-    return 1
+    if [[ "${scan_status}" -ne 0 ]] && ! grep -Fq 'exception-applied: ' <<<"${exception_marker}"; then
+      echo "FAIL: osv-scanner exited ${scan_status} but the report contained no reviewed exception finding" >&2
+      return 1
+    fi
   fi
 
   return "${filter_status}"
