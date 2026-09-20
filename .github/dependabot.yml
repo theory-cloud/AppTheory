@@ -1,0 +1,88 @@
+# Dependabot configuration for AppTheory.
+#
+# Dependabot PRs carry Conventional Commit `chore(deps)` subjects, which do not
+# meet this repo's staging release-eligibility expectations on their own:
+# release-please only ships `feat:`/`fix:`, so a green Dependabot PR is not by
+# itself a release-eligible change. Do not merge these PRs directly.
+#
+# Security updates are consolidated into steward-authored, signed `fix(deps)`
+# PRs that do carry a release-eligible commit type. This config exists so a
+# security advisory produces a candidate bump automatically instead of sitting
+# unnoticed.
+#
+# Scope note: AppTheory consumes TableTheory and its own distributable packages
+# as immutable GitHub Release assets (wheel/tarball URLs pinned by checksum),
+# never as registry coordinates. Those pins are invisible to Dependabot and stay
+# under manual steward refresh per docs/dependency-automation.md.
+#
+# No `ignore` rules on purpose: the exact dependency graph is verified by the
+# audit, OSV, and runtime-floor gates at review time, so suppressing an update
+# class here would hide the very advisories this config is meant to surface.
+
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    target-branch: staging
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 5
+    groups:
+      go-root:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: "/ts"
+    target-branch: staging
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "09:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 5
+    groups:
+      ts-runtime:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: "/cdk"
+    target-branch: staging
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "09:30"
+      timezone: America/New_York
+    open-pull-requests-limit: 3
+    groups:
+      cdk-constructs:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: "/py"
+    target-branch: staging
+    schedule:
+      interval: weekly
+      day: wednesday
+      time: "09:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 3
+    groups:
+      py-runtime:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    target-branch: staging
+    schedule:
+      interval: weekly
+      day: thursday
+      time: "09:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns: ["*"]
