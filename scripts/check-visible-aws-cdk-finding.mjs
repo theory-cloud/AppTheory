@@ -63,6 +63,8 @@
 // non-zero scanner exit was caused by this exact reviewed finding.
 // ===========================================================================
 import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const [mode, reportPath, lockfilePath] = process.argv.slice(2);
 
@@ -86,16 +88,31 @@ function blocked(message) {
   process.exit(2);
 }
 
-function readJson(path, description) {
+function readJson(file, description) {
   try {
-    return JSON.parse(fs.readFileSync(path, "utf8"));
+    return JSON.parse(fs.readFileSync(file, "utf8"));
   } catch (err) {
-    fail(`could not parse ${description} ${path}: ${err.message}`);
+    fail(`could not parse ${description} ${file}: ${err.message}`);
   }
 }
 
-function normalizePath(path) {
-  return String(path ?? "").replace(/\\/g, "/").replace(/^\.\//, "");
+function normalizePath(value) {
+  return String(value ?? "").replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+// Identity of the lockfile this checker was handed: the argv path with its "." and
+// ".." segments resolved lexically and expressed relative to this repository. The
+// exception below is granted to exactly one file, so argv has to NAME that file
+// rather than merely end in its name - a copied tree, a /tmp scratch path, or any
+// other path that is not this repository's cdk lockfile takes the non-exception
+// path (the brace-expansion assertion, zero findings, no registry lookups), exactly
+// as this checker behaved before the exception existed.
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+function canonicalLockfilePath(value) {
+  const raw = String(value ?? "").trim();
+  if (raw === "") return "";
+  return path.relative(repositoryRoot, path.resolve(raw)).split(path.sep).join("/");
 }
 
 function sameStringSet(actual, expected) {
@@ -211,7 +228,7 @@ const expectation = {
   alias: "CVE-2026-69152",
   cdkVersion: "2.265.0",
   fixedVersions: ["1.1.18", "2.1.4", "3.0.6", "5.0.9"],
-  lockfile: normalizePath(lockfilePath),
+  lockfile: canonicalLockfilePath(lockfilePath),
   minimatchVersion: "10.2.5",
   packageName: "brace-expansion",
   packagePath: "node_modules/aws-cdk-lib/node_modules/brace-expansion",
@@ -245,11 +262,13 @@ const streamJsonException = {
 // brace-expansion path to this checker, which includes the examples/cdk
 // projects; those carry neither the jsii toolchain nor stream-json, so for them
 // this checker behaves exactly as it did before the exception existed: the
-// brace-expansion graph assertion, zero findings, no registry lookups. Mirrors
-// the exact-match scoping of osvSourceMatchesLockfile below.
-const streamJsonExceptionApplies =
-  expectation.lockfile === streamJsonException.lockfile ||
-  expectation.lockfile.endsWith(`/${streamJsonException.lockfile}`);
+// brace-expansion graph assertion, zero findings, no registry lookups.
+//
+// The comparison is equality against the canonical repo-relative path computed
+// above, never a path-suffix convention: a path that merely ends in
+// "cdk/package-lock.json" - an absolute path into a copied tree, a /tmp scratch
+// copy - is a different file and must not inherit the grant.
+const streamJsonExceptionApplies = expectation.lockfile === streamJsonException.lockfile;
 
 // Expiry gate. For the exception's own lockfile the lookup is unconditional: it
 // runs whether or not the current report actually carries the finding, so the
@@ -362,12 +381,35 @@ function npmViaEntries(vuln) {
   return Array.isArray(vuln.via) ? vuln.via : [];
 }
 
+// Advisory URL identity. Deliberately NOT normalizePath: folding "\" into "/"
+// would let "https:\\github.com/advisories/GHSA-..." compare equal to the reviewed
+// https URL. Only the scheme separator's slash run is normalized (https:/x and
+// https://x are the same URL form) and backslashes are never touched, so a
+// backslash-spelled or otherwise non-canonical URL fails closed. Both sides go
+// through the same function.
+function normalizeAdvisoryUrl(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/^(https?):\/+/i, (_match, scheme) => `${scheme}://`);
+}
+
+// npm audit merges every advisory that affects one package into a single
+// vulnerabilities entry, so the reviewed advisory must be the ONLY entry in that
+// entry's `via` list. `.some()` semantics would bless an entry that also carries a
+// second, unreviewed advisory (a future critical on the same package, say) and the
+// merge would be silently swallowed; every entry - string propagation, other
+// advisory object, or otherwise - must be this exact advisory object or the
+// finding fails closed.
 function npmViaMentionsAdvisory(vuln) {
-  return npmViaEntries(vuln).some(
-    (entry) =>
-      entry &&
-      typeof entry === "object" &&
-      normalizePath(entry.url) === streamJsonException.advisoryUrl,
+  const entries = npmViaEntries(vuln);
+  return (
+    entries.length > 0 &&
+    entries.every(
+      (entry) =>
+        entry !== null &&
+        typeof entry === "object" &&
+        normalizeAdvisoryUrl(entry.url) === normalizeAdvisoryUrl(streamJsonException.advisoryUrl),
+    )
   );
 }
 
