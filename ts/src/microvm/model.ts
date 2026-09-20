@@ -1,4 +1,5 @@
 import type { Model } from "@theory-cloud/tabletheory-ts";
+
 import type { Headers, Query } from "../types.js";
 
 export const MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm";

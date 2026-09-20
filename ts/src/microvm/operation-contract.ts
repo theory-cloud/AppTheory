@@ -1,3 +1,8 @@
+import { safeError } from "./errors.js";
+import {
+  type MicroVMTransitionSet,
+  microVMTransitionSet,
+} from "./lifecycle.js";
 import {
   MICROVM_CONTROLLER_AUTH_DEFAULT_DENY,
   MICROVM_ERROR_FORBIDDEN_FIELD,
@@ -26,11 +31,6 @@ import {
   type MicroVMTenantBindingRule,
   type MicroVMTokenIssuanceContract,
 } from "./model.js";
-import { safeError } from "./errors.js";
-import {
-  type MicroVMTransitionSet,
-  microVMTransitionSet,
-} from "./lifecycle.js";
 import { forbiddenMicroVMFieldName, missingStrings } from "./safety.js";
 
 export function defaultMicroVMRealLifecycleContract(): MicroVMLifecycleContract {

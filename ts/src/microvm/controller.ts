@@ -1,3 +1,9 @@
+import { normalizeMicroVMCommand } from "./controller-contract.js";
+import { safeError } from "./errors.js";
+import {
+  normalizeMicroVMLifecycleState,
+  requiredMicroVMLifecycleStates,
+} from "./lifecycle.js";
 import {
   MICROVM_AWS_LAMBDA_PROVIDER_ID,
   MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS,
@@ -46,8 +52,6 @@ import {
   type MicroVMSessionSpec,
   type MicroVMSessionStatus,
 } from "./model.js";
-import { safeError } from "./errors.js";
-import { normalizeMicroVMCommand } from "./controller-contract.js";
 import {
   mapMicroVMProviderState,
   normalizeMicroVMOperation,
@@ -73,6 +77,11 @@ import {
   validateMicroVMProviderToken,
 } from "./provider.js";
 import {
+  cloneStringMap,
+  validateSafeMicroVMFieldValue,
+  validateSafeMicroVMMetadata,
+} from "./safety.js";
+import {
   cloneMicroVMSessionTokenMetadataList,
   microVMSessionTokenMetadataFromProviderToken,
   normalizeMicroVMSessionRecord,
@@ -80,16 +89,7 @@ import {
   validateMicroVMSessionRecord,
   validateMicroVMSessionStatus,
 } from "./session.js";
-import {
-  cloneStringMap,
-  validateSafeMicroVMFieldValue,
-  validateSafeMicroVMMetadata,
-} from "./safety.js";
 import { cloneMicroVMDate, randomMicroVMSessionID, validDate } from "./time.js";
-import {
-  normalizeMicroVMLifecycleState,
-  requiredMicroVMLifecycleStates,
-} from "./lifecycle.js";
 
 export class MicroVMController {
   private readonly client: MicroVMClient;

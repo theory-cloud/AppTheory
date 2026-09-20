@@ -2461,7 +2461,7 @@ function normalizeToolResult(result) {
             ? result.content.map(normalizeContentBlock)
             : [],
     };
-    if (Boolean(result?.isError)) {
+    if (result?.isError) {
         out.isError = true;
     }
     if (result?.structuredContent && isRecord(result.structuredContent)) {

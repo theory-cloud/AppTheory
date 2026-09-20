@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { MICROVM_ERROR_FORBIDDEN_FIELD, MICROVM_ERROR_PROVIDER_OPERATION_FAILED, MICROVM_ERROR_PROVIDER_OPERATION_UNSUPPORTED, MICROVM_ERROR_PROVIDER_REQUEST_INVALID, MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE, MICROVM_ERROR_TENANT_BINDING_VIOLATION, MICROVM_ERROR_TOKEN_SAFETY_VIOLATION, MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER, MICROVM_ENV_EXECUTION_ROLE_ARN, MICROVM_ENV_LOGGING, MicroVMOperation, MicroVMSafeError, } from "./model.js";
+import { cloneMicroVMSessionSpec, normalizeMicroVMAuthContext, } from "./controller.js";
 import { safeError } from "./errors.js";
+import { MICROVM_ERROR_FORBIDDEN_FIELD, MICROVM_ERROR_PROVIDER_OPERATION_FAILED, MICROVM_ERROR_PROVIDER_OPERATION_UNSUPPORTED, MICROVM_ERROR_PROVIDER_REQUEST_INVALID, MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE, MICROVM_ERROR_TENANT_BINDING_VIOLATION, MICROVM_ERROR_TOKEN_SAFETY_VIOLATION, MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER, MICROVM_ENV_EXECUTION_ROLE_ARN, MICROVM_ENV_LOGGING, MicroVMOperation, MicroVMSafeError, } from "./model.js";
 import { isRequiredMicroVMOperation, mapMicroVMProviderState, normalizeMicroVMOperation, normalizeMicroVMProviderState, normalizeMicroVMRealLifecycleState, } from "./operation-contract.js";
 import { forbiddenMicroVMFieldName, validateSafeMicroVMFieldValue, validateSafeMicroVMMetadata, } from "./safety.js";
 import { cloneMicroVMDate, validDate } from "./time.js";
-import { cloneMicroVMSessionSpec, normalizeMicroVMAuthContext, } from "./controller.js";
 export function validateMicroVMProviderSession(session) {
     const normalized = normalizeMicroVMProviderSession(session);
     if (!normalized.tenant_id ||

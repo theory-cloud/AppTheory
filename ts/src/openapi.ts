@@ -15,19 +15,12 @@ interface JsonObject {
   [key: string]: JsonValue;
 }
 type OpenAPIValidationRuleValue =
-  | number
-  | string
-  | readonly (number | string)[]
-  | undefined;
+  number | string | readonly (number | string)[] | undefined;
 
 const JSON_NUMBER_PATTERN = /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/;
 
 export type OpenAPIFieldSource =
-  | "body"
-  | "query"
-  | "path"
-  | "header"
-  | "response";
+  "body" | "query" | "path" | "header" | "response";
 export type OpenAPIFieldType =
   | "string"
   | "integer"

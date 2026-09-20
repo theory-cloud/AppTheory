@@ -1,13 +1,14 @@
 import { Buffer } from "node:buffer";
 
+import { safeError } from "./errors.js";
 import {
+  type MicroVMSafeError,
   MICROVM_DEFAULT_SESSION_PROVIDER_ID,
   MICROVM_ERROR_TENANT_BINDING_VIOLATION,
   MICROVM_ERROR_PROVIDER_OPERATION_FAILED,
   MicroVMCommand,
   MicroVMOperation,
   MicroVMRealState,
-  MicroVMSafeError,
   MicroVMState,
   type MicroVMClient,
   type MicroVMClientCall,
@@ -32,19 +33,12 @@ import {
   type MicroVMSessionRecord,
   type MicroVMSessionStatus,
 } from "./model.js";
-import { safeError } from "./errors.js";
 import {
   mapMicroVMProviderState,
   normalizeMicroVMOperation,
   normalizeMicroVMProviderState,
   isRequiredMicroVMOperation,
 } from "./operation-contract.js";
-import {
-  cloneMicroVMSessionRecord,
-  microVMSessionRecordKey,
-  microVMSessionKeyString,
-  validateMicroVMSessionRecord,
-} from "./session.js";
 import {
   cloneMicroVMProviderSession,
   cloneMicroVMProviderToken,
@@ -61,6 +55,12 @@ import {
   validateMicroVMProviderTokenInputInternal,
 } from "./provider.js";
 import { cloneStringMap } from "./safety.js";
+import {
+  cloneMicroVMSessionRecord,
+  microVMSessionRecordKey,
+  microVMSessionKeyString,
+  validateMicroVMSessionRecord,
+} from "./session.js";
 import { coalesceMicroVMTime, validDate } from "./time.js";
 
 export class FakeMicroVMClient implements MicroVMClient {
