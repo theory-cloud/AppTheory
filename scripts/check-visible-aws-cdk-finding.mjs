@@ -39,6 +39,13 @@
 // severity-based, count-based, or blanket allowlist: any other finding, in any
 // project, still fails the gate.
 //
+// Anchor maintenance (operator ruling 2026-09-20, wave-2 dependency
+// consolidation): the cdk-constructs group moves aws-cdk-lib 2.265.0 -> 2.269.0,
+// so `expectation.cdkVersion` below is re-anchored to 2.269.0. The bundled
+// brace-expansion graph assertion was re-verified against the new lockfile:
+// aws-cdk-lib still bundles minimatch 10.2.5 -> brace-expansion 5.0.9
+// (both in-bundle), and no exception term changed.
+//
 // Scope: the exception is granted to exactly one lockfile, `cdk/package-lock.json`
 // (see `streamJsonException.lockfile`). Every other lockfile this checker is
 // routed - the examples/cdk projects, which also carry aws-cdk-lib's bundled
@@ -226,7 +233,11 @@ const expectation = {
   advisoryId: "GHSA-rgw5-rvv9-x895",
   advisoryUrl: "https://github.com/advisories/GHSA-rgw5-rvv9-x895",
   alias: "CVE-2026-69152",
-  cdkVersion: "2.265.0",
+  // Re-anchored 2026-09-20 (operator ruling, wave-2 dependency consolidation):
+  // the cdk-constructs group moves aws-cdk-lib 2.265.0 -> 2.269.0. Re-verified
+  // against the new lockfile: the release still bundles the patched
+  // minimatch 10.2.5 -> brace-expansion 5.0.9 path asserted below.
+  cdkVersion: "2.269.0",
   fixedVersions: ["1.1.18", "2.1.4", "3.0.6", "5.0.9"],
   lockfile: canonicalLockfilePath(lockfilePath),
   minimatchVersion: "10.2.5",
