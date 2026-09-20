@@ -73,6 +73,23 @@ Enforcement rule (anti-drift):
 
 **10/10 definition:** SEC-1 through SEC-4 pass.
 
+### SEC-2 documented exception: cdk stream-json (GHSA-528h-pc64-c93x)
+
+One reviewed, self-expiring exception exists in SEC-2's cdk branch: advisory
+`GHSA-528h-pc64-c93x` / `CVE-2026-71429` for `stream-json < 3.5.0`, reached only through
+`jsii-rosetta` (a peer of the `jsii-pacmak` cdk devDependency). It is upstream-blocked: every
+patched `stream-json` release is ESM-only, which breaks `jsii-rosetta`'s CommonJS subpath requires
+under `jsii-pacmak`, while every stable `jsii-rosetta` inside `jsii-pacmak`'s peer range
+(`>= 5.9.0`, 5.9.0 through 6.0.15) still pins `stream-json ^1.9.1`.
+
+The exception is operator-ruled (2026-09-20, Factory sweep 2026-09; companion to PR #998), matched
+exactly (no severity, count, or blanket allowlists), and enforced identically by
+`gov_cmd_vuln` (via `scripts/check-visible-aws-cdk-finding.mjs`) and `scripts/verify-cdk-audit.sh`.
+It **expires automatically** - the gate fails closed - as soon as the npm registry shows a STABLE
+`jsii-rosetta >= 6.0.16` or a STABLE non-ESM-only `stream-json >= 3.5.0`. Prereleases never trigger
+expiry. Source of truth for the matching rules, ruling, and removal condition:
+`scripts/check-visible-aws-cdk-finding.mjs`.
+
 ## Compliance Readiness (CMP) — auditability and evidence
 | ID | Points | Requirement | How to verify |
 | --- | ---: | --- | --- |
