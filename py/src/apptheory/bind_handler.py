@@ -46,7 +46,7 @@ class BindConfig[ReqT]:
     strict_json: bool = False
     success_status: int = 200
     validation: ValidationSchema | None = None
-    validate: Callable[[Context, ReqT], None | Awaitable[None]] | None = None
+    validate: Callable[[Context, ReqT], Awaitable[None] | None] | None = None
 
 
 type TypedHandler[ReqT, RespT] = Callable[[Context, ReqT], RespT | Awaitable[RespT]]
