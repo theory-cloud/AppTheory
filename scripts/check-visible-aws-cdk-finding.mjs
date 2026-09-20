@@ -39,6 +39,12 @@
 // severity-based, count-based, or blanket allowlist: any other finding, in any
 // project, still fails the gate.
 //
+// Scope: the exception is granted to exactly one lockfile, `cdk/package-lock.json`
+// (see `streamJsonException.lockfile`). Every other lockfile this checker is
+// routed - the examples/cdk projects, which also carry aws-cdk-lib's bundled
+// brace-expansion path - gets the brace-expansion assertion, zero findings, and
+// no registry lookups, exactly as it did before the exception existed.
+//
 // Removal condition (enforced automatically, never by comment alone): the
 // exception EXPIRES and this checker FAILS as soon as the public npm registry
 // shows an upgrade path, meaning either
@@ -46,10 +52,11 @@
 //   (b) a STABLE stream-json >= 3.5.0 that is not ESM-only is published.
 // Prereleases such as 6.0.16-dev.5 never trigger expiry. When it fires, bump
 // jsii-rosetta to >= 6.0.16 stable / patched CJS-compatible stream-json and
-// remove this exception. The lookup is unconditional, so a stale exception
-// cannot survive by simply never matching again. A registry that cannot be
-// reached is reported as BLOCKED (exit 2) instead of being assumed to have no
-// upgrade path.
+// remove this exception. The lookup runs unconditionally whenever this checker
+// is given the exception's own lockfile - it does not depend on the current
+// report actually carrying the finding - so a stale exception cannot survive by
+// simply never matching again. A registry that cannot be reached is reported as
+// BLOCKED (exit 2) instead of being assumed to have no upgrade path.
 //
 // Machine contract: when the exception is applied, this checker prints one line
 // to stdout beginning "exception-applied: " so a calling gate can prove that a
@@ -223,6 +230,7 @@ const streamJsonException = {
   parentPath: "node_modules/jsii-rosetta",
   parentToolName: "jsii-pacmak",
   parentToolPath: "node_modules/jsii-pacmak",
+  lockfile: "cdk/package-lock.json",
   operatorRuling: "2026-09-20",
   companion: "https://github.com/theory-cloud/AppTheory/pull/998",
   justification:
@@ -231,9 +239,21 @@ const streamJsonException = {
     "bump jsii-rosetta to >= 6.0.16 stable / patched CJS-compatible stream-json and remove this exception",
 };
 
-// Expiry gate. Deliberately unconditional: the exception must stop suppressing
-// and fail loudly the moment upstream publishes a consumable fix, even if the
-// current lockfile no longer triggers it.
+// Scoping. The exception is granted to exactly one lockfile - the cdk jsii
+// toolchain project - and to nothing else. osv_scan_lockfile in
+// gov-verify-rubric.sh routes every lockfile carrying aws-cdk-lib's bundled
+// brace-expansion path to this checker, which includes the examples/cdk
+// projects; those carry neither the jsii toolchain nor stream-json, so for them
+// this checker behaves exactly as it did before the exception existed: the
+// brace-expansion graph assertion, zero findings, no registry lookups. Mirrors
+// the exact-match scoping of osvSourceMatchesLockfile below.
+const streamJsonExceptionApplies =
+  expectation.lockfile === streamJsonException.lockfile ||
+  expectation.lockfile.endsWith(`/${streamJsonException.lockfile}`);
+
+// Expiry gate. For the exception's own lockfile the lookup is unconditional: it
+// runs whether or not the current report actually carries the finding, so the
+// exception cannot survive by simply never matching again.
 async function findUpgradePaths() {
   const reasons = [];
 
@@ -271,12 +291,14 @@ async function findUpgradePaths() {
   return reasons;
 }
 
-const upgradePaths = await findUpgradePaths();
-if (upgradePaths.length > 0) {
-  for (const reason of upgradePaths) {
-    console.error(`${mode}-scanner: exception expired - ${reason}`);
+if (streamJsonExceptionApplies) {
+  const upgradePaths = await findUpgradePaths();
+  if (upgradePaths.length > 0) {
+    for (const reason of upgradePaths) {
+      console.error(`${mode}-scanner: exception expired - ${reason}`);
+    }
+    fail(`exception expired: ${streamJsonException.removalCondition}`);
   }
-  fail(`exception expired: ${streamJsonException.removalCondition}`);
 }
 
 const report = readJson(reportPath, "scanner report");
@@ -307,27 +329,33 @@ if (
   fail(`lockfile graph no longer matches the patched AWS CDK bundled ${expectation.packageName} path`);
 }
 
-const streamJsonPaths = Object.keys(packages).filter(
-  (path) =>
-    path === `node_modules/${streamJsonException.packageName}` ||
-    path.endsWith(`/node_modules/${streamJsonException.packageName}`),
-);
 const streamJsonPackage = packages[streamJsonException.packagePath];
 const jsiiRosettaPackage = packages[streamJsonException.parentPath];
 const jsiiPacmakPackage = packages[streamJsonException.parentToolPath];
 
-if (
-  !sameStringSet(streamJsonPaths, [streamJsonException.packagePath]) ||
-  streamJsonPackage?.dev !== true ||
-  !isVulnerableVersion(streamJsonPackage?.version, streamJsonException.patchedVersion) ||
-  jsiiRosettaPackage?.dev !== true ||
-  jsiiRosettaPackage?.dependencies?.[streamJsonException.packageName] === undefined ||
-  jsiiPacmakPackage?.dev !== true ||
-  jsiiPacmakPackage?.peerDependencies?.[streamJsonException.parentName] === undefined
-) {
-  fail(
-    `lockfile graph no longer matches the reviewed ${streamJsonException.packageName} exception (expected one dev-only ${streamJsonException.packageName} below the patched ${streamJsonException.patchedVersion} release, reachable only as a ${streamJsonException.parentName} dependency of the ${streamJsonException.parentToolName} devDependency)`,
+// The graph re-assertion belongs to the exception, so it is scoped with it: a
+// lockfile the exception does not cover must never be asked to carry the jsii
+// toolchain.
+if (streamJsonExceptionApplies) {
+  const streamJsonPaths = Object.keys(packages).filter(
+    (path) =>
+      path === `node_modules/${streamJsonException.packageName}` ||
+      path.endsWith(`/node_modules/${streamJsonException.packageName}`),
   );
+
+  if (
+    !sameStringSet(streamJsonPaths, [streamJsonException.packagePath]) ||
+    streamJsonPackage?.dev !== true ||
+    !isVulnerableVersion(streamJsonPackage?.version, streamJsonException.patchedVersion) ||
+    jsiiRosettaPackage?.dev !== true ||
+    jsiiRosettaPackage?.dependencies?.[streamJsonException.packageName] === undefined ||
+    jsiiPacmakPackage?.dev !== true ||
+    jsiiPacmakPackage?.peerDependencies?.[streamJsonException.parentName] === undefined
+  ) {
+    fail(
+      `lockfile graph no longer matches the reviewed ${streamJsonException.packageName} exception (expected one dev-only ${streamJsonException.packageName} below the patched ${streamJsonException.patchedVersion} release, reachable only as a ${streamJsonException.parentName} dependency of the ${streamJsonException.parentToolName} devDependency)`,
+    );
+  }
 }
 
 function npmViaEntries(vuln) {
@@ -350,6 +378,7 @@ function npmViaIsParentPropagation(vuln) {
 }
 
 function npmFindingIsReviewedException(name, vuln) {
+  if (!streamJsonExceptionApplies) return false;
   if (name === streamJsonException.packageName) {
     return (
       vuln.name === streamJsonException.packageName &&
@@ -376,6 +405,7 @@ function osvSourceMatchesLockfile(sourcePath) {
 }
 
 function osvFindingIsReviewedException(result, pkg, vuln) {
+  if (!streamJsonExceptionApplies) return false;
   const packageInfo = pkg?.package ?? {};
   return (
     packageInfo.ecosystem === "npm" &&
@@ -437,7 +467,9 @@ if (unexpected.length > 0) {
     );
   }
   fail(
-    `AWS CDK findings outside the reviewed ${streamJsonException.advisoryId} exception (${streamJsonException.packageName} in the cdk ${streamJsonException.parentToolName} toolchain)`,
+    streamJsonExceptionApplies
+      ? `AWS CDK findings outside the reviewed ${streamJsonException.advisoryId} exception (${streamJsonException.packageName} in the cdk ${streamJsonException.parentToolName} toolchain)`
+      : `AWS CDK findings outside the patched bundled ${expectation.packageName} path`,
   );
 }
 
@@ -490,7 +522,12 @@ console.error(
       path: expectation.packagePath,
       version: expectation.packageVersion,
     },
-    reviewedExceptions: applied.length > 0 ? [streamJsonException.exceptionId] : [],
+    // A lockfile the exception does not cover reports exactly what this checker
+    // reported before the exception existed, so the field is omitted rather
+    // than reported empty.
+    ...(streamJsonExceptionApplies
+      ? { reviewedExceptions: applied.length > 0 ? [streamJsonException.exceptionId] : [] }
+      : {}),
     provenance: {
       awsCdkLib: {
         path: "node_modules/aws-cdk-lib",
