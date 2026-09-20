@@ -116,7 +116,7 @@ passed `npm audit` with zero vulnerabilities. The removal rationale was:
 - `fast-xml-parser` / `fast-xml-builder`: the regenerated TypeScript lockfile no longer contains those packages, so
   keeping orphan overrides would hide dependency graph drift instead of fixing it.
 - `flatted` / `js-yaml`: upstream-selected lint-tool transitive versions remain audit-clean; local pins were redundant.
-- `yaml`: the TableTheory release asset now resolves `yaml@2.9.0`; AppTheory should not override TableTheory's
+- `yaml`: the TableTheory release asset now resolves `yaml@2.9.1`; AppTheory should not override TableTheory's
   transitive dependency unless a current advisory or contract gate requires it.
 
 As of this changeset, the repository pins AWS CDK `2.265.0`, which bundles fixed `brace-expansion@5.0.9` inside its
