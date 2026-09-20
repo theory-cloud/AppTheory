@@ -15,9 +15,14 @@
 # never as registry coordinates. Those pins are invisible to Dependabot and stay
 # under manual steward refresh per docs/dependency-automation.md.
 #
-# No `ignore` rules on purpose: the exact dependency graph is verified by the
-# audit, OSV, and runtime-floor gates at review time, so suppressing an update
-# class here would hide the very advisories this config is meant to surface.
+# Dependency classes are not suppressed here: the exact dependency graph is
+# verified by the audit, OSV, and runtime-floor gates at review time, so hiding
+# an update class would suppress the very advisories this config surfaces. The
+# single documented exception is the TypeScript major deferral in the `/ts`
+# section below (operator ruling 2026-09-20, wave-2 dependency consolidation;
+# TableTheory #595 pattern): no released @typescript-eslint supports
+# TypeScript >= 6.1.0, so Dependabot's typescript 7 proposal is unsatisfiable
+# and the ignore is the documented deferral.
 
 version: 2
 
@@ -47,6 +52,11 @@ updates:
     groups:
       ts-runtime:
         patterns: ["*"]
+    ignore:
+      # TypeScript 7 is outside the peer range supported by the current
+      # typescript-eslint toolchain (<6.1.0). Keep receiving 6.x and security updates.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: npm
     directory: "/cdk"
