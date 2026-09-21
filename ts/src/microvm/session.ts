@@ -1,6 +1,13 @@
 import { defineModel, type Model } from "@theory-cloud/tabletheory-ts";
 
 import {
+  normalizeMicroVMCommand,
+  validMicroVMCommand,
+  validMicroVMLifecycleState,
+} from "./controller-contract.js";
+import { safeError } from "./errors.js";
+import { normalizeMicroVMLifecycleState } from "./lifecycle.js";
+import {
   MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
   MICROVM_ERROR_TOKEN_SAFETY_VIOLATION,
   MICROVM_SESSION_REGISTRY_MODEL_NAME,
@@ -15,7 +22,11 @@ import {
   type MicroVMSessionStatus,
   type MicroVMSessionTokenMetadata,
 } from "./model.js";
-import { safeError } from "./errors.js";
+import {
+  normalizeMicroVMProviderToken,
+  normalizeStringArray,
+  validateMicroVMProviderToken,
+} from "./provider.js";
 import {
   cloneStringMap,
   validateSafeMicroVMFieldValue,
@@ -26,17 +37,6 @@ import {
   cloneMicroVMDateFromUnknown,
   validDate,
 } from "./time.js";
-import {
-  normalizeMicroVMCommand,
-  validMicroVMCommand,
-  validMicroVMLifecycleState,
-} from "./controller-contract.js";
-import { normalizeMicroVMLifecycleState } from "./lifecycle.js";
-import {
-  normalizeMicroVMProviderToken,
-  normalizeStringArray,
-  validateMicroVMProviderToken,
-} from "./provider.js";
 
 export function validateMicroVMSessionRecord(
   record: MicroVMSessionRecord,

@@ -1,8 +1,8 @@
+import { safeError } from "./errors.js";
 import {
   MICROVM_ERROR_FORBIDDEN_FIELD,
   type MicroVMSafeError,
 } from "./model.js";
-import { safeError } from "./errors.js";
 
 export const FORBIDDEN_MICROVM_FIELD_NAMES = new Set([
   "authorization",

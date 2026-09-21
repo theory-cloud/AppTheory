@@ -105,7 +105,7 @@ class SecurePrincipal:
     kind: PrincipalKind | str = PrincipalKind.EXTERNAL
 
 
-SecurePrincipalResolver = Callable[["Context"], SecurePrincipal | None | Awaitable[SecurePrincipal | None]]
+SecurePrincipalResolver = Callable[["Context"], SecurePrincipal | Awaitable[SecurePrincipal | None] | None]
 
 
 @dataclass(slots=True)

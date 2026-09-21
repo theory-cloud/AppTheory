@@ -70,8 +70,7 @@ export function html(status: number, body: Uint8Array | string): Response {
 
 type StreamableHTMLChunk = Uint8Array | string;
 type StreamableHTMLChunks =
-  | AsyncIterable<StreamableHTMLChunk>
-  | Iterable<StreamableHTMLChunk>;
+  AsyncIterable<StreamableHTMLChunk> | Iterable<StreamableHTMLChunk>;
 
 async function* normalizeHTMLChunks(
   chunks: StreamableHTMLChunks,

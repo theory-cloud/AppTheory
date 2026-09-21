@@ -14,6 +14,7 @@ import {
   type RunMicrovmCommandInput,
 } from "@aws-sdk/client-lambda-microvms";
 
+import { safeError } from "./errors.js";
 import {
   MICROVM_ERROR_CONTROLLER_INCOMPLETE,
   MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
@@ -38,7 +39,6 @@ import {
   type MicroVMProviderToken,
   type MicroVMProviderTokenInput,
 } from "./model.js";
-import { safeError } from "./errors.js";
 import {
   mapMicroVMProviderState,
   normalizeMicroVMProviderState,

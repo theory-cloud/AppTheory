@@ -351,7 +351,7 @@ class McpStreamingToolHandler(Protocol):
     def __call__(
         self,
         args: Any,
-        emit: Callable[[McpSSEEvent | dict[str, Any]], None | Awaitable[None]],
+        emit: Callable[[McpSSEEvent | dict[str, Any]], Awaitable[None] | None],
         context: McpToolContext,
     ) -> McpToolResult | dict[str, Any] | Awaitable[Any]: ...
 
@@ -581,7 +581,7 @@ class McpToolRegistry:
         self,
         name: str,
         args: Any,
-        emit: Callable[[McpSSEEvent | dict[str, Any]], None | Awaitable[None]],
+        emit: Callable[[McpSSEEvent | dict[str, Any]], Awaitable[None] | None],
         context: McpToolContext,
     ) -> dict[str, Any]:
         entry = self._entry(name)
@@ -3001,7 +3001,7 @@ def _json_bytes(value: Any) -> bytes:
     return jsonlib.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
-def _resolve_maybe(value: T | Awaitable[T]) -> T:
+def _resolve_maybe[T](value: T | Awaitable[T]) -> T:
     if not inspect.isawaitable(value):
         return cast(T, value)
 

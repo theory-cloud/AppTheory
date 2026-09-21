@@ -2,8 +2,8 @@ import { Buffer } from "node:buffer";
 
 import type { AppSyncResolverEvent } from "../aws-types.js";
 import { AppSyncContext } from "../context.js";
-import { AppError, AppTheoryError } from "../errors.js";
 import type { Context } from "../context.js";
+import { AppError, AppTheoryError } from "../errors.js";
 import type { Request, Response } from "../types.js";
 
 import { firstHeaderValue } from "./http.js";

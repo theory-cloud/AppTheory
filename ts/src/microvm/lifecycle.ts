@@ -1,3 +1,4 @@
+import { safeError } from "./errors.js";
 import {
   MICROVM_ERROR_INVALID_LIFECYCLE_EVENT,
   MICROVM_ERROR_LIFECYCLE_BYPASS,
@@ -22,7 +23,6 @@ import {
   type MicroVMRealLifecycleState,
   type MicroVMEscapeHatches,
 } from "./model.js";
-import { safeError } from "./errors.js";
 import { validateMicroVMRealLifecycleContract } from "./operation-contract.js";
 import {
   cloneStringMap,
