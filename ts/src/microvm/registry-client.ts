@@ -1,3 +1,4 @@
+import { safeError } from "./errors.js";
 import {
   MICROVM_DEFAULT_SESSION_PROVIDER_ID,
   MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
@@ -14,9 +15,8 @@ import {
   type MicroVMSessionStatus,
   type MicroVMCreateSessionInput,
 } from "./model.js";
-import { safeError } from "./errors.js";
-import { validateMicroVMSessionStatus } from "./session.js";
 import { cloneStringMap } from "./safety.js";
+import { validateMicroVMSessionStatus } from "./session.js";
 import { coalesceMicroVMTime } from "./time.js";
 
 export class MicroVMRegistryClient implements MicroVMClient {

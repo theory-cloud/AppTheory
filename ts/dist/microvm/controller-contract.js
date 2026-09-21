@@ -1,6 +1,6 @@
-import { MICROVM_CONTROLLER_AUTH_DEFAULT_DENY, MICROVM_ERROR_CONTROLLER_INCOMPLETE, MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER, MicroVMCommand, } from "./model.js";
 import { safeError } from "./errors.js";
 import { normalizeMicroVMLifecycleState, requiredMicroVMLifecycleStates, } from "./lifecycle.js";
+import { MICROVM_CONTROLLER_AUTH_DEFAULT_DENY, MICROVM_ERROR_CONTROLLER_INCOMPLETE, MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER, MicroVMCommand, } from "./model.js";
 import { normalizeMicroVMRealLifecycleState, requiredMicroVMRealLifecycleStates, } from "./operation-contract.js";
 import { missingStrings } from "./safety.js";
 export function defaultMicroVMControllerContract() {

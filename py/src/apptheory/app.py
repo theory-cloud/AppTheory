@@ -68,7 +68,7 @@ _EVENT_TRIGGER_EVENTBRIDGE = "eventbridge"
 _EVENT_TRIGGER_DYNAMODB_STREAM = "dynamodb_stream"
 
 
-def _resolve(value: T | Awaitable[T]) -> T:
+def _resolve[T](value: T | Awaitable[T]) -> T:
     if not inspect.isawaitable(value):
         return value
 
@@ -88,13 +88,13 @@ Handler = Callable[[Context], Response | Awaitable[Response]]
 NextHandler = Callable[[Context], Response]
 Middleware = Callable[[Context, NextHandler], Response | Awaitable[Response]]
 AuthHook = Callable[[Context], str | Awaitable[str]]
-PolicyHook = Callable[[Context], "PolicyDecision | None | Awaitable[PolicyDecision | None]"]
+PolicyHook = Callable[[Context], "PolicyDecision | Awaitable[PolicyDecision | None] | None"]
 EventHandler = Callable[[EventContext, dict[str, Any]], object | Awaitable[object]]
 EventMiddleware = Callable[[EventContext, dict[str, Any], Callable[[], object]], object | Awaitable[object]]
-SQSHandler = Callable[[EventContext, dict[str, Any]], None | Awaitable[None]]
-KinesisHandler = Callable[[EventContext, dict[str, Any]], None | Awaitable[None]]
+SQSHandler = Callable[[EventContext, dict[str, Any]], Awaitable[None] | None]
+KinesisHandler = Callable[[EventContext, dict[str, Any]], Awaitable[None] | None]
 SNSHandler = Callable[[EventContext, dict[str, Any]], object | Awaitable[object]]
-DynamoDBStreamHandler = Callable[[EventContext, dict[str, Any]], None | Awaitable[None]]
+DynamoDBStreamHandler = Callable[[EventContext, dict[str, Any]], Awaitable[None] | None]
 EventBridgeHandler = Callable[[EventContext, dict[str, Any]], object | Awaitable[object]]
 WebSocketHandler = Callable[[Context], Response | Awaitable[Response]]
 

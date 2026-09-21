@@ -9,31 +9,18 @@ import { RealClock, type Clock } from "./clock.js";
 import { sanitizeFieldValue, sanitizeLogString } from "./sanitization.js";
 
 export type JobStatus =
-  | "PENDING"
-  | "RUNNING"
-  | "SUCCEEDED"
-  | "FAILED"
-  | "CANCELED";
+  "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
 
 export type RecordStatus =
-  | "PENDING"
-  | "PROCESSING"
-  | "SUCCEEDED"
-  | "FAILED"
-  | "SKIPPED";
+  "PENDING" | "PROCESSING" | "SUCCEEDED" | "FAILED" | "SKIPPED";
 
 export type IdempotencyStatus = "IN_PROGRESS" | "COMPLETED";
 
 export type IdempotencyCreateOutcome =
-  | "created"
-  | "already_in_progress"
-  | "already_completed";
+  "created" | "already_in_progress" | "already_completed";
 
 export type JobLedgerErrorType =
-  | "internal_error"
-  | "invalid_input"
-  | "conflict"
-  | "not_found";
+  "internal_error" | "invalid_input" | "conflict" | "not_found";
 
 export class JobLedgerError extends Error {
   readonly type: JobLedgerErrorType;

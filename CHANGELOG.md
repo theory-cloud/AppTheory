@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.2.3](https://github.com/theory-cloud/AppTheory/compare/v4.2.2...v4.2.3) (2026-08-29)
+
+
+### Bug Fixes
+
+* **cdk:** use canonical colon-form image ARN for version pruning ([0fda7e5](https://github.com/theory-cloud/AppTheory/commit/0fda7e51447d8d3c16996814ff1d2ee00cda7b37))
+* **cdk:** use canonical colon-form image ARN for version pruning ([056b9dd](https://github.com/theory-cloud/AppTheory/commit/056b9ddb32326d57359dfaa47e48070d8e403ac8))
+
 ## [4.2.3-rc](https://github.com/theory-cloud/AppTheory/compare/v4.2.2...v4.2.3-rc) (2026-08-29)
 
 

@@ -68,7 +68,10 @@ assert_file_contains "THEORYCLOUD_STAGE: \${{ github.ref_name == 'premain' && 'l
 assert_file_contains "AWS_ROLE_ARN: \${{ github.ref_name == 'premain' && 'arn:aws:iam::787107040121:role/KnowledgeTheory-TheoryCloud-AppTheory-lab-Publisher' || github.ref_name == 'main' && 'arn:aws:iam::787107040121:role/KnowledgeTheory-TheoryCloud-AppTheory-live-Publisher' || '' }}"
 assert_file_contains "THEORYCLOUD_PUBLISH_REASON: \${{ format('github:{0}:{1}', github.repository, github.ref_name) }}"
 assert_file_contains "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1"
-assert_file_contains "uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3"
+# Pin follows the reviewed github-actions group landing (2026-09-20, wave-2
+# dependency consolidation, operator-ruled): configure-aws-credentials
+# v6.2.3 -> v6.3.0. Keep this assertion exact; update only with a reviewed bump.
+assert_file_contains "uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0"
 assert_file_contains "bash scripts/verify-theorycloud-publish-workflow.sh"
 assert_file_contains "bash scripts/sync-theorycloud-apptheory-subtree.sh \\"
 assert_file_contains "bash scripts/trigger-theorycloud-publish.sh \\"

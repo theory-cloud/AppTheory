@@ -6,8 +6,8 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.265.0",
-    "constructs": "10.8.0"
+    "aws-cdk-lib": "2.269.0",
+    "constructs": "10.8.1"
   },
   "dependencyClosure": {
     "@aws-cdk/asset-awscli-v1": {
@@ -146,6 +146,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_accountaccess": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.AccountAccess"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.accountaccess"
+            },
+            "python": {
+              "module": "aws_cdk.aws_accountaccess"
+            }
+          }
+        },
         "aws-cdk-lib.aws_acmpca": {
           "targets": {
             "dotnet": {
@@ -156,6 +169,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_acmpca"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_agentregistry": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.AgentRegistry"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.agentregistry"
+            },
+            "python": {
+              "module": "aws_cdk.aws_agentregistry"
             }
           }
         },
@@ -445,19 +471,6 @@
             }
           }
         },
-        "aws-cdk-lib.aws_artifact": {
-          "targets": {
-            "dotnet": {
-              "namespace": "Amazon.CDK.AWS.Artifact"
-            },
-            "java": {
-              "package": "software.amazon.awscdk.services.artifact"
-            },
-            "python": {
-              "module": "aws_cdk.aws_artifact"
-            }
-          }
-        },
         "aws-cdk-lib.aws_athena": {
           "targets": {
             "dotnet": {
@@ -585,19 +598,6 @@
             },
             "python": {
               "module": "aws_cdk.aws_backupgateway"
-            }
-          }
-        },
-        "aws-cdk-lib.aws_backupsearch": {
-          "targets": {
-            "dotnet": {
-              "namespace": "Amazon.CDK.AWS.BackupSearch"
-            },
-            "java": {
-              "package": "software.amazon.awscdk.services.backupsearch"
-            },
-            "python": {
-              "module": "aws_cdk.aws_backupsearch"
             }
           }
         },
@@ -875,6 +875,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_cloudhsm": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.CloudHSM"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.cloudhsm"
+            },
+            "python": {
+              "module": "aws_cdk.aws_cloudhsm"
+            }
+          }
+        },
         "aws-cdk-lib.aws_cloudtrail": {
           "targets": {
             "dotnet": {
@@ -1096,19 +1109,6 @@
             }
           }
         },
-        "aws-cdk-lib.aws_cognitosync": {
-          "targets": {
-            "dotnet": {
-              "namespace": "Amazon.CDK.AWS.CognitoSync"
-            },
-            "java": {
-              "package": "software.amazon.awscdk.services.cognitosync"
-            },
-            "python": {
-              "module": "aws_cdk.aws_cognitosync"
-            }
-          }
-        },
         "aws-cdk-lib.aws_comprehend": {
           "targets": {
             "dotnet": {
@@ -1187,19 +1187,6 @@
             }
           }
         },
-        "aws-cdk-lib.aws_controlcatalog": {
-          "targets": {
-            "dotnet": {
-              "namespace": "Amazon.CDK.AWS.ControlCatalog"
-            },
-            "java": {
-              "package": "software.amazon.awscdk.services.controlcatalog"
-            },
-            "python": {
-              "module": "aws_cdk.aws_controlcatalog"
-            }
-          }
-        },
         "aws-cdk-lib.aws_controltower": {
           "targets": {
             "dotnet": {
@@ -1249,6 +1236,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_databrew"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_dataexchange": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.DataExchange"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.dataexchange"
+            },
+            "python": {
+              "module": "aws_cdk.aws_dataexchange"
             }
           }
         },
@@ -1444,6 +1444,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_docdbelastic"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_drs": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.DRS"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.drs"
+            },
+            "python": {
+              "module": "aws_cdk.aws_drs"
             }
           }
         },
@@ -2246,6 +2259,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_iotsecuretunneling": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.IoTSecureTunneling"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.iotsecuretunneling"
+            },
+            "python": {
+              "module": "aws_cdk.aws_iotsecuretunneling"
+            }
+          }
+        },
         "aws-cdk-lib.aws_iotsitewise": {
           "targets": {
             "dotnet": {
@@ -2779,6 +2805,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_mgn": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.MGN"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.mgn"
+            },
+            "python": {
+              "module": "aws_cdk.aws_mgn"
+            }
+          }
+        },
         "aws-cdk-lib.aws_mpa": {
           "targets": {
             "dotnet": {
@@ -3000,6 +3039,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_opensearch": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.OpenSearch"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.opensearch"
+            },
+            "python": {
+              "module": "aws_cdk.aws_opensearch"
+            }
+          }
+        },
         "aws-cdk-lib.aws_opensearchserverless": {
           "targets": {
             "dotnet": {
@@ -3205,6 +3257,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_pipes"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_pricingplanmanager": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.PricingPlanManager"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.pricingplanmanager"
+            },
+            "python": {
+              "module": "aws_cdk.aws_pricingplanmanager"
             }
           }
         },
@@ -3835,6 +3900,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_serverlessrepo": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.ServerlessRepo"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.serverlessrepo"
+            },
+            "python": {
+              "module": "aws_cdk.aws_serverlessrepo"
+            }
+          }
+        },
         "aws-cdk-lib.aws_servicecatalog": {
           "targets": {
             "dotnet": {
@@ -4069,19 +4147,6 @@
             }
           }
         },
-        "aws-cdk-lib.aws_states": {
-          "targets": {
-            "dotnet": {
-              "namespace": "Amazon.CDK.AWS.States"
-            },
-            "java": {
-              "package": "software.amazon.awscdk.services.states"
-            },
-            "python": {
-              "module": "aws_cdk.aws_states"
-            }
-          }
-        },
         "aws-cdk-lib.aws_stepfunctions": {
           "targets": {
             "dotnet": {
@@ -4134,6 +4199,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_supportauthz": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.SupportAuthZ"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.supportauthz"
+            },
+            "python": {
+              "module": "aws_cdk.aws_supportauthz"
+            }
+          }
+        },
         "aws-cdk-lib.aws_synthetics": {
           "targets": {
             "dotnet": {
@@ -4160,16 +4238,16 @@
             }
           }
         },
-        "aws-cdk-lib.aws_thinclient": {
+        "aws-cdk-lib.aws_textract": {
           "targets": {
             "dotnet": {
-              "namespace": "Amazon.CDK.AWS.ThinClient"
+              "namespace": "Amazon.CDK.AWS.Textract"
             },
             "java": {
-              "package": "software.amazon.awscdk.services.thinclient"
+              "package": "software.amazon.awscdk.services.textract"
             },
             "python": {
-              "module": "aws_cdk.aws_thinclient"
+              "module": "aws_cdk.aws_textract"
             }
           }
         },
@@ -4212,16 +4290,16 @@
             }
           }
         },
-        "aws-cdk-lib.aws_usernotifications": {
+        "aws-cdk-lib.aws_translate": {
           "targets": {
             "dotnet": {
-              "namespace": "Amazon.CDK.AWS.UserNotifications"
+              "namespace": "Amazon.CDK.AWS.Translate"
             },
             "java": {
-              "package": "software.amazon.awscdk.services.usernotifications"
+              "package": "software.amazon.awscdk.services.translate"
             },
             "python": {
-              "module": "aws_cdk.aws_usernotifications"
+              "module": "aws_cdk.aws_translate"
             }
           }
         },
@@ -4326,6 +4404,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_wellarchitected"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_wickr": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.Wickr"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.wickr"
+            },
+            "python": {
+              "module": "aws_cdk.aws_wickr"
             }
           }
         },
@@ -4495,6 +4586,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_accountaccess": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.AccountAccess"
+            },
+            "go": {
+              "packageName": "interfacesawsaccountaccess"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.accountaccess"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_accountaccess"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_acmpca": {
           "targets": {
             "dotnet": {
@@ -4508,6 +4615,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_acmpca"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_agentregistry": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.AgentRegistry"
+            },
+            "go": {
+              "packageName": "interfacesawsagentregistry"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.agentregistry"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_agentregistry"
             }
           }
         },
@@ -4831,22 +4954,6 @@
             }
           }
         },
-        "aws-cdk-lib.interfaces.aws_artifact": {
-          "targets": {
-            "dotnet": {
-              "namespace": "Amazon.CDK.Interfaces.Artifact"
-            },
-            "go": {
-              "packageName": "interfacesawsartifact"
-            },
-            "java": {
-              "package": "software.amazon.awscdk.interfaces.artifact"
-            },
-            "python": {
-              "module": "aws_cdk.interfaces.aws_artifact"
-            }
-          }
-        },
         "aws-cdk-lib.interfaces.aws_athena": {
           "targets": {
             "dotnet": {
@@ -4972,22 +5079,6 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_backupgateway"
-            }
-          }
-        },
-        "aws-cdk-lib.interfaces.aws_backupsearch": {
-          "targets": {
-            "dotnet": {
-              "namespace": "Amazon.CDK.Interfaces.BackupSearch"
-            },
-            "go": {
-              "packageName": "interfacesawsbackupsearch"
-            },
-            "java": {
-              "package": "software.amazon.awscdk.interfaces.backupsearch"
-            },
-            "python": {
-              "module": "aws_cdk.interfaces.aws_backupsearch"
             }
           }
         },
@@ -5343,6 +5434,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_cloudhsm": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.CloudHSM"
+            },
+            "go": {
+              "packageName": "interfacesawscloudhsm"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.cloudhsm"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_cloudhsm"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_cloudtrail": {
           "targets": {
             "dotnet": {
@@ -5567,22 +5674,6 @@
             }
           }
         },
-        "aws-cdk-lib.interfaces.aws_cognitosync": {
-          "targets": {
-            "dotnet": {
-              "namespace": "Amazon.CDK.Interfaces.CognitoSync"
-            },
-            "go": {
-              "packageName": "interfacesawscognitosync"
-            },
-            "java": {
-              "package": "software.amazon.awscdk.interfaces.cognitosync"
-            },
-            "python": {
-              "module": "aws_cdk.interfaces.aws_cognitosync"
-            }
-          }
-        },
         "aws-cdk-lib.interfaces.aws_comprehend": {
           "targets": {
             "dotnet": {
@@ -5679,22 +5770,6 @@
             }
           }
         },
-        "aws-cdk-lib.interfaces.aws_controlcatalog": {
-          "targets": {
-            "dotnet": {
-              "namespace": "Amazon.CDK.Interfaces.ControlCatalog"
-            },
-            "go": {
-              "packageName": "interfacesawscontrolcatalog"
-            },
-            "java": {
-              "package": "software.amazon.awscdk.interfaces.controlcatalog"
-            },
-            "python": {
-              "module": "aws_cdk.interfaces.aws_controlcatalog"
-            }
-          }
-        },
         "aws-cdk-lib.interfaces.aws_controltower": {
           "targets": {
             "dotnet": {
@@ -5756,6 +5831,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_databrew"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_dataexchange": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.DataExchange"
+            },
+            "go": {
+              "packageName": "interfacesawsdataexchange"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.dataexchange"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_dataexchange"
             }
           }
         },
@@ -5996,6 +6087,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_docdbelastic"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_drs": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.DRS"
+            },
+            "go": {
+              "packageName": "interfacesawsdrs"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.drs"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_drs"
             }
           }
         },
@@ -6831,6 +6938,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_iotsecuretunneling": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.IoTSecureTunneling"
+            },
+            "go": {
+              "packageName": "interfacesawsiotsecuretunneling"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.iotsecuretunneling"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_iotsecuretunneling"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_iotsitewise": {
           "targets": {
             "dotnet": {
@@ -7423,6 +7546,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_mgn": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.MGN"
+            },
+            "go": {
+              "packageName": "interfacesawsmgn"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.mgn"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_mgn"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_mpa": {
           "targets": {
             "dotnet": {
@@ -7695,6 +7834,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_opensearch": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.OpenSearch"
+            },
+            "go": {
+              "packageName": "interfacesawsopensearch"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.opensearch"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_opensearch"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_opensearchserverless": {
           "targets": {
             "dotnet": {
@@ -7948,6 +8103,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_pipes"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_pricingplanmanager": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.PricingPlanManager"
+            },
+            "go": {
+              "packageName": "interfacesawspricingplanmanager"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.pricingplanmanager"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_pricingplanmanager"
             }
           }
         },
@@ -8607,6 +8778,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_serverlessrepo": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.ServerlessRepo"
+            },
+            "go": {
+              "packageName": "interfacesawsserverlessrepo"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.serverlessrepo"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_serverlessrepo"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_servicecatalog": {
           "targets": {
             "dotnet": {
@@ -8863,22 +9050,6 @@
             }
           }
         },
-        "aws-cdk-lib.interfaces.aws_states": {
-          "targets": {
-            "dotnet": {
-              "namespace": "Amazon.CDK.Interfaces.States"
-            },
-            "go": {
-              "packageName": "interfacesawsstates"
-            },
-            "java": {
-              "package": "software.amazon.awscdk.interfaces.states"
-            },
-            "python": {
-              "module": "aws_cdk.interfaces.aws_states"
-            }
-          }
-        },
         "aws-cdk-lib.interfaces.aws_stepfunctions": {
           "targets": {
             "dotnet": {
@@ -8927,6 +9098,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_supportauthz": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.SupportAuthZ"
+            },
+            "go": {
+              "packageName": "interfacesawssupportauthz"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.supportauthz"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_supportauthz"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_synthetics": {
           "targets": {
             "dotnet": {
@@ -8959,19 +9146,19 @@
             }
           }
         },
-        "aws-cdk-lib.interfaces.aws_thinclient": {
+        "aws-cdk-lib.interfaces.aws_textract": {
           "targets": {
             "dotnet": {
-              "namespace": "Amazon.CDK.Interfaces.ThinClient"
+              "namespace": "Amazon.CDK.Interfaces.Textract"
             },
             "go": {
-              "packageName": "interfacesawsthinclient"
+              "packageName": "interfacesawstextract"
             },
             "java": {
-              "package": "software.amazon.awscdk.interfaces.thinclient"
+              "package": "software.amazon.awscdk.interfaces.textract"
             },
             "python": {
-              "module": "aws_cdk.interfaces.aws_thinclient"
+              "module": "aws_cdk.interfaces.aws_textract"
             }
           }
         },
@@ -9023,19 +9210,19 @@
             }
           }
         },
-        "aws-cdk-lib.interfaces.aws_usernotifications": {
+        "aws-cdk-lib.interfaces.aws_translate": {
           "targets": {
             "dotnet": {
-              "namespace": "Amazon.CDK.Interfaces.UserNotifications"
+              "namespace": "Amazon.CDK.Interfaces.Translate"
             },
             "go": {
-              "packageName": "interfacesawsusernotifications"
+              "packageName": "interfacesawstranslate"
             },
             "java": {
-              "package": "software.amazon.awscdk.interfaces.usernotifications"
+              "package": "software.amazon.awscdk.interfaces.translate"
             },
             "python": {
-              "module": "aws_cdk.interfaces.aws_usernotifications"
+              "module": "aws_cdk.interfaces.aws_translate"
             }
           }
         },
@@ -9164,6 +9351,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_wellarchitected"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_wickr": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.Wickr"
+            },
+            "go": {
+              "packageName": "interfacesawswickr"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.wickr"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_wickr"
             }
           }
         },
@@ -9383,7 +9586,7 @@
   },
   "description": "AppTheory CDK constructs (TS-first jsii)",
   "homepage": "https://github.com/theory-cloud/AppTheory.git",
-  "jsiiVersion": "5.9.34 (build 8773a22)",
+  "jsiiVersion": "6.0.14 (build 44649f3)",
   "license": "Apache-2.0",
   "metadata": {
     "jsii": {
@@ -29498,6 +29701,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "4.2.3-rc",
-  "fingerprint": "Ckf32I4qvnPA6bibDr9zdiFTIRQc1+HM3ihnk+t9z90="
+  "version": "4.2.3",
+  "fingerprint": "liBesaAIwiXFEMYtPKEDdaqWw16AgiqDOgD8LJlRMac="
 }

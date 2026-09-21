@@ -767,8 +767,7 @@ export class App {
 
   private _applyEventMiddlewares<TEvent>(
     handler:
-      | ((ctx: EventContext, event: TEvent) => unknown | Promise<unknown>)
-      | null,
+      ((ctx: EventContext, event: TEvent) => unknown | Promise<unknown>) | null,
   ): ((ctx: EventContext, event: TEvent) => Promise<unknown>) | null {
     if (typeof handler !== "function" || this._eventMiddlewares.length === 0) {
       return handler ? async (ctx, event) => handler(ctx, event) : null;
