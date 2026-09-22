@@ -1,5 +1,59 @@
 # Changelog
 
+## [4.2.4](https://github.com/theory-cloud/AppTheory/compare/v4.2.3...v4.2.4) (2026-09-22)
+
+
+### Bug Fixes
+
+* **deps:** apply consolidated dependency sweep 2026-09 wave-2 ([176c321](https://github.com/theory-cloud/AppTheory/commit/176c321dc566661e6811857053c8dfa1aaba3926))
+* **deps:** bump cdk dependency group ([3046a81](https://github.com/theory-cloud/AppTheory/commit/3046a8116c28bc191dbb1291d4fd51c9372eb993))
+* **deps:** bump github-actions group ([70df803](https://github.com/theory-cloud/AppTheory/commit/70df8038a3566957d863fa931223295a5bc920c2))
+* **deps:** bump go dependency group (root) ([9a05758](https://github.com/theory-cloud/AppTheory/commit/9a0575849057fed38085d9bcb8046c78c01483f0))
+* **deps:** bump python runtime dependency group ([1440711](https://github.com/theory-cloud/AppTheory/commit/1440711bb282566fbfee268ec4666b3455bfb40a))
+* **deps:** bump typescript runtime dependency group ([d21a528](https://github.com/theory-cloud/AppTheory/commit/d21a52811bc7b03e25c857284930c615f78de2ad))
+* **deps:** pin every TableTheory runtime to v3.0.7 and add Dependabot config ([a67890c](https://github.com/theory-cloud/AppTheory/commit/a67890c5f47cd9330851073892462c65387dbe29))
+* **deps:** pin TypeScript TableTheory runtime to v3.0.7 ([3be2e98](https://github.com/theory-cloud/AppTheory/commit/3be2e98ee965cfd29288a44bc13d983ef289d0eb))
+* **deps:** refresh TableTheory pin to v3.0.7 ([87bce7f](https://github.com/theory-cloud/AppTheory/commit/87bce7fd00e5c037cf426aa1af5936f6adc26069))
+* **deps:** regenerate cdk-go bindings for xmldom override bump ([6afbcea](https://github.com/theory-cloud/AppTheory/commit/6afbcea1a9a506880c26b5fb57251ef8f0bab36f))
+* **deps:** resolve 2026-09 npm alerts; add scoped SEC-2 cdk stream-json exception ([e1be98f](https://github.com/theory-cloud/AppTheory/commit/e1be98f18f1c68c1039f63317bf11d5b2b3ff871))
+* **deps:** resolve npm security alerts in cdk lockfile ([65cb276](https://github.com/theory-cloud/AppTheory/commit/65cb276a4859993b9b709bcb08222cf3fdc42863))
+* **deps:** resolve npm security alerts in ts lockfile ([45798d3](https://github.com/theory-cloud/AppTheory/commit/45798d350baf3b99ad5a208cd336c9e9cf548a5c))
+* **gov:** fail closed on extra advisories, path aliases, and backslash URLs ([919050d](https://github.com/theory-cloud/AppTheory/commit/919050d67d096c7338d345039c3c5a7f16cbfc1b))
+* **gov:** narrow SEC-2 exception for upstream-blocked stream-json advisory ([ef56101](https://github.com/theory-cloud/AppTheory/commit/ef561015807ff4cef6db11f88ddc434fc7c5183d))
+* **gov:** scope the SEC-2 stream-json exception to the cdk lockfile ([f15e0d5](https://github.com/theory-cloud/AppTheory/commit/f15e0d53d001fd021889e99f77f79aaefce80814))
+* **py:** resolve ruff 0.16.8 findings ([ba13904](https://github.com/theory-cloud/AppTheory/commit/ba139044ee16c1ad010865368927773f23432ee2))
+* **scripts:** re-anchor SEC-2 cdkVersion to 2.269.0 ([d2cae9e](https://github.com/theory-cloud/AppTheory/commit/d2cae9e23664d4c3edb740df1be41b077d4e4a4a))
+* **scripts:** re-pin publish workflow verifier to configure-aws-credentials v6.3.0 ([e73236d](https://github.com/theory-cloud/AppTheory/commit/e73236dc2c2736906e6f531f22280f4481e73195))
+* **ts:** hold the SEC-2-reviewed lint-tool graph at staging's shape ([1e381b5](https://github.com/theory-cloud/AppTheory/commit/1e381b56fcf38b4efc53c247081faec8e8bf51df))
+* **ts:** resolve lint findings surfaced by the regenerated graph ([86486fb](https://github.com/theory-cloud/AppTheory/commit/86486fbefe60170c3a0600d212a52afdf214777c))
+
+## [4.2.4-rc](https://github.com/theory-cloud/AppTheory/compare/v4.2.3...v4.2.4-rc) (2026-09-21)
+
+
+### Bug Fixes
+
+* **deps:** apply consolidated dependency sweep 2026-09 wave-2 ([176c321](https://github.com/theory-cloud/AppTheory/commit/176c321dc566661e6811857053c8dfa1aaba3926))
+* **deps:** bump cdk dependency group ([3046a81](https://github.com/theory-cloud/AppTheory/commit/3046a8116c28bc191dbb1291d4fd51c9372eb993))
+* **deps:** bump github-actions group ([70df803](https://github.com/theory-cloud/AppTheory/commit/70df8038a3566957d863fa931223295a5bc920c2))
+* **deps:** bump go dependency group (root) ([9a05758](https://github.com/theory-cloud/AppTheory/commit/9a0575849057fed38085d9bcb8046c78c01483f0))
+* **deps:** bump python runtime dependency group ([1440711](https://github.com/theory-cloud/AppTheory/commit/1440711bb282566fbfee268ec4666b3455bfb40a))
+* **deps:** bump typescript runtime dependency group ([d21a528](https://github.com/theory-cloud/AppTheory/commit/d21a52811bc7b03e25c857284930c615f78de2ad))
+* **deps:** pin every TableTheory runtime to v3.0.7 and add Dependabot config ([a67890c](https://github.com/theory-cloud/AppTheory/commit/a67890c5f47cd9330851073892462c65387dbe29))
+* **deps:** pin TypeScript TableTheory runtime to v3.0.7 ([3be2e98](https://github.com/theory-cloud/AppTheory/commit/3be2e98ee965cfd29288a44bc13d983ef289d0eb))
+* **deps:** refresh TableTheory pin to v3.0.7 ([87bce7f](https://github.com/theory-cloud/AppTheory/commit/87bce7fd00e5c037cf426aa1af5936f6adc26069))
+* **deps:** regenerate cdk-go bindings for xmldom override bump ([6afbcea](https://github.com/theory-cloud/AppTheory/commit/6afbcea1a9a506880c26b5fb57251ef8f0bab36f))
+* **deps:** resolve 2026-09 npm alerts; add scoped SEC-2 cdk stream-json exception ([e1be98f](https://github.com/theory-cloud/AppTheory/commit/e1be98f18f1c68c1039f63317bf11d5b2b3ff871))
+* **deps:** resolve npm security alerts in cdk lockfile ([65cb276](https://github.com/theory-cloud/AppTheory/commit/65cb276a4859993b9b709bcb08222cf3fdc42863))
+* **deps:** resolve npm security alerts in ts lockfile ([45798d3](https://github.com/theory-cloud/AppTheory/commit/45798d350baf3b99ad5a208cd336c9e9cf548a5c))
+* **gov:** fail closed on extra advisories, path aliases, and backslash URLs ([919050d](https://github.com/theory-cloud/AppTheory/commit/919050d67d096c7338d345039c3c5a7f16cbfc1b))
+* **gov:** narrow SEC-2 exception for upstream-blocked stream-json advisory ([ef56101](https://github.com/theory-cloud/AppTheory/commit/ef561015807ff4cef6db11f88ddc434fc7c5183d))
+* **gov:** scope the SEC-2 stream-json exception to the cdk lockfile ([f15e0d5](https://github.com/theory-cloud/AppTheory/commit/f15e0d53d001fd021889e99f77f79aaefce80814))
+* **py:** resolve ruff 0.16.8 findings ([ba13904](https://github.com/theory-cloud/AppTheory/commit/ba139044ee16c1ad010865368927773f23432ee2))
+* **scripts:** re-anchor SEC-2 cdkVersion to 2.269.0 ([d2cae9e](https://github.com/theory-cloud/AppTheory/commit/d2cae9e23664d4c3edb740df1be41b077d4e4a4a))
+* **scripts:** re-pin publish workflow verifier to configure-aws-credentials v6.3.0 ([e73236d](https://github.com/theory-cloud/AppTheory/commit/e73236dc2c2736906e6f531f22280f4481e73195))
+* **ts:** hold the SEC-2-reviewed lint-tool graph at staging's shape ([1e381b5](https://github.com/theory-cloud/AppTheory/commit/1e381b56fcf38b4efc53c247081faec8e8bf51df))
+* **ts:** resolve lint findings surfaced by the regenerated graph ([86486fb](https://github.com/theory-cloud/AppTheory/commit/86486fbefe60170c3a0600d212a52afdf214777c))
+
 ## [4.2.3](https://github.com/theory-cloud/AppTheory/compare/v4.2.2...v4.2.3) (2026-08-29)
 
 
