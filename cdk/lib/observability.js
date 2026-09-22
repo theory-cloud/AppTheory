@@ -42,7 +42,7 @@ const constructs_1 = require("constructs");
  * Dashboard and alarms for AppTheory's first-party runtime metrics.
  */
 class AppTheoryObservability extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryObservability", version: "4.2.3" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryObservability", version: "4.2.4-rc" };
     dashboard;
     requestCount;
     requestDuration;
