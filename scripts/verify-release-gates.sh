@@ -18,6 +18,7 @@ bash ./scripts/verify-runtime-floor-claims.sh
 ./scripts/verify-ts-pack.sh
 ./scripts/verify-python-build.sh
 ./scripts/verify-cdk-audit.sh
+./scripts/verify-cdk-engines-floor.sh
 ./scripts/verify-cdk-constructs.sh
 ./scripts/verify-cdk-deprecation-warnings.sh
 ./scripts/verify-cdk-ts-pack.sh

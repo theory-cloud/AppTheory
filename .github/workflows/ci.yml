@@ -176,7 +176,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: ["20", "24"]
+        node-version: ["22", "24"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -194,6 +194,8 @@ jobs:
           cache-dependency-path: cdk/package-lock.json
       - name: Verify CDK lower-floor generated binding proof
         run: bash scripts/verify-cdk-go-drift.sh
+      - name: Verify CDK dependency engines admit the Node floor
+        run: bash scripts/verify-cdk-engines-floor.sh
 
   prerelease-readiness:
     name: Prerelease readiness (staging → premain)
