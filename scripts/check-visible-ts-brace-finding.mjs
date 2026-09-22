@@ -88,12 +88,13 @@ const expectation = {
   patchedParent: {
     dependencyRange: "^10.2.2",
     path: "node_modules/@typescript-eslint/typescript-estree",
-    version: "8.57.2",
+    version: "8.70.1",
   },
   patchedPackagePath: "node_modules/@typescript-eslint/typescript-estree/node_modules/brace-expansion",
-  patchedPackageVersion: "5.0.8",
+  patchedPackageVersion: "5.0.12",
   patchedTransitivePath: "node_modules/@typescript-eslint/typescript-estree/node_modules/minimatch",
-  patchedTransitiveVersion: "10.2.5",
+  patchedTransitiveVersion: "10.2.6",
+  patchedTransitiveBraceRange: "^5.0.8",
   vulnerableTransitivePath: "node_modules/minimatch",
   vulnerableTransitiveVersion: "3.1.4",
 };
@@ -102,14 +103,14 @@ const exception = {
   advisoryUrl: "https://github.com/advisories/GHSA-rgw5-rvv9-x895",
   alias: "CVE-2026-69152",
   fixedVersions: ["1.1.18", "2.1.4", "3.0.6", "5.0.9"],
+  // The @typescript-eslint 8.70.1 train carries brace-expansion 5.0.12, which
+  // is past the advisory's 5.0.9 fix, so only the legacy minimatch 3.x instance
+  // is still visible to the scanner. Exactly one visible finding per listed
+  // instance is asserted below.
   instances: [
     {
       path: expectation.packagePath,
       version: expectation.packageVersion,
-    },
-    {
-      path: expectation.patchedPackagePath,
-      version: expectation.patchedPackageVersion,
     },
   ],
   justification:
@@ -148,7 +149,7 @@ if (
   patchedPackage?.dependencies?.["balanced-match"] !== "^4.0.2" ||
   patchedTransitivePackage?.version !== expectation.patchedTransitiveVersion ||
   patchedTransitivePackage?.dev !== true ||
-  patchedTransitivePackage?.dependencies?.[expectation.packageName] !== "^5.0.5" ||
+  patchedTransitivePackage?.dependencies?.[expectation.packageName] !== expectation.patchedTransitiveBraceRange ||
   legacyTransitivePackage?.version !== expectation.vulnerableTransitiveVersion ||
   legacyTransitivePackage?.dev !== true ||
   legacyTransitivePackage?.dependencies?.[expectation.packageName] !== "^1.1.7"
@@ -239,7 +240,7 @@ for (const instance of exception.instances) {
             version: expectation.patchedPackageVersion,
           },
           minimatch: {
-            dependencyRange: "^5.0.5",
+            dependencyRange: expectation.patchedTransitiveBraceRange,
             path: expectation.patchedTransitivePath,
             version: expectation.patchedTransitiveVersion,
           },

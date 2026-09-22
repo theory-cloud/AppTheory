@@ -8,14 +8,22 @@
 // so this checker reads the floor from that manifest instead of hardcoding it.
 // The matching CI leg installs the newest Node N.x release, which makes the
 // floor runtime the whole `N.x` line: a dependency passes only when its
-// declared engines.node range admits at least one Node N.x release.
+// declared engines.node range admits at least one Node N.x *release*.
 //
 //   floor >=22 | engines >=22                  -> pass
 //   floor >=22 | engines ^22.13.0              -> pass (22.13.x is a 22.x)
 //   floor >=22 | engines 18 || 20 || >=22      -> pass
 //   floor >=22 | engines >=24                  -> FAIL
 //   floor >=22 | engines ^20.19.0 || >=24      -> FAIL
+//   floor >=22 | engines >=23.0.0-0            -> FAIL (sorts above every 22.x release)
+//   floor >=22 | engines =22.13.0-rc.1         -> FAIL (a prerelease is not a release)
+//   floor >=22 | engines >22.0.0 <22.0.1       -> FAIL (no release lies between them)
 //   floor >=20 | engines >=22                  -> FAIL (the stream-chain case)
+//
+// Bounds are intersected in release space (see "release-space intersection"
+// below), so a range anchored only on a prerelease of a later line - or wedged
+// between two adjacent releases - is never credited with a floor-line release
+// it does not admit.
 //
 // The matcher below is deliberately self-contained: a dependency gate must not
 // depend on a transitive npm package, and it must model every range it can
@@ -32,12 +40,15 @@
 // drives the checker with a synthetic lockfile.
 //
 // A lockfile's own root entry ("") is the project's declared floor rather than
-// an upstream dependency, so it is counted and left unjudged here;
-// scripts/verify-runtime-floor-claims.sh is the gate that owns it.
+// an upstream dependency. A declared project floor must not admit a Node
+// release below the CDK floor; a root that declares no engine range at all is
+// left alone, because scripts/verify-runtime-floor-claims.sh is the gate that
+// owns the absent-declaration case.
 //
 // There is no exception list and no waiver flag: every dependency entry with a
 // declared engines.node must admit the floor, or the gate fails.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -89,6 +100,12 @@ function readFloorMajor() {
 // === semver range support ==================================================
 
 class UnmodelledRange extends Error {}
+
+// Grammar the matcher deliberately does not model, including the legacy `~>`
+// tilde alias. npm has no `~>` operator - it is a RubyGems-ism that reaches
+// lockfiles through hand-authored engine claims - so it must fail the gate
+// closed rather than be skipped or silently widened.
+const UNMODELLED_CASES = ["~>3.0.0", "~> 3.0.0", "lts/*", "nightly", ">=22 || ^foo", ">=20 || lts/*"];
 
 const PARTIAL_RE = /^v?(\d+|[xX*])(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
 
@@ -294,27 +311,83 @@ function branchBounds(rawBranch) {
   return bounds;
 }
 
-// True when the declared range admits at least one release on the floor's
-// major line, i.e. when it intersects [floorMajor.0.0, (floorMajor + 1).0.0).
-//
 // Every branch is parsed before any of them is evaluated, so an unmodelled
 // branch fails the gate even when an earlier branch already admits the floor;
 // strictness must not depend on the order of the alternatives.
-function rangeAdmitsFloorMajor(rawRange, floorMajor) {
-  const range = String(rawRange);
-  if (range.trim() === "") return true;
-  const floorLower = { version: { major: floorMajor, minor: 0, patch: 0, prerelease: null }, inclusive: true };
-  const floorUpper = { version: { major: floorMajor + 1, minor: 0, patch: 0, prerelease: null }, inclusive: false };
+function parseBranches(rawRange) {
+  return String(rawRange)
+    .split("||")
+    .map((branch) => branchBounds(branch));
+}
 
-  const branches = range.split("||").map((branch) => branchBounds(branch));
-  for (const bounds of branches) {
-    const lower = maxLower(bounds.lower, floorLower);
-    const upper = minUpper(bounds.upper, floorUpper);
-    const order = compareVersions(lower.version, upper.version);
-    if (order < 0) return true;
-    if (order === 0 && lower.inclusive && upper.inclusive) return true;
+// === release-space intersection ============================================
+// A band is a pair of version bounds; `null` means unbounded on that side. The
+// bounds are compared over concrete releases, so a prerelease bound collapses
+// to the release edge it delimits:
+//   lower `23.0.0-x` inclusive -> `23.0.0` inclusive (23.0.0 is the first release >= it)
+//   lower `23.0.0-x` exclusive -> `23.0.0` inclusive (23.0.0 is the first release > it)
+//   upper `23.0.0-x` inclusive -> `23.0.0` exclusive (no release <= it reaches 23.0.0)
+//   upper `23.0.0-x` exclusive -> `23.0.0` exclusive (no release lies between them)
+//
+// Without this collapse, raw bound comparison credits a range such as
+// `>=23.0.0-0` with an intersection against the 22.x line: 23.0.0-0 sorts
+// below 23.0.0, so the interval [23.0.0-0, 23.0.0) looks non-empty even though
+// it contains no release at all, let alone a 22.x one.
+
+function toReleaseLower(bound) {
+  if (bound === null || bound.version.prerelease === null) return bound;
+  return { version: { ...bound.version, prerelease: null }, inclusive: true };
+}
+
+function toReleaseUpper(bound) {
+  if (bound === null || bound.version.prerelease === null) return bound;
+  return { version: { ...bound.version, prerelease: null }, inclusive: false };
+}
+
+const ZERO_RELEASE = { major: 0, minor: 0, patch: 0, prerelease: null };
+
+// Smallest concrete release admitted by an already-normalized lower bound.
+function firstRelease(lower) {
+  if (lower.inclusive) return lower.version;
+  return bump(lower.version, "patch");
+}
+
+// True when at least one concrete release satisfies both the range bounds and
+// the band.
+function bandAdmitsRelease(bounds, band) {
+  const lower = maxLower(toReleaseLower(bounds.lower), toReleaseLower(band.lower));
+  const upper = minUpper(toReleaseUpper(bounds.upper), toReleaseUpper(band.upper));
+  if (upper === null) return true;
+  if (lower === null) {
+    // The band's upper edge is itself a release, so it witnesses the band
+    // unless it is exclusive at the 0.0.0 floor.
+    return upper.inclusive || compareVersions(upper.version, ZERO_RELEASE) > 0;
   }
-  return false;
+  const order = compareVersions(firstRelease(lower), upper.version);
+  return upper.inclusive ? order <= 0 : order < 0;
+}
+
+// True when the declared range admits at least one release on the floor's
+// major line, i.e. when a release in [floorMajor.0.0, (floorMajor + 1).0.0)
+// satisfies it.
+function rangeAdmitsFloorMajor(rawRange, floorMajor) {
+  const band = {
+    lower: { version: { major: floorMajor, minor: 0, patch: 0, prerelease: null }, inclusive: true },
+    upper: { version: { major: floorMajor + 1, minor: 0, patch: 0, prerelease: null }, inclusive: false },
+  };
+  return parseBranches(rawRange).some((bounds) => bandAdmitsRelease(bounds, band));
+}
+
+// True when the declared range admits a release below the floor line, i.e.
+// when a release in [0.0.0, floorMajor.0.0) satisfies it. This is the
+// project-floor rule: a floor claim that admits a Node release the CDK floor
+// no longer supports is drift.
+function rangeAdmitsBelowFloorMajor(rawRange, floorMajor) {
+  const band = {
+    lower: null,
+    upper: { version: { major: floorMajor, minor: 0, patch: 0, prerelease: null }, inclusive: false },
+  };
+  return parseBranches(rawRange).some((bounds) => bandAdmitsRelease(bounds, band));
 }
 
 // === lockfile set ==========================================================
@@ -355,6 +428,21 @@ function resolveLockfileArgument(value) {
 
 // === scan ==================================================================
 
+function judge(declared, predicate, label, packagePath) {
+  try {
+    return predicate(declared);
+  } catch (err) {
+    if (err instanceof UnmodelledRange) {
+      fail(
+        `${label} ${packagePath || "<root>"} declares engines.node ${JSON.stringify(declared)}, ` +
+          `which scripts/check-cdk-engines-floor.mjs does not model (${err.message}); ` +
+          "extend the matcher - ranges are never skipped",
+      );
+    }
+    throw err;
+  }
+}
+
 function scanLockfile(lockfile, floorMajor) {
   const { absolute, label } = lockfile;
   const packages = readJsonFile(absolute, "lockfile", label)?.packages;
@@ -362,36 +450,48 @@ function scanLockfile(lockfile, floorMajor) {
     fail(`${label} is missing its packages map`);
   }
 
-  const result = { checked: 0, skippedRoots: 0, violations: [] };
+  const result = { checked: 0, projectFloors: 0, projectFloorsAbsent: 0, violations: [] };
   for (const [packagePath, entry] of Object.entries(packages)) {
     const declared = entry?.engines?.node;
-    if (declared === undefined || declared === null) continue;
-    if (typeof declared !== "string") {
-      fail(`${label} ${packagePath || "<root>"} engines.node is not a string`);
-    }
     if (packagePath === "") {
       // The lockfile's own project floor, not an upstream dependency.
-      result.skippedRoots += 1;
+      if (declared === undefined || declared === null) {
+        // Nothing declared to judge; scripts/verify-runtime-floor-claims.sh
+        // owns the absent-declaration case.
+        result.projectFloorsAbsent += 1;
+        continue;
+      }
+      if (typeof declared !== "string") {
+        fail(`${label} <root> engines.node is not a string`);
+      }
+      result.projectFloors += 1;
+      const belowFloor = judge(
+        declared,
+        (range) => rangeAdmitsBelowFloorMajor(range, floorMajor),
+        label,
+        packagePath,
+      );
+      if (belowFloor) {
+        result.violations.push({
+          kind: "project",
+          lockfile: label,
+          packagePath,
+          version: null,
+          declared,
+        });
+      }
       continue;
     }
 
-    let admits;
-    try {
-      admits = rangeAdmitsFloorMajor(declared, floorMajor);
-    } catch (err) {
-      if (err instanceof UnmodelledRange) {
-        fail(
-          `${label} ${packagePath} declares engines.node ${JSON.stringify(declared)}, ` +
-            `which scripts/check-cdk-engines-floor.mjs does not model (${err.message}); ` +
-            "extend the matcher - ranges are never skipped",
-        );
-      }
-      throw err;
+    if (declared === undefined || declared === null) continue;
+    if (typeof declared !== "string") {
+      fail(`${label} ${packagePath} engines.node is not a string`);
     }
-
     result.checked += 1;
+    const admits = judge(declared, (range) => rangeAdmitsFloorMajor(range, floorMajor), label, packagePath);
     if (!admits) {
       result.violations.push({
+        kind: "dependency",
         lockfile: label,
         packagePath,
         version: entry?.version ?? "<unknown>",
@@ -402,9 +502,23 @@ function scanLockfile(lockfile, floorMajor) {
   return result;
 }
 
+function describeViolation(violation, floorMajor, floorSpec) {
+  if (violation.kind === "project") {
+    return (
+      `cdk-engines-floor: project floor ${JSON.stringify(violation.declared)} in ${violation.lockfile} ` +
+      `admits a Node release below ${floorMajor}.0.0 (the ${CDK_MANIFEST} floor ${JSON.stringify(floorSpec)})`
+    );
+  }
+  return (
+    `cdk-engines-floor: unexpected engines.node ${JSON.stringify(violation.declared)} in ` +
+    `${violation.packagePath}@${violation.version} from ${violation.lockfile} ` +
+    `(excludes Node ${floorMajor}.x, the ${CDK_MANIFEST} floor ${JSON.stringify(floorSpec)})`
+  );
+}
+
 function runSelfTest() {
   const FLOOR = 22;
-  const cases = [
+  const matcherCases = [
     // Ranges that admit the floor major.
     ["*", FLOOR, true],
     ["x", FLOOR, true],
@@ -473,10 +587,85 @@ function runSelfTest() {
     [">=20", 20, true],
     [">= 20.16.0", 20, true],
     [">=24", 22, false],
+    // A range anchored only on a prerelease of the line above the floor admits
+    // no floor release: a prerelease sorts below its own release but above
+    // every release of the previous line.
+    [">=23.0.0-0", FLOOR, false],
+    ["23.0.0-0", FLOOR, false],
+    ["=23.0.0-rc.0", FLOOR, false],
+    ["v23.0.0-0", FLOOR, false],
+    ["^23.0.0-alpha", FLOOR, false],
+    ["~23.0.0-beta", FLOOR, false],
+    [">23.0.0-0", FLOOR, false],
+    [">23.0.0-beta.1", FLOOR, false],
+    [">=23.0.0-0 <23.0.0", FLOOR, false],
+    [">=24.0.0-0 || >=23.0.0-0", FLOOR, false],
+    [">=23.0.0-0 || >=24", FLOOR, false],
+    // A prerelease is not a release, so pinning to one admits nothing.
+    ["=22.13.0-rc.1", FLOOR, false],
+    ["22.13.0-rc.1", FLOOR, false],
+    ["=22.13.0-rc.1 || <20", FLOOR, false],
+    ["^23.0.0-alpha || ^20.19.0", FLOOR, false],
+    // Exclusive bounds on adjacent releases admit no release either.
+    [">22.0.0 <22.0.1", FLOOR, false],
+    ["22.0.0-0 - 22.0.0-1", FLOOR, false],
+    ["23.0.0-0 - 23.0.0", FLOOR, false],
+    ["1.0.0 - 22.0.0-0", FLOOR, false],
+    // Prerelease bounds that do admit floor releases still pass.
+    ["", FLOOR, true],
+    [">=22.0.0-0", FLOOR, true],
+    ["<=23.0.0-0", FLOOR, true],
+    ["<23.0.0-0", FLOOR, true],
+    [">=22.0.0-0 <23.0.0", FLOOR, true],
+    ["22.0.0-0 - 22.0.0", FLOOR, true],
+    ["22.0.0 - 22.5.0-0", FLOOR, true],
+    [">=23.0.0-0 || >=22.0.0", FLOOR, true],
+  ];
+
+  // The project-floor rule: a declared floor is drift only when it admits a
+  // release below the CDK floor. A floor anchored on its own line's prerelease
+  // admits none, so it must not be flagged.
+  const projectFloorCases = [
+    [">=22", false],
+    [">=22.0.0", false],
+    ["22.x", false],
+    [">=24", false],
+    [">22.0.0", false],
+    [">=22.0.0-0", false],
+    [">=22.13.0-0", false],
+    ["~22.1.0", false],
+    ["^22.0.0", false],
+    [">=22.0.0 <23.0.0", false],
+    ["*", true],
+    [">=20", true],
+    ["<22", true],
+    ["<=21.9", true],
+    ["21 - 21.9", true],
+    ["18 || 20", true],
+    [">=21.0.0-0", true],
+    // Admits prereleases of the floor line only: still no release at all.
+    [">=22.0.0-0 <22.0.0", false],
+  ];
+
+  // Policy probes drive the shipped scanner over synthetic lockfiles, so both
+  // rules are exercised through the same code path the gate uses rather than
+  // only at the matcher.
+  const policyCases = [
+    ["dependency anchored only on a later major's prerelease", ">=22", ">=23.0.0-0", true],
+    ["dependency pinned to a 22.x prerelease", ">=22", "=22.13.0-rc.1", true],
+    ["dependency wedged between adjacent releases", ">=22", ">22.0.0 <22.0.1", true],
+    ["dependency admitting the floor through a prerelease bound", ">=22", ">=22.0.0-0", false],
+    ["project floor anchored on the floor's own prerelease", ">=22.0.0-0", ">=22", false],
+    ["project floor below the CDK floor", ">=20", ">=22", true],
+    ["project floor above the CDK floor", ">=24", ">=22", false],
+    ["no project floor declared", null, ">=22", false],
   ];
 
   let failures = 0;
-  for (const [range, floor, expected] of cases) {
+  let cases = 0;
+
+  for (const [range, floor, expected] of matcherCases) {
+    cases += 1;
     let actual;
     try {
       actual = rangeAdmitsFloorMajor(range, floor);
@@ -492,8 +681,85 @@ function runSelfTest() {
       failures += 1;
     }
   }
-  if (failures > 0) fail(`self-test failed (${failures} of ${cases.length} cases)`);
-  return cases.length;
+
+  for (const [range, expected] of projectFloorCases) {
+    cases += 1;
+    let actual;
+    try {
+      actual = rangeAdmitsBelowFloorMajor(range, FLOOR);
+    } catch (err) {
+      console.error(`  self-test: project floor ${JSON.stringify(range)} threw ${err.message}`);
+      failures += 1;
+      continue;
+    }
+    if (actual !== expected) {
+      console.error(`  self-test: project floor ${JSON.stringify(range)} expected ${expected}, got ${actual}`);
+      failures += 1;
+    }
+  }
+
+  for (const range of UNMODELLED_CASES) {
+    cases += 1;
+    let refused = false;
+    try {
+      rangeAdmitsFloorMajor(range, FLOOR);
+    } catch (err) {
+      if (!(err instanceof UnmodelledRange)) {
+        console.error(`  self-test: unmodelled ${JSON.stringify(range)} threw ${err.message}`);
+        failures += 1;
+        continue;
+      }
+      refused = true;
+    }
+    if (!refused) {
+      console.error(`  self-test: unmodelled grammar ${JSON.stringify(range)} was accepted`);
+      failures += 1;
+    }
+  }
+
+  const probe = runPolicyProbes(FLOOR, policyCases);
+  cases += probe.cases;
+  failures += probe.failures;
+
+  if (failures > 0) fail(`self-test failed (${failures} of ${cases} cases)`);
+  return cases;
+}
+
+function runPolicyProbes(floorMajor, policyCases) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cdk-engines-floor-probe-"));
+  let failures = 0;
+  try {
+    policyCases.forEach(([description, rootEngines, dependencyEngines, expectViolation], index) => {
+      const root = { name: "cdk-engines-floor-probe", version: "1.0.0" };
+      if (rootEngines !== null) root.engines = { node: rootEngines };
+      const packages = {
+        "": root,
+        "node_modules/probe": { version: "1.0.0", engines: { node: dependencyEngines } },
+      };
+      const absolute = path.join(directory, `probe-${index}`, "package-lock.json");
+      fs.mkdirSync(path.dirname(absolute), { recursive: true });
+      fs.writeFileSync(
+        absolute,
+        JSON.stringify({ name: "cdk-engines-floor-probe", lockfileVersion: 3, packages }, null, 2),
+      );
+
+      let violated;
+      try {
+        violated = scanLockfile({ absolute, label: `probe-${index}` }, floorMajor).violations.length > 0;
+      } catch (err) {
+        console.error(`  policy probe: ${description} threw ${err.message}`);
+        failures += 1;
+        return;
+      }
+      if (violated !== expectViolation) {
+        console.error(`  policy probe: ${description} expected violation=${expectViolation}, got ${violated}`);
+        failures += 1;
+      }
+    });
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+  return { cases: policyCases.length, failures };
 }
 
 function main() {
@@ -501,32 +767,31 @@ function main() {
   const selfTest = args[0] === "--self-test";
   const lockfileArgs = selfTest ? args.slice(1) : args;
 
+  const { major: floorMajor, spec: floorSpec } = readFloorMajor();
   const selfTestCases = selfTest ? runSelfTest() : 0;
 
-  const { major: floorMajor, spec: floorSpec } = readFloorMajor();
   const lockfiles =
     lockfileArgs.length > 0 ? lockfileArgs.map(resolveLockfileArgument) : defaultLockfiles();
 
   let checked = 0;
-  let skippedRoots = 0;
+  let projectFloors = 0;
+  let projectFloorsAbsent = 0;
   const violations = [];
   for (const lockfile of lockfiles) {
     const result = scanLockfile(lockfile, floorMajor);
     checked += result.checked;
-    skippedRoots += result.skippedRoots;
+    projectFloors += result.projectFloors;
+    projectFloorsAbsent += result.projectFloorsAbsent;
     violations.push(...result.violations);
   }
 
   if (violations.length > 0) {
     for (const violation of violations) {
-      console.error(
-        `cdk-engines-floor: unexpected engines.node ${JSON.stringify(violation.declared)} in ` +
-          `${violation.packagePath}@${violation.version} from ${violation.lockfile} ` +
-          `(excludes Node ${floorMajor}.x, the ${CDK_MANIFEST} floor ${JSON.stringify(floorSpec)})`,
-      );
+      console.error(describeViolation(violation, floorMajor, floorSpec));
     }
     fail(
-      `${violations.length} of ${checked} CDK dependency engine ranges exclude the Node ${floorMajor} floor`,
+      `${violations.length} declared engine range(s) in ${lockfiles.length} CDK lockfiles conflict ` +
+        `with the Node ${floorMajor} floor`,
     );
   }
 
@@ -534,7 +799,7 @@ function main() {
   console.log(
     `cdk-engines-floor: PASS (${selfTestSummary}floor ${JSON.stringify(floorSpec)}; ` +
       `lockfiles ${lockfiles.length}; dependency engine ranges ${checked}; ` +
-      `own-project engine declarations not judged ${skippedRoots}; excluded 0)`,
+      `project floors judged ${projectFloors}; project floors absent ${projectFloorsAbsent}; excluded 0)`,
   );
 }
 
