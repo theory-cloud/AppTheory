@@ -1,3 +1,4 @@
+import { safeError } from "./errors.js";
 import {
   MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
   MICROVM_ERROR_TENANT_BINDING_VIOLATION,
@@ -15,7 +16,6 @@ import {
   type ReconstructingMicroVMSessionRegistryOptions,
   type TableTheoryMicroVMSessionRegistryOptions,
 } from "./model.js";
-import { safeError } from "./errors.js";
 import {
   asMicroVMSessionRegistryError,
   cloneMicroVMSessionRegistryRecord,

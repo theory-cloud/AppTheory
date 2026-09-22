@@ -1,3 +1,8 @@
+import { safeError } from "./errors.js";
+import {
+  normalizeMicroVMLifecycleState,
+  requiredMicroVMLifecycleStates,
+} from "./lifecycle.js";
 import {
   MICROVM_CONTROLLER_AUTH_DEFAULT_DENY,
   MICROVM_ERROR_CONTROLLER_INCOMPLETE,
@@ -12,11 +17,6 @@ import {
   type MicroVMRealLifecycleState,
   type MicroVMSessionRegistryContract,
 } from "./model.js";
-import { safeError } from "./errors.js";
-import {
-  normalizeMicroVMLifecycleState,
-  requiredMicroVMLifecycleStates,
-} from "./lifecycle.js";
 import {
   normalizeMicroVMRealLifecycleState,
   requiredMicroVMRealLifecycleStates,

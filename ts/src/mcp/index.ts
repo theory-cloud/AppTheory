@@ -26,8 +26,7 @@ export type McpProtocolShape =
   | typeof MCP_PROTOCOL_SHAPE_2026_07_28
   | typeof MCP_PROTOCOL_SHAPE_UNKNOWN;
 export type McpResultType =
-  | typeof MCP_RESULT_TYPE_COMPLETE
-  | typeof MCP_RESULT_TYPE_INPUT_REQUIRED;
+  typeof MCP_RESULT_TYPE_COMPLETE | typeof MCP_RESULT_TYPE_INPUT_REQUIRED;
 
 export const MCP_HEADER_PROTOCOL_VERSION = "mcp-protocol-version";
 export const MCP_HEADER_SESSION_ID = "mcp-session-id";
@@ -334,11 +333,7 @@ export interface McpStreamStore {
 
 export type McpTaskSupport = "forbidden" | "optional" | "required";
 export type McpTaskStatus =
-  | "working"
-  | "input_required"
-  | "completed"
-  | "failed"
-  | "canceled";
+  "working" | "input_required" | "completed" | "failed" | "canceled";
 
 export interface McpTaskMetadata {
   ttl?: number;
@@ -3696,7 +3691,7 @@ function normalizeToolResult(result: McpToolResult): McpToolResult {
       ? result.content.map(normalizeContentBlock)
       : [],
   };
-  if (Boolean(result?.isError)) {
+  if (result?.isError) {
     out.isError = true;
   }
   if (result?.structuredContent && isRecord(result.structuredContent)) {

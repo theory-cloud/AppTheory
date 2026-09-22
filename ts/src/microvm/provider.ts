@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 
 import {
+  cloneMicroVMSessionSpec,
+  normalizeMicroVMAuthContext,
+} from "./controller.js";
+import { safeError } from "./errors.js";
+import {
   MICROVM_ERROR_FORBIDDEN_FIELD,
   MICROVM_ERROR_PROVIDER_OPERATION_FAILED,
   MICROVM_ERROR_PROVIDER_OPERATION_UNSUPPORTED,
@@ -26,7 +31,6 @@ import {
   type MicroVMProviderToken,
   type MicroVMProviderTokenInput,
 } from "./model.js";
-import { safeError } from "./errors.js";
 import {
   isRequiredMicroVMOperation,
   mapMicroVMProviderState,
@@ -40,10 +44,6 @@ import {
   validateSafeMicroVMMetadata,
 } from "./safety.js";
 import { cloneMicroVMDate, validDate } from "./time.js";
-import {
-  cloneMicroVMSessionSpec,
-  normalizeMicroVMAuthContext,
-} from "./controller.js";
 
 export function validateMicroVMProviderSession(
   session: MicroVMProviderSession,

@@ -254,7 +254,7 @@ class ProfileLogger:
         config: LoggingProfileConfig,
         *,
         environment: dict[str, str] | None = None,
-        writer: Callable[[str], None] | None | object = _DEFAULT_PROFILE_WRITER,
+        writer: Callable[[str], None] | object | None = _DEFAULT_PROFILE_WRITER,
         sanitizer: LoggingProfileSanitizer | None = None,
         clock: Callable[[], datetime] | None = None,
         _root: ProfileLogger | None = None,
@@ -452,7 +452,7 @@ def hooks_from_profile_logger(
     config: LoggingProfileConfig,
     *,
     environment: dict[str, str] | None = None,
-    writer: Callable[[str], None] | None | object = _DEFAULT_PROFILE_WRITER,
+    writer: Callable[[str], None] | object | None = _DEFAULT_PROFILE_WRITER,
     sanitizer: LoggingProfileSanitizer | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> tuple[ObservabilityHooks, ProfileLogger]:

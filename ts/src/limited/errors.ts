@@ -1,7 +1,5 @@
 export type ErrorType =
-  | "internal_error"
-  | "rate_limit_exceeded"
-  | "invalid_input";
+  "internal_error" | "rate_limit_exceeded" | "invalid_input";
 
 export class RateLimiterError extends Error {
   readonly type: ErrorType;

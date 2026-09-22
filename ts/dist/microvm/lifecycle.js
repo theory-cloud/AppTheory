@@ -1,5 +1,5 @@
-import { MICROVM_ERROR_INVALID_LIFECYCLE_EVENT, MICROVM_ERROR_LIFECYCLE_BYPASS, MICROVM_ERROR_LIFECYCLE_HOOK_FAILED, MICROVM_ERROR_LIFECYCLE_INCOMPLETE, MICROVM_ERROR_RAW_SDK_ESCAPE_HATCH, MicroVMHook, MicroVMRealHook, MicroVMRealState, MicroVMSafeError, MicroVMState, } from "./model.js";
 import { safeError } from "./errors.js";
+import { MICROVM_ERROR_INVALID_LIFECYCLE_EVENT, MICROVM_ERROR_LIFECYCLE_BYPASS, MICROVM_ERROR_LIFECYCLE_HOOK_FAILED, MICROVM_ERROR_LIFECYCLE_INCOMPLETE, MICROVM_ERROR_RAW_SDK_ESCAPE_HATCH, MicroVMHook, MicroVMRealHook, MicroVMRealState, MicroVMSafeError, MicroVMState, } from "./model.js";
 import { validateMicroVMRealLifecycleContract } from "./operation-contract.js";
 import { cloneStringMap, missingStrings, validateSafeMicroVMMetadata, } from "./safety.js";
 export function validateMicroVMEscapeHatches(escapeHatches) {

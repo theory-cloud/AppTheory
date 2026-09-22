@@ -1,5 +1,5 @@
-import { type MicroVMLifecycleContract, type MicroVMLifecycleHook, type MicroVMLifecycleHookSpec, type MicroVMLifecycleState, type MicroVMLifecycleTransition, type MicroVMOperationContract, type MicroVMOperationHTTPRouteContract, type MicroVMOperationName, type MicroVMProviderStateMapping, type MicroVMRealLifecycleHook, type MicroVMRealLifecycleState, type MicroVMTenantBindingRule, type MicroVMTokenIssuanceContract } from "./model.js";
 import { type MicroVMTransitionSet } from "./lifecycle.js";
+import { type MicroVMLifecycleContract, type MicroVMLifecycleHook, type MicroVMLifecycleHookSpec, type MicroVMLifecycleState, type MicroVMLifecycleTransition, type MicroVMOperationContract, type MicroVMOperationHTTPRouteContract, type MicroVMOperationName, type MicroVMProviderStateMapping, type MicroVMRealLifecycleHook, type MicroVMRealLifecycleState, type MicroVMTenantBindingRule, type MicroVMTokenIssuanceContract } from "./model.js";
 export declare function defaultMicroVMRealLifecycleContract(): MicroVMLifecycleContract;
 export declare function defaultMicroVMOperationContract(): MicroVMOperationContract;
 export declare function defaultMicroVMProviderStateMappings(): MicroVMProviderStateMapping[];
