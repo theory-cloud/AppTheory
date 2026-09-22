@@ -61,6 +61,16 @@ These are wire-contract changes, not source-level API changes: after the import-
 on v3 compiles on v4, but the wire behavior an application observes can differ. See `CHANGELOG.md` and the v4 release
 notes for the complete commit-level detail in this range.
 
+### CDK Node.js floor
+
+The v4.x CDK construct library declares `engines.node` `>=22` instead of `>=20`, and CI builds the package and
+regenerates its jsii Go bindings on Node.js 22 and 24. The floor follows the dependency graph the CDK package actually
+installs: jsii-rosetta 6.0.16 resolves stream-json 3.7.0, which resolves stream-chain, and stream-chain has declared
+`engines.node` `>=22` since 4.2.3. Node.js 20 reached end of life in April 2026.
+
+Consuming CDK applications must run Node.js 22 or newer to install, synthesize, and deploy against this line. The
+TypeScript runtime package (`ts/`) keeps its `>=20` floor; only the CDK construct library moved.
+
 ## v3.x line
 
 ### Toolchain and CDK dependency floors
