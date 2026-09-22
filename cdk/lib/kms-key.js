@@ -40,7 +40,7 @@ const kms = __importStar(require("aws-cdk-lib/aws-kms"));
 const ssm = __importStar(require("aws-cdk-lib/aws-ssm"));
 const constructs_1 = require("constructs");
 class AppTheoryKmsKey extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryKmsKey", version: "4.2.4-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryKmsKey", version: "4.2.4" };
     key;
     alias;
     ssmParameter;
