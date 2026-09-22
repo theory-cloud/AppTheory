@@ -7,7 +7,7 @@
   },
   "dependencies": {
     "aws-cdk-lib": "2.270.0",
-    "constructs": "10.8.1"
+    "constructs": "^10.8.1"
   },
   "dependencyClosure": {
     "@aws-cdk/asset-awscli-v1": {
@@ -29702,5 +29702,5 @@
     }
   },
   "version": "4.2.4",
-  "fingerprint": "1JDeoCe27DPBxiVXsgzVFgfGMz++GFLlL4iwQAOTUaY="
+  "fingerprint": "oa21z2ppgJxuhLSL9TbZkEF0XevWvEpTWcyQkeo39hk="
 }
