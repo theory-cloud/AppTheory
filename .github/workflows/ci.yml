@@ -194,6 +194,8 @@ jobs:
           cache-dependency-path: cdk/package-lock.json
       - name: Verify CDK lower-floor generated binding proof
         run: bash scripts/verify-cdk-go-drift.sh
+      - name: Verify CDK dependency engines admit the Node floor
+        run: bash scripts/verify-cdk-engines-floor.sh
 
   prerelease-readiness:
     name: Prerelease readiness (staging → premain)
