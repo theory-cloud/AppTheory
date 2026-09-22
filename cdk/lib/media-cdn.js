@@ -67,7 +67,7 @@ function assertCloudFrontHostedZoneCertificateRegion(scope, constructName) {
  * - Stage-specific media subdomains (e.g., media.stage.example.com)
  */
 class AppTheoryMediaCdn extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMediaCdn", version: "4.2.3" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMediaCdn", version: "4.2.4" };
     /**
      * The CloudFront distribution.
      */

@@ -67,7 +67,7 @@ const constructs_1 = require("constructs");
  * });
  */
 class AppTheoryQueue extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryQueue", version: "4.2.3" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryQueue", version: "4.2.4" };
     /**
      * The main SQS queue.
      */

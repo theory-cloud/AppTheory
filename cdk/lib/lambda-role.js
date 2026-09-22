@@ -63,7 +63,7 @@ const constructs_1 = require("constructs");
  * });
  */
 class AppTheoryLambdaRole extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryLambdaRole", version: "4.2.3" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryLambdaRole", version: "4.2.4" };
     /**
      * The underlying IAM Role.
      */

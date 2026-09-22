@@ -1,6 +1,6 @@
 {
   "name": "@theory-cloud/apptheory-cdk",
-  "version": "4.2.3",
+  "version": "4.2.4",
   "description": "AppTheory CDK constructs (TS-first jsii)",
   "author": "Theory Cloud",
   "repository": {
@@ -33,6 +33,7 @@
     "constructs": "10.8.1",
     "jsii": "6.0.14",
     "jsii-pacmak": "1.140.0",
+    "jsii-rosetta": "6.0.16",
     "typescript": "7.0.2"
   },
   "overrides": {

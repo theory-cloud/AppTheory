@@ -678,12 +678,12 @@ check_visible_ts_brace_finding() {
 
 osv_scan_lockfile() {
   local lf="$1"
-  local exception_kind=""
+  local checker_kind=""
 
   if [[ "${lf}" == "ts/package-lock.json" ]]; then
-    exception_kind="ts"
+    checker_kind="ts"
   elif grep -Fq '"node_modules/aws-cdk-lib/node_modules/brace-expansion"' "${lf}"; then
-    exception_kind="aws-cdk"
+    checker_kind="aws-cdk"
   else
     osv-scanner scan --lockfile="${lf}"
     return $?
@@ -700,37 +700,34 @@ osv_scan_lockfile() {
   set -e
 
   local filter_status=0
-  local exception_marker=""
   set +e
-  if [[ "${exception_kind}" == "ts" ]]; then
+  if [[ "${checker_kind}" == "ts" ]]; then
     check_visible_ts_brace_finding "${tmp_report}" "${lf}"
     filter_status=$?
   else
     node scripts/check-visible-aws-cdk-finding.mjs osv "${tmp_report}" "${lf}" >"${tmp_marker}"
     filter_status=$?
-    exception_marker="$(cat "${tmp_marker}")"
-    [[ -z "${exception_marker}" ]] || printf '%s\n' "${exception_marker}"
+    cat "${tmp_marker}"
   fi
   set -e
   rm -f "${tmp_report}" "${tmp_marker}"
 
-  if [[ "${exception_kind}" == "ts" ]]; then
+  if [[ "${checker_kind}" == "ts" ]]; then
     if [[ "${scan_status}" -eq 0 && "${filter_status}" -eq 0 ]]; then
       echo "FAIL: vulnerability exception checker accepted an empty scanner report" >&2
       return 1
     fi
   else
-    # The aws-cdk graph carries one reviewed, self-expiring stream-json exception
-    # (see scripts/check-visible-aws-cdk-finding.mjs). osv-scanner exits non-zero
-    # when it reports findings, so a non-zero status is accepted only when the
-    # exception checker passed AND printed the machine marker proving that this
-    # exact reviewed finding caused it; any other finding or scanner error still
-    # fails closed.
+    # This repository grants no dependency-audit exceptions: the aws-cdk checker
+    # (scripts/check-visible-aws-cdk-finding.mjs) grants none, and its last one
+    # retired on 2026-09-22 with the jsii-rosetta 6.0.16 bump. The checker can
+    # therefore only pass on an empty findings set, and since osv-scanner exits
+    # non-zero when it reports findings, any non-zero scanner exit fails closed.
     if [[ "${filter_status}" -ne 0 ]]; then
       return "${filter_status}"
     fi
-    if [[ "${scan_status}" -ne 0 ]] && ! grep -Fq 'exception-applied: ' <<<"${exception_marker}"; then
-      echo "FAIL: osv-scanner exited ${scan_status} but the report contained no reviewed exception finding" >&2
+    if [[ "${scan_status}" -ne 0 ]]; then
+      echo "FAIL: osv-scanner exited ${scan_status} for ${lf} without any reviewed exception" >&2
       return 1
     fi
   fi
