@@ -497,6 +497,54 @@ require_order(
     "release branch verifier must compare HEAD to the tag or draft target commit before allowing asset builds",
 )
 require_contains(
+    "scripts/verify-release-pairing.sh",
+    "union ranges are not verified",
+    "template/release pairing verifier must fail closed on range syntax it cannot decide",
+)
+require_contains(
+    "scripts/verify-release-pairing.sh",
+    "release candidate packed at the wrong version",
+    "template/release pairing verifier must reject a CDK tarball packed at a version other than VERSION",
+)
+require_contains(
+    "scripts/verify-release-branch.sh",
+    'scripts/verify-release-pairing.sh --tag "${expected_tag}"',
+    "release branch verifier must pair apptheory-init templates with the release-candidate CDK tarball before assets are built",
+)
+require_contains(
+    "scripts/verify-release-publish-postcondition.sh",
+    "verify_release_pairing_postcondition",
+    "publish postcondition verifier must run the template/release pairing check",
+)
+require_order(
+    "scripts/verify-release-publish-postcondition.sh",
+    'if [[ "${phase}" != "complete" ]]',
+    "bash scripts/verify-release-pairing.sh --published",
+    "publish postcondition verifier must only pair against the published asset once publication completes",
+)
+require_contains(
+    "scripts/verify-release-gates.sh",
+    "bash ./scripts/verify-release-pairing.sh",
+    "full release gates must pair apptheory-init templates with the release-candidate CDK tarball",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "bash scripts/verify-release-pairing.sh",
+    "CI release/security gates must run the template/release pairing verifier",
+)
+for release_pr_workflow in (".github/workflows/prerelease-pr.yml", ".github/workflows/release-pr.yml"):
+    require_contains(
+        release_pr_workflow,
+        "bash scripts/verify-release-pairing.sh",
+        f"{release_pr_workflow} must pair apptheory-init templates with the release-candidate CDK tarball before generated artifact sync",
+    )
+    require_order(
+        release_pr_workflow,
+        "Verify apptheory-init template/release pairing",
+        "Sync generated CDK artifacts on release PR",
+        f"{release_pr_workflow} must fail closed on template/release skew before syncing generated CDK artifacts",
+    )
+require_contains(
     ".github/workflows/ci.yml",
     "ready_for_review",
     "CI must run when humans mark draft release PRs ready",

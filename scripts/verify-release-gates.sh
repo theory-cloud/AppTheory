@@ -28,6 +28,10 @@ bash ./scripts/verify-runtime-floor-claims.sh
 ./scripts/verify-api-snapshots.sh
 ./scripts/verify-contract-tests.sh
 ./scripts/verify-testkit-examples.sh
+# The scaffold gate above packs the working tree; this pairs the templates with the
+# release-candidate tarball at the VERSION tag the templates substitute.
+bash ./scripts/verify-release-pairing.sh --self-test
+bash ./scripts/verify-release-pairing.sh
 ./scripts/verify-microvm-conformance-harness.sh
 bash ./scripts/verify-docs-standard.sh
 bash ./scripts/verify-release-train-promotion.sh --self-test

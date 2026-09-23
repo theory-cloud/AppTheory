@@ -84,4 +84,11 @@ else
   fi
 fi
 
+# The apptheory-init templates substitute __APPTHEORY_TAG__ from VERSION, so the CDK
+# asset published for this tag has to pair with the template CDK pins. This is the
+# only point in the release train where the tree being packed and the tag the
+# templates point at are the same tree - the skew scripts/verify-scaffold-examples.sh
+# cannot see from a staging checkout, where VERSION still names an older release.
+scripts/verify-release-pairing.sh --tag "${expected_tag}"
+
 echo "release-branch: PASS (${expected_tag} source=${commit})"
