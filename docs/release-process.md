@@ -179,52 +179,97 @@ download is bounded by a connect timeout and a maximum transfer time so a stalle
 the gate promptly, and a download failure reports the HTTP status or timeout rather than assuming the
 asset is missing.
 
-The guard that keeps the gate a blocker is structural rather than a substring match:
-`scripts/verify-release-workflows.sh` reads every call site - the invoking step's `run:` body, or the
-shell script that calls the gate - strips comments, joins line continuations, balances quotes the way
-bash does (including ANSI-C `$'...'`, where a backslash escapes the next character), blanks heredoc
-bodies and multi-line quoted strings (an embedded `awk` program is data, not shell code), and
-classifies what is left. `--self-test` runs the attack battery, one case per shape, plus a second
-table of fail-closed spellings that must stay accepted.
+The guard that keeps the gate a blocker is pinned first and classified second:
+`scripts/verify-release-workflows.sh` pins the bytes of the guarded surface, so a change to that
+surface is a finding with no parsing involved, and only then classifies what an edit is still allowed
+to touch. The invoking step's `run:` body and the shell script that calls the gate are read by *one*
+quoting model - single quotes, double quotes, ANSI-C `$'...'`, `$( )` and backquote substitutions,
+each ending only on its own closer, with a backslash escaping the next character everywhere except a
+plain single-quoted word - and that one model is shared by every reader in the guard, so a form one
+reader understands cannot be read differently by the next. The readers strip comments, join line
+continuations, blank heredoc bodies and multi-line quoted bodies (an embedded `awk` program is data,
+not shell code), and classify what is left. What the quoting model does not cover is refused rather
+than guessed at, not read past. `--self-test` runs the attack battery, one case per shape, plus a
+second table of fail-closed spellings that must stay accepted; at the revision this section describes,
+144 weakening shapes fail closed and 6 fail-closed spellings are accepted.
 
-What the classifier proves at each call site it reads:
+What the pins prove. Every pin is a tripwire: a pinned region may only change together with the pin
+that describes it, in the same commit, so weakening the wiring is always a visible two-place edit.
+
+| Pinned surface | How it is decided |
+| --- | --- |
+| `scripts/verify-release-branch.sh`, `scripts/verify-release-publish-postcondition.sh`, `scripts/verify-release-gates.sh` | pinned whole-file by SHA-256. Each holds a guarded invocation and nothing the accepted spellings table needs to tolerate, so an added line anywhere in one - a function body around the invocation, a shadowing definition, a `set +e`, a line the masking pass treats as data - is a finding. There is no construct to model here and therefore no construct to get wrong |
+| The lines that name a guarded script in each shell invoker | equal, byte for byte and in file order, to the pinned invocation lines. `gov-infra/verifiers/gov-verify-rubric.sh` is pinned by line rather than by digest, because its own self-test table carries a `set +e` / `set -e` capture pair in an unrelated function that has to stay accepted |
+| Each guarded step, outside its `run:` body | every raw line, byte for byte. This is where a step key lives, so an added `working-directory:`, `timeout-minutes:` or any other key this guard does not read by name changes the pinned bytes and fails |
+| Each guarded step's `run:` body | the statements in normal form: comments stripped, continuations joined, whitespace collapsed, one layer of quotes removed from the argument words. Every pinned statement must be present, in order, and an extra statement is allowed only when it stands on its own line, is not joined into a list, opens no shell block or function body, and names no guarded script. That admits a `true` line, or an unrelated verifier added to the same step, and admits no spelling that wraps, gates, shadows or replaces the invocation - without the guard having had to model bash's function grammar at all |
+| The inputs of the gov verifier's exempted toolchain export | `GOV_TOOLS_DIR`, `GOV_TOOLS_BIN`, `GOV_TOOLS_PY_DIR`, `GOV_TOOLS_PY_BIN`, `GOV_TOOLS_PY_COV_DIR`, `GOV_TOOLS_PY_COV_BIN`, `GOV_TOOLS_PY_RUNTIME_DIR`, `GOV_TOOLS_PY_RUNTIME_BIN` and `PATH` are each pinned to exactly one assignment with exactly the pinned text, and any other assignment to one of those names anywhere in the file fails. A text pin on the export alone leaves the value it reads free to redirect from the line above it |
+
+What the classifier adds, where an edit has to stay allowed:
 
 | Property | How it is decided |
 | --- | --- |
 | Step and job conditionals | equal to the pinned literal; any other value - `false`, `${{ false }}`, `always()`, an expression the guard does not recognise - fails |
 | Step keys | read from the whole step block, because YAML key order carries no meaning: an `if:`, `continue-on-error:`, `shell:` or `env:` written after the `run:` body is the same key as one written before it, and a repeated key fails |
-| Keys spelled `key : value`, `"key": value` or `? key` | read as the same key - YAML does not require the colon to touch the key, and a quoted or explicit key is the same mapping key - and any of those spellings at a key's own indentation fails outright, so a key this guard does not enumerate cannot hide |
+| A repeated key at workflow or job-name level | refused. YAML keeps the last value for a repeated key and the runner resolves that one, while every reader here reads the first occurrence - so a second `defaults:`, or a second job carrying the pinned job's name with `if: false`, is a finding rather than a job the guard classified while the runner skipped another |
+| Keys spelled `key : value`, `"key": value` or `? key` | read as the same key - YAML does not require the colon to touch the key, and a quoted or explicit key is the same mapping key - and any of those spellings at any indentation, workflow level included, fails outright, so a key this guard does not enumerate cannot hide behind a spelling it never read |
 | The invocation | first on its line, unnegated, at top level, naming the script directly, with its exit status governing what follows |
 | Arguments | one of the pinned literal argument vectors; a variable, a `${{ }}` expression, an expansion or a substitution fails |
 | A tolerated `|| return N` / `|| exit N` tail | accepted only when nothing follows it in the same list, so `|| exit 1 &`, `|| exit 1; true` and `|| exit 1 \| tee log` all fail |
-| An invocation inside a function definition | accepted only for a function pinned as a host, and only when every call of that host is fail-closed in its own right - at file level, or carrying a `|| exit N` tail that leaves the shell whatever the caller's context is; any other function holding an invocation, or any other call of a pinned host, fails, because bash ignores errexit for every command in a function entered from a condition |
+| An invocation inside a function definition | accepted only for a function pinned as a host, and only when every call of that host is fail-closed in its own right - at file level, or carrying a `|| exit N` tail that leaves the shell whatever the caller's context is; any other function holding an invocation, or any other call of a pinned host, fails, because bash ignores errexit for every command in a function entered from a condition. A definition is recognised in both of bash's spellings - `name ()` and `function name`, with the parentheses optional in the second - and a body this model cannot place (a subshell body, a conditional body) is sealed to the end of the body rather than skipped, so its contents can never read as top level |
 | `env:` at step, job and workflow level | must not set a variable that decides which program runs or how a shell starts: `PATH`, `CDPATH`, `BASH_ENV`, `ENV`, `SHELLOPTS`, `BASHOPTS` or a `BASH_FUNC_*` exported function; a flow-style env mapping fails |
-| The whole run body or shell file | must not clear errexit in the region that can run the invocation, shadow `bash`, `exit`, `set`, `trap` or the script path with a function or alias, install a trap, or reassign one of those same variables in-shell |
+| `defaults.run` at workflow and job level | `shell` must keep errexit and `working-directory` must be unset. GitHub resolves both for every `run:` step below them, before the step's own keys, so either reaches a guarded step whose own lines are byte-identical to the pin |
+| The whole run body or shell file | must not clear errexit in the region that can run the invocation, shadow `bash`, `exit`, `set`, `trap` or the script path with a function or alias, install a trap, reassign one of those same variables in-shell, export a `BASH_FUNC_*` function definition into the environment, re-pin a command name with `hash -p`, or load code into the shell (`source`, `.`, `eval`) or move it (`cd`, `pushd`) so that the invocation's own line stays pinned while the command it runs does not |
+| Step discovery | a list indicator is a `-` followed by at least one space, and a step may carry its keys after any amount of it: `- name: X`, `-   name: X` and `-   run: \|` are the same step, and each is discovered and classified rather than skipped |
 
 The `env:` row is checked at workflow, job and step level, and the shell-state row is checked for the
 guarded steps and for every shell script that calls the gate, including
 `gov-infra/verifiers/gov-verify-rubric.sh`. That generated verifier legitimately exports `PATH` for
-its pinned toolchain and installs one `RETURN` trap, and it captures exit codes with `set +e` / `set
--e` pairs in functions of its own, so exactly two statements are exempted by their full text - a
-different `PATH` value, a second trap or a shadowing definition still fails - and the errexit check is
-scoped to the file-level statements plus the body of the function that holds the invocation. Its own
-check is reached by name rather than by a call the guard can follow, so that dispatch is pinned whole:
-the assignment that names the check, the `run_check` statement that dispatches it, and the
-`set -euo pipefail` inside `run_check` that makes the dispatched command fail closed.
+its pinned toolchain, installs one `RETURN` trap, loads its own three helper libraries, runs from the
+repository root, and evaluates the dispatch command in `run_check`; it also captures exit codes with
+`set +e` / `set -e` pairs in functions of its own, and each of the three shell invokers opens by
+`cd`-ing to the repository root through its own path. Those statements - and only those - are
+exempted by their full text, so a different `PATH` value, a second trap, a second `source`, a
+different `cd` or a shadowing definition still fails, and the errexit check is scoped to the
+file-level statements plus the body of the function that holds the invocation. Its own check is
+reached by name rather than by a call the guard can follow, so that dispatch is pinned whole: the
+assignment that names the check, the `run_check` statement that dispatches it, and the
+`set -euo pipefail` inside `run_check` that makes the dispatched command fail closed. The toolchain
+that exemption covers is closed on its inputs separately, in the pin table above.
 
 The guard's own invocations go through the same classification - the release/security step in `ci.yml`,
 the release preflights in `prerelease.yml` and `release.yml`, `scripts/verify-release-gates.sh` and
 `gov-infra/verifiers/gov-verify-rubric.sh` - so weakening a call of the guard fails as loudly as
 weakening a call of the gate it guards. Call sites are discovered from the workflow text rather than
 from a fixed list, so a call added in a new step is classified too, and a new step may not carry a
-conditional the guard has no pin for.
+conditional the guard has no pin for. In a shell invoker there is no unpinned call site: the guarded
+scripts are named on exactly the pinned lines of exactly those files, and a name anywhere else there
+is a finding. In a workflow, a call site in a *new* step is discovered and classified rather than
+pinned, because the accepted table requires an added step to stay accepted - so what a workflow pin
+fixes is the pinned wiring itself, and what covers everything else is the classification of the new
+call site.
 
-Every property above is decided positively against a pinned value, so within the pinned wiring an
-unrecognised value fails closed. Four YAML forms are refused outright rather than read past, because
-the guard reads literal text and the runner resolves the document: a `<<:` merge key, a second
-document in one workflow file, a YAML alias (`*name`, which re-points a value at a node defined
-elsewhere), and a flow-style step mapping (`- {name: ..., run: ...}`) that names the guarded script.
-An anchor (`&name`) is inert on its own and is not refused.
+Every property above is decided positively against a pinned value or a pinned byte, so within the
+pinned wiring an unrecognised value fails closed. Four YAML forms are refused outright rather than
+read past, because the guard reads literal text and the runner resolves the document: a `<<:` merge
+key, a second document in one workflow file, a YAML alias (`*name`, which re-points a value at a node
+defined elsewhere), and a flow-style step mapping (`- {name: ..., run: ...}`) that names the guarded
+script. An anchor (`&name`) is inert on its own and is not refused.
+
+Each claim in the two tables above has a battery case behind it in `--self-test`, and a claim with no
+case behind it is removed rather than kept: the pin claims by the shapes that add a statement to a
+pinned run body, add a step key, edit a digest-pinned file, add a line naming a guarded script or
+redirect a pinned toolchain input; the shell-state and loading claims by the shadowing, trap,
+errexit, `PATH`, `source`, `.`, `eval`, `cd`, `hash -p` and `BASH_FUNC_*` cases; the repeated-key
+claim by the duplicate job-name and second-`defaults:` cases; the quoting claim by the ANSI-C and
+backquote cases; the key-spelling claim by the pre-colon, quoted and explicit-key cases at step, job
+and workflow level; the `defaults.run` claim by the workflow-level, job-level and step-level
+`working-directory` cases and the workflow-level `shell` case in a workflow that has no pinned job;
+the function-host claim by the `()`-less, subshell, conditional and brace-poisoned bodies; and the
+step-discovery claim by the spaced flow-style and spaced unnamed-step cases. The accepted table holds
+the mirror image - the spellings that must stay accepted, including a trailing comment, a next-line
+`true`, a quoted `--self-test`, an unrelated `set +e`/`set -e` pair, an inert anchor and an unrelated
+verifier added to a pinned step - so a pin that starts over-blocking fails the self-test as loudly as
+a classifier that starts missing.
 
 The already-published `v4.2.4` asset declares `aws-cdk-lib 2.269.0` and cannot be changed. The gate
 exists so `4.2.5` and later either ship paired or fail before the release becomes public.
