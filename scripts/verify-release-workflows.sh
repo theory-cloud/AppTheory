@@ -95,78 +95,101 @@ def require_job_contains(path: str, job_name: str, needle: str, description: str
         )
 
 
-def step_block(text: str, step_name: str) -> str:
-    """The body of one workflow step, bounded by the next step or the next job."""
-    marker = f"      - name: {step_name}\n"
-    start_index = text.find(marker)
-    if start_index == -1:
-        raise SystemExit(f"release-workflows: FAIL (missing step {step_name!r})")
-    body_start = start_index + len(marker)
-    candidates = []
-    next_step = text.find("\n      - ", body_start)
-    if next_step != -1:
-        candidates.append(next_step)
-    next_job = re.search(r"\n  [A-Za-z0-9_-]+:\n", text[body_start:])
-    if next_job:
-        candidates.append(body_start + next_job.start())
-    end_index = min(candidates) if candidates else len(text)
-    return text[start_index:end_index]
+STEP_HEADER = re.compile(r"(?m)^      - name: (?P<name>.*)$")
+
+
+def workflow_step_blocks(text: str):
+    """(step_name, step_text) for every step of a workflow, bounded by the next step or job."""
+    markers = [(match.start(), match.group("name").strip()) for match in STEP_HEADER.finditer(text)]
+    blocks = []
+    for position, (start, name) in enumerate(markers):
+        end = markers[position + 1][0] if position + 1 < len(markers) else len(text)
+        next_job = re.search(r"\n  [A-Za-z0-9_-]+:\n", text[start:])
+        if next_job:
+            end = min(end, start + next_job.start())
+        blocks.append((name, text[start:end]))
+    return blocks
+
+
+def body_mentions(body: str, script: str) -> bool:
+    """True when a run body names the script in code or in a comment, never in masked data."""
+    return any(
+        script in line
+        for line in join_shell_continuations(mask_shell_data(body.splitlines()))
+    )
 
 
 PAIRING_SCRIPT = "verify-release-pairing.sh"
 PAIRING_SCRIPT_PATH = "scripts/verify-release-pairing.sh"
+META_GUARD_SCRIPT = "verify-release-workflows.sh"
+META_GUARD_SCRIPT_PATH = "scripts/verify-release-workflows.sh"
 
 PAIRING_STEP_NAME = "Verify apptheory-init template/release pairing"
+META_GUARD_STEP_CI = "Verify release/security invariants"
+META_GUARD_STEP_PREMAIN = "Verify release workflow invariants (release preflight)"
+META_GUARD_STEP_MAIN = "Verify release workflow invariants (stable release preflight)"
+RELEASE_PR_STEP_CONDITION = "steps.release_pr.outputs.exists == 'true'"
+RELEASE_MAIN_PREFLIGHT_IF = "github.ref == 'refs/heads/main' && inputs.tag_name == ''"
 PAIRING_WORKFLOWS = (
     ".github/workflows/ci.yml",
     ".github/workflows/prerelease-pr.yml",
     ".github/workflows/release-pr.yml",
-)
-PAIRING_JOBS = (
-    (".github/workflows/ci.yml", "release-security-gates"),
-    (".github/workflows/prerelease-pr.yml", "release-please"),
-    (".github/workflows/release-pr.yml", "release-please"),
 )
 PAIRING_SHELL_INVOKERS = (
     "scripts/verify-release-branch.sh",
     "scripts/verify-release-publish-postcondition.sh",
     "scripts/verify-release-gates.sh",
 )
-PAIRING_INVOKERS = PAIRING_WORKFLOWS + PAIRING_SHELL_INVOKERS
+# The release publishers run the meta-guard in their precondition step, so a weakened call
+# there would let a stale release path publish unnoticed.
+META_GUARD_WORKFLOWS = (
+    ".github/workflows/ci.yml",
+    ".github/workflows/prerelease.yml",
+    ".github/workflows/release.yml",
+)
 
-# The only step and job conditionals a pairing lane may carry, pinned literally. The two
-# release PR workflows must not pair when release-please created no PR to pair, so that
-# exact condition is the only conditional classifiable here. Everything else - `false`,
-# `${{ false }}`, `always()`, `failure()`, or an expression this guard does not recognise -
-# is not positively classifiable as the legitimate call and fails closed. The job-level
-# case belongs to this guard on purpose: verify-ci-rubric-enforced.sh only covers
-# step-level conditionals.
-PAIRING_STEP_IF = {
-    (".github/workflows/ci.yml", PAIRING_STEP_NAME): None,
-    (".github/workflows/prerelease-pr.yml", PAIRING_STEP_NAME): "steps.release_pr.outputs.exists == 'true'",
-    (".github/workflows/release-pr.yml", PAIRING_STEP_NAME): "steps.release_pr.outputs.exists == 'true'",
-}
-PAIRING_JOB_IF = {
-    (".github/workflows/ci.yml", "release-security-gates"): None,
-    (".github/workflows/prerelease-pr.yml", "release-please"): (
-        "github.event_name == 'workflow_dispatch' || !contains("
-        "github.event.head_commit.message, 'release-please--branches--premain')"
-    ),
-    (".github/workflows/release-pr.yml", "release-please"): (
-        "github.event_name == 'workflow_dispatch' || !contains("
-        "github.event.head_commit.message, 'release-please--branches--main')"
-    ),
-}
-
-# `-h`, `--help` and `--usage` exit 0 before any pairing is checked. `|| return N` /
-# `|| exit N` with a non-zero status is the one trailing operator that keeps a failing
-# pairing fail-closed, so it is the only one classified as legitimate.
+# `-h`, `--help` and `--usage` exit 0 before any check. `|| return N` / `|| exit N` with a
+# non-zero status is the only trailing list operator that keeps a failing invocation
+# fail-closed, and it is accepted only when nothing else follows it in the same list:
+# `|| exit 1 &` backgrounds the whole list and `|| exit 1; true` runs past the tail, so
+# neither of those decides the step's exit status.
 PAIRING_USAGE_FLAGS = re.compile(r"(?:^|\s)(-h|--help|--usage)(?=\s|$)")
 PAIRING_FAIL_CLOSED_TAIL = re.compile(r"^(?:return|exit)\s+[1-9][0-9]*$")
-PAIRING_SHADOWING = re.compile(
-    r"(?m)^[ \t]*(?:function[ \t]+)?(?:bash|(?:\./)?(?:scripts/)?verify-release-pairing\.sh)[ \t]*\([ \t]*\)"
-    r"|^[ \t]*(?:alias|function)[ \t]+(?:bash|(?:\./)?(?:scripts/)?verify-release-pairing\.sh)[ \t]*="
+
+# An invocation may only carry one of these literal argument vectors. GitHub substitutes
+# `${{ }}` and expands variables before bash parses the line, so an argument the guard
+# cannot read literally can place a list operator (`|| true`) or a usage flag (`--help`)
+# into the command line. The expansions below are the only ones any legitimate call site
+# carries, and each value is separately pinned literally by the release-workflow pins
+# further down this file.
+PAIRING_ALLOWED_ARG_VECTORS = (
+    (),
+    ("--self-test",),
+    ("--published",),
+    ("--published", "--tag", "${release_tag}"),
+    ("--tag", "${expected_tag}"),
 )
+META_GUARD_ALLOWED_ARG_VECTORS = ((), ("--self-test",))
+
+# Shadowing any of these names would let a failing guarded invocation report success: a
+# function or alias named `bash`, `exit` or `set` replaces the command the fail-closed
+# shape depends on. SHELL_STATE_KEYS are the variables that change what a later command in
+# the same shell executes.
+SHADOWING_COMMANDS = (
+    "bash",
+    "sh",
+    "env",
+    "command",
+    "builtin",
+    "exec",
+    "eval",
+    "set",
+    "trap",
+    "exit",
+    "return",
+)
+SHELL_STATE_KEYS = ("PATH", "BASH_ENV", "ENV", "SHELLOPTS")
+
 SHELL_OPENERS = ("if", "while", "until", "for", "case")
 SHELL_CLOSERS = ("fi", "done", "esac")
 HEREDOC_START = re.compile(
@@ -176,6 +199,67 @@ SHELL_SEMANTICS_ENV_KEYS = ("BASH_ENV", "ENV", "SHELLOPTS")
 # GitHub's built-in `bash` shell expands to `bash --noprofile --norc -eo pipefail {0}`,
 # so the bare keyword keeps errexit while an explicit command template has to prove it.
 SHELL_ERREXIT_FLAG = re.compile(r"(?:^|\s)-[A-Za-z]*e[A-Za-z]*(?=\s|$)")
+# `<<:` is a YAML merge key. GitHub Actions does not honour one today, so it is a dead end
+# there, but this guard refuses the document rather than depending on that.
+MERGE_KEY = re.compile(r"(?m)^[ \t]*<<[ \t]*:")
+GITHUB_EXPRESSION = re.compile(r"\$\{\{")
+
+# Each guarded script is classified the same way: which steps and shell scripts may invoke
+# it, which conditionals those call sites are pinned to, and which literal argument vectors
+# the invocation may carry. Adding a call site without a pin here fails closed.
+PAIRING_SPEC = {
+    "label": "pairing gate",
+    "script": PAIRING_SCRIPT,
+    "path": PAIRING_SCRIPT_PATH,
+    "usage_flags": PAIRING_USAGE_FLAGS,
+    "allowed_args": PAIRING_ALLOWED_ARG_VECTORS,
+    "jobs": (
+        (
+            ".github/workflows/ci.yml",
+            "release-security-gates",
+            None,
+        ),
+        (
+            ".github/workflows/prerelease-pr.yml",
+            "release-please",
+            "github.event_name == 'workflow_dispatch' || !contains("
+            "github.event.head_commit.message, 'release-please--branches--premain')",
+        ),
+        (
+            ".github/workflows/release-pr.yml",
+            "release-please",
+            "github.event_name == 'workflow_dispatch' || !contains("
+            "github.event.head_commit.message, 'release-please--branches--main')",
+        ),
+    ),
+    "workflow_steps": (
+        (".github/workflows/ci.yml", PAIRING_STEP_NAME, None),
+        (".github/workflows/prerelease-pr.yml", PAIRING_STEP_NAME, RELEASE_PR_STEP_CONDITION),
+        (".github/workflows/release-pr.yml", PAIRING_STEP_NAME, RELEASE_PR_STEP_CONDITION),
+    ),
+    "shell_invokers": PAIRING_SHELL_INVOKERS,
+}
+META_GUARD_SPEC = {
+    "label": "release-workflow meta-guard",
+    "script": META_GUARD_SCRIPT,
+    "path": META_GUARD_SCRIPT_PATH,
+    "usage_flags": PAIRING_USAGE_FLAGS,
+    "allowed_args": META_GUARD_ALLOWED_ARG_VECTORS,
+    "jobs": (),
+    "workflow_steps": (
+        (".github/workflows/ci.yml", META_GUARD_STEP_CI, None),
+        (".github/workflows/prerelease.yml", META_GUARD_STEP_PREMAIN, None),
+        (".github/workflows/release.yml", META_GUARD_STEP_MAIN, RELEASE_MAIN_PREFLIGHT_IF),
+    ),
+    # gov-verify-rubric.sh legitimately exports PATH for its pinned toolchain and installs a
+    # RETURN trap, so only its invocation shape is classified, never its shell state.
+    "shell_invokers": ("scripts/verify-release-gates.sh", "gov-infra/verifiers/gov-verify-rubric.sh"),
+}
+GUARDED_WORKFLOWS = tuple(dict.fromkeys(PAIRING_WORKFLOWS + META_GUARD_WORKFLOWS))
+GUARDED_SHELL_INVOKERS = tuple(
+    dict.fromkeys(PAIRING_SHELL_INVOKERS + META_GUARD_SPEC["shell_invokers"])
+)
+GUARDED_FILES = GUARDED_WORKFLOWS + GUARDED_SHELL_INVOKERS
 
 
 def split_shell_comment(line: str):
@@ -217,8 +301,13 @@ def split_shell_comment(line: str):
 
 
 def split_shell_statements(code: str):
-    """[(separator_before, statement)] split at top-level `;`, `&&`, `||`, `|`, `&`."""
-    statements = []
+    """[(separator_before, statement, separator_after)] split at top-level `;`, `&&`, `||`, `|`, `&`.
+
+    The separator that follows a statement is kept too: a tolerated fail-closed tail can be
+    chained into a backgrounded or piped list (`|| exit 1 &`), and bash backgrounds the
+    whole list, so the tail alone would not decide the step's exit status.
+    """
+    raw = []
     current = []
     separator = None
     state = None
@@ -247,19 +336,24 @@ def split_shell_statements(code: str):
             state = "double"
             current.append(char)
         elif code.startswith("&&", index) or code.startswith("||", index):
-            statements.append((separator, "".join(current)))
+            raw.append((separator, "".join(current)))
             separator = code[index : index + 2]
             current = []
             index += 1
         elif char in ";|&":
-            statements.append((separator, "".join(current)))
+            raw.append((separator, "".join(current)))
             separator = char
             current = []
         else:
             current.append(char)
         index += 1
-    statements.append((separator, "".join(current)))
-    return [(sep, text.strip()) for sep, text in statements if text.strip()]
+    raw.append((separator, "".join(current)))
+    statements = []
+    for position, (before, text) in enumerate(raw):
+        after = raw[position + 1][0] if position + 1 < len(raw) else None
+        if text.strip():
+            statements.append((before, text.strip(), after))
+    return statements
 
 
 def mask_heredoc_bodies(lines):
@@ -280,6 +374,75 @@ def mask_heredoc_bodies(lines):
             masked[index] = ""
         index += 1
     return masked
+
+
+def scan_quotes(text: str, stack: list):
+    """Advance a quote-context stack over one line; return the index where it first empties.
+
+    The stack tracks nesting, because a quoted shell word can contain a command substitution
+    that starts its own quoting context: in `x="$(awk '...')"` the embedded program is a
+    single-quoted word inside a substitution inside a double-quoted string.
+    """
+    index = 0
+    started_open = bool(stack)
+    while index < len(text):
+        char = text[index]
+        top = stack[-1] if stack else None
+        if top == "single":
+            if char == "'":
+                stack.pop()
+        elif top == "double":
+            if char == "\\" and index + 1 < len(text):
+                index += 1
+            elif char == '"':
+                stack.pop()
+            elif text.startswith("$(", index):
+                stack.append("substitution")
+                index += 1
+        elif top == "substitution":
+            if char == "\\" and index + 1 < len(text):
+                index += 1
+            elif char == ")":
+                stack.pop()
+            elif char == "'":
+                stack.append("single")
+            elif char == '"':
+                stack.append("double")
+        elif char == "\\" and index + 1 < len(text):
+            index += 1
+        elif char == "'":
+            stack.append("single")
+        elif char == '"':
+            stack.append("double")
+        elif text.startswith("$(", index):
+            stack.append("substitution")
+            index += 1
+        index += 1
+        if started_open and not stack:
+            return index
+    return None
+
+
+def mask_quoted_bodies(lines):
+    """Blank multi-line quoted-string bodies: an embedded program is data, not shell code.
+
+    An `awk '...'` script or a multi-line message is one shell word, so its lines are not
+    statements and must never be read as conditionals, loops, or invocations.
+    """
+    masked = list(lines)
+    stack = []
+    for index, line in enumerate(lines):
+        if stack:
+            remainder_at = scan_quotes(line, stack)
+            masked[index] = "" if remainder_at is None else line[remainder_at:]
+            continue
+        scan_quotes(split_shell_comment(line)[0], stack)
+    return masked
+
+
+def mask_shell_data(lines):
+    """Blank heredoc bodies and multi-line quoted strings; both are data, not shell code."""
+    return mask_quoted_bodies(mask_heredoc_bodies(lines))
 
 
 def join_shell_continuations(lines):
@@ -303,18 +466,18 @@ def join_shell_continuations(lines):
 
 
 def shell_statements(body: str):
-    """(line_number, statement) for every top-level statement in a shell body."""
-    for line_number, line in enumerate(join_shell_continuations(mask_heredoc_bodies(body.splitlines())), 1):
+    """(line_number, statement, separator_after) for every top-level statement in a body."""
+    for line_number, line in enumerate(join_shell_continuations(mask_shell_data(body.splitlines())), 1):
         code, _comment = split_shell_comment(line)
-        for _separator, statement in split_shell_statements(code):
-            yield line_number, statement
+        for _separator, statement, after in split_shell_statements(code):
+            yield line_number, statement, after
 
 
 def shell_errexit_flags(body: str):
     """(enabled, disabled) for errexit across a shell body's `set` statements."""
     enabled = False
     disabled = False
-    for _line_number, statement in shell_statements(body):
+    for _line_number, statement, _after in shell_statements(body):
         words = statement.split()
         if not words or words[0] != "set":
             continue
@@ -333,62 +496,128 @@ def shell_errexit_flags(body: str):
     return enabled, disabled
 
 
-def trailing_list_operator(code: str):
-    """The list operator a logical line trails with, or None when it ends cleanly."""
-    stripped = code.rstrip()
-    if not stripped:
+FUNCTION_DEFINITION = re.compile(r"^(?:function[ \t]+)?(?P<name>[^\s(=]+)[ \t]*\([ \t]*\)")
+ALIAS_DEFINITION = re.compile(r"^alias[ \t]+(?P<name>[^=\s]+)=")
+ASSIGNMENT_STATEMENT = re.compile(
+    r"^(?:(?:export|declare|typeset|readonly|local)[ \t]+(?:-[A-Za-z]+[ \t]+)*)?"
+    r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)\+?="
+)
+
+
+def shadowing_target(name: str, spec) -> bool:
+    """True when shadowing `name` would replace the command a guarded invocation needs."""
+    bare = name[2:] if name.startswith("./") else name
+    return (
+        bare in SHADOWING_COMMANDS
+        or bare in (spec["script"], spec["path"])
+        or name in (spec["script"], spec["path"])
+    )
+
+
+def unquote_argument(argument: str) -> str:
+    """One layer of matching surrounding quotes, so a quoted literal still matches its pin."""
+    if len(argument) >= 2 and argument[0] == argument[-1] and argument[0] in "\"'":
+        return argument[1:-1]
+    return argument
+
+
+def assignment_target(statement: str):
+    """The shell-state variable a statement assigns, or None when it assigns nothing of interest."""
+    match = ASSIGNMENT_STATEMENT.match(statement)
+    if not match:
         return None
-    for operator in ("&&", "||", ";", "|", "&"):
-        if stripped.endswith(operator) and not stripped.endswith("\\" + operator):
-            return operator
+    key = match.group("key")
+    if key in SHELL_STATE_KEYS or key.startswith("BASH_FUNC"):
+        return key
     return None
 
 
-def classify_pairing_invocations(body: str, where: str):
-    """Findings for every pairing invocation in one run block or shell script.
+def shell_state_findings(body: str, where: str, spec):
+    """Findings for shell state in one body that could mask a failing guarded invocation.
 
-    An invocation is accepted only when it is the legitimate call: a first-on-line,
-    unnegated, top-level statement whose exit status governs the enclosing step, optionally
-    tailed by a fail-closed `|| return N` / `|| exit N`. Every other shape - negated,
-    commented out, wrapped in a condition or loop, chained into another list, backgrounded,
-    quoted, or reached through indirection - fails closed instead of being treated as a pass.
+    A guarded invocation is only as fail-closed as the shell it runs in: errexit cleared
+    anywhere in the body, a function or alias shadowing `bash`/`exit`/`set`/the script path,
+    a trap that replaces the failing status, or a reassigned PATH/BASH_ENV/ENV/SHELLOPTS all
+    let a failing invocation leave the step green. None of them appear in the pinned wiring.
+    """
+    findings = []
+    _enabled, disabled = shell_errexit_flags(body)
+    if disabled:
+        findings.append(
+            f"{where}: clears errexit with `set +e`, so a failing {spec['label']} invocation "
+            "would not fail closed"
+        )
+    for line_number, statement, _after in shell_statements(body):
+        definition = FUNCTION_DEFINITION.match(statement) or ALIAS_DEFINITION.match(statement)
+        if definition and shadowing_target(definition.group("name"), spec):
+            findings.append(
+                f"{where}:{line_number}: the {spec['label']} invocation's command is shadowed by a "
+                f"function or alias definition ({statement!r})"
+            )
+        words = statement.split()
+        if words and words[0] == "trap":
+            findings.append(
+                f"{where}:{line_number}: installs a trap that can replace the exit status of a failing "
+                f"{spec['label']} invocation ({statement!r})"
+            )
+        target = assignment_target(statement)
+        if target:
+            findings.append(
+                f"{where}:{line_number}: reassigns {target} in the same shell as the {spec['label']} "
+                f"invocation, so a later invocation need not be the pinned command ({statement!r})"
+            )
+    return findings
+
+
+def classify_invocations(body: str, where: str, spec):
+    """Findings for every invocation of one guarded script in a run block or shell script.
+
+    An invocation is accepted only as the pinned fail-closed call: a first-on-line,
+    unnegated, top-level statement that names the guarded script directly, carries a pinned
+    literal argument vector, and is not followed by anything that decides the result in its
+    place. Anything else - negated, commented out, wrapped in a condition or loop, chained
+    into another list, backgrounded, quoted, reached through a variable or a `${{ }}`
+    expression, or taking a usage-exit flag - is reported instead of passing.
     """
     findings = []
     mentions = 0
     real = 0
     candidates = []
     depth = 0
-    for line_number, line in enumerate(join_shell_continuations(mask_heredoc_bodies(body.splitlines())), 1):
+    for line_number, line in enumerate(join_shell_continuations(mask_shell_data(body.splitlines())), 1):
         code, _comment = split_shell_comment(line)
-        if PAIRING_SCRIPT not in code and PAIRING_SCRIPT in line:
+        if spec["script"] not in code and spec["script"] in line:
             mentions += 1
             findings.append(
-                f"{where}:{line_number}: the pairing script is named in a comment, not invoked ({line.strip()!r})"
+                f"{where}:{line_number}: the {spec['label']} script is named in a comment, "
+                f"not invoked ({line.strip()!r})"
             )
         statements = split_shell_statements(code)
-        for index, (separator, statement) in enumerate(statements):
-            first = statement.split()[0] if statement.split() else ""
+        for index, (separator, statement, _after) in enumerate(statements):
+            words = statement.split()
+            first = words[0] if words else ""
             if first in SHELL_CLOSERS:
                 depth = max(depth - 1, 0)
-            if PAIRING_SCRIPT in statement:
+            if spec["script"] in statement:
                 mentions += 1
-                candidates.append((line_number, index, separator, statement, depth, statements, code))
+                candidates.append((line_number, index, separator, statement, depth, statements))
             if first in SHELL_OPENERS:
                 depth += 1
-    for line_number, index, separator, statement, depth, statements, code in candidates:
+    for line_number, index, separator, statement, depth, statements in candidates:
         label = f"{where}:{line_number}"
         if depth != 0:
             findings.append(
-                f"{label}: pairing invocation runs inside a conditional or loop block ({statement!r})"
+                f"{label}: {spec['label']} invocation runs inside a conditional or loop block ({statement!r})"
             )
         if statement.startswith("!"):
             findings.append(
-                f"{label}: pairing invocation is negated, and bash exempts negated commands from errexit ({statement!r})"
+                f"{label}: {spec['label']} invocation is negated, and bash exempts negated commands "
+                f"from errexit ({statement!r})"
             )
         if index != 0:
             findings.append(
-                f"{label}: pairing invocation is not the first command on its line, so {separator!r} decides "
-                f"whether it runs at all ({statement!r})"
+                f"{label}: {spec['label']} invocation is not the first command on its line, so {separator!r} "
+                f"decides whether it runs at all ({statement!r})"
             )
         words = statement.split()
         if len(words) > 1 and words[0] == "bash":
@@ -397,34 +626,58 @@ def classify_pairing_invocations(body: str, where: str):
             command, args = words[0], words[1:]
         else:
             command, args = "", []
-        if command not in (PAIRING_SCRIPT_PATH, "./" + PAIRING_SCRIPT_PATH):
+        args = tuple(unquote_argument(argument) for argument in args)
+        if command not in (spec["path"], "./" + spec["path"]):
             findings.append(
-                f"{label}: pairing invocation is not positively classifiable as an unquoted "
-                f"`bash {PAIRING_SCRIPT_PATH}` call ({statement!r})"
+                f"{label}: {spec['label']} invocation is not positively classifiable as an unquoted "
+                f"`bash {spec['path']}` call ({statement!r})"
             )
             continue
-        if PAIRING_USAGE_FLAGS.search(" " + " ".join(args)):
+        if GITHUB_EXPRESSION.search(statement):
             findings.append(
-                f"{label}: pairing invocation takes a usage flag, which exits 0 before any pairing is checked "
-                f"({statement!r})"
+                f"{label}: {spec['label']} invocation is built from a `${{{{ }}}}` expression, which GitHub "
+                f"substitutes into the command line before bash parses it ({statement!r})"
             )
-        trailing = trailing_list_operator(code)
+        if spec["usage_flags"].search(" " + " ".join(args)):
+            findings.append(
+                f"{label}: {spec['label']} invocation takes a usage flag, which exits 0 before any "
+                f"verification is checked ({statement!r})"
+            )
+        if tuple(args) not in spec["allowed_args"]:
+            findings.append(
+                f"{label}: {spec['label']} invocation arguments {tuple(args)!r} are not one of the pinned "
+                f"literal forms {spec['allowed_args']!r}; a variable, expansion or substitution here cannot "
+                f"be read literally ({statement!r})"
+            )
         if index + 1 < len(statements):
-            next_separator, next_statement = statements[index + 1]
+            next_separator, next_statement, next_after = statements[index + 1]
             fail_closed = next_separator == "||" and PAIRING_FAIL_CLOSED_TAIL.match(
                 " ".join(next_statement.split())
             )
             if not fail_closed:
                 findings.append(
-                    f"{label}: the pairing invocation's exit status does not govern the step; "
+                    f"{label}: the {spec['label']} invocation's exit status does not govern the step; "
                     f"{next_separator!r} {next_statement!r} follows it ({statement!r})"
                 )
-        elif trailing not in (None, ";"):
-            findings.append(
-                f"{label}: the pairing invocation is the last command on a line trailing {trailing!r}, "
-                f"so the step does not wait for or observe its exit status ({statement!r})"
-            )
-        if "--self-test" not in args:
+            else:
+                if next_after not in (None, ";"):
+                    findings.append(
+                        f"{label}: the tolerated fail-closed tail {next_statement!r} trails {next_after!r}, "
+                        f"so it is chained into a list instead of ending the step ({statement!r})"
+                    )
+                if index + 2 < len(statements):
+                    findings.append(
+                        f"{label}: {statements[index + 2][1]!r} follows the tolerated fail-closed tail "
+                        f"{next_statement!r}, so the tail no longer decides the result ({statement!r})"
+                    )
+        else:
+            after = statements[index][2]
+            if after not in (None, ";"):
+                findings.append(
+                    f"{label}: the {spec['label']} invocation is the last command on a line trailing "
+                    f"{after!r}, so the step does not wait for or observe its exit status ({statement!r})"
+                )
+        if tuple(args) != ("--self-test",):
             real += 1
     return findings, real, mentions
 
@@ -478,13 +731,12 @@ def shell_template_is_fail_closed(value):
     return bool(SHELL_ERREXIT_FLAG.search(" " + rest)) or "-o errexit" in rest
 
 
-def step_head_and_run(step_text: str):
-    """(lines before `run:`, run body) for one workflow step."""
+def step_run_body(step_text: str):
+    """The `run:` body of one workflow step, or None when the step has no `run:` key."""
     lines = step_text.splitlines()
     run_index, run_value = find_key_index(lines, 8, "run")
     if run_index is None:
-        return lines, None
-    head = lines[:run_index]
+        return None
     if run_value in ("|", "|-", "|+", ">", ">-", ">+", ""):
         collected = []
         for line in lines[run_index + 1 :]:
@@ -500,11 +752,11 @@ def step_head_and_run(step_text: str):
         base = min(indents) if indents else 0
         dedented = [line[base:] if len(line) > base else "" for line in collected]
         if run_value.startswith(">"):
-            return head, " ".join(part for part in dedented if part.strip())
-        return head, "\n".join(dedented)
+            return " ".join(part for part in dedented if part.strip())
+        return "\n".join(dedented)
     if len(run_value) >= 2 and run_value[0] == run_value[-1] and run_value[0] in "\"'":
-        return head, run_value[1:-1]
-    return head, run_value
+        return run_value[1:-1]
+    return run_value
 
 
 def env_keys_at(lines, indent: int):
@@ -554,117 +806,170 @@ def flow_style_mappings(lines, indent: int, key: str):
     return any(re.match(rf"^ {{{indent}}}{re.escape(key)}:\s*\S", line) for line in lines)
 
 
-def check_pairing_invocation_shapes(read_text):
-    """Every finding that makes a pairing invocation anything other than the legitimate call."""
+def job_findings(read_text, spec, workflow, job, expected_job_if):
+    """Job-level findings that would let a guarded step be skipped, softened, or mis-executed."""
     findings = []
+    text = read_text(workflow)
+    job_text = workflow_job_block(text, job)
+    if job_text is None:
+        return [f"{workflow}: missing job {job!r}"]
+    job_lines = job_text.splitlines()
+    job_if = find_key_index(job_lines, 4, "if")[1]
+    if job_if != expected_job_if:
+        findings.append(
+            f"{workflow}: job {job!r} conditional {job_if!r} is not the pinned legitimate one "
+            f"{expected_job_if!r}"
+        )
+    job_continue_on_error = find_key_index(job_lines, 4, "continue-on-error")[1]
+    if job_continue_on_error is not None and job_continue_on_error.lower() != "false":
+        findings.append(
+            f"{workflow}: job {job!r} continue-on-error makes a failed {spec['label']} advisory"
+        )
+    workflow_lines = text.splitlines()
+    workflow_defaults_index = next(
+        (i for i, line in enumerate(workflow_lines) if re.match(r"^defaults:\s*$", line)), None
+    )
+    workflow_shell = (
+        subtree_scalar(workflow_lines, workflow_defaults_index, "shell")
+        if workflow_defaults_index is not None
+        else None
+    )
+    if not shell_template_is_fail_closed(workflow_shell):
+        findings.append(
+            f"{workflow}: workflow defaults shell {workflow_shell!r} drops errexit for the "
+            f"{spec['label']}"
+        )
+    job_defaults_index = next(
+        (i for i, line in enumerate(job_lines) if re.match(r"^ {4}defaults:\s*$", line)), None
+    )
+    job_shell = (
+        subtree_scalar(job_lines, job_defaults_index, "shell")
+        if job_defaults_index is not None
+        else None
+    )
+    if not shell_template_is_fail_closed(job_shell):
+        findings.append(
+            f"{workflow}: job {job!r} defaults shell {job_shell!r} drops errexit for the "
+            f"{spec['label']}"
+        )
+    for key in duplicate_keys(job_lines, 4):
+        findings.append(f"{workflow}: job {job!r} declares {key!r} more than once; YAML keeps the last value")
+    if flow_style_mappings(job_lines, 4, "env"):
+        findings.append(
+            f"{workflow}: job {job!r} declares a flow-style env mapping this guard cannot classify"
+        )
+    for key in shell_semantics_env_keys(job_lines, 4):
+        findings.append(
+            f"{workflow}: job {job!r} env {key!r} can change how the {spec['label']} is executed"
+        )
+    return findings
 
-    def report(where, reason):
-        findings.append(f"{where}: {reason}")
 
-    for workflow, job in PAIRING_JOBS:
-        text = read_text(workflow)
-        job_text = workflow_job_block(text, job)
-        if job_text is None:
-            report(workflow, f"missing job {job!r}")
-            continue
-        job_if = find_key_index(job_text.splitlines(), 4, "if")[1]
-        expected_job_if = PAIRING_JOB_IF[(workflow, job)]
-        if job_if != expected_job_if:
-            report(
-                workflow,
-                f"job {job!r} conditional {job_if!r} is not the pinned legitimate one "
-                f"{expected_job_if!r}",
+def step_findings(spec, workflow, step_name, step_text, expected_step_if):
+    """Findings for one workflow step whose run body names a guarded script.
+
+    YAML key order carries no meaning, so every step key is read from the whole step block -
+    a conditional or `continue-on-error:` written after the `run:` body is the same step key
+    as one written before it and is classified the same way.
+    """
+    findings = []
+    where = f"{workflow} step {step_name!r}"
+    step_lines = step_text.splitlines()
+    step_if = find_key_index(step_lines, 8, "if")[1]
+    if step_if != expected_step_if:
+        findings.append(
+            f"{where}: conditional {step_if!r} is not the pinned legitimate one {expected_step_if!r}; "
+            f"every step that invokes {spec['script']} must carry exactly one pinned conditional"
+        )
+    step_continue_on_error = find_key_index(step_lines, 8, "continue-on-error")[1]
+    if step_continue_on_error is not None and step_continue_on_error.lower() != "false":
+        findings.append(f"{where}: continue-on-error makes a failed {spec['label']} advisory")
+    step_shell = find_key_index(step_lines, 8, "shell")[1]
+    if not shell_template_is_fail_closed(step_shell):
+        findings.append(f"{where}: shell {step_shell!r} drops errexit for the {spec['label']} step")
+    if flow_style_mappings(step_lines, 8, "env"):
+        findings.append(f"{where}: declares a flow-style env mapping this guard cannot classify")
+    for key in shell_semantics_env_keys(step_lines, 8):
+        findings.append(f"{where}: env {key!r} can change how the {spec['label']} is executed")
+    for key in duplicate_keys(step_lines, 8):
+        findings.append(
+            f"{where}: declares {key!r} more than once; YAML keeps the last value and hides the first"
+        )
+    run_body = step_run_body(step_text)
+    if run_body is None:
+        findings.append(f"{where}: has no run body")
+        return findings
+    findings.extend(shell_state_findings(run_body, where, spec))
+    body_findings, real, mentions = classify_invocations(run_body, where, spec)
+    findings.extend(body_findings)
+    if mentions == 0:
+        findings.append(f"{where}: never invokes {spec['script']}")
+    elif real == 0:
+        findings.append(
+            f"{where}: only a --self-test arm invokes {spec['script']}; "
+            f"the {spec['label']} itself is never verified"
+        )
+    return findings
+
+
+def check_workflow_steps(read_text, spec):
+    """Findings for every step that invokes a guarded script, and for every pin that lost its step.
+
+    Steps are discovered from the workflow text rather than from a fixed list, so a call site
+    added to a new step is classified instead of being ignored, and a new step may not carry a
+    conditional the guard has no pin for.
+    """
+    findings = []
+    pinned_ifs = {(workflow, name): expected for workflow, name, expected in spec["workflow_steps"]}
+    workflows = tuple(dict.fromkeys(workflow for workflow, _name, _if in spec["workflow_steps"]))
+    for workflow in workflows:
+        seen = set()
+        for step_name, step_text in workflow_step_blocks(read_text(workflow)):
+            run_body = step_run_body(step_text)
+            if run_body is None or not body_mentions(run_body, spec["script"]):
+                continue
+            seen.add(step_name)
+            findings.extend(
+                step_findings(spec, workflow, step_name, step_text, pinned_ifs.get((workflow, step_name)))
             )
-        job_continue_on_error = find_key_index(job_text.splitlines(), 4, "continue-on-error")[1]
-        if job_continue_on_error is not None and job_continue_on_error.lower() != "false":
-            report(workflow, f"job {job!r} continue-on-error makes a failed pairing advisory")
-        workflow_lines = text.splitlines()
-        workflow_defaults_index = next(
-            (i for i, line in enumerate(workflow_lines) if re.match(r"^defaults:\s*$", line)), None
-        )
-        workflow_shell = (
-            subtree_scalar(workflow_lines, workflow_defaults_index, "shell")
-            if workflow_defaults_index is not None
-            else None
-        )
-        if not shell_template_is_fail_closed(workflow_shell):
-            report(
-                workflow,
-                f"workflow defaults shell {workflow_shell!r} drops errexit for the pairing step",
-            )
-        job_lines = job_text.splitlines()
-        job_defaults_index = next(
-            (i for i, line in enumerate(job_lines) if re.match(r"^ {4}defaults:\s*$", line)), None
-        )
-        job_shell = (
-            subtree_scalar(job_lines, job_defaults_index, "shell")
-            if job_defaults_index is not None
-            else None
-        )
-        if not shell_template_is_fail_closed(job_shell):
-            report(workflow, f"job {job!r} defaults shell {job_shell!r} drops errexit for the pairing step")
-        for key in duplicate_keys(job_lines, 4):
-            report(workflow, f"job {job!r} declares {key!r} more than once; YAML keeps the last value")
-        if flow_style_mappings(job_lines, 4, "env"):
-            report(workflow, f"job {job!r} declares a flow-style env mapping this guard cannot classify")
-        for key in shell_semantics_env_keys(job_lines, 4):
-            report(workflow, f"job {job!r} env {key!r} can change how the pairing invocation is executed")
+        for pinned_name in (name for w, name, _if in spec["workflow_steps"] if w == workflow):
+            if pinned_name not in seen:
+                findings.append(f"{workflow}: missing {spec['label']} step {pinned_name!r}")
+    return findings
 
-        marker = f"      - name: {PAIRING_STEP_NAME}\n"
-        if marker not in text:
-            report(workflow, f"missing pairing step {PAIRING_STEP_NAME!r}")
-            continue
-        step_text = step_block(text, PAIRING_STEP_NAME)
-        head_lines, run_body = step_head_and_run(step_text)
-        where = f"{workflow} step {PAIRING_STEP_NAME!r}"
-        step_if = find_key_index(head_lines, 8, "if")[1]
-        expected_step_if = PAIRING_STEP_IF[(workflow, PAIRING_STEP_NAME)]
-        if step_if != expected_step_if:
-            report(where, f"conditional {step_if!r} is not the pinned legitimate one {expected_step_if!r}")
-        step_continue_on_error = find_key_index(head_lines, 8, "continue-on-error")[1]
-        if step_continue_on_error is not None and step_continue_on_error.lower() != "false":
-            report(where, "continue-on-error makes a failed pairing advisory")
-        step_shell = find_key_index(head_lines, 8, "shell")[1]
-        if not shell_template_is_fail_closed(step_shell):
-            report(where, f"shell {step_shell!r} drops errexit for the pairing step")
-        if flow_style_mappings(head_lines, 8, "env"):
-            report(where, "declares a flow-style env mapping this guard cannot classify")
-        for key in shell_semantics_env_keys(head_lines, 8):
-            report(where, f"env {key!r} can change how the pairing invocation is executed")
-        for key in duplicate_keys(step_text.splitlines(), 8):
-            report(where, f"declares {key!r} more than once; YAML keeps the last value and hides the first")
-        if run_body is None:
-            report(where, "has no run body")
-            continue
-        body_findings, real, mentions = classify_pairing_invocations(run_body, where)
-        findings.extend(body_findings)
-        if mentions == 0:
-            report(where, f"never invokes {PAIRING_SCRIPT}")
-        elif real == 0:
-            report(
-                where,
-                f"only a --self-test arm invokes {PAIRING_SCRIPT}; the pairing itself is never verified",
-            )
 
+def check_invocation_shapes(read_text):
+    """Every finding that makes a guarded release-gate invocation anything but the pinned call."""
+    findings = []
+    for spec in (PAIRING_SPEC, META_GUARD_SPEC):
+        for workflow, job, expected_job_if in spec["jobs"]:
+            findings.extend(job_findings(read_text, spec, workflow, job, expected_job_if))
+        findings.extend(check_workflow_steps(read_text, spec))
+        for path in spec["shell_invokers"]:
+            text = read_text(path)
+            body_findings, real, mentions = classify_invocations(text, path, spec)
+            findings.extend(body_findings)
+            if mentions == 0:
+                findings.append(f"{path}: never invokes {spec['script']}")
+            elif real == 0:
+                findings.append(
+                    f"{path}: only a --self-test arm invokes {spec['script']}; "
+                    f"the {spec['label']} itself is never verified"
+                )
     for path in PAIRING_SHELL_INVOKERS:
         text = read_text(path)
-        enabled, disabled = shell_errexit_flags(text)
-        if disabled:
-            report(path, "clears errexit, so a failing pairing invocation would not fail the gate")
-        elif not enabled:
-            report(path, "does not set errexit, so a failing pairing invocation would not fail the gate")
-        for match in PAIRING_SHADOWING.finditer(text):
-            report(
-                path,
-                f"the pairing invocation's command is shadowed by a function or alias definition "
-                f"({match.group(0).strip()!r})",
+        enabled, _disabled = shell_errexit_flags(text)
+        if not enabled:
+            findings.append(
+                f"{path}: does not set errexit, so a failing {PAIRING_SPEC['label']} invocation "
+                "would not fail the gate"
             )
-        body_findings, real, mentions = classify_pairing_invocations(text, path)
-        findings.extend(body_findings)
-        if mentions == 0:
-            report(path, f"never invokes {PAIRING_SCRIPT}")
-        elif real == 0:
-            report(path, f"only a --self-test arm invokes {PAIRING_SCRIPT}; the pairing itself is never verified")
+        findings.extend(shell_state_findings(text, path, PAIRING_SPEC))
+    for workflow in GUARDED_WORKFLOWS:
+        if MERGE_KEY.search(read_text(workflow)):
+            findings.append(
+                f"{workflow}: declares a YAML merge key (`<<:`) this guard refuses to classify"
+            )
     return findings
 
 
@@ -675,6 +980,10 @@ CI_STEP_RUN = CI_STEP_HEADER + "        run: |\n"
 CI_STEP = CI_STEP_RUN + CI_SELF_TEST + CI_BARE
 CI_JOB = "  release-security-gates:\n    name: Release/security gates\n"
 CI_HEAD = "name: CI\n\non:\n"
+CI_GUARD_BARE = f"          bash {META_GUARD_SCRIPT_PATH}\n"
+GATES_GUARD_BARE = f"bash ./{META_GUARD_SCRIPT_PATH}\n"
+GATES_GUARD_SELF_TEST = f"bash ./{META_GUARD_SCRIPT_PATH} --self-test\n"
+PREMAIN_GUARD_RUN = f"        run: bash {META_GUARD_SCRIPT_PATH}\n"
 RELEASE_PR_STEP_IF = "        if: steps.release_pr.outputs.exists == 'true'\n"
 RELEASE_PR_STEP_HEAD = RELEASE_PR_STEP_IF + "        run: |\n" + CI_SELF_TEST
 RELEASE_BRANCH_BARE = f'{PAIRING_SCRIPT_PATH} --tag "${{expected_tag}}"\n'
@@ -722,11 +1031,58 @@ SELF_TEST_ATTACKS = (
     ("shell invoker: errexit disabled with `set +e`", "scripts/verify-release-branch.sh", "# The apptheory-init templates substitute", "set +e\n# The apptheory-init templates substitute", "clears errexit"),
     ("shell invoker: errexit never set", "scripts/verify-release-branch.sh", "set -euo pipefail\n", "set -uo pipefail\n", "does not set errexit"),
     ("shell invoker: `bash` shadowed by a function", "scripts/verify-release-gates.sh", GATES_BARE, GATES_BARE + "bash() { return 0; }\n", "shadowed"),
+    # B1 - a step key written after the run body is the same step key (YAML key order carries
+    # no meaning), so every step key is classified from the whole step block.
+    ("step-level `if: false` written after the run body", ".github/workflows/ci.yml", CI_STEP, CI_STEP + "        if: false\n", "not the pinned legitimate one"),
+    ("step-level `continue-on-error: true` written after the run body", ".github/workflows/ci.yml", CI_STEP, CI_STEP + "        continue-on-error: true\n", "continue-on-error"),
+    ("step-level `shell: bash {0}` written after the run body", ".github/workflows/ci.yml", CI_STEP, CI_STEP + "        shell: bash {0}\n", "drops errexit"),
+    ("step-level `env: BASH_ENV` written after the run body", ".github/workflows/ci.yml", CI_STEP, CI_STEP + "        env:\n          BASH_ENV: ./weaken.sh\n", "BASH_ENV"),
+    ("meta-guard step `if: false` written after the run body", ".github/workflows/ci.yml", CI_GUARD_BARE, CI_GUARD_BARE + "        if: false\n", "not the pinned legitimate one"),
+    # B2 - the whole run body is the shell that executes the invocation, so shadowing, errexit
+    # and shell state anywhere in that body decide whether the invocation can fail the step.
+    ("step body shadows `bash` with a function", ".github/workflows/ci.yml", CI_BARE, "          bash() { return 0; }\n" + CI_BARE, "shadowed"),
+    ("step body shadows `exit` with a function", ".github/workflows/ci.yml", CI_BARE, f'          exit() {{ :; }}\n          bash {PAIRING_SCRIPT_PATH} || exit 1\n', "shadowed"),
+    ("step body reassigns PATH", ".github/workflows/ci.yml", CI_BARE, "          PATH=/tmp/evil:$PATH\n" + CI_BARE, "reassigns PATH"),
+    ("PATH prefix on the invocation line", ".github/workflows/ci.yml", CI_BARE, f"          PATH=/tmp/evil:$PATH bash {PAIRING_SCRIPT_PATH}\n", "not positively classifiable"),
+    ("step body clears errexit with `set +e` and a trailing success", ".github/workflows/ci.yml", CI_BARE, f"          set +e\n          bash {PAIRING_SCRIPT_PATH}\n          true\n", "clears errexit"),
+    ("step body installs a trap that overrides the exit status", ".github/workflows/ci.yml", CI_BARE, f"          trap 'exit 0' ERR\n          bash {PAIRING_SCRIPT_PATH}\n", "installs a trap"),
+    ("step body reassigns BASH_ENV", ".github/workflows/ci.yml", CI_BARE, f"          export BASH_ENV=./weaken.sh\n          bash {PAIRING_SCRIPT_PATH}\n", "reassigns BASH_ENV"),
+    ("meta-guard step body shadows `bash`", ".github/workflows/ci.yml", CI_GUARD_BARE, "          bash() { return 0; }\n" + CI_GUARD_BARE, "shadowed"),
+    ("shell invoker: function shadows `bash` before the invocation", "scripts/verify-release-gates.sh", GATES_BARE, f"bash() {{ return 0; }}\n" + GATES_BARE, "shadowed"),
+    ("shell invoker: `exit() { :; }` with a tolerated fail-closed tail", "scripts/verify-release-branch.sh", RELEASE_BRANCH_BARE, f'exit() {{ :; }}\n{PAIRING_SCRIPT_PATH} --tag "${{expected_tag}}" || exit 1\n', "shadowed"),
+    ("shell invoker: PATH prefix on the invocation line", "scripts/verify-release-branch.sh", RELEASE_BRANCH_BARE, f'PATH=/tmp/evil:$PATH {PAIRING_SCRIPT_PATH} --tag "${{expected_tag}}"\n', "not positively classifiable"),
+    ("shell invoker: PATH reassignment before the invocation", "scripts/verify-release-branch.sh", RELEASE_BRANCH_BARE, "PATH=/tmp/evil:$PATH\n" + RELEASE_BRANCH_BARE, "reassigns PATH"),
+    # B3 - GitHub substitutes `${{ }}` and expands variables before bash parses the line, so an
+    # argument the guard cannot read literally can inject a list operator or a usage flag.
+    ("`${{ }}` expression as an argument", ".github/workflows/ci.yml", CI_BARE, f"          bash {PAIRING_SCRIPT_PATH} ${{{{ env.WEAKEN }}}}\n", "substitutes into the command line"),
+    ("variable-indirected `--help` argument", ".github/workflows/ci.yml", CI_BARE, f'          PAIRING_ARGS=--help\n          bash {PAIRING_SCRIPT_PATH} "${{PAIRING_ARGS}}"\n', "cannot be read literally"),
+    ("variable-indirected `--self-test` argument in a release PR workflow", ".github/workflows/release-pr.yml", CI_BARE, f'          PAIRING_ARGS=--self-test\n          bash {PAIRING_SCRIPT_PATH} "${{PAIRING_ARGS}}"\n', "cannot be read literally"),
+    ("shell invoker: variable-indirected argument", "scripts/verify-release-gates.sh", GATES_BARE, f'{PAIRING_SCRIPT_PATH} "${{PAIRING_ARGS}}"\n', "cannot be read literally"),
+    # B4 - `|| exit 1 &` backgrounds the whole list, so the tolerated tail no longer decides
+    # the step's exit status. Any separator after the tail is reported.
+    ("tolerated tail backgrounded with `&`", ".github/workflows/ci.yml", CI_BARE, f"          bash {PAIRING_SCRIPT_PATH} || exit 1 &\n", "trails '&'"),
+    ("statement after the tolerated tail", ".github/workflows/ci.yml", CI_BARE, f"          bash {PAIRING_SCRIPT_PATH} || exit 1; true\n", "follows the tolerated fail-closed tail"),
+    ("tolerated tail piped into a command", ".github/workflows/ci.yml", CI_BARE, f"          bash {PAIRING_SCRIPT_PATH} || exit 1 | tee log\n", "trails '|'"),
+    ("shell invoker: tolerated tail backgrounded with `&`", "scripts/verify-release-branch.sh", RELEASE_BRANCH_BARE, f'{PAIRING_SCRIPT_PATH} --tag "${{expected_tag}}" || return 1 &\n', "trails '&'"),
+    # H1 - the meta-guard's own invocations are classified the same way, so weakening a call of
+    # the guard fails as loudly as weakening a call of the gate it guards.
+    ("meta-guard call with `|| true` in CI", ".github/workflows/ci.yml", CI_GUARD_BARE, f"          bash {META_GUARD_SCRIPT_PATH} || true\n", "exit status does not govern"),
+    ("meta-guard call with `|| true` in the full release gates", "scripts/verify-release-gates.sh", GATES_GUARD_BARE, f"bash ./{META_GUARD_SCRIPT_PATH} || true\n", "exit status does not govern"),
+    ("meta-guard call backgrounded in the full release gates", "scripts/verify-release-gates.sh", GATES_GUARD_BARE, GATES_GUARD_BARE.rstrip("\n") + " &\n", "trailing '&'"),
+    ("meta-guard self-test arm negated in the full release gates", "scripts/verify-release-gates.sh", GATES_GUARD_SELF_TEST, "! " + GATES_GUARD_SELF_TEST, "negated"),
+    ("meta-guard call with `|| true` in the prerelease preflight", ".github/workflows/prerelease.yml", PREMAIN_GUARD_RUN, f"        run: bash {META_GUARD_SCRIPT_PATH} || true\n", "exit status does not govern"),
+    ("meta-guard step conditional changed in the stable preflight", ".github/workflows/release.yml", "        if: " + RELEASE_MAIN_PREFLIGHT_IF + "\n" + PREMAIN_GUARD_RUN, "        if: false\n" + PREMAIN_GUARD_RUN, "not the pinned legitimate one"),
+    ("YAML merge key in a guarded workflow", ".github/workflows/ci.yml", CI_HEAD, "name: CI\n<<: *defaults\n\non:\n", "merge key"),
+    # A call site added to a new step is discovered and classified rather than ignored, and an
+    # unpinned conditional on a new call site fails closed.
+    ("unpinned new step invoking the meta-guard with `|| true`", ".github/workflows/ci.yml", CI_STEP_HEADER, "      - name: Unpinned extra gate\n        run: |\n" + CI_GUARD_BARE.rstrip("\n") + " || true\n" + CI_STEP_HEADER, "exit status does not govern"),
+    ("unpinned new step invoking the pairing gate with `|| true`", ".github/workflows/ci.yml", CI_STEP_HEADER, "      - name: Unpinned pairing gate\n        run: |\n" + CI_BARE.rstrip("\n") + " || true\n" + CI_STEP_HEADER, "exit status does not govern"),
+    ("unpinned new step carrying a conditional", ".github/workflows/ci.yml", CI_STEP_HEADER, "      - name: Unpinned conditional gate\n        if: always()\n        run: |\n" + CI_GUARD_BARE + CI_STEP_HEADER, "every step that invokes"),
 )
 
 
 def run_self_test() -> None:
-    real = {path: Path(path).read_text(encoding="utf-8") for path in PAIRING_INVOKERS}
+    real = {path: Path(path).read_text(encoding="utf-8") for path in GUARDED_FILES}
 
     def read_from(source):
         def read_text(path):
@@ -738,13 +1094,13 @@ def run_self_test() -> None:
 
         return read_text
 
-    baseline = check_pairing_invocation_shapes(read_from(real))
+    baseline = check_invocation_shapes(read_from(real))
     if baseline:
         raise SystemExit(
-            "release-workflows: FAIL (self-test: the legitimate pairing wiring was REJECTED, so the "
+            "release-workflows: FAIL (self-test: the legitimate guarded wiring was REJECTED, so the "
             "guard over-blocks: " + "; ".join(baseline)
         )
-    print("release-workflows: PASS-PROOF (self-test accepted: the legitimate pairing wiring at HEAD)")
+    print("release-workflows: PASS-PROOF (self-test accepted: the legitimate guarded wiring at HEAD)")
 
     for label, path, anchor, replacement, expected in SELF_TEST_ATTACKS:
         source = dict(real)
@@ -754,7 +1110,7 @@ def run_self_test() -> None:
                 f"from {path})"
             )
         source[path] = source[path].replace(anchor, replacement, 1)
-        findings = check_pairing_invocation_shapes(read_from(source))
+        findings = check_invocation_shapes(read_from(source))
         if not findings:
             raise SystemExit(
                 f"release-workflows: FAIL (self-test MISSED the {label!r} weakening in {path})"
@@ -777,14 +1133,13 @@ if MODE == "self-test":
     run_self_test()
     raise SystemExit(0)
 
-pairing_shape_findings = check_pairing_invocation_shapes(
+invocation_shape_findings = check_invocation_shapes(
     lambda path: Path(path).read_text(encoding="utf-8")
 )
-if pairing_shape_findings:
+if invocation_shape_findings:
     raise SystemExit(
-        "release-workflows: FAIL (a pairing gate invocation is not the legitimate fail-closed call; "
-        + "; ".join(pairing_shape_findings)
-        + ")"
+        "release-workflows: FAIL (a guarded release-gate invocation is not the pinned fail-closed "
+        "call; " + "; ".join(invocation_shape_findings) + ")"
     )
 
 
