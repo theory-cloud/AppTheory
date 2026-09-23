@@ -180,13 +180,37 @@ the gate promptly, and a download failure reports the HTTP status or timeout rat
 asset is missing.
 
 The guard that keeps the gate a blocker is structural rather than a substring match:
-`scripts/verify-release-workflows.sh` parses the invoking step's `run:` body, or the shell script that
-calls the gate, strips comments, joins line continuations, and tracks shell conditionals, then accepts
-the call only in the exact fail-closed shape - first on its line, unnegated, outside any conditional or
-loop or `if:`-guarded step or job, with no usage-exit flag, and with its exit status governing the step.
-Anything it cannot positively classify fails the gate, so a negated, commented-out, condition-wrapped,
-`--self-test`-only, or status-swallowing invocation is caught; `--self-test` runs the attack battery,
-one case per shape.
+`scripts/verify-release-workflows.sh` reads every call site - the invoking step's `run:` body, or the
+shell script that calls the gate - strips comments, joins line continuations, blanks heredoc bodies and
+multi-line quoted strings (an embedded `awk` program is data, not shell code), and classifies what is
+left. `--self-test` runs the attack battery, one case per shape.
+
+What the classifier proves at each call site it reads:
+
+| Property | How it is decided |
+| --- | --- |
+| Step and job conditionals | equal to the pinned literal; any other value - `false`, `${{ false }}`, `always()`, an expression the guard does not recognise - fails |
+| Step keys | read from the whole step block, because YAML key order carries no meaning: an `if:`, `continue-on-error:`, `shell:` or `env:` written after the `run:` body is the same key as one written before it, and a repeated key fails |
+| The invocation | first on its line, unnegated, at top level, naming the script directly, with its exit status governing what follows |
+| Arguments | one of the pinned literal argument vectors; a variable, a `${{ }}` expression, an expansion or a substitution fails |
+| A tolerated `|| return N` / `|| exit N` tail | accepted only when nothing follows it in the same list, so `|| exit 1 &`, `|| exit 1; true` and `|| exit 1 \| tee log` all fail |
+| The whole run body or shell file | must not clear errexit with `set +e`, shadow `bash`, `exit`, `set` or the script path with a function or alias, install a trap, or reassign `PATH`, `BASH_ENV`, `ENV` or `SHELLOPTS` |
+
+The last row is checked for the guarded steps and for the shell scripts that call the gate; for
+`gov-infra/verifiers/gov-verify-rubric.sh`, a generated verifier that legitimately exports `PATH` for
+its pinned toolchain and installs a `RETURN` trap, only the invocation shape is classified.
+
+The guard's own invocations go through the same classification - the release/security step in `ci.yml`,
+the release preflights in `prerelease.yml` and `release.yml`, `scripts/verify-release-gates.sh` and
+`gov-infra/verifiers/gov-verify-rubric.sh` - so weakening a call of the guard fails as loudly as
+weakening a call of the gate it guards. Call sites are discovered from the workflow text rather than
+from a fixed list, so a call added in a new step is classified too, and a new step may not carry a
+conditional the guard has no pin for.
+
+Every property above is decided positively against a pinned value, so within the pinned wiring an
+unrecognised value fails closed. The claim is bounded to those properties: a `<<:` merge key fails the
+guard outright, and YAML aliases or anchors used as `run:` bodies, multi-document workflow files, and
+flow-style step mappings other than `env:` are declined rather than claimed.
 
 The already-published `v4.2.4` asset declares `aws-cdk-lib 2.269.0` and cannot be changed. The gate
 exists so `4.2.5` and later either ship paired or fail before the release becomes public.
