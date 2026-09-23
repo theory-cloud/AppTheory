@@ -45,12 +45,6 @@ export default [
     rules: {
       "no-undef": "off",
       "no-unused-vars": "off",
-      // @eslint/js 10 added these three to `recommended`. They report on sources
-      // this dependency-only bump does not touch, so adopting them would be a
-      // reviewed lint-policy change; hold the eslint 9 reviewed surface instead.
-      "no-unassigned-vars": "off",
-      "no-useless-assignment": "off",
-      "preserve-caught-error": "off",
       "@typescript-eslint/consistent-type-imports": [
         "error",
         { prefer: "type-imports", fixStyle: "separate-type-imports" },

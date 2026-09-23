@@ -68,8 +68,14 @@ regenerates its jsii Go bindings on Node.js 22 and 24. The floor follows the dep
 installs: jsii-rosetta 6.0.16 resolves stream-json 3.7.0, which resolves stream-chain, and stream-chain has declared
 `engines.node` `>=22` since 4.2.3. Node.js 20 reached end of life in April 2026.
 
-Consuming CDK applications must run Node.js 22 or newer to install, synthesize, and deploy against this line. The
-TypeScript runtime package (`ts/`) keeps its `>=20` floor; only the CDK construct library moved.
+Consuming CDK applications must run Node.js 22 or newer to install, synthesize, and deploy against this line.
+
+### TypeScript runtime Node.js floor
+
+The runtime package (`ts/`) also declares `engines.node` `>=22` instead of `>=20`. The pinned
+`@theory-cloud/tabletheory-ts` release requires Node.js 22, and `scripts/verify-runtime-floor-claims.sh` fails closed
+while a package's declared floor sits below the floor its pinned TableTheory release requires, so the runtime package
+follows the CDK construct library onto the same floor. Consuming runtime applications must run Node.js 22 or newer.
 
 ## v3.x line
 

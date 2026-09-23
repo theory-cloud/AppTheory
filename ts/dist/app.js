@@ -1561,7 +1561,7 @@ export function timeoutMiddleware(config = {}) {
             }
         }
         const handlerCtx = cloneContextWithTimeoutCarrier(ctx, timeoutContextCarrier(ctx?.ctx ?? null, controller.signal));
-        let timer = setTimeout(() => {
+        const timer = setTimeout(() => {
             controller.abort(cfg.timeoutMessage);
         }, timeoutMs);
         let removeTimeoutAbortListener = () => { };
@@ -1580,10 +1580,7 @@ export function timeoutMiddleware(config = {}) {
             return await Promise.race([run, timeoutPromise]);
         }
         finally {
-            if (timer) {
-                clearTimeout(timer);
-                timer = null;
-            }
+            clearTimeout(timer);
             removeTimeoutAbortListener();
             removeParentAbortListener();
         }

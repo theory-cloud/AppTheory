@@ -2520,7 +2520,7 @@ export function timeoutMiddleware(config: TimeoutConfig = {}): Middleware {
       timeoutContextCarrier(ctx?.ctx ?? null, controller.signal),
     );
 
-    let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+    const timer = setTimeout(() => {
       controller.abort(cfg.timeoutMessage);
     }, timeoutMs);
 
@@ -2542,10 +2542,7 @@ export function timeoutMiddleware(config: TimeoutConfig = {}): Middleware {
       const run = Promise.resolve().then(() => next(handlerCtx));
       return await Promise.race([run, timeoutPromise]);
     } finally {
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
+      clearTimeout(timer);
       removeTimeoutAbortListener();
       removeParentAbortListener();
     }

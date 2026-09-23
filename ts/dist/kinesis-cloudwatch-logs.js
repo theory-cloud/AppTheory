@@ -48,9 +48,9 @@ function gunzipCloudWatchLogsSubscriptionData(data) {
     }
     catch (error) {
         if (isMaxOutputLengthError(error)) {
-            throw new Error(`${CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE}: payload too large`);
+            throw new Error(`${CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE}: payload too large`, { cause: error });
         }
-        throw new Error(`${CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE} gzip: invalid payload`);
+        throw new Error(`${CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE} gzip: invalid payload`, { cause: error });
     }
     if (payload.length > CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_DECODED_BYTES) {
         throw new Error(`${CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE}: payload too large`);
