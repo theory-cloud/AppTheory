@@ -158,8 +158,9 @@ The checker decides ranges the way npm semver does, including the desugaring npm
 body under an operator: `>2.269` means `>=2.270.0` and `<=2.269` means `<2.270.0`, neither of which is
 the `2.269.0` bound. It rejects the version syntax npm itself refuses (leading-zero components,
 components above `Number.MAX_SAFE_INTEGER`) and treats a pin no version can satisfy - any range whose
-ceiling falls below `0.0.0` - as empty. Shapes it declines to decide (prerelease ranges, unions, and
-`x`/`*` bodies under an operator) fail closed rather than passing, which is deliberate: for a handful of
+ceiling falls below `0.0.0` - as empty. Shapes it declines to decide (prerelease and build ranges,
+unions, `x`/`*` bodies under an operator, and the operator forms npm accepts only with the body
+attached, such as `>= 2.269`) fail closed rather than passing, which is deliberate: for a handful of
 degenerate ranges npm's own `intersects` disagrees with its `minVersion`/`satisfies`, and this gate
 follows the satisfiability answer, not the intersection artifact.
 
@@ -177,6 +178,15 @@ proof), or `--published` (download and verify the published asset for the curren
 download is bounded by a connect timeout and a maximum transfer time so a stalled release host fails
 the gate promptly, and a download failure reports the HTTP status or timeout rather than assuming the
 asset is missing.
+
+The guard that keeps the gate a blocker is structural rather than a substring match:
+`scripts/verify-release-workflows.sh` parses the invoking step's `run:` body, or the shell script that
+calls the gate, strips comments, joins line continuations, and tracks shell conditionals, then accepts
+the call only in the exact fail-closed shape - first on its line, unnegated, outside any conditional or
+loop or `if:`-guarded step or job, with no usage-exit flag, and with its exit status governing the step.
+Anything it cannot positively classify fails the gate, so a negated, commented-out, condition-wrapped,
+`--self-test`-only, or status-swallowing invocation is caught; `--self-test` runs the attack battery,
+one case per shape.
 
 The already-published `v4.2.4` asset declares `aws-cdk-lib 2.269.0` and cannot be changed. The gate
 exists so `4.2.5` and later either ship paired or fail before the release becomes public.
