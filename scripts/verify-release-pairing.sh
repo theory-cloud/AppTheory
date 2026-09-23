@@ -138,15 +138,38 @@ elif [[ "${published}" == "true" ]]; then
     exit 1
   fi
   published_url="https://github.com/${repo_slug}/releases/download/${tag}/${expected_asset}"
-  curl_args=(-fsSL)
+  # A stalled release-asset edge must fail the gate promptly instead of hanging until
+  # the job timeout, so bound both the connect and the whole transfer.
+  curl_connect_timeout=10
+  curl_max_time=120
+  curl_args=(-fsSL --connect-timeout "${curl_connect_timeout}" --max-time "${curl_max_time}")
   token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
   if [[ -n "${token}" ]]; then
     curl_args+=(-H "Authorization: Bearer ${token}")
   fi
   # Draft release assets are not served from the public release URL, so an HTTP
   # 200 download is itself proof the asset is published and therefore immutable.
-  if ! curl "${curl_args[@]}" -o "${work_root}/${expected_asset}" "${published_url}" 2>/dev/null; then
-    echo "release-pairing: FAIL (${tag} has no published asset ${expected_asset} at ${published_url})" >&2
+  download_status=""
+  download_rc=0
+  download_status="$(curl "${curl_args[@]}" -w '%{http_code}' \
+    -o "${work_root}/${expected_asset}" "${published_url}" 2>"${work_root}/curl.stderr")" \
+    || download_rc=$?
+  if (( download_rc != 0 )); then
+    case "${download_rc}" in
+      28) download_reason="download timed out (connect timeout ${curl_connect_timeout}s, max time ${curl_max_time}s)" ;;
+      6) download_reason="could not resolve the release host" ;;
+      7) download_reason="could not connect to the release host" ;;
+      22) download_reason="HTTP ${download_status:-unknown} from the release asset URL" ;;
+      35|60) download_reason="TLS failure talking to the release host" ;;
+      *) download_reason="curl exit ${download_rc}" ;;
+    esac
+    if (( download_rc == 22 )) && [[ "${download_status}" == "404" ]]; then
+      download_reason="HTTP 404 (no published asset ${expected_asset} for tag ${tag})"
+    fi
+    echo "release-pairing: FAIL (${tag} published asset ${expected_asset} could not be downloaded: ${download_reason}; url ${published_url})" >&2
+    if download_detail="$(tail -n 1 "${work_root}/curl.stderr" 2>/dev/null)" && [[ -n "${download_detail}" ]]; then
+      echo "release-pairing: FAIL (curl: ${download_detail})" >&2
+    fi
     exit 1
   fi
   cdk_tarball="${work_root}/${expected_asset}"
