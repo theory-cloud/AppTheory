@@ -137,6 +137,38 @@ evidence, and do not claim CI can sign generated sync commits by holding private
 - This keeps the stable Release Please manifest and the premain Release Please state synchronized for the next cycle.
   There is no post-release CI direct-push sync or automated protected-branch backmerge.
 
+## apptheory-init template/release pairing gate
+
+`apptheory-init` scaffolds pin `@theory-cloud/apptheory-cdk` to the GitHub release asset for
+`v` + `VERSION` and declare their own `aws-cdk-lib`/`constructs` versions. npm installs both, so the
+template pins must pair with the `peerDependencies` declared by the CDK asset for that tag. When they
+drift, `npm install` fails ERESOLVE in every generated project.
+
+`scripts/verify-scaffold-examples.sh` packs `cdk/` from the working tree, so it only proves the
+templates match the tree the gate runs on. It cannot see release-process skew: a tree whose `VERSION`
+already names a published release with different peers, a template asset URL naming a different tag
+than `VERSION` substitutes, or a release packed at a version other than the one the templates point at.
+
+`scripts/verify-release-pairing.sh` closes that class. It packs (or downloads) the CDK artifact,
+renders the templates with the real scaffolder, and fails closed unless every template names the
+release asset for the tag `VERSION` substitutes and its pins intersect that artifact's declared
+`peerDependencies`. Range syntax it cannot decide is a failure, never a pass.
+
+The gate is a blocker, not an advisory, in four places:
+
+| Where | What it proves |
+| --- | --- |
+| `ci.yml` `release-security-gates` (runs on every PR, including generated release PRs) | The generated RC/stable release-please PR head - the tree that will be tagged - pairs its templates with the packed candidate |
+| `prerelease-pr.yml` / `release-pr.yml`, before generated artifact sync | The branch about to generate a release PR has not drifted |
+| `scripts/verify-release-branch.sh`, on every publish path in the tagged tree before assets are built | The release-candidate tarball for the tag pairs with the shipped templates |
+| `scripts/verify-release-publish-postcondition.sh` `complete` phase | The release this run published pairs its immutable asset with the shipped templates |
+
+Run it locally with `./scripts/verify-release-pairing.sh` (default), `--self-test` (both-directions
+proof), or `--published` (download and verify the published asset for the current `VERSION`).
+
+The already-published `v4.2.4` asset declares `aws-cdk-lib 2.269.0` and cannot be changed. The gate
+exists so `4.2.5` and later either ship paired or fail before the release becomes public.
+
 ## Forbidden recovery actions
 
 Do not use any of these actions to recover a release lane:
