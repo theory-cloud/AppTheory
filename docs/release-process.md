@@ -181,9 +181,11 @@ asset is missing.
 
 The guard that keeps the gate a blocker is structural rather than a substring match:
 `scripts/verify-release-workflows.sh` reads every call site - the invoking step's `run:` body, or the
-shell script that calls the gate - strips comments, joins line continuations, blanks heredoc bodies and
-multi-line quoted strings (an embedded `awk` program is data, not shell code), and classifies what is
-left. `--self-test` runs the attack battery, one case per shape.
+shell script that calls the gate - strips comments, joins line continuations, balances quotes the way
+bash does (including ANSI-C `$'...'`, where a backslash escapes the next character), blanks heredoc
+bodies and multi-line quoted strings (an embedded `awk` program is data, not shell code), and
+classifies what is left. `--self-test` runs the attack battery, one case per shape, plus a second
+table of fail-closed spellings that must stay accepted.
 
 What the classifier proves at each call site it reads:
 
@@ -191,14 +193,24 @@ What the classifier proves at each call site it reads:
 | --- | --- |
 | Step and job conditionals | equal to the pinned literal; any other value - `false`, `${{ false }}`, `always()`, an expression the guard does not recognise - fails |
 | Step keys | read from the whole step block, because YAML key order carries no meaning: an `if:`, `continue-on-error:`, `shell:` or `env:` written after the `run:` body is the same key as one written before it, and a repeated key fails |
+| Keys spelled `key : value`, `"key": value` or `? key` | read as the same key - YAML does not require the colon to touch the key, and a quoted or explicit key is the same mapping key - and any of those spellings at a key's own indentation fails outright, so a key this guard does not enumerate cannot hide |
 | The invocation | first on its line, unnegated, at top level, naming the script directly, with its exit status governing what follows |
 | Arguments | one of the pinned literal argument vectors; a variable, a `${{ }}` expression, an expansion or a substitution fails |
 | A tolerated `|| return N` / `|| exit N` tail | accepted only when nothing follows it in the same list, so `|| exit 1 &`, `|| exit 1; true` and `|| exit 1 \| tee log` all fail |
-| The whole run body or shell file | must not clear errexit with `set +e`, shadow `bash`, `exit`, `set` or the script path with a function or alias, install a trap, or reassign `PATH`, `BASH_ENV`, `ENV` or `SHELLOPTS` |
+| An invocation inside a function definition | accepted only for a function pinned as a host, and only when every call of that host is fail-closed in its own right - at file level, or carrying a `|| exit N` tail that leaves the shell whatever the caller's context is; any other function holding an invocation, or any other call of a pinned host, fails, because bash ignores errexit for every command in a function entered from a condition |
+| `env:` at step, job and workflow level | must not set a variable that decides which program runs or how a shell starts: `PATH`, `CDPATH`, `BASH_ENV`, `ENV`, `SHELLOPTS`, `BASHOPTS` or a `BASH_FUNC_*` exported function; a flow-style env mapping fails |
+| The whole run body or shell file | must not clear errexit in the region that can run the invocation, shadow `bash`, `exit`, `set`, `trap` or the script path with a function or alias, install a trap, or reassign one of those same variables in-shell |
 
-The last row is checked for the guarded steps and for the shell scripts that call the gate; for
-`gov-infra/verifiers/gov-verify-rubric.sh`, a generated verifier that legitimately exports `PATH` for
-its pinned toolchain and installs a `RETURN` trap, only the invocation shape is classified.
+The `env:` row is checked at workflow, job and step level, and the shell-state row is checked for the
+guarded steps and for every shell script that calls the gate, including
+`gov-infra/verifiers/gov-verify-rubric.sh`. That generated verifier legitimately exports `PATH` for
+its pinned toolchain and installs one `RETURN` trap, and it captures exit codes with `set +e` / `set
+-e` pairs in functions of its own, so exactly two statements are exempted by their full text - a
+different `PATH` value, a second trap or a shadowing definition still fails - and the errexit check is
+scoped to the file-level statements plus the body of the function that holds the invocation. Its own
+check is reached by name rather than by a call the guard can follow, so that dispatch is pinned whole:
+the assignment that names the check, the `run_check` statement that dispatches it, and the
+`set -euo pipefail` inside `run_check` that makes the dispatched command fail closed.
 
 The guard's own invocations go through the same classification - the release/security step in `ci.yml`,
 the release preflights in `prerelease.yml` and `release.yml`, `scripts/verify-release-gates.sh` and
@@ -208,9 +220,11 @@ from a fixed list, so a call added in a new step is classified too, and a new st
 conditional the guard has no pin for.
 
 Every property above is decided positively against a pinned value, so within the pinned wiring an
-unrecognised value fails closed. The claim is bounded to those properties: a `<<:` merge key fails the
-guard outright, and YAML aliases or anchors used as `run:` bodies, multi-document workflow files, and
-flow-style step mappings other than `env:` are declined rather than claimed.
+unrecognised value fails closed. Four YAML forms are refused outright rather than read past, because
+the guard reads literal text and the runner resolves the document: a `<<:` merge key, a second
+document in one workflow file, a YAML alias (`*name`, which re-points a value at a node defined
+elsewhere), and a flow-style step mapping (`- {name: ..., run: ...}`) that names the guarded script.
+An anchor (`&name`) is inert on its own and is not refused.
 
 The already-published `v4.2.4` asset declares `aws-cdk-lib 2.269.0` and cannot be changed. The gate
 exists so `4.2.5` and later either ship paired or fail before the release becomes public.
