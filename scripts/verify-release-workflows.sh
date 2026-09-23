@@ -16,6 +16,7 @@ case "${1:-}" in
 esac
 
 RELEASE_WORKFLOWS_MODE="${mode}" python3 - <<'PY'
+import hashlib
 import os
 import re
 import subprocess
@@ -95,9 +96,14 @@ def require_job_contains(path: str, job_name: str, needle: str, description: str
         )
 
 
-STEP_START = re.compile(r"(?m)^      - ")
-STEP_HEADER = re.compile(r"(?m)^      - name[ \t]*:[ \t]*(?P<name>.*)$")
-FLOW_STYLE_STEP = re.compile(r"(?m)^      - \{")
+STEP_START = re.compile(r"(?m)^      -[ \t]+")
+STEP_HEADER = re.compile(r"(?m)^      -[ \t]+name[ \t]*:[ \t]*(?P<name>.*)$")
+FLOW_STYLE_STEP = re.compile(r"(?m)^      -[ \t]+\{")
+# A list indicator is a `-` followed by at least one space, and a step's own keys may be written
+# after any amount of that space: `      - name: X`, `      -   name: X` and `      -   run: |`
+# are the same step to YAML. Requiring exactly one space made a step written with more invisible
+# to discovery - a step the guard never classified at all, which is worse than refusing it.
+STEP_MARKER = re.compile(r"^(?P<indent>[ ]*)-[ \t]+(?P<rest>.*)$")
 
 
 def non_canonical_keys(lines):
@@ -105,12 +111,15 @@ def non_canonical_keys(lines):
 
     YAML accepts `key : value`, `"key": value` and an explicit `? key` line as the same mapping
     key, so a reader that matches `^key:` does not see the first two at all. Every reader here
-    tolerates the pre-colon whitespace, and any of these spellings at a key's own indentation is
-    refused as well, so a key this guard does not enumerate cannot hide either. The pinned wiring
-    is always canonical: `key: value` at the key's indentation.
+    tolerates the pre-colon whitespace, and any of these spellings at any indentation is refused as
+    well, so a key this guard does not enumerate cannot hide either. The pinned wiring is always
+    canonical: `key: value` at the key's indentation. A comment line is skipped: `#` cannot start a
+    YAML key or a shell word, so nothing behind it is a key this guard would have read.
     """
     found = []
     for index, line in enumerate(lines):
+        if line.lstrip().startswith("#"):
+            continue
         for prefix in KEY_LINE_PREFIXES:
             if not line.startswith(prefix):
                 continue
@@ -254,8 +263,12 @@ DOCUMENT_SEPARATOR = re.compile(r"(?m)^---[ \t]*$")
 # does not see the first form at all. Every key reader below tolerates the whitespace, and these
 # forms at a key's own indentation are additionally refused, so a key the guard does not enumerate
 # cannot hide either. Longest prefix first, so the step-key indent is not mistaken for the job-key
-# indent of the four spaces it starts with.
-KEY_LINE_PREFIXES = ("        ", "      - ", "    ")
+# indent of the four spaces it starts with, and an empty prefix last so the scan is anchored at
+# *every* indentation. Enumerating indentation levels is itself the trap: a first pass covered the
+# step, step-key and job-key levels and left the workflow level (indent 0) and the job-name level
+# (indent 2) unscanned, so `"env":` at column 0 - a workflow-level env mapping the runner applies
+# before bash starts - was never read as a key at all.
+KEY_LINE_PREFIXES = ("        ", "      - ", "    ", "  ", "")
 NON_CANONICAL_KEY_FORMS = (
     re.compile(r"\?[ \t]"),  # an explicit `? key` line
     re.compile(r"[\"'][^\"']*[\"'][ \t]*:"),  # a quoted `"key": value`
@@ -358,10 +371,40 @@ META_GUARD_SPEC = {
 # PATH value, another trap, a shadowing definition - is classified normally, so the exemption
 # cannot be widened into a general licence.
 SHELL_STATE_EXEMPTIONS = {
+    "scripts/verify-release-branch.sh": (
+        'cd "$(dirname "${BASH_SOURCE[0]}")/.."',
+    ),
+    "scripts/verify-release-publish-postcondition.sh": (
+        'cd "$(dirname "${BASH_SOURCE[0]}")/.."',
+        'cd "${tmp}"',
+    ),
+    "scripts/verify-release-gates.sh": (
+        'cd "$(dirname "${BASH_SOURCE[0]}")/.."',
+    ),
     "gov-infra/verifiers/gov-verify-rubric.sh": (
         'export PATH="${GOV_TOOLS_BIN}:${GOV_TOOLS_PY_BIN}:${GOV_TOOLS_PY_RUNTIME_BIN}:${PATH}"',
         "trap 'rm -f \"${tmp}\"' RETURN",
+        'source "${REPO_ROOT}/scripts/lib/blocked.sh"',
+        'source "${REPO_ROOT}/scripts/lib/ts-runtime-deps.sh"',
+        'source "${REPO_ROOT}/scripts/lib/cdk-runtime-deps.sh"',
+        'cd "${REPO_ROOT}"',
+        'eval "${cmd}"',
     ),
+}
+# A statement that loads code into the shell the invocation runs in, or moves that shell, decides
+# what the invocation runs without touching the invocation's own line: `source evil.sh` can define
+# `bash() { return 0; }` for everything after it, and `cd /tmp/evil` makes the relative
+# `bash scripts/verify-release-pairing.sh` run a different file altogether. Both leave the pinned
+# line byte-identical, so neither the byte pins nor the frame model can see them - the statement has
+# to be refused by shape. The pinned wiring uses each of these once, for a fixed reason (running from
+# the repository root, loading the verifier's own libraries, or the pinned dispatch `eval`), and each
+# of those statements is exempted by its full text, so a second one - or a different one - fails.
+SHELL_STATE_REDIRECT_REASONS = {
+    "source": "loads a file into the same shell",
+    ".": "loads a file into the same shell",
+    "eval": "evaluates text in the same shell",
+    "cd": "moves the shell, so a relative script path resolves elsewhere",
+    "pushd": "moves the shell, so a relative script path resolves elsewhere",
 }
 GUARDED_WORKFLOWS = tuple(dict.fromkeys(PAIRING_WORKFLOWS + META_GUARD_WORKFLOWS))
 GUARDED_SHELL_INVOKERS = tuple(
@@ -369,60 +412,302 @@ GUARDED_SHELL_INVOKERS = tuple(
 )
 GUARDED_FILES = GUARDED_WORKFLOWS + GUARDED_SHELL_INVOKERS
 
+# ---------------------------------------------------------------------------
+# Canonical pins.
+#
+# Every bypass this guard has had to close was the same kind of defect: the guard
+# modelled a grammar - bash's function bodies, bash's quote contexts, YAML's key
+# spellings - and the attack used one form the model lacked. A model only has to
+# miss one form once. So the guarded wiring is pinned by *content* instead: what
+# follows decides by exact bytes, or by a normal form deliberately coarser than
+# bash's own grammar, and never by re-deriving a construct from text.
+#
+# The pins are tripwires. A pinned region may only change together with the pin
+# that describes it, in the same commit, so weakening the guarded wiring is always
+# a visible two-place edit rather than a quiet one-line one.
+# ---------------------------------------------------------------------------
+
+# The two script names a pinned line may carry, as they appear in a file.
+GUARDED_BASENAMES = (PAIRING_SCRIPT, META_GUARD_SCRIPT)
+
+# Whole-file digests. These three files each hold a guarded invocation and nothing
+# the accepted spellings table needs to tolerate, so the file is pinned entire:
+# an addition, a deletion or an edit anywhere in it is a finding. Pinning the whole
+# file is what closes an *additive* attack the classifier never sees - a new
+# function body around the invocation, a shadowing definition on another line, a
+# `set +e` in a line a masking pass treated as data. There is no construct to model
+# and therefore no construct to get wrong.
+GUARDED_FILE_DIGESTS = {
+    "scripts/verify-release-branch.sh":
+        "5707f8ab5af9a0585119cb6691827b2961056897a92537e27763ac2d5c20fd6f",
+    "scripts/verify-release-publish-postcondition.sh":
+        "61b21485d0d97cc06b7c3d62a762fbd79632af78b12cf5e98b8adad6b2ff8766",
+    "scripts/verify-release-gates.sh":
+        "ed9bfef8eee60a76437c1e51f9f405644cf6302088431aeb232a96a8450afe18",
+}
+
+# The exact lines each shell invoker may use to name a guarded script, in file
+# order. Everything else about the file may change freely; the lines that reach a
+# guarded script may not, and a line the guard never classified is a finding rather
+# than a line it skipped. `gov-infra/verifiers/gov-verify-rubric.sh` is the one
+# invoker that cannot be digest-pinned (its own self-test table carries a `set +e`
+# / `set -e` capture pair in an unrelated function, which the accepted spellings
+# table requires this guard to tolerate), so it is pinned by line instead.
+GUARDED_INVOCATION_LINE_PINS = {
+    "scripts/verify-release-branch.sh": (
+        'scripts/verify-release-pairing.sh --tag "${expected_tag}"',
+    ),
+    "scripts/verify-release-publish-postcondition.sh": (
+        '  bash scripts/verify-release-pairing.sh --published --tag "${release_tag}" || return 1',
+    ),
+    "scripts/verify-release-gates.sh": (
+        "bash ./scripts/verify-release-pairing.sh --self-test",
+        "bash ./scripts/verify-release-pairing.sh",
+        "bash ./scripts/verify-release-workflows.sh --self-test",
+        "bash ./scripts/verify-release-workflows.sh",
+    ),
+    "gov-infra/verifiers/gov-verify-rubric.sh": (
+        "  bash ./scripts/verify-release-workflows.sh",
+    ),
+}
+
+# The gov verifier's toolchain export is exempt from the shell-state check because
+# it is legitimate - but a text pin on the export alone pins only its spelling, not
+# the value it reads. Appending `GOV_TOOLS_BIN="/tmp/evil:${GOV_TOOLS_BIN}"` before
+# it leaves the pinned statement byte-identical while the invocation runs a
+# different `bash` entirely. So every variable the exempted statement reads, and
+# every variable those statements read in turn, is pinned to exactly one assignment
+# with exactly this text, and any other assignment to one of those names - however
+# it is spelled, wherever it sits - is a finding.
+GOV_TOOLCHAIN_VARIABLES = (
+    "GOV_TOOLS_DIR",
+    "GOV_TOOLS_BIN",
+    "GOV_TOOLS_PY_DIR",
+    "GOV_TOOLS_PY_BIN",
+    "GOV_TOOLS_PY_COV_DIR",
+    "GOV_TOOLS_PY_COV_BIN",
+    "GOV_TOOLS_PY_RUNTIME_DIR",
+    "GOV_TOOLS_PY_RUNTIME_BIN",
+    "PATH",
+)
+GOV_TOOLCHAIN_ASSIGNMENT_PINS = {
+    "gov-infra/verifiers/gov-verify-rubric.sh": (
+        'GOV_TOOLS_DIR="${GOV_INFRA}/.tools"',
+        'GOV_TOOLS_BIN="${GOV_TOOLS_DIR}/bin"',
+        'GOV_TOOLS_PY_DIR="${GOV_TOOLS_DIR}/py"',
+        'GOV_TOOLS_PY_BIN="${GOV_TOOLS_PY_DIR}/bin"',
+        'GOV_TOOLS_PY_COV_DIR="${GOV_TOOLS_DIR}/py-coverage"',
+        'GOV_TOOLS_PY_COV_BIN="${GOV_TOOLS_PY_COV_DIR}/bin"',
+        'GOV_TOOLS_PY_RUNTIME_DIR="${GOV_TOOLS_DIR}/py-runtime"',
+        'GOV_TOOLS_PY_RUNTIME_BIN="${GOV_TOOLS_PY_RUNTIME_DIR}/bin"',
+        'export PATH="${GOV_TOOLS_BIN}:${GOV_TOOLS_PY_BIN}:${GOV_TOOLS_PY_RUNTIME_BIN}:${PATH}"',
+    ),
+}
+
+# Each guarded step is pinned in two parts, because two different spellings have to
+# stay accepted inside it.
+#
+#   `head` - every raw line of the step that is not part of the `run:` body, byte
+#   for byte (trailing whitespace stripped). This is where a step key lives, so an
+#   added `working-directory:`, `timeout-minutes:` or any other key this guard does
+#   not enumerate changes the pinned bytes. The classifier below also reads every
+#   key it knows by name; the pin is what covers the keys it does not.
+#
+#   `body` - the statements of the `run:` body in normal form: comments stripped,
+#   continuations joined, whitespace collapsed, argument words unquoted one layer
+#   (so `bash gate.sh "--self-test"` is the same statement as `bash gate.sh
+#   --self-test`). The pinned statements must all be present, in order. An extra
+#   statement is allowed only when it stands on its own line, is not joined into a
+#   list, opens no shell block or function body, and names no guarded script - which
+#   is exactly what a `true` line after the invocation, or an unrelated verifier
+#   added to the same step, is. A function body, a conditional, a subshell, a
+#   block, a second invocation or a weakened invocation cannot be spelled that way,
+#   so it fails here without the guard having had to model bash's function grammar
+#   at all.
+STEP_PINS = {
+    (".github/workflows/ci.yml", PAIRING_STEP_NAME): {
+        "head": (
+            "      - name: Verify apptheory-init template/release pairing",
+            "        run: |",
+        ),
+        "body": (
+            ("", "bash scripts/verify-release-pairing.sh --self-test", ""),
+            ("", "bash scripts/verify-release-pairing.sh", ""),
+        ),
+    },
+    (".github/workflows/prerelease-pr.yml", PAIRING_STEP_NAME): {
+        "head": (
+            "      - name: Verify apptheory-init template/release pairing",
+            "        if: steps.release_pr.outputs.exists == 'true'",
+            "        run: |",
+        ),
+        "body": (
+            ("", "bash scripts/verify-release-pairing.sh --self-test", ""),
+            ("", "bash scripts/verify-release-pairing.sh", ""),
+        ),
+    },
+    (".github/workflows/release-pr.yml", PAIRING_STEP_NAME): {
+        "head": (
+            "      - name: Verify apptheory-init template/release pairing",
+            "        if: steps.release_pr.outputs.exists == 'true'",
+            "        run: |",
+        ),
+        "body": (
+            ("", "bash scripts/verify-release-pairing.sh --self-test", ""),
+            ("", "bash scripts/verify-release-pairing.sh", ""),
+        ),
+    },
+    (".github/workflows/ci.yml", META_GUARD_STEP_CI): {
+        "head": (
+            "      - name: Verify release/security invariants",
+            "        env:",
+            "          GH_TOKEN: ${{ github.token }}",
+            "          GITHUB_TOKEN: ${{ github.token }}",
+            "          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}",
+            "          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+            "        run: |",
+        ),
+        "body": (
+            ("", "bash scripts/verify-branch-release-supply-chain.sh", ""),
+            ("", "bash scripts/verify-release-branch-signatures.sh", ""),
+            ("", "bash scripts/verify-release-train-promotion.sh --self-test", ""),
+            ("", "bash scripts/verify-ci-rubric-enforced.sh", ""),
+            ("", "bash scripts/verify-release-workflows.sh", ""),
+            ("", "bash scripts/verify-release-cycle.sh", ""),
+        ),
+    },
+    (".github/workflows/prerelease.yml", META_GUARD_STEP_PREMAIN): {
+        "head": (
+            "      - name: Verify release workflow invariants (release preflight)",
+            "        run: bash scripts/verify-release-workflows.sh",
+        ),
+        "body": (("", "bash scripts/verify-release-workflows.sh", ""),),
+    },
+    (".github/workflows/release.yml", META_GUARD_STEP_MAIN): {
+        "head": (
+            "      - name: Verify release workflow invariants (stable release preflight)",
+            "        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
+            "        run: bash scripts/verify-release-workflows.sh",
+        ),
+        "body": (("", "bash scripts/verify-release-workflows.sh", ""),),
+    },
+}
+
+# The statement words that can only start or close a shell construct, so an extra
+# statement led by one of them is not an inert addition to a pinned run body.
+STEP_BODY_KEYWORDS = (
+    "if",
+    "then",
+    "elif",
+    "else",
+    "fi",
+    "for",
+    "do",
+    "done",
+    "while",
+    "until",
+    "case",
+    "esac",
+    "select",
+    "function",
+    "coproc",
+    "time",
+)
+
+
+def shell_context_steps(text: str, stack=None):
+    """(index, char, contexts) for every character, with bash's quoting contexts applied.
+
+    `contexts` is the tuple of contexts the character sits inside, outermost first: `single`,
+    `double`, `ansi`, `substitution` (`$( ... )`) or `backquote`. A backslash skips the character it
+    escapes in every context except a plain single-quoted word, where bash treats it literally, and a
+    nested context ends only on its own closer.
+
+    There is one implementation of this rather than one per reader, because the readers used to
+    diverge: the comment splitter, the statement splitter and the multi-line masks each carried their
+    own hand-rolled state machine, so a form one of them lacked - ANSI-C quoting, then a backquote
+    substitution - was read one way by one reader and another way by the next. A backquote is the
+    case that broke it: `x="`echo "it's"`"` is a double-quoted string holding a command substitution
+    that holds a double-quoted word, and a scanner without a substitution context closed the string
+    at the `"` inside the substitution, leaving a single quote open for every line that followed.
+
+    `stack` may be passed in to continue a context across lines; it is mutated in place.
+    """
+    if stack is None:
+        stack = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        top = stack[-1] if stack else None
+        yield index, char, tuple(stack)
+        step = 1
+        if top == "single":
+            if char == "'":
+                stack.pop()
+        elif top == "ansi":
+            if char == "\\" and index + 1 < len(text):
+                step = 2
+            elif char == "'":
+                stack.pop()
+        elif top == "double":
+            if char == "\\" and index + 1 < len(text):
+                step = 2
+            elif char == '"':
+                stack.pop()
+            elif char == "`":
+                stack.append("backquote")
+            elif text.startswith("$(", index):
+                stack.append("substitution")
+                step = 2
+        elif top == "substitution":
+            if char == "\\" and index + 1 < len(text):
+                step = 2
+            elif char == ")":
+                stack.pop()
+            elif text.startswith("$'", index):
+                stack.append("ansi")
+                step = 2
+            elif char == "'":
+                stack.append("single")
+            elif char == '"':
+                stack.append("double")
+            elif char == "`":
+                stack.append("backquote")
+        else:
+            # Unquoted, or the body of a backquote substitution, where quoting starts over.
+            if char == "\\" and index + 1 < len(text):
+                step = 2
+            elif text.startswith("$'", index):
+                stack.append("ansi")
+                step = 2
+            elif char == "'":
+                stack.append("single")
+            elif char == '"':
+                stack.append("double")
+            elif char == "`":
+                if top == "backquote":
+                    stack.pop()
+                else:
+                    stack.append("backquote")
+            elif text.startswith("$(", index):
+                stack.append("substitution")
+                step = 2
+        if step == 2:
+            # The character this one escapes, or the second half of a two-character token. It is
+            # reported too, with the context the token opened, so a reader that rebuilds the text it
+            # reads (`(` in `$( )`, the quote in `$'...'`, an escaped character) keeps every byte.
+            yield index + 1, text[index + 1], tuple(stack)
+        index += step
+
 
 def split_shell_comment(line: str):
-    """Split a shell line into (code, comment) at the first unquoted word-initial `#`.
-
-    Quoting follows bash, including ANSI-C quoting: `$'...'` honours backslash escapes, so
-    `$'it\\'s'` is one word and does not end at the escaped apostrophe, while `$"..."` is an
-    ordinary double-quoted string and a backslash inside a plain `'...'` is literal.
-    """
-    code = []
-    state = None
-    index = 0
-    while index < len(line):
-        char = line[index]
-        if state == "single":
-            code.append(char)
-            if char == "'":
-                state = None
-        elif state == "ansi":
-            code.append(char)
-            if char == "\\" and index + 1 < len(line):
-                index += 1
-                code.append(line[index])
-            elif char == "'":
-                state = None
-        elif state == "double":
-            if char == "\\" and index + 1 < len(line):
-                code.append(char)
-                index += 1
-                code.append(line[index])
-            else:
-                code.append(char)
-                if char == '"':
-                    state = None
-        elif char == "\\" and index + 1 < len(line):
-            code.append(char)
-            index += 1
-            code.append(line[index])
-        elif line.startswith("$'", index):
-            state = "ansi"
-            code.append(char)
-            index += 1
-            code.append(line[index])
-        elif char == "'":
-            state = "single"
-            code.append(char)
-        elif char == '"':
-            state = "double"
-            code.append(char)
-        elif char == "#" and (index == 0 or line[index - 1] in " \t;&|("):
-            return "".join(code), line[index:]
-        else:
-            code.append(char)
-        index += 1
-    return "".join(code), ""
+    """Split a shell line into (code, comment) at the first unquoted word-initial `#`."""
+    for index, char, contexts in shell_context_steps(line):
+        if contexts:
+            continue
+        if char == "#" and (index == 0 or line[index - 1] in " \t;&|("):
+            return line[:index], line[index:]
+    return line, ""
 
 
 def split_shell_statements(code: str):
@@ -435,55 +720,22 @@ def split_shell_statements(code: str):
     raw = []
     current = []
     separator = None
-    state = None
-    index = 0
-    while index < len(code):
-        char = code[index]
-        if state == "single":
-            current.append(char)
-            if char == "'":
-                state = None
-        elif state == "double":
-            if char == "\\" and index + 1 < len(code):
-                current.append(char)
-                index += 1
-            current.append(code[index])
-            if code[index] == '"':
-                state = None
-        elif state == "ansi":
-            current.append(char)
-            if char == "\\" and index + 1 < len(code):
-                index += 1
-                current.append(code[index])
-            elif char == "'":
-                state = None
-        elif char == "\\" and index + 1 < len(code):
-            current.append(char)
-            index += 1
-            current.append(code[index])
-        elif code.startswith("$'", index):
-            state = "ansi"
-            current.append(char)
-            index += 1
-            current.append(code[index])
-        elif char == "'":
-            state = "single"
-            current.append(char)
-        elif char == '"':
-            state = "double"
-            current.append(char)
-        elif code.startswith("&&", index) or code.startswith("||", index):
+    consumed_to = -1
+    for index, char, contexts in shell_context_steps(code):
+        if index <= consumed_to:
+            continue
+        if not contexts and (code.startswith("&&", index) or code.startswith("||", index)):
             raw.append((separator, "".join(current)))
             separator = code[index : index + 2]
             current = []
-            index += 1
-        elif char in ";|&":
+            consumed_to = index + 1
+            continue
+        if not contexts and char in ";|&":
             raw.append((separator, "".join(current)))
             separator = char
             current = []
-        else:
-            current.append(char)
-        index += 1
+            continue
+        current.append(char)
     raw.append((separator, "".join(current)))
     statements = []
     for position, (before, text) in enumerate(raw):
@@ -525,52 +777,11 @@ def scan_quotes(text: str, stack: list):
     """
     index = 0
     started_open = bool(stack)
-    while index < len(text):
-        char = text[index]
-        top = stack[-1] if stack else None
-        if top == "single":
-            if char == "'":
-                stack.pop()
-        elif top == "ansi":
-            if char == "\\" and index + 1 < len(text):
-                index += 1
-            elif char == "'":
-                stack.pop()
-        elif top == "double":
-            if char == "\\" and index + 1 < len(text):
-                index += 1
-            elif char == '"':
-                stack.pop()
-            elif text.startswith("$(", index):
-                stack.append("substitution")
-                index += 1
-        elif top == "substitution":
-            if char == "\\" and index + 1 < len(text):
-                index += 1
-            elif char == ")":
-                stack.pop()
-            elif text.startswith("$'", index):
-                stack.append("ansi")
-                index += 1
-            elif char == "'":
-                stack.append("single")
-            elif char == '"':
-                stack.append("double")
-        elif char == "\\" and index + 1 < len(text):
-            index += 1
-        elif text.startswith("$'", index):
-            stack.append("ansi")
-            index += 1
-        elif char == "'":
-            stack.append("single")
-        elif char == '"':
-            stack.append("double")
-        elif text.startswith("$(", index):
-            stack.append("substitution")
-            index += 1
-        index += 1
-        if started_open and not stack:
+    for index, _char, contexts in shell_context_steps(text, stack):
+        if started_open and not contexts:
             return index
+    if started_open and not stack:
+        return len(text)
     return None
 
 
@@ -634,63 +845,50 @@ def unquoted_view(text: str) -> str:
 
     A glob, a parameter expansion or a brace inside quotes is not a word the shell will run and
     not a block boundary, so it must not be read as one. Quoting follows bash here too, which
-    matters for ANSI-C words: `$'a\\'b'` is one word, not a quote that ends early.
+    matters for ANSI-C words: `$'a\\'b'` is one word, not a quote that ends early. A command
+    substitution body is code - `` `echo }` `` and `$(echo })` really do contain a brace the shell
+    parses - so it is left visible, while a quote opened inside it still blanks.
     """
+    code_contexts = {"substitution", "backquote"}
     out = []
-    state = None
-    index = 0
-    while index < len(text):
-        char = text[index]
-        if state == "single":
-            if char == "'":
-                state = None
-            out.append(" ")
-        elif state == "ansi":
-            if char == "\\" and index + 1 < len(text):
-                index += 1
-            elif char == "'":
-                state = None
-            out.append(" ")
-        elif state == "double":
-            if char == "\\" and index + 1 < len(text):
-                index += 1
-            elif char == '"':
-                state = None
-            out.append(" ")
-        elif char == "\\" and index + 1 < len(text):
-            out.append(" ")
-            index += 1
-            out.append(" ")
-        elif text.startswith("$'", index):
-            state = "ansi"
-            out.append(" ")
-            index += 1
-            out.append(" ")
-        elif char == "'":
-            state = "single"
-            out.append(" ")
-        elif char == '"':
-            state = "double"
-            out.append(" ")
-        else:
-            out.append(char)
-        index += 1
+    for _index, char, contexts in shell_context_steps(text):
+        quoted = [context for context in contexts if context not in code_contexts]
+        out.append(" " if quoted else char)
     return "".join(out)
 
 
-# A function definition opens a body that bash treats as one unit for errexit: when the function is
-# entered from an `if` test or a `||`/`&&`/`|` list, -e is ignored for every command inside it.
-FUNCTION_OPEN = re.compile(
-    r"^(?:function[ \t]+)?(?P<name>[^\s(=]+)[ \t]*\([ \t]*\)[ \t]*(?P<rest>.*)$"
-)
+# bash spells a function definition two ways - `name ()` and `function name`, with the parentheses
+# optional in the second - and the body may be any compound command, not only `{ ...; }`. A model
+# that requires the parentheses misses `function bash { return 0; }` entirely, which defeats the
+# shadowing check below, and one that opens a frame only on `{` misses a subshell or conditional
+# body, which leaves every command in it reading as top level.
+FUNCTION_KEYWORD_OPEN = re.compile(r"^function[ \t]+(?P<name>[^\s(=;{}]+)")
+FUNCTION_PARENS_OPEN = re.compile(r"^(?P<name>[^\s(=;{}]+)[ \t]*\([ \t]*\)")
+
+
+def function_open_statement(statement: str):
+    """(name, remainder) for a statement that opens a function definition, or None.
+
+    `remainder` is what follows the name and its parentheses, so a caller can see whether the body
+    is on this statement's own line. Matching against the unquoted view keeps a quoted word that
+    merely looks like a definition (`echo "gate() {"`) from opening a frame.
+    """
+    view = normalize_statement(unquoted_view(statement))
+    match = FUNCTION_KEYWORD_OPEN.match(view) or FUNCTION_PARENS_OPEN.match(view)
+    if not match:
+        return None
+    return match.group("name"), view[match.end() :].strip()
 
 
 def function_frames(body: str):
     """(name, open_line, close_line) for every function definition that opens a body.
 
-    A one-line definition whose braces balance (`bash() { return 0; }`) opens nothing and is not a
-    frame; a definition that opens a block is, and it closes on the statement where the brace
-    depth returns to where it started.
+    A one-line definition whose braces balance (`bash() { return 0; }`) closes on its own line. A
+    definition that opens a brace body closes where the brace depth returns to where it started. A
+    body neither of those describes - a subshell body (`gate() ( ... )`), a conditional body
+    (`gate() if true; then ... fi`) - is sealed at end of file rather than guessed at, so every later
+    line counts as inside that function and an invocation there is refused instead of read as top
+    level. The pinned wiring is all brace-bodied, so this costs nothing on the legitimate tree.
     """
     frames = []
     stack = []
@@ -702,25 +900,28 @@ def function_frames(body: str):
             view = unquoted_view(statement)
             if pending is not None:
                 if normalize_statement(statement) == "{":
-                    stack.append([pending, line_number, depth])
+                    stack.append([pending, line_number, depth, True])
                     pending = None
                     depth += view.count("{") - view.count("}")
                     continue
                 # A definition with no body on its line only opens a frame when the next statement
                 # is its `{`; anything else means the definition did not open a block.
                 pending = None
-            definition = FUNCTION_OPEN.match(statement)
+            definition = function_open_statement(statement)
             if definition:
+                name, rest = definition
                 if "{" in view:
-                    stack.append([definition.group("name"), line_number, depth])
-                elif not view.strip():
-                    pending = definition.group("name")
+                    stack.append([name, line_number, depth, True])
+                elif not rest:
+                    pending = name
+                else:
+                    stack.append([name, line_number, depth, False])
             depth += view.count("{") - view.count("}")
-            while stack and depth <= stack[-1][2]:
-                name, open_line, _open_depth = stack.pop()
+            while stack and stack[-1][3] and depth <= stack[-1][2]:
+                name, open_line, _open_depth, _closable = stack.pop()
                 frames.append((name, open_line, line_number))
     while stack:
-        name, open_line, _open_depth = stack.pop()
+        name, open_line, _open_depth, _closable = stack.pop()
         frames.append((name, open_line, None))
     return frames
 
@@ -734,12 +935,17 @@ def shell_statement_contexts(body: str):
     can see what follows it on the same line.
     """
     containing = {}
+    lines = join_shell_continuations(mask_shell_data(body.splitlines()))
     for name, open_line, close_line in function_frames(body):
-        end = close_line if close_line is not None else 10**9
+        # A body the frame model could not close is sealed at the body's own last line, so every
+        # later statement counts as inside it. The bound is the body length, not a sentinel: a
+        # sentinel here made the fill below walk a billion line numbers for exactly the unclosable
+        # bodies this model now recognises.
+        end = close_line if close_line is not None else len(lines)
         for line in range(open_line, end + 1):
             containing.setdefault(line, name)
     depth = 0
-    for line_number, line in enumerate(join_shell_continuations(mask_shell_data(body.splitlines())), 1):
+    for line_number, line in enumerate(lines, 1):
         code, _comment = split_shell_comment(line)
         statements = split_shell_statements(code)
         for index, (separator, statement, after) in enumerate(statements):
@@ -824,7 +1030,7 @@ def pinned_call_site_findings(host, contexts, spec, where):
     ) in contexts:
         if not token.search(statement):
             continue
-        if FUNCTION_OPEN.match(statement):
+        if function_open_statement(statement):
             continue
         top_level_governed = function_of_line is None and governed_position(
             index, statement, after, statements, depth
@@ -940,7 +1146,6 @@ def pinned_dispatch_findings(host, contexts, where):
     return findings
 
 
-FUNCTION_DEFINITION = re.compile(r"^(?:function[ \t]+)?(?P<name>[^\s(=]+)[ \t]*\([ \t]*\)")
 ALIAS_DEFINITION = re.compile(r"^alias[ \t]+(?P<name>[^=\s]+)=")
 ASSIGNMENT_STATEMENT = re.compile(
     r"^(?:(?:export|declare|typeset|readonly|local)[ \t]+(?:-[A-Za-z]+[ \t]+)*)?"
@@ -991,11 +1196,22 @@ def shell_state_findings(body: str, where: str, spec, exemptions=()):
     for line_number, statement, _after in shell_statements(body):
         if normalize_statement(statement) in exempt:
             continue
-        definition = FUNCTION_DEFINITION.match(statement) or ALIAS_DEFINITION.match(statement)
-        if definition and shadowing_target(definition.group("name"), spec):
+        defined = function_open_statement(statement)
+        alias = ALIAS_DEFINITION.match(statement)
+        if alias:
+            defined = (alias.group("name"), "")
+        if defined and shadowing_target(defined[0], spec):
             findings.append(
                 f"{where}:{line_number}: the {spec['label']} invocation's command is shadowed by a "
                 f"function or alias definition ({statement!r})"
+            )
+        if "BASH_FUNC_" in statement:
+            # bash exports a function to child shells as `BASH_FUNC_name%%`, and a statement can
+            # write that spelling directly. It defines nothing in this shell, but the invocation's own
+            # `bash` starts with the function already defined, so a pinned name can run other code.
+            findings.append(
+                f"{where}:{line_number}: exports a shell function into the environment the "
+                f"{spec['label']} invocation starts from ({statement!r})"
             )
         words = statement.split()
         if words and words[0] == "trap":
@@ -1009,7 +1225,26 @@ def shell_state_findings(body: str, where: str, spec, exemptions=()):
                 f"{where}:{line_number}: reassigns {target} in the same shell as the {spec['label']} "
                 f"invocation, so a later invocation need not be the pinned command ({statement!r})"
             )
+        reason = loading_statement_reason(statement)
+        if reason:
+            findings.append(
+                f"{where}:{line_number}: {statement!r} {reason}, so the command a later {spec['label']} "
+                "invocation runs need not be the pinned one"
+            )
     return findings
+
+
+def loading_statement_reason(statement: str):
+    """Why a statement redirects what a later guarded invocation runs, or None."""
+    words = statement.split()
+    if not words:
+        return None
+    reason = SHELL_STATE_REDIRECT_REASONS.get(words[0])
+    if reason:
+        return reason
+    if "hash" in words and "-p" in words:
+        return "re-pins a command name to another path, in this shell"
+    return None
 
 
 def invocation_functions(body: str, spec):
@@ -1249,9 +1484,51 @@ def shell_template_is_fail_closed(value):
     return bool(SHELL_ERREXIT_FLAG.search(" " + rest)) or "-o errexit" in rest
 
 
+def defaults_run_findings(where, lines, defaults_index):
+    """Findings for a `defaults.run` mapping, which applies to every `run:` step below it.
+
+    GitHub resolves `shell` and `working-directory` from `defaults.run` before a step's own keys,
+    so a `defaults:` written once at workflow or job level reaches a guarded step whose own lines are
+    byte-identical to the pin. `shell` decides whether errexit runs at all; `working-directory`
+    decides which tree a relative `bash scripts/verify-release-pairing.sh` resolves in. Both are
+    refused when set to anything this guard does not recognise - which, in the pinned wiring, is
+    anything at all: no guarded workflow declares `defaults`.
+    """
+    findings = []
+    shell = subtree_scalar(lines, defaults_index, "shell")
+    if not shell_template_is_fail_closed(shell):
+        findings.append(
+            f"{where}: defaults shell {shell!r} drops errexit for every step below it, so a failing "
+            "guarded invocation would not fail the gate"
+        )
+    working_directory = subtree_scalar(lines, defaults_index, "working-directory")
+    if working_directory is not None:
+        findings.append(
+            f"{where}: defaults working-directory {working_directory!r} runs every step below it - a "
+            "guarded invocation included - against another directory's copy of the script"
+        )
+    return findings
+
+
+def step_key_lines(step_text: str):
+    """A step block's lines with the `- ` list marker replaced by its own width of spaces.
+
+    A step's keys are at the step-key indentation whether they follow the marker on the step's own
+    line (`- run: |`) or on the lines below it (`- name: X` / `  run: |`), and however much space
+    follows the dash. Normalising the marker line once means every key reader below sees each key at
+    the indentation it reads, instead of each reader having to know the marker's spelling.
+    """
+    lines = step_text.splitlines()
+    if lines:
+        marker = STEP_MARKER.match(lines[0])
+        if marker:
+            lines[0] = marker.group("indent") + "  " + marker.group("rest")
+    return lines
+
+
 def step_run_body(step_text: str):
     """The `run:` body of one workflow step, or None when the step has no `run:` key."""
-    lines = step_text.splitlines()
+    lines = step_key_lines(step_text)
     run_index, run_value = find_key_index(lines, 8, "run")
     if run_index is None:
         return None
@@ -1345,34 +1622,13 @@ def job_findings(read_text, spec, workflow, job, expected_job_if):
         findings.append(
             f"{workflow}: job {job!r} continue-on-error makes a failed {spec['label']} advisory"
         )
-    workflow_lines = text.splitlines()
-    workflow_defaults_index = next(
-        (i for i, line in enumerate(workflow_lines) if re.match(r"^defaults[ \t]*:[ \t]*$", line)),
-        None,
-    )
-    workflow_shell = (
-        subtree_scalar(workflow_lines, workflow_defaults_index, "shell")
-        if workflow_defaults_index is not None
-        else None
-    )
-    if not shell_template_is_fail_closed(workflow_shell):
-        findings.append(
-            f"{workflow}: workflow defaults shell {workflow_shell!r} drops errexit for the "
-            f"{spec['label']}"
-        )
     job_defaults_index = next(
         (i for i, line in enumerate(job_lines) if re.match(r"^ {4}defaults[ \t]*:[ \t]*$", line)),
         None,
     )
-    job_shell = (
-        subtree_scalar(job_lines, job_defaults_index, "shell")
-        if job_defaults_index is not None
-        else None
-    )
-    if not shell_template_is_fail_closed(job_shell):
-        findings.append(
-            f"{workflow}: job {job!r} defaults shell {job_shell!r} drops errexit for the "
-            f"{spec['label']}"
+    if job_defaults_index is not None:
+        findings.extend(
+            defaults_run_findings(f"{workflow}: job {job!r} defaults", job_lines, job_defaults_index)
         )
     for line_number, text_line in non_canonical_keys(job_lines):
         findings.append(
@@ -1401,7 +1657,7 @@ def step_findings(spec, workflow, step_name, step_text, expected_step_if):
     """
     findings = []
     where = f"{workflow} step {step_name!r}"
-    step_lines = step_text.splitlines()
+    step_lines = step_key_lines(step_text)
     step_if = find_key_index(step_lines, 8, "if")[1]
     if step_if != expected_step_if:
         findings.append(
@@ -1414,6 +1670,12 @@ def step_findings(spec, workflow, step_name, step_text, expected_step_if):
     step_shell = find_key_index(step_lines, 8, "shell")[1]
     if not shell_template_is_fail_closed(step_shell):
         findings.append(f"{where}: shell {step_shell!r} drops errexit for the {spec['label']} step")
+    step_working_directory = find_key_index(step_lines, 8, "working-directory")[1]
+    if step_working_directory is not None:
+        findings.append(
+            f"{where}: working-directory {step_working_directory!r} runs the {spec['label']} "
+            "invocation against another directory's copy of the script"
+        )
     if flow_style_mappings(step_lines, 8, "env"):
         findings.append(f"{where}: declares a flow-style env mapping this guard cannot classify")
     for key in shell_semantics_env_keys(step_lines, 8):
@@ -1480,9 +1742,220 @@ def check_workflow_steps(read_text, spec):
     return findings
 
 
+def canonical_statement(statement: str) -> str:
+    """A statement in the normal form the pins are written in.
+
+    Whitespace is collapsed and one layer of surrounding quotes is removed from the argument words -
+    the same unquoting `classify_invocations` applies, and deliberately not applied to the command
+    word, so `bash "scripts/verify-release-pairing.sh"` stays distinct from the pinned unquoted
+    path. Comments and continuations are already gone by the time a statement reaches here.
+    """
+    words = normalize_statement(statement).split()
+    if not words:
+        return ""
+    if len(words) > 1 and words[0] == "bash":
+        head, args = words[:2], words[2:]
+    else:
+        head, args = words[:1], words[1:]
+    return " ".join(head + [unquote_argument(word) for word in args])
+
+
+def step_body_line_indexes(step_text: str):
+    """The indexes of a step block's lines that the `run:` body occupies."""
+    lines = step_key_lines(step_text)
+    run_index, _value = find_key_index(lines, 8, "run")
+    if run_index is None:
+        return set()
+    indexes = set()
+    for index in range(run_index + 1, len(lines)):
+        if not lines[index].strip():
+            indexes.add(index)
+            continue
+        if len(lines[index]) - len(lines[index].lstrip()) <= 8:
+            break
+        indexes.add(index)
+    return indexes
+
+
+def step_head_lines(step_text: str):
+    """Every raw line of a step that is not part of its `run:` body, byte for byte.
+
+    The pin is on the raw line, so the marker's own spelling and every key line are part of it. Only
+    trailing whitespace is stripped, so a change that adds nothing but spaces is not a finding.
+    """
+    lines = step_text.splitlines()
+    body = step_body_line_indexes(step_text)
+    head = [lines[index].rstrip() for index in range(len(lines)) if index not in body]
+    while head and not head[-1].strip():
+        head.pop()
+    return tuple(head)
+
+
+def step_body_triples(step_text: str):
+    """(separator_before, statement, separator_after) for a step's run body, in normal form."""
+    body = step_run_body(step_text)
+    if body is None:
+        return ()
+    triples = []
+    for line in join_shell_continuations(mask_shell_data(body.splitlines())):
+        code, _comment = split_shell_comment(line)
+        for before, statement, after in split_shell_statements(code):
+            if not statement.strip():
+                continue
+            triples.append((before or "", canonical_statement(statement), after or ""))
+    return tuple(triples)
+
+
+def extra_statement_reason(before, statement, after):
+    """Why an extra statement in a pinned run body is not an inert addition, or None when it is.
+
+    An addition to a pinned step is allowed when it stands on its own line, decides nothing about
+    the invocations around it, and opens no shell construct - a `true` line, or an unrelated
+    verifier added to the same step. Everything that could wrap, gate, shadow or replace an
+    invocation needs a block, a function body, a list join or the guarded script's name, and each of
+    those is refused here by shape rather than by modelling what it runs.
+    """
+    if any(name in statement for name in GUARDED_BASENAMES):
+        return "names a guarded script, so it is not one of the pinned statements"
+    if before not in ("", ";") or after not in ("", ";"):
+        return "is joined to another statement instead of standing on its own line"
+    if any(char in unquoted_view(statement) for char in "{}()"):
+        return "opens or closes a shell block or a subshell"
+    words = statement.split()
+    if statement.startswith("!"):
+        return "is negated, and bash exempts a negated command from errexit"
+    if words and words[0] in STEP_BODY_KEYWORDS:
+        return f"opens a shell construct ({words[0]!r})"
+    return None
+
+
+def step_pin_findings(workflow: str, step_name: str, step_text: str):
+    """Findings for one pinned step whose content is not the pinned canonical form."""
+    pin = STEP_PINS.get((workflow, step_name))
+    if pin is None:
+        return []
+    where = f"{workflow} step {step_name!r}"
+    findings = []
+    head = step_head_lines(step_text)
+    if head != pin["head"]:
+        findings.append(
+            f"{where}: is not the pinned revision of this step; a step that invokes a guarded "
+            f"script may only change together with the pin that describes it (expected "
+            f"{len(pin['head'])} pinned line(s), found {len(head)})"
+        )
+    pinned_body = list(pin["body"])
+    position = 0
+    for before, statement, after in step_body_triples(step_text):
+        if position < len(pinned_body) and (before, statement, after) == pinned_body[position]:
+            position += 1
+            continue
+        reason = extra_statement_reason(before, statement, after)
+        if reason:
+            findings.append(
+                f"{where}: run body holds {statement!r}, which {reason}; a pinned run body may only "
+                "gain a statement that stands on its own line and opens nothing"
+            )
+    if position != len(pinned_body):
+        findings.append(
+            f"{where}: the pinned run body is missing the statement {pinned_body[position]!r}"
+        )
+    return findings
+
+
+def pinned_step_findings(read_text):
+    """Findings for every pinned step, and for a pin whose step the workflow no longer has."""
+    findings = []
+    for workflow, step_name in STEP_PINS:
+        match = None
+        for name, step_text in workflow_step_blocks(read_text(workflow)):
+            if name == step_name:
+                match = step_text
+                break
+        if match is None:
+            findings.append(f"{workflow}: the pinned step {step_name!r} is missing")
+            continue
+        findings.extend(step_pin_findings(workflow, step_name, match))
+    return findings
+
+
+def pinned_digest_findings(read_text):
+    """Findings for every digest-pinned shell invoker whose bytes are not the pinned revision."""
+    findings = []
+    for path, pinned in GUARDED_FILE_DIGESTS.items():
+        actual = hashlib.sha256(read_text(path).encode("utf-8")).hexdigest()
+        if actual != pinned:
+            findings.append(
+                f"{path}: is not the pinned revision; this file holds a guarded invocation and may "
+                "only change together with the pin that describes it (pinned sha256 "
+                f"{pinned[:12]}, found {actual[:12]})"
+            )
+    return findings
+
+
+def pinned_invocation_line_findings(read_text):
+    """Findings for a shell invoker whose guarded-script lines are not exactly the pinned ones."""
+    findings = []
+    for path, pinned in GUARDED_INVOCATION_LINE_PINS.items():
+        actual = tuple(
+            line.rstrip()
+            for line in read_text(path).splitlines()
+            if any(name in line for name in GUARDED_BASENAMES)
+        )
+        if actual != pinned:
+            findings.append(
+                f"{path}: the lines naming a guarded script are not the pinned ones; a guarded "
+                f"script name may appear only on its pinned invocation line (expected "
+                f"{len(pinned)}, found {len(actual)})"
+            )
+    return findings
+
+
+def pinned_toolchain_assignment_findings(read_text):
+    """Findings for a statement that assigns an input of a pinned toolchain export.
+
+    The export this guard exempts is exempt because it is legitimate, not because it is unread: the
+    variables it expands are pinned to exactly one assignment each, so the value it puts on `PATH`
+    cannot be redirected from a line above it.
+    """
+    findings = []
+    for path, pinned in GOV_TOOLCHAIN_ASSIGNMENT_PINS.items():
+        counts = {statement: 0 for statement in pinned}
+        for line_number, statement, _after in shell_statements(read_text(path)):
+            canonical = canonical_statement(statement)
+            match = ASSIGNMENT_STATEMENT.match(canonical)
+            if not match or match.group("key") not in GOV_TOOLCHAIN_VARIABLES:
+                continue
+            if canonical in counts:
+                counts[canonical] += 1
+                continue
+            findings.append(
+                f"{path}:{line_number}: assigns one of the toolchain variables the pinned export "
+                f"reads, outside the pinned statements ({statement!r}); the export's own text would "
+                "stay pinned while the toolchain it names did not"
+            )
+        for statement, count in counts.items():
+            if count != 1:
+                findings.append(
+                    f"{path}: the pinned toolchain statement {statement!r} appears {count} times; "
+                    "the toolchain a guarded invocation runs under is pinned exactly once"
+                )
+    return findings
+
+
+def pinned_region_findings(read_text):
+    """Every finding whose evidence is a pinned region rather than a classified construct."""
+    return (
+        pinned_step_findings(read_text)
+        + pinned_digest_findings(read_text)
+        + pinned_invocation_line_findings(read_text)
+        + pinned_toolchain_assignment_findings(read_text)
+    )
+
+
 def check_invocation_shapes(read_text):
     """Every finding that makes a guarded release-gate invocation anything but the pinned call."""
     findings = []
+    findings.extend(pinned_region_findings(read_text))
     for spec in (PAIRING_SPEC, META_GUARD_SPEC):
         for workflow, job, expected_job_if in spec["jobs"]:
             findings.extend(job_findings(read_text, spec, workflow, job, expected_job_if))
@@ -1523,6 +1996,35 @@ def check_invocation_shapes(read_text):
                 "elsewhere; this guard reads literal text and cannot follow the reference"
             )
         workflow_lines = text.splitlines()
+        for line_number, text_line in non_canonical_keys(workflow_lines):
+            findings.append(
+                f"{workflow}: line {line_number} spells a key as {text_line!r}; YAML reads "
+                "`key : value`, `\"key\": value` and `? key` as the same mapping key at every "
+                "indentation, so a key written that way - workflow level included - is refused "
+                "rather than read past"
+            )
+        workflow_defaults_index = next(
+            (i for i, line in enumerate(workflow_lines) if re.match(r"^defaults[ \t]*:[ \t]*$", line)),
+            None,
+        )
+        if workflow_defaults_index is not None:
+            findings.extend(
+                defaults_run_findings(
+                    f"{workflow}: workflow defaults", workflow_lines, workflow_defaults_index
+                )
+            )
+        # YAML keeps the last value for a repeated key, and every reader above reads the first
+        # occurrence: a second `defaults:` with a poisoned shell, or a second job carrying the pinned
+        # job's name with `if: false`, would be the one the runner resolves while the guard classified
+        # the first. The scan is over the whole file at the workflow level (0) and the job-name level
+        # (2) - the two levels no other duplicate scan reaches - rather than over the levels this
+        # guard happens to enumerate.
+        for indent, level in ((0, "workflow"), (2, "job name")):
+            for key in duplicate_keys(workflow_lines, indent):
+                findings.append(
+                    f"{workflow}: declares {key!r} more than once at {level} level; YAML keeps the "
+                    "last value and the runner resolves that one, so a repeated key is refused"
+                )
         for key in shell_semantics_env_keys(workflow_lines, 0):
             findings.append(
                 f"{workflow}: workflow-level env {key!r} can change how a guarded release-gate "
@@ -1696,6 +2198,160 @@ SELF_TEST_ATTACKS = (
     # Claim boundaries: the classes the doc says are refused rather than read past.
     ("second YAML document in a guarded workflow", ".github/workflows/ci.yml", CI_HEAD, CI_HEAD + "---\njobs: {}\n", "document separator"),
     ("YAML alias as a step run body", ".github/workflows/ci.yml", CI_STEP, CI_STEP + '      - name: Extra anchored gate\n        run: &weak "bash scripts/verify-release-pairing.sh || true"\n      - name: Extra aliased gate\n        run: *weak\n', "YAML alias"),
+    # R4-1 - bash spells a function definition two ways and accepts any compound command as a body,
+    # so an opener is not a name followed by `()`. A body the frame model does not see is a body
+    # bash ignores errexit inside when it is entered from a condition, and the invocation reads as
+    # top level. `function gate {` has no parentheses at all; `gate() (` and `gate() if ...` have no
+    # brace; and a balanced throwaway definition first leaves a stray brace pair for the model to
+    # read before the body that actually holds the invocation.
+    ("invocation inside a parens-less `function` body in a step", ".github/workflows/ci.yml", CI_BARE,
+     "          function gate {\n" + CI_BARE + "          }\n          if gate; then\n            :\n          fi\n",
+     "not a pinned invocation host"),
+    ("invocation inside a subshell function body", ".github/workflows/ci.yml", CI_BARE,
+     "          gate() (\n" + CI_BARE + "          )\n          if gate; then\n            :\n          fi\n",
+     "not a pinned invocation host"),
+    ("invocation inside a conditional function body", ".github/workflows/ci.yml", CI_BARE,
+     "          gate() if true; then\n" + CI_BARE + "          fi\n",
+     "not a pinned invocation host"),
+    ("invocation inside a brace-poisoned parens-less function body", ".github/workflows/ci.yml", CI_BARE,
+     "          gate() { echo }\n          function evil {\n" + CI_BARE
+     + "          }\n          if evil; then\n            :\n          fi\n",
+     "not a pinned invocation host"),
+    ("invocation inside a parens-less `function` body in the gov verifier", GOV_VERIFIER, GOV_CALL_ANCHOR,
+     '  echo "==> release workflow invariants"\n  function gate {\n'
+     "  bash ./scripts/verify-release-workflows.sh\n  }\n  if gate; then\n    :\n  fi\n",
+     "not a pinned invocation host"),
+    ("invocation inside a parens-less `function` body in a shell invoker", "scripts/verify-release-branch.sh",
+     RELEASE_BRANCH_BARE,
+     "function gate {\n" + RELEASE_BRANCH_BARE + "}\nif gate; then\n  :\nfi\n",
+     "is not the pinned revision"),
+    # R4-2 - the same missing form defeats the shadowing check, not just the frame model: a
+    # definition written `function bash { ... }` replaces the command a guarded invocation depends on
+    # while naming no parentheses at all.
+    ("`bash` shadowed by a parens-less `function` definition in a step", ".github/workflows/ci.yml", CI_BARE,
+     "          function bash { return 0; }\n" + CI_BARE,
+     "shadowed"),
+    ("`bash` shadowed by a parens-less `function` definition in the gov verifier", GOV_VERIFIER,
+     GOV_CALL_ANCHOR,
+     '  echo "==> release workflow invariants"\n  function bash { return 0; }\n'
+     "  bash ./scripts/verify-release-workflows.sh\n",
+     "shadowed"),
+    ("`bash` shadowed by a parens-less `function` definition in a shell invoker",
+     "scripts/verify-release-branch.sh", RELEASE_BRANCH_BARE,
+     "function bash { return 0; }\n" + RELEASE_BRANCH_BARE,
+     "shadowed"),
+    # R4-3 - a backquote opens a command substitution with quoting rules of its own, and one can
+    # start inside a double-quoted string. A scanner without that context closes the string at the
+    # `"` inside the substitution and leaves a quote open, so every line after it is read as quoted
+    # data: `set +e` and a weakened invocation were both invisible that way.
+    ("backquote substitution hiding `set +e`", ".github/workflows/ci.yml", CI_BARE,
+     '          x="`echo "it\'s"`"\n          set +e\n          echo "it\'s fine"\n'
+     + CI_BARE + "          true\n",
+     "clears errexit"),
+    ("backquote substitution hiding a `PATH` reassignment in the gov verifier", GOV_VERIFIER,
+     GOV_CALL_ANCHOR,
+     '  echo "==> release workflow invariants"\n  x="`echo "it\'s"`"\n'
+     '  export PATH="/tmp/evil:${PATH}"\n  echo "it\'s fine"\n'
+     "  bash ./scripts/verify-release-workflows.sh\n",
+     "reassigns PATH"),
+    # R4-4 - the non-canonical key scan is anchored at the levels it enumerates, and the workflow
+    # level was not one of them, so `"env":` at column 0 - an env mapping GitHub applies to the step
+    # before bash starts - was never read as a key.
+    ('workflow-level quoted key `"env":`', ".github/workflows/ci.yml", CI_HEAD,
+     'name: CI\n"env":\n  PATH: /tmp/evil\n\non:\n',
+     "spells a key as"),
+    ('workflow-level quoted key `"defaults":`', ".github/workflows/ci.yml", CI_HEAD,
+     'name: CI\n"defaults":\n  run:\n    shell: bash -c \'exit 0\' {0}\n\non:\n',
+     "spells a key as"),
+    # R4-5 - a list indicator is a `-` followed by at least one space, and a step may carry its keys
+    # after any amount of it. Requiring exactly one space made a spaced step invisible to discovery.
+    ("step keys written after extra list-item space", ".github/workflows/ci.yml", CI_STEP_HEADER,
+     '      -   {name: Fake gate, run: "bash scripts/verify-release-pairing.sh || true"}\n'
+     + CI_STEP_HEADER,
+     "flow-style step mapping"),
+    ("unnamed step written after extra list-item space", ".github/workflows/ci.yml", CI_STEP_HEADER,
+     "      -   run: |\n" + CI_BARE.rstrip("\n") + " || true\n" + CI_STEP_HEADER,
+     "exit status does not govern"),
+    # R4-6 - a text pin on the gov verifier's toolchain export pins its spelling, not the value it
+    # reads, so an appended assignment to the variable the export expands left the pinned statement
+    # byte-identical while `bash` on PATH was a different program entirely.
+    ("gov verifier: the pinned toolchain export's input redirected", GOV_VERIFIER,
+     'mkdir -p "${GOV_TOOLS_BIN}"\n',
+     'GOV_TOOLS_BIN="/tmp/evil:${GOV_TOOLS_BIN}"\nmkdir -p "${GOV_TOOLS_BIN}"\n',
+     "outside the pinned statements"),
+    # R4-7 - the pin claims themselves, one case each: a step key the classifier does not read by
+    # name, and a second line in a shell invoker that names a guarded script.
+    ("unpinned step key added to a pinned step", ".github/workflows/ci.yml", CI_STEP,
+     CI_STEP + "        working-directory: /tmp/evil\n",
+     "is not the pinned revision"),
+    ("second line naming the meta-guard in the gov verifier", GOV_VERIFIER, GOV_CALL_ANCHOR,
+     '  echo "==> release workflow invariants"\n  bash ./scripts/verify-release-workflows.sh\n'
+     "  bash ./scripts/verify-release-workflows.sh --self-test\n",
+     "may appear only on its pinned invocation line"),
+    # R4-8 - two statements that leave the invocation's own line byte-identical and still change
+    # what it runs: `source`/`.`/`eval` load code into the same shell (a `bash() { return 0; }`
+    # defined there replaces the command), and `cd` moves the shell so the relative script path
+    # resolves to a different file. Both were reachable in a pinned step and in the gov verifier's
+    # checked function; each is refused by shape, and the pinned wiring's own `cd`/`source`/`eval`
+    # statements are exempted by their full text.
+    ("step body sources a file into the invocation's shell", ".github/workflows/ci.yml", CI_BARE,
+     "          source /tmp/evil.sh\n" + CI_BARE,
+     "loads a file into the same shell"),
+    ("step body dot-sources a file into the invocation's shell", ".github/workflows/ci.yml", CI_BARE,
+     "          . /tmp/evil.sh\n" + CI_BARE,
+     "loads a file into the same shell"),
+    ("step body evaluates text into the invocation's shell", ".github/workflows/ci.yml", CI_BARE,
+     '          eval "$(cat /tmp/evil.sh)"\n' + CI_BARE,
+     "evaluates text in the same shell"),
+    ("step body moves the shell before the invocation", ".github/workflows/ci.yml", CI_BARE,
+     "          cd /tmp/evil\n" + CI_BARE,
+     "moves the shell"),
+    ("gov verifier: the checked function sources a file", GOV_VERIFIER, GOV_CALL_ANCHOR,
+     '  echo "==> release workflow invariants"\n  source /tmp/evil.sh\n'
+     "  bash ./scripts/verify-release-workflows.sh\n",
+     "loads a file into the same shell"),
+    ("gov verifier: the checked function moves the shell", GOV_VERIFIER, GOV_CALL_ANCHOR,
+     '  echo "==> release workflow invariants"\n  cd /tmp/evil\n'
+     "  bash ./scripts/verify-release-workflows.sh\n",
+     "moves the shell"),
+    # R4-9 - `defaults.run` is resolved for every `run:` step below it, so it reaches a guarded step
+    # whose own lines are byte-identical to the pin. `shell` decides whether errexit runs at all and
+    # `working-directory` decides which tree a relative script path resolves in; both are read at
+    # workflow and job level for every guarded workflow, including the two that have no pinned job.
+    ("workflow-level `defaults.run.working-directory`", ".github/workflows/ci.yml", CI_HEAD,
+     "name: CI\ndefaults:\n  run:\n    working-directory: /tmp/evil\n\non:\n",
+     "against another directory's copy"),
+    ("job-level `defaults.run.working-directory`", ".github/workflows/ci.yml", CI_JOB,
+     "  release-security-gates:\n    defaults:\n      run:\n        working-directory: /tmp/evil\n"
+     "    name: Release/security gates\n",
+     "against another directory's copy"),
+    ("step-level `working-directory`", ".github/workflows/ci.yml", CI_STEP,
+     CI_STEP + "        working-directory: /tmp/evil\n",
+     "against another directory's copy"),
+    ("workflow-level `defaults.run.shell` in a meta-guard workflow", ".github/workflows/release.yml",
+     "name: Release (main)\n",
+     "name: Release (main)\ndefaults:\n  run:\n    shell: bash -c 'exit 0' {0}\n",
+     "drops errexit for every step below it"),
+    # R4-10 - two more spellings of the same redirect: bash exports a function to child shells as
+    # `BASH_FUNC_name%%` (a spelling the assignment reader does not have to parse), and `hash -p`
+    # re-pins a command name to another path in the shell that runs the invocation.
+    ("exported shell function shadow via `BASH_FUNC_`", ".github/workflows/ci.yml", CI_BARE,
+     "          export BASH_FUNC_bash%%='() { return 0; }'\n" + CI_BARE,
+     "exports a shell function into the environment"),
+    ("`hash -p` re-pins the command name", ".github/workflows/ci.yml", CI_BARE,
+     "          hash -p /tmp/evil/bash bash\n" + CI_BARE,
+     "re-pins a command name"),
+    # R4-11 - YAML keeps the last value for a repeated key, and every reader in this guard reads the
+    # first occurrence, so a second `defaults:` - or a second job carrying the pinned job's name with
+    # `if: false` - is the one the runner would resolve. The duplicate scan runs at the workflow level
+    # (0) and the job-name level (2), which are the two levels no other duplicate scan reaches.
+    ("duplicate job name carrying `if: false`", ".github/workflows/ci.yml", CI_JOB,
+     CI_JOB + "  release-security-gates:\n    name: Decoy\n    if: false\n",
+     "more than once at job name level"),
+    ("second workflow-level `defaults:` with a poisoned shell", ".github/workflows/ci.yml", CI_HEAD,
+     "name: CI\ndefaults:\n  run:\n    shell: bash\n\ndefaults:\n  run:\n"
+     "    shell: bash -c 'exit 0' {0}\n\non:\n",
+     "more than once at workflow level"),
 )
 
 # Shapes GLM confirmed are correctly accepted. Each must produce no finding at all, so the battery
@@ -1707,6 +2363,7 @@ SELF_TEST_ACCEPTED = (
     ("quoted pinned `--self-test` argument", ".github/workflows/ci.yml", CI_SELF_TEST, f'          bash {PAIRING_SCRIPT_PATH} "--self-test"\n'),
     ("set +e / set -e capture pair in an unrelated gov verifier function", GOV_VERIFIER, "check_file_budgets() {\n", "check_file_budgets() {\n  set +e\n  :\n  set -e\n"),
     ("YAML anchor defined in an inert `x-` section", ".github/workflows/ci.yml", CI_HEAD, 'name: CI\nx-bodies:\n  weak: &weak "bash scripts/verify-release-pairing.sh || true"\n\non:\n'),
+    ("unrelated verifier added to a pinned release/security step", ".github/workflows/ci.yml", CI_GUARD_BARE, "          bash scripts/verify-api-snapshots.sh\n" + CI_GUARD_BARE),
 )
 
 
