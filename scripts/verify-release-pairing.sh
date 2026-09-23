@@ -250,10 +250,13 @@ DOMAIN_FLOOR = (0, 0, 0)  # the lowest version npm semver can select
 
 def parse_component(text, ctx):
     if not NUMERIC_COMPONENT.fullmatch(text):
-        fail(
-            f"{ctx}: unsupported version syntax {text!r} "
-            "(npm rejects leading zeros and non-numeric version components)"
-        )
+        # Name the real trigger: a `-`/`+` component is prerelease or build syntax, which
+        # this gate declines to decide, not a leading-zero or non-numeric component.
+        if "-" in text or "+" in text:
+            reason = "prerelease and build suffixes are declined rather than parsed as numeric components"
+        else:
+            reason = "npm rejects leading zeros and non-numeric version components"
+        fail(f"{ctx}: unsupported version syntax {text!r} ({reason})")
     value = int(text)
     if value > MAX_SAFE_INTEGER:
         fail(
