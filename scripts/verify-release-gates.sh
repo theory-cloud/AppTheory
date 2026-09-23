@@ -32,6 +32,8 @@ bash ./scripts/verify-runtime-floor-claims.sh
 # release-candidate tarball at the VERSION tag the templates substitute.
 bash ./scripts/verify-release-pairing.sh --self-test
 bash ./scripts/verify-release-pairing.sh
+# The meta-guard that keeps every pairing invocation a blocker runs its own attack battery.
+bash ./scripts/verify-release-workflows.sh --self-test
 ./scripts/verify-microvm-conformance-harness.sh
 bash ./scripts/verify-docs-standard.sh
 bash ./scripts/verify-release-train-promotion.sh --self-test
