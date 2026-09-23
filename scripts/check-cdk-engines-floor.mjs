@@ -40,10 +40,12 @@
 // drives the checker with a synthetic lockfile.
 //
 // A lockfile's own root entry ("") is the project's declared floor rather than
-// an upstream dependency. A declared project floor must not admit a Node
-// release below the CDK floor; a root that declares no engine range at all is
-// left alone, because scripts/verify-runtime-floor-claims.sh is the gate that
-// owns the absent-declaration case.
+// an upstream dependency. The fleet rule is one rule for every root: it must
+// DECLARE engines.node, and the declaration must not admit a Node release below
+// the CDK floor. Declaring a floor above the CDK floor is legitimate. An absent
+// declaration fails closed here as an unjudged floor - no other gate owns it,
+// because scripts/verify-runtime-floor-claims.sh only compares cdk/package.json
+// with the cdk lockfile root and never reads examples/.
 //
 // There is no exception list and no waiver flag: every dependency entry with a
 // declared engines.node must admit the floor, or the gate fails.
@@ -456,9 +458,16 @@ function scanLockfile(lockfile, floorMajor) {
     if (packagePath === "") {
       // The lockfile's own project floor, not an upstream dependency.
       if (declared === undefined || declared === null) {
-        // Nothing declared to judge; scripts/verify-runtime-floor-claims.sh
-        // owns the absent-declaration case.
+        // An absent root declaration is an unjudged floor, so it fails closed:
+        // every root must state the floor it supports.
         result.projectFloorsAbsent += 1;
+        result.violations.push({
+          kind: "project-absent",
+          lockfile: label,
+          packagePath,
+          version: null,
+          declared: null,
+        });
         continue;
       }
       if (typeof declared !== "string") {
@@ -503,6 +512,12 @@ function scanLockfile(lockfile, floorMajor) {
 }
 
 function describeViolation(violation, floorMajor, floorSpec) {
+  if (violation.kind === "project-absent") {
+    return (
+      `cdk-engines-floor: project floor absent in ${violation.lockfile} <root>, which declares no engines.node, ` +
+      `so the ${CDK_MANIFEST} floor ${JSON.stringify(floorSpec)} (Node ${floorMajor}.0.0) is unjudged`
+    );
+  }
   if (violation.kind === "project") {
     return (
       `cdk-engines-floor: project floor ${JSON.stringify(violation.declared)} in ${violation.lockfile} ` +
@@ -647,18 +662,22 @@ function runSelfTest() {
     [">=22.0.0-0 <22.0.0", false],
   ];
 
-  // Policy probes drive the shipped scanner over synthetic lockfiles, so both
-  // rules are exercised through the same code path the gate uses rather than
-  // only at the matcher.
+  // Policy probes drive the shipped scanner over synthetic lockfiles, so every
+  // rule - including the fail-closed absent-root rule - is exercised through the
+  // same code path the gate uses rather than only at the matcher.
   const policyCases = [
     ["dependency anchored only on a later major's prerelease", ">=22", ">=23.0.0-0", true],
     ["dependency pinned to a 22.x prerelease", ">=22", "=22.13.0-rc.1", true],
     ["dependency wedged between adjacent releases", ">=22", ">22.0.0 <22.0.1", true],
     ["dependency admitting the floor through a prerelease bound", ">=22", ">=22.0.0-0", false],
     ["project floor anchored on the floor's own prerelease", ">=22.0.0-0", ">=22", false],
+    ["project floor equal to the CDK floor", ">=22", ">=22", false],
+    ["project floor with a minor inside the CDK floor line", ">=22.13.0", ">=22", false],
     ["project floor below the CDK floor", ">=20", ">=22", true],
+    ["project floor spanning the line below the CDK floor", "^20.19.0 || ^22.13.0", ">=22", true],
     ["project floor above the CDK floor", ">=24", ">=22", false],
-    ["no project floor declared", null, ">=22", false],
+    ["no project floor declared", null, ">=22", true],
+    ["no project floor declared beside a clean dependency", null, "^22.13.0", true],
   ];
 
   let failures = 0;
@@ -790,8 +809,8 @@ function main() {
       console.error(describeViolation(violation, floorMajor, floorSpec));
     }
     fail(
-      `${violations.length} declared engine range(s) in ${lockfiles.length} CDK lockfiles conflict ` +
-        `with the Node ${floorMajor} floor`,
+      `${violations.length} engine floor violation(s) in ${lockfiles.length} CDK lockfiles against ` +
+        `the Node ${floorMajor} floor`,
     );
   }
 
