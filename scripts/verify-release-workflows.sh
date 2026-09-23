@@ -95,19 +95,25 @@ def require_job_contains(path: str, job_name: str, needle: str, description: str
         )
 
 
+STEP_START = re.compile(r"(?m)^      - ")
 STEP_HEADER = re.compile(r"(?m)^      - name: (?P<name>.*)$")
 
 
 def workflow_step_blocks(text: str):
-    """(step_name, step_text) for every step of a workflow, bounded by the next step or job."""
-    markers = [(match.start(), match.group("name").strip()) for match in STEP_HEADER.finditer(text)]
+    """(step_name, step_text) for every step of a workflow, bounded by the next step or job.
+
+    Bounds use `- ` step markers, not only named steps, so a step without a name (`- uses:`)
+    is a block of its own rather than being folded into the step above it.
+    """
+    starts = [match.start() for match in STEP_START.finditer(text)]
+    names = {match.start(): match.group("name").strip() for match in STEP_HEADER.finditer(text)}
     blocks = []
-    for position, (start, name) in enumerate(markers):
-        end = markers[position + 1][0] if position + 1 < len(markers) else len(text)
+    for position, start in enumerate(starts):
+        end = starts[position + 1] if position + 1 < len(starts) else len(text)
         next_job = re.search(r"\n  [A-Za-z0-9_-]+:\n", text[start:])
         if next_job:
             end = min(end, start + next_job.start())
-        blocks.append((name, text[start:end]))
+        blocks.append((names.get(start, ""), text[start:end]))
     return blocks
 
 
