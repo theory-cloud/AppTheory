@@ -96,7 +96,29 @@ def require_job_contains(path: str, job_name: str, needle: str, description: str
 
 
 STEP_START = re.compile(r"(?m)^      - ")
-STEP_HEADER = re.compile(r"(?m)^      - name: (?P<name>.*)$")
+STEP_HEADER = re.compile(r"(?m)^      - name[ \t]*:[ \t]*(?P<name>.*)$")
+FLOW_STYLE_STEP = re.compile(r"(?m)^      - \{")
+
+
+def non_canonical_keys(lines):
+    """(line_number, text) for key lines that are not spelled in the canonical form.
+
+    YAML accepts `key : value`, `"key": value` and an explicit `? key` line as the same mapping
+    key, so a reader that matches `^key:` does not see the first two at all. Every reader here
+    tolerates the pre-colon whitespace, and any of these spellings at a key's own indentation is
+    refused as well, so a key this guard does not enumerate cannot hide either. The pinned wiring
+    is always canonical: `key: value` at the key's indentation.
+    """
+    found = []
+    for index, line in enumerate(lines):
+        for prefix in KEY_LINE_PREFIXES:
+            if not line.startswith(prefix):
+                continue
+            rest = line[len(prefix) :]
+            if any(form.match(rest) for form in NON_CANONICAL_KEY_FORMS):
+                found.append((index + 1, line.strip()))
+            break
+    return found
 
 
 def workflow_step_blocks(text: str):
@@ -161,6 +183,9 @@ META_GUARD_WORKFLOWS = (
 # neither of those decides the step's exit status.
 PAIRING_USAGE_FLAGS = re.compile(r"(?:^|\s)(-h|--help|--usage)(?=\s|$)")
 PAIRING_FAIL_CLOSED_TAIL = re.compile(r"^(?:return|exit)\s+[1-9][0-9]*$")
+# A call site that ends with `|| exit N` is fail-closed whatever surrounds it, because `exit` in a
+# function leaves the shell rather than handing a status back to a caller bash may have exempted.
+EXIT_TAIL = re.compile(r"^exit\s+[1-9][0-9]*$")
 
 # An invocation may only carry one of these literal argument vectors. GitHub substitutes
 # `${{ }}` and expands variables before bash parses the line, so an argument the guard
@@ -194,21 +219,81 @@ SHADOWING_COMMANDS = (
     "exit",
     "return",
 )
-SHELL_STATE_KEYS = ("PATH", "BASH_ENV", "ENV", "SHELLOPTS")
+# Variables that decide which program a later command runs, or how a shell starts: PATH resolves
+# `bash` itself, and CDPATH can send a relative `cd` - such as the `cd "$(dirname "$0")/.."` every
+# guarded script opens with - to a different directory. BASH_ENV, ENV, SHELLOPTS and BASHOPTS are
+# read by a shell as it starts, so they can install code or shell options ahead of the invocation.
+# None of them is set in the pinned wiring at any level - workflow, job, step or invoking script -
+# apart from the gov verifier's own toolchain export, which is pinned by exact statement text in
+# SHELL_STATE_EXEMPTIONS. BASH_FUNC_* is matched by prefix, because bash exports one variable per
+# exported function under that prefix.
+SHELL_SEMANTICS_VARIABLES = ("PATH", "CDPATH", "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS")
+SHELL_STATE_KEYS = SHELL_SEMANTICS_VARIABLES
 
 SHELL_OPENERS = ("if", "while", "until", "for", "case")
 SHELL_CLOSERS = ("fi", "done", "esac")
 HEREDOC_START = re.compile(
     r"(?<!<)<<(?!<)-?[ \t]*(?P<quote>['\"]?)(?P<marker>[A-Za-z_][A-Za-z0-9_]*)(?P=quote)"
 )
-SHELL_SEMANTICS_ENV_KEYS = ("BASH_ENV", "ENV", "SHELLOPTS")
+SHELL_SEMANTICS_ENV_KEYS = SHELL_SEMANTICS_VARIABLES
 # GitHub's built-in `bash` shell expands to `bash --noprofile --norc -eo pipefail {0}`,
 # so the bare keyword keeps errexit while an explicit command template has to prove it.
 SHELL_ERREXIT_FLAG = re.compile(r"(?:^|\s)-[A-Za-z]*e[A-Za-z]*(?=\s|$)")
 # `<<:` is a YAML merge key. GitHub Actions does not honour one today, so it is a dead end
 # there, but this guard refuses the document rather than depending on that.
 MERGE_KEY = re.compile(r"(?m)^[ \t]*<<[ \t]*:")
+# YAML forms this text-level classifier cannot follow. An alias re-points a key's value at a node
+# defined elsewhere in the document (`run: *weakened`), and a second document is a file GitHub
+# refuses to load as one workflow, so the two would be read differently by the guard and by the
+# runner. Both are refused outright rather than read past.
+YAML_ALIAS = re.compile(
+    r"(?m)(?::[ \t]+|^[ \t]*-[ \t]+|\[|\{|,[ \t]*)\*[A-Za-z_][A-Za-z0-9_-]*[ \t]*(?:$|[,}\]])"
+)
+DOCUMENT_SEPARATOR = re.compile(r"(?m)^---[ \t]*$")
+# YAML spells `key : value` and `key: value` as the same key, so a reader that matches `^key:`
+# does not see the first form at all. Every key reader below tolerates the whitespace, and these
+# forms at a key's own indentation are additionally refused, so a key the guard does not enumerate
+# cannot hide either. Longest prefix first, so the step-key indent is not mistaken for the job-key
+# indent of the four spaces it starts with.
+KEY_LINE_PREFIXES = ("        ", "      - ", "    ")
+NON_CANONICAL_KEY_FORMS = (
+    re.compile(r"\?[ \t]"),  # an explicit `? key` line
+    re.compile(r"[\"'][^\"']*[\"'][ \t]*:"),  # a quoted `"key": value`
+    re.compile(r"[A-Za-z_][A-Za-z0-9_-]*[ \t]+:"),  # `key : value`
+)
 GITHUB_EXPRESSION = re.compile(r"\$\{\{")
+
+# `verify_release_pairing_postcondition` in the release publisher is the one function a pairing
+# invocation may sit inside, and its call sites are classified in full: every call has to be a
+# fail-closed one, and any other function that holds the invocation is refused rather than guessed
+# at, so an added `gate() { ... }` shape fails closed.
+PAIRING_FUNCTION_HOSTS = (
+    {
+        "path": "scripts/verify-release-publish-postcondition.sh",
+        "function": "verify_release_pairing_postcondition",
+        "kind": "direct",
+    },
+)
+# The gov verifier dispatches each check by name through `run_check`, which evaluates the command
+# in a subshell that re-enables `set -euo pipefail`, so the invocation inside
+# `check_release_lifecycle_invariants` is reached through a dispatch the guard cannot follow by
+# name. The dispatch is pinned here as exact text and must itself be a governed statement; any
+# other statement that expands the dispatch variable has to be governed too.
+META_GUARD_FUNCTION_HOSTS = (
+    {
+        "path": "gov-infra/verifiers/gov-verify-rubric.sh",
+        "function": "check_release_lifecycle_invariants",
+        "kind": "indirect",
+        "variable": "CMD_RELEASE_LIFECYCLE",
+        "assignment": 'CMD_RELEASE_LIFECYCLE="check_release_lifecycle_invariants"',
+        "dispatch": 'run_check "CMP-4" "Compliance" "$CMD_RELEASE_LIFECYCLE"',
+        # `run_check` evaluates the command in a subshell that re-enables errexit, so the evaluated
+        # check fails closed. Deleting that line - or softening it - would silently turn a failing
+        # check into a reported PASS, so the exact statement is pinned inside the function.
+        "dispatch_function": "run_check",
+        "dispatch_setup": "set -euo pipefail",
+    },
+)
 
 # Each guarded script is classified the same way: which steps and shell scripts may invoke
 # it, which conditionals those call sites are pinned to, and which literal argument vectors
@@ -244,6 +329,10 @@ PAIRING_SPEC = {
         (".github/workflows/release-pr.yml", PAIRING_STEP_NAME, RELEASE_PR_STEP_CONDITION),
     ),
     "shell_invokers": PAIRING_SHELL_INVOKERS,
+    # `verify_release_pairing_postcondition` is the release publisher's post-publish leg, whose
+    # call sites are pinned here: every call has to be a fail-closed one, and any other function
+    # that tries to hold the invocation is refused rather than guessed at.
+    "function_hosts": PAIRING_FUNCTION_HOSTS,
 }
 META_GUARD_SPEC = {
     "label": "release-workflow meta-guard",
@@ -257,9 +346,22 @@ META_GUARD_SPEC = {
         (".github/workflows/prerelease.yml", META_GUARD_STEP_PREMAIN, None),
         (".github/workflows/release.yml", META_GUARD_STEP_MAIN, RELEASE_MAIN_PREFLIGHT_IF),
     ),
-    # gov-verify-rubric.sh legitimately exports PATH for its pinned toolchain and installs a
-    # RETURN trap, so only its invocation shape is classified, never its shell state.
+    # gov-verify-rubric.sh is a generated verifier whose shell state is checked like any other,
+    # exempting only the two constructs it legitimately needs - the pinned toolchain PATH export
+    # and the RETURN trap that removes a scratch file - each named by exact statement text. Its
+    # `set +e` / `set -e` pairs around individual commands are handled by scoping the errexit
+    # check to the region that can actually run the invocation (see errexit_findings).
     "shell_invokers": ("scripts/verify-release-gates.sh", "gov-infra/verifiers/gov-verify-rubric.sh"),
+    "function_hosts": META_GUARD_FUNCTION_HOSTS,
+}
+# Statements the gov verifier legitimately needs, pinned by exact text. Anything else - a different
+# PATH value, another trap, a shadowing definition - is classified normally, so the exemption
+# cannot be widened into a general licence.
+SHELL_STATE_EXEMPTIONS = {
+    "gov-infra/verifiers/gov-verify-rubric.sh": (
+        'export PATH="${GOV_TOOLS_BIN}:${GOV_TOOLS_PY_BIN}:${GOV_TOOLS_PY_RUNTIME_BIN}:${PATH}"',
+        "trap 'rm -f \"${tmp}\"' RETURN",
+    ),
 }
 GUARDED_WORKFLOWS = tuple(dict.fromkeys(PAIRING_WORKFLOWS + META_GUARD_WORKFLOWS))
 GUARDED_SHELL_INVOKERS = tuple(
@@ -269,7 +371,12 @@ GUARDED_FILES = GUARDED_WORKFLOWS + GUARDED_SHELL_INVOKERS
 
 
 def split_shell_comment(line: str):
-    """Split a shell line into (code, comment) at the first unquoted word-initial `#`."""
+    """Split a shell line into (code, comment) at the first unquoted word-initial `#`.
+
+    Quoting follows bash, including ANSI-C quoting: `$'...'` honours backslash escapes, so
+    `$'it\\'s'` is one word and does not end at the escaped apostrophe, while `$"..."` is an
+    ordinary double-quoted string and a backslash inside a plain `'...'` is literal.
+    """
     code = []
     state = None
     index = 0
@@ -278,6 +385,13 @@ def split_shell_comment(line: str):
         if state == "single":
             code.append(char)
             if char == "'":
+                state = None
+        elif state == "ansi":
+            code.append(char)
+            if char == "\\" and index + 1 < len(line):
+                index += 1
+                code.append(line[index])
+            elif char == "'":
                 state = None
         elif state == "double":
             if char == "\\" and index + 1 < len(line):
@@ -289,6 +403,11 @@ def split_shell_comment(line: str):
                 if char == '"':
                     state = None
         elif char == "\\" and index + 1 < len(line):
+            code.append(char)
+            index += 1
+            code.append(line[index])
+        elif line.startswith("$'", index):
+            state = "ansi"
             code.append(char)
             index += 1
             code.append(line[index])
@@ -331,7 +450,19 @@ def split_shell_statements(code: str):
             current.append(code[index])
             if code[index] == '"':
                 state = None
+        elif state == "ansi":
+            current.append(char)
+            if char == "\\" and index + 1 < len(code):
+                index += 1
+                current.append(code[index])
+            elif char == "'":
+                state = None
         elif char == "\\" and index + 1 < len(code):
+            current.append(char)
+            index += 1
+            current.append(code[index])
+        elif code.startswith("$'", index):
+            state = "ansi"
             current.append(char)
             index += 1
             current.append(code[index])
@@ -387,7 +518,10 @@ def scan_quotes(text: str, stack: list):
 
     The stack tracks nesting, because a quoted shell word can contain a command substitution
     that starts its own quoting context: in `x="$(awk '...')"` the embedded program is a
-    single-quoted word inside a substitution inside a double-quoted string.
+    single-quoted word inside a substitution inside a double-quoted string. ANSI-C quoting
+    (`$'...'`) is its own context, because a backslash there escapes the next character: without
+    that, `$'it\\'s'` would close at the escaped apostrophe and leave the scanner believing a
+    single quote is still open, so every later line would be read as data instead of code.
     """
     index = 0
     started_open = bool(stack)
@@ -396,6 +530,11 @@ def scan_quotes(text: str, stack: list):
         top = stack[-1] if stack else None
         if top == "single":
             if char == "'":
+                stack.pop()
+        elif top == "ansi":
+            if char == "\\" and index + 1 < len(text):
+                index += 1
+            elif char == "'":
                 stack.pop()
         elif top == "double":
             if char == "\\" and index + 1 < len(text):
@@ -410,11 +549,17 @@ def scan_quotes(text: str, stack: list):
                 index += 1
             elif char == ")":
                 stack.pop()
+            elif text.startswith("$'", index):
+                stack.append("ansi")
+                index += 1
             elif char == "'":
                 stack.append("single")
             elif char == '"':
                 stack.append("double")
         elif char == "\\" and index + 1 < len(text):
+            index += 1
+        elif text.startswith("$'", index):
+            stack.append("ansi")
             index += 1
         elif char == "'":
             stack.append("single")
@@ -479,27 +624,320 @@ def shell_statements(body: str):
             yield line_number, statement, after
 
 
-def shell_errexit_flags(body: str):
-    """(enabled, disabled) for errexit across a shell body's `set` statements."""
-    enabled = False
-    disabled = False
-    for _line_number, statement, _after in shell_statements(body):
-        words = statement.split()
-        if not words or words[0] != "set":
+def normalize_statement(statement: str) -> str:
+    """A statement's text with runs of whitespace collapsed, so two spellings compare equal."""
+    return " ".join(statement.split())
+
+
+def unquoted_view(text: str) -> str:
+    """`text` with every quoted region blanked, so only unquoted words and braces are read.
+
+    A glob, a parameter expansion or a brace inside quotes is not a word the shell will run and
+    not a block boundary, so it must not be read as one. Quoting follows bash here too, which
+    matters for ANSI-C words: `$'a\\'b'` is one word, not a quote that ends early.
+    """
+    out = []
+    state = None
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if state == "single":
+            if char == "'":
+                state = None
+            out.append(" ")
+        elif state == "ansi":
+            if char == "\\" and index + 1 < len(text):
+                index += 1
+            elif char == "'":
+                state = None
+            out.append(" ")
+        elif state == "double":
+            if char == "\\" and index + 1 < len(text):
+                index += 1
+            elif char == '"':
+                state = None
+            out.append(" ")
+        elif char == "\\" and index + 1 < len(text):
+            out.append(" ")
+            index += 1
+            out.append(" ")
+        elif text.startswith("$'", index):
+            state = "ansi"
+            out.append(" ")
+            index += 1
+            out.append(" ")
+        elif char == "'":
+            state = "single"
+            out.append(" ")
+        elif char == '"':
+            state = "double"
+            out.append(" ")
+        else:
+            out.append(char)
+        index += 1
+    return "".join(out)
+
+
+# A function definition opens a body that bash treats as one unit for errexit: when the function is
+# entered from an `if` test or a `||`/`&&`/`|` list, -e is ignored for every command inside it.
+FUNCTION_OPEN = re.compile(
+    r"^(?:function[ \t]+)?(?P<name>[^\s(=]+)[ \t]*\([ \t]*\)[ \t]*(?P<rest>.*)$"
+)
+
+
+def function_frames(body: str):
+    """(name, open_line, close_line) for every function definition that opens a body.
+
+    A one-line definition whose braces balance (`bash() { return 0; }`) opens nothing and is not a
+    frame; a definition that opens a block is, and it closes on the statement where the brace
+    depth returns to where it started.
+    """
+    frames = []
+    stack = []
+    depth = 0
+    pending = None
+    for line_number, line in enumerate(join_shell_continuations(mask_shell_data(body.splitlines())), 1):
+        code, _comment = split_shell_comment(line)
+        for _separator, statement, _after in split_shell_statements(code):
+            view = unquoted_view(statement)
+            if pending is not None:
+                if normalize_statement(statement) == "{":
+                    stack.append([pending, line_number, depth])
+                    pending = None
+                    depth += view.count("{") - view.count("}")
+                    continue
+                # A definition with no body on its line only opens a frame when the next statement
+                # is its `{`; anything else means the definition did not open a block.
+                pending = None
+            definition = FUNCTION_OPEN.match(statement)
+            if definition:
+                if "{" in view:
+                    stack.append([definition.group("name"), line_number, depth])
+                elif not view.strip():
+                    pending = definition.group("name")
+            depth += view.count("{") - view.count("}")
+            while stack and depth <= stack[-1][2]:
+                name, open_line, _open_depth = stack.pop()
+                frames.append((name, open_line, line_number))
+    while stack:
+        name, open_line, _open_depth = stack.pop()
+        frames.append((name, open_line, None))
+    return frames
+
+
+def shell_statement_contexts(body: str):
+    """(line, index, separator_before, statement, separator_after, depth, function, statements).
+
+    `depth` is how many conditional or loop blocks the statement runs inside - the nesting that
+    makes bash ignore errexit - and `function` names the function definition the line sits in, or
+    None at file level. `statements` is the statement list the statement belongs to, so a caller
+    can see what follows it on the same line.
+    """
+    containing = {}
+    for name, open_line, close_line in function_frames(body):
+        end = close_line if close_line is not None else 10**9
+        for line in range(open_line, end + 1):
+            containing.setdefault(line, name)
+    depth = 0
+    for line_number, line in enumerate(join_shell_continuations(mask_shell_data(body.splitlines())), 1):
+        code, _comment = split_shell_comment(line)
+        statements = split_shell_statements(code)
+        for index, (separator, statement, after) in enumerate(statements):
+            words = statement.split()
+            first = words[0] if words else ""
+            if first in SHELL_CLOSERS:
+                depth = max(depth - 1, 0)
+            yield (
+                line_number,
+                index,
+                separator,
+                statement,
+                after,
+                depth,
+                containing.get(line_number),
+                statements,
+            )
+            if first in SHELL_OPENERS:
+                depth += 1
+
+
+def governed_position(index, statement, after, statements, depth):
+    """True when a statement's exit status reaches the shell's errexit check.
+
+    It has to be first in its list, unnegated, outside a conditional or loop block, and either last
+    on its line or followed only by a tolerated fail-closed `|| return N` / `|| exit N` tail with
+    nothing after it in the same list.
+    """
+    if depth != 0 or index != 0 or statement.startswith("!"):
+        return False
+    if index + 1 < len(statements):
+        separator, next_statement, next_after = statements[index + 1]
+        if separator != "||" or not PAIRING_FAIL_CLOSED_TAIL.match(
+            normalize_statement(next_statement)
+        ):
+            return False
+        return next_after in (None, ";") and index + 2 >= len(statements)
+    return after in (None, ";")
+
+
+def fail_closed_exit_call(index, statement, after, statements):
+    """True when a statement ends with a `|| exit N` tail that nothing else follows in its list.
+
+    `exit` in a function leaves the shell, so this tail propagates a failure no matter which
+    conditional or list context the call sits in - unlike `|| return N`, which hands the status
+    back to a caller that bash may have exempted from errexit.
+    """
+    if index != 0 or statement.startswith("!"):
+        return False
+    if index + 1 >= len(statements):
+        return False
+    separator, next_statement, next_after = statements[index + 1]
+    if separator != "||" or not EXIT_TAIL.match(normalize_statement(next_statement)):
+        return False
+    return next_after in (None, ";") and index + 2 >= len(statements)
+
+
+def pinned_call_site_findings(host, contexts, spec, where):
+    """Findings for the call sites of a function the spec pins as a direct invocation host.
+
+    Every occurrence of the function's name in the file has to be either its own definition or a
+    call that fails closed in its own right, and at least one such call has to exist. A call is
+    fail-closed when it sits at file level - where errexit governs it - or when it carries a
+    `|| exit N` tail anywhere, because that leaves the shell whatever the caller's context is. A
+    call the guard cannot place - `if f; then`, `! f`, `f || true`, a plain call inside a wrapper
+    function - is reported rather than counted: a wrapper can be entered from a condition, and
+    bash then ignores errexit for everything inside it, host and wrapper alike.
+    """
+    function = host["function"]
+    token = re.compile(rf"(?<![A-Za-z0-9_./-]){re.escape(function)}(?![A-Za-z0-9_.-])")
+    findings = []
+    calls = 0
+    for (
+        line_number,
+        index,
+        _before,
+        statement,
+        after,
+        depth,
+        function_of_line,
+        statements,
+    ) in contexts:
+        if not token.search(statement):
             continue
-        for index in range(1, len(words)):
-            word = words[index]
-            if word[:1] not in ("+", "-"):
-                continue
-            cluster = word[1:]
-            named = cluster == "o" and index + 1 < len(words) and words[index + 1] == "errexit"
-            if not named and "e" not in cluster:
-                continue
-            if word.startswith("+"):
-                disabled = True
-            else:
-                enabled = True
-    return enabled, disabled
+        if FUNCTION_OPEN.match(statement):
+            continue
+        top_level_governed = function_of_line is None and governed_position(
+            index, statement, after, statements, depth
+        )
+        if top_level_governed or fail_closed_exit_call(index, statement, after, statements):
+            calls += 1
+            continue
+        findings.append(
+            f"{where}:{line_number}: the {spec['label']} invocation host {function!r} is called from "
+            f"a position that is not fail-closed ({statement!r}), so bash could ignore errexit for "
+            f"everything inside it"
+        )
+    if not calls:
+        findings.append(
+            f"{where}: the pinned {spec['label']} invocation host {function!r} has no fail-closed "
+            "call site"
+        )
+    return findings
+
+
+def function_host_findings(contexts, spec, path, where):
+    """Findings for a guarded invocation that runs inside a function definition body.
+
+    bash ignores errexit for every command in a function body when the function is entered from an
+    `if`, `while` or `until` test, from a `&&`, `||` or `|` list that is not the command deciding
+    it, from a negation, or from a command substitution - and whatever the function calls inherits
+    that. So a function body may hold a guarded invocation only where the spec pins that function
+    as a host and the pin's own evidence checks out: the release publisher's post-publish leg,
+    whose call sites are classified directly, and the gov verifier's check, which is reached
+    through the pinned indirect dispatch. Any other function holding an invocation is refused
+    rather than guessed at, so a new `gate() { ... }` shape fails closed.
+    """
+    hosts = {}
+    for context in contexts:
+        if context[6] is not None and spec["script"] in context[3]:
+            hosts.setdefault(context[6], context[0])
+    if not hosts:
+        return []
+    pinned = {
+        host["function"]: host
+        for host in spec.get("function_hosts", ())
+        if host["path"] == path
+    }
+    findings = []
+    for function in sorted(hosts):
+        line_number = hosts[function]
+        host = pinned.get(function)
+        if host is None:
+            findings.append(
+                f"{where}:{line_number}: the {spec['label']} invocation runs inside the function "
+                f"{function!r}, which is not a pinned invocation host; bash ignores errexit for "
+                f"commands in a function entered from a condition, so an unpinned host cannot be "
+                f"proved fail-closed"
+            )
+            continue
+        if host["kind"] == "indirect":
+            findings.extend(pinned_dispatch_findings(host, contexts, where))
+        else:
+            findings.extend(pinned_call_site_findings(host, contexts, spec, where))
+    return findings
+
+
+def pinned_dispatch_findings(host, contexts, where):
+    """Findings for the pinned indirect dispatch that reaches a function-embedded invocation.
+
+    The pin says the file reaches this function by name through one exact dispatch statement, and
+    that the function running that dispatch re-enables errexit around it - which is what makes the
+    invocation fail-closed even though bash cannot follow the dispatch by name. Both halves are
+    checked rather than assumed: the assignment and the dispatch statement have to be present, every
+    statement that expands the dispatch variable has to be a governed one, and the dispatch function
+    has to contain an errexit-enabling statement of its own.
+    """
+    findings = []
+    variable = host["variable"]
+    pattern = re.compile(r"\$\{?" + re.escape(variable) + r"\}?")
+    texts = [normalize_statement(context[3]) for context in contexts]
+    if texts.count(host["assignment"]) != 1:
+        findings.append(
+            f"{where}: the pinned dispatch assignment {host['assignment']!r} for "
+            f"{host['function']!r} is missing"
+        )
+    dispatch_seen = False
+    for line_number, index, _before, statement, after, depth, _function, statements in contexts:
+        if not pattern.search(statement):
+            continue
+        if normalize_statement(statement) == host["dispatch"]:
+            dispatch_seen = True
+        if not governed_position(index, statement, after, statements, depth):
+            findings.append(
+                f"{where}:{line_number}: {host['function']!r} is dispatched through "
+                f"${variable} from a position that is not fail-closed ({statement!r}), so bash "
+                f"would not apply errexit to the command it runs"
+            )
+    if not dispatch_seen:
+        findings.append(
+            f"{where}: the pinned dispatch {host['dispatch']!r} that reaches "
+            f"{host['function']!r} is missing"
+        )
+    dispatch_function = host.get("dispatch_function")
+    dispatch_setup = host.get("dispatch_setup")
+    if dispatch_function and dispatch_setup:
+        inside = any(
+            normalize_statement(context[3]) == dispatch_setup
+            and context[6] == dispatch_function
+            for context in contexts
+        )
+        if not inside:
+            findings.append(
+                f"{where}: the pinned dispatch function {dispatch_function!r} no longer contains the "
+                f"pinned {dispatch_setup!r} that makes the command it evaluates fail closed, so a "
+                f"failing {host['function']!r} would be reported as a PASS"
+            )
+    return findings
 
 
 FUNCTION_DEFINITION = re.compile(r"^(?:function[ \t]+)?(?P<name>[^\s(=]+)[ \t]*\([ \t]*\)")
@@ -538,22 +976,21 @@ def assignment_target(statement: str):
     return None
 
 
-def shell_state_findings(body: str, where: str, spec):
+def shell_state_findings(body: str, where: str, spec, exemptions=()):
     """Findings for shell state in one body that could mask a failing guarded invocation.
 
-    A guarded invocation is only as fail-closed as the shell it runs in: errexit cleared
-    anywhere in the body, a function or alias shadowing `bash`/`exit`/`set`/the script path,
-    a trap that replaces the failing status, or a reassigned PATH/BASH_ENV/ENV/SHELLOPTS all
-    let a failing invocation leave the step green. None of them appear in the pinned wiring.
+    A guarded invocation is only as fail-closed as the shell it runs in: a function or alias
+    shadowing `bash`/`exit`/`set`/the script path, a trap that replaces the failing status, or a
+    reassigned PATH/CDPATH/BASH_ENV/ENV/SHELLOPTS/BASHOPTS all let a failing invocation leave the
+    step green. None of them appear in the pinned wiring, except the gov verifier's own toolchain
+    export and RETURN trap, which are named by exact statement text in `exemptions`. The statement
+    has to match the whole pinned text, so the exemption cannot be widened by editing the value.
     """
     findings = []
-    _enabled, disabled = shell_errexit_flags(body)
-    if disabled:
-        findings.append(
-            f"{where}: clears errexit with `set +e`, so a failing {spec['label']} invocation "
-            "would not fail closed"
-        )
+    exempt = {normalize_statement(statement) for statement in exemptions}
     for line_number, statement, _after in shell_statements(body):
+        if normalize_statement(statement) in exempt:
+            continue
         definition = FUNCTION_DEFINITION.match(statement) or ALIAS_DEFINITION.match(statement)
         if definition and shadowing_target(definition.group("name"), spec):
             findings.append(
@@ -575,7 +1012,80 @@ def shell_state_findings(body: str, where: str, spec):
     return findings
 
 
-def classify_invocations(body: str, where: str, spec):
+def invocation_functions(body: str, spec):
+    """The function definitions whose bodies contain an invocation of the guarded script."""
+    return {
+        context[6]
+        for context in shell_statement_contexts(body)
+        if context[6] and spec["script"] in context[3]
+    }
+
+
+def scoped_errexit(contexts, scope_functions):
+    """(enabled, disabled_line) for errexit over the statements that can run the invocation."""
+    enabled = False
+    disabled_line = None
+    for (
+        line_number,
+        _index,
+        _before,
+        statement,
+        _after,
+        _depth,
+        function,
+        _statements,
+    ) in contexts:
+        if function is not None and function not in scope_functions:
+            continue
+        words = statement.split()
+        if not words or words[0] != "set":
+            continue
+        for word_index in range(1, len(words)):
+            word = words[word_index]
+            if word[:1] not in ("+", "-"):
+                continue
+            cluster = word[1:]
+            named = (
+                cluster == "o"
+                and word_index + 1 < len(words)
+                and words[word_index + 1] == "errexit"
+            )
+            if not named and "e" not in cluster:
+                continue
+            if word.startswith("+"):
+                disabled_line = disabled_line if disabled_line is not None else line_number
+            else:
+                enabled = True
+    return enabled, disabled_line
+
+
+def errexit_findings(body: str, where: str, spec, scope_functions, require_enabled):
+    """Findings for errexit in the region that can actually run the guarded invocation.
+
+    `set +e` anywhere in a file is not the question: the gov verifier captures exit codes by
+    clearing errexit around individual commands in functions of its own, far from the invocation.
+    What decides the invocation is the region that executes it - the file-level statements plus the
+    body of the function that holds it - so `set +e` there is a finding and one in an unrelated
+    function is not. A workflow step body reaches bash through GitHub's
+    `bash --noprofile --norc -eo pipefail {0}` template, so only a shell invoker that has to
+    establish errexit itself is required to contain a `set -e`.
+    """
+    enabled, disabled_line = scoped_errexit(shell_statement_contexts(body), scope_functions)
+    findings = []
+    if require_enabled and not enabled:
+        findings.append(
+            f"{where}: does not set errexit, so a failing {spec['label']} invocation would not fail "
+            "the gate"
+        )
+    if disabled_line is not None:
+        findings.append(
+            f"{where}:{disabled_line}: clears errexit with `set +e` in the shell that runs the "
+            f"{spec['label']} invocation, so a failing invocation would not fail closed"
+        )
+    return findings
+
+
+def classify_invocations(body: str, where: str, spec, path=None):
     """Findings for every invocation of one guarded script in a run block or shell script.
 
     An invocation is accepted only as the pinned fail-closed call: a first-on-line,
@@ -583,13 +1093,16 @@ def classify_invocations(body: str, where: str, spec):
     literal argument vector, and is not followed by anything that decides the result in its
     place. Anything else - negated, commented out, wrapped in a condition or loop, chained
     into another list, backgrounded, quoted, reached through a variable or a `${{ }}`
-    expression, or taking a usage-exit flag - is reported instead of passing.
+    expression, or taking a usage-exit flag - is reported instead of passing. An invocation
+    inside a function definition body is accepted only for a function the spec pins as a host,
+    with that host's own call sites or dispatch classified (see `function_host_findings`),
+    because bash ignores errexit for everything in a function entered from a condition.
     """
     findings = []
     mentions = 0
     real = 0
+    contexts = list(shell_statement_contexts(body))
     candidates = []
-    depth = 0
     for line_number, line in enumerate(join_shell_continuations(mask_shell_data(body.splitlines())), 1):
         code, _comment = split_shell_comment(line)
         if spec["script"] not in code and spec["script"] in line:
@@ -598,17 +1111,10 @@ def classify_invocations(body: str, where: str, spec):
                 f"{where}:{line_number}: the {spec['label']} script is named in a comment, "
                 f"not invoked ({line.strip()!r})"
             )
-        statements = split_shell_statements(code)
-        for index, (separator, statement, _after) in enumerate(statements):
-            words = statement.split()
-            first = words[0] if words else ""
-            if first in SHELL_CLOSERS:
-                depth = max(depth - 1, 0)
-            if spec["script"] in statement:
-                mentions += 1
-                candidates.append((line_number, index, separator, statement, depth, statements))
-            if first in SHELL_OPENERS:
-                depth += 1
+    for line_number, index, separator, statement, _after, depth, _function, statements in contexts:
+        if spec["script"] in statement:
+            mentions += 1
+            candidates.append((line_number, index, separator, statement, depth, statements))
     for line_number, index, separator, statement, depth, statements in candidates:
         label = f"{where}:{line_number}"
         if depth != 0:
@@ -685,12 +1191,13 @@ def classify_invocations(body: str, where: str, spec):
                 )
         if tuple(args) != ("--self-test",):
             real += 1
+    findings.extend(function_host_findings(contexts, spec, path, where))
     return findings, real, mentions
 
 
 def workflow_job_block(text: str, job_name: str):
     match = re.search(
-        rf"(?ms)^  {re.escape(job_name)}:\n(?P<block>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        rf"(?ms)^  {re.escape(job_name)}[ \t]*:\n(?P<block>.*?)(?=^  [A-Za-z0-9_-]+[ \t]*:\n|\Z)",
         text,
     )
     return match.group("block") if match else None
@@ -699,7 +1206,7 @@ def workflow_job_block(text: str, job_name: str):
 def subtree_scalar(lines, index: int, key: str):
     """The value of `key:` anywhere below lines[index]'s indentation level."""
     parent_indent = len(lines[index]) - len(lines[index].lstrip())
-    pattern = re.compile(rf"^\s*{re.escape(key)}:\s*(?P<value>\S.*)$")
+    pattern = re.compile(rf"^\s*{re.escape(key)}[ \t]*:[ \t]*(?P<value>\S.*)$")
     for line in lines[index + 1 :]:
         if not line.strip():
             continue
@@ -712,7 +1219,12 @@ def subtree_scalar(lines, index: int, key: str):
 
 
 def find_key_index(lines, indent: int, key: str):
-    pattern = re.compile(rf"^ {{{indent}}}{re.escape(key)}:\s*(?P<value>.*)$")
+    """The first `key:` at one indentation level, tolerating YAML's `key : value` spelling.
+
+    YAML treats `key : value` and `key: value` as the same key, so a reader that requires the
+    colon to touch the key would simply not see the first form.
+    """
+    pattern = re.compile(rf"^ {{{indent}}}{re.escape(key)}[ \t]*:[ \t]*(?P<value>.*)$")
     for index, line in enumerate(lines):
         match = pattern.match(line)
         if match:
@@ -768,7 +1280,7 @@ def step_run_body(step_text: str):
 def env_keys_at(lines, indent: int):
     """Variable names declared under an `env:` mapping at one indentation level."""
     keys = []
-    marker = re.compile(rf"^ {{{indent}}}env:\s*$")
+    marker = re.compile(rf"^ {{{indent}}}env[ \t]*:[ \t]*$")
     for index, line in enumerate(lines):
         if not marker.match(line):
             continue
@@ -796,7 +1308,7 @@ def duplicate_keys(lines, indent: int):
     """Keys repeated at one mapping level: YAML keeps the last, so a duplicate can hide a value."""
     seen = set()
     duplicates = []
-    pattern = re.compile(rf"^ {{{indent}}}(?P<key>[A-Za-z_][A-Za-z0-9_-]*):")
+    pattern = re.compile(rf"^ {{{indent}}}(?P<key>[A-Za-z_][A-Za-z0-9_-]*)[ \t]*:")
     for line in lines:
         match = pattern.match(line)
         if not match:
@@ -809,7 +1321,9 @@ def duplicate_keys(lines, indent: int):
 
 def flow_style_mappings(lines, indent: int, key: str):
     """True when `key:` at one indentation level carries an inline flow mapping."""
-    return any(re.match(rf"^ {{{indent}}}{re.escape(key)}:\s*\S", line) for line in lines)
+    return any(
+        re.match(rf"^ {{{indent}}}{re.escape(key)}[ \t]*:[ \t]*\S", line) for line in lines
+    )
 
 
 def job_findings(read_text, spec, workflow, job, expected_job_if):
@@ -833,7 +1347,8 @@ def job_findings(read_text, spec, workflow, job, expected_job_if):
         )
     workflow_lines = text.splitlines()
     workflow_defaults_index = next(
-        (i for i, line in enumerate(workflow_lines) if re.match(r"^defaults:\s*$", line)), None
+        (i for i, line in enumerate(workflow_lines) if re.match(r"^defaults[ \t]*:[ \t]*$", line)),
+        None,
     )
     workflow_shell = (
         subtree_scalar(workflow_lines, workflow_defaults_index, "shell")
@@ -846,7 +1361,8 @@ def job_findings(read_text, spec, workflow, job, expected_job_if):
             f"{spec['label']}"
         )
     job_defaults_index = next(
-        (i for i, line in enumerate(job_lines) if re.match(r"^ {4}defaults:\s*$", line)), None
+        (i for i, line in enumerate(job_lines) if re.match(r"^ {4}defaults[ \t]*:[ \t]*$", line)),
+        None,
     )
     job_shell = (
         subtree_scalar(job_lines, job_defaults_index, "shell")
@@ -857,6 +1373,11 @@ def job_findings(read_text, spec, workflow, job, expected_job_if):
         findings.append(
             f"{workflow}: job {job!r} defaults shell {job_shell!r} drops errexit for the "
             f"{spec['label']}"
+        )
+    for line_number, text_line in non_canonical_keys(job_lines):
+        findings.append(
+            f"{workflow}: job {job!r} line {line_number} spells a key as {text_line!r}; YAML reads "
+            "`key : value` as `key: value`"
         )
     for key in duplicate_keys(job_lines, 4):
         findings.append(f"{workflow}: job {job!r} declares {key!r} more than once; YAML keeps the last value")
@@ -897,6 +1418,11 @@ def step_findings(spec, workflow, step_name, step_text, expected_step_if):
         findings.append(f"{where}: declares a flow-style env mapping this guard cannot classify")
     for key in shell_semantics_env_keys(step_lines, 8):
         findings.append(f"{where}: env {key!r} can change how the {spec['label']} is executed")
+    for line_number, text_line in non_canonical_keys(step_lines):
+        findings.append(
+            f"{where}: line {line_number} spells a key as {text_line!r}; YAML reads `key : value` "
+            "as `key: value`, so a reader that requires the colon to touch the key would miss it"
+        )
     for key in duplicate_keys(step_lines, 8):
         findings.append(
             f"{where}: declares {key!r} more than once; YAML keeps the last value and hides the first"
@@ -906,7 +1432,8 @@ def step_findings(spec, workflow, step_name, step_text, expected_step_if):
         findings.append(f"{where}: has no run body")
         return findings
     findings.extend(shell_state_findings(run_body, where, spec))
-    body_findings, real, mentions = classify_invocations(run_body, where, spec)
+    findings.extend(errexit_findings(run_body, where, spec, invocation_functions(run_body, spec), False))
+    body_findings, real, mentions = classify_invocations(run_body, where, spec, workflow)
     findings.extend(body_findings)
     if mentions == 0:
         findings.append(f"{where}: never invokes {spec['script']}")
@@ -923,7 +1450,9 @@ def check_workflow_steps(read_text, spec):
 
     Steps are discovered from the workflow text rather than from a fixed list, so a call site
     added to a new step is classified instead of being ignored, and a new step may not carry a
-    conditional the guard has no pin for.
+    conditional the guard has no pin for. A flow-style step mapping (`- {name: ..., run: ...}`) is
+    one line of YAML that no line-oriented reader can take apart, so a step written that way and
+    naming the guarded script is refused rather than skipped.
     """
     findings = []
     pinned_ifs = {(workflow, name): expected for workflow, name, expected in spec["workflow_steps"]}
@@ -931,6 +1460,13 @@ def check_workflow_steps(read_text, spec):
     for workflow in workflows:
         seen = set()
         for step_name, step_text in workflow_step_blocks(read_text(workflow)):
+            if FLOW_STYLE_STEP.match(step_text):
+                if spec["script"] in step_text:
+                    findings.append(
+                        f"{workflow}: a flow-style step mapping names {spec['script']} inside one "
+                        "line of YAML this guard cannot classify"
+                    )
+                continue
             run_body = step_run_body(step_text)
             if run_body is None or not body_mentions(run_body, spec["script"]):
                 continue
@@ -953,7 +1489,7 @@ def check_invocation_shapes(read_text):
         findings.extend(check_workflow_steps(read_text, spec))
         for path in spec["shell_invokers"]:
             text = read_text(path)
-            body_findings, real, mentions = classify_invocations(text, path, spec)
+            body_findings, real, mentions = classify_invocations(text, path, spec, path)
             findings.extend(body_findings)
             if mentions == 0:
                 findings.append(f"{path}: never invokes {spec['script']}")
@@ -962,19 +1498,40 @@ def check_invocation_shapes(read_text):
                     f"{path}: only a --self-test arm invokes {spec['script']}; "
                     f"the {spec['label']} itself is never verified"
                 )
-    for path in PAIRING_SHELL_INVOKERS:
-        text = read_text(path)
-        enabled, _disabled = shell_errexit_flags(text)
-        if not enabled:
-            findings.append(
-                f"{path}: does not set errexit, so a failing {PAIRING_SPEC['label']} invocation "
-                "would not fail the gate"
+            # The shell state is checked like any other body: the shell invoker has to establish
+            # errexit itself, and only the constructs named in SHELL_STATE_EXEMPTIONS are passed.
+            findings.extend(
+                shell_state_findings(text, path, spec, SHELL_STATE_EXEMPTIONS.get(path, ()))
             )
-        findings.extend(shell_state_findings(text, path, PAIRING_SPEC))
+            findings.extend(
+                errexit_findings(text, path, spec, invocation_functions(text, spec), True)
+            )
     for workflow in GUARDED_WORKFLOWS:
-        if MERGE_KEY.search(read_text(workflow)):
+        text = read_text(workflow)
+        if MERGE_KEY.search(text):
             findings.append(
                 f"{workflow}: declares a YAML merge key (`<<:`) this guard refuses to classify"
+            )
+        if DOCUMENT_SEPARATOR.search(text):
+            findings.append(
+                f"{workflow}: contains a YAML document separator; GitHub loads one workflow per "
+                "file, so a second document would be read differently by the runner"
+            )
+        if YAML_ALIAS.search(text):
+            findings.append(
+                f"{workflow}: uses a YAML alias, which re-points a value at a node defined "
+                "elsewhere; this guard reads literal text and cannot follow the reference"
+            )
+        workflow_lines = text.splitlines()
+        for key in shell_semantics_env_keys(workflow_lines, 0):
+            findings.append(
+                f"{workflow}: workflow-level env {key!r} can change how a guarded release-gate "
+                "invocation is executed"
+            )
+        if flow_style_mappings(workflow_lines, 0, "env"):
+            findings.append(
+                f"{workflow}: declares a workflow-level flow-style env mapping this guard cannot "
+                "classify"
             )
     return findings
 
@@ -994,6 +1551,10 @@ RELEASE_PR_STEP_IF = "        if: steps.release_pr.outputs.exists == 'true'\n"
 RELEASE_PR_STEP_HEAD = RELEASE_PR_STEP_IF + "        run: |\n" + CI_SELF_TEST
 RELEASE_BRANCH_BARE = f'{PAIRING_SCRIPT_PATH} --tag "${{expected_tag}}"\n'
 GATES_BARE = f"bash ./{PAIRING_SCRIPT_PATH}\n"
+GOV_VERIFIER = "gov-infra/verifiers/gov-verify-rubric.sh"
+GOV_CALL_ANCHOR = (
+    '  echo "==> release workflow invariants"\n  bash ./scripts/verify-release-workflows.sh\n'
+)
 
 # One attack per weakening shape. Each anchor is asserted to exist so a drifted fixture
 # fails the self-test loudly instead of silently dropping coverage.
@@ -1084,6 +1645,68 @@ SELF_TEST_ATTACKS = (
     ("unpinned new step invoking the meta-guard with `|| true`", ".github/workflows/ci.yml", CI_STEP_HEADER, "      - name: Unpinned extra gate\n        run: |\n" + CI_GUARD_BARE.rstrip("\n") + " || true\n" + CI_STEP_HEADER, "exit status does not govern"),
     ("unpinned new step invoking the pairing gate with `|| true`", ".github/workflows/ci.yml", CI_STEP_HEADER, "      - name: Unpinned pairing gate\n        run: |\n" + CI_BARE.rstrip("\n") + " || true\n" + CI_STEP_HEADER, "exit status does not govern"),
     ("unpinned new step carrying a conditional", ".github/workflows/ci.yml", CI_STEP_HEADER, "      - name: Unpinned conditional gate\n        if: always()\n        run: |\n" + CI_GUARD_BARE + CI_STEP_HEADER, "every step that invokes"),
+    # R3-1 - YAML reads `key : value` as `key: value`, so every key reader tolerates the
+    # whitespace, and a non-canonical key line at a key's own indentation is refused as well.
+    ("step-level `if : false` (pre-colon whitespace) after the run body", ".github/workflows/ci.yml", CI_STEP, CI_STEP + "        if : false\n", "not the pinned legitimate one"),
+    ("job-level `if : false` (pre-colon whitespace)", ".github/workflows/ci.yml", CI_JOB, "  release-security-gates:\n    if : false\n    name: Release/security gates\n", "not the pinned legitimate one"),
+    ("step-level `continue-on-error : true` (pre-colon whitespace)", ".github/workflows/ci.yml", CI_STEP, CI_STEP + "        continue-on-error : true\n", "continue-on-error"),
+    ("step-level `shell : bash {0}` (pre-colon whitespace)", ".github/workflows/ci.yml", CI_STEP, CI_STEP + "        shell : bash {0}\n", "drops errexit"),
+    ("step-level duplicate `run :` key (pre-colon whitespace)", ".github/workflows/ci.yml", CI_BARE, CI_BARE + f"        run : bash {PAIRING_SCRIPT_PATH} || true\n", "more than once"),
+    ("step-level `env :` with `PATH:` (pre-colon whitespace)", ".github/workflows/ci.yml", CI_STEP_RUN, CI_STEP_HEADER + "        env :\n          PATH: /tmp/evil\n        run: |\n", "env 'PATH'"),
+    ("step-level non-canonical key the guard does not enumerate", ".github/workflows/ci.yml", CI_STEP, CI_STEP + "        timeout-minutes : 5\n", "spells a key as"),
+    ("step-level quoted key `\"if\": false`", ".github/workflows/ci.yml", CI_STEP, CI_STEP + '        "if": false\n', "spells a key as"),
+    ("step-level quoted key `'if' : false`", ".github/workflows/ci.yml", CI_STEP, CI_STEP + "        'if' : false\n", "spells a key as"),
+    ("step-level explicit key `? if`", ".github/workflows/ci.yml", CI_STEP, CI_STEP + "        ? if\n        : false\n", "spells a key as"),
+    # R3-2 - ANSI-C quoting honours backslash escapes, so `$'it\'s ok'` closes where bash closes
+    # it instead of leaving a quote open that swallows every following line as data.
+    ("ANSI-C quoting hiding a `PATH` reassignment", ".github/workflows/ci.yml", CI_BARE, "          echo $'it\\'s ok'\n          PATH=/tmp/evil:$PATH\n          echo 'a' 'b'\n" + CI_BARE, "reassigns PATH"),
+    ("ANSI-C quoting hiding a weakened invocation", ".github/workflows/ci.yml", CI_BARE, "          echo $'it\\'s ok'\n" + f"          bash {PAIRING_SCRIPT_PATH} || true\n" + "          echo it is ok\n" + CI_BARE, "exit status does not govern"),
+    # R3-3 - bash ignores errexit for every command in a function entered from a condition, so a
+    # function body may hold a guarded invocation only where the spec pins that host.
+    ("invocation inside a function called from an `if` condition", ".github/workflows/ci.yml", CI_BARE, "          gate() {\n" + CI_BARE + "          }\n          if gate; then\n            :\n          fi\n", "not a pinned invocation host"),
+    ("invocation inside a function that is never called", ".github/workflows/ci.yml", CI_BARE, "          gate() {\n" + CI_BARE + "          }\n", "not a pinned invocation host"),
+    ("invocation inside a negated function call", ".github/workflows/ci.yml", CI_BARE, "          gate() {\n" + CI_BARE + "          }\n          ! gate\n", "not a pinned invocation host"),
+    ("invocation inside a function in a guarded shell invoker", "scripts/verify-release-branch.sh", RELEASE_BRANCH_BARE, f'gate() {{\n  {RELEASE_BRANCH_BARE}}}\nif gate; then\n  :\nfi\n', "not a pinned invocation host"),
+    ("pinned publisher host called with `|| true`", "scripts/verify-release-publish-postcondition.sh", 'verify_release_pairing_postcondition "${tag_name:-${expected_tag}}" || exit 1\n', 'verify_release_pairing_postcondition "${tag_name:-${expected_tag}}" || true\n', "not fail-closed"),
+    ("pinned publisher host called inside a command substitution", "scripts/verify-release-publish-postcondition.sh", 'verify_release_pairing_postcondition "${tag_name:-${expected_tag}}" || exit 1\n', 'x="$(verify_release_pairing_postcondition "${tag_name:-${expected_tag}}")"\n', "not fail-closed"),
+    ("pinned publisher host called plainly inside a wrapper function", "scripts/verify-release-publish-postcondition.sh", 'verify_release_pairing_postcondition "${tag_name:-${expected_tag}}" || exit 1\n', 'A() {\n  verify_release_pairing_postcondition "${tag_name:-${expected_tag}}"\n}\nif A; then\n  :\nfi\n', "not fail-closed"),
+    ("pinned publisher host with `|| return 1` inside a wrapper function", "scripts/verify-release-publish-postcondition.sh", 'verify_release_pairing_postcondition "${tag_name:-${expected_tag}}" || exit 1\n', 'A() {\n  verify_release_pairing_postcondition "${tag_name:-${expected_tag}}" || return 1\n}\nA\n', "not fail-closed"),
+    ("pinned indirect dispatch with a trailing `|| true`", "gov-infra/verifiers/gov-verify-rubric.sh", 'run_check "CMP-4" "Compliance" "$CMD_RELEASE_LIFECYCLE"\n', 'run_check "CMP-4" "Compliance" "$CMD_RELEASE_LIFECYCLE" || true\n', "not fail-closed"),
+    ("pinned indirect dispatch removed", "gov-infra/verifiers/gov-verify-rubric.sh", 'run_check "CMP-4" "Compliance" "$CMD_RELEASE_LIFECYCLE"\n', "", "is missing"),
+    ("pinned dispatch function stops re-enabling errexit", "gov-infra/verifiers/gov-verify-rubric.sh", '    set -euo pipefail\n    eval "${cmd}"\n', '    eval "${cmd}"\n', "no longer contains the pinned"),
+    ("pinned dispatch function softens its errexit setup", "gov-infra/verifiers/gov-verify-rubric.sh", '    set -euo pipefail\n    eval "${cmd}"\n', '    set -e\n    eval "${cmd}"\n', "no longer contains the pinned"),
+    # R3-4 - the runner applies step, job and workflow `env:` before bash starts, so the variables
+    # that decide which program runs or how a shell starts are checked at every level.
+    ("step-level `env: PATH`", ".github/workflows/ci.yml", CI_STEP_RUN, CI_STEP_HEADER + "        env:\n          PATH: /tmp/evil\n        run: |\n", "env 'PATH'"),
+    ("job-level `env: PATH`", ".github/workflows/ci.yml", CI_JOB, "  release-security-gates:\n    env:\n      PATH: /tmp/evil\n    name: Release/security gates\n", "env 'PATH'"),
+    ("workflow-level `env: CDPATH`", ".github/workflows/ci.yml", CI_HEAD, "name: CI\nenv:\n  CDPATH: /tmp/evil\n\non:\n", "workflow-level env 'CDPATH'"),
+    ("step-level `env: BASHOPTS`", ".github/workflows/ci.yml", CI_STEP_RUN, CI_STEP_HEADER + "        env:\n          BASHOPTS: expand_aliases\n        run: |\n", "env 'BASHOPTS'"),
+    ("step-level `env: PATH` written as a flow mapping", ".github/workflows/ci.yml", CI_STEP_RUN, CI_STEP_HEADER + "        env: {PATH: /tmp/evil}\n        run: |\n", "flow-style env"),
+    # R3-5 - the gov verifier is state-checked like any other body. Only the two constructs it
+    # legitimately needs are exempted, by exact statement text.
+    ("gov verifier: `bash` shadowed in the checked function", GOV_VERIFIER, GOV_CALL_ANCHOR, '  echo "==> release workflow invariants"\n  bash() { return 0; }\n  bash ./scripts/verify-release-workflows.sh\n', "shadowed"),
+    ("gov verifier: stray `PATH` reassignment in the checked function", GOV_VERIFIER, GOV_CALL_ANCHOR, '  echo "==> release workflow invariants"\n  export PATH="/tmp/evil:${PATH}"\n  bash ./scripts/verify-release-workflows.sh\n', "reassigns PATH"),
+    ("gov verifier: extra trap in the checked function", GOV_VERIFIER, GOV_CALL_ANCHOR, '  echo "==> release workflow invariants"\n  trap \'exit 0\' EXIT\n  bash ./scripts/verify-release-workflows.sh\n', "installs a trap"),
+    ("gov verifier: errexit cleared in the checked function", GOV_VERIFIER, GOV_CALL_ANCHOR, '  echo "==> release workflow invariants"\n  set +e\n  bash ./scripts/verify-release-workflows.sh\n', "clears errexit"),
+    ("gov verifier: the pinned toolchain export renamed", GOV_VERIFIER, 'export PATH="${GOV_TOOLS_BIN}:${GOV_TOOLS_PY_BIN}:${GOV_TOOLS_PY_RUNTIME_BIN}:${PATH}"\n', 'export PATH="${GOV_TOOLS_BIN}:${PATH}"\n', "reassigns PATH"),
+    # R3-6 - a flow-style step mapping is one line of YAML no line-oriented reader can take apart,
+    # so a step written that way and naming the guarded script is refused instead of skipped.
+    ("flow-style step mapping invoking the pairing gate", ".github/workflows/ci.yml", CI_STEP, CI_STEP + f'      - {{name: Extra gate, run: "bash {PAIRING_SCRIPT_PATH} || true"}}\n', "flow-style step mapping"),
+    ("flow-style step mapping invoking the meta-guard", ".github/workflows/ci.yml", CI_STEP_HEADER, '      - {name: Extra guard, run: "bash scripts/verify-release-workflows.sh || true"}\n' + CI_STEP_HEADER, "flow-style step mapping"),
+    # Claim boundaries: the classes the doc says are refused rather than read past.
+    ("second YAML document in a guarded workflow", ".github/workflows/ci.yml", CI_HEAD, CI_HEAD + "---\njobs: {}\n", "document separator"),
+    ("YAML alias as a step run body", ".github/workflows/ci.yml", CI_STEP, CI_STEP + '      - name: Extra anchored gate\n        run: &weak "bash scripts/verify-release-pairing.sh || true"\n      - name: Extra aliased gate\n        run: *weak\n', "YAML alias"),
+)
+
+# Shapes GLM confirmed are correctly accepted. Each must produce no finding at all, so the battery
+# fails if the classifier starts over-blocking a fail-closed spelling that differs from the pinned
+# one in a way that does not weaken it.
+SELF_TEST_ACCEPTED = (
+    ("trailing comment after the invocation", ".github/workflows/ci.yml", CI_BARE, f"          bash {PAIRING_SCRIPT_PATH} # pinned in the release doc\n"),
+    ("next-line `true` after the invocation", ".github/workflows/ci.yml", CI_BARE, CI_BARE + "          true\n"),
+    ("quoted pinned `--self-test` argument", ".github/workflows/ci.yml", CI_SELF_TEST, f'          bash {PAIRING_SCRIPT_PATH} "--self-test"\n'),
+    ("set +e / set -e capture pair in an unrelated gov verifier function", GOV_VERIFIER, "check_file_budgets() {\n", "check_file_budgets() {\n  set +e\n  :\n  set -e\n"),
+    ("YAML anchor defined in an inert `x-` section", ".github/workflows/ci.yml", CI_HEAD, 'name: CI\nx-bodies:\n  weak: &weak "bash scripts/verify-release-pairing.sh || true"\n\non:\n'),
 )
 
 
@@ -1129,9 +1752,25 @@ def run_self_test() -> None:
             )
         print(f"release-workflows: FAIL-PROOF (self-test rejected: {label} in {path})")
 
+    for label, path, anchor, replacement in SELF_TEST_ACCEPTED:
+        source = dict(real)
+        if anchor not in source[path]:
+            raise SystemExit(
+                f"release-workflows: FAIL (self-test fixture drifted: the {label!r} anchor is missing "
+                f"from {path})"
+            )
+        source[path] = source[path].replace(anchor, replacement, 1)
+        findings = check_invocation_shapes(read_from(source))
+        if findings:
+            raise SystemExit(
+                f"release-workflows: FAIL (self-test OVER-BLOCKS the accepted shape {label!r} in "
+                f"{path}: " + "; ".join(findings)
+            )
+        print(f"release-workflows: ACCEPT-PROOF (self-test accepted: {label} in {path})")
+
     print(
         f"release-workflows: PASS (self-test: {len(SELF_TEST_ATTACKS)} weakening shape(s) failed closed, "
-        "legitimate wiring accepted)"
+        f"{len(SELF_TEST_ACCEPTED)} fail-closed spelling(s) accepted, legitimate wiring accepted)"
     )
 
 
