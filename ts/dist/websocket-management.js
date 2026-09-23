@@ -91,7 +91,9 @@ export class WebSocketManagementClient {
                 .map((s) => s.trim())
                 .filter(Boolean)
                 .join(" ");
-            throw new Error(`apptheory: post_to_connection failed ${suffix}`.trim());
+            throw new Error(`apptheory: post_to_connection failed ${suffix}`.trim(), {
+                cause: err,
+            });
         }
     }
     async getConnection(connectionId) {
@@ -109,7 +111,9 @@ export class WebSocketManagementClient {
                 .map((s) => s.trim())
                 .filter(Boolean)
                 .join(" ");
-            throw new Error(`apptheory: get_connection failed ${suffix}`.trim());
+            throw new Error(`apptheory: get_connection failed ${suffix}`.trim(), {
+                cause: err,
+            });
         }
     }
     async deleteConnection(connectionId) {
@@ -125,7 +129,9 @@ export class WebSocketManagementClient {
                 .map((s) => s.trim())
                 .filter(Boolean)
                 .join(" ");
-            throw new Error(`apptheory: delete_connection failed ${suffix}`.trim());
+            throw new Error(`apptheory: delete_connection failed ${suffix}`.trim(), {
+                cause: err,
+            });
         }
     }
 }

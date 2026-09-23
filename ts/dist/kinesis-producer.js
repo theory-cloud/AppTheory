@@ -118,7 +118,9 @@ function normalizeKinesisReportRecord(record, index) {
         explicitHashKey = normalizeKinesisExplicitHashKey(record.explicit_hash_key);
     }
     catch (error) {
-        throw new Error(`${String(error.message)} at index ${index}`);
+        throw new Error(`${String(error.message)} at index ${index}`, {
+            cause: error,
+        });
     }
     if (!(record.data instanceof Uint8Array) || record.data.byteLength === 0) {
         throw new Error(`${KINESIS_PUT_RECORDS_INVALID_MESSAGE}: empty record data at index ${index}`);

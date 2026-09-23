@@ -227,7 +227,9 @@ function normalizeKinesisReportRecord(
     partitionKey = normalizeKinesisPartitionKey(record.partition_key);
     explicitHashKey = normalizeKinesisExplicitHashKey(record.explicit_hash_key);
   } catch (error) {
-    throw new Error(`${String((error as Error).message)} at index ${index}`);
+    throw new Error(`${String((error as Error).message)} at index ${index}`, {
+      cause: error,
+    });
   }
   if (!(record.data instanceof Uint8Array) || record.data.byteLength === 0) {
     throw new Error(

@@ -254,7 +254,7 @@ export function requireBearerTokenMiddleware(
   options: RequireBearerTokenOptions = {},
 ): Middleware {
   return async (ctx, next) => {
-    let token = "";
+    let token: string;
     try {
       token = bearerTokenFromHeaders(ctx.request.headers);
       if (options.claimsValidator) {

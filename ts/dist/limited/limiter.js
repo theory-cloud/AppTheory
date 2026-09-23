@@ -586,7 +586,7 @@ export class DynamoRateLimiter {
         catch (err) {
             return await this._handleMultiWindowIncrementError(key, now, windows, primaryLimit, err);
         }
-        let currentCount = 0;
+        let currentCount;
         try {
             const primary = windows[0];
             if (!primary) {

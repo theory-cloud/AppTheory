@@ -808,7 +808,7 @@ export class DynamoRateLimiter implements AtomicRateLimiter, RateLimiter {
       );
     }
 
-    let currentCount = 0;
+    let currentCount: number;
     try {
       const primary = windows[0];
       if (!primary) {
