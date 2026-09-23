@@ -138,15 +138,38 @@ elif [[ "${published}" == "true" ]]; then
     exit 1
   fi
   published_url="https://github.com/${repo_slug}/releases/download/${tag}/${expected_asset}"
-  curl_args=(-fsSL)
+  # A stalled release-asset edge must fail the gate promptly instead of hanging until
+  # the job timeout, so bound both the connect and the whole transfer.
+  curl_connect_timeout=10
+  curl_max_time=120
+  curl_args=(-fsSL --connect-timeout "${curl_connect_timeout}" --max-time "${curl_max_time}")
   token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
   if [[ -n "${token}" ]]; then
     curl_args+=(-H "Authorization: Bearer ${token}")
   fi
   # Draft release assets are not served from the public release URL, so an HTTP
   # 200 download is itself proof the asset is published and therefore immutable.
-  if ! curl "${curl_args[@]}" -o "${work_root}/${expected_asset}" "${published_url}" 2>/dev/null; then
-    echo "release-pairing: FAIL (${tag} has no published asset ${expected_asset} at ${published_url})" >&2
+  download_status=""
+  download_rc=0
+  download_status="$(curl "${curl_args[@]}" -w '%{http_code}' \
+    -o "${work_root}/${expected_asset}" "${published_url}" 2>"${work_root}/curl.stderr")" \
+    || download_rc=$?
+  if (( download_rc != 0 )); then
+    case "${download_rc}" in
+      28) download_reason="download timed out (connect timeout ${curl_connect_timeout}s, max time ${curl_max_time}s)" ;;
+      6) download_reason="could not resolve the release host" ;;
+      7) download_reason="could not connect to the release host" ;;
+      22) download_reason="HTTP ${download_status:-unknown} from the release asset URL" ;;
+      35|60) download_reason="TLS failure talking to the release host" ;;
+      *) download_reason="curl exit ${download_rc}" ;;
+    esac
+    if (( download_rc == 22 )) && [[ "${download_status}" == "404" ]]; then
+      download_reason="HTTP 404 (no published asset ${expected_asset} for tag ${tag})"
+    fi
+    echo "release-pairing: FAIL (${tag} published asset ${expected_asset} could not be downloaded: ${download_reason}; url ${published_url})" >&2
+    if download_detail="$(tail -n 1 "${work_root}/curl.stderr" 2>/dev/null)" && [[ -n "${download_detail}" ]]; then
+      echo "release-pairing: FAIL (curl: ${download_detail})" >&2
+    fi
     exit 1
   fi
   cdk_tarball="${work_root}/${expected_asset}"
@@ -212,12 +235,39 @@ def fail(message):
 # --- version/range algebra -------------------------------------------------
 #
 # Deliberately bounded: this verifies the declarative pins a template ships, not the
-# npm registry. Any syntax it cannot decide fails closed rather than passing.
+# npm registry. Any syntax it cannot decide fails closed rather than passing, and the
+# shapes that are decided are decided the way npm semver decides them - a partial
+# version under an operator is desugared the way node-semver's replaceXRange does it,
+# not as the corresponding full version.
+#
+# npm semver is strict by default: numeric components are `0|[1-9]\d*` (no leading
+# zeros) and are capped at Number.MAX_SAFE_INTEGER, so syntax npm itself would refuse
+# must fail closed here rather than being parsed into a range npm never accepts.
+MAX_SAFE_INTEGER = 9007199254740991
+NUMERIC_COMPONENT = re.compile(r"0|[1-9]\d*")
+DOMAIN_FLOOR = (0, 0, 0)  # the lowest version npm semver can select
+
+
+def parse_component(text, ctx):
+    if not NUMERIC_COMPONENT.fullmatch(text):
+        fail(
+            f"{ctx}: unsupported version syntax {text!r} "
+            "(npm rejects leading zeros and non-numeric version components)"
+        )
+    value = int(text)
+    if value > MAX_SAFE_INTEGER:
+        fail(
+            f"{ctx}: unsupported version syntax {text!r} "
+            "(npm rejects components above Number.MAX_SAFE_INTEGER)"
+        )
+    return value
+
+
 def parse_version(text, ctx):
-    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", text.strip())
+    match = re.fullmatch(r"v?([^.]+)\.([^.]+)\.([^.]+)", text.strip())
     if not match:
         fail(f"{ctx}: unsupported version syntax {text!r}")
-    return tuple(int(group) for group in match.groups())
+    return tuple(parse_component(group, ctx) for group in match.groups())
 
 
 def parse_partial(text, ctx):
@@ -232,9 +282,9 @@ def parse_partial(text, ctx):
         if part in ("x", "X", "*"):
             values.append(None)
             continue
-        if not re.fullmatch(r"\d+", part) or None in values:
+        if None in values:
             fail(f"{ctx}: unsupported version syntax {text!r}")
-        values.append(int(part))
+        values.append(parse_component(part, ctx))
     while values and values[-1] is None:
         values.pop()
     if not values:
@@ -252,6 +302,20 @@ def floor(partial):
         partial["minor"] if partial["minor"] is not None else 0,
         partial["patch"] if partial["patch"] is not None else 0,
     )
+
+
+def bump_last(partial):
+    """The version just above the highest component a partial version specifies.
+
+    node-semver's replaceXRange bumps the last SPECIFIED component and zeroes the
+    rest, so `2` -> `3.0.0`, `2.269` -> `2.270.0`, `2.269.5` -> `2.269.6`.
+    """
+    major, minor, patch = partial["major"], partial["minor"], partial["patch"]
+    if patch is not None:
+        return (major, minor, patch + 1)
+    if minor is not None:
+        return (major, minor + 1, 0)
+    return (major + 1, 0, 0)
 
 
 def caret_bounds(partial):
@@ -294,16 +358,31 @@ def comparator_bounds(token, ctx):
                 return caret_bounds(parse_partial(body, ctx))
             if operator == "~":
                 return tilde_bounds(parse_partial(body, ctx))
-            target = floor(parse_partial(body, ctx))
+            partial = parse_partial(body, ctx)
+            target = floor(partial)
             if operator == ">=":
+                # npm: >=2.269 -> >=2.269.0 (the partial's floor, still inclusive).
                 return (target, True, None, True)
             if operator == ">":
+                # npm bumps a partial body instead of using its floor, so >2.269 is
+                # >=2.270.0, NOT >2.269.0. A fully specified body stays exclusive.
+                if partial["patch"] is None:
+                    return (bump_last(partial), True, None, True)
                 return (target, False, None, True)
             if operator == "<=":
+                # npm bumps a partial body and makes the bound exclusive, so <=2.269
+                # is <2.270.0 (every 2.269.x passes), NOT <=2.269.0.
+                if partial["patch"] is None:
+                    return (None, True, bump_last(partial), False)
                 return (None, True, target, True)
             if operator == "<":
+                # npm uppercuts a partial body to `<2.269.0-0`; no version this gate
+                # accepts carries a prerelease, so `<2.269.0` is the same set.
                 return (None, True, target, False)
-            return (target, True, target, True)
+            # npm drops the operator of a partial `=` body (`=2.269` becomes the same
+            # range as the bare `2.269`), so `=` reuses the partial expansion instead
+            # of collapsing to the partial's floor.
+            return plain_bounds(partial)
     return plain_bounds(parse_partial(token, ctx))
 
 
@@ -345,9 +424,17 @@ def parse_range(text, ctx):
         fail(f"{ctx}: unsupported range syntax {text!r} (union ranges are not verified)")
     if " - " in raw:
         first, second = raw.split(" - ", 1)
+        upper = parse_partial(second, ctx)
+        # npm's hyphen upper bound is inclusive only for a fully specified version;
+        # a partial upper bound is bumped and made exclusive (`1.0 - 1.2` -> <1.3.0).
+        upper_bound = (
+            (None, True, floor(upper), True)
+            if upper["patch"] is not None
+            else (None, True, bump_last(upper), False)
+        )
         return conjoin(
             (floor(parse_partial(first, ctx)), True, None, True),
-            (None, True, floor(parse_partial(second, ctx)), True),
+            upper_bound,
             ctx,
         )
     bounds = None
@@ -365,6 +452,11 @@ def intersect(first, second):
 
 def is_empty(window):
     lo, lo_incl, hi, hi_incl = window
+    # npm semver has no version below 0.0.0, so a window that excludes 0.0.0 from
+    # above is unsatisfiable even when it has no lower bound at all: `<0.0.0`,
+    # `<0`, `<0.x` and `<0.0` select nothing, so any pairing with them ERESOLVEs.
+    if hi is not None and (hi < DOMAIN_FLOOR or (hi == DOMAIN_FLOOR and not hi_incl)):
+        return True
     if lo is None or hi is None:
         return False
     if lo < hi:
@@ -536,6 +628,91 @@ def run_self_test():
         )
     )
 
+    # npm desugars a PARTIAL version body by bumping its last specified component
+    # rather than by using the partial's floor: `>2.269` == `>=2.270.0` and
+    # `<=2.269` == `<2.270.0`. Modeling either against the paired full version
+    # (2.269.0) accepts a pin npm then refuses with ERESOLVE, so pin both the false
+    # pass and the boundary that must keep failing.
+    peer_name = sorted(peers)[0]
+
+    def with_peer(range_text):
+        mutated = copy.deepcopy(cdk_package)
+        mutated["peerDependencies"][peer_name] = range_text
+        return mutated
+
+    def with_pin(rendered_case, range_text):
+        for lang in LANGS:
+            for field in ("dependencies", "devDependencies"):
+                if peer_name in rendered_case[lang].get(field, {}):
+                    rendered_case[lang][field][peer_name] = range_text
+        return rendered_case
+
+    cases.append(
+        (
+            f"template pin below the bumped floor of a `>` partial peer ({peer_name} '>2.269')",
+            with_peer(">2.269"),
+            with_pin(copy.deepcopy(rendered), "2.269.5"),
+            "cannot satisfy the release cdk peer",
+        )
+    )
+    cases.append(
+        (
+            f"`>` partial template pin against an exact peer ({peer_name} '2.269.5')",
+            with_peer("2.269.5"),
+            with_pin(copy.deepcopy(rendered), ">2.269"),
+            "cannot satisfy the release cdk peer",
+        )
+    )
+    cases.append(
+        (
+            f"template pin above the exclusive ceiling of a `<=` partial peer ({peer_name} '<=2.269')",
+            with_peer("<=2.269"),
+            with_pin(copy.deepcopy(rendered), "2.270.0"),
+            "cannot satisfy the release cdk peer",
+        )
+    )
+    cases.append(
+        (
+            f"template pin below the bumped floor of a `>` major-only peer ({peer_name} '>2')",
+            with_peer(">2"),
+            with_pin(copy.deepcopy(rendered), "2.9.9"),
+            "cannot satisfy the release cdk peer",
+        )
+    )
+    # npm drops the operator of a partial `=` body, so `=2.269` spans 2.269.x rather
+    # than pinning the floor; a peer outside that span still has to fail closed.
+    cases.append(
+        (
+            f"`=` partial template pin against a peer outside its bumped range ({peer_name} '2.270.0' / '=2.269')",
+            with_peer("2.270.0"),
+            with_pin(copy.deepcopy(rendered), "=2.269"),
+            "cannot satisfy the release cdk peer",
+        )
+    )
+    # Versions start at 0.0.0, so a ceiling below it selects nothing no matter how the
+    # window is spelled; a pin that can never be installed must not pass pairing.
+    for unusable in ("<0.0.0", "<0", "<0.0", "<0.x"):
+        cases.append(
+            (
+                f"template pin selects no installable version ({unusable})",
+                cdk_package,
+                with_pin(copy.deepcopy(rendered), unusable),
+                "empty version range",
+            )
+        )
+
+    # npm strict semver rejects these outright, so the gate must refuse to parse them
+    # instead of turning npm-invalid text into a range npm would never accept.
+    for invalid in ("01.2.3", f"{MAX_SAFE_INTEGER + 1}.0.0", "1.02.3", "1.2.03"):
+        cases.append(
+            (
+                f"template pin uses npm-invalid version syntax ({invalid})",
+                cdk_package,
+                with_pin(copy.deepcopy(rendered), invalid),
+                "unsupported version syntax",
+            )
+        )
+
     for description, package, rendered_case, expected_fragment in cases:
         try:
             check_pairing(package, rendered_case, TAG, VERSION, TARBALL_BASENAME)
@@ -546,7 +723,51 @@ def run_self_test():
             continue
         fail(f"self-test {description}: skew was ACCEPTED; the gate is not fail-closed")
 
-    print(f"release-pairing: PASS (self-test: baseline paired, {len(cases)} skew case(s) failed closed)")
+    # The npm-aligned desugaring must not over-block: real pairings under the same
+    # operators the cases above reject still have to pass.
+    accepted_cases = (
+        (
+            f"`>` partial peer with a pin at its bumped floor ({peer_name} '>2.269' / '2.270.0')",
+            with_peer(">2.269"),
+            with_pin(copy.deepcopy(rendered), "2.270.0"),
+        ),
+        (
+            f"`<=` partial peer with a pin inside its bumped ceiling ({peer_name} '<=2.269' / '2.269.5')",
+            with_peer("<=2.269"),
+            with_pin(copy.deepcopy(rendered), "2.269.5"),
+        ),
+        (
+            f"hyphen peer with a partial upper bound ({peer_name} '1.0 - 1.2' / '1.2.5')",
+            with_peer("1.0 - 1.2"),
+            with_pin(copy.deepcopy(rendered), "1.2.5"),
+        ),
+        (
+            f"`>` major-only peer with a pin at its bumped floor ({peer_name} '>2' / '3.0.0')",
+            with_peer(">2"),
+            with_pin(copy.deepcopy(rendered), "3.0.0"),
+        ),
+        (
+            f"`<=` major-only peer with a pin inside its bumped ceiling ({peer_name} '<=2' / '2.9.9')",
+            with_peer("<=2"),
+            with_pin(copy.deepcopy(rendered), "2.9.9"),
+        ),
+        (
+            f"`=` partial peer with a pin inside its bumped range ({peer_name} '=2.269' / '2.269.5')",
+            with_peer("=2.269"),
+            with_pin(copy.deepcopy(rendered), "2.269.5"),
+        ),
+    )
+    for description, package, rendered_case in accepted_cases:
+        try:
+            check_pairing(package, rendered_case, TAG, VERSION, TARBALL_BASENAME)
+        except PairingError as error:
+            fail(f"self-test {description}: a legitimate pairing was REJECTED -> {error}")
+        print(f"release-pairing: PASS-PROOF (self-test accepted: {description})")
+
+    print(
+        f"release-pairing: PASS (self-test: baseline paired, {len(cases)} skew case(s) failed closed, "
+        f"{len(accepted_cases)} real pairing(s) accepted)"
+    )
 
 
 def main():

@@ -154,6 +154,15 @@ renders the templates with the real scaffolder, and fails closed unless every te
 release asset for the tag `VERSION` substitutes and its pins intersect that artifact's declared
 `peerDependencies`. Range syntax it cannot decide is a failure, never a pass.
 
+The checker decides ranges the way npm semver does, including the desugaring npm applies to a partial
+body under an operator: `>2.269` means `>=2.270.0` and `<=2.269` means `<2.270.0`, neither of which is
+the `2.269.0` bound. It rejects the version syntax npm itself refuses (leading-zero components,
+components above `Number.MAX_SAFE_INTEGER`) and treats a pin no version can satisfy - any range whose
+ceiling falls below `0.0.0` - as empty. Shapes it declines to decide (prerelease ranges, unions, and
+`x`/`*` bodies under an operator) fail closed rather than passing, which is deliberate: for a handful of
+degenerate ranges npm's own `intersects` disagrees with its `minVersion`/`satisfies`, and this gate
+follows the satisfiability answer, not the intersection artifact.
+
 The gate is a blocker, not an advisory, in four places:
 
 | Where | What it proves |
@@ -164,7 +173,10 @@ The gate is a blocker, not an advisory, in four places:
 | `scripts/verify-release-publish-postcondition.sh` `complete` phase | The release this run published pairs its immutable asset with the shipped templates |
 
 Run it locally with `./scripts/verify-release-pairing.sh` (default), `--self-test` (both-directions
-proof), or `--published` (download and verify the published asset for the current `VERSION`).
+proof), or `--published` (download and verify the published asset for the current `VERSION`). The
+download is bounded by a connect timeout and a maximum transfer time so a stalled release host fails
+the gate promptly, and a download failure reports the HTTP status or timeout rather than assuming the
+asset is missing.
 
 The already-published `v4.2.4` asset declares `aws-cdk-lib 2.269.0` and cannot be changed. The gate
 exists so `4.2.5` and later either ship paired or fail before the release becomes public.
