@@ -23,10 +23,10 @@ Notes:
 - The former AWS CDK `SEC-2` exceptions are retired. The patched graph uses AWS CDK `2.265.0`, which bundles
   `brace-expansion@5.0.9`, in `cdk/` and the scanned CDK examples. The AWS CDK checker now requires both zero scanner
   findings and the exact patched graph; any package, parent, version, path, or finding drift fails closed.
-- The `ts/` SEC-2 gate currently depends on OSV serving the advisory's multi-range record, which identifies `1.1.17` as
-  fixed. A stale single-range record (`introduced: 0`, `fixed: 5.0.8`) is a known flake vector: it misclassifies
-  `brace-expansion@1.1.17` and fails closed with `unexpected vulnerability GHSA-mh99-v99m-4gvg in
-  brace-expansion@1.1.17`. The AWS CDK graph is unaffected because its bundled `5.0.9` is fixed in both record variants.
+- The former `ts/` SEC-2 exception is also retired. The eslint 10 + `eslint-plugin-import-x` train hoisted the
+  TypeScript lint stack onto a single `minimatch@10.x` → `brace-expansion@5.x` path, which removed the
+  `minimatch@3.1.4` → `brace-expansion@1.1.17` instance that exception covered. The TypeScript checker now requires
+  both zero scanner findings and the exact patched graph; any parent, version, path, or finding drift fails closed.
 
 ## What’s In Here
 

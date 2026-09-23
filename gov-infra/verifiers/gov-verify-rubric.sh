@@ -712,24 +712,21 @@ osv_scan_lockfile() {
   set -e
   rm -f "${tmp_report}" "${tmp_marker}"
 
-  if [[ "${checker_kind}" == "ts" ]]; then
-    if [[ "${scan_status}" -eq 0 && "${filter_status}" -eq 0 ]]; then
-      echo "FAIL: vulnerability exception checker accepted an empty scanner report" >&2
-      return 1
-    fi
-  else
-    # This repository grants no dependency-audit exceptions: the aws-cdk checker
-    # (scripts/check-visible-aws-cdk-finding.mjs) grants none, and its last one
-    # retired on 2026-09-22 with the jsii-rosetta 6.0.16 bump. The checker can
-    # therefore only pass on an empty findings set, and since osv-scanner exits
-    # non-zero when it reports findings, any non-zero scanner exit fails closed.
-    if [[ "${filter_status}" -ne 0 ]]; then
-      return "${filter_status}"
-    fi
-    if [[ "${scan_status}" -ne 0 ]]; then
-      echo "FAIL: osv-scanner exited ${scan_status} for ${lf} without any reviewed exception" >&2
-      return 1
-    fi
+  # Neither lockfile class grants a dependency-audit exception any more. The
+  # aws-cdk checker (scripts/check-visible-aws-cdk-finding.mjs) retired its last
+  # one on 2026-09-22 with the jsii-rosetta 6.0.16 bump, and the TypeScript
+  # checker (scripts/check-visible-ts-brace-finding.mjs) retired the
+  # minimatch 3.x -> brace-expansion 1.x exception when the eslint 10 +
+  # eslint-plugin-import-x train hoisted the lint graph onto a single
+  # minimatch 10.x path. Both checkers therefore pass only on an empty findings
+  # set, and since osv-scanner exits non-zero when it reports findings, any
+  # non-zero scanner exit fails closed.
+  if [[ "${filter_status}" -ne 0 ]]; then
+    return "${filter_status}"
+  fi
+  if [[ "${scan_status}" -ne 0 ]]; then
+    echo "FAIL: osv-scanner exited ${scan_status} for ${lf} without any reviewed exception" >&2
+    return 1
   fi
 
   return "${filter_status}"
