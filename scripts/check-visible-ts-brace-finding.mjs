@@ -172,9 +172,8 @@ if (findings.length > 0) {
 
 console.error(
   `osv-scanner: PASS ${JSON.stringify({
-    recordType: "verified-patched-dependency",
+    recordType: "verified-clean-dependency-graph",
     checkId: "typescript-lint-tool-brace-expansion",
-    exceptionId: "typescript-brace-expansion",
     lockfile: expectation.lockfile,
     justification:
       "The eslint 10 + eslint-plugin-import-x train retired the minimatch 3.x -> brace-expansion 1.x path; SEC-2 grants no TypeScript dependency-audit exception.",
