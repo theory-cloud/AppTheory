@@ -161,7 +161,7 @@ The gate is a blocker, not an advisory, in four places:
 | `ci.yml` `release-security-gates` (runs on every PR, including generated release PRs) | The generated RC/stable release-please PR head - the tree that will be tagged - pairs its templates with the packed candidate |
 | `prerelease-pr.yml` / `release-pr.yml`, before generated artifact sync | The branch about to generate a release PR has not drifted |
 | `scripts/verify-release-branch.sh`, on every publish path in the tagged tree before assets are built | The release-candidate tarball for the tag pairs with the shipped templates |
-| `scripts/verify-release-publish-postcondition.sh` `complete` phase | The published, immutable asset still pairs with the shipped templates |
+| `scripts/verify-release-publish-postcondition.sh` `complete` phase | The release this run published pairs its immutable asset with the shipped templates |
 
 Run it locally with `./scripts/verify-release-pairing.sh` (default), `--self-test` (both-directions
 proof), or `--published` (download and verify the published asset for the current `VERSION`).

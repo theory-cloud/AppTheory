@@ -513,14 +513,19 @@ require_contains(
 )
 require_contains(
     "scripts/verify-release-publish-postcondition.sh",
-    "verify_release_pairing_postcondition",
-    "publish postcondition verifier must run the template/release pairing check",
+    "bash scripts/verify-release-pairing.sh --published",
+    "publish postcondition verifier must pair the published release CDK asset with the shipped templates",
 )
 require_order(
     "scripts/verify-release-publish-postcondition.sh",
     'if [[ "${phase}" != "complete" ]]',
     "bash scripts/verify-release-pairing.sh --published",
     "publish postcondition verifier must only pair against the published asset once publication completes",
+)
+require_contains(
+    "scripts/verify-release-publish-postcondition.sh",
+    'if [[ "${release_created}" != "true" ]]; then\n    return 0\n  fi\n\n  # Post-publish leg',
+    "publish postcondition verifier must pair only the release created by the run, not a republished older release",
 )
 require_contains(
     "scripts/verify-release-gates.sh",

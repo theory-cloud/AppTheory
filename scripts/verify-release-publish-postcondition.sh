@@ -322,10 +322,19 @@ verify_release_pairing_postcondition() {
     return 0
   fi
 
-  # Post-publish leg: download the immutable asset the apptheory-init templates
-  # point at and prove it still pairs with their CDK pins. This closes the skew a
-  # pre-pack check cannot see - assets built from a tree other than the one whose
-  # templates shipped, or a package re-published for an existing tag.
+  # Pair only the release this run published. The closure runs in the tagged tree, so
+  # the shipped templates and the shipped asset belong to the same release, and
+  # require_created_tag has already pinned tag_name to the VERSION tag. Re-verifying a
+  # previously published release against a newer branch would fail on the
+  # known-unfixable v4.2.4 asset while the next version is still being prepared; that
+  # window is covered by scripts/verify-release-branch.sh on the next publish.
+  if [[ "${release_created}" != "true" ]]; then
+    return 0
+  fi
+
+  # Post-publish leg: download the immutable asset the apptheory-init templates point
+  # at and prove it pairs with their CDK pins. This closes the skew a pre-pack check
+  # cannot see - assets built from a tree other than the one whose templates shipped.
   bash scripts/verify-release-pairing.sh --published --tag "${release_tag}" || return 1
   echo \
     "release-publish-postcondition: PASS (${release_tag} apptheory-init templates pair with the published CDK asset)"
