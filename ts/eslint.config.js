@@ -2,7 +2,7 @@ import js from "@eslint/js";
 import tseslint from "@typescript-eslint/eslint-plugin";
 import tsParser from "@typescript-eslint/parser";
 import globals from "globals";
-import importPlugin from "eslint-plugin-import";
+import importPlugin from "eslint-plugin-import-x";
 import promise from "eslint-plugin-promise";
 import unicorn from "eslint-plugin-unicorn";
 import prettier from "eslint-config-prettier";
@@ -33,18 +33,24 @@ export default [
     },
     plugins: {
       "@typescript-eslint": tseslint,
-      import: importPlugin,
+      "import-x": importPlugin,
       promise,
       unicorn,
     },
     settings: {
-      "import/resolver": {
+      "import-x/resolver": {
         node: true,
       },
     },
     rules: {
       "no-undef": "off",
       "no-unused-vars": "off",
+      // @eslint/js 10 added these three to `recommended`. They report on sources
+      // this dependency-only bump does not touch, so adopting them would be a
+      // reviewed lint-policy change; hold the eslint 9 reviewed surface instead.
+      "no-unassigned-vars": "off",
+      "no-useless-assignment": "off",
+      "preserve-caught-error": "off",
       "@typescript-eslint/consistent-type-imports": [
         "error",
         { prefer: "type-imports", fixStyle: "separate-type-imports" },
@@ -71,11 +77,11 @@ export default [
       "prefer-const": "error",
       "prefer-template": "error",
 
-      "import/extensions": ["error", "always", { ignorePackages: true }],
-      "import/first": "error",
-      "import/no-duplicates": "error",
-      "import/no-unresolved": "off",
-      "import/order": [
+      "import-x/extensions": ["error", "always", { ignorePackages: true }],
+      "import-x/first": "error",
+      "import-x/no-duplicates": "error",
+      "import-x/no-unresolved": "off",
+      "import-x/order": [
         "error",
         {
           alphabetize: { order: "asc", caseInsensitive: true },
