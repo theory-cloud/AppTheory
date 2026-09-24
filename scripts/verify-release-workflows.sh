@@ -100,14 +100,15 @@ def require_job_contains(path: str, job_name: str, needle: str, description: str
 # The guarded surface.
 #
 # The release path is pinned by whole-file SHA-256: the five workflows that run the release
-# train, and the transitive closure of the scripts they name. There is no model of YAML or
-# of bash anywhere in this file and no admission rule; the pins header below says what that
-# replaced and why.
+# train, and the transitive closure of the paths they name - wherever those paths live,
+# including the files outside `scripts/` and `gov-infra/` that the closure runs. There is no
+# model of YAML or of bash anywhere in this file and no admission rule; the pins header below
+# says what that replaced and why.
 #
 # The posture this buys: an intentional change to a pinned file is a visible two-place edit
 # - the file and its digest in the manifest - in the same commit. What is *not* pinned
 # anywhere in this repository is stated in docs/release-process.md, together with the reason
-# it is not.
+# it is not, and with the shapes that would weaken this file if a reviewer did not look.
 # ---------------------------------------------------------------------------
 
 ROOT = Path(".").resolve()
@@ -328,11 +329,12 @@ WORKFLOW_FILE_DIGESTS = {
     ".github/workflows/release.yml": "3e2a906dddd9b905bbc840fd6173f1e8166216d4b1b6414bfb82bc27d5ebd629",
 }
 
-# The transitive closure of the script paths the five workflows name, resolved relative to
-# the repository root or to the referencing file's directory, bounded to CLOSURE_ROOTS.
-# `closure_findings` re-derives that closure from the pinned bytes on every run, so a
-# workflow that gains a call site, or a pinned script that starts running another one, fails
-# until the same change adds the pin - the closure cannot rot into a stale list.
+# The transitive closure of the paths the five workflows name, resolved relative to the
+# repository root or to the referencing file's directory. `closure_findings` re-derives that
+# closure from the pinned bytes on every run, so a workflow that gains a call site, or a
+# pinned script that starts running another one, fails until the same change adds the pin -
+# the closure cannot rot into a stale list. The paths outside `scripts/` and `gov-infra/`
+# that the closure names are pinned beside these, in OUT_OF_ROOT_FILE_DIGESTS below.
 RELEASE_PATH_FILE_DIGESTS = {
     "gov-infra/verifiers/gov-verify-rubric.sh": "5c375a12d5008f671f954c983b03732095b48abd4b5f42f67937e82786f1ea3f",
     "gov-infra/verifiers/test-gov-rubric-timestamp.sh": "9efa7f7486e9049ac8a28c4416ab5a77ee2d660c30596cb025895aba4c7d574a",
