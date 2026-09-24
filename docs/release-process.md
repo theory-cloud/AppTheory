@@ -200,8 +200,8 @@ the new digest to paste, so the pin update is mechanical. Any edit to a pinned f
 update in the same pull request - no edit to a pinned file is admitted without one.
 
 `--self-test` runs the attack battery, one case per shape, each naming the class it must fail on, plus
-a table of shapes that must stay accepted. At this revision 263 weakening shapes fail closed and 4
-fail-closed spellings are accepted, and 8 accepted pinned-file changes are admitted with the pin update
+a table of shapes that must stay accepted. At this revision 290 weakening shapes fail closed and 4
+fail-closed spellings are accepted, and 11 accepted pinned-file changes are admitted with the pin update
 that goes with them, and the legitimate wiring at HEAD is accepted as the baseline before any attack
 is tried - the guard asserts all three counts, the size of the closure, the spelling table, the
 executor sentence and the sentences below against this document, so what is written here cannot drift
@@ -297,12 +297,18 @@ is read like a path: a module that resolves to a file in this repository (`evilm
 the one executed position that reads nothing: it looks a name up instead of running it, six pinned
 lines write it, and refusing it would over-block on all six.
 
-A name materialized at run time is the shape that remains, and it is stated precisely rather than
-guessed: the guard reads the *text* of the line, so a name handed to a launcher as data that is not
-written on the line at all - `xargs bash < list.txt`, `xargs -a list.txt bash` - is refused only when
-the line names a file the launcher could read, because a name no pinned file writes is a name no pin
-can describe. A name written on the line and piped into a launcher (`printf '%s\n' x.js | xargs bash`)
-is a **piped bare name** and is refused, which is what round 8 disclosed as a bound and round 9 closed.
+A launcher that reads the names it runs from a **file** is refused. `xargs bash < list.txt`,
+`xargs -a list.txt bash`, `xargs --arg-file=list.txt bash` and `parallel -a list.txt` hand the launcher
+a set of names written in exactly one place - a file, or the line's own standard input - and a name no
+line here writes is a name no pin describes: the file is added by the commit that adds the invocation
+and edited by every later one, with no pin edit anywhere. Round 10 refused these only "when the line
+names a file the launcher could read", which was a bound with no rule behind it and a plant that ran
+with exit 0; the spelling is refused outright now. A **pipe** is not one of these spellings -
+`find ... -print0 | xargs -0 gofmt -w` hands the launcher names this line writes, and the piped rule
+reads them, so a name written on the line and piped into a launcher (`printf '%s\n' x.js | xargs bash`)
+is a **piped bare name** and is refused - and a **heredoc body** handed to a launcher is read as a
+*list of names*, so `xargs bash <<'EOF'` with a body naming an unpinned file is a finding rather than a
+way around the rule.
 
 **An inline interpreter payload is code.** `bash -c "node scripts/evil9.js"`, `sh -c 'exec
 scripts/evil9.js'`, `python3 -c "import subprocess; subprocess.run(['node','scripts/evil9.js'])"`,
@@ -319,6 +325,32 @@ how the two spellings above are caught. The tree's own legitimate payloads write
 (`python3 -c "import pip"`, a JSON reader in `verify-release-publish-postcondition.sh`), and a battery
 case proves a payload naming a pinned file and a payload whose names are the standard library are
 still accepted.
+
+**The payload is read in every spelling the option has, and its argv is read with it.** Round 10 read
+the code option only as a *standalone* word, so `node "--eval=require('./scripts/evil9.js')"`,
+`python3 -c'…'`, `ruby -e'exec ["node","./scripts/evil9.js"]'` and `deno eval=require('./scripts/evil9.js')`
+each ran a plant with exit 0: the option was written attached to its value, the reading did not know
+the spelling, and the value was skipped. Every attached form of every inline-code option is read now -
+`--eval=…` with the `=` the CLI defines, `-c'…'`/`-e'…'` with the shell's own concatenation, and the
+`eval=` subcommand spelling `deno` accepts - and an attached option whose name this construction does
+not recognise does not get its value skipped either: every path-shaped token in it is read as an
+executed name, which is how `node --require=<file>` - a real code-loading option - is caught. The
+words after the payload are read too, because a payload binds its argv: `python3 -c '…sys.argv[1]…'
+./scripts/evil9.js` and `node -e "require(process.argv[1])" ./scripts/evil9.js` ran a plant past round
+10 with the operand read by nothing, and the same is true of the `$0` a shell hands its payload.
+
+**A payload's argument is read the way the shell divides it, or refused.** The shell reads adjacent
+quoted and unquoted runs as *one* argument - `"no""de"` is `node`, `'a'"b"` is `ab` - and round 10
+ended a payload at its first closing quote, so `bash -c "no""de scripts/evil9.js"` read the payload as
+`no` and the rest of the argument, which the shell hands to the same payload, was read by nothing. The
+words of a payload argument are built by walking the raw text the way the shell does, so concatenation
+resolves into the one argument the interpreter receives; an argument the walk cannot prove it reads in
+full - a quote that never closes with no following line to hand over, or the `$'…'` and `$"…"`
+spellings whose value is computed (`$'\x6eode'` is `node`) - is **refused** rather than partially read.
+A payload written across lines is one argument too, because that is how the shell reads an unclosed
+quote: `python3 -c '` followed by a body of code and its closing quote is read as the whole argument,
+which is how this tree's own JSON reader in `verify-release-publish-postcondition.sh` is read in full
+rather than up to its first newline.
 
 **An executed path outside the repository is refused whatever its suffix.** `path_like` returns
 nothing for a token starting with `/` or `~`, and round 9 left those spellings to the six-suffix list,
@@ -444,6 +476,40 @@ tarballs are fetched from the registry at run time, so a registry compromise is 
 reach. A pinned file that runs repo code under one of those directories is a finding; the carve-out is
 exactly the directory, decided on the resolved path, and the battery carries both directions.
 
+**The `.npmrc` an install reads is pinned too, and its keys are refused.** A lockfile only governs an
+install because npm *consults* it, and one configuration file decides whether it does: `ts/.npmrc` is
+committed, and a single line added to it - `package-lock=false` - makes npm ignore the pinned lockfile,
+so `npm ci` in a directory whose lockfile is pinned resolves the semver ranges and runs the lifecycle
+scripts of whatever version the registry serves. That is one freely editable unpinned file voiding the
+premise every install is admitted on, which is the shape round 9 adjudicated a blocker. So every
+`.npmrc` this repository can commit is pinned, a pinned `.npmrc` is read and refused if it sets a key
+that weakens the premise - the lockfile keys (`package-lock`, `shrinkwrap`), the fetch keys (a
+`registry`, a scoped `@scope:registry`, `_auth`, `_authToken`, `always-auth`, `cafile`, `strict-ssl`,
+`userconfig`, `globalconfig`, `prefix`) and the script and install-shape keys (`ignore-scripts`,
+`script-shell`, `shell`, `node-options`, `save*`, `legacy-peer-deps`, `force`, `omit`, `include`,
+`install-links`, `bin-links`, `link`, `global`) - and a pinned line that writes npm configuration, with
+`npm config set` or with a redirect into a `.npmrc`, is refused with it. `allow-remote`, the one key the
+tree sets, is deliberately **not** in that set: it narrows npm's remote-dependency policy rather than
+widening it, so refusing it would refuse the tree's own committed file.
+
+**A dependency-spelled name whose bytes are outside the repository is refused.** Round 10 decided the
+carve-out by fabricating a base-directory-joined candidate that existed nowhere and testing *that* for
+carve-out membership, so a link at `scripts/.venv/e9x.js` pointing at `/tmp/e9x.js` resolved outside
+the tree, the fabricated spelling carried a carve-out prefix, and the runtime bytes in `/tmp` executed
+past a PASS with no pin anywhere - the unconditional refusal of an absolute path defeated by a
+relative-looking name. The carve-out is decided on the name the file writes and on where its resolution
+*lands* now: a name whose resolution leaves the repository is a finding, because the bytes that would
+run are not the dependency tree's bytes. An absent name is admitted only while its dependency root is
+not materialised - a fresh checkout, before any install, is where this guard runs in the
+release/security job - and a materialised root that does not hold the name is the name-no-file-has
+finding it is everywhere else. The one exception is the shape a dependency root exists to provide: a
+name at **command position** whose basename is one of the executor spellings - the interpreter a
+virtualenv links at the Python it was built from, which `python3 -m venv` links and `uv` links, so
+`py/.venv/bin/python -m pip install …` is a dependency *tool* rather than a dependency file. A name
+handed to an interpreter as the *program* (`node scripts/.venv/e9x.js`), and a command-position name
+that is not an interpreter spelling (`scripts/.venv/e9x.js`), are both refused: neither is a tool a
+dependency root provides, and both are how the `/tmp`-smuggling repro reaches the tree.
+
 Round 9 admitted an install on that premise without checking it, and the premise was one unpinned file
 away from breaking: `.gitignore` decides which manifests this repository can commit, it was not pinned,
 and appending `/examples/evilA/` to it took `examples/evilA/package.json` out of the manifest walk -
@@ -454,7 +520,14 @@ is a pin like any other: the ignore rule and the manifest it hides are one visib
 an install is admitted on a *checked* directory rather than an assumed one: `npm ci`, `npm install`,
 `npm i`, `npm add` and `npm update` in a pinned file resolve the directory the invocation names - its
 `cd` and its `--prefix`, falling back to the file's own directory and the repository root - and that
-directory must **not be git-ignored** and must hold a pinned `package.json` and a pinned lockfile.
+directory must **not be git-ignored** and must hold a pinned `package.json` and a pinned lockfile. The
+`--prefix` spelling is read where npm's own syntax writes it, in the text *after* the tool name and
+with the option before or after the verb: round 10 looked for it in the text before the tool name,
+where no invocation can write it, so the option was dead code that happened to fail closed and
+`npm install --prefix <dir>`, `npm ci --prefix <dir>` and `npm --prefix <dir> install` each re-opened
+the round-9 attack - an install into a directory `.gitignore` hid, whose manifest no pin described and
+whose `postinstall` executed. The verb is read the same way, so `npm run --prefix <dir> <name>` resolves
+the manifest from the prefix directory too.
 
 The weakening flags are refused on the same terms, and the one live case in the tree is reconciled
 rather than left as prose. `--no-package-lock`, `--package-lock=false`, `--no-shrinkwrap`,

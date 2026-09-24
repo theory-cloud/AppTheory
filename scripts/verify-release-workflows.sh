@@ -23,6 +23,7 @@ import json
 import os
 import posixpath
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -340,6 +341,11 @@ HEREDOC_OPENER = re.compile(r"<<-?\s*(?P<quote>['\"]?)(?P<delimiter>[A-Za-z_][A-
 # a command that runs nothing (`cat`) is data. See `heredoc_bodies`.
 HEREDOC_READ_EXECUTORS = "interpreters"
 HEREDOC_READ_DATA = "data"
+# A body handed to a launcher that runs the names it is given (`xargs bash <<'EOF'`) is a *list of
+# names* rather than a script or an interpreter's code: the first word of each line is a name, not a
+# command. It is read as names, which is what makes `xargs bash <<'EOF'` with a body naming an
+# unpinned file a finding rather than a way around the launcher rule below.
+HEREDOC_READ_NAMES = "names"
 
 # The interpreters whose `-m` names a module rather than a file. `python3 -m evilmod` with an
 # `evilmod.py` planted in the tree ran unpinned code past a PASS in round 8; the module is read like
@@ -367,7 +373,14 @@ MANIFEST_IGNORED_DIRECTORIES = ("node_modules", ".venv", "dist", "_site", "vendo
 # An `npm`-family invocation: the subcommand, and whether it runs one of a package's scripts.
 NPM_INVOCATION = re.compile(r"(?:^|[\s;&|(`])(?P<tool>npm|npx|yarn|pnpm)(?=\s|$)")
 NPM_DIRECTORY = re.compile(r"(?:^|[\s;&|(`])cd\s+(?P<directory>[^\s;&|)]+)")
-NPM_PREFIX_OPTION = re.compile(r"--prefix[=\s]+(?P<directory>[^\s;&|)]+)")
+# The directory an invocation's `--prefix` (and its `-C` spelling) names. It is read out of the
+# invocation's *tail* - the text after the tool name - because that is where real npm syntax puts it:
+# `npm install --prefix <dir>` and `npm --prefix <dir> install` both write the option after `npm`, and
+# round 10 looked for it in the text *before* the tool name, where no invocation can write it. That is
+# why the option was dead code that happened to fail closed. The global flags of an `npm` invocation
+# may precede or follow the verb, so the option is read from the tail rather than from a fixed
+# position, and an `=`-attached spelling (`--prefix=<dir>`) is the same option.
+NPM_PREFIX_OPTION = re.compile(r"(?:--prefix|(?<![\w-])-C)(?:=|\s+)(?P<directory>[^\s;&|)]+)")
 NPM_RUN = re.compile(r"(?:^|\s)(?:run\s+(?P<run>[^\s;&|)]+)|(?P<lifecycle>test|start|stop|restart))\b")
 NPM_INSTALL = re.compile(r"(?:^|\s)(?:ci|install|i|add|update)\b")
 # The subcommands that fetch and run a package's binary, in both spellings npm accepts. `npm exec`
@@ -429,7 +442,90 @@ TOOL_LOCKFILES = {
 # where a commit can add one ignore rule and take a manifest out of the pins. Round 9 left it
 # unpinned, and `/examples/evilA/` appended to it hid an install target from every rule here.
 GITIGNORE_PATH = ".gitignore"
-PATTERN_PINNED_FILES = (GITIGNORE_PATH,)
+
+# The `.npmrc` files. An npm invocation reads the `.npmrc` of the directory it runs in and of every
+# directory above it, and one unfettered key there voids the lockfile premise the whole install rule
+# rests on: `package-lock=false` makes npm ignore the pinned lockfile, so `npm ci` in a directory
+# whose lockfile is pinned resolves the semver ranges and installs bytes no pin names. That is one
+# freely editable unpinned file - `ts/.npmrc` is committed and is the live case - so the sweep reads
+# every `.npmrc` this repository can commit, each must be pinned, and a pinned `.npmrc` may set none
+# of the weakening keys below. The pattern-file boundary applies: a `.npmrc` is configuration rather
+# than commands, so it is pinned for its own assertions and is not read by the executed-path rule.
+NPMRC_FILE_NAME = ".npmrc"
+
+# The npm configuration keys that weaken the premise an install is admitted on, in npm's own
+# spelling. Three families, and each family is a fact about the install rather than a preference:
+#
+#   * the lockfile keys: `package-lock`, `shrinkwrap` - whether the pinned lockfile governs the
+#     install at all, which is the whole of what the manifest and lockfile pins are for;
+#   * the fetch keys: a registry or a credential, which decides *where* the bytes come from
+#     (`registry`, `<scope>:registry`, `_auth`, `_authToken`, `always-auth`, `cafile`, `strict-ssl`,
+#     `userconfig`, `globalconfig`, `prefix`), because a pin describes a package and an integrity
+#     hash, not a registry;
+#   * the script and install-shape keys: `ignore-scripts` (the staging shape's own condition),
+#     `script-shell`, `shell`, `node-options`, `save`, `save-exact`, `save-dev`, `save-optional`,
+#     `save-peer`, `save-bundle`, `legacy-peer-deps`, `force`, `omit`, `include`, `install-links`,
+#     `bin-links`, `link`, `global` - which change what runs, what is written here or which shape an
+#     install takes, and each of which is a fact a *flag* is already refused for.
+#
+# `allow-remote` is deliberately absent, and it is the one key the tree sets: it narrows npm's
+# remote-dependency policy rather than widening it (transitive packages may not introduce remote
+# fetches), so refusing it would over-block the tree's own committed `ts/.npmrc` - which is admitted,
+# pinned and asserted like everything else here.
+NPMRC_WEAKENING_KEYS = (
+    "package-lock",
+    "shrinkwrap",
+    "registry",
+    "_auth",
+    "_authtoken",
+    "always-auth",
+    "cafile",
+    "strict-ssl",
+    "userconfig",
+    "globalconfig",
+    "prefix",
+    "ignore-scripts",
+    "script-shell",
+    "shell",
+    "node-options",
+    "save",
+    "save-exact",
+    "save-dev",
+    "save-optional",
+    "save-peer",
+    "save-bundle",
+    "legacy-peer-deps",
+    "force",
+    "omit",
+    "include",
+    "install-links",
+    "bin-links",
+    "link",
+    "global",
+)
+# The npm subcommands that write configuration rather than read it. `npm config set`, `npm config
+# delete`, `npm config edit` and `npm config unset` change the npm state an install later reads - the
+# same effect as editing a `.npmrc` - so they are findings in a pinned file. No pinned file writes
+# npm configuration; the battery carries the repro.
+NPM_CONFIG_WRITE_SUBCOMMANDS = ("set", "delete", "del", "rm", "unset", "edit")
+# A `.npmrc` written rather than committed. The sweep reads the tree at guard time, so a pinned line
+# that writes configuration into a `.npmrc` is the one shape the committed-file rule cannot see; it is
+# refused by its spelling instead.
+NPMRC_WRITE = re.compile(r"(?:(?:>>?|\btee|\bdd\s+of=)\s*[^\s;&|]*)(?<![\w-])\.npmrc\b")
+
+# The pinned files whose lines are *configuration* rather than commands: `.gitignore`'s lines are
+# patterns and a `.npmrc`'s lines are keys and values, so the executed-path reading does not read
+# them. Both are pinned by their digests like every other load-bearing file, and both are asserted by
+# a rule of their own (`carve_out_findings` and `manifest_paths` for the ignore file,
+# `npmrc_findings` for the npm configuration). The boundary is the basename, because a `.npmrc` is
+# configuration wherever a commit puts it.
+PATTERN_PINNED_BASENAMES = (GITIGNORE_PATH, NPMRC_FILE_NAME)
+
+
+def is_pattern_file(path):
+    """Whether a pinned file's lines are configuration rather than commands."""
+    return posixpath.basename(path) in PATTERN_PINNED_BASENAMES
+
 
 # The path-shaped token in an inline interpreter payload: a token holding a `/`, wherever in the
 # payload it sits. An inline payload is one line of another language's code, so the whitespace
@@ -463,9 +559,20 @@ INLINE_CODE_OPTIONS = {
 # the same payload under a different spelling. Only a cluster holding `c` is one, and only for a
 # shell: `-e` is `errexit` there and a payload for `node`.
 SHELL_EXECUTORS_FOR_INLINE = ("bash", "sh", "zsh", "dash", "ksh")
+# A shell flag cluster holding `c` (`bash -lc "..."`), which is the same payload under a different
+# spelling: only a cluster holding `c` is one, and only for a shell - `-e` is `errexit` there and a
+# payload for `node`. The *pure* cluster is the one whose letters stop at the `c`, so the payload is
+# the next word. A cluster with letters after the `c` (`bash -lc'…'`) carries its payload attached, and
+# where that payload starts is a position this reading cannot prove: the letters before the `c` may
+# consume values of their own, so the form is refused rather than guessed.
 COMBINED_INLINE_FLAG = re.compile(r"^-[A-Za-z]*c[A-Za-z]*$")
+COMBINED_INLINE_CLUSTER = re.compile(r"^-[A-Za-z]*c$")
 # The subcommand that takes inline code for the two runtimes that spell it that way.
 INLINE_EVAL_SUBCOMMAND = {"deno": "eval"}
+# The interpreters whose options this construction reads as code. An *unrecognized* attached option
+# on one of these lines is read too (see `unrecognized_attached_options`): a spelling of a code
+# option that is not in the set above is not a licence to skip the value it carries.
+INLINE_CODE_INTERPRETERS = tuple(INLINE_CODE_OPTIONS) + tuple(INLINE_EVAL_SUBCOMMAND)
 
 # A glob that names a directory and a set of files in it (`examples/testkit/*.mjs`), as opposed
 # to a regular expression handed to `grep`, which is a pattern over text and names no file.
@@ -473,6 +580,49 @@ GLOB_PATH = re.compile(r"^[A-Za-z0-9_$./~+-]*[*?][A-Za-z0-9_$./~+*-]*$")
 
 # The pipe form that hands a launcher a command to run: `... | xargs bash`.
 PIPED_EXECUTOR = re.compile(r"\|\s*xargs\s+(?:-\S+\s+)*(?P<name>[A-Za-z0-9_.-]+)")
+
+# A launcher that reads the names it runs from a file, or from the line's own standard input. The
+# `-a`/`--arg-file` spellings name the file outright and a `<` redirect hands the launcher the
+# line's standard input, and in both the names that run are written somewhere the pins do not
+# describe: `xargs -a list.txt bash` and `xargs bash < list.txt` run every name in a file that one
+# commit adds and every later commit edits with no pin edit anywhere. `xargs` is the spelling this
+# tree has; `parallel` reads an operand file the same way (`parallel -a <file>`), so both are named.
+#
+# A *pipe* is deliberately not one of these spellings. `find ... -print0 | xargs -0 gofmt -w` hands
+# the launcher names this line writes, and the piped rule below reads them; what is refused is a
+# launcher reading a file, which is a name no line here writes.
+LAUNCHER_FILE_READERS = ("xargs", "parallel")
+LAUNCHER_ARG_FILE_OPTION = re.compile(r"^-[A-Za-z]*a[A-Za-z]*$")
+INPUT_REDIRECT = re.compile(r"(?<![<=])<(?![<=])")
+
+
+def launcher_file_reading(line):
+    """The `(launcher, spelling)` of a launcher that reads its names from a file, or None.
+
+    The reading is of the launcher's own line segment: `xargs` must be the segment's command word,
+    so a mention inside a message is not one, and the option or redirect is looked for among that
+    segment's words. `xargs bash < list.txt` and `xargs -a list.txt bash` are the two repros, and
+    `parallel -a list.txt` is the same shape from another launcher.
+    """
+    for raw_segment in unquoted_segments(line):
+        words = shell_words(raw_segment)
+        command = None
+        command_index = None
+        for index, word in enumerate(words):
+            if word[0] in SHELL_KEYWORDS or ASSIGNMENT.match(word[0]):
+                continue
+            command = word[0]
+            command_index = index
+            break
+        if command not in LAUNCHER_FILE_READERS:
+            continue
+        for word in words[command_index + 1:]:
+            token = word[0]
+            if token.startswith("--arg-file") or LAUNCHER_ARG_FILE_OPTION.match(token):
+                return command, token
+        if INPUT_REDIRECT.search(raw_segment):
+            return command, "<"
+    return None
 
 # Dependency and tool code. `node_modules/`, a `.venv/` directory and `gov-infra/.tools/` are not
 # part of this repository: each is git-ignored, so no commit can change a byte of any of them, and
@@ -776,38 +926,126 @@ def resolve_reference(token, base_dir, root=None):
     return None, False
 
 
-def canonical_reference(token, base_dir):
-    """The canonical repository-relative path a token names, `..` and links already resolved.
+def resolve_executed(token, base_dir):
+    """The file a token in an executed position names, and how the resolution went.
 
-    `Path.resolve()` is non-strict, so this answers for a path that does not exist yet as well as
-    one that does, and it walks `..` out of a directory: `scripts/node_modules/../evil.js` is
-    `scripts/evil.js` here, which is why the carve-out below cannot be talked out of a pin by
-    walking through a dependency directory into a tracked path.
+    Returns `(relative_posix_or_None, status)`, and every status is decided on the *resolved* path:
+
+      * `"ok"` - a file that exists under the repository root, reached without a symbolic link;
+      * `"link"` - the same file, reached *through* a link, so the bytes that execute are not the
+        bytes the written path names;
+      * `"escaped"` - the token resolves to a path **outside** the repository root. That is the shape
+        round 10 let through: `scripts/.venv/e9x.js` linked to `/tmp/e9x.js` resolved outside the
+        root, so `resolve_reference` answered None and the carve-out was then decided on a
+        *fabricated* candidate that exists nowhere - the base-directory join the spelling never
+        named - which happened to hold a carve-out prefix and swallowed the token as dependency code.
+        The runtime bytes in `/tmp` then executed past a PASS with no pin anywhere;
+      * `"absent"` - no file in this repository has that name;
+      * `"unreadable"` - not a spelling this construction reads as a path.
+
+    A path is read from the repository root and from the referencing file's directory, exactly as
+    `resolve_reference` reads one; what this adds is that "resolved to nothing" and "resolved to
+    something that is not in this repository" are different answers rather than the same None.
     """
     bare = written_path(token)
     if bare is None:
-        return None
+        return None, "unreadable"
+    escaped = False
     for candidate in (Path(bare), Path(base_dir) / bare):
         try:
             resolved = candidate.resolve()
         except OSError:
             continue
-        if resolved.is_relative_to(ROOT):
-            return resolved.relative_to(ROOT).as_posix()
+        lexical = os.path.normpath(os.path.join(os.getcwd(), str(candidate)))
+        if not resolved.is_relative_to(ROOT):
+            # The token is written as a path inside the repository (or is a link) and resolution
+            # leaves it: that is a link out of the tree, or a `..` walk that leaves it, and neither
+            # is a name a pin can describe.
+            if Path(lexical).is_relative_to(ROOT) or candidate.is_symlink():
+                escaped = True
+            continue
+        if resolved.is_file():
+            linked = Path(lexical) != resolved
+            return resolved.relative_to(ROOT).as_posix(), ("link" if linked else "ok")
+    return None, ("escaped" if escaped else "absent")
+
+
+def dependency_spelling(token, base_dir):
+    """The dependency-spelled name a token writes, or None.
+
+    The *spelling* is read here, not a resolution, and it is read exactly the way `written_path`
+    reads one: `..` is normalised away first, so `scripts/node_modules/../evil.js` is
+    `scripts/evil.js` - the tracked file it resolves to - and not dependency code (round 9's rule,
+    kept). What is deliberately **not** here is what round 10 did instead: a resolution fallback that
+    fabricated a base-directory-joined candidate existing nowhere and tested *that* for carve-out
+    membership, which is how a token whose resolution left the repository was swallowed as dependency
+    code with no existence check, no link check and no root check. A spelling is a spelling: whether
+    the name may be executed is decided after this, by `resolve_executed` and by `dependency_reference`.
+    """
+    bare = written_path(token)
+    if bare is None:
+        return None
+    for candidate in (bare, posixpath.join(base_dir, bare) if base_dir else bare):
+        normalized = posixpath.normpath(candidate)
+        if normalized.startswith("..") or normalized.startswith("/"):
+            continue
+        if DEPENDENCY_DIRECTORY.search(normalized):
+            return normalized
     return None
 
 
-def dependency_reference(token, base_dir):
-    """The canonical path a token names when it lies under an approved dependency root.
+def dependency_reference(token, base_dir, command_position=False):
+    """The dependency-spelled name a token writes when it may be executed, or None.
 
-    This is the whole of the carve-out: it is decided on the *resolved* path and never on the
-    spelling, so `node_modules/evil.js` is dependency code and `scripts/node_modules/../evil.js` is
-    the tracked file it resolves to.
+    Four conditions, and each is stated rather than implied:
+
+      * the token must be **genuinely dependency-spelled** - its own spelling (normalised, no `..`
+        walked out) lies under a `node_modules/`, `.venv/` or `gov-infra/.tools/` directory, and
+        `carve_out_findings` asserts each such root is git-ignored and holds no tracked file, so no
+        commit can reach what the spelling names;
+      * a name whose resolution **leaves the repository** is refused. That is the round-10 hole: a
+        link at `scripts/.venv/e9x.js` pointing at `/tmp/e9x.js` resolved outside the root, the guard
+        fell back to a fabricated candidate, and the runtime bytes in `/tmp` executed past a PASS.
+        The bytes that would run are not the dependency tree's bytes, so the carve-out does not
+        apply to them;
+      * the exception is the shape a dependency root exists to provide: a token at **command
+        position** whose basename is one of this construction's own executor names. A virtualenv's
+        `bin/python` is a symbolic link to the interpreter the venv was built from, outside the tree,
+        in every environment this repository runs in - `python3 -m venv` links it and so does `uv` -
+        so `py/.venv/bin/python -m pip install ...`, which is how this tree builds, tests and lints
+        its Python side, is a dependency *tool* rather than a dependency file. A name handed to an
+        interpreter as the *program* (`node scripts/.venv/e9x.js`), and a command-position name that
+        is not an interpreter spelling (`scripts/.venv/e9x.js`), are both refused: neither is a tool
+        a dependency root provides, and both are how the `/tmp`-smuggling repro reaches the tree;
+      * an **absent** name is admitted only while its dependency root is not materialised here. A
+        committed line that names a dependency file no installer has produced, under a root that *is*
+        materialised, is the name-no-file-has finding it is everywhere else. A root that is absent
+        itself says nothing either way: this construction runs on a fresh checkout in the
+        release/security job, before any install, and dependency code is materialised at run time -
+        which is the carve-out's premise rather than a hole in it.
     """
-    relative = canonical_reference(token, base_dir)
-    if relative is None:
+    spelled = dependency_spelling(token, base_dir)
+    if spelled is None:
         return None
-    return relative if DEPENDENCY_DIRECTORY.search(relative) else None
+    _resolved, status = resolve_executed(token, base_dir)
+    if status == "escaped":
+        if command_position and posixpath.basename(spelled) in EXECUTOR_NAMES:
+            return spelled
+        return None
+    if status == "absent":
+        return spelled if dependency_root_of(spelled) is None else None
+    return spelled
+
+
+def dependency_root_of(spelled):
+    """The dependency root directory a spelled path lies under, or None."""
+    match = DEPENDENCY_DIRECTORY.search(spelled)
+    if match is None:
+        return None
+    root = spelled[: match.end()]
+    if not root.endswith("/"):
+        root += "/"
+    return root if Path(root).is_dir() else None
 
 
 def brace_like(token):
@@ -945,7 +1183,12 @@ def heredoc_bodies(text):
             continue
         delimiter = opener.group("delimiter")
         prefix = line[: opener.start()]
-        if mentions_executor(prefix, SHELL_EXECUTORS):
+        if mentions_executor(prefix, LAUNCHER_FILE_READERS):
+            # The launcher is the outer command, so the body is the *names* it runs - even when the
+            # launcher's operand is a shell (`xargs bash <<'EOF'`): the shell is handed each body line
+            # as a command line of its own, which is why the names are read as names.
+            kind = HEREDOC_READ_NAMES
+        elif mentions_executor(prefix, SHELL_EXECUTORS):
             kind = None
         elif mentions_executor(prefix, EXECUTOR_NAMES):
             kind = HEREDOC_READ_EXECUTORS
@@ -1123,9 +1366,105 @@ def module_name(words, start):
     return None
 
 
-def segment_words(raw_segment):
-    """The words of a segment with the offsets they occupy, so the text after one can be taken."""
-    return [(match.group(0), match.start(), match.end()) for match in re.finditer(r"\S+", raw_segment)]
+UNTERMINATED_QUOTE = "unterminated-quote"
+UNREADABLE_SPELLING = "unreadable-spelling"
+
+
+def shell_words(raw_segment):
+    """The words of a segment as the shell divides it: quote concatenation into one argument.
+
+    The shell's own rule is that adjacent quoted and unquoted runs are *one* word - `"no""de"` is
+    `node`, `'a'"b"` is `ab` - and round 10's payload reading broke that rule: it ended a payload at
+    the first closing quote, so `bash -c "no""de scripts/evil9.js"` read the payload as `no` and the
+    rest of the argument, which the shell hands to the same payload, was read by nothing. The words
+    are built by walking the raw text the way the shell does, and each word carries what the walk
+    could not prove:
+
+      * `UNTERMINATED_QUOTE` - a quote this walk cannot close inside the segment. The argument
+        continues on the next physical line (the shell's own reading), so it is only readable when
+        the caller can hand the following lines over; otherwise the form is refused.
+      * `UNREADABLE_SPELLING` - the `$'...'` and `$"..."` forms, whose value is computed rather than
+        written (`$'\\x6eode'` is `node`). A construction that cannot read the argument must not
+        pretend it did, so the form is refused rather than partially read.
+
+    A word is `(value, start, end, problem, detail)`; `problem` is None for a word this walk read in
+    full, and `detail` says which quote was left open or which spelling was not read.
+    """
+    words = []
+    index = 0
+    limit = len(raw_segment)
+    while index < limit:
+        while index < limit and raw_segment[index] in " \t":
+            index += 1
+        if index >= limit:
+            break
+        start = index
+        value = []
+        problem = None
+        detail = None
+        while index < limit and raw_segment[index] not in " \t":
+            character = raw_segment[index]
+            if character == "\\":
+                if index + 1 < limit:
+                    value.append(raw_segment[index + 1])
+                    index += 2
+                    continue
+                problem = problem or UNREADABLE_SPELLING
+                detail = detail or "a trailing backslash this walk cannot resolve"
+                index += 1
+                continue
+            if character in "\"'":
+                closing = raw_segment.find(character, index + 1)
+                if closing == -1:
+                    value.append(raw_segment[index + 1:])
+                    problem = problem or UNTERMINATED_QUOTE
+                    detail = detail or character
+                    index = limit
+                    continue
+                value.append(raw_segment[index + 1:closing])
+                index = closing + 1
+                continue
+            if character == '"':
+                cursor = index + 1
+                chunk = []
+                while cursor < limit:
+                    inner = raw_segment[cursor]
+                    if inner == "\\" and cursor + 1 < limit and raw_segment[cursor + 1] in '"\\$`':
+                        chunk.append(raw_segment[cursor + 1])
+                        cursor += 2
+                        continue
+                    if inner == '"':
+                        break
+                    chunk.append(inner)
+                    cursor += 1
+                if cursor >= limit:
+                    value.extend(chunk)
+                    problem = problem or UNTERMINATED_QUOTE
+                    detail = detail or '"'
+                    index = limit
+                    continue
+                value.extend(chunk)
+                index = cursor + 1
+                continue
+            if character == "$" and index + 1 < limit and raw_segment[index + 1] in "'\"":
+                # `$'...'` (ANSI-C quoting) and `$"..."` (locale translation): the value is computed,
+                # and `$'\x6eode'` is `node`. The spelling is kept in the value like any other text
+                # so a finding can name it, and it is marked unreadable so the form is refused.
+                quoted = raw_segment[index + 1]
+                closing = raw_segment.find(quoted, index + 2)
+                if closing == -1:
+                    value.append(raw_segment[index:])
+                    index = limit
+                else:
+                    value.append(raw_segment[index:closing + 1])
+                    index = closing + 1
+                problem = problem or UNREADABLE_SPELLING
+                detail = detail or f"the `${quoted}...' spelling, whose value is computed rather than written"
+                continue
+            value.append(character)
+            index += 1
+        words.append(("".join(value), start, index, problem, detail))
+    return words
 
 
 def unquoted_segments(line):
@@ -1168,68 +1507,262 @@ def unquoted_segments(line):
     return segments
 
 
-def payload_text(raw_segment, words, word_index):
-    """The text of the payload that starts at `word_index` of a segment, quotes removed.
+def attached_code_value(token, options):
+    """The code an *attached* option spelling carries, or None when the word carries none.
 
-    Everything after the option is the payload: `bash -c "node x.js"` holds one, and so does
-    `bash -c 'exec x.sh'`. A quoted payload ends at its unescaped closing quote, so the words after
-    it - the `$0` a shell hands its payload - are not read as part of it.
+    A code option is written two ways and both are the same argument to the interpreter: standalone
+    (`node -e "require('./evil9.js')"`) and attached - `--eval=...` with the `=` the CLI itself
+    defines, and for a short option the shell's own concatenation (`python3 -c'...'`,
+    `ruby -e'exec ...'`, `perl -ne'...'`), which is one word to the shell and one argument to the
+    interpreter. Round 10 read only the standalone spelling, so five spellings ran a plant past a
+    PASS with exit 0: `node "--eval=require('./scripts/evil9.js')"`, `python3 -c'...'`,
+    `python3 -c'...' ./scripts/evil9.js`, `ruby -e'exec [...]'` and `deno eval=...`.
     """
-    if word_index <= 0 or word_index > len(words):
-        return ""
-    remainder = raw_segment[words[word_index - 1][2]:].strip()
-    if not remainder:
-        return ""
-    if remainder[0] in "\"'":
-        quote = remainder[0]
-        index = 1
-        while index < len(remainder):
-            if remainder[index] == "\\":
-                index += 2
-                continue
-            if remainder[index] == quote:
-                return remainder[1:index]
-            index += 1
-        return remainder[1:]
-    return remainder.split()[0]
+    for option in options:
+        if token == option or not token.startswith(option):
+            continue
+        remainder = token[len(option):]
+        if remainder.startswith("="):
+            return remainder[1:]
+        if not option.startswith("--"):
+            return remainder
+    return None
 
 
-def inline_payloads(line):
-    """Every inline-code payload on a line, with the interpreter that runs it.
+def inline_payloads(line, continuation=""):
+    """Every inline-code payload on a line: the interpreter, its payload, and its operands.
 
     An inline payload is code the way a heredoc body is code, and round 9's rationale for reading a
     heredoc body applies to it verbatim: the interpreter hands the payload to its own parser, so the
     payload is a program, and a file the payload names is a file that runs. Round 9 read the
-    *first non-option word* after the option instead - the payload's first word - and the command
-    it named was never read: `bash -c "node scripts/evil9.js"`, `sh -c 'exec scripts/evil9.js'`,
-    `python3 -c "...subprocess.run(['node','scripts/evil9.js'])"` and `node -e
-    "require('./evil9.js')"` each ran a plant with exit 0. The payload's text is taken from the line
-    itself rather than from the tokenized words, and the segments are split only at separators that
-    are not inside a quote, because a payload is one argument that may hold spaces and punctuation.
+    *first non-option word* after the option instead - the payload's first word - and the command it
+    named was never read.
+
+    Each entry is `(executor, payload, problem, operands)`. `problem` is not None when the payload's
+    own argument is a spelling this walk cannot read in full (an unterminated quote with no
+    continuation to hand over, or the `$'...'` form), and then the form is refused rather than
+    partially read. `operands` are the words after the payload argument, each `(value, problem)`: a
+    payload reads its argv, so a name written there is data the payload may execute - `node -e
+    "require(process.argv[1])" ./scripts/evil9.js` ran a plant past round 10 with the operand read by
+    nothing at all, and the same is true of the `$0` a shell hands its payload.
     """
     payloads = []
     for raw_segment in unquoted_segments(line):
-        words = segment_words(raw_segment)
-        for index, (word, _start, _end) in enumerate(words):
-            executor = word.strip("\"'")
+        words = shell_words(raw_segment)
+        for index, word in enumerate(words):
+            executor = word[0]
             eval_subcommand = INLINE_EVAL_SUBCOMMAND.get(executor)
             if eval_subcommand is not None and index + 1 < len(words):
-                if words[index + 1][0].strip("\"'") == eval_subcommand:
-                    payloads.append((executor, payload_text(raw_segment, words, index + 2)))
+                following = words[index + 1]
+                if following[0] == eval_subcommand:
+                    entry = payload_entry(executor, words, index + 2, raw_segment, continuation)
+                    if entry is not None:
+                        payloads.append(entry)
+                    break
+                attached_eval = attached_code_value(following[0], (eval_subcommand,))
+                if attached_eval is not None:
+                    payloads.append((executor, attached_eval, None, tail_operands(words, index + 2)))
                     break
             if executor not in INLINE_CODE_OPTIONS and executor not in SHELL_EXECUTORS_FOR_INLINE:
                 continue
+            options = list(INLINE_CODE_OPTIONS.get(executor, ()))
             for later in range(index + 1, len(words)):
-                token = words[later][0].strip("\"'")
-                if token in INLINE_CODE_OPTIONS.get(executor, ()) or (
+                token = words[later][0]
+                cluster = (
                     executor in SHELL_EXECUTORS_FOR_INLINE and COMBINED_INLINE_FLAG.match(token)
-                ):
-                    payloads.append((executor, payload_text(raw_segment, words, later + 1)))
+                )
+                if cluster and not COMBINED_INLINE_CLUSTER.match(token) and token.startswith("-"):
+                    # `bash -lc'…'`: the payload is attached to a cluster whose earlier letters may
+                    # take values of their own, so where the payload starts is a position this reading
+                    # cannot prove. The form is refused rather than guessed.
+                    payloads.append(
+                        (
+                            executor,
+                            "",
+                            (
+                                UNREADABLE_SPELLING,
+                                f"the `{token}` flag cluster, whose payload this reading cannot "
+                                f"place - write the payload as its own argument",
+                            ),
+                            [],
+                        )
+                    )
+                    break
+                if cluster:
+                    options.append(token)
+                attached = attached_code_value(token, options)
+                if attached is not None:
+                    payloads.append((executor, attached, None, tail_operands(words, later + 1)))
+                    break
+                if token in options:
+                    entry = payload_entry(executor, words, later + 1, raw_segment, continuation)
+                    if entry is not None:
+                        payloads.append(entry)
                     break
     return payloads
 
 
-def executed_path_references(line, in_body=False, command_line=None, base_dir="", script_body=False, payload_depth=0, cwd="", statement_file=False):
+def tail_operands(words, start):
+    """The `(value, problem)` pairs of the words after a payload argument."""
+    return [(word[0], word_problem(word)) for word in words[start:]]
+
+
+def word_problem(word):
+    """The `(kind, detail)` a walked word could not be read with, or None when it was read in full."""
+    if word[3] is None:
+        return None
+    return (word[3], word[4])
+
+
+def describe_problem(problem):
+    """A problem a payload argument has, in words a finding can print.
+
+    A `detail` is a full noun phrase - "the `$\'...\'` spelling, whose value is computed rather than
+    written" - because the finding reads it as one ("written with ..."), and an unterminated quote's
+    detail is just the quote character, so it is phrased here.
+    """
+    kind, detail = problem
+    if kind == UNTERMINATED_QUOTE:
+        return f"a quote ({detail}) that never closes"
+    return detail
+
+
+def quoted_payload_continuation(lines, index):
+    """The following physical lines of a payload argument quoted past this line, or "".
+
+    The shell reads an unclosed quote as "the argument continues on the next line", so a payload
+    written across lines - `python3 -c '` followed by a body of code and its closing quote, which is
+    how this tree's own JSON reader is written - is one argument, and reading its first line only
+    would leave everything after it unread. `lines` is the file's physical lines and `index` is the
+    1-based number of the line the payload opens on; the continuation ends at the line that closes the
+    quote (that line's text included, up to and including the quote) and, when the quote never closes
+    anywhere below, the empty string is returned and the form is refused instead.
+    """
+    line = lines[index - 1]
+    if "'" not in line and '"' not in line:
+        return ""
+    open_quote = None
+    for _executor, _payload, problem, _operands in inline_payloads(line):
+        if problem is not None and problem[0] == UNTERMINATED_QUOTE:
+            open_quote = problem[1]
+            break
+    if open_quote is None:
+        return ""
+    pieces = []
+    for later in lines[index:]:
+        closing = closing_quote_index(later, open_quote)
+        if closing is None:
+            pieces.append(later)
+            continue
+        pieces.append(later[: closing + 1])
+        return "\n".join(pieces)
+    return ""
+
+
+def closing_quote_index(line, quote):
+    """The index of the first unescaped `quote` in a line, or None."""
+    index = 0
+    while index < len(line):
+        if line[index] == "\\":
+            index += 2
+            continue
+        if line[index] == quote:
+            return index
+        index += 1
+    return None
+
+
+def body_name_references(line, cwd):
+    """The names one line of a launcher's heredoc body hands it, read as executed names.
+
+    A body handed to `xargs`/`parallel` is a list of names, so each word is a name rather than
+    syntax: a path-like name is read by the executed-path rule, an absolute or home path is refused,
+    and a bare name is refused with the other bare names. A blank line and a `#` comment name nothing.
+    """
+    references = []
+    for raw_segment in unquoted_segments(line):
+        for word in shell_words(raw_segment):
+            value = word[0]
+            if not value or value.startswith("#"):
+                continue
+            token = path_like(value)
+            if token:
+                references.append(("operand", "xargs", token, line, cwd))
+                continue
+            if absolute_like(value):
+                references.append(("absolute", "xargs", value, line, cwd))
+                continue
+            if BARE_NAME.match(value):
+                references.append(("bare", "xargs", value, line, cwd))
+    return references
+
+
+
+def payload_entry(executor, words, payload_index, raw_segment, continuation):
+    """One `(executor, payload, problem, operands)` entry, or None when there is no argument."""
+    if payload_index >= len(words):
+        # The option is written with no argument at all (`bash -c`): it runs nothing, and there is no
+        # payload and no operand list to read.
+        return None
+    word = words[payload_index]
+    payload = word[0]
+    problem = word_problem(word)
+    operands = tail_operands(words, payload_index + 1)
+    if problem is not None and problem[0] == UNTERMINATED_QUOTE and continuation:
+        # The argument continues on the following physical lines, which is the shell's own reading of
+        # an unclosed quote - `python3 -c '` followed by a body of code and its closing quote is one
+        # argument in every shell. The extended text is walked again so the payload is the *whole*
+        # argument rather than its first line, and a walk that still cannot close the quote leaves the
+        # form refused.
+        extended = shell_words(raw_segment + "\n" + continuation)
+        if payload_index < len(extended):
+            word = extended[payload_index]
+            payload = word[0]
+            problem = word_problem(word)
+            operands = tail_operands(extended, payload_index + 1)
+    return (executor, payload, problem, operands)
+
+
+def unrecognized_attached_options(line):
+    """`(interpreter, option, value)` for attached options this construction does not recognize.
+
+    The inline-code option set is closed and enumerated, and a spelling of a code option that is not
+    in it is exactly what round 10 skipped: the word is an option, so the operand reading passes over
+    it, and the value it carries - which the interpreter may execute, the way `node
+    --require=<file>` loads one - was read by nothing. The reading here is the honest one for a value
+    whose meaning this construction cannot place: every path-shaped token in it is read as an
+    executed name, and a value that is a bare name is refused with them. A *glob* in such a value is
+    not read as a set, and that bound is stated rather than implied - the glob's text begins with the
+    option name (`--test-coverage-include="ts/dist/**/*.js"`), so the shell cannot match a file with
+    it and the pattern is handed to the tool rather than expanded into a set of programs. Only the
+    segment's own command word opens this reading, so a mention inside a message is not one.
+    """
+    found = []
+    for raw_segment in unquoted_segments(line):
+        words = shell_words(raw_segment)
+        command = None
+        for word in words:
+            if word[0] in SHELL_KEYWORDS or ASSIGNMENT.match(word[0]):
+                continue
+            command = word[0]
+            break
+        if command not in INLINE_CODE_INTERPRETERS:
+            continue
+        known = set(INLINE_CODE_OPTIONS.get(command, ()))
+        if command in INLINE_EVAL_SUBCOMMAND:
+            known.add(INLINE_EVAL_SUBCOMMAND[command])
+        for word in words[1:]:
+            token = word[0]
+            if not token.startswith("-") or "=" not in token:
+                continue
+            option, value = token.split("=", 1)
+            if option in known:
+                continue
+            found.append((command, option, value))
+    return found
+
+
+def executed_path_references(line, in_body=False, command_line=None, base_dir="", script_body=False, payload_depth=0, cwd="", statement_file=False, payload_continuation=""):
     """Every path-like token a line would run, with the position it is written in.
 
     This is the executed-path rule: the token a command runs - the first non-option argument
@@ -1430,13 +1963,31 @@ def executed_path_references(line, in_body=False, command_line=None, base_dir=""
                 references.append(("piped-bare", "xargs", raw, line, cwd))
         if not named:
             references.append(("piped-empty", "xargs", "", line, cwd))
+    # A launcher that reads the names it runs from a file, or from its own standard input, is
+    # refused. `xargs -a list.txt bash`, `xargs --arg-file=list.txt bash` and `xargs bash < list.txt`
+    # all hand the launcher a set of names that is written in exactly one place - a file, or the
+    # standard input of the line - and a name no pinned file writes is a name no pin can describe:
+    # the file is editable after the pull request that adds it with no pin edit anywhere, which is the
+    # shape round 8 disclosed as a bound and the adjudication requires closed. The tree reads names
+    # from a pipe of *its own writing* (`find ... -print0 | xargs -0 gofmt -w`) or from nothing at all,
+    # and none of its launcher lines reads a file: so the rule is total and costs the tree nothing.
+    launcher_file = launcher_file_reading(line)
+    if launcher_file is not None:
+        references.append(("launcher-file", launcher_file[0], launcher_file[1], line, cwd))
     # An inline payload opened on this line is code, and it is read the way a heredoc body handed
     # to an interpreter is read - with one addition. A payload is one line of another language, so
     # the whitespace tokenization that locates a command in a shell line does not locate anything
     # in it: `require('./evil9.js')` is a single word. Every path-shaped token in the payload is
-    # therefore read out of the text as well, and both readings are kept.
+    # therefore read out of the text as well, and both readings are kept. The words after the payload
+    # argument are read too: a payload binds its argv, so a name written there is data the payload may
+    # execute, exactly like the `$0` a shell hands its own payload.
     if payload_depth < 3:
-        for executor, payload in inline_payloads(line):
+        for executor, payload, problem, operands in inline_payloads(line, payload_continuation):
+            if problem is not None:
+                references.append(
+                    ("payload-unreadable", executor, describe_problem(problem), line, cwd)
+                )
+                continue
             if not payload:
                 continue
             for reference in executed_path_references(
@@ -1450,6 +2001,43 @@ def executed_path_references(line, in_body=False, command_line=None, base_dir=""
                 references.append(reference)
             for match in PAYLOAD_PATH_TOKEN.finditer(payload):
                 references.append(("payload", executor, match.group(0), line, cwd))
+            for value, operand_problem in operands:
+                if operand_problem is not None:
+                    references.append(
+                        (
+                            "payload-unreadable",
+                            executor,
+                            describe_problem(operand_problem),
+                            line,
+                            cwd,
+                        )
+                    )
+                    continue
+                token = path_like(value)
+                if token:
+                    references.append(("payload-operand", executor, token, line, cwd))
+                    continue
+                if absolute_like(value):
+                    references.append(("absolute", executor, value, line, cwd))
+                    continue
+                if BARE_NAME.match(value):
+                    references.append(("bare", executor, value, line, cwd))
+    # An attached option this construction does not recognize carries a value it cannot place, and
+    # the value is not skipped: every path-shaped token in it is read as an executed name, and a value
+    # that is a bare name is refused with them. See `unrecognized_attached_options` for what is read
+    # and what is not.
+    for interpreter, option, value in unrecognized_attached_options(line):
+        spelling = f"{interpreter} {option}="
+        for match in PAYLOAD_PATH_TOKEN.finditer(value):
+            token = match.group(0)
+            if glob_like(token):
+                continue
+            if absolute_like(token):
+                references.append(("absolute", spelling, token, line, cwd))
+                continue
+            references.append(("option-value", spelling, token, line, cwd))
+        if not PAYLOAD_PATH_TOKEN.search(value) and BARE_NAME.match(value):
+            references.append(("option-value", spelling, value, line, cwd))
     return references
 
 
@@ -1725,9 +2313,14 @@ OUT_OF_ROOT_FILE_DIGESTS = {
 # edit that took a manifest out of the pins: appending `/examples/evilA/` to it hid an install
 # target from every rule here while `cd examples/evilA && npm install` ran that directory's
 # `postinstall`. The executed-path reading does not read it - its lines are patterns, not commands
-# (`PATTERN_PINNED_FILES`) - but its digest is a pin like any other.
+# (`PATTERN_PINNED_BASENAMES`) - but its digest is a pin like any other.
 PATTERN_FILE_DIGESTS = {
     ".gitignore": "b11b5de75869935fa416afa9d35d3e56049be9ec9c027de0e147f6d5565a2d24",
+    # The one `.npmrc` this repository commits. It must be pinned: it decides whether npm consults
+    # the lockfile an install is admitted on, and it is readable from every npm invocation in `ts/`.
+    # Round 10 left it unpinned, and one line added to it in a commit that touches nothing else made
+    # `ts/package-lock.json`'s pins describe bytes the install never selected.
+    "ts/.npmrc": "21e35118c43bcd83aff348fbad4486f2e98ec0fadba982c0bbbf79ead5fb3bce",
 }
 
 PINNED_FILE_DIGESTS = dict(
@@ -1993,9 +2586,10 @@ def executed_path_findings(read_text):
     """
     findings = []
     for path in PINNED_FILE_DIGESTS:
-        if path in PATTERN_PINNED_FILES:
-            # `.gitignore` is pinned by its digest like every other load-bearing file, but its
-            # lines are patterns rather than commands, so they are not read here.
+        if is_pattern_file(path):
+            # `.gitignore` and a `.npmrc` are pinned by their digests like every other load-bearing
+            # file, but their lines are patterns and configuration rather than commands, so they are
+            # not read here. Each has an assertion of its own.
             continue
         try:
             text = read_text(path)
@@ -2003,6 +2597,7 @@ def executed_path_findings(read_text):
             continue
         base_dir = posixpath.dirname(path)
         bodies = heredoc_bodies(text)
+        physical = text.split("\n")
         for start, group in joined_lines(text):
             # The directory context is joined: a `cd` a continued line writes is in force for the
             # lines that continue it, so `cd scripts && \` followed by `python3 -m evilmod` resolves
@@ -2022,7 +2617,19 @@ def executed_path_findings(read_text):
                 stripped = line.strip()
                 if stripped.startswith("#") or stripped.startswith("//") or stripped.startswith("/*"):
                     continue
-                seen = set()
+                if in_body == HEREDOC_READ_NAMES:
+                    # The body a launcher reads is a list of names, so its lines are read as names
+                    # rather than as shell syntax. `xargs bash <<'EOF'` with a body naming an
+                    # unpinned file is the shape this closes.
+                    findings.extend(
+                        path_reference_findings(
+                            f"{path}:{index}",
+                            body_name_references(line, cwd_seed),
+                            base_dir,
+                            line,
+                        )
+                    )
+                    continue
                 references = executed_path_references(
                     line,
                     in_body=in_body is not None,
@@ -2030,6 +2637,7 @@ def executed_path_findings(read_text):
                     cwd=cwd_seed,
                     statement_file=posixpath.splitext(path)[1].lstrip(".").lower()
                     in STATEMENT_FILE_SUFFIXES,
+                    payload_continuation=quoted_payload_continuation(physical, index),
                 )
                 findings.extend(
                     path_reference_findings(f"{path}:{index}", references, base_dir, line)
@@ -2142,6 +2750,32 @@ def path_reference_findings(where, references, base_dir, line):
                 )
             )
             continue
+        if position == "launcher-file":
+            findings.append(
+                (
+                    CLASS_CLOSURE,
+                    f"{where}: runs `{command}` with {token!r}, so the names it runs are read from a "
+                    f"file or from the line's own standard input - {line.strip()!r}. A name no line "
+                    f"here writes is a name no pin describes: the file is added by one commit and "
+                    f"edited by every later one with no pin edit anywhere, which is the shape round 8 "
+                    f"disclosed as a bound and this round closes. Write the names on the line, or pipe "
+                    f"them in from a command this guard reads",
+                )
+            )
+            continue
+        if position == "payload-unreadable":
+            findings.append(
+                (
+                    CLASS_CLOSURE,
+                    f"{where}: runs `{command}` against an inline payload written with {token}, which "
+                    f"this construction cannot read in full - {line.strip()!r}. The shell concatenates "
+                    f"adjacent quoted and unquoted runs into one argument (`\"no\"\"de\"` is `node`) and "
+                    f"a `$'...'` spelling computes its own text, so a partial read would be a read of "
+                    f"something other than the argument that runs. Write the payload so the argument "
+                    f"this guard reads is the argument the shell hands over",
+                )
+            )
+            continue
         if position == "unrecognized":
             findings.append(
                 (
@@ -2154,6 +2788,10 @@ def path_reference_findings(where, references, base_dir, line):
             continue
         if position == "payload":
             phrase = f"names in the inline `{command}` payload"
+        if position == "payload-operand":
+            phrase = f"hands to the inline `{command}` payload as argv data"
+        if position == "option-value":
+            phrase = f"hands to `{command}` the value of an option this construction does not recognize:"
         if position == "script-bare":
             phrase = f"runs in the package script whose command is `{command}`"
         if position == "payload" and absolute_like(token):
@@ -2201,6 +2839,7 @@ def path_reference_findings(where, references, base_dir, line):
             token,
             base_dir,
             allow_unresolved=(position == "for-list"),
+            command_position=(position == "command"),
         )
         if finding is not None:
             findings.append(finding)
@@ -2248,17 +2887,18 @@ def line_directory(line, cwd, base_dir):
     return cwd
 
 
-def executed_name_finding(where, phrase, token, base_dir, allow_unresolved=False):
+def executed_name_finding(where, phrase, token, base_dir, allow_unresolved=False, command_position=False):
     """The finding for an executed name that is not pinned, or None when it is.
 
-    One reading, in one place, for every executed position: the symbolic link first (the bytes that
-    execute are the linked bytes, and a committed link is a name a later commit can repoint with no
-    pin edit), then the dependency carve-out decided on the *resolved* path, then the pin, then the
-    two shapes that resolve to nothing - a spelling this guard refuses to read, and a name no file
-    has.
+    One reading, in one place, for every executed position, and the order is the order of the
+    decisions: the symbolic link first (the bytes that execute are the linked bytes, and a committed
+    link is a name a later commit can repoint with no pin edit), then the dependency carve-out (a name
+    under a live dependency root that may be executed - see `dependency_reference` for its conditions),
+    then a resolution that *leaves* the repository, then the pin, then the two shapes that resolve to
+    nothing - a spelling this guard refuses to read, and a name no file has.
     """
-    resolved, through_link = resolve_reference(token, base_dir)
-    if through_link:
+    resolved, status = resolve_executed(token, base_dir)
+    if status == "link":
         return (
             CLASS_CLOSURE,
             f"{where}: {phrase} {token!r}, which resolves to {resolved!r} through a symbolic link. The "
@@ -2266,20 +2906,31 @@ def executed_name_finding(where, phrase, token, base_dir, allow_unresolved=False
             f"other than what runs - and a link is how a name outside the pin set, under a dependency root "
             f"or anywhere else, is reached by a file a commit can add and edit freely",
         )
+    if dependency_reference(token, base_dir, command_position):
+        return None
+    if status == "escaped":
+        return (
+            CLASS_CLOSURE,
+            f"{where}: {phrase} {token!r}, which resolves to a path outside this repository. A name that "
+            f"leaves the tree is one no pin here can describe - and the spellings that leave it are a "
+            f"symbolic link and a `..` walk, neither of which is a name a reviewer can pin. A dependency "
+            f"root is a dependency root only when the file under it is *in* the tree; a link that points "
+            f"out of the tree, under a dependency-spelled directory or anywhere else, is refused here",
+        )
+    if status == "unreadable":
+        return (
+            CLASS_CLOSURE,
+            f"{where}: {phrase} {token!r}, which is not one of the spellings this guard reads. A path "
+            f"is read as a plain path, with a leading `./`, or behind a braced variable directory; an "
+            f"unbraced variable, a quoted segment, a command substitution, an absolute path and a `~` "
+            f"are refused rather than skipped, because a spelling this guard cannot canonicalise is a "
+            f"script it cannot vouch for",
+        )
     if dependency_reference(token, base_dir):
         return None
     if resolved == GUARD_PATH or resolved in PINNED_FILE_DIGESTS:
         return None
     if resolved is None:
-        if written_path(token) is None:
-            return (
-                CLASS_CLOSURE,
-                f"{where}: {phrase} {token!r}, which is not one of the spellings this guard reads. A path "
-                f"is read as a plain path, with a leading `./`, or behind a braced variable directory; an "
-                f"unbraced variable, a quoted segment, a command substitution, an absolute path and a `~` "
-                f"are refused rather than skipped, because a spelling this guard cannot canonicalise is a "
-                f"script it cannot vouch for",
-            )
         if allow_unresolved:
             return None
         return (
@@ -2404,6 +3055,111 @@ def manifest_paths(patterns):
     return tuple(sorted(set(paths)))
 
 
+def npmrc_paths(patterns):
+    """Every `.npmrc` this repository can commit, ignoring the ignored trees.
+
+    An npm invocation reads the `.npmrc` of the directory it runs in **and of every directory above
+    it**, so the sweep is every `.npmrc` under the repository root rather than only the ones beside a
+    manifest: a file one directory above an install governs that install all the same. Dependency code
+    and build output are excluded exactly as `manifest_paths` excludes them, and a path `.gitignore`
+    ignores is excluded because a local materialisation is not part of this repository. What is outside
+    this sweep is outside it by construction: a `.npmrc` above the repository root (`$HOME/.npmrc`, the
+    npm global config) is not a file any commit here can reach.
+    """
+    paths = []
+    for path in sorted(Path(".").rglob(NPMRC_FILE_NAME)):
+        relative = path.as_posix()
+        if any(part in MANIFEST_IGNORED_DIRECTORIES for part in path.parts[:-1]):
+            continue
+        if gitignore_ignores(patterns, relative):
+            continue
+        paths.append(relative)
+    return tuple(sorted(set(paths)))
+
+
+def npmrc_assignments(text):
+    """The `key=value` pairs of a `.npmrc`, comments and blanks dropped, keys lowercased."""
+    pairs = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith(";"):
+            continue
+        if "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip().lower()
+        if key:
+            pairs.append((key, value.strip()))
+    return pairs
+
+
+def npmrc_findings(read_text):
+    """The `.npmrc` files that are unpinned or weakening, and the lines that write one.
+
+    Round 10 pinned every package manifest and lockfile this repository can commit on the premise that
+    a pinned lockfile is what binds the bytes an install selects, and one unpinned file voided it:
+    `ts/.npmrc` is committed, was pinned by nothing, and one line added to it - `package-lock=false` -
+    makes npm ignore the pinned lockfile, so `npm ci` in a directory whose lockfile is pinned resolves
+    the semver ranges and runs the lifecycle scripts of whatever version the registry serves. That is
+    the shape round 9 adjudicated a blocker, reintroduced by a one-file edit with no pin edit anywhere.
+
+    So every `.npmrc` this repository can commit must be pinned, and a *pinned* `.npmrc` is not a
+    licence either: its own keys are read, and a key that decides whether the lockfile governs the
+    install, where the bytes come from, or whether a script runs is refused even there. The tree's one
+    `.npmrc` sets `allow-remote=root`, which narrows npm's remote-dependency policy rather than widening
+    it, and is what the admitted side of the battery proves.
+    """
+    findings = []
+    patterns = repository_gitignore_patterns(read_text)
+    for path in npmrc_paths(patterns):
+        if path not in PINNED_FILE_DIGESTS:
+            findings.append(
+                (
+                    CLASS_CLOSURE,
+                    f"{path}: is an npm configuration file in this repository and is pinned by nothing. "
+                    f"npm reads the `.npmrc` of the directory it runs in and of every directory above it, "
+                    f"and a lockfile or registry key in one makes a pinned manifest and lockfile describe "
+                    f"bytes the install never selects - so every `.npmrc` this repository can commit is "
+                    f"pinned, and the pin is the two-place edit the ignore rule and the manifest beside it "
+                    f"are",
+                )
+            )
+            continue
+        try:
+            text = read_text(path)
+        except (OSError, UnicodeDecodeError):
+            continue
+        for key, value in npmrc_assignments(text):
+            if key in NPMRC_WEAKENING_KEYS or key.endswith(":registry"):
+                findings.append(
+                    (
+                        CLASS_CLOSURE,
+                        f"{path}: sets `{key}={value}`, and that key weakens what an install is admitted "
+                        f"on - the lockfile that governs it, the registry the bytes come from, or whether "
+                        f"a lifecycle script runs here at all. A pinned `.npmrc` is pinned for exactly this "
+                        f"reason: pinning the file does not make its keys admissible",
+                    )
+                )
+    for path in PINNED_FILE_DIGESTS:
+        if is_pattern_file(path):
+            continue
+        try:
+            text = read_text(path)
+        except (OSError, UnicodeDecodeError):
+            continue
+        for index, line in enumerate(text.split("\n"), 1):
+            if NPMRC_WRITE.search(line):
+                findings.append(
+                    (
+                        CLASS_CLOSURE,
+                        f"{path}:{index}: writes a `.npmrc` - {line.strip()!r}. The `.npmrc` the pins "
+                        f"describe is the committed one; an npm configuration file written at run time is "
+                        f"read by the next install and described by no pin at all",
+                    )
+                )
+    return findings
+
+
 def npm_invocations(text):
     """Every npm/npx invocation in a file, with the line it is written on and the text after it.
 
@@ -2436,21 +3192,29 @@ def npm_invocations(text):
         yield match.group("tool"), line, tail
 
 
-def npm_directory_spellings(line):
-    """The directory spellings an npm invocation's line names, in the order they are written."""
+def npm_directory_spellings(line, tail=""):
+    """The directory spellings an npm invocation names, in the order they are written.
+
+    Two spellings, and both are *read* rather than guessed: a `cd` written on the invocation's own
+    line, and the `--prefix`/`-C` option of the invocation itself. The prefix lives in `tail` - the
+    text after the tool name - because that is where npm's own syntax writes it; the `cd` lives in
+    `line`, the text up to and including the tool name, because a `cd` that governs the invocation is
+    written before it. What the invocation's *own* prefix names is read first: `npm install --prefix x`
+    installs into `x` whatever the line `cd`-ed to.
+    """
     spellings = []
-    for pattern in (NPM_DIRECTORY, NPM_PREFIX_OPTION):
-        for match in pattern.finditer(line):
+    for pattern, text in ((NPM_PREFIX_OPTION, tail), (NPM_DIRECTORY, line)):
+        for match in pattern.finditer(text):
             spelling = match.group("directory").strip("\"'")
             if spelling and spelling not in spellings:
                 spellings.append(spelling)
     return spellings
 
 
-def npm_package_json_candidates(line, base_dir):
+def npm_package_json_candidates(line, base_dir, tail=""):
     """The package.json files an npm invocation could read, nearest first."""
     candidates = []
-    for spelling in npm_directory_spellings(line):
+    for spelling in npm_directory_spellings(line, tail):
         bare = written_path(spelling)
         if bare is not None:
             candidates.append(posixpath.normpath(posixpath.join(bare, "package.json")))
@@ -2587,7 +3351,7 @@ def npm_call_command(tail):
     return match.group("value").strip("\"'")
 
 
-def npm_install_findings(where, line, words, base_dir, patterns):
+def npm_install_findings(where, line, tail, words, base_dir, patterns):
     """The findings an install in a pinned file produces: its target, and its weakening flags.
 
     An install is admitted because the manifest whose lifecycle scripts can run and the lockfile
@@ -2595,12 +3359,20 @@ def npm_install_findings(where, line, words, base_dir, patterns):
     premise without checking it, and the premise was breakable in one commit: `.gitignore` is
     unpinned, so appending `/examples/evilA/` to it took `examples/evilA/package.json` out of
     `manifest_paths`, and `cd examples/evilA && npm install` then ran that manifest's `postinstall`
-    from bytes no pin named. The directory the invocation names is resolved here, and it must hold a
-    pinned manifest and a pinned lockfile and must not be git-ignored.
+    from bytes no pin named. The directories the invocation names are resolved here - its `cd`, its
+    own `--prefix`/`-C`, the file's directory and the repository root - and each must hold a pinned
+    manifest and a pinned lockfile and must not be git-ignored.
+
+    `--prefix` is read from the *tail* (the text after the tool name), which is where npm syntax
+    writes it and where round 10 never looked: the option was read from the text before the tool name,
+    so `npm install --prefix examples/evilA`, `npm ci --prefix examples/evilA` and
+    `npm --prefix examples/evilA install` all checked only the file's directory and the root, and the
+    round-9 attack ran again through the prefix spelling with the ignore rule and the graph
+    unchanged - the postinstall of a manifest no pin named executed.
     """
     findings = []
     directories = []
-    for spelling in npm_directory_spellings(line):
+    for spelling in npm_directory_spellings(line, tail):
         bare = written_path(spelling)
         if bare is not None and bare not in directories:
             directories.append(bare)
@@ -2664,7 +3436,7 @@ def npm_install_findings(where, line, words, base_dir, patterns):
     return findings
 
 
-def lockfile_tool_findings(where, tool, line, base_dir):
+def lockfile_tool_findings(where, tool, line, tail, base_dir):
     """The finding a `yarn` or `pnpm` invocation in a pinned file produces.
 
     These two are package managers of the same kind as npm: each selects a manifest and a lockfile of
@@ -2675,7 +3447,7 @@ def lockfile_tool_findings(where, tool, line, base_dir):
     fails closed until they are pinned.
     """
     names = TOOL_LOCKFILES[tool]
-    for spelling in npm_directory_spellings(line):
+    for spelling in npm_directory_spellings(line, tail):
         bare = written_path(spelling)
         if bare is None:
             continue
@@ -2775,16 +3547,34 @@ def package_manifest_findings(read_text):
         for index, (tool, line, tail) in enumerate(invocations, 1):
             where = f"{path} (npm invocation {index} on {line.strip()!r})"
             directories = []
-            for spelling in npm_directory_spellings(line):
+            for spelling in npm_directory_spellings(line, tail):
                 bare = written_path(spelling)
                 if bare is not None:
                     directories.append(bare)
             words = npm_invocation_words(tail)
             subcommand = next((word for word, kind in words if kind == "word"), None)
             if tool in ("yarn", "pnpm"):
-                finding = lockfile_tool_findings(where, tool, line, base_dir)
+                finding = lockfile_tool_findings(where, tool, line, tail, base_dir)
                 if finding is not None:
                     findings.append(finding)
+                continue
+            if subcommand == "config":
+                # `npm config set <key> <value>` (and its `delete`/`edit`/`unset` spellings) writes
+                # npm configuration - the same effect as editing a `.npmrc`, from a pinned line, at run
+                # time, where the committed-file rule cannot see it. `npm config get` only reads, and is
+                # left alone: reading a key is a report, not a change to what an install selects.
+                following = [word for word, kind in words if kind == "word"]
+                if len(following) > 1 and following[1] in NPM_CONFIG_WRITE_SUBCOMMANDS:
+                    findings.append(
+                        (
+                            CLASS_CLOSURE,
+                            f"{where}: runs `{tool} config {following[1]}`, which writes npm "
+                            f"configuration. A `.npmrc` key decides whether the lockfile governs an "
+                            f"install and where its bytes come from, so the committed `.npmrc` files are "
+                            f"pinned and a line that writes configuration - through the tool or through a "
+                            f"redirect into a `.npmrc` - is refused with them",
+                        )
+                    )
                 continue
             call = npm_call_command(tail) if tool == "npx" or subcommand in ("exec", "x") else None
             if call is not None:
@@ -2828,7 +3618,7 @@ def package_manifest_findings(read_text):
                     )
                 continue
             if subcommand in NPM_INSTALL_SUBCOMMANDS:
-                findings.extend(npm_install_findings(where, line, words, base_dir, patterns))
+                findings.extend(npm_install_findings(where, line, tail, words, base_dir, patterns))
                 continue
             run = NPM_RUN.search(tail)
             if run is None:
@@ -2836,7 +3626,7 @@ def package_manifest_findings(read_text):
             name = run.group("run") or run.group("lifecycle")
             if name is None:
                 continue
-            candidates = npm_package_json_candidates(line, base_dir)
+            candidates = npm_package_json_candidates(line, base_dir, tail)
             existing = [candidate for candidate in candidates if Path(candidate).is_file()]
             declaring = [
                 candidate
@@ -2931,6 +3721,7 @@ def guarded_surface_findings(read_text, sweep=None):
     findings += closure_findings(read_text)
     findings += executed_path_findings(read_text)
     findings += carve_out_findings(read_text)
+    findings += npmrc_findings(read_text)
     findings += package_manifest_findings(read_text)
     findings += package_script_findings(read_text)
     findings += uses_findings(read_text)
@@ -2949,6 +3740,7 @@ CI_HEAD = 'name: CI\n\non:\n'
 CI_GUARD_BARE = '          bash scripts/verify-release-workflows.sh\n'
 PREMAIN_GUARD_RUN = '        run: bash scripts/verify-release-workflows.sh\n'
 GATES_BARE = 'bash ./scripts/verify-release-pairing.sh\n'
+GATES_BARE_PATH = "scripts/verify-release-gates.sh"
 CI_TAIL = '      - name: Run full rubric\n        run: make rubric\n'
 RELEASE_TAIL = '          gh workflow run pages.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG_NAME}" -f tag="${TAG_NAME}"\n'
 
@@ -4332,6 +5124,24 @@ SELF_TEST_INSTALL_IGNORE_RULE = "/examples/testkit/release-workflows-self-test-i
 SELF_TEST_CARVE_OUT_LINK = "scripts/.release-workflows-self-test-carve-out.js"
 SELF_TEST_CARVE_OUT_TARGET = "node_modules/release-workflows-self-test-carve-out.js"
 SELF_TEST_MODULE_PLANT = "scripts/release_workflows_self_test_evilmod.py"
+# The dependency file the accepted carve-out row runs. It is a *plant*: the carve-out admits a name
+# under a materialised dependency root, and a row that named a file no installer had produced would
+# be proving the round-11 rule (an absent name under a materialised root is a finding) rather than the
+# carve-out. Named so that no glob and no manifest walk in the tree reads it.
+SELF_TEST_DEPENDENCY_PLANT = "node_modules/release-workflows-self-test-dependency.js"
+# The round-11 plants. The install target and its ignore rule are the round-9 shape reached through
+# `--prefix`; the carve-out link is the zero-plant `/tmp` repro, a link at a dependency-spelled name
+# whose bytes live outside the tree; the `.npmrc` plants are the configuration file an install reads.
+SELF_TEST_PREFIX_INSTALL_DIR = "examples/release-workflows-self-test-prefix"
+SELF_TEST_PREFIX_IGNORE_RULE = f"/{SELF_TEST_PREFIX_INSTALL_DIR}/\n"
+SELF_TEST_CARVE_OUT_DIR = "scripts/.venv"
+SELF_TEST_CARVE_OUT_ESCAPE = f"{SELF_TEST_CARVE_OUT_DIR}/release-workflows-self-test-escape.js"
+SELF_TEST_CARVE_OUT_ESCAPE_TARGET = "/tmp/release-workflows-self-test-escape.js"
+# The accepted mirror of the escape refusal: a dependency root's *interpreter*, which is a link out of
+# the tree in every environment this repository runs in. See `dependency_reference`.
+SELF_TEST_VENV_TOOL = f"{SELF_TEST_CARVE_OUT_DIR}/bin/python"
+SELF_TEST_NPMRC_PLANT = "examples/release-workflows-self-test-npmrc/.npmrc"
+SELF_TEST_NPMRC_WRITE_LINE = "printf 'package-lock=false\\n' > ts/.npmrc\n"
 SELF_TEST_ENV = []
 
 # The well-known empty blob. `git update-index --cacheinfo` refuses a null object name, and an index
@@ -4588,6 +5398,247 @@ ROUND_10_ATTACKS = (
      GATES_BARE + "npm ci --legacy-peer-deps\n", CLASS_CLOSURE),
 )
 
+# ---------------------------------------------------------------------------
+# Round 11: the attached payload, shell-honest segmentation, the payload's argv, `--prefix` read
+# where npm writes it, no fabricated carve-out path, the `.npmrc` an install reads, and the launcher
+# that reads its names from a file. Every row below is a reproduction from the adversarial review of
+# round 10 (head 8a5fd3a6), R10-F1 to R10-F9, and each ran its plant past a PASS with exit 0 before
+# this round - several of them proven by running the plant, not only by passing the guard.
+# ---------------------------------------------------------------------------
+
+
+def _attack_prefix_install(text):
+    """`npm install --prefix <dir>` against a directory the pinned `.gitignore` hides."""
+    return text.replace(
+        GATES_BARE, GATES_BARE + f"npm install --prefix {SELF_TEST_PREFIX_INSTALL_DIR}\n", 1
+    )
+
+
+def _prepare_prefix_install(source):
+    """The round-9 attack, reached through the prefix spelling: an ignored, unpinned manifest.
+
+    Two files and the ignore rule that hides them, which is why the row carries pin updates: the
+    `.gitignore` rule is committed with its digest in the same change (that is the edit the pins make
+    visible, not the one they prevent), and what must still fail closed is the *install* - the
+    directory the invocation names in a position round 10 never read.
+    """
+    _self_test_write(
+        posixpath.join(SELF_TEST_PREFIX_INSTALL_DIR, "package.json"),
+        '{\n  "name": "release-workflows-self-test-prefix",\n  "private": true,\n'
+        '  "scripts": {\n    "postinstall": "node release-workflows-self-test-evil9.js"\n  }\n}\n',
+    )
+    source[GITIGNORE_PATH] = source[GITIGNORE_PATH] + SELF_TEST_PREFIX_IGNORE_RULE
+
+
+def _attack_prefix_ci(text):
+    return text.replace(
+        GATES_BARE, GATES_BARE + f"npm ci --prefix {SELF_TEST_PREFIX_INSTALL_DIR}\n", 1
+    )
+
+
+def _attack_prefix_before_verb(text):
+    """`npm --prefix <dir> install`: the global flag before the verb, which is the same option."""
+    return text.replace(
+        GATES_BARE, GATES_BARE + f"npm --prefix {SELF_TEST_PREFIX_INSTALL_DIR} install\n", 1
+    )
+
+
+def _plant_carve_out_escape(link_name):
+    """A link at a dependency-spelled name whose bytes live outside the tree.
+
+    The zero-plant repro: the pull request adds only the gate line, and the link - and the `/tmp`
+    bytes it points at - are materialised at run time under a root no commit can reach. Round 10 read
+    the token as dependency code because its *spelling* was under a dependency root and the fabricated
+    fallback candidate existed nowhere, so the runtime bytes ran past a PASS. The bytes that execute
+    are not the dependency tree's bytes, and that is what these rows prove is refused now - and what
+    the accepted mirror proves is still admitted, for the one shape a dependency root exists to
+    provide: the interpreter a virtualenv links out of the tree.
+    """
+
+    def prepare(_source):
+        target = Path(SELF_TEST_CARVE_OUT_ESCAPE_TARGET)
+        if target.exists() or target.is_symlink():
+            raise SystemExit(
+                f"release-workflows: FAIL (self-test: {SELF_TEST_CARVE_OUT_ESCAPE_TARGET} already "
+                f"exists, so the carve-out escape row cannot write its plant without overwriting the "
+                f"tree)"
+            )
+        target.write_text("// planted by the release-workflows self-test\n", encoding="utf-8")
+        SELF_TEST_LINKS.append(target)
+        directory = Path(SELF_TEST_CARVE_OUT_DIR)
+        created = not directory.exists()
+        directory.mkdir(parents=True, exist_ok=True)
+        if created:
+            SELF_TEST_LINKS.append(
+                lambda: shutil.rmtree(SELF_TEST_CARVE_OUT_DIR, ignore_errors=True)
+            )
+        link = Path(link_name)
+        if link.exists() or link.is_symlink():
+            raise SystemExit(
+                f"release-workflows: FAIL (self-test: {link_name} already exists, so the carve-out "
+                f"escape row cannot write its link without overwriting the tree)"
+            )
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(SELF_TEST_CARVE_OUT_ESCAPE_TARGET)
+        SELF_TEST_LINKS.append(link)
+
+    return prepare
+
+
+_prepare_carve_out_escape = _plant_carve_out_escape(SELF_TEST_CARVE_OUT_ESCAPE)
+_prepare_venv_tool = _plant_carve_out_escape(SELF_TEST_VENV_TOOL)
+
+
+def _attack_carve_out_escape(text):
+    return text.replace(
+        GATES_BARE, GATES_BARE + f"node {SELF_TEST_CARVE_OUT_ESCAPE}\n", 1
+    )
+
+
+def _attack_carve_out_escape_command(text):
+    """The same link at command position, where no interpreter spelling names it."""
+    return text.replace(GATES_BARE, GATES_BARE + f"{SELF_TEST_CARVE_OUT_ESCAPE}\n", 1)
+
+
+def _attack_carve_out_escape_node_modules(text):
+    """The same escape under `node_modules/`, the other root the review named."""
+    return text.replace(
+        GATES_BARE,
+        GATES_BARE + f"node node_modules/{posixpath.basename(SELF_TEST_CARVE_OUT_ESCAPE)}\n",
+        1,
+    )
+
+
+def _prepare_npmrc_plant(source):
+    """An unpinned `.npmrc` committed in the tree, which one install reads and no pin describes."""
+    _self_test_write(SELF_TEST_NPMRC_PLANT, "package-lock=false\n")
+    return source
+
+
+def _attack_npmrc_pinned_weakening(text):
+    """The live `ts/.npmrc` gains a lockfile key, with its pin updated in the same change.
+
+    This is the round-9 shape in one file: `package-lock=false` makes npm ignore the pinned lockfile,
+    so `cd ts && npm ci` resolves the semver ranges and runs the lifecycle scripts of whatever version
+    the registry serves. The digest moves with the edit - that is the pin doing its job - and the
+    *key* is what has to be refused, which is why this row carries a pin update.
+    """
+    return text + "package-lock=false\n"
+
+
+def _attack_npmrc_registry(text):
+    """The same file gains a scoped registry, which decides where an install's bytes come from."""
+    return text + "@evil:registry=https://registry.evil.invalid/\n"
+
+
+def _attack_npmrc_write(text):
+    """A pinned line writes configuration into the `.npmrc` the pins describe."""
+    return text.replace(GATES_BARE, GATES_BARE + SELF_TEST_NPMRC_WRITE_LINE, 1)
+
+
+ROUND_11_ATTACKS = (
+    # R10-F1 - the attached option spellings, and the value of an option the reading does not know.
+    # Round 10 matched the option only as a standalone word and skipped every `-`-prefixed word, so
+    # each of these five ran a plant with exit 0.
+    ("R10-F1 a pinned gate runs a `--eval=` attached payload",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + 'node "--eval=require(\'./scripts/evil9.js\')"\n', CLASS_CLOSURE),
+    ("R10-F1 a pinned gate runs a directly concatenated `-c` payload",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "python3 -c'import subprocess;subprocess.run([\"node\",\"./scripts/evil9.js\"])'\n",
+     CLASS_CLOSURE),
+    ("R10-F1 a pinned gate runs a concatenated `-c` payload that reads its argv",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "python3 -c'import sys;print(sys.argv[1])' ./scripts/evil9.js\n", CLASS_CLOSURE),
+    ("R10-F1 a pinned gate runs a directly concatenated `ruby -e` payload",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "ruby -e'exec [\"node\",\"./scripts/evil9.js\"]'\n", CLASS_CLOSURE),
+    ("R10-F1 a pinned gate attaches a payload to a shell flag cluster",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "bash -lc'node scripts/evil9.js'\n", CLASS_CLOSURE),
+    ("R10-F1 a pinned gate runs an attached `deno eval=` payload",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "deno eval=require('./scripts/evil9.js')\n", CLASS_CLOSURE),
+    ("R10-F1 a pinned gate runs an interpreter with an option the reading does not know",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "node --require=./scripts/evil9.js\n", CLASS_CLOSURE),
+    # R10-F2 - quote concatenation. The shell reads `"no""de"` as one argument, so a payload that ends
+    # at its first closing quote reads `no` and leaves the rest of the argument unread; and a `$'...'`
+    # spelling computes its own argument, which no reading here can reproduce.
+    ("R10-F2 a pinned gate runs a payload whose argument is concatenated from two quoted runs",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + 'bash -c "no""de scripts/evil9.js"\n', CLASS_CLOSURE),
+    ("R10-F2 a pinned gate runs a `$'...'` payload argument",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "bash -c $'no\\x64e scripts/evil9.js'\n", CLASS_CLOSURE),
+    # R10-F3 - the payload's argv. A payload reads its operands, so a name written after it is data the
+    # payload may execute - the `$0` case, which round 10 left unread because the executor branch broke
+    # at the payload word.
+    ("R10-F3 a pinned gate hands a payload a name through its argv",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + 'node -e "require(process.argv[1])" ./scripts/evil9.js\n', CLASS_CLOSURE),
+    ("R10-F3 a pinned gate hands a payload an extensionless name through its argv",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + 'node -e "require(process.argv[1])" ./scripts/evil9\n', CLASS_CLOSURE),
+    ("R10-F3 a pinned gate hands a shell payload a `$0` name",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + 'bash -c "node scripts/verify-release-pairing.sh" ./scripts/evil9.js\n',
+     CLASS_CLOSURE),
+    # R10-F4 - `npm install --prefix <dir>`, the round-9 install attack under a spelling round 10 never
+    # read: the option was looked for in the text before the tool name, where npm syntax cannot write
+    # it, and the install directory check then saw only the file's own directory and the root.
+    ("R10-F4 a pinned gate installs into a prefix directory `.gitignore` hides",
+     "scripts/verify-release-gates.sh", GATES_BARE, _attack_prefix_install, CLASS_CLOSURE,
+     _prepare_prefix_install, (GATES_BARE_PATH, GITIGNORE_PATH)),
+    ("R10-F4 a pinned gate runs `npm ci --prefix` against the same directory",
+     "scripts/verify-release-gates.sh", GATES_BARE, _attack_prefix_ci, CLASS_CLOSURE,
+     _prepare_prefix_install, (GATES_BARE_PATH, GITIGNORE_PATH)),
+    ("R10-F4 a pinned gate writes the prefix before the verb, `npm --prefix <dir> install`",
+     "scripts/verify-release-gates.sh", GATES_BARE, _attack_prefix_before_verb, CLASS_CLOSURE,
+     _prepare_prefix_install, (GATES_BARE_PATH, GITIGNORE_PATH)),
+    # R10-F5 - the zero-plant escape. The link and the `/tmp` bytes are runtime state under a root no
+    # commit can reach, and round 10 read the spelling as dependency code and the fabricated candidate
+    # as its justification; the bytes are outside the tree now, which is a finding.
+    ("R10-F5 a pinned gate runs a dependency-spelled link whose target is outside the tree",
+     "scripts/verify-release-gates.sh", GATES_BARE, _attack_carve_out_escape, CLASS_CLOSURE,
+     _prepare_carve_out_escape),
+    ("R10-F5 the same link at command position",
+     "scripts/verify-release-gates.sh", GATES_BARE, _attack_carve_out_escape_command, CLASS_CLOSURE,
+     _prepare_carve_out_escape),
+    ("R10-F5 the same escape under `node_modules/`",
+     "scripts/verify-release-gates.sh", GATES_BARE, _attack_carve_out_escape_node_modules,
+     CLASS_CLOSURE, _prepare_carve_out_escape),
+    # R10-F6 - the `.npmrc` an install reads. One committed unpinned file voids the lockfile premise
+    # every install is admitted on, and a pinned one is not a licence for the same keys.
+    ("R10-F6 the tree commits a `.npmrc` that no pin describes",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "# the unpinned `.npmrc` this row plants is read by every install in the tree\n",
+     CLASS_CLOSURE, _prepare_npmrc_plant),
+    ("R10-F6 the pinned `ts/.npmrc` gains `package-lock=false`",
+     "ts/.npmrc", "\n", _attack_npmrc_pinned_weakening, CLASS_CLOSURE, None, ("ts/.npmrc",)),
+    ("R10-F6 the pinned `ts/.npmrc` gains a scoped registry",
+     "ts/.npmrc", "\n", _attack_npmrc_registry, CLASS_CLOSURE, None, ("ts/.npmrc",)),
+    ("R10-F6 a pinned line writes npm configuration into a `.npmrc`",
+     "scripts/verify-release-gates.sh", GATES_BARE, _attack_npmrc_write, CLASS_CLOSURE),
+    ("R10-F6 a pinned line writes npm configuration through the tool",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "npm config set package-lock false\n", CLASS_CLOSURE),
+    # R10-F7 - the launcher that reads the names it runs from a file. The names are written in exactly
+    # one place, they are editable after the pull request that adds the file, and no pin describes them.
+    ("R10-F7 a pinned gate pipes a file into a launcher",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "xargs bash < list.txt\n", CLASS_CLOSURE),
+    ("R10-F7 a pinned gate names the launcher's file operand",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "xargs -a list.txt bash\n", CLASS_CLOSURE),
+    ("R10-F7 a pinned gate names the launcher's file operand in the long spelling",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "xargs --arg-file=list.txt bash\n", CLASS_CLOSURE),
+    ("R10-F7 a pinned gate feeds a launcher a heredoc body of names",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "xargs bash <<'EOF'\nscripts/evil9.js\nEOF\n", CLASS_CLOSURE),
+)
+
 SELF_TEST_ATTACKS = (
     ROUND_4_ATTACKS
     + ROUND_4_ACCEPTED_RECYCLED
@@ -4597,6 +5648,7 @@ SELF_TEST_ATTACKS = (
     + ROUND_8_ATTACKS
     + ROUND_9_ATTACKS
     + ROUND_10_ATTACKS
+    + ROUND_11_ATTACKS
 )
 
 
@@ -4756,10 +5808,17 @@ SELF_TEST_ACCEPTED = (
 # new content is accepted on its merits rather than masked by a digest finding. Each of these
 # is the accepted mirror of a rule above, and a construction that refuses them over-blocks.
 def _accepted_dependency_path(source):
+    """A pinned line that runs a file the dependency carve-out covers, present in the tree.
+
+    The file is planted by the row, because the carve-out is a claim about a *dependency tree that is
+    materialised*: an absent name under a materialised root is the name-no-file-has finding (the round
+    11 rule), and a row that named an absent file would be proving the opposite of what it says. The
+    plant is removed by `release_self_test_links`.
+    """
+    _self_test_write(SELF_TEST_DEPENDENCY_PLANT, "// planted by the release-workflows self-test\n")
     source["scripts/verify-release-gates.sh"] = source["scripts/verify-release-gates.sh"].replace(
         GATES_BARE,
-        GATES_BARE
-        + "node node_modules/release-please/build/src/bin/release-please.js\n",
+        GATES_BARE + f"node {SELF_TEST_DEPENDENCY_PLANT}\n",
         1,
     )
     return source
@@ -4888,7 +5947,69 @@ SELF_TEST_ACCEPTED_PINNED_ROUND_10 = (
     ),
 )
 
+# The accepted mirrors round 11 needs, each an edit to a pinned file that must be admitted with its
+# pin update. They are the proof that the new readings are readings and not blanket refusals: a payload
+# argument the shell concatenates out of two quoted runs and which names a pinned file, a payload whose
+# argv names a pinned file, and the interpreter a virtualenv provides - the one dependency-spelled name
+# whose bytes are outside the tree and which is still dependency code.
+def _accepted_concatenated_payload(source):
+    """`bash -c 'node scripts/'"verify-release-pairing.sh"`: one argument, one payload, one pin.
+
+    The shell concatenates the two quoted runs into the single argument `node
+    scripts/verify-release-pairing.sh`, and a payload that names a pinned file is admitted. A reading
+    that refused every concatenation would over-block this, and a reading that stopped at the first
+    closing quote would read `node scripts/` and leave the name unread - which is the round-10 hole in
+    the other direction.
+    """
+    source["scripts/verify-release-gates.sh"] = source["scripts/verify-release-gates.sh"].replace(
+        GATES_BARE,
+        GATES_BARE + "bash -c 'node scripts/'\"verify-release-pairing.sh\"\n",
+        1,
+    )
+    return source
+
+
+def _accepted_payload_argv(source):
+    """A payload that reads its argv, handed a name that is pinned: the accepted mirror of R10-F3."""
+    source["scripts/verify-release-gates.sh"] = source["scripts/verify-release-gates.sh"].replace(
+        GATES_BARE,
+        GATES_BARE + "node -e \"require(process.argv[1])\" ./scripts/verify-release-pairing.sh\n",
+        1,
+    )
+    return source
+
+
+def _accepted_venv_tool(source):
+    """The virtualenv interpreter: a dependency root's tool, whose link leaves the tree by design."""
+    _prepare_venv_tool(source)
+    source["scripts/verify-release-gates.sh"] = source["scripts/verify-release-gates.sh"].replace(
+        GATES_BARE,
+        GATES_BARE + f"{SELF_TEST_VENV_TOOL} -m release_workflows_self_test_prove\n",
+        1,
+    )
+    return source
+
+
+SELF_TEST_ACCEPTED_PINNED_ROUND_11 = (
+    (
+        "a pinned gate runs a payload whose argument is concatenated from two quoted runs",
+        "scripts/verify-release-gates.sh",
+        _accepted_concatenated_payload,
+    ),
+    (
+        "a pinned gate hands a payload a pinned name through its argv",
+        "scripts/verify-release-gates.sh",
+        _accepted_payload_argv,
+    ),
+    (
+        "a pinned gate runs a virtualenv interpreter a dependency root provides",
+        "scripts/verify-release-gates.sh",
+        _accepted_venv_tool,
+    ),
+)
+
 SELF_TEST_ACCEPTED_PINNED = SELF_TEST_ACCEPTED_PINNED + SELF_TEST_ACCEPTED_PINNED_ROUND_10
+SELF_TEST_ACCEPTED_PINNED = SELF_TEST_ACCEPTED_PINNED + SELF_TEST_ACCEPTED_PINNED_ROUND_11
 
 
 def fixture_paths():
@@ -4983,7 +6104,19 @@ def run_self_test() -> None:
                     f"nothing in {path})"
                 )
             source[path] = mutated
-            findings = guarded_surface_findings(read_from(source), sweep=sweep_for(source))
+            # A seventh element names files whose pin must move with the mutation, for the rows that
+            # have to prove a *rule* rather than a digest: an appended ignore rule whose digest the
+            # same commit carries, or a `.npmrc` that is pinned and still weakening. The pins are
+            # restored afterwards, so one row cannot leak into the next.
+            originals = dict(PINNED_FILE_DIGESTS)
+            if len(row) > 6:
+                for pinned_path in row[6]:
+                    PINNED_FILE_DIGESTS[pinned_path] = digest_of(source[pinned_path])
+            try:
+                findings = guarded_surface_findings(read_from(source), sweep=sweep_for(source))
+            finally:
+                PINNED_FILE_DIGESTS.clear()
+                PINNED_FILE_DIGESTS.update(originals)
             release_self_test_links()
             if not findings:
                 raise SystemExit(
@@ -5114,6 +6247,17 @@ for _doc_claim in (
     "`--no-audit` and `--no-fund` are deliberately **not** in that set",
     "`npm exec <cmd>` is `npx <cmd>` under another spelling",
     "`yarn` and `pnpm` are package managers of the same kind",
+    # Round 11's rules, each a sentence the artifact must keep true: the attached option spellings and
+    # the unrecognized one, the payload's argv, shell-honest concatenation and the refusal of a `$'...'`
+    # argument, the prefix read where npm writes it, the `.npmrc` and its weakening keys, the launcher
+    # that reads a file, and the escape refusal with the one dependency *tool* it admits.
+    "**The payload is read in every spelling the option has, and its argv is read with it.**",
+    "**A payload's argument is read the way the shell divides it, or refused.**",
+    "The `--prefix` spelling is read where npm's own syntax writes it",
+    "**The `.npmrc` an install reads is pinned too, and its keys are refused.**",
+    "A launcher that reads the names it runs from a **file** is refused",
+    "**A dependency-spelled name whose bytes are outside the repository is refused.**",
+    "is a dependency *tool* rather than a dependency file",
 ):
     if _doc_claim not in _doc_text:
         raise SystemExit(
