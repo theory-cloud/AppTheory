@@ -51,7 +51,7 @@ const constructs_1 = require("constructs");
  * - ergonomic grant helpers for common AWS resources
  */
 class AppTheoryCodeBuildJobRunner extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryCodeBuildJobRunner", version: "4.2.4" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryCodeBuildJobRunner", version: "4.3.0" };
     project;
     role;
     logGroup;
