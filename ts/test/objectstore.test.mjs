@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { S3Client } from "@aws-sdk/client-s3";
@@ -159,15 +158,89 @@ async function* asyncBytes(value) {
   yield Buffer.from(value, "utf8");
 }
 
-const uploadGrantFixture = JSON.parse(
-  readFileSync(
-    new URL(
-      "../../contract-tests/fixtures/objectstore/presign-put-upload-grant.json",
-      import.meta.url,
-    ),
-    "utf8",
-  ),
-);
+// Mirrors contract-tests/fixtures/objectstore/presign-put-upload-grant.json. The values are
+// inlined rather than read from disk because this suite also runs against an isolated copy of
+// ts/ only (scripts/verify-ts-tests.sh), where the fixture tree is not present.
+const uploadGrantFixture = {
+  input: {
+    objectstore: {
+      steps: [
+        {
+          name: "grant-at-cap",
+          operation: "presign_put",
+          ref: "s3://apptheory-contract/objects/alpha.txt",
+          content_length: 17,
+          checksum_sha256: "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          content_type: "text/plain; charset=utf-8",
+          max_bytes: 1048576,
+          expires_in: 900,
+        },
+        {
+          name: "grant-below-cap",
+          operation: "presign_put",
+          ref: "s3://apptheory-contract/objects/nested/café v1.txt",
+          content_length: 5,
+          checksum_sha256: "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          content_type: "application/json",
+          max_bytes: 5,
+          expires_in: 60,
+        },
+      ],
+    },
+  },
+  expect: {
+    output_json: {
+      steps: [
+        {
+          name: "grant-at-cap",
+          operation: "presign_put",
+          ref: { bucket: "apptheory-contract", key: "objects/alpha.txt" },
+          url: "https://objectstore.fake/apptheory-contract/objects/alpha.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=apptheory-fake&X-Amz-Date=20260101T000000Z&X-Amz-Expires=900&X-Amz-Signature=fake&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost%3Bx-amz-checksum-sha256&x-amz-checksum-sha256=JxNUv%2BpEygWMdjyXew%2BbVUVS2rnR6IFkvTTZRH9ivHc%3D&x-amz-content-length=17&x-amz-content-type=text%2Fplain%3B%20charset%3Dutf-8",
+          method: "PUT",
+          headers: {
+            "content-length": "17",
+            "content-type": "text/plain; charset=utf-8",
+            "x-amz-checksum-sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          },
+          expires_at: "2026-01-01T00:15:00Z",
+        },
+        {
+          name: "grant-below-cap",
+          operation: "presign_put",
+          ref: { bucket: "apptheory-contract", key: "objects/nested/café v1.txt" },
+          url: "https://objectstore.fake/apptheory-contract/objects/nested/caf%C3%A9%20v1.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=apptheory-fake&X-Amz-Date=20260101T000000Z&X-Amz-Expires=60&X-Amz-Signature=fake&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost%3Bx-amz-checksum-sha256&x-amz-checksum-sha256=JxNUv%2BpEygWMdjyXew%2BbVUVS2rnR6IFkvTTZRH9ivHc%3D&x-amz-content-length=5&x-amz-content-type=application%2Fjson",
+          method: "PUT",
+          headers: {
+            "content-length": "5",
+            "content-type": "application/json",
+            "x-amz-checksum-sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          },
+          expires_at: "2026-01-01T00:01:00Z",
+        },
+      ],
+      calls: [
+        {
+          operation: "PresignPut",
+          ref: { bucket: "apptheory-contract", key: "objects/alpha.txt" },
+          max_bytes: 1048576,
+          content_length: 17,
+          checksum_sha256: "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          expires_in: 900,
+          content_type: "text/plain; charset=utf-8",
+        },
+        {
+          operation: "PresignPut",
+          ref: { bucket: "apptheory-contract", key: "objects/nested/café v1.txt" },
+          max_bytes: 5,
+          content_length: 5,
+          checksum_sha256: "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          expires_in: 60,
+          content_type: "application/json",
+        },
+      ],
+    },
+  },
+};
 
 function uploadGrantFixtureSteps() {
   return uploadGrantFixture.input.objectstore.steps.filter(
