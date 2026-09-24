@@ -36,6 +36,186 @@
             "bucket": "bucket-a",
             "key": ""
           }
+        },
+        {
+          "name": "grant-missing-checksum",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 17,
+          "content_type": "text/plain",
+          "max_bytes": 1024,
+          "expires_in": 900
+        },
+        {
+          "name": "grant-checksum-wrong-length",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 17,
+          "checksum_sha256": "c2hvcnQ=",
+          "content_type": "text/plain",
+          "max_bytes": 1024,
+          "expires_in": 900
+        },
+        {
+          "name": "grant-checksum-not-padded",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 17,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc9",
+          "content_type": "text/plain",
+          "max_bytes": 1024,
+          "expires_in": 900
+        },
+        {
+          "name": "grant-missing-length",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": "text/plain",
+          "max_bytes": 1024,
+          "expires_in": 900
+        },
+        {
+          "name": "grant-zero-length",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 0,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": "text/plain",
+          "max_bytes": 1024,
+          "expires_in": 900
+        },
+        {
+          "name": "grant-negative-length",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": -1,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": "text/plain",
+          "max_bytes": 1024,
+          "expires_in": 900
+        },
+        {
+          "name": "grant-length-over-max-bytes",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 32,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": "text/plain",
+          "max_bytes": 16,
+          "expires_in": 900
+        },
+        {
+          "name": "grant-fractional-length",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 17.5,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": "text/plain",
+          "max_bytes": 1024,
+          "expires_in": 900
+        },
+        {
+          "name": "grant-missing-max-bytes",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 17,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": "text/plain",
+          "expires_in": 900
+        },
+        {
+          "name": "grant-missing-content-type",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 17,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "max_bytes": 1024,
+          "expires_in": 900
+        },
+        {
+          "name": "grant-padded-content-type",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 17,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": " text/plain",
+          "max_bytes": 1024,
+          "expires_in": 900
+        },
+        {
+          "name": "grant-content-type-header-injection",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 17,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": "text/plain\r\nx-amz-acl: public-read",
+          "max_bytes": 1024,
+          "expires_in": 900
+        },
+        {
+          "name": "grant-zero-expiry",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 17,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": "text/plain",
+          "max_bytes": 1024,
+          "expires_in": 0
+        },
+        {
+          "name": "grant-fractional-expiry",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 17,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": "text/plain",
+          "max_bytes": 1024,
+          "expires_in": 1.5
+        },
+        {
+          "name": "grant-sub-second-expiry",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 17,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": "text/plain",
+          "max_bytes": 1024,
+          "expires_in": 0.9
+        },
+        {
+          "name": "grant-expiry-over-cap",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 17,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": "text/plain",
+          "max_bytes": 1024,
+          "expires_in": 901
+        },
+        {
+          "name": "grant-versioned-ref",
+          "operation": "presign_put",
+          "ref": {
+            "bucket": "bucket-a",
+            "key": "objects/alpha.txt",
+            "version_id": "v1"
+          },
+          "content_length": 17,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": "text/plain",
+          "max_bytes": 1024,
+          "expires_in": 900
+        },
+        {
+          "name": "grant-malformed-ref",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a",
+          "content_length": 17,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": "text/plain",
+          "max_bytes": 1024,
+          "expires_in": 900
         }
       ]
     }
@@ -64,6 +244,168 @@
         {
           "name": "delete-invalid-ref",
           "operation": "delete",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_ref",
+            "message": "objectstore: invalid object ref"
+          }
+        },
+        {
+          "name": "grant-missing-checksum",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-checksum-wrong-length",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-checksum-not-padded",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-missing-length",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-zero-length",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-negative-length",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-length-over-max-bytes",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-fractional-length",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-missing-max-bytes",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-missing-content-type",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-padded-content-type",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-content-type-header-injection",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-zero-expiry",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-fractional-expiry",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-sub-second-expiry",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-expiry-over-cap",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-versioned-ref",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_ref",
+            "message": "objectstore: invalid object ref"
+          }
+        },
+        {
+          "name": "grant-malformed-ref",
+          "operation": "presign_put",
           "ok": false,
           "error": {
             "code": "objectstore.invalid_ref",

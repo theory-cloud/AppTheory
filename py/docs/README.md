@@ -51,7 +51,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
   `build_appsync_event`, `build_sqs_event`, `build_kinesis_event`, and the corresponding `serve_*` entrypoints.
 - MCP/OAuth surfaces: `McpServer`, registries, in-memory/Dynamo stores, bearer-token middleware, metadata handlers,
   DCR, PKCE, and protected-resource helpers.
-- Storage and data helpers: `ObjectStore`, `ObjectRef`, `create_s3_object_store`, `DynamoJobLedger`, and rate-limit
+- Storage and data helpers: `ObjectStore`, `ObjectRef`, `create_s3_object_store`, `ObjectStoreUploadGranter`, `DynamoJobLedger`, and rate-limit
   primitives.
 - Semantic vector helpers: `VectorStore`, `VectorRecord`, `QueryHit`, `SemanticIndex`, `SemanticRecord`,
   `FakeVectorStore`, `create_fake_vector_store`, `FakeEmbedder`, `S3VectorStore`, `create_s3_vector_store`,
@@ -73,7 +73,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>651 exported top-level symbols</summary>
+<summary>657 exported top-level symbols</summary>
 
 ```text
 App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError
@@ -220,6 +220,8 @@ VECTORSTORE_ERROR_EMBEDDING_FAILED, VECTORSTORE_ERROR_INVALID_CONFIG, VECTORSTOR
 VECTORSTORE_ERROR_INVALID_VECTOR, VECTORSTORE_ERROR_NOT_FOUND, VECTORSTORE_ERROR_UNSUPPORTED_OPERATION
 VectorStoreCall, VectorStoreError, WebSocketCall, WebSocketContext, WindowConfig, WindowLimit, wrap_error
 wrap_job_ledger_error
+MAX_PRESIGN_PUT_EXPIRES_IN, OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT, ObjectStorePresignPutInput,
+ObjectStorePresignPutOutput, ObjectStoreUploadGranter, validate_presign_put_input
 ```
 
 </details>

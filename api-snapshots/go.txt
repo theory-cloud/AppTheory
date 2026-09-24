@@ -687,6 +687,8 @@ func ResourceName(string, string, string, string) string
 
 ## github.com/theory-cloud/apptheory/v4/pkg/objectstore
 
+const MaxPresignPutExpiresIn = 15 * time.Minute
+
 const S3EncryptionBucketDefault S3EncryptionMode = "bucket-default"
 
 const S3EncryptionKMS S3EncryptionMode = "kms"
@@ -698,6 +700,8 @@ var ErrInvalidEncryptionConfig = errors.New("objectstore: invalid encryption con
 var ErrInvalidGetLimit = errors.New("objectstore: max bytes must be positive")
 
 var ErrInvalidObjectRef = errors.New("objectstore: invalid object ref")
+
+var ErrInvalidPresignPut = errors.New("objectstore: invalid presign put")
 
 var ErrInvalidStoreConfig = errors.New("objectstore: invalid store config")
 
@@ -727,6 +731,23 @@ type ObjectRef struct {
 	VersionID string
 }
 
+type PresignPutInput struct {
+	Ref            ObjectRef
+	ContentLength  int64
+	ChecksumSHA256 string
+	ContentType    string
+	MaxBytes       int64
+	ExpiresIn      time.Duration
+}
+
+type PresignPutOutput struct {
+	Ref       ObjectRef
+	URL       string
+	Method    string
+	Headers   map[string]string
+	ExpiresAt time.Time
+}
+
 type PutInput struct {
 	Ref         ObjectRef
 	Payload     []byte
@@ -751,6 +772,10 @@ type Store interface {
 	Delete(context.Context, DeleteInput) error
 }
 
+type UploadGranter interface {
+	PresignPut(context.Context, PresignPutInput) (*PresignPutOutput, error)
+}
+
 func NewS3Store(context.Context, S3StoreConfig) (Store, error)
 
 func ParseObjectRef(string) (ObjectRef, error)
@@ -759,9 +784,13 @@ func (*s3Store) Delete(context.Context, DeleteInput) error
 
 func (*s3Store) Get(context.Context, GetInput) (*GetOutput, error)
 
+func (*s3Store) PresignPut(context.Context, PresignPutInput) (*PresignPutOutput, error)
+
 func (*s3Store) Put(context.Context, PutInput) (ObjectRef, error)
 
 func (ObjectRef) Validate() error
+
+func (PresignPutInput) Validate() error
 
 ## github.com/theory-cloud/apptheory/v4/pkg/observability
 
@@ -5562,15 +5591,20 @@ const OperationDelete Operation = "Delete"
 
 const OperationGet Operation = "Get"
 
+const OperationPresignPut Operation = "PresignPut"
+
 const OperationPut Operation = "Put"
 
 type Call struct {
-	Operation   Operation
-	Ref         store.ObjectRef
-	MaxBytes    int64
-	ContentType string
-	Metadata    map[string]string
-	Payload     []byte
+	Operation      Operation
+	Ref            store.ObjectRef
+	MaxBytes       int64
+	ContentLength  int64
+	ChecksumSHA256 string
+	ExpiresIn      int64
+	ContentType    string
+	Metadata       map[string]string
+	Payload        []byte
 }
 
 type FakeStore struct {
@@ -5580,6 +5614,7 @@ type FakeStore struct {
 	objects  map[objectVersion]storedObject
 	calls    []Call
 	failures map[Operation]error
+	clock    func() time.Time
 }
 
 type Operation string
@@ -5592,6 +5627,10 @@ func (*FakeStore) Delete(context.Context, store.DeleteInput) error
 
 func (*FakeStore) Get(context.Context, store.GetInput) (*store.GetOutput, error)
 
+func (*FakeStore) PresignPut(context.Context, store.PresignPutInput) (*store.PresignPutOutput, error)
+
 func (*FakeStore) Put(context.Context, store.PutInput) (store.ObjectRef, error)
+
+func (*FakeStore) SetClock(func() time.Time)
 
 func (*FakeStore) SetError(Operation, error)

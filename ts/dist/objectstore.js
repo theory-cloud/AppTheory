@@ -1,4 +1,6 @@
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client, ServerSideEncryption, } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { verifyPresignPutUrl } from "./internal/objectstore-presign.js";
 export const OBJECTSTORE_ERROR_INVALID_REF = "objectstore.invalid_ref";
 export const OBJECTSTORE_ERROR_INVALID_GET_LIMIT = "objectstore.invalid_get_limit";
 export const OBJECTSTORE_ERROR_OBJECT_TOO_LARGE = "objectstore.object_too_large";
@@ -6,6 +8,9 @@ export const OBJECTSTORE_ERROR_NOT_FOUND = "objectstore.not_found";
 export const OBJECTSTORE_ERROR_INVALID_STORE_CONFIG = "objectstore.invalid_store_config";
 export const OBJECTSTORE_ERROR_INVALID_ENCRYPTION_CONFIG = "objectstore.invalid_encryption_config";
 export const OBJECTSTORE_ERROR_UNSUPPORTED_OPERATION = "objectstore.unsupported_operation";
+export const OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT = "objectstore.invalid_presign_put";
+/** Framework ceiling for a bounded upload grant, in seconds. */
+export const MAX_PRESIGN_PUT_EXPIRES_IN = 900;
 export const S3Encryption = {
     BucketDefault: "bucket-default",
     S3Managed: "s3-managed",
@@ -55,14 +60,53 @@ export function validateObjectRef(ref) {
 export function createFakeObjectStore() {
     return new FakeObjectStore();
 }
+/**
+ * Verifies a grant request is complete and safe. Every failure is fail-closed.
+ *
+ * The byte counts and the expiry must be integers: `Number.isSafeInteger`
+ * refuses a fractional content length, a boolean, a numeric string and
+ * `undefined` alike, matching the integer-typed Go grant input and Python's
+ * explicit type check. The expiry must further be a whole number of seconds,
+ * because the grant carries it as the integer `X-Amz-Expires`; a fractional
+ * expiry would be truncated or rejected by the signer.
+ */
+export function validatePresignPutInput(input) {
+    validateObjectRef(input.ref);
+    if (input.ref.versionId)
+        throw invalidObjectRef();
+    if (!Number.isSafeInteger(input.contentLength) ||
+        !Number.isSafeInteger(input.maxBytes) ||
+        input.contentLength <= 0 ||
+        input.maxBytes <= 0 ||
+        input.contentLength > input.maxBytes) {
+        throw invalidPresignPut();
+    }
+    if (!validPresignPutContentType(input.contentType)) {
+        throw invalidPresignPut();
+    }
+    if (!validPresignPutChecksumSha256(input.checksumSha256)) {
+        throw invalidPresignPut();
+    }
+    if (!Number.isSafeInteger(input.expiresIn) ||
+        input.expiresIn <= 0 ||
+        input.expiresIn > MAX_PRESIGN_PUT_EXPIRES_IN) {
+        throw invalidPresignPut();
+    }
+}
 export function unsupportedObjectStoreOperation(operation) {
     throw new ObjectStoreError(OBJECTSTORE_ERROR_UNSUPPORTED_OPERATION, `objectstore: unsupported operation: ${operation}`);
 }
 export async function createS3ObjectStore(config = {}) {
     return new S3ObjectStore(new S3Client(s3ClientConfig(config)), config);
 }
+// The fake clock's default instant keeps fake upload grants byte-identical
+// across runs and across the Go, TypeScript and Python fakes.
+const FAKE_PRESIGN_PUT_INSTANT = "2026-01-01T00:00:00Z";
+const FAKE_PRESIGN_PUT_BASE_URL = "https://objectstore.fake";
+const FAKE_PRESIGN_PUT_SIGNED_HEADERS = "content-length;content-type;host;x-amz-checksum-sha256";
 export class FakeObjectStore {
     seq = 0;
+    clock = null;
     latest = new Map();
     objects = new Map();
     callLog = [];
@@ -73,6 +117,9 @@ export class FakeObjectStore {
             return;
         }
         this.failures.delete(operation);
+    }
+    setClock(now) {
+        this.clock = now;
     }
     calls() {
         return this.callLog.map((call) => cloneCall(call));
@@ -133,11 +180,38 @@ export class FakeObjectStore {
             this.latest.delete(name);
         }
     }
+    async presignPut(input) {
+        validatePresignPutInput(input);
+        this.record({
+            operation: "PresignPut",
+            ref: input.ref,
+            maxBytes: input.maxBytes,
+            contentLength: input.contentLength,
+            checksumSha256: input.checksumSha256,
+            expiresIn: input.expiresIn,
+            contentType: input.contentType,
+        });
+        this.raiseFailure("PresignPut");
+        // validatePresignPutInput is the same gate the S3 store runs, so the fake refuses exactly what
+        // the real store refuses; expiresIn is already a whole number of seconds when it is minted.
+        const now = this.now();
+        return {
+            ref: cloneRef(input.ref),
+            url: fakePresignPutUrl(input, now, input.expiresIn),
+            method: "PUT",
+            headers: presignPutHeaders(input),
+            expiresAt: new Date(now.valueOf() + input.expiresIn * 1000),
+        };
+    }
     object(ref) {
         const versionId = ref.versionId || this.latest.get(objectName(ref));
         if (!versionId)
             return null;
         return this.objects.get(objectVersion({ ...ref, versionId })) ?? null;
+    }
+    now() {
+        const clock = this.clock;
+        return clock ? clock() : new Date(FAKE_PRESIGN_PUT_INSTANT);
     }
     record(call) {
         this.callLog.push(cloneCall(call));
@@ -208,6 +282,41 @@ class S3ObjectStore {
             commandInput.VersionId = input.ref.versionId;
         await this.client.send(new DeleteObjectCommand(commandInput));
     }
+    /**
+     * Mints one bounded upload grant for an exact object reference.
+     *
+     * Both presigner header sets are required and must not be "simplified":
+     * without `signableHeaders` the SDK drops `content-type` from the signature,
+     * and without `unhoistableHeaders` it hoists `x-amz-checksum-sha256` into the
+     * unsigned query. The post-condition check refuses such a URL. No
+     * server-side-encryption header is attached on this path.
+     */
+    async presignPut(input) {
+        validatePresignPutInput(input);
+        const url = await getSignedUrl(this.client, new PutObjectCommand({
+            Bucket: input.ref.bucket,
+            Key: input.ref.key,
+            ContentLength: input.contentLength,
+            ContentType: input.contentType,
+            ChecksumSHA256: input.checksumSha256,
+        }), {
+            expiresIn: input.expiresIn,
+            signableHeaders: new Set([
+                "content-length",
+                "content-type",
+                "x-amz-checksum-sha256",
+            ]),
+            unhoistableHeaders: new Set(["x-amz-checksum-sha256"]),
+        });
+        verifyPresignPutUrl(url, input.expiresIn);
+        return {
+            ref: cloneRef(input.ref),
+            url,
+            method: "PUT",
+            headers: presignPutHeaders(input),
+            expiresAt: new Date(Date.now() + input.expiresIn * 1000),
+        };
+    }
 }
 function validatePutInput(input) {
     validateObjectRef(input.ref);
@@ -225,6 +334,48 @@ function validateDeleteInput(input) {
 }
 function invalidObjectRef() {
     return new ObjectStoreError(OBJECTSTORE_ERROR_INVALID_REF, "objectstore: invalid object ref");
+}
+function invalidPresignPut() {
+    return new ObjectStoreError(OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT, "objectstore: invalid presign put");
+}
+function validPresignPutContentType(contentType) {
+    if (!contentType || contentType !== contentType.trim())
+        return false;
+    return !containsControl(contentType);
+}
+// validPresignPutChecksumSha256 accepts only the canonical base64 encoding of a
+// 32-byte digest. The explicit length, alphabet, padding and round-trip checks
+// keep every runtime identical, because Buffer.from(value, "base64") silently
+// accepts non-canonical input.
+function validPresignPutChecksumSha256(checksum) {
+    const encodedLength = 44;
+    if (typeof checksum !== "string" ||
+        checksum.length !== encodedLength ||
+        !checksum.endsWith("=")) {
+        return false;
+    }
+    for (let index = 0; index < encodedLength - 1; index += 1) {
+        if (!isBase64StandardByte(checksum.charCodeAt(index)))
+            return false;
+    }
+    const decoded = Buffer.from(checksum, "base64");
+    if (decoded.length !== 32)
+        return false;
+    return decoded.toString("base64") === checksum;
+}
+function isBase64StandardByte(value) {
+    return ((value >= 0x41 && value <= 0x5a) ||
+        (value >= 0x61 && value <= 0x7a) ||
+        (value >= 0x30 && value <= 0x39) ||
+        value === 0x2b ||
+        value === 0x2f);
+}
+function presignPutHeaders(input) {
+    return {
+        "content-length": String(input.contentLength),
+        "content-type": input.contentType,
+        "x-amz-checksum-sha256": input.checksumSha256,
+    };
 }
 function containsControl(value) {
     for (const ch of value) {
@@ -246,6 +397,58 @@ function objectName(ref) {
 }
 function objectVersion(ref) {
     return `${objectName(ref)}\0${ref.versionId ?? ""}`;
+}
+// The fake encodes the signed constraints instead of hashing them, so tests can
+// assert the exact grant without AWS. This URL format is shared byte-for-byte
+// with the Go and Python fakes because a contract fixture asserts it.
+function fakePresignPutUrl(input, now, expiresIn) {
+    const parameters = [
+        fakeQueryParameter("X-Amz-Algorithm", "AWS4-HMAC-SHA256"),
+        fakeQueryParameter("X-Amz-Credential", "apptheory-fake"),
+        fakeQueryParameter("X-Amz-Date", fakePresignPutDate(now)),
+        fakeQueryParameter("X-Amz-Expires", String(expiresIn)),
+        fakeQueryParameter("X-Amz-Signature", "fake"),
+        fakeQueryParameter("X-Amz-SignedHeaders", FAKE_PRESIGN_PUT_SIGNED_HEADERS),
+        fakeQueryParameter("x-amz-checksum-sha256", input.checksumSha256),
+        fakeQueryParameter("x-amz-content-length", String(input.contentLength)),
+        fakeQueryParameter("x-amz-content-type", input.contentType),
+    ];
+    const path = `${fakePercentEncode(input.ref.bucket, true)}/${fakePercentEncode(input.ref.key, true)}`;
+    return `${FAKE_PRESIGN_PUT_BASE_URL}/${path}?${parameters.join("&")}`;
+}
+function fakePresignPutDate(now) {
+    return now
+        .toISOString()
+        .replace(/[-:]/gu, "")
+        .replace(/\.\d{3}Z$/u, "Z");
+}
+function fakeQueryParameter(name, value) {
+    return `${name}=${fakePercentEncode(value, false)}`;
+}
+// Escapes every byte outside the RFC 3986 unreserved set with uppercase hex.
+// Path segments additionally keep "/" literal. All three runtimes share this
+// rule byte-for-byte.
+function fakePercentEncode(value, keepSlash) {
+    let out = "";
+    for (const byte of Buffer.from(value, "utf8")) {
+        if (fakePercentEncodeLiteral(byte, keepSlash)) {
+            out += String.fromCharCode(byte);
+            continue;
+        }
+        out += `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+    }
+    return out;
+}
+function fakePercentEncodeLiteral(value, keepSlash) {
+    if ((value >= 0x41 && value <= 0x5a) ||
+        (value >= 0x61 && value <= 0x7a) ||
+        (value >= 0x30 && value <= 0x39)) {
+        return true;
+    }
+    if (value === 0x2d || value === 0x5f || value === 0x2e || value === 0x7e) {
+        return true;
+    }
+    return keepSlash && value === 0x2f;
 }
 function cloneRef(ref) {
     return {
@@ -270,6 +473,11 @@ function cloneCall(call) {
         ...(call.contentType ? { contentType: call.contentType } : {}),
         ...(call.metadata ? { metadata: cloneMetadata(call.metadata) } : {}),
         ...(call.payload ? { payload: cloneBytes(call.payload) } : {}),
+        ...(call.contentLength !== undefined
+            ? { contentLength: call.contentLength }
+            : {}),
+        ...(call.checksumSha256 ? { checksumSha256: call.checksumSha256 } : {}),
+        ...(call.expiresIn !== undefined ? { expiresIn: call.expiresIn } : {}),
     };
 }
 function cloneOutput(obj) {

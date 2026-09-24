@@ -168,8 +168,8 @@ tabletheory:
       cta: See event workloads
   stats:
     - label: Contract fixtures
-      value: "273" # apptheory-fixture-count
-      sub: 271 run in all runtimes; route algebra and facade inventory run in Go and CDK-TS
+      value: "274" # apptheory-fixture-count
+      sub: 272 run in all runtimes; route algebra and facade inventory run in Go and CDK-TS
     - label: Runtimes
       value: "3"
       sub: Go · TypeScript · Python

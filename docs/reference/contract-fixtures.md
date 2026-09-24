@@ -1,11 +1,11 @@
 ---
 title: Contract Fixtures
-description: "The 273 contract vectors: 271 shared runtime fixtures plus two Go/CDK-TS MCP route/facade tables." # apptheory-fixture-count: 273
+description: "The 274 contract vectors: 272 shared runtime fixtures plus two Go/CDK-TS MCP route/facade tables." # apptheory-fixture-count: 274
 ---
 
 # Contract Fixtures
 
-AppTheory ships **273 machine-readable contract vectors** in `contract-tests/fixtures/`. <!-- apptheory-fixture-count: 273 --> Go, TypeScript, and Python execute 271 shared runner fixtures on every commit, including the `tier: mcp` SP09 runtime contracts, the `tier: oauth` SP12 protected-resource, bearer, DCR, and PKCE contracts, and the `tier: objectstore` SP13 bounded object-store contract. The remaining two vectors are the shared MCP route-algebra expectation table and facade route-inventory table consumed by Go and CDK-TS tests; Python is explicitly outside those versioned contracts' scope.
+AppTheory ships **274 machine-readable contract vectors** in `contract-tests/fixtures/`. <!-- apptheory-fixture-count: 274 --> Go, TypeScript, and Python execute 272 shared runner fixtures on every commit, including the `tier: mcp` SP09 runtime contracts, the `tier: oauth` SP12 protected-resource, bearer, DCR, and PKCE contracts, and the `tier: objectstore` SP13 bounded object-store contract. The remaining two vectors are the shared MCP route-algebra expectation table and facade route-inventory table consumed by Go and CDK-TS tests; Python is explicitly outside those versioned contracts' scope.
 
 This page explains what the fixtures are, what they cover, and how to evolve them safely.
 
@@ -44,7 +44,7 @@ its `tier` field and stable `id`. Directory names are organizational metadata, n
 | `observability/` | `p2.*` / `tier = p2` | Request-duration observability records and first-party CloudWatch EMF metric JSON lines. |
 | `mcp/` | `mcp.*` / `tier = mcp` | SP09 MCP protocol, registry, session, Streamable HTTP, resumable SSE, and task-store contracts executed by Go, TypeScript, and Python. |
 | `oauth/` | `oauth.*` / `tier = oauth` | SP12 OAuth protected-resource metadata, bearer expiry/audience/scope validation, dynamic client registration, and PKCE contracts executed by Go, TypeScript, and Python. |
-| `objectstore/` | `objectstore.*` / `tier = objectstore` | SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors executed by Go, TypeScript, and Python. |
+| `objectstore/` | `objectstore.*` / `tier = objectstore` | SP13 bounded object-store Put, capped Get, Delete, the bounded single-object upload grant, deterministic fake behavior, and forbidden operation errors executed by Go, TypeScript, and Python. |
 | `event-sources/` | `m1.*` / `tier = m1` | SQS, EventBridge, DynamoDB Streams, Kinesis, SNS, and non-HTTP middleware behavior. |
 | `websockets/` | `m2.*` / `tier = m2` | API Gateway WebSockets and management client fakes. |
 | `api-gateway-rest-sse/` | `m3.*` / `tier = m3` | API Gateway REST v1, Remote MCP path normalization, and SSE. |
@@ -55,7 +55,7 @@ its `tier` field and stable `id`. Directory names are organizational metadata, n
 
 ## Categories
 
-The 273 contract vectors span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory). All three runtimes execute the 271 generic fixtures; Go and CDK-TS additionally consume the MCP route-algebra and facade-inventory tables. <!-- apptheory-fixture-count: 273 -->
+The 274 contract vectors span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory). All three runtimes execute the 272 generic fixtures; Go and CDK-TS additionally consume the MCP route-algebra and facade-inventory tables. <!-- apptheory-fixture-count: 274 -->
 
 | Category | Covers |
 | --- | --- |
@@ -81,7 +81,7 @@ The 273 contract vectors span these behavior areas (counts approximate; see `con
 | MCP JSON-RPC and Streamable HTTP | The `mcp/` fixture tier pins `initialize`, JSON-RPC envelopes, tools/resources/resource-templates/prompts registries, session lifecycle, Streamable HTTP framing, resumable SSE replay, and task-store behavior across Go, TypeScript, and Python. |
 | OAuth protected resources | The `oauth/` fixture tier pins RFC 9728 protected-resource metadata, bearer `WWW-Authenticate` challenges, expiry/audience/scope denial semantics, DCR public-client constraints, and PKCE S256 verification across Go, TypeScript, and Python. Missing/expired bearer tokens are `401` challenge cases; invalid audience and insufficient scope are `403 app.forbidden` without a challenge. |
 | Sanitization | Token-like value redaction, JSON/XML safe-logging output. |
-| Object store | The `objectstore/` fixture tier pins strict object refs, Put, bounded Get, Delete, deterministic fake call logs, and forbidden list/presign/multipart operations across Go, TypeScript, and Python. |
+| Object store | The `objectstore/` fixture tier pins strict object refs, Put, bounded Get, Delete, deterministic fake call logs, the bounded upload grant (signed content length, content type, and SHA-256 checksum with a fifteen-minute cap), and forbidden list, generic presign, presign-get, multipart, copy, head, and raw-client operations across Go, TypeScript, and Python. |
 | Lambda MicroVM support | M15 foundation fixtures plus M16 real operations `run/get/list/suspend/resume/terminate/invoke/auth-token/shell-auth-token`, provider-state mappings, protected controller routes, token-hidden workload invoke, endpoint-dispatched no-hook example images, deployment execution-role propagation, tenant-bound list/recovery, token no-leak denial, and raw SDK/lifecycle bypass denial. The feature line is evidence-bounded to repo-local runtime/CDK/example/conformance harness proof plus verified example-path live smoke, not EqualToAI/Host, customer workload, arbitrary cloud mutation, or unauthenticated-controller proof. |
 
 ## Running the fixtures
@@ -90,7 +90,7 @@ The 273 contract vectors span these behavior areas (counts approximate; see `con
 ./scripts/verify-contract-tests.sh
 ```
 
-This validates the 271 generic fixture envelopes and runs the Go, TypeScript, and Python runners against that tree. The Go and CDK unit suites load the two nested route-algebra/facade tables directly. `make rubric` runs all of these gates alongside lint, build, API snapshots, and example synthesis. <!-- apptheory-fixture-count: 273 -->
+This validates the 272 generic fixture envelopes and runs the Go, TypeScript, and Python runners against that tree. The Go and CDK unit suites load the two nested route-algebra/facade tables directly. `make rubric` runs all of these gates alongside lint, build, API snapshots, and example synthesis. <!-- apptheory-fixture-count: 274 -->
 
 For single-runtime debugging from the repository root:
 

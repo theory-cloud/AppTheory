@@ -262,12 +262,15 @@
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string", "minLength": 1 },
-        "operation": { "type": "string", "enum": ["parse_ref", "put", "get", "delete", "list", "presign", "multipart"] },
+        "operation": { "type": "string", "enum": ["parse_ref", "put", "get", "delete", "presign_put", "presign", "presign_get", "list", "multipart", "copy", "head", "raw_client"] },
         "ref": { "$ref": "#/$defs/objectstoreRefInput" },
         "payload": { "$ref": "#/$defs/objectstoreBody" },
         "content_type": { "type": "string" },
         "metadata": { "$ref": "#/$defs/stringMap" },
         "max_bytes": { "type": "integer" },
+        "content_length": { "type": "number", "description": "number, not integer, so the fail-closed corpus can pin that a fractional byte count is refused" },
+        "checksum_sha256": { "type": "string" },
+        "expires_in": { "type": "number", "description": "number, not integer, so the fail-closed corpus can pin that a fractional or sub-second expiry is refused" },
         "bucket": { "type": "string" },
         "key": { "type": "string" },
         "prefix": { "type": "string" }
