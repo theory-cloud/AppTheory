@@ -6,8 +6,10 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	signer "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -43,6 +45,11 @@ type S3StoreConfig struct {
 }
 
 // NewS3Store loads AWS SDK v2 configuration and returns the S3-backed Store.
+//
+// The returned store also implements UploadGranter, so callers that need the bounded upload grant
+// upgrade the interface rather than changing how they construct the store:
+//
+//	granter, ok := store.(objectstore.UploadGranter)
 func NewS3Store(ctx context.Context, storeConfig S3StoreConfig) (Store, error) {
 	if _, err := normalizeS3StoreConfig(storeConfig); err != nil {
 		return nil, err
@@ -51,13 +58,21 @@ func NewS3Store(ctx context.Context, storeConfig S3StoreConfig) (Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newS3StoreWithClient(s3.NewFromConfig(cfg), storeConfig)
+	client := s3.NewFromConfig(cfg)
+	return newS3StoreWithClient(client, storeConfig, withS3Presigner(s3.NewPresignClient(client)))
 }
 
 type s3Store struct {
 	client     s3StoreClient
+	presigner  s3PresignPutClient
 	encryption S3EncryptionConfig
+	now        func() time.Time
 }
+
+var (
+	_ Store         = (*s3Store)(nil)
+	_ UploadGranter = (*s3Store)(nil)
+)
 
 type s3StoreClient interface {
 	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
@@ -65,7 +80,13 @@ type s3StoreClient interface {
 	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
 
-func newS3StoreWithClient(client s3StoreClient, storeConfig S3StoreConfig) (*s3Store, error) {
+// s3PresignPutClient is the narrow presigning seam. The SDK presign client is bound to a concrete
+// *s3.Client, so this interface is what keeps the grant testable without AWS.
+type s3PresignPutClient interface {
+	PresignPutObject(context.Context, *s3.PutObjectInput, ...func(*s3.PresignOptions)) (*signer.PresignedHTTPRequest, error)
+}
+
+func newS3StoreWithClient(client s3StoreClient, storeConfig S3StoreConfig, options ...s3StoreOption) (*s3Store, error) {
 	normalized, err := normalizeS3StoreConfig(storeConfig)
 	if err != nil {
 		return nil, err
@@ -73,7 +94,20 @@ func newS3StoreWithClient(client s3StoreClient, storeConfig S3StoreConfig) (*s3S
 	if client == nil {
 		return nil, ErrInvalidStoreConfig
 	}
-	return &s3Store{client: client, encryption: normalized.Encryption}, nil
+	store := &s3Store{client: client, encryption: normalized.Encryption, now: time.Now}
+	for _, option := range options {
+		option(store)
+	}
+	return store, nil
+}
+
+// s3StoreOption narrows a constructed store without changing the construction seam.
+type s3StoreOption func(*s3Store)
+
+func withS3Presigner(presigner s3PresignPutClient) s3StoreOption {
+	return func(store *s3Store) {
+		store.presigner = presigner
+	}
 }
 
 func (s *s3Store) Put(ctx context.Context, input PutInput) (ObjectRef, error) {
@@ -170,11 +204,67 @@ func (s *s3Store) Delete(ctx context.Context, input DeleteInput) error {
 	return err
 }
 
+// PresignPut mints one bounded upload grant for an exact object reference.
+//
+// The grant signs the declared content length, content type and SHA-256 checksum, so S3 rejects any
+// other bytes, and it never outlives MaxPresignPutExpiresIn. No server-side encryption header is
+// attached: the upload is the client's own request against the one bucket, which owns its default
+// encryption policy.
+func (s *s3Store) PresignPut(ctx context.Context, input PresignPutInput) (*PresignPutOutput, error) {
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+	if err := s.requirePresigner(); err != nil {
+		return nil, err
+	}
+
+	params := &s3.PutObjectInput{
+		Bucket:         aws.String(input.Ref.Bucket),
+		Key:            aws.String(input.Ref.Key),
+		ContentLength:  aws.Int64(input.ContentLength),
+		ContentType:    aws.String(input.ContentType),
+		ChecksumSHA256: aws.String(input.ChecksumSHA256),
+	}
+	out, err := s.presigner.PresignPutObject(ctx, params, func(options *s3.PresignOptions) {
+		options.Expires = input.ExpiresIn
+	})
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		return nil, ErrInvalidStoreConfig
+	}
+	if err := verifyPresignPutURL(out.URL, input.ExpiresIn); err != nil {
+		return nil, err
+	}
+	return &PresignPutOutput{
+		Ref:       input.Ref,
+		URL:       out.URL,
+		Method:    presignPutMethod,
+		Headers:   presignPutHeaders(input),
+		ExpiresAt: s.nowTime().Add(input.ExpiresIn),
+	}, nil
+}
+
 func (s *s3Store) requireClient() error {
 	if s == nil || s.client == nil {
 		return ErrInvalidStoreConfig
 	}
 	return nil
+}
+
+func (s *s3Store) requirePresigner() error {
+	if s == nil || s.presigner == nil {
+		return ErrInvalidStoreConfig
+	}
+	return nil
+}
+
+func (s *s3Store) nowTime() time.Time {
+	if s.now == nil {
+		return time.Now()
+	}
+	return s.now()
 }
 
 func normalizeS3StoreConfig(storeConfig S3StoreConfig) (S3StoreConfig, error) {

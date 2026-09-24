@@ -2997,7 +2997,28 @@ async function runObjectStoreStep(runtime, fake, step) {
       await fake.delete({ ref: objectStoreStepRef(runtime, step) });
       return objectStoreStepResult(result, {});
     }
-    if (["list", "presign", "multipart"].includes(operation)) {
+    if (operation === "presign_put") {
+      const grant = await fake.presignPut({
+        ref: objectStoreStepRef(runtime, step),
+        contentLength: Number(step.content_length ?? 0),
+        checksumSha256: String(step.checksum_sha256 ?? ""),
+        contentType: String(step.content_type ?? ""),
+        maxBytes: Number(step.max_bytes ?? 0),
+        expiresIn: Number(step.expires_in ?? 0),
+      });
+      return objectStoreGrantResult(result, grant);
+    }
+    if (
+      [
+        "list",
+        "presign",
+        "presign_get",
+        "multipart",
+        "copy",
+        "head",
+        "raw_client",
+      ].includes(operation)
+    ) {
       assertForbiddenObjectStoreOperation(runtime, fake, operation);
     }
     runtime.unsupportedObjectStoreOperation(operation);
@@ -3005,6 +3026,22 @@ async function runObjectStoreStep(runtime, fake, step) {
     return objectStoreStepResult(result, { error: err });
   }
   return objectStoreStepResult(result, {});
+}
+
+function objectStoreGrantResult(base, grant) {
+  const result = { ...base };
+  result.ok = true;
+  result.ref = objectStoreRefJSON(grant.ref);
+  result.url = String(grant.url ?? "");
+  result.method = String(grant.method ?? "");
+  result.headers = cloneObjectStoreMetadata(grant.headers ?? {});
+  result.expires_at = objectStoreExpiresAtJSON(grant.expiresAt);
+  return result;
+}
+
+function objectStoreExpiresAtJSON(expiresAt) {
+  const iso = new Date(expiresAt ?? 0).toISOString();
+  return iso.replace(/\.\d{3}Z$/u, "Z");
 }
 
 function objectStoreStepResult(base, { ref = null, output = null, error = null }) {
@@ -3052,19 +3089,41 @@ function objectStoreErrorCodeFromMessage(message) {
   if (message === "objectstore: max bytes must be positive") return "objectstore.invalid_get_limit";
   if (message === "objectstore: object exceeds max bytes") return "objectstore.object_too_large";
   if (message === "objectstore: object not found") return "objectstore.not_found";
+  if (message === "objectstore: invalid presign put") return "objectstore.invalid_presign_put";
   if (message.startsWith("objectstore: unsupported operation")) return "objectstore.unsupported_operation";
   return "objectstore.error";
 }
 
-function assertForbiddenObjectStoreOperation(_runtime, fake, operation) {
+function assertForbiddenObjectStoreOperation(runtime, fake, operation) {
   const methodNames = {
     list: ["list", "listObjects"],
-    presign: ["presign", "presignGet", "presignPut", "publicURL"],
+    presign: ["presign", "presignGet", "presignGetObject", "presignURL", "publicURL"],
+    presign_get: ["presign", "presignGet", "presignGetObject", "presignURL", "publicURL"],
     multipart: ["multipart", "createMultipartUpload", "uploadPart", "completeMultipartUpload", "abortMultipartUpload"],
+    copy: ["copy", "copyObject"],
+    head: ["head", "headObject"],
+    raw_client: ["client", "rawClient", "s3Client"],
   };
   for (const method of methodNames[operation] ?? []) {
     if (typeof fake?.[method] === "function") {
       throw new Error(`objectstore: forbidden operation exposed: ${operation}`);
+    }
+  }
+  if (["presign", "presign_get"].includes(operation)) {
+    assertNarrowPresignPutSurface(runtime, fake);
+  }
+}
+
+// The upload grant is the only authorized presigning exception, so the only presign-shaped method
+// on the store surfaces must be the narrow grant itself.
+function assertNarrowPresignPutSurface(_runtime, fake) {
+  if (typeof fake?.presignPut !== "function") {
+    throw new Error("objectstore: upload grant surface missing: presignPut");
+  }
+  for (const name of Object.getOwnPropertyNames(Object.getPrototypeOf(fake))) {
+    if (!name.toLowerCase().includes("presign")) continue;
+    if (name !== "presignPut") {
+      throw new Error(`objectstore: forbidden presign surface exposed: ${name}`);
     }
   }
 }
@@ -3078,6 +3137,9 @@ function objectStoreCallsJSON(calls) {
     if (call.metadata && Object.keys(call.metadata).length > 0) {
       out.metadata = cloneObjectStoreMetadata(call.metadata);
     }
+    if (call.contentLength !== undefined) out.content_length = Number(call.contentLength);
+    if (call.checksumSha256) out.checksum_sha256 = String(call.checksumSha256);
+    if (call.expiresIn !== undefined) out.expires_in = Number(call.expiresIn);
     return out;
   });
 }
