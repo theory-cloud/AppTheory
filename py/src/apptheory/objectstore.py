@@ -615,9 +615,9 @@ def _parse_presign_put_expiry(raw: str) -> int | None:
     """Parse ``X-Amz-Expires`` as bare ASCII digits.
 
     ``int()`` is lenient: it accepts surrounding whitespace, underscores (``9_00``) and non-ASCII
-    decimal digits such as fullwidth ``９００``, so a padded or non-canonical expiry would satisfy a
-    post-condition that the Go and TypeScript runtimes refuse. Requiring ``[0-9]+`` keeps all three
-    runtimes' post-condition on exactly the same input domain.
+    decimal digits (East Asian fullwidth digits, for example), so a padded or non-canonical expiry
+    would satisfy a post-condition that the Go and TypeScript runtimes refuse. Requiring ``[0-9]+``
+    keeps all three runtimes' post-condition on exactly the same input domain.
     """
     if not raw or any(ch < "0" or ch > "9" for ch in raw):
         return None

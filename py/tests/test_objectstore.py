@@ -497,7 +497,7 @@ class ObjectStoreTests(unittest.TestCase):
             ("expires-underscored", _presigned_url(expires="9_00"), 900),
             ("expires-fractional", _presigned_url(expires="900.0"), 900),
             ("expires-scientific", _presigned_url(expires="9e2"), 900),
-            ("expires-fullwidth-digits", _presigned_url(expires=quote("９００")), 900),
+            ("expires-fullwidth-digits", _presigned_url(expires=quote(chr(0xFF19) + chr(0xFF10) * 2)), 900),
             ("signed-headers-missing", "https://s3.amazonaws.com/bucket-a/objects/alpha.txt?X-Amz-Expires=900", 900),
             ("queryless", "https://s3.amazonaws.com/bucket-a/objects/alpha.txt", 900),
         ]
