@@ -127,17 +127,55 @@ GUARDED_WORKFLOWS = (
 # left as prose.
 GUARD_PATH = "scripts/verify-release-workflows.sh"
 
-# A script path can be written with a leading `./` or behind a variable that holds a
-# directory. This construction is not a shell: it resolves those two spellings, and treats
-# any other path as one that names no file.
-SCRIPT_REFERENCE = re.compile(r"[A-Za-z0-9_@./${}-]+\.(?:sh|mjs|py|rb)")
-VARIABLE_DIRECTORY = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}/")
+# A script path can be written three ways and only three. This construction is not a shell;
+# it reads these spellings and refuses every other one, because a spelling it does not read
+# is a spelling nobody is vouching for:
+#
+#   * a plain path, from the repository root or from the referencing file's directory
+#   * the same behind a leading `./`
+#   * the same behind a braced variable used as a directory (`${VAR}/x.sh`), read as a
+#     directory relative to the referencing file, which is what `${SCRIPT_DIR}` means in
+#     every script here
+#
+# Everything else - an unbraced `$VAR/`, a quoted segment, a command substitution, an
+# absolute path, a `~` - is a finding rather than a skip. Rounds 1-6 read two spellings and
+# skipped the rest, which is how `bash "$SCRIPT_DIR/new-helper.sh"`, `bash
+# scripts/"new"-helper.sh`, `bash "$GITHUB_WORKSPACE/scripts/new-helper.sh"` and `make -C
+# scripts pwn` each ran unpinned code past a PASS.
+SCRIPT_EXTENSIONS = ("sh", "bash", "mjs", "cjs", "py", "rb")
 
-# Where workflow-invoked scripts live. A script path under one of these roots is part of the
-# pinned surface; a path outside them is read as data - a test body, an example handler, a
-# library module - and is not part of the release path this guard pins. Pinning those would
-# make every library and example edit a pin edit, which is over-blocking with no bound behind
-# it; the boundary is stated here instead of implied.
+# The trailing boundary is load bearing: without it `hashlib.sha256` reads as `hashlib.sh`.
+SCRIPT_REFERENCE = re.compile(
+    r"[A-Za-z0-9_@$./{}~-]+\.(?:" + "|".join(SCRIPT_EXTENSIONS) + r")\b"
+)
+
+ADMITTED_VARIABLE_DIRECTORY = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}/")
+
+# A bare path may hold none of these. A `$` outside an admitted prefix is a variable this
+# construction cannot read, a `~` is a home directory it cannot resolve and a `{` is a brace
+# expansion it cannot expand; the rest cannot survive the token pattern above, and they are
+# refused here so the rule and the reason sit in one place.
+REFUSED_CHARACTERS = "$~*():\"'`{}"
+
+# Every spelling that runs something: an interpreter, a shell, a `source`, or a launcher. A
+# token written on a line that reaches one of these before it is executed at that site, so a
+# token there that names no file is a finding rather than a comment about a file.
+EXECUTOR_REFERENCE = re.compile(
+    r"(?:^|[\s;&|(`])(?:bash|sh|zsh|dash|ksh|source|env|command|xargs|python|python3|node|make|find)\b"
+)
+
+# `make` reads a makefile. `-f` names one outright and `-C <dir>` names `<dir>/Makefile`; a
+# bare `make` reads the makefile of the directory it runs in, which a byte scanner cannot
+# follow through a `cd`, so the repository root's makefile and the referencing file's own
+# directory are both read.
+MAKE_INVOCATION = re.compile(r"(?:^|[\s;&|(`])make\b(?P<arguments>[^\n]*)")
+MAKE_FILE_OPTION = re.compile(r"(?:^|\s)-f\s*(?P<file>[^\s]+)")
+MAKE_DIRECTORY_OPTION = re.compile(r"(?:^|\s)-C\s*(?P<directory>[^\s]+)")
+
+# Where the release path lives. A reference under one of these roots is inside the surface
+# this guard exists for; a reference outside them is pinned all the same, because a pinned
+# file may name only pinned files and where a file lives does not enter into that. The roots
+# name the release path in the finding messages and in docs/release-process.md.
 CLOSURE_ROOTS = ("scripts/", "gov-infra/")
 
 # The files outside the pinned set that could gain a call site. `Makefile` exists here and a
@@ -157,26 +195,106 @@ def sweep_paths():
 
 
 def script_references(text):
-    """Every script-shaped path a file names, exactly as written."""
-    return sorted({match.group(0) for match in SCRIPT_REFERENCE.finditer(text)})
+    """Every script-shaped token a file writes, with the line it is written on.
+
+    A token that is part of a glob is not read: `ts/test/*.test.mjs` is expansion, and no
+    file is named until the shell expands it. That is the same boundary the occurrence sweep
+    states for a glob, and it is stated here rather than left to be inferred.
+    """
+    for line in text.split("\n"):
+        for match in SCRIPT_REFERENCE.finditer(line):
+            if match.start() > 0 and line[match.start() - 1] in "*?[]":
+                continue
+            yield match.group(0), line, match.start()
 
 
-def resolve_reference(token, base_dir):
-    """The repository-relative path a written token names, or None if it names no file."""
-    token = VARIABLE_DIRECTORY.sub("", token)
-    if token.startswith("./"):
-        token = token[2:]
-    candidates = [Path(token)]
-    if not token.startswith("/"):
-        candidates.append(Path(base_dir) / token)
+def written_path(token):
+    """The bare path a written token reads as, or None when the spelling is refused."""
+    bare = ADMITTED_VARIABLE_DIRECTORY.sub("", token, count=1)
+    if bare.startswith("./"):
+        bare = bare[2:]
+    if not bare or bare.startswith("/"):
+        return None
+    if any(character in bare for character in REFUSED_CHARACTERS):
+        return None
+    return bare
+
+
+def resolve_reference(token, base_dir, root=None):
+    """The file a token reads as, and whether reading it went through a symbolic link.
+
+    `root` is the directory the path is read relative to; the real run passes nothing and
+    gets the repository, and the link probe at the foot of this file passes a temporary
+    directory so the probe can hold a real symbolic link without writing one into the tree.
+    """
+    root = ROOT if root is None else Path(root).resolve()
+    bare = written_path(token)
+    if bare is None:
+        return None, False
+    candidates = [Path(bare), Path(base_dir) / bare]
     for candidate in candidates:
         try:
             resolved = candidate.resolve()
         except OSError:
             continue
-        if resolved.is_file() and resolved.is_relative_to(ROOT):
-            return resolved.relative_to(ROOT).as_posix()
-    return None
+        if resolved.is_file() and resolved.is_relative_to(root):
+            lexical = os.path.normpath(os.path.join(os.getcwd(), str(candidate)))
+            return resolved.relative_to(root).as_posix(), Path(lexical) != resolved
+    return None, False
+
+
+def executed_tokens(read_text):
+    """Every token the pinned set runs at an execution site.
+
+    The site is the line, and the executor is any interpreter, shell, `source` or launcher
+    written before the token on that line. The reading is deliberately coarse: it over-reads
+    a line (`echo "run bash x.sh"` reads as executed) rather than under-read one, and the
+    direction of the error is the safe one.
+    """
+    executed = set()
+    for path in PINNED_FILE_DIGESTS:
+        try:
+            text = read_text(path)
+        except (OSError, UnicodeDecodeError):
+            continue
+        for line in text.split("\n"):
+            executors = tuple(EXECUTOR_REFERENCE.finditer(line))
+            for token, _line, start in script_references(line):
+                if any(executor.end() <= start for executor in executors):
+                    executed.add(token)
+    return executed
+
+
+def makefile_candidates(text, base_dir):
+    """The makefiles a file's `make` invocations read, with the selector that names each.
+
+    A comment line is not read: `# keep the make wrapper thin` names no makefile.
+    """
+    candidates = []
+    for invocation in MAKE_INVOCATION.finditer(text):
+        line = text[: invocation.end()].split("\n")[-1]
+        if line.strip().startswith("#"):
+            continue
+        arguments = invocation.group("arguments")
+        file_option = MAKE_FILE_OPTION.search(arguments)
+        directory_option = MAKE_DIRECTORY_OPTION.search(arguments)
+        if file_option is not None:
+            candidates.append((file_option.group("file").lstrip("/"), "make -f", line.strip()))
+            continue
+        if directory_option is not None:
+            directory = directory_option.group("directory").lstrip("/")
+            candidates.append((posixpath.join(directory, "Makefile"), "make -C", line.strip()))
+            continue
+        selected = [
+            candidate
+            for candidate in dict.fromkeys(("Makefile", posixpath.join(base_dir, "Makefile")))
+            if Path(candidate).is_file()
+        ]
+        if not selected:
+            candidates.append(("Makefile", "make", line.strip()))
+            continue
+        candidates.extend((candidate, "make", line.strip()) for candidate in selected)
+    return candidates
 
 
 # ---------------------------------------------------------------------------
@@ -229,9 +347,9 @@ RELEASE_PATH_FILE_DIGESTS = {
     "scripts/invoke-release-please-pr.mjs": "212693f9a4debdc24d342bf7038ddfe24d5903a1e9d561cd9dbcb564bc06fe03",
     "scripts/invoke-release-please-pr.sh": "f51707ea23aac342c10b51d73b5d239f188dadaf1fd2fab5635a417c7d7b3582",
     "scripts/lib/blocked.sh": "0ea5984eec6b856df5ba2144376c152dd767e5a39e3c451216783844644bd1fa",
-    "scripts/lib/cdk-runtime-deps.sh": "4f6787295928f5586545a7203910a37e6b9ab7b76a23ffdca7ea9f12700b9749",
-    "scripts/lib/runtime-deps.sh": "9b2fc575343a7fe2389c89c0a6f8adef7e90c18685ac309ecff4505aa151b78c",
-    "scripts/lib/ts-runtime-deps.sh": "71c79b7914a4e3c62fe666fe9860ce2ddcf7761307f8f74481a9154fc302b34c",
+    "scripts/lib/cdk-runtime-deps.sh": "3e5c972d39bbef831a6c2629b5960eb5514df7f5f67057039d85a3071353f734",
+    "scripts/lib/runtime-deps.sh": "a96d91d48dcad9a298582bd8a0a7a0170ad476fff74a76b04eb8fd33fab5ea55",
+    "scripts/lib/ts-runtime-deps.sh": "eddc132e0185babe9adae69c9cf92119b464ac2ed09de369c586ac711364b406",
     "scripts/list-go-packages.sh": "bb7a1234c199cdccf72c20840b92d9376ad025311b79ef19bd25e3b29fa60ee2",
     "scripts/microvm_conformance.py": "c167ece1626939b44cfa41909478b8a06b5f4c7e46239f47c084add3c07587f0",
     "scripts/publish-go-module-tags.sh": "94149628cc8aea55ddd03c72fd14bb903f668ab0632086093c2bad25ea33da3b",
@@ -307,7 +425,32 @@ RELEASE_PATH_FILE_DIGESTS = {
     "scripts/verify-version-alignment.sh": "ee6513e9f81957eaeefe208c256405ed2c74acf6bcf53cceef35a477264638f9",
 }
 
-PINNED_FILE_DIGESTS = dict(WORKFLOW_FILE_DIGESTS, **RELEASE_PATH_FILE_DIGESTS)
+# The files outside those roots that the pinned closure names, pinned all the same: the three
+# contract runners the release gates execute, the testkit and CDK example programs they run,
+# and the curated-package marker a pinned snapshot tool names. A pinned file may name only
+# files that are pinned and where a file lives does not enter into it, so these are pins like
+# any other and an edit to one of them is the same visible two-place edit. The derivation does
+# not tell a read from a run - a byte scanner cannot - so a name is pinned whether the site
+# reads it or runs it, and the doc says so rather than guessing.
+OUT_OF_ROOT_FILE_DIGESTS = {
+    "contract-tests/runners/py/run.py": "6861fa8273fc20a31c61f802bf0e16caea7db5a2cdf23ca3a808d9a2d67f373c",
+    "contract-tests/runners/ts/fixtures.test.cjs": "75315854e6d5f922076bbd82cfeaed684b0bd1f651fd23e7c9089cbba21b1064",
+    "contract-tests/runners/ts/run.cjs": "f4ca1e22d58df6b1cbb237fd8cbbbdf45534b614a12ca2b6ff795c604bcacf5b",
+    "examples/cdk/hello-world/handlers/py/handler_test.py": "d5f0368f8aafc8dad1ae4bc51ffd2624c20ebe8ef5eb1961f12d136968ddfe6a",
+    "examples/cdk/hello-world/handlers/ts/app.mjs": "aeaf7fa561562807b25a03e0e71667ba4e227843ddb2f9ed40fea64cc2dd1e35",
+    "examples/cdk/hello-world/handlers/ts/handler.test.mjs": "4b9a225c2db54fe4c9cec24c102e0cc3283982ae538166dcdaaa33d6100134b5",
+    "examples/mcp/tools-only-py/server_test.py": "3bac538273d54687b6a3fae699e9722f24ad30bda71d7bff24e94489a7635656",
+    "examples/mcp/tools-only-ts/server.mjs": "7dcbdca7e4042c9bf0c07b2f4fe20c8b3c3a6fdab4967931ed7563108410bb1f",
+    "examples/mcp/tools-only-ts/server.test.mjs": "54b3c1bc8359153d7fb17cd3dd370564afe35eb832ec9afa0eee3fa5bb0a1213",
+    "examples/testkit/py.py": "ee20b7b54984d5f776f46078ca191ed09bd73670a9065d66c3ce5f01d4296b2f",
+    "examples/testkit/ts-streaming.mjs": "fa4b04dc724c44b1d417c7c8fa8e591f590952915f653457831c4fc77105f642",
+    "examples/testkit/ts.mjs": "6ccc6662c9e1e6d812f4ab7c15a34c060253eb2323b70d5a802743e8fcc11f33",
+    "py/src/apptheory/__init__.py": "84ec707055fd97b8cc5b8360cbbaabcd3bd97f0edb5f83eb443d25240a7a710f",
+}
+
+PINNED_FILE_DIGESTS = dict(
+    WORKFLOW_FILE_DIGESTS, **RELEASE_PATH_FILE_DIGESTS, **OUT_OF_ROOT_FILE_DIGESTS
+)
 
 # Finding classes. Each attack case in the battery names the class it must fail on, and each
 # accepted case names a shape that must produce no finding at all, so a case that starts
@@ -372,6 +515,16 @@ def digest_findings(read_text):
     """Every pinned file that is not its pinned revision, byte for byte."""
     findings = []
     for path, pinned in PINNED_FILE_DIGESTS.items():
+        if Path(path).is_symlink():
+            findings.append(
+                (
+                    CLASS_DIGEST,
+                    f"{path}: is a symbolic link. A pinned file is pinned by the bytes that execute, and a "
+                    f"link's bytes belong to whatever it points at, so a pin over a link pins an object the "
+                    f"release path does not name. Make it a file",
+                )
+            )
+            continue
         try:
             text = read_text(path)
         except (OSError, UnicodeDecodeError) as error:
@@ -397,30 +550,87 @@ def digest_findings(read_text):
 
 
 def closure_findings(read_text):
-    """Script paths a pinned file names that are themselves pinned by nothing.
+    """Script paths a pinned file names that are pinned by nothing, or that name no file.
 
-    A pinned workflow may name only scripts that are pinned, and a pinned script may run only
-    scripts under CLOSURE_ROOTS that are pinned. Anything else is a call site the pins do not
-    reach, and it is refused here rather than left to an editor's memory of the manifest.
+    A pinned file may name only files that are pinned. Where those files live does not enter
+    into it: a workflow names a script, a pinned script runs another, and a pinned script runs
+    the contract runners under `contract-tests/` and the examples under `examples/`, so those
+    are pinned too. A name that resolves to no file is a finding when the line it is written
+    on runs it, because that is exactly what a spelling this construction does not read looks
+    like; a name that resolves through a symbolic link is a finding, because the bytes that
+    execute are the linked bytes. A name that resolves to no file and that nothing runs is a
+    name - a message, a comment, an output path - and is left alone.
+
+    Anything else is a call site the pins do not reach, and it is refused here rather than
+    left to an editor's memory of the manifest.
     """
     findings = []
+    executed = executed_tokens(read_text)
+    swept = set(sweep_paths())
     for path in PINNED_FILE_DIGESTS:
         try:
             text = read_text(path)
         except (OSError, UnicodeDecodeError):
             continue
-        for token in script_references(text):
-            resolved = resolve_reference(token, posixpath.dirname(path))
-            if resolved is None or resolved == GUARD_PATH or resolved in PINNED_FILE_DIGESTS:
+        base_dir = posixpath.dirname(path)
+        for token, line, _start in script_references(text):
+            resolved, through_link = resolve_reference(token, base_dir)
+            if resolved is None:
+                if written_path(token) is None:
+                    findings.append(
+                        (
+                            CLASS_CLOSURE,
+                            f"{path}: names {token!r}, which is not one of the spellings this guard reads. A "
+                            f"path is read as a plain path, with a leading `./`, or behind a braced variable "
+                            f"directory; an unbraced variable, a quoted segment, a command substitution, an "
+                            f"absolute path and a `~` are refused rather than skipped, because a spelling this "
+                            f"guard cannot canonicalise is a script it cannot vouch for",
+                        )
+                    )
+                elif token in executed:
+                    findings.append(
+                        (
+                            CLASS_CLOSURE,
+                            f"{path}: runs {token!r}, which names no file. The line runs it - {line.strip()!r}"
+                            f" - and it resolves to nothing, so the release path would run whatever that name "
+                            f"means at run time and no pin could say what it is",
+                        )
+                    )
                 continue
-            if path not in WORKFLOW_FILE_DIGESTS and not resolved.startswith(CLOSURE_ROOTS):
+            if through_link:
+                findings.append(
+                    (
+                        CLASS_CLOSURE,
+                        f"{path}: names {token!r}, which resolves to {resolved!r} through a symbolic link. The "
+                        f"bytes that execute are the linked bytes, so a pin over the written path would pin "
+                        f"something other than what runs",
+                    )
+                )
+                continue
+            if resolved == GUARD_PATH or resolved in PINNED_FILE_DIGESTS:
                 continue
             findings.append(
                 (
                     CLASS_CLOSURE,
-                    f"{path}: names {token!r}, which resolves to {resolved!r} and is pinned by nothing. A "
-                    f"pinned file may run only scripts that are pinned themselves, so the reference and the "
-                    f"pin are one change",
+                    f"{path}: names {token!r}, which resolves to {resolved!r} and is pinned by nothing"
+                    + (
+                        ""
+                        if resolved.startswith(CLOSURE_ROOTS)
+                        else " (it is outside `scripts/` and `gov-infra/`)"
+                    )
+                    + f". A pinned file may name only files that are pinned themselves, so the reference "
+                    f"and the pin are one change",
+                )
+            )
+        for candidate, selector, line in makefile_candidates(text, base_dir):
+            if candidate in PINNED_FILE_DIGESTS or candidate == GUARD_PATH or candidate in swept:
+                continue
+            findings.append(
+                (
+                    CLASS_CLOSURE,
+                    f"{path}: runs `{selector}` against {candidate!r} in {line!r}, and that makefile is "
+                    f"pinned by nothing. A make with a directory or a file selector reads the makefile the "
+                    f"selector names, so the selector and the pin are one change",
                 )
             )
     return findings
@@ -483,6 +693,7 @@ def sweep_findings(read_text, paths=None):
 def guarded_surface_findings(read_text, sweep=None):
     findings = digest_findings(read_text)
     findings += closure_findings(read_text)
+    findings += spelling_witness_findings(read_text)
     findings += sweep_findings(read_text, paths=sweep)
     return findings
 
@@ -1480,9 +1691,154 @@ ROUND_6_ATTACKS = (
      "set -euo pipefail\n", "set -euo pipefail\necho tampered\n", CLASS_DIGEST),
 )
 
-SELF_TEST_ATTACKS = (
-    ROUND_4_ATTACKS + ROUND_4_ACCEPTED_RECYCLED + ROUND_5_ATTACKS + ROUND_6_ATTACKS
+
+# ---------------------------------------------------------------------------
+# Round 7: the derivation's silence becomes refusal. Rounds 1-6 stopped at the
+# spellings they had been taught: every other spelling resolved to `None` and was
+# skipped, and a path outside `scripts/` and `gov-infra/` was read as data whether
+# the closure ran it or not. Every case below is a repro from the adversarial
+# review of round 6 (head 527215dd) - R6-F1 and R6-F2 - plus a row per spelling the
+# derivation reads and per spelling it refuses, which is the table the runbook
+# states.
+#
+# A refused spelling no longer resolves to `None` and no longer stops there: it is
+# a finding on its own. A name that resolves to nothing is a finding when the line
+# it is written on runs it, a name that resolves outside the release-path roots is
+# a finding unless it is pinned, and a name that resolves through a symbolic link
+# is a finding because the bytes that execute are the linked bytes.
+# ---------------------------------------------------------------------------
+
+SELF_TEST_LINKS = []
+
+SYMLINK_PROBE_LINK = "scripts/.release-workflows-self-test-link.sh"
+
+
+def _attack_symlink_through_the_root(text):
+    """A pinned gate that runs a symbolic link, in the tree, at a pinned file.
+
+    A battery case mutates text; a symbolic link is not text, so this row writes a real link
+    into the tree as a side effect of the mutation and the battery unlinks it when the case is
+    done. The name is dot-prefixed so no glob in the tree reads it, and the case fails loudly
+    rather than overwriting a link that is already there.
+    """
+    link = Path(SYMLINK_PROBE_LINK)
+    if link.is_symlink() or link.exists():
+        raise SystemExit(
+            f"release-workflows: FAIL (self-test: {SYMLINK_PROBE_LINK} already exists, so the "
+            f"symbolic-link row cannot write its link without overwriting the tree)"
+        )
+    link.symlink_to("verify-release-gates.sh")
+    SELF_TEST_LINKS.append(link)
+    return text.replace(GATES_BARE, GATES_BARE + f"bash {SYMLINK_PROBE_LINK}\n", 1)
+
+
+ROUND_7_ATTACKS = (
+    # R6-F1 - the unbraced variable directory. Rounds 1-6 stripped only `${VAR}/`, so
+    # `$SCRIPT_DIR/` resolved to `None` and was skipped; the braced form was read.
+    ("R6-F1 unbraced variable directory in a pinned gate", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + 'bash "$SCRIPT_DIR/new-helper.sh"\n', CLASS_CLOSURE),
+    ("R6-F1 unbraced variable directory in a pinned workflow", ".github/workflows/ci.yml",
+     CI_TAIL,
+     CI_TAIL + '      - name: Unbraced variable probe\n        run: bash "$SCRIPT_DIR/new-helper.sh"\n',
+     CLASS_CLOSURE),
+    # R6-F1 - the quoted segment. The token the pattern sees is the `-helper.sh` tail, which
+    # names no file, and the line runs it.
+    ("R6-F1 quoted path segment in a pinned gate", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + 'bash scripts/"new"-helper.sh\n', CLASS_CLOSURE),
+    # R6-F1 - `$GITHUB_WORKSPACE` at the release root.
+    ("R6-F1 unbraced `$GITHUB_WORKSPACE` at the repository root", ".github/workflows/ci.yml",
+     CI_TAIL,
+     CI_TAIL + '      - name: Workspace probe\n        run: bash "$GITHUB_WORKSPACE/scripts/new-helper.sh"\n',
+     CLASS_CLOSURE),
+    # R6-F1 - the command substitution the three shared runtime-dependency libraries used
+    # until this round, re-run against the admitted spelling they carry now.
+    ("R6-F1 the command-substitution source spelling a shared library used",
+     "scripts/lib/ts-runtime-deps.sh",
+     'source "${_APPTHEORY_SCRIPTS_LIB_DIR}/runtime-deps.sh"\n',
+     'source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/runtime-deps.sh"\n',
+     CLASS_CLOSURE),
+    ("R6-F1 the command-substitution source spelling in the blocked-tool library",
+     "scripts/lib/runtime-deps.sh",
+     'source "${_APPTHEORY_SCRIPTS_LIB_DIR}/blocked.sh"\n',
+     'source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/blocked.sh"\n',
+     CLASS_CLOSURE),
+    # The refused spellings that are refused on their own, with no line to run them: an
+    # absolute path and a home directory.
+    ("an absolute path in a pinned gate", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "# see /opt/evil/new-helper.sh for the details\n", CLASS_CLOSURE),
+    ("a home directory path in a pinned gate", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "# see ~/evil-helper.sh for the details\n", CLASS_CLOSURE),
+    # R6-F1 - `make -C`, which names `<dir>/Makefile`; the repro creates that makefile and
+    # nothing pinned it.
+    ("R6-F1 `make -C` against a makefile pinned by nothing", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "make -C scripts pwn\n", CLASS_CLOSURE),
+    # R6-F2(a) - the two-hop re-entry: a name that resolves to nothing, run by a line.
+    ("R6-F2 a pinned gate runs a helper that names no file", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "bash examples/evil-helper.sh\n", CLASS_CLOSURE),
+    # R6-F2 - a real file outside the release-path roots, run by a line and pinned by nothing.
+    ("R6-F2 a pinned gate runs an out-of-root test it does not pin",
+     "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "node ts/test/appsync-context.test.mjs\n", CLASS_CLOSURE),
+    # R6-F2(c) - the live blind spot: a runner under `contract-tests/runners/` that the
+    # closure executes and nothing pinned, beside the one this round pinned.
+    ("R6-F2 an unpinned runner beside a pinned one", "scripts/verify-contract-tests.sh",
+     "python3 contract-tests/runners/py/run.py\n",
+     "python3 contract-tests/runners/py/run.py\npython3 contract-tests/runners/py/run_self_test.py\n",
+     CLASS_CLOSURE),
+    # R6-F2(b) - the symbolic link. A case mutates text and a link is not text, so this row
+    # writes a real link into the tree and the battery unlinks it when it finishes.
+    ("R6-F2 a pinned gate runs a symbolic link into a pinned file", "scripts/verify-release-gates.sh",
+     GATES_BARE, _attack_symlink_through_the_root, CLASS_CLOSURE),
 )
+
+
+SELF_TEST_ATTACKS = (
+    ROUND_4_ATTACKS
+    + ROUND_4_ACCEPTED_RECYCLED
+    + ROUND_5_ATTACKS
+    + ROUND_6_ATTACKS
+    + ROUND_7_ATTACKS
+)
+
+
+# The spellings the derivation reads, each witnessed by a name the pinned tree itself writes.
+# This is the accepted side of the spelling table: a spelling nothing in the tree writes is a
+# spelling nothing tests, and a future edit that removes the last witness fails the battery
+# rather than quietly shrinking what the derivation is asked to read.
+ADMITTED_SPELLING_WITNESSES = (
+    ("a plain path", "scripts/verify-release-workflows.sh"),
+    ("a path behind a leading `./`", "./scripts/verify-release-pairing.sh"),
+    ("a path behind a braced variable directory", "${SCRIPT_DIR}/lib/ts-runtime-deps.sh"),
+    ("a path that walks up a directory", "../../scripts/lib/blocked.sh"),
+)
+
+
+def spelling_witness_findings(read_text):
+    """The admitted spellings, each proven by a pinned file that writes one and resolves it."""
+    findings = []
+    for spelling, token in ADMITTED_SPELLING_WITNESSES:
+        witnessed = False
+        for path in PINNED_FILE_DIGESTS:
+            try:
+                text = read_text(path)
+            except (OSError, UnicodeDecodeError):
+                continue
+            if token not in text:
+                continue
+            resolved, through_link = resolve_reference(token, posixpath.dirname(path))
+            if resolved is not None and not through_link:
+                witnessed = True
+                break
+        if not witnessed:
+            findings.append(
+                (
+                    CLASS_CLOSURE,
+                    f"the admitted spelling {spelling} is written by no pinned file as a path this guard "
+                    f"reads ({token!r} is the witness it is checked against), so nothing in the tree proves "
+                    f"that spelling is admitted",
+                )
+            )
+    return findings
 
 
 def _accepted_makefile(source):
@@ -1547,6 +1903,16 @@ def fixture_paths():
     return tuple(sorted(paths))
 
 
+def release_self_test_links() -> None:
+    """Unlink every link a battery case wrote, so the battery leaves the tree as it found it."""
+    while SELF_TEST_LINKS:
+        link = SELF_TEST_LINKS.pop()
+        try:
+            link.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def run_self_test() -> None:
     fixture = {path: read_source(path) for path in fixture_paths()}
     base_sweep = sweep_paths()
@@ -1566,60 +1932,65 @@ def run_self_test() -> None:
         # guard's own file is in the fixture but is never swept, exactly as in the real run.
         return tuple(sorted(set(base_sweep) | (set(source) - set(fixture))))
 
-    baseline = guarded_surface_findings(read_from(fixture), sweep=sweep_for(fixture))
-    if baseline:
-        raise SystemExit(
-            "release-workflows: FAIL (self-test: the legitimate guarded wiring was REJECTED, so the "
-            "guard over-blocks: " + "; ".join(message for _kind, message in baseline)
-        )
-    print("release-workflows: PASS-PROOF (self-test accepted: the legitimate guarded wiring at HEAD)")
+    try:
+        baseline = guarded_surface_findings(read_from(fixture), sweep=sweep_for(fixture))
+        if baseline:
+            raise SystemExit(
+                "release-workflows: FAIL (self-test: the legitimate guarded wiring was REJECTED, so the "
+                "guard over-blocks: " + "; ".join(message for _kind, message in baseline)
+            )
+        print("release-workflows: PASS-PROOF (self-test accepted: the legitimate guarded wiring at HEAD)")
 
-    for label, path, anchor, replacement, expected in SELF_TEST_ATTACKS:
-        source = dict(fixture)
-        if anchor not in source[path]:
-            raise SystemExit(
-                f"release-workflows: FAIL (self-test fixture drifted: the {label!r} anchor is missing "
-                f"from {path})"
+        for label, path, anchor, replacement, expected in SELF_TEST_ATTACKS:
+            source = dict(fixture)
+            if anchor not in source[path]:
+                raise SystemExit(
+                    f"release-workflows: FAIL (self-test fixture drifted: the {label!r} anchor is missing "
+                    f"from {path})"
+                )
+            mutated = (
+                replacement(source[path])
+                if callable(replacement)
+                else source[path].replace(anchor, replacement, 1)
             )
-        mutated = (
-            replacement(source[path])
-            if callable(replacement)
-            else source[path].replace(anchor, replacement, 1)
-        )
-        if mutated == source[path]:
-            raise SystemExit(
-                f"release-workflows: FAIL (self-test fixture drifted: the {label!r} mutation changed "
-                f"nothing in {path})"
-            )
-        source[path] = mutated
-        findings = guarded_surface_findings(read_from(source), sweep=sweep_for(source))
-        if not findings:
-            raise SystemExit(
-                f"release-workflows: FAIL (self-test MISSED the {label!r} weakening in {path})"
-            )
-        kinds = {kind for kind, _message in findings}
-        if expected not in kinds:
-            joined = " | ".join(f"{kind}: {message}" for kind, message in findings)
-            raise SystemExit(
-                f"release-workflows: FAIL (self-test caught the {label!r} weakening but reported an "
-                f"unexpected diagnostic; expected {expected!r} in {joined!r})"
-            )
-        print(f"release-workflows: FAIL-PROOF (self-test rejected: {label} in {path} -> {expected})")
+            if mutated == source[path]:
+                raise SystemExit(
+                    f"release-workflows: FAIL (self-test fixture drifted: the {label!r} mutation changed "
+                    f"nothing in {path})"
+                )
+            source[path] = mutated
+            findings = guarded_surface_findings(read_from(source), sweep=sweep_for(source))
+            release_self_test_links()
+            if not findings:
+                raise SystemExit(
+                    f"release-workflows: FAIL (self-test MISSED the {label!r} weakening in {path})"
+                )
+            kinds = {kind for kind, _message in findings}
+            if expected not in kinds:
+                joined = " | ".join(f"{kind}: {message}" for kind, message in findings)
+                raise SystemExit(
+                    f"release-workflows: FAIL (self-test caught the {label!r} weakening but reported an "
+                    f"unexpected diagnostic; expected {expected!r} in {joined!r})"
+                )
+            print(f"release-workflows: FAIL-PROOF (self-test rejected: {label} in {path} -> {expected})")
 
-    for label, mutate in SELF_TEST_ACCEPTED:
-        source = mutate(dict(fixture))
-        if source == fixture:
-            raise SystemExit(
-                f"release-workflows: FAIL (self-test fixture drifted: the {label!r} mutation changed "
-                f"nothing)"
-            )
-        findings = guarded_surface_findings(read_from(source), sweep=sweep_for(source))
-        if findings:
-            raise SystemExit(
-                f"release-workflows: FAIL (self-test OVER-BLOCKS the accepted shape {label!r}: "
-                + "; ".join(message for _kind, message in findings)
-            )
-        print(f"release-workflows: ACCEPT-PROOF (self-test accepted: {label})")
+        for label, mutate in SELF_TEST_ACCEPTED:
+            source = mutate(dict(fixture))
+            if source == fixture:
+                raise SystemExit(
+                    f"release-workflows: FAIL (self-test fixture drifted: the {label!r} mutation changed "
+                    f"nothing)"
+                )
+            findings = guarded_surface_findings(read_from(source), sweep=sweep_for(source))
+            release_self_test_links()
+            if findings:
+                raise SystemExit(
+                    f"release-workflows: FAIL (self-test OVER-BLOCKS the accepted shape {label!r}: "
+                    + "; ".join(message for _kind, message in findings)
+                )
+            print(f"release-workflows: ACCEPT-PROOF (self-test accepted: {label})")
+    finally:
+        release_self_test_links()
 
     print(
         f"release-workflows: PASS (self-test: {len(SELF_TEST_ATTACKS)} weakening shape(s) failed closed, "
@@ -1631,22 +2002,32 @@ if MODE == "self-test":
     run_self_test()
     raise SystemExit(0)
 
-# The runbook states three counts in prose: the two battery counts and the size of the pinned
-# closure. Reflowed line breaks are normal in Markdown and are not drift, so the document is
-# compared with its whitespace collapsed; every number is read out of the artifact that
-# produces it, never restated.
+# The runbook states the counts and the mechanisms in prose: the two battery counts, the size
+# of the pinned closure, the spellings the derivation reads and the spellings it refuses, the
+# Makefile sentence and the disclosure. Reflowed line breaks are normal in Markdown and are not
+# drift, so the document is compared with its whitespace collapsed; every number is read out of
+# the artifact that produces it, never restated.
 _doc_text = " ".join(Path("docs/release-process.md").read_text(encoding="utf-8").split())
 for _doc_claim in (
     f"{len(SELF_TEST_ATTACKS)} weakening shapes fail closed and "
     f"{len(SELF_TEST_ACCEPTED)} fail-closed spellings are accepted",
     f"the transitive closure of the script paths they name: "
-    f"{len(RELEASE_PATH_FILE_DIGESTS)} files under `scripts/` and `gov-infra/`",
+    f"{len(RELEASE_PATH_FILE_DIGESTS)} files under `scripts/` and `gov-infra/`, and "
+    f"{len(OUT_OF_ROOT_FILE_DIGESTS)} files outside them",
+    f"{len(RELEASE_PATH_FILE_DIGESTS) + len(OUT_OF_ROOT_FILE_DIGESTS)} files in the closure and "
+    f"{len(WORKFLOW_FILE_DIGESTS)} workflows",
+    "There is no non-admitted call site",
+    "an unbraced variable, a quoted segment, a command substitution, an absolute path and a `~` "
+    "are refused rather than skipped",
+    "`make -C <dir>` and `make -f <file>` name the makefile the selector reads",
+    "Any weakening of this file is caught by review and by nothing else",
 ):
     if _doc_claim not in _doc_text:
         raise SystemExit(
             "release-workflows: FAIL (docs/release-process.md must state what the pins actually cover - "
-            "the battery counts and the size of the closure - so a documented claim cannot drift from "
-            f"the artifact behind it; missing {_doc_claim!r})"
+            "the battery counts, the size of the closure, the spellings the derivation reads and "
+            "refuses, the Makefile boundary and the disclosure - so a documented claim cannot drift "
+            f"from the artifact behind it; missing {_doc_claim!r})"
         )
 
 guarded_surface = guarded_surface_findings(read_source)

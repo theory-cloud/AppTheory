@@ -200,19 +200,57 @@ the new digest to paste, so the pin update is mechanical. Any edit to a pinned f
 update in the same pull request - no edit to a pinned file is admitted without one.
 
 `--self-test` runs the attack battery, one case per shape, each naming the class it must fail on, plus
-a table of shapes that must stay accepted. At this revision 189 weakening shapes fail closed and 4
+a table of shapes that must stay accepted. At this revision 202 weakening shapes fail closed and 4
 fail-closed spellings are accepted, and the legitimate wiring at HEAD is accepted as the baseline
-before any attack is tried - the guard asserts those two counts against this document, so the numbers
-here cannot drift from the battery.
+before any attack is tried - the guard asserts those two counts, the size of the closure, the
+spelling table and the sentences below against this document, so what is written here cannot drift
+from the artifact behind it.
 
 What is pinned, and what each pin is behind:
 
 | Pinned surface | How it is decided |
 | --- | --- |
 | The five workflows the release train runs - `ci.yml`, `prerelease-pr.yml`, `release-pr.yml`, `prerelease.yml` and `release.yml` | whole-file SHA-256, byte for byte. Every job, every step, every root key below `jobs:`, every key spelling, every `uses:` reference and every line ending of each workflow is inside one digest, so there is no region a key could be written below and no spelling a key could take that this construction has to know. Battery: `env: BASH_ENV` and `defaults.run.shell` appended at the end of `ci.yml` and `release.yml`, a quoted `"jobs":` shadow mapping, a quoted and a space-drifted duplicate job key, a quoted `"release-please":` duplicate, a `true:` block below `jobs:`, an action reference changed inside a pinned job, a second `jobs:` mapping, `if: false` on the job and on the step, every shell spelling rounds 1-4 closed, and the CRLF, byte-order-mark and trailing-whitespace cases |
-| The release path those workflows run - the transitive closure of the script paths they name: 86 files under `scripts/` and `gov-infra/`, including `verify-release-branch.sh`, `verify-release-gates.sh`, `verify-release-publish-postcondition.sh`, `verify-release-pairing.sh`, `publish-release-assets.sh`, `run-release-please-pr.sh`, `sync-release-pr-generated.sh` and `gov-verify-rubric.sh` | whole-file SHA-256 each. The closure is resolved from the repository root or the referencing file's directory and bounded to `scripts/` and `gov-infra/`; a path outside those roots is read as data - a test body, an example handler, a library module - and is not part of the release path this guard pins. Battery: the `if false` wrap of the branch-provenance call in `publish-release-assets.sh`, every shell-invoker case, `set +e`, a `bash()` definition and a re-pointed toolchain variable in the GovTheory verifier, and trailing whitespace and CRLF in a pinned script |
-| The closure itself - a pinned file may name only scripts that are pinned themselves | re-derived from the pinned bytes on every run, so a workflow that gains a call site, or a pinned script that starts running another one, fails until the same change adds the pin and the closure cannot rot into a stale list. Battery: a pinned workflow naming a script nothing pins |
-| Every occurrence of a guarded script name in the sweep set - every file under `.github/`, `Makefile`, and a root `package.json` when present | admitted from exactly one place: on a line byte-identical to a line a pinned workflow holds. That is additive strengthening - repeating a pinned invocation line can add a run of the gate or the guard, and it cannot weaken the step that already runs it - and it is the whole of what a file outside the pinned set may say about a guarded script. The sweep walks every file under `.github/`, so a new workflow, or a composite action if one is ever added, is read rather than enumerated. There is no `Makefile` or `package.json` call site today and no composite action, and the sweep is what keeps that true. Battery: a call site added to the `Makefile` on a line that is not one of the pinned invocation lines, and, as the accepted mirror, a byte-identical pinned invocation line added to the `Makefile`, a new unguarded workflow, and a new unguarded job in a workflow no pin covers |
+| The release path those workflows run - the transitive closure of the script paths they name: 86 files under `scripts/` and `gov-infra/`, and 13 files outside them, including `verify-release-branch.sh`, `verify-release-gates.sh`, `verify-release-publish-postcondition.sh`, `verify-release-pairing.sh`, `publish-release-assets.sh`, `run-release-please-pr.sh`, `sync-release-pr-generated.sh`, `gov-verify-rubric.sh`, the three contract runners under `contract-tests/runners/` and the testkit and CDK examples under `examples/` | whole-file SHA-256 each. The closure is resolved from the repository root or the referencing file's directory, and a path is a finding unless it is pinned wherever it lives. Battery: the `if false` wrap of the branch-provenance call in `publish-release-assets.sh`, every shell-invoker case, `set +e`, a `bash()` definition and a re-pointed toolchain variable in the GovTheory verifier, trailing whitespace and CRLF in a pinned script, a pinned gate running a helper that names no file, a pinned gate running an out-of-root test it does not pin, an unpinned runner beside a pinned one, and a pinned gate running a symbolic link into a pinned file |
+| The closure itself - a pinned file may name only files that are pinned themselves: 99 files in the closure and 5 workflows | re-derived from the pinned bytes on every run, so a workflow that gains a call site, or a pinned script that starts running another one, fails until the same change adds the pin and the closure cannot rot into a stale list. Battery: a pinned workflow naming a script nothing pins |
+| Every occurrence of a guarded script name in the sweep set - every file under `.github/`, `Makefile`, and a root `package.json` when present | admitted from exactly one place: on a line byte-identical to a line a pinned workflow holds. That is additive strengthening - repeating a pinned invocation line can add a run of the gate or the guard, and it cannot weaken the step that already runs it - and it is the whole of what a file outside the pinned set may say about a guarded script. The sweep walks every file under `.github/`, so a new workflow, or a composite action if one is ever added, is read rather than enumerated. There is no non-admitted call site in the `Makefile` or in a root `package.json` today and no composite action, and the sweep is what keeps that true; the `Makefile`'s one call site is `Makefile:21`, `bash scripts/verify-release-workflows.sh`, and it is admitted exactly because that line is byte-identical to the line `ci.yml` holds. Battery: a call site added to the `Makefile` on a line that is not one of the pinned invocation lines, and, as the accepted mirror, a byte-identical pinned invocation line added to the `Makefile`, a new unguarded workflow, and a new unguarded job in a workflow no pin covers |
+
+### What the closure derivation reads
+
+A pinned file names the scripts it runs, and a name is read in exactly three spellings: a plain path,
+from the repository root or from the referencing file's directory; the same behind a leading `./`;
+and the same behind a braced variable directory (`${SCRIPT_DIR}/x.sh`), read as a directory relative
+to the referencing file, which is what that variable means in every script here. Everything else fails
+closed: an unbraced variable, a quoted segment, a command substitution, an absolute path and a `~` are
+refused rather than skipped, each a finding on its own whether or not a line runs it, because a
+spelling this guard cannot canonicalise is a script it cannot vouch for. Rounds 1-6 read the first two
+of those spellings and skipped every other one, which is how `bash "$SCRIPT_DIR/new-helper.sh"`,
+`bash scripts/"new"-helper.sh` and `bash "$GITHUB_WORKSPACE/scripts/new-helper.sh"` each ran unpinned
+code past a PASS. The admitted side of the spelling table is witnessed by names the pinned tree
+itself writes, so a spelling nothing writes fails the battery rather than quietly shrinking what the
+derivation is asked to read, and each refused spelling has an attack row.
+
+A name that resolves to no file is read as a name, and it is a finding when the line it is written on
+runs it. The executor spellings are `bash`, `sh`, `zsh`, `dash`, `ksh`, `source`, `.`, `env`,
+`command`, `xargs`, `python`, `python3`, `node`, `make` and `find`, and the reading is deliberately
+coarse - a line that reaches one of them before the name reads as executed whether or not it runs
+that name - because the direction of the error is the safe one. A name that is part of a glob is not
+read at all: expansion names files at run time, and that is the same limit the sweep below states for
+a glob.
+
+A name that resolves is a finding unless it is pinned, and where it lives does not enter into it: a
+pinned file may name only files that are pinned, so the 13 files outside `scripts/` and `gov-infra/`
+that the closure names are pinned too. The derivation does not tell a read from a run, because a byte
+scanner cannot, and that is the honest reading rather than a guess that a file which is only read is
+harmless: a name is pinned whether the site reads it or runs it.
+
+A name that resolves through a symbolic link is a finding, because the bytes that execute are the
+linked bytes, and no pinned file may itself be a link for the same reason. `make -C <dir>` and
+`make -f <file>` name the makefile the selector reads, and that makefile must be pinned - or already
+be a file the occurrence sweep reads - like anything else, so `make -C scripts` against an unpinned
+`scripts/Makefile` is a finding. A bare `make` names the makefile of the directory it runs in, which
+a byte scanner cannot follow through a `cd`, so the repository root's makefile and the referencing
+file's own directory are both read when they exist.
 
 An occurrence sweep matches a guarded script's *name*, so it does not see a glob, and this is the
 sweep's one limit, stated rather than glossed: `printf '' > scripts/verify-release-pa*` names no
@@ -226,7 +264,29 @@ What is **not** pinned anywhere in this repository, said plainly - it is one fil
 
 | File | Why it is not pinned |
 | --- | --- |
-| `scripts/verify-release-workflows.sh` | This guard. A file cannot pin its own bytes: a weakened copy would carry the weakened pin with it, so a self-pin would prove nothing. Its integrity is rooted in pull-request review and in signed commits, and in nothing else. |
+| `scripts/verify-release-workflows.sh` | This guard. A file cannot pin its own bytes: a weakened copy would carry the weakened pin with it, so a self-pin would prove nothing. Any weakening of this file is caught by review and by nothing else. A pinned file that names this guard - every release gate does - is admitted, because there is nothing here to pin. |
+
+That residual is the one this construction cannot close, and no count or tripwire here should be read
+as enforcement of it: a weakened guard asserts its own weakened counts, so the number of pins and the
+size of the battery prove what the guard does only for a guard that is honest. It is worth naming the
+cheap shapes a reviewer has to look for, because every one of them is a single-file edit that passes
+everything in this repository:
+
+| Shape | What it buys |
+| --- | --- |
+| Deleting a pin - the `verify-release-please-token-safety.sh` root, the two `gov-infra/` verifier pins, or any entry of the closure - plus the matching count in this document | the deleted file runs unpinned, and the count in the sentence above still validates because it is read out of the same weakened artifact |
+| Gutting a finding function - `digest_findings`, `closure_findings`, `sweep_findings` - while leaving the tuples and the battery in place | every case the battery carries still reports the class it names, because the finding it names comes from a function that has been emptied |
+| Dropping `spelling_witness_findings` from `guarded_surface_findings`, or narrowing the derivation - removing the refused-spelling branch, the out-of-root rule or the symbolic-link rule | the admitted spellings are no longer witnessed and a whole family of names stops being read |
+| Narrowing `CLOSURE_ROOTS` to `("scripts/",)` | nothing. The roots name the release path in the finding messages and in this document and gate no decision, so narrowing them is cosmetic. It was a real shape in round 6, when a path outside them was skipped; it is not one now, and it is listed here so that a reviewer who remembers it does not stop looking at the two rows above |
+
+The other unpinned file is the root `Makefile`. The sweep reads it for a guarded script name, and its
+one call site is admitted; an edit to a `make` target that runs code naming no guarded script is caught
+by review, not by a pin.
+
+The battery cannot close this residual either: a case that weakens the guard file is admitted by
+construction, because the guard file is the boundary the battery is built on. What the battery
+asserts is the opposite direction - that the legitimate wiring is accepted before any attack is
+tried - so a construction that over-blocks fails as loudly as one that starts missing.
 
 Round 5 disclosed three files here, and two of them are in the interior now: `ci.yml` invokes both
 `scripts/verify-ci-rubric-enforced.sh` and `scripts/verify-release-pairing.sh`, so both are in the
@@ -250,8 +310,14 @@ removed rather than kept. The two pin rows are carried by the shapes that add or
 pinned file - a statement or a key added anywhere in a workflow, a root key appended below `jobs:`, a
 key spelling YAML resolves to a pinned key, an action reference changed inside a pinned job, a whole
 trailing job that absorbs an append, an edit to any file in the release-path closure - and the closure
-row by a pinned workflow naming a script nothing pins, the sweep row by a call site added to the
-`Makefile` on a line that is not a pinned invocation line. The accepted table holds the mirror image,
+row by a pinned workflow naming a script nothing pins, by a pinned gate running a helper that names no
+file, by an unpinned runner beside a pinned one, by a pinned gate running an out-of-root test and by a
+pinned gate running a symbolic link into a pinned file. The spelling rows are carried by one attack
+case per refused spelling - unbraced variable, quoted segment, `$GITHUB_WORKSPACE`, command
+substitution, absolute path, home directory - and by a witness assertion per admitted spelling, which
+fails if nothing in the tree writes one. The make row is carried by `make -C scripts` against a
+makefile pinned by nothing, and the sweep row by a call site added to the `Makefile` on a line that is
+not a pinned invocation line. The accepted table holds the mirror image,
 so a construction that over-blocks fails the self-test as loudly as one that starts missing: the
 legitimate wiring at HEAD (asserted before any attack is tried), a byte-identical pinned invocation
 line added to the `Makefile`, a new unguarded workflow, a new unguarded job in a workflow no pin

@@ -2,7 +2,9 @@
 # Shared CDK runtime dependency installation contract.
 # Source this file from a script that has changed to the repository root.
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/runtime-deps.sh"
+_APPTHEORY_SCRIPTS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+source "${_APPTHEORY_SCRIPTS_LIB_DIR}/runtime-deps.sh"
 
 APPTHEORY_CDK_RUNTIME_DEPS_STAMP="cdk/node_modules/.gov-cdk-runtime-deps.sha256"
 

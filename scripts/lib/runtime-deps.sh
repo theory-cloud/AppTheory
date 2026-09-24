@@ -2,7 +2,9 @@
 # Shared runtime dependency installation primitives.
 # Source this file from a script that has changed to the repository root.
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/blocked.sh"
+_APPTHEORY_SCRIPTS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+source "${_APPTHEORY_SCRIPTS_LIB_DIR}/blocked.sh"
 
 sha256_stdin() {
   if command -v sha256sum >/dev/null 2>&1; then
