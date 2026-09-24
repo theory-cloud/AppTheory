@@ -73,22 +73,32 @@ Enforcement rule (anti-drift):
 
 **10/10 definition:** SEC-1 through SEC-4 pass.
 
-### SEC-2 documented exception: cdk stream-json (GHSA-528h-pc64-c93x)
+### SEC-2 dependency-audit exceptions: none
 
-One reviewed, self-expiring exception exists in SEC-2's cdk branch: advisory
-`GHSA-528h-pc64-c93x` / `CVE-2026-71429` for `stream-json < 3.5.0`, reached only through
-`jsii-rosetta` (a peer of the `jsii-pacmak` cdk devDependency). It is upstream-blocked: every
-patched `stream-json` release is ESM-only, which breaks `jsii-rosetta`'s CommonJS subpath requires
-under `jsii-pacmak`, while every stable `jsii-rosetta` inside `jsii-pacmak`'s peer range
-(`>= 5.9.0`, 5.9.0 through 6.0.15) still pins `stream-json ^1.9.1`.
+SEC-2 grants **no dependency-audit exceptions**. Every finding visible to the cdk npm-audit / OSV
+audit surface fails the gate, and a non-zero scanner exit is never explained away. Any future
+exception requires a new operator ruling; none is currently authorized.
 
-The exception is operator-ruled (2026-09-20, Factory sweep 2026-09; companion to PR #998), matched
-exactly (no severity, count, or blanket allowlists), and enforced identically by
-`gov_cmd_vuln` (via `scripts/check-visible-aws-cdk-finding.mjs`) and `scripts/verify-cdk-audit.sh`.
-It **expires automatically** - the gate fails closed - as soon as the npm registry shows a STABLE
-`jsii-rosetta >= 6.0.16` or a STABLE non-ESM-only `stream-json >= 3.5.0`. Prereleases never trigger
-expiry. Source of truth for the matching rules, ruling, and removal condition:
-`scripts/check-visible-aws-cdk-finding.mjs`.
+This section formerly documented the one reviewed, self-expiring exception that SEC-2 carried:
+advisory `GHSA-528h-pc64-c93x` / `CVE-2026-71429` for `stream-json < 3.5.0`, reached only through
+`jsii-rosetta` (a peer of the `jsii-pacmak` cdk devDependency), operator-ruled 2026-09-20 (Factory
+sweep 2026-09; companion to PR #998) and matched exactly (no severity, count, or blanket
+allowlists). It was upstream-blocked: every patched `stream-json` release was ESM-only, which broke
+`jsii-rosetta`'s CommonJS subpath requires under `jsii-pacmak`, while every stable `jsii-rosetta`
+inside `jsii-pacmak`'s peer range (`>= 5.9.0`, 5.9.0 through 6.0.15) pinned `stream-json ^1.9.1`.
+
+**Resolution (2026-09-22).** The exception's own removal condition fired: the npm registry published
+a STABLE `jsii-rosetta >= 6.0.16`, and `cdk/package.json` now pins `jsii-rosetta 6.0.16`.
+`jsii-pacmak 1.140.0`'s `jsii-rosetta: >=5.9.0` peer range already admitted 6.0.16, so no `jsii` or
+`jsii-pacmak` bump was required - the whole change is the one added devDependency pin.
+`jsii-rosetta 6.0.16` moves to `stream-json ^3.6.0` and consumes it through dynamic ESM `import()`
+of the extension-suffixed subpaths (`stream-json/parser.js`, `assembler.js`, `disassembler.js`,
+`stringer.js`), which is exactly what the old CJS subpath requires could not do; `cdk/package-lock.json`
+now resolves `stream-json` 3.7.0, and `npm audit` on `cdk/` reports an empty vulnerability map. The
+exception and all of its machinery - the registry-backed expiry lookup, the exception matcher, and
+the `exception-applied:` machine marker - were removed from
+`scripts/check-visible-aws-cdk-finding.mjs`, `scripts/verify-cdk-audit.sh`, and `gov-verify-rubric.sh`'s
+`osv_scan_lockfile`.
 
 ## Compliance Readiness (CMP) — auditability and evidence
 | ID | Points | Requirement | How to verify |

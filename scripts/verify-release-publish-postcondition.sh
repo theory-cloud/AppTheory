@@ -315,6 +315,31 @@ verify_go_module_postcondition() {
     "release-publish-postcondition: PASS (${release_tag} root + nested Go modules resolve at ${source_commit})"
 }
 
+verify_release_pairing_postcondition() {
+  local release_tag="$1"
+
+  if [[ "${phase}" != "complete" ]]; then
+    return 0
+  fi
+
+  # Pair only the release this run published. The closure runs in the tagged tree, so
+  # the shipped templates and the shipped asset belong to the same release, and
+  # require_created_tag has already pinned tag_name to the VERSION tag. Re-verifying a
+  # previously published release against a newer branch would fail on the
+  # known-unfixable v4.2.4 asset while the next version is still being prepared; that
+  # window is covered by scripts/verify-release-branch.sh on the next publish.
+  if [[ "${release_created}" != "true" ]]; then
+    return 0
+  fi
+
+  # Post-publish leg: download the immutable asset the apptheory-init templates point
+  # at and prove it pairs with their CDK pins. This closes the skew a pre-pack check
+  # cannot see - assets built from a tree other than the one whose templates shipped.
+  bash scripts/verify-release-pairing.sh --published --tag "${release_tag}" || return 1
+  echo \
+    "release-publish-postcondition: PASS (${release_tag} apptheory-init templates pair with the published CDK asset)"
+}
+
 commit_self_test_change() {
   local subject="$1"
   local path="$2"
@@ -518,6 +543,7 @@ case "${channel}" in
     if is_rc_tag "${expected_tag}"; then
       require_created_tag "RC" || exit 1
       verify_go_module_postcondition || exit 1
+      verify_release_pairing_postcondition "${tag_name:-${expected_tag}}" || exit 1
       if [[ "${release_created}" != "true" ]]; then
         exit 0
       fi
@@ -548,6 +574,7 @@ case "${channel}" in
 
     require_created_tag "stable" || exit 1
     verify_go_module_postcondition || exit 1
+    verify_release_pairing_postcondition "${tag_name:-${expected_tag}}" || exit 1
     if [[ "${release_created}" != "true" ]]; then
       exit 0
     fi

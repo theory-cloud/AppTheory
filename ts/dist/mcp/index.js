@@ -2096,7 +2096,7 @@ function decodeRoutingHeaderName(value) {
     return { value: text, malformed: false };
 }
 function requestRoutingName(request) {
-    let field = "";
+    let field;
     switch (request.method) {
         case "tools/call":
         case "prompts/get":

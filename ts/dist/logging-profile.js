@@ -63,7 +63,9 @@ export function decodeLoggingProfileJSON(raw) {
         parsed = JSON.parse(text);
     }
     catch (error) {
-        throw new Error(`logging profile json: ${errorMessage(error)}`);
+        throw new Error(`logging profile json: ${errorMessage(error)}`, {
+            cause: error,
+        });
     }
     if (!isRecord(parsed)) {
         throw new Error("logging profile json: root must be an object");

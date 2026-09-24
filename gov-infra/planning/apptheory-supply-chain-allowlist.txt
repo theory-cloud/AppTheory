@@ -19,9 +19,12 @@
 # - Go:
 #   GOV-SUPPLY:GO:REPLACE:rule=REMOTE_REPLACE:from=github.com/example/upstream@v1.2.3:to=github.com/example/fork@v1.2.3
 
-# eslint import tooling: prepublishOnly scripts reference `.npmrc` for publish-time packaging; not executed during install.
-GOV-SUPPLY:NODE:SCRIPT:pkg=eslint-import-resolver-node:ver=0.3.9:hook=prepublishOnly:rule=CRED_FILE_ACCESS
-GOV-SUPPLY:NODE:SCRIPT:pkg=eslint-module-utils:ver=2.12.1:hook=prepublishOnly:rule=CRED_FILE_ACCESS
+# eslint import tooling: the two `prepublishOnly` CRED_FILE_ACCESS suppressions that named
+# `eslint-import-resolver-node@0.3.9` and `eslint-module-utils@2.12.1` are retired. Both were transitive
+# dependencies of `eslint-plugin-import@2.32.0`; the eslint 10 + `eslint-plugin-import-x` train removed that
+# tree (neither package has a lockfile entry any more), so the entries suppressed nothing. Re-running the
+# scanner with them in place reported `findings=0 allowlisted=0`. They now fail closed like any other finding
+# if those exact packages ever return.
 
 # Remote Python wheel dependencies must use a pip-supported #sha256 URL
 # fragment or move to a trusted package source; do not suppress them here.

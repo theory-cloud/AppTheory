@@ -30,10 +30,10 @@ audit_status=$?
 set -e
 
 # Fail closed unless the AWS CDK bundled dependency graph is exactly patched and
-# every visible npm audit finding is the reviewed, self-expiring stream-json
-# exception (advisory, CJS/ESM deadlock, 2026-09-20 operator ruling, and the
-# automatic registry-backed expiry condition are documented in
-# scripts/check-visible-aws-cdk-finding.mjs).
+# the audit surface carries zero findings. This repository grants no
+# dependency-audit exceptions; the checker below is the single place that could
+# have granted one, and its last exception retired on 2026-09-22 with the
+# jsii-rosetta 6.0.16 bump (see scripts/check-visible-aws-cdk-finding.mjs).
 set +e
 node scripts/check-visible-aws-cdk-finding.mjs npm "${tmp_report}" cdk/package-lock.json >"${tmp_marker}"
 filter_status=$?
@@ -44,17 +44,10 @@ if [[ "${filter_status}" -ne 0 ]]; then
   exit "${filter_status}"
 fi
 
-# npm audit exits 1 whenever it reports findings. That is acceptable only when
-# the exception checker above both passed and positively identified the reviewed
-# stream-json finding as the cause; any other scanner exit still fails closed.
+# npm audit exits 1 whenever it reports findings, and this project tolerates
+# none, so any non-zero exit fails closed.
 case "${audit_status}" in
   0) ;;
-  1)
-    if ! grep -Fq 'exception-applied: ' "${tmp_marker}"; then
-      echo "cdk-audit: FAIL (npm audit exited 1 without reporting the reviewed stream-json exception)" >&2
-      exit 1
-    fi
-    ;;
   *)
     echo "cdk-audit: FAIL (npm audit exited ${audit_status})" >&2
     exit 1

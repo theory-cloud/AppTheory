@@ -3193,7 +3193,7 @@ function requestRoutingName(request: ParsedRPCRequest): {
   required: boolean;
   invalidMessage: string;
 } {
-  let field = "";
+  let field: string;
   switch (request.method) {
     case "tools/call":
     case "prompts/get":

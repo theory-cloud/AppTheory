@@ -19,7 +19,9 @@ export function json(status, value) {
         serialized = JSON.stringify(value);
     }
     catch (err) {
-        throw new Error(`json serialization failed: ${String(err)}`);
+        throw new Error(`json serialization failed: ${String(err)}`, {
+            cause: err,
+        });
     }
     return normalizeResponse({
         status,
@@ -109,7 +111,9 @@ export function safeJSONForHTML(value) {
         serialized = JSON.stringify(sortKeysDeep(value));
     }
     catch (err) {
-        throw new Error(`json serialization failed: ${String(err)}`);
+        throw new Error(`json serialization failed: ${String(err)}`, {
+            cause: err,
+        });
     }
     return String(serialized)
         .replace(/&/g, "\\u0026")

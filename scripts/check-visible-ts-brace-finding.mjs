@@ -1,5 +1,13 @@
-// Purpose: validate the exact reviewed vulnerability exception for the
-// TypeScript lint-tool brace-expansion paths.
+// Purpose: validate the exact reviewed, exception-free TypeScript lint-tool
+// brace-expansion graph.
+//
+// SEC-2 grants no TypeScript dependency-audit exception. The eslint 10 +
+// eslint-plugin-import-x train hoisted the lint stack onto a single
+// minimatch 10.x / brace-expansion 5.x path, retiring the vulnerable
+// minimatch 3.x -> brace-expansion 1.x instance that the former
+// GHSA-rgw5-rvv9-x895 exception covered. This checker therefore requires both
+// the exact graph below and an empty scanner report: any package, parent,
+// version, path, or finding drift fails closed.
 import fs from "node:fs";
 
 const [reportPath, lockfilePath] = process.argv.slice(2);
@@ -55,70 +63,53 @@ function fixedVersions(vuln, packageName) {
 const report = readJson(reportPath, "scanner report");
 const lock = readJson(lockfilePath, "lockfile");
 const expectation = {
-  advisoryId: "GHSA-mh99-v99m-4gvg",
-  advisoryUrl: "https://github.com/advisories/GHSA-mh99-v99m-4gvg",
-  alias: "CVE-2026-14257",
-  fixedVersions: ["1.1.17", "2.1.3", "3.0.3", "5.0.8"],
-  lockfile: normalizePath(lockfilePath),
-  packageName: "brace-expansion",
-  packagePath: "node_modules/brace-expansion",
-  packageVersion: "1.1.17",
-  legacyParents: [
-    {
-      dependencyRange: "^3.1.2",
-      path: "node_modules/@eslint/config-array",
-      version: "0.21.1",
-    },
-    {
-      dependencyRange: "^3.1.2",
-      path: "node_modules/@eslint/eslintrc",
-      version: "3.3.3",
-    },
-    {
-      dependencyRange: "^3.1.2",
-      path: "node_modules/eslint",
-      version: "9.39.2",
-    },
-    {
-      dependencyRange: "^3.1.2",
-      path: "node_modules/eslint-plugin-import",
-      version: "2.32.0",
-    },
-  ],
-  patchedParent: {
-    dependencyRange: "^10.2.2",
-    path: "node_modules/@typescript-eslint/typescript-estree",
-    version: "8.57.2",
+  braceExpansion: {
+    balancedMatchRange: "^4.0.2",
+    dev: true,
+    path: "node_modules/brace-expansion",
+    version: "5.0.12",
   },
-  patchedPackagePath: "node_modules/@typescript-eslint/typescript-estree/node_modules/brace-expansion",
-  patchedPackageVersion: "5.0.8",
-  patchedTransitivePath: "node_modules/@typescript-eslint/typescript-estree/node_modules/minimatch",
-  patchedTransitiveVersion: "10.2.5",
-  vulnerableTransitivePath: "node_modules/minimatch",
-  vulnerableTransitiveVersion: "3.1.4",
-};
-const exception = {
-  advisoryId: "GHSA-rgw5-rvv9-x895",
-  advisoryUrl: "https://github.com/advisories/GHSA-rgw5-rvv9-x895",
-  alias: "CVE-2026-69152",
-  fixedVersions: ["1.1.18", "2.1.4", "3.0.6", "5.0.9"],
-  instances: [
+  lockfile: normalizePath(lockfilePath),
+  minimatch: {
+    braceExpansionRange: "^5.0.8",
+    dev: true,
+    path: "node_modules/minimatch",
+    version: "10.2.6",
+  },
+  // Re-anchored for the eslint 10 + eslint-plugin-import-x train: eslint 10
+  // dropped `@eslint/eslintrc` and moved to `minimatch ^10.2.5`, and the swap
+  // replaced the eslint-plugin-import parent with eslint-plugin-import-x. Every
+  // remaining parent now resolves the single hoisted minimatch 10.x below.
+  minimatchParents: [
     {
-      path: expectation.packagePath,
-      version: expectation.packageVersion,
+      dependencyRange: "^10.2.4",
+      path: "node_modules/@eslint/config-array",
+      version: "0.23.5",
     },
     {
-      path: expectation.patchedPackagePath,
-      version: expectation.patchedPackageVersion,
+      dependencyRange: "^10.2.2",
+      path: "node_modules/@typescript-eslint/typescript-estree",
+      version: "8.70.1",
+    },
+    {
+      dependencyRange: "^10.2.5",
+      path: "node_modules/eslint",
+      version: "10.11.0",
+    },
+    {
+      dependencyRange: "^9.0.3 || ^10.1.2",
+      path: "node_modules/eslint-plugin-import-x",
+      version: "4.17.1",
     },
   ],
-  justification:
-    "New advisory; no fixed aws-cdk release available; operator-authorized exception 2026-08-03 pending upstream fix.",
 };
 
 const packages = lock.packages ?? {};
 const bracePaths = Object.keys(packages).filter(
   (path) => path === "node_modules/brace-expansion" || path.endsWith("/node_modules/brace-expansion"),
+);
+const minimatchPaths = Object.keys(packages).filter(
+  (path) => path === "node_modules/minimatch" || path.endsWith("/node_modules/minimatch"),
 );
 const minimatchParents = Object.entries(packages)
   .filter(([, pkg]) => pkg?.dependencies?.minimatch)
@@ -127,125 +118,76 @@ const minimatchParents = Object.entries(packages)
     path,
     version: pkg.version,
   }));
-const expectedParents = [...expectation.legacyParents, expectation.patchedParent].map((parent) =>
-  JSON.stringify(parent),
-);
-const actualParents = minimatchParents.map((parent) => JSON.stringify(parent));
-const patchedLegacyPackage = packages[expectation.packagePath];
-const patchedPackage = packages[expectation.patchedPackagePath];
-const patchedTransitivePackage = packages[expectation.patchedTransitivePath];
-const legacyTransitivePackage = packages[expectation.vulnerableTransitivePath];
+const braceExpansionPackage = packages[expectation.braceExpansion.path];
+const minimatchPackage = packages[expectation.minimatch.path];
 
 if (
-  !sameStringSet(bracePaths, [expectation.packagePath, expectation.patchedPackagePath]) ||
-  !sameStringSet(actualParents, expectedParents) ||
-  patchedLegacyPackage?.version !== expectation.packageVersion ||
-  patchedLegacyPackage?.dev !== true ||
-  patchedLegacyPackage?.dependencies?.["balanced-match"] !== "^1.0.0" ||
-  patchedLegacyPackage?.dependencies?.["concat-map"] !== "0.0.1" ||
-  patchedPackage?.version !== expectation.patchedPackageVersion ||
-  patchedPackage?.dev !== true ||
-  patchedPackage?.dependencies?.["balanced-match"] !== "^4.0.2" ||
-  patchedTransitivePackage?.version !== expectation.patchedTransitiveVersion ||
-  patchedTransitivePackage?.dev !== true ||
-  patchedTransitivePackage?.dependencies?.[expectation.packageName] !== "^5.0.5" ||
-  legacyTransitivePackage?.version !== expectation.vulnerableTransitiveVersion ||
-  legacyTransitivePackage?.dev !== true ||
-  legacyTransitivePackage?.dependencies?.[expectation.packageName] !== "^1.1.7"
+  !sameStringSet(bracePaths, [expectation.braceExpansion.path]) ||
+  !sameStringSet(minimatchPaths, [expectation.minimatch.path]) ||
+  !sameStringSet(
+    minimatchParents.map((parent) => JSON.stringify(parent)),
+    expectation.minimatchParents.map((parent) => JSON.stringify(parent)),
+  ) ||
+  braceExpansionPackage?.version !== expectation.braceExpansion.version ||
+  braceExpansionPackage?.dev !== expectation.braceExpansion.dev ||
+  braceExpansionPackage?.dependencies?.["balanced-match"] !==
+    expectation.braceExpansion.balancedMatchRange ||
+  minimatchPackage?.version !== expectation.minimatch.version ||
+  minimatchPackage?.dev !== expectation.minimatch.dev ||
+  minimatchPackage?.dependencies?.["brace-expansion"] !== expectation.minimatch.braceExpansionRange
 ) {
-  fail(`lockfile graph no longer matches the patched TypeScript lint-tool ${expectation.packageName} path`);
+  fail("lockfile graph no longer matches the reviewed TypeScript lint-tool brace-expansion path");
 }
 
-const unexpected = [];
-const visibleCounts = new Map(exception.instances.map((instance) => [instance.version, 0]));
+// No TypeScript dependency-audit exception is granted, so every reported
+// vulnerability is unexpected and a clean scanner report is the only passing
+// state.
+const findings = [];
 if (!Array.isArray(report.results)) {
   fail("OSV report is missing its results array");
 }
 for (const result of report.results) {
   for (const pkg of result.packages ?? []) {
     for (const vuln of pkg.vulnerabilities ?? []) {
-      const sourcePath = normalizePath(result?.source?.path);
       const packageInfo = pkg?.package ?? {};
-      const dependencyGroups = (pkg.dependency_groups ?? []).map(String);
-      const instance = exception.instances.find(
-        (candidate) => candidate.version === packageInfo.version,
-      );
-      const matches =
-        instance &&
-        (sourcePath === expectation.lockfile || sourcePath.endsWith(`/${expectation.lockfile}`)) &&
-        packageInfo.ecosystem === "npm" &&
-        packageInfo.name === expectation.packageName &&
-        sameStringSet(dependencyGroups, ["dev"]) &&
-        vuln.id === exception.advisoryId &&
-        sameStringSet((vuln.aliases ?? []).map(String), [exception.alias]) &&
-        sameStringSet(fixedVersions(vuln, expectation.packageName), exception.fixedVersions);
-
-      if (matches) {
-        visibleCounts.set(instance.version, visibleCounts.get(instance.version) + 1);
-      } else {
-        unexpected.push({
-          fixedVersions: fixedVersions(vuln, expectation.packageName),
-          id: vuln.id ?? "<unknown>",
-          packageName: packageInfo.name ?? "<unknown>",
-          source: result?.source?.path ?? "<unknown>",
-          version: packageInfo.version ?? "<unknown>",
-        });
-      }
+      findings.push({
+        fixedVersions: fixedVersions(vuln, packageInfo.name ?? "<unknown>"),
+        id: vuln.id ?? "<unknown>",
+        packageName: packageInfo.name ?? "<unknown>",
+        source: result?.source?.path ?? "<unknown>",
+        version: packageInfo.version ?? "<unknown>",
+      });
     }
   }
 }
 
-const incorrectCounts = [...visibleCounts].filter(([, count]) => count !== 1);
-if (unexpected.length > 0 || incorrectCounts.length > 0) {
-  for (const vuln of unexpected) {
+if (findings.length > 0) {
+  for (const vuln of findings) {
     console.error(
       `osv-scanner: unexpected vulnerability ${vuln.id} in ${vuln.packageName}@${vuln.version} from ${vuln.source} (fixed versions: ${JSON.stringify(vuln.fixedVersions)})`,
     );
   }
-  for (const [version, count] of incorrectCounts) {
-    console.error(
-      `osv-scanner: expected exactly one visible TypeScript lint-tool ${exception.advisoryId} finding for ${expectation.packageName}@${version}, matched ${count}`,
-    );
-  }
-  fail("visible TypeScript lint-tool findings did not match the reviewed exception set");
+  fail("TypeScript lint-tool findings must be empty; SEC-2 grants no exception");
 }
 
-for (const instance of exception.instances) {
-  console.error(
-    `osv-scanner: WARN ${JSON.stringify({
-      recordType: "reviewed-vulnerability-exception",
-      exceptionId: "typescript-brace-expansion",
-      advisoryId: exception.advisoryId,
-      advisoryUrl: exception.advisoryUrl,
-      alias: exception.alias,
-      fixedVersions: exception.fixedVersions,
-      justification: exception.justification,
-      lockfile: expectation.lockfile,
-      package: {
-        name: expectation.packageName,
-        path: instance.path,
-        version: instance.version,
+console.error(
+  `osv-scanner: PASS ${JSON.stringify({
+    recordType: "verified-clean-dependency-graph",
+    checkId: "typescript-lint-tool-brace-expansion",
+    lockfile: expectation.lockfile,
+    justification:
+      "The eslint 10 + eslint-plugin-import-x train retired the minimatch 3.x -> brace-expansion 1.x path; SEC-2 grants no TypeScript dependency-audit exception.",
+    provenance: {
+      braceExpansion: {
+        path: expectation.braceExpansion.path,
+        version: expectation.braceExpansion.version,
       },
-      provenance: {
-        legacyMinimatch: {
-          dependencyRange: "^1.1.7",
-          path: expectation.vulnerableTransitivePath,
-          version: expectation.vulnerableTransitiveVersion,
-        },
-        legacyParents: expectation.legacyParents,
-        patchedBranch: {
-          braceExpansion: {
-            path: expectation.patchedPackagePath,
-            version: expectation.patchedPackageVersion,
-          },
-          minimatch: {
-            dependencyRange: "^5.0.5",
-            path: expectation.patchedTransitivePath,
-            version: expectation.patchedTransitiveVersion,
-          },
-          parent: expectation.patchedParent,
-        },
+      minimatch: {
+        braceExpansionRange: expectation.minimatch.braceExpansionRange,
+        path: expectation.minimatch.path,
+        version: expectation.minimatch.version,
       },
-    })}`,
-  );
-}
+      minimatchParents: expectation.minimatchParents,
+    },
+  })}`,
+);
