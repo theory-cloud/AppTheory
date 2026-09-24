@@ -1,5 +1,21 @@
 # Changelog
 
+## [4.4.0](https://github.com/theory-cloud/AppTheory/compare/v4.3.0...v4.4.0) (2026-09-24)
+
+
+### Features
+
+* **objectstore:** add bounded single-object upload grant ([3cb9c8f](https://github.com/theory-cloud/AppTheory/commit/3cb9c8f50e3e2377e9768f89a2e261136c7ab86d))
+* **objectstore:** bounded single-object upload grant (presign PUT) across Go, TS, and Python ([f3237d7](https://github.com/theory-cloud/AppTheory/commit/f3237d77252bd924f7b4e2a277c88891c3f4a6b3))
+
+
+### Bug Fixes
+
+* **objectstore:** keep the expiry parser docstrings ASCII ([326f403](https://github.com/theory-cloud/AppTheory/commit/326f40385d02ebb5f34d11447e161130f386bd76))
+* **objectstore:** parse grant expiry as ASCII digits in every runtime ([d650e1b](https://github.com/theory-cloud/AppTheory/commit/d650e1b0bc84b422ca0ed91def564f0806239bd4))
+* **objectstore:** refuse non-integer upload-grant lengths and expiry ([6117b87](https://github.com/theory-cloud/AppTheory/commit/6117b87ae1ee8324df99853f0b59b4dbb5c9faca))
+* **ts:** inline the upload-grant fixture in the objectstore test ([b672ad3](https://github.com/theory-cloud/AppTheory/commit/b672ad30407896d605f37946883845dbc1badaa8))
+
 ## [4.4.0-rc](https://github.com/theory-cloud/AppTheory/compare/v4.3.0...v4.4.0-rc) (2026-09-24)
 
 
