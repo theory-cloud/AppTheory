@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -34,12 +35,31 @@ type FixtureObjectStoreStep struct {
 	ContentType    string            `json:"content_type,omitempty"`
 	Metadata       map[string]string `json:"metadata,omitempty"`
 	MaxBytes       int64             `json:"max_bytes,omitempty"`
-	ContentLength  int64             `json:"content_length,omitempty"`
 	ChecksumSHA256 string            `json:"checksum_sha256,omitempty"`
-	ExpiresIn      int64             `json:"expires_in,omitempty"`
 	Bucket         string            `json:"bucket,omitempty"`
 	Key            string            `json:"key,omitempty"`
 	Prefix         string            `json:"prefix,omitempty"`
+
+	// ContentLength and ExpiresIn are decoded as json.Number rather than int64 because the
+	// fail-closed corpus probes mistyped (non-integer) values for them. The Go grant input is
+	// int64-typed, so a fractional byte count or expiry cannot reach PresignPut at all; decoding is
+	// that type boundary, and it reports ErrInvalidPresignPut so Go refuses such a field with the
+	// same stable code the TypeScript and Python runtimes report.
+	ContentLength json.Number `json:"content_length,omitempty"`
+	ExpiresIn     json.Number `json:"expires_in,omitempty"`
+}
+
+// objectStoreStepInteger converts an optional fixture integer field, refusing anything that is not
+// an integer literal. An absent field reads as zero, which the grant validation then refuses.
+func objectStoreStepInteger(raw json.Number) (int64, bool) {
+	if raw == "" {
+		return 0, true
+	}
+	value, err := strconv.ParseInt(string(raw), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return value, true
 }
 
 func runFixtureObjectStore(f Fixture) error {
@@ -113,13 +133,21 @@ func runObjectStoreStep(fake *storetest.FakeStore, step FixtureObjectStoreStep) 
 		if err != nil {
 			return objectStoreStepResult(result, store.ObjectRef{}, nil, err)
 		}
+		contentLength, ok := objectStoreStepInteger(step.ContentLength)
+		if !ok {
+			return objectStoreStepResult(result, store.ObjectRef{}, nil, store.ErrInvalidPresignPut)
+		}
+		expiresIn, ok := objectStoreStepInteger(step.ExpiresIn)
+		if !ok {
+			return objectStoreStepResult(result, store.ObjectRef{}, nil, store.ErrInvalidPresignPut)
+		}
 		grant, err := fake.PresignPut(context.Background(), store.PresignPutInput{
 			Ref:            ref,
-			ContentLength:  step.ContentLength,
+			ContentLength:  contentLength,
 			ChecksumSHA256: step.ChecksumSHA256,
 			ContentType:    step.ContentType,
 			MaxBytes:       step.MaxBytes,
-			ExpiresIn:      time.Duration(step.ExpiresIn) * time.Second,
+			ExpiresIn:      time.Duration(expiresIn) * time.Second,
 		})
 		if err != nil {
 			return objectStoreStepResult(result, store.ObjectRef{}, nil, err)

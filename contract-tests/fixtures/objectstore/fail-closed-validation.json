@@ -106,6 +106,16 @@
           "expires_in": 900
         },
         {
+          "name": "grant-fractional-length",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 17.5,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": "text/plain",
+          "max_bytes": 1024,
+          "expires_in": 900
+        },
+        {
           "name": "grant-missing-max-bytes",
           "operation": "presign_put",
           "ref": "s3://bucket-a/objects/alpha.txt",
@@ -152,6 +162,26 @@
           "content_type": "text/plain",
           "max_bytes": 1024,
           "expires_in": 0
+        },
+        {
+          "name": "grant-fractional-expiry",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 17,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": "text/plain",
+          "max_bytes": 1024,
+          "expires_in": 1.5
+        },
+        {
+          "name": "grant-sub-second-expiry",
+          "operation": "presign_put",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "content_length": 17,
+          "checksum_sha256": "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHc=",
+          "content_type": "text/plain",
+          "max_bytes": 1024,
+          "expires_in": 0.9
         },
         {
           "name": "grant-expiry-over-cap",
@@ -284,6 +314,15 @@
           }
         },
         {
+          "name": "grant-fractional-length",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
           "name": "grant-missing-max-bytes",
           "operation": "presign_put",
           "ok": false,
@@ -321,6 +360,24 @@
         },
         {
           "name": "grant-zero-expiry",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-fractional-expiry",
+          "operation": "presign_put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_presign_put",
+            "message": "objectstore: invalid presign put"
+          }
+        },
+        {
+          "name": "grant-sub-second-expiry",
           "operation": "presign_put",
           "ok": false,
           "error": {

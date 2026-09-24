@@ -158,13 +158,15 @@ def _fixture_step_ref(step: dict[str, Any]) -> apptheory.ObjectRef:
 
 
 def _fixture_presign_put_input(step: dict[str, Any]) -> apptheory.ObjectStorePresignPutInput:
+    # Forward the numeric fields exactly as the fixture wrote them: coercing with int() would hide
+    # the fractional length and expiry the fail-closed corpus pins as refusals.
     return apptheory.ObjectStorePresignPutInput(
         ref=_fixture_step_ref(step),
-        content_length=int(step.get("content_length") or 0),
+        content_length=step.get("content_length", 0),
         checksum_sha256=str(step.get("checksum_sha256") or ""),
         content_type=str(step.get("content_type") or ""),
-        max_bytes=int(step.get("max_bytes") or 0),
-        expires_in=int(step.get("expires_in") or 0),
+        max_bytes=step.get("max_bytes", 0),
+        expires_in=step.get("expires_in", 0),
     )
 
 
@@ -531,7 +533,7 @@ class ObjectStoreTests(unittest.TestCase):
             with self.subTest(step=step["name"]), self.assertRaises(apptheory.ObjectStoreError) as ctx:
                 fake.presign_put(_fixture_presign_put_input(step))
             self.assert_object_store_error(expected["error"]["code"], ctx.exception)
-        self.assertEqual(refusals, 15)
+        self.assertEqual(refusals, 18)
         self.assertEqual(fake.calls(), [])
 
         non_canonical = "JxNUv+pEygWMdjyXew+bVUVS2rnR6IFkvTTZRH9ivHd="

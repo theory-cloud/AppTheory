@@ -268,9 +268,9 @@
         "content_type": { "type": "string" },
         "metadata": { "$ref": "#/$defs/stringMap" },
         "max_bytes": { "type": "integer" },
-        "content_length": { "type": "integer" },
+        "content_length": { "type": "number", "description": "number, not integer, so the fail-closed corpus can pin that a fractional byte count is refused" },
         "checksum_sha256": { "type": "string" },
-        "expires_in": { "type": "integer" },
+        "expires_in": { "type": "number", "description": "number, not integer, so the fail-closed corpus can pin that a fractional or sub-second expiry is refused" },
         "bucket": { "type": "string" },
         "key": { "type": "string" },
         "prefix": { "type": "string" }

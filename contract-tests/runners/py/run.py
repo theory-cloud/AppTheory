@@ -3158,11 +3158,11 @@ def _run_objectstore_step(
             grant = fake.presign_put(
                 runtime.ObjectStorePresignPutInput(
                     ref=_objectstore_step_ref(runtime, step),
-                    content_length=int(step.get("content_length") or 0),
+                    content_length=_objectstore_step_number(step, "content_length"),
                     checksum_sha256=str(step.get("checksum_sha256") or ""),
                     content_type=str(step.get("content_type") or ""),
-                    max_bytes=int(step.get("max_bytes") or 0),
-                    expires_in=int(step.get("expires_in") or 0),
+                    max_bytes=_objectstore_step_number(step, "max_bytes"),
+                    expires_in=_objectstore_step_number(step, "expires_in"),
                 )
             )
             return _objectstore_step_result(result, grant=grant)
@@ -3229,6 +3229,16 @@ def _objectstore_step_ref(runtime: Any, step: dict[str, Any]) -> Any:
         ref = runtime.ObjectRef(bucket="", key="")
     runtime.validate_object_ref(ref)
     return ref
+
+
+def _objectstore_step_number(step: dict[str, Any], name: str) -> Any:
+    """Forward a grant numeric field exactly as the fixture wrote it.
+
+    Coercing with ``int()`` would turn a mistyped ``content_length`` or ``expires_in`` into a value
+    the runtime accepts, so the fail-closed corpus could not pin the refusal. An absent field reads
+    as zero, which the grant validation refuses.
+    """
+    return step[name] if name in step else 0
 
 
 def _objectstore_error_json(error: Exception) -> dict[str, str]:
