@@ -47,7 +47,7 @@ const constructs_1 = require("constructs");
  * Vectors and Bedrock permissions used by the runtime vectorstore helpers.
  */
 class AppTheoryVectorIndex extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryVectorIndex", version: "4.4.0-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryVectorIndex", version: "4.4.0" };
     vectorBucket;
     index;
     vectorBucketName;
