@@ -78,8 +78,11 @@ function presignQueryValue(
   return null;
 }
 
+// X-Amz-Expires is always a bare decimal integer. The pattern deliberately excludes a sign,
+// whitespace, underscores and non-ASCII digits, which the Go and Python parsers used to tolerate, so
+// every runtime's post-condition accepts exactly [0-9]+.
 function presignPutSeconds(value: string): number | null {
-  if (!/^[+-]?\d+$/u.test(value)) return null;
+  if (!/^[0-9]+$/u.test(value)) return null;
   const seconds = Number(value);
   return Number.isSafeInteger(seconds) ? seconds : null;
 }

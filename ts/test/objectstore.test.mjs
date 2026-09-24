@@ -391,6 +391,12 @@ test("presigned url post-condition rejects unsafe grant shapes", () => {
     "content type unsigned": "https://bucket-a.s3.amazonaws.com/objects/alpha.txt?X-Amz-Expires=900&X-Amz-SignedHeaders=content-length%3Bhost%3Bx-amz-checksum-sha256",
     "expiry over ceiling": "https://bucket-a.s3.amazonaws.com/objects/alpha.txt?X-Amz-Expires=1800&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost%3Bx-amz-checksum-sha256",
     "expiry not an integer": "https://bucket-a.s3.amazonaws.com/objects/alpha.txt?X-Amz-Expires=9e2&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost%3Bx-amz-checksum-sha256",
+    // X-Amz-Expires must be bare ASCII digits: no sign, padding, underscores, or fullwidth digits.
+    "expiry with sign": "https://bucket-a.s3.amazonaws.com/objects/alpha.txt?X-Amz-Expires=%2B900&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost%3Bx-amz-checksum-sha256",
+    "expiry padded": "https://bucket-a.s3.amazonaws.com/objects/alpha.txt?X-Amz-Expires=%20900&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost%3Bx-amz-checksum-sha256",
+    "expiry underscored": "https://bucket-a.s3.amazonaws.com/objects/alpha.txt?X-Amz-Expires=9_00&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost%3Bx-amz-checksum-sha256",
+    "expiry fractional": "https://bucket-a.s3.amazonaws.com/objects/alpha.txt?X-Amz-Expires=900.0&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost%3Bx-amz-checksum-sha256",
+    "expiry fullwidth digits": "https://bucket-a.s3.amazonaws.com/objects/alpha.txt?X-Amz-Expires=%EF%BC%99%EF%BC%90%EF%BC%90&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost%3Bx-amz-checksum-sha256",
     "no query": "https://bucket-a.s3.amazonaws.com/objects/alpha.txt",
     "no expiry": "https://bucket-a.s3.amazonaws.com/objects/alpha.txt?X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost%3Bx-amz-checksum-sha256",
   };

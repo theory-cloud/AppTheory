@@ -258,6 +258,37 @@ func TestVerifyPresignPutURLFailClosed(t *testing.T) {
 			url:  "https://bucket-a.s3.amazonaws.com/%zz?a=b",
 			want: ErrInvalidStoreConfig,
 		},
+		// X-Amz-Expires must be bare ASCII digits, in every runtime.
+		{
+			name: "expiry-with-sign",
+			url: "https://bucket-a.s3.amazonaws.com/objects/alpha.txt?X-Amz-Expires=%2B900" +
+				"&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost%3Bx-amz-checksum-sha256",
+			want: ErrInvalidStoreConfig,
+		},
+		{
+			name: "expiry-padded",
+			url: "https://bucket-a.s3.amazonaws.com/objects/alpha.txt?X-Amz-Expires=%20900" +
+				"&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost%3Bx-amz-checksum-sha256",
+			want: ErrInvalidStoreConfig,
+		},
+		{
+			name: "expiry-underscored",
+			url: "https://bucket-a.s3.amazonaws.com/objects/alpha.txt?X-Amz-Expires=9_00" +
+				"&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost%3Bx-amz-checksum-sha256",
+			want: ErrInvalidStoreConfig,
+		},
+		{
+			name: "expiry-fractional",
+			url: "https://bucket-a.s3.amazonaws.com/objects/alpha.txt?X-Amz-Expires=900.0" +
+				"&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost%3Bx-amz-checksum-sha256",
+			want: ErrInvalidStoreConfig,
+		},
+		{
+			name: "expiry-fullwidth-digits",
+			url: "https://bucket-a.s3.amazonaws.com/objects/alpha.txt?X-Amz-Expires=%EF%BC%99%EF%BC%90%EF%BC%90" +
+				"&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost%3Bx-amz-checksum-sha256",
+			want: ErrInvalidStoreConfig,
+		},
 	}
 
 	for _, test := range tests {

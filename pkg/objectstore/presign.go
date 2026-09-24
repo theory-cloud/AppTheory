@@ -167,7 +167,7 @@ func presignPutHeaders(input PresignPutInput) map[string]string {
 //
 // A URL is only returned when the constraint headers really are signed headers and are not hoisted
 // into unsigned query parameters, and when the embedded expiry cannot outlive the requested one.
-// Anything else is a misconfigured signer and fails closed.
+// X-Amz-Expires must be bare ASCII digits. Anything else is a misconfigured signer and fails closed.
 func verifyPresignPutURL(rawURL string, requested time.Duration) error {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -199,14 +199,36 @@ func verifyPresignPutURL(rawURL string, requested time.Duration) error {
 	if !ok {
 		return ErrInvalidStoreConfig
 	}
-	expiresSeconds, err := strconv.ParseInt(expiresRaw, 10, 64)
-	if err != nil || expiresSeconds <= 0 || expiresSeconds > presignPutMaxExpiresSeconds {
+	expiresSeconds, ok := presignPutExpirySeconds(expiresRaw)
+	if !ok || expiresSeconds <= 0 || expiresSeconds > presignPutMaxExpiresSeconds {
 		return ErrInvalidStoreConfig
 	}
 	if requested > 0 && expiresSeconds > int64(requested/time.Second) {
 		return ErrInvalidStoreConfig
 	}
 	return nil
+}
+
+// presignPutExpirySeconds parses X-Amz-Expires as bare ASCII digits.
+//
+// A signer writes a plain decimal integer, but the lenient parsers this replaces also tolerated a
+// leading sign (strconv), surrounding whitespace and underscores (Python's int()), and non-ASCII
+// decimal digits (Python's int()). Accepting only [0-9]+ keeps all three runtimes' post-condition
+// on exactly the same input domain.
+func presignPutExpirySeconds(raw string) (int64, bool) {
+	if raw == "" {
+		return 0, false
+	}
+	for index := 0; index < len(raw); index++ {
+		if raw[index] < '0' || raw[index] > '9' {
+			return 0, false
+		}
+	}
+	seconds, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return seconds, true
 }
 
 func presignQueryValue(query url.Values, name string) (string, bool) {

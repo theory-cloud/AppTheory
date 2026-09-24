@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 from unittest import mock
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import apptheory
 import boto3
@@ -487,6 +487,15 @@ class ObjectStoreTests(unittest.TestCase):
                 900,
             ),
             ("expires-not-an-integer", _presigned_url(expires="soon"), 900),
+            # X-Amz-Expires must be bare ASCII digits: int() used to tolerate a sign, padding,
+            # underscores and fullwidth digits, all of which Go and TypeScript already refuse.
+            ("expires-with-sign", _presigned_url(expires="%2B900"), 900),
+            ("expires-padded", _presigned_url(expires="%20900"), 900),
+            ("expires-trailing-pad", _presigned_url(expires="900%20"), 900),
+            ("expires-underscored", _presigned_url(expires="9_00"), 900),
+            ("expires-fractional", _presigned_url(expires="900.0"), 900),
+            ("expires-scientific", _presigned_url(expires="9e2"), 900),
+            ("expires-fullwidth-digits", _presigned_url(expires=quote("９００")), 900),
             ("signed-headers-missing", "https://s3.amazonaws.com/bucket-a/objects/alpha.txt?X-Amz-Expires=900", 900),
             ("queryless", "https://s3.amazonaws.com/bucket-a/objects/alpha.txt", 900),
         ]

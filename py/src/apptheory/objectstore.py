@@ -604,14 +604,24 @@ def _verify_presign_put_url(raw_url: str, requested_expires_in: int) -> None:
     expires_raw = _presign_query_value(query, _PRESIGN_PUT_EXPIRES_PARAM)
     if expires_raw is None:
         raise _invalid_store_config()
-    try:
-        expires_seconds = int(expires_raw)
-    except ValueError:
-        raise _invalid_store_config() from None
-    if expires_seconds <= 0 or expires_seconds > MAX_PRESIGN_PUT_EXPIRES_IN:
+    expires_seconds = _parse_presign_put_expiry(expires_raw)
+    if expires_seconds is None or expires_seconds <= 0 or expires_seconds > MAX_PRESIGN_PUT_EXPIRES_IN:
         raise _invalid_store_config()
     if requested_expires_in > 0 and expires_seconds > requested_expires_in:
         raise _invalid_store_config()
+
+
+def _parse_presign_put_expiry(raw: str) -> int | None:
+    """Parse ``X-Amz-Expires`` as bare ASCII digits.
+
+    ``int()`` is lenient: it accepts surrounding whitespace, underscores (``9_00``) and non-ASCII
+    decimal digits such as fullwidth ``９００``, so a padded or non-canonical expiry would satisfy a
+    post-condition that the Go and TypeScript runtimes refuse. Requiring ``[0-9]+`` keeps all three
+    runtimes' post-condition on exactly the same input domain.
+    """
+    if not raw or any(ch < "0" or ch > "9" for ch in raw):
+        return None
+    return int(raw)
 
 
 def _presign_query_value(query: dict[str, list[str]], name: str) -> str | None:
