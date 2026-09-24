@@ -158,11 +158,13 @@ ADMITTED_VARIABLE_DIRECTORY = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}/")
 # refused here so the rule and the reason sit in one place.
 REFUSED_CHARACTERS = "$~*():\"'`{}"
 
-# Every spelling that runs something: an interpreter, a shell, a `source`, or a launcher. A
-# token written on a line that reaches one of these before it is executed at that site, so a
-# token there that names no file is a finding rather than a comment about a file.
+# Every spelling that runs something: an interpreter, a shell, a `source`, a launcher, or one of
+# the two process-spawning module names the pinned Python and Node tools use. A token written on
+# a line that reaches one of these before it is executed at that site, so a token there that
+# names no file is a finding rather than a comment about a file.
 EXECUTOR_REFERENCE = re.compile(
-    r"(?:^|[\s;&|(`])(?:bash|sh|zsh|dash|ksh|source|env|command|xargs|python|python3|node|make|find)\b"
+    r"(?:^|[\s;&|(`])(?:bash|sh|zsh|dash|ksh|source|env|command|xargs|python|python3|node|make|find"
+    r"|subprocess|child_process)\b"
 )
 
 # `make` reads a makefile. `-f` names one outright and `-C <dir>` names `<dir>/Makefile`; a
@@ -1791,6 +1793,13 @@ ROUND_7_ATTACKS = (
     # writes a real link into the tree and the battery unlinks it when it finishes.
     ("R6-F2 a pinned gate runs a symbolic link into a pinned file", "scripts/verify-release-gates.sh",
      GATES_BARE, _attack_symlink_through_the_root, CLASS_CLOSURE),
+    # The executor family the derivation reads includes the two process-spawning module names a
+    # pinned Python or Node tool uses, so a name that resolves to nothing on one of those lines
+    # is a finding too and not a comment.
+    ("a pinned tool spawns a name that resolves to nothing", "scripts/diagnose-release-state.sh",
+     "import subprocess\n",
+     'import subprocess\ncompleted = subprocess.run(["bash", "scripts/evil-helper.sh"], check=False)\n',
+     CLASS_CLOSURE),
 )
 
 

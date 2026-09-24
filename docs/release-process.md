@@ -200,7 +200,7 @@ the new digest to paste, so the pin update is mechanical. Any edit to a pinned f
 update in the same pull request - no edit to a pinned file is admitted without one.
 
 `--self-test` runs the attack battery, one case per shape, each naming the class it must fail on, plus
-a table of shapes that must stay accepted. At this revision 202 weakening shapes fail closed and 4
+a table of shapes that must stay accepted. At this revision 203 weakening shapes fail closed and 4
 fail-closed spellings are accepted, and the legitimate wiring at HEAD is accepted as the baseline
 before any attack is tried - the guard asserts those two counts, the size of the closure, the
 spelling table and the sentences below against this document, so what is written here cannot drift
@@ -232,11 +232,11 @@ derivation is asked to read, and each refused spelling has an attack row.
 
 A name that resolves to no file is read as a name, and it is a finding when the line it is written on
 runs it. The executor spellings are `bash`, `sh`, `zsh`, `dash`, `ksh`, `source`, `.`, `env`,
-`command`, `xargs`, `python`, `python3`, `node`, `make` and `find`, and the reading is deliberately
-coarse - a line that reaches one of them before the name reads as executed whether or not it runs
-that name - because the direction of the error is the safe one. A name that is part of a glob is not
-read at all: expansion names files at run time, and that is the same limit the sweep below states for
-a glob.
+`command`, `xargs`, `python`, `python3`, `node`, `make`, `find`, `subprocess` and `child_process`,
+and the reading is deliberately coarse - a line that reaches one of them before the name reads as
+executed whether or not it runs that name - because the direction of the error is the safe one. A
+name that is part of a glob is not read at all: expansion names files at run time, and that is the
+same limit the sweep below states for a glob.
 
 A name that resolves is a finding unless it is pinned, and where it lives does not enter into it: a
 pinned file may name only files that are pinned, so the 13 files outside `scripts/` and `gov-infra/`
