@@ -10,7 +10,7 @@ const JSII_RTTI_SYMBOL_1 = Symbol.for("jsii.rtti");
  * kind-to-identifier invariants as the Go runtime package.
  */
 class AppTheoryMcpRouteAlgebra {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra", version: "4.2.4" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra", version: "4.3.0-rc" };
     /** MCP route-algebra contract version. */
     static CONTRACT_VERSION = "m17.mcp-route-algebra/v1";
     /** Namespace endpoint kind. */
