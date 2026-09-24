@@ -36,6 +36,9 @@ func (s *FakeStore) PresignPut(_ context.Context, input store.PresignPutInput) (
 		return nil, err
 	}
 
+	// Exact, never truncated: Validate already refused anything that is not a whole number of
+	// seconds, so the grant cannot carry a fractional or zero X-Amz-Expires. This is the same
+	// validation the S3 store runs, so the fake refuses exactly what the real store refuses.
 	expiresIn := int64(input.ExpiresIn / time.Second)
 
 	s.mu.Lock()

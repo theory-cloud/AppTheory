@@ -85,10 +85,11 @@ export interface ObjectStore {
 
 /**
  * One bounded upload grant request. Every field is required: the reference
- * must be exact and unversioned, the content length must be positive and no
- * larger than maxBytes, the checksum must be the canonical base64 SHA-256
- * digest of the exact bytes the client will upload, and expiresIn must be
- * positive and at most MAX_PRESIGN_PUT_EXPIRES_IN seconds.
+ * must be exact and unversioned, the content length must be a positive safe
+ * integer no larger than maxBytes, the checksum must be the canonical base64
+ * SHA-256 digest of the exact bytes the client will upload, and expiresIn must
+ * be a whole number of seconds, positive and at most
+ * MAX_PRESIGN_PUT_EXPIRES_IN.
  */
 export interface ObjectStorePresignPutInput {
   ref: ObjectRef;
@@ -194,15 +195,24 @@ export function createFakeObjectStore(): FakeObjectStore {
   return new FakeObjectStore();
 }
 
-/** Verifies a grant request is complete and safe. Every failure is fail-closed. */
+/**
+ * Verifies a grant request is complete and safe. Every failure is fail-closed.
+ *
+ * The byte counts and the expiry must be integers: `Number.isSafeInteger`
+ * refuses a fractional content length, a boolean, a numeric string and
+ * `undefined` alike, matching the integer-typed Go grant input and Python's
+ * explicit type check. The expiry must further be a whole number of seconds,
+ * because the grant carries it as the integer `X-Amz-Expires`; a fractional
+ * expiry would be truncated or rejected by the signer.
+ */
 export function validatePresignPutInput(
   input: ObjectStorePresignPutInput,
 ): void {
   validateObjectRef(input.ref);
   if (input.ref.versionId) throw invalidObjectRef();
   if (
-    !Number.isFinite(input.contentLength) ||
-    !Number.isFinite(input.maxBytes) ||
+    !Number.isSafeInteger(input.contentLength) ||
+    !Number.isSafeInteger(input.maxBytes) ||
     input.contentLength <= 0 ||
     input.maxBytes <= 0 ||
     input.contentLength > input.maxBytes
@@ -216,7 +226,7 @@ export function validatePresignPutInput(
     throw invalidPresignPut();
   }
   if (
-    !Number.isFinite(input.expiresIn) ||
+    !Number.isSafeInteger(input.expiresIn) ||
     input.expiresIn <= 0 ||
     input.expiresIn > MAX_PRESIGN_PUT_EXPIRES_IN
   ) {
@@ -350,6 +360,8 @@ export class FakeObjectStore implements ObjectStore, ObjectStoreUploadGranter {
     });
     this.raiseFailure("PresignPut");
 
+    // validatePresignPutInput is the same gate the S3 store runs, so the fake refuses exactly what
+    // the real store refuses; expiresIn is already a whole number of seconds when it is minted.
     const now = this.now();
     return {
       ref: cloneRef(input.ref),

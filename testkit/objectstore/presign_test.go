@@ -154,6 +154,10 @@ func TestFakeStorePresignPutFailsClosedWithoutRecording(t *testing.T) {
 		{name: "length-over-max", mutate: func(i *store.PresignPutInput) { i.MaxBytes = 1 }, want: store.ErrInvalidPresignPut},
 		{name: "missing-content-type", mutate: func(i *store.PresignPutInput) { i.ContentType = "" }, want: store.ErrInvalidPresignPut},
 		{name: "expiry-over-cap", mutate: func(i *store.PresignPutInput) { i.ExpiresIn = 16 * time.Minute }, want: store.ErrInvalidPresignPut},
+		// The fake runs the S3 store's own validation, so a sub-second or fractional expiry is
+		// refused here instead of minting a grant whose X-Amz-Expires has been truncated to zero.
+		{name: "sub-second-expiry", mutate: func(i *store.PresignPutInput) { i.ExpiresIn = 500 * time.Millisecond }, want: store.ErrInvalidPresignPut},
+		{name: "fractional-expiry", mutate: func(i *store.PresignPutInput) { i.ExpiresIn = 1500 * time.Millisecond }, want: store.ErrInvalidPresignPut},
 	}
 
 	for _, test := range tests {

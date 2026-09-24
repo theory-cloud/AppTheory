@@ -60,13 +60,22 @@ export function validateObjectRef(ref) {
 export function createFakeObjectStore() {
     return new FakeObjectStore();
 }
-/** Verifies a grant request is complete and safe. Every failure is fail-closed. */
+/**
+ * Verifies a grant request is complete and safe. Every failure is fail-closed.
+ *
+ * The byte counts and the expiry must be integers: `Number.isSafeInteger`
+ * refuses a fractional content length, a boolean, a numeric string and
+ * `undefined` alike, matching the integer-typed Go grant input and Python's
+ * explicit type check. The expiry must further be a whole number of seconds,
+ * because the grant carries it as the integer `X-Amz-Expires`; a fractional
+ * expiry would be truncated or rejected by the signer.
+ */
 export function validatePresignPutInput(input) {
     validateObjectRef(input.ref);
     if (input.ref.versionId)
         throw invalidObjectRef();
-    if (!Number.isFinite(input.contentLength) ||
-        !Number.isFinite(input.maxBytes) ||
+    if (!Number.isSafeInteger(input.contentLength) ||
+        !Number.isSafeInteger(input.maxBytes) ||
         input.contentLength <= 0 ||
         input.maxBytes <= 0 ||
         input.contentLength > input.maxBytes) {
@@ -78,7 +87,7 @@ export function validatePresignPutInput(input) {
     if (!validPresignPutChecksumSha256(input.checksumSha256)) {
         throw invalidPresignPut();
     }
-    if (!Number.isFinite(input.expiresIn) ||
+    if (!Number.isSafeInteger(input.expiresIn) ||
         input.expiresIn <= 0 ||
         input.expiresIn > MAX_PRESIGN_PUT_EXPIRES_IN) {
         throw invalidPresignPut();
@@ -183,6 +192,8 @@ export class FakeObjectStore {
             contentType: input.contentType,
         });
         this.raiseFailure("PresignPut");
+        // validatePresignPutInput is the same gate the S3 store runs, so the fake refuses exactly what
+        // the real store refuses; expiresIn is already a whole number of seconds when it is minted.
         const now = this.now();
         return {
             ref: cloneRef(input.ref),

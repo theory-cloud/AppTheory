@@ -518,6 +518,26 @@ test("upload grant validation matches the frozen fail-closed table", async () =>
       run: () => validatePresignPutInput({ ...valid, expiresIn: 901 }),
     },
     {
+      name: "grant-fractional-length",
+      code: OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT,
+      run: () => validatePresignPutInput({ ...valid, contentLength: 17.5 }),
+    },
+    {
+      name: "grant-non-integer-max-bytes",
+      code: OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT,
+      run: () => validatePresignPutInput({ ...valid, maxBytes: 1024.5 }),
+    },
+    {
+      name: "grant-fractional-expiry",
+      code: OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT,
+      run: () => validatePresignPutInput({ ...valid, expiresIn: 1.5 }),
+    },
+    {
+      name: "grant-sub-second-expiry",
+      code: OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT,
+      run: () => validatePresignPutInput({ ...valid, expiresIn: 0.9 }),
+    },
+    {
       name: "grant-versioned-ref",
       code: OBJECTSTORE_ERROR_INVALID_REF,
       run: () =>
@@ -631,6 +651,20 @@ test("fake upload grants are byte-deterministic and clock injectable", async () 
   );
   await assert.rejects(
     () => refused.presignPut({ ...grantStepInput(steps[0]), contentLength: undefined }),
+    { code: OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT },
+  );
+  // The fake refuses a fractional or sub-second expiry exactly like the real store, instead of
+  // minting a grant whose X-Amz-Expires is non-integer or truncated to zero.
+  await assert.rejects(
+    () => refused.presignPut({ ...grantStepInput(steps[0]), expiresIn: 1.5 }),
+    { code: OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT },
+  );
+  await assert.rejects(
+    () => refused.presignPut({ ...grantStepInput(steps[0]), expiresIn: 0.9 }),
+    { code: OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT },
+  );
+  await assert.rejects(
+    () => refused.presignPut({ ...grantStepInput(steps[0]), contentLength: 17.5 }),
     { code: OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT },
   );
   assert.deepEqual(refused.calls(), []);

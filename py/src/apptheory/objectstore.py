@@ -101,7 +101,12 @@ class ObjectStoreDeleteInput:
 
 @dataclass(frozen=True)
 class ObjectStorePresignPutInput:
-    """One bounded upload-grant request: exact ref, declared bytes, expiry ceiling."""
+    """One bounded upload-grant request: exact ref, declared bytes, expiry ceiling.
+
+    ``content_length`` and ``max_bytes`` are byte counts and ``expires_in`` is a whole number of
+    seconds; a bool, float or numeric string for any of them is refused by
+    :func:`validate_presign_put_input` with ``objectstore.invalid_presign_put``.
+    """
 
     ref: ObjectRef
     content_length: int
@@ -204,21 +209,40 @@ def validate_object_ref(ref: ObjectRef) -> None:
 def validate_presign_put_input(input_: ObjectStorePresignPutInput) -> None:
     """Verify an upload-grant request is complete and safe, failing closed on every doubt.
 
-    An unversioned exact reference, a positive content length no larger than ``max_bytes``, a
-    non-empty unpadded content type, the canonical base64 SHA-256 digest, and an expiry above zero
-    and at most ``MAX_PRESIGN_PUT_EXPIRES_IN``.
+    An unversioned exact reference, an integer content length that is positive and no larger than
+    ``max_bytes``, a non-empty unpadded content type, the canonical base64 SHA-256 digest, and an
+    expiry of a whole number of seconds, above zero and at most ``MAX_PRESIGN_PUT_EXPIRES_IN``.
+
+    Every field is type-checked before it is compared or handed to the SDK. ``bool`` is refused
+    even though ``isinstance(True, int)`` holds, and a numeric string or a float is refused rather
+    than coerced, so a mistyped field raises ``ObjectStoreError`` instead of a ``TypeError`` or a
+    botocore ``ParamValidationError``. This is the same input domain the Go and TypeScript
+    runtimes accept.
     """
     validate_object_ref(input_.ref)
     if input_.ref.version_id:
         raise _invalid_object_ref()
+    if not _is_grant_integer(input_.content_length) or not _is_grant_integer(input_.max_bytes):
+        raise _invalid_presign_put()
     if input_.content_length <= 0 or input_.max_bytes <= 0 or input_.content_length > input_.max_bytes:
         raise _invalid_presign_put()
     if not _valid_presign_put_content_type(input_.content_type):
         raise _invalid_presign_put()
     if not _valid_presign_put_checksum(input_.checksum_sha256):
         raise _invalid_presign_put()
+    if not _is_grant_integer(input_.expires_in):
+        raise _invalid_presign_put()
     if input_.expires_in <= 0 or input_.expires_in > MAX_PRESIGN_PUT_EXPIRES_IN:
         raise _invalid_presign_put()
+
+
+def _is_grant_integer(value: Any) -> bool:
+    """Accept only a real integer: never a ``bool``, a float or a numeric string.
+
+    ``True`` is an ``int`` in Python, and ``X-Amz-Expires`` is a whole number of seconds, so the
+    bool exclusion is what keeps ``content_length=True`` from minting ``content-length: "True"``.
+    """
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _valid_presign_put_content_type(content_type: str) -> bool:
@@ -351,7 +375,10 @@ class FakeObjectStore:
         too, which keeps the signed-header set identical between fake and real.
         """
         validate_presign_put_input(input_)
-        expires_in = int(input_.expires_in)
+        # Already a whole number of seconds: validate_presign_put_input refused anything else, so
+        # the grant can never carry a fractional or zero X-Amz-Expires. This is the same validation
+        # the S3 store runs, so the fake refuses exactly what the real store refuses.
+        expires_in = input_.expires_in
         self._record(
             ObjectStoreCall(
                 operation="PresignPut",

@@ -535,10 +535,40 @@ class ObjectStoreTests(unittest.TestCase):
             _presign_put_input(content_length=18, max_bytes=17),
             _presign_put_input(max_bytes=0),
             _presign_put_input(content_type=""),
+            # Mistyped fields: bool is an int subclass, and a numeric string or a float must be
+            # refused rather than coerced. Every runtime refuses these with the same code.
+            _presign_put_input(content_length=True),
+            _presign_put_input(max_bytes=True),
+            _presign_put_input(expires_in=True),
+            _presign_put_input(content_length=17.5),
+            _presign_put_input(max_bytes=1024.5),
+            _presign_put_input(expires_in=1.5),
+            _presign_put_input(expires_in=0.9),
+            _presign_put_input(expires_in="900"),
+            _presign_put_input(content_length="17"),
         ]:
             with self.assertRaises(apptheory.ObjectStoreError) as ctx:
                 apptheory.validate_presign_put_input(rejected)
             self.assert_object_store_error(apptheory.OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT, ctx.exception)
+
+    def test_presign_put_type_mistakes_raise_object_store_errors(self) -> None:
+        """A mistyped grant field must never surface a raw TypeError or SDK validation error."""
+        for overrides in [
+            {"content_length": True},
+            {"content_length": 17.5},
+            {"content_length": "17"},
+            {"max_bytes": True},
+            {"max_bytes": 1024.5},
+            {"expires_in": True},
+            {"expires_in": "900"},
+            {"expires_in": 1.5},
+            {"expires_in": 0.9},
+        ]:
+            fake = apptheory.create_fake_object_store()
+            with self.subTest(overrides=overrides), self.assertRaises(apptheory.ObjectStoreError) as ctx:
+                fake.presign_put(_presign_put_input(**overrides))
+            self.assert_object_store_error(apptheory.OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT, ctx.exception)
+            self.assertEqual(fake.calls(), [])
 
     def test_presign_put_validation_accepts_the_declared_boundaries(self) -> None:
         self.assertEqual(apptheory.MAX_PRESIGN_PUT_EXPIRES_IN, 900)

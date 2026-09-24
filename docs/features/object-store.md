@@ -110,7 +110,7 @@ grant, err := granter.PresignPut(ctx, objectstore.PresignPutInput{
   ChecksumSHA256: checksum,                  // required: base64 of the 32-byte SHA-256 digest
   ContentType:    "text/plain; charset=utf-8",
   MaxBytes:       1 << 20,                   // caller-supplied ceiling
-  ExpiresIn:      10 * time.Minute,          // required, > 0, <= objectstore.MaxPresignPutExpiresIn
+  ExpiresIn:      10 * time.Minute,          // required, whole seconds, > 0, <= objectstore.MaxPresignPutExpiresIn
 })
 ```
 
@@ -145,9 +145,14 @@ Guarantees enforced by every runtime:
 - **They are never hoisted into unsigned query parameters.** A signature that only constrained the query string would
   be a weaker grant; every S3 implementation verifies the presigned URL after signing and fails closed with
   `objectstore.invalid_store_config` if the constraints are not signed headers.
-- **The expiry is capped.** `ExpiresIn` must be positive and at most `MaxPresignPutExpiresIn` (fifteen minutes,
-  `MAX_PRESIGN_PUT_EXPIRES_IN` / `MAX_PRESIGN_PUT_EXPIRES_IN` in TypeScript and Python). Anything above the cap fails
-  closed before a URL is minted.
+- **The expiry is capped and must be whole seconds.** `ExpiresIn` must be a whole number of seconds, positive and at
+  most `MaxPresignPutExpiresIn` (fifteen minutes, `MAX_PRESIGN_PUT_EXPIRES_IN` / `MAX_PRESIGN_PUT_EXPIRES_IN` in
+  TypeScript and Python). Anything above the cap, and any sub-second or fractional expiry — which the signer would
+  truncate to a zero-second `X-Amz-Expires` — fails closed with `objectstore.invalid_presign_put` before a URL is
+  minted. The fake stores apply this same validation, so they refuse exactly what the S3 stores refuse.
+- **The byte counts and the expiry are integers.** A content length, `MaxBytes`, or expiry that is not an integer
+  (a float, a numeric string, or `true`/`True`) fails closed with `objectstore.invalid_presign_put` in every runtime.
+  The Go grant input is integer-typed, so such a value cannot be expressed there at all.
 - **The reference is exact and unversioned.** Versioned, prefixed, wildcarded, and malformed references are refused
   with `objectstore.invalid_ref`.
 - **Everything else about the request is required.** A missing content length, content type, checksum, or `MaxBytes`,

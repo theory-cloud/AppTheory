@@ -138,6 +138,23 @@ func TestPresignPutInputValidation(t *testing.T) {
 			mutate: func(input *PresignPutInput) { input.ExpiresIn = MaxPresignPutExpiresIn + time.Second },
 			want:   ErrInvalidPresignPut,
 		},
+		{
+			// The grant carries the expiry as the integer X-Amz-Expires; a sub-second expiry would
+			// be truncated to zero by the signer and mint an already-expired link.
+			name:   "sub-second-expiry",
+			mutate: func(input *PresignPutInput) { input.ExpiresIn = 500 * time.Millisecond },
+			want:   ErrInvalidPresignPut,
+		},
+		{
+			name:   "fractional-expiry",
+			mutate: func(input *PresignPutInput) { input.ExpiresIn = 1500 * time.Millisecond },
+			want:   ErrInvalidPresignPut,
+		},
+		{
+			name:   "nanosecond-expiry",
+			mutate: func(input *PresignPutInput) { input.ExpiresIn = 900*time.Second + time.Nanosecond },
+			want:   ErrInvalidPresignPut,
+		},
 	}
 
 	for _, test := range tests {

@@ -49,10 +49,11 @@ export interface ObjectStore {
 }
 /**
  * One bounded upload grant request. Every field is required: the reference
- * must be exact and unversioned, the content length must be positive and no
- * larger than maxBytes, the checksum must be the canonical base64 SHA-256
- * digest of the exact bytes the client will upload, and expiresIn must be
- * positive and at most MAX_PRESIGN_PUT_EXPIRES_IN seconds.
+ * must be exact and unversioned, the content length must be a positive safe
+ * integer no larger than maxBytes, the checksum must be the canonical base64
+ * SHA-256 digest of the exact bytes the client will upload, and expiresIn must
+ * be a whole number of seconds, positive and at most
+ * MAX_PRESIGN_PUT_EXPIRES_IN.
  */
 export interface ObjectStorePresignPutInput {
     ref: ObjectRef;
@@ -104,7 +105,16 @@ export interface ObjectStoreCall {
 export declare function parseObjectRef(raw: string): ObjectRef;
 export declare function validateObjectRef(ref: ObjectRef): void;
 export declare function createFakeObjectStore(): FakeObjectStore;
-/** Verifies a grant request is complete and safe. Every failure is fail-closed. */
+/**
+ * Verifies a grant request is complete and safe. Every failure is fail-closed.
+ *
+ * The byte counts and the expiry must be integers: `Number.isSafeInteger`
+ * refuses a fractional content length, a boolean, a numeric string and
+ * `undefined` alike, matching the integer-typed Go grant input and Python's
+ * explicit type check. The expiry must further be a whole number of seconds,
+ * because the grant carries it as the integer `X-Amz-Expires`; a fractional
+ * expiry would be truncated or rejected by the signer.
+ */
 export declare function validatePresignPutInput(input: ObjectStorePresignPutInput): void;
 export declare function unsupportedObjectStoreOperation(operation: string): never;
 export declare function createS3ObjectStore(config?: S3ObjectStoreConfig): Promise<ObjectStore>;

@@ -56,8 +56,10 @@ type UploadGranter interface {
 // Every field is required. Ref must be an exact, unversioned s3://bucket/key reference;
 // ContentLength must be positive and no larger than MaxBytes; ChecksumSHA256 must be the canonical
 // base64 encoding of the 32-byte SHA-256 digest of the exact bytes the client will upload;
-// ContentType must be non-empty; and ExpiresIn must be positive and at most
-// MaxPresignPutExpiresIn.
+// ContentType must be non-empty; and ExpiresIn must be a whole number of seconds, positive and at
+// most MaxPresignPutExpiresIn. ContentLength, MaxBytes and ExpiresIn are typed integers here, so a
+// fractional byte count or expiry cannot even be expressed; the other runtimes refuse one with
+// ErrInvalidPresignPut instead.
 type PresignPutInput struct {
 	Ref            ObjectRef
 	ContentLength  int64
@@ -84,7 +86,12 @@ type PresignPutOutput struct {
 //
 // Every failure mode is fail-closed: an unversioned exact reference, a positive content length no
 // larger than MaxBytes, a non-empty unpadded content type, the canonical base64 SHA-256 digest,
-// and an expiry above zero and at most MaxPresignPutExpiresIn.
+// and an expiry of a whole number of seconds, above zero and at most MaxPresignPutExpiresIn.
+//
+// Whole seconds matter because the grant carries the expiry as X-Amz-Expires, an integer number of
+// seconds. A sub-second or fractional expiry would be truncated to zero by the signer and mint a
+// link that has already expired, so it is refused here with ErrInvalidPresignPut, identically for
+// the S3 store and the test fake.
 func (i PresignPutInput) Validate() error {
 	if err := i.Ref.Validate(); err != nil {
 		return err
@@ -101,7 +108,7 @@ func (i PresignPutInput) Validate() error {
 	if !validPresignPutChecksumSHA256(i.ChecksumSHA256) {
 		return ErrInvalidPresignPut
 	}
-	if i.ExpiresIn <= 0 || i.ExpiresIn > MaxPresignPutExpiresIn {
+	if i.ExpiresIn <= 0 || i.ExpiresIn > MaxPresignPutExpiresIn || i.ExpiresIn%time.Second != 0 {
 		return ErrInvalidPresignPut
 	}
 	return nil
