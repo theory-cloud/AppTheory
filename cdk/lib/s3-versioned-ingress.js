@@ -52,7 +52,7 @@ const BUNDLE_ID_PATTERN = /^rel_[0-9a-z]{26}$/;
  * credentials, mint bundle identifiers, or define artifact URI schemes.
  */
 class AppTheoryS3VersionedIngress extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryS3VersionedIngress", version: "4.3.0-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryS3VersionedIngress", version: "4.3.0" };
     /** Canonical object-key root for every namespace release bundle. */
     static KEY_ROOT = "ns/";
     /** CloudFormation-resolved physical bucket name. */
