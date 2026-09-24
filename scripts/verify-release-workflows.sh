@@ -16,8 +16,10 @@ case "${1:-}" in
 esac
 
 RELEASE_WORKFLOWS_MODE="${mode}" python3 - <<'PY'
+import fnmatch
 import glob
 import hashlib
+import json
 import os
 import posixpath
 import re
@@ -194,6 +196,13 @@ REFUSED_CHARACTERS = "$~*():\"'`{}"
 # The word is the unit, and the boundaries are load bearing: `node-version:` is a YAML key
 # and not `node`, `subprocess.PIPE` is not a call, and `source="..."` is an assignment and
 # not the builtin.
+#
+# `npm` and `npx` are in the set because round 8 left them out entirely, and the omission was
+# live: a pinned gate runs `npm run build`, and the script bytes it runs come from a package.json
+# the guard never read. Round 9 closed that in two places - the invocation reads the package
+# manifest it names (see "What a pinned file runs" and `package_manifest_findings`), and every
+# manifest and lockfile in the repository is pinned so the dependency bytes an install and an
+# `npx` binary resolve to are named by pinned bytes.
 EXECUTOR_NAMES = (
     "bash",
     "sh",
@@ -217,6 +226,8 @@ EXECUTOR_NAMES = (
     "php",
     "deno",
     "bun",
+    "npm",
+    "npx",
     "make",
     "find",
     "subprocess",
@@ -233,8 +244,17 @@ LAUNCHER_EXECUTORS = ("env", "command", "xargs", "nohup", "exec")
 
 # The executors whose first operand is data rather than the file they run: `make` takes a
 # makefile selector (and has its own rule below), `find` takes a search root and runs nothing
-# until `-exec`, and the two process-spawning module names take a command line, not a path.
-OPERAND_IS_DATA = ("make", "find", "subprocess", "child_process")
+# until `-exec`, the two process-spawning module names take a command line, not a path, and an
+# `npm`/`npx` invocation takes a subcommand, which `package_manifest_findings` reads against the
+# package manifest the invocation names.
+#
+# This is a pause in the reading, not the end of it. Round 8 `break`-ed here, so a file `find`
+# handed to `-exec` later on the same line was never read;
+# `find gov-infra -name data.txt -exec node gov-infra/evil2.js {} \;` ran unpinned code past a
+# PASS. The reading now resumes at the next executor in the segment, so the operand of `find` (and
+# of `make`, `subprocess`, `child_process`) is still data while nothing later on the line is
+# skipped.
+OPERAND_IS_DATA = ("make", "find", "subprocess", "child_process", "npm", "npx")
 
 # The one YAML key whose value is a command line. A workflow's `run:` is shell - that is what
 # the key means - so its value is read at command position even though YAML indents it. Every
@@ -274,12 +294,71 @@ PATH_TOKEN = re.compile(r"[A-Za-z0-9_@$./{}~+*?\[\]-]+")
 PATH_REFUSED = re.compile(r"[@:=,()\"'\\!<>]")
 GLOB_CHARACTERS = re.compile(r"[*?\[\]]")
 
+# The characters that tell this construction a token's value is computed at run time rather than
+# written where it can be read: a variable, a command substitution, a brace expansion or an array
+# subscript. Round 8 skipped a token that held one of these and was not path-like, which is how
+# `node "${files[@]}"` ran a planted file past a PASS. A token holding one of these in an executed
+# position is now refused unless it is the admitted `${VAR}/` directory spelling.
+EXPANSION_CHARACTERS = "$`{}"
+
+# A bare name - a file name with no directory component - written where a command runs it. Round 8
+# read only tokens with a `/` in them, so `node evil9.js` and a piped `printf '%s\n' evil.js | xargs
+# bash` both ran a file the guard never read. A name of this shape in an executed position is now a
+# finding whether or not the file exists yet: every execution on this release path writes a slashed
+# path, and a name with no directory in it is how a variable, a flag value and an object property
+# are written everywhere else in the tree.
+BARE_NAME = re.compile(r"^[A-Za-z0-9_@$~+-][A-Za-z0-9_.@$~+-]*\.[A-Za-z0-9]{1,8}$")
+
+# A shell brace expansion written into a path, which is what makes a *command* refused: the shell
+# rewrites the name before anything runs, so `./scripts/{deep,}/evil7.js` runs the file under
+# `./scripts/deep/`. The shape is deliberately narrow, because every other brace at command position
+# in this tree is a variable in a condition, a `case` word, an object literal or a JSON fragment -
+# measured, not guessed: the wider test over this tree produces 25 false positives and this one
+# produces none.
+BRACE_EXPANSION = re.compile(r"^[A-Za-z0-9_./~+-]*\{[A-Za-z0-9_,./~+-]*\}[A-Za-z0-9_./~+.-]*$")
+
+# The `find` actions that name a command to run. They are the one place a file is run later on a
+# line than the executor that starts it, so they are where the reading resumes after an executor
+# whose first operand is data.
+FIND_EXEC_OPTIONS = ("-exec", "-execdir", "-ok", "-okdir")
+
 # The separators between one command and the next on a line.
 COMMAND_SEPARATORS = re.compile(r"(?:;|\|\||&&|\||`|\$\(|&)")
 
 # The shell spellings, for the one question a heredoc asks: is this body a script to run.
 SHELL_EXECUTORS = ("bash", "sh", "zsh", "dash", "ksh", "source", ".")
 HEREDOC_OPENER = re.compile(r"<<-?\s*(?P<quote>['\"]?)(?P<delimiter>[A-Za-z_][A-Za-z0-9_]*)(?P=quote)")
+
+# How a heredoc body is read, decided by the command that opens it: a shell body is a script, an
+# interpreter's body is that language's code and is read at executor positions, and a body handed to
+# a command that runs nothing (`cat`) is data. See `heredoc_bodies`.
+HEREDOC_READ_EXECUTORS = "interpreters"
+HEREDOC_READ_DATA = "data"
+
+# The interpreters whose `-m` names a module rather than a file. `python3 -m evilmod` with an
+# `evilmod.py` planted in the tree ran unpinned code past a PASS in round 8; the module is read like
+# a path here, and a module that resolves to a file in this repository must be pinned.
+PYTHON_EXECUTORS = ("python", "python3", "python2")
+MODULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
+
+# The package manifests. An npm invocation's directory is a `cd` this construction does not follow,
+# so rather than guess which manifest an install or a script reads, every manifest and lockfile in
+# the repository is pinned: the package.json whose lifecycle scripts can run and the lockfile whose
+# resolved versions and integrity hashes bind the dependency bytes are then pinned content wherever
+# the invocation runs. `MANIFEST_FILE_NAMES` is the closed set, and `package_manifest_findings`
+# fails closed on a manifest that exists but is not pinned.
+MANIFEST_FILE_NAMES = ("package.json", "package-lock.json", "npm-shrinkwrap.json")
+# Directories whose manifests are dependency code or build output and never carry a release-path
+# script: the carve-out roots plus the generated and vendored trees.
+MANIFEST_IGNORED_DIRECTORIES = ("node_modules", ".venv", "dist", "_site", "vendor")
+
+# An `npm`-family invocation: the subcommand, and whether it runs one of a package's scripts.
+NPM_INVOCATION = re.compile(r"(?:^|[\s;&|(`])(?P<tool>npm|npx)(?=\s|$)")
+NPM_DIRECTORY = re.compile(r"(?:^|[\s;&|(`])cd\s+(?P<directory>[^\s;&|)]+)")
+NPM_PREFIX_OPTION = re.compile(r"--prefix[=\s]+(?P<directory>[^\s;&|)]+)")
+NPM_RUN = re.compile(r"(?:^|\s)(?:run\s+(?P<run>[^\s;&|)]+)|(?P<lifecycle>test|start|stop|restart))\b")
+NPM_INSTALL = re.compile(r"(?:^|\s)(?:ci|install|i|add|update)\b")
+NPM_BIN_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@/-]*$")
 
 # A glob that names a directory and a set of files in it (`examples/testkit/*.mjs`), as opposed
 # to a regular expression handed to `grep`, which is a pattern over text and names no file.
@@ -288,21 +367,44 @@ GLOB_PATH = re.compile(r"^[A-Za-z0-9_$./~+-]*[*?][A-Za-z0-9_$./~+*-]*$")
 # The pipe form that hands a launcher a command to run: `... | xargs bash`.
 PIPED_EXECUTOR = re.compile(r"\|\s*xargs\s+(?:-\S+\s+)*(?P<name>[A-Za-z0-9_.-]+)")
 
-# Dependency and tool code. `node_modules/`, a `.venv/` or `venv/` directory and
-# `gov-infra/.tools/` are not part of this repository: all three are git-ignored, so no commit
-# can change a byte of any of them, and each is materialised at run time by an installer that a
-# pinned file names - `scripts/stage-release-please-package.sh` pins the exact version
-# `release-please@17.1.3` and installs with `--ignore-scripts` (so no dependency lifecycle
-# script runs) and its assertions are held by `scripts/verify-release-please-token-safety.sh`,
-# which is pinned like everything else on the release path; `py/.venv`, `cdk/.venv` and
-# `gov-infra/.tools` are built by pinned scripts from `py/requirements-build.txt`,
-# `py/requirements-lint.txt` and `cdk/requirements-build.txt`, whose versions are exact pins.
+# Dependency and tool code. `node_modules/`, a `.venv/` directory and `gov-infra/.tools/` are not
+# part of this repository: each is git-ignored, so no commit can change a byte of any of them, and
+# each is materialised at run time by an installer a pinned file names - `scripts/` scripts and
+# `gov-infra/verifiers/gov-verify-rubric.sh` run `npm ci` against the lockfile of the directory
+# they `cd` into, and `stage-release-please-package.sh` pins the exact version
+# `release-please@17.1.3` and installs with `--ignore-scripts` and `--no-package-lock` (so no
+# lifecycle script runs and no lockfile is consulted), with its assertions held by
+# `scripts/verify-release-please-token-safety.sh`, which is pinned like everything else on the
+# release path; `py/.venv` and `cdk/.venv` are built by pinned scripts from
+# `py/requirements-build.txt`, `py/requirements-lint.txt` and `cdk/requirements-build.txt`, whose
+# versions are exact pins; `gov-infra/.tools` is built by the GovTheory verifier from exact version
+# pins.
+#
 # So a path under one of these directories is read as **dependency code** rather than silently
-# unread: it cannot be pinned (there is nothing in the tree to pin) and no pull request can
-# reach it. The limit is stated rather than implied - the npm staging is `--no-package-lock`,
-# so the transitive bytes there are registry-resolved and not lockfile-pinned, and this guard
-# does not claim otherwise.
-DEPENDENCY_DIRECTORY = re.compile(r"(?:^|/)(?:node_modules|\.venv|venv)/|^gov-infra/\.tools/")
+# unread: it cannot be pinned (there is nothing in the tree to pin) and no commit can reach it.
+#
+# The claim "no commit can reach it" is not prose here: `carve_out_findings` reads `.gitignore` and
+# asserts that every root below is ignored, so a root that stops being uncommittable fails the
+# guard instead of being disclosed. `venv/` is deliberately NOT a root: nothing in this tree ever
+# creates a non-dot venv, and an ignore rule for a directory the repository never makes would be a
+# rule that makes the claim true by fiat rather than by fact.
+#
+# The trust model is stated exactly rather than implied, because round 8's version of this comment
+# was wrong in two ways. What the pins DO fix: every `package.json`, `package-lock.json` and
+# `npm-shrinkwrap.json` in this repository is pinned (`MANIFEST_FILE_NAMES`, below), so an `npm ci`
+# in any directory installs exactly the resolved versions and integrity hashes a pinned lockfile
+# records, and the `bin` map in that lockfile says which package provides the binary an `npx`
+# invocation runs. What they do NOT fix: the tarballs themselves are fetched from the registry at
+# run time, so a registry compromise is outside this guard's reach, and the release-please staging
+# runs with `--no-package-lock`, so that one install's transitive bytes are registry-resolved and
+# named by the exact version pin and by nothing else.
+DEPENDENCY_DIRECTORY = re.compile(r"(?:^|/)(?:node_modules|\.venv)/|^gov-infra/\.tools/")
+
+# The carve-out roots, as prefixes of a canonical repository-relative path. `carve_out_findings`
+# asserts that each is git-ignored; the executed-path rule checks the *resolved* path against
+# `DEPENDENCY_DIRECTORY`, so a spelling that walks out of a dependency directory into a tracked
+# path (`node scripts/node_modules/../evil.js`) resolves outside the carve-out and needs a pin.
+CARVE_OUT_ROOTS = ("node_modules/", ".venv/", "gov-infra/.tools/")
 
 # A local composite action. `uses: ./...` in a pinned workflow names a directory in this
 # repository that the runner checks out and runs; the guard pins no file under it, so one could
@@ -338,6 +440,102 @@ def sweep_paths():
         paths.extend(str(path) for path in sorted(github.rglob("*")) if path.is_file())
     paths.extend(extra for extra in SWEEP_EXTRA_FILES if Path(extra).is_file())
     return tuple(paths)
+
+
+# The file the carve-out's own claim is read from. It is not pinned - an edit to it is what the
+# assertion below is for - and it is read through `read_text` so the self-test can drive it.
+GITIGNORE_PATH = ".gitignore"
+
+
+def gitignore_patterns(text):
+    """The live patterns of a `.gitignore`, in file order, with comments and blanks dropped."""
+    patterns = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        patterns.append(stripped)
+    return patterns
+
+
+def repository_gitignore_patterns(read_text):
+    """The root `.gitignore` patterns, or an empty tuple when the file cannot be read."""
+    try:
+        return tuple(gitignore_patterns(read_text(GITIGNORE_PATH)))
+    except (OSError, UnicodeDecodeError):
+        return ()
+
+
+def _gitignore_matches(pattern, path):
+    """Whether one `.gitignore` pattern ignores `path`, a posix repository-relative path.
+
+    The reading is git's own: a pattern holding a `/` (other than a trailing one) is anchored to
+    the ignore file's directory, one without matches any path component, a trailing `/` makes the
+    pattern directory-only, and an ignored directory ignores everything under it. Wildcards go
+    through `fnmatch`.
+    """
+    if pattern.startswith("!"):
+        pattern = pattern[1:]
+    directory_only = pattern.endswith("/")
+    if directory_only:
+        pattern = pattern[:-1]
+    if not pattern:
+        return False
+    anchored = pattern.startswith("/") or "/" in pattern
+    if pattern.startswith("/"):
+        pattern = pattern[1:]
+    parts = path.split("/")
+    directories = ["/".join(parts[:index]) for index in range(1, len(parts))]
+    if anchored:
+        candidates = directories if directory_only else [path, *directories]
+        return any(fnmatch.fnmatchcase(candidate, pattern) for candidate in candidates)
+    if directory_only:
+        return any(fnmatch.fnmatchcase(part, pattern) for part in parts[:-1])
+    return any(fnmatch.fnmatchcase(part, pattern) for part in parts)
+
+
+def gitignore_ignores(patterns, path):
+    """Whether git's own reading of these patterns would ignore `path`: the last match wins."""
+    ignored = False
+    for pattern in patterns:
+        if _gitignore_matches(pattern, path):
+            ignored = not pattern.startswith("!")
+    return ignored
+
+
+def carve_out_findings(read_text):
+    """Every approved dependency root that is not git-ignored.
+
+    The carve-out is the one shape here that is trusted rather than pinned, and its whole
+    justification is that no commit can reach it. Round 8 stated that in prose and it was false:
+    `.gitignore` anchored only `py/.venv/`, so `venv/evil.js` and `scripts/.venv/evil.js` were
+    committable while the guard read them as dependency code. The claim is an assertion now, and a
+    root that stops being uncommittable fails the guard instead of being disclosed.
+    """
+    patterns = repository_gitignore_patterns(read_text)
+    findings = []
+    if not patterns:
+        return [
+            (
+                CLASS_CLOSURE,
+                f"{GITIGNORE_PATH}: holds no live ignore pattern, so the carve-out roots cannot be "
+                f"shown to be uncommittable. The carve-out is trusted only because no commit can "
+                f"reach what it covers, so a missing or unreadable ignore file is refused rather "
+                f"than assumed",
+            )
+        ]
+    for root in CARVE_OUT_ROOTS:
+        probe = root + "release-workflows-carve-out-probe"
+        if not gitignore_ignores(patterns, probe):
+            findings.append(
+                (
+                    CLASS_CLOSURE,
+                    f"{GITIGNORE_PATH}: the carve-out root {root!r} is not git-ignored - {probe!r} "
+                    f"is committable. A root that a commit can reach is not dependency code, so "
+                    f"either ignore it here or drop it from CARVE_OUT_ROOTS",
+                )
+            )
+    return findings
 
 
 def script_references(text):
@@ -387,6 +585,77 @@ def resolve_reference(token, base_dir, root=None):
             lexical = os.path.normpath(os.path.join(os.getcwd(), str(candidate)))
             return resolved.relative_to(root).as_posix(), Path(lexical) != resolved
     return None, False
+
+
+def canonical_reference(token, base_dir):
+    """The canonical repository-relative path a token names, `..` and links already resolved.
+
+    `Path.resolve()` is non-strict, so this answers for a path that does not exist yet as well as
+    one that does, and it walks `..` out of a directory: `scripts/node_modules/../evil.js` is
+    `scripts/evil.js` here, which is why the carve-out below cannot be talked out of a pin by
+    walking through a dependency directory into a tracked path.
+    """
+    bare = written_path(token)
+    if bare is None:
+        return None
+    for candidate in (Path(bare), Path(base_dir) / bare):
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved.is_relative_to(ROOT):
+            return resolved.relative_to(ROOT).as_posix()
+    return None
+
+
+def dependency_reference(token, base_dir):
+    """The canonical path a token names when it lies under an approved dependency root.
+
+    This is the whole of the carve-out: it is decided on the *resolved* path and never on the
+    spelling, so `node_modules/evil.js` is dependency code and `scripts/node_modules/../evil.js` is
+    the tracked file it resolves to.
+    """
+    relative = canonical_reference(token, base_dir)
+    if relative is None:
+        return None
+    return relative if DEPENDENCY_DIRECTORY.search(relative) else None
+
+
+def brace_like(token):
+    """A token a brace expansion or an unadmitted `{...}` would rewrite.
+
+    The admitted `${VAR}/` directory spelling is stripped first, so it is not brace-like; every
+    other brace is, which is what makes `node scripts/{deep,}/evil7.js` a finding rather than a
+    token the `,`-refusing path test silently drops.
+    """
+    stripped = ADMITTED_VARIABLE_DIRECTORY.sub("", token, count=1)
+    return "{" in stripped or "}" in stripped
+
+
+def expansion_like(token):
+    """A token whose value is computed at run time rather than written where it can be read."""
+    return any(character in token for character in EXPANSION_CHARACTERS)
+
+
+def bare_like(token, base_dir=""):
+    """A bare name - a file name with no directory component - in an executed position.
+
+    True when the token names a file by shape (a dot suffix) or when it resolves to a file in the
+    tree at the repository root. A tool name, a flag value, a shell keyword and an object property
+    are none of those, which is why `command -v python3`, `python3 -m venv` and a Python
+    comparison are left alone while `node evil9.js` is refused.
+    """
+    if not token or "/" in token or token.startswith("-") or token.startswith("~"):
+        return False
+    if token in EXECUTOR_NAMES or token in SHELL_KEYWORDS or token in CONDITION_COMMANDS:
+        return False
+    if ASSIGNMENT.match(token):
+        return False
+    if BARE_NAME.match(token):
+        return True
+    if not base_dir:
+        return resolve_reference(token, "")[0] is not None
+    return False
 
 
 def executed_tokens(read_text):
@@ -456,31 +725,43 @@ def mentions_executor(text, names):
 
 
 def heredoc_bodies(text):
-    """The line numbers of a heredoc body, which is not a command line in this file.
+    """The line numbers of a heredoc body and how the body is read.
 
-    A heredoc body is the text a command is handed. When the command is a shell
-    (`bash <<'EOF'`), the body is a script and it is read as a command line; every other body -
-    `python3 - <<'PY'`, `cat <<'EOF'`, `node - <<'JS'` - is another language's text, and a line
-    of it is a name or an expression rather than a command this file runs. The read-or-run rule
-    reads the body's script-shaped names either way; what this changes is that the body is not
-    read at command position, which is how `"apptheory/py.typed" not in names` inside a heredoc
-    stops being a command.
+    A heredoc body is the text a command is handed, and what it is depends on the command: when it
+    is a shell (`bash <<'EOF'`) the body is a script and it is read as a command line, exactly as
+    before; when it is another interpreter (`python3 - <<'PY'`, `node - <<'JS'`) the body is that
+    interpreter's code and it is read at *executor* positions, because a body line's first word is
+    the interpreter's own syntax rather than a command this construction knows; when the command
+    reaches no executor at all (`cat <<'EOF'`) the body is data - a file being written, a PR body -
+    and it is not read at command position.
+
+    Round 8 skipped every non-shell body outright, which is how a body that names
+    `node gov-infra/evil5.js` kept that file out of the pins: the helper was named only inside a
+    heredoc, and the derivation never looked inside it. `read_or_run` still reads the body's
+    script-shaped names on every run; what changed is that the executed-path rule reads an
+    interpreter's body too.
     """
-    bodies = set()
+    bodies = {}
     delimiter = None
-    shell_body = False
+    kind = None
     for index, line in enumerate(text.split("\n"), 1):
         if delimiter is not None:
             if line.strip() == delimiter:
                 delimiter = None
-            elif not shell_body:
-                bodies.add(index)
+            elif kind is not None:
+                bodies[index] = kind
             continue
         opener = HEREDOC_OPENER.search(line)
         if opener is None:
             continue
         delimiter = opener.group("delimiter")
-        shell_body = mentions_executor(line[: opener.start()], SHELL_EXECUTORS)
+        prefix = line[: opener.start()]
+        if mentions_executor(prefix, SHELL_EXECUTORS):
+            kind = None
+        elif mentions_executor(prefix, EXECUTOR_NAMES):
+            kind = HEREDOC_READ_EXECUTORS
+        else:
+            kind = HEREDOC_READ_DATA
     return bodies
 
 
@@ -501,7 +782,71 @@ def first_operand(words, start):
     return None
 
 
-def executed_path_references(line):
+def data_operand_resume(words, start):
+    """Where the reading resumes after an executor whose first operand is data, or None.
+
+    `find gov-infra -name data.txt -exec node gov-infra/evil2.js {} \\;` is the shape this closes:
+    the search root is data, and the file `-exec` runs is later on the same line. The reading
+    resumes at the command a `find` action names (`-exec`, `-execdir`, `-ok`, `-okdir`), so the
+    operand of `find` - and of `make`, `subprocess`, `child_process` and an `npm` subcommand - is
+    still read as data while the command `find` hands a file to is read as what it is.
+
+    The resume is an action name and not "any later word that looks like an executor", which is the
+    difference between a reading and a guess: the wider test matched the *value* of an option
+    (`npx jsii-pacmak -t python -o out`), and it produced a false finding on a pinned line.
+    """
+    for index in range(start, len(words)):
+        if words[index] in FIND_EXEC_OPTIONS and index + 1 < len(words):
+            return index + 1
+    return None
+
+
+def path_shape(token):
+    """Whether an unreadable token could be a path at all, whatever spelling it is written in.
+
+    The refused-spelling readings below are offered only for a token that could name a file. An
+    operand of `==`, `=`, `!=`, `]]`, `>` or `1` is punctuation or a value, not a refused path, and
+    offering a refusal for those would make the rule fire on almost every Python and JavaScript line
+    in the tree - which is exactly the shape that forces a bound to be stated rather than guessed.
+    """
+    if not token or token.startswith("-"):
+        return False
+    return any(character in token for character in "/.$")
+
+
+def refused_positions(token):
+    """The refused-spelling readings one written-but-unreadable executed token produces."""
+    if brace_like(token):
+        return (("brace", token),)
+    if expansion_like(token):
+        return (("refused", token),)
+    if bare_like(token):
+        return (("bare", token),)
+    return ()
+
+
+def module_name(words, start):
+    """The module a Python executor's `-m` names, or None.
+
+    `python3 -m evilmod` with an `evilmod.py` planted in the tree ran unpinned code past a PASS in
+    round 8: the module was not a path, so nothing resolved it. The module is read here and
+    `package_manifest_findings` decides it - a module that resolves to a file in this repository
+    must be pinned, while `venv`, `pip`, `unittest` and `coverage` name the standard library and the
+    built venv's own tooling and stay accepted.
+    """
+    for index in range(start, len(words)):
+        word = words[index]
+        if word == "-m":
+            if index + 1 >= len(words):
+                return None
+            candidate = words[index + 1].strip("\"'")
+            return candidate if MODULE_NAME.match(candidate) else None
+        if not word.startswith("-"):
+            return None
+    return None
+
+
+def executed_path_references(line, in_body=False):
     """Every path-like token a line would run, with the position it is written in.
 
     This is the executed-path rule: the token a command runs - the first non-option argument
@@ -519,9 +864,14 @@ def executed_path_references(line):
     alone. `make`, `find`, `subprocess` and `child_process` are executors for the read-or-run
     rule above but name no file to run at their first operand - a makefile selector and a
     search root are not scripts - so the executed-path rule does not read their argument.
-    A name stored in a variable and expanded later (`"${files[@]}"`, `"$f"`) is read as a name
-    here exactly as it is everywhere else in this file, and that limit is stated in
-    docs/release-process.md.
+    Three more readings bound it, each forced by a measured false positive or a measured hole.
+    Round 8 read a token only when it held a `/`, so a bare name (`node evil9.js`, a piped
+    `printf '%s\n' evil.js | xargs bash`) was never read and neither was a token a brace expansion
+    or an array subscript had rewritten (`node scripts/{deep,}/evil7.js`, `node "${files[@]}"`);
+    all four are now refused rather than skipped. `command -v <name>` is the one executed position
+    that reads nothing, because it looks a name up instead of running it. And inside an
+    interpreter's heredoc body only executor positions are read, because a body line's first word
+    is that interpreter's syntax.
     """
     stripped = line.strip()
     labelled = RUN_COMMAND_LABEL.match(stripped)
@@ -562,24 +912,53 @@ def executed_path_references(line):
                 break
             if word in EXECUTOR_NAMES:
                 if word in OPERAND_IS_DATA:
+                    # Their first operand is data, but nothing later on the line is skipped: the
+                    # reading resumes at the next executor, which is the `-exec`/`-execdir` form
+                    # `find gov-infra -name data.txt -exec node gov-infra/evil2.js {} \;` hid
+                    # behind round 8's `break`.
+                    resume = data_operand_resume(words, index + 1)
+                    index = len(words) if resume is None else resume
+                    continue
+                # `command -v <name>` asks whether a name exists; it runs nothing. The operand is a
+                # name to look up, not a file that executes, and six pinned lines write it.
+                if word == "command" and any(
+                    option in ("-v", "-V") for option in words[index + 1:]
+                ):
                     break
                 operand_index = first_operand(words, index + 1)
                 if operand_index is None:
                     break
                 operand = words[operand_index]
+                if word in PYTHON_EXECUTORS:
+                    module = module_name(words, index + 1)
+                    if module is not None:
+                        yield ("module", word, module, line)
                 if word in LAUNCHER_EXECUTORS:
                     token = path_like(operand)
                     if token:
                         yield ("launcher", word, token, line)
+                    elif path_shape(operand):
+                        for position, refused in refused_positions(operand):
+                            yield (position, word, refused, line)
                     index = operand_index
                     continue
                 token = path_like(operand)
                 if token:
                     yield ("operand", word, token, line)
+                elif path_shape(operand):
+                    for position, refused in refused_positions(operand):
+                        yield (position, word, refused, line)
+                break
+            if in_body:
+                # A heredoc body handed to an interpreter is that interpreter's code: its first
+                # word is syntax, not a command, so only executor positions are read there.
                 break
             token = path_like(word)
             if token and command_line:
                 yield ("command", word, token, line)
+                break
+            if command_line and BRACE_EXPANSION.match(word):
+                yield ("brace", word, word, line)
                 break
             operand_index = first_operand(words, index + 1)
             if operand_index is not None:
@@ -595,10 +974,19 @@ def executed_path_references(line):
     # line writes is one the pins must be able to describe.
     piped = PIPED_EXECUTOR.search(line)
     if piped is not None and piped.group("name") in EXECUTOR_NAMES:
+        named = False
         for word in line.split():
-            token = path_like(word.strip("\"'"))
+            raw = word.strip("\"'")
+            token = path_like(raw)
             if token:
+                named = True
                 yield ("piped", "xargs", token, line)
+                continue
+            if path_shape(raw) and bare_like(raw):
+                named = True
+                yield ("piped-bare", "xargs", raw, line)
+        if not named:
+            yield ("piped-empty", "xargs", "", line)
 
 
 def makefile_candidates(text, base_dir):
@@ -746,7 +1134,7 @@ RELEASE_PATH_FILE_DIGESTS = {
     # No pinned workflow names this one. The guard's own verify pass runs it - it is the
     # release-credential boundary test - so it is a root of the closure from here. The guard
     # is unpinned, so this pins the verifier's bytes, not the call of it.
-    "scripts/verify-release-please-token-safety.sh": "24961e9733fe1242dae7943b43c70084c9d8a2bee7da05a0a57217b9d322364b",
+    "scripts/verify-release-please-token-safety.sh": "c636e05b0840ac25edb5c31280a6f49e1d216be7c3348fc95c816e60677590d9",
     "scripts/verify-release-pr-postcondition.sh": "25e41253ec2cd549ae6e85712bc2815ecf91e0d8676e1218f7a42961dbf31416",
     "scripts/verify-release-publish-postcondition.sh": "61b21485d0d97cc06b7c3d62a762fbd79632af78b12cf5e98b8adad6b2ff8766",
     "scripts/verify-release-state.sh": "a55337b19361b3604ad4552faff6077b37a217c51a7a7bf274cdc8e088636753",
@@ -810,6 +1198,53 @@ OUT_OF_ROOT_FILE_DIGESTS = {
     "examples/testkit/ts-streaming.mjs": "fa4b04dc724c44b1d417c7c8fa8e591f590952915f653457831c4fc77105f642",
     "examples/testkit/ts.mjs": "6ccc6662c9e1e6d812f4ab7c15a34c060253eb2323b70d5a802743e8fcc11f33",
     "py/src/apptheory/__init__.py": "84ec707055fd97b8cc5b8360cbbaabcd3bd97f0edb5f83eb443d25240a7a710f",
+    # The package manifests. Every `package.json`, `package-lock.json` and `npm-shrinkwrap.json`
+    # this repository can commit is pinned, because an npm invocation's directory is a `cd` this
+    # construction does not follow: the manifest whose lifecycle scripts can run and the lockfile
+    # whose resolved versions and integrity hashes bind the dependency bytes are then pinned
+    # content wherever the invocation runs. Round 8 pinned none of them, so a pinned gate's
+    # `npm run build` ran bytes from a `package.json` no pin described.
+    "cdk/package-lock.json": "42e3ffbb0a9181d9c48c4aad41d5f662ccf78e71ab292ac8bb2a9a9ce0a0b34d",
+    "cdk/package.json": "150d6b6bcea340f2f668a70fcb95b81a41955eb687c5b9d4080314d51d4eb755",
+    "examples/cdk/codebuild-job-runner/package-lock.json": "3c1a33629363474f62c6227797329547f8b56483c9933afb7398639974bb076b",
+    "examples/cdk/codebuild-job-runner/package.json": "db2ab2659f4ee979de050a74c8adaa408767446d7662e21362e33d0b051c732a",
+    "examples/cdk/hello-world/handlers/ts/package.json": "d2464c8d09cb127c2d88dbbcf17bd8977b31338911cc48bcdfcfc35cf7612248",
+    "examples/cdk/hello-world/package-lock.json": "dab6b47a871afcd90764db1ce7d0c8972f43b17653cfd8983d2fc22c09b7aad6",
+    "examples/cdk/hello-world/package.json": "cf1c429c4a670244f75435a71fa2c49ac0e394fd3b86ee423b3683c7ca3f35c6",
+    "examples/cdk/import-pipeline/package-lock.json": "622dfcdf29b8ecae0bf98ad59c99bb11d7615e7f1b0b28d7c0492a100a0f9a56",
+    "examples/cdk/import-pipeline/package.json": "b090f91f7e5e802e06ea9d06e2268556bb6d0fbd7ad32071acf314b683bb18ac",
+    "examples/cdk/kinesis-cloudwatch-logs/package-lock.json": "38502198e4198edfec04ddaeba0703ba03c1984e21b37583132e33d380e142c6",
+    "examples/cdk/kinesis-cloudwatch-logs/package.json": "bd6429d56b638876d44fbcbf7bdf767b8b1818c2be97c24f130bcd1f399a40ad",
+    "examples/cdk/lambda-role/package-lock.json": "660400ec4d8195ef83a9cb14e101e68b1a63020a56d1a8d44f4fc74fcf4c4851",
+    "examples/cdk/lambda-role/package.json": "08196fd6f4da4feca4ef2cae196a1d33eaed702b6117a4f701cfd0ebac56fc2c",
+    "examples/cdk/lesser-parity/package-lock.json": "f73265cfb0037bdc172d947444c44d34475175482f5710adde65724b69a657f8",
+    "examples/cdk/lesser-parity/package.json": "ff0360fcbcb37c511b8ded9326ccb755ca794db699af07bf012d56897903d09c",
+    "examples/cdk/media-cdn/package.json": "9b5b8e128fdd09cbe5a1e411437c95a6991f63b702c758216c1b2ab8a26e06a2",
+    "examples/cdk/microvm-controller/package-lock.json": "d82d2c793e7cef74aa99a53f8064ae4352a1bb9585ad50a8f0d017d6acb161e7",
+    "examples/cdk/microvm-controller/package.json": "bfb14fac579a305c01ae9c03fb70cb32678b29258f20e7c44bdbeedd8f933fb6",
+    "examples/cdk/microvm-controller/workloads/ts/package.json": "f69ed17eea98f49ee075f676bae79df9cb779e54d5887b94d94313d34511170c",
+    "examples/cdk/multilang/handlers/ts/package.json": "631fd91d47940a1162c7d10f6d2abf71896facde9c6fc28def3fe0fc51666940",
+    "examples/cdk/multilang/package-lock.json": "1baa6dce8d2b92dd0932edfac72f1af2ea9147bcea2e2fc084c7ca1623884feb",
+    "examples/cdk/multilang/package.json": "1ad647e2f5f0e94881018a4b7f0d22f8145e37d5a817bee1c1f4e128b1075052",
+    "examples/cdk/path-routed-frontend/package.json": "18c5883e57a7e195a950ddf6fc0fca000304be4145aa6c79b84c8047fe2b068b",
+    "examples/cdk/restv1-router/package.json": "cc9b097a5b9be9c46970416865e8f296b689a9bdb9047a02e9f5ab8355e09eb0",
+    "examples/cdk/s3-vectors-semantic-search/package-lock.json": "aff00d207f9ac5ccae96d42e8c552a41e3aa05f3b23e21dca0ef500f20500b3e",
+    "examples/cdk/s3-vectors-semantic-search/package.json": "4d480377984d702a7456a10506bbcc78e7428f57022e8038ebe8e9bf0e6861de",
+    "examples/cdk/sqs-queue/package-lock.json": "93c0c4417dee4dde293ea8bae91513a4eb816e43a6c6561561420ff4a2be4b03",
+    "examples/cdk/sqs-queue/package.json": "500b9e9ed3f96f42ab9f3ec8f4b13dfc2193b123c4ab64e851358208092fe284",
+    "examples/cdk/ssr-only-provided-assets-site/package-lock.json": "b44d2599a79b5b0f35e4a917159e5e59715425d334c96953c0fb503fb290eb31",
+    "examples/cdk/ssr-only-provided-assets-site/package.json": "d5c4f65660ba42b2e96b6ef3256c0a799cc391567f87b7432dace15fe786ed88",
+    "examples/cdk/ssr-site/package-lock.json": "1530ad6500f07fbdeee2b9cce1f2b336de3f982494f5c22f20458c1327090486",
+    "examples/cdk/ssr-site/package.json": "34b1c3ee7b1512c0301d8c42660edde2506f673b2c14a15a0e839076cf79ee88",
+    "examples/mcp/tools-only-ts/package.json": "f86c21ed02836ffe608286e702ae58e706a7a723ac7900b686345db6e80ec280",
+    "ts/package-lock.json": "53eac22fdabd809a622fa9dbf98d61f7d7e3bf639c9a6017feced1a16e8ea26a",
+    "ts/package.json": "c88de0b5966faa0caceb0882ad119172c9066564d4a2fa2f76be03feb446d5ed",
+    # The files those manifests run. Pinning a manifest is what makes these reachable, and the
+    # closure is re-derived from their bytes on every run like every other pinned file.
+    "examples/cdk/microvm-controller/workloads/py/server.py": "e9dafe34c710298c0567eb5a98eb724242ad19de52037eccc85e1318b84213aa",
+    "examples/cdk/microvm-controller/workloads/ts/server.js": "10f94316d68f1536e579f57b505025aa98d4694bc94bb7e53ba8bbaac1e93fa2",
+    "ts/scripts/verify-openapi.mjs": "45339ef4f14889687d7f451601f142c801c438b498c03c19205a57a4aa99c653",
+    "ts/scripts/verify-secure-app.mjs": "b74fdca6703b450e0fbe22eecec4d14df0771c6c67612dec35db0083827f6c08",
 }
 
 PINNED_FILE_DIGESTS = dict(
@@ -1024,6 +1459,22 @@ def glob_members(token, base_dir):
     return sorted(members)
 
 
+def module_file_for(name):
+    """The repository file a Python `-m` module name resolves to, or None.
+
+    A module is a file or a package: `evilmod`, `evilmod.py` and `evilmod/__init__.py` are the same
+    module to the interpreter. Only a name that resolves to a file *in this repository* is a
+    finding; `venv`, `pip`, `unittest`, `coverage`, `ensurepip` and `build` are resolved by the
+    interpreter out of its own standard library and site-packages, name no file here, and stay
+    accepted.
+    """
+    for candidate in (f"{name}.py", posixpath.join(name, "__init__.py"), name):
+        resolved, _through_link = resolve_reference(candidate, "")
+        if resolved is not None:
+            return resolved
+    return None
+
+
 def executed_path_findings(read_text):
     """Paths a pinned file runs that are pinned by nothing, or that name no file.
 
@@ -1032,13 +1483,17 @@ def executed_path_findings(read_text):
     pin is a name a later commit may edit with no pin edit at all, which is the whole reason
     the extension allowlist above was not enough.
 
-    Four shapes are findings rather than skips, and each is a spelling the guard cannot
+    The shapes that are findings rather than skips are each a spelling the guard cannot
     canonicalise into a pin: an unrecognized command whose non-option argument is a glob (the
     guard cannot say which command runs what it expands to), a glob in a running position at
-    all (the matched set is named at run time, by nothing), a spelling the guard refuses to
-    resolve (an unbraced variable, a quoted segment, a command substitution, an absolute path,
-    a `~`), and a name that resolves to no file. A glob in a reading position - an option
-    value, a pathspec, a coverage filter - is not one of these, and neither is dependency code.
+    all (the matched set is named at run time, by nothing), a brace expansion, an array or
+    variable expansion, a bare name with no directory component, a `python -m` module that
+    resolves to a file here, a pipe into a launcher with no name on the line, a spelling the
+    guard refuses to resolve (an unbraced variable, a quoted segment, a command substitution, an
+    absolute path, a `~`), and a name that resolves to no file. A glob in a reading position - an
+    option value, a pathspec, a coverage filter - is not one of these, and neither is dependency
+    code: the carve-out is decided on the *resolved* path, so a spelling that walks out of a
+    dependency directory into a tracked file is a finding like any other unpinned name.
     """
     findings = []
     for path in PINNED_FILE_DIGESTS:
@@ -1049,13 +1504,79 @@ def executed_path_findings(read_text):
         base_dir = posixpath.dirname(path)
         bodies = heredoc_bodies(text)
         for index, line in enumerate(text.split("\n"), 1):
-            if index in bodies:
+            in_body = bodies.get(index)
+            if in_body == HEREDOC_READ_DATA:
                 continue
             stripped = line.strip()
             if stripped.startswith("#") or stripped.startswith("//"):
                 continue
-            for position, command, token, _line in executed_path_references(line):
+            for position, command, token, _line in executed_path_references(
+                line, in_body=in_body is not None
+            ):
                 where = f"{path}:{index}"
+                if position == "brace":
+                    findings.append(
+                        (
+                            CLASS_CLOSURE,
+                            f"{where}: runs `{command}` against {token!r}, which holds a brace "
+                            f"expansion. The shell rewrites the name before anything runs, so the token "
+                            f"written here is not the name that executes - `node scripts/{{deep,}}/evil7.js` "
+                            f"runs the file under `scripts/deep/` - and a set named by an expansion is a set "
+                            f"no pin describes. Write the name out",
+                        )
+                    )
+                    continue
+                if position == "refused":
+                    findings.append(
+                        (
+                            CLASS_CLOSURE,
+                            f"{where}: runs `{command}` against {token!r}, an expansion rather than a name "
+                            f"this guard can read. A path is read as a plain path, with a leading `./`, or "
+                            f"behind a braced variable directory; an array subscript, a bare variable, a "
+                            f"command substitution and every other expansion are refused rather than "
+                            f"skipped, because a spelling this guard cannot canonicalise is a file it cannot "
+                            f"vouch for",
+                        )
+                    )
+                    continue
+                if position in ("bare", "piped-bare"):
+                    findings.append(
+                        (
+                            CLASS_CLOSURE,
+                            f"{where}: runs `{command}` against the bare name {token!r}. A name with no "
+                            f"directory component is how a variable, a flag value and an object property are "
+                            f"written everywhere else in this file, and every execution on this release path "
+                            f"writes a slashed path - so a bare name in an executed position is refused rather "
+                            f"than read as a path",
+                        )
+                    )
+                    continue
+                if position == "module":
+                    module_file = module_file_for(token)
+                    if module_file is not None:
+                        findings.append(
+                            (
+                                CLASS_CLOSURE,
+                                f"{where}: runs `{command} -m {token}`, and {module_file!r} is a file in "
+                                f"this repository. A Python module that resolves to a file here is a file the "
+                                f"release path runs, and it is pinned by nothing, so the reference and the pin "
+                                f"are one change - a module the interpreter resolves out of its own standard "
+                                f"library and site-packages (`venv`, `pip`, `unittest`, `coverage`) names no "
+                                f"file in this tree and is left alone",
+                            )
+                        )
+                    continue
+                if position == "piped-empty":
+                    findings.append(
+                        (
+                            CLASS_CLOSURE,
+                            f"{where}: pipes into `{command}` with no name on the line - {line.strip()!r}. "
+                            f"The names that launcher will run come from the left of the pipe, which is data "
+                            f"in another command this guard cannot read, so the set it runs is named at run "
+                            f"time by nothing. Name the file on the line",
+                        )
+                    )
+                    continue
                 if position == "unrecognized":
                     findings.append(
                         (
@@ -1095,7 +1616,7 @@ def executed_path_findings(read_text):
                             )
                         )
                     continue
-                if DEPENDENCY_DIRECTORY.search(token):
+                if dependency_reference(token, base_dir):
                     continue
                 resolved, through_link = resolve_reference(token, base_dir)
                 if position == "for-list" and resolved is None:
@@ -1224,10 +1745,311 @@ def sweep_findings(read_text, paths=None):
     return findings
 
 
+def manifest_paths(patterns):
+    """Every package manifest this repository can commit, ignoring the ignored trees.
+
+    Dependency code and build output are excluded - a manifest under a carve-out root is dependency
+    code, one under `dist/` or a generated docs tree is build output - and a path `.gitignore`
+    ignores is excluded too, because a local materialisation (`.codex/`, `.claude/`, `.theory/`) is
+    not part of this repository and no commit can reach it. Everything else is walked rather than
+    enumerated, so a manifest added anywhere is found rather than missed.
+    """
+    paths = []
+    for name in MANIFEST_FILE_NAMES:
+        for path in sorted(Path(".").rglob(name)):
+            relative = path.as_posix()
+            if any(part in MANIFEST_IGNORED_DIRECTORIES for part in path.parts[:-1]):
+                continue
+            if gitignore_ignores(patterns, relative):
+                continue
+            paths.append(relative)
+    return tuple(sorted(set(paths)))
+
+
+def npm_invocations(text):
+    """Every npm/npx invocation in a file, with the line it is written on and the text after it.
+
+    This is read over the whole file rather than at command position, because the invocation that
+    matters is written inside a subshell - `if ! (cd cdk && npm run build >/dev/null); then` - and a
+    reading that only looked at lines starting in column zero would miss every one of them. That is
+    the same shape `makefile_candidates` uses, and for the same reason.
+    """
+    for match in NPM_INVOCATION.finditer(text):
+        end = match.end("tool")
+        line = text[:end].split("\n")[-1]
+        tail = text[end:].split("\n")[0]
+        # The tool must be the command word of its segment. A mention inside a condition or a
+        # message is not a run: `if ! command -v npx >/dev/null` and an `echo` that says
+        # "(npx not found)" are both prose about the tool, and treating them as invocations
+        # produced two false findings on pinned lines before this gate existed.
+        words = [
+            word.strip("\"'")
+            for word in COMMAND_SEPARATORS.split(line)[-1].split()
+            if word.strip("\"'")
+        ]
+        command_word = False
+        for word in words:
+            if word in SHELL_KEYWORDS or ASSIGNMENT.match(word):
+                continue
+            command_word = word == match.group("tool")
+            break
+        if not command_word:
+            continue
+        yield match.group("tool"), line, tail
+
+
+def npm_directory_spellings(line):
+    """The directory spellings an npm invocation's line names, in the order they are written."""
+    spellings = []
+    for pattern in (NPM_DIRECTORY, NPM_PREFIX_OPTION):
+        for match in pattern.finditer(line):
+            spelling = match.group("directory").strip("\"'")
+            if spelling and spelling not in spellings:
+                spellings.append(spelling)
+    return spellings
+
+
+def npm_package_json_candidates(line, base_dir):
+    """The package.json files an npm invocation could read, nearest first."""
+    candidates = []
+    for spelling in npm_directory_spellings(line):
+        bare = written_path(spelling)
+        if bare is not None:
+            candidates.append(posixpath.normpath(posixpath.join(bare, "package.json")))
+    for fallback in (posixpath.join(base_dir, "package.json"), "package.json"):
+        if fallback not in candidates:
+            candidates.append(fallback)
+    return candidates
+
+
+def package_scripts(read_text, manifest):
+    """The scripts a pinned package.json declares, or None when it cannot be read as JSON."""
+    try:
+        data = json.loads(read_text(manifest))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    scripts = data.get("scripts")
+    return scripts if isinstance(scripts, dict) else {}
+
+
+def lockfile_bins(text):
+    """The binaries the packages a pinned lockfile installs provide.
+
+    A lockfile records, for every installed package, the `bin` names it puts on `node_modules/.bin`,
+    so `npx <name>` can be resolved to the package that provides it without leaving the pinned
+    bytes. That is what makes the `npx` rule a pin rather than a guess: what it does not say is
+    which tarball the registry served, and that limit is stated in docs/release-process.md.
+    """
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return set()
+    bins = set()
+    packages = data.get("packages")
+    if not isinstance(packages, dict):
+        return bins
+    for key, entry in packages.items():
+        if not isinstance(entry, dict):
+            continue
+        name = key.rsplit("node_modules/", 1)[-1]
+        recorded = entry.get("bin")
+        if isinstance(recorded, str):
+            bins.add(name)
+        elif isinstance(recorded, dict):
+            bins.update(str(item) for item in recorded)
+    return bins
+
+
+def npx_bin(tail):
+    """The binary name an `npx` invocation hands the launcher, or None.
+
+    The name is the first non-option word after the tool, and only that word: `npx cdk synth` runs
+    `cdk`, and `npx >/dev/null 2>&1` (a condition check) runs nothing, so a first word that is not a
+    name makes this None rather than the next word that happens to look like one.
+    """
+    for word in tail.split():
+        if word.startswith("-"):
+            continue
+        candidate = word.strip("\"'")
+        return candidate if NPM_BIN_NAME.match(candidate) else None
+    return None
+
+
+def package_manifest_findings(read_text):
+    """Package manifests and npm invocations that the pins do not reach.
+
+    Round 8 did not read npm at all, and the omission was live: a pinned gate runs `npm run build`,
+    whose bytes come from a `package.json` nothing pinned, and `npm run evil` in a pinned gate with
+    an `evil` script added to a root `package.json` passed with the plant running.
+
+    Three readings, each stated where it lives:
+
+      * every manifest in this repository is pinned. An npm invocation's directory is a `cd` this
+        construction does not follow, so rather than guess which manifest an install reads, the
+        closed set of manifests and lockfiles is pinned: the `package.json` whose lifecycle scripts
+        can run and the lockfile whose resolved versions and integrity hashes bind the dependency
+        bytes are then pinned content wherever the invocation runs;
+      * `npm run <name>` (and `npm test` and the other lifecycles) must be declared by a pinned
+        `package.json` the invocation's line names, and its `pre`/`post` variants come with it. A
+        name no pinned manifest declares is a finding, and so is an invocation whose line names no
+        manifest that exists;
+      * `npx <bin>` runs a binary out of the `node_modules` of the directory it runs in. When that
+        directory canonicalises, the pinned lockfile there must record the binary's package; when
+        the directory is a spelling this construction cannot follow, the same pinned file must
+        install into that spelling first (`npm ci` with the same spelling), which is what makes the
+        binary local rather than a registry fetch.
+
+    An install (`npm ci`, `npm install`) is admitted by the first reading, and that is the honest
+    statement rather than a skip: whatever directory it installs into, both the `package.json` whose
+    lifecycle scripts run and the lockfile whose integrity hashes bind the installed bytes are
+    pinned, and npm refuses to run `npm ci` at all without that lockfile.
+    """
+    findings = []
+    patterns = repository_gitignore_patterns(read_text)
+    for manifest in manifest_paths(patterns):
+        if manifest in PINNED_FILE_DIGESTS:
+            continue
+        findings.append(
+            (
+                CLASS_CLOSURE,
+                f"{manifest}: is a package manifest in this repository and is pinned by nothing. An npm "
+                f"invocation's directory is a `cd` this construction does not follow, so every package "
+                f"manifest and lockfile in the repository is pinned: the manifest whose lifecycle scripts "
+                f"can run and the lockfile whose resolved versions and integrity hashes bind the "
+                f"dependency bytes are then pinned content wherever the invocation runs",
+            )
+        )
+    pinned_manifests = [
+        path for path in PINNED_FILE_DIGESTS if posixpath.basename(path) == "package.json"
+    ]
+    declared_scripts = {}
+    for manifest in pinned_manifests:
+        try:
+            declared_scripts[manifest] = package_scripts(read_text, manifest) or {}
+        except (OSError, UnicodeDecodeError):
+            declared_scripts[manifest] = {}
+    provided_bins = {}
+    for lockfile in PINNED_FILE_DIGESTS:
+        if posixpath.basename(lockfile) not in ("package-lock.json", "npm-shrinkwrap.json"):
+            continue
+        try:
+            provided_bins[lockfile] = lockfile_bins(read_text(lockfile))
+        except (OSError, UnicodeDecodeError):
+            provided_bins[lockfile] = set()
+
+    def declares(name):
+        return any(
+            any(key in scripts for key in (name, f"pre{name}", f"post{name}"))
+            for scripts in declared_scripts.values()
+        )
+
+    def provides(name):
+        return any(name in bins for bins in provided_bins.values())
+
+    for path in PINNED_FILE_DIGESTS:
+        try:
+            text = read_text(path)
+        except (OSError, UnicodeDecodeError):
+            continue
+        base_dir = posixpath.dirname(path)
+        invocations = list(npm_invocations(text))
+        installs_state = any(NPM_INSTALL.search(tail) for _tool, _line, tail in invocations)
+        for index, (tool, line, tail) in enumerate(invocations, 1):
+            where = f"{path} (npm invocation {index} on {line.strip()!r})"
+            directories = []
+            for spelling in npm_directory_spellings(line):
+                bare = written_path(spelling)
+                if bare is not None:
+                    directories.append(bare)
+            if tool == "npx":
+                wanted = npx_bin(tail)
+                if wanted is None:
+                    continue
+                named = False
+                for bare in directories:
+                    for lock_name in ("package-lock.json", "npm-shrinkwrap.json"):
+                        lockfile = posixpath.normpath(posixpath.join(bare, lock_name))
+                        if wanted in provided_bins.get(lockfile, set()):
+                            named = True
+                if not named and installs_state and provides(wanted):
+                    # The directory is a `cd` this construction does not follow, and the file
+                    # materialises it from a pinned lockfile first, so the binary is the one that
+                    # lockfile records rather than a registry fetch.
+                    named = True
+                if not named:
+                    findings.append(
+                        (
+                            CLASS_CLOSURE,
+                            f"{where}: runs `npx {wanted}`, and no pinned lockfile the invocation names "
+                            f"provides that binary. `npx` runs a binary out of the `node_modules` of the "
+                            f"directory it runs in, and falls back to fetching one from the registry when "
+                            f"that directory has none - so either name a directory whose pinned lockfile "
+                            f"records the package, or install into it from one in the same file",
+                        )
+                    )
+                continue
+            run = NPM_RUN.search(tail)
+            if run is None:
+                continue
+            name = run.group("run") or run.group("lifecycle")
+            if name is None:
+                continue
+            candidates = npm_package_json_candidates(line, base_dir)
+            existing = [candidate for candidate in candidates if Path(candidate).is_file()]
+            declaring = [
+                candidate
+                for candidate in existing
+                if candidate in declared_scripts
+                and any(
+                    key in declared_scripts[candidate]
+                    for key in (name, f"pre{name}", f"post{name}")
+                )
+            ]
+            if declaring:
+                continue
+            if not existing:
+                # No package.json the line names exists. The invocation's directory is a `cd` this
+                # construction does not follow, so the reading is file-wide instead: the pinned file
+                # installs npm state from a pinned lockfile, and a pinned manifest declares the
+                # script. `npm run evil` in a pinned gate has neither.
+                if not declares(name):
+                    findings.append(
+                        (
+                            CLASS_CLOSURE,
+                            f"{where}: runs `npm run {name}`, and no pinned `package.json` declares that "
+                            f"script. A pinned file runs only files that are pinned, and a package script "
+                            f"is a file's worth of code: the script and the pin are one change",
+                        )
+                    )
+                elif not installs_state:
+                    findings.append(
+                        (
+                            CLASS_CLOSURE,
+                            f"{where}: runs `npm run {name}`, names no `package.json` this construction "
+                            f"can read, and installs nothing itself. The bytes that run are a script whose "
+                            f"manifest is named nowhere on the line and materialised nowhere in the file, "
+                            f"so no pin describes them",
+                        )
+                    )
+                continue
+            findings.append(
+                (
+                    CLASS_CLOSURE,
+                    f"{where}: runs `npm run {name}`, and no pinned `package.json` among "
+                    f"{', '.join(repr(candidate) for candidate in existing)} declares it. A pinned file "
+                    f"runs only files that are pinned, and a package script is a file's worth of code: "
+                    f"the script and the pin are one change",
+                )
+            )
+    return findings
+
+
 def guarded_surface_findings(read_text, sweep=None):
     findings = digest_findings(read_text)
     findings += closure_findings(read_text)
     findings += executed_path_findings(read_text)
+    findings += carve_out_findings(read_text)
+    findings += package_manifest_findings(read_text)
     findings += uses_findings(read_text)
     findings += spelling_witness_findings(read_text)
     findings += sweep_findings(read_text, paths=sweep)
@@ -2462,6 +3284,150 @@ ROUND_8_ATTACKS = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Round 9: the carve-out is decided on the resolved path, npm and npx enter the closure, a bare
+# name and an expansion are refused in an executed position, a heredoc body handed to an
+# interpreter is read, and a witness must be a name the file runs rather than one it prints.
+# Every case below is a reproduction from the adversarial review of round 8 (head 2f73bc19),
+# R8-F1 to R8-F5 and the four disclosed residual bounds, each of which passed with the plant
+# running and exit 0 before this round.
+# ---------------------------------------------------------------------------
+
+# A manifest planted in the tree. It is the file a `npm run` reads, and nothing pins it: the case
+# that matters is a gate that gains the invocation while the script lives in a manifest no pin
+# describes. It is written under a directory that already exists so the battery's cleanup - which
+# unlinks files - leaves the tree as it found it.
+SELF_TEST_MANIFEST_PLANT = "examples/testkit/package.json"
+
+
+def _attack_planted_package_manifest(text):
+    """A pinned gate that runs `npm run evil`, declared by a manifest nothing pins."""
+    manifest = Path(SELF_TEST_MANIFEST_PLANT)
+    if manifest.exists():
+        raise SystemExit(
+            f"release-workflows: FAIL (self-test: {SELF_TEST_MANIFEST_PLANT} already exists, so the "
+            f"planted-manifest row cannot write its plant without overwriting the tree)"
+        )
+    manifest.write_text(
+        '{\n  "name": "release-workflows-self-test-plant",\n  "private": true,\n'
+        '  "scripts": {\n    "evil": "node scripts/evil-helper.js"\n  }\n}\n',
+        encoding="utf-8",
+    )
+    SELF_TEST_LINKS.append(manifest)
+    return text.replace(GATES_BARE, GATES_BARE + "npm run evil\n", 1)
+
+
+def _attack_planted_module(text):
+    """A pinned gate that runs `python3 -m <plant>`, with the module planted in the tree.
+
+    A module resolves like a path here, so the row needs the file it resolves to: the module is the
+    shape that ran past round 8 because `evilmod` is not a path and nothing resolved it.
+    """
+    plant = Path("release_workflows_self_test_plant.py")
+    if plant.exists():
+        raise SystemExit(
+            "release-workflows: FAIL (self-test: the planted-module row's plant already exists)"
+        )
+    plant.write_text("# planted by the release-workflows self-test\n", encoding="utf-8")
+    SELF_TEST_LINKS.append(plant)
+    return text.replace(
+        GATES_BARE, GATES_BARE + "python3 -m release_workflows_self_test_plant\n", 1
+    )
+
+
+def _attack_unignored_carve_out(text):
+    """`.gitignore` with the `.venv/` rule removed, so the carve-out root is committable again."""
+    return text.replace(".venv/\n", "", 1)
+
+
+def _attack_planted_relative_walk(text):
+    """A spelling that walks out of a dependency directory into a tracked path.
+
+    `scripts/node_modules/../evil.js` reads as dependency code if the carve-out is decided on the
+    spelling, and as `scripts/evil.js` once it is decided on the resolved path. The plant is the
+    tracked file it resolves to.
+    """
+    plant = Path("scripts/release-workflows-self-test-walk.js")
+    if plant.exists():
+        raise SystemExit(
+            "release-workflows: FAIL (self-test: the relative-walk row's plant already exists)"
+        )
+    plant.write_text("// planted by the release-workflows self-test\n", encoding="utf-8")
+    SELF_TEST_LINKS.append(plant)
+    return text.replace(
+        GATES_BARE,
+        GATES_BARE + "node scripts/node_modules/../release-workflows-self-test-walk.js\n",
+        1,
+    )
+
+
+ROUND_9_ATTACKS = (
+    # R8-F1 - the carve-out was decided on the spelling, so five spellings walked it. The first is
+    # the one that matters: it resolves to a *tracked* file, and the walk is normalised before the
+    # carve-out test, so the tracked file needs a pin.
+    ("R8-F1 a node_modules walk out of the carve-out into a tracked path",
+     "scripts/verify-release-gates.sh", GATES_BARE, _attack_planted_relative_walk, CLASS_CLOSURE),
+    ("R8-F1 a `.tools` walk out of the carve-out into a tracked path",
+     "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "node gov-infra/.tools/../release-workflows-self-test-plant.js\n",
+     CLASS_CLOSURE),
+    # R8-F1 - `venv/` and a `.venv/` outside `py/` were named as carve-outs while `.gitignore`
+    # ignored neither. `venv/` is out of the carve-out entirely because nothing in this tree makes
+    # one; `.venv/` is a root and `.gitignore` ignores it at any depth, which the row below proves.
+    ("R8-F1 a bare `venv/` path is no longer a carve-out",
+     "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "node venv/release-workflows-self-test-plant.js\n", CLASS_CLOSURE),
+    ("R8-F1 a `scripts/venv/` path is no longer a carve-out",
+     "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "node scripts/venv/release-workflows-self-test-plant.js\n",
+     CLASS_CLOSURE),
+    # The assertion behind the surviving `.venv/` carve-out: a root that stops being git-ignored
+    # fails closed instead of being disclosed, which is what round 8 claimed in prose only.
+    ("R8-F1 an un-ignored carve-out root", GITIGNORE_PATH,
+     ".venv/\n", _attack_unignored_carve_out, CLASS_CLOSURE),
+    # R8-F2 - npm and npx were not read at all, and a pinned gate runs `npm run build`.
+    ("R8-F2 a pinned gate runs an npm script no pinned manifest declares",
+     "scripts/verify-release-gates.sh", GATES_BARE, _attack_planted_package_manifest,
+     CLASS_CLOSURE),
+    ("R8-F2 a pinned gate runs npx against a binary no pinned lockfile provides",
+     "scripts/verify-release-gates.sh", GATES_BARE, GATES_BARE + "npx release-workflows-evil\n",
+     CLASS_CLOSURE),
+    # R8-F2 - `python3 -m evilmod`, with an `evilmod.py` planted in the tree.
+    ("R8-F2 a pinned gate runs a python module that resolves to a planted file",
+     "scripts/verify-release-gates.sh", GATES_BARE, _attack_planted_module, CLASS_CLOSURE),
+    # R8-F3 - the `find` operand is data and the executor after it was skipped.
+    ("R8-F3 a find `-exec` runs a name the guard skipped after the search root",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "find gov-infra -name data.txt -exec node gov-infra/release-workflows-self-test.js {} \\;\n",
+     CLASS_CLOSURE),
+    # R8-F4 - a brace expansion in an executed path.
+    ("R8-F4 a pinned gate runs a brace expansion",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "node scripts/{release-workflows-self-test,}/plant.js\n", CLASS_CLOSURE),
+    # The four disclosed residual bounds of round 8, each of which ran a plant past a PASS.
+    ("R8 bound a piped bare name (round 8 disclosed this as a limit)",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "printf '%s\\n' release-workflows-self-test-plant.js | xargs bash\n",
+     CLASS_CLOSURE),
+    ("R8 bound a bare name run directly (round 8 disclosed this as a limit)",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "node release-workflows-self-test-plant.js\n", CLASS_CLOSURE),
+    ("R8 bound a variable-mediated glob (round 8 disclosed this as a limit)",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + 'files=(examples/testkit/*.mjs); node "${files[@]}"\n', CLASS_CLOSURE),
+    ("R8 bound an executed path inside a heredoc body (round 8 disclosed this as a limit)",
+     "scripts/verify-release-gates.sh", GATES_BARE,
+     GATES_BARE + "python3 - <<'PY'\nnode gov-infra/release-workflows-self-test.py\nPY\n",
+     CLASS_CLOSURE),
+    # R8-F5 - the witness satisfied by a string. The real `source` line is replaced by an `echo`
+    # that prints the spelling, so the file no longer runs what it once did.
+    ("R8-F5 the witness for an admitted spelling is printed, not run",
+     "scripts/verify-testkit-examples.sh",
+     'source "${SCRIPT_DIR}/lib/ts-runtime-deps.sh"\n',
+     'echo \'source "${SCRIPT_DIR}/lib/ts-runtime-deps.sh"\'\n', CLASS_CLOSURE),
+)
+
+
 SELF_TEST_ATTACKS = (
     ROUND_4_ATTACKS
     + ROUND_4_ACCEPTED_RECYCLED
@@ -2469,6 +3435,7 @@ SELF_TEST_ATTACKS = (
     + ROUND_6_ATTACKS
     + ROUND_7_ATTACKS
     + ROUND_8_ATTACKS
+    + ROUND_9_ATTACKS
 )
 
 
@@ -2518,7 +3485,14 @@ def code_text(text):
 
 
 def spelling_witness_findings(read_text):
-    """The admitted spellings, each proven by a pinned file whose *code* writes one and resolves it."""
+    """The admitted spellings, each proven by a pinned file that *runs* the token it writes.
+
+    Round 7 satisfied this with a comment, and round 8 stripped comments but not strings:
+    `echo 'source "${SCRIPT_DIR}/lib/ts-runtime-deps.sh"'` kept the row green while the line that
+    ran the library was gone. A witness must now be written in the file's code *and* be a token the
+    file's own executed-path reading yields - a name a command runs - so prose about a spelling, a
+    string a file merely prints and a commented-out line are none of them a witness.
+    """
     findings = []
     for spelling, token in ADMITTED_SPELLING_WITNESSES:
         witnessed = False
@@ -2530,16 +3504,31 @@ def spelling_witness_findings(read_text):
             if token not in code_text(text):
                 continue
             resolved, through_link = resolve_reference(token, posixpath.dirname(path))
-            if resolved is not None and not through_link:
-                witnessed = True
+            if resolved is None or through_link:
+                continue
+            bodies = heredoc_bodies(text)
+            for index, line in enumerate(text.split("\n"), 1):
+                in_body = bodies.get(index)
+                if in_body == HEREDOC_READ_DATA:
+                    continue
+                for _position, _command, found, _line in executed_path_references(
+                    line, in_body=in_body is not None
+                ):
+                    if found == token:
+                        witnessed = True
+                        break
+                if witnessed:
+                    break
+            if witnessed:
                 break
         if not witnessed:
             findings.append(
                 (
                     CLASS_CLOSURE,
-                    f"the admitted spelling {spelling} is written by no pinned file as a path this guard "
-                    f"reads ({token!r} is the witness it is checked against), so nothing in the tree proves "
-                    f"that spelling is admitted",
+                    f"the admitted spelling {spelling} is written by no pinned file as a name that file "
+                    f"runs ({token!r} is the witness it is checked against), so nothing in the tree "
+                    f"proves that spelling is admitted - a comment about a spelling and a string that "
+                    f"prints one are not a use of it",
                 )
             )
     return findings
@@ -2622,6 +3611,36 @@ def _accepted_matched_glob(source):
     return source
 
 
+def _accepted_command_lookup(source):
+    """`command -v <name>` is a lookup, not a run: the operand is a name to look for.
+
+    Six pinned lines write it, and the executed-path rule does not read the operand there. A
+    construction that refused it would over-block on all six, so the bound is exercised instead of
+    implied.
+    """
+    source["scripts/verify-release-gates.sh"] = source["scripts/verify-release-gates.sh"].replace(
+        GATES_BARE, GATES_BARE + "command -v node >/dev/null 2>&1 || true\n", 1
+    )
+    return source
+
+
+def _accepted_data_body(source):
+    """A heredoc body handed to a command that runs nothing is data, not a command line.
+
+    `cat <<'EOF'` writes its body to a file or to stdout; the body is read by the read-or-run rule
+    (a script-shaped name in it must still be pinned) but not at command position, because a line of
+    another format is not a command this construction knows. The tree's PR-body template is the
+    measured case: `Release/security gates` is a line of a `cat <<'EOF'` body, and reading it as a
+    command produced a false finding on a pinned line.
+    """
+    source["scripts/verify-release-gates.sh"] = source["scripts/verify-release-gates.sh"].replace(
+        GATES_BARE,
+        GATES_BARE + "cat <<'EOF'\nRelease/security gates\nnode scripts/a-name-that-is-not-a-file.js\nEOF\n",
+        1,
+    )
+    return source
+
+
 SELF_TEST_ACCEPTED_PINNED = (
     (
         "a pinned gate runs a node_modules dependency path (the declared carve-out)",
@@ -2633,6 +3652,16 @@ SELF_TEST_ACCEPTED_PINNED = (
         "scripts/verify-release-gates.sh",
         _accepted_matched_glob,
     ),
+    (
+        "a pinned gate looks a tool up with `command -v` (the executed position that runs nothing)",
+        "scripts/verify-release-gates.sh",
+        _accepted_command_lookup,
+    ),
+    (
+        "a pinned gate writes a heredoc body to a file (a body no command runs)",
+        "scripts/verify-release-gates.sh",
+        _accepted_data_body,
+    ),
 )
 
 
@@ -2640,6 +3669,7 @@ def fixture_paths():
     paths = set(sweep_paths())
     paths.update(PINNED_FILE_DIGESTS)
     paths.add(GUARD_PATH)
+    paths.add(GITIGNORE_PATH)
     return tuple(sorted(paths))
 
 
@@ -2792,15 +3822,26 @@ for _doc_claim in (
     _executor_sentence,
     "There is no call site of a guarded script",
     "are refused rather than skipped",
-    "are refused at these sites too",
+    "is refused with the other refused spellings",
     "`make -C <dir>` and `make -f <file>` name the makefile the selector reads",
     "A glob in a running position is now a finding unless the pins describe the set it matches",
     "A `uses:` that names a local path (`./.github/actions/...`) is refused outright, in a pinned "
     "workflow",
     "is **dependency or tool code**",
-    "A witness is a *code* witness",
+    "A witness is an *executed* witness",
     "has **no call site today**",
     "Any weakening of this file is caught by review and by nothing else",
+    # Round 9's rules, each a sentence the artifact must keep true: the carve-out decided on the
+    # resolved path, the ignores read as an assertion, the manifest pins, the body read as what it
+    # is, the three refused spellings and the `find` action the reading resumes at.
+    "It is decided on the **resolved path** now",
+    "the guard reads `.gitignore` and fails closed unless every approved dependency root is ignored",
+    "every package manifest and lockfile in this repository",
+    "a body handed to another interpreter",
+    "A **bare name**",
+    "A **brace expansion**",
+    "the reading resumes there",
+    "`npm run <name>` must be declared by a pinned manifest",
 ):
     if _doc_claim not in _doc_text:
         raise SystemExit(

@@ -126,6 +126,14 @@ FAKE_NPM
 chmod +x "${test_root}/bin/npm"
 
 sentinel='release-please-token-safety-sentinel-do-not-log'
+# The transport is run by its literal path, not through the variable that names it: the release
+# guard reads the file a command runs, and a variable holding the path is a spelling it cannot
+# canonicalise - `bash "${transport}"` was refused by it, which is the honest outcome for a name
+# written nowhere on the line. The variable stays for the grep assertions above and below, and this
+# assertion keeps the literal and the variable the same file.
+if [[ "${transport}" != "scripts/invoke-release-please-pr.sh" ]]; then
+  fail "transport variable drifted from the pinned path"
+fi
 output="$({
   RELEASE_PLEASE_TOKEN="${sentinel}" \
     GH_TOKEN="${sentinel}-gh" \
@@ -135,7 +143,7 @@ output="$({
     RELEASE_PLEASE_CONFIG_FILE="release-please-config.premain.json" \
     RELEASE_PLEASE_MANIFEST_FILE=".release-please-manifest.premain.json" \
     PATH="${test_root}/bin:${PATH}" \
-    bash "${transport}"
+    bash scripts/invoke-release-please-pr.sh
 } 2>&1)" || {
   printf '%s\n' "${output}" >&2
   fail "environment-only launcher self-test failed"

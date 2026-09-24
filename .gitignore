@@ -16,7 +16,10 @@ __pycache__/
 *.pyc
 *.egg-info/
 .coverage
-py/.venv/
+# Every virtualenv, at any depth: scripts/verify-release-workflows.sh carves `.venv/` out of the
+# release path as dependency code, and it asserts that each carve-out root is git-ignored - an
+# unanchored rule here is what makes `py/.venv`, `cdk/.venv` and any future one uncommittable.
+.venv/
 
 # OS/editor temp
 *.swp

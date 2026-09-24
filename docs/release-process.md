@@ -200,8 +200,8 @@ the new digest to paste, so the pin update is mechanical. Any edit to a pinned f
 update in the same pull request - no edit to a pinned file is admitted without one.
 
 `--self-test` runs the attack battery, one case per shape, each naming the class it must fail on, plus
-a table of shapes that must stay accepted. At this revision 218 weakening shapes fail closed and 4
-fail-closed spellings are accepted, and 2 accepted pinned-file changes are admitted with the pin update
+a table of shapes that must stay accepted. At this revision 233 weakening shapes fail closed and 4
+fail-closed spellings are accepted, and 4 accepted pinned-file changes are admitted with the pin update
 that goes with them, and the legitimate wiring at HEAD is accepted as the baseline before any attack
 is tried - the guard asserts all three counts, the size of the closure, the spelling table, the
 executor sentence and the sentences below against this document, so what is written here cannot drift
@@ -212,8 +212,8 @@ What is pinned, and what each pin is behind:
 | Pinned surface | How it is decided |
 | --- | --- |
 | The five workflows the release train runs - `ci.yml`, `prerelease-pr.yml`, `release-pr.yml`, `prerelease.yml` and `release.yml` | whole-file SHA-256, byte for byte. Every job, every step, every root key below `jobs:`, every key spelling, every `uses:` reference and every line ending of each workflow is inside one digest, so there is no region a key could be written below and no spelling a key could take that this construction has to know. A `uses:` that names a local path (`./.github/actions/...`) is refused outright, in a pinned workflow, because a local action runs the directory's files and no pin covers them: there is none in the tree, and adding one means extending the pin closure over the action directory in the same change. Battery: `env: BASH_ENV` and `defaults.run.shell` appended at the end of `ci.yml` and `release.yml`, a quoted `"jobs":` shadow mapping, a quoted and a space-drifted duplicate job key, a quoted `"release-please":` duplicate, a `true:` block below `jobs:`, an action reference changed inside a pinned job, a local composite action added to a pinned workflow, a second `jobs:` mapping, `if: false` on the job and on the step, every shell spelling rounds 1-4 closed, and the CRLF, byte-order-mark and trailing-whitespace cases |
-| The release path those workflows run - the transitive closure of the script paths they name: 86 files under `scripts/` and `gov-infra/`, and 37 files outside them, including `verify-release-branch.sh`, `verify-release-gates.sh`, `verify-release-publish-postcondition.sh`, `verify-release-pairing.sh`, `publish-release-assets.sh`, `run-release-please-pr.sh`, `sync-release-pr-generated.sh`, `gov-verify-rubric.sh`, the three contract runners under `contract-tests/runners/`, the ts unit-test set under `ts/test/` and the testkit and CDK examples under `examples/` | whole-file SHA-256 each. The closure is resolved from the repository root or the referencing file's directory, and a path is a finding unless it is pinned wherever it lives. The `ts/test/*.test.mjs` set is in the closure because round 7's glob membership rule reads the set `scripts/verify-ts-tests.sh` runs: every file a pinned file runs must be pinned, whether it is named or matched. Battery: the `if false` wrap of the branch-provenance call in `publish-release-assets.sh`, every shell-invoker case, `set +e`, a `bash()` definition and a re-pointed toolchain variable in the GovTheory verifier, trailing whitespace and CRLF in a pinned script, a pinned gate running a helper that names no file, a pinned gate running an out-of-root file it does not pin, an unpinned runner beside a pinned one, a pinned gate running a symbolic link into a pinned file, and the round-8 executed-path cases - `.js`, `.pl`, extensionless, `ruby`, `exec`, `.`, the command-position path, the unbraced variable directory, the glob cases and the up-walk path |
-| The closure itself - a pinned file may name only files that are pinned themselves: 123 files in the closure and 5 workflows | re-derived from the pinned bytes on every run, so a workflow that gains a call site, or a pinned script that starts running another one, fails until the same change adds the pin and the closure cannot rot into a stale list. Battery: a pinned workflow naming a script nothing pins |
+| The release path those workflows run - the transitive closure of the script paths they name: 86 files under `scripts/` and `gov-infra/`, and 76 files outside them, including `verify-release-branch.sh`, `verify-release-gates.sh`, `verify-release-publish-postcondition.sh`, `verify-release-pairing.sh`, `publish-release-assets.sh`, `run-release-please-pr.sh`, `sync-release-pr-generated.sh`, `gov-verify-rubric.sh`, the three contract runners under `contract-tests/runners/`, the ts unit-test set under `ts/test/`, the testkit and CDK examples under `examples/`, and every package manifest and lockfile in this repository | whole-file SHA-256 each. The closure is resolved from the repository root or the referencing file's directory, and a path is a finding unless it is pinned wherever it lives. The `ts/test/*.test.mjs` set is in the closure because round 7's glob membership rule reads the set `scripts/verify-ts-tests.sh` runs: every file a pinned file runs must be pinned, whether it is named or matched. Every `package.json`, `package-lock.json` and `npm-shrinkwrap.json` this repository can commit is pinned because an npm invocation's directory is a `cd` this construction does not follow, so the manifest whose lifecycle scripts can run and the lockfile whose integrity hashes bind the dependency bytes are pinned content wherever the invocation runs. Battery: the `if false` wrap of the branch-provenance call in `publish-release-assets.sh`, every shell-invoker case, `set +e`, a `bash()` definition and a re-pointed toolchain variable in the GovTheory verifier, trailing whitespace and CRLF in a pinned script, a pinned gate running a helper that names no file, a pinned gate running an out-of-root file it does not pin, an unpinned runner beside a pinned one, a pinned gate running a symbolic link into a pinned file, the round-8 executed-path cases - `.js`, `.pl`, extensionless, `ruby`, `exec`, `.`, the command-position path, the unbraced variable directory, the glob cases and the up-walk path - and the round-9 cases: a walk out of a carve-out root into a tracked path, a `venv/` path that is no longer a carve-out, an un-ignored carve-out root, an npm script no pinned manifest declares, an `npx` binary no pinned lockfile provides, a `python -m` module that resolves to a planted file, a `find -exec` on the far side of a data operand, a brace expansion, a piped bare name, a bare name, a variable-mediated glob and a heredoc body |
+| The closure itself - a pinned file may name only files that are pinned themselves: 162 files in the closure and 5 workflows | re-derived from the pinned bytes on every run, so a workflow that gains a call site, or a pinned script that starts running another one, fails until the same change adds the pin and the closure cannot rot into a stale list. Battery: a pinned workflow naming a script nothing pins |
 | Every occurrence of a guarded script name in the sweep set - every file under `.github/`, `Makefile`, and a root `package.json` when present | admitted from exactly one place: on a line byte-identical to a line a pinned workflow holds. That is additive strengthening - repeating a pinned invocation line can add a run of the gate or the guard, and it cannot weaken the step that already runs it - and it is the whole of what a file outside the pinned set may say about a guarded script. The sweep walks every file under `.github/`, so a new workflow is read rather than enumerated. There is no call site of a guarded script in the `Makefile` or in a root `package.json` today, and no local composite action, and the sweep is what keeps the first two true; that posture is stricter than "the one call site is admitted", and the accepted battery case is a *fixture* that models an admitted duplicate rather than a description of the tree. Battery: a call site added to the `Makefile` on a line that is not one of the pinned invocation lines, and, as the accepted mirror, a byte-identical pinned invocation line added to the `Makefile`, a new unguarded workflow, and a new unguarded job in a workflow no pin covers |
 
 ### What the closure derivation reads
@@ -237,12 +237,13 @@ executed whether or not it runs that name - because the direction of the error i
 
 The executor spellings are `bash`, `sh`, `zsh`, `dash`, `ksh`, `source`, `.`, `env`, `command`,
 `xargs`, `nohup`, `exec`, `python`, `python3`, `python2`, `node`, `nodejs`, `ruby`, `perl`, `php`,
-`deno`, `bun`, `make`, `find`, `subprocess` and `child_process`, enumerated once in the guard and only
-there, and the guard asserts that this sentence is that list: an executor the prose names and the code
-does not read - `.` was one, for six rounds - is a spelling nothing refuses and nothing reads. The set
-is closed: `ruby`, `perl`, `php`, `exec` and the pipe form `... | xargs bash` each name a file the
-guard now reads, and an unrecognized command whose non-option argument is a glob is refused rather than
-skipped, because there is no way to say what an unknown command does with what the glob expands to.
+`deno`, `bun`, `npm`, `npx`, `make`, `find`, `subprocess` and `child_process`, enumerated once in the
+guard and only there, and the guard asserts that this sentence is that list: an executor the prose
+names and the code does not read - `.` was one, for six rounds - is a spelling nothing refuses and
+nothing reads. The set is closed: `ruby`, `perl`, `php`, `exec` and the pipe form `... | xargs bash`
+each name a file the guard now reads, `npm` and `npx` were absent until round 8's review, and an
+unrecognized command whose non-option argument is a glob is refused rather than skipped, because
+there is no way to say what an unknown command does with what the glob expands to.
 
 ### The executed-path rule: the suffix comes off
 
@@ -266,19 +267,40 @@ Two readings bound the rule, and both are stated rather than implied. A *command
 starts at the left margin or is the value of a `run:` key; an indented line that is neither is a
 continuation, an argument list, a YAML value or a heredoc body, and its first word is a name rather
 than a command. That is why `"${REPO_ROOT}/go.mod"` on a line of an array literal and
-`py/pyproject.toml` under a `cache-dependency-path:` block are not read as commands, and why a heredoc
-body - `python3 - <<'PY'`, `cat <<'EOF'` - is read as the language it is. A command's arguments stop
-at its first operand, so `python3 tool.py "ts/dist/index.d.ts"` reads the tool and leaves the data it
-is handed alone; `make`, `find`, `subprocess` and `child_process` name a makefile selector, a search
-root and a command line rather than a file to run, so the rule does not read their argument, and `make`
-keeps the selector rule stated below.
+`py/pyproject.toml` under a `cache-dependency-path:` block are not read as commands. A heredoc body is
+read as what it is, decided by the command that opens it: a shell body (`bash <<'EOF'`) is a script and
+is read as a command line, a body handed to another interpreter (`python3 - <<'PY'`, `node - <<'JS'`) is
+read at executor positions - which is what makes a file a body runs a name this guard must be able to
+pin - and a body handed to a command that runs nothing (`cat <<'EOF'`) is data and is not read at
+command position at all. A command's arguments stop at its first operand, so
+`python3 tool.py "ts/dist/index.d.ts"` reads the tool and leaves the data it is handed alone; `make`,
+`find`, `subprocess` and `child_process` name a makefile selector, a search root and a command line
+rather than a file to run, and an `npm`/`npx` invocation names a subcommand - so the rule does not read
+their first operand, and `make` keeps the selector rule stated below. That pause is not the end of the
+line: `find`'s `-exec` and `-execdir` actions name a command, and the reading resumes there, so
+`find gov-infra -name data.txt -exec node gov-infra/evil2.js {} \;` reads the file the action runs.
 
-A name stored in a variable and expanded later - `"${files[@]}"`, `"$f"` - is read as a name, not as a
-file, at every site in this file. That is the rule's one limit and it is deliberate: a variable's value
-is not in the bytes the guard reads, and a guard that guessed it would be guessing. What the limit
-leaves open is a name materialized at run time and run without ever being written down, and that is
-stated rather than glossed: `printf '%s\n' some.js | xargs bash` names its file as data in another
-command, and a name no pinned file writes is a name no pin can describe.
+The token a command runs is read whatever its suffix, including no suffix at all, and six spellings a
+round-8 reader skipped are refused rather than skipped now. A **bare name** - a file name with no
+directory component, `node evil9.js`, or a name on the left of a pipe into a launcher - is refused,
+because every execution on this release path writes a slashed path and a name without a directory is
+how a variable, a flag value and an object property are written everywhere else. A **brace expansion**
+in an executed path (`node scripts/{deep,}/evil7.js`) is refused, because the shell rewrites the name
+before anything runs, so the token written is not the name that executes. An **array or variable
+expansion** in an executed position (`node "${files[@]}"`, `node "$f"`) is refused with the other
+refused spellings; the glob-as-set rule below still covers a literal glob. A `python -m <module>` name
+is read like a path: a module that resolves to a file in this repository (`evilmod` with an
+`evilmod.py` beside it) must be pinned, while the interpreter's own standard library and site-packages
+(`venv`, `pip`, `unittest`, `coverage`) name no file here and are left alone. And `command -v <name>` is
+the one executed position that reads nothing: it looks a name up instead of running it, six pinned
+lines write it, and refusing it would over-block on all six.
+
+A name materialized at run time is the shape that remains, and it is stated precisely rather than
+guessed: the guard reads the *text* of the line, so a name that reaches a launcher as data - every
+`printf '%s\n' x.js | xargs bash`, or a pipe into a launcher with no name written on the line - is
+refused rather than read, because a name no pinned file writes is a name no pin can describe. A name
+written on a backslash continuation line after an executor is not read either, and no executor
+invocation on this release path writes its path that way.
 
 ### Globs, and the one the tree runs
 
@@ -304,20 +326,43 @@ whole.
 
 ### The one carve-out: dependency code
 
-A path under a `node_modules/` directory, a `.venv/` or `venv/` directory, or `gov-infra/.tools/` is
+A path under a `node_modules/` directory, a `.venv/` directory, or `gov-infra/.tools/` is
 **dependency or tool code**, and the executed-path rule reads it as such rather than silently not
 reading it. The reason it is out of scope is not that it is unimportant; it is that it is not in this
-repository. All three directories are git-ignored, so no commit can change a byte of any of them, and
-each is materialised at run time by an installer a pinned file names: `stage-release-please-package.sh`
-pins the exact version `release-please@17.1.3` and installs with `--ignore-scripts`, so no dependency
-lifecycle script runs, and its assertions - the version pin, the credential-free boundary - are held
-by `verify-release-please-token-safety.sh`, which is pinned like everything else on the release path;
-the two venvs are built by pinned scripts from `requirements-build.txt` and `requirements-lint.txt`,
-whose versions are exact pins; `gov-infra/.tools` is built by the GovTheory verifier from exact
-version pins. The limit is stated rather than implied: the npm staging runs with `--no-package-lock`,
-so the transitive bytes under `node_modules/` are registry-resolved and not lockfile-pinned, and this
-guard does not claim otherwise. A pinned file that runs repo code under one of those directories is a
-finding; the carve-out is exactly the directory, and the battery carries both directions.
+repository: each root is git-ignored, so no commit can change a byte of what it covers, and each is
+materialised at run time by an installer a pinned file names - `npm ci` against the lockfile of the
+directory the invoking line `cd`s into, and `stage-release-please-package.sh`, which pins the exact
+version `release-please@17.1.3` and installs with `--ignore-scripts` and `--no-package-lock`, with its
+assertions - the version pin, the credential-free boundary - held by
+`verify-release-please-token-safety.sh`, which is pinned like everything else on the release path; the
+two venvs are built by pinned scripts from `requirements-build.txt` and `requirements-lint.txt`, whose
+versions are exact pins; `gov-infra/.tools` is built by the GovTheory verifier from exact version pins.
+
+Two things round 8 got wrong here are corrected rather than re-disclosed. First, the carve-out was
+decided on the *spelling*: `node scripts/node_modules/../evil.js` was dependency code because the token
+contained `node_modules/`, while the file it runs is the tracked `scripts/evil.js`. It is decided on
+the **resolved path** now - the `..` walk is normalised, and a spelling that walks out of a dependency
+directory into a tracked path is a finding like any other unpinned name. Second, the sentence that
+closed this section claimed all three roots were git-ignored, and `.gitignore` anchored only
+`py/.venv/`, so `venv/evil.js` and `scripts/.venv/evil.js` were committable while the guard read them
+as dependency code. `venv/` is not a carve-out root at all now, because nothing in this tree makes a
+non-dot venv and an ignore rule for a directory the repository never creates would make the claim true
+by fiat; `.venv/` is a root and `.gitignore` ignores it at any depth. And the claim itself is an
+assertion rather than prose: the guard reads `.gitignore` and fails closed unless every approved
+dependency root is ignored, so a root that stops being uncommittable fails the guard instead of being
+disclosed, and the battery carries the un-ignored root.
+
+The trust model is stated exactly. What the pins DO fix: every `package.json`, `package-lock.json` and
+`npm-shrinkwrap.json` this repository can commit is pinned, so an `npm ci` in any directory installs
+exactly the resolved versions and integrity hashes a pinned lockfile records, the `bin` map in that
+lockfile says which package provides the binary an `npx` invocation runs, and `npm run <name>` must be
+declared by a pinned manifest - the one the invocation's line names, or, when the line names none it
+can read, by a pinned manifest at all and in a file that installs npm state. What they do NOT fix: the
+tarballs are fetched from the registry at run time, so a registry compromise is outside this guard's
+reach, and the release-please staging runs with `--no-package-lock`, so that one install's transitive
+bytes are named by the exact version pin and by nothing else. A pinned file that runs repo code under
+one of those directories is a finding; the carve-out is exactly the directory, decided on the resolved
+path, and the battery carries both directions.
 
 A name that resolves to no file is read as a name, and it is a finding when the line it is written on
 runs it. A name that resolves is a finding unless it is pinned, and where it lives does not enter into
@@ -336,13 +381,16 @@ file's own directory are both read when they exist.
 
 The admitted spellings are witnessed by names the pinned tree itself writes, so a spelling nothing
 writes fails the battery rather than quietly shrinking what the derivation is asked to read, and each
-refused spelling has an attack row. A witness is a *code* witness: the witness check reads each file
-with its comments stripped, because round 7 satisfied the up-walk row with a shellcheck directive -
-prose about a spelling - while the code below it wrote the braced form. The up-walk spelling is no
-longer in the witness table at all, because nothing in the pinned tree writes `../x.sh` as a path it
-resolves; what remains is the read, and the battery proves the read with an attack row that walks up
-to an unpinned file. An admitted spelling nothing writes is surface, so it is dropped rather than
-witnessed by a comment.
+refused spelling has an attack row. A witness is an *executed* witness: the token must be a name a
+command runs, in the file's own executed-path reading, so a comment about a spelling, a string the file
+merely prints (`echo 'source "${SCRIPT_DIR}/lib/ts-runtime-deps.sh"'`) and a commented-out line are
+none of them a witness. Round 7 satisfied the row with a shellcheck directive - prose about a spelling -
+while the code below it wrote the braced form; round 8 stripped comments but left strings, and printing
+the spelling kept the row green while the line that ran the library was gone. The up-walk spelling is
+no longer in the witness table at all, because nothing in the pinned tree writes `../x.sh` as a path it
+resolves; what remains is the read, and the battery proves the read with an attack row that walks up to
+an unpinned file. An admitted spelling nothing writes is surface, so it is dropped rather than
+witnessed by a comment or a string.
 
 What is **not** pinned anywhere in this repository, said plainly - it is one file:
 
