@@ -38,7 +38,7 @@ const JSII_RTTI_SYMBOL_1 = Symbol.for("jsii.rtti");
 const acm = __importStar(require("aws-cdk-lib/aws-certificatemanager"));
 const constructs_1 = require("constructs");
 class AppTheoryCertificate extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryCertificate", version: "4.3.0" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryCertificate", version: "4.4.0" };
     certificate;
     constructor(scope, id, props) {
         super(scope, id);
