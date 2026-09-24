@@ -1,5 +1,34 @@
 # Changelog
 
+## [4.3.0-rc](https://github.com/theory-cloud/AppTheory/compare/v4.2.4...v4.3.0-rc) (2026-09-24)
+
+
+### Features
+
+* **cdk:** raise the CDK Node floor to 22 and gate dependency engines drift ([e9149af](https://github.com/theory-cloud/AppTheory/commit/e9149af8983c7ddf9d955e1b6cc723e4a5d3d951))
+* **cdk:** raise the CDK Node floor to Node 22 ([84f1250](https://github.com/theory-cloud/AppTheory/commit/84f125041ea0f37b424f6e74fcdbe66c61ea21be))
+* **release:** add apptheory-init template/release pairing gate ([b778cc2](https://github.com/theory-cloud/AppTheory/commit/b778cc248df8824415e904349a188c6eeff02c4e))
+* **release:** add apptheory-init template/release pairing gate ([64031fb](https://github.com/theory-cloud/AppTheory/commit/64031fbda5cf35b501a3b7db827062c0bba8fe6e))
+* **scripts:** gate CDK dependencies on the Node floor via engines.node ([4cd1fc6](https://github.com/theory-cloud/AppTheory/commit/4cd1fc633696d14e51f3a8e2dfc0c930265744eb))
+
+
+### Bug Fixes
+
+* **cdk:** pin jsii-rosetta 6.0.16 to clear the stream-json advisory ([79c904f](https://github.com/theory-cloud/AppTheory/commit/79c904fbb2b9da645b3fee59d4f2f3793e429827))
+* **cdk:** relax the constructs peer pin from an exact version to a range ([8959db6](https://github.com/theory-cloud/AppTheory/commit/8959db66fb8228606108bde24a9c09a32f4f9a31))
+* **cdk:** relax the constructs peer pin from an exact version to a range ([19e8346](https://github.com/theory-cloud/AppTheory/commit/19e83469fe6d726bce33c6ebdbf19d179047e32d))
+* **release:** bound the published-asset download and report the real failure ([dc39383](https://github.com/theory-cloud/AppTheory/commit/dc39383073427d38f5832e16b35483b31ad8fa40))
+* **release:** desugar partial version ranges the way npm does ([cc0a7c2](https://github.com/theory-cloud/AppTheory/commit/cc0a7c2dbec922aaafcf68a97e786ef049f0e378))
+* **release:** finish the [#1029](https://github.com/theory-cloud/AppTheory/issues/1029) release-pairing gate rework (F1-F4) ([f43bbd6](https://github.com/theory-cloud/AppTheory/commit/f43bbd684fb37620d389625b6f572e0b7e1af35e))
+* **release:** pair only the release the publish run created ([dd88c28](https://github.com/theory-cloud/AppTheory/commit/dd88c288341839eed72de8b130fc36550eaed825))
+* **release:** pin the pairing gate against semantic weakening ([543cf01](https://github.com/theory-cloud/AppTheory/commit/543cf014c5516b88ba251d3e37fb0f84659e3c1e))
+* **scripts:** close the prerelease false pass in the CDK engines floor gate ([58d3648](https://github.com/theory-cloud/AppTheory/commit/58d36489ca762d5fbbc4a86b0737bb634e7124d1))
+* **scripts:** harden the CDK engines-floor matcher and fold in superseded Dependabot PRs ([0c6459d](https://github.com/theory-cloud/AppTheory/commit/0c6459db8b17debf3d4bc7467352e972eda62634))
+* **scripts:** judge example lockfile roots fail-closed on the engines floor ([f070bb2](https://github.com/theory-cloud/AppTheory/commit/f070bb2b6f9e0db034f91250468e8e4be1179a8c))
+* **scripts:** judge example lockfile roots fail-closed on the engines floor ([f9befa0](https://github.com/theory-cloud/AppTheory/commit/f9befa0ce60fbe6e8322ca58ece7ac7c701b49aa))
+* **scripts:** remove the expired cdk stream-json dependency-audit exception ([0c973ed](https://github.com/theory-cloud/AppTheory/commit/0c973ed3da74d9ceb565cd6d59768e201c48fbac))
+* **scripts:** remove the expired cdk stream-json dependency-audit exception ([781da72](https://github.com/theory-cloud/AppTheory/commit/781da72cb1c3d8bf7dfbee7dbca33d704dfea3d4))
+
 ## [4.2.4](https://github.com/theory-cloud/AppTheory/compare/v4.2.3...v4.2.4) (2026-09-22)
 
 
