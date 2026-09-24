@@ -2,23 +2,55 @@
 
 from __future__ import annotations
 
+import base64
+import datetime as dt
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, cast
+from urllib.parse import parse_qs, urlparse
 
 OBJECTSTORE_ERROR_INVALID_REF = "objectstore.invalid_ref"
 OBJECTSTORE_ERROR_INVALID_GET_LIMIT = "objectstore.invalid_get_limit"
+OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT = "objectstore.invalid_presign_put"
 OBJECTSTORE_ERROR_OBJECT_TOO_LARGE = "objectstore.object_too_large"
 OBJECTSTORE_ERROR_NOT_FOUND = "objectstore.not_found"
 OBJECTSTORE_ERROR_INVALID_STORE_CONFIG = "objectstore.invalid_store_config"
 OBJECTSTORE_ERROR_INVALID_ENCRYPTION_CONFIG = "objectstore.invalid_encryption_config"
 OBJECTSTORE_ERROR_UNSUPPORTED_OPERATION = "objectstore.unsupported_operation"
 
+MAX_PRESIGN_PUT_EXPIRES_IN = 900
+
 S3_ENCRYPTION_BUCKET_DEFAULT = "bucket-default"
 S3_ENCRYPTION_S3_MANAGED = "s3-managed"
 S3_ENCRYPTION_KMS = "kms"
 
 S3EncryptionMode = Literal["bucket-default", "s3-managed", "kms"]
-ObjectStoreOperation = Literal["Put", "Get", "Delete"]
+ObjectStoreOperation = Literal["Put", "Get", "Delete", "PresignPut"]
+
+_PRESIGN_PUT_METHOD = "PUT"
+_PRESIGN_PUT_HEADER_CONTENT_LENGTH = "content-length"
+_PRESIGN_PUT_HEADER_CONTENT_TYPE = "content-type"
+_PRESIGN_PUT_HEADER_CHECKSUM = "x-amz-checksum-sha256"
+_PRESIGN_PUT_SIGNED_HEADERS_PARAM = "X-Amz-SignedHeaders"
+_PRESIGN_PUT_EXPIRES_PARAM = "X-Amz-Expires"
+
+_PRESIGN_PUT_REQUIRED_HEADERS = (
+    _PRESIGN_PUT_HEADER_CONTENT_LENGTH,
+    _PRESIGN_PUT_HEADER_CONTENT_TYPE,
+    _PRESIGN_PUT_HEADER_CHECKSUM,
+)
+
+_PRESIGN_PUT_ENCODED_SHA256_LENGTH = 44
+_PRESIGN_PUT_SHA256_SIZE = 32
+_PRESIGN_PUT_BASE64_ALPHABET = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+
+_FAKE_PRESIGN_PUT_BASE_URL = "https://objectstore.fake"
+_FAKE_PRESIGN_PUT_ALGORITHM = "AWS4-HMAC-SHA256"
+_FAKE_PRESIGN_PUT_CREDENTIAL = "apptheory-fake"
+_FAKE_PRESIGN_PUT_SIGNATURE = "fake"
+_FAKE_PRESIGN_PUT_SIGNED_HEADERS = "content-length;content-type;host;x-amz-checksum-sha256"
+_FAKE_PRESIGN_PUT_UNRESERVED = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~")
+_FAKE_PRESIGN_PUT_DEFAULT_INSTANT = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
 
 
 class ObjectStoreError(Exception):
@@ -68,10 +100,41 @@ class ObjectStoreDeleteInput:
 
 
 @dataclass(frozen=True)
+class ObjectStorePresignPutInput:
+    """One bounded upload-grant request: exact ref, declared bytes, expiry ceiling.
+
+    ``content_length`` and ``max_bytes`` are byte counts and ``expires_in`` is a whole number of
+    seconds; a bool, float or numeric string for any of them is refused by
+    :func:`validate_presign_put_input` with ``objectstore.invalid_presign_put``.
+    """
+
+    ref: ObjectRef
+    content_length: int
+    checksum_sha256: str
+    content_type: str
+    max_bytes: int
+    expires_in: int
+
+
+@dataclass(frozen=True)
+class ObjectStorePresignPutOutput:
+    """A bounded upload grant. ``headers`` are exactly the headers the client must send."""
+
+    ref: ObjectRef
+    url: str
+    method: str
+    headers: dict[str, str]
+    expires_at: dt.datetime
+
+
+@dataclass(frozen=True)
 class ObjectStoreCall:
     operation: ObjectStoreOperation
     ref: ObjectRef
     max_bytes: int = 0
+    content_length: int = 0
+    checksum_sha256: str = ""
+    expires_in: int = 0
     content_type: str = ""
     metadata: dict[str, str] | None = None
     payload: bytes = b""
@@ -105,6 +168,18 @@ class ObjectStore(Protocol):
     def delete(self, input_: ObjectStoreDeleteInput) -> None: ...
 
 
+class ObjectStoreUploadGranter(Protocol):
+    """Bounded upload-grant capability, deliberately separate from ``ObjectStore``.
+
+    The method here can only mint a single PUT grant whose signed headers carry the declared
+    content length, content type and SHA-256 checksum, for at most ``MAX_PRESIGN_PUT_EXPIRES_IN``.
+    Presigned GET, presigning without a checksum, list, multipart, copy, head, public URLs and raw
+    clients have no method here and none on ``ObjectStore``.
+    """
+
+    def presign_put(self, input_: ObjectStorePresignPutInput) -> ObjectStorePresignPutOutput: ...
+
+
 def parse_object_ref(raw: str) -> ObjectRef:
     if not raw or raw != raw.strip() or any(ch in raw for ch in "?#"):
         raise _invalid_object_ref()
@@ -131,6 +206,70 @@ def validate_object_ref(ref: ObjectRef) -> None:
         raise _invalid_object_ref()
 
 
+def validate_presign_put_input(input_: ObjectStorePresignPutInput) -> None:
+    """Verify an upload-grant request is complete and safe, failing closed on every doubt.
+
+    An unversioned exact reference, an integer content length that is positive and no larger than
+    ``max_bytes``, a non-empty unpadded content type, the canonical base64 SHA-256 digest, and an
+    expiry of a whole number of seconds, above zero and at most ``MAX_PRESIGN_PUT_EXPIRES_IN``.
+
+    Every field is type-checked before it is compared or handed to the SDK. ``bool`` is refused
+    even though ``isinstance(True, int)`` holds, and a numeric string or a float is refused rather
+    than coerced, so a mistyped field raises ``ObjectStoreError`` instead of a ``TypeError`` or a
+    botocore ``ParamValidationError``. This is the same input domain the Go and TypeScript
+    runtimes accept.
+    """
+    validate_object_ref(input_.ref)
+    if input_.ref.version_id:
+        raise _invalid_object_ref()
+    if not _is_grant_integer(input_.content_length) or not _is_grant_integer(input_.max_bytes):
+        raise _invalid_presign_put()
+    if input_.content_length <= 0 or input_.max_bytes <= 0 or input_.content_length > input_.max_bytes:
+        raise _invalid_presign_put()
+    if not _valid_presign_put_content_type(input_.content_type):
+        raise _invalid_presign_put()
+    if not _valid_presign_put_checksum(input_.checksum_sha256):
+        raise _invalid_presign_put()
+    if not _is_grant_integer(input_.expires_in):
+        raise _invalid_presign_put()
+    if input_.expires_in <= 0 or input_.expires_in > MAX_PRESIGN_PUT_EXPIRES_IN:
+        raise _invalid_presign_put()
+
+
+def _is_grant_integer(value: Any) -> bool:
+    """Accept only a real integer: never a ``bool``, a float or a numeric string.
+
+    ``True`` is an ``int`` in Python, and ``X-Amz-Expires`` is a whole number of seconds, so the
+    bool exclusion is what keeps ``content_length=True`` from minting ``content-length: "True"``.
+    """
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _valid_presign_put_content_type(content_type: str) -> bool:
+    if not content_type or content_type != content_type.strip():
+        return False
+    return not _contains_control(content_type)
+
+
+def _valid_presign_put_checksum(checksum: str) -> bool:
+    """Accept only the canonical base64 encoding of a 32-byte digest.
+
+    The explicit length, alphabet, padding and round-trip checks keep the runtimes identical:
+    ``base64.b64decode`` is tolerant of non-canonical padding bits.
+    """
+    if len(checksum) != _PRESIGN_PUT_ENCODED_SHA256_LENGTH or not checksum.endswith("="):
+        return False
+    if any(ch not in _PRESIGN_PUT_BASE64_ALPHABET for ch in checksum[:-1]):
+        return False
+    try:
+        decoded = base64.b64decode(checksum, validate=True)
+    except ValueError:
+        return False
+    if len(decoded) != _PRESIGN_PUT_SHA256_SIZE:
+        return False
+    return base64.b64encode(decoded).decode("ascii") == checksum
+
+
 def create_fake_object_store() -> FakeObjectStore:
     return FakeObjectStore()
 
@@ -154,12 +293,17 @@ class FakeObjectStore:
         self._objects: dict[tuple[str, str, str], _StoredObject] = {}
         self._calls: list[ObjectStoreCall] = []
         self._failures: dict[ObjectStoreOperation, Exception] = {}
+        self._clock: Callable[[], dt.datetime] | None = None
 
     def set_error(self, operation: ObjectStoreOperation, error: Exception | None) -> None:
         if error is None:
             self._failures.pop(operation, None)
             return
         self._failures[operation] = error
+
+    def set_clock(self, now: Callable[[], dt.datetime] | None) -> None:
+        """Inject the grant clock. ``None`` restores the fixed default instant."""
+        self._clock = now
 
     def calls(self) -> list[ObjectStoreCall]:
         return [_clone_call(call) for call in self._calls]
@@ -223,6 +367,45 @@ class FakeObjectStore:
         if self._latest.get(name) == input_.ref.version_id:
             self._latest.pop(name, None)
 
+    def presign_put(self, input_: ObjectStorePresignPutInput) -> ObjectStorePresignPutOutput:
+        """Mint a deterministic fake upload grant.
+
+        The URL encodes the signed constraints instead of hashing them, so tests assert the exact
+        grant without AWS. A real S3 store additionally signs the request host; the fake signs it
+        too, which keeps the signed-header set identical between fake and real.
+        """
+        validate_presign_put_input(input_)
+        # Already a whole number of seconds: validate_presign_put_input refused anything else, so
+        # the grant can never carry a fractional or zero X-Amz-Expires. This is the same validation
+        # the S3 store runs, so the fake refuses exactly what the real store refuses.
+        expires_in = input_.expires_in
+        self._record(
+            ObjectStoreCall(
+                operation="PresignPut",
+                ref=input_.ref,
+                max_bytes=input_.max_bytes,
+                content_length=input_.content_length,
+                checksum_sha256=input_.checksum_sha256,
+                expires_in=expires_in,
+                content_type=input_.content_type,
+            )
+        )
+        self._raise_failure("PresignPut")
+
+        now = self._now()
+        return ObjectStorePresignPutOutput(
+            ref=input_.ref,
+            url=_fake_presign_put_url(input_, now, expires_in),
+            method=_PRESIGN_PUT_METHOD,
+            headers=_presign_put_headers(input_),
+            expires_at=now + dt.timedelta(seconds=expires_in),
+        )
+
+    def _now(self) -> dt.datetime:
+        if self._clock is None:
+            return _FAKE_PRESIGN_PUT_DEFAULT_INSTANT
+        return _as_utc(self._clock())
+
     def _object(self, ref: ObjectRef) -> _StoredObject | None:
         version = ref.version_id or self._latest.get((ref.bucket, ref.key), "")
         if not version:
@@ -283,6 +466,38 @@ class _S3ObjectStore:
             kwargs["VersionId"] = input_.ref.version_id
         self._client.delete_object(**kwargs)
 
+    def presign_put(self, input_: ObjectStorePresignPutInput) -> ObjectStorePresignPutOutput:
+        """Mint one bounded upload grant for an exact object reference.
+
+        The grant signs the declared content length, content type and SHA-256 checksum, so S3
+        rejects any other bytes, and it never outlives ``MAX_PRESIGN_PUT_EXPIRES_IN``. No
+        server-side encryption header is attached: the upload is the client's own request against
+        the one bucket, which owns its default encryption policy.
+        """
+        validate_presign_put_input(input_)
+        generate = getattr(self._client, "generate_presigned_url", None)
+        if not callable(generate):
+            raise _invalid_store_config()
+        raw_url = generate(
+            "put_object",
+            Params={
+                "Bucket": input_.ref.bucket,
+                "Key": input_.ref.key,
+                "ContentLength": input_.content_length,
+                "ContentType": input_.content_type,
+                "ChecksumSHA256": input_.checksum_sha256,
+            },
+            ExpiresIn=input_.expires_in,
+        )
+        _verify_presign_put_url(str(raw_url or ""), input_.expires_in)
+        return ObjectStorePresignPutOutput(
+            ref=input_.ref,
+            url=str(raw_url),
+            method=_PRESIGN_PUT_METHOD,
+            headers=_presign_put_headers(input_),
+            expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(seconds=input_.expires_in),
+        )
+
 
 def _validate_put_input(input_: ObjectStorePutInput) -> None:
     validate_object_ref(input_.ref)
@@ -304,6 +519,119 @@ def _invalid_object_ref() -> ObjectStoreError:
     return ObjectStoreError(OBJECTSTORE_ERROR_INVALID_REF, "objectstore: invalid object ref")
 
 
+def _invalid_presign_put() -> ObjectStoreError:
+    return ObjectStoreError(OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT, "objectstore: invalid presign put")
+
+
+def _invalid_store_config() -> ObjectStoreError:
+    return ObjectStoreError(OBJECTSTORE_ERROR_INVALID_STORE_CONFIG, "objectstore: invalid store config")
+
+
+def _presign_put_headers(input_: ObjectStorePresignPutInput) -> dict[str, str]:
+    return {
+        _PRESIGN_PUT_HEADER_CONTENT_LENGTH: str(input_.content_length),
+        _PRESIGN_PUT_HEADER_CONTENT_TYPE: input_.content_type,
+        _PRESIGN_PUT_HEADER_CHECKSUM: input_.checksum_sha256,
+    }
+
+
+def _as_utc(value: dt.datetime) -> dt.datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=dt.UTC)
+    return value.astimezone(dt.UTC)
+
+
+def _fake_presign_put_url(input_: ObjectStorePresignPutInput, now: dt.datetime, expires_in: int) -> str:
+    parameters = [
+        _fake_query_parameter("X-Amz-Algorithm", _FAKE_PRESIGN_PUT_ALGORITHM),
+        _fake_query_parameter("X-Amz-Credential", _FAKE_PRESIGN_PUT_CREDENTIAL),
+        _fake_query_parameter("X-Amz-Date", now.strftime("%Y%m%dT%H%M%SZ")),
+        _fake_query_parameter("X-Amz-Expires", str(expires_in)),
+        _fake_query_parameter("X-Amz-Signature", _FAKE_PRESIGN_PUT_SIGNATURE),
+        _fake_query_parameter("X-Amz-SignedHeaders", _FAKE_PRESIGN_PUT_SIGNED_HEADERS),
+        _fake_query_parameter(_PRESIGN_PUT_HEADER_CHECKSUM, input_.checksum_sha256),
+        _fake_query_parameter("x-amz-content-length", str(input_.content_length)),
+        _fake_query_parameter("x-amz-content-type", input_.content_type),
+    ]
+    bucket = _fake_percent_encode(input_.ref.bucket, keep_slash=True)
+    key = _fake_percent_encode(input_.ref.key, keep_slash=True)
+    return f"{_FAKE_PRESIGN_PUT_BASE_URL}/{bucket}/{key}?{'&'.join(parameters)}"
+
+
+def _fake_query_parameter(name: str, value: str) -> str:
+    return f"{name}={_fake_percent_encode(value, keep_slash=False)}"
+
+
+def _fake_percent_encode(value: str, *, keep_slash: bool) -> str:
+    """Escape every byte outside the RFC 3986 unreserved set, using uppercase hex.
+
+    Path segments additionally keep ``/`` literal. All three runtimes share this rule byte-for-byte.
+    """
+    out: list[str] = []
+    for byte in value.encode("utf-8"):
+        if byte in _FAKE_PRESIGN_PUT_UNRESERVED or (keep_slash and byte == 0x2F):
+            out.append(chr(byte))
+            continue
+        out.append(f"%{byte:02X}")
+    return "".join(out)
+
+
+def _verify_presign_put_url(raw_url: str, requested_expires_in: int) -> None:
+    """Enforce the grant's post-condition on a presigned URL, failing closed on any doubt.
+
+    A URL is only accepted when the constraint headers really are signed headers and are not
+    hoisted into unsigned query parameters, and when the embedded expiry cannot outlive the
+    requested one. Anything else is a misconfigured signer.
+    """
+    try:
+        parsed = urlparse(raw_url)
+    except ValueError:
+        raise _invalid_store_config() from None
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    if not query:
+        raise _invalid_store_config()
+
+    signed_raw = _presign_query_value(query, _PRESIGN_PUT_SIGNED_HEADERS_PARAM)
+    if signed_raw is None:
+        raise _invalid_store_config()
+    signed = {name.strip() for name in signed_raw.lower().split(";")}
+    for required in _PRESIGN_PUT_REQUIRED_HEADERS:
+        if required not in signed:
+            raise _invalid_store_config()
+        if _presign_query_value(query, required) is not None:
+            raise _invalid_store_config()
+
+    expires_raw = _presign_query_value(query, _PRESIGN_PUT_EXPIRES_PARAM)
+    if expires_raw is None:
+        raise _invalid_store_config()
+    expires_seconds = _parse_presign_put_expiry(expires_raw)
+    if expires_seconds is None or expires_seconds <= 0 or expires_seconds > MAX_PRESIGN_PUT_EXPIRES_IN:
+        raise _invalid_store_config()
+    if requested_expires_in > 0 and expires_seconds > requested_expires_in:
+        raise _invalid_store_config()
+
+
+def _parse_presign_put_expiry(raw: str) -> int | None:
+    """Parse ``X-Amz-Expires`` as bare ASCII digits.
+
+    ``int()`` is lenient: it accepts surrounding whitespace, underscores (``9_00``) and non-ASCII
+    decimal digits (East Asian fullwidth digits, for example), so a padded or non-canonical expiry
+    would satisfy a post-condition that the Go and TypeScript runtimes refuse. Requiring ``[0-9]+``
+    keeps all three runtimes' post-condition on exactly the same input domain.
+    """
+    if not raw or any(ch < "0" or ch > "9" for ch in raw):
+        return None
+    return int(raw)
+
+
+def _presign_query_value(query: dict[str, list[str]], name: str) -> str | None:
+    for key, values in query.items():
+        if key.lower() != name.lower() or not values:
+            continue
+        return values[0]
+    return None
+
+
 def _contains_control(value: str) -> bool:
     return any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value)
 
@@ -323,6 +651,9 @@ def _clone_call(call: ObjectStoreCall) -> ObjectStoreCall:
         operation=call.operation,
         ref=call.ref,
         max_bytes=call.max_bytes,
+        content_length=call.content_length,
+        checksum_sha256=call.checksum_sha256,
+        expires_in=call.expires_in,
         content_type=call.content_type,
         metadata=_clone_metadata(call.metadata),
         payload=bytes(call.payload),
@@ -377,8 +708,13 @@ def _read_s3_body_bounded(body: Any, max_bytes: int) -> bytes:
 def _load_s3_client(region_name: str) -> Any:
     try:
         import boto3  # type: ignore[import-not-found]
+        from botocore.config import Config  # type: ignore[import-not-found]
 
-        kwargs = {"region_name": region_name} if region_name else {}
+        kwargs: dict[str, Any] = {"region_name": region_name} if region_name else {}
+        # botocore's bundled S3 model declares signatureVersion "s3", which presigns with SigV2 and
+        # signs neither content-length nor the checksum header. Pin s3v4 so the post-condition can
+        # hold; _verify_presign_put_url still refuses anything a misconfigured client returns.
+        kwargs["config"] = Config(signature_version="s3v4")
         client = boto3.client("s3", **kwargs)
         if not all(callable(getattr(client, method, None)) for method in ("put_object", "get_object", "delete_object")):
             raise RuntimeError("s3 methods unavailable")
@@ -391,8 +727,10 @@ def _load_s3_client(region_name: str) -> Any:
 
 
 __all__ = [
+    "MAX_PRESIGN_PUT_EXPIRES_IN",
     "OBJECTSTORE_ERROR_INVALID_ENCRYPTION_CONFIG",
     "OBJECTSTORE_ERROR_INVALID_GET_LIMIT",
+    "OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT",
     "OBJECTSTORE_ERROR_INVALID_REF",
     "OBJECTSTORE_ERROR_INVALID_STORE_CONFIG",
     "OBJECTSTORE_ERROR_NOT_FOUND",
@@ -410,7 +748,10 @@ __all__ = [
     "ObjectStoreGetInput",
     "ObjectStoreGetOutput",
     "ObjectStoreOperation",
+    "ObjectStorePresignPutInput",
+    "ObjectStorePresignPutOutput",
     "ObjectStorePutInput",
+    "ObjectStoreUploadGranter",
     "S3EncryptionConfig",
     "S3EncryptionMode",
     "S3ObjectStoreConfig",
@@ -419,4 +760,5 @@ __all__ = [
     "parse_object_ref",
     "unsupported_object_store_operation",
     "validate_object_ref",
+    "validate_presign_put_input",
 ]

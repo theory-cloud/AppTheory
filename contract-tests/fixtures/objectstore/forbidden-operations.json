@@ -1,7 +1,7 @@
 {
   "id": "objectstore.forbidden_operations.errors",
   "tier": "objectstore",
-  "name": "List, presign, and multipart are forbidden object-store operations",
+  "name": "List, generic presign, presign-get, multipart, copy, head, and raw clients stay forbidden",
   "setup": {
     "objectstore": {
       "backend": "fake"
@@ -22,8 +22,28 @@
           "ref": "s3://bucket-a/objects/alpha.txt"
         },
         {
+          "name": "presign-get-forbidden",
+          "operation": "presign_get",
+          "ref": "s3://bucket-a/objects/alpha.txt"
+        },
+        {
           "name": "multipart-forbidden",
           "operation": "multipart",
+          "ref": "s3://bucket-a/objects/alpha.txt"
+        },
+        {
+          "name": "copy-forbidden",
+          "operation": "copy",
+          "ref": "s3://bucket-a/objects/alpha.txt"
+        },
+        {
+          "name": "head-forbidden",
+          "operation": "head",
+          "ref": "s3://bucket-a/objects/alpha.txt"
+        },
+        {
+          "name": "raw-client-forbidden",
+          "operation": "raw_client",
           "ref": "s3://bucket-a/objects/alpha.txt"
         }
       ]
@@ -51,12 +71,48 @@
           }
         },
         {
+          "name": "presign-get-forbidden",
+          "operation": "presign_get",
+          "ok": false,
+          "error": {
+            "code": "objectstore.unsupported_operation",
+            "message": "objectstore: unsupported operation: presign_get"
+          }
+        },
+        {
           "name": "multipart-forbidden",
           "operation": "multipart",
           "ok": false,
           "error": {
             "code": "objectstore.unsupported_operation",
             "message": "objectstore: unsupported operation: multipart"
+          }
+        },
+        {
+          "name": "copy-forbidden",
+          "operation": "copy",
+          "ok": false,
+          "error": {
+            "code": "objectstore.unsupported_operation",
+            "message": "objectstore: unsupported operation: copy"
+          }
+        },
+        {
+          "name": "head-forbidden",
+          "operation": "head",
+          "ok": false,
+          "error": {
+            "code": "objectstore.unsupported_operation",
+            "message": "objectstore: unsupported operation: head"
+          }
+        },
+        {
+          "name": "raw-client-forbidden",
+          "operation": "raw_client",
+          "ok": false,
+          "error": {
+            "code": "objectstore.unsupported_operation",
+            "message": "objectstore: unsupported operation: raw_client"
           }
         }
       ],

@@ -18,8 +18,12 @@ var (
 // Store is AppTheory's narrow object-store contract.
 //
 // It intentionally supports only byte Put, bounded Get, and Delete. There is no
-// unbounded read method and no listing, presigning, public URL, multipart, copy,
-// head, or raw client escape hatch.
+// unbounded read method and no listing, public URL, multipart, copy, head, or raw
+// client escape hatch.
+//
+// UploadGranter is the one bounded presigning exception and is deliberately a separate
+// capability interface rather than a fourth Store method, so a store opts in to minting
+// upload links and no existing Store implementation changes shape.
 type Store interface {
 	Put(context.Context, PutInput) (ObjectRef, error)
 	Get(context.Context, GetInput) (*GetOutput, error)

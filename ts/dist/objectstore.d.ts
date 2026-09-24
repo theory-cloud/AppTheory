@@ -5,6 +5,9 @@ export declare const OBJECTSTORE_ERROR_NOT_FOUND = "objectstore.not_found";
 export declare const OBJECTSTORE_ERROR_INVALID_STORE_CONFIG = "objectstore.invalid_store_config";
 export declare const OBJECTSTORE_ERROR_INVALID_ENCRYPTION_CONFIG = "objectstore.invalid_encryption_config";
 export declare const OBJECTSTORE_ERROR_UNSUPPORTED_OPERATION = "objectstore.unsupported_operation";
+export declare const OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT = "objectstore.invalid_presign_put";
+/** Framework ceiling for a bounded upload grant, in seconds. */
+export declare const MAX_PRESIGN_PUT_EXPIRES_IN = 900;
 export declare const S3Encryption: {
     readonly BucketDefault: "bucket-default";
     readonly S3Managed: "s3-managed";
@@ -44,6 +47,41 @@ export interface ObjectStore {
     get(input: ObjectStoreGetInput): Promise<ObjectStoreGetOutput>;
     delete(input: ObjectStoreDeleteInput): Promise<void>;
 }
+/**
+ * One bounded upload grant request. Every field is required: the reference
+ * must be exact and unversioned, the content length must be a positive safe
+ * integer no larger than maxBytes, the checksum must be the canonical base64
+ * SHA-256 digest of the exact bytes the client will upload, and expiresIn must
+ * be a whole number of seconds, positive and at most
+ * MAX_PRESIGN_PUT_EXPIRES_IN.
+ */
+export interface ObjectStorePresignPutInput {
+    ref: ObjectRef;
+    contentLength: number;
+    checksumSha256: string;
+    contentType: string;
+    maxBytes: number;
+    expiresIn: number;
+}
+export interface ObjectStorePresignPutOutput {
+    ref: ObjectRef;
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    expiresAt: Date;
+}
+/**
+ * The bounded upload-grant capability, deliberately separate from
+ * `ObjectStore`: the Put/Get/Delete contract is unchanged, and a store opts in
+ * to minting one narrow upload link. Consumers upgrade the interface rather
+ * than changing how they construct the store.
+ *
+ * Presigned GET, presigning without a checksum, list, multipart, copy, head,
+ * public URLs and raw clients stay forbidden: they have no method here.
+ */
+export interface ObjectStoreUploadGranter {
+    presignPut(input: ObjectStorePresignPutInput): Promise<ObjectStorePresignPutOutput>;
+}
 export interface S3EncryptionConfig {
     mode?: S3EncryptionMode;
     kmsKeyId?: string;
@@ -52,7 +90,7 @@ export interface S3ObjectStoreConfig {
     region?: string;
     encryption?: S3EncryptionConfig;
 }
-export type ObjectStoreOperation = "Put" | "Get" | "Delete";
+export type ObjectStoreOperation = "Put" | "Get" | "Delete" | "PresignPut";
 export interface ObjectStoreCall {
     operation: ObjectStoreOperation;
     ref: ObjectRef;
@@ -60,24 +98,42 @@ export interface ObjectStoreCall {
     contentType?: string;
     metadata?: Record<string, string>;
     payload?: Uint8Array;
+    contentLength?: number;
+    checksumSha256?: string;
+    expiresIn?: number;
 }
 export declare function parseObjectRef(raw: string): ObjectRef;
 export declare function validateObjectRef(ref: ObjectRef): void;
 export declare function createFakeObjectStore(): FakeObjectStore;
+/**
+ * Verifies a grant request is complete and safe. Every failure is fail-closed.
+ *
+ * The byte counts and the expiry must be integers: `Number.isSafeInteger`
+ * refuses a fractional content length, a boolean, a numeric string and
+ * `undefined` alike, matching the integer-typed Go grant input and Python's
+ * explicit type check. The expiry must further be a whole number of seconds,
+ * because the grant carries it as the integer `X-Amz-Expires`; a fractional
+ * expiry would be truncated or rejected by the signer.
+ */
+export declare function validatePresignPutInput(input: ObjectStorePresignPutInput): void;
 export declare function unsupportedObjectStoreOperation(operation: string): never;
 export declare function createS3ObjectStore(config?: S3ObjectStoreConfig): Promise<ObjectStore>;
-export declare class FakeObjectStore implements ObjectStore {
+export declare class FakeObjectStore implements ObjectStore, ObjectStoreUploadGranter {
     private seq;
+    private clock;
     private readonly latest;
     private readonly objects;
     private readonly callLog;
     private readonly failures;
     setError(operation: ObjectStoreOperation, error: Error | null): void;
+    setClock(now: (() => Date) | null): void;
     calls(): ObjectStoreCall[];
     put(input: ObjectStorePutInput): Promise<ObjectRef>;
     get(input: ObjectStoreGetInput): Promise<ObjectStoreGetOutput>;
     delete(input: ObjectStoreDeleteInput): Promise<void>;
+    presignPut(input: ObjectStorePresignPutInput): Promise<ObjectStorePresignPutOutput>;
     private object;
+    private now;
     private record;
     private raiseFailure;
 }
