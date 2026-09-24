@@ -18,8 +18,10 @@ esac
 RELEASE_WORKFLOWS_MODE="${mode}" python3 - <<'PY'
 import hashlib
 import os
+import posixpath
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 MODE = os.environ.get("RELEASE_WORKFLOWS_MODE", "verify")
@@ -115,6 +117,8 @@ def require_job_contains(path: str, job_name: str, needle: str, description: str
 # docs/release-process.md, together with the reason it is not.
 # ---------------------------------------------------------------------------
 
+ROOT = Path(".").resolve()
+
 GUARDED_BASENAMES = ("verify-release-pairing.sh", "verify-release-workflows.sh")
 
 GUARDED_WORKFLOWS = (
@@ -125,20 +129,27 @@ GUARDED_WORKFLOWS = (
     ".github/workflows/release.yml",
 )
 
-GUARDED_INVOKERS = (
-    "scripts/verify-release-branch.sh",
-    "scripts/verify-release-publish-postcondition.sh",
-    "scripts/verify-release-gates.sh",
-    "gov-infra/verifiers/gov-verify-rubric.sh",
-)
+# This guard. A file cannot pin its own bytes, so it is read by nothing here; that boundary
+# is stated in docs/release-process.md and asserted by an accepted battery case rather than
+# left as prose.
+GUARD_PATH = "scripts/verify-release-workflows.sh"
 
-GOV_VERIFIER = "gov-infra/verifiers/gov-verify-rubric.sh"
+# A script path can be written with a leading `./` or behind a variable that holds a
+# directory. This construction is not a shell: it resolves those two spellings, and treats
+# any other path as one that names no file.
+SCRIPT_REFERENCE = re.compile(r"[A-Za-z0-9_@./${}-]+\.(?:sh|mjs|py|rb)")
+VARIABLE_DIRECTORY = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}/")
 
-# Two places outside the pinned files that could gain a call site. `Makefile` and
-# a root `package.json` are read when present; `.github/**` is walked rather than
-# enumerated, so a new workflow file or a new composite action is read too.
-# Neither file names a guarded script today and there is no `.github/actions/`
-# directory; the occurrence sweep below is what keeps that true.
+# Where workflow-invoked scripts live. A script path under one of these roots is part of the
+# pinned surface; a path outside them is read as data - a test body, an example handler, a
+# library module - and is not part of the release path this guard pins. Pinning those would
+# make every library and example edit a pin edit, which is over-blocking with no bound behind
+# it; the boundary is stated here instead of implied.
+CLOSURE_ROOTS = ("scripts/", "gov-infra/")
+
+# The files outside the pinned set that could gain a call site. `Makefile` exists here and a
+# root `package.json` does not; `.github/**` is walked rather than enumerated, so a new
+# workflow file or a new composite action is read too.
 SWEEP_EXTRA_FILES = ("Makefile", "package.json")
 
 
@@ -149,1176 +160,340 @@ def sweep_paths():
     if github.is_dir():
         paths.extend(str(path) for path in sorted(github.rglob("*")) if path.is_file())
     paths.extend(extra for extra in SWEEP_EXTRA_FILES if Path(extra).is_file())
-    paths.extend(path for path in GUARDED_INVOKERS if path not in paths)
     return tuple(paths)
+
+
+def script_references(text):
+    """Every script-shaped path a file names, exactly as written."""
+    return sorted({match.group(0) for match in SCRIPT_REFERENCE.finditer(text)})
+
+
+def resolve_reference(token, base_dir):
+    """The repository-relative path a written token names, or None if it names no file."""
+    token = VARIABLE_DIRECTORY.sub("", token)
+    if token.startswith("./"):
+        token = token[2:]
+    candidates = [Path(token)]
+    if not token.startswith("/"):
+        candidates.append(Path(base_dir) / token)
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved.is_file() and resolved.is_relative_to(ROOT):
+            return resolved.relative_to(ROOT).as_posix()
+    return None
 
 
 # ---------------------------------------------------------------------------
 # Pins.
+#
+# There is no model of YAML or of bash here, and no admission rule. Every file the release
+# path consists of is pinned by its whole-file SHA-256, byte for byte: the five workflows
+# that run the release train, and the transitive closure of the scripts they name. Bytes
+# either match the pin or they do not.
+#
+# Rounds 1-5 reasoned about root keys, key identity, job spans and step spans, and each
+# round produced a spelling the reasoning did not hold: a root-level key below `jobs:`, a
+# quoted duplicate of a job key, a deleted job whose append absorbed the rewrite. The
+# reasoning was the hole, so it is deleted rather than repaired, and with it the tolerances
+# it needed - whitespace and line endings are bytes as well.
+#
+# The posture this buys: an intentional change to a pinned file is a visible two-place edit
+# - the file and its digest in this manifest - in the same commit. What is *not* pinned
+# anywhere in this repository is stated in docs/release-process.md with the reason it is not.
 # ---------------------------------------------------------------------------
 
-# The workflow-level configuration above `jobs:` - `on:`, `permissions:`,
-# `concurrency:`, `env:`, `defaults:` and anything else the owner adds - is
-# resolved by the runner before any step below it, so it is pinned whole.
-WORKFLOW_PREAMBLE_PINS = {
-    '.github/workflows/ci.yml': (
-        'name: CI',
-        '',
-        'on:',
-        '  pull_request:',
-        '    types: [opened, synchronize, reopened, ready_for_review]',
-        '  push:',
-        '    branches:',
-        '      - staging',
-        '      - main',
-        '      - premain',
-        '  workflow_dispatch:',
-        '    inputs:',
-        '      run_full_rubric:',
-        '        description: "Run Rubric (full gate set)"',
-        '        required: false',
-        '        type: boolean',
-        '        default: true',
-        '      release_pr_number:',
-        '        description: "Generated release PR number for head-bound release checks"',
-        '        required: false',
-        '        type: string',
-        '        default: ""',
-        '',
-        'permissions:',
-        '  contents: read',
-        '  pull-requests: read',
-    ),
-    '.github/workflows/prerelease-pr.yml': (
-        'name: Prerelease PR (premain)',
-        '',
-        'on:',
-        '  push:',
-        '    branches: ["premain"]',
-        '    paths-ignore:',
-        '      - ".release-please-manifest.premain.json"',
-        '      - "CHANGELOG.md"',
-        '      - "VERSION"',
-        '      - "ts/package.json"',
-        '      - "ts/package-lock.json"',
-        '      - "cdk/package.json"',
-        '      - "cdk/package-lock.json"',
-        '      - "cdk/.jsii"',
-        '      - "py/pyproject.toml"',
-        '      - "examples/cdk/multilang/package-lock.json"',
-        '      - "examples/cdk/ssr-site/package-lock.json"',
-        '      - "examples/cdk/lesser-parity/package-lock.json"',
-        '  workflow_dispatch: {}',
-        '',
-        'permissions:',
-        '  actions: write',
-        '  contents: write',
-        '  issues: write',
-        '  pull-requests: write',
-        '',
-        'concurrency:',
-        '  group: release-pr-${{ github.repository }}-release-please--branches--premain',
-        '  cancel-in-progress: false',
-    ),
-    '.github/workflows/release-pr.yml': (
-        'name: Release PR (main)',
-        '',
-        'on:',
-        '  push:',
-        '    branches: ["main"]',
-        '    paths-ignore:',
-        '      - ".release-please-manifest.json"',
-        '      - "CHANGELOG.md"',
-        '      - "VERSION"',
-        '      - "ts/package.json"',
-        '      - "ts/package-lock.json"',
-        '      - "cdk/package.json"',
-        '      - "cdk/package-lock.json"',
-        '      - "cdk/.jsii"',
-        '      - "py/pyproject.toml"',
-        '      - "examples/cdk/multilang/package-lock.json"',
-        '      - "examples/cdk/ssr-site/package-lock.json"',
-        '      - "examples/cdk/lesser-parity/package-lock.json"',
-        '  workflow_dispatch: {}',
-        '',
-        'permissions:',
-        '  actions: write',
-        '  contents: write',
-        '  issues: write',
-        '  pull-requests: write',
-        '',
-        'concurrency:',
-        '  group: release-pr-${{ github.repository }}-release-please--branches--main',
-        '  cancel-in-progress: false',
-    ),
-    '.github/workflows/prerelease.yml': (
-        'name: Prerelease (premain)',
-        '',
-        'on:',
-        '  push:',
-        '    branches: ["premain"]',
-        '  workflow_dispatch: {}',
-        '',
-        'concurrency:',
-        '  group: release-publisher-${{ github.repository }}',
-        '  cancel-in-progress: false',
-        '',
-        'permissions:',
-        '  contents: write',
-        '  issues: write',
-        '  pull-requests: write',
-    ),
-    '.github/workflows/release.yml': (
-        'name: Release (main)',
-        '',
-        'on:',
-        '  push:',
-        '    branches: ["main"]',
-        '  workflow_dispatch:',
-        '    inputs:',
-        '      tag_name:',
-        '        description: "Optional: upload assets to an existing tag\'s *draft* release (fails if already published/immutable) (e.g., v0.2.0)"',
-        '        required: false',
-        '',
-        'concurrency:',
-        '  group: release-publisher-${{ github.repository }}',
-        '  cancel-in-progress: false',
-        '',
-        'permissions:',
-        '  contents: write',
-        '  issues: write',
-        '  pull-requests: write',
-    ),
+# The five workflows the release train runs, whole-file. The required release context, the
+# release and prerelease publishers, the release PR sync, and every step, job, root key and
+# line ending of each of them is one digest here, so there is no region a key could be
+# written below and no spelling a key could take that this construction has to know.
+WORKFLOW_FILE_DIGESTS = {
+    ".github/workflows/ci.yml": "31428c2eb91329ff41c95bdc6d775efc3897089ed1de7e8dcaacafd361210e45",
+    ".github/workflows/prerelease-pr.yml": "d5b56f61a63798f84bb7bc1d1fea6100508249ff8865967688d2c6a5c430285c",
+    ".github/workflows/release-pr.yml": "20e9dcc2afd278d7d50328eb7eefb6f596477efd0b8e72c0ef16b326611f644d",
+    ".github/workflows/prerelease.yml": "0661bc8ae58bc0a8a24c275d33282617cdf7c6981e518fcec779d5b28acdd4a1",
+    ".github/workflows/release.yml": "3e2a906dddd9b905bbc840fd6173f1e8166216d4b1b6414bfb82bc27d5ebd629",
 }
 
-# Every raw line of a guarded job between its key line and its first step. This
-# is where the job's own `if:` lives - pinned whether it is present with exactly
-# these bytes or absent, which is the same pin as the absence of those bytes -
-# and where `continue-on-error:`, `env:`, `defaults:` and any key this guard
-# does not enumerate live. Reached before the step below it runs, so it is
-# pinned whole rather than key by key.
-JOB_PINS = {
-    ('.github/workflows/ci.yml', 'release-security-gates'): (
-        '  release-security-gates:',
-        '    name: Release/security gates',
-        '    runs-on: ubuntu-latest',
-        '    steps:',
-        '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
-        '        with:',
-        '          fetch-depth: 0',
-        '          persist-credentials: false',
-        '      - name: Verify release/security invariants',
-        '        env:',
-        '          GH_TOKEN: ${{ github.token }}',
-        '          GITHUB_TOKEN: ${{ github.token }}',
-        '          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}',
-        '          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}',
-        '        run: |',
-        '          bash scripts/verify-branch-release-supply-chain.sh',
-        '          bash scripts/verify-release-branch-signatures.sh',
-        '          bash scripts/verify-release-train-promotion.sh --self-test',
-        '          bash scripts/verify-ci-rubric-enforced.sh',
-        '          bash scripts/verify-release-workflows.sh',
-        '          bash scripts/verify-release-cycle.sh',
-        '      - name: Verify runtime floor claims',
-        '        run: bash scripts/verify-runtime-floor-claims.sh',
-        '      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0',
-        '        with:',
-        '          go-version: "1.26.6"',
-        '      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0',
-        '        with:',
-        '          node-version: "24"',
-        '      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0',
-        '        with:',
-        '          python-version: "3.14"',
-        '      - name: Verify apptheory-init template/release pairing',
-        '        run: |',
-        '          bash scripts/verify-release-pairing.sh --self-test',
-        '          bash scripts/verify-release-pairing.sh',
-    ),
-    ('.github/workflows/prerelease-pr.yml', 'release-please'): (
-        '  release-please:',
-        "    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, 'release-please--branches--premain')",
-        '    runs-on: ubuntu-latest',
-        '    steps:',
-        '      - name: Checkout',
-        '        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
-        '',
-        '      - name: Verify branch version sync before release PR',
-        '        run: scripts/verify-branch-version-sync.sh',
-        '',
-        '      - name: Release Please (PR only)',
-        '        id: release',
-        '        env:',
-        '          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '        run: |',
-        '          # Wrapper stages release-please@17.1.3 without credentials in npm and',
-        '          # invokes its parser in-process with an environment-only token. It',
-        '          # always applies --draft-pull-request internally.',
-        '          scripts/run-release-please-pr.sh \\',
-        '            --target-branch premain \\',
-        '            --config-file release-please-config.premain.json \\',
-        '            --manifest-file .release-please-manifest.premain.json',
-        '',
-        '      - name: Verify generated RC release PR postcondition',
-        '        env:',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '        run: scripts/verify-release-pr-postcondition.sh prerelease',
-        '',
-        '      - name: Detect open release PR',
-        '        id: release_pr',
-        '        env:',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '        run: |',
-        '          pr_number="$(',
-        '            gh pr list \\',
-        '              --state open \\',
-        '              --base premain \\',
-        '              --head release-please--branches--premain \\',
-        '              --json number \\',
-        '              --jq \'.[0].number // ""\'',
-        '          )"',
-        '          if [[ -n "${pr_number}" ]]; then',
-        '            echo "exists=true" >> "${GITHUB_OUTPUT}"',
-        '            echo "number=${pr_number}" >> "${GITHUB_OUTPUT}"',
-        '          else',
-        '            echo "exists=false" >> "${GITHUB_OUTPUT}"',
-        '          fi',
-        '',
-        '      - name: Draft-lock release PR before artifact setup',
-        "        if: steps.release_pr.outputs.exists == 'true'",
-        '        env:',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '          RELEASE_PR_NUMBER: ${{ steps.release_pr.outputs.number }}',
-        '        run: |',
-        '          set -euo pipefail',
-        '',
-        '          is_draft="$(gh pr view "${RELEASE_PR_NUMBER}" --json isDraft --jq \'.isDraft\')"',
-        '          if [[ "${is_draft}" != "true" ]]; then',
-        '            gh pr ready "${RELEASE_PR_NUMBER}" --undo',
-        '          fi',
-        '',
-        '          is_draft="$(gh pr view "${RELEASE_PR_NUMBER}" --json isDraft --jq \'.isDraft\')"',
-        '          if [[ "${is_draft}" != "true" ]]; then',
-        '            echo "release-pr: FAIL (PR #${RELEASE_PR_NUMBER} could not be draft-locked before artifact setup)" >&2',
-        '            exit 1',
-        '          fi',
-        '',
-        '      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0',
-        "        if: steps.release_pr.outputs.exists == 'true'",
-        '        with:',
-        '          go-version: "1.26.6"',
-        '',
-        '      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0',
-        "        if: steps.release_pr.outputs.exists == 'true'",
-        '        with:',
-        '          node-version: "24.13.1"',
-        '',
-        '      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0',
-        "        if: steps.release_pr.outputs.exists == 'true'",
-        '        with:',
-        '          python-version: "3.14"',
-        '',
-        '      - name: Verify apptheory-init template/release pairing',
-        "        if: steps.release_pr.outputs.exists == 'true'",
-        '        run: |',
-        '          bash scripts/verify-release-pairing.sh --self-test',
-        '          bash scripts/verify-release-pairing.sh',
-        '',
-        '      - name: Sync generated CDK artifacts on release PR',
-        "        if: steps.release_pr.outputs.exists == 'true'",
-        '        env:',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '        run: scripts/sync-release-pr-generated.sh release-please--branches--premain',
-    ),
-    ('.github/workflows/release-pr.yml', 'release-please'): (
-        '  release-please:',
-        "    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, 'release-please--branches--main')",
-        '    runs-on: ubuntu-latest',
-        '    steps:',
-        '      - name: Checkout',
-        '        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
-        '',
-        '      - name: Check recorded stable release',
-        '        id: stable_release',
-        '        env:',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '        run: |',
-        '          set -euo pipefail',
-        '',
-        '          stable="$(',
-        "            python3 - <<'PY'",
-        '          import json',
-        '          from pathlib import Path',
-        '',
-        '          version = json.loads(Path(".release-please-manifest.json").read_text(encoding="utf-8")).get(".", "")',
-        '          if not version:',
-        '              raise SystemExit("missing stable release version")',
-        '          print(version)',
-        '          PY',
-        '          )"',
-        '',
-        '          tag="v${stable}"',
-        '          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"',
-        '',
-        '          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then',
-        '            echo "blocked=false" >> "${GITHUB_OUTPUT}"',
-        '            echo "stable-release: PASS (${tag} tag exists)"',
-        '            exit 0',
-        '          fi',
-        '',
-        '          echo "blocked=false" >> "${GITHUB_OUTPUT}"',
-        '          echo "stable-release: WARN (${tag} tag is missing; next Release PR must be forced from the premain RC baseline)"',
-        '          {',
-        '            echo "### Stable release tag missing"',
-        '            echo ""',
-        '            echo "\\`${tag}\\` is recorded in \\`.release-please-manifest.json\\`,"',
-        '            echo "but \\`refs/tags/${tag}\\` does not exist."',
-        '            echo "Release PR generation will continue only through the premain RC"',
-        '            echo "baseline so the next stable version stays on the patch line."',
-        '          } >> "${GITHUB_STEP_SUMMARY}"',
-        '',
-        '      - name: Compute release-as (align to premain RC)',
-        "        if: steps.stable_release.outputs.blocked != 'true'",
-        '        id: version',
-        '        run: |',
-        '          set -euo pipefail',
-        '',
-        '          release_as="$(',
-        "            python3 - <<'PY'",
-        '          import json',
-        '          from pathlib import Path',
-        '',
-        '',
-        '          def parse_base(v: str) -> tuple[int, int, int]:',
-        '              v = v.strip()',
-        '              if v.startswith("v"):',
-        '                  v = v[1:]',
-        '              v = v.split("+", 1)[0]',
-        '              base = v.split("-", 1)[0]',
-        '              parts = base.split(".")',
-        '              if len(parts) != 3:',
-        '                  raise ValueError(f"invalid semver base: {v}")',
-        '              return (int(parts[0]), int(parts[1]), int(parts[2]))',
-        '',
-        '',
-        '          stable = json.loads(Path(".release-please-manifest.json").read_text(encoding="utf-8")).get(".", "")',
-        '          premain = json.loads(Path(".release-please-manifest.premain.json").read_text(encoding="utf-8")).get(".", "")',
-        '',
-        '          if not stable or not premain:',
-        '              raise SystemExit("")',
-        '',
-        '          premain_base = premain.split("+", 1)[0].split("-", 1)[0]',
-        '',
-        '          # If premain is already on a higher major/minor/patch line (e.g., 0.5.0-rc.1),',
-        '          # force the stable Release PR to promote that baseline (e.g., 0.5.0).',
-        '          if parse_base(premain_base) > parse_base(stable):',
-        '              print(premain_base)',
-        '          PY',
-        '          )"',
-        '',
-        '          echo "release_as=${release_as}" >> "${GITHUB_OUTPUT}"',
-        '          echo "release-as: ${release_as:-}"',
-        '',
-        '      - name: Release Please (PR only) (aligned)',
-        "        if: steps.stable_release.outputs.blocked != 'true' && steps.version.outputs.release_as != ''",
-        '        id: release_aligned',
-        '        env:',
-        '          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '          RELEASE_AS: ${{ steps.version.outputs.release_as }}',
-        '        run: |',
-        '          # NOTE: release-please-action currently does not apply `release-as` when using',
-        '          # `config-file`+`manifest-file` (manifest mode). Use the CLI so the stable',
-        '          # release PR can be forced to the premain RC baseline.',
-        '          # Wrapper stages release-please@17.1.3 without credentials in npm and',
-        '          # invokes its parser in-process with an environment-only token. It',
-        '          # always applies --draft-pull-request internally.',
-        '          scripts/run-release-please-pr.sh \\',
-        '            --target-branch main \\',
-        '            --config-file release-please-config.json \\',
-        '            --manifest-file .release-please-manifest.json \\',
-        '            --release-as "${RELEASE_AS}"',
-        '',
-        '      - name: Release Please (PR only)',
-        "        if: steps.stable_release.outputs.blocked != 'true' && steps.version.outputs.release_as == ''",
-        '        id: release_default',
-        '        env:',
-        '          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '        run: |',
-        '          # Wrapper stages release-please@17.1.3 without credentials in npm and',
-        '          # invokes its parser in-process with an environment-only token. It',
-        '          # always applies --draft-pull-request internally.',
-        '          scripts/run-release-please-pr.sh \\',
-        '            --target-branch main \\',
-        '            --config-file release-please-config.json \\',
-        '            --manifest-file .release-please-manifest.json',
-        '',
-        '      - name: Verify generated stable release PR postcondition',
-        "        if: steps.stable_release.outputs.blocked != 'true'",
-        '        env:',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '        run: scripts/verify-release-pr-postcondition.sh stable',
-        '',
-        '      - name: Detect open release PR',
-        "        if: steps.stable_release.outputs.blocked != 'true'",
-        '        id: release_pr',
-        '        env:',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '        run: |',
-        '          pr_number="$(',
-        '            gh pr list \\',
-        '              --state open \\',
-        '              --base main \\',
-        '              --head release-please--branches--main \\',
-        '              --json number \\',
-        '              --jq \'.[0].number // ""\'',
-        '          )"',
-        '          if [[ -n "${pr_number}" ]]; then',
-        '            echo "exists=true" >> "${GITHUB_OUTPUT}"',
-        '            echo "number=${pr_number}" >> "${GITHUB_OUTPUT}"',
-        '          else',
-        '            echo "exists=false" >> "${GITHUB_OUTPUT}"',
-        '          fi',
-        '',
-        '      - name: Draft-lock release PR before artifact setup',
-        "        if: steps.release_pr.outputs.exists == 'true'",
-        '        env:',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '          RELEASE_PR_NUMBER: ${{ steps.release_pr.outputs.number }}',
-        '        run: |',
-        '          set -euo pipefail',
-        '',
-        '          is_draft="$(gh pr view "${RELEASE_PR_NUMBER}" --json isDraft --jq \'.isDraft\')"',
-        '          if [[ "${is_draft}" != "true" ]]; then',
-        '            gh pr ready "${RELEASE_PR_NUMBER}" --undo',
-        '          fi',
-        '',
-        '          is_draft="$(gh pr view "${RELEASE_PR_NUMBER}" --json isDraft --jq \'.isDraft\')"',
-        '          if [[ "${is_draft}" != "true" ]]; then',
-        '            echo "release-pr: FAIL (PR #${RELEASE_PR_NUMBER} could not be draft-locked before artifact setup)" >&2',
-        '            exit 1',
-        '          fi',
-        '',
-        '      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0',
-        "        if: steps.release_pr.outputs.exists == 'true'",
-        '        with:',
-        '          go-version: "1.26.6"',
-        '',
-        '      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0',
-        "        if: steps.release_pr.outputs.exists == 'true'",
-        '        with:',
-        '          node-version: "24.13.1"',
-        '',
-        '      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0',
-        "        if: steps.release_pr.outputs.exists == 'true'",
-        '        with:',
-        '          python-version: "3.14"',
-        '',
-        '      - name: Verify apptheory-init template/release pairing',
-        "        if: steps.release_pr.outputs.exists == 'true'",
-        '        run: |',
-        '          bash scripts/verify-release-pairing.sh --self-test',
-        '          bash scripts/verify-release-pairing.sh',
-        '',
-        '      - name: Sync generated CDK artifacts on release PR',
-        "        if: steps.release_pr.outputs.exists == 'true'",
-        '        env:',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '        run: scripts/sync-release-pr-generated.sh release-please--branches--main',
-    ),
-    ('.github/workflows/prerelease.yml', 'release-please'): (
-        '  release-please:',
-        '    runs-on: ubuntu-latest',
-        '    steps:',
-        '      - name: Checkout (release preflight)',
-        '        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
-        '        with:',
-        '          fetch-depth: 0',
-        '',
-        '      - name: Fetch main + premain (release preflight)',
-        '        run: git fetch origin main premain --force',
-        '',
-        '      - name: Verify branch version sync (release preflight)',
-        '        run: scripts/verify-branch-version-sync.sh',
-        '',
-        '      - name: Verify release supply chain (release preflight)',
-        '        run: bash scripts/verify-branch-release-supply-chain.sh',
-        '',
-        '      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0',
-        '        with:',
-        '          go-version: "1.26.6"',
-        '',
-        '      - name: Verify release workflow invariants (release preflight)',
-        '        run: bash scripts/verify-release-workflows.sh',
-        '',
-        '      - name: Set SOURCE_DATE_EPOCH (release preflight)',
-        '        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"',
-        '',
-        '      - name: Install golangci-lint (pinned) (release preflight)',
-        '        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0',
-        '',
-        '      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0',
-        '        with:',
-        '          node-version: "24.13.1"',
-        '',
-        '      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0',
-        '        with:',
-        '          python-version: "3.14.3"',
-        '',
-        '      - name: Release Please (Prerelease)',
-        '        id: release',
-        '        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0',
-        '        with:',
-        '          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '          target-branch: premain',
-        '          config-file: release-please-config.premain.json',
-        '          manifest-file: .release-please-manifest.premain.json',
-        '          # Prevent release-please from opening the *next* prerelease PR on release commits.',
-        '          # PR generation runs in prerelease-pr.yml.',
-        '          skip-github-pull-request: true',
-        '',
-        '      - name: Verify prerelease publish postcondition',
-        '        env:',
-        '          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}',
-        '          TAG_NAME: ${{ steps.release.outputs.tag_name }}',
-        '        run: scripts/verify-release-publish-postcondition.sh prerelease "${RELEASE_CREATED}" "${TAG_NAME}" prepublish',
-        '',
-        '      - name: Build, upload, and publish prerelease assets',
-        "        if: steps.release.outputs.release_created == 'true'",
-        '        env:',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '          TAG_NAME: ${{ steps.release.outputs.tag_name }}',
-        '        run: scripts/publish-release-assets.sh "${TAG_NAME}"',
-        '',
-        '      - name: Recover or verify existing prerelease',
-        "        if: steps.release.outputs.release_created != 'true'",
-        '        env:',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '        run: |',
-        '          TAG_NAME="v$(./scripts/read-version.sh)"',
-        '          if [[ ! "${TAG_NAME}" =~ -rc(\\.|$) ]]; then',
-        '            echo "release-assets: SKIP (${TAG_NAME} is not a prerelease tag)"',
-        '            exit 0',
-        '          fi',
-        '',
-        '          if ! gh release view "${TAG_NAME}" >/dev/null 2>&1; then',
-        '            echo "release-assets: SKIP (${TAG_NAME} has no release to recover or verify)"',
-        '            exit 0',
-        '          fi',
-        '',
-        '          scripts/publish-release-assets.sh "${TAG_NAME}"',
-        '',
-        '      - name: Verify prerelease publication closure',
-        '        env:',
-        '          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}',
-        '          TAG_NAME: ${{ steps.release.outputs.tag_name }}',
-        '        run: scripts/verify-release-publish-postcondition.sh prerelease "${RELEASE_CREATED}" "${TAG_NAME}" complete',
-        '',
-        '      - name: Diagnose failed prerelease state (read-only)',
-        '        if: failure()',
-        '        env:',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '          TAG_NAME: ${{ steps.release.outputs.tag_name }}',
-        '        run: |',
-        '          if [[ -z "${TAG_NAME}" ]]; then',
-        '            TAG_NAME="v$(./scripts/read-version.sh)"',
-        '          fi',
-        '',
-        '          export TAG_NAME',
-        '          scripts/diagnose-release-state.sh --tag "${TAG_NAME}"',
-    ),
-    ('.github/workflows/release.yml', 'release-please'): (
-        '  release-please:',
-        '    runs-on: ubuntu-latest',
-        '    outputs:',
-        '      release_created: ${{ steps.release.outputs.release_created }}',
-        '      tag_name: ${{ steps.release.outputs.tag_name }}',
-        '    steps:',
-        '      - name: Checkout (for tag-triggered assets)',
-        "        if: startsWith(github.ref, 'refs/tags/') || inputs.tag_name != ''",
-        '        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
-        '        with:',
-        '          fetch-depth: 0',
-        '          # The publish script resolves and checks out the immutable tag or draft-release target.',
-        '',
-        '      - name: Checkout (stable release preflight)',
-        "        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
-        '        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
-        '        with:',
-        '          fetch-depth: 0',
-        '',
-        '      - name: Fetch main + premain (stable release preflight)',
-        "        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
-        '        run: git fetch origin main premain --force',
-        '',
-        '      - name: Verify branch version sync (stable release preflight)',
-        "        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
-        '        run: scripts/verify-branch-version-sync.sh',
-        '',
-        '      - name: Verify release supply chain (stable release preflight)',
-        "        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
-        '        run: bash scripts/verify-branch-release-supply-chain.sh',
-        '',
-        '      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0',
-        "        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
-        '        with:',
-        '          go-version: "1.26.6"',
-        '',
-        '      - name: Verify release workflow invariants (stable release preflight)',
-        "        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
-        '        run: bash scripts/verify-release-workflows.sh',
-        '',
-        '      - name: Set SOURCE_DATE_EPOCH (stable release preflight)',
-        "        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
-        '        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"',
-        '',
-        '      - name: Install golangci-lint (pinned) (stable release preflight)',
-        "        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
-        '        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0',
-        '',
-        '      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0',
-        "        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
-        '        with:',
-        '          node-version: "24.13.1"',
-        '',
-        '      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0',
-        "        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
-        '        with:',
-        '          python-version: "3.14.3"',
-        '',
-        '      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0',
-        "        if: startsWith(github.ref, 'refs/tags/') || inputs.tag_name != ''",
-        '        with:',
-        '          go-version: "1.26.6"',
-        '',
-        '      - name: Install golangci-lint (pinned) (for tag-triggered assets)',
-        "        if: startsWith(github.ref, 'refs/tags/') || inputs.tag_name != ''",
-        '        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0',
-        '',
-        '      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0',
-        "        if: startsWith(github.ref, 'refs/tags/') || inputs.tag_name != ''",
-        '        with:',
-        '          node-version: "24.13.1"',
-        '',
-        '      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0',
-        "        if: startsWith(github.ref, 'refs/tags/') || inputs.tag_name != ''",
-        '        with:',
-        '          python-version: "3.14.3"',
-        '',
-        '      - name: Upload assets for existing tag release',
-        "        if: startsWith(github.ref, 'refs/tags/') || inputs.tag_name != ''",
-        '        env:',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '          TAG_NAME: ${{ inputs.tag_name || github.ref_name }}',
-        '        run: scripts/publish-release-assets.sh "${TAG_NAME}"',
-        '',
-        '      - name: Release Please (Stable)',
-        '        id: release',
-        "        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
-        '        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0',
-        '        with:',
-        '          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '          target-branch: main',
-        '          config-file: release-please-config.json',
-        '          manifest-file: .release-please-manifest.json',
-        '          # Prevent release-please from opening the *next* release PR on release commits.',
-        '          # PR generation runs in release-pr.yml.',
-        '          skip-github-pull-request: true',
-        '',
-        '      - name: Verify stable publish postcondition',
-        "        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
-        '        env:',
-        '          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}',
-        '          TAG_NAME: ${{ steps.release.outputs.tag_name }}',
-        '        run: scripts/verify-release-publish-postcondition.sh stable "${RELEASE_CREATED}" "${TAG_NAME}" prepublish',
-        '',
-        '      - name: Build, upload, and publish release assets',
-        "        if: steps.release.outputs.release_created == 'true'",
-        '        env:',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '          TAG_NAME: ${{ steps.release.outputs.tag_name }}',
-        '        run: scripts/publish-release-assets.sh "${TAG_NAME}"',
-        '',
-        '      - name: Recover or verify existing stable release',
-        "        if: github.ref == 'refs/heads/main' && inputs.tag_name == '' && steps.release.outputs.release_created != 'true'",
-        '        env:',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '        run: |',
-        '          TAG_NAME="v$(./scripts/read-version.sh)"',
-        '          if [[ "${TAG_NAME}" =~ -rc(\\.|$) ]]; then',
-        '            echo "release-assets: SKIP (${TAG_NAME} is not a stable tag)"',
-        '            exit 0',
-        '          fi',
-        '',
-        '          if ! gh release view "${TAG_NAME}" >/dev/null 2>&1; then',
-        '            echo "release-assets: SKIP (${TAG_NAME} has no release to recover or verify)"',
-        '            exit 0',
-        '          fi',
-        '',
-        '          scripts/publish-release-assets.sh "${TAG_NAME}"',
-        '',
-        '      - name: Verify stable publication closure',
-        "        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
-        '        env:',
-        '          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}',
-        '          TAG_NAME: ${{ steps.release.outputs.tag_name }}',
-        '        run: scripts/verify-release-publish-postcondition.sh stable "${RELEASE_CREATED}" "${TAG_NAME}" complete',
-        '',
-        '      - name: Diagnose failed release state (read-only)',
-        '        if: failure()',
-        '        env:',
-        '          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}',
-        '          TAG_NAME: ${{ inputs.tag_name || steps.release.outputs.tag_name }}',
-        '        run: |',
-        '          if [[ -z "${TAG_NAME}" && "${GITHUB_REF:-}" == refs/tags/* ]]; then',
-        '            TAG_NAME="${GITHUB_REF_NAME}"',
-        '          fi',
-        '',
-        '          if [[ -z "${TAG_NAME}" ]]; then',
-        '            TAG_NAME="v$(./scripts/read-version.sh)"',
-        '          fi',
-        '',
-        '          export TAG_NAME',
-        '          scripts/diagnose-release-state.sh --tag "${TAG_NAME}"',
-        '',
-        '  # Hands docs publication off to pages.yml. Releases are published with the',
-        '  # default GITHUB_TOKEN, whose events can never trigger other workflows —',
-        '  # but workflow_dispatch is explicitly allowed, so this job dispatches',
-        '  # pages.yml on the just-published tag instead of relying on release events.',
-        '  # Runs only after the release-please job (including asset publish and the',
-        '  # publication-closure postcondition) has completed successfully.',
-    ),
+# The transitive closure of the script paths the five workflows name, resolved relative to
+# the repository root or to the referencing file's directory, bounded to CLOSURE_ROOTS.
+# `closure_findings` re-derives that closure from the pinned bytes on every run, so a
+# workflow that gains a call site, or a pinned script that starts running another one, fails
+# until the same change adds the pin - the closure cannot rot into a stale list.
+RELEASE_PATH_FILE_DIGESTS = {
+    "gov-infra/verifiers/gov-verify-rubric.sh": "5c375a12d5008f671f954c983b03732095b48abd4b5f42f67937e82786f1ea3f",
+    "gov-infra/verifiers/test-gov-rubric-timestamp.sh": "9efa7f7486e9049ac8a28c4416ab5a77ee2d660c30596cb025895aba4c7d574a",
+    "scripts/check-cdk-engines-floor.mjs": "24d4a6d9e437b55b3fb321b63d9ff7e42e0e3bee2ba5309a8e0a7651a638110e",
+    "scripts/check-visible-aws-cdk-finding.mjs": "90539460e8f70fceb1982e5e01ff3b9219acef64867c50cbdd6eb8303f110658",
+    "scripts/check-visible-ts-brace-finding.mjs": "6bf7a1e14c993ce06eb75a91fbcda13492215dd8a24837aa349c4cade89527a6",
+    "scripts/diagnose-release-state.sh": "53642c06ba3f9c7a561633b5c6065c1ec3008e5bf090843a23d6165b5725d60a",
+    "scripts/fmt-check.sh": "de47ba4d3d1b7bfc9a8e78e9fe3ea9d958e01bc63695845624103631f6ca8f3a",
+    "scripts/generate-api-snapshots.sh": "f91de9fb0853028c1ccb3ed8d660b80f365c3d17eeb8a2f4f89d3a8de85bfaee",
+    "scripts/generate-checksums.sh": "cd5a6f78e5c0efebbf15d09f7b9bfe749d2ee8e85494d4b019194f311d68059e",
+    "scripts/go-module-release-contract.sh": "89f98dad00324779da032b53089f562189dabc9a040bed009cdd5ba9f6cfcfe4",
+    "scripts/invoke-release-please-pr.mjs": "212693f9a4debdc24d342bf7038ddfe24d5903a1e9d561cd9dbcb564bc06fe03",
+    "scripts/invoke-release-please-pr.sh": "f51707ea23aac342c10b51d73b5d239f188dadaf1fd2fab5635a417c7d7b3582",
+    "scripts/lib/blocked.sh": "0ea5984eec6b856df5ba2144376c152dd767e5a39e3c451216783844644bd1fa",
+    "scripts/lib/cdk-runtime-deps.sh": "4f6787295928f5586545a7203910a37e6b9ab7b76a23ffdca7ea9f12700b9749",
+    "scripts/lib/runtime-deps.sh": "9b2fc575343a7fe2389c89c0a6f8adef7e90c18685ac309ecff4505aa151b78c",
+    "scripts/lib/ts-runtime-deps.sh": "71c79b7914a4e3c62fe666fe9860ce2ddcf7761307f8f74481a9154fc302b34c",
+    "scripts/list-go-packages.sh": "bb7a1234c199cdccf72c20840b92d9376ad025311b79ef19bd25e3b29fa60ee2",
+    "scripts/microvm_conformance.py": "c167ece1626939b44cfa41909478b8a06b5f4c7e46239f47c084add3c07587f0",
+    "scripts/publish-go-module-tags.sh": "94149628cc8aea55ddd03c72fd14bb903f668ab0632086093c2bad25ea33da3b",
+    "scripts/publish-release-assets.sh": "9bc3cbb3d61e1f284bbb770960c4b9c85b1bbd52804cc3d02fa7eaf23b10fe37",
+    "scripts/read-version.sh": "eaa550d8d29da26c240934bdb83a1d821fd8693070e6c6a65b1ff001a310fe8c",
+    "scripts/render-release-artifact-sync-plan.py": "9fd2a876baa8dbe3da7b0004896d03c17abc7962894fbd8a440869ee74f4cd33",
+    "scripts/render-release-notes.sh": "3dd1c51c3fdee91017b6646f63bdce3fdb9a1aa4d795fdbf015d607fa41f1c08",
+    "scripts/run-release-please-pr.sh": "e06950248bd9f0877b9992ad2551fe4442c1185d8c9f5b4e48a86c719355f8cd",
+    "scripts/stage-release-please-package.sh": "8b94504cf21375b416807a7d09d67ae7f83d4a93dc52da2f165ba4961b1cb325",
+    "scripts/stage-theorycloud-apptheory-subtree.sh": "af3d4a0fcee5a42f9d462b58149492e5d151e1784fea33885b16e1d5a1730603",
+    "scripts/sync-release-pr-generated.sh": "8414dcdac85face1ddf9ed970b704e7d9430eac90f49c3feb8d1865854aa6c26",
+    "scripts/sync-theorycloud-apptheory-subtree.sh": "e6fc9965630486883c77a5d2fa3c831726808dae75b624b8b134e01d18c50627",
+    "scripts/test_microvm_conformance.py": "172ec946ddda3cfc6d9329a2721c8fe9dd719f0f2f610f5ab5e88a31ec40229d",
+    "scripts/theorycloud-apptheory-env.sh": "9dea6fa6dbacaa8de7084071e3d27724c184dc12362201e658665728d0f51d91",
+    "scripts/tools/api_snapshots/py_snapshot.py": "24e7fc8c03bc9955a0408220d1c475b3c941c12e0cc6a83d4827f016fa26e054",
+    "scripts/tools/api_snapshots/ts_snapshot.py": "d988493161d67063aeaa702ef2c734fa0509cac70c7cb45dd511c36ef4ccacd3",
+    "scripts/trigger-theorycloud-publish.sh": "953014e53db4750fd6003a866ad98734efb285ef347baa424c41695da5e2f703",
+    "scripts/update-api-snapshots.sh": "6b4ac01537b94c181fadc395468001bac7f32edf678070c79ef1614f90245744",
+    "scripts/update-cdk-generated.sh": "46ab89c5da216b66818b819e71172147941e7278834597283448ff5856d2721c",
+    "scripts/update-cdk-readme-inventory.sh": "6166076f01d42c88778f6261d4d8beecdc88e84a4c14dac9a579d139cbf94082",
+    "scripts/verify-api-docs.sh": "5021b716482317682b2f3be7e89da842b85b411d13dcf410c2e97e8601e90739",
+    "scripts/verify-api-snapshots.sh": "565c444398c424bb50ebaac9aabffab07089c28bf013521ce1d502d3db7a6aed",
+    "scripts/verify-branch-release-supply-chain.sh": "805c8f8af1e3a0e600859db1788d5a3ea12a19760e440528b2114e542e4bacda",
+    "scripts/verify-branch-version-sync.sh": "38f749592b4b3f3f065313aa8aa33237adc45b3bc327ca5f88ebabda3f272e06",
+    "scripts/verify-builds.sh": "001cdf0d9b36390d1334d081e6b9a1b310fec532dd25a2f04180fa2e7c6e21c4",
+    "scripts/verify-cdk-audit.sh": "a6800ac4b499bdc778af7a0809fdba10e6a3f539110b4ab24e6a1d561c21c262",
+    "scripts/verify-cdk-constructs.sh": "11e7dbc900042be4a84c0d1a8749b107271179f7bf3808fb836c565679b7c3cc",
+    "scripts/verify-cdk-deprecation-warnings.sh": "afd09340ee88af80876b9167f603dcbf4940bf049c871ce478ef1c87f1bbec70",
+    "scripts/verify-cdk-engines-floor.sh": "f137c37721b66bbd8f20a7a7f40d85da9f36f68f1aee7dedeb17b48a208cfc83",
+    "scripts/verify-cdk-go-drift.sh": "9daf96e7746d18828f6dc3f67039fed6deb4d5922641c3f53880cca43fb0cf9c",
+    "scripts/verify-cdk-go-major-version.sh": "74d63baea7dd8fdb0b2a4f80fbfc3516e15024cd13a61d39d4510637ec03008f",
+    "scripts/verify-cdk-go.sh": "a3f6309d00b3c1638d875678b4c8a9ce7ef49f367d9196d8b21d5a239b19954d",
+    "scripts/verify-cdk-python-build.sh": "48a907c88d77930556de8f04c5c1e1918ad798bafa7cf45d4d81dd49ccfad065",
+    "scripts/verify-cdk-readme-inventory.sh": "9be0cc469831e22d922bd62c73659266409ec5204a9458b04176475461bd7cf4",
+    "scripts/verify-cdk-synth.sh": "2cd8b6952a1a381f1a15e94ce6eccbc03d0708281f6a61748f69d988115f3c25",
+    "scripts/verify-cdk-ts-pack.sh": "efbbb077e4b369f846506ecad95f2e21637794f8b4fb59b559fb57e9cc497f2d",
+    "scripts/verify-ci-rubric-enforced.sh": "9a08d035c2c65cf10021cada1db7288cf8a18972a9881a073898e80eb392ae67",
+    "scripts/verify-contract-tests.sh": "38799a0ee5dc8f6042ca772389847eea584f3a4cd990a0b962e761e22901f8ab",
+    "scripts/verify-docs-standard.sh": "a7c0c72fd0d361dc3376d47488b9caede3e41c117b2148489b16d26cd600275b",
+    "scripts/verify-fixture-count.sh": "9db4a7bd8cc3d01ddec49ba52004e8a839a9a67246e6e67c92d0ac93d0754569",
+    "scripts/verify-fixture-schema.sh": "53aca268596cc3f7e94bed6027b22fd6810a01f53afb878a5877a35f2c28ea82",
+    "scripts/verify-go-lint.sh": "799d09ef71e71a27234dd1896cf66fb2d5afe2342aed78309df141c140e3e644",
+    "scripts/verify-go-module-tags.sh": "0ca622faf6844a8ee16d0965d5e08be5d9290ed02dafb0e4602cab38c941f80f",
+    "scripts/verify-go.sh": "b062274123b7c12b9779eb1799c2582bfb786017ac1fe520dd8f24286282eac9",
+    "scripts/verify-microvm-conformance-harness.sh": "e2adb69d12bab33ac127fb44ecaaa64e14998cee6f2d39c805a40d39c3edbf28",
+    "scripts/verify-python-build.sh": "7f3b393224672047554016d544cdd8715c723136485dc0dd203649fb0e205ed2",
+    "scripts/verify-python-lint.sh": "4d1397f272c70a48a3630204d3dcf7855444f41e9ee51b74ecfa2c0daeaeaf17",
+    "scripts/verify-python-tests.sh": "a2c260c78f0c3f9955b1e12e8c0d4cfa23530bfe0b52318863659ff80eaf48b5",
+    "scripts/verify-release-branch-signatures.sh": "b252234f19702bb1e1e9893d6047d802b81dbd7d073de64a3ebd24eb86b08c3f",
+    "scripts/verify-release-branch.sh": "5707f8ab5af9a0585119cb6691827b2961056897a92537e27763ac2d5c20fd6f",
+    "scripts/verify-release-cycle.sh": "63d5d122f4fd2d1f1fb6436d90513a6222543b30461220162bd14c4a26c07662",
+    "scripts/verify-release-gates.sh": "ed9bfef8eee60a76437c1e51f9f405644cf6302088431aeb232a96a8450afe18",
+    "scripts/verify-release-pairing.sh": "1de72ff31c814730b7c0282fe18693479f0a0ecb39c927e074e3b041d920e902",
+    # No pinned workflow names this one. The guard's own verify pass runs it - it is the
+    # release-credential boundary test - so it is a root of the closure from here. The guard
+    # is unpinned, so this pins the verifier's bytes, not the call of it.
+    "scripts/verify-release-please-token-safety.sh": "24961e9733fe1242dae7943b43c70084c9d8a2bee7da05a0a57217b9d322364b",
+    "scripts/verify-release-pr-postcondition.sh": "25e41253ec2cd549ae6e85712bc2815ecf91e0d8676e1218f7a42961dbf31416",
+    "scripts/verify-release-publish-postcondition.sh": "61b21485d0d97cc06b7c3d62a762fbd79632af78b12cf5e98b8adad6b2ff8766",
+    "scripts/verify-release-state.sh": "a55337b19361b3604ad4552faff6077b37a217c51a7a7bf274cdc8e088636753",
+    "scripts/verify-release-train-promotion.sh": "7df69fe23210d89d14f8e70bd8118fe9bd7be3e85364385cfd46796d5bca3ba5",
+    "scripts/verify-rubric.sh": "c4182067f51cd9bc721b08fed9d4fe0e3ce30d6a020aa0de36e4c8b54f8cc818",
+    "scripts/verify-runtime-floor-claims.sh": "d8e452ab43c7eaeb52a91e9003064b5dd5843ea49e0f6e31575ab992bc83152d",
+    "scripts/verify-scaffold-examples.sh": "1e242ba49c7cb89112836a946e2964a540f1bbc7ff37fd0ab48651249cd42524",
+    "scripts/verify-testkit-examples.sh": "e00d89f230f744762f0b20ef33776d45b396a2df77c0dce3d364e7946b84b973",
+    "scripts/verify-theorycloud-apptheory-publish-config.sh": "0e8e1ba2266954338abc90227b08643941be55a0f0d786c71b27515ffa19b11c",
+    "scripts/verify-theorycloud-apptheory-subtree.sh": "f6bad2b5ae33be44000590ad682f35ffb463d2cf8865d61547b371d3b3f9d909",
+    "scripts/verify-theorycloud-publish-workflow.sh": "afadfd324ec3a81207e2b2aadfc2d88954e279d18dbc3c48b510aea9acff2033",
+    "scripts/verify-ts-dist-drift.sh": "177bcfd3ce85ef75d53aef672a431723883f193162f09e8f36c82753dab5e98b",
+    "scripts/verify-ts-lint.sh": "2416c9a76cf0ff8db4e06f48b8cff3e433f79a7dc6e175c2756a5fa75748253b",
+    "scripts/verify-ts-pack.sh": "1b323b96cff29d81002b01e55263738f41c98da98791a9cae1d409f77b2d35b5",
+    "scripts/verify-ts-tests.sh": "dd0bdca95643df4645f71805d0ed5b3231315efe989ed6d9394fec65690b7181",
+    "scripts/verify-version-alignment.sh": "ee6513e9f81957eaeefe208c256405ed2c74acf6bcf53cceef35a477264638f9",
 }
 
-# Each guarded step, whole: its name, every key it carries (`if:`, `env:`,
-# `shell:`, `run:` and any other), and the complete run body. Keyed by the
-# workflow, the job that must contain it, and the step name, so moving a pinned
-# step - into another job, into a job that never runs, or out of the workflow -
-# fails, and adding `if: false` to the job it left fails with it.
-STEP_PINS = {
-    ('.github/workflows/ci.yml', 'release-security-gates', 'Verify release/security invariants'): (
-        '      - name: Verify release/security invariants',
-        '        env:',
-        '          GH_TOKEN: ${{ github.token }}',
-        '          GITHUB_TOKEN: ${{ github.token }}',
-        '          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}',
-        '          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}',
-        '        run: |',
-        '          bash scripts/verify-branch-release-supply-chain.sh',
-        '          bash scripts/verify-release-branch-signatures.sh',
-        '          bash scripts/verify-release-train-promotion.sh --self-test',
-        '          bash scripts/verify-ci-rubric-enforced.sh',
-        '          bash scripts/verify-release-workflows.sh',
-        '          bash scripts/verify-release-cycle.sh',
-    ),
-    ('.github/workflows/ci.yml', 'release-security-gates', 'Verify apptheory-init template/release pairing'): (
-        '      - name: Verify apptheory-init template/release pairing',
-        '        run: |',
-        '          bash scripts/verify-release-pairing.sh --self-test',
-        '          bash scripts/verify-release-pairing.sh',
-    ),
-    ('.github/workflows/prerelease-pr.yml', 'release-please', 'Verify apptheory-init template/release pairing'): (
-        '      - name: Verify apptheory-init template/release pairing',
-        "        if: steps.release_pr.outputs.exists == 'true'",
-        '        run: |',
-        '          bash scripts/verify-release-pairing.sh --self-test',
-        '          bash scripts/verify-release-pairing.sh',
-    ),
-    ('.github/workflows/release-pr.yml', 'release-please', 'Verify apptheory-init template/release pairing'): (
-        '      - name: Verify apptheory-init template/release pairing',
-        "        if: steps.release_pr.outputs.exists == 'true'",
-        '        run: |',
-        '          bash scripts/verify-release-pairing.sh --self-test',
-        '          bash scripts/verify-release-pairing.sh',
-    ),
-    ('.github/workflows/prerelease.yml', 'release-please', 'Verify release workflow invariants (release preflight)'): (
-        '      - name: Verify release workflow invariants (release preflight)',
-        '        run: bash scripts/verify-release-workflows.sh',
-    ),
-    ('.github/workflows/release.yml', 'release-please', 'Verify release workflow invariants (stable release preflight)'): (
-        '      - name: Verify release workflow invariants (stable release preflight)',
-        "        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
-        '        run: bash scripts/verify-release-workflows.sh',
-    ),
-}
+PINNED_FILE_DIGESTS = dict(WORKFLOW_FILE_DIGESTS, **RELEASE_PATH_FILE_DIGESTS)
 
-# Whole-file digests for every shell invoker that can reach the gate or the
-# guard. Round 4 pinned three of these by digest and the fourth - the GovTheory
-# verifier - by invocation line only, because its own self-test table carries a
-# `set +e` / `set -e` capture pair in an unrelated function that the classifier
-# had to keep tolerating. There is no tolerance to preserve any more, so all
-# four are pinned whole: a `set +e`, a shadowing definition, an added function
-# body or a `source` on another line is a finding with nothing parsed.
-INVOKER_FILE_DIGESTS = {
-    'scripts/verify-release-branch.sh': "5707f8ab5af9a0585119cb6691827b2961056897a92537e27763ac2d5c20fd6f",
-    'scripts/verify-release-publish-postcondition.sh': "61b21485d0d97cc06b7c3d62a762fbd79632af78b12cf5e98b8adad6b2ff8766",
-    'scripts/verify-release-gates.sh': "ed9bfef8eee60a76437c1e51f9f405644cf6302088431aeb232a96a8450afe18",
-    'gov-infra/verifiers/gov-verify-rubric.sh': "5c375a12d5008f671f954c983b03732095b48abd4b5f42f67937e82786f1ea3f",
-}
-
-# The transitive closure of the GovTheory verifier's toolchain PATH export:
-# every name the export reads, and every name those statements read in turn.
-# Round 4 pinned the export's own text and the eight names below it, and left
-# `GOV_INFRA` - which `GOV_TOOLS_DIR` reads - free: appending one assignment
-# redirected the whole toolchain, so `bash` on PATH was another program while
-# the pinned statements were byte-identical. The closure starts at `SCRIPT_DIR`
-# now and includes it, so no name in the chain can be re-pointed from any line.
-GOV_TOOLCHAIN_ASSIGNMENT_PINS = (
-    'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
-    'REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"',
-    'GOV_INFRA="${REPO_ROOT}/gov-infra"',
-    'GOV_TOOLS_DIR="${GOV_INFRA}/.tools"',
-    'GOV_TOOLS_BIN="${GOV_TOOLS_DIR}/bin"',
-    'GOV_TOOLS_PY_DIR="${GOV_TOOLS_DIR}/py"',
-    'GOV_TOOLS_PY_BIN="${GOV_TOOLS_PY_DIR}/bin"',
-    'GOV_TOOLS_PY_COV_DIR="${GOV_TOOLS_DIR}/py-coverage"',
-    'GOV_TOOLS_PY_COV_BIN="${GOV_TOOLS_PY_COV_DIR}/bin"',
-    'GOV_TOOLS_PY_RUNTIME_DIR="${GOV_TOOLS_DIR}/py-runtime"',
-    'GOV_TOOLS_PY_RUNTIME_BIN="${GOV_TOOLS_PY_RUNTIME_DIR}/bin"',
-    'export PATH="${GOV_TOOLS_BIN}:${GOV_TOOLS_PY_BIN}:${GOV_TOOLS_PY_RUNTIME_BIN}:${PATH}"',
-)
-GOV_TOOLCHAIN_VARIABLES = (
-    "SCRIPT_DIR",
-    "REPO_ROOT",
-    "GOV_INFRA",
-    "GOV_TOOLS_DIR",
-    "GOV_TOOLS_BIN",
-    "GOV_TOOLS_PY_DIR",
-    "GOV_TOOLS_PY_BIN",
-    "GOV_TOOLS_PY_COV_DIR",
-    "GOV_TOOLS_PY_COV_BIN",
-    "GOV_TOOLS_PY_RUNTIME_DIR",
-    "GOV_TOOLS_PY_RUNTIME_BIN",
-    "PATH",
-)
-
-# The stripped lines a guarded script may be named on outside a pinned region:
-# the invocation lines of the pinned steps themselves. Derived from the pins, so
-# the two cannot drift.
-PINNED_INVOCATION_LINES = (
-    'bash scripts/verify-release-pairing.sh',
-    'bash scripts/verify-release-pairing.sh --self-test',
-    'bash scripts/verify-release-workflows.sh',
-    'run: bash scripts/verify-release-workflows.sh',
-)
-
-# Finding classes. Each case in the battery names the class it must fail on, so a
-# case that starts failing for an unrelated reason is a battery failure rather
-# than a quiet pass.
-CLASS_PREAMBLE = "preamble"
-CLASS_JOB = "job"
-CLASS_JOB_KEY = "job-key"
-CLASS_STEP_BYTES = "step-bytes"
-CLASS_STEP_JOB = "step-job"
+# Finding classes. Each attack case in the battery names the class it must fail on, and each
+# accepted case names a shape that must produce no finding at all, so a case that starts
+# failing - or passing - for an unrelated reason fails the battery loudly.
+#
+# `digest` is the whole of the pinning construction: a byte of a pinned file changed. There
+# is no finer class because there is no finer rule.
 CLASS_DIGEST = "digest"
+CLASS_CLOSURE = "closure"
 CLASS_SWEEP = "sweep"
-CLASS_TOOLCHAIN = "toolchain"
 
 
-def normalize_text(text: str) -> str:
-    """CRLF to LF, and trailing whitespace off every line. That is the tolerance.
+def read_source(path: str) -> str:
+    """Read a pinned file without newline translation.
 
-    Nothing else normalises: an editor that writes CRLF, or a formatter that
-    leaves trailing spaces, must not trip the guard, and every other byte is
-    compared as it stands.
+    `Path.read_text()` opens in universal-newlines mode, so it would hand back `\\r\\n` as `\\n`
+    and a CRLF copy of a pinned file would hash equal to its pin. A pinned file is compared
+    byte for byte, so its bytes are what is read. The reader probe below fails loudly if this
+    function ever stops being byte-faithful.
     """
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    return "\n".join(line.rstrip() for line in text.split("\n"))
+    with Path(path).open("r", encoding="utf-8", newline="") as handle:
+        return handle.read()
 
 
-def region_lines(text: str) -> tuple:
-    lines = normalize_text(text).split("\n")
-    while lines and lines[-1] == "":
-        lines.pop()
-    return tuple(lines)
+# The probe that keeps the claim above honest. It is the one place the guard tests its own
+# reader: a universal-newline reader is a whitespace tolerance by another name, it was
+# written into this construction once, and string-mutating battery cases cannot see it.
+_reader_probe_body = "line\r\nline\rline\n\ufeffmark"
+_reader_probe = Path(tempfile.mkdtemp(prefix="release-workflows-reader-")) / "probe.txt"
+_reader_probe.write_text(_reader_probe_body, encoding="utf-8", newline="")
+if read_source(str(_reader_probe)) != _reader_probe_body:
+    raise SystemExit(
+        "release-workflows: FAIL (the pin reader is not byte-faithful: it returned different text "
+        "than the file holds, so a CRLF or CR line ending would hash equal to an LF pin)"
+    )
+_reader_probe.unlink()
 
 
-JOB_BLOCK = r"(?ms)^  {job}:[ \t]*\n(?P<block>.*?)(?=^  [A-Za-z0-9_-]+:[ \t]*\n|\Z)"
-STEP_MARKER = re.compile(r"(?m)^      -[ \t]")
-JOB_BOUNDARY = re.compile(r"\n  [A-Za-z0-9_-]+:[ \t]*\n")
+def digest_of(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def job_span(text: str, job: str):
-    match = re.search(JOB_BLOCK.format(job=re.escape(job)), text)
-    if match is None:
-        return None
-    return match.start(), match.end()
-
-
-def step_spans(text: str):
-    """(start, end) for every step block, bounded by the next step or the next job.
-
-    The block is the unit a pin compares, not the `run:` body: YAML reads a key
-    written after the run body as the same step key as one written before it, so
-    a pin that stopped at the last body line would admit `if: false` appended to
-    the step. A block that grows or shrinks is then simply not the pinned text.
-    """
-    starts = [match.start() for match in STEP_MARKER.finditer(text)]
-    spans = []
-    for index, start in enumerate(starts):
-        end = starts[index + 1] if index + 1 < len(starts) else len(text)
-        boundary = JOB_BOUNDARY.search(text, start)
-        if boundary is not None:
-            end = min(end, boundary.start())
-        spans.append((start, end))
-    return spans
-
-
-def matching_step_spans(text: str):
-    """(start, end, lines) for every step block whose exact text is a pinned step."""
-    pinned = {tuple(lines) for lines in STEP_PINS.values()}
-    matches = []
-    for start, end in step_spans(text):
-        lines = region_lines(text[start:end])
-        if lines in pinned:
-            matches.append((start, end, lines))
-    return matches
-
-
-ROOT_KEY = re.compile(r"^(?P<key>[A-Za-z_][A-Za-z0-9_-]*)[ \t]*:")
-
-
-def root_key_findings(read_text):
-    """Findings for a key declared more than once at the workflow's own level.
-
-    The preamble pin fixes the bytes above the first `jobs:` line, so a second
-    `jobs:` or `on:` written below it is outside every pin - and YAML keeps the
-    last value for a repeated key, so the runner would resolve the one the guard
-    never read.
-    """
-    findings = []
-    for path in WORKFLOW_PREAMBLE_PINS:
-        counts = {}
-        for line in normalize_text(read_text(path)).split("\n"):
-            match = ROOT_KEY.match(line)
-            if match is not None:
-                key = match.group("key")
-                counts[key] = counts.get(key, 0) + 1
-        for key, count in sorted(counts.items()):
-            if count != 1:
-                findings.append(
-                    (
-                        CLASS_PREAMBLE,
-                        f"{path}: the workflow-level key {key!r} is declared {count} times; YAML keeps "
-                        f"the last value and the runner resolves that one, so a repeated root key is "
-                        f"refused rather than read past",
-                    )
-                )
-    return findings
-
-
-def preamble_findings(read_text):
-    findings = []
-    for path, pinned in WORKFLOW_PREAMBLE_PINS.items():
-        text = normalize_text(read_text(path))
-        match = re.search(r"(?m)^jobs:[ \t]*$", text)
-        if match is None:
-            findings.append(
-                (
-                    CLASS_PREAMBLE,
-                    f"{path}: has no `jobs:` mapping, so the configuration above it cannot be pinned",
-                )
-            )
-            continue
-        actual = region_lines(text[: match.start()])
-        if actual != pinned:
-            findings.append(
-                (
-                    CLASS_PREAMBLE,
-                    f"{path}: the workflow-level configuration above `jobs:` is not the pinned revision; "
-                    f"`on:`, `permissions:`, `env:`, `defaults:` and every other workflow-level key is "
-                    f"resolved before the pinned step runs, so the region may only change together with "
-                    f"the pin that describes it (expected {len(pinned)} pinned line(s), found {len(actual)})",
-                )
-            )
-    return findings
-
-
-def job_findings(read_text):
-    """Findings for a guarded job whose block is not the pinned revision.
-
-    The whole job is pinned, not only the guarded step inside it. Steps share a
-    workspace, so a sibling step that runs first can rewrite the guarded script
-    and leave the pinned step's own bytes - and both of its invocations - exactly
-    as pinned; `printf '' > scripts/verify-release-pa*` in another step of the
-    same job makes the pinned invocations exit 0 without touching them. A job
-    pin closes that, and closes the job's `if:` with it: the condition is pinned
-    present with exactly these bytes, or pinned absent.
-    """
-    findings = []
-    for (path, job), pinned in JOB_PINS.items():
-        text = normalize_text(read_text(path))
-        key_line = f"  {job}:"
-        occurrences = sum(1 for line in text.split("\n") if line == key_line)
-        if occurrences != 1:
-            findings.append(
-                (
-                    CLASS_JOB_KEY,
-                    f"{path}: the job key `{key_line}` is defined {occurrences} times; YAML keeps the "
-                    f"last definition and the runner resolves that one, so the pinned job may be defined "
-                    f"exactly once",
-                )
-            )
-        span = job_span(text, job)
-        if span is None:
-            findings.append((CLASS_JOB, f"{path}: missing job {job!r}"))
-            continue
-        actual = region_lines(text[span[0] : span[1]])
-        if actual != pinned:
-            findings.append(
-                (
-                    CLASS_JOB,
-                    f"{path}: job {job!r} is not the pinned revision; the job's `if:` - present with "
-                    f"exactly these bytes, or absent - every job-level key, and every step of the job, "
-                    f"run in the context the pinned release gate is keyed on, so the block is pinned whole "
-                    f"(expected {len(pinned)} pinned line(s), found {len(actual)})",
-                )
-            )
-    return findings
-
-
-def step_findings(read_text):
-    findings = []
-    for (path, job, step_name), pinned in STEP_PINS.items():
-        text = normalize_text(read_text(path))
-        matches = [match for match in matching_step_spans(text) if match[2] == pinned]
-        if len(matches) != 1:
-            findings.append(
-                (
-                    CLASS_STEP_BYTES,
-                    f"{path}: the pinned step {step_name!r} is not the pinned revision; the guarded step "
-                    f"is pinned whole - its name, every key and its complete run body - and its block may "
-                    f"appear byte for byte exactly once (expected {len(pinned)} pinned line(s), matched "
-                    f"{len(matches)} step block(s))",
-                )
-            )
-            continue
-        start, _end, _lines = matches[0]
-        span = job_span(text, job)
-        if span is None or not (span[0] <= start < span[1]):
-            findings.append(
-                (
-                    CLASS_STEP_JOB,
-                    f"{path}: the pinned step {step_name!r} is not inside the pinned job {job!r}; moving a "
-                    f"pinned step to another job - or into a job that never runs - leaves its own lines "
-                    f"byte-identical while the pinned release context stops running the gate",
-                )
-            )
-    return findings
+def tolerance_hint(text: str) -> str:
+    """What a mismatch looks like when it is a normalisation a pin does not tolerate."""
+    hints = []
+    if text.startswith("\ufeff"):
+        hints.append("begins with a byte-order mark")
+    if "\r" in text:
+        hints.append("contains carriage returns (CRLF line endings)")
+    if not text.endswith("\n"):
+        hints.append("does not end with a newline")
+    if not hints:
+        return ""
+    return (
+        "; the file " + " and ".join(hints) + ". Pinned files are compared byte for byte, so the "
+        "fix is to normalise the file - the normalisation is visible in the diff - because a "
+        "tolerance here is a tolerance an attacker can write through"
+    )
 
 
 def digest_findings(read_text):
+    """Every pinned file that is not its pinned revision, byte for byte."""
     findings = []
-    for path, pinned in INVOKER_FILE_DIGESTS.items():
-        actual = hashlib.sha256(normalize_text(read_text(path)).encode("utf-8")).hexdigest()
+    for path, pinned in PINNED_FILE_DIGESTS.items():
+        try:
+            text = read_text(path)
+        except (OSError, UnicodeDecodeError) as error:
+            findings.append(
+                (
+                    CLASS_DIGEST,
+                    f"{path}: cannot be read as UTF-8 text ({error}); the release path pins this file by "
+                    f"its whole-file SHA-256",
+                )
+            )
+            continue
+        actual = digest_of(text)
         if actual != pinned:
             findings.append(
                 (
                     CLASS_DIGEST,
-                    f"{path}: is not the pinned revision; this file holds a guarded invocation and may "
-                    f"only change together with the pin that describes it (pinned sha256 {pinned[:12]}, "
-                    f"found {actual[:12]})",
+                    f"{path}: is not the pinned revision. This file is part of the release path and is "
+                    f"pinned by its whole-file SHA-256, so it changes only together with the pin that "
+                    f"describes it: replace {pinned} with {actual}{tolerance_hint(text)}",
                 )
             )
     return findings
 
 
-ASSIGNMENT_KEY = re.compile(r"^(?:export[ \t]+)?(?P<key>[A-Za-z_][A-Za-z0-9_]*)=")
+def closure_findings(read_text):
+    """Script paths a pinned file names that are themselves pinned by nothing.
 
-
-def toolchain_findings(read_text):
+    A pinned workflow may name only scripts that are pinned, and a pinned script may run only
+    scripts under CLOSURE_ROOTS that are pinned. Anything else is a call site the pins do not
+    reach, and it is refused here rather than left to an editor's memory of the manifest.
+    """
     findings = []
-    text = normalize_text(read_text(GOV_VERIFIER))
-    counts = {statement: 0 for statement in GOV_TOOLCHAIN_ASSIGNMENT_PINS}
-    for line_number, line in enumerate(text.split("\n"), 1):
-        match = ASSIGNMENT_KEY.match(line)
-        if match is None or match.group("key") not in GOV_TOOLCHAIN_VARIABLES:
+    for path in PINNED_FILE_DIGESTS:
+        try:
+            text = read_text(path)
+        except (OSError, UnicodeDecodeError):
             continue
-        if line in counts:
-            counts[line] += 1
-            continue
-        findings.append(
-            (
-                CLASS_TOOLCHAIN,
-                f"{GOV_VERIFIER}:{line_number}: assigns {match.group('key')}, a name in the transitive "
-                f"closure of the pinned toolchain PATH export, outside the pinned statements ({line!r}); "
-                f"pinning an export's text pins its spelling, not the value it reads",
-            )
-        )
-    for statement, count in counts.items():
-        if count != 1:
+        for token in script_references(text):
+            resolved = resolve_reference(token, posixpath.dirname(path))
+            if resolved is None or resolved == GUARD_PATH or resolved in PINNED_FILE_DIGESTS:
+                continue
+            if path not in WORKFLOW_FILE_DIGESTS and not resolved.startswith(CLOSURE_ROOTS):
+                continue
             findings.append(
                 (
-                    CLASS_TOOLCHAIN,
-                    f"{GOV_VERIFIER}: the pinned toolchain statement {statement!r} appears {count} times; "
-                    f"the toolchain a guarded invocation runs under is pinned exactly once",
+                    CLASS_CLOSURE,
+                    f"{path}: names {token!r}, which resolves to {resolved!r} and is pinned by nothing. A "
+                    f"pinned file may run only scripts that are pinned themselves, so the reference and the "
+                    f"pin are one change",
                 )
             )
     return findings
 
 
-def pinned_line_numbers(read_text):
-    """Line indexes covered by a pinned step block, per workflow."""
-    covered = {}
-    for (path, _job, _step_name), pinned in STEP_PINS.items():
-        text = normalize_text(read_text(path))
-        for start, _end, lines in matching_step_spans(text):
-            if lines != pinned:
+def pinned_invocation_lines(read_text):
+    """The stripped lines of the pinned workflows that name a guarded script.
+
+    A file no pin covers may repeat one of these lines and only these. The line is the pinned
+    workflow's own text, so repeating it adds a run of the gate or the guard and cannot weaken
+    the step that already runs it.
+    """
+    lines = set()
+    for path in WORKFLOW_FILE_DIGESTS:
+        for line in read_text(path).split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("#"):
                 continue
-            first_line = text.count("\n", 0, start)
-            covered.setdefault(path, set()).update(range(first_line, first_line + len(pinned)))
-    return covered
+            if any(name in stripped for name in GUARDED_BASENAMES):
+                lines.add(stripped)
+    return lines
 
 
 def sweep_findings(read_text, paths=None):
-    """Every occurrence of a guarded script name that no byte-exact pin covers.
+    """Every naming of a guarded script in a file no pin covers.
 
-    A name is admitted from three places and nowhere else: inside a
-    digest-pinned invoker, inside a pinned step, or on a line that is
-    byte-identical to a pinned invocation line. The third is additive
-    strengthening - running a pinned gate from somewhere else cannot make the
-    pinned step stop running - and it is admitted outside the five guarded
-    workflows only. Inside one, the guarded script may be named on the pinned
-    step and nowhere else, because that workflow is the artifact the required
-    release context is keyed on.
+    A name is admitted from exactly one place: on a line byte-identical to a line a pinned
+    workflow holds. That is additive strengthening - running the gate or the guard from
+    somewhere else cannot make the pinned step stop running - and it is the whole of what a
+    file outside the pinned set may say about a guarded script. Every other naming is a
+    finding, including one in a new workflow, in a composite action, in the `Makefile` or in
+    a root `package.json`.
     """
     findings = []
-    covered = pinned_line_numbers(read_text)
+    admitted = pinned_invocation_lines(read_text)
     for path in (sweep_paths() if paths is None else paths):
-        if path in INVOKER_FILE_DIGESTS:
+        if path in PINNED_FILE_DIGESTS:
             continue
-        text = normalize_text(read_text(path))
+        try:
+            text = read_text(path)
+        except (OSError, UnicodeDecodeError):
+            continue
         for index, line in enumerate(text.split("\n")):
             if not any(name in line for name in GUARDED_BASENAMES):
                 continue
-            if index in covered.get(path, ()):
-                continue
-            if line.strip() in PINNED_INVOCATION_LINES and path not in GUARDED_WORKFLOWS:
+            if line.strip() in admitted:
                 continue
             findings.append(
                 (
                     CLASS_SWEEP,
-                    f"{path}:{index + 1}: names a guarded script outside every byte-exact pin "
-                    f"({line.strip()!r}); a guarded script name may appear only inside a pinned region, "
-                    f"or on a line byte-identical to a pinned invocation line in a location no pin reaches",
+                    f"{path}:{index + 1}: names a guarded script and is not a byte-identical duplicate of a "
+                    f"line a pinned workflow holds ({line.strip()!r}); a file no pin covers may only repeat a "
+                    f"pinned invocation line, because repeating it can add a run of the gate and cannot "
+                    f"weaken one",
                 )
             )
     return findings
 
 
-def guarded_surface_findings(read_text):
-    return (
-        preamble_findings(read_text)
-        + root_key_findings(read_text)
-        + job_findings(read_text)
-        + step_findings(read_text)
-        + digest_findings(read_text)
-        + toolchain_findings(read_text)
-        + sweep_findings(read_text)
-    )
+def guarded_surface_findings(read_text, sweep=None):
+    findings = digest_findings(read_text)
+    findings += closure_findings(read_text)
+    findings += sweep_findings(read_text, paths=sweep)
+    return findings
+
+
 CI_STEP_HEADER = '      - name: Verify apptheory-init template/release pairing\n'
 CI_BARE = '          bash scripts/verify-release-pairing.sh\n'
 CI_SELF_TEST = '          bash scripts/verify-release-pairing.sh --self-test\n'
@@ -1329,160 +504,162 @@ CI_HEAD = 'name: CI\n\non:\n'
 CI_GUARD_BARE = '          bash scripts/verify-release-workflows.sh\n'
 PREMAIN_GUARD_RUN = '        run: bash scripts/verify-release-workflows.sh\n'
 GATES_BARE = 'bash ./scripts/verify-release-pairing.sh\n'
+CI_TAIL = '      - name: Run full rubric\n        run: make rubric\n'
+RELEASE_TAIL = '          gh workflow run pages.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG_NAME}" -f tag="${TAG_NAME}"\n'
 
-# Every weakening shape rounds 1-4 closed, verbatim. Under byte-exact pins most of them
-# now fail on a pin rather than on a classifier, so each one names the pin class it must
-# fail on: a case that starts failing for an unrelated reason fails the battery too.
+# Every weakening shape rounds 1-4 closed, verbatim. Under whole-file pins every one of them
+# now fails on the digest of the file it edits, so each names the class it must fail on - and
+# a case that starts failing for an unrelated reason fails the battery as well.
 ROUND_4_ATTACKS = (
     ('`!` prefix negation', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          ! bash scripts/verify-release-pairing.sh\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('`|| echo advisory`', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh || echo advisory\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('`if false; then ... fi` wrap', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          if false; then\n            bash scripts/verify-release-pairing.sh\n          fi\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('commented-out invocation', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          # bash scripts/verify-release-pairing.sh\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step-level `if: false`', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n',
      '      - name: Verify apptheory-init template/release pairing\n        if: false\n        run: |\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step-level `if: ${{ false }}`', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n',
      '      - name: Verify apptheory-init template/release pairing\n        if: ${{ false }}\n        run: |\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step-level `if: always()`', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n',
      '      - name: Verify apptheory-init template/release pairing\n        if: always()\n        run: |\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('job-level `if: false`', '.github/workflows/ci.yml',
      '  release-security-gates:\n    name: Release/security gates\n',
      '  release-security-gates:\n    if: false\n    name: Release/security gates\n',
-     CLASS_JOB,
+     CLASS_DIGEST,
     ),
     ('`|| true`', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh || true\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('`|| :`', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh || :\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('`||:`', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh ||:\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('`&& true`', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh && true\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('`|| exit 0`', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh || exit 0\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('`; true`', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh; true\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('usage-exit flag `--help`', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh --help\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('usage-exit flag `-h`', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh -h\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step-level continue-on-error', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n',
      '      - name: Verify apptheory-init template/release pairing\n        continue-on-error: true\n        run: |\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('job-level continue-on-error', '.github/workflows/ci.yml',
      '  release-security-gates:\n    name: Release/security gates\n',
      '  release-security-gates:\n    continue-on-error: true\n    name: Release/security gates\n',
-     CLASS_JOB,
+     CLASS_DIGEST,
     ),
     ('backslash continuation hiding `|| true`', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh \\\n            || true\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('`--self-test`-only step', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step-level `shell: bash {0}`', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n',
      '      - name: Verify apptheory-init template/release pairing\n        shell: bash {0}\n        run: |\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('workflow-level `defaults: run: shell: bash {0}`', '.github/workflows/ci.yml',
      'name: CI\n\non:\n',
      'name: CI\ndefaults:\n  run:\n    shell: bash {0}\n\non:\n',
-     CLASS_PREAMBLE,
+     CLASS_DIGEST,
     ),
     ('env indirection via `BASH_ENV`', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n',
      '      - name: Verify apptheory-init template/release pairing\n        env:\n          BASH_ENV: ./weaken.sh\n        run: |\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('flow-style `env: {BASH_ENV: ...}`', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n',
      '      - name: Verify apptheory-init template/release pairing\n        env: {BASH_ENV: ./weaken.sh}\n        run: |\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('job-level `env: BASH_ENV`', '.github/workflows/ci.yml',
      '  release-security-gates:\n    name: Release/security gates\n',
      '  release-security-gates:\n    env:\n      BASH_ENV: ./weaken.sh\n    name: Release/security gates\n',
-     CLASS_JOB,
+     CLASS_DIGEST,
     ),
     ('backgrounded invocation (`&`)', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh &\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('duplicate `run:` key in the step', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh\n        run: bash scripts/verify-release-pairing.sh || true\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('duplicate `if:` key on the release PR step', '.github/workflows/release-pr.yml',
      "        if: steps.release_pr.outputs.exists == 'true'\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n",
      "        if: steps.release_pr.outputs.exists == 'true'\n        if: false\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n",
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('folded `run: >-` hiding `|| true`', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      '      - name: Verify apptheory-init template/release pairing\n        run: >-\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh || true\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('heredoc-smuggled invocation', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          cat <<EOF\n          bash scripts/verify-release-pairing.sh\n          EOF\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('shell invoker: backgrounded invocation (`&`)', 'scripts/verify-release-branch.sh',
      'scripts/verify-release-pairing.sh --tag "${expected_tag}"\n',
@@ -1497,12 +674,12 @@ ROUND_4_ATTACKS = (
     ('variable indirection', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          PAIR="scripts/verify-release-pairing.sh"\n          bash "${PAIR}"\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('release PR step-level `if: false`', '.github/workflows/release-pr.yml',
      "        if: steps.release_pr.outputs.exists == 'true'\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n",
      '        if: false\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('shell invoker: commented-out invocation', 'scripts/verify-release-branch.sh',
      'scripts/verify-release-pairing.sh --tag "${expected_tag}"\n',
@@ -1532,67 +709,67 @@ ROUND_4_ATTACKS = (
     ('step-level `if: false` written after the run body', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n        if: false\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step-level `continue-on-error: true` written after the run body', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n        continue-on-error: true\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step-level `shell: bash {0}` written after the run body', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n        shell: bash {0}\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step-level `env: BASH_ENV` written after the run body', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n        env:\n          BASH_ENV: ./weaken.sh\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('meta-guard step `if: false` written after the run body', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-workflows.sh\n',
      '          bash scripts/verify-release-workflows.sh\n        if: false\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step body shadows `bash` with a function', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash() { return 0; }\n          bash scripts/verify-release-pairing.sh\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step body shadows `exit` with a function', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          exit() { :; }\n          bash scripts/verify-release-pairing.sh || exit 1\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step body reassigns PATH', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          PATH=/tmp/evil:$PATH\n          bash scripts/verify-release-pairing.sh\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('PATH prefix on the invocation line', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          PATH=/tmp/evil:$PATH bash scripts/verify-release-pairing.sh\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step body clears errexit with `set +e` and a trailing success', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          set +e\n          bash scripts/verify-release-pairing.sh\n          true\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step body installs a trap that overrides the exit status', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      "          trap 'exit 0' ERR\n          bash scripts/verify-release-pairing.sh\n",
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step body reassigns BASH_ENV', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          export BASH_ENV=./weaken.sh\n          bash scripts/verify-release-pairing.sh\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('meta-guard step body shadows `bash`', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-workflows.sh\n',
      '          bash() { return 0; }\n          bash scripts/verify-release-workflows.sh\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('shell invoker: function shadows `bash` before the invocation', 'scripts/verify-release-gates.sh',
      'bash ./scripts/verify-release-pairing.sh\n',
@@ -1617,17 +794,17 @@ ROUND_4_ATTACKS = (
     ('`${{ }}` expression as an argument', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh ${{ env.WEAKEN }}\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('variable-indirected `--help` argument', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          PAIRING_ARGS=--help\n          bash scripts/verify-release-pairing.sh "${PAIRING_ARGS}"\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('variable-indirected `--self-test` argument in a release PR workflow', '.github/workflows/release-pr.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          PAIRING_ARGS=--self-test\n          bash scripts/verify-release-pairing.sh "${PAIRING_ARGS}"\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('shell invoker: variable-indirected argument', 'scripts/verify-release-gates.sh',
      'bash ./scripts/verify-release-pairing.sh\n',
@@ -1637,17 +814,17 @@ ROUND_4_ATTACKS = (
     ('tolerated tail backgrounded with `&`', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh || exit 1 &\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('statement after the tolerated tail', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh || exit 1; true\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('tolerated tail piped into a command', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh || exit 1 | tee log\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('shell invoker: tolerated tail backgrounded with `&`', 'scripts/verify-release-branch.sh',
      'scripts/verify-release-pairing.sh --tag "${expected_tag}"\n',
@@ -1657,7 +834,7 @@ ROUND_4_ATTACKS = (
     ('meta-guard call with `|| true` in CI', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-workflows.sh\n',
      '          bash scripts/verify-release-workflows.sh || true\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('meta-guard call with `|| true` in the full release gates', 'scripts/verify-release-gates.sh',
      'bash ./scripts/verify-release-workflows.sh\n',
@@ -1677,107 +854,107 @@ ROUND_4_ATTACKS = (
     ('meta-guard call with `|| true` in the prerelease preflight', '.github/workflows/prerelease.yml',
      '        run: bash scripts/verify-release-workflows.sh\n',
      '        run: bash scripts/verify-release-workflows.sh || true\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('meta-guard step conditional changed in the stable preflight', '.github/workflows/release.yml',
      "        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''\n        run: bash scripts/verify-release-workflows.sh\n",
      '        if: false\n        run: bash scripts/verify-release-workflows.sh\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('YAML merge key in a guarded workflow', '.github/workflows/ci.yml',
      'name: CI\n\non:\n',
      'name: CI\n<<: *defaults\n\non:\n',
-     CLASS_PREAMBLE,
+     CLASS_DIGEST,
     ),
     ('unpinned new step invoking the meta-guard with `|| true`', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n',
      '      - name: Unpinned extra gate\n        run: |\n          bash scripts/verify-release-workflows.sh || true\n      - name: Verify apptheory-init template/release pairing\n',
-     CLASS_SWEEP,
+     CLASS_DIGEST,
     ),
     ('unpinned new step invoking the pairing gate with `|| true`', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n',
      '      - name: Unpinned pairing gate\n        run: |\n          bash scripts/verify-release-pairing.sh || true\n      - name: Verify apptheory-init template/release pairing\n',
-     CLASS_SWEEP,
+     CLASS_DIGEST,
     ),
     ('unpinned new step carrying a conditional', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n',
      '      - name: Unpinned conditional gate\n        if: always()\n        run: |\n          bash scripts/verify-release-workflows.sh\n      - name: Verify apptheory-init template/release pairing\n',
-     CLASS_SWEEP,
+     CLASS_DIGEST,
     ),
     ('step-level `if : false` (pre-colon whitespace) after the run body', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n        if : false\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('job-level `if : false` (pre-colon whitespace)', '.github/workflows/ci.yml',
      '  release-security-gates:\n    name: Release/security gates\n',
      '  release-security-gates:\n    if : false\n    name: Release/security gates\n',
-     CLASS_JOB,
+     CLASS_DIGEST,
     ),
     ('step-level `continue-on-error : true` (pre-colon whitespace)', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n        continue-on-error : true\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step-level `shell : bash {0}` (pre-colon whitespace)', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n        shell : bash {0}\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step-level duplicate `run :` key (pre-colon whitespace)', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh\n        run : bash scripts/verify-release-pairing.sh || true\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step-level `env :` with `PATH:` (pre-colon whitespace)', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n',
      '      - name: Verify apptheory-init template/release pairing\n        env :\n          PATH: /tmp/evil\n        run: |\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step-level non-canonical key the guard does not enumerate', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n        timeout-minutes : 5\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step-level quoted key `"if": false`', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n        "if": false\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ("step-level quoted key `'if' : false`", '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      "      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n        'if' : false\n",
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step-level explicit key `? if`', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n        ? if\n        : false\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('ANSI-C quoting hiding a `PATH` reassignment', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      "          echo $'it\\'s ok'\n          PATH=/tmp/evil:$PATH\n          echo 'a' 'b'\n          bash scripts/verify-release-pairing.sh\n",
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('ANSI-C quoting hiding a weakened invocation', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      "          echo $'it\\'s ok'\n          bash scripts/verify-release-pairing.sh || true\n          echo it is ok\n          bash scripts/verify-release-pairing.sh\n",
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('invocation inside a function called from an `if` condition', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          gate() {\n          bash scripts/verify-release-pairing.sh\n          }\n          if gate; then\n            :\n          fi\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('invocation inside a function that is never called', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          gate() {\n          bash scripts/verify-release-pairing.sh\n          }\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('invocation inside a negated function call', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          gate() {\n          bash scripts/verify-release-pairing.sh\n          }\n          ! gate\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('invocation inside a function in a guarded shell invoker', 'scripts/verify-release-branch.sh',
      'scripts/verify-release-pairing.sh --tag "${expected_tag}"\n',
@@ -1827,27 +1004,27 @@ ROUND_4_ATTACKS = (
     ('step-level `env: PATH`', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n',
      '      - name: Verify apptheory-init template/release pairing\n        env:\n          PATH: /tmp/evil\n        run: |\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('job-level `env: PATH`', '.github/workflows/ci.yml',
      '  release-security-gates:\n    name: Release/security gates\n',
      '  release-security-gates:\n    env:\n      PATH: /tmp/evil\n    name: Release/security gates\n',
-     CLASS_JOB,
+     CLASS_DIGEST,
     ),
     ('workflow-level `env: CDPATH`', '.github/workflows/ci.yml',
      'name: CI\n\non:\n',
      'name: CI\nenv:\n  CDPATH: /tmp/evil\n\non:\n',
-     CLASS_PREAMBLE,
+     CLASS_DIGEST,
     ),
     ('step-level `env: BASHOPTS`', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n',
      '      - name: Verify apptheory-init template/release pairing\n        env:\n          BASHOPTS: expand_aliases\n        run: |\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step-level `env: PATH` written as a flow mapping', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n',
      '      - name: Verify apptheory-init template/release pairing\n        env: {PATH: /tmp/evil}\n        run: |\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('gov verifier: `bash` shadowed in the checked function', 'gov-infra/verifiers/gov-verify-rubric.sh',
      '  echo "==> release workflow invariants"\n  bash ./scripts/verify-release-workflows.sh\n',
@@ -1877,42 +1054,42 @@ ROUND_4_ATTACKS = (
     ('flow-style step mapping invoking the pairing gate', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n      - {name: Extra gate, run: "bash scripts/verify-release-pairing.sh || true"}\n',
-     CLASS_SWEEP,
+     CLASS_DIGEST,
     ),
     ('flow-style step mapping invoking the meta-guard', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n',
      '      - {name: Extra guard, run: "bash scripts/verify-release-workflows.sh || true"}\n      - name: Verify apptheory-init template/release pairing\n',
-     CLASS_SWEEP,
+     CLASS_DIGEST,
     ),
     ('second YAML document in a guarded workflow', '.github/workflows/ci.yml',
      'name: CI\n\non:\n',
      'name: CI\n\non:\n---\njobs: {}\n',
-     CLASS_PREAMBLE,
+     CLASS_DIGEST,
     ),
     ('YAML alias as a step run body', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n      - name: Extra anchored gate\n        run: &weak "bash scripts/verify-release-pairing.sh || true"\n      - name: Extra aliased gate\n        run: *weak\n',
-     CLASS_SWEEP,
+     CLASS_DIGEST,
     ),
     ('invocation inside a parens-less `function` body in a step', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          function gate {\n          bash scripts/verify-release-pairing.sh\n          }\n          if gate; then\n            :\n          fi\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('invocation inside a subshell function body', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          gate() (\n          bash scripts/verify-release-pairing.sh\n          )\n          if gate; then\n            :\n          fi\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('invocation inside a conditional function body', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          gate() if true; then\n          bash scripts/verify-release-pairing.sh\n          fi\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('invocation inside a brace-poisoned parens-less function body', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          gate() { echo }\n          function evil {\n          bash scripts/verify-release-pairing.sh\n          }\n          if evil; then\n            :\n          fi\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('invocation inside a parens-less `function` body in the gov verifier', 'gov-infra/verifiers/gov-verify-rubric.sh',
      '  echo "==> release workflow invariants"\n  bash ./scripts/verify-release-workflows.sh\n',
@@ -1927,7 +1104,7 @@ ROUND_4_ATTACKS = (
     ('`bash` shadowed by a parens-less `function` definition in a step', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          function bash { return 0; }\n          bash scripts/verify-release-pairing.sh\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('`bash` shadowed by a parens-less `function` definition in the gov verifier', 'gov-infra/verifiers/gov-verify-rubric.sh',
      '  echo "==> release workflow invariants"\n  bash ./scripts/verify-release-workflows.sh\n',
@@ -1942,7 +1119,7 @@ ROUND_4_ATTACKS = (
     ('backquote substitution hiding `set +e`', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          x="`echo "it\'s"`"\n          set +e\n          echo "it\'s fine"\n          bash scripts/verify-release-pairing.sh\n          true\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('backquote substitution hiding a `PATH` reassignment in the gov verifier', 'gov-infra/verifiers/gov-verify-rubric.sh',
      '  echo "==> release workflow invariants"\n  bash ./scripts/verify-release-workflows.sh\n',
@@ -1952,32 +1129,32 @@ ROUND_4_ATTACKS = (
     ('workflow-level quoted key `"env":`', '.github/workflows/ci.yml',
      'name: CI\n\non:\n',
      'name: CI\n"env":\n  PATH: /tmp/evil\n\non:\n',
-     CLASS_PREAMBLE,
+     CLASS_DIGEST,
     ),
     ('workflow-level quoted key `"defaults":`', '.github/workflows/ci.yml',
      'name: CI\n\non:\n',
      'name: CI\n"defaults":\n  run:\n    shell: bash -c \'exit 0\' {0}\n\non:\n',
-     CLASS_PREAMBLE,
+     CLASS_DIGEST,
     ),
     ('step keys written after extra list-item space', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n',
      '      -   {name: Fake gate, run: "bash scripts/verify-release-pairing.sh || true"}\n      - name: Verify apptheory-init template/release pairing\n',
-     CLASS_SWEEP,
+     CLASS_DIGEST,
     ),
     ('unnamed step written after extra list-item space', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n',
      '      -   run: |\n          bash scripts/verify-release-pairing.sh || true\n      - name: Verify apptheory-init template/release pairing\n',
-     CLASS_SWEEP,
+     CLASS_DIGEST,
     ),
     ("gov verifier: the pinned toolchain export's input redirected", 'gov-infra/verifiers/gov-verify-rubric.sh',
      'mkdir -p "${GOV_TOOLS_BIN}"\n',
      'GOV_TOOLS_BIN="/tmp/evil:${GOV_TOOLS_BIN}"\nmkdir -p "${GOV_TOOLS_BIN}"\n',
-     CLASS_TOOLCHAIN,
+     CLASS_DIGEST,
     ),
     ('unpinned step key added to a pinned step', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n        working-directory: /tmp/evil\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('second line naming the meta-guard in the gov verifier', 'gov-infra/verifiers/gov-verify-rubric.sh',
      '  echo "==> release workflow invariants"\n  bash ./scripts/verify-release-workflows.sh\n',
@@ -1987,22 +1164,22 @@ ROUND_4_ATTACKS = (
     ("step body sources a file into the invocation's shell", '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          source /tmp/evil.sh\n          bash scripts/verify-release-pairing.sh\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ("step body dot-sources a file into the invocation's shell", '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          . /tmp/evil.sh\n          bash scripts/verify-release-pairing.sh\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ("step body evaluates text into the invocation's shell", '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          eval "$(cat /tmp/evil.sh)"\n          bash scripts/verify-release-pairing.sh\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('step body moves the shell before the invocation', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          cd /tmp/evil\n          bash scripts/verify-release-pairing.sh\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('gov verifier: the checked function sources a file', 'gov-infra/verifiers/gov-verify-rubric.sh',
      '  echo "==> release workflow invariants"\n  bash ./scripts/verify-release-workflows.sh\n',
@@ -2017,42 +1194,42 @@ ROUND_4_ATTACKS = (
     ('workflow-level `defaults.run.working-directory`', '.github/workflows/ci.yml',
      'name: CI\n\non:\n',
      'name: CI\ndefaults:\n  run:\n    working-directory: /tmp/evil\n\non:\n',
-     CLASS_PREAMBLE,
+     CLASS_DIGEST,
     ),
     ('job-level `defaults.run.working-directory`', '.github/workflows/ci.yml',
      '  release-security-gates:\n    name: Release/security gates\n',
      '  release-security-gates:\n    defaults:\n      run:\n        working-directory: /tmp/evil\n    name: Release/security gates\n',
-     CLASS_JOB,
+     CLASS_DIGEST,
     ),
     ('step-level `working-directory`', '.github/workflows/ci.yml',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n',
      '      - name: Verify apptheory-init template/release pairing\n        run: |\n          bash scripts/verify-release-pairing.sh --self-test\n          bash scripts/verify-release-pairing.sh\n        working-directory: /tmp/evil\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('workflow-level `defaults.run.shell` in a meta-guard workflow', '.github/workflows/release.yml',
      'name: Release (main)\n',
      "name: Release (main)\ndefaults:\n  run:\n    shell: bash -c 'exit 0' {0}\n",
-     CLASS_PREAMBLE,
+     CLASS_DIGEST,
     ),
     ('exported shell function shadow via `BASH_FUNC_`', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      "          export BASH_FUNC_bash%%='() { return 0; }'\n          bash scripts/verify-release-pairing.sh\n",
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('`hash -p` re-pins the command name', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          hash -p /tmp/evil/bash bash\n          bash scripts/verify-release-pairing.sh\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('duplicate job name carrying `if: false`', '.github/workflows/ci.yml',
      '  release-security-gates:\n    name: Release/security gates\n',
      '  release-security-gates:\n    name: Release/security gates\n  release-security-gates:\n    name: Decoy\n    if: false\n',
-     CLASS_JOB_KEY,
+     CLASS_DIGEST,
     ),
     ('second workflow-level `defaults:` with a poisoned shell', '.github/workflows/ci.yml',
      'name: CI\n\non:\n',
      "name: CI\ndefaults:\n  run:\n    shell: bash\n\ndefaults:\n  run:\n    shell: bash -c 'exit 0' {0}\n\non:\n",
-     CLASS_PREAMBLE,
+     CLASS_DIGEST,
     ),
 )
 
@@ -2066,17 +1243,17 @@ ROUND_4_ACCEPTED_RECYCLED = (
     ('trailing comment after the invocation', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh # pinned in the release doc\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('next-line `true` after the invocation', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
      '          bash scripts/verify-release-pairing.sh\n          true\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('quoted pinned `--self-test` argument', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh --self-test\n',
      '          bash scripts/verify-release-pairing.sh "--self-test"\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
     ('set +e / set -e capture pair in an unrelated gov verifier function', 'gov-infra/verifiers/gov-verify-rubric.sh',
      'check_file_budgets() {\n',
@@ -2086,12 +1263,12 @@ ROUND_4_ACCEPTED_RECYCLED = (
     ('YAML anchor defined in an inert `x-` section', '.github/workflows/ci.yml',
      'name: CI\n\non:\n',
      'name: CI\nx-bodies:\n  weak: &weak "bash scripts/verify-release-pairing.sh || true"\n\non:\n',
-     CLASS_SWEEP,
+     CLASS_DIGEST,
     ),
     ('unrelated verifier added to a pinned release/security step', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-workflows.sh\n',
      '          bash scripts/verify-api-snapshots.sh\n          bash scripts/verify-release-workflows.sh\n',
-     CLASS_STEP_BYTES,
+     CLASS_DIGEST,
     ),
 )
 
@@ -2109,19 +1286,19 @@ ROUND_5_ATTACKS = (
     # as the first line of a run body is inert in no sense: the pinned statements
     # below it stay byte-identical and never run.
     ("F1 own-line `exit 0` first in the pairing step", ".github/workflows/ci.yml",
-     CI_STEP_RUN, CI_STEP_RUN + "          exit 0\n", CLASS_STEP_BYTES),
+     CI_STEP_RUN, CI_STEP_RUN + "          exit 0\n", CLASS_DIGEST),
     ("F1 own-line `exec true` first in the pairing step", ".github/workflows/ci.yml",
-     CI_STEP_RUN, CI_STEP_RUN + "          exec true\n", CLASS_STEP_BYTES),
+     CI_STEP_RUN, CI_STEP_RUN + "          exec true\n", CLASS_DIGEST),
     ("F1 own-line `exit 0` first in the release/security step", ".github/workflows/ci.yml",
-     META_GUARD_BODY_FIRST, "          exit 0\n" + META_GUARD_BODY_FIRST, CLASS_STEP_BYTES),
+     META_GUARD_BODY_FIRST, "          exit 0\n" + META_GUARD_BODY_FIRST, CLASS_DIGEST),
     ("F1 own-line `exit 0` first in the prerelease preflight", ".github/workflows/prerelease.yml",
      PREMAIN_GUARD_RUN,
      "        run: |\n          exit 0\n          bash scripts/verify-release-workflows.sh\n",
-     CLASS_STEP_BYTES),
+     CLASS_DIGEST),
     ("F1 own-line `exec true` first in the stable preflight", ".github/workflows/release.yml",
      PREMAIN_GUARD_RUN,
      "        run: |\n          exec true\n          bash scripts/verify-release-workflows.sh\n",
-     CLASS_STEP_BYTES),
+     CLASS_DIGEST),
     # F2 - the heredoc mask ran on comment-split code without the quoting walker,
     # so a quoted `<<` opened a mask that hid the lines below it.
     ("F2 quoted `<<` opens a mask over a shadowed `bash` and a redirected PATH", ".github/workflows/ci.yml",
@@ -2130,28 +1307,30 @@ ROUND_5_ATTACKS = (
      "          bash() { return 0; }\n"
      "          PATH=/tmp/evil:$PATH\n"
      "          true\n" + CI_BARE,
-     CLASS_STEP_BYTES),
+     CLASS_DIGEST),
     ("F2 quoted `<<` opens a mask in the release/security step", ".github/workflows/ci.yml",
      META_GUARD_BODY_FIRST,
      '          echo "docs say << true marker"\n'
      "          bash() { return 0; }\n"
      "          true\n" + META_GUARD_BODY_FIRST,
-     CLASS_STEP_BYTES),
-    # F3 - the closure of the pinned toolchain export was incomplete: GOV_INFRA
-    # was read by a pinned statement and never pinned itself, and REPO_ROOT and
-    # SCRIPT_DIR were pinned by nothing at all.
-    ("F3 `GOV_INFRA` redirected above the pinned toolchain", GOV_VERIFIER,
+     CLASS_DIGEST),
+    # F3 - the pinned toolchain closure was incomplete: GOV_INFRA was read by a pinned
+    # statement and never pinned itself, and REPO_ROOT and SCRIPT_DIR were pinned by nothing,
+    # so one appended assignment re-pointed the toolchain while the pinned statements stayed
+    # byte-identical. The whole file is one digest now, so the three cases below are ordinary
+    # byte changes - the mechanism they attacked no longer exists.
+    ("F3 `GOV_INFRA` redirected above the toolchain setup", "gov-infra/verifiers/gov-verify-rubric.sh",
      'mkdir -p "${GOV_TOOLS_BIN}"\n',
      'GOV_INFRA="/tmp/evilgov"\nmkdir -p "${GOV_TOOLS_BIN}"\n',
-     CLASS_TOOLCHAIN),
-    ("F3 `REPO_ROOT` re-pointed so the exempted `source` lines load elsewhere", GOV_VERIFIER,
+     CLASS_DIGEST),
+    ("F3 `REPO_ROOT` re-pointed at the head of the toolchain setup", "gov-infra/verifiers/gov-verify-rubric.sh",
      'PLANNING_DIR="${GOV_INFRA}/planning"\n',
      'REPO_ROOT="/tmp/evilrepo"\nPLANNING_DIR="${GOV_INFRA}/planning"\n',
-     CLASS_TOOLCHAIN),
-    ("F3 `SCRIPT_DIR` re-pointed at the head of the closure", GOV_VERIFIER,
+     CLASS_DIGEST),
+    ("F3 `SCRIPT_DIR` re-pointed at the head of the toolchain setup", "gov-infra/verifiers/gov-verify-rubric.sh",
      'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n',
      'SCRIPT_DIR="/tmp/evil"\n',
-     CLASS_TOOLCHAIN),
+     CLASS_DIGEST),
     # F4 - pins keyed by (workflow, step name) only, so the pinned step could be
     # moved verbatim into a job that never runs.
     ("F4 pinned ci.yml pairing step moved verbatim into an `if: false` job", ".github/workflows/ci.yml",
@@ -2161,24 +1340,24 @@ ROUND_5_ATTACKS = (
      "    if: false\n"
      "    runs-on: ubuntu-latest\n"
      "    steps:\n" + CI_STEP,
-     CLASS_STEP_JOB),
+     CLASS_DIGEST),
     ("F4 `if: false` added to the pinned ci.yml pairing job", ".github/workflows/ci.yml",
      CI_JOB,
      "  release-security-gates:\n    if: false\n    name: Release/security gates\n",
-     CLASS_JOB),
+     CLASS_DIGEST),
     # F5 - the same admitted-freedom rule as F1: an extra statement that names no
     # guarded basename was admitted as inert, and a glob truncate leaves the
     # pinned invocations byte-identical while they run an empty file.
     ("F5 glob truncate of the paired gate before the pinned invocations", ".github/workflows/ci.yml",
      CI_BARE,
      "          printf '' > scripts/verify-release-pa*\n" + CI_BARE,
-     CLASS_STEP_BYTES),
+     CLASS_DIGEST),
     # Round 5's own pin policy.
     ("a new step in a guarded workflow on an unpinned invocation line", ".github/workflows/ci.yml",
      CI_STEP_HEADER,
      "      - name: Extra pairing arm\n        run: |\n"
      "          bash scripts/verify-release-pairing.sh --published\n" + CI_STEP_HEADER,
-     CLASS_SWEEP),
+     CLASS_DIGEST),
     ("a call site added to the Makefile on an unpinned line", "Makefile",
      "test: test-unit\n",
      "bash scripts/verify-release-workflows.sh --self-test\ntest: test-unit\n",
@@ -2186,106 +1365,196 @@ ROUND_5_ATTACKS = (
     ("a workflow-level key added above `jobs:`", ".github/workflows/ci.yml",
      CI_HEAD,
      "name: CI\nenv:\n  FOO: bar\n\non:\n",
-     CLASS_PREAMBLE),
+     CLASS_DIGEST),
     ("a second root-level `jobs:` mapping added below the first", ".github/workflows/ci.yml",
      "      - name: Run full rubric\n        run: make rubric\n",
      "      - name: Run full rubric\n        run: make rubric\n"
      "jobs:\n  decoy:\n    name: Release/security gates\n    runs-on: ubuntu-latest\n    steps: []\n",
-     CLASS_PREAMBLE),
+     CLASS_DIGEST),
     ("a job-level key added to a pinned job", ".github/workflows/prerelease.yml",
      "  release-please:\n    runs-on: ubuntu-latest\n",
      "  release-please:\n    timeout-minutes: 1\n    runs-on: ubuntu-latest\n",
-     CLASS_JOB),
+     CLASS_DIGEST),
     ("a sibling step added to a pinned job", ".github/workflows/ci.yml",
      META_GUARD_BODY_FIRST,
      "      - name: Extra unguarded helper\n"
      "        run: bash scripts/verify-api-snapshots.sh\n" + CI_GUARD_BARE + META_GUARD_BODY_FIRST,
-     CLASS_JOB),
+     CLASS_DIGEST),
     ("the pinned job key defined a second time", ".github/workflows/prerelease.yml",
      "  release-please:\n    runs-on: ubuntu-latest\n",
      "  release-please:\n    if: false\n    runs-on: ubuntu-latest\n  release-please:\n",
-     CLASS_JOB_KEY),
+     CLASS_DIGEST),
 )
 
-SELF_TEST_ATTACKS = ROUND_4_ATTACKS + ROUND_4_ACCEPTED_RECYCLED + ROUND_5_ATTACKS
+
+# ---------------------------------------------------------------------------
+# Round 6: the collapse completed. Rounds 1-5 pinned *regions* inside the five
+# workflows, which left every root key below `jobs:`, every key spelling YAML
+# resolves to a pinned key, and every script below the pinned steps outside the
+# pins. The five workflows are whole-file digests now and the release path is a
+# digest closure, so every case below fails on a pin rather than on a rule about
+# YAML or bash. Each is a repro from the adversarial review of round 5
+# (head b12f6d4a) - R5-1 .. R5-5 - or the battery row the runbook was missing
+# (R5-6), plus the closure row this construction carries.
+# ---------------------------------------------------------------------------
+
+ROUND_6_ATTACKS = (
+    # R5-1 - a root key below `jobs:` was outside every pin. `env: BASH_ENV` sources an
+    # attacker's file into every bash step of every job, including the pinned gate steps;
+    # a root-level `defaults: run: shell:` replaces the shell of every `run:` step. Both
+    # are appended at EOF, which the trailing unpinned `pages-dispatch` job absorbed.
+    ("R5-1 root-level `env: BASH_ENV` appended at ci.yml EOF", ".github/workflows/ci.yml",
+     CI_TAIL, CI_TAIL + "env:\n  BASH_ENV: ./weaken.sh\n", CLASS_DIGEST),
+    ("R5-1 root-level `defaults.run.shell` appended at ci.yml EOF", ".github/workflows/ci.yml",
+     CI_TAIL, CI_TAIL + "defaults:\n  run:\n    shell: bash -c 'exit 0' {0}\n", CLASS_DIGEST),
+    ("R5-1 root-level `defaults.run.shell` appended at release.yml EOF", ".github/workflows/release.yml",
+     RELEASE_TAIL, RELEASE_TAIL + "defaults:\n  run:\n    shell: bash -c 'exit 0' {0}\n", CLASS_DIGEST),
+    # R5-2 - key identity is not byte identity. YAML reads `"jobs":`, `jobs :` and `jobs:` as
+    # the same key and keeps the last mapping, so a quoted shadow, a quoted duplicate job key
+    # and a space-drifted duplicate all resolved to a definition the guard had never read.
+    ("R5-2 quoted `\"jobs\":` shadow mapping appended at ci.yml EOF", ".github/workflows/ci.yml",
+     CI_TAIL,
+     CI_TAIL
+     + '"jobs":\n  decoy:\n    name: Release/security gates\n    runs-on: ubuntu-latest\n    steps: []\n',
+     CLASS_DIGEST),
+    ("R5-2 quoted duplicate job key appended inside the ci.yml `jobs:` mapping",
+     ".github/workflows/ci.yml",
+     CI_TAIL,
+     CI_TAIL + '  "release-security-gates":\n    name: Decoy release/security gates\n'
+     "    runs-on: ubuntu-latest\n    steps: []\n",
+     CLASS_DIGEST),
+    ("R5-2 space-drifted duplicate job key inside the ci.yml `jobs:` mapping",
+     ".github/workflows/ci.yml",
+     CI_TAIL,
+     CI_TAIL + "  release-security-gates :\n    name: Decoy release/security gates\n"
+     "    runs-on: ubuntu-latest\n    steps: []\n",
+     CLASS_DIGEST),
+    ("R5-2 quoted duplicate `\"release-please\":` job key in release.yml", ".github/workflows/release.yml",
+     RELEASE_TAIL, RELEASE_TAIL + '  "release-please":\n    runs-on: ubuntu-latest\n    steps: []\n',
+     CLASS_DIGEST),
+    # R5-4 - the YAML 1.1 boolean alias: `true:` and `on:` are one key to PyYAML, so a `true:`
+    # block below `jobs:` could redefine the value the workflow is keyed on.
+    ("R5-4 root-level `true:` block appended below `jobs:` in ci.yml", ".github/workflows/ci.yml",
+     CI_TAIL, CI_TAIL + "true:\n  cancel-in-progress: true\n", CLASS_DIGEST),
+    # R5-3 - the publish path below the pinned steps was substring-guarded only. Wrapping the
+    # branch-provenance call in `if false` left every needle present and correctly ordered
+    # while the pairing gate stopped running on every tagged publish.
+    ("R5-3 `if false` wrap of the branch-provenance call in publish-release-assets.sh",
+     "scripts/publish-release-assets.sh",
+     'else\n  scripts/verify-release-branch.sh "${tag}"\nfi\n',
+     'else\n  if false; then\n    scripts/verify-release-branch.sh "${tag}"\n  fi\nfi\n',
+     CLASS_DIGEST),
+    # R5-5 - a tolerance that is not semantics-preserving, and the two normalisations the
+    # construction used to tolerate. They are byte changes now, like anything else.
+    ("R5-5 trailing whitespace after a backslash continuation in a pinned workflow",
+     ".github/workflows/ci.yml",
+     '          git fetch --no-tags "${release_ref_depth_args[@]}" origin \\\n',
+     '          git fetch --no-tags "${release_ref_depth_args[@]}" origin \\ \n',
+     CLASS_DIGEST),
+    ("R5-5 trailing whitespace on a pinned step line", ".github/workflows/ci.yml",
+     CI_SELF_TEST, CI_SELF_TEST.rstrip("\n") + "   \n", CLASS_DIGEST),
+    ("R5-5 trailing whitespace on a pinned release-path script line", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE.rstrip("\n") + "   \n", CLASS_DIGEST),
+    ("R5-5 CRLF line endings in a pinned workflow", ".github/workflows/ci.yml",
+     CI_HEAD, lambda text: text.replace("\n", "\r\n"), CLASS_DIGEST),
+    ("R5-5 CRLF line endings in a pinned release-path script", "scripts/verify-release-gates.sh",
+     "#!/usr/bin/env bash\n", lambda text: text.replace("\n", "\r\n"), CLASS_DIGEST),
+    ("R5-5 byte-order mark prepended to a pinned workflow", ".github/workflows/ci.yml",
+     "name: CI\n", "\ufeffname: CI\n", CLASS_DIGEST),
+    # R5-6 - the runbook carried a row for an action reference changed inside a pinned job and
+    # no battery case behind it. The row stays; the case exists now.
+    ("R5-6 action reference changed inside a pinned job", ".github/workflows/ci.yml",
+     "      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0\n",
+     "      - uses: actions/setup-go@main # v7.0.0\n",
+     CLASS_DIGEST),
+    # The closure row: a pinned workflow that names a script nothing pins. It fails on the
+    # digest of the workflow it edits and on the closure, which is the class of that row.
+    ("the closure row: a pinned workflow names a script pinned by nothing", ".github/workflows/ci.yml",
+     CI_TAIL, CI_TAIL + "      - name: Closure probe\n        run: bash scripts/verify-ssr-site-smoke.sh\n",
+     CLASS_CLOSURE),
+    # The round-5 disclosure moved into the interior. At round 5 these two files were read by
+    # nothing and were disclosed as unpinned; ci.yml invokes both, so both are in the closure
+    # now and an edit to either is a digest finding like any other. Two accepted cases became
+    # two attack cases, and the disclosed set is one file - this guard.
+    ("the closed boundary: an edit to verify-ci-rubric-enforced.sh",
+     "scripts/verify-ci-rubric-enforced.sh",
+     'require_contains "${ci}" "bash scripts/verify-release-workflows.sh" \\\n',
+     'require_contains "${ci}" "bash scripts/verify-branch-release-supply-chain.sh" \\\n',
+     CLASS_DIGEST),
+    ("the closed boundary: an edit to the paired gate's own file", "scripts/verify-release-pairing.sh",
+     "set -euo pipefail\n", "set -euo pipefail\necho tampered\n", CLASS_DIGEST),
+)
+
+SELF_TEST_ATTACKS = (
+    ROUND_4_ATTACKS + ROUND_4_ACCEPTED_RECYCLED + ROUND_5_ATTACKS + ROUND_6_ATTACKS
+)
 
 
-# The shapes that must stay accepted, so a pin that starts over-blocking fails
-# the self-test as loudly as a pin that starts missing. Two of them are the
-# disclosure: `scripts/verify-ci-rubric-enforced.sh` and this guard itself are
-# pinned by nothing in this repository, and the battery asserts that boundary
+def _accepted_makefile(source):
+    source["Makefile"] = source["Makefile"].replace(
+        "test: test-unit\n", "bash scripts/verify-release-workflows.sh\ntest: test-unit\n", 1
+    )
+    return source
+
+
+def _accepted_new_workflow(source):
+    source[".github/workflows/pages-preview.yml"] = (
+        "name: Pages preview\n\non:\n  workflow_dispatch:\n\njobs:\n  preview:\n"
+        "    runs-on: ubuntu-latest\n    steps:\n      - run: echo preview\n"
+    )
+    return source
+
+
+def _accepted_new_job(source):
+    source[".github/workflows/pages.yml"] = source[".github/workflows/pages.yml"] + (
+        "\n  preview:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo preview\n"
+    )
+    return source
+
+
+def _accepted_guard_own_file(source):
+    source[GUARD_PATH] = source[GUARD_PATH].replace(
+        "GUARDED_BASENAMES = ", "GUARDED_BASENAMES = ()  # tampered\n", 1
+    )
+    return source
+
+
+# The shapes that must stay accepted, so a construction that over-blocks fails the self-test
+# as loudly as one that starts missing. Every admitted shape is additive: it adds a workflow,
+# adds a job to a file no pin covers, or repeats a pinned invocation line. None of them can
+# change a byte of a pinned file, and none can stop a pinned step from running. One entry is
+# the disclosure - this guard is read by nothing here - and the battery asserts that boundary
 # rather than leaving it claimed in prose only.
 SELF_TEST_ACCEPTED = (
     (
-        "trailing whitespace on a pinned step line",
-        ".github/workflows/ci.yml",
-        lambda text: text.replace(CI_SELF_TEST, CI_SELF_TEST.rstrip("\n") + "   \n", 1),
-    ),
-    (
-        "trailing whitespace on a digest-pinned invoker line",
-        "scripts/verify-release-gates.sh",
-        lambda text: text.replace(GATES_BARE, GATES_BARE.rstrip("\n") + "   \n", 1),
-    ),
-    (
-        "CRLF line endings in a guarded workflow",
-        ".github/workflows/ci.yml",
-        lambda text: text.replace("\n", "\r\n"),
-    ),
-    (
         "a byte-identical pinned invocation line added to the Makefile",
-        "Makefile",
-        lambda text: text.replace(
-            "test: test-unit\n",
-            "bash scripts/verify-release-workflows.sh\ntest: test-unit\n",
-            1,
-        ),
+        _accepted_makefile,
     ),
     (
-        "a job-level key added to an unrelated job in a guarded workflow",
-        ".github/workflows/ci.yml",
-        lambda text: text.replace(
-            "  cdk-go-drift:\n    name: CDK Go binding drift\n",
-            "  cdk-go-drift:\n    name: CDK Go binding drift\n    timeout-minutes: 30\n",
-            1,
-        ),
+        "a new unguarded workflow added under .github/workflows",
+        _accepted_new_workflow,
     ),
     (
-        "the disclosed boundary: verify-ci-rubric-enforced.sh is not read",
-        "scripts/verify-ci-rubric-enforced.sh",
-        lambda text: text.replace(
-            'require_contains "${ci}" "bash scripts/verify-release-workflows.sh" \\\n',
-            'require_contains "${ci}" "bash scripts/verify-branch-release-supply-chain.sh" \\\n',
-            1,
-        ),
+        "a new unguarded job added to an unpinned workflow",
+        _accepted_new_job,
     ),
     (
-        "the disclosed boundary: the paired gate's own file is not read by the guard",
-        "scripts/verify-release-pairing.sh",
-        lambda text: text.replace(
-            "set -euo pipefail\n", "set -euo pipefail\necho tampered\n", 1
-        ),
-    ),
-    (
-        "the disclosed boundary: the guard's own file is not read by the guard",
-        "scripts/verify-release-workflows.sh",
-        lambda text: text.replace("GUARDED_BASENAMES = ", "GUARDED_BASENAMES = ()  # tampered\n", 1),
+        "the disclosed boundary: the guard's own file is read by nothing",
+        _accepted_guard_own_file,
     ),
 )
 
 
 def fixture_paths():
     paths = set(sweep_paths())
-    paths.update(INVOKER_FILE_DIGESTS)
-    paths.update(WORKFLOW_PREAMBLE_PINS)
-    paths.add(GOV_VERIFIER)
-    paths.add("scripts/verify-ci-rubric-enforced.sh")
-    paths.add("scripts/verify-release-workflows.sh")
-    paths.add("scripts/verify-release-pairing.sh")
+    paths.update(PINNED_FILE_DIGESTS)
+    paths.add(GUARD_PATH)
     return tuple(sorted(paths))
 
 
 def run_self_test() -> None:
-    fixture = {path: Path(path).read_text(encoding="utf-8") for path in fixture_paths()}
+    fixture = {path: read_source(path) for path in fixture_paths()}
+    base_sweep = sweep_paths()
 
     def read_from(source):
         def read_text(path):
@@ -2297,7 +1566,12 @@ def run_self_test() -> None:
 
         return read_text
 
-    baseline = guarded_surface_findings(read_from(fixture))
+    def sweep_for(source):
+        # The sweep set the real run would use, plus any file an accepted case adds. The
+        # guard's own file is in the fixture but is never swept, exactly as in the real run.
+        return tuple(sorted(set(base_sweep) | (set(source) - set(fixture))))
+
+    baseline = guarded_surface_findings(read_from(fixture), sweep=sweep_for(fixture))
     if baseline:
         raise SystemExit(
             "release-workflows: FAIL (self-test: the legitimate guarded wiring was REJECTED, so the "
@@ -2312,8 +1586,18 @@ def run_self_test() -> None:
                 f"release-workflows: FAIL (self-test fixture drifted: the {label!r} anchor is missing "
                 f"from {path})"
             )
-        source[path] = source[path].replace(anchor, replacement, 1)
-        findings = guarded_surface_findings(read_from(source))
+        mutated = (
+            replacement(source[path])
+            if callable(replacement)
+            else source[path].replace(anchor, replacement, 1)
+        )
+        if mutated == source[path]:
+            raise SystemExit(
+                f"release-workflows: FAIL (self-test fixture drifted: the {label!r} mutation changed "
+                f"nothing in {path})"
+            )
+        source[path] = mutated
+        findings = guarded_surface_findings(read_from(source), sweep=sweep_for(source))
         if not findings:
             raise SystemExit(
                 f"release-workflows: FAIL (self-test MISSED the {label!r} weakening in {path})"
@@ -2327,22 +1611,20 @@ def run_self_test() -> None:
             )
         print(f"release-workflows: FAIL-PROOF (self-test rejected: {label} in {path} -> {expected})")
 
-    for label, path, mutate in SELF_TEST_ACCEPTED:
-        source = dict(fixture)
-        mutated = mutate(source[path])
-        if mutated == source[path]:
+    for label, mutate in SELF_TEST_ACCEPTED:
+        source = mutate(dict(fixture))
+        if source == fixture:
             raise SystemExit(
                 f"release-workflows: FAIL (self-test fixture drifted: the {label!r} mutation changed "
-                f"nothing in {path})"
+                f"nothing)"
             )
-        source[path] = mutated
-        findings = guarded_surface_findings(read_from(source))
+        findings = guarded_surface_findings(read_from(source), sweep=sweep_for(source))
         if findings:
             raise SystemExit(
-                f"release-workflows: FAIL (self-test OVER-BLOCKS the accepted shape {label!r} in "
-                f"{path}: " + "; ".join(message for _kind, message in findings)
+                f"release-workflows: FAIL (self-test OVER-BLOCKS the accepted shape {label!r}: "
+                + "; ".join(message for _kind, message in findings)
             )
-        print(f"release-workflows: ACCEPT-PROOF (self-test accepted: {label} in {path})")
+        print(f"release-workflows: ACCEPT-PROOF (self-test accepted: {label})")
 
     print(
         f"release-workflows: PASS (self-test: {len(SELF_TEST_ATTACKS)} weakening shape(s) failed closed, "
@@ -2354,21 +1636,25 @@ if MODE == "self-test":
     run_self_test()
     raise SystemExit(0)
 
-# The runbook states these two counts in prose. Reflowed line breaks are normal in
-# Markdown and are not drift, so the document is compared with its whitespace
-# collapsed; the numbers themselves are read out of the battery, never restated.
-_doc_claim = (
+# The runbook states three counts in prose: the two battery counts and the size of the pinned
+# closure. Reflowed line breaks are normal in Markdown and are not drift, so the document is
+# compared with its whitespace collapsed; every number is read out of the artifact that
+# produces it, never restated.
+_doc_text = " ".join(Path("docs/release-process.md").read_text(encoding="utf-8").split())
+for _doc_claim in (
     f"{len(SELF_TEST_ATTACKS)} weakening shapes fail closed and "
-    f"{len(SELF_TEST_ACCEPTED)} fail-closed spellings are accepted"
-)
-if _doc_claim not in " ".join(Path("docs/release-process.md").read_text(encoding="utf-8").split()):
-    raise SystemExit(
-        "release-workflows: FAIL (docs/release-process.md must state the counts this battery actually "
-        f"reports, so the documented claim cannot drift from the cases behind it; missing "
-        f"{_doc_claim!r})"
-    )
+    f"{len(SELF_TEST_ACCEPTED)} fail-closed spellings are accepted",
+    f"the transitive closure of the script paths they name: "
+    f"{len(RELEASE_PATH_FILE_DIGESTS)} files under `scripts/` and `gov-infra/`",
+):
+    if _doc_claim not in _doc_text:
+        raise SystemExit(
+            "release-workflows: FAIL (docs/release-process.md must state what the pins actually cover - "
+            "the battery counts and the size of the closure - so a documented claim cannot drift from "
+            f"the artifact behind it; missing {_doc_claim!r})"
+        )
 
-guarded_surface = guarded_surface_findings(lambda path: Path(path).read_text(encoding="utf-8"))
+guarded_surface = guarded_surface_findings(read_source)
 if guarded_surface:
     raise SystemExit(
         "release-workflows: FAIL (a guarded release-gate region is not its pinned revision; "

@@ -180,22 +180,28 @@ the gate promptly, and a download failure reports the HTTP status or timeout rat
 asset is missing.
 
 The guard that keeps the gate a blocker is `scripts/verify-release-workflows.sh`, and it decides by
-bytes. Rounds 1-4 modelled what an edit *meant* - bash's quote contexts, bash's function bodies,
-YAML's key spellings - and admitted an extra statement they judged inert. Every round found a spelling
-the model lacked, and the last round found that the admission rule itself was the hole: an `exit 0`
-written as the first line of a pinned run body leaves every pinned statement below it in place and
-stops the gate from ever mattering. There is no model and no admission rule any more.
+bytes. Rounds 1-5 modelled what an edit *meant* - bash's quote contexts, bash's function bodies, YAML's
+root keys and key spellings, a job's span, a step's span - and admitted whatever the model could not
+see. Every round produced a spelling the model lacked: an `exit 0` written first in a pinned run body,
+a root-level `env:` appended below `jobs:`, a quoted `"jobs":` mapping, a job key written twice under
+two spellings, a whole trailing job that absorbed an append. There is no model and no admission rule
+any more, and no region logic either: the five workflows are pinned as whole files.
 
-What "pinned" means here. A guarded region is decided by its exact bytes. The only tolerated drift is
-trailing whitespace on a line and a CRLF line ending, so an ordinary editor does not trip the guard;
-every other byte is compared as it stands. A guarded region may change only together with the pin that
-describes it, in the same commit. That is deliberately a visible two-place edit, and updating the pin
-in the same pull request is the intended workflow for any intentional change to a guarded region -
-there is no edit to one that is admitted without it.
+What "pinned" means here. A pinned file is decided by its exact bytes - its whole-file SHA-256. There
+is no tolerance, for whitespace or for line endings: a CRLF line ending, a byte-order mark or a
+trailing space is a byte change like any other, and it fails closed with a message that says so. The
+guard probes its own reader for byte-fidelity before it compares anything, because a
+universal-newline reader - which hands back `\r\n` as `\n` - is the same tolerance by another name.
+The
+fix for a file whose editor wrote different line endings is to normalise the file, and that
+normalisation is an ordinary visible edit. A pinned file may change only together with the pin that
+describes it, in the same commit: that is deliberately a visible two-place edit, and the guard reports
+the new digest to paste, so the pin update is mechanical. Any edit to a pinned file requires the pin
+update in the same pull request - no edit to a pinned file is admitted without one.
 
-`--self-test` runs the attack battery, one case per shape, each naming the pin class it must fail on,
-plus a table of shapes that must stay accepted. At this revision 170 weakening shapes fail closed and
-8 fail-closed spellings are accepted, and the legitimate wiring at HEAD is accepted as the baseline
+`--self-test` runs the attack battery, one case per shape, each naming the class it must fail on, plus
+a table of shapes that must stay accepted. At this revision 189 weakening shapes fail closed and 4
+fail-closed spellings are accepted, and the legitimate wiring at HEAD is accepted as the baseline
 before any attack is tried - the guard asserts those two counts against this document, so the numbers
 here cannot drift from the battery.
 
@@ -203,66 +209,64 @@ What is pinned, and what each pin is behind:
 
 | Pinned surface | How it is decided |
 | --- | --- |
-| The workflow-level configuration of each guarded workflow - every raw line above its first `jobs:` | byte for byte. `on:`, `permissions:`, `concurrency:`, `env:`, `defaults:` and anything else at that level is resolved by the runner before any step below it, so the region is pinned whole rather than key by key. Battery: a workflow-level key added above `jobs:`, a workflow-level `defaults:` that drops errexit, a workflow-level `env: CDPATH`, the quoted-key spellings, a YAML merge key and a second YAML document |
-| Every workflow-level key, declared exactly once | a repeated root key is refused rather than read past: YAML keeps the last value, and the runner resolves the one the guard never read. Battery: a second `jobs:` mapping added below the first |
-| Each guarded job - the whole block, from its key line to the next job | byte for byte, including the job's `if:` (present with exactly these bytes, or absent), every job-level key, and every step of the job. The steps of one job share a runner and a workspace, so a sibling step that runs first can rewrite the guarded script and leave the pinned step's own bytes - and both of its invocations - exactly as pinned. Battery: `if: false` and `continue-on-error` on the job, a job-level `env: PATH`, a job-level `defaults`, an action reference changed inside a pinned job, a sibling step that truncates the paired gate, and the step-moved-into-another-job case |
-| A pinned job key declared exactly once | YAML keeps the last definition of a repeated key, so a second job carrying the pinned key is refused. Battery: the duplicate job-name case |
-| Each guarded step - the whole block, keyed by (workflow, job, step name) | byte for byte: the step's name, every key it carries and its complete `run:` body. The block runs to the next step or the next job, so a key appended after the `run:` body is part of the same block and changes it. Battery: `exit 0` and `exec true` written first in the body, the quoted-`<<` mask over a shadowed `bash`, the glob-truncate case, negation, list operators, usage flags, backslash continuations, a heredoc-smuggled invocation, a step key appended after the body, and the step-moved-to-another-job case |
-| A guarded step is inside the job its pin names | the pin is keyed by (workflow, job, step), so moving it - into another job, or into a job that never runs - fails even when its own bytes are untouched. Battery: the step-verbatim-into-an-`if: false`-job case |
-| The four shell invokers that can reach the gate or the guard | whole-file SHA-256: `scripts/verify-release-branch.sh`, `scripts/verify-release-publish-postcondition.sh`, `scripts/verify-release-gates.sh` and `gov-infra/verifiers/gov-verify-rubric.sh`. Round 4 pinned the fourth by invocation line only, to keep tolerating a `set +e`/`set -e` pair inside one of its own self-tests - a tolerance this construction withdraws, so the whole file is pinned now. Battery: every shell-invoker case, plus `set +e` and a `bash()` definition added to the GovTheory verifier |
-| The transitive closure of the GovTheory verifier's toolchain `PATH` export | `SCRIPT_DIR`, `REPO_ROOT`, `GOV_INFRA`, the eight `GOV_TOOLS_*` names and `PATH` are each pinned to exactly one assignment with exactly the pinned text, and any other assignment to one of those names anywhere in the file fails. Round 4 pinned the export's own text and the names below it but left `GOV_INFRA` - which `GOV_TOOLS_DIR` reads - free, so one appended assignment put another `bash` first on `PATH` while every pinned statement stayed byte-identical. Battery: `GOV_INFRA`, `REPO_ROOT` and `SCRIPT_DIR` each re-pointed |
-| Every occurrence of a guarded script name in the sweep set - every file under `.github/`, `Makefile`, a root `package.json` when present, and the invoker scripts | admitted from three places and nowhere else: inside a digest-pinned invoker, inside a pinned step, or on a line byte-identical to a pinned invocation line. The third is additive strengthening - running a pinned gate from somewhere else cannot make the pinned step stop running - and it is admitted outside the five guarded workflows only, because one of those workflows is the artifact the required release context is keyed on. There is no composite action, `Makefile` or `package.json` call site today, and the sweep is what keeps that true. Battery: a flow-style step mapping, a YAML alias, a step written with extra list-item space, a call site in a new step, a call site added to the `Makefile`, and a call site added to a workflow that is not one of the five |
+| The five workflows the release train runs - `ci.yml`, `prerelease-pr.yml`, `release-pr.yml`, `prerelease.yml` and `release.yml` | whole-file SHA-256, byte for byte. Every job, every step, every root key below `jobs:`, every key spelling, every `uses:` reference and every line ending of each workflow is inside one digest, so there is no region a key could be written below and no spelling a key could take that this construction has to know. Battery: `env: BASH_ENV` and `defaults.run.shell` appended at the end of `ci.yml` and `release.yml`, a quoted `"jobs":` shadow mapping, a quoted and a space-drifted duplicate job key, a quoted `"release-please":` duplicate, a `true:` block below `jobs:`, an action reference changed inside a pinned job, a second `jobs:` mapping, `if: false` on the job and on the step, every shell spelling rounds 1-4 closed, and the CRLF, byte-order-mark and trailing-whitespace cases |
+| The release path those workflows run - the transitive closure of the script paths they name: 86 files under `scripts/` and `gov-infra/`, including `verify-release-branch.sh`, `verify-release-gates.sh`, `verify-release-publish-postcondition.sh`, `verify-release-pairing.sh`, `publish-release-assets.sh`, `run-release-please-pr.sh`, `sync-release-pr-generated.sh` and `gov-verify-rubric.sh` | whole-file SHA-256 each. The closure is resolved from the repository root or the referencing file's directory and bounded to `scripts/` and `gov-infra/`; a path outside those roots is read as data - a test body, an example handler, a library module - and is not part of the release path this guard pins. Battery: the `if false` wrap of the branch-provenance call in `publish-release-assets.sh`, every shell-invoker case, `set +e`, a `bash()` definition and a re-pointed toolchain variable in the GovTheory verifier, and trailing whitespace and CRLF in a pinned script |
+| The closure itself - a pinned file may name only scripts that are pinned themselves | re-derived from the pinned bytes on every run, so a workflow that gains a call site, or a pinned script that starts running another one, fails until the same change adds the pin and the closure cannot rot into a stale list. Battery: a pinned workflow naming a script nothing pins |
+| Every occurrence of a guarded script name in the sweep set - every file under `.github/`, `Makefile`, and a root `package.json` when present | admitted from exactly one place: on a line byte-identical to a line a pinned workflow holds. That is additive strengthening - repeating a pinned invocation line can add a run of the gate or the guard, and it cannot weaken the step that already runs it - and it is the whole of what a file outside the pinned set may say about a guarded script. The sweep walks every file under `.github/`, so a new workflow, or a composite action if one is ever added, is read rather than enumerated. There is no `Makefile` or `package.json` call site today and no composite action, and the sweep is what keeps that true. Battery: a call site added to the `Makefile` on a line that is not one of the pinned invocation lines, and, as the accepted mirror, a byte-identical pinned invocation line added to the `Makefile`, a new unguarded workflow, and a new unguarded job in a workflow no pin covers |
 
-An occurrence sweep matches the guarded script's *name*, so it does not see a glob, and this is the
+An occurrence sweep matches a guarded script's *name*, so it does not see a glob, and this is the
 sweep's one limit, stated rather than glossed: `printf '' > scripts/verify-release-pa*` names no
-guarded script. Inside a pinned step or a pinned job it is a finding either way, because those regions
-are pinned by bytes and the battery carries both shapes; in a file that holds no pin it is not seen.
-That is harmless for the context the required release gate runs in, because only the steps of one job
-share a runner and a filesystem - a step in another job, or in another workflow file, cannot reach the
-workspace the pinned step runs in.
+guarded script. In a pinned file that shape is a digest finding anyway, because the file's bytes
+changed, and the battery carries it. In a file no pin covers it is not seen, and it is harmless there:
+an unpinned file runs on another runner or in another workflow, so it cannot reach the workspace a
+pinned step runs in, while the five workflows - the files where the shape would matter - are pinned
+whole.
 
-What is **not** pinned anywhere in this repository, said plainly. These three files are read by nothing
-here, so a change to one of them is invisible to every gate in this repository. Their integrity is
-rooted in pull-request review and in signed commits, and in nothing else:
+What is **not** pinned anywhere in this repository, said plainly - it is one file:
 
 | File | Why it is not pinned |
 | --- | --- |
-| `scripts/verify-release-workflows.sh` | This guard. A file cannot pin its own bytes: a weakened copy would carry the weakened pin with it, so a self-pin would prove nothing. |
-| `scripts/verify-ci-rubric-enforced.sh` | It substring-checks `ci.yml` (its line 101 asserts that the release/security step names the guard). The guard does not read it. |
-| `scripts/verify-release-pairing.sh` | The gate this guard protects. The guard pins where the gate is invoked, in which job and under what bytes; it does not pin the gate's own file. |
+| `scripts/verify-release-workflows.sh` | This guard. A file cannot pin its own bytes: a weakened copy would carry the weakened pin with it, so a self-pin would prove nothing. Its integrity is rooted in pull-request review and in signed commits, and in nothing else. |
 
-Those three rows are asserted by the battery rather than only claimed: three accepted cases edit
-exactly those files and require that no finding is produced, so the disclosed boundary cannot quietly
-become a claim that the guard covers them.
+Round 5 disclosed three files here, and two of them are in the interior now: `ci.yml` invokes both
+`scripts/verify-ci-rubric-enforced.sh` and `scripts/verify-release-pairing.sh`, so both are in the
+release-path closure and an edit to either is a digest finding like any other. The battery carries that
+as two attack cases - the accepted cases that used to assert those two boundaries - and one accepted
+case remains for the boundary that is left, so the disclosed file cannot quietly become a claim the
+guard covers.
 
-Round 4's accepted table is gone, and the claims it carried with it. Each of its six entries was
-admitted by the freedom to add a statement to a pinned run body or an inert section to a workflow, and
-every one of them changes the bytes of a pinned region or names a guarded script outside one: a
-trailing comment on the invocation line, a `true` line after it, a quoted `--self-test`, an unrelated
-`set +e` / `set -e` pair inside the GovTheory verifier, an `x-` section holding a weakened invocation,
-and an unrelated verifier added to a pinned step. All six now fail closed, they are carried in the
-battery as attack cases rather than as accepted ones, and the workflow for any of them is the
-documented two-place edit - change the region and the pin together - rather than an admission.
+Round 4's and round 5's accepted tables are gone, and the claims they carried with them. Each entry was
+admitted by the freedom to add a statement to a pinned run body, an inert section to a workflow, or a
+tolerance for whitespace and line endings. Every one of them either changes the bytes of a pinned file
+or names a guarded script outside the pins: a trailing comment on the invocation line, a `true` line
+after it, a quoted `--self-test`, an unrelated `set +e` / `set -e` pair inside the GovTheory verifier,
+an `x-` section holding a weakened invocation, an unrelated verifier added to a pinned step, trailing
+whitespace on a pinned line, and CRLF line endings. All of them fail closed as attack cases now, and the
+workflow for any of them is the documented two-place edit - change the file and the pin together -
+rather than an admission.
 
 Every row of the tables above has a battery case behind it in `--self-test`, and a row with no case is
-removed rather than kept. The pin rows are carried by the shapes that add or edit a byte of a pinned
-region: a statement added to a pinned run body, a step key appended after the body, a key added above
-`jobs:`, a key added to a pinned job, a sibling step added to a pinned job, a repeated job key, a
-repeated root key, an edit to one of the four digest-pinned invokers, an assignment to a name in the
-pinned toolchain closure, and a guarded script name written outside every pin. The accepted table holds
-the mirror image, so a pin that starts over-blocking fails the self-test as loudly as a pin that starts
-missing: the legitimate wiring at HEAD (asserted before any attack is tried), trailing whitespace on a
-pinned line, CRLF line endings, a byte-identical pinned invocation line added to the `Makefile`, a key
-added to a job that holds no pin, and the three disclosed boundaries above.
+removed rather than kept. The two pin rows are carried by the shapes that add or edit a byte of a
+pinned file - a statement or a key added anywhere in a workflow, a root key appended below `jobs:`, a
+key spelling YAML resolves to a pinned key, an action reference changed inside a pinned job, a whole
+trailing job that absorbs an append, an edit to any file in the release-path closure - and the closure
+row by a pinned workflow naming a script nothing pins, the sweep row by a call site added to the
+`Makefile` on a line that is not a pinned invocation line. The accepted table holds the mirror image,
+so a construction that over-blocks fails the self-test as loudly as one that starts missing: the
+legitimate wiring at HEAD (asserted before any attack is tried), a byte-identical pinned invocation
+line added to the `Makefile`, a new unguarded workflow, a new unguarded job in a workflow no pin
+covers, and the one disclosed boundary above. Every admitted shape is additive: none of them can change
+a byte of a pinned file, and none can stop a pinned step from running.
 
 The guard's own invocations go through the same pins - the release/security step in `ci.yml`, the
 release preflights in `prerelease.yml` and `release.yml`, `scripts/verify-release-gates.sh` and
 `gov-infra/verifiers/gov-verify-rubric.sh` - so weakening a call of the guard fails as loudly as
-weakening a call of the gate it guards. The three YAML forms that the runner would resolve differently
-from a literal reading are refused rather than read past: a `<<:` merge key, a second document in one
-workflow file, and a YAML alias (`*name`, which re-points a value at a node defined elsewhere). In the
-pinned wiring each of them sits inside a pinned region, so each is an ordinary byte change as well as a
-refused form.
+weakening a call of the gate it guards. The YAML forms the runner would resolve differently from a
+literal reading - a `<<:` merge key, a second document in one workflow file, a YAML alias (`*name`,
+which re-points a value at a node defined elsewhere), a quoted or space-drifted duplicate key, and a
+`true:` block that YAML 1.1 reads as the same key as `on:` - are all ordinary byte changes here,
+because every file that holds one is pinned whole. None of them has to be classified, and none of them
+can be written past.
 
 The already-published `v4.2.4` asset declares `aws-cdk-lib 2.269.0` and cannot be changed. The gate
 exists so `4.2.5` and later either ship paired or fail before the release becomes public.
