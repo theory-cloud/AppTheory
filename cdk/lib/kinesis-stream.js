@@ -46,7 +46,7 @@ const constructs_1 = require("constructs");
  * Logs destinations are intentionally separate constructs.
  */
 class AppTheoryKinesisStream extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryKinesisStream", version: "4.3.0-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryKinesisStream", version: "4.3.0" };
     /**
      * The Kinesis stream, created or imported.
      */

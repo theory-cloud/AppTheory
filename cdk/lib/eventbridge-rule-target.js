@@ -45,7 +45,7 @@ const constructs_1 = require("constructs");
  * For schedule-only back-compat, see `AppTheoryEventBridgeHandler`.
  */
 class AppTheoryEventBridgeRuleTarget extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeRuleTarget", version: "4.3.0-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeRuleTarget", version: "4.3.0" };
     rule;
     constructor(scope, id, props) {
         super(scope, id);
