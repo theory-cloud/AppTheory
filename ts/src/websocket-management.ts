@@ -127,7 +127,9 @@ export class WebSocketManagementClient {
         .map((s) => s.trim())
         .filter(Boolean)
         .join(" ");
-      throw new Error(`apptheory: post_to_connection failed ${suffix}`.trim());
+      throw new Error(`apptheory: post_to_connection failed ${suffix}`.trim(), {
+        cause: err,
+      });
     }
   }
 
@@ -147,7 +149,9 @@ export class WebSocketManagementClient {
         .map((s) => s.trim())
         .filter(Boolean)
         .join(" ");
-      throw new Error(`apptheory: get_connection failed ${suffix}`.trim());
+      throw new Error(`apptheory: get_connection failed ${suffix}`.trim(), {
+        cause: err,
+      });
     }
   }
 
@@ -165,7 +169,9 @@ export class WebSocketManagementClient {
         .map((s) => s.trim())
         .filter(Boolean)
         .join(" ");
-      throw new Error(`apptheory: delete_connection failed ${suffix}`.trim());
+      throw new Error(`apptheory: delete_connection failed ${suffix}`.trim(), {
+        cause: err,
+      });
     }
   }
 }

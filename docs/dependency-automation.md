@@ -111,7 +111,7 @@ passed `npm audit` with zero vulnerabilities. The removal rationale was:
   pin was no longer carrying a security fix.
 - `@eslint/eslintrc` / `eslint` → `ajv`: ESLint selects its compatible `ajv@6.14.0`; AppTheory does not override
   lint-tool internals without an active advisory.
-- `@eslint/eslintrc` / `eslint` / `eslint-plugin-import` → `minimatch`: the lint stack remains audit-clean on its
+- `@eslint/config-array` / `eslint` / `eslint-plugin-import-x` → `minimatch`: the lint stack remains audit-clean on its
   upstream-selected `minimatch` versions, and none of these packages are runtime dependencies.
 - `fast-xml-parser` / `fast-xml-builder`: the regenerated TypeScript lockfile no longer contains those packages, so
   keeping orphan overrides would hide dependency graph drift instead of fixing it.
@@ -124,13 +124,11 @@ published tarball. Production `aws-cdk-lib` manifests at or above `2.265.0` carr
 findings. The CDK npm-audit and GovTheory OSV gates verify the exact bundled graph and require empty scanner reports;
 any AWS CDK, minimatch, brace-expansion, package-path, or finding drift fails closed.
 
-The TypeScript lint graph still requires `minimatch@3.1.4`, but its compatible `brace-expansion` range now resolves to
-patched `brace-expansion@1.1.17`, the first fixed 1.x release for `GHSA-mh99-v99m-4gvg`. The independently resolvable
-minimatch 10 path remains pinned by the lockfile to fixed `brace-expansion@5.0.8`. SEC-2 verifies both exact paths and
-requires an empty OSV report; any lint-parent, minimatch, package, advisory, or path drift fails closed.
-
-The `ts/` SEC-2 gate's deterministic result currently depends on OSV serving the advisory's multi-range record, which
-identifies `1.1.17` as fixed. A stale single-range record (`introduced: 0`, `fixed: 5.0.8`) is a known flake vector: it
-misclassifies `brace-expansion@1.1.17`, so a clean tree fails closed with `unexpected vulnerability
-GHSA-mh99-v99m-4gvg in brace-expansion@1.1.17`. The AWS CDK gate is variant-independent because bundled `5.0.9` is
-fixed in both record variants.
+The TypeScript lint graph no longer carries a `minimatch@3.x` parent. Landing the eslint 10 train
+(`eslint` 10.11.0, `@eslint/js` 10.0.1, `eslint-plugin-unicorn` ^76.0.0) with `eslint-plugin-import` swapped for the
+maintained `eslint-plugin-import-x` fork dropped `@eslint/eslintrc` and hoisted the whole lint stack onto one
+`minimatch@10.2.6` → `brace-expansion@5.0.12` path. The vulnerable `brace-expansion@1.1.17` instance and the
+`GHSA-rgw5-rvv9-x895` / `GHSA-mh99-v99m-4gvg` exception that covered it are therefore gone, and the `ts/` SEC-2 checker
+now grants no exception: it requires both an empty OSV report and the exact parent, minimatch, brace-expansion, and
+version graph, and any drift fails closed. Both OSV lockfile classes are now exception-free and advisory-variant
+independent, because the only remaining brace-expansion instance (`5.0.12`) is past every recorded 5.x fix.

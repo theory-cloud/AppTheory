@@ -112,6 +112,12 @@ jobs:
         with:
           python-version: "3.14"
 
+      - name: Verify apptheory-init template/release pairing
+        if: steps.release_pr.outputs.exists == 'true'
+        run: |
+          bash scripts/verify-release-pairing.sh --self-test
+          bash scripts/verify-release-pairing.sh
+
       - name: Sync generated CDK artifacts on release PR
         if: steps.release_pr.outputs.exists == 'true'
         env:

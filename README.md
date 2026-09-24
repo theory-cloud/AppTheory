@@ -170,7 +170,7 @@ The full documentation site lives at **[apptheory.theorycloud.ai](https://appthe
 |---|---|
 | `docs/` | Public documentation site (Jekyll) — also the canonical doc tree |
 | `runtime/` | Go runtime — fixture-backed contract implementation (default P2) |
-| `ts/` | TypeScript runtime (ESM, Node.js 20+) |
+| `ts/` | TypeScript runtime (ESM, Node.js 22+) |
 | `py/` | Python runtime (3.12+) |
 | `cdk/` | CDK constructs (jsii) — `AppTheoryHttpApi`, `AppTheoryMcpServer`, `AppTheoryQueue`, ... |
 | `cdk-go/` | Generated Go bindings for the jsii CDK package |

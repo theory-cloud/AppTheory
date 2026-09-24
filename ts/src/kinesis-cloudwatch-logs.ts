@@ -104,10 +104,12 @@ function gunzipCloudWatchLogsSubscriptionData(
     if (isMaxOutputLengthError(error)) {
       throw new Error(
         `${CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE}: payload too large`,
+        { cause: error },
       );
     }
     throw new Error(
       `${CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE} gzip: invalid payload`,
+      { cause: error },
     );
   }
 

@@ -119,7 +119,7 @@ export function bearerTokenFromHeaders(headers) {
 }
 export function requireBearerTokenMiddleware(options = {}) {
     return async (ctx, next) => {
-        let token = "";
+        let token;
         try {
             token = bearerTokenFromHeaders(ctx.request.headers);
             if (options.claimsValidator) {

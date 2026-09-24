@@ -133,6 +133,19 @@ jobs:
           bash scripts/verify-release-cycle.sh
       - name: Verify runtime floor claims
         run: bash scripts/verify-runtime-floor-claims.sh
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.6"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Verify apptheory-init template/release pairing
+        run: |
+          bash scripts/verify-release-pairing.sh --self-test
+          bash scripts/verify-release-pairing.sh
 
   runtime-floor-matrix:
     name: Runtime floor matrix (Node ${{ matrix.node-version }}, Python ${{ matrix.python-version }})
@@ -141,7 +154,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: ["20", "24"]
+        node-version: ["22", "24"]
         python-version: ["3.12", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -176,7 +189,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: ["20", "24"]
+        node-version: ["22", "24"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -194,6 +207,8 @@ jobs:
           cache-dependency-path: cdk/package-lock.json
       - name: Verify CDK lower-floor generated binding proof
         run: bash scripts/verify-cdk-go-drift.sh
+      - name: Verify CDK dependency engines admit the Node floor
+        run: bash scripts/verify-cdk-engines-floor.sh
 
   prerelease-readiness:
     name: Prerelease readiness (staging → premain)

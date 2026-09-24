@@ -6,8 +6,8 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.269.0",
-    "constructs": "10.8.1"
+    "aws-cdk-lib": "2.270.0",
+    "constructs": "^10.8.1"
   },
   "dependencyClosure": {
     "@aws-cdk/asset-awscli-v1": {
@@ -29701,6 +29701,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "4.2.4",
-  "fingerprint": "tZNLRxMUVubfyOvRhA8EmiMOrCGUsYmJ4PvVphkaCHE="
+  "version": "4.3.0-rc",
+  "fingerprint": "xVW35d5qetWUYpP1uyXE7t+pcTRJXA5PuMUxVLVbjYA="
 }

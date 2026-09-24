@@ -42,20 +42,38 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Scaffolds consume @theory-cloud/apptheory-cdk as a packed release tarball, so
+# this gate must too. npm resolves a `file:` directory dependency by symlinking
+# it, which skips peer resolution and lets template peer drift against
+# cdk/package.json pass unnoticed; an installed tarball has its peerDependencies
+# enforced, so a split aws-cdk-lib or constructs tree fails the install here.
+cdk_tarball_dir="${work_root}/cdk-tarball"
+mkdir -p "${cdk_tarball_dir}"
+if ! (cd "${repo_root}/cdk" && npm pack --silent --pack-destination "${cdk_tarball_dir}" >/dev/null); then
+  echo "scaffold: FAIL (npm pack failed for cdk/)" >&2
+  exit 1
+fi
+cdk_tarball="$(find "${cdk_tarball_dir}" -maxdepth 1 -name '*.tgz' -print -quit)"
+if [[ -z "${cdk_tarball}" ]]; then
+  echo "scaffold: FAIL (npm pack produced no cdk tarball)" >&2
+  exit 1
+fi
+
 patch_package_json() {
   local pkg="$1"
-  python3 - "$pkg" "$repo_root" <<'PY'
+  python3 - "$pkg" "$repo_root" "${cdk_tarball}" <<'PY'
 import json
 import pathlib
 import sys
 
 pkg_path = pathlib.Path(sys.argv[1])
 repo = pathlib.Path(sys.argv[2])
+cdk_tarball = sys.argv[3]
 data = json.loads(pkg_path.read_text())
 if "dependencies" in data and "@theory-cloud/apptheory" in data["dependencies"]:
     data["dependencies"]["@theory-cloud/apptheory"] = f"file:{repo / 'ts'}"
 if "devDependencies" in data and "@theory-cloud/apptheory-cdk" in data["devDependencies"]:
-    data["devDependencies"]["@theory-cloud/apptheory-cdk"] = f"file:{repo / 'cdk'}"
+    data["devDependencies"]["@theory-cloud/apptheory-cdk"] = f"file:{cdk_tarball}"
 pkg_path.write_text(json.dumps(data, indent=2) + "\n")
 PY
 }

@@ -26,7 +26,9 @@ export function json(status: number, value: unknown): Response {
   try {
     serialized = JSON.stringify(value);
   } catch (err) {
-    throw new Error(`json serialization failed: ${String(err)}`);
+    throw new Error(`json serialization failed: ${String(err)}`, {
+      cause: err,
+    });
   }
 
   return normalizeResponse({
@@ -133,7 +135,9 @@ export function safeJSONForHTML(value: unknown): string {
   try {
     serialized = JSON.stringify(sortKeysDeep(value));
   } catch (err) {
-    throw new Error(`json serialization failed: ${String(err)}`);
+    throw new Error(`json serialization failed: ${String(err)}`, {
+      cause: err,
+    });
   }
 
   return String(serialized)

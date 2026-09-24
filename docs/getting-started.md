@@ -10,7 +10,7 @@ then carries one canonical CDK path through bootstrap, deploy, curl verification
 ## Prerequisites
 
 - Go `1.26.6` (`go.mod`)
-- Node.js `>=20` (`ts/package.json` and `cdk/package.json`)
+- Node.js `>=22` (`ts/package.json` and `cdk/package.json`)
 - Python `>=3.12` (`py/pyproject.toml`)
 - `make` and `git`
 - AWS credentials plus permission to run `cdk bootstrap`, `cdk deploy`, and `cdk destroy` when you are ready to create
@@ -18,8 +18,12 @@ then carries one canonical CDK path through bootstrap, deploy, curl verification
 
 These floors are compatibility claims, not aspirations. `scripts/verify-runtime-floor-claims.sh` fails closed unless the
 package manifests, lockfiles, pinned TableTheory GitHub Release artifacts, and `.github/workflows/ci.yml` agree.
-The CI floor matrix runs Python 3.12 and 3.14 plus Node.js 20 and 24 so the lower-floor claim remains
-evidence-bounded.
+The runtime floor matrix runs Python 3.12 and 3.14 plus Node.js 22 and 24 for the runtime package floor, and the CDK
+floor matrix runs Node.js 22 and 24 for the CDK construct floor. `scripts/verify-cdk-engines-floor.sh` also fails the
+CDK gate when a locked dependency declares an `engines.node` range that excludes the CDK floor, when a lockfile's own
+root declares no `engines.node` at all (absence fails closed), or when a declared project floor admits a Node release
+below it, so the floor cannot drift behind the dependency graph unnoticed. Prerelease bounds are intersected in release
+space, so a range anchored only on a prerelease never counts as admitting a floor release.
 
 ## Install from repo
 

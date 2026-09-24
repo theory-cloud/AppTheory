@@ -81,6 +81,112 @@ def require_job_contains(path: str, job_name: str, needle: str, description: str
         )
 
 
+def require_job_not_contains(path: str, job_name: str, needle: str, description: str) -> None:
+    text = Path(path).read_text(encoding="utf-8")
+    match = re.search(
+        rf"(?ms)^  {re.escape(job_name)}:\n(?P<block>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        text,
+    )
+    if not match:
+        raise SystemExit(f"release-workflows: FAIL ({description}; missing job {job_name!r} in {path})")
+    if needle in match.group("block"):
+        raise SystemExit(
+            f"release-workflows: FAIL ({description}; unexpected {needle!r} in {job_name!r} job in {path})"
+        )
+
+
+def step_block(text: str, step_name: str) -> str:
+    """The body of one workflow step, bounded by the next step or the next job."""
+    marker = f"      - name: {step_name}\n"
+    start_index = text.find(marker)
+    if start_index == -1:
+        raise SystemExit(f"release-workflows: FAIL (missing step {step_name!r})")
+    body_start = start_index + len(marker)
+    candidates = []
+    next_step = text.find("\n      - ", body_start)
+    if next_step != -1:
+        candidates.append(next_step)
+    next_job = re.search(r"\n  [A-Za-z0-9_-]+:\n", text[body_start:])
+    if next_job:
+        candidates.append(body_start + next_job.start())
+    end_index = min(candidates) if candidates else len(text)
+    return text[start_index:end_index]
+
+
+PAIRING_SCRIPT = "verify-release-pairing.sh"
+
+# Shapes that let a pairing invocation report success while still containing the exact
+# invocation string the positive pins below match: swallowing the exit status, exiting
+# through the usage path (`-h`/`--help` exits 0 before any pairing is checked), or
+# turning the step/job into a warn-only one.
+PAIRING_WEAKENING_SUBSTRINGS = (
+    "|| true",
+    "|| exit 0",
+    "||:",
+    "|| :",
+    "; true",
+    "&& true",
+)
+PAIRING_WEAKENING_FLAGS = re.compile(r"(?:^|\s)(-h|--help|--usage)(?=\s|$)")
+
+PAIRING_STEP_NAME = "Verify apptheory-init template/release pairing"
+PAIRING_WORKFLOWS = (
+    ".github/workflows/ci.yml",
+    ".github/workflows/prerelease-pr.yml",
+    ".github/workflows/release-pr.yml",
+)
+PAIRING_JOBS = (
+    (".github/workflows/ci.yml", "release-security-gates"),
+    (".github/workflows/prerelease-pr.yml", "release-please"),
+    (".github/workflows/release-pr.yml", "release-please"),
+)
+PAIRING_INVOKERS = PAIRING_WORKFLOWS + (
+    "scripts/verify-release-branch.sh",
+    "scripts/verify-release-publish-postcondition.sh",
+    "scripts/verify-release-gates.sh",
+)
+
+
+def require_pairing_invocations_are_unguarded(path: str, description: str) -> None:
+    text = Path(path).read_text(encoding="utf-8")
+    lines = [line.strip() for line in text.splitlines() if PAIRING_SCRIPT in line]
+    if not lines:
+        raise SystemExit(
+            f"release-workflows: FAIL ({description}; {path} never invokes {PAIRING_SCRIPT})"
+        )
+    for line in lines:
+        tail = line.split(PAIRING_SCRIPT, 1)[1]
+        weakening = [shape for shape in PAIRING_WEAKENING_SUBSTRINGS if shape in tail]
+        flag = PAIRING_WEAKENING_FLAGS.search(tail)
+        if flag:
+            weakening.append(flag.group(1))
+        if weakening:
+            raise SystemExit(
+                f"release-workflows: FAIL ({description}; {path} weakens the pairing gate with "
+                f"{', '.join(repr(shape) for shape in weakening)} in {line!r})"
+            )
+
+
+for invoker in PAIRING_INVOKERS:
+    require_pairing_invocations_are_unguarded(
+        invoker,
+        "every pairing gate invocation must fail closed rather than exiting zero",
+    )
+for workflow in PAIRING_WORKFLOWS:
+    step = step_block(Path(workflow).read_text(encoding="utf-8"), PAIRING_STEP_NAME)
+    if "continue-on-error" in step:
+        raise SystemExit(
+            f"release-workflows: FAIL (pairing gate step must not be continue-on-error in {workflow})"
+        )
+for workflow, job in PAIRING_JOBS:
+    require_job_not_contains(
+        workflow,
+        job,
+        "continue-on-error",
+        "pairing gate jobs must not be continue-on-error, which would make a failed pairing advisory",
+    )
+
+
 require_order(
     ".github/workflows/prerelease.yml",
     "Verify branch version sync (release preflight)",
@@ -496,6 +602,59 @@ require_order(
     'if [[ "${commit}" != "${tag_commit}" ]]',
     "release branch verifier must compare HEAD to the tag or draft target commit before allowing asset builds",
 )
+require_contains(
+    "scripts/verify-release-pairing.sh",
+    "union ranges are not verified",
+    "template/release pairing verifier must fail closed on range syntax it cannot decide",
+)
+require_contains(
+    "scripts/verify-release-pairing.sh",
+    "release candidate packed at the wrong version",
+    "template/release pairing verifier must reject a CDK tarball packed at a version other than VERSION",
+)
+require_contains(
+    "scripts/verify-release-branch.sh",
+    'scripts/verify-release-pairing.sh --tag "${expected_tag}"',
+    "release branch verifier must pair apptheory-init templates with the release-candidate CDK tarball before assets are built",
+)
+require_contains(
+    "scripts/verify-release-publish-postcondition.sh",
+    "bash scripts/verify-release-pairing.sh --published",
+    "publish postcondition verifier must pair the published release CDK asset with the shipped templates",
+)
+require_order(
+    "scripts/verify-release-publish-postcondition.sh",
+    'if [[ "${phase}" != "complete" ]]',
+    "bash scripts/verify-release-pairing.sh --published",
+    "publish postcondition verifier must only pair against the published asset once publication completes",
+)
+require_contains(
+    "scripts/verify-release-publish-postcondition.sh",
+    'if [[ "${release_created}" != "true" ]]; then\n    return 0\n  fi\n\n  # Post-publish leg',
+    "publish postcondition verifier must pair only the release created by the run, not a republished older release",
+)
+require_contains(
+    "scripts/verify-release-gates.sh",
+    "bash ./scripts/verify-release-pairing.sh",
+    "full release gates must pair apptheory-init templates with the release-candidate CDK tarball",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "bash scripts/verify-release-pairing.sh",
+    "CI release/security gates must run the template/release pairing verifier",
+)
+for release_pr_workflow in (".github/workflows/prerelease-pr.yml", ".github/workflows/release-pr.yml"):
+    require_contains(
+        release_pr_workflow,
+        "bash scripts/verify-release-pairing.sh",
+        f"{release_pr_workflow} must pair apptheory-init templates with the release-candidate CDK tarball before generated artifact sync",
+    )
+    require_order(
+        release_pr_workflow,
+        "Verify apptheory-init template/release pairing",
+        "Sync generated CDK artifacts on release PR",
+        f"{release_pr_workflow} must fail closed on template/release skew before syncing generated CDK artifacts",
+    )
 require_contains(
     ".github/workflows/ci.yml",
     "ready_for_review",
