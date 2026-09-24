@@ -16,6 +16,7 @@ case "${1:-}" in
 esac
 
 RELEASE_WORKFLOWS_MODE="${mode}" python3 - <<'PY'
+import glob
 import hashlib
 import os
 import posixpath
@@ -102,8 +103,14 @@ def require_job_contains(path: str, job_name: str, needle: str, description: str
 # The release path is pinned by whole-file SHA-256: the five workflows that run the release
 # train, and the transitive closure of the paths they name - wherever those paths live,
 # including the files outside `scripts/` and `gov-infra/` that the closure runs. There is no
-# model of YAML or of bash anywhere in this file and no admission rule; the pins header below
-# says what that replaced and why.
+# model of YAML or of bash here and no admission rule over a pinned file's bytes; the pins
+# header below says what that replaced and why. What round 8 added is a *reading of the
+# command line* - which word is a command, which word is the file it runs, which line is a
+# command line at all - because a suffix list is not a reading: it is a guess about which
+# names matter, and `node scripts/evil-helper.js` walked past it. That reading is stated
+# where it lives (see "What a pinned file runs" below), together with the one carve-out it
+# admits: dependency and tool code, which is git-ignored, materialised at run time, and
+# unreachable by a pull request.
 #
 # The posture this buys: an intentional change to a pinned file is a visible two-place edit
 # - the file and its digest in the manifest - in the same commit. What is *not* pinned
@@ -143,6 +150,18 @@ GUARD_PATH = "scripts/verify-release-workflows.sh"
 # skipped the rest, which is how `bash "$SCRIPT_DIR/new-helper.sh"`, `bash
 # scripts/"new"-helper.sh`, `bash "$GITHUB_WORKSPACE/scripts/new-helper.sh"` and `make -C
 # scripts pwn` each ran unpinned code past a PASS.
+#
+# This list bounds one of the two rules that read a name, and only one:
+#
+#   * the read-or-run rule: a token with one of these suffixes, anywhere in a pinned file,
+#     is pinned whether the site reads it or runs it, because a byte scanner cannot tell
+#     the two apart and a file that is only read is still a file the release path needs;
+#   * the executed-path rule (below): a path-like token written *where a command runs it* -
+#     after an executor, or as the command itself - is pinned **whatever its suffix,
+#     including no suffix at all**. That rule has no extension boundary, because the
+#     boundary is what `node scripts/evil-helper.js`, `perl scripts/evil.pl` and
+#     `ruby scripts/new-helper.rb` each walked past: a name no suffix list covers is a name
+#     no pin covers, so it was free to be introduced and free to be edited afterwards.
 SCRIPT_EXTENSIONS = ("sh", "bash", "mjs", "cjs", "py", "rb")
 
 # The trailing boundary is load bearing: without it `hashlib.sha256` reads as `hashlib.sh`.
@@ -162,10 +181,134 @@ REFUSED_CHARACTERS = "$~*():\"'`{}"
 # the two process-spawning module names the pinned Python and Node tools use. A token written on
 # a line that reaches one of these before it is executed at that site, so a token there that
 # names no file is a finding rather than a comment about a file.
-EXECUTOR_REFERENCE = re.compile(
-    r"(?:^|[\s;&|(`])(?:bash|sh|zsh|dash|ksh|source|env|command|xargs|python|python3|node|make|find"
-    r"|subprocess|child_process)\b"
+#
+# This is the executor set, and it is closed: it is enumerated once, here, the runbook
+# enumerates exactly it, and this file asserts that the runbook's sentence is this list. A
+# spelling that is not in it - `ruby`, `perl`, `php`, `exec`, `deno`, `bun`, `nodejs` - is
+# the surface rounds 1-7 left open by naming only interpreters and adding none: `ruby
+# scripts/new-helper.rb` was written past a PASS because `ruby` was not a spelling this
+# construction knew. `exec` and the pipe form are the same hole (`exec <path>`, `... | xargs
+# bash`), and `.` - the POSIX spelling of `source` the runbook used to list while this tuple
+# did not - is implemented here rather than removed from the prose.
+#
+# The word is the unit, and the boundaries are load bearing: `node-version:` is a YAML key
+# and not `node`, `subprocess.PIPE` is not a call, and `source="..."` is an assignment and
+# not the builtin.
+EXECUTOR_NAMES = (
+    "bash",
+    "sh",
+    "zsh",
+    "dash",
+    "ksh",
+    "source",
+    ".",
+    "env",
+    "command",
+    "xargs",
+    "nohup",
+    "exec",
+    "python",
+    "python3",
+    "python2",
+    "node",
+    "nodejs",
+    "ruby",
+    "perl",
+    "php",
+    "deno",
+    "bun",
+    "make",
+    "find",
+    "subprocess",
+    "child_process",
 )
+EXECUTOR_REFERENCE = re.compile(
+    r"(?:^|[\s;&|(\"'`,[])(?P<name>" + "|".join(re.escape(name) for name in EXECUTOR_NAMES) + r")(?![-.\w])"
+)
+
+# The launchers: their first operand is another command, not a file, so the reading continues
+# at command position there. `exec scripts/new-helper2.sh` is the case that matters - `exec`
+# replaces the shell with the file it names, so the file is run and must be pinned.
+LAUNCHER_EXECUTORS = ("env", "command", "xargs", "nohup", "exec")
+
+# The executors whose first operand is data rather than the file they run: `make` takes a
+# makefile selector (and has its own rule below), `find` takes a search root and runs nothing
+# until `-exec`, and the two process-spawning module names take a command line, not a path.
+OPERAND_IS_DATA = ("make", "find", "subprocess", "child_process")
+
+# The one YAML key whose value is a command line. A workflow's `run:` is shell - that is what
+# the key means - so its value is read at command position even though YAML indents it. Every
+# other key's value is data, which is why `cache-dependency-path: |` and a `paths:` list are
+# read as names and not as commands.
+RUN_COMMAND_LABEL = re.compile(r"^(?:-\s*)?run:\s*(?P<command>.*)$")
+
+# The words that are not commands at all, so a path written after one of them is not run by
+# it: a shell keyword, a condition, an option fragment or an assignment.
+SHELL_KEYWORDS = (
+    "if",
+    "then",
+    "else",
+    "elif",
+    "fi",
+    "for",
+    "in",
+    "do",
+    "done",
+    "while",
+    "until",
+    "case",
+    "esac",
+    "function",
+    "select",
+    "!",
+)
+CONDITION_COMMANDS = ("[[", "[", "test")
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?=")
+
+# The shape of a token that names a file on the release path, with no extension boundary. A
+# token is path-like when it holds a `/` or ends in a letter-dot-suffix, and it holds none of
+# these: `@` and `:` are a git ref, a URL or a YAML key; `=` is an option value; the rest are
+# quoting, a call, a redirect and a flag this construction cannot read as a path. An absolute
+# path and a `~` are refused rather than resolved, and they are refused by this same test.
+PATH_TOKEN = re.compile(r"[A-Za-z0-9_@$./{}~+*?\[\]-]+")
+PATH_REFUSED = re.compile(r"[@:=,()\"'\\!<>]")
+GLOB_CHARACTERS = re.compile(r"[*?\[\]]")
+
+# The separators between one command and the next on a line.
+COMMAND_SEPARATORS = re.compile(r"(?:;|\|\||&&|\||`|\$\(|&)")
+
+# The shell spellings, for the one question a heredoc asks: is this body a script to run.
+SHELL_EXECUTORS = ("bash", "sh", "zsh", "dash", "ksh", "source", ".")
+HEREDOC_OPENER = re.compile(r"<<-?\s*(?P<quote>['\"]?)(?P<delimiter>[A-Za-z_][A-Za-z0-9_]*)(?P=quote)")
+
+# A glob that names a directory and a set of files in it (`examples/testkit/*.mjs`), as opposed
+# to a regular expression handed to `grep`, which is a pattern over text and names no file.
+GLOB_PATH = re.compile(r"^[A-Za-z0-9_$./~+-]*[*?][A-Za-z0-9_$./~+*-]*$")
+
+# The pipe form that hands a launcher a command to run: `... | xargs bash`.
+PIPED_EXECUTOR = re.compile(r"\|\s*xargs\s+(?:-\S+\s+)*(?P<name>[A-Za-z0-9_.-]+)")
+
+# Dependency and tool code. `node_modules/`, a `.venv/` or `venv/` directory and
+# `gov-infra/.tools/` are not part of this repository: all three are git-ignored, so no commit
+# can change a byte of any of them, and each is materialised at run time by an installer that a
+# pinned file names - `scripts/stage-release-please-package.sh` pins the exact version
+# `release-please@17.1.3` and installs with `--ignore-scripts` (so no dependency lifecycle
+# script runs) and its assertions are held by `scripts/verify-release-please-token-safety.sh`,
+# which is pinned like everything else on the release path; `py/.venv`, `cdk/.venv` and
+# `gov-infra/.tools` are built by pinned scripts from `py/requirements-build.txt`,
+# `py/requirements-lint.txt` and `cdk/requirements-build.txt`, whose versions are exact pins.
+# So a path under one of these directories is read as **dependency code** rather than silently
+# unread: it cannot be pinned (there is nothing in the tree to pin) and no pull request can
+# reach it. The limit is stated rather than implied - the npm staging is `--no-package-lock`,
+# so the transitive bytes there are registry-resolved and not lockfile-pinned, and this guard
+# does not claim otherwise.
+DEPENDENCY_DIRECTORY = re.compile(r"(?:^|/)(?:node_modules|\.venv|venv)/|^gov-infra/\.tools/")
+
+# A local composite action. `uses: ./...` in a pinned workflow names a directory in this
+# repository that the runner checks out and runs; the guard pins no file under it, so one could
+# be introduced by one PR and edited afterwards with no pin edit at all - worse than a script.
+# There is no local action in the tree today; the rule refuses the spelling outright.
+LOCAL_USES = re.compile(r"^\s*(?:-\s*)?uses:\s*(?P<value>\S+)")
 
 # `make` reads a makefile. `-f` names one outright and `-C <dir>` names `<dir>/Makefile`; a
 # bare `make` reads the makefile of the directory it runs in, which a byte scanner cannot
@@ -268,6 +411,196 @@ def executed_tokens(read_text):
     return executed
 
 
+def path_like(token):
+    """The bare path a token reads as when it is written where a command runs it, or None.
+
+    No extension boundary: an extensionless name (`scripts/evil-helper`) and every suffix
+    (`evil.js`, `evil.pl`, `evil.rb`) are the same thing here - all three ran unpinned code
+    past a PASS before this rule existed. What is excluded is what is not a path this
+    construction can resolve: an option, an absolute path, a home directory, a quoted segment,
+    a YAML key, a git ref, a URL (`node-version:` is a key and not `node`), an attribute
+    (`result.metadata` names a field, not a file) and a bare word with no directory component
+    at all, because a name with no directory in it is how a variable, a flag value and an
+    object property are written and this guard reads the name in any other position.
+    """
+    if not token or token in (".", "..", "/", "-"):
+        return None
+    if token.startswith("-") or token.startswith("/") or token.startswith("~"):
+        return None
+    if PATH_REFUSED.search(token) or token.endswith("/"):
+        return None
+    if "/" not in token:
+        return None
+    return token
+
+
+def glob_like(token):
+    """A token that the shell would expand before running anything it names."""
+    return GLOB_CHARACTERS.search(token) is not None
+
+
+def command_segments(line):
+    """The words of each command on a line, split at the separators between commands."""
+    for part in COMMAND_SEPARATORS.split(line):
+        words = [word.strip("\"'") for word in part.split() if word.strip("\"'")]
+        if words:
+            yield words
+
+
+def mentions_executor(text, names):
+    """Whether `text` writes one of `names` as a word."""
+    for name in names:
+        if re.search(r"(?:^|[\s;&|(\"'`,])" + re.escape(name) + r"(?![-.\w])", text):
+            return True
+    return False
+
+
+def heredoc_bodies(text):
+    """The line numbers of a heredoc body, which is not a command line in this file.
+
+    A heredoc body is the text a command is handed. When the command is a shell
+    (`bash <<'EOF'`), the body is a script and it is read as a command line; every other body -
+    `python3 - <<'PY'`, `cat <<'EOF'`, `node - <<'JS'` - is another language's text, and a line
+    of it is a name or an expression rather than a command this file runs. The read-or-run rule
+    reads the body's script-shaped names either way; what this changes is that the body is not
+    read at command position, which is how `"apptheory/py.typed" not in names` inside a heredoc
+    stops being a command.
+    """
+    bodies = set()
+    delimiter = None
+    shell_body = False
+    for index, line in enumerate(text.split("\n"), 1):
+        if delimiter is not None:
+            if line.strip() == delimiter:
+                delimiter = None
+            elif not shell_body:
+                bodies.add(index)
+            continue
+        opener = HEREDOC_OPENER.search(line)
+        if opener is None:
+            continue
+        delimiter = opener.group("delimiter")
+        shell_body = mentions_executor(line[: opener.start()], SHELL_EXECUTORS)
+    return bodies
+
+
+def first_operand(words, start):
+    """The index of a command's first non-option operand, or None.
+
+    A bare `-` is the conventional standard-input marker, not an operand: `python3 - x` reads
+    its program from stdin and hands `x` to it as data, so the reading stops there rather than
+    walking on to the next argument and calling it the file that runs.
+    """
+    for index in range(start, len(words)):
+        word = words[index]
+        if word == "-":
+            return None
+        if word.startswith("-"):
+            continue
+        return index
+    return None
+
+
+def executed_path_references(line):
+    """Every path-like token a line would run, with the position it is written in.
+
+    This is the executed-path rule: the token a command runs - the first non-option argument
+    of an executor, the argument of a launcher (whose own operand is the next command), the
+    command itself when a path is written as the command, and the items of a `for ... in ...`
+    list - is a path this construction must be able to pin, whatever its suffix.
+
+    Two readings bound it, and both are stated rather than implied. First, a *command line* is
+    a line that starts at the left margin or is the value of a `run:` key; an indented line that
+    is neither is a continuation, an argument list, a YAML value or a data line, and its first
+    word is a name rather than a command - which is why `"${REPO_ROOT}/go.mod"` on a line of an
+    array literal and `py/pyproject.toml` under a `cache-dependency-path:` block are not read as
+    commands. Second, a command's own arguments stop at its first operand, so
+    `python3 tool.py "ts/dist/index.d.ts"` reads the tool and leaves the data it is handed
+    alone. `make`, `find`, `subprocess` and `child_process` are executors for the read-or-run
+    rule above but name no file to run at their first operand - a makefile selector and a
+    search root are not scripts - so the executed-path rule does not read their argument.
+    A name stored in a variable and expanded later (`"${files[@]}"`, `"$f"`) is read as a name
+    here exactly as it is everywhere else in this file, and that limit is stated in
+    docs/release-process.md.
+    """
+    stripped = line.strip()
+    labelled = RUN_COMMAND_LABEL.match(stripped)
+    if labelled is not None:
+        line = labelled.group("command")
+        command_line = True
+    else:
+        command_line = line == stripped
+    for words in command_segments(line):
+        if words[0] == "for":
+            if "in" in words:
+                # A `for` list is read because the loop variable is what a command in the loop
+                # body runs: `for f in examples/testkit/*.mjs; do node "$f"; done`. A glob item
+                # is read when the same line reaches an executor, and a plain item is read as a
+                # name, which means it is a finding only if it is a name that resolves to a file
+                # - an item that names nothing is a name, and a list of names is how this tree
+                # writes a module path, a ref and a documentation pattern.
+                runs_glob = mentions_executor(line, tuple(
+                    name for name in EXECUTOR_NAMES if name not in OPERAND_IS_DATA
+                ))
+                for word in words[words.index("in") + 1:]:
+                    token = path_like(word)
+                    if token is None:
+                        continue
+                    if glob_like(token):
+                        if runs_glob:
+                            yield ("for-list", "for", token, line)
+                    else:
+                        yield ("for-list", "for", token, line)
+            continue
+        index = 0
+        while index < len(words):
+            word = words[index]
+            if word in SHELL_KEYWORDS or ASSIGNMENT.match(word):
+                index += 1
+                continue
+            if word.startswith("-") or word in CONDITION_COMMANDS or word.endswith(":"):
+                break
+            if word in EXECUTOR_NAMES:
+                if word in OPERAND_IS_DATA:
+                    break
+                operand_index = first_operand(words, index + 1)
+                if operand_index is None:
+                    break
+                operand = words[operand_index]
+                if word in LAUNCHER_EXECUTORS:
+                    token = path_like(operand)
+                    if token:
+                        yield ("launcher", word, token, line)
+                    index = operand_index
+                    continue
+                token = path_like(operand)
+                if token:
+                    yield ("operand", word, token, line)
+                break
+            token = path_like(word)
+            if token and command_line:
+                yield ("command", word, token, line)
+                break
+            operand_index = first_operand(words, index + 1)
+            if operand_index is not None:
+                operand = path_like(words[operand_index])
+                if operand and GLOB_PATH.match(operand):
+                    yield ("unrecognized", word, operand, line)
+            break
+    # The pipe form: `... | xargs bash`. The name `xargs` runs is data on the left of the
+    # pipe, which a reading of this line's own segments never reaches, so when the line pipes
+    # into a launcher that names an executor, every path-like token on the line is read. This
+    # is the one place the reading widens rather than narrows, and it widens in the safe
+    # direction: the file xargs will be handed is a name this line writes, and a name this
+    # line writes is one the pins must be able to describe.
+    piped = PIPED_EXECUTOR.search(line)
+    if piped is not None and piped.group("name") in EXECUTOR_NAMES:
+        for word in line.split():
+            token = path_like(word.strip("\"'"))
+            if token:
+                yield ("piped", "xargs", token, line)
+
+
 def makefile_candidates(text, base_dir):
     """The makefiles a file's `make` invocations read, with the selector that names each.
 
@@ -303,10 +636,13 @@ def makefile_candidates(text, base_dir):
 # ---------------------------------------------------------------------------
 # Pins.
 #
-# There is no model of YAML or of bash here, and no admission rule. Every file the release
-# path consists of is pinned by its whole-file SHA-256, byte for byte: the five workflows
-# that run the release train, and the transitive closure of the scripts they name. Bytes
-# either match the pin or they do not.
+# Every file the release path consists of is pinned by its whole-file SHA-256, byte for byte:
+# the five workflows that run the release train, and the transitive closure of the scripts
+# they name. Bytes either match the pin or they do not, and no pin is compared against a
+# normalised or parsed reading of a pinned file. The one reading this construction does
+# perform is over a pinned file's *text* to derive the closure - which name is a script, which
+# name a command runs - and that reading is stated where it lives rather than implied here
+# ("What a pinned file runs", and the executed-path rule after it).
 #
 # Rounds 1-5 reasoned about root keys, key identity, job spans and step spans, and each
 # round produced a spelling the reasoning did not hold: a root-level key below `jobs:`, a
@@ -425,7 +761,7 @@ RELEASE_PATH_FILE_DIGESTS = {
     "scripts/verify-ts-dist-drift.sh": "177bcfd3ce85ef75d53aef672a431723883f193162f09e8f36c82753dab5e98b",
     "scripts/verify-ts-lint.sh": "2416c9a76cf0ff8db4e06f48b8cff3e433f79a7dc6e175c2756a5fa75748253b",
     "scripts/verify-ts-pack.sh": "1b323b96cff29d81002b01e55263738f41c98da98791a9cae1d409f77b2d35b5",
-    "scripts/verify-ts-tests.sh": "dd0bdca95643df4645f71805d0ed5b3231315efe989ed6d9394fec65690b7181",
+    "scripts/verify-ts-tests.sh": "538de4fd733a48ab399cb591c251760212d84d8e44ccfb95dc6a7f76a8b4c410",
     "scripts/verify-version-alignment.sh": "ee6513e9f81957eaeefe208c256405ed2c74acf6bcf53cceef35a477264638f9",
 }
 
@@ -437,6 +773,30 @@ RELEASE_PATH_FILE_DIGESTS = {
 # not tell a read from a run - a byte scanner cannot - so a name is pinned whether the site
 # reads it or runs it, and the doc says so rather than guessing.
 OUT_OF_ROOT_FILE_DIGESTS = {
+    "ts/test/appsync-context.test.mjs": "54417a837f08fab6799b80a549b7842eb28fde1563ece26f137a66899766706a",
+    "ts/test/appsync-errors.test.mjs": "8a950fa63de5dbaf7b5051945b43a47db1157e8338e80edf4419e351efe0901e",
+    "ts/test/appsync-handle-lambda.test.mjs": "37968f7ebbdfe02a5900413265389470476919001cd2948cc94d942a8e3f6ddd",
+    "ts/test/appsync-projection.test.mjs": "b2059248e6f42ff81fbd611e51b9eb89197069ee541c67af6ce9862a3a585e2e",
+    "ts/test/appsync-testkit.test.mjs": "fb79e4ab609893c80ced7d20133d163250e0ccd7c21218e45a70469ef59b8153",
+    "ts/test/aws-http-streaming.test.mjs": "dff1a2087b87574f395cf4fb44ee8c1237c6393456e00106452869d0c0189527",
+    "ts/test/governance-coverage.test.mjs": "1da7017c32587ba8b4597ebe1cf813d424aaa49447c5681cfe13fef027b83368",
+    "ts/test/header-canonicalization.test.mjs": "36bf3fdfc55e60f7b9a6b5ad5c31bc33bf83442ffc46b5e405c5dcc8b447b70c",
+    "ts/test/http-error-format.test.mjs": "486c1a41b456f7f56d749a8f2ac9d705e92c7fb5f50ae4bc18595451ecc40067",
+    "ts/test/http-testkit.test.mjs": "0ece21bc6eb31a1ee86b217371b56b31517bf235496b108d9af565cccb382e68",
+    "ts/test/jobs.test.mjs": "49b3f9cd23ec94729fc5a1793fff2d5082ef3917e668a753f793c2334c18c040",
+    "ts/test/kinesis-cloudwatch-logs.test.mjs": "ea5a21f495a6eede088e6c4dca889b92b606d2e395bf2af6fa65ee59fcfed013",
+    "ts/test/kinesis-producer.test.mjs": "32a4ea14ee38c7b60d5277e98509bb148a06239554bf293b59b92a8cb2319e93",
+    "ts/test/logging-profile.test.mjs": "3e324a5b5d4290ecc6db0cbea8528f1ae899e416d4491cd46cd1a81e2b138172",
+    "ts/test/mcp.test.mjs": "34c9ebf5be022f3d1070be9fd18b8da6717428be6f129e1f9892f621fa77166c",
+    "ts/test/microvm.test.mjs": "4c2fc13e745ec7b973df61de471a4500e6020384861807efd6fd5b9009473a8a",
+    "ts/test/oauth.test.mjs": "a7252ecc1432beed9e0cfe93f4ad3d75b4b6da4b9c15e8382ebfd7c0a826265f",
+    "ts/test/objectstore.test.mjs": "c7dc6295a8582dc9d7396e715b12027e2b61fad0b10b6b4de82850dea7ff94ee",
+    "ts/test/response.test.mjs": "02c0344dbe347a7b83e2f9215a8ddaa33136a68325c4314593d5d13903fc5e61",
+    "ts/test/sanitization.test.mjs": "523bf569769fbb5cd87327d2415d2b069d203fb2b500aa867a028a2c387a9b91",
+    "ts/test/secure-denial-headers.test.mjs": "756705f33c2457a5b6888a027e518de48010ea6da8b1e6ccf323a310b9533973",
+    "ts/test/timeout-middleware.test.mjs": "d7d55ace6cc951ed2110e9eb5eb46011ed62cbe300ca1ce547a145c988ed9a4d",
+    "ts/test/validation.test.mjs": "b8645379b8455cdb236714753cccb1bd8cf2dcf9c1080e1f504fa74fda986b33",
+    "ts/test/vectorstore.test.mjs": "02ba6633ebf8c70592b5e54f5f0c379a176093a694d6cb695b81f7503f3567cc",
     "contract-tests/runners/py/run.py": "6861fa8273fc20a31c61f802bf0e16caea7db5a2cdf23ca3a808d9a2d67f373c",
     "contract-tests/runners/ts/fixtures.test.cjs": "75315854e6d5f922076bbd82cfeaed684b0bd1f651fd23e7c9089cbba21b1064",
     "contract-tests/runners/ts/run.cjs": "f4ca1e22d58df6b1cbb237fd8cbbbdf45534b614a12ca2b6ff795c604bcacf5b",
@@ -640,6 +1000,176 @@ def closure_findings(read_text):
     return findings
 
 
+def glob_members(token, base_dir):
+    """The repository files a glob in an executed position expands to, right now.
+
+    Re-derived on every run, like the closure: the guard resolves the glob the way the shell
+    would, from the repository root and from the referencing file's directory, and asks for the
+    files that exist at this revision. A glob whose matches are all pinned is a set the pins
+    describe; a glob that matches nothing is a set nobody describes.
+    """
+    bare = ADMITTED_VARIABLE_DIRECTORY.sub("", token, count=1)
+    if bare.startswith("./"):
+        bare = bare[2:]
+    members = set()
+    for candidate in (bare, posixpath.join(base_dir, bare)):
+        for match in glob.glob(candidate, recursive=True):
+            path = Path(match)
+            try:
+                resolved = path.resolve()
+            except OSError:
+                continue
+            if path.is_file() and resolved.is_relative_to(ROOT):
+                members.add(resolved.relative_to(ROOT).as_posix())
+    return sorted(members)
+
+
+def executed_path_findings(read_text):
+    """Paths a pinned file runs that are pinned by nothing, or that name no file.
+
+    Every token the executed-path rule reads must resolve to a file this construction pins.
+    Where it lives does not enter into it and neither does its suffix: a name the guard cannot
+    pin is a name a later commit may edit with no pin edit at all, which is the whole reason
+    the extension allowlist above was not enough.
+
+    Four shapes are findings rather than skips, and each is a spelling the guard cannot
+    canonicalise into a pin: an unrecognized command whose non-option argument is a glob (the
+    guard cannot say which command runs what it expands to), a glob in a running position at
+    all (the matched set is named at run time, by nothing), a spelling the guard refuses to
+    resolve (an unbraced variable, a quoted segment, a command substitution, an absolute path,
+    a `~`), and a name that resolves to no file. A glob in a reading position - an option
+    value, a pathspec, a coverage filter - is not one of these, and neither is dependency code.
+    """
+    findings = []
+    for path in PINNED_FILE_DIGESTS:
+        try:
+            text = read_text(path)
+        except (OSError, UnicodeDecodeError):
+            continue
+        base_dir = posixpath.dirname(path)
+        bodies = heredoc_bodies(text)
+        for index, line in enumerate(text.split("\n"), 1):
+            if index in bodies:
+                continue
+            stripped = line.strip()
+            if stripped.startswith("#") or stripped.startswith("//"):
+                continue
+            for position, command, token, _line in executed_path_references(line):
+                where = f"{path}:{index}"
+                if position == "unrecognized":
+                    findings.append(
+                        (
+                            CLASS_CLOSURE,
+                            f"{where}: runs `{command}` against the glob {token!r}. The command is not one "
+                            f"of the executor spellings this guard reads, so what it does with what the "
+                            f"glob expands to is a guess, and a guess is not a pin",
+                        )
+                    )
+                    continue
+                if glob_like(token):
+                    members = glob_members(token, base_dir)
+                    unpinned = [
+                        member
+                        for member in members
+                        if member not in PINNED_FILE_DIGESTS and member != GUARD_PATH
+                    ]
+                    if not members:
+                        findings.append(
+                            (
+                                CLASS_CLOSURE,
+                                f"{where}: writes the glob {token!r} where `{command}` runs it, and the "
+                                f"repository holds no file that glob matches. A glob names no file until the "
+                                f"shell expands it, so the set it runs is named at run time by nothing - "
+                                f"enumerate the names, or write the glob over a matched set the pins describe",
+                            )
+                        )
+                    elif unpinned:
+                        findings.append(
+                            (
+                                CLASS_CLOSURE,
+                                f"{where}: runs `{command}` against the glob {token!r}, which expands to "
+                                f"{len(members)} file(s) and pins {len(members) - len(unpinned)} of them. "
+                                f"A pinned file runs only files that are pinned, so every file the glob "
+                                f"matches must be pinned: {', '.join(unpinned[:4])}"
+                                + (", ..." if len(unpinned) > 4 else ""),
+                            )
+                        )
+                    continue
+                if DEPENDENCY_DIRECTORY.search(token):
+                    continue
+                resolved, through_link = resolve_reference(token, base_dir)
+                if position == "for-list" and resolved is None:
+                    continue
+                if resolved == GUARD_PATH or resolved in PINNED_FILE_DIGESTS:
+                    continue
+                if resolved is None:
+                    if written_path(token) is None:
+                        findings.append(
+                            (
+                                CLASS_CLOSURE,
+                                f"{where}: runs `{command}` against {token!r}, which is not one of the "
+                                f"spellings this guard reads. A path is read as a plain path, with a leading "
+                                f"`./`, or behind a braced variable directory; an unbraced variable, a quoted "
+                                f"segment, a command substitution, an absolute path and a `~` are refused "
+                                f"rather than skipped, because a spelling this guard cannot canonicalise is a "
+                                f"script it cannot vouch for",
+                            )
+                        )
+                        continue
+                    findings.append(
+                        (
+                            CLASS_CLOSURE,
+                            f"{where}: runs `{command}` against {token!r}, and nothing in the repository has "
+                            f"that name. A pinned file runs only files that are pinned, so a name that "
+                            f"resolves to nothing is a spelling no pin describes - {line.strip()!r}",
+                        )
+                    )
+                    continue
+                findings.append(
+                    (
+                        CLASS_CLOSURE,
+                        f"{where}: runs `{command}` against {token!r}, which resolves to {resolved!r} and is "
+                        f"pinned by nothing. A pinned file runs only files that are pinned themselves, so the "
+                        f"reference and the pin are one change",
+                    )
+                )
+    return findings
+
+
+def uses_findings(read_text):
+    """Local composite actions in a pinned workflow.
+
+    `uses: ./path` names a directory in this repository that the runner checks out and runs.
+    No pin covers a file under it, and - unlike a script, which at least has to be named
+    again to change what runs - the action's own content is what executes, so after the pull
+    request that introduces it every later commit can edit the code the release train runs
+    with no pin edit anywhere. There is no local action in the tree today, so the honest rule
+    is to refuse the spelling: adding one means extending the pin closure over the action
+    directory in the same change.
+    """
+    findings = []
+    for path in WORKFLOW_FILE_DIGESTS:
+        try:
+            text = read_text(path)
+        except (OSError, UnicodeDecodeError):
+            continue
+        for index, line in enumerate(text.split("\n"), 1):
+            match = LOCAL_USES.match(line)
+            if match is None or not match.group("value").startswith("./"):
+                continue
+            findings.append(
+                (
+                    CLASS_CLOSURE,
+                    f"{path}:{index}: uses the local action {match.group('value')!r}. A `uses:` that names a "
+                    f"path in this repository runs code no pin covers, and the action's own files stay "
+                    f"editable after the pull request that adds it - worse than a script, which at least has "
+                    f"to be named again to change what runs. Pin the action directory in the same change or "
+                    f"call a script that is pinned",
+                )
+            )
+    return findings
+
+
 def pinned_invocation_lines(read_text):
     """The stripped lines of the pinned workflows that name a guarded script.
 
@@ -697,6 +1227,8 @@ def sweep_findings(read_text, paths=None):
 def guarded_surface_findings(read_text, sweep=None):
     findings = digest_findings(read_text)
     findings += closure_findings(read_text)
+    findings += executed_path_findings(read_text)
+    findings += uses_findings(read_text)
     findings += spelling_witness_findings(read_text)
     findings += sweep_findings(read_text, paths=sweep)
     return findings
@@ -1780,9 +2312,13 @@ ROUND_7_ATTACKS = (
     ("R6-F2 a pinned gate runs a helper that names no file", "scripts/verify-release-gates.sh",
      GATES_BARE, GATES_BARE + "bash examples/evil-helper.sh\n", CLASS_CLOSURE),
     # R6-F2 - a real file outside the release-path roots, run by a line and pinned by nothing.
-    ("R6-F2 a pinned gate runs an out-of-root test it does not pin",
+    # Round 8 changed the file this row names: the ts unit-test set is pinned now (round 8's
+    # glob membership rule reads the set `verify-ts-tests.sh` runs), so `ts/test/*.test.mjs` is
+    # no longer an unpinned name and the row moved to the built output, which is generated and
+    # stays unpinned by design.
+    ("R6-F2 a pinned gate runs an out-of-root file it does not pin",
      "scripts/verify-release-gates.sh",
-     GATES_BARE, GATES_BARE + "node ts/test/appsync-context.test.mjs\n", CLASS_CLOSURE),
+     GATES_BARE, GATES_BARE + "node ts/dist/index.js\n", CLASS_CLOSURE),
     # R6-F2(c) - the live blind spot: a runner under `contract-tests/runners/` that the
     # closure executes and nothing pinned, beside the one this round pinned.
     ("R6-F2 an unpinned runner beside a pinned one", "scripts/verify-contract-tests.sh",
@@ -1803,12 +2339,136 @@ ROUND_7_ATTACKS = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Round 8: the extension boundary comes off, the reading becomes a reading of the
+# command line, and the last two classifiers that were never read at all - a local
+# action and a glob - become findings. Every case below is a repro from the
+# adversarial review of round 7 (head cd3ee4e9), R7-F1 to R7-F7, plus the rows the
+# new rules need in both directions.
+#
+# The hole rounds 1-7 left was the suffix list: `node scripts/evil-helper.js` and
+# `perl scripts/evil.pl` were names no suffix list covered, so they were introduced
+# with the documented two-place edit and then free to be edited forever, because
+# nothing read them again. The executed-path rule reads the token a command runs,
+# whatever its suffix, and the executor set is closed and enumerated (the runbook
+# enumerates exactly it and the guard asserts that sentence).
+# ---------------------------------------------------------------------------
+
+SELF_TEST_PLANT = "examples/testkit/release-workflows-self-test-plant.mjs"
+
+
+def _attack_planted_glob_member(text):
+    """A pinned gate that runs a glob over a directory, with a file planted in it.
+
+    A glob's matched set is a property of the tree, not of the text, so this row writes the
+    file the glob picks up - the plant is unpinned, which is the whole point - and the battery
+    removes it when the case is done, exactly as the symbolic-link row does.
+    """
+    plant = Path(SELF_TEST_PLANT)
+    if plant.exists():
+        raise SystemExit(
+            f"release-workflows: FAIL (self-test: {SELF_TEST_PLANT} already exists, so the "
+            f"planted-glob row cannot write its plant without overwriting the tree)"
+        )
+    plant.write_text("// planted by the release-workflows self-test\n", encoding="utf-8")
+    SELF_TEST_LINKS.append(plant)
+    return text.replace(
+        GATES_BARE,
+        GATES_BARE + 'for planted in examples/testkit/*.mjs; do node "${planted}"; done\n',
+        1,
+    )
+
+
+def _attack_witness_in_a_comment(text):
+    """The braced-variable witness moved into a comment, leaving a real line that writes another.
+
+    Round 7's witness check read the file as text, so a comment that *mentioned* the spelling
+    satisfied it. This is the swap the review described: the code that wrote the spelling is
+    commented out and the file goes on writing a different, real, pinned library.
+    """
+    return text.replace(
+        'source "${SCRIPT_DIR}/lib/ts-runtime-deps.sh"\n',
+        '# source "${SCRIPT_DIR}/lib/ts-runtime-deps.sh"\nsource "${SCRIPT_DIR}/lib/blocked.sh"\n',
+        1,
+    )
+
+
+ROUND_8_ATTACKS = (
+    # R7-F1 - the live one. `.js`, `.pl` and every other suffix were outside the suffix list, so
+    # the reference was never read: add the helper, update the pin, and the guard was green. The
+    # executed-path rule reads the name the command runs whatever its suffix, and the same row
+    # covers the extensionless case, which is what "whatever its suffix, including no extension"
+    # has to mean for the rule to be a rule.
+    ("R7-F1 a pinned gate runs an unpinned .js helper", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "node scripts/evil-helper.js\n", CLASS_CLOSURE),
+    ("R7-F1 a pinned gate runs an unpinned .pl helper", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "perl scripts/evil.pl\n", CLASS_CLOSURE),
+    ("R7-F1 a pinned gate runs an extensionless helper", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "bash scripts/evil-helper\n", CLASS_CLOSURE),
+    # R7-F4 - the executor set was narrower than the runbook said it was, and `ruby`, `exec`
+    # and the pipe form each named a file the guard never read.
+    ("R7-F4 a pinned gate runs ruby against an unpinned helper", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "ruby scripts/new-helper.rb\n", CLASS_CLOSURE),
+    ("R7-F4 a pinned gate execs an unpinned helper", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "exec scripts/new-helper2.sh\n", CLASS_CLOSURE),
+    ("R7-F4 a pinned gate pipes a name into xargs bash", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "printf '%s\\n' scripts/existing-helper.sh | xargs bash\n",
+     CLASS_CLOSURE),
+    # R7-F4 - the `.` the runbook listed and the code did not implement.
+    ("R7-F4 a pinned gate dot-sources an unpinned helper", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + ". scripts/new-helper3.sh\n", CLASS_CLOSURE),
+    # The command itself. A path written as the command is the one executed position that is not
+    # an executor's argument, and it is read whatever its suffix.
+    ("R7-F1 a pinned gate runs a path as the command itself", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "./scripts/new-helper4.js\n", CLASS_CLOSURE),
+    # R7-F1 - a suffix-free spelling behind a variable directory, which the read-or-run rule
+    # does not read either (no suffix): the executed-path rule reads it, and the refused-spelling
+    # branch refuses an unbraced variable at the same site.
+    ("R7-F1 a pinned gate runs an unbraced variable directory helper",
+     "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + 'bash "$SCRIPT_DIR/new-helper5.js"\n', CLASS_CLOSURE),
+    # R7-F3 - the glob carve-out. `<executor> <glob>` and `for f in <glob>; do <executor> "$f"`.
+    # The first case has no plant, so the glob matches nothing: a set that names no file is a set
+    # nothing describes. The second writes the plant, and the matched set then holds a file no
+    # pin covers - which is what the review's repro did.
+    ("R7-F3 a pinned gate runs a glob that matches nothing", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "bash scripts/*/helper.sh\n", CLASS_CLOSURE),
+    ("R7-F3 a pinned gate runs a glob the matched set of which holds a plant",
+     "scripts/verify-release-gates.sh",
+     GATES_BARE, _attack_planted_glob_member, CLASS_CLOSURE),
+    # A glob written where a command that is not an executor would run it. The guard cannot say
+    # what an unrecognized command does with what the glob expands to, so it refuses the pair.
+    ("R7-F3 an unrecognized command runs a glob", "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "foobar scripts/*/helper.sh\n", CLASS_CLOSURE),
+    # The up-walk spelling the witness table used to carry. Nothing in the tree writes it as a
+    # path it resolves, so it is no longer an admitted *witnessed* spelling - but it is still a
+    # spelling the guard *reads*, and this row is what proves that: `../` names a file outside
+    # the referencing directory and the name must be pinned like any other.
+    ("the dropped witness spelling is still read: an up-walk path to an unpinned file",
+     "scripts/verify-release-gates.sh",
+     GATES_BARE, GATES_BARE + "bash ../ts/dist/index.js\n", CLASS_CLOSURE),
+    # R7-F2 - the local composite action. `uses: ./...` runs a directory in this repository that
+    # no pin covers, and after the pull request that adds it the action's own files stay editable
+    # with no pin edit at all. There is none in the tree; the rule refuses the spelling.
+    ("R7-F2 a pinned workflow uses a local composite action", ".github/workflows/ci.yml",
+     CI_TAIL, CI_TAIL + "      - uses: ./.github/actions/evil\n", CLASS_CLOSURE),
+    # R7-F5 - a witness satisfied by a comment. The braced-variable witness is written in code
+    # by `scripts/verify-testkit-examples.sh`; this row comments that line out and leaves the
+    # text behind, which is exactly the swap the review made.
+    ("R7-F5 the witness for an admitted spelling is written only in a comment",
+     "scripts/verify-testkit-examples.sh",
+     'source "${SCRIPT_DIR}/lib/ts-runtime-deps.sh"\n', _attack_witness_in_a_comment,
+     CLASS_CLOSURE),
+)
+
+
 SELF_TEST_ATTACKS = (
     ROUND_4_ATTACKS
     + ROUND_4_ACCEPTED_RECYCLED
     + ROUND_5_ATTACKS
     + ROUND_6_ATTACKS
     + ROUND_7_ATTACKS
+    + ROUND_8_ATTACKS
 )
 
 
@@ -1816,16 +2476,49 @@ SELF_TEST_ATTACKS = (
 # This is the accepted side of the spelling table: a spelling nothing in the tree writes is a
 # spelling nothing tests, and a future edit that removes the last witness fails the battery
 # rather than quietly shrinking what the derivation is asked to read.
+#
+# A witness is a *code* witness. Round 7 satisfied the up-walk row with the shellcheck directive
+# at `gov-infra/verifiers/gov-verify-rubric.sh:33` - a comment about a spelling - while the code
+# below it wrote the braced form; removing the comment failed the battery and putting the same
+# text in front of a real line left it green, which is a witness for prose and not for code. The
+# witness is now read out of the file with its comments stripped (and a trailing comment does not
+# count either), and the up-walk spelling is gone from this table because nothing in the pinned
+# tree writes it as a path it resolves: the two `../` occurrences that remain are `${SCRIPT_DIR}/../..`
+# and a `[[ "${spec}" == ../* ]]` comparison, neither of which is a name the guard resolves. An
+# admitted spelling nothing writes is surface, so it is dropped rather than witnessed by prose;
+# the `../` *read* is kept, and the battery carries an attack row that proves it (a `../` path
+# that resolves to no pinned file is refused).
 ADMITTED_SPELLING_WITNESSES = (
     ("a plain path", "scripts/verify-release-workflows.sh"),
     ("a path behind a leading `./`", "./scripts/verify-release-pairing.sh"),
     ("a path behind a braced variable directory", "${SCRIPT_DIR}/lib/ts-runtime-deps.sh"),
-    ("a path that walks up a directory", "../../scripts/lib/blocked.sh"),
 )
 
 
+def code_text(text):
+    """The code of a file: comments removed, so a witness is a witness for code.
+
+    A full-line comment in either the `#` or the `//` dialect is dropped, and so is the tail of
+    a line from an unquoted `#`, which is the spelling both this tree's shell and its Python use.
+    A string that *looks* like a path is still a string and this cannot tell it apart from code;
+    what it does tell apart is prose about a spelling from a use of one, which is the direction
+    the round-7 finding went.
+    """
+    lines = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped.startswith("//"):
+            continue
+        for index, character in enumerate(line):
+            if character == "#" and (index == 0 or line[index - 1].isspace()):
+                line = line[:index]
+                break
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def spelling_witness_findings(read_text):
-    """The admitted spellings, each proven by a pinned file that writes one and resolves it."""
+    """The admitted spellings, each proven by a pinned file whose *code* writes one and resolves it."""
     findings = []
     for spelling, token in ADMITTED_SPELLING_WITNESSES:
         witnessed = False
@@ -1834,7 +2527,7 @@ def spelling_witness_findings(read_text):
                 text = read_text(path)
             except (OSError, UnicodeDecodeError):
                 continue
-            if token not in text:
+            if token not in code_text(text):
                 continue
             resolved, through_link = resolve_reference(token, posixpath.dirname(path))
             if resolved is not None and not through_link:
@@ -1907,6 +2600,42 @@ SELF_TEST_ACCEPTED = (
 )
 
 
+# The accepted shapes that are *edits to a pinned file*, which is the two-place edit the whole
+# construction is built around: the file changes and its digest changes with it, in the same
+# commit. The harness applies the digest update to the fixture, so a row here proves that the
+# new content is accepted on its merits rather than masked by a digest finding. Each of these
+# is the accepted mirror of a rule above, and a construction that refuses them over-blocks.
+def _accepted_dependency_path(source):
+    source["scripts/verify-release-gates.sh"] = source["scripts/verify-release-gates.sh"].replace(
+        GATES_BARE,
+        GATES_BARE
+        + "node node_modules/release-please/build/src/bin/release-please.js\n",
+        1,
+    )
+    return source
+
+
+def _accepted_matched_glob(source):
+    source["scripts/verify-release-gates.sh"] = source["scripts/verify-release-gates.sh"].replace(
+        GATES_BARE, GATES_BARE + "node examples/testkit/*.mjs\n", 1
+    )
+    return source
+
+
+SELF_TEST_ACCEPTED_PINNED = (
+    (
+        "a pinned gate runs a node_modules dependency path (the declared carve-out)",
+        "scripts/verify-release-gates.sh",
+        _accepted_dependency_path,
+    ),
+    (
+        "a pinned gate runs a glob whose matched set is pinned",
+        "scripts/verify-release-gates.sh",
+        _accepted_matched_glob,
+    ),
+)
+
+
 def fixture_paths():
     paths = set(sweep_paths())
     paths.update(PINNED_FILE_DIGESTS)
@@ -1915,11 +2644,15 @@ def fixture_paths():
 
 
 def release_self_test_links() -> None:
-    """Unlink every link a battery case wrote, so the battery leaves the tree as it found it."""
+    """Remove every file a battery case wrote, so the battery leaves the tree as it found it.
+
+    A link and a planted file are not text, so the two rows that need one write it into the tree
+    and register it here; the battery calls this after every case and again in its `finally`.
+    """
     while SELF_TEST_LINKS:
-        link = SELF_TEST_LINKS.pop()
+        written = SELF_TEST_LINKS.pop()
         try:
-            link.unlink()
+            written.unlink()
         except FileNotFoundError:
             pass
 
@@ -2000,12 +2733,35 @@ def run_self_test() -> None:
                     + "; ".join(message for _kind, message in findings)
                 )
             print(f"release-workflows: ACCEPT-PROOF (self-test accepted: {label})")
+
+        for label, path, mutate in SELF_TEST_ACCEPTED_PINNED:
+            source = mutate(dict(fixture))
+            if source == fixture:
+                raise SystemExit(
+                    f"release-workflows: FAIL (self-test fixture drifted: the {label!r} mutation changed "
+                    f"nothing)"
+                )
+            original = dict(PINNED_FILE_DIGESTS)
+            PINNED_FILE_DIGESTS[path] = digest_of(source[path])
+            try:
+                findings = guarded_surface_findings(read_from(source), sweep=sweep_for(source))
+            finally:
+                PINNED_FILE_DIGESTS.clear()
+                PINNED_FILE_DIGESTS.update(original)
+            release_self_test_links()
+            if findings:
+                raise SystemExit(
+                    f"release-workflows: FAIL (self-test OVER-BLOCKS the accepted change {label!r}, whose "
+                    f"pin update is applied with it: " + "; ".join(message for _kind, message in findings)
+                )
+            print(f"release-workflows: ACCEPT-PROOF (self-test accepted: {label})")
     finally:
         release_self_test_links()
 
     print(
         f"release-workflows: PASS (self-test: {len(SELF_TEST_ATTACKS)} weakening shape(s) failed closed, "
-        f"{len(SELF_TEST_ACCEPTED)} fail-closed spelling(s) accepted, the legitimate wiring accepted)"
+        f"{len(SELF_TEST_ACCEPTED)} fail-closed spelling(s) accepted, "
+        f"{len(SELF_TEST_ACCEPTED_PINNED)} accepted pinned-file change(s), the legitimate wiring accepted)"
     )
 
 
@@ -2019,26 +2775,40 @@ if MODE == "self-test":
 # drift, so the document is compared with its whitespace collapsed; every number is read out of
 # the artifact that produces it, never restated.
 _doc_text = " ".join(Path("docs/release-process.md").read_text(encoding="utf-8").split())
+_executor_sentence = (
+    "The executor spellings are "
+    + ", ".join(f"`{name}`" for name in EXECUTOR_NAMES[:-1])
+    + f" and `{EXECUTOR_NAMES[-1]}`"
+)
 for _doc_claim in (
     f"{len(SELF_TEST_ATTACKS)} weakening shapes fail closed and "
-    f"{len(SELF_TEST_ACCEPTED)} fail-closed spellings are accepted",
+    f"{len(SELF_TEST_ACCEPTED)} fail-closed spellings are accepted, and "
+    f"{len(SELF_TEST_ACCEPTED_PINNED)} accepted pinned-file changes are admitted with the pin update",
     f"the transitive closure of the script paths they name: "
     f"{len(RELEASE_PATH_FILE_DIGESTS)} files under `scripts/` and `gov-infra/`, and "
     f"{len(OUT_OF_ROOT_FILE_DIGESTS)} files outside them",
     f"{len(RELEASE_PATH_FILE_DIGESTS) + len(OUT_OF_ROOT_FILE_DIGESTS)} files in the closure and "
     f"{len(WORKFLOW_FILE_DIGESTS)} workflows",
-    "There is no non-admitted call site",
-    "an unbraced variable, a quoted segment, a command substitution, an absolute path and a `~` "
+    _executor_sentence,
+    "There is no call site of a guarded script",
     "are refused rather than skipped",
+    "are refused at these sites too",
     "`make -C <dir>` and `make -f <file>` name the makefile the selector reads",
+    "A glob in a running position is now a finding unless the pins describe the set it matches",
+    "A `uses:` that names a local path (`./.github/actions/...`) is refused outright, in a pinned "
+    "workflow",
+    "is **dependency or tool code**",
+    "A witness is a *code* witness",
+    "has **no call site today**",
     "Any weakening of this file is caught by review and by nothing else",
 ):
     if _doc_claim not in _doc_text:
         raise SystemExit(
             "release-workflows: FAIL (docs/release-process.md must state what the pins actually cover - "
             "the battery counts, the size of the closure, the spellings the derivation reads and "
-            "refuses, the Makefile boundary and the disclosure - so a documented claim cannot drift "
-            f"from the artifact behind it; missing {_doc_claim!r})"
+            "refuses, the executor set, the executed-path rule, the glob rule, the local-action rule, "
+            "the dependency carve-out, the Makefile boundary and the disclosure - so a documented claim "
+            f"cannot drift from the artifact behind it; missing {_doc_claim!r})"
         )
 
 guarded_surface = guarded_surface_findings(read_source)

@@ -37,7 +37,8 @@ cp -a ts "${tmp_dir}/ts"
 
 (cd "${tmp_dir}/ts" && npm ci >/dev/null)
 
-if ! (cd "${tmp_dir}/ts" && npm run build >"${tmp_log}" 2>&1 && node --test test/*.test.mjs >>"${tmp_log}" 2>&1); then
+# shellcheck disable=SC2086 # the glob is the set of test files and the temporary path holds no whitespace.
+if ! (cd "${tmp_dir}/ts" && npm run build >"${tmp_log}" 2>&1 && node --test ${tmp_dir}/ts/test/*.test.mjs >>"${tmp_log}" 2>&1); then
   echo "ts-tests: FAIL (unit tests failed)" >&2
   cat "${tmp_log}" >&2
   exit 1
