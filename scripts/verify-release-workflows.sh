@@ -97,24 +97,17 @@ def require_job_contains(path: str, job_name: str, needle: str, description: str
 
 
 # ---------------------------------------------------------------------------
-# The guarded surface, pinned by exact bytes.
+# The guarded surface.
 #
-# Rounds 1-4 classified the guarded wiring instead: they modelled bash's quote
-# contexts, bash's function bodies and YAML's key spellings, and admitted an
-# extra statement they judged inert. Every round found a spelling the model
-# lacked, and the last round found that the admission rule itself was the hole -
-# an `exit 0` written as the first line of a pinned run body leaves every pinned
-# statement in place and stops the gate from ever mattering.
+# The release path is pinned by whole-file SHA-256: the five workflows that run the release
+# train, and the transitive closure of the scripts they name. There is no model of YAML or
+# of bash anywhere in this file and no admission rule; the pins header below says what that
+# replaced and why.
 #
-# So there is no model and no admission rule here. Every guarded region is
-# pinned by exact bytes. The only tolerated drift is trailing whitespace on a
-# line and a CRLF line ending, so an ordinary editor does not trip the guard;
-# anything else is a finding with no parsing involved.
-#
-# The posture this buys: an intentional change to a guarded region is a visible
-# two-place edit - the region and the pin that describes it - in the same
-# commit. What is *not* pinned anywhere in this repository is stated in
-# docs/release-process.md, together with the reason it is not.
+# The posture this buys: an intentional change to a pinned file is a visible two-place edit
+# - the file and its digest in the manifest - in the same commit. What is *not* pinned
+# anywhere in this repository is stated in docs/release-process.md, together with the reason
+# it is not.
 # ---------------------------------------------------------------------------
 
 ROOT = Path(".").resolve()
@@ -456,8 +449,8 @@ def sweep_findings(read_text, paths=None):
 
     A name is admitted from exactly one place: on a line byte-identical to a line a pinned
     workflow holds. That is additive strengthening - running the gate or the guard from
-    somewhere else cannot make the pinned step stop running - and it is the whole of what a
-    file outside the pinned set may say about a guarded script. Every other naming is a
+    somewhere else cannot make the step that already runs it stop running - and it is the whole
+    of what a file outside the pinned set may say about a guarded script. Every other naming is a
     finding, including one in a new workflow, in a composite action, in the `Makefile` or in
     a root `package.json`.
     """
@@ -507,9 +500,11 @@ GATES_BARE = 'bash ./scripts/verify-release-pairing.sh\n'
 CI_TAIL = '      - name: Run full rubric\n        run: make rubric\n'
 RELEASE_TAIL = '          gh workflow run pages.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG_NAME}" -f tag="${TAG_NAME}"\n'
 
-# Every weakening shape rounds 1-4 closed, verbatim. Under whole-file pins every one of them
-# now fails on the digest of the file it edits, so each names the class it must fail on - and
-# a case that starts failing for an unrelated reason fails the battery as well.
+# Every weakening shape rounds 1-4 closed, verbatim, labels included: a label is the historical
+# name of the shape - several of them name a classifier tolerance that no longer exists - and not
+# a statement about the pins. Under whole-file pins every one of them fails on the digest of the
+# file it edits, and the `Makefile` cases fail on the sweep, so each case names the class it must
+# fail on; a case that starts failing, or passing, for an unrelated reason fails the battery too.
 ROUND_4_ATTACKS = (
     ('`!` prefix negation', '.github/workflows/ci.yml',
      '          bash scripts/verify-release-pairing.sh\n',
@@ -1236,8 +1231,8 @@ ROUND_4_ATTACKS = (
 # Constants the battery anchors on.
 
 # The discarded accepted table, re-evaluated under the collapse. Each of these was admitted
-# by round 4's freedom to add a statement or an inert section; each changes the bytes of a
-# pinned region or names a guarded script outside one. All six now fail. The intended
+# by round 4's freedom to add a statement or an inert section; each either changes the bytes
+# of a pinned file or names a guarded script outside the pins. All six fail closed now. The
 # workflow for any of them is to update the pin in the same PR - a documented two-place edit.
 ROUND_4_ACCEPTED_RECYCLED = (
     ('trailing comment after the invocation', '.github/workflows/ci.yml',
