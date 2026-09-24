@@ -170,6 +170,7 @@ LoggingProfileRequestContext	interface
 LoggingProfileSanitization	interface
 LoggingProfileSanitizer	type
 LoggingProfileValidationError	class
+MAX_PRESIGN_PUT_EXPIRES_IN	const
 MCP_CODE_HEADER_MISMATCH	const
 MCP_CODE_INTERNAL_ERROR	const
 MCP_CODE_INVALID_PARAMS	const
@@ -385,6 +386,7 @@ MultiWindowStrategy	class
 OAuthBearerError	class
 OBJECTSTORE_ERROR_INVALID_ENCRYPTION_CONFIG	const
 OBJECTSTORE_ERROR_INVALID_GET_LIMIT	const
+OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT	const
 OBJECTSTORE_ERROR_INVALID_REF	const
 OBJECTSTORE_ERROR_INVALID_STORE_CONFIG	const
 OBJECTSTORE_ERROR_NOT_FOUND	const
@@ -398,7 +400,10 @@ ObjectStoreError	class
 ObjectStoreGetInput	interface
 ObjectStoreGetOutput	interface
 ObjectStoreOperation	type
+ObjectStorePresignPutInput	interface
+ObjectStorePresignPutOutput	interface
 ObjectStorePutInput	interface
+ObjectStoreUploadGranter	interface
 ObservabilityHooks	interface
 OpenAPIAuthSchemes	interface
 OpenAPIDocument	type
@@ -717,6 +722,7 @@ validateMicroVMSessionTokenMetadata	function
 validateObjectRef	function
 validateOrThrow	function
 validatePKCECodeVerifier	function
+validatePresignPutInput	function
 validateRequiredMetadata	function
 validateValue	function
 validateVector	function

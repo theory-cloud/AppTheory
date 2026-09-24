@@ -346,7 +346,8 @@ Reference stack: `examples/cdk/import-pipeline/`
 ### Object store helper
 
 AppTheory includes a narrow bounded object-store helper for framework-owned byte payload storage. It is not a general
-storage SDK and does not expose list, presign, multipart, or raw-client escape hatches.
+storage SDK and does not expose list, multipart, copy, head, presigned GET, generic presign, public URL, or raw-client
+escape hatches.
 
 - Go: `pkg/objectstore`
 - TypeScript: `ObjectStore`, `ObjectRef`, `createS3ObjectStore`, and `FakeObjectStore`
@@ -355,10 +356,24 @@ storage SDK and does not expose list, presign, multipart, or raw-client escape h
 - Object refs: strict `s3://bucket/key` parsing into bucket/key/version fields with no default bucket/key and no query
   or fragment support.
 - Store contract: `Put`, bounded `Get` with required `MaxBytes`, and `Delete` only.
+- Bounded upload grant: `UploadGranter` / `ObjectStoreUploadGranter` is the one authorized presigning exception and is
+  deliberately a separate capability interface rather than a fourth store method. `PresignPut` /
+  `presignPut` / `presign_put` mints a single-object PUT link that signs `content-length`, `content-type`, and
+  `x-amz-checksum-sha256` as request headers (never as unsigned query parameters), requires an exact unversioned
+  reference and a caller-supplied `MaxBytes`, and refuses any expiry above `MaxPresignPutExpiresIn`
+  (`MAX_PRESIGN_PUT_EXPIRES_IN`) of fifteen minutes. Every S3 implementation verifies the presigned URL after signing
+  and fails closed with `objectstore.invalid_store_config` when the constraints are not signed headers.
+- Upload-grant validation: `PresignPutInput.Validate` / `validatePresignPutInput` / `validate_presign_put_input` fails
+  closed with `objectstore.invalid_ref` for a versioned or malformed reference and with
+  `objectstore.invalid_presign_put` for a missing or invalid content length, `MaxBytes`, content type, checksum, or
+  expiry.
+- Still forbidden: presigned GET, presigning without a checksum, list, multipart, copy, head, public URLs, and raw
+  clients. The objectstore contract fixtures assert both halves of that boundary.
 - S3 implementations: each runtime keeps the cloud client seam inside the framework surface and exposes only bounded
-  `put`/`get`/`delete` operations. TypeScript intentionally carries `@aws-sdk/client-s3` as a hard package dependency
-  because the S3 implementation imports it at module load; Python intentionally keeps `boto3` optional/lazy and fails
-  closed from `create_s3_object_store` if the dependency or required S3 methods are unavailable.
+  `put`/`get`/`delete` operations plus the bounded upload grant. TypeScript intentionally carries
+  `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner` as hard package dependencies because the S3 implementation
+  imports them at module load; Python intentionally keeps `boto3` optional/lazy and fails closed from
+  `create_s3_object_store` if the dependency or required S3 methods are unavailable.
 - Encryption: bucket-default, S3-managed, and KMS modes fail closed on contradictory or missing KMS configuration.
 
 Guide: [Object Store Helper](./features/object-store.md)
@@ -557,7 +572,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1051 exported top-level symbols</summary>
+<summary>1057 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins, APIGatewayV2Request
@@ -750,6 +765,7 @@ OAuthProtectedResourcePath, RegisterMCPServer
 Capabilities, DefaultCapabilities, FacadeConfig, HandlerFactory, RegisterMCPFacade, RootDiscoveryConfig, Route, RouteInventory, URLMode
 URLModePublicBaseURL, URLModeRequestHost
 AgentMCPPattern, AuthorizationAuthorizePathForResourcePath, AuthorizationServerPathForResourcePath, AuthorizationServerPrefix, AuthorizationServerSuffixPathForResourcePath, AuthorizationTokenPathForResourcePath, EndpointKind, EndpointKindAgent, EndpointKindNamespace, EndpointKindPartnerAgent, EndpointKindPartnerNamespace, EndpointPath, EndpointTemplate, NamespaceMCPPattern, OAuthDiscoveryTemplate, OAuthFacadeTemplate, ParamAgentID, ParamClientNamespace, ParamPartnerID, ParseMCPPath, PartnerAgentMCPPattern, PartnerNamespaceMCPPattern, ProtectedResourcePathForResourcePath, ProtectedResourcePathFromMCPPath, ProtectedResourcePrefix, ResourcePathFromProtectedResourcePath, SupportedEndpointTemplates, SupportedOAuthDiscoveryTemplates, SupportedOAuthFacadeTemplates
+ErrInvalidPresignPut, MaxPresignPutExpiresIn, OperationPresignPut, PresignPutInput, PresignPutOutput, UploadGranter
 ```
 
 </details>

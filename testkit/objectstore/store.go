@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	store "github.com/theory-cloud/apptheory/v4/pkg/objectstore"
 )
@@ -20,19 +21,24 @@ const (
 	OperationGet Operation = "Get"
 	// OperationDelete records a Store.Delete call.
 	OperationDelete Operation = "Delete"
+	// OperationPresignPut records an UploadGranter.PresignPut call.
+	OperationPresignPut Operation = "PresignPut"
 )
 
 // Call is one recorded FakeStore operation.
 type Call struct {
-	Operation   Operation
-	Ref         store.ObjectRef
-	MaxBytes    int64
-	ContentType string
-	Metadata    map[string]string
-	Payload     []byte
+	Operation      Operation
+	Ref            store.ObjectRef
+	MaxBytes       int64
+	ContentLength  int64
+	ChecksumSHA256 string
+	ExpiresIn      int64
+	ContentType    string
+	Metadata       map[string]string
+	Payload        []byte
 }
 
-// FakeStore is an in-memory Store for tests.
+// FakeStore is an in-memory Store and UploadGranter for tests.
 //
 // FakeStore records calls in order, injects per-operation failures, and copies
 // all byte slices and metadata maps at its boundary.
@@ -43,9 +49,13 @@ type FakeStore struct {
 	objects  map[objectVersion]storedObject
 	calls    []Call
 	failures map[Operation]error
+	clock    func() time.Time
 }
 
-var _ store.Store = (*FakeStore)(nil)
+var (
+	_ store.Store         = (*FakeStore)(nil)
+	_ store.UploadGranter = (*FakeStore)(nil)
+)
 
 type objectName struct {
 	bucket string
@@ -83,6 +93,14 @@ func (s *FakeStore) SetError(operation Operation, err error) {
 		return
 	}
 	s.failures[operation] = err
+}
+
+// SetClock replaces the deterministic clock used by PresignPut. Passing nil restores the fixed
+// default instant, so upload grants stay reproducible across runs and runtimes.
+func (s *FakeStore) SetClock(now func() time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clock = now
 }
 
 // Calls returns the recorded operations in call order.

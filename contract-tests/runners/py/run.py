@@ -3154,8 +3154,20 @@ def _run_objectstore_step(
                 runtime.ObjectStoreDeleteInput(ref=_objectstore_step_ref(runtime, step))
             )
             return _objectstore_step_result(result)
-        if operation in ("list", "presign", "multipart"):
-            _assert_forbidden_objectstore_operation(fake, operation)
+        if operation == "presign_put":
+            grant = fake.presign_put(
+                runtime.ObjectStorePresignPutInput(
+                    ref=_objectstore_step_ref(runtime, step),
+                    content_length=int(step.get("content_length") or 0),
+                    checksum_sha256=str(step.get("checksum_sha256") or ""),
+                    content_type=str(step.get("content_type") or ""),
+                    max_bytes=int(step.get("max_bytes") or 0),
+                    expires_in=int(step.get("expires_in") or 0),
+                )
+            )
+            return _objectstore_step_result(result, grant=grant)
+        if operation in ("list", "presign", "presign_get", "multipart", "copy", "head", "raw_client"):
+            _assert_forbidden_objectstore_operation(runtime, fake, operation)
         runtime.unsupported_object_store_operation(operation)
     except Exception as exc:  # noqa: BLE001
         return _objectstore_step_result(result, error=exc)
@@ -3167,6 +3179,7 @@ def _objectstore_step_result(
     *,
     ref: Any | None = None,
     output: Any | None = None,
+    grant: Any | None = None,
     error: Exception | None = None,
 ) -> dict[str, Any]:
     out = dict(result)
@@ -3175,6 +3188,13 @@ def _objectstore_step_result(
         out["error"] = _objectstore_error_json(error)
         return out
     out["ok"] = True
+    if grant is not None:
+        out["ref"] = _objectstore_ref_json(grant.ref)
+        out["url"] = str(grant.url)
+        out["method"] = str(grant.method)
+        out["headers"] = {str(key): str(value) for key, value in (grant.headers or {}).items()}
+        out["expires_at"] = _objectstore_expires_at_json(grant.expires_at)
+        return out
     if output is not None:
         out["ref"] = _objectstore_ref_json(output.ref)
         out["payload"] = _objectstore_body_json(bytes(output.payload))
@@ -3186,6 +3206,13 @@ def _objectstore_step_result(
     if ref is not None:
         out["ref"] = _objectstore_ref_json(ref)
     return out
+
+
+def _objectstore_expires_at_json(value: Any) -> str:
+    if not isinstance(value, dt.datetime):
+        raise RuntimeError("objectstore: upload grant expiry is not a datetime")
+    expires_at = value if value.tzinfo is not None else value.replace(tzinfo=dt.UTC)
+    return expires_at.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _objectstore_step_ref(runtime: Any, step: dict[str, Any]) -> Any:
@@ -3219,6 +3246,8 @@ def _objectstore_error_code_from_message(message: str) -> str:
         return "objectstore.invalid_ref"
     if message == "objectstore: max bytes must be positive":
         return "objectstore.invalid_get_limit"
+    if message == "objectstore: invalid presign put":
+        return "objectstore.invalid_presign_put"
     if message == "objectstore: object exceeds max bytes":
         return "objectstore.object_too_large"
     if message == "objectstore: object not found":
@@ -3228,10 +3257,11 @@ def _objectstore_error_code_from_message(message: str) -> str:
     return "objectstore.error"
 
 
-def _assert_forbidden_objectstore_operation(fake: Any, operation: str) -> None:
+def _assert_forbidden_objectstore_operation(runtime: Any, fake: Any, operation: str) -> None:
     method_names = {
         "list": ("list", "list_objects"),
-        "presign": ("presign", "presign_get", "presign_put", "public_url"),
+        "presign": ("presign", "presign_get", "presign_get_object", "presign_url", "public_url"),
+        "presign_get": ("presign", "presign_get", "presign_get_object", "presign_url", "public_url"),
         "multipart": (
             "multipart",
             "create_multipart_upload",
@@ -3239,10 +3269,19 @@ def _assert_forbidden_objectstore_operation(fake: Any, operation: str) -> None:
             "complete_multipart_upload",
             "abort_multipart_upload",
         ),
+        "copy": ("copy", "copy_object"),
+        "head": ("head", "head_object"),
+        "raw_client": ("client", "raw_client", "s3_client"),
     }
     for method in method_names.get(operation, ()):
         if callable(getattr(fake, method, None)):
             raise RuntimeError(f"objectstore: forbidden operation exposed: {operation}")
+    if operation in ("presign", "presign_get"):
+        if callable(getattr(getattr(runtime, "ObjectStore", None), "presign_put", None)):
+            raise RuntimeError("objectstore: presign_put must not be part of the store contract")
+        for name in dir(fake):
+            if "presign" in name.lower() and name != "presign_put":
+                raise RuntimeError(f"objectstore: forbidden presign surface exposed: {name}")
 
 
 def _objectstore_calls_json(calls: list[Any]) -> list[dict[str, Any]]:
@@ -3254,6 +3293,12 @@ def _objectstore_calls_json(calls: list[Any]) -> list[dict[str, Any]]:
         }
         if int(call.max_bytes or 0) != 0:
             item["max_bytes"] = int(call.max_bytes)
+        if int(getattr(call, "content_length", 0) or 0) != 0:
+            item["content_length"] = int(call.content_length)
+        if getattr(call, "checksum_sha256", ""):
+            item["checksum_sha256"] = call.checksum_sha256
+        if int(getattr(call, "expires_in", 0) or 0) != 0:
+            item["expires_in"] = int(call.expires_in)
         if bytes(getattr(call, "payload", b"")):
             item["payload"] = _objectstore_body_json(bytes(call.payload))
         if getattr(call, "content_type", ""):

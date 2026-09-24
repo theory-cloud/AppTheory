@@ -5,7 +5,7 @@ description: The Python implementation of the AppTheory contract — typed, asyn
 
 # Python Runtime
 
-The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the 271 generic runner fixtures in the [273-vector corpus](../reference/contract-fixtures.md), including the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the two Go/CDK-TS MCP route/facade tables are explicitly outside Python's scope. <!-- apptheory-fixture-count: 273 -->
+The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the 272 generic runner fixtures in the [274-vector corpus](../reference/contract-fixtures.md), including the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the two Go/CDK-TS MCP route/facade tables are explicitly outside Python's scope. <!-- apptheory-fixture-count: 274 -->
 
 ## Install
 
@@ -106,6 +106,12 @@ using the fake object store does not require boto3; constructing the S3-backed s
 `ObjectStoreError` if boto3 or the required S3 methods are unavailable. This differs from TypeScript's hard S3 SDK
 dependency by design and does not widen the object-store contract.
 
+The S3-backed store also exposes the bounded upload grant (`ObjectStoreUploadGranter#presign_put`). Because botocore's
+bundled S3 service model defaults to signature version `s3`, AppTheory constructs the boto3 client with
+`Config(signature_version="s3v4")`: a SigV2 presigned URL does not sign `content-length` at all and hoists
+`content-type` and `x-amz-checksum-sha256` into the query string. The store additionally re-verifies every presigned URL
+and fails closed with `ObjectStoreError(objectstore.invalid_store_config)` if the constraints are not signed headers.
+
 ## HTTP error format
 
 ```python
@@ -118,7 +124,7 @@ Applies to HTTP error serialization only.
 
 ## What's verified
 
-The Python runner passes all 271 generic fixtures in the 273-vector corpus on every commit. <!-- apptheory-fixture-count: 273 --> It includes the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the nested route-algebra and facade-inventory tables are consumed only by Go and CDK-TS. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
+The Python runner passes all 272 generic fixtures in the 274-vector corpus on every commit. <!-- apptheory-fixture-count: 274 --> It includes the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the nested route-algebra and facade-inventory tables are consumed only by Go and CDK-TS. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
 
 ## Next reads
 

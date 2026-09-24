@@ -5,7 +5,7 @@ description: The TypeScript implementation of the AppTheory contract — bundled
 
 # TypeScript Runtime
 
-The TypeScript runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the 271 generic runner fixtures in the [273-vector corpus](../reference/contract-fixtures.md), including the SP09 MCP fixture tier for JSON-RPC, registries, sessions, Streamable HTTP, resumable SSE, task stores, the SP12 OAuth tier, and the SP13 objectstore tier. The CDK-TS package separately consumes the remaining MCP route-algebra and facade-inventory vectors. <!-- apptheory-fixture-count: 273 -->
+The TypeScript runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the 272 generic runner fixtures in the [274-vector corpus](../reference/contract-fixtures.md), including the SP09 MCP fixture tier for JSON-RPC, registries, sessions, Streamable HTTP, resumable SSE, task stores, the SP12 OAuth tier, and the SP13 objectstore tier. The CDK-TS package separately consumes the remaining MCP route-algebra and facade-inventory vectors. <!-- apptheory-fixture-count: 274 -->
 
 ## Install
 
@@ -110,10 +110,15 @@ Applies to HTTP error serialization only.
 
 ## Object-store dependency posture
 
-The TypeScript package intentionally declares `@aws-sdk/client-s3` as a hard dependency because `createS3ObjectStore`
-imports the S3 client at module load. This keeps the packaged S3 helper deterministic for GitHub Release consumers while
-still exposing only the bounded AppTheory `ObjectStore` contract — no raw client, list, presign, or multipart escape
-hatches.
+The TypeScript package intentionally declares `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner` as hard
+dependencies because `createS3ObjectStore` imports the S3 client and the presigner at module load. This keeps the
+packaged S3 helper deterministic for GitHub Release consumers while still exposing only the bounded AppTheory
+`ObjectStore` contract plus the bounded upload grant (`ObjectStoreUploadGranter#presignPut`) — no raw client, list,
+presigned GET, generic presign, or multipart escape hatches.
+
+The presigner is configured so that `content-length`, `content-type`, and `x-amz-checksum-sha256` are signed request
+headers and are never hoisted into unsigned query parameters; the S3 implementation re-verifies the presigned URL and
+fails closed if that ever stops being true.
 
 ## Lambda Function URL streaming
 
@@ -144,7 +149,7 @@ See [CDK Getting Started](../cdk/getting-started.md).
 
 ## What's verified
 
-The TypeScript runtime passes all 271 generic runner fixtures in the 273-vector corpus on every commit. <!-- apptheory-fixture-count: 273 --> The runner includes the SP09 MCP, SP12 OAuth, and SP13 objectstore tiers; CDK-TS tests load the remaining route-algebra and facade-inventory tables directly. The `ts/dist/` build output is checked in and gated by `make rubric`.
+The TypeScript runtime passes all 272 generic runner fixtures in the 274-vector corpus on every commit. <!-- apptheory-fixture-count: 274 --> The runner includes the SP09 MCP, SP12 OAuth, and SP13 objectstore tiers; CDK-TS tests load the remaining route-algebra and facade-inventory tables directly. The `ts/dist/` build output is checked in and gated by `make rubric`.
 
 ## Next reads
 
