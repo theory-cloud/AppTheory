@@ -1090,10 +1090,7 @@ check_ts_coverage() {
   # - We include only shipped runtime output under ts/dist/** to prevent denominator games.
   # - We run both contract fixtures and package unit tests so coverage evidence matches
   #   the TypeScript test surface enforced elsewhere in the release gate.
-  if ! NO_COLOR=1 node --test --experimental-test-coverage \
-    --test-coverage-lines="${COV_THRESHOLD}" \
-    --test-coverage-include="ts/dist/**/*.js" \
-    "${test_files[@]}" >"${tmp}" 2>&1; then
+  if ! NO_COLOR=1 node --test --experimental-test-coverage --test-coverage-lines="${COV_THRESHOLD}" --test-coverage-include="ts/dist/**/*.js" contract-tests/runners/ts/fixtures.test.cjs ts/test/*.test.mjs >"${tmp}" 2>&1; then
     cat "${tmp}"
     if grep -i -F "all files" "${tmp}" > "${summary}"; then :; else tail -n 80 "${tmp}" > "${summary}"; fi
     rm -f "${tmp}"

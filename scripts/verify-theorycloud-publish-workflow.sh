@@ -37,8 +37,7 @@ if [[ ! -f "${WORKFLOW_FILE}" ]]; then
   fail "missing workflow file ${WORKFLOW_FILE}"
 fi
 
-bash -n \
-  "${REPO_ROOT}/scripts/stage-theorycloud-apptheory-subtree.sh" \
+bash -n "${REPO_ROOT}/scripts/stage-theorycloud-apptheory-subtree.sh" \
   "${REPO_ROOT}/scripts/verify-theorycloud-apptheory-subtree.sh" \
   "${REPO_ROOT}/scripts/theorycloud-apptheory-env.sh" \
   "${REPO_ROOT}/scripts/sync-theorycloud-apptheory-subtree.sh" \
