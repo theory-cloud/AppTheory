@@ -56,7 +56,7 @@ function normalizeFilters(values) {
  * - Configure S3 -> SQS notifications with prefix/suffix filters
  */
 class AppTheoryS3Ingest extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryS3Ingest", version: "4.4.1" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryS3Ingest", version: "4.4.2-rc" };
     bucket;
     queue;
     queueConstruct;

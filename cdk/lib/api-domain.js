@@ -40,7 +40,7 @@ const apigwv2 = __importStar(require("aws-cdk-lib/aws-apigatewayv2"));
 const route53 = __importStar(require("aws-cdk-lib/aws-route53"));
 const constructs_1 = require("constructs");
 class AppTheoryApiDomain extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryApiDomain", version: "4.4.1" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryApiDomain", version: "4.4.2-rc" };
     domainName;
     apiMapping;
     cnameRecord;

@@ -47,7 +47,7 @@ const constructs_1 = require("constructs");
  * and/or AWS Organization ID; no unconstrained wildcard principal is synthesized.
  */
 class AppTheoryCloudWatchLogsDestination extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestination", version: "4.4.1" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestination", version: "4.4.2-rc" };
     /**
      * The CloudWatch Logs destination resource.
      */
