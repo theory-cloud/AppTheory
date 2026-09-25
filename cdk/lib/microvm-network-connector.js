@@ -105,7 +105,7 @@ var AppTheoryMicrovmManagedNetworkConnector;
  * controller behavior stays in the AppTheory runtime contract.
  */
 class AppTheoryMicrovmNetworkConnector extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector", version: "4.4.2-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector", version: "4.4.2" };
     /**
      * Import an existing Lambda MicroVM network connector ARN into the AppTheory CDK surface.
      */
@@ -239,7 +239,7 @@ exports.AppTheoryMicrovmNetworkConnector = AppTheoryMicrovmNetworkConnector;
  * typed connector reference without requiring callers to pass raw strings through deployment code.
  */
 class AppTheoryMicrovmNetworkConnectorReference extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorReference", version: "4.4.2-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorReference", version: "4.4.2" };
     /**
      * Import an existing Lambda MicroVM network connector ARN into the AppTheory CDK surface.
      */

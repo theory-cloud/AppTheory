@@ -43,7 +43,7 @@ const constructs_1 = require("constructs");
 const function_1 = require("./function");
 const http_api_1 = require("./http-api");
 class AppTheoryApp extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryApp", version: "4.4.2-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryApp", version: "4.4.2" };
     api;
     fn;
     databaseTable;

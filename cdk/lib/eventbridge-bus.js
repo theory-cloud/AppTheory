@@ -42,7 +42,7 @@ const constructs_1 = require("constructs");
  * Opinionated custom EventBridge bus with explicit cross-account publish allowlist.
  */
 class AppTheoryEventBridgeBus extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBus", version: "4.4.2-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBus", version: "4.4.2" };
     eventBus;
     policies = [];
     allowedAccounts = new Set();

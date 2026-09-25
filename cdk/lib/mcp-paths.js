@@ -9,7 +9,7 @@ const JSII_RTTI_SYMBOL_1 = Symbol.for("jsii.rtti");
  * their protected resource host from each request at runtime.
  */
 class AppTheoryMcpPaths {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpPaths", version: "4.4.2-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpPaths", version: "4.4.2" };
     /** Conventional MCP endpoint path. */
     static MCP = "/mcp";
     /** Generic RFC 9728 protected-resource metadata path. */

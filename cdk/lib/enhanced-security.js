@@ -44,7 +44,7 @@ const secretsmanager = __importStar(require("aws-cdk-lib/aws-secretsmanager"));
 const wafv2 = __importStar(require("aws-cdk-lib/aws-wafv2"));
 const constructs_1 = require("constructs");
 class AppTheoryEnhancedSecurity extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryEnhancedSecurity", version: "4.4.2-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryEnhancedSecurity", version: "4.4.2" };
     securityGroup;
     waf;
     secrets;
