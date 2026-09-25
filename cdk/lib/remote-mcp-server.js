@@ -54,7 +54,7 @@ const STREAM_MAX_EVENT_DEFAULT_BYTES = 10 * 1024 * 1024;
  * This construct is designed for MCP Streamable HTTP (2025-06-18).
  */
 class AppTheoryRemoteMcpServer extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRemoteMcpServer", version: "4.4.0" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRemoteMcpServer", version: "4.4.1-rc" };
     /**
      * The underlying REST API router.
      */
