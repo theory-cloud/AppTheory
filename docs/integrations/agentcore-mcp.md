@@ -127,6 +127,10 @@ matching runtime handler. If a singleton deployment needs the full OAuth facade 
 and register every derived `routeInventory` entry in application code. Do not use `RegisterMCPFacade`: it serves only
 the canonical default family.
 
+Every route the construct wires adds its own route-scoped Lambda invoke permission by default. When the application
+shares one Lambda across the MCP facade and its own route bundle, set `scopePermissionToRoute: false` to collapse
+those into one API-scoped permission instead; that permission then lets every route on the API invoke the handler.
+
 See: `docs/cdk/mcp-server-agentcore.md`.
 
 ---

@@ -148,6 +148,21 @@ export interface AppTheoryMcpServerProps {
   readonly handler: lambda.IFunction;
 
   /**
+   * Whether Lambda invoke permissions should be scoped to individual HTTP API v2 routes.
+   *
+   * When false, the construct grants one API-scoped invoke permission per Lambda instead of
+   * one permission per route. This is the scalable choice for large MCP facade families that
+   * share one Lambda, where the per-route permissions can exhaust the Lambda resource policy
+   * size limit.
+   *
+   * The trade-off is explicit: the API-scoped permission allows every route on that HTTP API
+   * to invoke the handler, not only the routes this construct owns.
+   *
+   * @default true
+   */
+  readonly scopePermissionToRoute?: boolean;
+
+  /**
    * Existing HTTP API to attach to. Attach mode is the primary front-door
    * topology and never creates an `AWS::ApiGatewayV2::Api` resource.
    * @default a construct-owned HttpApi
@@ -370,7 +385,10 @@ export class AppTheoryMcpServer extends Construct {
     const integration = new apigwv2Integrations.HttpLambdaIntegration(
       "McpHandler",
       props.handler,
-      { payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_2_0 },
+      {
+        payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_2_0,
+        scopePermissionToRoute: props.scopePermissionToRoute ?? true,
+      },
     );
     const runtimeOwnedAuth = new apigwv2.HttpNoneAuthorizer();
     for (const route of this.routeInventory.routes) {

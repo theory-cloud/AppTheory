@@ -67,6 +67,18 @@ type AppTheoryMicrovmControllerProps struct {
 	// Default: undefined.
 	//
 	ExecutionRole awsiam.IRole `field:"optional" json:"executionRole" yaml:"executionRole"`
+	// Whether Lambda invoke permissions should be scoped to individual controller routes.
+	//
+	// When false, the construct grants one API-scoped invoke permission per Lambda instead of
+	// one permission per controller route. This is the scalable choice for the canonical
+	// controller route family, where the per-route permissions can exhaust the Lambda resource
+	// policy size limit.
+	//
+	// The trade-off is explicit: the API-scoped permission allows every route on that HTTP API
+	// to invoke the controller Lambda, not only the controller routes this construct owns.
+	// Default: true.
+	//
+	ScopePermissionToRoute *bool `field:"optional" json:"scopePermissionToRoute" yaml:"scopePermissionToRoute"`
 	// Billing mode for the session registry table.
 	// Default: PAY_PER_REQUEST.
 	//
