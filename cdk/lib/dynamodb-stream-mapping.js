@@ -39,7 +39,7 @@ const lambda = __importStar(require("aws-cdk-lib/aws-lambda"));
 const lambdaEventSources = __importStar(require("aws-cdk-lib/aws-lambda-event-sources"));
 const constructs_1 = require("constructs");
 class AppTheoryDynamoDBStreamMapping extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryDynamoDBStreamMapping", version: "4.4.1" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryDynamoDBStreamMapping", version: "4.4.2-rc" };
     constructor(scope, id, props) {
         super(scope, id);
         props.consumer.addEventSource(new lambdaEventSources.DynamoEventSource(props.table, {

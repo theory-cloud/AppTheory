@@ -39,7 +39,7 @@ const aws_cdk_lib_1 = require("aws-cdk-lib");
 const dynamodb = __importStar(require("aws-cdk-lib/aws-dynamodb"));
 const constructs_1 = require("constructs");
 class AppTheoryEventBusTable extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryEventBusTable", version: "4.4.1" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryEventBusTable", version: "4.4.2-rc" };
     table;
     constructor(scope, id, props = {}) {
         super(scope, id);
