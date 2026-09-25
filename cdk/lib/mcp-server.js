@@ -57,7 +57,7 @@ const DEFAULT_SESSION_TTL_MINUTES = 60;
  * `mcpfacade.RegisterMCPFacade`.
  */
 class AppTheoryMcpServer extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpServer", version: "4.4.0" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpServer", version: "4.4.1-rc" };
     routeSequence = 0;
     api;
     ownedApi;
