@@ -38,6 +38,18 @@ type AppTheoryHttpIngestionEndpointProps struct {
 	// Default: "/ingest".
 	//
 	EndpointPath *string `field:"optional" json:"endpointPath" yaml:"endpointPath"`
+	// Whether the Lambda invoke permission should be scoped to the ingestion route.
+	//
+	// When false, the construct grants one API-scoped invoke permission instead of one
+	// permission scoped to the ingestion path. This is the scalable choice when the ingestion
+	// Lambda is shared with other routes on the same HTTP API, where the per-route permissions
+	// can exhaust the Lambda resource policy size limit.
+	//
+	// The trade-off is explicit: the API-scoped permission allows every route on that HTTP API
+	// to invoke the handler, not only the ingestion route this construct owns.
+	// Default: true.
+	//
+	ScopePermissionToRoute *bool `field:"optional" json:"scopePermissionToRoute" yaml:"scopePermissionToRoute"`
 	// Optional stage configuration.
 	// Default: undefined.
 	//

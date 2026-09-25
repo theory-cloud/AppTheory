@@ -121,6 +121,20 @@ export interface AppTheoryMicrovmControllerProps {
      */
     readonly stage?: AppTheoryMicrovmControllerStageOptions;
     /**
+     * Whether Lambda invoke permissions should be scoped to individual controller routes.
+     *
+     * When false, the construct grants one API-scoped invoke permission per Lambda instead of
+     * one permission per controller route. This is the scalable choice for the canonical
+     * controller route family, where the per-route permissions can exhaust the Lambda resource
+     * policy size limit.
+     *
+     * The trade-off is explicit: the API-scoped permission allows every route on that HTTP API
+     * to invoke the controller Lambda, not only the controller routes this construct owns.
+     *
+     * @default true
+     */
+    readonly scopePermissionToRoute?: boolean;
+    /**
      * Name for the durable MicroVM session registry DynamoDB table.
      *
      * @default undefined (CloudFormation-generated)
@@ -232,6 +246,7 @@ export declare class AppTheoryMicrovmController extends Construct {
      * The access log group (if access logging is enabled).
      */
     readonly accessLogGroup?: logs.ILogGroup;
+    private readonly scopePermissionToRoute;
     constructor(scope: Construct, id: string, props: AppTheoryMicrovmControllerProps);
     private createSessionTable;
     private createStage;

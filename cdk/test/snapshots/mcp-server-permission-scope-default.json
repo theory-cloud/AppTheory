@@ -1,0 +1,2106 @@
+{
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>"
+    }
+  },
+  "Resources": {
+    "Fn9270CBC0": {
+      "DependsOn": [
+        "FnServiceRoleDefaultPolicyC6A839BF",
+        "FnServiceRoleB9001A96"
+      ],
+      "Properties": {
+        "Code": {
+          "ZipFile": "exports.handler = async () => ({ statusCode: 204 });"
+        },
+        "Environment": {
+          "Variables": {
+            "MCP_ENDPOINT": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Fn::GetAtt": [
+                      "McpServerApi22C3CCFE",
+                      "ApiEndpoint"
+                    ]
+                  },
+                  "/{client_namespace}/mcp"
+                ]
+              ]
+            },
+            "MCP_SESSION_TABLE": {
+              "Ref": "McpServerSessionTable469EA0FB"
+            },
+            "MCP_SESSION_TTL_MINUTES": "60"
+          }
+        },
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "FnServiceRoleB9001A96",
+            "Arn"
+          ]
+        },
+        "Runtime": "nodejs24.x"
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "FnServiceRoleB9001A96": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+              ]
+            ]
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "FnServiceRoleDefaultPolicyC6A839BF": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:DescribeTable"
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "McpServerSessionTable469EA0FB",
+                    "Arn"
+                  ]
+                }
+              ]
+            },
+            {
+              "Action": [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator"
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "McpServerSessionTable469EA0FB",
+                    "Arn"
+                  ]
+                }
+              ]
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "PolicyName": "FnServiceRoleDefaultPolicyC6A839BF",
+        "Roles": [
+          {
+            "Ref": "FnServiceRoleB9001A96"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Policy"
+    },
+    "McpServerAccessLogs1AA4997C": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "RetentionInDays": 30
+      },
+      "Type": "AWS::Logs::LogGroup",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "McpServerApi22C3CCFE": {
+      "Properties": {
+        "Name": "apptheory-mcp-permission-scope",
+        "ProtocolType": "HTTP"
+      },
+      "Type": "AWS::ApiGatewayV2::Api"
+    },
+    "McpServerRoute09193E35C": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /{client_namespace}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute0McpHandler6B86F391": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "PayloadFormatVersion": "2.0"
+      },
+      "Type": "AWS::ApiGatewayV2::Integration"
+    },
+    "McpServerRoute0McpHandlerPermissionF9DBAC37": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute105D8E3C67": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "DELETE /{client_namespace}/partners/{partner_id}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute10McpHandlerPermissionCF19FF2E": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/partners/{partner_id}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute11492860B1": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute11McpHandlerPermissionC8FEC9B9": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute12197B625D": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute12McpHandlerPermissionCA5EEDE0": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute1376595EB5": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /{client_namespace}/partners/{partner_id}/mcp/.well-known/oauth-authorization-server",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute13McpHandlerPermissionBCA69FEB": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/partners/{partner_id}/mcp/.well-known/oauth-authorization-server"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute14625DC2B1": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/authorize",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute14McpHandlerPermission384DB01C": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/authorize"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute159240B124": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/token",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute15McpHandlerPermission71458E4C": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/token"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute163380AFC0": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /{client_namespace}/agents/{agent_id}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute16McpHandlerPermission547241DE": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/agents/{agent_id}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute1799281BDB": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /{client_namespace}/agents/{agent_id}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute17McpHandlerPermission949C9334": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/agents/{agent_id}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute18188EA07F": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "DELETE /{client_namespace}/agents/{agent_id}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute18McpHandlerPermissionAD042734": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/agents/{agent_id}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute19EABD95D2": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /.well-known/oauth-protected-resource/{client_namespace}/agents/{agent_id}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute19McpHandlerPermission0AA1A804": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-protected-resource/{client_namespace}/agents/{agent_id}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute1D814E9D5": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /{client_namespace}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute1McpHandlerPermission3B4E5CF3": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute207DFBFA34": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute20McpHandlerPermission5A70D80F": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute21644F2325": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /{client_namespace}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute21McpHandlerPermission7530ECFD": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute228A6D145A": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/authorize",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute22McpHandlerPermissionE2F9F164": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/authorize"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute23EB9B08B4": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/token",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute23McpHandlerPermissionAD46A6FD": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/token"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute246D00D39": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "DELETE /{client_namespace}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute249AB1FB6E": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute24McpHandlerPermissionA81532D4": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute25EE27EBF7": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute25McpHandlerPermissionAB81D40C": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute26EDDE7D37": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "DELETE /{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute26McpHandlerPermission65CDDF16": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute275C279BE9": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute27McpHandlerPermission59FC9DCA": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute28A1B8223C": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute28McpHandlerPermissionF43AE1A9": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute29E6B0928A": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute29McpHandlerPermission3A954881": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute2McpHandlerPermission0FCC1681": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute3087CC492F": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/authorize",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute30McpHandlerPermission2398975F": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/authorize"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute312FCB9447": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/token",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute31McpHandlerPermission722E66BF": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/token"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute3FD21A61E": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /.well-known/oauth-protected-resource/{client_namespace}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute3McpHandlerPermission62E42670": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-protected-resource/{client_namespace}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute4E0E9E5F3": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute4McpHandlerPermission66AF6D45": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute50BE5660C": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /{client_namespace}/mcp/.well-known/oauth-authorization-server",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute5McpHandlerPermission96AFA0A7": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/mcp/.well-known/oauth-authorization-server"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute6EC5C76D7": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/mcp/authorize",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute6McpHandlerPermissionE3531EF4": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/mcp/authorize"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute7F945B051": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /.well-known/oauth-authorization-server/{client_namespace}/mcp/token",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute7McpHandlerPermissionA1998991": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/mcp/token"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute81B161A8C": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /{client_namespace}/partners/{partner_id}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute8McpHandlerPermissionC3BF1303": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/partners/{partner_id}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute9FCA2CB84": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /{client_namespace}/partners/{partner_id}/mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute9McpHandlerPermission2C162AA5": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/partners/{partner_id}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerSessionTable469EA0FB": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "sessionId",
+            "AttributeType": "S"
+          }
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [
+          {
+            "AttributeName": "sessionId",
+            "KeyType": "HASH"
+          }
+        ],
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "SSESpecification": {
+          "SSEEnabled": true
+        },
+        "TableName": "apptheory-mcp-sessions",
+        "TimeToLiveSpecification": {
+          "AttributeName": "expiresAt",
+          "Enabled": true
+        }
+      },
+      "Type": "AWS::DynamoDB::Table",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "McpServerStage3B37C8A0": {
+      "Properties": {
+        "AccessLogSettings": {
+          "DestinationArn": {
+            "Fn::GetAtt": [
+              "McpServerAccessLogs1AA4997C",
+              "Arn"
+            ]
+          },
+          "Format": "{\"requestId\":\"$context.requestId\",\"ip\":\"$context.identity.sourceIp\",\"requestTime\":\"$context.requestTime\",\"httpMethod\":\"$context.httpMethod\",\"routeKey\":\"$context.routeKey\",\"status\":\"$context.status\",\"protocol\":\"$context.protocol\",\"responseLength\":\"$context.responseLength\",\"integrationLatency\":\"$context.integrationLatency\"}"
+        },
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AutoDeploy": true,
+        "DefaultRouteSettings": {
+          "ThrottlingBurstLimit": 200,
+          "ThrottlingRateLimit": 100
+        },
+        "StageName": "$default"
+      },
+      "Type": "AWS::ApiGatewayV2::Stage"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}

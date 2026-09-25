@@ -207,6 +207,21 @@ export interface AppTheoryMicrovmControllerProps {
   readonly stage?: AppTheoryMicrovmControllerStageOptions;
 
   /**
+   * Whether Lambda invoke permissions should be scoped to individual controller routes.
+   *
+   * When false, the construct grants one API-scoped invoke permission per Lambda instead of
+   * one permission per controller route. This is the scalable choice for the canonical
+   * controller route family, where the per-route permissions can exhaust the Lambda resource
+   * policy size limit.
+   *
+   * The trade-off is explicit: the API-scoped permission allows every route on that HTTP API
+   * to invoke the controller Lambda, not only the controller routes this construct owns.
+   *
+   * @default true
+   */
+  readonly scopePermissionToRoute?: boolean;
+
+  /**
    * Name for the durable MicroVM session registry DynamoDB table.
    *
    * @default undefined (CloudFormation-generated)
@@ -337,6 +352,8 @@ export class AppTheoryMicrovmController extends Construct {
    */
   public readonly accessLogGroup?: logs.ILogGroup;
 
+  private readonly scopePermissionToRoute: boolean;
+
   constructor(scope: Construct, id: string, props: AppTheoryMicrovmControllerProps) {
     super(scope, id);
 
@@ -346,6 +363,7 @@ export class AppTheoryMicrovmController extends Construct {
     validateRequired(props.controller, "controller");
     validateRequired(props.authorizer, "authorizer");
     validateRequired(props.microvmImage, "microvmImage");
+    this.scopePermissionToRoute = props.scopePermissionToRoute ?? true;
 
     const imageArn = normalizeNoWhitespaceString(props.microvmImage.microvmImageArn, "microvmImage.microvmImageArn", 2048);
     const ingressConnectorArns = normalizeConnectorReferences(
@@ -588,6 +606,7 @@ export class AppTheoryMicrovmController extends Construct {
         methods: [route.method],
         integration: new apigwv2Integrations.HttpLambdaIntegration(route.id, this.controllerFunction, {
           payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_2_0,
+          scopePermissionToRoute: this.scopePermissionToRoute,
         }),
         authorizer: this.routeAuthorizer,
       });

@@ -206,6 +206,21 @@ When you’re using a custom domain, the construct maps the stage to the domain 
 
 ---
 
+## Lambda permission policy size
+
+Every route the construct wires adds its own route-scoped Lambda invoke permission by default. The canonical four-pattern
+family derives 32 routes, so an application that shares one Lambda across the MCP facade and its own route bundle can
+exhaust the 20 KB Lambda resource-policy limit.
+
+For large MCP route bundles that share one Lambda, set `scopePermissionToRoute: false` to collapse per-route invoke
+permissions into one API-scoped permission per Lambda. If you attach the construct to an application-owned HTTP API
+(`api`), that one permission is scoped to the whole front door.
+
+The trade-off is explicit: the API-scoped permission lets every route on that API invoke the handler, not only the
+routes this construct owns.
+
+---
+
 ## Security and migration note
 
 `unauthenticatedMcp: true` is a deployment-facade opt-out, not an instruction to ship an open tool endpoint. Protect

@@ -9934,7 +9934,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/app.ts",
-          "line": 95
+          "line": 110
         },
         "parameters": [
           {
@@ -9960,7 +9960,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/app.ts",
-        "line": 87
+        "line": 102
       },
       "name": "AppTheoryApp",
       "properties": [
@@ -9968,7 +9968,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 88
+            "line": 103
           },
           "name": "api",
           "type": {
@@ -9979,7 +9979,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 89
+            "line": 104
           },
           "name": "fn",
           "type": {
@@ -9990,7 +9990,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 93
+            "line": 108
           },
           "name": "alias",
           "optional": true,
@@ -10002,7 +10002,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 90
+            "line": 105
           },
           "name": "databaseTable",
           "optional": true,
@@ -10014,7 +10014,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 92
+            "line": 107
           },
           "name": "domain",
           "optional": true,
@@ -10026,7 +10026,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 91
+            "line": 106
           },
           "name": "rateLimitTable",
           "optional": true,
@@ -10407,6 +10407,24 @@
           "optional": true,
           "type": {
             "fqn": "aws-cdk-lib.aws_lambda.Runtime"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "remarks": "Forwarded unchanged to the inner `AppTheoryHttpApi`. When false, one API-scoped invoke\npermission is granted per Lambda instead of one permission per route, which is the\nscalable choice when the app Lambda is shared with other routes on the same HTTP API and\nthe per-route permissions can exhaust the Lambda resource policy size limit.\n\nThe trade-off is explicit: the API-scoped permission allows every route on that HTTP API\nto invoke the handler, not only the routes this construct owns.",
+            "summary": "Whether Lambda invoke permissions should be scoped to individual HTTP API v2 routes."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 99
+          },
+          "name": "scopePermissionToRoute",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
           }
         },
         {
@@ -14318,7 +14336,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/http-api.ts",
-          "line": 191
+          "line": 206
         },
         "parameters": [
           {
@@ -14344,7 +14362,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/http-api.ts",
-        "line": 185
+        "line": 200
       },
       "name": "AppTheoryHttpApi",
       "properties": [
@@ -14352,7 +14370,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 186
+            "line": 201
           },
           "name": "api",
           "type": {
@@ -14363,7 +14381,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 187
+            "line": 202
           },
           "name": "stage",
           "type": {
@@ -14374,7 +14392,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 188
+            "line": 203
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -14386,7 +14404,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 189
+            "line": 204
           },
           "name": "domain",
           "optional": true,
@@ -14762,7 +14780,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 158
+            "line": 173
           },
           "name": "cors",
           "optional": true,
@@ -14788,12 +14806,30 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 164
+            "line": 179
           },
           "name": "domain",
           "optional": true,
           "type": {
             "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiDomainOptions"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "remarks": "When false, the construct grants one API-scoped invoke permission per Lambda instead of\none permission per route. This is the scalable choice for route families that share one\nLambda, where the per-route permissions can exhaust the Lambda resource policy size\nlimit.\n\nThe trade-off is explicit: the API-scoped permission allows every route on that HTTP API\nto invoke the handler, not only the routes this construct owns.",
+            "summary": "Whether Lambda invoke permissions should be scoped to individual HTTP API v2 routes."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 167
+          },
+          "name": "scopePermissionToRoute",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
           }
         },
         {
@@ -14805,7 +14841,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 170
+            "line": 185
           },
           "name": "stage",
           "optional": true,
@@ -14825,7 +14861,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 182
+            "line": 197
           },
           "name": "waf",
           "optional": true,
@@ -14983,7 +15019,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/http-ingestion-endpoint.ts",
-          "line": 150
+          "line": 165
         },
         "parameters": [
           {
@@ -15009,7 +15045,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/http-ingestion-endpoint.ts",
-        "line": 140
+        "line": 155
       },
       "name": "AppTheoryHttpIngestionEndpoint",
       "properties": [
@@ -15017,7 +15053,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-ingestion-endpoint.ts",
-            "line": 141
+            "line": 156
           },
           "name": "api",
           "type": {
@@ -15028,7 +15064,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-ingestion-endpoint.ts",
-            "line": 143
+            "line": 158
           },
           "name": "endpoint",
           "type": {
@@ -15039,7 +15075,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-ingestion-endpoint.ts",
-            "line": 142
+            "line": 157
           },
           "name": "routeAuthorizer",
           "type": {
@@ -15050,7 +15086,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-ingestion-endpoint.ts",
-            "line": 144
+            "line": 159
           },
           "name": "stage",
           "type": {
@@ -15061,7 +15097,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-ingestion-endpoint.ts",
-            "line": 145
+            "line": 160
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -15073,7 +15109,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-ingestion-endpoint.ts",
-            "line": 147
+            "line": 162
           },
           "name": "apiMapping",
           "optional": true,
@@ -15085,7 +15121,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-ingestion-endpoint.ts",
-            "line": 148
+            "line": 163
           },
           "name": "cnameRecord",
           "optional": true,
@@ -15097,7 +15133,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-ingestion-endpoint.ts",
-            "line": 146
+            "line": 161
           },
           "name": "domainName",
           "optional": true,
@@ -15225,7 +15261,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-ingestion-endpoint.ts",
-            "line": 87
+            "line": 102
           },
           "name": "authorizer",
           "type": {
@@ -15256,7 +15292,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-ingestion-endpoint.ts",
-            "line": 93
+            "line": 108
           },
           "name": "apiName",
           "optional": true,
@@ -15274,7 +15310,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-ingestion-endpoint.ts",
-            "line": 119
+            "line": 134
           },
           "name": "authorizerCacheTtl",
           "optional": true,
@@ -15292,7 +15328,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-ingestion-endpoint.ts",
-            "line": 106
+            "line": 121
           },
           "name": "authorizerHeaderName",
           "optional": true,
@@ -15309,7 +15345,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-ingestion-endpoint.ts",
-            "line": 112
+            "line": 127
           },
           "name": "authorizerName",
           "optional": true,
@@ -15326,7 +15362,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-ingestion-endpoint.ts",
-            "line": 125
+            "line": 140
           },
           "name": "domain",
           "optional": true,
@@ -15343,12 +15379,30 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-ingestion-endpoint.ts",
-            "line": 99
+            "line": 114
           },
           "name": "endpointPath",
           "optional": true,
           "type": {
             "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "remarks": "When false, the construct grants one API-scoped invoke permission instead of one\npermission scoped to the ingestion path. This is the scalable choice when the ingestion\nLambda is shared with other routes on the same HTTP API, where the per-route permissions\ncan exhaust the Lambda resource policy size limit.\n\nThe trade-off is explicit: the API-scoped permission allows every route on that HTTP API\nto invoke the handler, not only the ingestion route this construct owns.",
+            "summary": "Whether the Lambda invoke permission should be scoped to the ingestion route."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 97
+          },
+          "name": "scopePermissionToRoute",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
           }
         },
         {
@@ -15360,7 +15414,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-ingestion-endpoint.ts",
-            "line": 131
+            "line": 146
           },
           "name": "stage",
           "optional": true,
@@ -18562,7 +18616,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/mcp-server.ts",
-          "line": 295
+          "line": 310
         },
         "parameters": [
           {
@@ -18588,7 +18642,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/mcp-server.ts",
-        "line": 253
+        "line": 268
       },
       "name": "AppTheoryMcpServer",
       "properties": [
@@ -18596,7 +18650,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 256
+            "line": 271
           },
           "name": "api",
           "type": {
@@ -18613,7 +18667,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 282
+            "line": 297
           },
           "name": "endpoint",
           "type": {
@@ -18628,7 +18682,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 268
+            "line": 283
           },
           "name": "endpoints",
           "type": {
@@ -18648,7 +18702,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 285
+            "line": 300
           },
           "name": "mcpPath",
           "type": {
@@ -18659,7 +18713,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 269
+            "line": 284
           },
           "name": "mcpPaths",
           "type": {
@@ -18679,7 +18733,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 288
+            "line": 303
           },
           "name": "protectedResourceMetadataPath",
           "type": {
@@ -18690,7 +18744,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 270
+            "line": 285
           },
           "name": "protectedResourceMetadataPaths",
           "type": {
@@ -18706,7 +18760,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 271
+            "line": 286
           },
           "name": "routeInventory",
           "type": {
@@ -18717,7 +18771,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 293
+            "line": 308
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -18729,7 +18783,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 291
+            "line": 306
           },
           "name": "apiMapping",
           "optional": true,
@@ -18741,7 +18795,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 292
+            "line": 307
           },
           "name": "cnameRecord",
           "optional": true,
@@ -18753,7 +18807,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 290
+            "line": 305
           },
           "name": "domainName",
           "optional": true,
@@ -18765,7 +18819,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 257
+            "line": 272
           },
           "name": "ownedApi",
           "optional": true,
@@ -18777,7 +18831,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 258
+            "line": 273
           },
           "name": "sessionTable",
           "optional": true,
@@ -19095,7 +19149,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 155
+            "line": 170
           },
           "name": "api",
           "optional": true,
@@ -19112,7 +19166,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 220
+            "line": 235
           },
           "name": "apiName",
           "optional": true,
@@ -19130,7 +19184,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 164
+            "line": 179
           },
           "name": "attachedApiStageName",
           "optional": true,
@@ -19148,7 +19202,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 210
+            "line": 225
           },
           "name": "authorizationServerIssuer",
           "optional": true,
@@ -19165,7 +19219,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 236
+            "line": 251
           },
           "name": "domain",
           "optional": true,
@@ -19182,7 +19236,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 225
+            "line": 240
           },
           "name": "enableSessionTable",
           "optional": true,
@@ -19200,7 +19254,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 217
+            "line": 232
           },
           "name": "jwksUri",
           "optional": true,
@@ -19218,7 +19272,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 203
+            "line": 218
           },
           "name": "mcpPath",
           "optional": true,
@@ -19236,7 +19290,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 196
+            "line": 211
           },
           "name": "ownedApi",
           "optional": true,
@@ -19254,12 +19308,30 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 174
+            "line": 189
           },
           "name": "routeFamily",
           "optional": true,
           "type": {
             "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpRouteFamily"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "remarks": "When false, the construct grants one API-scoped invoke permission per Lambda instead of\none permission per route. This is the scalable choice for large MCP facade families that\nshare one Lambda, where the per-route permissions can exhaust the Lambda resource policy\nsize limit.\n\nThe trade-off is explicit: the API-scoped permission allows every route on that HTTP API\nto invoke the handler, not only the routes this construct owns.",
+            "summary": "Whether Lambda invoke permissions should be scoped to individual HTTP API v2 routes."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 163
+          },
+          "name": "scopePermissionToRoute",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
           }
         },
         {
@@ -19272,7 +19344,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 190
+            "line": 205
           },
           "name": "sessionState",
           "optional": true,
@@ -19289,7 +19361,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 228
+            "line": 243
           },
           "name": "sessionTableName",
           "optional": true,
@@ -19306,7 +19378,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 231
+            "line": 246
           },
           "name": "sessionTtlMinutes",
           "optional": true,
@@ -19323,7 +19395,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 241
+            "line": 256
           },
           "name": "stage",
           "optional": true,
@@ -19341,7 +19413,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/mcp-server.ts",
-            "line": 184
+            "line": 199
           },
           "name": "unauthenticatedMcp",
           "optional": true,
@@ -20070,7 +20142,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/microvm-controller.ts",
-          "line": 340
+          "line": 357
         },
         "parameters": [
           {
@@ -20096,7 +20168,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 304
+        "line": 319
       },
       "name": "AppTheoryMicrovmController",
       "properties": [
@@ -20107,7 +20179,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 308
+            "line": 323
           },
           "name": "api",
           "type": {
@@ -20121,7 +20193,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 323
+            "line": 338
           },
           "name": "controllerFunction",
           "type": {
@@ -20135,7 +20207,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 333
+            "line": 348
           },
           "name": "endpoint",
           "type": {
@@ -20149,7 +20221,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 318
+            "line": 333
           },
           "name": "routeAuthorizer",
           "type": {
@@ -20163,7 +20235,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 328
+            "line": 343
           },
           "name": "sessionTable",
           "type": {
@@ -20177,7 +20249,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 313
+            "line": 328
           },
           "name": "stage",
           "type": {
@@ -20191,7 +20263,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 338
+            "line": 353
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -20367,7 +20439,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 293
+            "line": 308
           },
           "name": "authorizerCacheTtl",
           "optional": true,
@@ -20384,7 +20456,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 277
+            "line": 292
           },
           "name": "authorizerHeaderName",
           "optional": true,
@@ -20401,7 +20473,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 284
+            "line": 299
           },
           "name": "authorizerName",
           "optional": true,
@@ -20418,7 +20490,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 242
+            "line": 257
           },
           "name": "enableSessionTablePointInTimeRecovery",
           "optional": true,
@@ -20447,13 +20519,31 @@
         {
           "abstract": true,
           "docs": {
+            "default": "true",
+            "remarks": "When false, the construct grants one API-scoped invoke permission per Lambda instead of\none permission per controller route. This is the scalable choice for the canonical\ncontroller route family, where the per-route permissions can exhaust the Lambda resource\npolicy size limit.\n\nThe trade-off is explicit: the API-scoped permission allows every route on that HTTP API\nto invoke the controller Lambda, not only the controller routes this construct owns.",
+            "summary": "Whether Lambda invoke permissions should be scoped to individual controller routes."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 222
+          },
+          "name": "scopePermissionToRoute",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
             "default": "PAY_PER_REQUEST",
             "summary": "Billing mode for the session registry table."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 221
+            "line": 236
           },
           "name": "sessionTableBillingMode",
           "optional": true,
@@ -20470,7 +20560,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 235
+            "line": 250
           },
           "name": "sessionTableDeletionProtection",
           "optional": true,
@@ -20487,7 +20577,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 249
+            "line": 264
           },
           "name": "sessionTableEncryption",
           "optional": true,
@@ -20504,7 +20594,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 256
+            "line": 271
           },
           "name": "sessionTableEncryptionKey",
           "optional": true,
@@ -20521,7 +20611,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 214
+            "line": 229
           },
           "name": "sessionTableName",
           "optional": true,
@@ -20538,7 +20628,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 263
+            "line": 278
           },
           "name": "sessionTableReadCapacity",
           "optional": true,
@@ -20555,7 +20645,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 228
+            "line": 243
           },
           "name": "sessionTableRemovalPolicy",
           "optional": true,
@@ -20572,7 +20662,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 270
+            "line": 285
           },
           "name": "sessionTableWriteCapacity",
           "optional": true,
@@ -29701,6 +29791,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "4.4.0",
-  "fingerprint": "3kTn7uxelX3EFm2HKrxPaXV51x2CLOLlr+crO/S1yPA="
+  "version": "4.4.1-rc",
+  "fingerprint": "DN9EHjE68VLzqJAHMeCzWeuAfGsIDUh30IUCXQkcFJk="
 }
