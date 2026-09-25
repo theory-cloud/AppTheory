@@ -47,8 +47,8 @@ AppTheory is a **contract-first serverless runtime for AWS Lambda** designed to 
                   DynamoDB
 ```
 
-
 AppTheory is the runtime layer of the [Theory Cloud](THEORY_CLOUD.md) stack — used in production by [Pay Theory](https://paytheory.com).
+
 
 ## Install
 
