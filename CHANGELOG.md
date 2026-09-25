@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.4.1](https://github.com/theory-cloud/AppTheory/compare/v4.4.0...v4.4.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* **cdk:** support api-scoped http invoke permissions ([f25e18c](https://github.com/theory-cloud/AppTheory/commit/f25e18c754b4ea3388b8582f69c547fa0633a5c9))
+* **cdk:** support api-scoped http invoke permissions ([92c4407](https://github.com/theory-cloud/AppTheory/commit/92c4407b93cbe12db51abe1a7b968a673bd4b1b4))
+
 ## [4.4.1-rc](https://github.com/theory-cloud/AppTheory/compare/v4.4.0...v4.4.1-rc) (2026-09-25)
 
 

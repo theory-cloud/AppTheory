@@ -47,7 +47,7 @@ const constructs_1 = require("constructs");
  * the selected destination type.
  */
 class AppTheoryCloudWatchLogsSubscription extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsSubscription", version: "4.4.1-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsSubscription", version: "4.4.1" };
     /**
      * The CloudWatch Logs subscription filter resource.
      */
