@@ -17,6 +17,18 @@ type AppTheoryHttpApiProps struct {
 	// Default: undefined.
 	//
 	Domain *AppTheoryHttpApiDomainOptions `field:"optional" json:"domain" yaml:"domain"`
+	// Whether Lambda invoke permissions should be scoped to individual HTTP API v2 routes.
+	//
+	// When false, the construct grants one API-scoped invoke permission per Lambda instead of
+	// one permission per route. This is the scalable choice for route families that share one
+	// Lambda, where the per-route permissions can exhaust the Lambda resource policy size
+	// limit.
+	//
+	// The trade-off is explicit: the API-scoped permission allows every route on that HTTP API
+	// to invoke the handler, not only the routes this construct owns.
+	// Default: true.
+	//
+	ScopePermissionToRoute *bool `field:"optional" json:"scopePermissionToRoute" yaml:"scopePermissionToRoute"`
 	// Stage configuration.
 	// Default: undefined.
 	//

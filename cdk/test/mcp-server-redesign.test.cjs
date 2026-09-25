@@ -80,6 +80,53 @@ function literalSingletonRouteFamilies(document) {
   return singletons;
 }
 
+function stableJson(value) {
+  if (Array.isArray(value)) return value.map(stableJson);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const key of Object.keys(value).sort()) {
+      out[key] = stableJson(value[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+function expectSnapshot(name, template) {
+  const filePath = path.join(__dirname, "snapshots", `${name}.json`);
+  const actual = JSON.stringify(stableJson(template), null, 2) + "\n";
+  if (!fs.existsSync(filePath)) {
+    assert.fail(`missing snapshot ${filePath} (run with UPDATE_SNAPSHOTS=1)`);
+  }
+  assert.equal(actual, fs.readFileSync(filePath, "utf-8"));
+}
+
+function writeSnapshot(name, template) {
+  const filePath = path.join(__dirname, "snapshots", `${name}.json`);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(stableJson(template), null, 2) + "\n");
+}
+
+function lambdaPermissionEntries(template) {
+  const entries = [];
+  for (const [id, resource] of Object.entries(template.Resources ?? {})) {
+    if (resource.Type !== "AWS::Lambda::Permission") continue;
+    entries.push({ id, sourceArn: resource.Properties?.SourceArn ?? null });
+  }
+  return entries;
+}
+
+function lambdaPermissionSourceArnResourceName(sourceArn) {
+  const parts = sourceArn?.["Fn::Join"]?.[1];
+  if (!Array.isArray(parts)) return undefined;
+  const tail = parts[parts.length - 1];
+  return typeof tail === "string" ? tail : undefined;
+}
+
+function apiScopedLambdaPermissions(template) {
+  return lambdaPermissionEntries(template).filter((entry) => entry.id.includes("ApiPermissionApiScoped"));
+}
+
 test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL authority", () => {
   const assembly = JSON.parse(fs.readFileSync(path.join(__dirname, "..", ".jsii"), "utf8"));
   const expectedProps = {
@@ -95,6 +142,7 @@ test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL author
       "mcpPath",
       "ownedApi",
       "routeFamily",
+      "scopePermissionToRoute",
       "sessionState",
       "sessionTableName",
       "sessionTtlMinutes",
@@ -769,4 +817,77 @@ test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => 
     /new AppTheoryMcpServer/,
     "the anti-pattern must not depict the blessed canonical default",
   );
+});
+
+test("AppTheoryMcpServer scopes one invoke permission per route by default", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack, "Fn"),
+    sessionState: { enabled: false },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const routes = resourcesOfType(template, "AWS::ApiGatewayV2::Route");
+  assert.equal(routes.length, fixtureRouteKeys().length, "Should synthesize the canonical route family");
+  assert.equal(
+    lambdaPermissionEntries(template).length,
+    routes.length,
+    "Should synthesize one route-scoped permission per route",
+  );
+  assert.deepEqual(apiScopedLambdaPermissions(template), [], "Default synthesis must not grant an API-scoped permission");
+  for (const permission of lambdaPermissionEntries(template)) {
+    assert.match(permission.id, /McpHandlerPermission/, "Should keep the per-route integration permission id");
+    assert.ok(
+      !lambdaPermissionSourceArnResourceName(permission.sourceArn)?.endsWith("/*/*/*"),
+      "Should scope each permission to its own route",
+    );
+  }
+});
+
+test("AppTheoryMcpServer can use API-scoped invoke permissions", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
+    httpApiId: "api-1234567890",
+    apiEndpoint: "https://api.example.com",
+  });
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack, "Fn"),
+    api: importedApi,
+    sessionState: { enabled: false },
+    scopePermissionToRoute: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.deepEqual(routeKeys(template), fixtureRouteKeys(), "Should keep the canonical route family");
+  assert.equal(
+    lambdaPermissionEntries(template).length,
+    1,
+    "Should synthesize exactly one API-scoped permission for the shared MCP handler",
+  );
+  const [permission] = apiScopedLambdaPermissions(template);
+  assert.ok(permission, "Should synthesize the CDK API-scoped permission");
+  // An imported API renders its literal id into the execute-api ARN, so assert the scope shape.
+  assert.ok(
+    lambdaPermissionSourceArnResourceName(permission.sourceArn)?.endsWith("/*/*/*"),
+    "Should scope the permission to every route on the API",
+  );
+});
+
+test("AppTheoryMcpServer default template is unchanged for existing users", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack, "Fn"),
+    ownedApi: { apiName: "apptheory-mcp-permission-scope" },
+    sessionState: { enabled: true, tableName: "apptheory-mcp-sessions" },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("mcp-server-permission-scope-default", template);
+  } else {
+    expectSnapshot("mcp-server-permission-scope-default", template);
+  }
 });

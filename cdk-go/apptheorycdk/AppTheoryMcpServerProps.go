@@ -56,6 +56,18 @@ type AppTheoryMcpServerProps struct {
 	// Default: AppTheoryMcpRouteAlgebra.supportedEndpointTemplates()
 	//
 	RouteFamily *AppTheoryMcpRouteFamily `field:"optional" json:"routeFamily" yaml:"routeFamily"`
+	// Whether Lambda invoke permissions should be scoped to individual HTTP API v2 routes.
+	//
+	// When false, the construct grants one API-scoped invoke permission per Lambda instead of
+	// one permission per route. This is the scalable choice for large MCP facade families that
+	// share one Lambda, where the per-route permissions can exhaust the Lambda resource policy
+	// size limit.
+	//
+	// The trade-off is explicit: the API-scoped permission allows every route on that HTTP API
+	// to invoke the handler, not only the routes this construct owns.
+	// Default: true.
+	//
+	ScopePermissionToRoute *bool `field:"optional" json:"scopePermissionToRoute" yaml:"scopePermissionToRoute"`
 	// Session-state table configuration.
 	//
 	// The table defaults on.
