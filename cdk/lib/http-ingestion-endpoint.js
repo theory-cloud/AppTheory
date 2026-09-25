@@ -51,7 +51,7 @@ const string_utils_1 = require("./private/string-utils");
  * authenticate with a shared secret key via a Lambda request authorizer.
  */
 class AppTheoryHttpIngestionEndpoint extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpoint", version: "4.4.0" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpoint", version: "4.4.1-rc" };
     api;
     routeAuthorizer;
     endpoint;
