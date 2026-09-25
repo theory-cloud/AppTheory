@@ -47,6 +47,7 @@ AppTheory is a **contract-first serverless runtime for AWS Lambda** designed to 
                   DynamoDB
 ```
 
+
 AppTheory is the runtime layer of the [Theory Cloud](THEORY_CLOUD.md) stack — used in production by [Pay Theory](https://paytheory.com).
 
 ## Install
@@ -285,7 +286,7 @@ AppTheory is the runtime layer of the Theory Cloud stack. It depends on [TableTh
 - Autheory (identity) → depends on AppTheory
 - theory-mcp-server → runs on AppTheory
 
-The single-path philosophy applies here: one way to register a route, one way to order middleware, one way to dispatch a Lambda event — enforced by the framework, not by convention. When generative coding tools produce AppTheory code, the constrained API surface means the output converges on correct implementations instead of drifting across equivalent-but-incompatible patterns.
+The single-path philosophy applies here: one way to register a route, one way to order middleware, one way to dispatch a Lambda event -- enforced by the framework, not by convention. When generative coding tools produce AppTheory code, the constrained API surface means the output converges on correct implementations instead of drifting across equivalent-but-incompatible patterns.
 
 ## License & contributing
 
