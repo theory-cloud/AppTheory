@@ -20,7 +20,7 @@ const constructs_1 = require("constructs");
  * enforces the `theorycloud.app` suffix during stack evaluation.
  */
 class AppTheoryInstallParameters extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryInstallParameters", version: "4.4.2-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryInstallParameters", version: "4.4.2" };
     /** Exact 12-digit namespace AWS account token. */
     targetAccountId;
     /** Theory Cloud namespace slug token. */
