@@ -43,6 +43,15 @@ that same header.
 - request body/schema validation remains application-specific and should be enforced in the ingestion Lambda
 - stage-level throttling is available through `stage.throttlingRateLimit` and `stage.throttlingBurstLimit`
 
+## Lambda permission policy size
+
+The ingestion route adds one Lambda invoke permission scoped to the ingestion path by default. When the ingestion
+Lambda is also attached to other routes on the same HTTP API, set `scopePermissionToRoute: false` to grant one
+API-scoped permission instead of the path-scoped one.
+
+The trade-off is explicit: the API-scoped permission lets every route on that API invoke the handler, not only the
+ingestion route this construct owns. The authorizer invoke permission is unaffected either way.
+
 ## Related
 
 - `AppTheoryEventBridgeBus` and `AppTheoryEventBridgeRuleTarget` cover the cross-account EventBridge relay path

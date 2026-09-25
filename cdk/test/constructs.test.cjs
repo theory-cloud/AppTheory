@@ -141,6 +141,26 @@ function lambdaPermissionCount(template) {
   return lambdaPermissionSourceArns(template).length;
 }
 
+function lambdaPermissionEntries(template) {
+  const entries = [];
+  for (const [id, resource] of Object.entries(template.Resources ?? {})) {
+    if (resource.Type !== "AWS::Lambda::Permission") continue;
+    entries.push({ id, sourceArn: resource.Properties?.SourceArn ?? null });
+  }
+  return entries;
+}
+
+function lambdaPermissionSourceArnResourceName(sourceArn) {
+  const parts = sourceArn?.["Fn::Join"]?.[1];
+  if (!Array.isArray(parts)) return undefined;
+  const tail = parts[parts.length - 1];
+  return typeof tail === "string" ? tail : undefined;
+}
+
+function apiScopedLambdaPermissions(template) {
+  return lambdaPermissionEntries(template).filter((entry) => entry.id.includes("ApiPermissionApiScoped"));
+}
+
 function iamPolicyActions(template) {
   const actions = [];
   for (const resource of Object.values(template.Resources ?? {})) {
@@ -702,6 +722,54 @@ test("AppTheoryHttpApi synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryHttpApi scopes one invoke permission per route by default", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryHttpApi(stack, "HttpApi", { handler: fn, apiName: "apptheory-test" });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const routes = resourcesOfType(template, "AWS::ApiGatewayV2::Route");
+  assert.equal(routes.length, 2, "Should synthesize the root and proxy routes");
+  assert.equal(lambdaPermissionCount(template), routes.length, "Should synthesize one route-scoped permission per route");
+  assert.deepEqual(apiScopedLambdaPermissions(template), [], "Default synthesis must not grant an API-scoped permission");
+  assert.deepEqual(
+    lambdaPermissionEntries(template)
+      .map((entry) => lambdaPermissionSourceArnResourceName(entry.sourceArn))
+      .sort(),
+    ["/*/*/", "/*/*/{proxy+}"],
+  );
+});
+
+test("AppTheoryHttpApi can use API-scoped invoke permissions", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryHttpApi(stack, "HttpApi", {
+    handler: fn,
+    apiName: "apptheory-test",
+    scopePermissionToRoute: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(lambdaPermissionCount(template), 1, "Should synthesize one API-scoped permission for the shared Lambda");
+  const [permission] = apiScopedLambdaPermissions(template);
+  assert.ok(permission, "Should synthesize the CDK API-scoped permission");
+  assert.equal(lambdaPermissionSourceArnResourceName(permission.sourceArn), "/*/*/*");
+});
+
 test("AppTheoryHttpApi exposes custom domain, CORS, and access logs", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -859,6 +927,78 @@ test("AppTheoryHttpIngestionEndpoint synthesizes expected template", () => {
   } else {
     expectSnapshot("http-ingestion-endpoint", template);
   }
+});
+
+test("AppTheoryHttpIngestionEndpoint scopes its invoke permission to the ingestion route by default", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const handler = new lambda.Function(stack, "Handler", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 202, body: 'accepted' });"),
+  });
+  const authorizer = new lambda.Function(stack, "AuthorizerFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ isAuthorized: true });"),
+  });
+
+  new apptheory.AppTheoryHttpIngestionEndpoint(stack, "Endpoint", {
+    handler,
+    authorizer,
+    apiName: "apptheory-ingestion",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(
+    lambdaPermissionCount(template),
+    2,
+    "Should synthesize the ingestion route permission plus the authorizer permission",
+  );
+  assert.deepEqual(apiScopedLambdaPermissions(template), [], "Default synthesis must not grant an API-scoped permission");
+  const ingestionPermissions = lambdaPermissionEntries(template)
+    .filter((entry) => entry.id.includes("IngestionHandler"));
+  assert.equal(ingestionPermissions.length, 1, "Should synthesize one ingestion route permission");
+  assert.equal(lambdaPermissionSourceArnResourceName(ingestionPermissions[0].sourceArn), "/*/*/ingest");
+});
+
+test("AppTheoryHttpIngestionEndpoint can use an API-scoped invoke permission", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const handler = new lambda.Function(stack, "Handler", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 202, body: 'accepted' });"),
+  });
+  const authorizer = new lambda.Function(stack, "AuthorizerFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ isAuthorized: true });"),
+  });
+
+  new apptheory.AppTheoryHttpIngestionEndpoint(stack, "Endpoint", {
+    handler,
+    authorizer,
+    apiName: "apptheory-ingestion",
+    scopePermissionToRoute: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(
+    lambdaPermissionCount(template),
+    2,
+    "Should keep the authorizer permission while collapsing the route permission",
+  );
+  const [permission] = apiScopedLambdaPermissions(template);
+  assert.ok(permission, "Should synthesize the CDK API-scoped permission");
+  assert.equal(lambdaPermissionSourceArnResourceName(permission.sourceArn), "/*/*/*");
+  assert.equal(
+    lambdaPermissionEntries(template).filter((entry) => entry.id.includes("Authorizer")).length,
+    1,
+    "Should preserve the authorizer invoke permission",
+  );
 });
 
 test("AppTheoryHttpIngestionEndpoint fails closed on invalid props", () => {
@@ -2747,6 +2887,49 @@ test("AppTheoryApp synthesizes expected template", () => {
   } else {
     expectSnapshot("app", template);
   }
+});
+
+test("AppTheoryApp scopes one invoke permission per route by default", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryApp(stack, "App", {
+    appName: "apptheory-permission-scope",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const routes = resourcesOfType(template, "AWS::ApiGatewayV2::Route");
+  assert.equal(routes.length, 2, "Should synthesize the root and proxy routes");
+  assert.equal(lambdaPermissionCount(template), routes.length, "Should synthesize one route-scoped permission per route");
+  assert.deepEqual(apiScopedLambdaPermissions(template), [], "Default synthesis must not grant an API-scoped permission");
+  assert.deepEqual(
+    lambdaPermissionEntries(template)
+      .map((entry) => lambdaPermissionSourceArnResourceName(entry.sourceArn))
+      .sort(),
+    ["/*/*/", "/*/*/{proxy+}"],
+  );
+});
+
+test("AppTheoryApp can use API-scoped invoke permissions", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryApp(stack, "App", {
+    appName: "apptheory-permission-scope",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    scopePermissionToRoute: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(lambdaPermissionCount(template), 1, "Should synthesize one API-scoped permission for the app Lambda");
+  const [permission] = apiScopedLambdaPermissions(template);
+  assert.ok(permission, "Should synthesize the CDK API-scoped permission");
+  assert.equal(lambdaPermissionSourceArnResourceName(permission.sourceArn), "/*/*/*");
 });
 
 test("AppTheoryApp forwards an exact stable execution role name", () => {
@@ -6116,6 +6299,68 @@ test("AppTheoryMicrovmController synthesizes protected controller deployment", (
   } else {
     expectSnapshot("microvm-controller", template);
   }
+});
+
+test("AppTheoryMicrovmController scopes one invoke permission per controller route by default", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const connector = importedMicrovmConnector(stack);
+
+  new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+    controller: microvmControllerLambdaProps(),
+    authorizer: microvmAuthorizer(stack),
+    microvmImage: {
+      microvmImageArn: "arn:aws:lambda:us-east-1:123456789012:microvm-image/imported",
+      logging: { disabled: true },
+    },
+    ...microvmControllerNetworkProps(stack, connector, { executionRole: false }),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const routes = resourcesOfType(template, "AWS::ApiGatewayV2::Route");
+  assert.equal(routes.length, 10, "Should synthesize the canonical controller route family");
+  assert.equal(
+    lambdaPermissionCount(template),
+    routes.length + 1,
+    "Should synthesize one route-scoped permission per route plus the authorizer permission",
+  );
+  assert.deepEqual(apiScopedLambdaPermissions(template), [], "Default synthesis must not grant an API-scoped permission");
+  const routeScopedResourceNames = lambdaPermissionEntries(template)
+    .map((entry) => lambdaPermissionSourceArnResourceName(entry.sourceArn))
+    .filter((resourceName) => typeof resourceName === "string" && resourceName.startsWith("/*/*/microvms"));
+  assert.equal(routeScopedResourceNames.length, routes.length, "Should scope one permission per controller route");
+});
+
+test("AppTheoryMicrovmController can use API-scoped invoke permissions", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const connector = importedMicrovmConnector(stack);
+
+  new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+    controller: microvmControllerLambdaProps(),
+    authorizer: microvmAuthorizer(stack),
+    microvmImage: {
+      microvmImageArn: "arn:aws:lambda:us-east-1:123456789012:microvm-image/imported",
+      logging: { disabled: true },
+    },
+    ...microvmControllerNetworkProps(stack, connector, { executionRole: false }),
+    scopePermissionToRoute: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(
+    lambdaPermissionCount(template),
+    2,
+    "Should synthesize one API-scoped controller permission plus the authorizer permission",
+  );
+  const [permission] = apiScopedLambdaPermissions(template);
+  assert.ok(permission, "Should synthesize the CDK API-scoped permission");
+  assert.equal(lambdaPermissionSourceArnResourceName(permission.sourceArn), "/*/*/*");
+  assert.equal(
+    lambdaPermissionEntries(template).filter((entry) => entry.id.includes("Authorizer")).length,
+    1,
+    "Should preserve the authorizer invoke permission",
+  );
 });
 
 test("AppTheoryMicrovmController preserves explicit disabled runtime logging without an execution role", () => {

@@ -77,6 +77,19 @@ The runtime package (`ts/`) also declares `engines.node` `>=22` instead of `>=20
 while a package's declared floor sits below the floor its pinned TableTheory release requires, so the runtime package
 follows the CDK construct library onto the same floor. Consuming runtime applications must run Node.js 22 or newer.
 
+### HTTP API v2 route permission scope
+
+`AppTheoryMcpServer`, `AppTheoryHttpApi`, `AppTheoryHttpIngestionEndpoint`, `AppTheoryMicrovmController`, and
+`AppTheoryApp` gain an optional `scopePermissionToRoute` prop that defaults to `true`, so existing deployments
+synthesize exactly the same templates as before and no action is required.
+
+Set `scopePermissionToRoute: false` when one Lambda backs many HTTP API v2 routes and the per-route
+`AWS::Lambda::Permission` entries approach the 20 KB Lambda resource-policy limit. The construct then grants one
+API-scoped permission per Lambda instead of one permission per route, which lets every route on that API invoke the
+handler — not only the routes the construct owns. Prefer `AppTheoryRestApi` / `AppTheoryRestApiRouter` and their
+existing `scopePermissionToMethod` prop for REST API v1 route bundles; this is the HTTP API v2 counterpart of that
+prop and mirrors it in name, default, and semantics.
+
 ## v3.x line
 
 ### Toolchain and CDK dependency floors

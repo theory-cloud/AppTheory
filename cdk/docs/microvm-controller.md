@@ -98,6 +98,15 @@ The construct registers the fixed M16 controller route set:
 
 Each route uses the same controller Lambda integration and the same Lambda request authorizer.
 
+## Lambda permission policy size
+
+Each of the ten controller routes adds its own route-scoped Lambda invoke permission by default. When the controller
+Lambda is shared with other routes on the same HTTP API, set `scopePermissionToRoute: false` to collapse those into one
+API-scoped permission.
+
+The trade-off is explicit: the API-scoped permission lets every route on that API invoke the controller Lambda, not only
+the controller routes this construct owns. The authorizer invoke permission is unaffected either way.
+
 ## IAM and environment
 
 The controller Lambda receives:

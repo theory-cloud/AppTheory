@@ -49,13 +49,25 @@ type AppTheoryAppProps struct {
 	// This exemption keeps account-agnostic synthesis representable for the THE-2861 token-valued-input failure class. Synthesis still fails if AppTheory cannot apply the requested name exactly.
 	// Default: undefined.
 	//
-	RoleName       *string                  `field:"optional" json:"roleName" yaml:"roleName"`
-	Runtime        awslambda.Runtime        `field:"optional" json:"runtime" yaml:"runtime"`
-	SecurityGroups *[]awsec2.ISecurityGroup `field:"optional" json:"securityGroups" yaml:"securityGroups"`
-	Stage          awsapigatewayv2.IStage   `field:"optional" json:"stage" yaml:"stage"`
-	TimeoutSeconds *float64                 `field:"optional" json:"timeoutSeconds" yaml:"timeoutSeconds"`
-	Vpc            awsec2.IVpc              `field:"optional" json:"vpc" yaml:"vpc"`
-	VpcSubnets     *awsec2.SubnetSelection  `field:"optional" json:"vpcSubnets" yaml:"vpcSubnets"`
+	RoleName *string           `field:"optional" json:"roleName" yaml:"roleName"`
+	Runtime  awslambda.Runtime `field:"optional" json:"runtime" yaml:"runtime"`
+	// Whether Lambda invoke permissions should be scoped to individual HTTP API v2 routes.
+	//
+	// Forwarded unchanged to the inner `AppTheoryHttpApi`. When false, one API-scoped invoke
+	// permission is granted per Lambda instead of one permission per route, which is the
+	// scalable choice when the app Lambda is shared with other routes on the same HTTP API and
+	// the per-route permissions can exhaust the Lambda resource policy size limit.
+	//
+	// The trade-off is explicit: the API-scoped permission allows every route on that HTTP API
+	// to invoke the handler, not only the routes this construct owns.
+	// Default: true.
+	//
+	ScopePermissionToRoute *bool                    `field:"optional" json:"scopePermissionToRoute" yaml:"scopePermissionToRoute"`
+	SecurityGroups         *[]awsec2.ISecurityGroup `field:"optional" json:"securityGroups" yaml:"securityGroups"`
+	Stage                  awsapigatewayv2.IStage   `field:"optional" json:"stage" yaml:"stage"`
+	TimeoutSeconds         *float64                 `field:"optional" json:"timeoutSeconds" yaml:"timeoutSeconds"`
+	Vpc                    awsec2.IVpc              `field:"optional" json:"vpc" yaml:"vpc"`
+	VpcSubnets             *awsec2.SubnetSelection  `field:"optional" json:"vpcSubnets" yaml:"vpcSubnets"`
 	// Regional WAF attachment is intentionally unavailable on AppTheoryApp because this top-level construct deploys an API Gateway v2 HTTP API.
 	//
 	// Supplying this prop fails closed during synthesis instead of producing an

@@ -82,6 +82,21 @@ export interface AppTheoryAppProps {
   readonly waf?: boolean | AppTheoryRegionalWafOptions;
   readonly hostedZone?: route53.IHostedZone;
   readonly stage?: apigwv2.IStage;
+
+  /**
+   * Whether Lambda invoke permissions should be scoped to individual HTTP API v2 routes.
+   *
+   * Forwarded unchanged to the inner `AppTheoryHttpApi`. When false, one API-scoped invoke
+   * permission is granted per Lambda instead of one permission per route, which is the
+   * scalable choice when the app Lambda is shared with other routes on the same HTTP API and
+   * the per-route permissions can exhaust the Lambda resource policy size limit.
+   *
+   * The trade-off is explicit: the API-scoped permission allows every route on that HTTP API
+   * to invoke the handler, not only the routes this construct owns.
+   *
+   * @default true
+   */
+  readonly scopePermissionToRoute?: boolean;
 }
 
 export class AppTheoryApp extends Construct {
@@ -192,6 +207,7 @@ export class AppTheoryApp extends Construct {
       apiName: `${appName}-api`,
       cors: props.cors,
       domain: normalizeDomainOptions(this, props),
+      scopePermissionToRoute: props.scopePermissionToRoute,
     });
     (this as { domain?: AppTheoryApiDomain }).domain = this.api.domain;
 
