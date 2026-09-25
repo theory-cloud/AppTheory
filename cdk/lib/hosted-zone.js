@@ -41,7 +41,7 @@ const ssm = __importStar(require("aws-cdk-lib/aws-ssm"));
 const constructs_1 = require("constructs");
 const string_utils_1 = require("./private/string-utils");
 class AppTheoryHostedZone extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryHostedZone", version: "4.4.1-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryHostedZone", version: "4.4.1" };
     hostedZone;
     hostedZoneId;
     zoneName;
