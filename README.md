@@ -53,6 +53,7 @@ AppTheory is the runtime layer of the [Theory Cloud](THEORY_CLOUD.md) stack — 
 
 AppTheory is distributed exclusively through immutable **[GitHub Releases](https://github.com/theory-cloud/AppTheory/releases)** — no PyPI, no npm. The single distribution path keeps versions aligned across all three runtimes. Pin the release you are consuming and verify downloaded assets before installing them:
 
+
 ```bash
 VERSION=3.0.0-rc
 TAG="v${VERSION}"
