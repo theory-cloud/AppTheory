@@ -66,7 +66,7 @@ const string_utils_1 = require("./private/string-utils");
  * router.addLambdaIntegration('/{proxy+}', ['ANY'], apiFn);
  */
 class AppTheoryRestApiRouter extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouter", version: "4.4.1" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouter", version: "4.4.2" };
     /**
      * The underlying API Gateway REST API.
      */

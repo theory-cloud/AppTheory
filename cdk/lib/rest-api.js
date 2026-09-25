@@ -41,7 +41,7 @@ const rest_api_waf_1 = require("./private/rest-api-waf");
 const rest_api_streaming_1 = require("./private/rest-api-streaming");
 const string_utils_1 = require("./private/string-utils");
 class AppTheoryRestApi extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRestApi", version: "4.4.1" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRestApi", version: "4.4.2" };
     api;
     webAcl;
     wafAssociation;

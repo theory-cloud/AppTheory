@@ -1,5 +1,27 @@
 # Changelog
 
+## [4.4.2](https://github.com/theory-cloud/AppTheory/compare/v4.4.1...v4.4.2) (2026-09-25)
+
+
+### Bug Fixes
+
+* arbitrary newline ([94f38c6](https://github.com/theory-cloud/AppTheory/commit/94f38c6d5e100a295e6f8cec9fa74b13f9f8a6a1))
+* readme edited ([cd2421a](https://github.com/theory-cloud/AppTheory/commit/cd2421a3f89c8ea6aa041dca5ba82a7d1e0d7f80))
+* readme modification ([bcc3697](https://github.com/theory-cloud/AppTheory/commit/bcc36971bc610b94d464ddab5026ed594a3291ce))
+* readme modification ([8943e01](https://github.com/theory-cloud/AppTheory/commit/8943e014d69740d62cf04862b6d5d251461b73b7))
+* readme modification ([f056e89](https://github.com/theory-cloud/AppTheory/commit/f056e89cad7251fc52ec162c503652cc804cdd3c))
+
+## [4.4.2-rc](https://github.com/theory-cloud/AppTheory/compare/v4.4.1...v4.4.2-rc) (2026-09-25)
+
+
+### Bug Fixes
+
+* arbitrary newline ([94f38c6](https://github.com/theory-cloud/AppTheory/commit/94f38c6d5e100a295e6f8cec9fa74b13f9f8a6a1))
+* readme edited ([cd2421a](https://github.com/theory-cloud/AppTheory/commit/cd2421a3f89c8ea6aa041dca5ba82a7d1e0d7f80))
+* readme modification ([bcc3697](https://github.com/theory-cloud/AppTheory/commit/bcc36971bc610b94d464ddab5026ed594a3291ce))
+* readme modification ([8943e01](https://github.com/theory-cloud/AppTheory/commit/8943e014d69740d62cf04862b6d5d251461b73b7))
+* readme modification ([f056e89](https://github.com/theory-cloud/AppTheory/commit/f056e89cad7251fc52ec162c503652cc804cdd3c))
+
 ## [4.4.1](https://github.com/theory-cloud/AppTheory/compare/v4.4.0...v4.4.1) (2026-09-25)
 
 

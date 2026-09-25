@@ -145,7 +145,7 @@ function generateSpaRewriteFunctionCode(spaOrigins) {
  * ensuring that paths without file extensions are rewritten to index.html.
  */
 class AppTheoryPathRoutedFrontend extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontend", version: "4.4.1" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontend", version: "4.4.2" };
     /**
      * The CloudFront distribution.
      */

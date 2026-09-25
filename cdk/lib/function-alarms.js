@@ -39,7 +39,7 @@ const aws_cdk_lib_1 = require("aws-cdk-lib");
 const cloudwatch = __importStar(require("aws-cdk-lib/aws-cloudwatch"));
 const constructs_1 = require("constructs");
 class AppTheoryFunctionAlarms extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryFunctionAlarms", version: "4.4.1" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryFunctionAlarms", version: "4.4.2" };
     errors;
     throttles;
     constructor(scope, id, props) {

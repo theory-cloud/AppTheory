@@ -85,7 +85,7 @@ var AppTheoryMicrovmHookMode;
  * the AppTheory runtime contract.
  */
 class AppTheoryMicrovmImage extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImage", version: "4.4.1" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImage", version: "4.4.2" };
     /**
      * The underlying CloudFormation MicroVM image resource.
      */

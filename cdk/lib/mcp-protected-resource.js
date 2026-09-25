@@ -43,7 +43,7 @@ const string_utils_1 = require("./private/string-utils");
  * Adds path-scoped `/.well-known/oauth-protected-resource/...` metadata (RFC9728) to a REST API.
  */
 class AppTheoryMcpProtectedResource extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResource", version: "4.4.1" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResource", version: "4.4.2" };
     constructor(scope, id, props) {
         super(scope, id);
         const router = props.router;
