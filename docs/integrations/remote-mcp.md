@@ -104,10 +104,14 @@ Important behaviors for Claude compatibility:
 - MCP tasks are opt-in. AppTheory advertises `tasks` only for protocol `2025-11-25` discovery/initialize results when
   `mcp.WithTaskRuntime(...)` supplies a store and at least one registered tool declares task support.
 - Task-augmented `tools/call` runs the tool body to completion inside that invocation and replies with a task that is
-  already terminal (`completed`, `failed`, or `canceled`). Nothing runs in a goroutine/thread/promise that outlives the
-  invocation: in Lambda the environment is frozen after the handler returns, so detached work can stay `working` forever,
-  lose its result, or half-apply its writes. Products that need work to survive a disconnect own that hand-off (queue it
-  and run it in a consumer-triggered invocation) rather than relying on detached execution.
+  already terminal: `completed`, or `failed` when the body returns an error (including an error caused by the invocation
+  ending). `canceled` is the client-requested state, recorded by `tasks/cancel`, and the stored terminal state wins if a
+  body errors after a client cancel; a hard Lambda function timeout is not observable in-process, so nothing is recorded
+  and the task stays `working` until its TTL. The rule is identical in Go, TypeScript, and Python. Nothing runs in a
+  goroutine/thread/promise that outlives the invocation: in Lambda the environment is frozen after the handler returns,
+  so detached work can stay `working` forever, lose its result, or half-apply its writes. Products that need work to
+  survive a disconnect own that hand-off (queue it and run it in a consumer-triggered invocation) rather than relying on
+  detached execution.
 - The stateless shape does not expose task methods or task-augmented `tools/call`; session-ful task behavior is
   unchanged.
 - Task records are session-scoped. Products must bind the MCP session to the same principal, tenant, actor route, and
