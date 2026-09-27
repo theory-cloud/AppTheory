@@ -831,10 +831,11 @@ type LogEntry struct {
 }
 
 type LoggerConfig struct {
-	Format             string               `json:"format"`
-	Level              string               `json:"level"`
-	RetryDelay         time.Duration        `json:"retry_delay"`
-	BatchSize          int                  `json:"batch_size"`
+	Format     string        `json:"format"`
+	Level      string        `json:"level"`
+	RetryDelay time.Duration `json:"retry_delay"`
+	BatchSize  int           `json:"batch_size"`
+
 	BufferSize         int                  `json:"buffer_size"`
 	MaxRetries         int                  `json:"max_retries"`
 	EnableStack        bool                 `json:"enable_stack"`
@@ -2802,7 +2803,11 @@ func (*WebSocketContext) SendJSONMessage(any) error
 
 func (*WebSocketContext) SendMessage([]byte) error
 
+func (*limitedBodyReader) Close() error
+
 func (*limitedBodyReader) Read([]byte) (int, error)
+
+func (*streamingBodyReader) Close() error
 
 func (RandomIDGenerator) NewID() string
 
