@@ -15,8 +15,10 @@ const iam = require("aws-cdk-lib/aws-iam");
 const kms = require("aws-cdk-lib/aws-kms");
 const kinesis = require("aws-cdk-lib/aws-kinesis");
 const lambda = require("aws-cdk-lib/aws-lambda");
+const lambdaEventSources = require("aws-cdk-lib/aws-lambda-event-sources");
 const logs = require("aws-cdk-lib/aws-logs");
 const route53 = require("aws-cdk-lib/aws-route53");
+const sns = require("aws-cdk-lib/aws-sns");
 const sqs = require("aws-cdk-lib/aws-sqs");
 const { Construct, Node } = require("constructs");
 
@@ -1971,6 +1973,169 @@ test("AppTheoryKinesisStreamMapping passes representative stream options", () =>
   }
 });
 
+test("AppTheoryKinesisStreamMapping routes discarded records to an SNS on-failure destination", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "111111111111", region: "us-east-1" },
+  });
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const stream = kinesis.Stream.fromStreamArn(
+    stack,
+    "Imported",
+    "arn:aws:kinesis:us-east-1:111111111111:stream/existing-events",
+  );
+  const topic = new sns.Topic(stack, "OnFailure", { topicName: "apptheory-kinesis-on-failure" });
+
+  new apptheory.AppTheoryKinesisStreamMapping(stack, "Mapping", {
+    consumer: fn,
+    stream,
+    retryAttempts: 5,
+    maxRecordAge: cdk.Duration.hours(6),
+    bisectBatchOnError: true,
+    onFailure: new lambdaEventSources.SnsDlq(topic),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const mappings = resourcesOfType(template, "AWS::Lambda::EventSourceMapping");
+  assert.equal(mappings.length, 1);
+  assert.equal(mappings[0].Properties?.MaximumRetryAttempts, 5);
+  assert.equal(mappings[0].Properties?.BisectBatchOnFunctionError, true);
+  assert.deepEqual(mappings[0].Properties?.DestinationConfig?.OnFailure, {
+    Destination: stack.resolve(topic.topicArn),
+  });
+
+  const snsActions = iamPolicyActions(template).filter((action) => action.startsWith("sns:"));
+  assert.deepEqual(snsActions, ["sns:Publish"], "on-failure destination must grant exactly sns:Publish");
+  const sqsActions = iamPolicyActions(template).filter((action) => action.startsWith("sqs:"));
+  assert.deepEqual(sqsActions, [], "an SNS destination must not grant SQS permissions");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("kinesis-stream-mapping-on-failure-sns", template);
+  } else {
+    expectSnapshot("kinesis-stream-mapping-on-failure-sns", template);
+  }
+});
+
+test("AppTheoryKinesisStreamMapping routes discarded records to an SQS on-failure destination", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "111111111111", region: "us-east-1" },
+  });
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const stream = kinesis.Stream.fromStreamArn(
+    stack,
+    "Imported",
+    "arn:aws:kinesis:us-east-1:111111111111:stream/existing-events",
+  );
+  const queue = new sqs.Queue(stack, "OnFailure", { queueName: "apptheory-kinesis-on-failure" });
+
+  new apptheory.AppTheoryKinesisStreamMapping(stack, "Mapping", {
+    consumer: fn,
+    stream,
+    retryAttempts: 0,
+    bisectBatchOnError: true,
+    onFailure: new lambdaEventSources.SqsDlq(queue),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const mappings = resourcesOfType(template, "AWS::Lambda::EventSourceMapping");
+  assert.deepEqual(mappings[0].Properties?.DestinationConfig?.OnFailure, {
+    Destination: stack.resolve(queue.queueArn),
+  });
+
+  // CDK's SqsDlq binds with queue.grantSendMessages, which grants sqs:SendMessage plus the two
+  // read-only metadata actions CDK always pairs with it. Nothing that consumes, purges, or deletes
+  // from the destination queue is granted.
+  const sqsActions = iamPolicyActions(template).filter((action) => action.startsWith("sqs:"));
+  assert.deepEqual(
+    sqsActions.slice().sort(),
+    ["sqs:GetQueueAttributes", "sqs:GetQueueUrl", "sqs:SendMessage"],
+    "on-failure destination must grant only send rights on the destination queue",
+  );
+});
+
+test("AppTheoryKinesisStreamMapping accepts an on-failure destination while retries stay unbounded", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "111111111111", region: "us-east-1" },
+  });
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const stream = kinesis.Stream.fromStreamArn(
+    stack,
+    "Imported",
+    "arn:aws:kinesis:us-east-1:111111111111:stream/existing-events",
+  );
+  const queue = new sqs.Queue(stack, "OnFailure", { queueName: "apptheory-kinesis-on-failure" });
+
+  // AWS Lambda accepts an unbounded retry policy together with an on-failure destination: the
+  // destination simply receives nothing until retries are exhausted or the record ages out. The
+  // construct documents that semantics rather than rejecting the combination.
+  new apptheory.AppTheoryKinesisStreamMapping(stack, "Mapping", {
+    consumer: fn,
+    stream,
+    onFailure: new lambdaEventSources.SqsDlq(queue),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const mappings = resourcesOfType(template, "AWS::Lambda::EventSourceMapping");
+  assert.equal(mappings[0].Properties?.MaximumRetryAttempts, undefined);
+  assert.equal(mappings[0].Properties?.MaximumRecordAgeInSeconds, undefined);
+  assert.ok(mappings[0].Properties?.DestinationConfig?.OnFailure, "destination is still configured");
+});
+
+test("AppTheoryKinesisStreamMapping rejects an on-failure destination that is not an event source DLQ", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const stream = new apptheory.AppTheoryKinesisStream(stack, "Stream");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStreamMapping(stack, "Mapping", {
+        consumer: fn,
+        stream: stream.stream,
+        onFailure: {},
+      }),
+    /AppTheoryKinesisStreamMapping requires onFailure to be a lambda\.IEventSourceDlq/,
+  );
+});
+
+test("AppTheoryKinesisStreamMapping omits the on-failure destination by default", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const stream = new apptheory.AppTheoryKinesisStream(stack, "Stream");
+
+  new apptheory.AppTheoryKinesisStreamMapping(stack, "Mapping", { consumer: fn, stream: stream.stream });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const mappings = resourcesOfType(template, "AWS::Lambda::EventSourceMapping");
+  assert.equal(mappings[0].Properties?.DestinationConfig, undefined);
+});
+
 test("AppTheoryKinesisStreamMapping fails closed on timestamp mismatch", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -2569,6 +2734,184 @@ test("AppTheoryDynamoDBStreamMapping (parallelization + batching window) synthes
   } else {
     expectSnapshot("dynamodb-stream-mapping-options", template);
   }
+});
+
+test("AppTheoryDynamoDBStreamMapping routes discarded records to an SQS on-failure destination", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "111111111111", region: "us-east-1" },
+  });
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const table = new dynamodb.Table(stack, "Table", {
+    billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+    stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+  });
+
+  const queue = new sqs.Queue(stack, "OnFailure", { queueName: "apptheory-dynamodb-on-failure" });
+
+  new apptheory.AppTheoryDynamoDBStreamMapping(stack, "Stream", {
+    consumer: fn,
+    table,
+    retryAttempts: 5,
+    maxRecordAge: cdk.Duration.hours(6),
+    bisectBatchOnError: true,
+    onFailure: new lambdaEventSources.SqsDlq(queue),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const mappings = resourcesOfType(template, "AWS::Lambda::EventSourceMapping");
+  assert.equal(mappings.length, 1);
+  assert.equal(mappings[0].Properties?.MaximumRetryAttempts, 5);
+  assert.equal(mappings[0].Properties?.BisectBatchOnFunctionError, true);
+  assert.deepEqual(mappings[0].Properties?.FunctionResponseTypes, ["ReportBatchItemFailures"]);
+  assert.deepEqual(mappings[0].Properties?.DestinationConfig?.OnFailure, {
+    Destination: stack.resolve(queue.queueArn),
+  });
+
+  // CDK's SqsDlq binds with queue.grantSendMessages, which grants sqs:SendMessage plus the two
+  // read-only metadata actions CDK always pairs with it. Nothing that consumes, purges, or deletes
+  // from the destination queue is granted.
+  const sqsActions = iamPolicyActions(template).filter((action) => action.startsWith("sqs:"));
+  assert.deepEqual(
+    sqsActions.slice().sort(),
+    ["sqs:GetQueueAttributes", "sqs:GetQueueUrl", "sqs:SendMessage"],
+    "on-failure destination must grant only send rights on the destination queue",
+  );
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("dynamodb-stream-mapping-on-failure-sqs", template);
+  } else {
+    expectSnapshot("dynamodb-stream-mapping-on-failure-sqs", template);
+  }
+});
+
+test("AppTheoryDynamoDBStreamMapping routes discarded records to an SNS on-failure destination", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "111111111111", region: "us-east-1" },
+  });
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const table = new dynamodb.Table(stack, "Table", {
+    billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+    stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+  });
+
+  const topic = new sns.Topic(stack, "OnFailure", { topicName: "apptheory-dynamodb-on-failure" });
+
+  new apptheory.AppTheoryDynamoDBStreamMapping(stack, "Stream", {
+    consumer: fn,
+    table,
+    retryAttempts: 0,
+    bisectBatchOnError: true,
+    onFailure: new lambdaEventSources.SnsDlq(topic),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const mappings = resourcesOfType(template, "AWS::Lambda::EventSourceMapping");
+  assert.deepEqual(mappings[0].Properties?.DestinationConfig?.OnFailure, {
+    Destination: stack.resolve(topic.topicArn),
+  });
+
+  const snsActions = iamPolicyActions(template).filter((action) => action.startsWith("sns:"));
+  assert.deepEqual(snsActions, ["sns:Publish"], "on-failure destination must grant exactly sns:Publish");
+  const sqsActions = iamPolicyActions(template).filter((action) => action.startsWith("sqs:"));
+  assert.deepEqual(sqsActions, [], "an SNS destination must not grant SQS permissions");
+});
+
+test("AppTheoryDynamoDBStreamMapping accepts an on-failure destination while retries stay unbounded", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "111111111111", region: "us-east-1" },
+  });
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const table = new dynamodb.Table(stack, "Table", {
+    billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+    stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+  });
+
+  const queue = new sqs.Queue(stack, "OnFailure", { queueName: "apptheory-dynamodb-on-failure" });
+
+  // AWS Lambda accepts an unbounded retry policy together with an on-failure destination: the
+  // destination simply receives nothing until retries are exhausted or the record ages out. The
+  // construct documents that semantics rather than rejecting the combination.
+  new apptheory.AppTheoryDynamoDBStreamMapping(stack, "Stream", {
+    consumer: fn,
+    table,
+    onFailure: new lambdaEventSources.SqsDlq(queue),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const mappings = resourcesOfType(template, "AWS::Lambda::EventSourceMapping");
+  assert.equal(mappings[0].Properties?.MaximumRetryAttempts, undefined);
+  assert.equal(mappings[0].Properties?.MaximumRecordAgeInSeconds, undefined);
+  assert.ok(mappings[0].Properties?.DestinationConfig?.OnFailure, "destination is still configured");
+});
+
+test("AppTheoryDynamoDBStreamMapping rejects an on-failure destination that is not an event source DLQ", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const table = new dynamodb.Table(stack, "Table", {
+    billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+    stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryDynamoDBStreamMapping(stack, "Stream", {
+        consumer: fn,
+        table,
+        onFailure: {},
+      }),
+    /AppTheoryDynamoDBStreamMapping requires onFailure to be a lambda\.IEventSourceDlq/,
+  );
+});
+
+test("AppTheoryDynamoDBStreamMapping omits the on-failure destination by default", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const table = new dynamodb.Table(stack, "Table", {
+    billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+    stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+  });
+
+  new apptheory.AppTheoryDynamoDBStreamMapping(stack, "Stream", { consumer: fn, table });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const mappings = resourcesOfType(template, "AWS::Lambda::EventSourceMapping");
+  assert.equal(mappings[0].Properties?.DestinationConfig, undefined);
 });
 
 test("AppTheoryEventBusTable synthesizes expected template", () => {

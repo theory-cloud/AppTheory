@@ -28,9 +28,9 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryS3VersionedIngress` (versioned namespace artifact bucket + exact-object upload/read grants)
 - `AppTheoryVectorIndex` (S3 Vectors bucket/index plus AppTheory vectorstore env/grants)
 - `AppTheoryCodeBuildJobRunner` (CodeBuild project wrapper for batch steps; safe defaults + logs + state-change hook)
-- `AppTheoryDynamoDBStreamMapping` (Streams mapping + permissions)
+- `AppTheoryDynamoDBStreamMapping` (Streams mapping + permissions; optional on-failure destination for discarded records)
 - `AppTheoryKinesisStream` (Kinesis Data Stream create/wrap surface with encryption and grant helpers)
-- `AppTheoryKinesisStreamMapping` (Kinesis stream → Lambda event-source mapping; partial-batch failures default on)
+- `AppTheoryKinesisStreamMapping` (Kinesis stream → Lambda event-source mapping; partial-batch failures default on; optional on-failure destination for discarded records)
 - `AppTheoryCloudWatchLogsDestination` (CloudWatch Logs destination → Kinesis with explicit source allowlists)
 - `AppTheoryCloudWatchLogsSubscription` (source log group subscription attachment to a caller-provided destination ARN)
 - `AppTheoryEventBusTable` (opinionated EventBus DynamoDB table + required GSIs + Lambda binding helper)
@@ -96,6 +96,27 @@ synthesis. The token exemption keeps account-agnostic synthesis representable fo
 failure class. Synthesis still fails if the generated role is not available for the rename; omitting the prop preserves
 CloudFormation-generated names. This supported prop supersedes direct CloudFormation property-override escape hatches
 for stable function role names.
+
+## Stream mapping on-failure destinations
+
+`AppTheoryDynamoDBStreamMapping` and `AppTheoryKinesisStreamMapping` accept an optional `onFailure` destination for the
+records AWS Lambda discards after retries are exhausted or `maxRecordAge` is exceeded. Pass an event source DLQ the same
+way the CDK event sources do: `new lambdaEventSources.SqsDlq(queue)` for an SQS queue,
+`new lambdaEventSources.SnsDlq(topic)` for an SNS topic, or `new lambdaEventSources.S3OnFailureDestination(bucket)` for
+an S3 bucket. Binding the DLQ adds exactly the permission the destination needs to the consumer execution role —
+`sqs:SendMessage` (with the read-only `sqs:GetQueueAttributes` and `sqs:GetQueueUrl` actions CDK pairs with it) or
+`sns:Publish`.
+
+The destination receives metadata about the discarded batch, not the records themselves: the shard ID and sequence
+numbers identify records to re-read from the stream while they remain inside the stream retention window. Lambda only
+sends to the destination once retries are exhausted or the record ages out, so a mapping that leaves `retryAttempts` and
+`maxRecordAge` unbounded (the AWS Lambda default of `-1`, retry until the record expires) never sends anything. Configure
+a bounded `retryAttempts` with `bisectBatchOnError: true` so a poison record is retained for repair instead of blocking
+its shard. With `bisectBatchOnError` enabled the metadata's `BatchSize` can exceed 1 because Lambda consolidates the
+failed messages it writes to the destination.
+
+Omitting `onFailure` is byte-identical to the previous behavior: no `DestinationConfig` is emitted and no destination
+permission is granted.
 
 ## Kinesis and CloudWatch Logs path
 
