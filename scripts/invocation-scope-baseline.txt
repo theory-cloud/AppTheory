@@ -10,19 +10,28 @@
 # launch that cannot be joined must not exist. An entry names the enclosing
 # function (the innermost one for a closure) and the occurrence within it.
 #
-# Go: `go` statements under runtime/, pkg/, testkit/ and cmd/ (non-test files).
-# TypeScript: worker/child-process/task starts and unimplemented-grace helpers
-#   under ts/src (empty: the runtime starts no detached asynchronous work).
-# Python: thread, task and process starts under py/src.
+# Go: `go` statements and time.AfterFunc / time.NewTimer / time.NewTicker /
+#   time.Tick constructors under runtime/, pkg/, testkit/ and cmd/ (non-test
+#   files). A timer stored in a named variable the owning function stops is not
+#   reported; time.Tick and a discarded timer handle always are.
+# TypeScript: worker/child-process/task starts, timers (including bracket
+#   access), queueMicrotask, process.nextTick, setImmediate, async IIFEs,
+#   discarded promise chains (.then/.catch/.finally in statement position) and
+#   discarded calls to functions the file declares async, under ts/src.
+# Python: thread, task, process, ThreadPoolExecutor/ProcessPoolExecutor,
+#   asyncio.to_thread, loop.run_in_executor and daemon-flagged thread starts
+#   under py/src, including threads created inside a comprehension.
 
 # --- Go ---------------------------------------------------------------------
 # The buffered HTTP API v2 / Function URL / ALB / v1 adapters close and join
 # their drain worker on every exit path (drainBodyReaderForAPIGatewayV2).
 runtime/aws_http.go|drainBodyReaderForAPIGatewayV2[#1]|joined: the adapter closes the reader (unblocking the read) and waits for the worker before it returns
-# limitBodyStream's producer observes the serve context; every buffered adapter
-# cancels that context and joins the stream before returning, and the
-# response-streaming adapters hand the body to the transport, which closes it.
-runtime/response_limits.go|limitBodyStream[#1]|joined: the producer observes the serve context; the owning adapter cancels and joins it (cancel + joinAbandonedBodyStream) or the transport closes the body
+# limitBodyStream's producer observes the serve context at both of its blocking
+# points. Every buffered adapter cancels that context and drains the stream to
+# its close before returning; the v1 response-streaming adapter converts the
+# stream through streamjoin, and the body it hands the transport cancels the
+# serve context and drains the stream on both EOF and Close.
+runtime/response_limits.go|limitBodyStream[#1]|joined: the producer observes the serve context; the owning adapter cancels that context and drains the stream to its close on every exit, and the response-streaming transport's converted body does the same on EOF and on Close
 # The streamjoin primitive joins its producer on EOF and on Close.
 runtime/internal/streamjoin/streamjoin.go|New[#1]|joined: the returned body joins the producer on EOF and on Close
 # streamScope owns the producers of one streamed MCP body; stop() cancels the
@@ -50,3 +59,6 @@ ts/src/app.ts|timer[#1]|joined: the timeout middleware clears the timer in a fin
 # The buffered adapter's drain worker is closed and joined unconditionally, and
 # the timeout middleware starts no thread at all.
 py/src/apptheory/aws_http.py|thread[#1]|joined: _drain_streaming_body closes the body (releasing the read) and joins the worker before it returns
+# The same drain worker is flagged daemon as belt-and-braces; the join above,
+# not the flag, is what keeps it inside the invocation.
+py/src/apptheory/aws_http.py|daemon-thread[#1]|joined: _drain_streaming_body closes the body (releasing the read) and joins the worker before it returns, so the daemon flag changes nothing about the join
