@@ -1,0 +1,18 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.assertEventSourceDlq = assertEventSourceDlq;
+/**
+ * Rejects an unusable on-failure destination at construct time. The CDK event
+ * source would otherwise fail later in synthesis with an opaque jsii binding
+ * error instead of naming the construct and the expected type.
+ */
+function assertEventSourceDlq(constructName, onFailure) {
+    if (onFailure === undefined) {
+        return;
+    }
+    if (typeof onFailure.bind !== "function") {
+        throw new Error(`${constructName} requires onFailure to be a lambda.IEventSourceDlq ` +
+            "(for example new lambdaEventSources.SqsDlq(queue) or new lambdaEventSources.SnsDlq(topic))");
+    }
+}
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoic3RyZWFtLW1hcHBpbmctb24tZmFpbHVyZS5qcyIsInNvdXJjZVJvb3QiOiIiLCJzb3VyY2VzIjpbInN0cmVhbS1tYXBwaW5nLW9uLWZhaWx1cmUudHMiXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6Ijs7QUFPQSxvREFXQztBQWhCRDs7OztHQUlHO0FBQ0gsU0FBZ0Isb0JBQW9CLENBQUMsYUFBcUIsRUFBRSxTQUFrQztJQUM1RixJQUFJLFNBQVMsS0FBSyxTQUFTLEVBQUUsQ0FBQztRQUM1QixPQUFPO0lBQ1QsQ0FBQztJQUVELElBQUksT0FBUSxTQUFnQyxDQUFDLElBQUksS0FBSyxVQUFVLEVBQUUsQ0FBQztRQUNqRSxNQUFNLElBQUksS0FBSyxDQUNiLEdBQUcsYUFBYSxxREFBcUQ7WUFDbkUsNEZBQTRGLENBQy9GLENBQUM7SUFDSixDQUFDO0FBQ0gsQ0FBQyIsInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB0eXBlICogYXMgbGFtYmRhIGZyb20gXCJhd3MtY2RrLWxpYi9hd3MtbGFtYmRhXCI7XG5cbi8qKlxuICogUmVqZWN0cyBhbiB1bnVzYWJsZSBvbi1mYWlsdXJlIGRlc3RpbmF0aW9uIGF0IGNvbnN0cnVjdCB0aW1lLiBUaGUgQ0RLIGV2ZW50XG4gKiBzb3VyY2Ugd291bGQgb3RoZXJ3aXNlIGZhaWwgbGF0ZXIgaW4gc3ludGhlc2lzIHdpdGggYW4gb3BhcXVlIGpzaWkgYmluZGluZ1xuICogZXJyb3IgaW5zdGVhZCBvZiBuYW1pbmcgdGhlIGNvbnN0cnVjdCBhbmQgdGhlIGV4cGVjdGVkIHR5cGUuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBhc3NlcnRFdmVudFNvdXJjZURscShjb25zdHJ1Y3ROYW1lOiBzdHJpbmcsIG9uRmFpbHVyZT86IGxhbWJkYS5JRXZlbnRTb3VyY2VEbHEpOiB2b2lkIHtcbiAgaWYgKG9uRmFpbHVyZSA9PT0gdW5kZWZpbmVkKSB7XG4gICAgcmV0dXJuO1xuICB9XG5cbiAgaWYgKHR5cGVvZiAob25GYWlsdXJlIGFzIHsgYmluZD86IHVua25vd24gfSkuYmluZCAhPT0gXCJmdW5jdGlvblwiKSB7XG4gICAgdGhyb3cgbmV3IEVycm9yKFxuICAgICAgYCR7Y29uc3RydWN0TmFtZX0gcmVxdWlyZXMgb25GYWlsdXJlIHRvIGJlIGEgbGFtYmRhLklFdmVudFNvdXJjZURscSBgICtcbiAgICAgICAgXCIoZm9yIGV4YW1wbGUgbmV3IGxhbWJkYUV2ZW50U291cmNlcy5TcXNEbHEocXVldWUpIG9yIG5ldyBsYW1iZGFFdmVudFNvdXJjZXMuU25zRGxxKHRvcGljKSlcIixcbiAgICApO1xuICB9XG59XG4iXX0=

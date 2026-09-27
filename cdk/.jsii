@@ -11682,7 +11682,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/dynamodb-stream-mapping.ts",
-          "line": 21
+          "line": 43
         },
         "parameters": [
           {
@@ -11708,7 +11708,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/dynamodb-stream-mapping.ts",
-        "line": 20
+        "line": 42
       },
       "name": "AppTheoryDynamoDBStreamMapping",
       "symbolId": "lib/dynamodb-stream-mapping:AppTheoryDynamoDBStreamMapping"
@@ -11720,7 +11720,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/dynamodb-stream-mapping.ts",
-        "line": 7
+        "line": 9
       },
       "name": "AppTheoryDynamoDBStreamMappingProps",
       "properties": [
@@ -11729,7 +11729,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamodb-stream-mapping.ts",
-            "line": 8
+            "line": 10
           },
           "name": "consumer",
           "type": {
@@ -11741,7 +11741,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamodb-stream-mapping.ts",
-            "line": 9
+            "line": 11
           },
           "name": "table",
           "type": {
@@ -11753,7 +11753,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamodb-stream-mapping.ts",
-            "line": 11
+            "line": 13
           },
           "name": "batchSize",
           "optional": true,
@@ -11766,7 +11766,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamodb-stream-mapping.ts",
-            "line": 12
+            "line": 14
           },
           "name": "bisectBatchOnError",
           "optional": true,
@@ -11779,7 +11779,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamodb-stream-mapping.ts",
-            "line": 15
+            "line": 17
           },
           "name": "maxBatchingWindow",
           "optional": true,
@@ -11792,7 +11792,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamodb-stream-mapping.ts",
-            "line": 16
+            "line": 18
           },
           "name": "maxRecordAge",
           "optional": true,
@@ -11802,10 +11802,28 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "- discarded records are dropped",
+            "remarks": "Pass an event source DLQ, such as `new lambdaEventSources.SqsDlq(queue)` or\n`new lambdaEventSources.SnsDlq(topic)`. Binding that DLQ grants the consumer role exactly the\npermission the destination needs (`sqs:SendMessage` or `sns:Publish`); an Amazon S3 bucket\n(`new lambdaEventSources.S3OnFailureDestination(bucket)`) is also supported.\n\nThe destination receives metadata about the discarded batch, not the records themselves: the\nshard ID and sequence numbers identify records to re-read from the stream while they are still\ninside the stream retention window. It only receives anything once retries are exhausted or\n`maxRecordAge` is exceeded, so a mapping that leaves both unbounded (the AWS Lambda default is\n`-1`, retry until the record expires) has nothing to send. Pair this prop with a bounded\n`retryAttempts` and `bisectBatchOnError: true` so a poison record is retained for repair instead\nof blocking its shard.",
+            "summary": "Destination for the records Lambda discards after retries are exhausted or `maxRecordAge` elapses."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamodb-stream-mapping.ts",
-            "line": 13
+            "line": 39
+          },
+          "name": "onFailure",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IEventSourceDlq"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamodb-stream-mapping.ts",
+            "line": 15
           },
           "name": "parallelizationFactor",
           "optional": true,
@@ -11818,7 +11836,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamodb-stream-mapping.ts",
-            "line": 17
+            "line": 19
           },
           "name": "reportBatchItemFailures",
           "optional": true,
@@ -11831,7 +11849,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamodb-stream-mapping.ts",
-            "line": 14
+            "line": 16
           },
           "name": "retryAttempts",
           "optional": true,
@@ -11844,7 +11862,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamodb-stream-mapping.ts",
-            "line": 10
+            "line": 12
           },
           "name": "startingPosition",
           "optional": true,
@@ -16248,7 +16266,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/kinesis-stream-mapping.ts",
-          "line": 103
+          "line": 125
         },
         "parameters": [
           {
@@ -16274,7 +16292,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/kinesis-stream-mapping.ts",
-        "line": 102
+        "line": 124
       },
       "name": "AppTheoryKinesisStreamMapping",
       "symbolId": "lib/kinesis-stream-mapping:AppTheoryKinesisStreamMapping"
@@ -16289,7 +16307,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/kinesis-stream-mapping.ts",
-        "line": 11
+        "line": 13
       },
       "name": "AppTheoryKinesisStreamMappingProps",
       "properties": [
@@ -16301,7 +16319,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/kinesis-stream-mapping.ts",
-            "line": 15
+            "line": 17
           },
           "name": "consumer",
           "type": {
@@ -16316,7 +16334,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/kinesis-stream-mapping.ts",
-            "line": 20
+            "line": 22
           },
           "name": "stream",
           "type": {
@@ -16332,7 +16350,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/kinesis-stream-mapping.ts",
-            "line": 41
+            "line": 43
           },
           "name": "batchSize",
           "optional": true,
@@ -16349,7 +16367,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/kinesis-stream-mapping.ts",
-            "line": 69
+            "line": 71
           },
           "name": "bisectBatchOnError",
           "optional": true,
@@ -16366,7 +16384,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/kinesis-stream-mapping.ts",
-            "line": 48
+            "line": 50
           },
           "name": "maxBatchingWindow",
           "optional": true,
@@ -16383,12 +16401,30 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/kinesis-stream-mapping.ts",
-            "line": 62
+            "line": 64
           },
           "name": "maxRecordAge",
           "optional": true,
           "type": {
             "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- discarded records are dropped",
+            "remarks": "Pass an event source DLQ, such as `new lambdaEventSources.SqsDlq(queue)` or\n`new lambdaEventSources.SnsDlq(topic)`. Binding that DLQ grants the consumer role exactly the\npermission the destination needs (`sqs:SendMessage` or `sns:Publish`); an Amazon S3 bucket\n(`new lambdaEventSources.S3OnFailureDestination(bucket)`) is also supported.\n\nThe destination receives metadata about the discarded batch, not the records themselves: the\nshard ID and sequence numbers identify records to re-read from the stream while they are still\ninside the stream retention window. It only receives anything once retries are exhausted or\n`maxRecordAge` is exceeded, so a mapping that leaves both unbounded (the AWS Lambda default is\n`-1`, retry until the record expires) has nothing to send. Pair this prop with a bounded\n`retryAttempts` and `bisectBatchOnError: true` so a poison record is retained for repair instead\nof blocking its shard.",
+            "summary": "Destination for the records Lambda discards after retries are exhausted or `maxRecordAge` elapses."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 115
+          },
+          "name": "onFailure",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IEventSourceDlq"
           }
         },
         {
@@ -16400,7 +16436,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/kinesis-stream-mapping.ts",
-            "line": 76
+            "line": 78
           },
           "name": "parallelizationFactor",
           "optional": true,
@@ -16418,7 +16454,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/kinesis-stream-mapping.ts",
-            "line": 86
+            "line": 88
           },
           "name": "reportBatchItemFailures",
           "optional": true,
@@ -16435,7 +16471,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/kinesis-stream-mapping.ts",
-            "line": 55
+            "line": 57
           },
           "name": "retryAttempts",
           "optional": true,
@@ -16452,7 +16488,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/kinesis-stream-mapping.ts",
-            "line": 27
+            "line": 29
           },
           "name": "startingPosition",
           "optional": true,
@@ -16469,7 +16505,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/kinesis-stream-mapping.ts",
-            "line": 34
+            "line": 36
           },
           "name": "startingPositionTimestamp",
           "optional": true,
@@ -16486,7 +16522,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/kinesis-stream-mapping.ts",
-            "line": 93
+            "line": 95
           },
           "name": "tumblingWindow",
           "optional": true,
@@ -29791,6 +29827,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "4.4.2-rc",
-  "fingerprint": "eHklOIzQyXFC0QftCCFjxaml/fB7IyrQJvGRKh/UHH8="
+  "version": "4.4.2",
+  "fingerprint": "U4wRavjcL9WrsZ4Qmcqkzdcw8pxxUulH++LH+llqFng="
 }

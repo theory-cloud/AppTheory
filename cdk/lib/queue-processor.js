@@ -38,7 +38,7 @@ const queue_consumer_1 = require("./queue-consumer");
  * });
  */
 class AppTheoryQueueProcessor extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryQueueProcessor", version: "4.4.2-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryQueueProcessor", version: "4.4.2" };
     /**
      * The main SQS queue.
      */
