@@ -14,6 +14,7 @@ import (
 	"time"
 
 	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	"github.com/theory-cloud/apptheory/v4/runtime/internal/streamjoin"
 )
 
 // protocolVersion is the latest session-ful MCP protocol version supported by this server.
@@ -511,8 +512,12 @@ func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
 		return internalServerError(), nil
 	}
 
-	events, err := s.streamStore.Subscribe(ctx, sessionID, streamID, lastEventID)
+	// The replay body is produced by the store's subscription pump and the SSE
+	// writer; the scope keeps both joined to the response body.
+	scope := newStreamScope(ctx)
+	events, err := s.streamStore.Subscribe(scope.context(), sessionID, streamID, lastEventID)
 	if err != nil {
+		scope.stop()
 		if errors.Is(err, ErrStreamNotFound) {
 			return notFound("stream not found"), nil
 		}
@@ -520,21 +525,14 @@ func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
 		return internalServerError(), nil
 	}
 
-	return s.streamToSSE(ctx, sessionID, events)
+	return s.streamToSSE(scope, sessionID, events)
 }
 
 func (s *Server) openSessionListener(ctx context.Context, sessionID string, remainingMS int) (*apptheory.Response, error) {
 	listenerCtx, cancel := s.initialSessionListenerContext(ctx, remainingMS)
 
-	pr, pw := io.Pipe()
-
-	go func() {
+	body := streamjoin.New(listenerCtx, func(listenerCtx context.Context, pw *io.PipeWriter) {
 		defer cancel()
-		defer func() {
-			if err := pw.Close(); err != nil && !errors.Is(err, io.ErrClosedPipe) {
-				s.logger.WarnContext(listenerCtx, "session listener close error", "sessionId", sessionID, "error", err)
-			}
-		}()
 
 		if listenerCtx.Err() != nil {
 			return
@@ -570,7 +568,7 @@ func (s *Server) openSessionListener(ctx context.Context, sessionID string, rema
 				}
 			}
 		}
-	}()
+	})
 
 	resp := &apptheory.Response{
 		Status: 200,
@@ -580,7 +578,7 @@ func (s *Server) openSessionListener(ctx context.Context, sessionID string, rema
 			"connection":       {"keep-alive"},
 			headerMcpSessionID: {sessionID},
 		},
-		BodyReader: pr,
+		BodyReader: body,
 	}
 	return resp, nil
 }
@@ -1668,10 +1666,15 @@ func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, re
 		return s.marshalSingleResponse(resp, sessionID, false)
 	}
 
+	// Run the tool inside a scope bound to the response body, so no producer of
+	// this stream is still running once the adapter has stopped reading it. The
+	// tool keeps its detached-from-the-connection context: a client disconnect
+	// must not discard an in-flight result that the client can still resume.
+	scope := newStreamScope(ctx)
 	toolCtx, finish := s.trackRequest(context.WithoutCancel(ctx), sessionID, req.ID)
 	streamID, err := s.streamStore.Create(ctx, sessionID)
 	if err != nil {
-		finish()
+		scope.stop()
 		s.logger.ErrorContext(ctx, "stream store error", "error", err)
 		return internalServerError(), nil
 	}
@@ -1680,6 +1683,7 @@ func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, re
 	// that disconnects immediately can resume this stream with Last-Event-ID.
 	if _, primeErr := s.streamStore.Append(ctx, sessionID, streamID, nil); primeErr != nil {
 		finish()
+		scope.stop()
 		s.logger.ErrorContext(ctx, "stream prime error", "sessionId", sessionID, "streamId", streamID, "error", primeErr)
 		if closeErr := s.streamStore.Close(context.WithoutCancel(ctx), sessionID, streamID); closeErr != nil {
 			s.logger.WarnContext(ctx, "stream prime cleanup error", "sessionId", sessionID, "streamId", streamID, "error", closeErr)
@@ -1687,16 +1691,18 @@ func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, re
 		return internalServerError(), nil
 	}
 
-	// Run the tool out-of-band so disconnects do not cancel execution.
-	go s.runStreamingTool(toolCtx, sessionID, streamID, req, finish)
+	scope.goJoin(func() {
+		s.runStreamingTool(toolCtx, sessionID, streamID, req, finish)
+	})
 
-	events, err := s.streamStore.Subscribe(ctx, sessionID, streamID, "")
+	events, err := s.streamStore.Subscribe(scope.context(), sessionID, streamID, "")
 	if err != nil {
+		scope.stop()
 		s.logger.ErrorContext(ctx, "stream store error", "error", err)
 		return internalServerError(), nil
 	}
 
-	return s.streamToSSE(ctx, sessionID, events)
+	return s.streamToSSE(scope, sessionID, events)
 }
 
 func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID string, req *Request, finish func()) {
@@ -1848,57 +1854,6 @@ func (s *Server) appendStreamResponseOrDeliveryError(
 			s.logger.ErrorContext(ctx, "stream store delivery error append failed", "sessionId", sessionID, "streamId", streamID, "error", appendErr)
 		}
 	}
-}
-
-func (s *Server) streamToSSE(ctx context.Context, sessionID string, events <-chan StreamEvent) (*apptheory.Response, error) {
-	out := make(chan apptheory.SSEEvent)
-
-	go func() {
-		defer close(out)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case ev, ok := <-events:
-				if !ok {
-					return
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case out <- apptheory.SSEEvent{
-					ID:    ev.ID,
-					Event: streamEventName(ev),
-					Data:  streamEventData(ev),
-				}:
-				}
-			}
-		}
-	}()
-
-	resp, err := apptheory.SSEStreamResponse(ctx, 200, out)
-	if err != nil {
-		return nil, err
-	}
-	if resp.Headers == nil {
-		resp.Headers = map[string][]string{}
-	}
-	resp.Headers[headerMcpSessionID] = []string{sessionID}
-	return resp, nil
-}
-
-func streamEventName(ev StreamEvent) string {
-	if len(ev.Data) == 0 {
-		return ""
-	}
-	return "message"
-}
-
-func streamEventData(ev StreamEvent) any {
-	if len(ev.Data) == 0 {
-		return ""
-	}
-	return ev.Data
 }
 
 func badRequest(msg string) *apptheory.Response {

@@ -51,6 +51,18 @@ func TimeoutMiddleware(config TimeoutConfig) Middleware {
 			case res := <-ch:
 				return res.resp, res.err
 			case <-timeoutCtx.Done():
+				// The timeout has expired, and the handler chain's context is
+				// cancelled, but the invocation must not return while the handler
+				// this middleware started can still run: the work would outlive
+				// its invocation (in Lambda the environment is frozen after the
+				// handler returns, so a detached handler resumes at an
+				// unpredictable time or never). Wait for the handler to unwind
+				// before reporting the timeout.
+				//
+				// The wait is bounded by the handler's own cooperation: a handler
+				// that observes its context returns immediately, and one that
+				// ignores it holds the invocation until it returns on its own.
+				<-ch
 				return nil, &AppError{Code: errorCodeTimeout, Message: cfg.TimeoutMessage}
 			}
 		}

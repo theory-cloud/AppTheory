@@ -28,6 +28,15 @@ const (
 	// transport mismatch instead of spinning on an empty 200.
 	apigatewayV2StreamingBodyTimeout = 5 * time.Second
 
+	// streamingBodyDrainJoinGrace bounds how long the adapter waits for the
+	// abandoned body-drain worker to exit when the response body is not
+	// closable. Every body the runtime produces is closable (streamjoin bodies
+	// and pipes), and io.Closer guarantees that Close unblocks a blocked Read,
+	// so the grace window only ever applies to a handler-supplied reader that is
+	// neither closable nor terminating — a reader that cannot be interrupted by
+	// construction.
+	streamingBodyDrainJoinGrace = 100 * time.Millisecond
+
 	// apigatewayV2StreamingBodyErrorMessage is the documented client-visible
 	// error for a streaming response body the HTTP API v2 adapter cannot
 	// deliver for a non-size reason (a stream that did not terminate in time or
@@ -76,7 +85,17 @@ func (a *App) ServeAPIGatewayV2(ctx context.Context, event events.APIGatewayV2HT
 		a.recordAdapterDecodeError(startedAt, event.RequestContext.HTTP.Method, event.RequestContext.HTTP.Path, err, resp.Status)
 		return apigatewayV2ResponseFromResponse(ctx, resp)
 	}
-	return apigatewayV2ResponseFromResponse(ctx, a.Serve(ctx, req))
+
+	// The invocation's serve context is cancelled before this adapter returns,
+	// and any runtime-produced response body stream the adapter abandoned is
+	// joined, so no producer the invocation started is still running once the
+	// adapter hands its response back to the Lambda runtime.
+	serveCtx, cancelServe := context.WithCancel(ctx)
+	resp := a.Serve(serveCtx, req)
+	defer joinAbandonedBodyStream(resp.BodyStream, streamingBodyDrainJoinGrace)
+	defer cancelServe()
+
+	return apigatewayV2ResponseFromResponse(serveCtx, resp)
 }
 
 func (a *App) ServeLambdaFunctionURL(ctx context.Context, event events.LambdaFunctionURLRequest) events.LambdaFunctionURLResponse {
@@ -87,7 +106,15 @@ func (a *App) ServeLambdaFunctionURL(ctx context.Context, event events.LambdaFun
 		a.recordAdapterDecodeError(startedAt, event.RequestContext.HTTP.Method, event.RequestContext.HTTP.Path, err, resp.Status)
 		return lambdaFunctionURLResponseFromResponse(ctx, resp)
 	}
-	return lambdaFunctionURLResponseFromResponse(ctx, a.Serve(ctx, req))
+
+	// Same invariant as ServeAPIGatewayV2: cancel the invocation's serve
+	// context and join any abandoned response body stream before returning.
+	serveCtx, cancelServe := context.WithCancel(ctx)
+	resp := a.Serve(serveCtx, req)
+	defer joinAbandonedBodyStream(resp.BodyStream, streamingBodyDrainJoinGrace)
+	defer cancelServe()
+
+	return lambdaFunctionURLResponseFromResponse(serveCtx, resp)
 }
 
 func requestFromAPIGatewayV2(event events.APIGatewayV2HTTPRequest) (Request, error) {
@@ -249,6 +276,36 @@ func apigatewayV2ResponseFromResponse(ctx context.Context, resp Response) events
 	return out
 }
 
+// joinAbandonedBodyStream waits for the runtime's own BodyStream producer to
+// exit after the invocation's serve context has been cancelled.
+//
+// The buffered adapters cancel the serve context before returning, which is what
+// stops a stream limiter (limitBodyStream) blocked on an abandoned body. The
+// producer closes its output channel as it returns, so draining it here is the
+// join. Only runtime-produced producer streams can be joined this way, and only
+// their close is observable, so the wait is bounded: a handler-supplied stream
+// that is still open after the grace window is left as the handler's own
+// concern and never holds the invocation open.
+func joinAbandonedBodyStream(stream BodyStream, grace time.Duration) {
+	if stream == nil {
+		return
+	}
+
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+
+	for {
+		select {
+		case _, ok := <-stream:
+			if !ok {
+				return
+			}
+		case <-timer.C:
+			return
+		}
+	}
+}
+
 func drainStreamingBodyForAPIGatewayV2(ctx context.Context, resp Response) (Response, error) {
 	drainCtx, cancel := context.WithTimeout(ctx, apigatewayV2StreamingBodyTimeout)
 	defer cancel()
@@ -321,14 +378,31 @@ func drainBodyReaderForAPIGatewayV2(ctx context.Context, reader io.Reader) ([]by
 		}
 		return res.body, res.err
 	case <-ctx.Done():
-		// Unblock a blocked pipe read so the drain goroutine can exit instead
-		// of leaking until the producer writes or closes. Only pipe readers are
-		// closed; other readers either do not block (bytes.Reader) or own their
-		// own lifecycle.
-		if pr, ok := reader.(*io.PipeReader); ok {
-			if err := pr.Close(); err != nil {
+		// The invocation is abandoning this body. Unblock the drain worker and
+		// wait for it to exit before returning: a worker left reading a body
+		// that nobody consumes would outlive the invocation it was started in.
+		//
+		// Closing any closable reader is what makes the wait bounded. io.Closer
+		// requires Close to unblock a blocked Read, which covers the pipe
+		// readers and the streamjoin bodies the runtime produces, plus
+		// handler-supplied bodies that own an external resource (for example a
+		// store object body, whose Close also releases the connection).
+		if closer, ok := reader.(io.Closer); ok {
+			if err := closer.Close(); err != nil {
 				_ = err
 			}
+			<-done
+			return nil, ctx.Err()
+		}
+		// A reader that is neither closable nor terminating cannot be
+		// interrupted by construction (bytes.Reader and friends return
+		// immediately and are joined here without delay); settle briefly so a
+		// worker that is about to finish is still joined.
+		timer := time.NewTimer(streamingBodyDrainJoinGrace)
+		defer timer.Stop()
+		select {
+		case <-done:
+		case <-timer.C:
 		}
 		return nil, ctx.Err()
 	}

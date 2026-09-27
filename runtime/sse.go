@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/theory-cloud/apptheory/v4/runtime/internal/streamjoin"
 )
 
 // SSEEvent is a Server-Sent Events (SSE) message.
@@ -105,13 +107,19 @@ func SSEResponse(status int, events ...SSEEvent) (*Response, error) {
 //
 // The returned response uses response streaming when invoked through the API Gateway REST API v1 adapter
 // (`ServeAPIGatewayProxy` via `HandleLambda`).
+//
+// The body is produced by a goroutine that is joined to the body reader: the
+// reader reports EOF only once that producer has returned, and closing the
+// reader stops the producer and waits for it. An adapter that drains or abandons
+// this body therefore never leaves the producer running past its invocation.
 func SSEStreamResponse(ctx context.Context, status int, events <-chan SSEEvent) (*Response, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	pr, pw := io.Pipe()
-	go streamSSEEvents(ctx, pw, events)
+	body := streamjoin.New(ctx, func(streamCtx context.Context, pw *io.PipeWriter) {
+		streamSSEEvents(streamCtx, pw, events)
+	})
 
 	return &Response{
 		Status: status,
@@ -122,7 +130,7 @@ func SSEStreamResponse(ctx context.Context, status int, events <-chan SSEEvent) 
 		},
 		Cookies:    nil,
 		Body:       nil,
-		BodyReader: pr,
+		BodyReader: body,
 		IsBase64:   false,
 	}, nil
 }
