@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -299,6 +300,21 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
+	// The WebSocket adapter returns the buffered API Gateway REST v1 response
+	// shape, so it owns the same body lifetime a buffered adapter does: the
+	// serve context is the invocation scope the handler's producers observe, and
+	// the body is drained, closed and joined before this function returns.
+	serveCtx, cancelServe := context.WithCancel(ctx)
+	var responseBodyReader io.Reader
+	var responseBodyStream BodyStream
+	defer func() {
+		cancelServe()
+		closeAbandonedBodyReader(responseBodyReader)
+		joinAbandonedBodyStream(responseBodyStream)
+	}()
+	ctx = serveCtx
+
 	startedAt := adapterEntryTime(a)
 
 	routeKey := strings.TrimSpace(event.RequestContext.RouteKey)
@@ -391,5 +407,8 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 	if normErr != nil {
 		return a.webSocketErrorResponse(normErr, requestID)
 	}
-	return apigatewayProxyResponseFromResponse(resp)
+
+	responseBodyReader = resp.BodyReader
+	responseBodyStream = resp.BodyStream
+	return apigatewayProxyResponseFromResponse(bufferedAdapterResponse(serveCtx, resp, apigatewayProxyStreamingBodyErrorMessage))
 }

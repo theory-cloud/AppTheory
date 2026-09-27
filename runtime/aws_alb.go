@@ -11,11 +11,19 @@ import (
 )
 
 func (a *App) ServeALB(ctx context.Context, event events.ALBTargetGroupRequest) events.ALBTargetGroupResponse {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	req, err := requestFromALB(event)
 	if err != nil {
 		return albTargetGroupResponseFromResponse(a.responseForHTTPError(err))
 	}
-	return albTargetGroupResponseFromResponse(a.Serve(ctx, req))
+
+	serveCtx, resp, finishInvocation := a.serveForBufferedAdapter(ctx, req)
+	defer finishInvocation()
+
+	return albTargetGroupResponseFromResponse(bufferedAdapterResponse(serveCtx, resp, albTargetGroupStreamingBodyErrorMessage))
 }
 
 func requestFromALB(event events.ALBTargetGroupRequest) (Request, error) {

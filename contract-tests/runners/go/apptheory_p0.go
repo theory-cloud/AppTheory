@@ -785,15 +785,26 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 			BodyStream: ch,
 		}, nil
 	},
-	"sse_stream_live": func(_ *apptheory.Context) (*apptheory.Response, error) {
-		// A live listener: never written, never closed.
+	"sse_stream_live": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		// A live listener: it never terminates on its own, but its producer
+		// observes the invocation context and closes the stream when the
+		// invocation ends, so the adapter that gives up on it can join it. A
+		// producer that ignored the context would hold the invocation until the
+		// Lambda function timeout instead of being abandoned by the adapter.
+		ch := make(chan apptheory.StreamChunk)
+		done := ctx.Context().Done()
+		go func() {
+			defer close(ch)
+			ch <- apptheory.StreamChunk{Bytes: []byte("id: 1\nevent: message\ndata: {\"ok\":true}\n\n")}
+			<-done
+		}()
 		return &apptheory.Response{
 			Status:     200,
 			Headers:    map[string][]string{"content-type": {"text/event-stream"}},
 			Cookies:    nil,
 			Body:       nil,
 			IsBase64:   false,
-			BodyStream: make(chan apptheory.StreamChunk),
+			BodyStream: ch,
 		}, nil
 	},
 	"sse_stream_overrun": func(_ *apptheory.Context) (*apptheory.Response, error) {

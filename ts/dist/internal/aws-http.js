@@ -2,7 +2,7 @@ import { STATUS_CODES } from "node:http";
 import { AppError } from "../errors.js";
 import { headersFromSingle, normalizePath, parseRawQueryString, queryFromSingle, toBuffer, } from "./http.js";
 import { normalizeRequest } from "./request.js";
-import { errorResponse, normalizeResponse } from "./response.js";
+import { errorResponse, normalizeResponse, } from "./response.js";
 import { sourceProvenanceFromProviderRequestContext } from "./source-provenance.js";
 // APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES bounds how many bytes of a streaming
 // response body the buffered HTTP API v2 / Function URL adapters drain before
@@ -32,6 +32,18 @@ const APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE = "streaming response body cann
 // fail-closed shape with the adapter named in the message. A body that merely
 // exceeds the byte budget maps to 413 (app.too_large) instead.
 const LAMBDA_FUNCTION_URL_STREAMING_BODY_ERROR_MESSAGE = "streaming response body cannot be delivered by the Function URL adapter";
+// APIGATEWAY_PROXY_STREAMING_BODY_ERROR_MESSAGE is the documented client-visible
+// error for a streaming response body the buffered API Gateway REST v1 adapter
+// cannot deliver for a non-size reason. The v1 buffered shape delivers a
+// complete body only, so the adapter drains the body under the shared budget and
+// fails closed with the adapter named in the message.
+const APIGATEWAY_PROXY_STREAMING_BODY_ERROR_MESSAGE = "streaming response body cannot be delivered by the API Gateway REST v1 adapter";
+// ALB_TARGET_GROUP_STREAMING_BODY_ERROR_MESSAGE is the documented client-visible
+// error for a streaming response body the buffered ALB target group adapter
+// cannot deliver for a non-size reason. ALB delivers buffered responses only, so
+// the adapter drains the body under the shared budget and fails closed with the
+// adapter named in the message.
+const ALB_TARGET_GROUP_STREAMING_BODY_ERROR_MESSAGE = "streaming response body cannot be delivered by the ALB target group adapter";
 class StreamingBodyBudgetError extends Error {
     constructor(message) {
         super(message);
@@ -272,39 +284,17 @@ export function requestFromLambdaFunctionURL(event) {
         sourceProvenance: sourceProvenanceFromProviderRequestContext("lambda-url", event.requestContext?.http?.sourceIp),
     };
 }
-// STREAMING_BODY_UNWIND_GRACE_MS bounds how long the buffered adapters wait for
-// an unblocked streaming body to finish unwinding. A producer that ignores the
-// unwind cannot be interrupted by construction, so the wait is bounded rather
-// than holding the invocation open indefinitely.
-const STREAMING_BODY_UNWIND_GRACE_MS = 100;
-// settleWithin resolves once the promise settles or the grace window elapses,
-// whichever happens first. Callers use it to join work they started without
-// holding the invocation open for a producer that never settles.
-export async function settleWithin(promise, graceMs) {
-    let timer;
-    try {
-        await Promise.race([
-            promise.then(() => { }, () => { }),
-            new Promise((resolve) => {
-                timer = setTimeout(resolve, graceMs);
-            }),
-        ]);
-    }
-    finally {
-        if (timer !== undefined)
-            clearTimeout(timer);
-    }
-}
 // unblockStreamingBody unblocks a pending async read so the drain can exit, and
-// waits for the producer to unwind. The wait means the adapter cannot return
-// with a producer goroutine equivalent (a pending async task) still running: in
-// Lambda the execution environment is frozen once the handler returns, so an
-// abandoned producer resumes at an unpredictable time or never.
+// waits for the producer to unwind before returning. Waiting is unconditional:
+// there is no grace window, because a producer the runtime started must not be
+// running once the adapter returns. In Lambda the execution environment is
+// frozen once the handler returns, so an abandoned producer resumes at an
+// unpredictable time (or never); a producer that cannot be interrupted is
+// bounded by the Lambda function timeout instead of being abandoned here.
 //
 // It is the TS-idiomatic counterpart of the Go adapter closing a body reader: a
-// Node.js Readable is destroyed; an async generator object is asked to unwind
-// through iterator.return(). A producer blocked inside an await that never
-// resolves is waited for only up to the unwind grace window.
+// Node.js Readable is destroyed (and its close promise awaited); an async
+// generator object is asked to unwind through iterator.return().
 async function unblockStreamingBody(bodyStream) {
     const unblockable = bodyStream;
     if (unblockable === null || unblockable === undefined)
@@ -312,17 +302,21 @@ async function unblockStreamingBody(bodyStream) {
     if (typeof unblockable.destroy === "function") {
         try {
             unblockable.destroy();
-            return;
         }
         catch {
             // fall through to iterator.return()
+        }
+        const closed = unblockable.closed;
+        if (closed && typeof closed.then === "function") {
+            await closed.catch(() => undefined);
+            return;
         }
     }
     if (typeof unblockable.return === "function") {
         try {
             const result = unblockable.return();
             if (result && typeof result.then === "function") {
-                await settleWithin(result, STREAMING_BODY_UNWIND_GRACE_MS);
+                await result.catch(() => undefined);
             }
         }
         catch {
@@ -373,9 +367,10 @@ async function drainStreamingBodyForBufferedAdapter(bodyStream, maxBytes, timeou
                 // The deadline won while this read was still pending. Unblock the
                 // producer and wait for the abandoned read to settle before failing
                 // closed, so the drain cannot return while a producer it started is
-                // still running.
+                // still running. The read's own outcome is dropped: the budget error is
+                // what the adapter reports.
                 await unblockStreamingBody(bodyStream);
-                await settleWithin(pending, STREAMING_BODY_UNWIND_GRACE_MS);
+                await pending.then(() => undefined, () => undefined);
             }
             throw err;
         }
@@ -428,87 +423,88 @@ export async function apigatewayV2ResponseFromResponse(resp) {
         headers[key] = String(values[0]);
         multiValueHeaders[key] = values.map((v) => String(v));
     }
-    let bodyBytes = toBuffer(normalized.body);
-    const isBase64Encoded = Boolean(normalized.isBase64);
-    if (normalized.bodyStream) {
-        try {
-            bodyBytes = await drainStreamingBodyForBufferedAdapter(normalized.bodyStream, APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES, APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS);
-        }
-        catch (err) {
-            const error = isStreamingBodySizeError(err)
-                ? streamingBodySizeErrorResponse()
-                : streamingBodyErrorResponse(APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE);
-            const errorHeaders = {};
-            for (const [key, values] of Object.entries(error.headers ?? {})) {
-                if (!values || values.length === 0)
-                    continue;
-                errorHeaders[key] = String(values[0]);
-            }
-            return {
-                statusCode: error.status,
-                headers: errorHeaders,
-                multiValueHeaders: {},
-                body: error.body.toString("utf8"),
-                isBase64Encoded: false,
-                cookies: [...error.cookies],
-            };
-        }
+    const drained = await bufferedAdapterBody(normalized, APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE, singleValueHeaders);
+    if (!drained.ok) {
+        return {
+            statusCode: drained.status,
+            headers: drained.headers,
+            multiValueHeaders: {},
+            body: drained.body.toString("utf8"),
+            isBase64Encoded: false,
+            cookies: [...drained.cookies],
+        };
     }
     return {
         statusCode: normalized.status,
         headers,
         multiValueHeaders,
-        body: isBase64Encoded
-            ? bodyBytes.toString("base64")
-            : bodyBytes.toString("utf8"),
-        isBase64Encoded,
+        body: normalized.isBase64
+            ? drained.body.toString("base64")
+            : drained.body.toString("utf8"),
+        isBase64Encoded: Boolean(normalized.isBase64),
         cookies: [...normalized.cookies],
     };
 }
 export async function lambdaFunctionURLResponseFromResponse(resp) {
     const normalized = normalizeResponse(resp);
-    const headers = {};
-    for (const [key, values] of Object.entries(normalized.headers ?? {})) {
-        if (!values || values.length === 0)
-            continue;
-        headers[key] = values.map((v) => String(v)).join(",");
-    }
-    let bodyBytes = toBuffer(normalized.body);
-    const isBase64Encoded = Boolean(normalized.isBase64);
-    if (normalized.bodyStream) {
-        try {
-            bodyBytes = await drainStreamingBodyForBufferedAdapter(normalized.bodyStream, APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES, APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS);
-        }
-        catch (err) {
-            const error = isStreamingBodySizeError(err)
-                ? streamingBodySizeErrorResponse()
-                : streamingBodyErrorResponse(LAMBDA_FUNCTION_URL_STREAMING_BODY_ERROR_MESSAGE);
-            const errorHeaders = {};
-            for (const [key, values] of Object.entries(error.headers ?? {})) {
-                if (!values || values.length === 0)
-                    continue;
-                errorHeaders[key] = values.map((v) => String(v)).join(",");
-            }
-            return {
-                statusCode: error.status,
-                headers: errorHeaders,
-                body: error.body.toString("utf8"),
-                isBase64Encoded: false,
-                cookies: [...error.cookies],
-            };
-        }
+    const headers = joinedValueHeaders(normalized.headers);
+    const drained = await bufferedAdapterBody(normalized, LAMBDA_FUNCTION_URL_STREAMING_BODY_ERROR_MESSAGE, joinedValueHeaders);
+    if (!drained.ok) {
+        return {
+            statusCode: drained.status,
+            headers: drained.headers,
+            body: drained.body.toString("utf8"),
+            isBase64Encoded: false,
+            cookies: [...drained.cookies],
+        };
     }
     return {
         statusCode: normalized.status,
         headers,
-        body: isBase64Encoded
-            ? bodyBytes.toString("base64")
-            : bodyBytes.toString("utf8"),
-        isBase64Encoded,
+        body: normalized.isBase64
+            ? drained.body.toString("base64")
+            : drained.body.toString("utf8"),
+        isBase64Encoded: Boolean(normalized.isBase64),
         cookies: [...normalized.cookies],
     };
 }
-export function apigatewayProxyResponseFromResponse(resp) {
+// bufferedAdapterBody drains a streaming response body into the buffered body
+// under the shared adapter budget.
+//
+// Every buffered adapter routes through this, so the ALB target group, the
+// buffered API Gateway REST v1 and the WebSocket shapes get the same drain,
+// unblock and join as the HTTP API v2 and Function URL shapes. An adapter that
+// dropped a streaming body instead would return while a producer the invocation
+// had started was still running. ok=false is the fail-closed outcome: the
+// headers and cookies are the error response's own, not the drained response's.
+async function bufferedAdapterBody(resp, errorMessage, headerBuilder) {
+    if (!resp.bodyStream) {
+        return {
+            ok: true,
+            status: resp.status,
+            headers: {},
+            cookies: [],
+            body: toBuffer(resp.body),
+        };
+    }
+    try {
+        const body = await drainStreamingBodyForBufferedAdapter(resp.bodyStream, APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES, APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS);
+        return { ok: true, status: resp.status, headers: {}, cookies: [], body };
+    }
+    catch (err) {
+        const error = isStreamingBodySizeError(err)
+            ? streamingBodySizeErrorResponse()
+            : streamingBodyErrorResponse(errorMessage);
+        return {
+            ok: false,
+            status: error.status,
+            headers: headerBuilder(error.headers),
+            cookies: [...error.cookies],
+            body: error.body,
+        };
+    }
+}
+export async function apigatewayProxyResponseFromResponse(resp) {
     const normalized = normalizeResponse(resp);
     const headers = {};
     const multiValueHeaders = {};
@@ -522,25 +518,64 @@ export function apigatewayProxyResponseFromResponse(resp) {
         headers["set-cookie"] = String(normalized.cookies[0]);
         multiValueHeaders["set-cookie"] = normalized.cookies.map((v) => String(v));
     }
-    const bodyBytes = toBuffer(normalized.body);
-    const isBase64Encoded = Boolean(normalized.isBase64);
+    const drained = await bufferedAdapterBody(normalized, APIGATEWAY_PROXY_STREAMING_BODY_ERROR_MESSAGE, singleValueHeaders);
     return {
-        statusCode: normalized.status,
-        headers,
-        multiValueHeaders,
-        body: isBase64Encoded
-            ? bodyBytes.toString("base64")
-            : bodyBytes.toString("utf8"),
-        isBase64Encoded,
+        statusCode: drained.status,
+        headers: drained.ok ? { ...headers, ...drained.headers } : drained.headers,
+        multiValueHeaders: drained.ok ? multiValueHeaders : {},
+        body: normalized.isBase64
+            ? drained.body.toString("base64")
+            : drained.body.toString("utf8"),
+        isBase64Encoded: drained.ok ? Boolean(normalized.isBase64) : false,
+    };
+}
+function singleValueHeaders(headers) {
+    const out = {};
+    for (const [key, values] of Object.entries(headers ?? {})) {
+        if (!values || values.length === 0)
+            continue;
+        out[key] = String(values[0]);
+    }
+    return out;
+}
+function joinedValueHeaders(headers) {
+    const out = {};
+    for (const [key, values] of Object.entries(headers ?? {})) {
+        if (!values || values.length === 0)
+            continue;
+        out[key] = values.map((v) => String(v)).join(",");
+    }
+    return out;
+}
+export async function albTargetGroupResponseFromResponse(resp) {
+    const normalized = normalizeResponse(resp);
+    const headers = {};
+    const multiValueHeaders = {};
+    for (const [key, values] of Object.entries(normalized.headers ?? {})) {
+        if (!values || values.length === 0)
+            continue;
+        headers[key] = String(values[0]);
+        multiValueHeaders[key] = values.map((v) => String(v));
+    }
+    if (normalized.cookies.length > 0) {
+        headers["set-cookie"] = String(normalized.cookies[0]);
+        multiValueHeaders["set-cookie"] = normalized.cookies.map((v) => String(v));
+    }
+    const drained = await bufferedAdapterBody(normalized, ALB_TARGET_GROUP_STREAMING_BODY_ERROR_MESSAGE, singleValueHeaders);
+    return {
+        statusCode: drained.status,
+        statusDescription: albStatusDescription(drained.status),
+        headers: drained.ok ? { ...headers, ...drained.headers } : drained.headers,
+        multiValueHeaders: drained.ok ? multiValueHeaders : {},
+        body: normalized.isBase64
+            ? drained.body.toString("base64")
+            : drained.body.toString("utf8"),
+        isBase64Encoded: drained.ok ? Boolean(normalized.isBase64) : false,
     };
 }
 function albStatusDescription(status) {
     const code = Number(status ?? 0);
     const text = STATUS_CODES[String(code)] ?? "";
     return text ? `${code} ${text}` : String(code);
-}
-export function albTargetGroupResponseFromResponse(resp) {
-    const out = apigatewayProxyResponseFromResponse(resp);
-    return { ...out, statusDescription: albStatusDescription(out.statusCode) };
 }
 //# sourceMappingURL=aws-http.js.map

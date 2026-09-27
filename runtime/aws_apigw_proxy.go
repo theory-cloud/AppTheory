@@ -18,7 +18,14 @@ func (a *App) ServeAPIGatewayProxy(ctx context.Context, event events.APIGatewayP
 	if err != nil {
 		return apigatewayProxyResponseFromResponse(a.responseForHTTPError(err))
 	}
-	return apigatewayProxyResponseFromResponse(a.Serve(ctx, req))
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	serveCtx, resp, finishInvocation := a.serveForBufferedAdapter(ctx, req)
+	defer finishInvocation()
+
+	return apigatewayProxyResponseFromResponse(bufferedAdapterResponse(serveCtx, resp, apigatewayProxyStreamingBodyErrorMessage))
 }
 
 func (a *App) serveAPIGatewayProxyLambda(ctx context.Context, event events.APIGatewayProxyRequest) any {
@@ -31,15 +38,26 @@ func (a *App) serveAPIGatewayProxyLambda(ctx context.Context, event events.APIGa
 		}
 		return apigatewayProxyResponseFromResponse(a.responseForHTTPError(err))
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
-	resp := a.Serve(ctx, req)
-	if streamingRoute {
+	serveCtx, cancelServe, resp := a.serveScoped(ctx, req)
+
+	// Response streaming hands the body to the transport, which reads it and
+	// closes it (which stops and joins the producer) itself. The serve context
+	// must stay live while the transport reads, so this path cancels nothing.
+	if streamingRoute || (!resp.IsBase64 && isTextEventStream(resp.Headers)) {
 		return apigatewayProxyStreamingResponseFromResponse(resp)
 	}
-	if resp.IsBase64 || !isTextEventStream(resp.Headers) {
-		return apigatewayProxyResponseFromResponse(resp)
-	}
-	return apigatewayProxyStreamingResponseFromResponse(resp)
+
+	// Buffered delivery: the adapter owns the body's lifetime, so it cancels the
+	// invocation scope and joins the body before returning.
+	defer func() {
+		cancelServe()
+		joinAbandonedBodyStream(resp.BodyStream)
+	}()
+	return apigatewayProxyResponseFromResponse(bufferedAdapterResponse(serveCtx, resp, apigatewayProxyStreamingBodyErrorMessage))
 }
 
 func requestFromAPIGatewayProxy(event events.APIGatewayProxyRequest) (Request, error) {
@@ -177,9 +195,44 @@ func apigatewayProxyStreamingRouteStageVariableName(method, resource string) str
 	return apigatewayProxyStreamingRouteStageVariablePrefix + hex.EncodeToString(sum[:16])
 }
 
+// streamingBodyReader is the body a response-streaming transport is handed.
+//
+// It is an io.Closer for every combination of a buffered prefix and a streaming
+// reader, and its Close reaches the streaming reader's own closer. The
+// aws-lambda-go streaming runtime closes the response (and therefore the body)
+// when the POST completes, errors, or the client disconnects — but
+// APIGatewayProxyStreamingResponse.Close only reaches the body when the body is
+// an io.ReadCloser, and a bare io.MultiReader is not. Composing the prefix and
+// the stream here keeps the close path intact, so a client disconnect on the v1
+// streaming route stops and joins the SSE writer and the forwarder behind it.
+type streamingBodyReader struct {
+	io.Reader
+	closers []io.Closer
+}
+
+func (r *streamingBodyReader) Close() error {
+	if r == nil {
+		return nil
+	}
+	var firstErr error
+	for _, closer := range r.closers {
+		if closer == nil {
+			continue
+		}
+		if err := closer.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 func apigatewayProxyStreamingResponseFromResponse(resp Response) *events.APIGatewayProxyStreamingResponse {
 	body := io.Reader(bytes.NewReader(resp.Body))
+	var closers []io.Closer
 	if resp.BodyReader != nil {
+		if closer, ok := resp.BodyReader.(io.Closer); ok {
+			closers = append(closers, closer)
+		}
 		if len(resp.Body) > 0 {
 			body = io.MultiReader(bytes.NewReader(resp.Body), resp.BodyReader)
 		} else {
@@ -192,7 +245,7 @@ func apigatewayProxyStreamingResponseFromResponse(resp Response) *events.APIGate
 		Headers:           map[string]string{},
 		MultiValueHeaders: map[string][]string{},
 		Cookies:           append([]string(nil), resp.Cookies...),
-		Body:              body,
+		Body:              &streamingBodyReader{Reader: body, closers: closers},
 	}
 
 	for key, values := range resp.Headers {

@@ -2622,19 +2622,39 @@ def _default_policy_message(code: str) -> str:
             return "internal error"
 
 
-def _limit_response_stream(body_stream: Any, initial_bytes: int, max_response_bytes: int):
-    emitted = max(0, int(initial_bytes or 0))
+class _LimitedResponseStream:
+    """Applies the response byte budget to a streamed body.
 
-    def gen():
-        nonlocal emitted
-        for chunk in body_stream:
-            data = bytes(chunk or b"")
-            if not data:
-                yield data
-                continue
-            if emitted + len(data) > max_response_bytes:
-                raise AppError("app.too_large", "response too large")
-            emitted += len(data)
-            yield data
+    The accounting runs in the consumer's own iteration, and close is forwarded to
+    the wrapped stream: without that forwarding the limiter would hide the
+    producer's close and an adapter giving up on a limited body (or a transport
+    that stops reading it) could not release the producer.
+    """
 
-    return gen()
+    __slots__ = ("_emitted", "_inner", "_max")
+
+    def __init__(self, inner: Any, initial_bytes: int, max_response_bytes: int) -> None:
+        self._inner = inner
+        self._emitted = max(0, int(initial_bytes or 0))
+        self._max = int(max_response_bytes)
+
+    def __iter__(self) -> _LimitedResponseStream:
+        return self
+
+    def __next__(self) -> bytes:
+        data = bytes(next(self._inner) or b"")
+        if not data:
+            return data
+        if self._emitted + len(data) > self._max:
+            raise AppError("app.too_large", "response too large")
+        self._emitted += len(data)
+        return data
+
+    def close(self) -> None:
+        close = getattr(self._inner, "close", None)
+        if callable(close):
+            close()
+
+
+def _limit_response_stream(body_stream: Any, initial_bytes: int, max_response_bytes: int) -> Any:
+    return _LimitedResponseStream(body_stream, initial_bytes, max_response_bytes)

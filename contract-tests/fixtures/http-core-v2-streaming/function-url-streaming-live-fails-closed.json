@@ -1,7 +1,7 @@
 {
   "id": "p0.adapter.lambda_function_url.streaming_live_fails_closed",
   "tier": "p0",
-  "name": "Lambda Function URL: live streaming body fails closed with the documented 500",
+  "name": "Lambda Function URL: live streaming body the runtime releases fails closed with the documented 500",
   "setup": {
     "routes": [
       { "method": "GET", "path": "/live", "handler": "sse_stream_live" }

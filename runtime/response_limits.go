@@ -139,6 +139,13 @@ func sendStreamChunk(ctx context.Context, out chan<- StreamChunk, chunk StreamCh
 // The accounting happens inline on the consumer's goroutine: the wrapper needs
 // no producer of its own, so a reader the adapter abandons cannot leave a
 // goroutine behind.
+//
+// The wrapper implements io.Closer and delegates Close to the reader it wraps.
+// That is what keeps the close path intact through the limiter: a buffered
+// adapter that gives up on a limited body closes it to unblock and join the
+// producer behind it, and a response-streaming transport closes the body on a
+// client disconnect. Without the forwarded Close the limiter would hide the
+// producer's closer and the body could not be joined.
 func limitBodyReader(reader io.Reader, limiter *responseSizeLimiter) io.Reader {
 	if reader == nil || limiter == nil {
 		return reader
@@ -165,4 +172,14 @@ func (r *limitedBodyReader) Read(p []byte) (int, error) {
 		return emit, r.limiter.limitErr()
 	}
 	return emit, err
+}
+
+func (r *limitedBodyReader) Close() error {
+	if r == nil || r.reader == nil {
+		return nil
+	}
+	if closer, ok := r.reader.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
 }

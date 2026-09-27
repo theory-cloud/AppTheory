@@ -4,18 +4,9 @@ import (
 	"context"
 	"io"
 	"sync"
-	"time"
 
 	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
 )
-
-// streamJoinGrace bounds how long a streamed body waits for a stream store
-// subscription to release its pump after the scope has been canceled. The
-// runtime's own stores close their subscription channel when the subscription
-// context is done, which is what the drain below observes; the grace only
-// applies to a custom StreamStore that ignores cancellation, so a handler-owned
-// store can never hold the invocation open.
-const streamJoinGrace = 100 * time.Millisecond
 
 // streamScope owns the goroutines that produce one incrementally streamed MCP
 // response body, so the body reader can join every one of them.
@@ -166,8 +157,9 @@ func (s *Server) streamToSSE(scope *streamScope, sessionID string, events <-chan
 
 // forwardStreamEvents translates store events into SSE events. It drains the
 // subscription before returning once the scope is canceled, which joins the
-// store's pump: the runtime's stores close their channel when the subscription
-// context is done.
+// store's pump: a StreamStore implementation MUST close its subscription
+// channel when the subscription context is done, so the join completes inside
+// the invocation that opened the subscription.
 func forwardStreamEvents(ctx context.Context, events <-chan StreamEvent, out chan<- apptheory.SSEEvent) {
 	defer close(out)
 
@@ -194,21 +186,24 @@ func forwardStreamEvents(ctx context.Context, events <-chan StreamEvent, out cha
 	}
 }
 
+// drainClosedSubscription waits for a canceled subscription's channel to close.
+//
+// The wait is unconditional. A subscription the invocation opened must not still
+// have a producer running once the streamed body's reader is released, so the
+// forwarder waits for the channel to close rather than giving up on a grace
+// window. Every store the runtime ships closes its channel when the subscription
+// context is done; a custom StreamStore MUST do the same (see the StreamStore
+// interface contract), which is what keeps this join prompt. A store that
+// ignores its context is bounded by the Lambda function timeout, not abandoned
+// by the framework.
 func drainClosedSubscription(events <-chan StreamEvent) {
 	if events == nil {
 		return
 	}
 
-	timer := time.NewTimer(streamJoinGrace)
-	defer timer.Stop()
-
 	for {
-		select {
-		case _, ok := <-events:
-			if !ok {
-				return
-			}
-		case <-timer.C:
+		// Draining to the close is the join.
+		if _, ok := <-events; !ok {
 			return
 		}
 	}

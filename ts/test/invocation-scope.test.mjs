@@ -125,38 +125,193 @@ test("http api v2 adapter joins the read it abandons at the drain deadline", asy
   }
 });
 
-test("http api v2 adapter does not hold the invocation on an uninterruptible producer", async () => {
+test("http api v2 adapter waits for a producer that cannot observe the unwind", async () => {
   const app = createApp();
 
-  const producer = (async function* liveStream() {
-    yield Buffer.from("data: first\n\n", "utf8");
-    // Never settles: the generator can be asked to unwind, but it is suspended
-    // inside an await, so the unwind cannot complete. The adapter's wait for it
-    // stays bounded instead of holding the invocation open forever.
-    await new Promise(() => {});
+  let unwound = false;
+  let releaseRead;
+  const gate = new Promise((resolve) => {
+    releaseRead = resolve;
+  });
+
+  const producer = (async function* heldStream() {
+    try {
+      yield Buffer.from("data: first\n\n", "utf8");
+      // Suspended inside an await the producer does not race against its own
+      // unwind, so asking it to unwind cannot complete until the await settles.
+      // The adapter waits for it anyway: a producer the invocation started must
+      // not still be running when the adapter returns. On Lambda the invocation
+      // (not the adapter) bounds a producer like this one.
+      await gate;
+    } finally {
+      unwound = true;
+    }
   })();
 
   app.get("/live", () => htmlStream(200, producer));
 
   const startedAt = Date.now();
-  const out = await app.serveAPIGatewayV2(apigwV2Event("/live"));
-
-  assert.equal(out.statusCode, 500);
-  assert.ok(
-    Date.now() - startedAt < STREAMING_BODY_TIMEOUT_MS + 2000,
-    "adapter held the invocation well past its drain budget",
+  const releaseTimer = setTimeout(
+    () => releaseRead(),
+    STREAMING_BODY_TIMEOUT_MS + 100,
   );
+
+  try {
+    const out = await app.serveAPIGatewayV2(apigwV2Event("/live"));
+
+    assert.equal(out.statusCode, 500);
+    assert.equal(
+      unwound,
+      true,
+      "the adapter returned while a producer it abandoned could still run",
+    );
+    assert.ok(
+      Date.now() - startedAt >= STREAMING_BODY_TIMEOUT_MS + 100,
+      "the adapter returned before the producer it gave up on had settled",
+    );
+  } finally {
+    clearTimeout(releaseTimer);
+  }
 });
 
-test("timeout middleware waits for the handler it timed out", async () => {
+test("alb and buffered v1 adapters drain and join a streaming body", async () => {
+  const app = createApp();
+
+  let albFinished = false;
+  app.get("/alb", () =>
+    htmlStream(
+      200,
+      (async function* albBody() {
+        try {
+          yield Buffer.from("alb body", "utf8");
+        } finally {
+          albFinished = true;
+        }
+      })(),
+    ),
+  );
+
+  const alb = await app.serveALB({
+    httpMethod: "GET",
+    path: "/alb",
+    headers: {},
+    body: "",
+    isBase64Encoded: false,
+  });
+  assert.equal(alb.statusCode, 200);
+  assert.equal(alb.body, "alb body");
+  assert.equal(albFinished, true, "the ALB adapter dropped a streaming body");
+
+  let v1Finished = false;
+  app.get("/v1", () =>
+    htmlStream(
+      200,
+      (async function* v1Body() {
+        try {
+          yield Buffer.from("v1 body", "utf8");
+        } finally {
+          v1Finished = true;
+        }
+      })(),
+    ),
+  );
+
+  const v1 = await app.serveAPIGatewayProxy({
+    httpMethod: "GET",
+    path: "/v1",
+    headers: {},
+    body: "",
+    isBase64Encoded: false,
+  });
+  assert.equal(v1.statusCode, 200);
+  assert.equal(v1.body, "v1 body");
+  assert.equal(v1Finished, true, "the buffered v1 adapter dropped a streaming body");
+});
+
+test("alb and buffered v1 adapters fail closed on an oversized body and join the producer", async () => {
+  const app = createApp();
+
+  let finished = false;
+  app.get("/huge", () =>
+    htmlStream(
+      200,
+      (async function* oversized() {
+        try {
+          // One chunk past the shared 4 MiB adapter budget.
+          yield Buffer.alloc(4 * 1024 * 1024 + 1, 0x61);
+        } finally {
+          finished = true;
+        }
+      })(),
+    ),
+  );
+
+  const alb = await app.serveALB({
+    httpMethod: "GET",
+    path: "/huge",
+    headers: {},
+    body: "",
+    isBase64Encoded: false,
+  });
+  assert.equal(alb.statusCode, 413);
+  assert.equal(finished, true, "the ALB adapter abandoned the producer of a size-denied body");
+
+  const v1 = await app.serveAPIGatewayProxy({
+    httpMethod: "GET",
+    path: "/huge",
+    headers: {},
+    body: "",
+    isBase64Encoded: false,
+  });
+  assert.equal(v1.statusCode, 413);
+  assert.equal(finished, true);
+});
+
+test("a limiter-wrapped streaming body is released and joined when the transport stops reading", async () => {
+  // MaxResponseBytes wraps the body, so a transport that stops reading it (a
+  // client disconnect) only reaches the producer if the wrapper forwards the
+  // unwind. The limiter is an async generator, so its return() propagates
+  // through the for-await chain.
+  const app = createApp({ limits: { maxResponseBytes: 1024 } });
+
+  let finished = false;
+  app.get("/limited", () =>
+    htmlStream(
+      200,
+      (async function* limited() {
+        try {
+          yield Buffer.from("first", "utf8");
+          await new Promise(() => {});
+        } finally {
+          finished = true;
+        }
+      })(),
+    ),
+  );
+
+  const resp = await app.serve(request("/limited"));
+  assert.ok(resp.bodyStream, "expected a limited body stream");
+
+  const iterator = resp.bodyStream[Symbol.asyncIterator]();
+  const first = await iterator.next();
+  assert.equal(first.done, false);
+
+  await iterator.return();
+  assert.equal(finished, true, "the limiter hid the producer's unwind");
+});
+
+test("timeout middleware never abandons a handler that ignores its abort signal", async () => {
   const app = createApp({ tier: "p0" });
   app.use(timeoutMiddleware({ defaultTimeoutMs: 5 }));
 
   let handlerFinished = false;
+  let sideEffectAfterReturn = false;
   app.get("/uncooperative", async () => {
-    // Ignores the abort signal entirely.
+    // Ignores the abort signal entirely and runs to completion on the invoking
+    // task, so the middleware cannot return before it finishes.
     await sleep(40);
     handlerFinished = true;
+    sideEffectAfterReturn = false;
     return {
       status: 200,
       headers: { "content-type": ["text/plain; charset=utf-8"] },
@@ -176,6 +331,7 @@ test("timeout middleware waits for the handler it timed out", async () => {
     true,
     "the middleware returned while the handler it started was still running",
   );
+  assert.equal(sideEffectAfterReturn, false);
 });
 
 test("timeout middleware still returns promptly for a cooperative handler", async () => {

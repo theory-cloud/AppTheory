@@ -6738,9 +6738,18 @@ function builtInAppTheoryHandler(runtime, name, effects) {
         headers: { "content-type": ["text/event-stream"] },
         cookies: [],
         body: Buffer.alloc(0),
+        // A live listener: it never terminates on its own, but it suspends at a
+        // yield between polls, so the runtime's unwind (iterator.return()) and
+        // the read it abandoned both settle promptly and the adapter can join
+        // them. A source parked inside an await the runtime cannot settle would
+        // hold the invocation until the Lambda function timeout instead of being
+        // abandoned by the adapter.
         bodyStream: (async function* () {
           yield Buffer.from('id: 1\nevent: message\ndata: {"ok":true}\n\n', "utf8");
-          await new Promise(() => {});
+          for (;;) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            yield Buffer.alloc(0);
+          }
         })(),
         isBase64: false,
       });

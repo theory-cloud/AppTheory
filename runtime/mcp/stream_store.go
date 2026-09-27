@@ -30,6 +30,15 @@ type StreamStore interface {
 	// Subscribe streams events after afterEventID. If afterEventID is empty,
 	// it streams from the beginning. If afterEventID is present, it must belong
 	// to the requested stream.
+	//
+	// The returned channel is the store's subscription lifetime. An
+	// implementation MUST close it when ctx is done, and MUST NOT leave a
+	// producer goroutine writing to it after that close: a streamed MCP body
+	// waits for the channel to close before the invocation that opened the
+	// subscription returns, so a subscription that ignores ctx is abandoned work
+	// in a frozen Lambda environment instead of a closed stream. A store that
+	// keeps the channel open past ctx does not leak a goroutine of its own, but
+	// it does hold the invocation open until the function timeout.
 	Subscribe(ctx context.Context, sessionID, streamID, afterEventID string) (<-chan StreamEvent, error)
 
 	// StreamForEvent returns the stream id that the given event id belongs to.
