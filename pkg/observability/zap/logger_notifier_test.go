@@ -95,7 +95,11 @@ func TestZapLogger_Notifier_SendsEntry_WithIDsAndFieldOverrides(t *testing.T) {
 	}
 }
 
-func TestZapLogger_Notifier_DropsWhenBufferFull_AndFlushContextCancel(t *testing.T) {
+// TestZapLogger_Notifier_DeliversSynchronously_AndDropsAfterClose pins E4: there
+// is no notification queue and no notifier goroutine, so an error log delivers
+// its notification before the logging call returns, and a closed logger drops
+// instead of queueing.
+func TestZapLogger_Notifier_DeliversSynchronously_AndDropsAfterClose(t *testing.T) {
 	t.Parallel()
 
 	base := ubzap.New(zapcore.NewCore(
@@ -104,11 +108,9 @@ func TestZapLogger_Notifier_DropsWhenBufferFull_AndFlushContextCancel(t *testing
 		zapcore.DebugLevel,
 	))
 
-	block := make(chan struct{})
-	notifier := &recordingNotifier{block: block}
+	notifier := &recordingNotifier{}
 	loggerAny, err := NewZapLogger(observability.LoggerConfig{
 		MaxRetries: 1,
-		BufferSize: 1,
 		Level:      "debug",
 		Format:     "json",
 	}, WithZapLogger(base), WithErrorNotifier(notifier))
@@ -120,33 +122,26 @@ func TestZapLogger_Notifier_DropsWhenBufferFull_AndFlushContextCancel(t *testing
 		t.Fatalf("expected *Logger, got %T", loggerAny)
 	}
 
-	// First enqueue is consumed by the notifier goroutine and blocks in Notify.
-	logger.Error("e1")
-	// Second enqueue fills the buffer.
-	logger.Error("e2")
-	// Third enqueue should drop.
-	logger.Error("e3")
+	logger.Error("delivered")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := logger.Flush(ctx); err != nil { // should return without waiting for blocked notifier
-		t.Fatalf("Flush: %v", err)
+	// No Flush: the delivery already happened inside the logging call, so no work
+	// is left for a later invocation of the execution environment to resume.
+	notifier.mu.Lock()
+	delivered := len(notifier.entries)
+	notifier.mu.Unlock()
+	if delivered != 1 {
+		t.Fatalf("expected the notification to be delivered before Error returned, got %d", delivered)
 	}
 
-	close(block) // unblock notifier to allow shutdown
 	if err := logger.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
-	stats := logger.GetStats()
-	if stats.EntriesDropped == 0 {
-		t.Fatalf("expected entries to be dropped when buffer is full, got %#v", stats)
-	}
-
-	// Directly exercise enqueue drop when notifier is closed/nil.
-	logger.core.enqueueNotification(observability.LogEntry{})
+	// A closed logger has nothing to deliver to, so the notification is dropped
+	// rather than handed to a consumer that is no longer running.
+	logger.core.notify(observability.LogEntry{})
 	if logger.core.entriesDropped.Load() == 0 {
-		t.Fatalf("expected enqueueNotification to record drops when closed, got %#v", logger.GetStats())
+		t.Fatalf("expected a drop after close, got %#v", logger.GetStats())
 	}
 }
 

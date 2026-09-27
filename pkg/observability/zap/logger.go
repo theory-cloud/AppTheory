@@ -65,10 +65,6 @@ type zapCore struct {
 	retryDelay time.Duration
 	maxRetries int
 
-	notifyMu sync.Mutex
-	notifyCh chan observability.LogEntry
-	notifyWg sync.WaitGroup
-
 	closeOnce sync.Once
 	closed    atomic.Bool
 
@@ -160,18 +156,8 @@ func NewZapLogger(config observability.LoggerConfig, options ...Option) (observa
 		notifier:   opts.notifier,
 		retryDelay: opts.retryDelay,
 		maxRetries: opts.maxRetries,
-		notifyCh:   nil,
 	}
 	zcore.lastError.Store("")
-
-	if zcore.notifier != nil {
-		if opts.bufferSize <= 0 {
-			opts.bufferSize = 256
-		}
-		zcore.notifyCh = make(chan observability.LogEntry, opts.bufferSize)
-		notifyCh := zcore.notifyCh
-		go zcore.runNotifier(notifyCh)
-	}
 
 	return &Logger{
 		core:   zcore,
@@ -298,14 +284,14 @@ func (l *Logger) WithSpanID(spanID string) observability.StructuredLogger {
 	return next
 }
 
+// Flush syncs the underlying logger. Error notifications are already delivered by
+// the logging call that produced them, so there is no queued notifier work to
+// wait for here; the context is accepted for interface compatibility.
 func (l *Logger) Flush(ctx context.Context) error {
 	if l == nil || l.core == nil {
 		return nil
 	}
-
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	_ = ctx
 
 	start := time.Now()
 	l.core.flushCount.Add(1)
@@ -314,8 +300,6 @@ func (l *Logger) Flush(ctx context.Context) error {
 		l.core.errorCount.Add(1)
 		l.core.lastError.Store(err.Error())
 	}
-
-	l.core.waitNotifier(ctx)
 
 	dur := time.Since(start)
 	l.core.lastFlushNanos.Store(time.Now().UnixNano())
@@ -399,7 +383,7 @@ func (l *Logger) logEntry(level string, message string, fields ...map[string]any
 	l.core.entriesLogged.Add(1)
 
 	if l.shouldNotify(level) {
-		l.core.enqueueNotification(l.notificationEntry(level, message, callFields))
+		l.core.notify(l.notificationEntry(level, message, callFields))
 	}
 }
 
@@ -494,34 +478,26 @@ func (l *Logger) notificationEntry(level string, message string, callFields map[
 	}
 }
 
-func (c *zapCore) enqueueNotification(entry observability.LogEntry) {
-	c.notifyMu.Lock()
-	defer c.notifyMu.Unlock()
-	if c.closed.Load() || c.notifyCh == nil {
+// notify delivers one error notification on the calling goroutine.
+//
+// There is no notifier goroutine and no queue: a process-lifetime consumer of
+// log entries outlives the Lambda invocation that produced them, resumes when
+// the environment is reused, and holds a handle to state that belongs to an
+// ended invocation, so the delivery happens inside the call that logs. The
+// delivery is bounded by the configured retry policy (maxRetries attempts with
+// retryDelay between them); a notifier that ignores its context and blocks
+// forever is bounded by the Lambda function timeout.
+func (c *zapCore) notify(entry observability.LogEntry) {
+	if c == nil || c.notifier == nil {
+		return
+	}
+	if c.closed.Load() {
 		c.entriesDropped.Add(1)
 		return
 	}
-
-	c.notifyWg.Add(1)
-	select {
-	case c.notifyCh <- entry:
-		return
-	default:
-		c.notifyWg.Done()
-		c.entriesDropped.Add(1)
-	}
-}
-
-func (c *zapCore) runNotifier(ch <-chan observability.LogEntry) {
-	if ch == nil {
-		return
-	}
-	for entry := range ch {
-		if err := c.notifyWithRetries(entry); err != nil {
-			c.errorCount.Add(1)
-			c.lastError.Store(err.Error())
-		}
-		c.notifyWg.Done()
+	if err := c.notifyWithRetries(entry); err != nil {
+		c.errorCount.Add(1)
+		c.lastError.Store(err.Error())
 	}
 }
 
@@ -553,37 +529,10 @@ func (c *zapCore) notifyWithRetries(entry observability.LogEntry) error {
 	return lastErr
 }
 
-func (c *zapCore) waitNotifier(ctx context.Context) {
-	if c.notifyCh == nil {
-		return
-	}
-
-	done := make(chan struct{})
-	go func() {
-		c.notifyWg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-ctx.Done():
-		return
-	case <-done:
-		return
-	}
-}
-
 func (c *zapCore) close() error {
 	var err error
 	c.closeOnce.Do(func() {
-		c.notifyMu.Lock()
 		c.closed.Store(true)
-		if c.notifyCh != nil {
-			close(c.notifyCh)
-			c.notifyCh = nil
-		}
-		c.notifyMu.Unlock()
-
-		c.notifyWg.Wait()
 		err = c.logger.Sync()
 		if err != nil {
 			c.errorCount.Add(1)

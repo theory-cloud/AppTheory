@@ -57,11 +57,16 @@ func TestZapCore_NotifyWithRetries_DefaultsAndStopsOnSuccess(t *testing.T) {
 	}
 }
 
-func TestZapCore_RunNotifier_NilChannelDoesNothing(t *testing.T) {
+func TestZapCore_RunNotifier_RemovedWithTheQueue(t *testing.T) {
 	t.Parallel()
 
+	// The process-lifetime notifier goroutine is gone: a nil-notifier core
+	// delivers nothing and starts nothing.
 	var core zapCore
-	core.runNotifier(nil)
+	core.notify(observability.LogEntry{})
+	if core.entriesDropped.Load() != 0 {
+		t.Fatalf("expected no drops for a nil notifier, got %d", core.entriesDropped.Load())
+	}
 }
 
 func TestZapCore_LastErrorString_EmptyWhenUnset(t *testing.T) {
