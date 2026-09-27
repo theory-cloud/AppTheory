@@ -102,6 +102,14 @@ bounded grace window that ended in abandoning work, that behavior is gone.
   delivered (`"...cannot be delivered by the ALB target group adapter"`, `"...by the API Gateway REST v1 adapter"`), and
   map a byte-budget overrun to HTTP 413 as the other adapters do. When the drain time budget expires the adapter closes
   the body and waits for the read it gave up on before failing closed — unconditionally.
+- **The response-streaming adapter.** The API Gateway REST v1 response-streaming route now delivers a
+  handler-supplied `Response.BodyStream` as well. A `BodyStream` is a channel, so it is converted through `streamjoin`
+  under the invocation's serve context before it is handed to the transport: the resulting body reports EOF only after
+  the stream's producer has exited, and closing it on a client disconnect cancels the serve context and joins the
+  producer the response-size limiter started. The route previously dropped a `BodyStream` and returned an empty 200
+  while the limiter's producer was still running. The Lambda Function URL streaming handler also unwinds the body's
+  async iterator when the first transport write fails, so a producer is never left suspended. Python delivers buffered
+  only, and the TypeScript buffered adapters already drain and join.
 - **Bodies the adapter cannot interrupt.** A handler-supplied body that is neither closable nor terminating cannot be
   interrupted by construction. It is read on the invoking goroutine, or waited for unconditionally, so the Lambda
   function timeout bounds it; the adapter no longer walks away from it after a grace window. Every body the runtime
