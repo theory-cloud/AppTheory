@@ -2803,6 +2803,10 @@ func (*WebSocketContext) SendJSONMessage(any) error
 
 func (*WebSocketContext) SendMessage([]byte) error
 
+func (*joinedBodyStream) Close() error
+
+func (*joinedBodyStream) Read([]byte) (int, error)
+
 func (*limitedBodyReader) Close() error
 
 func (*limitedBodyReader) Read([]byte) (int, error)

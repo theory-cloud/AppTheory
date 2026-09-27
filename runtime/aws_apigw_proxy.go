@@ -7,8 +7,11 @@ import (
 	"encoding/hex"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-lambda-go/events"
+
+	"github.com/theory-cloud/apptheory/v4/runtime/internal/streamjoin"
 )
 
 const apigatewayProxyStreamingRouteStageVariablePrefix = "APPTHEORYSTREAMINGV1"
@@ -46,9 +49,11 @@ func (a *App) serveAPIGatewayProxyLambda(ctx context.Context, event events.APIGa
 
 	// Response streaming hands the body to the transport, which reads it and
 	// closes it (which stops and joins the producer) itself. The serve context
-	// must stay live while the transport reads, so this path cancels nothing.
+	// must stay live while the transport reads, so this path cancels nothing
+	// here: a portable BodyStream is joined through streamjoin below, and that
+	// join cancels the serve context when the transport closes the body.
 	if streamingRoute || (!resp.IsBase64 && isTextEventStream(resp.Headers)) {
-		return apigatewayProxyStreamingResponseFromResponse(resp)
+		return apigatewayProxyStreamingResponseFromResponse(joinStreamingResponseBody(serveCtx, cancelServe, resp))
 	}
 
 	// Buffered delivery: the adapter owns the body's lifetime, so it cancels the
@@ -195,6 +200,117 @@ func apigatewayProxyStreamingRouteStageVariableName(method, resource string) str
 	return apigatewayProxyStreamingRouteStageVariablePrefix + hex.EncodeToString(sum[:16])
 }
 
+// joinStreamingResponseBody converts a portable BodyStream into a body the
+// response-streaming transport can read and close.
+//
+// The v1 response-streaming transport owns the body: it reads it and closes it
+// when the POST completes, errors, or the client disconnects — but only when
+// the body is an io.ReadCloser, and a portable BodyStream is a channel. Without
+// this conversion the transport would see an empty body and hold no handle on
+// the producers behind it, so the response limiter (limitBodyStream) and the
+// handler's own producer would outlive the invocation. The converted body joins
+// them (see joinedBodyStream).
+func joinStreamingResponseBody(ctx context.Context, cancel context.CancelFunc, resp Response) Response {
+	if resp.BodyStream == nil {
+		return resp
+	}
+
+	stream := resp.BodyStream
+	body := streamjoin.New(ctx, func(streamCtx context.Context, pw *io.PipeWriter) {
+		streamBodyStreamChunks(streamCtx, pw, stream)
+	})
+	resp.BodyReader = &joinedBodyStream{body: body, cancel: cancel, stream: stream}
+	resp.BodyStream = nil
+	return resp
+}
+
+// streamBodyStreamChunks copies a portable BodyStream's chunks into the pipe the
+// streamjoin body reads, preserving chunk boundaries and terminal stream errors.
+func streamBodyStreamChunks(ctx context.Context, pw *io.PipeWriter, stream BodyStream) {
+	defer safeClosePipeWriter(pw)
+
+	if stream == nil {
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case chunk, ok := <-stream:
+			if !ok {
+				return
+			}
+			if chunk.Err != nil {
+				closePipeWriterWithError(pw, chunk.Err)
+				return
+			}
+			if len(chunk.Bytes) == 0 {
+				continue
+			}
+			if _, err := pw.Write(chunk.Bytes); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// joinedBodyStream is the closable body a response-streaming transport receives
+// for a portable BodyStream response.
+//
+// streamjoin turns the stream into a reader that reports EOF only after its
+// producer has returned. This wrapper adds the two releases the transport's
+// close must also perform on the stream that produced it:
+//
+//   - it cancels the serve context, which stops a response limiter
+//     (limitBodyStream) blocked on the abandoned body;
+//   - it drains the limiter's output channel to its close, so the limiter's
+//     producer is joined rather than merely signaled.
+//
+// Reaching EOF performs the same release, so a transport that drains the body
+// to completion also leaves no producer behind.
+type joinedBodyStream struct {
+	body   *streamjoin.Body
+	cancel context.CancelFunc
+	stream BodyStream
+
+	once sync.Once
+}
+
+func (b *joinedBodyStream) Read(p []byte) (int, error) {
+	if b == nil || b.body == nil {
+		return 0, io.EOF
+	}
+
+	n, err := b.body.Read(p)
+	if err != nil {
+		b.release()
+	}
+	return n, err
+}
+
+func (b *joinedBodyStream) Close() error {
+	if b == nil {
+		return nil
+	}
+
+	var err error
+	if b.body != nil {
+		err = b.body.Close()
+	}
+	b.release()
+	return err
+}
+
+func (b *joinedBodyStream) release() {
+	b.once.Do(func() {
+		if b.cancel != nil {
+			b.cancel()
+		}
+		joinAbandonedBodyStream(b.stream)
+	})
+}
+
 // streamingBodyReader is the body a response-streaming transport is handed.
 //
 // It is an io.Closer for every combination of a buffered prefix and a streaming
@@ -226,6 +342,11 @@ func (r *streamingBodyReader) Close() error {
 	return firstErr
 }
 
+// apigatewayProxyStreamingResponseFromResponse builds the streaming envelope.
+//
+// A portable BodyStream is not a reader, so it MUST already have been converted
+// to a closable reader by joinStreamingResponseBody; a BodyStream left on the
+// response is dropped, which is why the only caller converts first.
 func apigatewayProxyStreamingResponseFromResponse(resp Response) *events.APIGatewayProxyStreamingResponse {
 	body := io.Reader(bytes.NewReader(resp.Body))
 	var closers []io.Closer

@@ -625,6 +625,162 @@ func TestTimeoutMiddlewareNeverAbandonsAnUncooperativeHandler(t *testing.T) {
 	assertNoGoroutineFor(t, "TimeoutMiddleware.func", "timeout middleware returned")
 }
 
+// streamingRouteRequest builds a v1 proxy event that takes the response-streaming
+// branch: the route carries the streaming stage variable.
+func streamingRouteRequest(method, resource string) events.APIGatewayProxyRequest {
+	return events.APIGatewayProxyRequest{
+		Resource:   resource,
+		Path:       resource,
+		HTTPMethod: method,
+		StageVariables: map[string]string{
+			apigatewayProxyStreamingRouteStageVariableName(method, resource): "1",
+		},
+	}
+}
+
+// TestServeAPIGatewayProxyLambdaStreamsBodyStreamThroughTheLimiter covers R1 on
+// the delivery path: a portable BodyStream response on the v1 response-streaming
+// route must be handed to the transport as bytes, not silently dropped into an
+// empty 200. The limiter is engaged (MaxResponseBytes set), so the bytes also
+// cross limitBodyStream.
+func TestServeAPIGatewayProxyLambdaStreamsBodyStreamThroughTheLimiter(t *testing.T) {
+	app := New(
+		WithTier(TierP1),
+		WithIDGenerator(fixedIDGenerator("req_stream")),
+		WithLimits(Limits{MaxResponseBytes: 4096}),
+	)
+	app.Get("/mcp", func(_ *Context) (*Response, error) {
+		return &Response{
+			Status:     200,
+			Headers:    map[string][]string{"content-type": {"text/event-stream"}},
+			BodyStream: StreamBytes([]byte("one"), []byte("two")),
+		}, nil
+	})
+
+	out := app.serveAPIGatewayProxyLambda(context.Background(), streamingRouteRequest("GET", "/mcp"))
+	streaming, ok := out.(*events.APIGatewayProxyStreamingResponse)
+	if !ok {
+		t.Fatalf("expected a streaming response, got %T", out)
+	}
+	if streaming.StatusCode != 200 {
+		t.Fatalf("status: got %d want 200", streaming.StatusCode)
+	}
+
+	body, err := io.ReadAll(streaming.Body)
+	if err != nil {
+		t.Fatalf("read streaming body: %v", err)
+	}
+	if string(body) != "onetwo" {
+		t.Fatalf("streaming body = %q, want %q", string(body), "onetwo")
+	}
+	assertNoGoroutineFor(t, "limitBodyStream.func", "v1 streaming body delivered to EOF")
+	assertNoGoroutineFor(t, "internal/streamjoin.New.func", "v1 streaming body delivered to EOF")
+}
+
+// TestServeAPIGatewayProxyLambdaStreamingRouteJoinsAbandonedBodyStream covers R1
+// on the disconnect path, and is also the strict join test for the
+// limitBodyStream baseline entry: with MaxResponseBytes set, the handler's
+// BodyStream is produced by a goroutine the limiter started, and the serve
+// context is a plain background context, so nothing but the transport's close
+// can release that producer. Closing the body must cancel the serve context and
+// join the limiter's producer; a version that returned an unclosable reader, or
+// that canceled without joining, leaves the limiter goroutine running forever.
+func TestServeAPIGatewayProxyLambdaStreamingRouteJoinsAbandonedBodyStream(t *testing.T) {
+	app := New(
+		WithTier(TierP1),
+		WithIDGenerator(fixedIDGenerator("req_stream")),
+		WithLimits(Limits{MaxResponseBytes: 4096}),
+	)
+
+	never := make(chan StreamChunk)
+	app.Get("/mcp", func(_ *Context) (*Response, error) {
+		return &Response{
+			Status:     200,
+			Headers:    map[string][]string{"content-type": {"text/event-stream"}},
+			BodyStream: never,
+		}, nil
+	})
+
+	out := app.serveAPIGatewayProxyLambda(context.Background(), streamingRouteRequest("GET", "/mcp"))
+	streaming, ok := out.(*events.APIGatewayProxyStreamingResponse)
+	if !ok {
+		t.Fatalf("expected a streaming response, got %T", out)
+	}
+
+	closer, ok := streaming.Body.(io.Closer)
+	if !ok {
+		t.Fatalf("expected the streaming body to be closable, got %T", streaming.Body)
+	}
+	if err := closer.Close(); err != nil {
+		t.Fatalf("close streaming body: %v", err)
+	}
+
+	assertNoGoroutineFor(t, "limitBodyStream.func", "v1 streaming client disconnect")
+	assertNoGoroutineFor(t, "internal/streamjoin.New.func", "v1 streaming client disconnect")
+}
+
+// TestJoinStreamingResponseBodyConvertsBodyStreamToAClosableReader pins the R1
+// shape: a BodyStream response becomes a closable BodyReader and carries no
+// BodyStream to the transport, and closing it releases the runtime's producer.
+func TestJoinStreamingResponseBodyConvertsBodyStreamToAClosableReader(t *testing.T) {
+	app := New(WithTier(TierP1))
+	app.Get("/mcp", func(ctx *Context) (*Response, error) {
+		stream := make(chan StreamChunk)
+		serveDone := ctx.Context().Done()
+		go func() {
+			<-serveDone
+			close(stream)
+		}()
+		return &Response{Status: 200, BodyStream: stream}, nil
+	})
+
+	serveCtx, cancelServe, resp := app.serveScoped(context.Background(), Request{Method: "GET", Path: "/mcp"})
+	joined := joinStreamingResponseBody(serveCtx, cancelServe, resp)
+
+	if joined.BodyStream != nil {
+		t.Fatalf("expected the BodyStream to be converted, got %v", joined.BodyStream)
+	}
+	closer, ok := joined.BodyReader.(io.Closer)
+	if !ok {
+		t.Fatalf("expected a closable body reader, got %T", joined.BodyReader)
+	}
+	if err := closer.Close(); err != nil {
+		t.Fatalf("close joined body: %v", err)
+	}
+	assertNoGoroutineFor(t, "internal/streamjoin.New.func", "joined body closed")
+
+	plain := joinStreamingResponseBody(context.Background(), nil, Response{Status: 200, Body: []byte("plain")})
+	if plain.BodyReader != nil || plain.BodyStream != nil {
+		t.Fatal("expected a response without a BodyStream to pass through unchanged")
+	}
+}
+
+// TestStreamjoinBodyCloseWaitsForASlowProducer is the strict join test for the
+// streamjoin baseline entry: a producer that lingers after the body is closed
+// must finish before Close returns. Removing the join-wait lets Close return
+// while the producer is still running, which the elapsed-time assertion catches.
+func TestStreamjoinBodyCloseWaitsForASlowProducer(t *testing.T) {
+	const linger = 200 * time.Millisecond
+	finished := make(chan struct{})
+
+	body := streamjoin.New(context.Background(), func(ctx context.Context, _ *io.PipeWriter) {
+		defer close(finished)
+		<-ctx.Done()
+		time.Sleep(linger)
+	})
+
+	started := time.Now()
+	if err := body.Close(); err != nil {
+		t.Fatalf("close streamjoin body: %v", err)
+	}
+	elapsed := time.Since(started)
+	if elapsed < linger/2 {
+		t.Fatalf("Close returned after %s, before the producer exited (linger %s)", elapsed, linger)
+	}
+	assertClosedBeforeReturn(t, finished)
+	assertNoGoroutineFor(t, "internal/streamjoin.New.func", "streamjoin close with a slow producer")
+}
+
 func closePipeWriter(pw *io.PipeWriter) {
 	if pw == nil {
 		return
