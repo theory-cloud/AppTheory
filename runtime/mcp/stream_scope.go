@@ -131,6 +131,23 @@ func (r *scopedBodyReader) release() {
 	})
 }
 
+// scopeResponseBody binds a response body reader to the scope that produced it,
+// unconditionally.
+//
+// The wrapper is what releases the scope: it closes the inner body (when it has
+// a closer) and then stops the scope on both EOF and Close. Installing it only
+// when the inner reader happened to implement io.Closer would let a different
+// body type skip the join entirely, so the wrapper is always installed and the
+// closer is optional: a non-closable body still stops and joins the scope's
+// producers, it just cannot also close the body underneath them.
+func scopeResponseBody(scope *streamScope, reader io.Reader) io.Reader {
+	wrapper := &scopedBodyReader{inner: reader, scope: scope}
+	if closer, ok := reader.(io.Closer); ok {
+		wrapper.closer = closer
+	}
+	return wrapper
+}
+
 // streamToSSE serializes a stream store subscription as an SSE response body
 // whose reader joins every producer the stream started.
 func (s *Server) streamToSSE(scope *streamScope, sessionID string, events <-chan StreamEvent) (*apptheory.Response, error) {
@@ -149,9 +166,7 @@ func (s *Server) streamToSSE(scope *streamScope, sessionID string, events <-chan
 	}
 	resp.Headers[headerMcpSessionID] = []string{sessionID}
 
-	if closer, ok := resp.BodyReader.(io.Closer); ok {
-		resp.BodyReader = &scopedBodyReader{inner: resp.BodyReader, closer: closer, scope: scope}
-	}
+	resp.BodyReader = scopeResponseBody(scope, resp.BodyReader)
 	return resp, nil
 }
 

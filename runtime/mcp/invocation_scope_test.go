@@ -312,6 +312,99 @@ func TestStreamedBodyReleaseJoinsScopeBeforeClosing(t *testing.T) {
 	}
 }
 
+// TestScopeResponseBodyAlwaysReleasesScope covers R4: the scope-releasing
+// wrapper is installed for every body reader, so a future BodyReader type that
+// does not implement io.Closer cannot skip the join.
+func TestScopeResponseBodyAlwaysReleasesScope(t *testing.T) {
+	t.Run("on EOF", func(t *testing.T) {
+		scope := newStreamScope(context.Background())
+		relayDone := make(chan struct{})
+		scope.goRun(func(ctx context.Context) {
+			<-ctx.Done()
+			close(relayDone)
+		})
+
+		// strings.Reader is not an io.Closer, so the wrapper used to be skipped
+		// for this shape and the scope was never released.
+		reader := scopeResponseBody(scope, strings.NewReader("body"))
+		if _, ok := reader.(*scopedBodyReader); !ok {
+			t.Fatalf("expected the scope wrapper to be installed unconditionally, got %T", reader)
+		}
+
+		body, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatalf("read scoped body: %v", err)
+		}
+		if string(body) != "body" {
+			t.Fatalf("scoped body = %q", string(body))
+		}
+
+		select {
+		case <-relayDone:
+		case <-time.After(time.Second):
+			t.Fatal("reaching EOF on a non-closable scoped body did not release the scope")
+		}
+		assertNoGoroutineFor(t, "(*streamScope).goRun.func", "non-closable scoped body served to EOF")
+	})
+
+	t.Run("on close", func(t *testing.T) {
+		scope := newStreamScope(context.Background())
+		relayDone := make(chan struct{})
+		scope.goRun(func(ctx context.Context) {
+			<-ctx.Done()
+			close(relayDone)
+		})
+
+		reader := scopeResponseBody(scope, strings.NewReader("body"))
+		closer, ok := reader.(io.Closer)
+		if !ok {
+			t.Fatalf("expected the wrapped reader to be closable, got %T", reader)
+		}
+		if err := closer.Close(); err != nil {
+			t.Fatalf("close scoped body: %v", err)
+		}
+
+		select {
+		case <-relayDone:
+		case <-time.After(time.Second):
+			t.Fatal("closing a non-closable scoped body did not release the scope")
+		}
+		assertNoGoroutineFor(t, "(*streamScope).goRun.func", "non-closable scoped body closed")
+	})
+}
+
+// TestStreamToSSEInstallsTheScopeWrapper proves streamToSSE routes its body
+// through the unconditional scope wrapper, and that releasing the body joins the
+// SSE forwarder.
+func TestStreamToSSEInstallsTheScopeWrapper(t *testing.T) {
+	s := NewServer("test-server", "1.0.0")
+	scope := newStreamScope(context.Background())
+	events := make(chan StreamEvent)
+
+	resp, err := s.streamToSSE(scope, "sess-join", events)
+	if err != nil {
+		t.Fatalf("streamToSSE: %v", err)
+	}
+	if _, ok := resp.BodyReader.(*scopedBodyReader); !ok {
+		t.Fatalf("expected the scope wrapper to be installed, got %T", resp.BodyReader)
+	}
+
+	// The store closes its subscription when the invocation ends, which is the
+	// close the forwarder drains inside the scope's stop.
+	close(events)
+
+	closer, ok := resp.BodyReader.(io.Closer)
+	if !ok {
+		t.Fatalf("expected the scoped body to be closable, got %T", resp.BodyReader)
+	}
+	if err := closer.Close(); err != nil {
+		t.Fatalf("close scoped body: %v", err)
+	}
+
+	assertNoGoroutineFor(t, "forwardStreamEvents", "streamed body released")
+	assertNoGoroutineFor(t, "(*streamScope).goRun.func", "streamed body released")
+}
+
 func streamToolsCallBody(t *testing.T, name string) []byte {
 	t.Helper()
 
