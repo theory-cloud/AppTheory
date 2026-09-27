@@ -64,6 +64,7 @@ import {
   requestFromAPIGatewayV2,
   requestFromLambdaFunctionURL,
   requestFromWebSocketEvent,
+  settleWithin,
 } from "./internal/aws-http.js";
 import {
   serveLambdaFunctionURLStreaming,
@@ -2491,6 +2492,16 @@ function timeoutForContext(
   return timeoutMs;
 }
 
+// TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS bounds how long the timeout middleware waits
+// for the handler it timed out to unwind before returning the timeout response.
+//
+// A handler that observes its abort signal unwinds immediately and is never left
+// running. A handler that ignores cancellation is the case this middleware exists
+// to bound, so its response is not held open for the handler's full runtime; it is
+// the one documented place where a handler the middleware started can still be
+// running when the response is returned.
+const TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS = 250;
+
 /** Creates middleware that fails requests closed when timeout policy expires. */
 export function timeoutMiddleware(config: TimeoutConfig = {}): Middleware {
   const cfg = normalizeTimeoutConfig(config);
@@ -2538,9 +2549,22 @@ export function timeoutMiddleware(config: TimeoutConfig = {}): Middleware {
         controller.signal.removeEventListener("abort", onAbort);
     });
 
+    const run = Promise.resolve().then(() => next(handlerCtx));
     try {
-      const run = Promise.resolve().then(() => next(handlerCtx));
       return await Promise.race([run, timeoutPromise]);
+    } catch (err) {
+      // The deadline won and the handler chain's abort signal has fired, but the
+      // invocation must not return while the handler this middleware started can
+      // still run: the Lambda execution environment is frozen once the handler
+      // returns, so detached work resumes at an unpredictable time (or never).
+      // Wait for the handler to unwind.
+      //
+      // The wait is bounded. A handler that observes its abort signal unwinds
+      // immediately and is therefore never left running; a handler that ignores
+      // cancellation is exactly the case this middleware exists to bound, so its
+      // response is not held open for the handler's full runtime.
+      await settleWithin(run, TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS);
+      throw err;
     } finally {
       clearTimeout(timer);
       removeTimeoutAbortListener();

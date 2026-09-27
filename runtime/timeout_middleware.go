@@ -13,6 +13,16 @@ type TimeoutConfig struct {
 	TimeoutMessage    string
 }
 
+// timeoutMiddlewareJoinGrace bounds how long the timeout middleware waits for
+// the handler it timed out to unwind before returning the timeout response.
+//
+// A handler that observes its cancelled context returns immediately and is never
+// left running. A handler that ignores cancellation is the case this middleware
+// exists to bound, so its response is not held open for the handler's full
+// runtime; it is the one documented place where a handler the middleware started
+// can still be running when the response is returned.
+const timeoutMiddlewareJoinGrace = 250 * time.Millisecond
+
 func TimeoutMiddleware(config TimeoutConfig) Middleware {
 	cfg := normalizeTimeoutConfig(config)
 
@@ -51,18 +61,24 @@ func TimeoutMiddleware(config TimeoutConfig) Middleware {
 			case res := <-ch:
 				return res.resp, res.err
 			case <-timeoutCtx.Done():
-				// The timeout has expired, and the handler chain's context is
+				// The deadline expired and the handler chain's context is
 				// cancelled, but the invocation must not return while the handler
-				// this middleware started can still run: the work would outlive
-				// its invocation (in Lambda the environment is frozen after the
-				// handler returns, so a detached handler resumes at an
-				// unpredictable time or never). Wait for the handler to unwind
-				// before reporting the timeout.
+				// this middleware started can still run: in Lambda the execution
+				// environment is frozen once the handler returns, so detached work
+				// resumes at an unpredictable time (or never). Wait for the
+				// handler to unwind.
 				//
-				// The wait is bounded by the handler's own cooperation: a handler
-				// that observes its context returns immediately, and one that
-				// ignores it holds the invocation until it returns on its own.
-				<-ch
+				// The wait is bounded. A handler that observes its context
+				// returns immediately, and is therefore never left running; a
+				// handler that ignores cancellation is exactly the case this
+				// middleware exists to bound, so its response is not held open
+				// for the handler's full runtime.
+				joinTimer := time.NewTimer(timeoutMiddlewareJoinGrace)
+				defer joinTimer.Stop()
+				select {
+				case <-ch:
+				case <-joinTimer.C:
+				}
 				return nil, &AppError{Code: errorCodeTimeout, Message: cfg.TimeoutMessage}
 			}
 		}

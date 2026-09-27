@@ -376,15 +376,48 @@ export function requestFromLambdaFunctionURL(
   };
 }
 
-// unblockStreamingBody best-effort unblocks a pending async read so the drain
-// can exit instead of lingering until the producer writes or closes. It is the
-// TS-idiomatic counterpart of the Go adapter closing only *io.PipeReader:
-// a Node.js Readable is destroyed; an async generator object is asked to
-// unwind (fire-and-forget). A generator blocked inside a producer await that
-// never resolves stays pending, bounded by the Lambda lifecycle.
-function unblockStreamingBody(
+// STREAMING_BODY_UNWIND_GRACE_MS bounds how long the buffered adapters wait for
+// an unblocked streaming body to finish unwinding. A producer that ignores the
+// unwind cannot be interrupted by construction, so the wait is bounded rather
+// than holding the invocation open indefinitely.
+const STREAMING_BODY_UNWIND_GRACE_MS = 100;
+
+// settleWithin resolves once the promise settles or the grace window elapses,
+// whichever happens first. Callers use it to join work they started without
+// holding the invocation open for a producer that never settles.
+export async function settleWithin(
+  promise: Promise<unknown>,
+  graceMs: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      promise.then(
+        () => {},
+        () => {},
+      ),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, graceMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+// unblockStreamingBody unblocks a pending async read so the drain can exit, and
+// waits for the producer to unwind. The wait means the adapter cannot return
+// with a producer goroutine equivalent (a pending async task) still running: in
+// Lambda the execution environment is frozen once the handler returns, so an
+// abandoned producer resumes at an unpredictable time or never.
+//
+// It is the TS-idiomatic counterpart of the Go adapter closing a body reader: a
+// Node.js Readable is destroyed; an async generator object is asked to unwind
+// through iterator.return(). A producer blocked inside an await that never
+// resolves is waited for only up to the unwind grace window.
+async function unblockStreamingBody(
   bodyStream: AsyncIterable<Buffer> | null | undefined,
-): void {
+): Promise<void> {
   const unblockable = bodyStream as unknown as {
     destroy?: () => unknown;
     return?: () => unknown;
@@ -401,8 +434,8 @@ function unblockStreamingBody(
   if (typeof unblockable.return === "function") {
     try {
       const result = unblockable.return() as Promise<unknown> | undefined;
-      if (result && typeof result.catch === "function") {
-        result.catch(() => {});
+      if (result && typeof result.then === "function") {
+        await settleWithin(result, STREAMING_BODY_UNWIND_GRACE_MS);
       }
     } catch {
       // best-effort unblock
@@ -444,15 +477,29 @@ async function drainStreamingBodyForBufferedAdapter(
   for (;;) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) {
-      unblockStreamingBody(bodyStream);
+      await unblockStreamingBody(bodyStream);
       throw new StreamingBodyBudgetError(
         "streaming body did not terminate within the adapter budget",
       );
     }
-    const next = await withDeadline(iterator.next(), remainingMs);
+    const pending = iterator.next();
+    let next: IteratorResult<Buffer, unknown>;
+    try {
+      next = await withDeadline(pending, remainingMs);
+    } catch (err) {
+      if (err instanceof StreamingBodyBudgetError) {
+        // The deadline won while this read was still pending. Unblock the
+        // producer and wait for the abandoned read to settle before failing
+        // closed, so the drain cannot return while a producer it started is
+        // still running.
+        await unblockStreamingBody(bodyStream);
+        await settleWithin(pending, STREAMING_BODY_UNWIND_GRACE_MS);
+      }
+      throw err;
+    }
     if (next.done) {
       if (total === 0 && Date.now() >= deadline) {
-        unblockStreamingBody(bodyStream);
+        await unblockStreamingBody(bodyStream);
         throw new StreamingBodyBudgetError(
           "streaming body did not terminate within the adapter budget",
         );
@@ -462,7 +509,7 @@ async function drainStreamingBodyForBufferedAdapter(
     const chunk = Buffer.from(next.value);
     total += chunk.length;
     if (total > maxBytes) {
-      unblockStreamingBody(bodyStream);
+      await unblockStreamingBody(bodyStream);
       throw new StreamingBodyTooLargeError();
     }
     chunks.push(chunk);

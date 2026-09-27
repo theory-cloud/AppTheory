@@ -6,6 +6,7 @@ export declare function requestFromAPIGatewayProxy(event: APIGatewayProxyRequest
 export declare function requestFromALBTargetGroup(event: ALBTargetGroupRequest): Request;
 export declare function requestFromAPIGatewayV2(event: APIGatewayV2HTTPRequest): Request;
 export declare function requestFromLambdaFunctionURL(event: LambdaFunctionURLRequest): Request;
+export declare function settleWithin(promise: Promise<unknown>, graceMs: number): Promise<void>;
 export declare function apigatewayV2ResponseFromResponse(resp: Response): Promise<APIGatewayV2HTTPResponse>;
 export declare function lambdaFunctionURLResponseFromResponse(resp: Response): Promise<LambdaFunctionURLResponse>;
 export declare function apigatewayProxyResponseFromResponse(resp: Response): APIGatewayProxyResponse;

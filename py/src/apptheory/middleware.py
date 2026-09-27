@@ -22,6 +22,17 @@ class _TimeoutCancellationCarrier:
     cancelled: threading.Event
 
 
+# _TIMEOUT_MIDDLEWARE_JOIN_GRACE bounds how long the timeout middleware waits for
+# the handler it timed out to unwind before returning the timeout response.
+#
+# A handler that observes its cancellation carrier returns immediately and is
+# never left running. A handler that ignores cancellation is the case this
+# middleware exists to bound, so its response is not held open for the handler's
+# full runtime; it is the one documented place where a handler the middleware
+# started can still be running when the response is returned.
+_TIMEOUT_MIDDLEWARE_JOIN_GRACE = 0.25
+
+
 def _clone_context_with_timeout_ctx(ctx: Context, carrier: Any) -> Context:
     clone = Context(
         request=ctx.request,
@@ -70,7 +81,19 @@ def timeout_middleware(config: TimeoutConfig) -> Middleware:
         thread.start()
 
         if not done.wait(timeout=float(timeout_ms) / 1000.0):
+            # The deadline expired and the handler chain's cancellation token is
+            # set, but the invocation must not return while the handler this
+            # middleware started can still run: the Lambda execution environment
+            # is frozen once the handler returns, so detached work resumes at an
+            # unpredictable time (or never). Wait for the handler to unwind.
+            #
+            # The wait is bounded. A handler that observes the cancellation
+            # carrier returns immediately and is never left running; a handler
+            # that ignores cancellation is exactly the case this middleware
+            # exists to bound, so its response is not held open for the handler's
+            # full runtime.
             cancelled.set()
+            thread.join(timeout=_TIMEOUT_MIDDLEWARE_JOIN_GRACE)
             raise AppError("app.timeout", cfg.timeout_message)
 
         if "exc" in result:
