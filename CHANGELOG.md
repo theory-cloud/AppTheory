@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.5.0](https://github.com/theory-cloud/AppTheory/compare/v4.4.2...v4.5.0) (2026-09-27)
+
+
+### Features
+
+* **cdk:** add on-failure destination to stream mappings ([a4c6d80](https://github.com/theory-cloud/AppTheory/commit/a4c6d80ac68f64990bcbbca522cfa28b41ef005f))
+* **cdk:** add on-failure destination to stream mappings ([bea5f1d](https://github.com/theory-cloud/AppTheory/commit/bea5f1d48a3b019f28a1ea9e80bd0ebd37f522bc))
+
 ## [4.5.0-rc](https://github.com/theory-cloud/AppTheory/compare/v4.4.2...v4.5.0-rc) (2026-09-27)
 
 
