@@ -310,12 +310,11 @@ func (s *Server) runTaskTool(ctx context.Context, record TaskRecord, args json.R
 
 	result, err := s.registry.Call(ctx, record.ToolName, args)
 	if err != nil {
-		if ctx.Err() != nil {
-			// The invocation ended before the body finished (client disconnect,
-			// request cancellation, or the invocation deadline). Record a
-			// terminal state instead of leaving the task `working` forever.
-			return s.finishTaskCanceled(ctx, record)
-		}
+		// Every runtime records the body's own outcome here: a body error is a
+		// failed task, including an error caused by the invocation ending before
+		// the body finished. `canceled` is the client-requested state, recorded
+		// by tasks/cancel; updateTask then re-reads the stored terminal state, so
+		// a body that errors after a client cancel still reports `canceled`.
 		if rpcErr, ok := toolLifecycleRPCError(err); ok {
 			return s.finishTask(ctx, record, nil, rpcErr)
 		}
@@ -330,20 +329,6 @@ func (s *Server) runTaskTool(ctx context.Context, record TaskRecord, args json.R
 		return s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: "task result marshal failed"})
 	}
 	return s.finishTask(ctx, record, resultBytes, nil)
-}
-
-// finishTaskCanceled records a task the invocation could not carry to
-// completion, so polling clients get a terminal answer instead of a task that
-// stays `working` forever.
-func (s *Server) finishTaskCanceled(ctx context.Context, record TaskRecord) Task {
-	record.Task.LastUpdatedAt = time.Now().UTC()
-	record.Task.Status = TaskStatusCanceled
-	if record.Task.StatusMessage == "" {
-		record.Task.StatusMessage = taskCanceledMessage
-	}
-	record.Result = nil
-	record.Error = nil
-	return s.updateTask(ctx, record)
 }
 
 func (s *Server) finishTask(ctx context.Context, record TaskRecord, result json.RawMessage, rpcErr *RPCError) Task {
@@ -583,6 +568,10 @@ func (t *taskExecutionTracker) track(sessionID, taskID string, cancel context.Ca
 		t.mu.Lock()
 		delete(t.cancels, key)
 		t.mu.Unlock()
+		// Release the tracked context once the body has finished. It is derived
+		// from the request context, so this only frees its timer and child
+		// state; a concurrent tasks/cancel that already ran it is idempotent.
+		cancel()
 	}
 }
 
