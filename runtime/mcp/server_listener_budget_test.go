@@ -116,6 +116,15 @@ func TestGET_NoLastEventID_WithInitialSessionListenerBudget_NoRemainingTime_Keep
 	if !strings.HasPrefix(frame, ":") || !strings.Contains(frame, "keepalive") {
 		t.Fatalf("expected keepalive comment frame, got:\n%s", frame)
 	}
+
+	// The listener is joined to its body: close the body so the keepalive
+	// producer is stopped and waited for instead of being left blocked on a
+	// pipe nobody reads (which would outlive this test).
+	if closer, ok := resp.BodyReader.(io.Closer); ok {
+		if err := closer.Close(); err != nil {
+			t.Fatalf("close listener body: %v", err)
+		}
+	}
 }
 
 func TestGET_NoLastEventID_WithInitialSessionListenerBudget_ClosesBeforeParentDeadline(t *testing.T) {
