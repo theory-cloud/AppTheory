@@ -90,6 +90,29 @@ handler — not only the routes the construct owns. Prefer `AppTheoryRestApi` / 
 existing `scopePermissionToMethod` prop for REST API v1 route bundles; this is the HTTP API v2 counterpart of that
 prop and mirrors it in name, default, and semantics.
 
+### Stream mapping on-failure destinations
+
+`AppTheoryDynamoDBStreamMapping` and `AppTheoryKinesisStreamMapping` gain an optional `onFailure` destination for the
+records AWS Lambda discards after retries are exhausted or `maxRecordAge` is exceeded. When `onFailure` is omitted the
+constructs emit no `DestinationConfig` and grant no destination permission, so existing deployments synthesize exactly
+the same templates as before and no action is required.
+
+Pass an event source DLQ the same way the CDK event sources do: `new lambdaEventSources.SqsDlq(queue)`,
+`new lambdaEventSources.SnsDlq(topic)`, or `new lambdaEventSources.S3OnFailureDestination(bucket)`. Binding the DLQ adds
+exactly the permission the destination needs to the consumer execution role — `sqs:SendMessage` (with the read-only
+`sqs:GetQueueAttributes` and `sqs:GetQueueUrl` actions CDK pairs with it) for a queue, `sns:Publish` for a topic.
+
+Lambda only sends to the destination once retries are exhausted or the record ages out, so a mapping that leaves
+`retryAttempts` and `maxRecordAge` unbounded (the AWS Lambda default of `-1`, retry until the record expires in the
+stream) never sends anything. Pair `onFailure` with a bounded `retryAttempts` and `bisectBatchOnError: true` so a poison
+record is retained for repair instead of blocking its shard. `reportBatchItemFailures` is independent of the destination
+and remains on by default.
+
+The destination carries metadata about the discarded batch — shard ID and sequence numbers — not the record payloads, so
+original records must be re-read from the stream while they are still inside the stream retention window. With
+`bisectBatchOnError` enabled, the metadata's `BatchSize` can exceed 1 because Lambda consolidates the failed messages it
+writes to the destination.
+
 ## v3.x line
 
 ### Toolchain and CDK dependency floors
