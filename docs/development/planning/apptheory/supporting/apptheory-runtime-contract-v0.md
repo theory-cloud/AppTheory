@@ -114,6 +114,36 @@ Late error rules:
 - If an error occurs **after** the first chunk, the runtime MUST NOT change `status`/`headers`/`cookies`.
   - Test harnesses MUST surface the late error as a deterministic `stream_error_code` (fixture-backed).
 
+## Invocation-scoped work (normative)
+
+A Lambda invocation ends when the handler has returned its response and the adapter has stopped consuming the response
+body. Work the runtime starts for one invocation MUST NOT still be running at that point: in Lambda the execution
+environment is frozen after the handler returns, so detached work resumes at an unpredictable time on a later
+invocation of the same environment (or never), and can half-apply writes, lose results, or hold state that belongs to
+an ended invocation.
+
+Rules:
+
+- Every goroutine, thread, task or promise the runtime starts to produce or consume a response body MUST be joined
+  before the adapter that owns the body returns. Joining means the adapter waits for it; concurrency inside one
+  invocation is fine, running past it is not.
+- A body reader the runtime produces MUST report end-of-stream only once its producer has returned, and closing it
+  MUST release the producer and wait for it. An adapter that abandons a body therefore leaves nothing running.
+- The invocation's serve context MUST be cancelled before a buffered adapter returns, so producers that observe it
+  stop with the invocation.
+- The runtime MUST NOT create work that outlives a handler it started: middleware that starts a handler on another
+  goroutine/thread/promise MUST join it (through a bounded grace window) before returning.
+
+Bounded exceptions, identical in all three runtimes:
+
+- A handler-supplied body that is neither closable nor terminating cannot be interrupted by construction; the
+  abandoning adapter waits a bounded grace window for it and then fails closed.
+- The timeout middleware abandons a handler that ignores its cancellation token after a bounded grace window. That
+  handler is the case the middleware exists to bound.
+- A producer whose transport stops reading without closing the body (a response-streaming client disconnect) is not
+  observable by the runtime; every adapter the runtime ships either drains the body to completion or to a bounded
+  budget, or streams it to termination.
+
 ## Routing semantics (P0)
 
 Route patterns (v0):

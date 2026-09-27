@@ -61,6 +61,44 @@ These are wire-contract changes, not source-level API changes: after the import-
 on v3 compiles on v4, but the wire behavior an application observes can differ. See `CHANGELOG.md` and the v4 release
 notes for the complete commit-level detail in this range.
 
+### Invocation-scoped work
+
+AppTheory no longer starts work that outlives the Lambda invocation that started it. Handlers and middleware may still
+run work concurrently inside one invocation, but the runtime joins it before returning, because the Lambda execution
+environment is frozen once the handler returns: detached work resumes at an unpredictable time on a later invocation of
+the same environment (or never), and can half-apply writes, lose results, or hold state that belongs to an ended
+invocation.
+
+Action required depends on what your application relies on today:
+
+- **Task-augmented `tools/call`.** The tool body now runs to completion inside the `tools/call` invocation and the
+  `CreateTaskResult` it returns carries a task that is already terminal (`completed`, `failed`, or `canceled`); it is no
+  longer returned as `working` while a detached goroutine, thread, or promise runs the body. `tasks/get`,
+  `tasks/result`, `tasks/list`, and `tasks/cancel` behave as before, and a client that only polls is unaffected. Two
+  consequences are worth planning for:
+  - the `tools/call` response now blocks for the duration of the tool body, bounded by your Lambda timeout (previously
+    it returned immediately);
+  - a body the invocation ends before finishing (client disconnect, request cancellation, deadline) records a terminal
+    `canceled` task instead of leaving the task `working`. If your product needs work to survive a disconnect, own that
+    hand-off: queue the work and run it in an invocation triggered by a consumer, instead of relying on detached
+    execution. In-process `tasks/cancel` still cancels an in-flight body reached by a concurrent connection.
+- **Streamed `tools/call` and SSE responses.** The tool body and the SSE relay are joined to the response body. A
+  response-streaming adapter still delivers progress incrementally, and a disconnect still does not cancel the tool body,
+  so a client can resume with `Last-Event-ID`; but an adapter that stops reading the body now waits for the tool body to
+  finish instead of returning while it runs.
+- **Buffered HTTP API v2 and Function URL adapters.** When the drain time budget expires, the adapter closes the body and
+  waits for the read it abandoned before failing closed, so a slow producer no longer keeps running after the invocation
+  returns. A handler-supplied body that is neither closable nor terminating cannot be interrupted by construction; the
+  wait for it is bounded and the adapter then fails closed. Every body the runtime itself produces is interruptible.
+- **Timeout middleware.** It now cancels the handler chain and joins it for a bounded grace window (250 ms) before
+  returning the timeout response, in every runtime. A handler that observes its cancellation token/abort signal unwinds
+  immediately and is never left running; a handler that ignores cancellation is the case the middleware exists to bound,
+  and it is abandoned after the grace window, exactly as before.
+
+These are behavior changes, not source-level API changes: no exported signature changed, and applications that poll
+tasks, read SSE streams, or rely on the documented budgets keep working. The TypeScript and Python packages carry the
+same behavior, and no new configuration is required in any runtime.
+
 ### CDK Node.js floor
 
 The v4.x CDK construct library declares `engines.node` `>=22` instead of `>=20`, and CI builds the package and

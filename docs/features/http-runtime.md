@@ -178,6 +178,15 @@ No adapter performs an unbounded read, and none of the budgets are configurable:
 a handler that wants true incremental SSE must use a response-streaming adapter
 (API Gateway REST v1, or the Lambda Function URL streaming handler), not HTTP API v2.
 
+When the time budget expires, the adapter does not walk away from the body: it
+closes the reader (or the stream) so the producer can unwind and then waits for
+the read it abandoned, so no producer goroutine/thread/promise outlives the
+invocation that started it. A body that is neither closable nor terminating — a
+handler-supplied source blocked inside a call it does not leave — cannot be
+interrupted by construction, so the wait for it is bounded and the adapter then
+fails closed. Every body the runtime itself produces is interruptible. See
+[Invocation-scoped work](../development/planning/apptheory/supporting/apptheory-runtime-contract-v0.md#invocation-scoped-work-normative).
+
 ## Header canonicalization
 
 `Request.Headers` and `Response.Headers` keys are lower-cased. Look-ups are case-insensitive at the boundary, but if you iterate the map you see the canonical (lower-case) form.
