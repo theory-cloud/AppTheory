@@ -175,7 +175,7 @@ func TestToolsCallStreamingJoinsToolWhenBodyCloses(t *testing.T) {
 	}
 
 	// The tool holds work of its own, so closing the body joins it rather than
-	// cancelling it: the close must not return until the tool has finished.
+	// canceling it: the close must not return until the tool has finished.
 	closed := make(chan struct{})
 	go func() {
 		defer close(closed)
@@ -251,8 +251,8 @@ func TestStreamSubscriptionJoinsPumpAndWatcher(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create stream: %v", err)
 	}
-	if _, err := store.Append(ctx, "sess-join", streamID, json.RawMessage(`{"jsonrpc":"2.0"}`)); err != nil {
-		t.Fatalf("append stream event: %v", err)
+	if _, appendErr := store.Append(ctx, "sess-join", streamID, json.RawMessage(`{"jsonrpc":"2.0"}`)); appendErr != nil {
+		t.Fatalf("append stream event: %v", appendErr)
 	}
 
 	events, err := store.Subscribe(ctx, "sess-join", streamID, "")
@@ -271,8 +271,8 @@ func TestStreamSubscriptionJoinsPumpAndWatcher(t *testing.T) {
 	// The subscription's pump and the watcher it starts both stop with the
 	// subscription context; neither may keep running.
 	time.Sleep(20 * time.Millisecond)
-	assertNoGoroutineFor(t, "(*MemoryStreamStore).pumpSubscription", "stream subscription cancelled")
-	assertNoGoroutineFor(t, "(*MemoryStreamStore).broadcastOnDone.func", "stream subscription cancelled")
+	assertNoGoroutineFor(t, "(*MemoryStreamStore).pumpSubscription", "stream subscription canceled")
+	assertNoGoroutineFor(t, "(*MemoryStreamStore).broadcastOnDone.func", "stream subscription canceled")
 }
 
 func TestStreamedBodyReleaseJoinsScopeBeforeClosing(t *testing.T) {

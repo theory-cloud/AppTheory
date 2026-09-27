@@ -230,7 +230,7 @@ func TestLimitBodyStreamProducerStopsOnServeContextCancel(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("join of the abandoned stream took %s", elapsed)
 	}
-	assertNoGoroutineFor(t, "limitBodyStream.func", "serve context cancelled")
+	assertNoGoroutineFor(t, "limitBodyStream.func", "serve context canceled")
 }
 
 func TestAPIGatewayV2AdapterJoinsAbandonedBodyStream(t *testing.T) {

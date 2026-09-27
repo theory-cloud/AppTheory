@@ -16,7 +16,7 @@ type TimeoutConfig struct {
 // timeoutMiddlewareJoinGrace bounds how long the timeout middleware waits for
 // the handler it timed out to unwind before returning the timeout response.
 //
-// A handler that observes its cancelled context returns immediately and is never
+// A handler that observes its canceled context returns immediately and is never
 // left running. A handler that ignores cancellation is the case this middleware
 // exists to bound, so its response is not held open for the handler's full
 // runtime; it is the one documented place where a handler the middleware started
@@ -62,7 +62,7 @@ func TimeoutMiddleware(config TimeoutConfig) Middleware {
 				return res.resp, res.err
 			case <-timeoutCtx.Done():
 				// The deadline expired and the handler chain's context is
-				// cancelled, but the invocation must not return while the handler
+				// canceled, but the invocation must not return while the handler
 				// this middleware started can still run: in Lambda the execution
 				// environment is frozen once the handler returns, so detached work
 				// resumes at an unpredictable time (or never). Wait for the

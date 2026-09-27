@@ -10,7 +10,7 @@ import (
 )
 
 // streamJoinGrace bounds how long a streamed body waits for a stream store
-// subscription to release its pump after the scope has been cancelled. The
+// subscription to release its pump after the scope has been canceled. The
 // runtime's own stores close their subscription channel when the subscription
 // context is done, which is what the drain below observes; the grace only
 // applies to a custom StreamStore that ignores cancellation, so a handler-owned
@@ -32,7 +32,7 @@ const streamJoinGrace = 100 * time.Millisecond
 //   - a relay (the SSE forwarder) holds no work of its own, so the scope
 //     cancels its context and waits for it;
 //   - the tool body holds a result that must reach the task/stream store, so the
-//     scope only waits for it. Cancelling it would discard the in-flight result,
+//     scope only waits for it. Canceling it would discard the in-flight result,
 //     which is the durability the streamed tools/call contract promises a client
 //     that reconnects with Last-Event-ID.
 type streamScope struct {
@@ -71,7 +71,7 @@ func (s *streamScope) goRun(run func(ctx context.Context)) {
 }
 
 // goJoin starts a producer that holds work of its own and must be waited for
-// rather than cancelled.
+// rather than canceled.
 func (s *streamScope) goJoin(run func()) {
 	if s == nil || run == nil {
 		return
@@ -100,6 +100,9 @@ type scopedBodyReader struct {
 	inner  io.Reader
 	closer io.Closer
 	scope  *streamScope
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (r *scopedBodyReader) Read(p []byte) (int, error) {
@@ -109,7 +112,10 @@ func (r *scopedBodyReader) Read(p []byte) (int, error) {
 
 	n, err := r.inner.Read(p)
 	if err != nil {
-		_ = r.release()
+		// The body is done either way; release the scope so its producers stop
+		// and are joined before the reader reports completion. A close error is
+		// kept for Close, because the read error is what the consumer must see.
+		r.release()
 	}
 	return n, err
 }
@@ -118,19 +124,20 @@ func (r *scopedBodyReader) Close() error {
 	if r == nil {
 		return nil
 	}
-	return r.release()
+	r.release()
+	return r.closeErr
 }
 
 // release closes the SSE body first, which stops and joins the SSE writer and
 // closes the event channel, and then cancels and joins the scope's remaining
 // producers.
-func (r *scopedBodyReader) release() error {
-	var err error
-	if r.closer != nil {
-		err = r.closer.Close()
-	}
-	r.scope.stop()
-	return err
+func (r *scopedBodyReader) release() {
+	r.closeOnce.Do(func() {
+		if r.closer != nil {
+			r.closeErr = r.closer.Close()
+		}
+		r.scope.stop()
+	})
 }
 
 // streamToSSE serializes a stream store subscription as an SSE response body
@@ -158,7 +165,7 @@ func (s *Server) streamToSSE(scope *streamScope, sessionID string, events <-chan
 }
 
 // forwardStreamEvents translates store events into SSE events. It drains the
-// subscription before returning once the scope is cancelled, which joins the
+// subscription before returning once the scope is canceled, which joins the
 // store's pump: the runtime's stores close their channel when the subscription
 // context is done.
 func forwardStreamEvents(ctx context.Context, events <-chan StreamEvent, out chan<- apptheory.SSEEvent) {

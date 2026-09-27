@@ -13,11 +13,11 @@
 //   - the reader reaches EOF only after the producer has returned, so an
 //     adapter that drains a body to completion cannot return early;
 //   - closing the reader unblocks the producer (by closing the pipe and
-//     cancelling the producer context) and then waits for it to return, so an
+//     canceling the producer context) and then waits for it to return, so an
 //     adapter that abandons a body also leaves no producer behind.
 //
 // A producer that blocks on something this package cannot unblock — a read from
-// a source that is neither closed nor cancelled by the caller — keeps the
+// a source that is neither closed nor canceled by the caller — keeps the
 // documented io.Closer contract instead: Close unblocks blocked reads and
 // writes. Producers must observe their context for the close path to be
 // prompt.
@@ -47,7 +47,7 @@ type Body struct {
 // New starts produce on its own goroutine and returns the body that streams its
 // output.
 //
-// The context handed to produce is cancelled when the body is closed or when
+// The context handed to produce is canceled when the body is closed or when
 // parent is done, so a producer that blocks on a channel receive can also be
 // unblocked by Close.
 func New(parent context.Context, produce Producer) *Body {

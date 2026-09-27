@@ -2802,6 +2802,8 @@ func (*WebSocketContext) SendJSONMessage(any) error
 
 func (*WebSocketContext) SendMessage([]byte) error
 
+func (*limitedBodyReader) Read([]byte) (int, error)
+
 func (RandomIDGenerator) NewID() string
 
 func (RealClock) Now() time.Time
@@ -2939,6 +2941,25 @@ func (ArtifactEntry) SHA256() string
 func (VersionedArtifact) ArchiveBytes() []byte
 
 func (VersionedArtifact) Entries() []ArtifactEntry
+
+## github.com/theory-cloud/apptheory/v4/runtime/internal/streamjoin
+
+type Body struct {
+	pr     *io.PipeReader
+	cancel context.CancelFunc
+	done   chan struct{}
+
+	closeOnce sync.Once
+	closeErr  error
+}
+
+type Producer func(context.Context, *io.PipeWriter)
+
+func New(context.Context, Producer) *Body
+
+func (*Body) Close() error
+
+func (*Body) Read([]byte) (int, error)
 
 ## github.com/theory-cloud/apptheory/v4/runtime/mcp
 
@@ -3693,6 +3714,10 @@ func (*ToolRegistry) List() []ToolDef
 func (*ToolRegistry) RegisterStreamingTool(ToolDef, StreamingToolHandler) error
 
 func (*ToolRegistry) RegisterTool(ToolDef, ToolHandler) error
+
+func (*scopedBodyReader) Close() error
+
+func (*scopedBodyReader) Read([]byte) (int, error)
 
 func (dynamoStreamRecord) TableName() string
 

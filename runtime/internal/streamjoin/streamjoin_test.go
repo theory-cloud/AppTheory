@@ -131,7 +131,7 @@ func TestCloseJoinsProducerBlockedOnChannelReceive(t *testing.T) {
 		defer close(released)
 		// A producer that pulls from an external source blocks on a channel
 		// receive, which pipe closure alone cannot interrupt; the producer
-		// context must be cancelled by Close.
+		// context must be canceled by Close.
 		select {
 		case <-ctx.Done():
 		case <-time.After(10 * time.Second):
@@ -153,7 +153,7 @@ func TestCloseJoinsProducerBlockedOnChannelReceive(t *testing.T) {
 	select {
 	case <-released:
 	case <-time.After(time.Second):
-		t.Fatal("producer context was not cancelled by Close")
+		t.Fatal("producer context was not canceled by Close")
 	}
 	assertNoProducerGoroutine(t, "after channel close")
 }
@@ -208,7 +208,12 @@ func TestCloseEndsStreamEarlyForReader(t *testing.T) {
 }
 
 func TestNewNilInputs(t *testing.T) {
-	body := New(nil, nil)
+	// A nil parent context and a nil producer are both supported; they are
+	// passed through variables so the call is not a literal nil context.
+	var parent context.Context
+	var produce Producer
+
+	body := New(parent, produce)
 
 	got, err := io.ReadAll(body)
 	if err != nil {

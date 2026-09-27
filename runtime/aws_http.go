@@ -77,6 +77,22 @@ func isStreamingBodySizeError(err error) bool {
 	return errorCodeForError(err) == errorCodeTooLarge
 }
 
+// serveForBufferedAdapter serves a request on an invocation-scoped context and
+// returns the cleanup the adapter must run before it returns.
+//
+// The cleanup cancels the serve context (so producers that observe it stop with
+// the invocation) and joins any runtime-produced body stream the adapter
+// abandoned, so no producer the invocation started is still running once the
+// adapter hands its response back to the Lambda runtime.
+func (a *App) serveForBufferedAdapter(ctx context.Context, req Request) (context.Context, Response, func()) {
+	serveCtx, cancelServe := context.WithCancel(ctx)
+	resp := a.Serve(serveCtx, req)
+	return serveCtx, resp, func() {
+		cancelServe()
+		joinAbandonedBodyStream(resp.BodyStream, streamingBodyDrainJoinGrace)
+	}
+}
+
 func (a *App) ServeAPIGatewayV2(ctx context.Context, event events.APIGatewayV2HTTPRequest) events.APIGatewayV2HTTPResponse {
 	startedAt := adapterEntryTime(a)
 	req, err := requestFromAPIGatewayV2(event)
@@ -86,14 +102,8 @@ func (a *App) ServeAPIGatewayV2(ctx context.Context, event events.APIGatewayV2HT
 		return apigatewayV2ResponseFromResponse(ctx, resp)
 	}
 
-	// The invocation's serve context is cancelled before this adapter returns,
-	// and any runtime-produced response body stream the adapter abandoned is
-	// joined, so no producer the invocation started is still running once the
-	// adapter hands its response back to the Lambda runtime.
-	serveCtx, cancelServe := context.WithCancel(ctx)
-	resp := a.Serve(serveCtx, req)
-	defer joinAbandonedBodyStream(resp.BodyStream, streamingBodyDrainJoinGrace)
-	defer cancelServe()
+	serveCtx, resp, finishInvocation := a.serveForBufferedAdapter(ctx, req)
+	defer finishInvocation()
 
 	return apigatewayV2ResponseFromResponse(serveCtx, resp)
 }
@@ -107,12 +117,8 @@ func (a *App) ServeLambdaFunctionURL(ctx context.Context, event events.LambdaFun
 		return lambdaFunctionURLResponseFromResponse(ctx, resp)
 	}
 
-	// Same invariant as ServeAPIGatewayV2: cancel the invocation's serve
-	// context and join any abandoned response body stream before returning.
-	serveCtx, cancelServe := context.WithCancel(ctx)
-	resp := a.Serve(serveCtx, req)
-	defer joinAbandonedBodyStream(resp.BodyStream, streamingBodyDrainJoinGrace)
-	defer cancelServe()
+	serveCtx, resp, finishInvocation := a.serveForBufferedAdapter(ctx, req)
+	defer finishInvocation()
 
 	return lambdaFunctionURLResponseFromResponse(serveCtx, resp)
 }
@@ -277,7 +283,7 @@ func apigatewayV2ResponseFromResponse(ctx context.Context, resp Response) events
 }
 
 // joinAbandonedBodyStream waits for the runtime's own BodyStream producer to
-// exit after the invocation's serve context has been cancelled.
+// exit after the invocation's serve context has been canceled.
 //
 // The buffered adapters cancel the serve context before returning, which is what
 // stops a stream limiter (limitBodyStream) blocked on an abandoned body. The
