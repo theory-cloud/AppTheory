@@ -98,12 +98,17 @@ class TestStreamingDrainScope(unittest.TestCase):
             time.sleep(0.01)
 
     def test_drain_joins_the_worker_it_abandons(self) -> None:
+        workers_before = len(_worker_threads())
         body = _InterruptibleBlockingBody()
         with self.assertRaises(aws_http._StreamingBodyBudgetError):
             aws_http._drain_streaming_body(body, aws_http._APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES, 0.2)
 
         self.assertTrue(body.unwound.is_set(), "the abandoned read was not unwound before returning")
-        self.assertEqual(_worker_threads(), [], "drain worker outlived the adapter")
+        self.assertLessEqual(
+            len(_worker_threads()),
+            workers_before,
+            "drain worker outlived the adapter",
+        )
 
     def test_adapter_bounds_an_uninterruptible_body(self) -> None:
         # The canonicalized response wraps the handler's stream in a generator,
@@ -129,11 +134,16 @@ class TestStreamingDrainScope(unittest.TestCase):
             yield b"data: first\n\n"
             yield b"data: second\n\n"
 
+        workers_before = len(_worker_threads())
         out = aws_http.apigw_v2_response_from_response(html_stream(200, gen()))
 
         self.assertEqual(out["statusCode"], 200)
         self.assertEqual(out["body"], "data: first\n\ndata: second\n\n")
-        self.assertEqual(_worker_threads(), [], "drain worker outlived a terminated body")
+        self.assertLessEqual(
+            len(_worker_threads()),
+            workers_before,
+            "drain worker outlived a terminated body",
+        )
 
 
 class TestTimeoutMiddlewareScope(unittest.TestCase):

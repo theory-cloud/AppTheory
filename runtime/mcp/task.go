@@ -249,17 +249,27 @@ func (s *Server) handleTaskToolsCall(ctx context.Context, req *Request, sessionI
 		return NewErrorResponse(req.ID, CodeServerError, "task store returned nil task")
 	}
 
-	taskCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	// The tool body runs to completion inside this invocation: the response the
+	// client receives describes a task whose outcome is already recorded, and no
+	// goroutine survives the invocation that started it.
+	//
+	// A task that kept running in a detached goroutine after the handler returned
+	// could stay `working` forever, lose its result, or half-apply its writes —
+	// the process is frozen between invocations, so the work resumes at an
+	// unpredictable time (or never) on a later invocation of the same environment.
+	taskCtx, cancel := context.WithCancel(ctx)
 	finish := s.taskExecutions.track(sessionID, created.Task.TaskID, cancel)
-	go s.runTaskTool(taskCtx, *created, params.Arguments, finish)
+	defer finish()
 
-	meta := map[string]any{relatedTaskMetadataKey: RelatedTaskMetadata{TaskID: created.Task.TaskID}}
+	task := s.runTaskTool(taskCtx, *created, params.Arguments)
+
+	meta := map[string]any{relatedTaskMetadataKey: RelatedTaskMetadata{TaskID: task.TaskID}}
 	if s.taskRuntime.modelImmediateResponse != "" {
 		meta[modelImmediateResponseMetadataKey] = s.taskRuntime.modelImmediateResponse
 	}
 	return NewResultResponse(req.ID, CreateTaskResult{
 		Meta: meta,
-		Task: created.Task,
+		Task: task,
 	})
 }
 
@@ -284,41 +294,59 @@ func durationMilliseconds(d time.Duration) int64 {
 	return int64(d / time.Millisecond)
 }
 
-func (s *Server) runTaskTool(ctx context.Context, record TaskRecord, args json.RawMessage, finish func()) {
-	defer finish()
+// runTaskTool executes a task-augmented tool body to completion and returns the
+// terminal task state.
+//
+// The caller runs this on the invoking goroutine: the task outcome is recorded
+// before the tools/call response is built, so a client never receives a task
+// that can still be running after the invocation that created it.
+func (s *Server) runTaskTool(ctx context.Context, record TaskRecord, args json.RawMessage) (task Task) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.ErrorContext(ctx, "task tool panic", "taskId", record.Task.TaskID, "tool", record.ToolName, "panic", r)
-			s.finishTask(ctx, record, nil, &RPCError{Code: CodeInternalError, Message: "internal error"})
+			task = s.finishTask(ctx, record, nil, &RPCError{Code: CodeInternalError, Message: "internal error"})
 		}
 	}()
 
 	result, err := s.registry.Call(ctx, record.ToolName, args)
 	if err != nil {
 		if ctx.Err() != nil {
-			return
+			// The invocation ended before the body finished (client disconnect,
+			// request cancellation, or the invocation deadline). Record a
+			// terminal state instead of leaving the task `working` forever.
+			return s.finishTaskCanceled(ctx, record)
 		}
 		if rpcErr, ok := toolLifecycleRPCError(err); ok {
-			s.finishTask(ctx, record, nil, rpcErr)
-			return
+			return s.finishTask(ctx, record, nil, rpcErr)
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: formatToolTimeoutMessage(record.ToolName)})
-			return
+			return s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: formatToolTimeoutMessage(record.ToolName)})
 		}
-		s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: err.Error()})
-		return
+		return s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: err.Error()})
 	}
 
 	resultBytes, err := json.Marshal(result)
 	if err != nil {
-		s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: "task result marshal failed"})
-		return
+		return s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: "task result marshal failed"})
 	}
-	s.finishTask(ctx, record, resultBytes, nil)
+	return s.finishTask(ctx, record, resultBytes, nil)
 }
 
-func (s *Server) finishTask(ctx context.Context, record TaskRecord, result json.RawMessage, rpcErr *RPCError) {
+// finishTaskCanceled records a task the invocation could not carry to
+// completion, so polling clients get a terminal answer instead of a task that
+// stays `working` forever.
+func (s *Server) finishTaskCanceled(ctx context.Context, record TaskRecord) Task {
+	record.Task.LastUpdatedAt = time.Now().UTC()
+	record.Task.Status = TaskStatusCanceled
+	if record.Task.StatusMessage == "" {
+		record.Task.StatusMessage = taskCanceledMessage
+	}
+	record.Result = nil
+	record.Error = nil
+	return s.updateTask(ctx, record)
+}
+
+func (s *Server) finishTask(ctx context.Context, record TaskRecord, result json.RawMessage, rpcErr *RPCError) Task {
 	now := time.Now().UTC()
 	record.Task.LastUpdatedAt = now
 	record.Result = append(json.RawMessage(nil), result...)
@@ -337,9 +365,35 @@ func (s *Server) finishTask(ctx context.Context, record TaskRecord, result json.
 	default:
 		record.Task.Status = TaskStatusCompleted
 	}
-	if _, err := s.taskRuntime.store.Update(context.WithoutCancel(ctx), record); err != nil && !errors.Is(err, ErrTaskTerminal) {
+	return s.updateTask(ctx, record)
+}
+
+// updateTask persists the terminal task and returns the task state a client
+// should see.
+//
+// The store write is detached from the request context on purpose: it is a
+// synchronous write on the invoking goroutine, and a canceled request must not
+// leave the task in a non-terminal state. When the store already holds a
+// terminal state for the task (a concurrent tasks/cancel won the race), the
+// stored state is authoritative.
+func (s *Server) updateTask(ctx context.Context, record TaskRecord) Task {
+	updated, err := s.taskRuntime.store.Update(context.WithoutCancel(ctx), record)
+	if err != nil && !errors.Is(err, ErrTaskTerminal) {
 		s.logger.ErrorContext(ctx, "task store update error", "taskId", record.Task.TaskID, "tool", record.ToolName, "error", err)
 	}
+	if err == nil && updated != nil {
+		return updated.Task
+	}
+	if errors.Is(err, ErrTaskTerminal) {
+		current, getErr := s.taskRuntime.store.Get(context.WithoutCancel(ctx), TaskLookup{
+			SessionID: record.SessionID,
+			TaskID:    record.Task.TaskID,
+		})
+		if getErr == nil && current != nil {
+			return current.Task
+		}
+	}
+	return record.Task
 }
 
 func (s *Server) handleTasksGet(ctx context.Context, req *Request, sessionID string) *Response {

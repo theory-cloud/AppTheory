@@ -320,4 +320,45 @@ func streamToolsCallBody(t *testing.T, name string) []byte {
 	return mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodToolsCall, Params: mustMarshal(t, params)})
 }
 
+func TestTaskBodyRunsInsideTheToolsCallInvocation(t *testing.T) {
+	store := NewMemoryTaskStore()
+	s := NewServer("test", "dev",
+		WithServerIDGenerator(staticIDGenerator{id: "task-invocation"}),
+		WithTaskRuntime(TaskRuntimeOptions{Store: store}),
+	)
+
+	bodyFinished := false
+	if err := s.Registry().RegisterTool(taskCapableToolDef(), func(context.Context, json.RawMessage) (*ToolResult, error) {
+		bodyFinished = true
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "done"}}}, nil
+	}); err != nil {
+		t.Fatalf("register task tool: %v", err)
+	}
+
+	resp := s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(1, "slow"), protocolVersion, "sess-1")
+	if resp.Error != nil {
+		t.Fatalf("tools/call task create error: %+v", resp.Error)
+	}
+	created, ok := resp.Result.(CreateTaskResult)
+	if !ok {
+		t.Fatalf("expected create task result, got %#v", resp.Result)
+	}
+
+	if !bodyFinished {
+		t.Fatal("tools/call returned before the task body ran")
+	}
+	if created.Task.Status != TaskStatusCompleted {
+		t.Fatalf("expected a terminal task in the tools/call reply, got %+v", created.Task)
+	}
+	record, err := store.Get(context.Background(), TaskLookup{SessionID: "sess-1", TaskID: "task-invocation"})
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if record.Task.Status != TaskStatusCompleted || len(record.Result) == 0 {
+		t.Fatalf("expected a stored terminal task with a result, got %+v", record)
+	}
+
+	assertNoGoroutineFor(t, "runTaskTool", "tools/call task body")
+}
+
 var _ = apptheory.Response{}
