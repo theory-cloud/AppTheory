@@ -32,7 +32,7 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryEventBridgeRuleTarget`: EventBridge rule or schedule to Lambda target
 - `AppTheoryKinesisStream`: create or wrap the encrypted Kinesis Data Stream used by AppTheory stream consumers
 - `AppTheoryKinesisStreamMapping`: Kinesis stream to AppTheory Lambda event-source mapping with partial-batch failures
-  enabled by default
+  enabled by default and an optional on-failure destination for discarded records
 - `AppTheoryCloudWatchLogsDestination`: CloudWatch Logs destination and fail-closed source allowlist for Logs-to-Kinesis
   delivery
 - `AppTheoryCloudWatchLogsSubscription`: source-side CloudWatch Logs subscription attachment for a caller-provided log
@@ -52,7 +52,8 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryFunction`: Lambda wrapper with AppTheory defaults; set `roleName` when the execution role needs a stable
   physical name
 - `AppTheoryFunctionAlarms`
-- `AppTheoryDynamoDBStreamMapping`
+- `AppTheoryDynamoDBStreamMapping`: DynamoDB Streams to AppTheory Lambda event-source mapping with an optional
+  on-failure destination for discarded records
 - `AppTheoryDynamoTable`
 - `AppTheoryEventBusTable`: durable EventBus DynamoDB table plus Lambda binding helper for publish/query/replay flows
 - `AppTheoryLambdaRole`
@@ -169,6 +170,14 @@ Event workload wiring:
 - use `targetProps` on EventBridge targets for DLQ, retry, and maximum-event-age policy
 - use `AppTheoryDynamoDBStreamMapping` for DynamoDB Streams to Lambda wiring
 - use `AppTheoryKinesisStream` plus `AppTheoryKinesisStreamMapping` for Kinesis stream consumers
+- pass `onFailure` to either stream mapping to retain the records Lambda discards after retries are exhausted: an SQS
+  queue (`new lambdaEventSources.SqsDlq(queue)`), an SNS topic (`new lambdaEventSources.SnsDlq(topic)`), or an S3 bucket
+  (`new lambdaEventSources.S3OnFailureDestination(bucket)`). Binding the DLQ adds exactly the permission the destination
+  needs (`sqs:SendMessage` or `sns:Publish`) to the consumer role, and the destination carries batch metadata — shard ID
+  and sequence numbers — rather than record payloads. Lambda only sends to the destination once retries are exhausted or
+  the record ages out, so a mapping that leaves `retryAttempts` and `maxRecordAge` unbounded never sends anything: pair
+  `onFailure` with a bounded `retryAttempts` and `bisectBatchOnError`. Omit `onFailure` to keep the previous template
+  byte-identical
 - use `AppTheoryCloudWatchLogsDestination` when CloudWatch Logs subscriptions deliver through Kinesis; configure
   `allowedSourceAccounts` and/or `allowedOrganizationIds` explicitly
 - use `AppTheoryCloudWatchLogsSubscription` to attach one source log group to the destination ARN from TypeScript
