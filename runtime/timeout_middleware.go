@@ -13,16 +13,14 @@ type TimeoutConfig struct {
 	TimeoutMessage    string
 }
 
-// timeoutMiddlewareJoinGrace bounds how long the timeout middleware waits for
-// the handler it timed out to unwind before returning the timeout response.
+// TimeoutMiddleware fails a request closed when its timeout policy expires.
 //
-// A handler that observes its canceled context returns immediately and is never
-// left running. A handler that ignores cancellation is the case this middleware
-// exists to bound, so its response is not held open for the handler's full
-// runtime; it is the one documented place where a handler the middleware started
-// can still be running when the response is returned.
-const timeoutMiddlewareJoinGrace = 250 * time.Millisecond
-
+// The handler chain runs on the invoking goroutine with a deadline-bearing
+// context, and the middleware reports app.timeout when the deadline passed while
+// the chain was running. It starts no goroutine of its own: a handler that
+// observes its canceled context returns immediately, and a handler that ignores
+// it runs until it returns, bounded by the Lambda function timeout rather than
+// abandoned by the middleware. There is no grace window and no abandoned work.
 func TimeoutMiddleware(config TimeoutConfig) Middleware {
 	cfg := normalizeTimeoutConfig(config)
 
@@ -41,48 +39,27 @@ func TimeoutMiddleware(config TimeoutConfig) Middleware {
 
 			handlerCtx := withDerivedTimeoutContext(timeoutCtx, ctx)
 
-			type result struct {
-				resp *Response
-				err  error
-			}
-
-			ch := make(chan result, 1)
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						ch <- result{resp: nil, err: &AppError{Code: errorCodeInternal, Message: errorMessageInternal}}
-					}
-				}()
-				resp, err := next(handlerCtx)
-				ch <- result{resp: resp, err: err}
-			}()
-
-			select {
-			case res := <-ch:
-				return res.resp, res.err
-			case <-timeoutCtx.Done():
-				// The deadline expired and the handler chain's context is
-				// canceled, but the invocation must not return while the handler
-				// this middleware started can still run: in Lambda the execution
-				// environment is frozen once the handler returns, so detached work
-				// resumes at an unpredictable time (or never). Wait for the
-				// handler to unwind.
-				//
-				// The wait is bounded. A handler that observes its context
-				// returns immediately, and is therefore never left running; a
-				// handler that ignores cancellation is exactly the case this
-				// middleware exists to bound, so its response is not held open
-				// for the handler's full runtime.
-				joinTimer := time.NewTimer(timeoutMiddlewareJoinGrace)
-				defer joinTimer.Stop()
-				select {
-				case <-ch:
-				case <-joinTimer.C:
-				}
+			resp, err := runHandlerWithRecovery(next, handlerCtx)
+			if timeoutCtx.Err() != nil {
 				return nil, &AppError{Code: errorCodeTimeout, Message: cfg.TimeoutMessage}
 			}
+			return resp, err
 		}
 	}
+}
+
+// runHandlerWithRecovery runs the handler chain on the calling goroutine and
+// converts a panic into the internal error the serve pipeline expects, so the
+// middleware keeps the recovery it had while it ran the chain on its own
+// goroutine.
+func runHandlerWithRecovery(next Handler, ctx *Context) (resp *Response, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			resp = nil
+			err = &AppError{Code: errorCodeInternal, Message: errorMessageInternal}
+		}
+	}()
+	return next(ctx)
 }
 
 func withDerivedTimeoutContext(derived context.Context, ctx *Context) *Context {

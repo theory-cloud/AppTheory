@@ -64,7 +64,6 @@ import {
   requestFromAPIGatewayV2,
   requestFromLambdaFunctionURL,
   requestFromWebSocketEvent,
-  settleWithin,
 } from "./internal/aws-http.js";
 import {
   serveLambdaFunctionURLStreaming,
@@ -2492,17 +2491,17 @@ function timeoutForContext(
   return timeoutMs;
 }
 
-// TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS bounds how long the timeout middleware waits
-// for the handler it timed out to unwind before returning the timeout response.
-//
-// A handler that observes its abort signal unwinds immediately and is never left
-// running. A handler that ignores cancellation is the case this middleware exists
-// to bound, so its response is not held open for the handler's full runtime; it is
-// the one documented place where a handler the middleware started can still be
-// running when the response is returned.
-const TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS = 250;
-
-/** Creates middleware that fails requests closed when timeout policy expires. */
+/**
+ * Creates middleware that fails requests closed when timeout policy expires.
+ *
+ * The handler chain runs on the invoking task with an abort signal that carries
+ * the deadline, and the middleware reports `app.timeout` when the signal was
+ * aborted by the time the chain returned. It starts no promise or task of its
+ * own: a handler that observes its signal unwinds immediately, and a handler
+ * that ignores it runs until it returns, bounded by the Lambda function timeout
+ * rather than abandoned by the middleware. There is no grace window and no
+ * abandoned work.
+ */
 export function timeoutMiddleware(config: TimeoutConfig = {}): Middleware {
   const cfg = normalizeTimeoutConfig(config);
 
@@ -2535,39 +2534,14 @@ export function timeoutMiddleware(config: TimeoutConfig = {}): Middleware {
       controller.abort(cfg.timeoutMessage);
     }, timeoutMs);
 
-    let removeTimeoutAbortListener = () => {};
-    const timeoutPromise = new Promise<Response>((_resolve, reject) => {
-      void _resolve;
-      const onAbort = () =>
-        reject(new AppError("app.timeout", cfg.timeoutMessage));
-      if (controller.signal.aborted) {
-        onAbort();
-        return;
-      }
-      controller.signal.addEventListener("abort", onAbort, { once: true });
-      removeTimeoutAbortListener = () =>
-        controller.signal.removeEventListener("abort", onAbort);
-    });
-
-    const run = Promise.resolve().then(() => next(handlerCtx));
     try {
-      return await Promise.race([run, timeoutPromise]);
-    } catch (err) {
-      // The deadline won and the handler chain's abort signal has fired, but the
-      // invocation must not return while the handler this middleware started can
-      // still run: the Lambda execution environment is frozen once the handler
-      // returns, so detached work resumes at an unpredictable time (or never).
-      // Wait for the handler to unwind.
-      //
-      // The wait is bounded. A handler that observes its abort signal unwinds
-      // immediately and is therefore never left running; a handler that ignores
-      // cancellation is exactly the case this middleware exists to bound, so its
-      // response is not held open for the handler's full runtime.
-      await settleWithin(run, TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS);
-      throw err;
+      const resp = await next(handlerCtx);
+      if (controller.signal.aborted) {
+        throw new AppError("app.timeout", cfg.timeoutMessage);
+      }
+      return resp;
     } finally {
       clearTimeout(timer);
-      removeTimeoutAbortListener();
       removeParentAbortListener();
     }
   };
