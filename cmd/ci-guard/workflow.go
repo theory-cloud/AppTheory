@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -20,6 +21,11 @@ const (
 	rubricCondition = "(github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')"
 	buildsCondition = "github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'"
 
+	// eligibilityCondition is the staging release-eligibility gate: it must keep
+	// the push-to-staging leg as well as the pull-request-to-staging leg,
+	// because the merged staging SHA is a path that can promote code (R-F1).
+	eligibilityCondition = "(github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')"
+
 	stagingBranch = "staging"
 	premainBranch = "premain"
 	mainBranch    = "main"
@@ -32,6 +38,19 @@ const (
 	prereleaseID   = "prerelease-readiness"
 	eligibilityID  = "staging-release-eligibility"
 	maxDispatchIns = 3
+
+	// ciWorkflowPath is the workflow the repository gates on; it carries the
+	// staging rubric and deterministic-build jobs whose conditions are pinned.
+	ciWorkflowPath = ".github/workflows/ci.yml"
+
+	// defaultWorkflowsDir is the directory scanned for every workflow file, so a
+	// new workflow with a push/pull_request trigger cannot gate silently: it
+	// must be classified, or be one of the justified non-gating publishers.
+	defaultWorkflowsDir = ".github/workflows"
+
+	// maxCalleeDepth bounds reusable-workflow (`uses: ./...`) nesting so a
+	// cyclic or runaway chain fails closed instead of recursing forever.
+	maxCalleeDepth = 4
 )
 
 var protectedBranches = []string{stagingBranch, premainBranch, mainBranch}
@@ -50,29 +69,72 @@ var headDomain = []string{
 	otherHeadRef,
 }
 
-// parityExemption records a promotion-only job whose pull-request-to-staging
-// equivalent is a different job. Every entry must carry a reason and keep a
-// live counterpart; a stale entry fails the guard.
-type parityExemption struct {
-	job         string
-	counterpart string
-	reason      string
+// publisherExemption records a workflow that runs on a push but gates nothing
+// (it publishes or deploys), so it needs no pull-request-to-staging equivalent.
+// An exemption is only valid while the workflow keeps a publisher trigger set:
+// the moment it declares a pull_request trigger it gates PRs and must be
+// classified like every other workflow.
+type publisherExemption struct {
+	path   string
+	reason string
 }
 
-var promotionParityExemptions = []parityExemption{
+var publisherExemptions = []publisherExemption{
 	{
-		job:         prereleaseID,
-		counterpart: eligibilityID,
-		reason:      "promotion-edge release-eligibility gate; the staging lane runs the same predicate through " + eligibilityID,
+		path:   ".github/workflows/pages.yml",
+		reason: "GitHub Pages docs build + deploy; a failure publishes nothing and gates no merge or promotion",
+	},
+	{
+		path:   ".github/workflows/theorycloud-apptheory-subtree-publish.yml",
+		reason: "publishes the docs subtree to the TheoryCloud docs repo; deploy-only, gates no merge or promotion",
+	},
+	{
+		path:   ".github/workflows/prerelease.yml",
+		reason: "release-please prerelease publisher; the pre-merge half of its checks runs on PRs to staging",
+	},
+	{
+		path:   ".github/workflows/release.yml",
+		reason: "release-please stable publisher; the pre-merge half of its checks runs on PRs to staging",
+	},
+	{
+		path:   ".github/workflows/prerelease-pr.yml",
+		reason: "generated release-candidate PR producer; cannot gate the hand-authored PR lane it serves",
+	},
+	{
+		path:   ".github/workflows/release-pr.yml",
+		reason: "generated stable PR producer; cannot gate the hand-authored PR lane it serves",
 	},
 }
 
-type workflowFile struct {
-	path           string
-	pushBranches   []string
+// publisherTriggers are the triggers an exempt non-gating publisher may
+// declare. Anything else fails closed: an unmodeled trigger could hide a
+// gating path behind an exemption.
+var publisherTriggers = map[string]bool{
+	"push":              true,
+	"workflow_dispatch": true,
+	"workflow_call":     true,
+}
+
+type triggerContext struct {
 	hasPush        bool
+	pushBranches   []string
 	hasPullRequest bool
-	jobs           []workflowJob
+	hasDispatch    bool
+}
+
+type workflowFile struct {
+	path            string
+	triggers        []string
+	ctx             triggerContext
+	hasWorkflowCall bool
+	jobs            []workflowJob
+}
+
+type workflowStep struct {
+	name   string
+	hasIf  bool
+	ifText string
+	line   int
 }
 
 type workflowJob struct {
@@ -80,6 +142,9 @@ type workflowJob struct {
 	name   string
 	ifText string
 	hasIf  bool
+	needs  []string
+	uses   string
+	steps  []workflowStep
 }
 
 type jobClass struct {
@@ -93,81 +158,246 @@ type jobClass struct {
 	dispatch bool
 }
 
+type classifiedJob struct {
+	id    string
+	class *jobClass
+	def   workflowJob
+}
+
 func runWorkflowTriggers(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("workflow-triggers", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	root := flags.String("root", ".", "repository root")
-	workflowPath := flags.String("workflow", filepath.Join(".github", "workflows", "ci.yml"), "workflow file relative to root")
+	workflowsDir := flags.String("workflows-dir", defaultWorkflowsDir, "workflow directory relative to root")
 	if err := flags.Parse(args); err != nil {
 		return exitBlocked
 	}
 
-	workflow, err := loadWorkflow(filepath.Join(*root, filepath.FromSlash(*workflowPath)))
+	result, err := evaluateWorkflowDirectory(*root, *workflowsDir)
 	if err != nil {
 		writeString(stderr, fmt.Sprintf("ci-trigger-parity: FAIL (%v)\n", err))
 		return exitFail
 	}
-	failures, err := evaluateWorkflow(workflow)
-	if err != nil {
-		writeString(stderr, fmt.Sprintf("ci-trigger-parity: FAIL (%v)\n", err))
-		return exitFail
-	}
-	if len(failures) > 0 {
+	if len(result.failures) > 0 {
 		writeString(stderr, "ci-trigger-parity: FAIL\n")
-		for _, failure := range failures {
+		for _, failure := range result.failures {
 			writeString(stderr, fmt.Sprintf("- %s\n", failure))
 		}
 		return exitFail
 	}
-	writeString(stdout, fmt.Sprintf("ci-trigger-parity: PASS (%s: %d jobs classified by effective triggers)\n", *workflowPath, len(workflow.jobs)))
+	writeString(stdout, fmt.Sprintf("ci-trigger-parity: PASS (%d workflow files scanned, %d classified, %d jobs classified by effective triggers)\n",
+		result.scanned, result.classified, result.jobs))
 	return exitPass
 }
 
-func loadWorkflow(path string) (*workflowFile, error) {
-	//nolint:gosec // the path is the repository workflow under guard, not user input.
-	data, err := os.ReadFile(path)
+type directoryResult struct {
+	failures   []string
+	scanned    int
+	classified int
+	jobs       int
+}
+
+func evaluateWorkflowDirectory(root, workflowsDir string) (directoryResult, error) {
+	files, err := listWorkflowFiles(root, workflowsDir)
 	if err != nil {
-		return nil, err
+		return directoryResult{}, err
+	}
+	result := directoryResult{scanned: len(files)}
+	seen := map[string]bool{}
+	ciSeen := false
+	for _, rel := range files {
+		seen[rel] = true
+		file := evaluateWorkflowFile(root, rel)
+		result.failures = append(result.failures, file.failures...)
+		result.classified += file.classified
+		result.jobs += file.jobs
+		ciSeen = ciSeen || file.isCI
+	}
+	if !ciSeen {
+		result.failures = append(result.failures, fmt.Sprintf("the workflow directory must contain %s; the pinned rubric/builds/eligibility conditions are checked there", ciWorkflowPath))
+	}
+	result.failures = append(result.failures, checkPublisherExemptionsExist(seen)...)
+	return result, nil
+}
+
+func listWorkflowFiles(root, workflowsDir string) ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(workflowsDir)))
+	if err != nil {
+		return nil, fmt.Errorf("cannot read workflow directory %s: %w", workflowsDir, err)
+	}
+	var files []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml") {
+			continue
+		}
+		files = append(files, path.Join(workflowsDir, name))
+	}
+	sort.Strings(files)
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no workflow files found in %s", workflowsDir)
+	}
+	return files, nil
+}
+
+type fileResult struct {
+	failures   []string
+	classified int
+	jobs       int
+	isCI       bool
+}
+
+// evaluateWorkflowFile accounts for one workflow file: an explicit non-gating
+// publisher exemption is validated but not classified, a reusable-only workflow
+// is validated and classified where it is called, and anything else is
+// classified like ci.yml.
+func evaluateWorkflowFile(root, rel string) fileResult {
+	full := filepath.Join(root, filepath.FromSlash(rel))
+	if exemption, ok := findPublisherExemption(rel); ok {
+		if err := checkPublisherWorkflow(full, rel, exemption); err != nil {
+			return fileResult{failures: []string{err.Error()}}
+		}
+		return fileResult{}
+	}
+	wf, err := loadWorkflow(full, rel)
+	if err != nil {
+		return fileResult{failures: []string{err.Error()}}
+	}
+	if isReusableOnly(wf) {
+		return fileResult{}
+	}
+	jobs, err := classifyWorkflow(root, wf, wf.ctx, "", 0)
+	if err != nil {
+		return fileResult{failures: []string{err.Error()}}
+	}
+	result := fileResult{classified: 1, jobs: len(jobs), isCI: rel == ciWorkflowPath}
+	result.failures = append(result.failures, checkParity(jobs)...)
+	if result.isCI {
+		result.failures = append(result.failures, checkExactConditions(jobs)...)
+		result.failures = append(result.failures, checkExemptionsAreLive(jobs)...)
+		result.failures = append(result.failures, checkCanary(jobs)...)
+		result.failures = append(result.failures, checkUnconditionalSteps(jobs)...)
+	}
+	return result
+}
+
+func checkPublisherExemptionsExist(seen map[string]bool) []string {
+	var failures []string
+	for _, exemption := range publisherExemptions {
+		if !seen[exemption.path] {
+			failures = append(failures, fmt.Sprintf("publisher exemption for %q is stale: the workflow no longer exists", exemption.path))
+		}
+	}
+	return failures
+}
+
+func isReusableOnly(wf *workflowFile) bool {
+	return wf.hasWorkflowCall && !wf.ctx.hasPush && !wf.ctx.hasPullRequest && !wf.ctx.hasDispatch
+}
+
+func findPublisherExemption(rel string) (*publisherExemption, bool) {
+	for i := range publisherExemptions {
+		if publisherExemptions[i].path == rel {
+			return &publisherExemptions[i], true
+		}
+	}
+	return nil, false
+}
+
+// checkPublisherWorkflow parses an exempt non-gating publisher and fails closed
+// when it stops looking like one: a pull_request trigger makes it a gate on the
+// PR lane, and an unmodeled trigger could hide one.
+func checkPublisherWorkflow(fullPath, rel string, exemption *publisherExemption) error {
+	//nolint:gosec // the path is a repository workflow enumerated from the workflow directory.
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		return fmt.Errorf("%s: %w", rel, err)
 	}
 	var document yaml.Node
 	if err := yaml.Unmarshal(data, &document); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return fmt.Errorf("%s: %w", rel, err)
 	}
 	if document.Kind != yaml.DocumentNode || len(document.Content) != 1 {
-		return nil, fmt.Errorf("%s: expected exactly one YAML document", path)
+		return fmt.Errorf("%s: expected exactly one YAML document", rel)
 	}
-	root := document.Content[0]
-	if root.Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("%s: workflow root must be a mapping", path)
+	rootNode := document.Content[0]
+	if rootNode.Kind != yaml.MappingNode {
+		return fmt.Errorf("%s: workflow root must be a mapping", rel)
 	}
-	if err := rejectUnmodeledNodes(root, path); err != nil {
+	if err := rejectUnmodeledNodes(rootNode, rel); err != nil {
+		return err
+	}
+	onNode, ok := mapLookup(rootNode, "on")
+	if !ok {
+		return fmt.Errorf("%s: publisher workflow must declare an on: trigger block", rel)
+	}
+	if onNode.Kind != yaml.MappingNode {
+		return fmt.Errorf("%s: on: must be a mapping for a publisher workflow", rel)
+	}
+	for i := 0; i+1 < len(onNode.Content); i += 2 {
+		key := onNode.Content[i]
+		if key.Kind != yaml.ScalarNode {
+			return fmt.Errorf("%s: on: trigger names must be scalars", rel)
+		}
+		if key.Value == "pull_request" || key.Value == "pull_request_target" {
+			return fmt.Errorf("%s is a non-gating publisher exemption (%s) but declares a %s trigger; a workflow that gates pull requests must be classified, not exempted",
+				rel, exemption.reason, key.Value)
+		}
+		if !publisherTriggers[key.Value] {
+			return fmt.Errorf("%s: on: trigger %q is not modeled for a non-gating publisher exemption", rel, key.Value)
+		}
+	}
+	return nil
+}
+
+func loadWorkflow(fullPath, rel string) (*workflowFile, error) {
+	//nolint:gosec // the path is the repository workflow under guard, not user input.
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", rel, err)
+	}
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return nil, fmt.Errorf("%s: %w", rel, err)
+	}
+	if document.Kind != yaml.DocumentNode || len(document.Content) != 1 {
+		return nil, fmt.Errorf("%s: expected exactly one YAML document", rel)
+	}
+	rootNode := document.Content[0]
+	if rootNode.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("%s: workflow root must be a mapping", rel)
+	}
+	if err := rejectUnmodeledNodes(rootNode, rel); err != nil {
 		return nil, err
 	}
 
-	workflow := &workflowFile{path: path}
-	onNode, ok := mapLookup(root, "on")
+	workflow := &workflowFile{path: rel}
+	onNode, ok := mapLookup(rootNode, "on")
 	if !ok {
-		return nil, fmt.Errorf("%s: workflow must declare an on: trigger block", path)
+		return nil, fmt.Errorf("%s: workflow must declare an on: trigger block", rel)
 	}
 	if err := workflow.parseTriggers(onNode); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", rel, err)
 	}
-	jobsNode, ok := mapLookup(root, "jobs")
+	jobsNode, ok := mapLookup(rootNode, "jobs")
 	if !ok {
-		return nil, fmt.Errorf("%s: workflow must declare jobs", path)
+		return nil, fmt.Errorf("%s: workflow must declare jobs", rel)
 	}
 	if jobsNode.Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("%s: jobs must be a mapping", path)
+		return nil, fmt.Errorf("%s: jobs must be a mapping", rel)
 	}
 	for i := 0; i+1 < len(jobsNode.Content); i += 2 {
 		job, err := parseWorkflowJob(jobsNode.Content[i], jobsNode.Content[i+1])
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
+			return nil, fmt.Errorf("%s: %w", rel, err)
 		}
 		workflow.jobs = append(workflow.jobs, job)
 	}
 	if len(workflow.jobs) == 0 {
-		return nil, fmt.Errorf("%s: workflow declares no jobs", path)
+		return nil, fmt.Errorf("%s: workflow declares no jobs", rel)
 	}
 	return workflow, nil
 }
@@ -181,28 +411,42 @@ func (wf *workflowFile) parseTriggers(node *yaml.Node) error {
 		if key.Kind != yaml.ScalarNode {
 			return fmt.Errorf("on: trigger names must be scalars")
 		}
-		switch key.Value {
-		case "push":
-			wf.hasPush = true
-			branches, err := parsePushTrigger(value)
-			if err != nil {
-				return err
-			}
-			wf.pushBranches = branches
-		case "pull_request":
-			wf.hasPullRequest = true
-			if err := parsePullRequestTrigger(value); err != nil {
-				return err
-			}
-		case "workflow_dispatch":
-			if err := parseDispatchTrigger(value); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("on: trigger %q is not modeled by the parity classifier", key.Value)
+		wf.triggers = append(wf.triggers, key.Value)
+		if err := wf.parseTrigger(key.Value, value); err != nil {
+			return err
 		}
 	}
+	if !wf.ctx.hasPush && !wf.ctx.hasPullRequest && !wf.ctx.hasDispatch && !wf.hasWorkflowCall {
+		return fmt.Errorf("on: declares no modeled trigger")
+	}
 	return nil
+}
+
+// parseTrigger records one `on:` entry. Every trigger the classifier does not
+// model is an error, so an unmodelled trigger fails closed rather than being
+// ignored.
+func (wf *workflowFile) parseTrigger(name string, value *yaml.Node) error {
+	switch name {
+	case "push":
+		wf.ctx.hasPush = true
+		branches, err := parsePushTrigger(value)
+		if err != nil {
+			return err
+		}
+		wf.ctx.pushBranches = branches
+		return nil
+	case "pull_request":
+		wf.ctx.hasPullRequest = true
+		return parsePullRequestTrigger(value)
+	case "workflow_dispatch":
+		wf.ctx.hasDispatch = true
+		return parseDispatchTrigger(value)
+	case "workflow_call":
+		wf.hasWorkflowCall = true
+		return parseWorkflowCallTrigger(value)
+	default:
+		return fmt.Errorf("on: trigger %q is not modeled by the parity classifier", name)
+	}
 }
 
 func parsePushTrigger(node *yaml.Node) ([]string, error) {
@@ -276,6 +520,22 @@ func parseDispatchTrigger(node *yaml.Node) error {
 	return nil
 }
 
+func parseWorkflowCallTrigger(node *yaml.Node) error {
+	if isNullNode(node) {
+		return nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("workflow_call: trigger must be a mapping")
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key := node.Content[i].Value
+		if key != "inputs" && key != "secrets" && key != "outputs" {
+			return fmt.Errorf("workflow_call: key %q is not modeled", key)
+		}
+	}
+	return nil
+}
+
 func parseWorkflowJob(idNode, body *yaml.Node) (workflowJob, error) {
 	if idNode.Kind != yaml.ScalarNode {
 		return workflowJob{}, fmt.Errorf("job ids must be scalars")
@@ -285,29 +545,118 @@ func parseWorkflowJob(idNode, body *yaml.Node) (workflowJob, error) {
 		return workflowJob{}, fmt.Errorf("job %q must be a mapping", job.id)
 	}
 	for i := 0; i+1 < len(body.Content); i += 2 {
-		key, value := body.Content[i].Value, body.Content[i+1]
-		switch key {
-		case "name":
-			if value.Kind == yaml.ScalarNode {
-				job.name = value.Value
-			}
-		case "if":
-			if value.Kind != yaml.ScalarNode {
-				return workflowJob{}, fmt.Errorf("job %q if: must be a scalar expression", job.id)
-			}
-			if value.Style == yaml.LiteralStyle || value.Style == yaml.FoldedStyle {
-				return workflowJob{}, fmt.Errorf("job %q uses a %s if: block; continuation forms are not modeled", job.id, styleName(value.Style))
-			}
-			job.ifText = value.Value
-			job.hasIf = true
+		if err := applyJobField(&job, body.Content[i].Value, body.Content[i+1]); err != nil {
+			return workflowJob{}, err
 		}
 	}
 	return job, nil
 }
 
-func rejectUnmodeledNodes(node *yaml.Node, path string) error {
+func applyJobField(job *workflowJob, key string, value *yaml.Node) error {
+	switch key {
+	case "name":
+		if value.Kind == yaml.ScalarNode {
+			job.name = value.Value
+		}
+	case "if":
+		condition, err := parseJobCondition(value, job.id)
+		if err != nil {
+			return err
+		}
+		job.ifText = condition
+		job.hasIf = true
+	case "needs":
+		needs, err := scalarList(value)
+		if err != nil {
+			return fmt.Errorf("job %q needs: %w", job.id, err)
+		}
+		job.needs = needs
+	case "uses":
+		if value.Kind != yaml.ScalarNode {
+			return fmt.Errorf("job %q uses: must be a scalar", job.id)
+		}
+		job.uses = value.Value
+	case "steps":
+		steps, err := parseSteps(value)
+		if err != nil {
+			return fmt.Errorf("job %q: %w", job.id, err)
+		}
+		job.steps = steps
+	}
+	return nil
+}
+
+// parseJobCondition reads a job-level if:. A literal or folded block scalar is
+// rejected: its continuation form is not modeled and could hide a clause.
+func parseJobCondition(value *yaml.Node, jobID string) (string, error) {
+	if value.Kind != yaml.ScalarNode {
+		return "", fmt.Errorf("job %q if: must be a scalar expression", jobID)
+	}
+	if value.Style == yaml.LiteralStyle || value.Style == yaml.FoldedStyle {
+		return "", fmt.Errorf("job %q uses a %s if: block; continuation forms are not modeled", jobID, styleName(value.Style))
+	}
+	return value.Value, nil
+}
+
+func parseSteps(node *yaml.Node) ([]workflowStep, error) {
+	if isNullNode(node) {
+		return nil, nil
+	}
+	if node.Kind != yaml.SequenceNode {
+		return nil, fmt.Errorf("steps must be a sequence")
+	}
+	var steps []workflowStep
+	for _, item := range node.Content {
+		if item.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("every step must be a mapping")
+		}
+		step := workflowStep{line: item.Line}
+		for i := 0; i+1 < len(item.Content); i += 2 {
+			key, value := item.Content[i].Value, item.Content[i+1]
+			switch key {
+			case "name":
+				if value.Kind == yaml.ScalarNode {
+					step.name = value.Value
+				}
+			case "if":
+				if value.Kind != yaml.ScalarNode {
+					return nil, fmt.Errorf("step if: must be a scalar expression")
+				}
+				if value.Style == yaml.LiteralStyle || value.Style == yaml.FoldedStyle {
+					return nil, fmt.Errorf("step if: uses a %s block; continuation forms are not modeled", styleName(value.Style))
+				}
+				step.ifText = value.Value
+				step.hasIf = true
+			}
+		}
+		if step.name == "" {
+			step.name = fmt.Sprintf("step at line %d", item.Line)
+		}
+		steps = append(steps, step)
+	}
+	return steps, nil
+}
+
+func scalarList(node *yaml.Node) ([]string, error) {
+	if node.Kind == yaml.ScalarNode {
+		if node.Value == "" {
+			return nil, fmt.Errorf("must name at least one job")
+		}
+		return []string{node.Value}, nil
+	}
+	values, err := scalarSequence(node)
+	if err != nil {
+		return nil, err
+	}
+	if len(values) == 0 {
+		return nil, fmt.Errorf("must name at least one job")
+	}
+	return values, nil
+}
+
+func rejectUnmodeledNodes(node *yaml.Node, rel string) error {
 	if node.Kind == yaml.AliasNode {
-		return fmt.Errorf("%s: YAML aliases are not modeled; spell every job out", path)
+		return fmt.Errorf("%s: YAML aliases are not modeled; spell every job out", rel)
 	}
 	if node.Kind == yaml.MappingNode {
 		seen := map[string]bool{}
@@ -317,81 +666,222 @@ func rejectUnmodeledNodes(node *yaml.Node, path string) error {
 				continue
 			}
 			if key.Value == "<<" {
-				return fmt.Errorf("%s: YAML merge keys are not modeled", path)
+				return fmt.Errorf("%s: YAML merge keys are not modeled", rel)
 			}
 			if seen[key.Value] {
-				return fmt.Errorf("%s: duplicate mapping key %q is not modeled", path, key.Value)
+				return fmt.Errorf("%s: duplicate mapping key %q is not modeled", rel, key.Value)
 			}
 			seen[key.Value] = true
 		}
 	}
 	for _, child := range node.Content {
-		if err := rejectUnmodeledNodes(child, path); err != nil {
+		if err := rejectUnmodeledNodes(child, rel); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func evaluateWorkflow(wf *workflowFile) ([]string, error) {
-	var failures []string
-	if !wf.hasPullRequest {
-		failures = append(failures, "workflow must trigger on pull_request")
+// classifyWorkflow classifies every job of a workflow in the trigger context it
+// actually runs in. For a reusable workflow reached through `uses:`, that
+// context is the caller's, so a promotion-only job inside a callee cannot hide
+// behind the callee file's own (absent) triggers.
+func classifyWorkflow(root string, wf *workflowFile, ctx triggerContext, prefix string, depth int) ([]classifiedJob, error) {
+	if depth > maxCalleeDepth {
+		return nil, fmt.Errorf("%s: reusable-workflow nesting exceeds %d levels", wf.path, maxCalleeDepth)
 	}
-	if !wf.hasPush {
-		failures = append(failures, "workflow must trigger on push")
+	if err := validateNeedsTargets(wf); err != nil {
+		return nil, err
 	}
+	own, err := resolveJobClasses(ctx, wf, prefix)
+	if err != nil {
+		return nil, err
+	}
+	nested, err := classifyCallees(root, wf, ctx, prefix, depth)
+	if err != nil {
+		return nil, err
+	}
+	return append(own, nested...), nil
+}
 
-	classes := map[string]*jobClass{}
-	order := make([]string, 0, len(wf.jobs))
+func validateNeedsTargets(wf *workflowFile) error {
+	ids := map[string]bool{}
 	for _, job := range wf.jobs {
-		class, err := classifyJob(wf, job)
+		ids[job.id] = true
+	}
+	for _, job := range wf.jobs {
+		for _, need := range job.needs {
+			if !ids[need] {
+				return fmt.Errorf("%s: job %q needs %q, which is not a job in this workflow", wf.path, job.id, need)
+			}
+		}
+	}
+	return nil
+}
+
+// jobResolver classifies a workflow's own jobs, resolving `needs:` in
+// dependency order: a job is held back until every job it needs has a class,
+// and a pass that makes no progress is a `needs:` cycle.
+type jobResolver struct {
+	ctx      triggerContext
+	wf       *workflowFile
+	prefix   string
+	resolved map[string]*jobClass
+	out      []classifiedJob
+}
+
+func resolveJobClasses(ctx triggerContext, wf *workflowFile, prefix string) ([]classifiedJob, error) {
+	resolver := &jobResolver{ctx: ctx, wf: wf, prefix: prefix, resolved: map[string]*jobClass{}}
+	remaining := wf.jobs
+	for len(remaining) > 0 {
+		deferred, progressed, err := resolver.resolvePass(remaining)
 		if err != nil {
 			return nil, err
 		}
-		classes[job.id] = class
-		order = append(order, job.id)
+		if !progressed {
+			return nil, fmt.Errorf("%s: needs: cycle among %s", wf.path, strings.Join(jobIDs(remaining), ", "))
+		}
+		remaining = deferred
 	}
-
-	failures = append(failures, checkExactConditions(classes)...)
-	failures = append(failures, checkPushParity(order, classes)...)
-	failures = append(failures, checkPromotionParity(order, classes)...)
-	failures = append(failures, checkExemptionsAreLive(classes)...)
-	failures = append(failures, checkCanary(classes)...)
-	return failures, nil
+	return resolver.out, nil
 }
 
-func classifyJob(wf *workflowFile, job workflowJob) (*jobClass, error) {
-	class := &jobClass{id: job.id, name: job.name, hasIf: job.hasIf, ifText: job.ifText, prBases: map[string]bool{}}
-	if !job.hasIf {
-		class.pushRefs = append([]string{}, wf.pushBranches...)
-		for _, base := range baseDomain {
-			class.prBases[base] = true
+func (r *jobResolver) resolvePass(jobs []workflowJob) ([]workflowJob, bool, error) {
+	var deferred []workflowJob
+	progressed := false
+	for _, job := range jobs {
+		if !r.needsResolved(job) {
+			deferred = append(deferred, job)
+			continue
 		}
-		class.prAny = true
-		class.dispatch = true
+		class, err := r.classify(job)
+		if err != nil {
+			return nil, false, err
+		}
+		r.resolved[job.id] = class
+		r.out = append(r.out, classifiedJob{id: r.prefix + job.id, class: class, def: job})
+		progressed = true
+	}
+	return deferred, progressed, nil
+}
+
+func (r *jobResolver) needsResolved(job workflowJob) bool {
+	for _, need := range job.needs {
+		if _, ok := r.resolved[need]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *jobResolver) classify(job workflowJob) (*jobClass, error) {
+	class, hasAlways, err := classifyJob(r.ctx, job)
+	if err != nil {
+		return nil, err
+	}
+	if len(job.needs) == 0 || hasAlways {
 		return class, nil
 	}
-
-	condition, err := parseCondition(job.ifText)
-	if err != nil {
-		return nil, fmt.Errorf("job %q: %w", job.id, err)
-	}
-	if class.pushRefs, err = classifyPush(condition, wf.pushBranches, job.id); err != nil {
-		return nil, err
-	}
-	if err := classifyPullRequest(condition, class, job.id); err != nil {
-		return nil, err
-	}
-	if err := classifyDispatch(condition, class, job); err != nil {
-		return nil, err
+	for _, need := range job.needs {
+		class = intersectClasses(class, r.resolved[need])
 	}
 	return class, nil
 }
 
+func classifyCallees(root string, wf *workflowFile, ctx triggerContext, prefix string, depth int) ([]classifiedJob, error) {
+	var out []classifiedJob
+	for _, job := range wf.jobs {
+		if job.uses == "" {
+			continue
+		}
+		nested, err := classifyCallee(root, wf, ctx, prefix, depth, job)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, nested...)
+	}
+	return out, nil
+}
+
+func classifyCallee(root string, wf *workflowFile, ctx triggerContext, prefix string, depth int, job workflowJob) ([]classifiedJob, error) {
+	calleeRel, ok := localCalleePath(job.uses)
+	if !ok {
+		return nil, fmt.Errorf("%s: job %q uses %q; only a local reusable workflow (./.github/workflows/<name>.yml) can be classified, so a remote reusable workflow is not modeled", wf.path, job.id, job.uses)
+	}
+	callee, err := loadWorkflow(filepath.Join(root, filepath.FromSlash(calleeRel)), calleeRel)
+	if err != nil {
+		return nil, err
+	}
+	if !callee.hasWorkflowCall {
+		return nil, fmt.Errorf("%s: job %q calls %s, which does not declare on: workflow_call", wf.path, job.id, calleeRel)
+	}
+	return classifyWorkflow(root, callee, ctx, prefix+path.Base(calleeRel)+":", depth+1)
+}
+
+func jobIDs(jobs []workflowJob) []string {
+	ids := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		ids = append(ids, job.id)
+	}
+	return ids
+}
+
+func localCalleePath(uses string) (string, bool) {
+	if !strings.HasPrefix(uses, "./.github/workflows/") {
+		return "", false
+	}
+	rest := strings.TrimPrefix(uses, "./")
+	if rest == "" || strings.Contains(rest, "@") || strings.Contains(rest, "..") {
+		return "", false
+	}
+	if !strings.HasSuffix(rest, ".yml") && !strings.HasSuffix(rest, ".yaml") {
+		return "", false
+	}
+	return rest, true
+}
+
+func classifyJob(ctx triggerContext, job workflowJob) (*jobClass, bool, error) {
+	class := &jobClass{id: job.id, name: job.name, hasIf: job.hasIf, ifText: job.ifText, prBases: map[string]bool{}}
+	if !job.hasIf {
+		if ctx.hasPush {
+			class.pushRefs = append([]string{}, ctx.pushBranches...)
+		}
+		if ctx.hasPullRequest {
+			for _, base := range baseDomain {
+				class.prBases[base] = true
+			}
+			class.prAny = true
+		}
+		class.dispatch = ctx.hasDispatch
+		return class, false, nil
+	}
+
+	condition, err := parseCondition(job.ifText)
+	if err != nil {
+		return nil, false, fmt.Errorf("job %q: %w", job.id, err)
+	}
+	hasAlways := containsAlways(condition)
+	if ctx.hasPush {
+		if class.pushRefs, err = classifyPush(condition, ctx.pushBranches, job.id); err != nil {
+			return nil, false, err
+		}
+	}
+	if ctx.hasPullRequest {
+		if err := classifyPullRequest(condition, class, job.id); err != nil {
+			return nil, false, err
+		}
+	}
+	if ctx.hasDispatch {
+		if err := classifyDispatch(condition, class, job); err != nil {
+			return nil, false, err
+		}
+	}
+	return class, hasAlways, nil
+}
+
 func classifyPush(condition expr, pushBranches []string, jobID string) ([]string, error) {
 	refs := map[string]bool{}
-	for _, branch := range uniqueStrings(append(append([]string{}, pushBranches...), protectedBranches...)) {
+	for _, branch := range uniqueStrings(pushBranches) {
 		ok, err := condition.eval(state{event: "push", ref: pushRefPrefix + branch})
 		if err != nil {
 			return nil, fmt.Errorf("job %q: %w", jobID, err)
@@ -445,58 +935,93 @@ func classifyDispatch(condition expr, class *jobClass, job workflowJob) error {
 	return nil
 }
 
-func checkExactConditions(classes map[string]*jobClass) []string {
-	var failures []string
-	for _, jobID := range []string{"rubric", "builds"} {
-		allowed := rubricCondition
-		if jobID == "builds" {
-			allowed = buildsCondition
-		}
-		class, ok := classes[jobID]
-		if !ok {
-			failures = append(failures, fmt.Sprintf("workflow must define the %q job", jobID))
-			continue
-		}
-		if !class.hasIf || normalizeExpression(class.ifText) != normalizeExpression(allowed) {
-			failures = append(failures, fmt.Sprintf(
-				"job %q must be staging-pull-request-only; its if: must equal %q exactly (got %q)",
-				jobID, normalizeExpression(allowed), normalizeExpression(class.ifText)))
+// intersectClasses narrows a job's effective triggers to the states in which a
+// job it needs can run: with a `needs:` edge, a job whose dependency is
+// promotion-only can only ever run on the promotion lane, whatever its own
+// condition says (the SAN-AT1073-R1-F2 bypass). `if: always()` is the one
+// spelling that makes the dependent independent of its needs' outcomes.
+func intersectClasses(class, needed *jobClass) *jobClass {
+	merged := &jobClass{
+		id:      class.id,
+		name:    class.name,
+		hasIf:   class.hasIf,
+		ifText:  class.ifText,
+		prBases: map[string]bool{},
+	}
+	neededRefs := map[string]bool{}
+	for _, ref := range needed.pushRefs {
+		neededRefs[ref] = true
+	}
+	for _, ref := range class.pushRefs {
+		if neededRefs[ref] {
+			merged.pushRefs = append(merged.pushRefs, ref)
 		}
 	}
+	for base, ok := range class.prBases {
+		if ok && needed.prBases[base] {
+			merged.prBases[base] = true
+		}
+	}
+	merged.prAny = class.prAny && needed.prAny
+	merged.dispatch = class.dispatch && needed.dispatch
+	return merged
+}
+
+func checkParity(jobs []classifiedJob) []string {
+	failures := checkPushParity(jobs)
+	failures = append(failures, checkPromotionParity(jobs)...)
 	return failures
 }
 
-func checkPushParity(order []string, classes map[string]*jobClass) []string {
+func checkPushParity(jobs []classifiedJob) []string {
 	var failures []string
-	for _, id := range order {
-		class := classes[id]
+	for _, job := range jobs {
+		class := job.class
 		if len(class.pushRefs) > 0 && !class.prBases[stagingBranch] {
 			failures = append(failures, fmt.Sprintf(
 				"job %q (%s) can run on a push (%s) but not on a pull request to staging (R-F1 push parity)",
-				id, class.name, strings.Join(class.pushRefs, ", ")))
+				job.id, class.name, strings.Join(class.pushRefs, ", ")))
 		}
 	}
 	return failures
 }
 
-func checkPromotionParity(order []string, classes map[string]*jobClass) []string {
+func checkPromotionParity(jobs []classifiedJob) []string {
 	var failures []string
-	for _, id := range order {
-		class := classes[id]
+	for _, job := range jobs {
+		class := job.class
 		if !isPromotionOnly(class) {
 			continue
 		}
-		if exemption := findPromotionExemption(id); exemption != nil {
+		if exemption := findPromotionExemption(class.id); exemption != nil {
 			continue
 		}
 		failures = append(failures, fmt.Sprintf(
 			"job %q (%s) runs only on promotion pull requests (%s) with no pull-request-to-staging equivalent; add one or record a justified exception",
-			id, class.name, strings.Join(promotionBases(class), ", ")))
+			job.id, class.name, strings.Join(promotionBases(class), ", ")))
 	}
 	return failures
 }
 
-func checkExemptionsAreLive(classes map[string]*jobClass) []string {
+// parityExemption records a promotion-only job whose pull-request-to-staging
+// equivalent is a different job. Every entry must carry a reason and keep a
+// live counterpart; a stale entry fails the guard.
+type parityExemption struct {
+	job         string
+	counterpart string
+	reason      string
+}
+
+var promotionParityExemptions = []parityExemption{
+	{
+		job:         prereleaseID,
+		counterpart: eligibilityID,
+		reason:      "promotion-edge release-eligibility gate; the staging lane runs the same predicate through " + eligibilityID,
+	},
+}
+
+func checkExemptionsAreLive(jobs []classifiedJob) []string {
+	classes := classIndex(jobs)
 	var failures []string
 	for _, exemption := range promotionParityExemptions {
 		class, ok := classes[exemption.job]
@@ -520,7 +1045,68 @@ func checkExemptionsAreLive(classes map[string]*jobClass) []string {
 	return failures
 }
 
-func checkCanary(classes map[string]*jobClass) []string {
+// checkExactConditions pins the conditions of the jobs whose trigger set the
+// operator ruling fixes: the rubric and deterministic builds are staging-
+// pull-request-only, and the staging release-eligibility gate must keep both
+// its pull-request-to-staging and push-to-staging legs (ADV-1073-R1-01: a
+// semantically weaker push-leg removal must not pass).
+func checkExactConditions(jobs []classifiedJob) []string {
+	classes := classIndex(jobs)
+	expected := []struct {
+		id          string
+		condition   string
+		description string
+	}{
+		{"rubric", rubricCondition, "staging-pull-request-only"},
+		{"builds", buildsCondition, "staging-pull-request-only"},
+		{eligibilityID, eligibilityCondition, "pull-request-to-staging-plus-push-to-staging"},
+	}
+	var failures []string
+	for _, want := range expected {
+		class, ok := classes[want.id]
+		if !ok {
+			failures = append(failures, fmt.Sprintf("workflow must define the %q job", want.id))
+			continue
+		}
+		if !class.hasIf || normalizeExpression(class.ifText) != normalizeExpression(want.condition) {
+			failures = append(failures, fmt.Sprintf(
+				"job %q must be %s; its if: must equal %q exactly (got %q)",
+				want.id, want.description, normalizeExpression(want.condition), normalizeExpression(class.ifText)))
+		}
+	}
+	return failures
+}
+
+// checkUnconditionalSteps forbids a step-level condition that depends on the
+// triggering event inside the rubric/builds jobs: the job-level condition
+// already selects the lane, so an event-dependent step `if:` can vacate the
+// gate while the job name still reports green on a staging pull request
+// (ADV-1073-R1-03(b)). Status-only step conditions such as `if: always()` do
+// not depend on the event and stay allowed.
+func checkUnconditionalSteps(jobs []classifiedJob) []string {
+	var failures []string
+	for _, job := range jobs {
+		if job.id != "rubric" && job.id != "builds" {
+			continue
+		}
+		for _, step := range job.def.steps {
+			if !step.hasIf || !referencesTriggerContext(step.ifText) {
+				continue
+			}
+			failures = append(failures, fmt.Sprintf(
+				"job %q step %q has an event-dependent step-level if: (%q); the job's steps must run unconditionally on its staging-pull-request trigger",
+				job.id, step.name, step.ifText))
+		}
+	}
+	return failures
+}
+
+func referencesTriggerContext(text string) bool {
+	return strings.Contains(text, "github.") || strings.Contains(text, "inputs.")
+}
+
+func checkCanary(jobs []classifiedJob) []string {
+	classes := classIndex(jobs)
 	canary, ok := classes[prereleaseID]
 	if !ok {
 		return []string{fmt.Sprintf("workflow must define the promotion-edge job %q; the parity check is vacuous without it", prereleaseID)}
@@ -529,6 +1115,14 @@ func checkCanary(classes map[string]*jobClass) []string {
 		return []string{fmt.Sprintf("job %q is no longer a promotion-only job; the R-F1 parity check is vacuous", prereleaseID)}
 	}
 	return nil
+}
+
+func classIndex(jobs []classifiedJob) map[string]*jobClass {
+	classes := map[string]*jobClass{}
+	for _, job := range jobs {
+		classes[job.id] = job.class
+	}
+	return classes
 }
 
 func isPromotionOnly(class *jobClass) bool {

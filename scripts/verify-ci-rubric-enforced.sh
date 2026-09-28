@@ -125,11 +125,18 @@ require_contains "${ci}" "name: Verify deterministic builds" \
 # Operator ruling (2026-09-28): the rubric is staging-only — the staging ruleset
 # requires it with strict_required_status_checks_policy: true, so the merged
 # staging SHA is the tested SHA, and premain/main only ever receive staging
-# content. The rubric and deterministic-build conditions, the push/promotion
-# parity of every other job, and both promotion lanes are enforced by
-# scripts/verify-ci-trigger-parity.sh, which parses the workflow as YAML and
-# classifies every job by its effective triggers. Matching the raw condition
-# text was bypassable (a negated join, a `github.ref` disjunct, or a
+# content. scripts/verify-ci-trigger-parity.sh enforces, by parsing rather than
+# matching text: the rubric and deterministic-build conditions; the staging
+# release-eligibility gate's pull-request-to-staging *and* push-to-staging legs
+# (a push-leg removal is a coverage regression, not a simplification); the
+# push/promotion parity of every other job, including jobs whose effective
+# runnability comes from a `needs:` edge; both promotion lanes; every workflow
+# file in .github/workflows/ (ci.yml classified, justified non-gating publishers
+# required to stay non-gating, reusable `uses:` callees classified in the
+# caller's trigger context, anything else classified like ci.yml); and the rubric
+# and deterministic-build jobs carrying no event-dependent step-level `if:` that
+# could vacate the gate while the check name stays green. Matching the raw
+# condition text was bypassable (a negated join, a `github.ref` disjunct, or a
 # continuation-line clause broadened the rubric while a grep still passed), so
 # no line-level condition matching is done here.
 bash scripts/verify-ci-trigger-parity.sh
@@ -195,11 +202,15 @@ for unprovisioned in \
 done
 
 # Job-trigger parity (R-F1) — both promotion lanes (staging->premain and
-# premain->main), generic push coverage, and the staging-only rubric/builds
-# conditions — is enforced by scripts/verify-ci-trigger-parity.sh above. The
-# enumeration that used to live here matched literal substrings and missed a
-# premain->main-only job, a generic `github.event_name == 'push'` job, and
-# `github.event_name != 'pull_request'`.
+# premain->main), generic push coverage, the staging-only rubric/builds
+# conditions, the staging release-eligibility gate's push-to-staging leg, and
+# `needs:`-induced effective triggers — is enforced by
+# scripts/verify-ci-trigger-parity.sh above, over every workflow file in
+# .github/workflows/. The enumeration that used to live here matched literal
+# substrings and missed a premain->main-only job, a generic
+# `github.event_name == 'push'` job, `github.event_name != 'pull_request'`, a
+# promotion-only job behind a `needs:` edge or a reusable-workflow callee, and a
+# push/promotion-only job in a workflow file other than ci.yml.
 
 require_line "scripts/verify-rubric.sh" "bash ./scripts/verify-cdk-go-drift.sh" \
   "full rubric must verify cdk-go generated binding drift"

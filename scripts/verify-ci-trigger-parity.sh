@@ -11,19 +11,31 @@
 #   A. the rubric job runs only for pull requests targeting staging, plus the
 #      opt-in manual dispatch, and nowhere else;
 #   B. the deterministic-build job has the same staging-pull-request-only shape;
-#   C. every other job that can run on a push to staging/premain/main can also
-#      run on a pull request to staging;
-#   D. every job that runs only on a promotion pull request has a pull-request-
+#   C. the staging release-eligibility gate keeps both its pull-request-to-
+#      staging leg and its push-to-staging leg;
+#   D. every other job that can run on a push to staging/premain/main can also
+#      run on a pull request to staging, including jobs reached through `uses:`
+#      reusable workflows and jobs whose effective runnability comes from a
+#      `needs:` edge;
+#   E. every job that runs only on a promotion pull request has a pull-request-
 #      to-staging equivalent, or is an exemption with a recorded counterpart and
 #      reason;
-#   E. both promotion lanes are covered (staging->premain and premain->main).
+#   F. both promotion lanes are covered (staging->premain and premain->main);
+#   G. every workflow file in .github/workflows/ is accounted for: ci.yml is
+#      classified, a justified non-gating publisher must stay non-gating (no
+#      pull_request trigger), a reusable-only workflow is classified where it is
+#      called, and any other workflow is classified like ci.yml;
+#   H. the rubric and deterministic-build jobs carry no event-dependent
+#      step-level if: that could vacate the gate while the check name stays
+#      green.
 #
-# The check is delegated to cmd/ci-guard, which parses the workflow as YAML and
-# classifies every job by its effective triggers (workflow `on:` x job `if:`).
-# A job condition the classifier does not model -- a negated or `!=` predicate
-# over an unknown ref, a folded/continuation scalar, a YAML alias or merge key,
-# a `pull_request` branch filter -- fails closed rather than passing: matching
-# the raw text let `|| (github.event_name != 'pull_request')`,
+# The check is delegated to cmd/ci-guard, which parses every workflow as YAML and
+# classifies every job by its effective triggers (workflow `on:` x job `if:` x
+# `needs:`). A job condition the classifier does not model -- a negated or `!=`
+# predicate over an unknown ref, a folded/continuation scalar, a YAML alias or
+# merge key, a `pull_request` branch filter, a remote reusable workflow -- fails
+# closed rather than passing: matching the raw text let
+# `|| (github.event_name != 'pull_request')`,
 # `|| (github.ref == 'refs/heads/staging')` and a continuation-line clause
 # broaden the rubric while the guard passed.
 #
@@ -33,8 +45,8 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 if ! command -v go >/dev/null 2>&1; then
-  echo "ci-trigger-parity: BLOCKED (go toolchain not found; cmd/ci-guard parses the workflow)" >&2
+  echo "ci-trigger-parity: BLOCKED (go toolchain not found; cmd/ci-guard parses the workflows)" >&2
   exit 2
 fi
 
-go run ./cmd/ci-guard workflow-triggers --root "$(pwd)" --workflow ".github/workflows/ci.yml"
+go run ./cmd/ci-guard workflow-triggers --root "$(pwd)" --workflows-dir ".github/workflows"

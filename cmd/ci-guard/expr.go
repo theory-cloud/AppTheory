@@ -68,6 +68,39 @@ type constExpr struct{ value bool }
 
 func (e constExpr) eval(state) (bool, error) { return e.value, nil }
 
+// alwaysExpr is GitHub's always() status function. It is kept distinct from the
+// other status functions because it is the one spelling that makes a job
+// independent of its `needs:` outcomes: a job with `needs:` and `if: always()`
+// still runs when the jobs it needs were skipped, so the classifier must not
+// narrow its triggers to theirs.
+type alwaysExpr struct{}
+
+func (e alwaysExpr) eval(state) (bool, error) { return true, nil }
+
+// containsAlways reports whether an expression calls always() anywhere, which
+// is what decides whether a `needs:` edge narrows the job's effective triggers.
+func containsAlways(e expr) bool {
+	switch typed := e.(type) {
+	case alwaysExpr:
+		return true
+	case orExpr:
+		for _, part := range typed.parts {
+			if containsAlways(part) {
+				return true
+			}
+		}
+	case andExpr:
+		for _, part := range typed.parts {
+			if containsAlways(part) {
+				return true
+			}
+		}
+	case notExpr:
+		return containsAlways(typed.child)
+	}
+	return false
+}
+
 type compareExpr struct {
 	op    string
 	left  operand
@@ -389,7 +422,12 @@ func (p *expressionParser) parseFunctionCall() (expr, error) {
 	}
 	p.pos++
 	switch name {
-	case "always", "success", "failure", "cancelled": //nolint:misspell // GitHub Actions spells the function cancelled()
+	case "always":
+		return alwaysExpr{}, nil
+	case "success", "failure", "cancelled": //nolint:misspell // GitHub Actions spells the function cancelled()
+		// For trigger classification these three all mean "the job runs only
+		// where its needs ran and completed", which is the default gate the
+		// needs: handling applies; only always() lifts that gate.
 		return constExpr{value: true}, nil
 	default:
 		return nil, fmt.Errorf("function %q in if: expression is not modeled", name)
