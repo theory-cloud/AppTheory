@@ -1,12 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { assertDistIsFresh } from "./invocation-scope-dist-freshness.mjs";
 import { createApp, htmlStream, timeoutMiddleware } from "../dist/index.js";
 
 // This file proves the invocation-scope invariant for the TypeScript runtime: an
 // asynchronous read, task or handler the runtime starts for a request must have
 // settled before the adapter (or the middleware) that started it returns, so no
 // work outlives the Lambda invocation that started it.
+//
+// The tests load the built package, so assertDistIsFresh fails loudly when the
+// build is older than the source it was built from instead of passing against
+// stale output.
+assertDistIsFresh();
 
 // Mirrors APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS in src/internal/aws-http.ts.
 const STREAMING_BODY_TIMEOUT_MS = 5000;

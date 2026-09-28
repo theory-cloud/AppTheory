@@ -1,6 +1,7 @@
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 
+import { assertDistIsFresh } from "./invocation-scope-dist-freshness.mjs";
 import {
   Context,
   createApp,
@@ -8,19 +9,28 @@ import {
   timeoutMiddleware,
 } from "../dist/index.js";
 
-// This file proves the invocation-scope invariant for the three TypeScript
-// launch sites whose join the baseline justifies by waiting for the abandoned
-// work:
+// This file proves the invocation-scope invariant for the TypeScript launch
+// sites the guard reasons about:
 //
-//   ts/src/internal/aws-http.ts|timer[#1]         (withDeadline's drain budget)
-//   ts/src/internal/aws-http.ts|promise-race[#1]  (the raced read)
-//   ts/src/app.ts|timer[#1]                       (the timeout middleware)
+//   ts/src/internal/aws-http.ts|withDeadline.<anonymous>[#1]
+//     withDeadline's drain-budget timer. It stays in
+//     scripts/invocation-scope-baseline.txt because the arm and the clear sit in
+//     two different closures, so the per-scope proof cannot follow it.
+//   ts/src/app.ts|timeoutMiddleware.<anonymous>[#1]
+//     the timeout middleware's abort timer, discharged by the proof (its
+//     clearTimeout is in a finally of the same scope), so it needs no baseline
+//     entry — this test is what still pins the join.
 //
 // Each test is strict: it asserts an ordering that only holds while the join is
 // present, so deleting the join makes the test fail instead of merely weakening
 // it. The tests drive the runtime's real timers through node:test's mock clock,
 // so the 5000 ms drain budget and the middleware's abort deadline are exercised
 // without a wall-clock wait.
+//
+// The tests load the built package, so they exercise the source under test only
+// when the build is current: assertDistIsFresh fails loudly on a stale dist
+// rather than passing against code no longer in ts/src.
+assertDistIsFresh();
 
 // Mirrors APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS in src/internal/aws-http.ts.
 const STREAMING_BODY_TIMEOUT_MS = 5000;
