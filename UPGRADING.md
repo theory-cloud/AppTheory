@@ -194,6 +194,34 @@ original records must be re-read from the stream while they are still inside the
 `bisectBatchOnError` enabled, the metadata's `BatchSize` can exceed 1 because Lambda consolidates the failed messages it
 writes to the destination.
 
+### TableTheory v4 dependency floor
+
+The v4 line requires TableTheory v4.0.0 in all three runtimes. TableTheory v4 moves its Go module path to
+`github.com/theory-cloud/tabletheory/v4`, so Go consumers must replace every TableTheory `/v3` import with `/v4`
+and require `github.com/theory-cloud/tabletheory/v4`; the TableTheory values passed to AppTheory APIs (for example
+`NewTableTheorySessionRegistry`) change Go type identity. Do not keep both TableTheory major paths in one
+application — their otherwise similar interfaces are distinct Go types.
+
+The AppTheory TypeScript and Python release metadata continues to install TableTheory only from immutable GitHub
+Release assets. The v4 dependency assets pinned by this line are:
+
+- TypeScript: `theory-cloud-tabletheory-ts-4.0.0.tgz`, verified with SHA-512
+  `qw/8a6sy5pYk6kO1eP/sO0aCNPALyEQZwHbe5FGBnqBCM6dzhfMdHFW2TkJRuDg4+5JquUZBYCWr561ooObOOA==`.
+- Python: `tabletheory_py-4.0.0-py3-none-any.whl`, verified with SHA-256
+  `2add972f0b070426d77de65158b7c5f8b191d1331c4403afe5b0879dee7961de`.
+
+TableTheory v4 removes the ticker-driven memory monitor: `MemoryMonitor.Start` / `Stop`,
+`ResourceProtector.StartMemoryMonitoring` / `StopMemoryMonitoring`, and `ResourceLimits.MemoryCheckInterval` are
+gone, replaced by on-demand `MemoryMonitor.Sample`, `ResourceProtector.SampleMemory`, and
+`ResourceProtector.SetMemoryAlertCallback`. A caller samples inside the request whose memory it records, so nothing
+a sample starts can outlive the invocation. AppTheory does not use the removed API. TableTheory v4 also returns
+`ErrInvalidOperator` from `ConsistentRead()` on GSI queries instead of silently dropping the flag, and converges
+`[]byte`/set-tagged DynamoDB write shapes on the cross-runtime DMS matrix; AppTheory's TableTheory queries use
+base-table key conditions, so the GSI change does not apply and no persisted-shape migration is required.
+
+Use those pinned assets through AppTheory's package metadata; do not substitute registry-published packages or
+mutable URLs.
+
 ## v3.x line
 
 ### Toolchain and CDK dependency floors
