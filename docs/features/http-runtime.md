@@ -206,8 +206,10 @@ runtime puts around a body forwards close to the body it wraps. See
 `ts/src/` and `py/src/`, and fails on any asynchronous launch whose join the
 proof cannot show. `scripts/invocation-scope-baseline.txt` lists exactly the
 sites the proof cannot discharge, each with the join that keeps it inside its
-invocation; every other launch is discharged by the proof itself, so the baseline
-shrinks as the runtime makes a join visible to a parser.
+invocation. A site is absent from that file only when the proof itself discharges
+it, so the baseline shrinks as the runtime makes a join visible to a parser, and
+a launch the proof cannot follow — even one whose join is in the same function —
+is listed there with its strict join test rather than left unreported.
 
 Each language is read with its own parser, never with a text pattern:
 
@@ -221,16 +223,33 @@ Each language is read with its own parser, never with a text pattern:
   aliased `time` import.
 - **TypeScript** — the TypeScript compiler API, through
   `scripts/tools/invocation_scope/scan_typescript.mjs`. Each scope (the module,
-  every function, every class-field initializer and static block) gets a
-  control-flow graph; a launch is joined only when an `await` (or `return`) of the
-  held target, or a `clearTimeout`/`clearInterval`/`clearImmediate` of a timer
-  handle, dominates every exit. A TypeScript parse diagnostic fails the scan
-  rather than being skipped.
+  every function, every parameter initializer, every class-field initializer and
+  every static block) gets a control-flow graph; a launch is joined only when an
+  `await` (or `return`) of the held target, or a
+  `clearTimeout`/`clearInterval`/`clearImmediate` of a timer handle, dominates
+  every exit. A target and its join are matched on the bare expression, so a
+  non-null assertion, a type assertion or parentheses around either name the same
+  target (`clearTimeout(this.t!)` clears the `this.t` that armed the timer). A
+  timer function bound to a variable (`const st = setTimeout; st(cb, 1)`) is
+  recognized as that timer, a member assigned an async arrow (`this.run = async
+  () => {...}`) is a function the file declares async, and an iterator read held
+  from `<expr>.next()` is a launch until it settles. A TypeScript parse diagnostic
+  fails the scan rather than being skipped.
 - **Python** — the standard-library `ast` module, through
   `scripts/tools/invocation_scope/scan_python.py`, with the same per-scope
   control-flow graph. Threads are joined by `join()`, tasks and offloads by
   `await` (directly or through `gather`/`wait`), and an executor `submit` is
-  joined lexically by its own `with` block.
+  joined lexically by its own `with` block. A class body and the expressions a
+  `def`/`class` statement evaluates (default arguments, decorators, class bases
+  and keywords) are scopes of their own, and a walrus receiver
+  (`(t := Thread(...)).start()`) names its target. A plain name is tracked inside
+  the function that binds it, plus the body of the `def` whose default argument
+  bound it; an attribute (`self.worker`, `mod.worker`), a container element
+  (`pool["a"]`), a module global and a class attribute (also under `self.<name>`
+  and `<Class>.<name>`) are tracked across the file, because the target belongs to
+  the instance, the container, the module or the class rather than to the frame
+  that assigned it. The join proof stays in the function that starts the work: a
+  join in a sibling method does not clean a launch.
 
 A missing `node` or Python interpreter fails the guard; it never skips a
 language, and it never reports an empty (vacuously clean) result. The guard's
@@ -238,13 +257,18 @@ self-tests in `scripts/tools/invocation_scope` pin a red case for every shape a
 presence- or line-based reading accepts by mistake — a one-line
 `if (cond) await p`, a join after an early return, a join inside a nested
 uncalled function, a `cancel()` without a wait, a conditional `Stop()`, a
-destructuring or array aggregate of promises, a walrus-bound task — and a green
-case for every joined form (`try`/`finally`, both branches of an `if`/`else`,
-`await Promise.all`/`allSettled`, `defer wg.Wait()`). `main_test.go` holds the Go
-proofs and `selftest.go` the two scanner batteries; the battery runs from
+destructuring or array aggregate of promises, a walrus-bound task, a target bound
+in one method and started in a sibling method, a launch in a default argument, a
+decorator or a class base, a launch in a parameter initializer, a timer reached
+through a variable alias — and a green case for every joined form
+(`try`/`finally`, both branches of an `if`/`else`, `await Promise.all`/
+`allSettled`, `defer wg.Wait()`, a sibling method that starts and joins the
+target its constructor stored). `main_test.go` holds the Go proofs and
+`selftest.go` the two scanner batteries; the battery runs from
 `scripts/verify-invocation-scope.sh` because it needs the TypeScript compiler and
 a Python interpreter, neither of which the release-gates snapshot (a tracked-tree
-copy with no `node_modules`) provides.
+copy with no `node_modules`) provides. `make rubric` runs that verifier;
+`make test-unit` is `go test` only and does not run the scanners at all.
 
 Deliberately conservative, and reported rather than assumed joined:
 
@@ -256,12 +280,22 @@ Deliberately conservative, and reported rather than assumed joined:
 - A thread built inside a comprehension is reported even when a later loop starts
   and joins it, because the comprehension hides the handle the guard tracks.
 - A join that crosses a scope boundary — into another method, into a callback the
-  caller may never call, or into a returned cleanup function — is reported. The
-  join may well be real (every remaining baseline entry is of this shape: the Go
-  producers joined by another method or by the consumer of a returned value, and
-  the TypeScript drain-budget timer armed in a `Promise` executor and cleared in
-  the race's `finally`); the proof simply cannot see across the boundary, so the
-  site stays in the baseline with its strict join test.
+  caller may never call, into a handler that only some paths reach, or into a
+  returned cleanup function — is reported, and so is a join matched only through a
+  chain that consumes its target (`await p.then(f)` is not read as a join of `p`).
+  The join may well be real; the proof simply cannot show it, so the site stays in
+  the baseline with its strict join test. That is the shape of every remaining
+  baseline entry: the Go producers joined by another method or by the consumer of
+  a returned value, and the two TypeScript drain sites — the budget timer armed in
+  a `Promise` executor and cleared in the race's `finally`, and the in-flight read
+  the drain releases only on its budget path.
+- A daemon-flagged thread constructor in a default argument, a decorator or a
+  class base is reported even without a `.start()`, because the expression runs
+  outside every body the proof covers.
+- An attribute, container element, module global or class attribute is tracked
+  file-wide, so a scope that rebinds the same key does not un-track it, and a
+  subscript whose key the proof cannot match is recognized as a launch whenever
+  the container it indexes holds one.
 - `unref()` is not a join: it releases the event loop, not the callback.
 - A `switch` is modeled without fallthrough, and a promise whose producer is known
   only from its type (not from syntax) is left to
