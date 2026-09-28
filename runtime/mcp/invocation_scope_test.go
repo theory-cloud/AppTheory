@@ -36,7 +36,7 @@ func assertNoGoroutineFor(t *testing.T, marker, when string) {
 // assertNoNewGoroutineFor asserts that no goroutine started after the snapshot
 // still contains marker. Scoping the check to the invocation under test keeps a
 // failure attributable: a producer that another test in the process left running
-// is that test's leak, and a passing test is never failed by its neighbours.
+// is that test's leak, and a passing test is never failed by its neighbors.
 func assertNoNewGoroutineFor(t *testing.T, before map[int]struct{}, marker, when string) {
 	t.Helper()
 
