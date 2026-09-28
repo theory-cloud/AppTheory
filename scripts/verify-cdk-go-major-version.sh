@@ -35,11 +35,10 @@ cp \
   scripts/update-cdk-generated.sh \
   scripts/verify-cdk-go.sh \
   "${fixture_root}/scripts/"
-cp \
-  scripts/lib/blocked.sh \
-  scripts/lib/runtime-deps.sh \
-  scripts/lib/cdk-runtime-deps.sh \
-  "${fixture_root}/scripts/lib/"
+# Copy the whole shared helper directory rather than a hand-maintained list: a
+# helper that exists in the repo but is missing from this fixture root fails
+# inside the fixture with no obvious cause (scripts/lib/retry.sh did).
+cp scripts/lib/*.sh "${fixture_root}/scripts/lib/"
 
 python3 - "${fixture_root}" "${synthetic_version}" <<'PY'
 import json
