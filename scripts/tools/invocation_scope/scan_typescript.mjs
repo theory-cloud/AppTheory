@@ -84,6 +84,10 @@
  *   * A join is matched on the bare held target, not through a chain that
  *     consumes it: `await p.then(f)` is not read as a join of `p`, so a launch
  *     whose only release is a chain on it is reported.
+ *   * A labeled `break`/`continue` is modeled as leaving the scope rather than as
+ *     loop control, so a join after the labeled statement is not credited to a
+ *     launch before it and that launch is reported. The conservative direction is
+ *     deliberate: an unknown label keeps the same fallback.
  */
 
 import { createRequire } from 'node:module';

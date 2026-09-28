@@ -101,6 +101,13 @@ var tsFlaggedProbes = []struct{ name, src, rule string }{
 	{"member-assigned async call", "class C {\n  run = async (): Promise<void> => {\n    await work();\n  };\n  start() {\n    this.run();\n  }\n}", "discarded-async-call"},
 	{"member-assigned async call in a constructor", "class C {\n  start() {\n    this.run = async () => {\n      await work();\n    };\n    this.run();\n  }\n}", "discarded-async-call"},
 	{"held iterator read", "async function drain(it) {\n  const pending = it.next();\n  work(pending);\n}", "async-read"},
+	// A labeled `break`/`continue` is modeled as leaving the scope rather than as
+	// loop control, so a join after the labeled statement is not credited to a
+	// launch before it. That is a deliberate conservative report — the guard never
+	// assumes a join it cannot follow — and it is stated in the module docstring
+	// and in docs/features/http-runtime.md. A later round that models the label as
+	// loop control moves this row to the joined battery.
+	{"labeled exit is not modeled as loop control", "async function run() {\n  const p = load(id).then((u) => render(u));\n  outer: for (const x of xs) {\n    break outer;\n  }\n  await p;\n}", "floating-then"},
 }
 
 // tsCleanProbes are the TypeScript shapes the scanner must accept.

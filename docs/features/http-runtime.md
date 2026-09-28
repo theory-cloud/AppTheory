@@ -292,6 +292,10 @@ Deliberately conservative, and reported rather than assumed joined:
 - A daemon-flagged thread constructor in a default argument, a decorator or a
   class base is reported even without a `.start()`, because the expression runs
   outside every body the proof covers.
+- A labeled `break`/`continue` is modeled as leaving the scope rather than as
+  loop control, so a join after the labeled statement is not credited to a launch
+  before it: the launch is reported. The conservative direction is deliberate, and
+  a probe pins it.
 - An attribute, container element, module global or class attribute is tracked
   file-wide, so a scope that rebinds the same key does not un-track it, and a
   subscript whose key the proof cannot match is recognized as a launch whenever
