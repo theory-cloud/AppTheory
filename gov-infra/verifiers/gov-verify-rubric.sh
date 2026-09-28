@@ -32,6 +32,8 @@ REPORT_PATH="${EVIDENCE_DIR}/gov-rubric-report.json"
 
 # shellcheck source=../../scripts/lib/blocked.sh
 source "${REPO_ROOT}/scripts/lib/blocked.sh"
+# shellcheck source=../../scripts/lib/retry.sh
+source "${REPO_ROOT}/scripts/lib/retry.sh"
 # shellcheck source=../../scripts/lib/ts-runtime-deps.sh
 source "${REPO_ROOT}/scripts/lib/ts-runtime-deps.sh"
 # shellcheck source=../../scripts/lib/cdk-runtime-deps.sh
@@ -405,7 +407,11 @@ ensure_go_tool_pinned() {
   fi
 
   echo "Installing ${tool_name} ${version} into ${GOV_TOOLS_BIN}..." >&2
-  if ! GOBIN="${GOV_TOOLS_BIN}" go install "${module_path}@${version}"; then
+  # Tool provisioning is network-dependent: retry a bounded number of times with
+  # backoff, and still fail closed (never "use whatever is installed") when every
+  # attempt fails.
+  if ! run_with_retry 3 5 "install pinned ${tool_name} ${version}" -- \
+    env GOBIN="${GOV_TOOLS_BIN}" go install "${module_path}@${version}"; then
     echo "BLOCKED: failed to install pinned ${tool_name} ${version} (check network/toolchain)" >&2
     return 2
   fi
@@ -458,7 +464,8 @@ ensure_pip_audit_pinned() {
     return 2
   fi
 
-  if ! "${GOV_TOOLS_PY_BIN}/python" -m pip install --disable-pip-version-check --no-cache-dir "pip-audit==${v}"; then
+  if ! run_with_retry 3 5 "install pinned pip-audit ${v}" -- \
+    "${GOV_TOOLS_PY_BIN}/python" -m pip install --disable-pip-version-check --no-cache-dir "pip-audit==${v}"; then
     echo "BLOCKED: failed to install pinned pip-audit ${v}" >&2
     return 2
   fi
@@ -497,7 +504,11 @@ ensure_cdk_dist_go_bindings_generated() {
   fi
 
   # Pacmak output can require a tidy pass to ensure the module graph is complete.
-  (cd cdk/dist/go/apptheorycdk && go mod tidy >/dev/null)
+  if ! run_with_retry 3 5 "tidy generated cdk Go module" -- \
+    bash -c 'cd cdk/dist/go/apptheorycdk && go mod tidy >/dev/null'; then
+    echo "FAIL: failed to tidy the generated cdk Go module (check network/toolchain)" >&2
+    return 1
+  fi
 
   return 0
 }
@@ -574,7 +585,8 @@ ensure_py_runtime_deps_installed_into() {
 
   if [[ "${#deps[@]}" -gt 0 ]]; then
     echo "Installing Python runtime deps into ${venv_dir}..." >&2
-    if ! "${python_bin}" -m pip install --disable-pip-version-check --no-cache-dir "${deps[@]}"; then
+    if ! run_with_retry 3 5 "install Python runtime deps" -- \
+      "${python_bin}" -m pip install --disable-pip-version-check --no-cache-dir "${deps[@]}"; then
       echo "BLOCKED: failed to install Python runtime dependencies (check network/toolchain)" >&2
       return 2
     fi
@@ -1040,7 +1052,8 @@ ensure_py_coverage_pinned() {
     echo "BLOCKED: failed to create python venv at ${GOV_TOOLS_PY_COV_DIR}" >&2
     return 2
   fi
-  if ! "${GOV_TOOLS_PY_COV_BIN}/python" -m pip install --disable-pip-version-check --no-cache-dir "coverage==${v}"; then
+  if ! run_with_retry 3 5 "install pinned Coverage.py ${v}" -- \
+    "${GOV_TOOLS_PY_COV_BIN}/python" -m pip install --disable-pip-version-check --no-cache-dir "coverage==${v}"; then
     echo "BLOCKED: failed to install pinned Coverage.py ${v}" >&2
     return 2
   fi

@@ -3,6 +3,7 @@
 # Source this file from a script that has changed to the repository root.
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/runtime-deps.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/retry.sh"
 
 APPTHEORY_TS_RUNTIME_DEPS_STAMP="ts/node_modules/.gov-ts-runtime-deps.sha256"
 
@@ -32,7 +33,8 @@ ensure_ts_runtime_deps_installed() {
   fi
 
   echo "Installing TypeScript runtime deps into ts/node_modules..." >&2
-  if ! (cd ts && npm ci --ignore-scripts --no-audit --no-fund >/dev/null); then
+  if ! run_with_retry 3 5 "TypeScript runtime dependency install" -- \
+    bash -c 'cd ts && npm ci --ignore-scripts --no-audit --no-fund >/dev/null'; then
     echo "BLOCKED: failed to install TypeScript runtime dependencies (check network/toolchain)" >&2
     return 2
   fi
