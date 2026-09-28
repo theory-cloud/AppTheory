@@ -1,12 +1,27 @@
-import test from "node:test";
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 
+import { assertDistIsFresh } from "./invocation-scope-dist-freshness.mjs";
 import { createApp, htmlStream, timeoutMiddleware } from "../dist/index.js";
 
 // This file proves the invocation-scope invariant for the TypeScript runtime: an
 // asynchronous read, task or handler the runtime starts for a request must have
 // settled before the adapter (or the middleware) that started it returns, so no
 // work outlives the Lambda invocation that started it.
+//
+// The drain-deadline tests drive the runtime's real timers through node:test's
+// mock clock and assert the ordering the invariant is about ("the adapter has
+// not returned at its deadline", "the adapter returned once the read settled"),
+// never elapsed wall-clock time: a `Date.now()` comparison against a
+// `setTimeout` boundary has no slack and compares two clock domains, so it can
+// fail while the invariant holds. The timer-leak half of the invariant is pinned
+// by the mock-clock tests in invocation-scope-join.test.mjs, which count the
+// timer handles the runtime arms and clears.
+//
+// The tests load the built package, so assertDistIsFresh fails loudly when the
+// build is older than the source it was built from instead of passing against
+// stale output.
+assertDistIsFresh();
 
 // Mirrors APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS in src/internal/aws-http.ts.
 const STREAMING_BODY_TIMEOUT_MS = 5000;
@@ -38,14 +53,12 @@ function request(path) {
   };
 }
 
-// countActiveTimeouts reports how many timer handles the process still holds, so
-// a test can prove the runtime cleared the timers it created.
-function countActiveTimeouts() {
-  if (typeof process.getActiveResourcesInfo !== "function") {
-    return null;
-  }
-  return process.getActiveResourcesInfo().filter((kind) => kind === "Timeout")
-    .length;
+// flush lets the microtask and immediate queues drain between mock-clock ticks,
+// so a test observes the runtime's state rather than racing its own tick.
+function flush() {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
 }
 
 function sleep(ms) {
@@ -70,107 +83,122 @@ function abortSignalFromContextCarrier(value) {
 }
 
 test("http api v2 adapter joins the read it abandons at the drain deadline", async () => {
-  const app = createApp();
-
-  let unwound = false;
-  let releaseRead;
-  const readGate = new Promise((resolve) => {
-    releaseRead = resolve;
-  });
-
-  const producer = (async function* heldStream() {
-    try {
-      yield Buffer.from("data: first\n\n", "utf8");
-      // Hold the next read open past the drain deadline. A producer that
-      // observes the unwind settles here; an abandoned one does not.
-      await readGate;
-    } finally {
-      unwound = true;
-    }
-  })();
-
-  app.get("/held", () => htmlStream(200, producer));
-
-  const timersBefore = countActiveTimeouts();
-  const startedAt = Date.now();
-  const releaseTimer = setTimeout(
-    () => releaseRead(),
-    STREAMING_BODY_TIMEOUT_MS + 50,
-  );
-
+  mock.timers.enable({ apis: ["setTimeout", "Date"] });
   try {
-    const out = await app.serveAPIGatewayV2(apigwV2Event("/held"));
+    const app = createApp();
 
-    assert.equal(out.statusCode, 500);
+    let unwound = false;
+    let releaseRead;
+    const readGate = new Promise((resolve) => {
+      releaseRead = resolve;
+    });
+
+    const producer = (async function* heldStream() {
+      try {
+        yield Buffer.from("data: first\n\n", "utf8");
+        // Hold the next read open past the drain deadline. A producer that
+        // observes the unwind settles here; an abandoned one does not.
+        await readGate;
+      } finally {
+        unwound = true;
+      }
+    })();
+
+    app.get("/held", () => htmlStream(200, producer));
+
+    const state = { settled: false, response: null };
+    const served = app.serveAPIGatewayV2(apigwV2Event("/held")).then((out) => {
+      state.settled = true;
+      state.response = out;
+    });
+
+    await flush();
+
+    // The read the drain started is still pending when the budget expires, and
+    // the only thing that releases it is this test's own release below, which
+    // lands after the deadline. The drain must not resolve the invocation on its
+    // own deadline.
+    mock.timers.tick(STREAMING_BODY_TIMEOUT_MS);
+    await flush();
+    assert.equal(
+      state.settled,
+      false,
+      "the adapter gave up at its drain deadline while the read it abandoned could still run",
+    );
+
+    releaseRead();
+    await flush();
+    await served;
+
+    assert.equal(state.response.statusCode, 500);
     assert.equal(
       unwound,
       true,
       "the adapter returned while the read it abandoned could still run",
     );
-    assert.ok(
-      Date.now() - startedAt >= STREAMING_BODY_TIMEOUT_MS,
-      "the adapter gave up before its drain budget expired",
-    );
-
-    await sleep(20);
-    const timersAfter = countActiveTimeouts();
-    if (timersBefore !== null && timersAfter !== null) {
-      assert.ok(
-        timersAfter <= timersBefore,
-        `adapter left ${timersAfter - timersBefore} pending timer(s) behind`,
-      );
-    }
   } finally {
-    clearTimeout(releaseTimer);
+    mock.timers.reset();
   }
 });
 
 test("http api v2 adapter waits for a producer that cannot observe the unwind", async () => {
-  const app = createApp();
-
-  let unwound = false;
-  let releaseRead;
-  const gate = new Promise((resolve) => {
-    releaseRead = resolve;
-  });
-
-  const producer = (async function* heldStream() {
-    try {
-      yield Buffer.from("data: first\n\n", "utf8");
-      // Suspended inside an await the producer does not race against its own
-      // unwind, so asking it to unwind cannot complete until the await settles.
-      // The adapter waits for it anyway: a producer the invocation started must
-      // not still be running when the adapter returns. On Lambda the invocation
-      // (not the adapter) bounds a producer like this one.
-      await gate;
-    } finally {
-      unwound = true;
-    }
-  })();
-
-  app.get("/live", () => htmlStream(200, producer));
-
-  const startedAt = Date.now();
-  const releaseTimer = setTimeout(
-    () => releaseRead(),
-    STREAMING_BODY_TIMEOUT_MS + 100,
-  );
-
+  mock.timers.enable({ apis: ["setTimeout", "Date"] });
   try {
-    const out = await app.serveAPIGatewayV2(apigwV2Event("/live"));
+    const app = createApp();
 
-    assert.equal(out.statusCode, 500);
+    let unwound = false;
+    let releaseRead;
+    const gate = new Promise((resolve) => {
+      releaseRead = resolve;
+    });
+
+    const producer = (async function* heldStream() {
+      try {
+        yield Buffer.from("data: first\n\n", "utf8");
+        // Suspended inside an await the producer does not race against its own
+        // unwind, so asking it to unwind cannot complete until the await settles.
+        // The adapter waits for it anyway: a producer the invocation started must
+        // not still be running when the adapter returns. On Lambda the invocation
+        // (not the adapter) bounds a producer like this one.
+        await gate;
+      } finally {
+        unwound = true;
+      }
+    })();
+
+    app.get("/live", () => htmlStream(200, producer));
+
+    const state = { settled: false, response: null };
+    const served = app.serveAPIGatewayV2(apigwV2Event("/live")).then((out) => {
+      state.settled = true;
+      state.response = out;
+    });
+
+    await flush();
+
+    // Past its drain budget the adapter has closed the body and is waiting for
+    // the read it abandoned; it must not have returned yet. The read settles
+    // only on the release below.
+    mock.timers.tick(STREAMING_BODY_TIMEOUT_MS);
+    await flush();
+    assert.equal(
+      state.settled,
+      false,
+      "the adapter returned at its drain deadline while a producer it abandoned could still run",
+    );
+
+    releaseRead();
+    await flush();
+    await served;
+
+    assert.equal(state.response.statusCode, 500);
     assert.equal(
       unwound,
       true,
       "the adapter returned while a producer it abandoned could still run",
     );
-    assert.ok(
-      Date.now() - startedAt >= STREAMING_BODY_TIMEOUT_MS + 100,
-      "the adapter returned before the producer it gave up on had settled",
-    );
   } finally {
-    clearTimeout(releaseTimer);
+    mock.timers.reset();
   }
 });
 

@@ -13,9 +13,14 @@ import apptheory.aws_http as aws_http  # noqa: E402
 from apptheory.response import html_stream  # noqa: E402
 
 # This file proves the invocation-scope invariant for the Python drain launch
-# site the baseline justifies by waiting for the worker it abandons:
+# site:
 #
-#   py/src/apptheory/aws_http.py|thread[#1]
+#   py/src/apptheory/aws_http.py|_drain_streaming_body[#1]
+#
+# The guard's Python scanner now discharges this site itself: `worker.join(...)`
+# dominates every exit of `_drain_streaming_body`, so the site is no longer in
+# scripts/invocation-scope-baseline.txt. This test is what still pins the join —
+# the guard proves dominance, and this proves the waiting is real.
 #
 # The tests are strict: the worker only records that it unwound after the slow
 # release completes, so a drain that returned without joining its worker is

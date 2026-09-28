@@ -345,8 +345,9 @@ func (r *streamingBodyReader) Close() error {
 // apigatewayProxyStreamingResponseFromResponse builds the streaming envelope.
 //
 // A portable BodyStream is not a reader, so it MUST already have been converted
-// to a closable reader by joinStreamingResponseBody; a BodyStream left on the
-// response is dropped, which is why the only caller converts first.
+// to a closable reader by joinStreamingResponseBody. The error-path caller cannot
+// carry one — error responses are buffered — and the streaming caller converts
+// before it calls here, so a BodyStream left on the response is dropped.
 func apigatewayProxyStreamingResponseFromResponse(resp Response) *events.APIGatewayProxyStreamingResponse {
 	body := io.Reader(bytes.NewReader(resp.Body))
 	var closers []io.Closer
