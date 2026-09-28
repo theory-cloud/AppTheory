@@ -15,6 +15,12 @@ bash ./scripts/verify-cdk-readme-inventory.sh
 bash ./scripts/verify-cdk-go-drift.sh
 bash ./scripts/verify-api-docs.sh
 bash ./gov-infra/verifiers/test-gov-rubric-timestamp.sh
+bash ./gov-infra/verifiers/test-gov-retry.sh
+# The CI-wiring and install-hygiene guards parse the workflow as YAML and the
+# install surfaces as tokenized shell; run their red/green self-tests here so a
+# guard that stops failing closed on the reproduced bypasses fails the rubric.
+bash ./scripts/test-verify-ci-trigger-parity.sh
+bash ./scripts/test-verify-npm-install-hygiene.sh
 bash ./gov-infra/verifiers/gov-verify-rubric.sh
 
 echo "rubric: PASS"

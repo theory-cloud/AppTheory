@@ -118,23 +118,99 @@ require_contains "${ci}" "run_full_rubric:" \
   "manual CI dispatch must expose an explicit full-rubric toggle"
 require_contains "${ci}" "default: true" \
   "manual CI dispatch must continue to run the full rubric by default"
-require_contains \
-  "${ci}" \
-  "if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')" \
-  "full rubric must run only for PRs targeting staging plus opted-in manual dispatch"
 require_contains "${ci}" "  builds:" "CI must define the standalone deterministic-build job"
 require_contains "${ci}" "name: Verify deterministic builds" \
   "CI must keep the deterministic-build job name stable for branch protection visibility"
-require_contains \
-  "${ci}" \
-  "if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'" \
-  "deterministic builds must run only for PRs targeting staging"
+
+# Operator ruling (2026-09-28): the rubric is staging-only — the staging ruleset
+# requires it with strict_required_status_checks_policy: true, so the merged
+# staging SHA is the tested SHA, and premain/main only ever receive staging
+# content. scripts/verify-ci-trigger-parity.sh enforces, by parsing rather than
+# matching text: the rubric and deterministic-build conditions; the staging
+# release-eligibility gate's pull-request-to-staging *and* push-to-staging legs
+# (a push-leg removal is a coverage regression, not a simplification); the
+# push/promotion parity of every other job, including jobs whose effective
+# runnability comes from a `needs:` edge; both promotion lanes; every workflow
+# file in .github/workflows/ (ci.yml classified, justified non-gating publishers
+# required to stay non-gating, reusable `uses:` callees classified in the
+# caller's trigger context, anything else classified like ci.yml); and the rubric
+# and deterministic-build jobs carrying no event-dependent step-level `if:` that
+# could vacate the gate while the check name stays green. Matching the raw
+# condition text was bypassable (a negated join, a `github.ref` disjunct, or a
+# continuation-line clause broadened the rubric while a grep still passed), so
+# no line-level condition matching is done here.
+bash scripts/verify-ci-trigger-parity.sh
+
+require_job_contains "${ci}" "rubric" "uses: actions/upload-artifact@" \
+  "full rubric must publish the GovTheory evidence report as a retrievable artifact"
+require_job_contains "${ci}" "rubric" "path: gov-infra/evidence/" \
+  "published GovTheory evidence artifact must cover the verifier evidence directory"
+require_job_contains "${ci}" "rubric" "if: always()" \
+  "GovTheory evidence artifact must upload even when the rubric fails"
 require_contains "scripts/sync-release-pr-generated.sh" "--raw-field run_full_rubric=false" \
   "automated generated release PR CI dispatch must opt out of the full rubric"
 require_not_contains "scripts/sync-release-pr-generated.sh" "Rubric (full gate set)" \
   "generated release PR required checks must exclude the full rubric"
 require_not_contains "scripts/sync-release-pr-generated.sh" "Verify deterministic builds" \
   "generated release PR required checks must exclude skipped deterministic builds"
+
+# R-F1 staging-side readiness equivalence: the promotion lane's readiness gate
+# and the staging lane's eligibility gate must be the same predicate, so a PR
+# cannot be green while its promotion fails on release eligibility.
+require_contains "${ci}" "  staging-release-eligibility:" \
+  "CI must define the staging-lane release-eligibility job"
+require_contains "${ci}" "name: Release eligibility (staging → premain)" \
+  "staging release eligibility must keep a stable branch-protection check name"
+require_job_contains "${ci}" "staging-release-eligibility" "bash scripts/verify-release-eligibility.sh" \
+  "staging release eligibility must use the shared release-eligibility predicate"
+require_job_contains "${ci}" "staging-release-eligibility" '--range "origin/premain..HEAD"' \
+  "staging release eligibility must check the post-merge promotion range"
+require_job_contains "${ci}" "prerelease-readiness" "bash scripts/verify-release-eligibility.sh" \
+  "prerelease readiness must use the shared release-eligibility predicate"
+require_job_contains "${ci}" "prerelease-readiness" '--range "origin/premain..origin/staging"' \
+  "prerelease readiness must check the exact promotion range"
+require_contains "scripts/verify-release-eligibility.sh" "^(feat|fix|perf)(\\([^)]+\\))?(!)?: " \
+  "the shared release-eligibility predicate must require a release-eligible conventional commit"
+
+# Toolchain-provisioning parity: the promotion-path rubric job and the PR-to-
+# staging rubric job are the same job, so its pinned toolchain is provisioned
+# identically on every lane it now runs on.
+for provisioned in \
+  "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e" \
+  "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" \
+  "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97" \
+  "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0"; do
+  require_job_contains "${ci}" "rubric" "${provisioned}" \
+    "full rubric must provision its pinned toolchain on every lane it runs on"
+done
+# The release-eligibility predicate is git-only. Assert that so the staging PR
+# lane and the promotion lane cannot diverge by provisioning.
+for unprovisioned in \
+  "actions/setup-go@" \
+  "actions/setup-node@" \
+  "actions/setup-python@"; do
+  for eligibility_job in staging-release-eligibility prerelease-readiness; do
+    if awk -v job="  ${eligibility_job}:" -v needle="${unprovisioned}" '
+      $0 == job { in_job = 1; next }
+      in_job && /^  [A-Za-z0-9_-]+:/ { in_job = 0 }
+      in_job && index($0, needle) { found = 1 }
+      END { exit found ? 0 : 1 }
+    ' "${ci}"; then
+      fail "release eligibility must not depend on a toolchain the other lane does not provision; ${eligibility_job} uses ${unprovisioned}"
+    fi
+  done
+done
+
+# Job-trigger parity (R-F1) — both promotion lanes (staging->premain and
+# premain->main), generic push coverage, the staging-only rubric/builds
+# conditions, the staging release-eligibility gate's push-to-staging leg, and
+# `needs:`-induced effective triggers — is enforced by
+# scripts/verify-ci-trigger-parity.sh above, over every workflow file in
+# .github/workflows/. The enumeration that used to live here matched literal
+# substrings and missed a premain->main-only job, a generic
+# `github.event_name == 'push'` job, `github.event_name != 'pull_request'`, a
+# promotion-only job behind a `needs:` edge or a reusable-workflow callee, and a
+# push/promotion-only job in a workflow file other than ci.yml.
 
 require_line "scripts/verify-rubric.sh" "bash ./scripts/verify-cdk-go-drift.sh" \
   "full rubric must verify cdk-go generated binding drift"

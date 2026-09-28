@@ -33,7 +33,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-(cd "${example_dir}" && npm ci >/dev/null)
+(cd "${example_dir}" && npm ci --ignore-scripts >/dev/null)
 
 if ! (cd "${example_dir}" && npx cdk synth "${stack_name}" --quiet --no-notices --no-version-reporting -o "${tmp_out}" >/dev/null 2>"${tmp_log}"); then
   echo "ssr-only-provided-assets-synth: FAIL (synth failed)" >&2
