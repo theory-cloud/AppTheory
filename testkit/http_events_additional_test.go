@@ -4,7 +4,7 @@ import (
 	"encoding/base64"
 	"testing"
 
-	"github.com/theory-cloud/apptheory/v4/testkit"
+	"github.com/theory-cloud/apptheory/v5/testkit"
 )
 
 func TestAPIGatewayV2Request_Base64AndQuery(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	runtimemicrovm "github.com/theory-cloud/apptheory/v4/runtime/microvm"
+	runtimemicrovm "github.com/theory-cloud/apptheory/v5/runtime/microvm"
 )
 
 func TestFakeClientControllerFlow(t *testing.T) {

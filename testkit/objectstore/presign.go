@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	store "github.com/theory-cloud/apptheory/v4/pkg/objectstore"
+	store "github.com/theory-cloud/apptheory/v5/pkg/objectstore"
 )
 
 // fakePresignPutInstant is the clock instant used when no clock is injected. It keeps fake upload

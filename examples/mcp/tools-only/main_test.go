@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/theory-cloud/apptheory/v4/testkit"
-	mcptest "github.com/theory-cloud/apptheory/v4/testkit/mcp"
+	"github.com/theory-cloud/apptheory/v5/testkit"
+	mcptest "github.com/theory-cloud/apptheory/v5/testkit/mcp"
 )
 
 func TestToolsOnlyExample(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/theory-cloud/apptheory/v4/runtime/internal/streamjoin"
+	"github.com/theory-cloud/apptheory/v5/runtime/internal/streamjoin"
 )
 
 // SSEEvent is a Server-Sent Events (SSE) message.

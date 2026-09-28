@@ -13,6 +13,73 @@ for `CHANGELOG.md`:
 Every minor release line that changes runtime behavior, deployment constructs, generated artifacts, dependency floors,
 or deprecation posture must add or update a section here before the release is promoted.
 
+## v5.x line
+
+AppTheory v5 is a major release on two axes: the Go module path moves to the next semantic import version, and the Go
+data-layer dependency moves to TableTheory v4. Go consumers must migrate both together.
+
+### Go module import paths
+
+AppTheory v5 moves the Go runtime and the generated CDK Go bindings onto the next semantic import version. Replace the
+`/v4` suffix on every AppTheory runtime import with the canonical `github.com/theory-cloud/apptheory/v5` path, pin the
+v5 module tag, and run `go mod tidy`:
+
+```bash
+go get github.com/theory-cloud/apptheory/v5@v5.0.0-rc
+```
+
+Update the generated CDK Go bindings in the same release transaction: replace
+`github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v4` with
+`github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v5`, pin the matching v5 CDK module tag, and run `go mod tidy` in
+the CDK application's module. Runtime and CDK module tags continue to target the same immutable release commit; do not
+mix major lines or substitute registry-published artifacts.
+
+The v5.0.0-rc tag is the first v5 release; pin the exact v5 release or RC tag you are moving to. Do not retain both
+AppTheory major paths in one application: packages from `/v4` and `/v5` have distinct Go type identities even where
+their APIs are otherwise unchanged.
+
+### TableTheory v4 dependency floor
+
+The v5 line requires TableTheory v4.0.0 in all three runtimes. TableTheory v4 moves its Go module path to
+`github.com/theory-cloud/tabletheory/v4`, so Go consumers must replace every TableTheory `/v3` import with `/v4` and
+require `github.com/theory-cloud/tabletheory/v4`. Because `/v3` and `/v4` TableTheory packages are distinct Go types,
+these **7 exported AppTheory constructors** now take a TableTheory v4 `tablecore.DB` and no longer accept a TableTheory
+v3 client:
+
+| Constructor | Package |
+| --- | --- |
+| `NewDynamoJobLedger(db tablecore.DB, config *Config) *DynamoJobLedger` | `pkg/jobs` |
+| `NewDynamoRateLimiter(db tablecore.DB, config *Config, strategy RateLimitStrategy) *DynamoRateLimiter` | `pkg/limited` |
+| `NewDynamoDBEventBus(db tablecore.DB, config EventBusConfig) *DynamoDBEventBus` | `pkg/services` |
+| `NewDynamoSessionStore(db tablecore.DB) SessionStore` | `runtime/mcp` |
+| `NewDynamoStreamStore(db tablecore.DB) StreamStore` | `runtime/mcp` |
+| `NewDynamoTaskStore(db tablecore.DB) TaskStore` | `runtime/mcp` |
+| `NewTableTheorySessionRegistry(db tablecore.DB) (*TableTheorySessionRegistry, error)` | `runtime/microvm` |
+
+Before the v5 upgrade, Go consumers of those constructors must `go get github.com/theory-cloud/tabletheory/v4@v4.0.0`
+and pass a TableTheory v4 client. Do not keep both TableTheory major paths in one application — their otherwise
+similar interfaces are distinct Go types.
+
+The AppTheory TypeScript and Python release metadata continues to install TableTheory only from immutable GitHub
+Release assets. The v4 dependency assets pinned by this line are:
+
+- TypeScript: `theory-cloud-tabletheory-ts-4.0.0.tgz`, verified with SHA-512
+  `qw/8a6sy5pYk6kO1eP/sO0aCNPALyEQZwHbe5FGBnqBCM6dzhfMdHFW2TkJRuDg4+5JquUZBYCWr561ooObOOA==`.
+- Python: `tabletheory_py-4.0.0-py3-none-any.whl`, verified with SHA-256
+  `2add972f0b070426d77de65158b7c5f8b191d1331c4403afe5b0879dee7961de`.
+
+TableTheory v4 removes the ticker-driven memory monitor: `MemoryMonitor.Start` / `Stop`,
+`ResourceProtector.StartMemoryMonitoring` / `StopMemoryMonitoring`, and `ResourceLimits.MemoryCheckInterval` are
+gone, replaced by on-demand `MemoryMonitor.Sample`, `ResourceProtector.SampleMemory`, and
+`ResourceProtector.SetMemoryAlertCallback`. A caller samples inside the request whose memory it records, so nothing
+a sample starts can outlive the invocation. AppTheory does not use the removed API. TableTheory v4 also returns
+`ErrInvalidOperator` from `ConsistentRead()` on GSI queries instead of silently dropping the flag, and converges
+`[]byte`/set-tagged DynamoDB write shapes on the cross-runtime DMS matrix; AppTheory's TableTheory queries use
+base-table key conditions, so the GSI change does not apply and no persisted-shape migration is required.
+
+Use those pinned assets through AppTheory's package metadata; do not substitute registry-published packages or
+mutable URLs.
+
 ## v4.x line
 
 ### Go module import paths

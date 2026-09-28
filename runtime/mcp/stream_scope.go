@@ -5,7 +5,7 @@ import (
 	"io"
 	"sync"
 
-	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
 )
 
 // streamScope owns the goroutines that produce one incrementally streamed MCP
