@@ -13,6 +13,14 @@ type TimeoutConfig struct {
 	TimeoutMessage    string
 }
 
+// TimeoutMiddleware fails a request closed when its timeout policy expires.
+//
+// The handler chain runs on the invoking goroutine with a deadline-bearing
+// context, and the middleware reports app.timeout when the deadline passed while
+// the chain was running. It starts no goroutine of its own: a handler that
+// observes its canceled context returns immediately, and a handler that ignores
+// it runs until it returns, bounded by the Lambda function timeout rather than
+// abandoned by the middleware. There is no grace window and no abandoned work.
 func TimeoutMiddleware(config TimeoutConfig) Middleware {
 	cfg := normalizeTimeoutConfig(config)
 
@@ -31,30 +39,27 @@ func TimeoutMiddleware(config TimeoutConfig) Middleware {
 
 			handlerCtx := withDerivedTimeoutContext(timeoutCtx, ctx)
 
-			type result struct {
-				resp *Response
-				err  error
-			}
-
-			ch := make(chan result, 1)
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						ch <- result{resp: nil, err: &AppError{Code: errorCodeInternal, Message: errorMessageInternal}}
-					}
-				}()
-				resp, err := next(handlerCtx)
-				ch <- result{resp: resp, err: err}
-			}()
-
-			select {
-			case res := <-ch:
-				return res.resp, res.err
-			case <-timeoutCtx.Done():
+			resp, err := runHandlerWithRecovery(next, handlerCtx)
+			if timeoutCtx.Err() != nil {
 				return nil, &AppError{Code: errorCodeTimeout, Message: cfg.TimeoutMessage}
 			}
+			return resp, err
 		}
 	}
+}
+
+// runHandlerWithRecovery runs the handler chain on the calling goroutine and
+// converts a panic into the internal error the serve pipeline expects, so the
+// middleware keeps the recovery it had while it ran the chain on its own
+// goroutine.
+func runHandlerWithRecovery(next Handler, ctx *Context) (resp *Response, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			resp = nil
+			err = &AppError{Code: errorCodeInternal, Message: errorMessageInternal}
+		}
+	}()
+	return next(ctx)
 }
 
 func withDerivedTimeoutContext(derived context.Context, ctx *Context) *Context {

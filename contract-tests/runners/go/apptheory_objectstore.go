@@ -13,8 +13,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	store "github.com/theory-cloud/apptheory/v4/pkg/objectstore"
-	storetest "github.com/theory-cloud/apptheory/v4/testkit/objectstore"
+	store "github.com/theory-cloud/apptheory/v5/pkg/objectstore"
+	storetest "github.com/theory-cloud/apptheory/v5/testkit/objectstore"
 )
 
 const fixtureBackendFake = "fake"

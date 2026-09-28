@@ -114,6 +114,55 @@ Late error rules:
 - If an error occurs **after** the first chunk, the runtime MUST NOT change `status`/`headers`/`cookies`.
   - Test harnesses MUST surface the late error as a deterministic `stream_error_code` (fixture-backed).
 
+## Invocation-scoped work (normative)
+
+A Lambda invocation ends when the handler has returned its response and the adapter has stopped consuming the response
+body. Work the runtime starts for one invocation MUST NOT still be running at that point: in Lambda the execution
+environment is frozen after the handler returns, so detached work resumes at an unpredictable time on a later
+invocation of the same environment (or never), and can half-apply writes, lose results, or hold state that belongs to
+an ended invocation.
+
+Rules (no carve-outs; none of these is a documented exception):
+
+- Every goroutine, thread, task or promise the runtime starts MUST be joined before the adapter or middleware that
+  owns it returns, or must not exist. Joining means the owner waits for it; concurrency inside one invocation is
+  fine, running past it is not. There is no grace window that ends in abandoning work, and a residual that outlives
+  the invocation is not an acceptable documented behavior.
+- Middleware MUST NOT run a handler on a second execution context it can abandon. The timeout middleware runs the
+  handler chain on the invoking goroutine/thread/task with a deadline-bearing context or cancellation token, and
+  reports its timeout after the chain returns. A handler that observes the token unwinds immediately; a handler that
+  ignores it runs until it returns and is bounded by the Lambda function timeout, never by the middleware walking
+  away from it.
+- A body reader the runtime produces MUST report end-of-stream only once its producer has returned, and closing it
+  MUST release the producer and wait for it. A wrapper the runtime puts around a body (a byte-budget limiter, a
+  composed prefix reader, a canonicalizing stream wrapper) MUST forward close to the body it wraps, so an adapter
+  that gives up on a wrapped body can still release the producer behind it.
+- Every body reader or stream the runtime hands to a transport MUST be closable and MUST forward close to its
+  producer, so a response-streaming transport that stops reading (a client disconnect) stops and joins the producer.
+- A body the adapter cannot interrupt by construction (a handler-supplied reader or stream that neither closes nor
+  terminates) MUST be read on the invoking goroutine, or waited for unconditionally, so the invocation — not the
+  adapter — is what bounds it. It is never abandoned.
+- The invocation's serve context MUST be cancelled before a buffered adapter returns, and every runtime-produced body
+  stream the adapter abandoned MUST then be drained to its close, so producers that observe the context stop with the
+  invocation and are joined by it.
+- Every buffered adapter MUST deliver streaming bodies through the same bounded drain, close and join: no adapter may
+  drop a streaming body it cannot deliver.
+- A handler-supplied streaming body (`Response.BodyStream` / `bodyStream` / `body_stream`) MUST be releasable: its
+  producer MUST close it when the invocation context ends. The adapter that gives up on such a body closes it and then
+  waits for it unconditionally, so a body that cannot be released holds the invocation until the Lambda function
+  timeout instead of being abandoned by the adapter. Every body the runtime itself produces satisfies this by
+  construction.
+- A store the runtime ships or accepts (StreamStore, TaskStore) MUST bound every operation by the context it is
+  given; a subscription MUST close its channel when that context is done. This is a requirement on custom
+  implementations, not an exception for them: a store that ignores its context holds the invocation open until the
+  function timeout instead of being abandoned by the framework.
+- A task-augmented `tools/call` MUST reply with a task in a terminal state, and the reply's state MUST be the same in
+  every runtime. The tool body's own outcome decides it: `completed`, or `failed` when the body returns an error
+  (including an error caused by the invocation ending). `canceled` is the client-requested state, recorded by
+  `tasks/cancel`; a body that errors after a client cancel still reports `canceled`, because the stored terminal
+  state is authoritative. A hard Lambda function timeout is not observable in-process: the environment is frozen, so
+  nothing is recorded and the task stays `working` until its TTL expires.
+
 ## Routing semantics (P0)
 
 Route patterns (v0):

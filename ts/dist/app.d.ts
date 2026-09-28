@@ -328,6 +328,16 @@ export declare function createApp(options?: {
 export type LambdaFunctionURLStreamingHandler = (event: LambdaFunctionURLRequest, ctx?: unknown) => Promise<unknown>;
 /** Creates a Lambda Function URL streaming handler for an AppTheory app. */
 export declare function createLambdaFunctionURLStreamingHandler(app: App): LambdaFunctionURLStreamingHandler;
-/** Creates middleware that fails requests closed when timeout policy expires. */
+/**
+ * Creates middleware that fails requests closed when timeout policy expires.
+ *
+ * The handler chain runs on the invoking task with an abort signal that carries
+ * the deadline, and the middleware reports `app.timeout` when the signal was
+ * aborted by the time the chain returned. It starts no promise or task of its
+ * own: a handler that observes its signal unwinds immediately, and a handler
+ * that ignores it runs until it returns, bounded by the Lambda function timeout
+ * rather than abandoned by the middleware. There is no grace window and no
+ * abandoned work.
+ */
 export declare function timeoutMiddleware(config?: TimeoutConfig): Middleware;
 //# sourceMappingURL=app.d.ts.map

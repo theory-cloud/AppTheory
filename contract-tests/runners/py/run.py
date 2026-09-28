@@ -4899,18 +4899,39 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
 
     if name == "sse_stream_live":
 
-        def handler(_ctx):
-            def gen():
-                yield b'id: 1\nevent: message\ndata: {"ok":true}\n\n'
-                # Never returns: a live listener.
-                threading.Event().wait()
+        class _LiveBody:
+            """A live listener that never ends on its own but releases on close.
 
+            The adapter closes a body it gives up on and then waits for the read
+            it abandoned, so a body that cannot be released would hold the
+            invocation until the Lambda function timeout instead of being
+            abandoned by the adapter.
+            """
+
+            def __init__(self):
+                self._closed = threading.Event()
+                self._first = True
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                if self._first:
+                    self._first = False
+                    return b'id: 1\nevent: message\ndata: {"ok":true}\n\n'
+                self._closed.wait()
+                raise StopIteration
+
+            def close(self):
+                self._closed.set()
+
+        def handler(_ctx):
             return runtime.Response(
                 status=200,
                 headers={"content-type": ["text/event-stream"]},
                 cookies=[],
                 body=b"",
-                body_stream=gen(),
+                body_stream=_LiveBody(),
                 is_base64=False,
             )
 

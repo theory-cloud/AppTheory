@@ -61,7 +61,7 @@ REPO="theory-cloud/AppTheory"
 PYTHON_VERSION="${VERSION/-rc/rc0}"
 
 # Go resolves the immutable git tag.
-go get "github.com/theory-cloud/apptheory/v4@${TAG}"
+go get "github.com/theory-cloud/apptheory/v5@${TAG}"
 
 # TypeScript and Python install from verified GitHub Release assets.
 gh release download "${TAG}" --repo "${REPO}" \
@@ -210,7 +210,7 @@ import (
     "encoding/json"
 
     "github.com/aws/aws-lambda-go/lambda"
-    apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+    apptheory "github.com/theory-cloud/apptheory/v5/runtime"
 )
 
 func main() {

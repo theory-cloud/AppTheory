@@ -864,7 +864,9 @@ class McpRuntimeTests(unittest.TestCase):
         self.assertEqual(failure_result.body_json["error"]["code"], MCP_CODE_SERVER_ERROR)
 
         is_error = harness.call(session_id, "tools/call", {"name": "is_error", "task": {}}, "is-error")
-        self.assertEqual(is_error.body_json["result"]["task"]["status"], "working")
+        # The task body runs inside the tools/call invocation, so the reply already
+        # carries the terminal state.
+        self.assertEqual(is_error.body_json["result"]["task"]["status"], "failed")
         is_error_task = harness.call(session_id, "tasks/get", {"taskId": "task-is-error"}, "is-error-get")
         self.assertEqual(is_error_task.body_json["result"]["status"], "failed")
         self.assertEqual(is_error_task.body_json["result"]["statusMessage"], "tool returned isError result")

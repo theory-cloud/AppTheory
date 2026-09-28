@@ -412,7 +412,7 @@ func (a *App) servePortableMatch(tier Tier, normalized Request, match *routeMatc
 		state.errorCode = errorCodeTooLarge
 		return a.respondToServeError(opts, &AppError{Code: errorCodeTooLarge, Message: errorMessageResponseTooLarge}, normalized, state.requestID, state.traceID)
 	}
-	resp = limitStreamedResponse(resp, a.limits.MaxResponseBytes)
+	resp = limitStreamedResponse(requestCtx.Context(), resp, a.limits.MaxResponseBytes)
 
 	return resp
 }

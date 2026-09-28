@@ -265,9 +265,9 @@
               },
               "task": {
                 "taskId": "task-1",
-                "status": "working",
+                "status": "completed",
                 "createdAt": "2026-07-03T00:00:00Z",
-                "lastUpdatedAt": "2026-07-03T00:00:00Z",
+                "lastUpdatedAt": "2026-07-03T00:00:01Z",
                 "ttl": 86400000,
                 "pollInterval": 100
               }

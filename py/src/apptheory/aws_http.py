@@ -28,6 +28,28 @@ _APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES = 4 * 1024 * 1024
 # an empty 200.
 _APIGATEWAY_V2_STREAMING_BODY_TIMEOUT = 5.0
 
+# There is no unwind-grace constant here: a body the adapter gives up on is always
+# interrupted (close) and then waited for unconditionally, so there is no grace
+# window that ends in abandoning a worker.
+
+# _APIGATEWAY_PROXY_STREAMING_BODY_ERROR_MESSAGE is the documented client-visible
+# error for a streaming response body the buffered API Gateway REST v1 adapter
+# cannot deliver for a non-size reason. The v1 buffered shape delivers a complete
+# body only, so the adapter drains the body under the shared budget and fails
+# closed with the adapter named in the message.
+_APIGATEWAY_PROXY_STREAMING_BODY_ERROR_MESSAGE = (
+    "streaming response body cannot be delivered by the API Gateway REST v1 adapter"
+)
+
+# _ALB_TARGET_GROUP_STREAMING_BODY_ERROR_MESSAGE is the documented client-visible
+# error for a streaming response body the buffered ALB target group adapter cannot
+# deliver for a non-size reason. ALB delivers buffered responses only, so the
+# adapter drains the body under the shared budget and fails closed with the
+# adapter named in the message.
+_ALB_TARGET_GROUP_STREAMING_BODY_ERROR_MESSAGE = (
+    "streaming response body cannot be delivered by the ALB target group adapter"
+)
+
 # _APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE is the documented client-visible
 # error for a streaming response body the HTTP API v2 adapter cannot deliver for
 # a non-size reason (it did not terminate within the budget, or the stream
@@ -84,15 +106,38 @@ def _read_all_bounded(body_stream: Any, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
+def _unblock_streaming_body(body_stream: Any) -> None:
+    """Close a streaming body the adapter is abandoning so its reader can exit.
+
+    Closing a generator raises ``GeneratorExit`` at its suspend point, which runs
+    its ``finally`` blocks and unwinds the drain worker. A source that is blocked
+    inside a call it does not leave (a live listener waiting on a queue) cannot be
+    interrupted by construction.
+    """
+    close = getattr(body_stream, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception:  # noqa: BLE001
+        return
+
+
 def _drain_streaming_body(body_stream: Any, max_bytes: int, timeout: float) -> bytes:
     """Drain a streaming body under a bounded byte and time budget.
 
-    The drain runs in a daemon worker thread so a never-terminating stream
-    (a live listener) cannot hold the invocation: ``join(timeout)`` enforces
-    the budget and the adapter fails closed. When the deadline fires the worker
-    is abandoned, bounded by the Lambda lifecycle — the Python counterpart of
-    the Go adapter abandoning a non-pipe reader — and a stream that closed
-    empty only because the deadline fired fails closed deterministically.
+    The drain runs in a worker thread so a never-terminating stream (a live
+    listener) cannot hold the invocation past its budget: ``join(timeout)``
+    enforces that budget. When the budget expires the adapter closes the stream so
+    the worker can exit, and then waits for it **unconditionally**: a worker the
+    adapter started may not still be reading when the adapter returns, because the
+    Lambda execution environment is frozen once the handler returns and detached
+    work resumes at an unpredictable time (or never). There is no grace window and
+    no abandoned worker. A source that cannot be interrupted by construction is
+    bounded by the Lambda function timeout, not by the adapter giving up on it.
+
+    A stream that closed empty only because the budget fired fails closed
+    deterministically.
     """
     box: dict[str, Any] = {}
 
@@ -110,6 +155,8 @@ def _drain_streaming_body(body_stream: Any, max_bytes: int, timeout: float) -> b
     worker.start()
     worker.join(timeout=timeout)
     if worker.is_alive():
+        _unblock_streaming_body(body_stream)
+        worker.join()
         raise _StreamingBodyBudgetError("streaming body did not terminate within the adapter budget")
     error = box.get("error")
     if error is not None:
@@ -273,6 +320,16 @@ def lambda_function_url_response_from_response(resp: Response) -> dict[str, Any]
 
 
 def apigw_proxy_response_from_response(resp: Response) -> dict[str, Any]:
+    # The buffered API Gateway REST v1 shape (shared with the WebSocket adapter)
+    # delivers a complete body only, so a streaming body is drained, closed and
+    # joined here: an adapter that dropped it would return while a producer the
+    # invocation had started was still running.
+    resp = _with_drained_streaming_body(
+        resp,
+        error_message=_APIGATEWAY_PROXY_STREAMING_BODY_ERROR_MESSAGE,
+        max_bytes=_APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES,
+        timeout=_APIGATEWAY_V2_STREAMING_BODY_TIMEOUT,
+    )
     headers: dict[str, str] = {}
     multi: dict[str, list[str]] = {}
     for key, values in (resp.headers or {}).items():
@@ -299,6 +356,14 @@ def apigw_proxy_response_from_response(resp: Response) -> dict[str, Any]:
 
 
 def alb_target_group_response_from_response(resp: Response) -> dict[str, Any]:
+    # ALB delivers buffered responses only, so a streaming body is drained,
+    # closed and joined here (see apigw_proxy_response_from_response).
+    resp = _with_drained_streaming_body(
+        resp,
+        error_message=_ALB_TARGET_GROUP_STREAMING_BODY_ERROR_MESSAGE,
+        max_bytes=_APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES,
+        timeout=_APIGATEWAY_V2_STREAMING_BODY_TIMEOUT,
+    )
     headers: dict[str, str] = {}
     multi: dict[str, list[str]] = {}
     for key, values in (resp.headers or {}).items():

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	store "github.com/theory-cloud/apptheory/v4/pkg/objectstore"
+	store "github.com/theory-cloud/apptheory/v5/pkg/objectstore"
 )
 
 // Operation names a Store operation recorded by FakeStore.

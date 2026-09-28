@@ -35,7 +35,7 @@ trap cleanup EXIT
 
 cp -a ts "${tmp_dir}/ts"
 
-(cd "${tmp_dir}/ts" && npm ci >/dev/null)
+(cd "${tmp_dir}/ts" && npm ci --ignore-scripts >/dev/null)
 
 if ! (cd "${tmp_dir}/ts" && npm run build >"${tmp_log}" 2>&1 && node --test test/*.test.mjs >>"${tmp_log}" 2>&1); then
   echo "ts-tests: FAIL (unit tests failed)" >&2

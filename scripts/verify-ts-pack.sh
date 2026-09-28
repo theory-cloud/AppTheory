@@ -39,7 +39,7 @@ cp -a ts "${tmp_ts_dir}"
 rm -rf "${tmp_ts_dir}/node_modules"
 rm -rf "${tmp_ts_dir}/dist"
 
-(cd "${tmp_ts_dir}" && npm ci >/dev/null)
+(cd "${tmp_ts_dir}" && npm ci --ignore-scripts >/dev/null)
 (cd "${tmp_ts_dir}" && npm run build >/dev/null)
 
 if [[ -n "${SOURCE_DATE_EPOCH:-}" ]]; then

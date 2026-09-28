@@ -27,9 +27,14 @@ tmp_log="$(mktemp)"
 cleanup() { rm -f "${tmp_log}"; }
 trap cleanup EXIT
 
-if ! (cd cdk && npm test) >"${tmp_log}" 2>&1; then
-  echo "${gate_name}: FAIL (cd cdk && npm test failed)" >&2
-  echo "${gate_name}: last 200 lines of npm test output:" >&2
+# Build explicitly instead of leaning on cdk/package.json's `pretest` hook:
+# cdk/.npmrc sets `ignore-scripts=true`, so npm deliberately does not run pre/
+# post hooks, and the jsii build output this gate scans for deprecation warnings
+# would otherwise never be produced. Both commands share one log so the scan
+# still sees the build's warnings.
+if ! (cd cdk && npm run build && npm test) >"${tmp_log}" 2>&1; then
+  echo "${gate_name}: FAIL (cd cdk && npm run build && npm test failed)" >&2
+  echo "${gate_name}: last 200 lines of output:" >&2
   tail -n 200 "${tmp_log}" >&2 || true
   exit 1
 fi
@@ -61,7 +66,7 @@ patterns=(
   "GrantOnPrincipalOptions#scope"
 )
 
-echo "${gate_name}: scanned command: cd cdk && npm test"
+echo "${gate_name}: scanned command: cd cdk && npm run build && npm test"
 
 failure=0
 counts=()

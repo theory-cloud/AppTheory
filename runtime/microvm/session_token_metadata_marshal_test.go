@@ -6,14 +6,14 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/stretchr/testify/require"
-	"github.com/theory-cloud/tabletheory/v3/pkg/marshal"
-	"github.com/theory-cloud/tabletheory/v3/pkg/model"
+	"github.com/theory-cloud/tabletheory/v4/pkg/marshal"
+	"github.com/theory-cloud/tabletheory/v4/pkg/model"
 )
 
 // Regression for https://github.com/theory-cloud/AppTheory/issues/883:
 // SessionTokenMetadata is designed for nested durable storage. Under
-// TableTheory v3 nested marshaling, zero-valued fields must stay omitted
-// (matching the TableTheory v2 persisted shape) via the json omitempty tags.
+// TableTheory v4 nested marshaling, zero-valued fields must stay omitted
+// via the json omitempty tags.
 func TestSessionTokenMetadata_NestedMarshalOmitsZeroFields(t *testing.T) {
 	registry := model.NewRegistry()
 	require.NoError(t, registry.Register(SessionRegistryRecord{}))

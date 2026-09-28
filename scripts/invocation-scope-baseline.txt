@@ -1,0 +1,95 @@
+# Invocation-scope baseline: the launch sites whose join the AST proof cannot
+# show, each with the join that keeps it inside its invocation.
+#
+# Format: <path>|<function>[#n]|<justification>
+#
+# The guard (scripts/tools/invocation_scope) reports a launch unless a join on
+# the same target dominates every exit of the scope that contains it. Go sources
+# are parsed with go/ast and the TypeScript and Python sources with their real
+# parsers (the TypeScript compiler API and Python's `ast`), invoked from
+# scripts/tools/invocation_scope/scan_typescript.mjs and scan_python.py. The
+# guard fails on any launch that is not listed here and on any entry that no
+# longer matches a reported launch, so this file is the auditable sweep table for
+# the invariant: no goroutine, thread, task or promise the runtime starts may
+# outlive the Lambda invocation that started it, and a launch that cannot be
+# joined must not exist.
+#
+# An entry names the enclosing scope (the innermost named function for a
+# closure, the class for a Python class body, `<name>.<signature>` for the
+# expressions a `def`/`class` statement evaluates) and the occurrence within it,
+# so two scopes in one file cannot collide. A site is absent from this file only
+# when the proof itself discharges it: a join
+# on the same target dominates every exit (a `defer wg.Wait()` registered before
+# any return, a receive or `for range` drain on every path, a `clearTimeout` in a
+# `finally`, an `await` before every return, both branches of an `if/else`).
+# A removed site keeps its strict join test in the runtime test suites, and a
+# launch the proof cannot follow is listed here with that test rather than left
+# unreported.
+#
+# Go: `go` statements and errgroup `<g>.Go(func(){...})` launches, plus
+#   time.AfterFunc / NewTimer / NewTicker / Tick constructors (with or without an
+#   aliased `time` import), under runtime/, pkg/, testkit/ and cmd/ (non-test
+#   files). A timer whose Stop or channel receive dominates every exit is not
+#   reported; time.Tick and a discarded timer handle always are.
+# TypeScript: timers (including bracket access and a timer function the file
+#   binds to a variable), queueMicrotask, process.nextTick, setImmediate, async
+#   IIFEs, iterator reads held from `.next()`, floating promises in any position
+#   (statement, call argument, comma operand, `void`, array/object aggregate,
+#   class-field initializer, parameter initializer), discarded calls to functions
+#   the file declares async (including a member assigned an async arrow), and
+#   compound/chained assignments, under ts/src.
+# Python: thread, task, process, ThreadPoolExecutor/ProcessPoolExecutor submit,
+#   asyncio.to_thread, loop.run_in_executor, daemon-flagged threads that are
+#   started, and threads built inside a comprehension, under py/src. A target an
+#   attribute, a container element, a module global or a class attribute holds is
+#   recognized from any method that starts it, and a class body, a default
+#   argument, a decorator and a class base are scopes of their own.
+
+# --- Go ---------------------------------------------------------------------
+# The buffered HTTP API v2 / Function URL / ALB / v1 adapters close and join
+# their drain worker on every exit path. The result channel is buffered, so the
+# proof (which only trusts an unbuffered close-signal channel) cannot show the
+# receive precedes the goroutine's exit even though the code does wait.
+runtime/aws_http.go|drainBodyReaderForAPIGatewayV2[#1]|joined: the adapter closes the reader (unblocking the read) and waits for the worker on every exit path before it returns
+# limitBodyStream's producer observes the serve context at both of its blocking
+# points. Every buffered adapter cancels that context and drains the stream to
+# its close before returning; the v1 response-streaming adapter converts the
+# stream through streamjoin, and the body it hands the transport cancels the
+# serve context and drains the stream on both EOF and Close. The producer closes
+# the returned channel, so the join lives in the consumer, not in this function.
+runtime/response_limits.go|limitBodyStream[#1]|joined: the producer observes the serve context and closes the returned channel; the owning adapter cancels that context and drains the stream to its close on every exit, and the response-streaming transport's converted body does the same on EOF and on Close
+# The streamjoin primitive joins its producer on EOF and on Close; the
+# goroutine's close signal is a field of the returned body, so the join is in
+# the body's reader, not in New.
+runtime/internal/streamjoin/streamjoin.go|New[#1]|joined: the returned body joins the producer on EOF and on Close
+# streamScope owns the producers of one streamed MCP body; stop() cancels the
+# relays and waits for every producer, and the body reader calls it on EOF/Close.
+# The WaitGroup is waited in another method of the same type, which the per-scope
+# proof cannot see.
+runtime/mcp/stream_scope.go|(streamScope).goRun[#1]|joined: (*streamScope).stop cancels the relay context and waits for it; the body reader releases the scope on EOF and on Close
+runtime/mcp/stream_scope.go|(streamScope).goJoin[#1]|joined: (*streamScope).stop waits for every producer, including the ones that are only joined
+# The memory stream store's subscription pump is joined through the forwarder,
+# which drains the subscription to its close before the body reader is released.
+# The launched callable is a method, so its body is not visible to the proof.
+runtime/mcp/stream_store.go|(MemoryStreamStore).Subscribe[#1]|joined: the pump closes its channel with the subscription context; forwardStreamEvents drains it (drainClosedSubscription) before the streamed body is released
+# broadcastOnDone returns the join as a function value; the pump is what calls
+# it, so no Wait call appears in this function to dominate its exits.
+runtime/mcp/stream_store.go|(MemoryStreamStore).broadcastOnDone[#1]|joined: the returned wait function blocks until the watcher has run; the pump defers it before it reports completion
+# Same contract as the memory store pump; the launched callable is a method, so
+# its body is not visible to the proof.
+runtime/mcp/stream_store_dynamo.go|(DynamoStreamStore).Subscribe[#1]|joined: it observes the subscription context and closes its channel, and the forwarder drains it to that close
+
+# --- TypeScript -------------------------------------------------------------
+# The drain holds the read it started as `pending` (`async-read`) and only
+# releases it on the budget path, inside a conditional catch handler: the proof
+# sees the launch but a join in one branch of a handler does not dominate it, so
+# the site stays here. Its strict join tests are the two drain-deadline ordering
+# cases in ts/test/invocation-scope.test.mjs and the two held-read cases in
+# ts/test/invocation-scope-join.test.mjs; all four go red when the drain stops
+# unblocking the producer and awaiting the read it abandoned.
+ts/src/internal/aws-http.ts|drainStreamingBodyForBufferedAdapter[#1]|joined: the drain unblocks the producer and awaits the abandoned read before it throws, so the read cannot outlive the drain
+# The drain budget's timer is armed inside the Promise executor and cleared in
+# the race's finally, which is a different closure: the per-scope proof cannot
+# see across the two callbacks, even though the finally releases the timer on
+# every path the returned promise can take.
+ts/src/internal/aws-http.ts|withDeadline.<anonymous>[#1]|joined: withDeadline's timer is cleared in the returned promise's finally on both paths (whichever side of the race wins), and its caller awaits the abandoned read before returning

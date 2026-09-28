@@ -178,6 +178,133 @@ No adapter performs an unbounded read, and none of the budgets are configurable:
 a handler that wants true incremental SSE must use a response-streaming adapter
 (API Gateway REST v1, or the Lambda Function URL streaming handler), not HTTP API v2.
 
+The **ALB target group** and **buffered API Gateway REST v1** conversions (and
+the WebSocket adapter, which returns the v1 proxy shape) deliver a streaming body
+through the same bounded drain as the shapes above: a terminating body becomes the
+buffered response, a body over 4 MiB maps to 413, and a body that does not
+terminate in time fails closed with the adapter named in the message
+(`"...cannot be delivered by the ALB target group adapter"` /
+`"...by the API Gateway REST v1 adapter"`). No buffered adapter drops a streaming
+body.
+
+When the time budget expires, the adapter does not walk away from the body: it
+closes the reader (or the stream) so the producer can unwind and then waits for
+the read it gave up on, **unconditionally** — there is no grace window and no
+abandoned worker, so no producer goroutine/thread/promise outlives the invocation
+that started it. A body that is neither closable nor terminating — a
+handler-supplied source blocked inside a call it does not leave — cannot be
+interrupted by construction; it is read on the invoking goroutine or waited for
+unconditionally, so the Lambda function timeout is what bounds it rather than the
+adapter. Every body the runtime itself produces is closable, and every wrapper the
+runtime puts around a body forwards close to the body it wraps. See
+[Invocation-scoped work](../development/planning/apptheory/supporting/apptheory-runtime-contract-v0.md#invocation-scoped-work-normative).
+
+### The invocation-scope guard
+
+`scripts/verify-invocation-scope.sh` is part of `make rubric`. It runs
+`scripts/tools/invocation_scope` over `runtime/`, `pkg/`, `testkit/`, `cmd/`,
+`ts/src/` and `py/src/`, and fails on any asynchronous launch whose join the
+proof cannot show. `scripts/invocation-scope-baseline.txt` lists exactly the
+sites the proof cannot discharge, each with the join that keeps it inside its
+invocation. A site is absent from that file only when the proof itself discharges
+it, so the baseline shrinks as the runtime makes a join visible to a parser, and
+a launch the proof cannot follow — even one whose join is in the same function —
+is listed there with its strict join test rather than left unreported.
+
+Each language is read with its own parser, never with a text pattern:
+
+- **Go** — `go/ast`. A launch is joined only when a join dominates every exit of
+  the function that launched it: a `Wait()` whose `Add` runs before the launch and
+  whose goroutine calls `Done`, a `defer <join>` registered before any return and
+  reached on every path, a `for range` drain (or, for a close-only goroutine, a
+  receive) over an unbuffered channel the goroutine closes as its last action, a
+  `Stop()` or channel receive that releases an `AfterFunc`/`NewTimer`/`NewTicker`
+  handle on every path, or an errgroup `Wait`. Recognized regardless of an
+  aliased `time` import.
+- **TypeScript** — the TypeScript compiler API, through
+  `scripts/tools/invocation_scope/scan_typescript.mjs`. Each scope (the module,
+  every function, every parameter initializer, every class-field initializer and
+  every static block) gets a control-flow graph; a launch is joined only when an
+  `await` (or `return`) of the held target, or a
+  `clearTimeout`/`clearInterval`/`clearImmediate` of a timer handle, dominates
+  every exit. A target and its join are matched on the bare expression, so a
+  non-null assertion, a type assertion or parentheses around either name the same
+  target (`clearTimeout(this.t!)` clears the `this.t` that armed the timer). A
+  timer function bound to a variable (`const st = setTimeout; st(cb, 1)`) is
+  recognized as that timer, a member assigned an async arrow (`this.run = async
+  () => {...}`) is a function the file declares async, and an iterator read held
+  from `<expr>.next()` is a launch until it settles. A TypeScript parse diagnostic
+  fails the scan rather than being skipped.
+- **Python** — the standard-library `ast` module, through
+  `scripts/tools/invocation_scope/scan_python.py`, with the same per-scope
+  control-flow graph. Threads are joined by `join()`, tasks and offloads by
+  `await` (directly or through `gather`/`wait`), and an executor `submit` is
+  joined lexically by its own `with` block. A class body and the expressions a
+  `def`/`class` statement evaluates (default arguments, decorators, class bases
+  and keywords) are scopes of their own, and a walrus receiver
+  (`(t := Thread(...)).start()`) names its target. A plain name is tracked inside
+  the function that binds it, plus the body of the `def` whose default argument
+  bound it; an attribute (`self.worker`, `mod.worker`), a container element
+  (`pool["a"]`), a module global and a class attribute (also under `self.<name>`
+  and `<Class>.<name>`) are tracked across the file, because the target belongs to
+  the instance, the container, the module or the class rather than to the frame
+  that assigned it. The join proof stays in the function that starts the work: a
+  join in a sibling method does not clean a launch.
+
+A missing `node` or Python interpreter fails the guard; it never skips a
+language, and it never reports an empty (vacuously clean) result. The guard's
+self-tests in `scripts/tools/invocation_scope` pin a red case for every shape a
+presence- or line-based reading accepts by mistake — a one-line
+`if (cond) await p`, a join after an early return, a join inside a nested
+uncalled function, a `cancel()` without a wait, a conditional `Stop()`, a
+destructuring or array aggregate of promises, a walrus-bound task, a target bound
+in one method and started in a sibling method, a launch in a default argument, a
+decorator or a class base, a launch in a parameter initializer, a timer reached
+through a variable alias — and a green case for every joined form
+(`try`/`finally`, both branches of an `if`/`else`, `await Promise.all`/
+`allSettled`, `defer wg.Wait()`, a sibling method that starts and joins the
+target its constructor stored). `main_test.go` holds the Go proofs and
+`selftest.go` the two scanner batteries; the battery runs from
+`scripts/verify-invocation-scope.sh` because it needs the TypeScript compiler and
+a Python interpreter, neither of which the release-gates snapshot (a tracked-tree
+copy with no `node_modules`) provides. `make rubric` runs that verifier;
+`make test-unit` is `go test` only and does not run the scanners at all.
+
+Deliberately conservative, and reported rather than assumed joined:
+
+- An exception raised outside a `try` body is not modeled as an exit, mirroring
+  the Go proof.
+- A `try` whose handlers are not exhaustive keeps a transfer edge to the exit, so
+  a join after such a `try` is reported even though a catch-all would have
+  discharged it.
+- A thread built inside a comprehension is reported even when a later loop starts
+  and joins it, because the comprehension hides the handle the guard tracks.
+- A join that crosses a scope boundary — into another method, into a callback the
+  caller may never call, into a handler that only some paths reach, or into a
+  returned cleanup function — is reported, and so is a join matched only through a
+  chain that consumes its target (`await p.then(f)` is not read as a join of `p`).
+  The join may well be real; the proof simply cannot show it, so the site stays in
+  the baseline with its strict join test. That is the shape of every remaining
+  baseline entry: the Go producers joined by another method or by the consumer of
+  a returned value, and the two TypeScript drain sites — the budget timer armed in
+  a `Promise` executor and cleared in the race's `finally`, and the in-flight read
+  the drain releases only on its budget path.
+- A daemon-flagged thread constructor in a default argument, a decorator or a
+  class base is reported even without a `.start()`, because the expression runs
+  outside every body the proof covers.
+- A labeled `break`/`continue` is modeled as leaving the scope rather than as
+  loop control, so a join after the labeled statement is not credited to a launch
+  before it: the launch is reported. The conservative direction is deliberate, and
+  a probe pins it.
+- An attribute, container element, module global or class attribute is tracked
+  file-wide, so a scope that rebinds the same key does not un-track it, and a
+  subscript whose key the proof cannot match is recognized as a launch whenever
+  the container it indexes holds one.
+- `unref()` is not a join: it releases the event loop, not the callback.
+- A `switch` is modeled without fallthrough, and a promise whose producer is known
+  only from its type (not from syntax) is left to
+  `@typescript-eslint/no-floating-promises` inside `ts/**`.
+
 ## Header canonicalization
 
 `Request.Headers` and `Response.Headers` keys are lower-cased. Look-ups are case-insensitive at the boundary, but if you iterate the map you see the canonical (lower-case) form.

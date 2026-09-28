@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/theory-cloud/apptheory/v4/pkg/sanitization"
+	"github.com/theory-cloud/apptheory/v5/pkg/sanitization"
 )
 
 type SanitizerFunc func(key string, value any) any
@@ -68,10 +68,13 @@ type LoggerStats struct {
 //
 // Fields are intentionally aligned with Lift’s `observability.LoggerConfig` where it matters for migrations.
 type LoggerConfig struct {
-	Format             string               `json:"format"`
-	Level              string               `json:"level"`
-	RetryDelay         time.Duration        `json:"retry_delay"`
-	BatchSize          int                  `json:"batch_size"`
+	Format     string        `json:"format"`
+	Level      string        `json:"level"`
+	RetryDelay time.Duration `json:"retry_delay"`
+	BatchSize  int           `json:"batch_size"`
+	// BufferSize is accepted for compatibility and has no effect on the zap
+	// logger: error notifications are delivered synchronously inside the call
+	// that logs, so there is no notification queue to size.
 	BufferSize         int                  `json:"buffer_size"`
 	MaxRetries         int                  `json:"max_retries"`
 	EnableStack        bool                 `json:"enable_stack"`

@@ -3,6 +3,7 @@
 # Source this file from a script that has changed to the repository root.
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/runtime-deps.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/retry.sh"
 
 APPTHEORY_CDK_RUNTIME_DEPS_STAMP="cdk/node_modules/.gov-cdk-runtime-deps.sha256"
 
@@ -40,7 +41,8 @@ ensure_cdk_runtime_deps_installed() {
   fi
 
   echo "Installing CDK runtime deps into cdk/node_modules..." >&2
-  if ! (cd cdk && npm ci --no-audit --no-fund >/dev/null); then
+  if ! run_with_retry 3 5 "CDK runtime dependency install" -- \
+    bash -c 'cd cdk && npm ci --ignore-scripts --no-audit --no-fund >/dev/null'; then
     echo "BLOCKED: failed to install CDK runtime dependencies (check network/toolchain)" >&2
     return 2
   fi

@@ -18,12 +18,58 @@ function sseChunks(...chunks) {
   })();
 }
 
+// liveStream models a live listener: it yields one chunk and then never
+// terminates on its own. It does not race its own unwind, so asking it to unwind
+// cannot complete until the gate settles — which is exactly the body the adapter
+// must still join rather than abandon.
 function liveStream(firstChunk) {
-  return (async function* () {
-    yield Buffer.from(firstChunk, "utf8");
-    // Never resolves, never terminates: a live listener.
-    await new Promise(() => {});
+  let releaseRead;
+  const gate = new Promise((resolve) => {
+    releaseRead = resolve;
+  });
+  let unwound = false;
+  const stream = (async function* () {
+    try {
+      yield Buffer.from(firstChunk, "utf8");
+      await gate;
+    } finally {
+      unwound = true;
+    }
   })();
+  return {
+    stream,
+    release: () => releaseRead(),
+    unwound: () => unwound,
+  };
+}
+
+// Mirrors APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS in src/internal/aws-http.ts.
+const STREAMING_BODY_TIMEOUT_MS = 5000;
+
+// assertLiveBodyJoined runs a buffered adapter call for a live body, releases the
+// body once the drain budget has expired, and asserts the adapter waited for it.
+async function assertLiveBodyJoined(t, live, call, expectedMessage) {
+  const startedAt = Date.now();
+  const timer = setTimeout(() => live.release(), STREAMING_BODY_TIMEOUT_MS + 100);
+  try {
+    const out = await call();
+    assert.equal(out.statusCode, 500);
+    assert.match(
+      JSON.stringify(out),
+      new RegExp(expectedMessage.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
+    assert.equal(
+      live.unwound(),
+      true,
+      "the adapter returned while the live body it gave up on could still run",
+    );
+    assert.ok(
+      Date.now() - startedAt >= STREAMING_BODY_TIMEOUT_MS,
+      "the adapter returned before its drain budget expired",
+    );
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function errorStream() {
@@ -95,13 +141,17 @@ test("apigateway v2 adapter delivers a terminating streaming body as buffered co
   assert.equal(out.isBase64Encoded, false);
 });
 
-test("apigateway v2 adapter fails closed on a live streaming body", async () => {
+test("apigateway v2 adapter fails closed on a live streaming body and joins it", async () => {
   const app = createApp();
-  app.get("/live", () => htmlStream(200, liveStream("data: first\n\n")));
+  const live = liveStream("data: first\n\n");
+  app.get("/live", () => htmlStream(200, live.stream));
 
-  const out = await app.serveAPIGatewayV2(apigwV2Event("/live"));
-
-  assertStreamingError(out, APIGATEWAY_V2_STREAMING_ERROR_MESSAGE);
+  await assertLiveBodyJoined(
+    null,
+    live,
+    () => app.serveAPIGatewayV2(apigwV2Event("/live")),
+    APIGATEWAY_V2_STREAMING_ERROR_MESSAGE,
+  );
 });
 
 test("apigateway v2 adapter maps a streaming body over the byte budget to 413", async () => {
@@ -137,13 +187,17 @@ test("lambda function url adapter delivers a terminating streaming body as buffe
   assert.equal(out.isBase64Encoded, false);
 });
 
-test("lambda function url adapter fails closed on a live streaming body", async () => {
+test("lambda function url adapter fails closed on a live streaming body and joins it", async () => {
   const app = createApp();
-  app.get("/live", () => htmlStream(200, liveStream("data: first\n\n")));
+  const live = liveStream("data: first\n\n");
+  app.get("/live", () => htmlStream(200, live.stream));
 
-  const out = await app.serveLambdaFunctionURL(lambdaFunctionURLEvent("/live"));
-
-  assertStreamingError(out, LAMBDA_FUNCTION_URL_STREAMING_ERROR_MESSAGE);
+  await assertLiveBodyJoined(
+    null,
+    live,
+    () => app.serveLambdaFunctionURL(lambdaFunctionURLEvent("/live")),
+    LAMBDA_FUNCTION_URL_STREAMING_ERROR_MESSAGE,
+  );
 });
 
 test("lambda function url adapter maps a streaming body over the byte budget to 413", async () => {

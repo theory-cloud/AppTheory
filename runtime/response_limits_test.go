@@ -111,7 +111,7 @@ func TestLimitBodyStreamPassesEmptyAndUpstreamError(t *testing.T) {
 	stream <- StreamChunk{Err: errors.New("upstream")}
 	close(stream)
 
-	limited := limitBodyStream(stream, &responseSizeLimiter{max: 10})
+	limited := limitBodyStream(context.Background(), stream, &responseSizeLimiter{max: 10})
 	first := <-limited
 	if len(first.Bytes) != 0 || first.Err != nil {
 		t.Fatalf("expected empty chunk to pass through, got %#v", first)
@@ -124,7 +124,7 @@ func TestLimitBodyStreamPassesEmptyAndUpstreamError(t *testing.T) {
 		t.Fatal("expected limited stream to close after upstream error")
 	}
 
-	if limitBodyStream(nil, &responseSizeLimiter{max: 1}) != nil {
+	if limitBodyStream(context.Background(), nil, &responseSizeLimiter{max: 1}) != nil {
 		t.Fatal("nil stream should remain nil")
 	}
 }
@@ -147,7 +147,4 @@ func TestLimitBodyReaderPassesReadErrorsAndNilInputs(t *testing.T) {
 	if len(body) != 0 || err == nil || err.Error() != "read failed" {
 		t.Fatalf("expected read failure to propagate, body=%q err=%v", body, err)
 	}
-
-	closeResponseLimitPipeWriter(nil)
-	closeResponseLimitPipeWriterWithError(nil, errors.New("ignored"))
 }

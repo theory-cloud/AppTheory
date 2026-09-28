@@ -155,7 +155,7 @@ probe_s3_origin_4xx() {
 deploy_attempted="1"
 (
   cd "${example_dir}"
-  npm ci >/dev/null
+  npm ci --ignore-scripts >/dev/null
   APPTHEORY_SSR_ONLY_PROVIDED_ASSETS_STACK_NAME="${stack_name}" \
     npx cdk deploy "${stack_name}" --require-approval never --outputs-file "${outputs_file}" >/dev/null
 )
