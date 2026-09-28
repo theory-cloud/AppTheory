@@ -831,10 +831,11 @@ type LogEntry struct {
 }
 
 type LoggerConfig struct {
-	Format             string               `json:"format"`
-	Level              string               `json:"level"`
-	RetryDelay         time.Duration        `json:"retry_delay"`
-	BatchSize          int                  `json:"batch_size"`
+	Format     string        `json:"format"`
+	Level      string        `json:"level"`
+	RetryDelay time.Duration `json:"retry_delay"`
+	BatchSize  int           `json:"batch_size"`
+
 	BufferSize         int                  `json:"buffer_size"`
 	MaxRetries         int                  `json:"max_retries"`
 	EnableStack        bool                 `json:"enable_stack"`
@@ -2802,6 +2803,16 @@ func (*WebSocketContext) SendJSONMessage(any) error
 
 func (*WebSocketContext) SendMessage([]byte) error
 
+func (*joinedBodyStream) Close() error
+
+func (*joinedBodyStream) Read([]byte) (int, error)
+
+func (*limitedBodyReader) Close() error
+
+func (*limitedBodyReader) Read([]byte) (int, error)
+
+func (*streamingBodyReader) Close() error
+
 func (RandomIDGenerator) NewID() string
 
 func (RealClock) Now() time.Time
@@ -2939,6 +2950,25 @@ func (ArtifactEntry) SHA256() string
 func (VersionedArtifact) ArchiveBytes() []byte
 
 func (VersionedArtifact) Entries() []ArtifactEntry
+
+## github.com/theory-cloud/apptheory/v4/runtime/internal/streamjoin
+
+type Body struct {
+	pr     *io.PipeReader
+	cancel context.CancelFunc
+	done   chan struct{}
+
+	closeOnce sync.Once
+	closeErr  error
+}
+
+type Producer func(context.Context, *io.PipeWriter)
+
+func New(context.Context, Producer) *Body
+
+func (*Body) Close() error
+
+func (*Body) Read([]byte) (int, error)
 
 ## github.com/theory-cloud/apptheory/v4/runtime/mcp
 
@@ -3693,6 +3723,10 @@ func (*ToolRegistry) List() []ToolDef
 func (*ToolRegistry) RegisterStreamingTool(ToolDef, StreamingToolHandler) error
 
 func (*ToolRegistry) RegisterTool(ToolDef, ToolHandler) error
+
+func (*scopedBodyReader) Close() error
+
+func (*scopedBodyReader) Read([]byte) (int, error)
 
 func (dynamoStreamRecord) TableName() string
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,10 +17,39 @@ class TimeoutConfig:
     timeout_message: str = "request timeout"
 
 
+class _DeadlineCancellation(threading.Event):
+    """A cancellation token that becomes set once its deadline passes.
+
+    Handlers observe it exactly like an event (``is_set`` / ``wait``, and
+    ``isinstance(token, threading.Event)`` still holds for handlers written
+    against the previous carrier), but nothing has to fire a timer to set it: the
+    deadline is evaluated when the token is read. That is what lets the timeout
+    middleware run the handler inline and still give the handler a cancellation
+    token with no thread, promise or timer behind it.
+    """
+
+    def __init__(self, deadline: float) -> None:
+        super().__init__()
+        self._deadline = deadline
+
+    def is_set(self) -> bool:
+        return super().is_set() or time.monotonic() >= self._deadline
+
+    def wait(self, timeout: float | None = None) -> bool:
+        """Wait until the token is set, its deadline passes, or ``timeout`` elapses."""
+        remaining = self._deadline - time.monotonic()
+        if remaining > 0:
+            if timeout is None or timeout > remaining:
+                timeout = remaining
+            if timeout > 0:
+                super().wait(timeout)
+        return self.is_set()
+
+
 @dataclass(slots=True)
 class _TimeoutCancellationCarrier:
     parent: Any | None
-    cancelled: threading.Event
+    cancelled: _DeadlineCancellation
 
 
 def _clone_context_with_timeout_ctx(ctx: Context, carrier: Any) -> Context:
@@ -43,6 +73,16 @@ def _clone_context_with_timeout_ctx(ctx: Context, carrier: Any) -> Context:
 
 
 def timeout_middleware(config: TimeoutConfig) -> Middleware:
+    """Fail requests closed when timeout policy expires.
+
+    The handler chain runs on the invoking thread with a deadline-bearing
+    cancellation token, and the middleware raises ``app.timeout`` when the deadline
+    passed while the chain was running. It starts no thread of its own: a handler
+    that observes the token returns immediately, and a handler that ignores it runs
+    until it returns, bounded by the Lambda function timeout rather than abandoned
+    by the middleware. There is no grace window and no abandoned work.
+    """
+
     cfg = _normalize_timeout_config(config)
 
     def mw(ctx: Context, next_handler: NextHandler) -> Any:
@@ -50,33 +90,24 @@ def timeout_middleware(config: TimeoutConfig) -> Middleware:
         if timeout_ms <= 0:
             return next_handler(ctx)
 
-        result: dict[str, Any] = {}
-        done = threading.Event()
-        cancelled = threading.Event()
+        deadline = time.monotonic() + (float(timeout_ms) / 1000.0)
+        cancelled = _DeadlineCancellation(deadline=deadline)
         handler_ctx = _clone_context_with_timeout_ctx(
             ctx,
             _TimeoutCancellationCarrier(getattr(ctx, "ctx", None), cancelled),
         )
 
-        def run() -> None:
-            try:
-                result["resp"] = next_handler(handler_ctx)
-            except Exception as exc:  # noqa: BLE001
-                result["exc"] = exc
-            finally:
-                done.set()
-
-        thread = threading.Thread(target=run, daemon=True)
-        thread.start()
-
-        if not done.wait(timeout=float(timeout_ms) / 1000.0):
+        try:
+            result = next_handler(handler_ctx)
+        finally:
+            # Release anything the handler left waiting on the token: the
+            # invocation is over, so the token is done either way.
             cancelled.set()
+
+        if time.monotonic() >= deadline:
             raise AppError("app.timeout", cfg.timeout_message)
 
-        if "exc" in result:
-            raise result["exc"]
-
-        return result.get("resp")
+        return result
 
     return mw
 

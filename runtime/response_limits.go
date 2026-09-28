@@ -1,11 +1,12 @@
 package apptheory
 
 import (
+	"context"
 	"io"
 	"sync"
 )
 
-func limitStreamedResponse(resp Response, maxBytes int) Response {
+func limitStreamedResponse(ctx context.Context, resp Response, maxBytes int) Response {
 	if maxBytes <= 0 || (resp.BodyReader == nil && resp.BodyStream == nil) {
 		return resp
 	}
@@ -18,7 +19,7 @@ func limitStreamedResponse(resp Response, maxBytes int) Response {
 		resp.BodyReader = limitBodyReader(resp.BodyReader, limiter)
 	}
 	if resp.BodyStream != nil {
-		resp.BodyStream = limitBodyStream(resp.BodyStream, limiter)
+		resp.BodyStream = limitBodyStream(ctx, resp.BodyStream, limiter)
 	}
 	return resp
 }
@@ -73,94 +74,112 @@ func (l *responseSizeLimiter) limitErr() error {
 	return &AppError{Code: errorCodeTooLarge, Message: errorMessageResponseTooLarge}
 }
 
-func limitBodyStream(stream BodyStream, limiter *responseSizeLimiter) BodyStream {
+// limitBodyStream applies the response byte budget to a portably streamed body.
+//
+// A channel-to-channel transform needs a goroutine, so the producer observes ctx
+// at both of its blocking points (the receive from the handler's stream and the
+// send to the consumer). The adapters that buffer a streamed body cancel that
+// context before they return, which is what lets the producer exit when the
+// adapter abandons the body instead of outliving the invocation.
+func limitBodyStream(ctx context.Context, stream BodyStream, limiter *responseSizeLimiter) BodyStream {
 	if stream == nil || limiter == nil {
 		return stream
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	out := make(chan StreamChunk)
 	go func() {
 		defer close(out)
-		for chunk := range stream {
+		for {
+			var chunk StreamChunk
+			var ok bool
+			select {
+			case <-ctx.Done():
+				return
+			case chunk, ok = <-stream:
+				if !ok {
+					return
+				}
+			}
 			if chunk.Err != nil {
-				out <- chunk
+				sendStreamChunk(ctx, out, chunk)
 				return
 			}
 			if len(chunk.Bytes) == 0 {
-				out <- StreamChunk{Bytes: []byte{}}
+				if !sendStreamChunk(ctx, out, StreamChunk{Bytes: []byte{}}) {
+					return
+				}
 				continue
 			}
 			if !limiter.allowChunk(len(chunk.Bytes)) {
-				out <- StreamChunk{Err: limiter.limitErr()}
+				sendStreamChunk(ctx, out, StreamChunk{Err: limiter.limitErr()})
 				return
 			}
-			out <- StreamChunk{Bytes: append([]byte(nil), chunk.Bytes...)}
+			if !sendStreamChunk(ctx, out, StreamChunk{Bytes: append([]byte(nil), chunk.Bytes...)}) {
+				return
+			}
 		}
 	}()
 	return out
 }
 
+func sendStreamChunk(ctx context.Context, out chan<- StreamChunk, chunk StreamChunk) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case out <- chunk:
+		return true
+	}
+}
+
+// limitBodyReader applies the response byte budget to a reader body.
+//
+// The accounting happens inline on the consumer's goroutine: the wrapper needs
+// no producer of its own, so a reader the adapter abandons cannot leave a
+// goroutine behind.
+//
+// The wrapper implements io.Closer and delegates Close to the reader it wraps.
+// That is what keeps the close path intact through the limiter: a buffered
+// adapter that gives up on a limited body closes it to unblock and join the
+// producer behind it, and a response-streaming transport closes the body on a
+// client disconnect. Without the forwarded Close the limiter would hide the
+// producer's closer and the body could not be joined.
 func limitBodyReader(reader io.Reader, limiter *responseSizeLimiter) io.Reader {
 	if reader == nil || limiter == nil {
 		return reader
 	}
-
-	pr, pw := io.Pipe()
-	go func() {
-		buf := make([]byte, 32*1024)
-		for {
-			n, err := reader.Read(buf)
-			if writeLimitedReaderChunk(pw, limiter, buf[:n]) {
-				return
-			}
-			if err == nil {
-				continue
-			}
-			if err == io.EOF {
-				closeResponseLimitPipeWriter(pw)
-				return
-			}
-			closeResponseLimitPipeWriterWithError(pw, err)
-			return
-		}
-	}()
-
-	return pr
+	return &limitedBodyReader{reader: reader, limiter: limiter}
 }
 
-func writeLimitedReaderChunk(pw *io.PipeWriter, limiter *responseSizeLimiter, chunk []byte) bool {
-	if len(chunk) == 0 {
-		return false
-	}
-
-	emit, overflow := limiter.consumeReader(len(chunk))
-	if emit > 0 {
-		if _, err := pw.Write(chunk[:emit]); err != nil {
-			return true
-		}
-	}
-	if !overflow {
-		return false
-	}
-
-	closeResponseLimitPipeWriterWithError(pw, limiter.limitErr())
-	return true
+type limitedBodyReader struct {
+	reader  io.Reader
+	limiter *responseSizeLimiter
 }
 
-func closeResponseLimitPipeWriter(pw *io.PipeWriter) {
-	if pw == nil {
-		return
+func (r *limitedBodyReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n <= 0 {
+		return n, err
 	}
-	if err := pw.Close(); err != nil {
-		return
+
+	emit, overflow := r.limiter.consumeReader(n)
+	if overflow {
+		// The budget is exhausted mid-read: hand the consumer the bytes that
+		// still fit together with the size error, which is what the previous
+		// pipe-based limiter produced across two reads.
+		return emit, r.limiter.limitErr()
 	}
+	return emit, err
 }
 
-func closeResponseLimitPipeWriterWithError(pw *io.PipeWriter, err error) {
-	if pw == nil {
-		return
+func (r *limitedBodyReader) Close() error {
+	if r == nil || r.reader == nil {
+		return nil
 	}
-	if closeErr := pw.CloseWithError(err); closeErr != nil {
-		return
+	if closer, ok := r.reader.(io.Closer); ok {
+		return closer.Close()
 	}
+	return nil
 }

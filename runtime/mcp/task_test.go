@@ -421,7 +421,9 @@ func TestTaskRuntimeToolsCall_CompletesAndReturnsResult(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected create task result, got %#v", createResp.Result)
 	}
-	if created.Task.TaskID != "task-1" || created.Task.Status != TaskStatusWorking {
+	// The body runs to completion inside the tools/call invocation, so the task
+	// the client receives is already terminal.
+	if created.Task.TaskID != "task-1" || created.Task.Status != TaskStatusCompleted {
 		t.Fatalf("unexpected create task: %+v", created.Task)
 	}
 	if _, ok := created.Meta[relatedTaskMetadataKey].(RelatedTaskMetadata); !ok {
@@ -677,10 +679,15 @@ func TestTaskRuntimeToolsCall_CancelStopsInFlightTool(t *testing.T) {
 		t.Fatalf("register task tool: %v", err)
 	}
 
-	createResp := s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(1, "slow"), protocolVersion, "sess-1")
-	if createResp.Error != nil {
-		t.Fatalf("tools/call task create error: %+v", createResp.Error)
-	}
+	// The tool body runs on the invoking goroutine, so the tools/call response
+	// cannot be observed until the body returns. In-process cancellation comes
+	// from a concurrent connection: dispatch the call from its own goroutine, as
+	// a second HTTP request would, and cancel it from this one.
+	createDone := make(chan *Response, 1)
+	go func() {
+		createDone <- s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(1, "slow"), protocolVersion, "sess-1")
+	}()
+
 	select {
 	case <-started:
 	case <-time.After(time.Second):
@@ -695,6 +702,21 @@ func TestTaskRuntimeToolsCall_CancelStopsInFlightTool(t *testing.T) {
 	case <-canceled:
 	case <-time.After(time.Second):
 		t.Fatal("task tool context was not canceled")
+	}
+
+	createResp := <-createDone
+	if createResp.Error != nil {
+		t.Fatalf("tools/call task create error: %+v", createResp.Error)
+	}
+	created, ok := createResp.Result.(CreateTaskResult)
+	if !ok {
+		t.Fatalf("expected create task result, got %#v", createResp.Result)
+	}
+	if created.Task.Status != TaskStatusCanceled {
+		t.Fatalf("expected the tools/call reply to report the canceled task, got %+v", created.Task)
+	}
+	if created.Task.StatusMessage == "" {
+		t.Fatalf("expected a canceled task status message, got %+v", created.Task)
 	}
 
 	record, err := store.Get(context.Background(), TaskLookup{SessionID: "sess-1", TaskID: "task-cancel"})

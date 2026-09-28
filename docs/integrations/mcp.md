@@ -410,14 +410,31 @@ Tool support is fail-closed:
 - `TaskSupportOptional` allows both synchronous and task-augmented `tools/call`
 - `TaskSupportRequired` rejects synchronous `tools/call` and requires task augmentation
 
-When a task-capable `tools/call` includes a `task` parameter, AppTheory creates a session-scoped task record, returns a
-`CreateTaskResult`, and runs the tool on a background context detached from the request connection. The final tool
-result or JSON-RPC error is stored in the configured `TaskStore`. Clients then use:
+When a task-capable `tools/call` includes a `task` parameter, AppTheory creates a session-scoped task record, runs the
+tool body to completion inside that `tools/call` invocation, stores the final tool result or JSON-RPC error in the
+configured `TaskStore`, and returns a `CreateTaskResult` whose task is already in its terminal state (`completed` or
+`failed`). The body never runs in a goroutine, thread, or promise that outlives the invocation: in Lambda the execution
+environment is frozen after the handler returns, so a detached body could stay `working` forever, lose its result, or
+half-apply its writes.
+
+The terminal state is the tool body's own outcome, identically in Go, TypeScript, and Python: `completed`, or `failed`
+when the body returns an error — including an error caused by the invocation ending (client disconnect, request
+cancellation, deadline). `canceled` is the client-requested state, recorded by `tasks/cancel`; a body that errors after
+a client cancel still reports `canceled`, because the stored terminal state is authoritative. A hard Lambda function
+timeout is not observable in-process (the environment is frozen), so nothing is recorded and the task stays `working`
+until its TTL expires.
+
+Clients then use:
 
 - `tasks/get` to inspect status
 - `tasks/list` to list tasks for the current MCP session
 - `tasks/result` to retrieve terminal results, with related-task metadata injected into `_meta`
-- `tasks/cancel` to mark the task canceled and cancel the in-flight tool context when it is still running
+- `tasks/cancel` to mark the task canceled and cancel the tracked in-flight tool context when it is still running (a
+  concurrent connection, for example another request on a long-lived server, reaches the tracked context; the
+  tools/call invocation itself completes the body before replying)
+
+If a product needs work to survive a client disconnect, that is a durable hand-off the product owns (queue the work and
+run it in an invocation triggered by a consumer), not a background goroutine inside the MCP invocation.
 
 Task state is always bound to the active MCP session id. A store must never broaden lookup, list, cancel, or delete
 operations outside the supplied session scope. Product deployments should bind that session to the same principal,
@@ -655,6 +672,11 @@ Important deployment note:
 - the HTTP API v2 adapter cannot stream: it drains a terminating streaming body into the buffered response (bounded to
   4 MiB / 5 seconds) and fails closed with HTTP 500 and a JSON error body when the stream does not terminate in time,
   instead of returning a silent empty `200`
+- a streamed `tools/call` body is joined to its response: the tool body and the SSE relay run in the invocation that
+  serves the stream, and an adapter that stops reading the body cancels the relay and waits for the tool body to finish
+  before it returns. A client disconnect therefore still does not cancel the tool body — the stored terminal result
+  remains available to a client that reconnects with `last-event-id` — but nothing is left running past the invocation
+  that produced the stream either
 
 ### Resumability
 
@@ -687,6 +709,11 @@ srv := mcp.NewServer("my-mcp-server", "dev",
   }),
 )
 ```
+
+The keepalive producer is joined to the response body: an adapter that consumes the listener and stops reading it (the
+HTTP API v2, buffered Function URL, ALB and buffered v1 adapters close the body when their drain budget expires)
+cancels the writer and waits for it unconditionally, so no keepalive writer outlives the invocation. The budget semantics are unchanged — one keepalive
+comment immediately, then one per keepalive interval until the configured window elapses and the body ends.
 
 Important scope notes:
 

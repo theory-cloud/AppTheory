@@ -178,6 +178,27 @@ No adapter performs an unbounded read, and none of the budgets are configurable:
 a handler that wants true incremental SSE must use a response-streaming adapter
 (API Gateway REST v1, or the Lambda Function URL streaming handler), not HTTP API v2.
 
+The **ALB target group** and **buffered API Gateway REST v1** conversions (and
+the WebSocket adapter, which returns the v1 proxy shape) deliver a streaming body
+through the same bounded drain as the shapes above: a terminating body becomes the
+buffered response, a body over 4 MiB maps to 413, and a body that does not
+terminate in time fails closed with the adapter named in the message
+(`"...cannot be delivered by the ALB target group adapter"` /
+`"...by the API Gateway REST v1 adapter"`). No buffered adapter drops a streaming
+body.
+
+When the time budget expires, the adapter does not walk away from the body: it
+closes the reader (or the stream) so the producer can unwind and then waits for
+the read it gave up on, **unconditionally** — there is no grace window and no
+abandoned worker, so no producer goroutine/thread/promise outlives the invocation
+that started it. A body that is neither closable nor terminating — a
+handler-supplied source blocked inside a call it does not leave — cannot be
+interrupted by construction; it is read on the invoking goroutine or waited for
+unconditionally, so the Lambda function timeout is what bounds it rather than the
+adapter. Every body the runtime itself produces is closable, and every wrapper the
+runtime puts around a body forwards close to the body it wraps. See
+[Invocation-scoped work](../development/planning/apptheory/supporting/apptheory-runtime-contract-v0.md#invocation-scoped-work-normative).
+
 ## Header canonicalization
 
 `Request.Headers` and `Response.Headers` keys are lower-cased. Look-ups are case-insensitive at the boundary, but if you iterate the map you see the canonical (lower-case) form.

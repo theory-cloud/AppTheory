@@ -601,7 +601,9 @@ test("mcp task runtime handles lifecycle and error paths", async () => {
   assert.equal((await json(await post(server, rpc("ttl-high", "tools/call", { name: "task_echo", arguments: {}, task: { ttl: 999999 } }), headers))).error.message, "Invalid params: task.ttl exceeds maximum");
   assert.equal((await json(await post(server, rpc("missing-task", "tasks/get", {}), headers))).error.message, "Invalid params: missing taskId");
   const failed = await json(await post(server, rpc("failed", "tools/call", { name: "fails", arguments: {}, task: {} }), headers));
-  assert.equal(failed.result.task.status, "working");
+  // The task body runs inside the tools/call invocation, so the reply already
+  // carries the terminal state.
+  assert.equal(failed.result.task.status, "failed");
   assert.equal((await json(await post(server, rpc("failed-result", "tasks/result", { taskId: "task-2" }), headers))).error.message, "boom");
 
   const noTasks = createMcpServer("No Tasks", "1", { idGenerator: sequenceIdGenerator(["sess-no-tasks"]) });

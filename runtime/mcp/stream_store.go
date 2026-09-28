@@ -30,6 +30,15 @@ type StreamStore interface {
 	// Subscribe streams events after afterEventID. If afterEventID is empty,
 	// it streams from the beginning. If afterEventID is present, it must belong
 	// to the requested stream.
+	//
+	// The returned channel is the store's subscription lifetime. An
+	// implementation MUST close it when ctx is done, and MUST NOT leave a
+	// producer goroutine writing to it after that close: a streamed MCP body
+	// waits for the channel to close before the invocation that opened the
+	// subscription returns, so a subscription that ignores ctx is abandoned work
+	// in a frozen Lambda environment instead of a closed stream. A store that
+	// keeps the channel open past ctx does not leak a goroutine of its own, but
+	// it does hold the invocation open until the function timeout.
 	Subscribe(ctx context.Context, sessionID, streamID, afterEventID string) (<-chan StreamEvent, error)
 
 	// StreamForEvent returns the stream id that the given event id belongs to.
@@ -252,7 +261,12 @@ func (m *MemoryStreamStore) pumpSubscription(ctx context.Context, stream *memory
 	defer close(out)
 
 	done := ctx.Done()
-	m.broadcastOnDone(done, stream)
+	stopBroadcast := make(chan struct{})
+	waitBroadcast := m.broadcastOnDone(done, stopBroadcast, stream)
+	// Declared after close(out) so it runs before the pump reports completion:
+	// the watcher goroutine is part of the pump and must exit with it.
+	defer waitBroadcast()
+	defer close(stopBroadcast)
 
 	nextIndex := startIndex
 	for {
@@ -269,16 +283,28 @@ func (m *MemoryStreamStore) pumpSubscription(ctx context.Context, stream *memory
 	}
 }
 
-func (m *MemoryStreamStore) broadcastOnDone(done <-chan struct{}, stream *memoryStream) {
+// broadcastOnDone wakes the subscription condition variable when the
+// subscription context is done. The returned function waits for the watcher, so
+// the pump cannot return while a goroutine it started is still running.
+func (m *MemoryStreamStore) broadcastOnDone(done <-chan struct{}, stop <-chan struct{}, stream *memoryStream) func() {
 	if done == nil {
-		return
+		return func() {}
 	}
+
+	var watcher sync.WaitGroup
+	watcher.Add(1)
 	go func() {
-		<-done
+		defer watcher.Done()
+		select {
+		case <-done:
+		case <-stop:
+		}
 		m.mu.Lock()
 		stream.cond.Broadcast()
 		m.mu.Unlock()
 	}()
+
+	return watcher.Wait
 }
 
 func (m *MemoryStreamStore) waitNextSubscriptionEvent(ctx context.Context, stream *memoryStream, nextIndex *int) (StreamEvent, bool) {

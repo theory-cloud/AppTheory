@@ -61,6 +61,87 @@ These are wire-contract changes, not source-level API changes: after the import-
 on v3 compiles on v4, but the wire behavior an application observes can differ. See `CHANGELOG.md` and the v4 release
 notes for the complete commit-level detail in this range.
 
+### Invocation-scoped work
+
+AppTheory no longer starts work that outlives the Lambda invocation that started it. Handlers and middleware may still
+run work concurrently inside one invocation, but the runtime joins it before returning, because the Lambda execution
+environment is frozen once the handler returns: detached work resumes at an unpredictable time on a later invocation of
+the same environment (or never), and can half-apply writes, lose results, or hold state that belongs to an ended
+invocation.
+
+Action required depends on what your application relies on today:
+
+There are **no documented residuals and no grace windows**: every launch the runtime starts is joined before the
+adapter or middleware that owns it returns, or it does not exist. Where an earlier draft of this entry described a
+bounded grace window that ended in abandoning work, that behavior is gone.
+
+- **Task-augmented `tools/call`.** The tool body runs to completion inside the `tools/call` invocation and the
+  `CreateTaskResult` it returns carries a task that is already terminal; it is no longer returned as `working` while a
+  detached goroutine, thread, or promise runs the body. `tasks/get`, `tasks/result`, `tasks/list`, and `tasks/cancel`
+  behave as before, and a client that only polls is unaffected. Two consequences are worth planning for:
+  - the `tools/call` response now blocks for the duration of the tool body, bounded by your Lambda timeout (previously
+    it returned immediately);
+  - the terminal state is the tool body's own outcome, identical in Go, TypeScript, and Python: `completed`, or
+    `failed` when the body returns an error — including an error caused by the invocation ending (client disconnect,
+    request cancellation, deadline). `canceled` is the client-requested state, recorded by `tasks/cancel`; a body that
+    errors after a client cancel still reports `canceled`, because the stored terminal state is authoritative. Go
+    previously recorded `canceled` for a request-context cancellation that `tasks/cancel` had not requested; that
+    cross-runtime divergence is gone (see ADV-1070-R0-04). A **hard Lambda function timeout is not observable
+    in-process**: the execution environment is frozen, so nothing is recorded and the task stays `working` until its
+    TTL expires (see ADV-1070-R0-03). If your product needs work to survive a disconnect, own that hand-off: queue the
+    work and run it in an invocation triggered by a consumer, instead of relying on detached execution. In-process
+    `tasks/cancel` still cancels an in-flight body reached by a concurrent connection.
+- **Streamed `tools/call` and SSE responses.** The tool body and the SSE relay are joined to the response body. A
+  response-streaming adapter still delivers progress incrementally, and a disconnect still does not cancel the tool body,
+  so a client can resume with `Last-Event-ID`; an adapter that stops reading the body now waits for the tool body to
+  finish instead of returning while it runs.
+- **Every buffered adapter.** HTTP API v2, the Lambda Function URL, the **ALB target group**, and the **buffered API
+  Gateway REST v1** shape now deliver a streaming body through the same bounded drain, close and join. ALB and the
+  buffered v1 conversion previously dropped a streaming body entirely (returning a response while its producer could
+  still run); they now drain it into the buffered body, fail closed with a message naming the adapter when it cannot be
+  delivered (`"...cannot be delivered by the ALB target group adapter"`, `"...by the API Gateway REST v1 adapter"`), and
+  map a byte-budget overrun to HTTP 413 as the other adapters do. When the drain time budget expires the adapter closes
+  the body and waits for the read it gave up on before failing closed — unconditionally.
+- **The response-streaming adapter.** The API Gateway REST v1 response-streaming route now delivers a
+  handler-supplied `Response.BodyStream` as well. A `BodyStream` is a channel, so it is converted through `streamjoin`
+  under the invocation's serve context before it is handed to the transport: the resulting body reports EOF only after
+  the stream's producer has exited, and closing it on a client disconnect cancels the serve context and joins the
+  producer the response-size limiter started. The route previously dropped a `BodyStream` and returned an empty 200
+  while the limiter's producer was still running. The Lambda Function URL streaming handler also unwinds the body's
+  async iterator when the first transport write fails, so a producer is never left suspended. Python delivers buffered
+  only, and the TypeScript buffered adapters already drain and join.
+- **Bodies the adapter cannot interrupt.** A handler-supplied body that is neither closable nor terminating cannot be
+  interrupted by construction. It is read on the invoking goroutine, or waited for unconditionally, so the Lambda
+  function timeout bounds it; the adapter no longer walks away from it after a grace window. Every body the runtime
+  itself produces (an SSE body, a streamjoin body, a limited body, a composed reader) is closable, and closing it
+  forwards to its producer and joins it.
+- **What a handler-supplied streaming body must do.** A `Response.BodyStream` (Go), `bodyStream` (TypeScript) or
+  `body_stream` (Python) producer must release the body when the invocation context ends: close the channel (Go), let
+  the async iterable unwind through `return()`/`destroy()` (TypeScript), or implement `close()` (Python). The adapter
+  gives up on a body that does not terminate within its drain budget, closes it and then **waits for it
+  unconditionally**, so a body that cannot be released holds the invocation until the Lambda function timeout instead
+  of being abandoned after a grace window. The shared contract fixtures (`sse_stream_live`) now use an interruptible
+  live producer — a handler that closes its stream with the invocation — so they pin both the documented fail-closed
+  500 and the join that follows it. The runtime's own producers already comply: every runtime-produced stream observes
+  the invocation context (Go's limiter pump, the SSE bodies, the MCP stream scope) or closes on the transport's close
+  (TypeScript's generators, Python's `close()` forwarding).
+- **Timeout middleware (all three runtimes).** It runs the handler chain **on the invoking goroutine/thread/task** with
+  a deadline-bearing context or cancellation token, and reports `app.timeout` once the chain returns if the deadline
+  passed. It starts no second execution context, so there is nothing to abandon and no grace window. A handler that
+  ignores the token runs to completion and is bounded by the Lambda function timeout; its response is no longer
+  produced by a middleware that gave up on it. The Python timeout test that pinned the previous abandonment behavior
+  now pins this one.
+- **Observability log notifications (`pkg/observability/zap`).** The process-lifetime notifier goroutine and its entry
+  queue are gone. An error notification is delivered synchronously inside the call that logs, bounded by the configured
+  retry policy (`MaxRetries` attempts with `RetryDelay` between them); a notifier that ignores its context is bounded by
+  the Lambda function timeout. `LoggerConfig.BufferSize` is accepted for compatibility and no longer sizes anything;
+  `EntriesDropped` now counts only notifications that could not be delivered because the logger was closed. The
+  TypeScript and Python observability surfaces have no equivalent background notifier, so they are unchanged.
+
+These are behavior changes, not source-level API changes: no exported signature changed, and applications that poll
+tasks, read SSE streams, or rely on the documented budgets keep working. The TypeScript and Python packages carry the
+same behavior, and no new configuration is required in any runtime.
+
 ### CDK Node.js floor
 
 The v4.x CDK construct library declares `engines.node` `>=22` instead of `>=20`, and CI builds the package and

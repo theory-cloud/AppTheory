@@ -1,0 +1,64 @@
+# Invocation-scope baseline: every asynchronous launch site in the shipped
+# runtime trees, with the join that keeps it inside its invocation.
+#
+# Format: <path>|<function>[#n]|<justification>
+#
+# The guard (scripts/tools/invocation_scope) fails on any launch that is not
+# listed here and on any entry that no longer matches a site, so this file is the
+# auditable sweep table for the invariant: no goroutine, thread, task or promise
+# the runtime starts may outlive the Lambda invocation that started it, and a
+# launch that cannot be joined must not exist. An entry names the enclosing
+# function (the innermost one for a closure) and the occurrence within it.
+#
+# Go: `go` statements and time.AfterFunc / time.NewTimer / time.NewTicker /
+#   time.Tick constructors under runtime/, pkg/, testkit/ and cmd/ (non-test
+#   files). A timer stored in a named variable the owning function stops is not
+#   reported; time.Tick and a discarded timer handle always are.
+# TypeScript: worker/child-process/task starts, timers (including bracket
+#   access), queueMicrotask, process.nextTick, setImmediate, async IIFEs,
+#   discarded promise chains (.then/.catch/.finally in statement position) and
+#   discarded calls to functions the file declares async, under ts/src.
+# Python: thread, task, process, ThreadPoolExecutor/ProcessPoolExecutor,
+#   asyncio.to_thread, loop.run_in_executor and daemon-flagged thread starts
+#   under py/src, including threads created inside a comprehension.
+
+# --- Go ---------------------------------------------------------------------
+# The buffered HTTP API v2 / Function URL / ALB / v1 adapters close and join
+# their drain worker on every exit path (drainBodyReaderForAPIGatewayV2).
+runtime/aws_http.go|drainBodyReaderForAPIGatewayV2[#1]|joined: the adapter closes the reader (unblocking the read) and waits for the worker before it returns
+# limitBodyStream's producer observes the serve context at both of its blocking
+# points. Every buffered adapter cancels that context and drains the stream to
+# its close before returning; the v1 response-streaming adapter converts the
+# stream through streamjoin, and the body it hands the transport cancels the
+# serve context and drains the stream on both EOF and Close.
+runtime/response_limits.go|limitBodyStream[#1]|joined: the producer observes the serve context; the owning adapter cancels that context and drains the stream to its close on every exit, and the response-streaming transport's converted body does the same on EOF and on Close
+# The streamjoin primitive joins its producer on EOF and on Close.
+runtime/internal/streamjoin/streamjoin.go|New[#1]|joined: the returned body joins the producer on EOF and on Close
+# streamScope owns the producers of one streamed MCP body; stop() cancels the
+# relays and waits for every producer, and the body reader calls it on EOF/Close.
+runtime/mcp/stream_scope.go|(streamScope).goRun[#1]|joined: (*streamScope).stop cancels the relay context and waits for it; the body reader releases the scope on EOF and on Close
+runtime/mcp/stream_scope.go|(streamScope).goJoin[#1]|joined: (*streamScope).stop waits for every producer, including the ones that are only joined
+# The memory stream store's subscription pump is joined through the forwarder,
+# which drains the subscription to its close before the body reader is released.
+runtime/mcp/stream_store.go|(MemoryStreamStore).Subscribe[#1]|joined: the pump closes its channel with the subscription context; forwardStreamEvents drains it (drainClosedSubscription) before the streamed body is released
+runtime/mcp/stream_store.go|(MemoryStreamStore).broadcastOnDone[#1]|joined: the returned wait function blocks until the watcher has run; the pump defers it before it reports completion
+runtime/mcp/stream_store_dynamo.go|(DynamoStreamStore).Subscribe[#1]|joined: same contract as the memory store pump; it observes the subscription context and closes its channel, and the forwarder drains it to that close
+# The embedder's batch worker pool is joined by its WaitGroup on every path.
+pkg/vectorstore/embedder.go|(TitanEmbedder).EmbedBatch[#1]|joined: every worker is tracked by a WaitGroup that EmbedBatch waits on before returning
+
+# --- TypeScript -------------------------------------------------------------
+# The drain budget's timer is cleared in a finally on every path, and the read it
+# abandons is then awaited unconditionally.
+ts/src/internal/aws-http.ts|timer[#1]|joined: withDeadline clears the timer in a finally on both paths, and its caller awaits the abandoned read before returning
+ts/src/internal/aws-http.ts|promise-race[#1]|joined: the raced read is awaited unconditionally after unblockStreamingBody, so the loser of the race cannot outlive the drain
+# The timeout middleware's abort timer is cleared in a finally, and the handler it
+# aborts runs on the invoking task.
+ts/src/app.ts|timer[#1]|joined: the timeout middleware clears the timer in a finally and awaits the handler on the invoking task; there is no detached promise to abandon
+
+# --- Python -----------------------------------------------------------------
+# The buffered adapter's drain worker is closed and joined unconditionally, and
+# the timeout middleware starts no thread at all.
+py/src/apptheory/aws_http.py|thread[#1]|joined: _drain_streaming_body closes the body (releasing the read) and joins the worker before it returns
+# The same drain worker is flagged daemon as belt-and-braces; the join above,
+# not the flag, is what keeps it inside the invocation.
+py/src/apptheory/aws_http.py|daemon-thread[#1]|joined: _drain_streaming_body closes the body (releasing the read) and joins the worker before it returns, so the daemon flag changes nothing about the join
