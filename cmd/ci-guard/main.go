@@ -13,6 +13,11 @@
 //	    Read repository-relative surface paths (one per line) on stdin and fail
 //	    closed on any package install that leaves lifecycle scripts enabled.
 //
+//	lockfile-config --root <dir>
+//	    Read repository-relative lockfile paths (one per line) on stdin and fail
+//	    closed when a lockfile directory is missing the package-manager config
+//	    that disables lifecycle scripts, or sets scripts back on.
+//
 // Exit codes: 0 PASS, 1 FAIL, 2 BLOCKED.
 package main
 
@@ -42,6 +47,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runWorkflowTriggers(args[1:], stdout, stderr)
 	case "install-hygiene":
 		return runInstallHygiene(args[1:], stdin, stdout, stderr)
+	case "lockfile-config":
+		return runLockfileConfig(args[1:], stdin, stdout, stderr)
 	default:
 		writeString(stderr, fmt.Sprintf("ci-guard: unknown subcommand %q\n", args[0]))
 		return exitBlocked

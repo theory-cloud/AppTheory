@@ -36,7 +36,7 @@ func (s *shellScanner) scan(text string, startLine int) {
 		markers := findHeredocMarkers(code)
 		if len(markers) > 0 {
 			body, next := collectHeredocBody(lines, i+1, markers)
-			if isShellName(firstWord(segments)) {
+			if runsShell(segments) {
 				s.scan(body.text, body.line)
 			}
 			i = next
@@ -44,25 +44,51 @@ func (s *shellScanner) scan(text string, startLine int) {
 	}
 }
 
+// runsShell reports whether a logical line hands its heredoc body to a shell:
+// either directly (`bash <<EOF`) or through a pipeline (`cat <<EOF | bash`).
+// The body of any other heredoc (`python3 - <<PY`, `cat > file <<EOF`) is data,
+// not commands.
+func runsShell(segments [][]string) bool {
+	for _, words := range segments {
+		rest, _ := unwrapCommand(words)
+		for len(rest) > 0 {
+			if isShellName(rest[0]) {
+				return true
+			}
+			// Peel launcher words so `cat <<EOF | sudo bash` still counts.
+			if !isCommandPrefixWord(rest[0]) {
+				break
+			}
+			rest = rest[1:]
+			for len(rest) > 0 && strings.HasPrefix(rest[0], "-") {
+				rest = rest[1:]
+			}
+		}
+	}
+	return false
+}
+
 func (s *shellScanner) visitSegment(words []string, line int, raw string) {
 	if len(words) == 0 {
 		return
 	}
-	for i := 0; i+2 < len(words); i++ {
-		if isShellName(words[i]) && isDashCFlag(words[i+1]) {
-			s.scan(words[i+2], line)
+	// A nested interpreter's own flags may precede `-c` (`bash -eu -c '...'`),
+	// so the payload is the word after the first `-c`-style flag of that
+	// interpreter rather than the word immediately after the interpreter name.
+	for i := 0; i < len(words); i++ {
+		if !isShellName(words[i]) {
+			continue
+		}
+		for j := i + 1; j < len(words) && strings.HasPrefix(words[j], "-"); j++ {
+			if isDashCFlag(words[j]) {
+				if j+1 < len(words) {
+					s.scan(words[j+1], line)
+				}
+				break
+			}
 		}
 	}
 	s.visit(shellCommand{words: words, line: line, raw: raw})
-}
-
-func firstWord(segments [][]string) string {
-	for _, words := range segments {
-		if len(words) > 0 {
-			return words[0]
-		}
-	}
-	return ""
 }
 
 type shellLine struct {

@@ -22,9 +22,49 @@ const (
 	npmCommand  = "npm"
 	yarnCommand = "yarn"
 	pnpmCommand = "pnpm"
+
+	// maxVariableHops bounds `$NAME` resolution so a self-referential
+	// assignment cannot spin the scanner.
+	maxVariableHops = 8
 )
 
 var immutableSpecPattern = regexp.MustCompile(`@[0-9]+\.[0-9]+\.[0-9]+`)
+
+// Launcher value-taking flags: a launcher's own flag may consume the next word,
+// so the launcher target must skip the flag and its value together. Boolean
+// flags are skipped one word at a time.
+var (
+	npxValueFlags     = map[string]bool{"-p": true, "--package": true}
+	corepackFlags     = map[string]bool{}
+	pnpmDlxValueFlags = map[string]bool{"--package": true}
+	xargsValueFlags   = map[string]bool{
+		"-I": true, "-i": true, "-n": true, "-P": true, "-s": true, "-a": true,
+		"-E": true, "-d": true, "-L": true, "-e": true,
+		"--max-args": true, "--replace": true, "--max-procs": true,
+		"--delimiter": true, "--arg-file": true, "--max-lines": true, "--eof": true,
+	}
+
+	// Command-prefix words take values too (`sudo -u root npm ci`,
+	// `nice -n 10 npm ci`, `env -u FOO npm ci`), so those flags must skip their
+	// value as well or the value would be read as the command name.
+	prefixValueFlags = map[string]map[string]bool{
+		"sudo": {
+			"-u": true, "--user": true, "-g": true, "--group": true, "-p": true,
+			"--prompt": true, "-C": true, "--close-from": true, "-r": true,
+			"--role": true, "-t": true, "--type": true, "-h": true, "--host": true,
+		},
+		"nice": {"-n": true, "--adjustment": true},
+		"env":  {"-u": true, "--unset": true, "-C": true, "--chdir": true},
+	}
+)
+
+// reservedShellWords introduce a command rather than being one: `if CMD`,
+// `while CMD`, `! CMD` and `{ CMD` all run CMD in command position, so the
+// keyword is skipped and the remainder is classified.
+var reservedShellWords = map[string]bool{
+	"if": true, "elif": true, "while": true, "until": true, "then": true,
+	"do": true, "else": true, "!": true, "{": true, "}": true,
+}
 
 type installViolation struct {
 	path    string
@@ -36,6 +76,7 @@ type installViolation struct {
 type installScanState struct {
 	violations []installViolation
 	allowed    int
+	env        map[string]string
 }
 
 func runInstallHygiene(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -103,6 +144,7 @@ func (s *installScanState) scanSurface(root, rel string) {
 		s.record(installViolation{path: rel, message: "cannot read surface", text: err.Error()})
 		return
 	}
+	s.resetEnv()
 	if rel != makefileName && (strings.HasSuffix(rel, ".yml") || strings.HasSuffix(rel, ".yaml")) {
 		if err := s.scanWorkflowYAML(rel, string(data)); err != nil {
 			s.record(installViolation{path: rel, message: "cannot parse workflow YAML", text: err.Error()})
@@ -110,6 +152,10 @@ func (s *installScanState) scanSurface(root, rel string) {
 		return
 	}
 	scanShellText(string(data), 1, func(command shellCommand) { s.checkCommand(rel, command) })
+}
+
+func (s *installScanState) resetEnv() {
+	s.env = map[string]string{}
 }
 
 func (s *installScanState) scanWorkflowYAML(rel, data string) error {
@@ -136,6 +182,7 @@ func (s *installScanState) walkRuns(rel string, node *yaml.Node) {
 					s.record(installViolation{path: rel, line: value.Line, message: "run: value must be a plain string", text: "unmodeled run: value"})
 					continue
 				}
+				s.resetEnv()
 				scanShellText(value.Value, value.Line, func(command shellCommand) { s.checkCommand(rel, command) })
 				continue
 			}
@@ -149,7 +196,16 @@ func (s *installScanState) walkRuns(rel string, node *yaml.Node) {
 }
 
 func (s *installScanState) checkCommand(rel string, command shellCommand) {
-	words := unwrapCommand(command.words)
+	s.scanCommand(rel, command, command.words)
+}
+
+func (s *installScanState) scanCommand(rel string, command shellCommand, raw []string) {
+	words, assignments := unwrapCommand(raw)
+	s.absorb(assignments)
+	if len(words) == 0 {
+		return
+	}
+	words = s.resolveHead(rel, command, words)
 	if len(words) == 0 {
 		return
 	}
@@ -157,20 +213,132 @@ func (s *installScanState) checkCommand(rel string, command shellCommand) {
 	args := words[1:]
 	switch {
 	case name == "npx" || name == "pnpx":
-		s.checkNested(rel, command, args)
+		s.checkLaunched(rel, command, args, npxValueFlags)
+	case name == "corepack":
+		s.checkLaunched(rel, command, args, corepackFlags)
+	case name == "xargs":
+		s.checkLaunched(rel, command, args, xargsValueFlags)
 	case name == pnpmCommand && len(args) > 0 && args[0] == "dlx":
-		s.checkNested(rel, command, args[1:])
+		s.checkLaunched(rel, command, args[1:], pnpmDlxValueFlags)
+	case name == "eval":
+		payload := strings.Join(args, " ")
+		if strings.TrimSpace(payload) != "" {
+			scanShellText(payload, command.line, func(nested shellCommand) { s.checkCommand(rel, nested) })
+		}
+	case reservedShellWords[name]:
+		s.scanCommand(rel, command, words[1:])
 	default:
 		s.checkInstall(rel, command, name, args)
 	}
 }
 
-func (s *installScanState) checkNested(rel string, command shellCommand, words []string) {
-	nested := unwrapCommand(words)
-	if len(nested) == 0 {
+// checkLaunched classifies the command a launcher ultimately runs, skipping the
+// launcher's own flags (and the values they consume) and stripping a pinned
+// version from the package spec (`npx npm@10.9.0 ci`).
+func (s *installScanState) checkLaunched(rel string, command shellCommand, words []string, valueFlags map[string]bool) {
+	target := launchTarget(words, valueFlags)
+	if len(target) == 0 {
 		return
 	}
-	s.checkInstall(rel, command, commandBase(nested[0]), nested[1:])
+	s.checkInstall(rel, command, commandBase(target[0]), target[1:])
+}
+
+func launchTarget(words []string, valueFlags map[string]bool) []string {
+	index := 0
+	for index < len(words) {
+		word := words[index]
+		if word == "-" || !strings.HasPrefix(word, "-") {
+			break
+		}
+		if valueFlags[word] && index+1 < len(words) {
+			index += 2
+			continue
+		}
+		index++
+	}
+	if index >= len(words) {
+		return nil
+	}
+	target := append([]string{}, words[index:]...)
+	target[0] = stripPackageVersion(target[0])
+	return target
+}
+
+func stripPackageVersion(spec string) string {
+	if index := strings.LastIndexByte(spec, '@'); index > 0 {
+		return spec[:index]
+	}
+	return spec
+}
+
+// resolveHead replaces a leading `$NAME` / `${NAME}` command word with the
+// literal value recorded for it. A value containing whitespace is a whole
+// command line (`CMD='npm ci'; $CMD`), so it is re-scanned as shell text. An
+// unrecorded variable is left alone: a dynamically constructed command cannot
+// be resolved statically, and treating every `$VAR` as an install would fail
+// every script that uses one.
+func (s *installScanState) resolveHead(rel string, command shellCommand, words []string) []string {
+	for hop := 0; hop < maxVariableHops; hop++ {
+		if len(words) == 0 {
+			return nil
+		}
+		name, ok := variableReference(words[0])
+		if !ok {
+			return words
+		}
+		value, found := s.env[name]
+		if !found {
+			return words
+		}
+		if strings.ContainsAny(value, " \t") {
+			scanShellText(value, command.line, func(nested shellCommand) { s.checkCommand(rel, nested) })
+			return nil
+		}
+		words = append([]string{value}, words[1:]...)
+	}
+	return words
+}
+
+func (s *installScanState) absorb(assignments map[string]string) {
+	if len(assignments) == 0 {
+		return
+	}
+	if s.env == nil {
+		s.env = map[string]string{}
+	}
+	for name, value := range assignments {
+		s.env[name] = value
+	}
+}
+
+func variableReference(word string) (string, bool) {
+	if strings.HasPrefix(word, "${") && strings.HasSuffix(word, "}") {
+		name := word[2 : len(word)-1]
+		if isVariableName(name) {
+			return name, true
+		}
+		return "", false
+	}
+	if strings.HasPrefix(word, "$") && isVariableName(word[1:]) {
+		return word[1:], true
+	}
+	return "", false
+}
+
+func isVariableName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'):
+		case i > 0 && c >= '0' && c <= '9':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (s *installScanState) checkInstall(rel string, command shellCommand, name string, args []string) {
@@ -246,22 +414,40 @@ func hasIgnoreScriptsTrue(flags []string) bool {
 	return found
 }
 
-func unwrapCommand(words []string) []string {
+// unwrapCommand peels the leading assignment words and launcher words
+// (`sudo`, `env`, `time`, ...) off a command, returning the words that form the
+// command itself plus the literal `NAME=value` assignments it saw. The
+// assignments are what let `NPM=npm; $NPM ci` and `env NPM=npm $NPM ci` be
+// classified instead of escaping as an unknown command word.
+func unwrapCommand(words []string) ([]string, map[string]string) {
 	index := 0
+	assignments := map[string]string{}
 	for index < len(words) {
 		switch {
 		case isAssignmentWord(words[index]):
+			name, value := splitAssignment(words[index])
+			assignments[name] = value
 			index++
 		case isCommandPrefixWord(words[index]):
+			prefix := words[index]
 			index++
 			for index < len(words) && strings.HasPrefix(words[index], "-") {
+				if prefixValueFlags[prefix][words[index]] && index+1 < len(words) {
+					index += 2
+					continue
+				}
 				index++
 			}
 		default:
-			return words[index:]
+			return words[index:], assignments
 		}
 	}
-	return words[index:]
+	return words[index:], assignments
+}
+
+func splitAssignment(word string) (string, string) {
+	equals := strings.IndexByte(word, '=')
+	return word[:equals], word[equals+1:]
 }
 
 func isAssignmentWord(word string) bool {
