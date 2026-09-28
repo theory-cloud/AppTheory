@@ -40,7 +40,7 @@ ensure_cdk_runtime_deps_installed() {
   fi
 
   echo "Installing CDK runtime deps into cdk/node_modules..." >&2
-  if ! (cd cdk && npm ci --no-audit --no-fund >/dev/null); then
+  if ! (cd cdk && npm ci --ignore-scripts --no-audit --no-fund >/dev/null); then
     echo "BLOCKED: failed to install CDK runtime dependencies (check network/toolchain)" >&2
     return 2
   fi

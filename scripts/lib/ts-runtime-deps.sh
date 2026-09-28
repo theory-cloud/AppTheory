@@ -32,7 +32,7 @@ ensure_ts_runtime_deps_installed() {
   fi
 
   echo "Installing TypeScript runtime deps into ts/node_modules..." >&2
-  if ! (cd ts && npm ci --no-audit --no-fund >/dev/null); then
+  if ! (cd ts && npm ci --ignore-scripts --no-audit --no-fund >/dev/null); then
     echo "BLOCKED: failed to install TypeScript runtime dependencies (check network/toolchain)" >&2
     return 2
   fi

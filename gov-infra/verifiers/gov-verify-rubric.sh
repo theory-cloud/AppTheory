@@ -2277,6 +2277,19 @@ check_supply_chain_apptheory() {
     fail=1
   fi
 
+  # Node install hygiene (R-G3): every package install in an executable surface
+  # must use the lockfile with lifecycle scripts disabled, so a compromised
+  # dependency's install hooks never run inside CI or the rubric.
+  set +e
+  scripts/verify-npm-install-hygiene.sh
+  local ec_npm=$?
+  set -e
+  if [[ $ec_npm -eq 2 ]]; then
+    blocked=1
+  elif [[ $ec_npm -ne 0 ]]; then
+    fail=1
+  fi
+
   # Node projects to scan (explicit to prevent "green by removing a directory").
   local -a node_projects=(
     "ts"
