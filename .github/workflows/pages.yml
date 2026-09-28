@@ -50,10 +50,10 @@
 #
 # The Go install string is the one runtime snippet the placeholders cannot
 # express: Go semantic import versioning bakes the module major into the path
-# (/v3, /v4, ...), which is a function of the release, not a constant. The
+# (/v4, /v5, ...), which is a function of the release, not a constant. The
 # derive step below rewrites the override's Go install from the deploy tag, so
 # the live docs can never advertise a Go module version/tag that has not been
-# published (for example the staged /v4 path paired with a v3 tag, or an
+# published (for example the staged /v5 path paired with a v4 tag, or an
 # in-flight RC tag). docs/_data/runtimes.yml pins the same derived shape for
 # the latest published release as the checked-in local-preview fallback.
 #
