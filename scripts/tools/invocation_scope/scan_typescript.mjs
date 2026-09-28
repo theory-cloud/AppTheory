@@ -2,8 +2,11 @@
 /*
  * AST invocation-scope scanner for TypeScript/JavaScript sources.
  *
- * Invoked by scripts/tools/invocation_scope (the repository guard) and by the
- * guard's self-tests, so the scan runs inside `make rubric` and `make test-unit`.
+ * Invoked by scripts/tools/invocation_scope (the repository guard), which
+ * scripts/verify-invocation-scope.sh runs — with this scanner and the guard's
+ * self-tests — as part of `make rubric`. `make test-unit` is `go test` only and
+ * never invokes this scanner, so the sweep is pinned by the rubric verifier and
+ * not by the unit-test target.
  * It uses the TypeScript compiler API from ts/node_modules/typescript, which is
  * already a devDependency of ts/.
  *
@@ -18,35 +21,43 @@
  * Proof, exactly: a launch is reported unless a join on the same target executes
  * on every path from the launch to every exit of the scope that contains it. The
  * source is parsed with the TypeScript compiler; each scope (the file's top
- * level, every function-like node, every class property initializer and every
- * static block) gets a control-flow graph whose nodes are statements and whose
- * edges are fallthrough, branches, loop back-edges, break/continue targets, and
- * exception transfers into catch/finally clauses. `return` and an unhandled
- * `throw` are exits; a nested function is an opaque statement, so its `return` is
- * not this scope's exit and its `await` is not this scope's join.
+ * level, every function-like node, every parameter initializer, every class
+ * property initializer and every static block) gets a control-flow graph whose
+ * nodes are statements and whose edges are fallthrough, branches, loop
+ * back-edges, break/continue targets, and exception transfers into catch/finally
+ * clauses. `return` and an unhandled `throw` are exits; a nested function is an
+ * opaque statement, so its `return` is not this scope's exit and its `await` is
+ * not this scope's join.
  *
  * A launch is accepted only when no path from its statement to an exit avoids
  * every join statement, where a join statement is one that executes the join
  * unconditionally whenever it executes: an `await` (or `return`) of the held
  * target, `await Promise.all/allSettled/race/any(...)` over it, or a
- * clearTimeout/clearInterval/clearImmediate of a timer handle. A join nested in
- * an `if` branch, a loop body, a `try` body without a joining `finally`, a nested
- * arrow/function, a conditional expression (`c ? a : b`), or a short-circuit
- * operator (`c && a`, `c || a`, `a ?? b`) is not such a statement, so
- * `if (c) await p;`, `c && await p;` and `c ? await p : 0` leave the held target
- * reported. A join in a `finally` clause is reached from every exit and so
+ * clearTimeout/clearInterval/clearImmediate of a timer handle. The target and the
+ * join are matched on the bare expression, so a non-null assertion, a type
+ * assertion and parentheses around either name the same target
+ * (`clearTimeout(this.t!)` clears the `this.t` a `this.t = setTimeout(...)` armed).
+ * A join nested in an `if` branch, a loop body, a `try` body without a joining
+ * `finally`, a nested arrow/function, a conditional expression (`c ? a : b`), or a
+ * short-circuit operator (`c && a`, `c || a`, `a ?? b`) is not such a statement,
+ * so `if (c) await p;`, `c && await p;` and `c ? await p : 0` leave the held
+ * target reported. A join in a `finally` clause is reached from every exit and so
  * dominates; a join split across both branches of an `if/else` is accepted,
  * because the graph merges the branches.
  *
  * Recognized launches: timers (`setTimeout`/`setInterval`/`setImmediate`, property
- * or computed-member form) that no clear on every path releases; `queueMicrotask`
- * and `process.nextTick`; a `void` discard of a call; a dropped async IIFE; a
- * dropped `.then`/`.catch`/`.finally` chain; a dropped call to a function this
- * file declares `async`; a promise bound to a name, member, element or
- * destructuring pattern and not joined on every path (including `this.x =`, a
- * rebinding `p = ...`, a compound `p ??= ...`, a chained `a = b = ...` and a
- * container element `jobs["a"] = ...`); an array or object aggregate of promises;
- * and an `Array.from(...)`/`.map(...)` given an async callback.
+ * or computed-member form, and a timer function the file binds to a variable —
+ * `const st = setTimeout; st(cb, 1)`) that no clear on every path releases;
+ * `queueMicrotask` and `process.nextTick`; an iterator read held from
+ * `<expr>.next()`, which starts the producer's next step and must settle first; a
+ * `void` discard of a call; a dropped async IIFE; a dropped `.then`/`.catch`/
+ * `.finally` chain; a dropped call to a function this file declares `async` or
+ * assigns to a member as an async arrow (`this.run = async () => {...}`); a
+ * promise bound to a name, member, element or destructuring pattern and not
+ * joined on every path (including `this.x =`, a rebinding `p = ...`, a compound
+ * `p ??= ...`, a chained `a = b = ...` and a container element `jobs["a"] = ...`);
+ * an array or object aggregate of promises; and an `Array.from(...)`/`.map(...)`
+ * given an async callback.
  *
  * Deliberately conservative, and documented as such in
  * docs/features/http-runtime.md:
@@ -61,6 +72,18 @@
  *     left to @typescript-eslint/no-floating-promises inside ts/**.
  *   * An aggregate bound through a destructuring pattern is reported as one
  *     launch on the whole pattern, so a join has to cover every bound name.
+ *   * A parameter initializer is reported whenever it launches: it runs when the
+ *     call is made, before any join in the body that could release it, so the
+ *     proof does not credit a body `await` to a default-argument launch.
+ *   * A timer alias is collected file-wide, so a local binding of a timer name
+ *     (`const st = setTimeout`) makes a later `st(...)` a launch in every scope of
+ *     the file. The broader tracking errs toward reporting.
+ *   * A member-assigned async method is matched by name, not by receiver: a
+ *     `this.run = async () => {...}` anywhere in the file makes any
+ *     `<receiver>.run()` a launch.
+ *   * A join is matched on the bare held target, not through a chain that
+ *     consumes it: `await p.then(f)` is not read as a join of `p`, so a launch
+ *     whose only release is a chain on it is reported.
  */
 
 import { createRequire } from 'node:module';
@@ -178,6 +201,29 @@ function skipParens(node) {
     cur = cur.expression;
   }
   return cur;
+}
+
+// bareText is the text a held target is matched on: the assertion wrappers that
+// do not change which value is named are stripped, so `this.t!`, `this.t as
+// Timer`, `(this.t)` and `this.t` are one target.
+function bareText(file, node) {
+  let cur = node;
+  for (;;) {
+    if (!cur) {
+      return '';
+    }
+    if (
+      ts.isParenthesizedExpression(cur) ||
+      ts.isNonNullExpression(cur) ||
+      ts.isAsExpression(cur) ||
+      ts.isTypeAssertionExpression(cur) ||
+      (ts.isSatisfiesExpression && ts.isSatisfiesExpression(cur))
+    ) {
+      cur = cur.expression;
+      continue;
+    }
+    return cur.getText(file);
+  }
 }
 
 function memberInfo(node) {
@@ -423,7 +469,7 @@ function joinedKeys(file, expr, out) {
   if (node && ts.isSpreadElement(node)) {
     return joinedKeys(file, node.expression, out);
   }
-  out.add(expr.getText(file));
+  out.add(bareText(file, expr));
   return out;
 }
 
@@ -437,7 +483,7 @@ function makeJoinPredicate(file, target, isTimer) {
         const info = memberInfo(node.expression);
         const name = info ? info.name : calleeName(node.expression);
         if (name && CLEAR_NAMES.has(name)) {
-          return node.arguments.some((arg) => arg.getText(file) === target);
+          return node.arguments.some((arg) => bareText(file, arg) === target);
         }
       }
       return false;
@@ -580,8 +626,23 @@ function collectScopes(file) {
     if (node === file) {
       return;
     }
-    if (isFunctionLike(node) && node.body && ts.isBlock(node.body)) {
-      scopes.push({ root: node, stmts: node.body.statements, name: scopeName(node) });
+    if (isFunctionLike(node)) {
+      // A parameter initializer runs when the call is made, before any join the
+      // body could reach, so it is a scope of its own.
+      const params = (node.parameters ?? []).filter(
+        (param) => ts.isParameter(param) && param.initializer,
+      );
+      if (params.length > 0) {
+        scopes.push({
+          root: node,
+          stmts: [],
+          params,
+          name: `${scopeName(node)}.<parameter default>`,
+        });
+      }
+      if (node.body && ts.isBlock(node.body)) {
+        scopes.push({ root: node, stmts: node.body.statements, name: scopeName(node) });
+      }
       return;
     }
     if (ts.isPropertyDeclaration(node) && node.initializer) {
@@ -614,7 +675,7 @@ function collectInScope(stmts) {
 // Launch classification
 // ---------------------------------------------------------------------------
 
-function promiseRule(file, expr, asyncNames) {
+function promiseRule(file, expr, asyncNames, timerAliases) {
   const node = skipParens(expr);
   if (!node) {
     return null;
@@ -638,15 +699,22 @@ function promiseRule(file, expr, asyncNames) {
     if (info && info.name === 'nextTick' && info.receiver.getText(file) === 'process') {
       return 'process-next-tick';
     }
-    if (name && TIMER_NAMES.has(name)) {
+    const timerName = timerNameOf(name, timerAliases);
+    if (timerName) {
       const first = skipParens(node.arguments[0]);
       if (first && ts.isIdentifier(first) && RESOLVER_NAMES.has(first.text)) {
         // `setTimeout(resolve, ms)` is the promise-delay idiom, not detached work.
         return null;
       }
-      return `timer-${name}`;
+      return `timer-${timerName}`;
     }
-    if (!info && name && asyncNames.has(name)) {
+    if (info && info.name === 'next') {
+      // A held iterator read starts the producer's next step. Its promise has to
+      // settle before the invocation returns, so it is a launch whether or not
+      // the chain that consumes it is awaited.
+      return 'async-read';
+    }
+    if (name && asyncNames.has(name)) {
       return 'discarded-async-call';
     }
     if (info && PROMISE_STATIC_NAMES.has(info.name) && info.receiver.getText(file) === 'Promise') {
@@ -658,14 +726,14 @@ function promiseRule(file, expr, asyncNames) {
     return null;
   }
   if (ts.isArrayLiteralExpression(node) || ts.isObjectLiteralExpression(node)) {
-    return aggregateRule(file, node, asyncNames);
+    return aggregateRule(file, node, asyncNames, timerAliases);
   }
   return null;
 }
 
 // aggregateRule recognizes an array or object literal that holds a launch, so a
 // binding of the aggregate is a launch of everything inside it.
-function aggregateRule(file, node, asyncNames) {
+function aggregateRule(file, node, asyncNames, timerAliases) {
   let found = false;
   const visit = (child) => {
     if (found) {
@@ -674,7 +742,7 @@ function aggregateRule(file, node, asyncNames) {
     if (isFunctionLike(child)) {
       return;
     }
-    if (ts.isCallExpression(child) && promiseRule(file, child, asyncNames)) {
+    if (ts.isCallExpression(child) && promiseRule(file, child, asyncNames, timerAliases)) {
       found = true;
       return;
     }
@@ -698,12 +766,77 @@ function asyncFunctionNames(file) {
       names.add(node.name.text);
     }
     if (ts.isVariableDeclaration(node) && node.initializer && isAsyncFunctionExpression(node.initializer)) {
-      if (ts.isIdentifier(node.name)) {
+      if (ts.isIdentifier(node.name) && !skipParens(node.initializer).asteriskToken) {
         names.add(node.name.text);
+      }
+    }
+    // A class field's async arrow is an async method of the instance, the same
+    // way a member assignment is: `run = async () => {...}` names `run`.
+    if (ts.isPropertyDeclaration(node) && node.initializer && node.name) {
+      const initializer = skipParens(node.initializer);
+      if (initializer && isAsyncFunctionExpression(initializer) && !initializer.asteriskToken) {
+        const info = memberInfo(node.name);
+        const name = info ? info.name : calleeName(node.name);
+        if (name) {
+          names.add(name);
+        }
+      }
+    }
+    // A member assigned an async arrow declares an async method too:
+    // `this.run = async () => {...}` names `run`, so a later `<receiver>.run()`
+    // is a call to a function the file declares async.
+    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
+      const right = skipParens(node.right);
+      if (!right || !isAsyncFunctionExpression(right) || right.asteriskToken) {
+        return;
+      }
+      const left = skipParens(node.left);
+      if (ts.isPropertyAccessExpression(left)) {
+        names.add(left.name.text);
+      } else if (ts.isElementAccessExpression(left)) {
+        const arg = left.argumentExpression;
+        if (arg && (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg))) {
+          names.add(arg.text);
+        }
       }
     }
   });
   return names;
+}
+
+// timerAliasNames maps a variable the file binds to a timer function onto that
+// timer's name, so `const st = setTimeout; st(cb, 1)` is the timer it names.
+function timerAliasNames(file) {
+  const aliases = new Map();
+  walkAll(file, (node) => {
+    if (!ts.isVariableDeclaration(node) || !node.initializer || !ts.isIdentifier(node.name)) {
+      return;
+    }
+    const init = skipParens(node.initializer);
+    if (!init) {
+      return;
+    }
+    if (ts.isIdentifier(init) && TIMER_NAMES.has(init.text)) {
+      aliases.set(node.name.text, init.text);
+      return;
+    }
+    const info = memberInfo(init);
+    if (info && TIMER_NAMES.has(info.name)) {
+      aliases.set(node.name.text, info.name);
+    }
+  });
+  return aliases;
+}
+
+// timerNameOf resolves a callee name through the file's timer aliases.
+function timerNameOf(name, timerAliases) {
+  if (!name) {
+    return null;
+  }
+  if (TIMER_NAMES.has(name)) {
+    return name;
+  }
+  return timerAliases.get(name) ?? null;
 }
 
 // targetKeys lists the held targets a binding introduces. A destructuring
@@ -731,7 +864,7 @@ function targetKeys(node) {
   if (out.length > 0) {
     return out;
   }
-  return [skipParens(node).getText()];
+  return [bareText(node.getSourceFile(), node)];
 }
 
 // ---------------------------------------------------------------------------
@@ -754,7 +887,7 @@ function statementOf(node) {
   return cur;
 }
 
-function analyzeScope(file, scope, asyncNames) {
+function analyzeScope(file, scope, asyncNames, timerAliases) {
   const graph = new Graph();
   let scanStmts = scope.stmts ?? [];
   if (scope.field) {
@@ -814,7 +947,7 @@ function analyzeScope(file, scope, asyncNames) {
     if (ts.isVoidExpression(e)) {
       const inner = skipParens(e.expression);
       if (inner && ts.isCallExpression(inner)) {
-        report(inner, promiseRule(file, e, asyncNames) ?? 'void-call', ctx);
+        report(inner, promiseRule(file, e, asyncNames, timerAliases) ?? 'void-call', ctx);
         return;
       }
       walkExpr(e.expression, CONSUME);
@@ -842,7 +975,7 @@ function analyzeScope(file, scope, asyncNames) {
       walkExpr(e.expression, ctx);
       return;
     }
-    const rule = promiseRule(file, e, asyncNames);
+    const rule = promiseRule(file, e, asyncNames, timerAliases);
     if (rule) {
       report(e, rule, ctx);
       return;
@@ -881,6 +1014,12 @@ function analyzeScope(file, scope, asyncNames) {
       }
     }
   };
+
+  // A parameter initializer is evaluated where the call is made, so nothing in
+  // this scope joins it: the launch it makes is reported as it is walked.
+  for (const param of scope.params ?? []) {
+    walkExpr(param.initializer, DISCARD);
+  }
 
   for (const node of nodes) {
     if (ts.isPropertyDeclaration(node)) {
@@ -1022,10 +1161,11 @@ function scanFile(fileName, source) {
   }
 
   const asyncNames = asyncFunctionNames(file);
+  const timerAliases = timerAliasNames(file);
   const lines = source.split('\n');
   const findings = [];
   for (const scope of collectScopes(file)) {
-    for (const f of analyzeScope(file, scope, asyncNames)) {
+    for (const f of analyzeScope(file, scope, asyncNames, timerAliases)) {
       findings.push({
         line: f.line,
         rule: f.rule,

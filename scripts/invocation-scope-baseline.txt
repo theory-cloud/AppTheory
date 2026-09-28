@@ -14,28 +14,36 @@
 # outlive the Lambda invocation that started it, and a launch that cannot be
 # joined must not exist.
 #
-# An entry names the enclosing function (the innermost named function for a
-# closure) and the occurrence within it, so two functions in one file cannot
-# collide. A site is absent from this file when the proof discharges it: a join
+# An entry names the enclosing scope (the innermost named function for a
+# closure, the class for a Python class body, `<name>.<signature>` for the
+# expressions a `def`/`class` statement evaluates) and the occurrence within it,
+# so two scopes in one file cannot collide. A site is absent from this file only
+# when the proof itself discharges it: a join
 # on the same target dominates every exit (a `defer wg.Wait()` registered before
 # any return, a receive or `for range` drain on every path, a `clearTimeout` in a
 # `finally`, an `await` before every return, both branches of an `if/else`).
-# Each removed site keeps its strict join test in the runtime test suites; the
-# guard no longer needs a justification for it.
+# A removed site keeps its strict join test in the runtime test suites, and a
+# launch the proof cannot follow is listed here with that test rather than left
+# unreported.
 #
 # Go: `go` statements and errgroup `<g>.Go(func(){...})` launches, plus
 #   time.AfterFunc / NewTimer / NewTicker / Tick constructors (with or without an
 #   aliased `time` import), under runtime/, pkg/, testkit/ and cmd/ (non-test
 #   files). A timer whose Stop or channel receive dominates every exit is not
 #   reported; time.Tick and a discarded timer handle always are.
-# TypeScript: timers (including bracket access), queueMicrotask,
-#   process.nextTick, setImmediate, async IIFEs, floating promises in any
-#   position (statement, call argument, comma operand, `void`, array/object
-#   aggregate, class-field initializer), discarded calls to functions the file
-#   declares async, and compound/chained assignments, under ts/src.
+# TypeScript: timers (including bracket access and a timer function the file
+#   binds to a variable), queueMicrotask, process.nextTick, setImmediate, async
+#   IIFEs, iterator reads held from `.next()`, floating promises in any position
+#   (statement, call argument, comma operand, `void`, array/object aggregate,
+#   class-field initializer, parameter initializer), discarded calls to functions
+#   the file declares async (including a member assigned an async arrow), and
+#   compound/chained assignments, under ts/src.
 # Python: thread, task, process, ThreadPoolExecutor/ProcessPoolExecutor submit,
 #   asyncio.to_thread, loop.run_in_executor, daemon-flagged threads that are
-#   started, and threads built inside a comprehension, under py/src.
+#   started, and threads built inside a comprehension, under py/src. A target an
+#   attribute, a container element, a module global or a class attribute holds is
+#   recognized from any method that starts it, and a class body, a default
+#   argument, a decorator and a class base are scopes of their own.
 
 # --- Go ---------------------------------------------------------------------
 # The buffered HTTP API v2 / Function URL / ALB / v1 adapters close and join
@@ -72,6 +80,14 @@ runtime/mcp/stream_store.go|(MemoryStreamStore).broadcastOnDone[#1]|joined: the 
 runtime/mcp/stream_store_dynamo.go|(DynamoStreamStore).Subscribe[#1]|joined: it observes the subscription context and closes its channel, and the forwarder drains it to that close
 
 # --- TypeScript -------------------------------------------------------------
+# The drain holds the read it started as `pending` (`async-read`) and only
+# releases it on the budget path, inside a conditional catch handler: the proof
+# sees the launch but a join in one branch of a handler does not dominate it, so
+# the site stays here. Its strict join tests are the two drain-deadline ordering
+# cases in ts/test/invocation-scope.test.mjs and the two held-read cases in
+# ts/test/invocation-scope-join.test.mjs; all four go red when the drain stops
+# unblocking the producer and awaiting the read it abandoned.
+ts/src/internal/aws-http.ts|drainStreamingBodyForBufferedAdapter[#1]|joined: the drain unblocks the producer and awaits the abandoned read before it throws, so the read cannot outlive the drain
 # The drain budget's timer is armed inside the Promise executor and cleared in
 # the race's finally, which is a different closure: the per-scope proof cannot
 # see across the two callbacks, even though the finally releases the timer on
