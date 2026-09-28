@@ -68,22 +68,6 @@ require_job_contains() {
   ' "${path}" || fail "${description}; missing ${needle} in ${job} job"
 }
 
-require_job_not_contains() {
-  local path="$1"
-  local job="$2"
-  local needle="$3"
-  local description="$4"
-
-  if awk -v job="  ${job}:" -v needle="${needle}" '
-    $0 == job { in_job = 1; next }
-    in_job && /^  [A-Za-z0-9_-]+:/ { in_job = 0 }
-    in_job && index($0, needle) { found = 1 }
-    END { exit found ? 0 : 1 }
-  ' "${path}"; then
-    fail "${description}; unexpected ${needle} in ${job} job"
-  fi
-}
-
 require_job_without_if() {
   local path="$1"
   local job="$2"
@@ -134,31 +118,22 @@ require_contains "${ci}" "run_full_rubric:" \
   "manual CI dispatch must expose an explicit full-rubric toggle"
 require_contains "${ci}" "default: true" \
   "manual CI dispatch must continue to run the full rubric by default"
-require_contains \
-  "${ci}" \
-  "if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')" \
-  "full rubric must run only for PRs targeting staging plus opted-in manual dispatch"
 require_contains "${ci}" "  builds:" "CI must define the standalone deterministic-build job"
 require_contains "${ci}" "name: Verify deterministic builds" \
   "CI must keep the deterministic-build job name stable for branch protection visibility"
-require_contains \
-  "${ci}" \
-  "if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'" \
-  "deterministic builds must run only for PRs targeting staging"
-# Operator ruling (2026-09-28): the rubric is staging-only. The staging ruleset
+
+# Operator ruling (2026-09-28): the rubric is staging-only — the staging ruleset
 # requires it with strict_required_status_checks_policy: true, so the merged
-# staging SHA is the tested SHA; premain and main only ever receive staging
-# content and must not repeat the full rubric. Neither the rubric nor the
-# deterministic-build job may be broadened to a push or to a promotion PR — the
-# promotion lanes run no rubric, so requiring it there would deadlock them.
-for staging_only_job in rubric builds; do
-  require_job_not_contains "${ci}" "${staging_only_job}" "base.ref == 'premain'" \
-    "${staging_only_job} must not run on the staging->premain promotion PR (rubric is staging-PR-only)"
-  require_job_not_contains "${ci}" "${staging_only_job}" "base.ref == 'main'" \
-    "${staging_only_job} must not run on a premain->main promotion PR (rubric is staging-PR-only)"
-  require_job_not_contains "${ci}" "${staging_only_job}" "github.event_name == 'push'" \
-    "${staging_only_job} must not run on a push; the staging ruleset pins the staging-PR run strict instead"
-done
+# staging SHA is the tested SHA, and premain/main only ever receive staging
+# content. The rubric and deterministic-build conditions, the push/promotion
+# parity of every other job, and both promotion lanes are enforced by
+# scripts/verify-ci-trigger-parity.sh, which parses the workflow as YAML and
+# classifies every job by its effective triggers. Matching the raw condition
+# text was bypassable (a negated join, a `github.ref` disjunct, or a
+# continuation-line clause broadened the rubric while a grep still passed), so
+# no line-level condition matching is done here.
+bash scripts/verify-ci-trigger-parity.sh
+
 require_job_contains "${ci}" "rubric" "uses: actions/upload-artifact@" \
   "full rubric must publish the GovTheory evidence report as a retrievable artifact"
 require_job_contains "${ci}" "rubric" "path: gov-infra/evidence/" \
@@ -179,9 +154,6 @@ require_contains "${ci}" "  staging-release-eligibility:" \
   "CI must define the staging-lane release-eligibility job"
 require_contains "${ci}" "name: Release eligibility (staging → premain)" \
   "staging release eligibility must keep a stable branch-protection check name"
-require_job_contains "${ci}" "staging-release-eligibility" \
-  "if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')" \
-  "staging release eligibility must run on PRs to staging and on pushes to staging"
 require_job_contains "${ci}" "staging-release-eligibility" "bash scripts/verify-release-eligibility.sh" \
   "staging release eligibility must use the shared release-eligibility predicate"
 require_job_contains "${ci}" "staging-release-eligibility" '--range "origin/premain..HEAD"' \
@@ -222,62 +194,12 @@ for unprovisioned in \
   done
 done
 
-# Job-trigger parity (R-F1): enumerate every non-rubric job whose condition can
-# only fire on the promotion lane, and every non-rubric job that can only fire on
-# a push to staging/premain/main. A new promotion-only or push-only job fails
-# this guard until it is given a staging-PR equivalent with the same toolchain
-# and recorded below. The rubric itself is staging-PR-only by operator ruling
-# (2026-09-28) and is enumerated as staging-only above, not here.
-promotion_only_jobs="$(
-  awk \
-    -v base_staging="base.ref == 'staging'" \
-    -v premain="base.ref == 'premain'" \
-    -v head_staging="head.ref == 'staging'" '
-    /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job); in_job = 1; next }
-    in_job && /^    if:/ {
-      line = $0
-      if ((index(line, premain) || index(line, head_staging)) && index(line, base_staging) == 0) print job
-    }
-  ' "${ci}" | sort -u | tr '\n' ' '
-)"
-push_only_jobs="$(
-  awk \
-    -v base_staging="base.ref == 'staging'" \
-    -v push_staging="github.ref == 'refs/heads/staging'" \
-    -v push_premain="github.ref == 'refs/heads/premain'" \
-    -v push_main="github.ref == 'refs/heads/main'" '
-    /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job); in_job = 1; next }
-    in_job && /^    if:/ {
-      line = $0
-      if ((index(line, push_staging) || index(line, push_premain) || index(line, push_main)) && index(line, base_staging) == 0) print job
-    }
-  ' "${ci}" | sort -u | tr '\n' ' '
-)"
-
-case " ${promotion_only_jobs} " in
-  *" prerelease-readiness "*) : ;;
-  *) fail "promotion-lane job enumeration did not find prerelease-readiness; the parity check is vacuous" ;;
-esac
-
-for promotion_job in ${promotion_only_jobs}; do
-  case " prerelease-readiness " in
-    *" ${promotion_job} "*) : ;;
-    *)
-      fail "promotion-lane job '${promotion_job}' has no staging-PR equivalent; add one (or record the justified exception here and in the PR body)"
-      ;;
-  esac
-done
-
-if [[ -n "${push_only_jobs// /}" ]]; then
-  fail "push-to-staging-premain-main-only job(s) have no PR-to-staging equivalent:${push_only_jobs}"
-fi
-
-# The staging release-eligibility gate runs on PRs to staging and on pushes to
-# staging through one predicate; assert the push leg so the PR-side equivalent
-# cannot be silently removed.
-require_job_contains "${ci}" "staging-release-eligibility" \
-  "github.event_name == 'push' && github.ref == 'refs/heads/staging'" \
-  "staging-release-eligibility must remain enumerated as a push-to-staging job covered by the parity check"
+# Job-trigger parity (R-F1) — both promotion lanes (staging->premain and
+# premain->main), generic push coverage, and the staging-only rubric/builds
+# conditions — is enforced by scripts/verify-ci-trigger-parity.sh above. The
+# enumeration that used to live here matched literal substrings and missed a
+# premain->main-only job, a generic `github.event_name == 'push'` job, and
+# `github.event_name != 'pull_request'`.
 
 require_line "scripts/verify-rubric.sh" "bash ./scripts/verify-cdk-go-drift.sh" \
   "full rubric must verify cdk-go generated binding drift"

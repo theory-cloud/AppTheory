@@ -118,6 +118,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # The release/security gates run scripts/verify-ci-rubric-enforced.sh,
+      # which classifies the workflow through cmd/ci-guard, so the pinned Go
+      # toolchain is provisioned before them.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.6"
       - name: Verify release/security invariants
         env:
           GH_TOKEN: ${{ github.token }}
@@ -133,9 +139,6 @@ jobs:
           bash scripts/verify-release-cycle.sh
       - name: Verify runtime floor claims
         run: bash scripts/verify-runtime-floor-claims.sh
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: "1.26.6"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
