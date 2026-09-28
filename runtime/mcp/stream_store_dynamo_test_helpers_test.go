@@ -1197,3 +1197,27 @@ func assignStreamRecords(dest any, records []dynamoStreamRecord) error {
 	*out = append((*out)[:0], records...)
 	return nil
 }
+
+// mutableClock is a clock the test can advance. The stream stores read it from
+// their pump goroutine while the test advances it, so every path takes the mutex
+// instead of sharing a bare time.Time the test reassigns.
+type mutableClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func newMutableClock(at time.Time) *mutableClock {
+	return &mutableClock{now: at}
+}
+
+func (c *mutableClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *mutableClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}

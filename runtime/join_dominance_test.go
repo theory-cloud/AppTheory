@@ -14,9 +14,10 @@ import (
 //
 // The settle-window checks in invocation_scope_test.go prove the worker is gone
 // once the drain returned. These tests instead prove the drain cannot return
-// before the worker exits: the worker lingers after the reader is closed, so a
-// drain that dropped its `<-done` join is caught by an elapsed-time assertion
-// and by a channel the worker closes only as its read returns.
+// before the worker exits: the worker lingers after the reader is closed and
+// closes its own channel only as its read returns, so a drain that dropped its
+// `<-done` join is caught by that ordering assertion — never by how long the
+// drain took.
 //
 // The strict tests for the limitBodyStream and streamjoin.New entries live in
 // invocation_scope_test.go.
@@ -65,16 +66,14 @@ func TestDrainBodyReaderForAPIGatewayV2WaitsForItsWorkerOnAbandon(t *testing.T) 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
-	started := time.Now()
 	_, err := drainBodyReaderForAPIGatewayV2(ctx, reader)
-	elapsed := time.Since(started)
 
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("drain error = %v, want context.DeadlineExceeded", err)
 	}
-	if elapsed < linger/2 {
-		t.Fatalf("drain returned after %s, before its worker exited (linger %s)", elapsed, linger)
-	}
+	// readDone is closed by the worker's read as it returns, and the drain joins
+	// the worker, so the marker is always closed by the time the drain returns: a
+	// drain that returned without joining finds it open.
 	select {
 	case <-reader.readDone:
 	default:
