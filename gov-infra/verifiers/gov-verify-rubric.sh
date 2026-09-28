@@ -1404,13 +1404,35 @@ check_doc_integrity() {
   for materialized_surface in \
     ".codex/steward.md" \
     ".codex/theorymcp/" \
-    ".theorymcp/"; do
+    ".theorymcp/" \
+    ".agents/" \
+    ".claude/" \
+    ".kimi-code/" \
+    ".mcp.json" \
+    "GEMINI.md" \
+    "AGENTS.md"; do
     if git -C "${REPO_ROOT}" ls-files --error-unmatch -- "${materialized_surface}" >/dev/null 2>&1; then
       echo "FAIL: TheoryCloud materialization must not be tracked: ${materialized_surface}"
       failures=$((failures + 1))
     fi
     if ! git -C "${REPO_ROOT}" check-ignore -q -- "${materialized_surface}"; then
       echo "FAIL: TheoryCloud materialization must be covered by .gitignore: ${materialized_surface}"
+      failures=$((failures + 1))
+    fi
+  done
+
+  # The profile claim must also stay consistent on the repo side: the tracked
+  # governance docs keep pointing readers at the repo-local verifier, so nothing
+  # can imply the MCP route retired or replaced repo-local gov-infra.
+  local governance_doc
+  for governance_doc in "gov-infra/README.md" "gov-infra/AGENTS.md"; do
+    if [[ ! -f "${governance_doc}" ]]; then
+      echo "FAIL: missing tracked governance doc: ${governance_doc}"
+      failures=$((failures + 1))
+      continue
+    fi
+    if ! grep -Fq "bash gov-infra/verifiers/gov-verify-rubric.sh" "${governance_doc}"; then
+      echo "FAIL: ${governance_doc} must keep directing readers to the repo-local verifier"
       failures=$((failures + 1))
     fi
   done
