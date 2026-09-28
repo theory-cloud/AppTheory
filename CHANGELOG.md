@@ -1,5 +1,103 @@
 # Changelog
 
+## [5.0.0](https://github.com/theory-cloud/AppTheory/compare/v4.5.0...v5.0.0) (2026-09-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** The AppTheory Go module path is now github.com/theory-cloud/apptheory/v5, so every Go consumer must rewrite its AppTheory imports from /v4 to /v5. The 7 exported constructors jobs.NewDynamoJobLedger, limited.NewDynamoRateLimiter, services.NewDynamoDBEventBus, mcp.NewDynamoSessionStore, mcp.NewDynamoStreamStore, mcp.NewDynamoTaskStore and microvm.NewTableTheorySessionRegistry now take a TableTheory v4 tablecore.DB and no longer accept a TableTheory v3 client. CDK Go consumers move to github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v5.
+
+### Features
+
+* **ci:** add a staging release-eligibility gate mirroring prerelease readiness ([d7e1a20](https://github.com/theory-cloud/AppTheory/commit/d7e1a20fd581f8df9f64a838711654eaf5c62731))
+* **runtime:** join response-body producers and drain workers to their invocation ([56c5fc4](https://github.com/theory-cloud/AppTheory/commit/56c5fc4858dc03704c0e350236059225475b0221))
+* **runtime:** no work outlives the invocation that started it (MCP task runner, session listener, body drain) ([aab191f](https://github.com/theory-cloud/AppTheory/commit/aab191f3abdedf2579f5e6d78395cb708e995739))
+* **scripts:** prove invocation-scope joins on real ASTs ([6f8e87e](https://github.com/theory-cloud/AppTheory/commit/6f8e87e2390cfa4f8e046d875b7e92426e328fcb))
+* **scripts:** prove invocation-scope joins on real ASTs ([1b17af6](https://github.com/theory-cloud/AppTheory/commit/1b17af627f0f34d0ebae68bfe77017093157b972))
+
+
+### Bug Fixes
+
+* **ci:** align release tooling with the staged v5 Go module ([0d75277](https://github.com/theory-cloud/AppTheory/commit/0d75277578e02c4a2690bf2aa52c4d0ef457ccd3))
+* **ci:** bump ruby/setup-ruby to v1.327.0 ([2b2ee2a](https://github.com/theory-cloud/AppTheory/commit/2b2ee2aa4012298647f07f29f40c47f62b3a45fa))
+* **ci:** classify every workflow file, reusable callee and needs: edge ([2b5c7f1](https://github.com/theory-cloud/AppTheory/commit/2b5c7f17acdcf9a0164fa0ba5186561cc35360e0))
+* **ci:** copy the shared helper directory into the CDK major-version fixture ([4e8369d](https://github.com/theory-cloud/AppTheory/commit/4e8369d918c57579b8a188d93bdc8f816d9f6213))
+* **ci:** enforce the parsed CI guard and run both guard self-tests in the rubric ([58539b1](https://github.com/theory-cloud/AppTheory/commit/58539b14d75d407527ae7ffedcfad5996b1015cf))
+* **ci:** governance conformance to software_repo_gov_infra (rubric + readiness on every promotion path) ([e12bbe8](https://github.com/theory-cloud/AppTheory/commit/e12bbe8b041f64d962d68a7fb5bbd2114ea4b987))
+* **ci:** restrict the full rubric and deterministic builds to staging PRs ([66cdf31](https://github.com/theory-cloud/AppTheory/commit/66cdf312d86143fab5e17f086d0e388bf62b7452))
+* **ci:** run the rubric and deterministic builds on the promotion path ([38a227e](https://github.com/theory-cloud/AppTheory/commit/38a227e1f12fe509c3b0059f8146a0e3f224b95b))
+* **deps:** adopt TableTheory v4 Go module path and pin v4.0.0 ([ebfea7c](https://github.com/theory-cloud/AppTheory/commit/ebfea7c60a793266b906d6a2ba64a7495a39b91f))
+* **deps:** apply Dependabot go-root group updates ([07cbf2e](https://github.com/theory-cloud/AppTheory/commit/07cbf2e1718ff2b777f2373aa766b56ddcc8e924))
+* **deps:** correct TableTheory TypeScript asset URL integrity fragment ([001894b](https://github.com/theory-cloud/AppTheory/commit/001894b2d39d02e391fc8659f9afa55627ba7e75))
+* **deps:** move the Go module path to github.com/theory-cloud/apptheory/v5 ([bceaeab](https://github.com/theory-cloud/AppTheory/commit/bceaeab043db7ce7a5725fa892e5136524db5ffc))
+* **deps:** pin TableTheory v4.0.0 for the TypeScript and Python runtimes ([26884b9](https://github.com/theory-cloud/AppTheory/commit/26884b95c717b2c224ff03900a06ce5b4534e1f5))
+* **deps:** refresh CDK example synth snapshots for the /v5 handler sources ([d72c599](https://github.com/theory-cloud/AppTheory/commit/d72c599a0f8aacc6336babcfef4b30bed5e6a97b))
+* **deps:** refresh CDK example synth snapshots for the v4 handler sources ([fd4ddab](https://github.com/theory-cloud/AppTheory/commit/fd4ddabc5d490553f8e2639c994386d9ded24fec))
+* **examples:** make the multilang SSE producer observe the invocation context ([a29f0a0](https://github.com/theory-cloud/AppTheory/commit/a29f0a0cee8657abb720fcc8585679dae534761a))
+* **gov:** bound network-dependent installs with retry and backoff ([6c14496](https://github.com/theory-cloud/AppTheory/commit/6c14496eb3e56d716bf17ef9914b5910c8b32284))
+* **gov:** disable npm lifecycle scripts on every package install ([7ad2b42](https://github.com/theory-cloud/AppTheory/commit/7ad2b423ca86891d76b96471e2f1aae7065573b9))
+* **gov:** disable npm lifecycle scripts structurally and close the launcher spellings ([f9be2d8](https://github.com/theory-cloud/AppTheory/commit/f9be2d8ceadba9f3d9302d9e94badd169bc209f8))
+* **gov:** enforce ignore coverage for every materialized host surface ([94a0462](https://github.com/theory-cloud/AppTheory/commit/94a0462f7b1bc097487813ad7860d602ef4c80f1))
+* **gov:** parse the CI-wiring and install guards instead of matching lines ([186c84c](https://github.com/theory-cloud/AppTheory/commit/186c84c8e4e67ba0eb969715f48c17d915c8e7f2))
+* **invocation-scope:** recognize the TypeScript surfaces the gate found ([703af1e](https://github.com/theory-cloud/AppTheory/commit/703af1e0202192f30db28fee78c7db180fb86c4d))
+* **invocation-scope:** seed Python launch targets across function scopes ([281e93e](https://github.com/theory-cloud/AppTheory/commit/281e93efb8841eff8b2c4161298ec479c6e2bcd1))
+* **mcp:** record the tool body's own terminal state in every runtime ([5bd260f](https://github.com/theory-cloud/AppTheory/commit/5bd260fa9687ef6d96338357d3c51edb7192d34f))
+* **observability:** deliver error notifications inside the logging call ([d9d7a3a](https://github.com/theory-cloud/AppTheory/commit/d9d7a3ad10b3875b93ef8f90bf09d1d0d011bed0))
+* **runtime,ts,py:** bound the detached work left by adapters and the timeout middleware ([f3dba9a](https://github.com/theory-cloud/AppTheory/commit/f3dba9a6480460a0f3b18389385bc21b394ea9aa))
+* **runtime,ts,py:** join every body a buffered adapter gives up on ([ffbd5d7](https://github.com/theory-cloud/AppTheory/commit/ffbd5d73ba50e9b82dd3ddc5db477402fa1bbe07))
+* **runtime,ts,py:** run MCP task bodies inside the invocation that created them ([e5f0b25](https://github.com/theory-cloud/AppTheory/commit/e5f0b25f57b45515cd542a2862a7365ddec3c0fe))
+* **runtime,ts,py:** run the timeout handler on the invoking execution context ([089d968](https://github.com/theory-cloud/AppTheory/commit/089d968b090cad20e7e05fe761e7cb5060d6ab76))
+* **runtime:** correct the streaming envelope's caller comment ([fb5fae2](https://github.com/theory-cloud/AppTheory/commit/fb5fae217f9aac3e143fa0a8c9826021549a2986))
+
+## [5.0.0-rc](https://github.com/theory-cloud/AppTheory/compare/v4.5.0...v5.0.0-rc) (2026-09-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** The AppTheory Go module path is now github.com/theory-cloud/apptheory/v5, so every Go consumer must rewrite its AppTheory imports from /v4 to /v5. The 7 exported constructors jobs.NewDynamoJobLedger, limited.NewDynamoRateLimiter, services.NewDynamoDBEventBus, mcp.NewDynamoSessionStore, mcp.NewDynamoStreamStore, mcp.NewDynamoTaskStore and microvm.NewTableTheorySessionRegistry now take a TableTheory v4 tablecore.DB and no longer accept a TableTheory v3 client. CDK Go consumers move to github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v5.
+
+### Features
+
+* **ci:** add a staging release-eligibility gate mirroring prerelease readiness ([d7e1a20](https://github.com/theory-cloud/AppTheory/commit/d7e1a20fd581f8df9f64a838711654eaf5c62731))
+* **runtime:** join response-body producers and drain workers to their invocation ([56c5fc4](https://github.com/theory-cloud/AppTheory/commit/56c5fc4858dc03704c0e350236059225475b0221))
+* **runtime:** no work outlives the invocation that started it (MCP task runner, session listener, body drain) ([aab191f](https://github.com/theory-cloud/AppTheory/commit/aab191f3abdedf2579f5e6d78395cb708e995739))
+* **scripts:** prove invocation-scope joins on real ASTs ([6f8e87e](https://github.com/theory-cloud/AppTheory/commit/6f8e87e2390cfa4f8e046d875b7e92426e328fcb))
+* **scripts:** prove invocation-scope joins on real ASTs ([1b17af6](https://github.com/theory-cloud/AppTheory/commit/1b17af627f0f34d0ebae68bfe77017093157b972))
+
+
+### Bug Fixes
+
+* **ci:** align release tooling with the staged v5 Go module ([0d75277](https://github.com/theory-cloud/AppTheory/commit/0d75277578e02c4a2690bf2aa52c4d0ef457ccd3))
+* **ci:** bump ruby/setup-ruby to v1.327.0 ([2b2ee2a](https://github.com/theory-cloud/AppTheory/commit/2b2ee2aa4012298647f07f29f40c47f62b3a45fa))
+* **ci:** classify every workflow file, reusable callee and needs: edge ([2b5c7f1](https://github.com/theory-cloud/AppTheory/commit/2b5c7f17acdcf9a0164fa0ba5186561cc35360e0))
+* **ci:** copy the shared helper directory into the CDK major-version fixture ([4e8369d](https://github.com/theory-cloud/AppTheory/commit/4e8369d918c57579b8a188d93bdc8f816d9f6213))
+* **ci:** enforce the parsed CI guard and run both guard self-tests in the rubric ([58539b1](https://github.com/theory-cloud/AppTheory/commit/58539b14d75d407527ae7ffedcfad5996b1015cf))
+* **ci:** governance conformance to software_repo_gov_infra (rubric + readiness on every promotion path) ([e12bbe8](https://github.com/theory-cloud/AppTheory/commit/e12bbe8b041f64d962d68a7fb5bbd2114ea4b987))
+* **ci:** restrict the full rubric and deterministic builds to staging PRs ([66cdf31](https://github.com/theory-cloud/AppTheory/commit/66cdf312d86143fab5e17f086d0e388bf62b7452))
+* **ci:** run the rubric and deterministic builds on the promotion path ([38a227e](https://github.com/theory-cloud/AppTheory/commit/38a227e1f12fe509c3b0059f8146a0e3f224b95b))
+* **deps:** adopt TableTheory v4 Go module path and pin v4.0.0 ([ebfea7c](https://github.com/theory-cloud/AppTheory/commit/ebfea7c60a793266b906d6a2ba64a7495a39b91f))
+* **deps:** apply Dependabot go-root group updates ([07cbf2e](https://github.com/theory-cloud/AppTheory/commit/07cbf2e1718ff2b777f2373aa766b56ddcc8e924))
+* **deps:** correct TableTheory TypeScript asset URL integrity fragment ([001894b](https://github.com/theory-cloud/AppTheory/commit/001894b2d39d02e391fc8659f9afa55627ba7e75))
+* **deps:** move the Go module path to github.com/theory-cloud/apptheory/v5 ([bceaeab](https://github.com/theory-cloud/AppTheory/commit/bceaeab043db7ce7a5725fa892e5136524db5ffc))
+* **deps:** pin TableTheory v4.0.0 for the TypeScript and Python runtimes ([26884b9](https://github.com/theory-cloud/AppTheory/commit/26884b95c717b2c224ff03900a06ce5b4534e1f5))
+* **deps:** refresh CDK example synth snapshots for the /v5 handler sources ([d72c599](https://github.com/theory-cloud/AppTheory/commit/d72c599a0f8aacc6336babcfef4b30bed5e6a97b))
+* **deps:** refresh CDK example synth snapshots for the v4 handler sources ([fd4ddab](https://github.com/theory-cloud/AppTheory/commit/fd4ddabc5d490553f8e2639c994386d9ded24fec))
+* **examples:** make the multilang SSE producer observe the invocation context ([a29f0a0](https://github.com/theory-cloud/AppTheory/commit/a29f0a0cee8657abb720fcc8585679dae534761a))
+* **gov:** bound network-dependent installs with retry and backoff ([6c14496](https://github.com/theory-cloud/AppTheory/commit/6c14496eb3e56d716bf17ef9914b5910c8b32284))
+* **gov:** disable npm lifecycle scripts on every package install ([7ad2b42](https://github.com/theory-cloud/AppTheory/commit/7ad2b423ca86891d76b96471e2f1aae7065573b9))
+* **gov:** disable npm lifecycle scripts structurally and close the launcher spellings ([f9be2d8](https://github.com/theory-cloud/AppTheory/commit/f9be2d8ceadba9f3d9302d9e94badd169bc209f8))
+* **gov:** enforce ignore coverage for every materialized host surface ([94a0462](https://github.com/theory-cloud/AppTheory/commit/94a0462f7b1bc097487813ad7860d602ef4c80f1))
+* **gov:** parse the CI-wiring and install guards instead of matching lines ([186c84c](https://github.com/theory-cloud/AppTheory/commit/186c84c8e4e67ba0eb969715f48c17d915c8e7f2))
+* **invocation-scope:** recognize the TypeScript surfaces the gate found ([703af1e](https://github.com/theory-cloud/AppTheory/commit/703af1e0202192f30db28fee78c7db180fb86c4d))
+* **invocation-scope:** seed Python launch targets across function scopes ([281e93e](https://github.com/theory-cloud/AppTheory/commit/281e93efb8841eff8b2c4161298ec479c6e2bcd1))
+* **mcp:** record the tool body's own terminal state in every runtime ([5bd260f](https://github.com/theory-cloud/AppTheory/commit/5bd260fa9687ef6d96338357d3c51edb7192d34f))
+* **observability:** deliver error notifications inside the logging call ([d9d7a3a](https://github.com/theory-cloud/AppTheory/commit/d9d7a3ad10b3875b93ef8f90bf09d1d0d011bed0))
+* **runtime,ts,py:** bound the detached work left by adapters and the timeout middleware ([f3dba9a](https://github.com/theory-cloud/AppTheory/commit/f3dba9a6480460a0f3b18389385bc21b394ea9aa))
+* **runtime,ts,py:** join every body a buffered adapter gives up on ([ffbd5d7](https://github.com/theory-cloud/AppTheory/commit/ffbd5d73ba50e9b82dd3ddc5db477402fa1bbe07))
+* **runtime,ts,py:** run MCP task bodies inside the invocation that created them ([e5f0b25](https://github.com/theory-cloud/AppTheory/commit/e5f0b25f57b45515cd542a2862a7365ddec3c0fe))
+* **runtime,ts,py:** run the timeout handler on the invoking execution context ([089d968](https://github.com/theory-cloud/AppTheory/commit/089d968b090cad20e7e05fe761e7cb5060d6ab76))
+* **runtime:** correct the streaming envelope's caller comment ([fb5fae2](https://github.com/theory-cloud/AppTheory/commit/fb5fae217f9aac3e143fa0a8c9826021549a2986))
+
 ## [4.5.0](https://github.com/theory-cloud/AppTheory/compare/v4.4.2...v4.5.0) (2026-09-27)
 
 
