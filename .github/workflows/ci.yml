@@ -223,25 +223,30 @@ jobs:
           set -euo pipefail
 
           git fetch origin premain staging --force
-          range="origin/premain..origin/staging"
+          bash scripts/verify-release-eligibility.sh \
+            --range "origin/premain..origin/staging" \
+            --context "prerelease readiness (staging → premain)"
 
-          echo "Checking commits in ${range}..."
-          # Do not pipe directly into grep -q under pipefail: grep exits as soon
-          # as it finds a match, which can SIGPIPE git log and make a matching
-          # commit look like a failed readiness check.
-          commit_subjects="$(git log --format=%s "${range}")"
-          if grep -Eq '^(feat|fix|perf)(\([^)]+\))?(!)?: ' <<<"${commit_subjects}"; then
-            echo "prerelease-ready: OK"
-            exit 0
-          fi
+  staging-release-eligibility:
+    name: Release eligibility (staging → premain)
+    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Verify the promotion range stays release-eligible
+        run: |
+          set -euo pipefail
 
-          echo "prerelease-ready: FAIL"
-          echo "No user-facing conventional commits (feat:/fix:/perf:) found in ${range}."
-          echo "release-please will skip, so no new vX.Y.Z-rc tag will be cut."
-          echo
-          echo "Commit subjects:"
-          printf '%s\n' "${commit_subjects}" || true
-          exit 1
+          # On a PR, HEAD is the pull request merge commit, so
+          # origin/premain..HEAD is the range that would exist after the merge;
+          # on a push it is the merged staging SHA, which is the exact range the
+          # staging → premain promotion PR re-checks.
+          git fetch origin premain staging --force
+          bash scripts/verify-release-eligibility.sh \
+            --range "origin/premain..HEAD" \
+            --context "staging release eligibility"
 
   version-alignment:
     name: Version alignment

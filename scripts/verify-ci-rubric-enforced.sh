@@ -153,6 +153,108 @@ require_not_contains "scripts/sync-release-pr-generated.sh" "Rubric (full gate s
 require_not_contains "scripts/sync-release-pr-generated.sh" "Verify deterministic builds" \
   "generated release PR required checks must exclude skipped deterministic builds"
 
+# R-F1 staging-side readiness equivalence: the promotion lane's readiness gate
+# and the staging lane's eligibility gate must be the same predicate, so a PR
+# cannot be green while its promotion fails on release eligibility.
+require_contains "${ci}" "  staging-release-eligibility:" \
+  "CI must define the staging-lane release-eligibility job"
+require_contains "${ci}" "name: Release eligibility (staging → premain)" \
+  "staging release eligibility must keep a stable branch-protection check name"
+require_job_contains "${ci}" "staging-release-eligibility" \
+  "if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')" \
+  "staging release eligibility must run on PRs to staging and on pushes to staging"
+require_job_contains "${ci}" "staging-release-eligibility" "bash scripts/verify-release-eligibility.sh" \
+  "staging release eligibility must use the shared release-eligibility predicate"
+require_job_contains "${ci}" "staging-release-eligibility" '--range "origin/premain..HEAD"' \
+  "staging release eligibility must check the post-merge promotion range"
+require_job_contains "${ci}" "prerelease-readiness" "bash scripts/verify-release-eligibility.sh" \
+  "prerelease readiness must use the shared release-eligibility predicate"
+require_job_contains "${ci}" "prerelease-readiness" '--range "origin/premain..origin/staging"' \
+  "prerelease readiness must check the exact promotion range"
+require_contains "scripts/verify-release-eligibility.sh" "^(feat|fix|perf)(\\([^)]+\\))?(!)?: " \
+  "the shared release-eligibility predicate must require a release-eligible conventional commit"
+
+# Toolchain-provisioning parity: the promotion-path rubric job and the PR-to-
+# staging rubric job are the same job, so its pinned toolchain is provisioned
+# identically on every lane it now runs on.
+for provisioned in \
+  "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e" \
+  "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" \
+  "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97" \
+  "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0"; do
+  require_job_contains "${ci}" "rubric" "${provisioned}" \
+    "full rubric must provision its pinned toolchain on every lane it runs on"
+done
+# The release-eligibility predicate is git-only. Assert that so the staging PR
+# lane and the promotion lane cannot diverge by provisioning.
+for unprovisioned in \
+  "actions/setup-go@" \
+  "actions/setup-node@" \
+  "actions/setup-python@"; do
+  for eligibility_job in staging-release-eligibility prerelease-readiness; do
+    if awk -v job="  ${eligibility_job}:" -v needle="${unprovisioned}" '
+      $0 == job { in_job = 1; next }
+      in_job && /^  [A-Za-z0-9_-]+:/ { in_job = 0 }
+      in_job && index($0, needle) { found = 1 }
+      END { exit found ? 0 : 1 }
+    ' "${ci}"; then
+      fail "release eligibility must not depend on a toolchain the other lane does not provision; ${eligibility_job} uses ${unprovisioned}"
+    fi
+  done
+done
+
+# Job-trigger parity (R-F1): enumerate every job whose condition can only fire on
+# the promotion lane, and every job that can only fire on pushes to staging. A
+# new promotion-only or push-only job fails this guard until it is given a
+# staging-PR equivalent and recorded below.
+promotion_only_jobs="$(
+  awk \
+    -v base_staging="base.ref == 'staging'" \
+    -v premain="base.ref == 'premain'" \
+    -v head_staging="head.ref == 'staging'" '
+    /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job); in_job = 1; next }
+    in_job && /^    if:/ {
+      line = $0
+      if ((index(line, premain) || index(line, head_staging)) && index(line, base_staging) == 0) print job
+    }
+  ' "${ci}" | sort -u | tr '\n' ' '
+)"
+push_only_jobs="$(
+  awk \
+    -v base_staging="base.ref == 'staging'" \
+    -v push_staging="github.ref == 'refs/heads/staging'" '
+    /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job); in_job = 1; next }
+    in_job && /^    if:/ {
+      line = $0
+      if (index(line, push_staging) && index(line, base_staging) == 0) print job
+    }
+  ' "${ci}" | sort -u | tr '\n' ' '
+)"
+
+case " ${promotion_only_jobs} " in
+  *" prerelease-readiness "*) : ;;
+  *) fail "promotion-lane job enumeration did not find prerelease-readiness; the parity check is vacuous" ;;
+esac
+
+for promotion_job in ${promotion_only_jobs}; do
+  case " prerelease-readiness " in
+    *" ${promotion_job} "*) : ;;
+    *)
+      fail "promotion-lane job '${promotion_job}' has no staging-PR equivalent; add one (or record the justified exception here and in the PR body)"
+      ;;
+  esac
+done
+
+if [[ -n "${push_only_jobs// /}" ]]; then
+  fail "push-to-staging-only job(s) have no PR-to-staging equivalent:${push_only_jobs}"
+fi
+
+for parity_job in rubric builds staging-release-eligibility; do
+  require_job_contains "${ci}" "${parity_job}" \
+    "github.event_name == 'push' && github.ref == 'refs/heads/staging'" \
+    "${parity_job} must be enumerated as a push-to-staging job covered by the parity check"
+done
+
 require_line "scripts/verify-rubric.sh" "bash ./scripts/verify-cdk-go-drift.sh" \
   "full rubric must verify cdk-go generated binding drift"
 require_line_order \
