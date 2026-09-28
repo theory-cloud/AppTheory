@@ -120,15 +120,32 @@ require_contains "${ci}" "default: true" \
   "manual CI dispatch must continue to run the full rubric by default"
 require_contains \
   "${ci}" \
-  "if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')" \
-  "full rubric must run only for PRs targeting staging plus opted-in manual dispatch"
+  "if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging') || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')" \
+  "full rubric must run for PRs targeting staging, staging->premain promotion PRs, pushes to the staging branch, and opted-in manual dispatch"
 require_contains "${ci}" "  builds:" "CI must define the standalone deterministic-build job"
 require_contains "${ci}" "name: Verify deterministic builds" \
   "CI must keep the deterministic-build job name stable for branch protection visibility"
 require_contains \
   "${ci}" \
-  "if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'" \
-  "deterministic builds must run only for PRs targeting staging"
+  "if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging') || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')" \
+  "deterministic builds must run for PRs targeting staging, staging->premain promotion PRs, and pushes to the staging branch"
+# R-F1 promotion-path parity: the merged staging SHA and the staging->premain
+# promotion PR must be verified by the same rubric and deterministic-build jobs a
+# PR to staging runs, so a green PR cannot be promoted into a red gate.
+require_job_contains "${ci}" "rubric" "github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging'" \
+  "full rubric must run on the staging->premain promotion PR"
+require_job_contains "${ci}" "rubric" "github.event_name == 'push' && github.ref == 'refs/heads/staging'" \
+  "full rubric must run on the merged staging SHA"
+require_job_contains "${ci}" "builds" "github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging'" \
+  "deterministic builds must run on the staging->premain promotion PR"
+require_job_contains "${ci}" "builds" "github.event_name == 'push' && github.ref == 'refs/heads/staging'" \
+  "deterministic builds must run on the merged staging SHA"
+require_job_contains "${ci}" "rubric" "uses: actions/upload-artifact@" \
+  "full rubric must publish the GovTheory evidence report as a retrievable artifact"
+require_job_contains "${ci}" "rubric" "path: gov-infra/evidence/" \
+  "published GovTheory evidence artifact must cover the verifier evidence directory"
+require_job_contains "${ci}" "rubric" "if: always()" \
+  "GovTheory evidence artifact must upload even when the rubric fails"
 require_contains "scripts/sync-release-pr-generated.sh" "--raw-field run_full_rubric=false" \
   "automated generated release PR CI dispatch must opt out of the full rubric"
 require_not_contains "scripts/sync-release-pr-generated.sh" "Rubric (full gate set)" \

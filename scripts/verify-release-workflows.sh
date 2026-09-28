@@ -692,8 +692,8 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
-    "if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')",
-    "full rubric must run only on staging PRs and opted-in manual dispatch",
+    "if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging') || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')",
+    "full rubric must run on staging PRs, the staging->premain promotion PR, the merged staging SHA, and opted-in manual dispatch",
 )
 require_contains(
     ".github/workflows/ci.yml",
@@ -702,8 +702,8 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
-    "if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'",
-    "deterministic builds must run only on staging PRs",
+    "if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging') || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')",
+    "deterministic builds must run on staging PRs, the staging->premain promotion PR, and the merged staging SHA",
 )
 require_contains(
     ".github/workflows/ci.yml",
