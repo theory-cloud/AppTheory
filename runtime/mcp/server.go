@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
-	"github.com/theory-cloud/apptheory/v4/runtime/internal/streamjoin"
+	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
+	"github.com/theory-cloud/apptheory/v5/runtime/internal/streamjoin"
 )
 
 // protocolVersion is the latest session-ful MCP protocol version supported by this server.

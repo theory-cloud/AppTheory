@@ -15,7 +15,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
 )
 
 // This file proves R8: the streamed tools/call body join completes before the
