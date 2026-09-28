@@ -151,7 +151,7 @@ assert_release_pins "${go_dir}" "${go_version}"
   go mod tidy
   go test ./...
   patch_package_json package.json
-  npm install >/dev/null
+  npm install --ignore-scripts >/dev/null
 )
 synth_project "${go_dir}"
 
@@ -162,7 +162,7 @@ assert_release_pins "${ts_dir}"
 (
   cd "${ts_dir}"
   patch_package_json package.json
-  npm install >/dev/null
+  npm install --ignore-scripts >/dev/null
   npm test
 )
 synth_project "${ts_dir}"
@@ -176,7 +176,7 @@ assert_release_pins "${py_dir}"
   printf '%s\n' "${repo_root}/py" > requirements.txt
   PYTHONPATH="${repo_root}/py/src:${py_dir}" python3 -m unittest discover -s tests -p 'test_*.py'
   patch_package_json package.json
-  npm install >/dev/null
+  npm install --ignore-scripts >/dev/null
 )
 synth_project "${py_dir}"
 

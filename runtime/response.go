@@ -118,11 +118,12 @@ func normalizeResponse(in *Response) (Response, error) {
 	}
 	// A response must carry exactly one body representation. A buffered body
 	// combined with a streaming body is divergent: the buffered adapters drain
-	// the stream and replace the buffered body, while the v1 streaming adapter
-	// composes Body + BodyReader and ignores BodyStream entirely. The same
-	// handler response would produce different wire bytes on different
-	// adapters, so the normalizer fails closed on the ambiguous shape instead
-	// of letting adapters silently pick one representation. The failure is
+	// the stream into the buffered body, while the v1 streaming adapter streams
+	// the buffered prefix followed by the BodyReader or the joined BodyStream
+	// incrementally. The same handler response would produce different wire
+	// bytes on different adapters, so the normalizer fails closed on the
+	// ambiguous shape instead of letting adapters silently pick one
+	// representation. The failure is
 	// signaled as a sentinel error so the serve path routes it through the
 	// established serve-error pipeline (request id, AppSync envelope, P2
 	// observability), mirroring the TS throw and Py raise on the same shape.

@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 
-	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
 )
 
 func envOr(name string, fallback string) string {
@@ -51,15 +51,29 @@ func buildApp() *apptheory.App {
 
 	app.Get("/sse", func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		events := make(chan apptheory.SSEEvent)
+		// The producer observes the invocation context at both of its blocking
+		// points (the send and the delay), so it stops when the invocation that
+		// started it ends instead of blocking forever on a channel nobody reads.
+		// A producer that ignored the context would be frozen with the execution
+		// environment and resume on a later invocation.
+		done := ctx.Context().Done()
 		go func() {
 			defer close(events)
 			for i := 1; i <= 3; i++ {
-				events <- apptheory.SSEEvent{
+				select {
+				case <-done:
+					return
+				case events <- apptheory.SSEEvent{
 					ID:    fmt.Sprintf("%d", i),
 					Event: "message",
 					Data:  map[string]any{"ok": true, "lang": lang, "name": name, "seq": i},
+				}:
 				}
-				time.Sleep(1 * time.Second)
+				select {
+				case <-done:
+					return
+				case <-time.After(1 * time.Second):
+				}
 			}
 		}()
 		return apptheory.SSEStreamResponse(ctx.Context(), 200, events)

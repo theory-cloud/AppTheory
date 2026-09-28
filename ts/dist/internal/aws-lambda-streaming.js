@@ -84,10 +84,10 @@ async function writeStreamedLambdaFunctionURLResponse(responseStream, resp, http
     }
     const out = httpResponseStreamFrom(responseStream, meta);
     let streamErrorCode = "";
-    if (firstChunk && firstChunk.length > 0) {
-        out.write(firstChunk);
-    }
     try {
+        if (firstChunk && firstChunk.length > 0) {
+            out.write(firstChunk);
+        }
         if (stream) {
             if (!iterator) {
                 for await (const chunk of stream) {
@@ -105,6 +105,18 @@ async function writeStreamedLambdaFunctionURLResponse(responseStream, resp, http
         streamErrorCode = streamErrorCodeForError(err);
     }
     finally {
+        // The prefetched first chunk is written before the loop starts, so a
+        // transport failure there never enters the for-await and would otherwise
+        // leave the generator suspended past the invocation. Unwind it explicitly;
+        // a generator the loop already drained ignores the extra return().
+        if (iterator) {
+            try {
+                await iterator.return?.();
+            }
+            catch {
+                // best-effort unwind: the transport is already failing
+            }
+        }
         out.end();
     }
     return streamErrorCode;

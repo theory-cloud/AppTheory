@@ -465,6 +465,14 @@ Known configuration keys surfaced by canonical docs:
 - `APPTHEORY_JOBS_TABLE_NAME`
 - `UNKNOWN:` a complete stable env-var/config-key catalog is not yet centralized in one canonical index
 
+### Internal streaming join (Go)
+
+`runtime/internal/streamjoin` is internal to the module's `runtime/...` tree and is not public API. It hands a producer
+goroutine's output to a response body reader that joins the producer: the `Body` reader reports EOF only once its
+producer has returned, and closing it releases the producer and waits for it. `Producer` is the function it runs. Every
+response body the runtime produces incrementally (SSE responses, the MCP session listener, streamed tool events) is
+built on it, so an adapter that abandons a body cannot leave a producer running past the invocation that started it.
+
 ### MCP and OAuth
 
 AppTheory includes fixture-backed MCP and OAuth support across the runtime family, with the Go package paths listed
@@ -572,7 +580,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1057 exported top-level symbols</summary>
+<summary>1059 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins, APIGatewayV2Request
@@ -583,7 +591,7 @@ AuthorizationCodeStore, AuthorizationServerMetadata, AuthorizationServerMetadata
 AuthPostureAuthenticated, AuthPostureAuthenticatedAnyOf, AuthPostureInternalOnly, AuthPostureKind, AuthPostureOptional, AuthPosturePublic
 AuthPrincipal, AWSLambdaMicroVMProvider, AWSLambdaMicroVMProviderID, AWSLambdaMicroVMProviderOption, BaseName
 BearerTokenClaims, BearerTokenClaimsFromContext, BearerTokenClaimsValidator, BearerTokenFromHeaders, BearerTokenRecord
-BearerTokenValidationOptions, BearerTokenValidator, BedrockRuntimeAPI, Binary, BindConfig, BodyStream
+BearerTokenValidationOptions, BearerTokenValidator, BedrockRuntimeAPI, Binary, BindConfig, Body, BodyStream
 BuiltInLoggingProfileNames, CacheableResultConfig, CacheControlISR, CacheControlSSG, CacheControlSSR, CacheHint
 CacheScope, CacheScopePrivate, CacheScopePublic, Call, CallToolRequest, CanonicalizeIssuerURL, CanonicalResourceURL
 CapabilityConfig, CaptureBodyStream, ClaudeDynamicClientRegistrationPolicy, ClaudePublicClient, Client, ClientIP
@@ -683,7 +691,7 @@ OperationShellToken, OperationSuspend, OperationTerminate, Option, Optional, Opt
 OriginalURI, OriginURL, OriginValidator, ParseBatchRequest, ParseObjectRef, ParseRequest, ParseResponse, PartialMask
 PaymentXMLPatterns, PKCEChallengeS256, PKCEVerifyS256, Policy, PolicyAction, PolicyAllow, PolicyDecision
 PolicyFromEnv, PolicyFromText, PolicyFullyRedact, PolicyHook, PolicyPartialMask, PolicyRule, PrincipalAuthHook
-PrincipalExternal, PrincipalInternal, PrincipalKind, ProfileLogger, ProfileLoggerOption, PromptArgument, PromptDef
+PrincipalExternal, PrincipalInternal, PrincipalKind, Producer, ProfileLogger, ProfileLoggerOption, PromptArgument, PromptDef
 PromptHandler, PromptMessage, PromptRegistry, PromptResult, ProtectedResourceMetadata
 ProtectedResourceMetadataHandler, ProtectedResourceMetadataURLForRequest, ProtectedResourceWWWAuthenticate
 ProtocolShape, ProtocolShape20251125, ProtocolShape20260728, ProtocolShapeUnknown, ProtocolVersion20260728, Provider

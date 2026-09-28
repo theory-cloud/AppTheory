@@ -25,7 +25,12 @@ tmp_log="$(mktemp)"
 cleanup() { rm -f "${tmp_log}"; }
 trap cleanup EXIT
 
-if ! (cd cdk && npm test >/dev/null 2>"${tmp_log}"); then
+# Build explicitly instead of leaning on cdk/package.json's `pretest` hook:
+# cdk/.npmrc sets `ignore-scripts=true`, so npm deliberately does not run pre/
+# post hooks (a compromised dependency's install hooks must never run here), and
+# an implicit pre-hook would silently stop building the constructs before the
+# tests load ../lib.
+if ! (cd cdk && npm run build >/dev/null 2>"${tmp_log}" && npm test >/dev/null 2>>"${tmp_log}"); then
   echo "cdk-constructs: FAIL (tests failed)" >&2
   cat "${tmp_log}" >&2
   exit 1

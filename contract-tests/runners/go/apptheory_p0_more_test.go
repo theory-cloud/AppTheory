@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	apptheory "github.com/theory-cloud/apptheory/v4/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
 )
 
 func TestServeFixtureP0_MissingRequestAndDecodeErrors(t *testing.T) {

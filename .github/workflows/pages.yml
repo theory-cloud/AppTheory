@@ -50,10 +50,10 @@
 #
 # The Go install string is the one runtime snippet the placeholders cannot
 # express: Go semantic import versioning bakes the module major into the path
-# (/v3, /v4, ...), which is a function of the release, not a constant. The
+# (/v4, /v5, ...), which is a function of the release, not a constant. The
 # derive step below rewrites the override's Go install from the deploy tag, so
 # the live docs can never advertise a Go module version/tag that has not been
-# published (for example the staged /v4 path paired with a v3 tag, or an
+# published (for example the staged /v5 path paired with a v4 tag, or an
 # in-flight RC tag). docs/_data/runtimes.yml pins the same derived shape for
 # the latest published release as the checked-in local-preview fallback.
 #
@@ -176,7 +176,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Ruby
-        uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1.324.0
+        uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
         with:
           ruby-version: "3.3"
           # No bundler cache: this job checks out an input-derived ref, and

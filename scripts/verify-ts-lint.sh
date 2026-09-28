@@ -31,7 +31,7 @@ trap cleanup EXIT
 
 cp -a ts "${tmp_dir}/ts"
 
-(cd "${tmp_dir}/ts" && npm ci >/dev/null)
+(cd "${tmp_dir}/ts" && npm ci --ignore-scripts >/dev/null)
 
 if ! (cd "${tmp_dir}/ts" && npm run check >"${tmp_log}" 2>&1); then
   echo "ts-lint: FAIL (ts checks failed)" >&2

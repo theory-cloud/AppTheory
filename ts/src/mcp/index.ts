@@ -2125,9 +2125,14 @@ export class McpServer {
       },
     };
     const created = await store.create(record);
-    await this.finishTask(store, created, params["arguments"]);
+    // The body runs to completion inside this tools/call invocation, so the
+    // reply describes the task's terminal state. A task left running in a
+    // detached promise could stay `working` forever, lose its result, or
+    // half-apply its writes: the Lambda execution environment is frozen once the
+    // handler returns, so the work resumes at an unpredictable time (or never).
+    const finished = await this.finishTask(store, created, params["arguments"]);
     const meta: Record<string, unknown> = {
-      [RELATED_TASK_METADATA_KEY]: { taskId: created.task.taskId },
+      [RELATED_TASK_METADATA_KEY]: { taskId: finished.task.taskId },
     };
     if (this.taskRuntime.modelImmediateResponse) {
       meta[MODEL_IMMEDIATE_RESPONSE_METADATA_KEY] =
@@ -2135,7 +2140,7 @@ export class McpServer {
     }
     return newResultResponse(request.id, {
       _meta: meta,
-      task: cloneTask(created.task),
+      task: cloneTask(finished.task),
     });
   }
 
@@ -2143,7 +2148,7 @@ export class McpServer {
     store: McpTaskStore,
     record: McpTaskRecord,
     args: unknown,
-  ): Promise<void> {
+  ): Promise<McpTaskRecord> {
     const next = cloneTaskRecord(record);
     next.task.lastUpdatedAt = isoNoMillis(new Date());
     try {
@@ -2166,11 +2171,20 @@ export class McpServer {
       next.task.status = "failed";
       next.task.statusMessage = errorMessage(err);
     }
-    await store.update(next).catch((err: unknown) => {
+    try {
+      return await store.update(next);
+    } catch (err) {
       if (!(err instanceof McpTaskTerminalError)) {
         throw err;
       }
-    });
+      // A concurrent tasks/cancel won the race and the store already holds a
+      // terminal state for this task; that state is authoritative.
+      const current = await store.get({
+        sessionId: next.sessionId,
+        taskId: next.task.taskId,
+      });
+      return current ?? next;
+    }
   }
 
   private async handleTasksGet(

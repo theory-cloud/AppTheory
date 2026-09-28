@@ -103,7 +103,7 @@ for entry in "${examples[@]}"; do
     rm -f "${tmp_log}"
   }
 
-  if ! (cd "${example_dir}" && npm ci >/dev/null 2>"${tmp_log}"); then
+  if ! (cd "${example_dir}" && npm ci --ignore-scripts >/dev/null 2>"${tmp_log}"); then
     echo "cdk-synth: FAIL (npm ci failed for ${example_dir})" >&2
     cat "${tmp_log}" >&2
     cleanup

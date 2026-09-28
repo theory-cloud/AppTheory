@@ -138,7 +138,7 @@ account claims.
 
 TypeScript uses `new AppTheoryCloudWatchLogsSubscription(...)`; Go uses
 `apptheorycdk.NewAppTheoryCloudWatchLogsSubscription(...)` from
-`github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v4`.
+`github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v5`.
 
 Keep the handler on the AppTheory runtime entrypoint and decode Kinesis-delivered CloudWatch Logs envelopes with
 `DecodeCloudWatchLogsSubscription` / `decodeCloudWatchLogsSubscription` /

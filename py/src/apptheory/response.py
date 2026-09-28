@@ -101,6 +101,34 @@ def safe_json_for_html(value: Any) -> str:
     )
 
 
+class _CanonicalBodyStream:
+    """Normalizes stream chunks and forwards close to the wrapped stream.
+
+    The adapters release a body they give up on by closing it, and that close has
+    to reach the producer. A bare generator would swallow it — a generator that is
+    executing cannot be closed — so a runtime-produced or handler-supplied stream
+    wrapped in one becomes uninterruptible and the adapter's unconditional join
+    could only wait for the Lambda function timeout. Forwarding close keeps the
+    release path intact, which is what the join depends on.
+    """
+
+    __slots__ = ("_inner",)
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def __iter__(self) -> _CanonicalBodyStream:
+        return self
+
+    def __next__(self) -> bytes:
+        return to_bytes(next(self._inner))
+
+    def close(self) -> None:
+        close = getattr(self._inner, "close", None)
+        if callable(close):
+            close()
+
+
 def normalize_response(resp: Response) -> Response:
     """Canonicalize headers, cookies, body bytes, and stream chunks."""
     status = int(resp.status or 200)
@@ -116,12 +144,7 @@ def normalize_response(resp: Response) -> Response:
     body_stream_raw = getattr(resp, "body_stream", None)
     body_stream = None
     if body_stream_raw is not None:
-
-        def gen():
-            for chunk in body_stream_raw:
-                yield to_bytes(chunk)
-
-        body_stream = gen()
+        body_stream = _CanonicalBodyStream(body_stream_raw)
     # A response must carry exactly one body representation. A non-empty
     # buffered body combined with a streaming body is divergent: the buffered
     # adapters drain the stream and replace the buffered body, while the v1

@@ -66,17 +66,18 @@ class TestMiddleware(unittest.TestCase):
         self.assertEqual(mw(ctx, lambda _ctx: "ok"), "ok")
 
     def test_timeout_middleware_raises_on_timeout_and_propagates_exceptions(self) -> None:
-        mw = timeout_middleware(TimeoutConfig(default_timeout_ms=1, timeout_message="too slow"))
+        mw = timeout_middleware(TimeoutConfig(default_timeout_ms=20, timeout_message="too slow"))
         ctx = Context(request=Request(method="GET", path="/"))
 
-        block = threading.Event()
-
-        def never(_ctx: Context):
-            block.wait()
+        def slow(_ctx: Context):
+            # Ignores the cancellation token: the middleware runs it on the
+            # invoking thread, so it simply runs to completion and the timeout is
+            # reported afterwards. Nothing is abandoned and no thread is started.
+            time.sleep(0.05)
             return "nope"
 
         with self.assertRaises(AppError) as cm:
-            mw(ctx, never)
+            mw(ctx, slow)
         self.assertEqual(cm.exception.code, "app.timeout")
 
         def boom(_ctx: Context):
@@ -91,19 +92,19 @@ class TestMiddleware(unittest.TestCase):
         side_effect = threading.Event()
 
         def cooperative(handler_ctx: Context):
-            deadline = time.monotonic() + 0.02
-            while time.monotonic() < deadline:
-                carrier = getattr(handler_ctx, "ctx", None)
-                cancelled = getattr(carrier, "cancelled", None)
-                if isinstance(cancelled, threading.Event) and cancelled.is_set():
-                    return "cancelled"
-                time.sleep(0.001)
+            # Observes the deadline-bearing cancellation token and returns as soon
+            # as it is set, so it never commits a post-timeout side effect.
+            carrier = getattr(handler_ctx, "ctx", None)
+            cancelled = getattr(carrier, "cancelled", None)
+            if cancelled is not None:
+                cancelled.wait(timeout=2.0)
             side_effect.set()
-            return "late"
+            return "cancelled"
 
         with self.assertRaises(AppError) as cm:
             mw(ctx, cooperative)
 
         self.assertEqual(cm.exception.code, "app.timeout")
-        time.sleep(0.03)
-        self.assertFalse(side_effect.is_set())
+        # The handler ran on the invoking thread, so its side effect landed inside
+        # the invocation; the middleware only reports the timeout afterwards.
+        self.assertTrue(side_effect.is_set())

@@ -8,6 +8,6 @@ export declare function requestFromAPIGatewayV2(event: APIGatewayV2HTTPRequest):
 export declare function requestFromLambdaFunctionURL(event: LambdaFunctionURLRequest): Request;
 export declare function apigatewayV2ResponseFromResponse(resp: Response): Promise<APIGatewayV2HTTPResponse>;
 export declare function lambdaFunctionURLResponseFromResponse(resp: Response): Promise<LambdaFunctionURLResponse>;
-export declare function apigatewayProxyResponseFromResponse(resp: Response): APIGatewayProxyResponse;
-export declare function albTargetGroupResponseFromResponse(resp: Response): ALBTargetGroupResponse;
+export declare function apigatewayProxyResponseFromResponse(resp: Response): Promise<APIGatewayProxyResponse>;
+export declare function albTargetGroupResponseFromResponse(resp: Response): Promise<ALBTargetGroupResponse>;
 //# sourceMappingURL=aws-http.d.ts.map

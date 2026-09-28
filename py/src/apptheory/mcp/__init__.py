@@ -1542,13 +1542,19 @@ class McpServer:
             ),
         )
         created = store.create(record)
-        self._finish_task(store, created, params.get("arguments"))
-        meta: dict[str, Any] = {RELATED_TASK_METADATA_KEY: {"taskId": created.task.task_id}}
+        # The body runs to completion inside this tools/call invocation, so the
+        # reply describes the task's terminal state. A task left running on a
+        # detached thread or task could stay `working` forever, lose its result,
+        # or half-apply its writes: the Lambda execution environment is frozen
+        # once the handler returns, so the work resumes at an unpredictable time
+        # (or never).
+        finished = self._finish_task(store, created, params.get("arguments"))
+        meta: dict[str, Any] = {RELATED_TASK_METADATA_KEY: {"taskId": finished.task.task_id}}
         if self.task_runtime.model_immediate_response:
             meta[MODEL_IMMEDIATE_RESPONSE_METADATA_KEY] = self.task_runtime.model_immediate_response
-        return _new_result_response(request.id, {"_meta": meta, "task": _task_to_json(created.task)})
+        return _new_result_response(request.id, {"_meta": meta, "task": _task_to_json(finished.task)})
 
-    def _finish_task(self, store: McpTaskStore, record: McpTaskRecord, args: Any) -> None:
+    def _finish_task(self, store: McpTaskStore, record: McpTaskRecord, args: Any) -> McpTaskRecord:
         next_record = _clone_task_record(record)
         next_record.task.last_updated_at = _iso_no_millis(self.clock.now())
         try:
@@ -1566,9 +1572,13 @@ class McpServer:
             next_record.task.status = "failed"
             next_record.task.status_message = _error_message(exc)
         try:
-            store.update(next_record)
+            return store.update(next_record)
         except McpTaskTerminalError:
-            return
+            # A concurrent tasks/cancel won the race and the store already holds a
+            # terminal state for this task; that state is authoritative.
+            with contextlib.suppress(Exception):
+                return store.get({"session_id": next_record.session_id, "task_id": next_record.task.task_id})
+            return next_record
 
     def _handle_tasks_get(self, request: _ParsedRPCRequest, session_id: str) -> dict[str, Any]:
         lookup, error = _task_lookup_from_request(request, session_id)

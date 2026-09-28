@@ -31,7 +31,7 @@ for file_path in Path(os.environ["TMP_DIR"]).rglob("*"):
 PY
 fi
 
-(cd "${tmp_cdk_dir}" && npm ci >/dev/null)
+(cd "${tmp_cdk_dir}" && npm ci --ignore-scripts >/dev/null)
 (cd "${tmp_cdk_dir}" && npm run build >/dev/null)
 
 if [[ -n "${SOURCE_DATE_EPOCH:-}" ]]; then

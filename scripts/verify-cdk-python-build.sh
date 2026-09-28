@@ -108,7 +108,7 @@ for file_path in root.rglob("*"):
     os.utime(file_path, (epoch, epoch))
 PY
 
-(cd "${tmp_dir}/cdk" && npm ci >/dev/null)
+(cd "${tmp_dir}/cdk" && npm ci --ignore-scripts >/dev/null)
 (cd "${tmp_dir}/cdk" && npm run build >/dev/null)
 
 TMP_CDK_DIR="${tmp_dir}/cdk" python3 - <<'PY'
