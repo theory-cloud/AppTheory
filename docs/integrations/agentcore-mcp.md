@@ -255,8 +255,8 @@ import (
   "os"
 
   "github.com/theory-cloud/apptheory/v4/runtime/mcp"
-  "github.com/theory-cloud/tabletheory/v3"
-  "github.com/theory-cloud/tabletheory/v3/pkg/session"
+  "github.com/theory-cloud/tabletheory/v4"
+  "github.com/theory-cloud/tabletheory/v4/pkg/session"
 )
 
 func buildMcpServerWithDynamoSessions() (*mcp.Server, error) {

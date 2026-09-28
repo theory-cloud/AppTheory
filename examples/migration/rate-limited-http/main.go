@@ -9,8 +9,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 
-	"github.com/theory-cloud/tabletheory/v3"
-	"github.com/theory-cloud/tabletheory/v3/pkg/session"
+	"github.com/theory-cloud/tabletheory/v4"
+	"github.com/theory-cloud/tabletheory/v4/pkg/session"
 
 	"github.com/theory-cloud/apptheory/v4/pkg/limited"
 	limitedmw "github.com/theory-cloud/apptheory/v4/pkg/limited/middleware"

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	tablecore "github.com/theory-cloud/tabletheory/v3/pkg/core"
-	tableerrors "github.com/theory-cloud/tabletheory/v3/pkg/errors"
+	tablecore "github.com/theory-cloud/tabletheory/v4/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/v4/pkg/errors"
 )
 
 // DynamoRateLimiter implements RateLimiter using DynamoDB via TableTheory.
