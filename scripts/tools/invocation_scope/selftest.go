@@ -14,17 +14,21 @@ import (
 // join does not dominate every exit — the shapes a presence- or text-based
 // reading accepts by mistake — and every "joined" probe is a launch a dominating
 // join covers. The probes are the ones the AppTheory invocation-scope round-2
-// sanity review and the TableTheory detached-work guard rounds 1-3 used, ported
-// here with the launch forms this repository's guard contract names (aliased
-// imports, walrus bindings, aggregates, expression positions, class-field
-// initializers, compound and chained assignments).
+// sanity review used, the TableTheory detached-work guard rounds 1-4 used, and
+// the ones the paired review gate's invocation-scope rework round found (the
+// cross-frame binding family on both scanner surfaces), ported here with the
+// launch forms this repository's guard contract names (aliased imports, walrus
+// bindings, aggregates, expression positions, class-field and static-block
+// initializers, parameter initializers, module-global and class-attribute
+// targets, compound and chained assignments).
 //
 // The battery needs the TypeScript compiler and a Python interpreter, so
 // scripts/verify-invocation-scope.sh installs the TypeScript runtime deps (the
 // repository's own ts/node_modules contract) and runs it inside `make rubric`.
 // It is deliberately not part of `go test`: verify-builds.sh snapshots the
 // tracked tree, which has no node_modules, and a scanner that cannot run must
-// fail the guard rather than be skipped.
+// fail the guard rather than be skipped. `make test-unit` is `go test` only and
+// never runs this battery; the rubric verifier is what runs it.
 
 // tsFlaggedProbes are the TypeScript shapes the scanner must report.
 var tsFlaggedProbes = []struct{ name, src, rule string }{
@@ -81,6 +85,22 @@ var tsFlaggedProbes = []struct{ name, src, rule string }{
 	// A try whose handler can skip the join, or whose body joins only at its end.
 	{"join at the end of a try body with a handler", "async function run() {\n  const p = load(id).then((u) => render(u));\n  try {\n    work();\n    await p;\n  } catch (e) {\n    log(e);\n  }\n}", "floating-then"},
 	{"rebound async call not awaited", "async function run() {\n  let p: Promise<void>;\n  p = flushAsync();\n}\nasync function flushAsync(): Promise<void> {\n  await work();\n}", "discarded-async-call"},
+	// A parameter initializer is evaluated when the call is made, before any join
+	// the body could reach, and a timer function bound to a variable is the timer
+	// it names; a member-assigned async arrow is a function the file declares
+	// async; and an iterator read held from `.next()` is work the invocation
+	// started until it settles.
+	{"function parameter default launch", "function go(p = load(id).then((u) => render(u))) {\n  work();\n}", "floating-then"},
+	{"method parameter default timer", "class C {\n  m(p = setTimeout(() => flush(), 1)) {\n    work();\n  }\n}", "timer-setTimeout"},
+	{"arrow parameter default launch", "const go = (p = load(id).then((u) => render(u))) => {\n  work();\n};", "floating-then"},
+	{"constructor parameter default timer", "class C {\n  constructor(p = setTimeout(() => flush(), 1)) {\n    work();\n  }\n}", "timer-setTimeout"},
+	{"parameter default async iife", "function go(p = (async () => {\n  await work();\n})()) {\n  return p;\n}", "detached-async-iife"},
+	{"variable-aliased timer", "const st = setTimeout;\nst(() => flush(), 1000);", "timer-setTimeout"},
+	{"variable-aliased interval", "const si = setInterval;\nsi(poll, 5000);", "timer-setInterval"},
+	{"variable-aliased immediate", "const si = setImmediate;\nsi(work);", "timer-setImmediate"},
+	{"member-assigned async call", "class C {\n  run = async (): Promise<void> => {\n    await work();\n  };\n  start() {\n    this.run();\n  }\n}", "discarded-async-call"},
+	{"member-assigned async call in a constructor", "class C {\n  start() {\n    this.run = async () => {\n      await work();\n    };\n    this.run();\n  }\n}", "discarded-async-call"},
+	{"held iterator read", "async function drain(it) {\n  const pending = it.next();\n  work(pending);\n}", "async-read"},
 }
 
 // tsCleanProbes are the TypeScript shapes the scanner must accept.
@@ -117,6 +137,23 @@ var tsCleanProbes = []struct{ name, src string }{
 	{"chained assignment then awaited", "async function run() {\n  let a, b;\n  a = b = load(id).then((u) => render(u));\n  await b;\n}"},
 	{"destructuring aggregate joined", "async function load1(): Promise<void> {}\nasync function run() {\n  const [a, b] = [load1(), load1()];\n  await Promise.all([a, b]);\n}"},
 	{"array aggregate joined", "async function load1(): Promise<void> {}\nasync function run() {\n  const jobs = [load1(), load1()];\n  await Promise.all(jobs);\n}"},
+	// The joined forms of the shapes above stay accepted: a parameter default
+	// that launches nothing, a managed timer bound to a variable or passed
+	// through an assertion, an awaited member-assigned async call, and an
+	// awaited iterator read.
+	{"parameter default without a launch", "function go(p = 1) {\n  return p;\n}"},
+	{"parameter default holding a settled promise", "function go(p = Promise.resolve(1)) {\n  return p;\n}"},
+	{"variable-aliased timer cleared", "const st = setTimeout;\nconst timer = st(() => flush(), 1000);\nclearTimeout(timer);"},
+	{"variable-aliased timer cleared in a finally", "function withBudget(ms: number) {\n  const st = setTimeout;\n  const timer = st(() => abort(), ms);\n  try {\n    return work();\n  } finally {\n    clearTimeout(timer);\n  }\n}"},
+	{"member-assigned async call awaited", "class C {\n  run = async (): Promise<void> => {\n    await work();\n  };\n  async start() {\n    await this.run();\n  }\n}"},
+	{"member-assigned async call returned", "class C {\n  run = async (): Promise<void> => {\n    await work();\n  };\n  start() {\n    return this.run();\n  }\n}"},
+	{"awaited iterator read", "async function take(it: AsyncIterator<Buffer>) {\n  const first = await it.next();\n  return first;\n}"},
+	{"bare next call is not a read", "function use(next: () => void) {\n  next();\n}"},
+	{"non-null assertion on a cleared timer", "function arm(t: { timer?: ReturnType<typeof setTimeout> }) {\n  t.timer = setTimeout(() => flush(), 1000);\n  clearTimeout(t.timer!);\n}"},
+	{"parenthesized cleared timer", "function arm(t: { timer?: ReturnType<typeof setTimeout> }) {\n  t.timer = setTimeout(() => flush(), 1000);\n  clearTimeout((t.timer));\n}"},
+	{"type-asserted cleared timer", "function arm(t: { timer?: ReturnType<typeof setTimeout> }) {\n  t.timer = setTimeout(() => flush(), 1000);\n  clearTimeout(t.timer as ReturnType<typeof setTimeout>);\n}"},
+	{"non-null awaited held promise", "async function run() {\n  const p: Promise<void> | undefined = load(id).then((u) => render(u));\n  await (p!);\n}"},
+	{"bracket non-null cleared timer", "const timer = globalThis[\"setTimeout\"](() => controller.abort(), ms);\nclearTimeout(timer!);"},
 }
 
 // pyFlaggedProbes are the Python shapes the scanner must report.
@@ -178,6 +215,32 @@ var pyFlaggedProbes = []struct{ name, src, rule string }{
 	// A try whose handler can skip the join, or whose body joins only at its end.
 	{"join at the end of a try body with a handler", "def run():\n    t = threading.Thread(target=work)\n    t.start()\n    try:\n        work()\n        t.join()\n    except Exception:\n        pass\n", "thread-start"},
 	{"non-exhaustive handler before the join", "def run():\n    t = threading.Thread(target=work)\n    t.start()\n    try:\n        work()\n    except ValueError:\n        pass\n    t.join()\n", "thread-start"},
+	// A target that belongs to an instance, a container, a module or a class is
+	// reachable from a scope other than the one that bound it, so a start there is
+	// reported; the join proof stays in the function that starts the work, so a
+	// sibling method's join does not clean it.
+	{"self attribute started in a sibling method", "class W:\n    def __init__(self):\n        self.worker = threading.Thread(target=work)\n    def go(self):\n        self.worker.start()\n", "thread-start"},
+	{"self attribute started in a sibling method, joined in a third", "class W:\n    def __init__(self):\n        self.worker = threading.Thread(target=work)\n    def go(self):\n        self.worker.start()\n    def close(self):\n        self.worker.join()\n", "thread-start"},
+	{"daemon self attribute started in a sibling method", "class W:\n    def __init__(self):\n        self.worker = threading.Thread(target=work, daemon=True)\n    def go(self):\n        self.worker.start()\n", "daemon-thread"},
+	{"container element started in a sibling method", "class W:\n    def __init__(self):\n        self.pool = {}\n        self.pool[\"a\"] = threading.Thread(target=work)\n    def go(self):\n        self.pool[\"a\"].start()\n", "thread-start"},
+	{"module attribute started in another function", "def setup():\n    mod.worker = threading.Thread(target=work)\n\ndef go():\n    mod.worker.start()\n", "thread-start"},
+	{"variable-key subscript start", "pool = {}\npool[\"a\"] = threading.Thread(target=work)\nkey = \"a\"\npool[key].start()\n", "thread-start"},
+	{"dict aggregate loop start", "pool = {\"a\": threading.Thread(target=work)}\nfor k in pool:\n    pool[k].start()\n", "thread-start"},
+	{"module global started in another function", "WORKER = threading.Thread(target=work)\ndef handle():\n    WORKER.start()\n", "thread-start"},
+	// A constructor expression a `def`/`class` statement evaluates runs outside
+	// every body the join proof covers, and a default argument names the
+	// parameter the body receives.
+	{"one-line walrus thread start", "def run():\n    (t := threading.Thread(target=work)).start()\n", "thread-start"},
+	{"two-line walrus thread start", "def run():\n    (t := threading.Thread(target=work))\n    t.start()\n", "thread-start"},
+	{"daemon thread in a default argument", "def g(t=threading.Thread(target=work, daemon=True)):\n    pass\n", "daemon-thread"},
+	{"thread started in a default argument", "def g(x=threading.Thread(target=work).start()):\n    pass\n", "thread-start"},
+	{"default-argument thread started in the body", "def g(t=threading.Thread(target=work)):\n    t.start()\n", "thread-start"},
+	{"task created in a decorator", "def deco(x):\n    return x\n\n@deco(asyncio.create_task(work()))\ndef g():\n    pass\n", "asyncio-task"},
+	{"thread in a class base", "class W(threading.Thread(target=work, daemon=True)):\n    pass\n", "daemon-thread"},
+	// A class body is a scope of its own, and its names are class attributes.
+	{"class body arms and starts a thread", "class W:\n    worker = threading.Thread(target=work)\n    worker.start()\n", "thread-start"},
+	{"class body attribute started from a method", "class W:\n    worker = threading.Thread(target=work)\n    def go(self):\n        self.worker.start()\n", "thread-start"},
+	{"class body attribute started from the class", "class W:\n    worker = threading.Thread(target=work)\n    def go(self):\n        W.worker.start()\n", "thread-start"},
 }
 
 // pyCleanProbes are the Python shapes the scanner must accept.
@@ -222,6 +285,21 @@ var pyCleanProbes = []struct{ name, src string }{
 	{"inline offload awaited", "async def run():\n    result = await asyncio.to_thread(compute, arg)\n"},
 	{"one-line conditional inline offload awaited", "async def run(cond):\n    if cond: await asyncio.to_thread(compute, arg)\n"},
 	{"both branches inline offload awaited", "async def run(cond):\n    if cond:\n        await asyncio.to_thread(compute, arg)\n    else:\n        await asyncio.to_thread(compute, arg)\n"},
+	// The joined controls for the cross-frame shapes stay accepted: the join has
+	// to dominate in the function that starts the work, and a plain name bound in
+	// one function is not the same object in another.
+	{"sibling method starts and joins its constructor's thread", "class W:\n    def __init__(self):\n        self.worker = threading.Thread(target=work)\n    def go(self):\n        self.worker.start()\n        self.worker.join()\n"},
+	{"sibling method starts and joins the container element", "class W:\n    def __init__(self):\n        self.pool = {}\n        self.pool[\"a\"] = threading.Thread(target=work)\n    def go(self):\n        self.pool[\"a\"].start()\n        self.pool[\"a\"].join()\n"},
+	{"walrus thread joined after a one-line start", "def run():\n    (t := threading.Thread(target=work)).start()\n    t.join()\n"},
+	{"attribute joined without a start", "class W:\n    def __init__(self):\n        self.worker = threading.Thread(target=work)\n    def go(self):\n        self.worker.join()\n"},
+	{"plain name bound in one function started in another", "def a():\n    t = threading.Thread(target=work)\n\ndef b():\n    t.start()\n"},
+	{"module global started and joined in the same function", "WORKER = threading.Thread(target=work)\ndef handle():\n    WORKER.start()\n    WORKER.join()\n"},
+	{"default-argument thread started and joined in the body", "def g(t=threading.Thread(target=work)):\n    t.start()\n    t.join()\n"},
+	{"default-argument thread never started", "def g(t=threading.Thread(target=work)):\n    pass\n"},
+	{"class body arms and starts and joins a thread", "class W:\n    worker = threading.Thread(target=work)\n    worker.start()\n    worker.join()\n"},
+	{"class body attribute never started", "class W:\n    worker = threading.Thread(target=work)\n"},
+	{"class base thread that is not daemon and never started", "class W(threading.Thread(target=work)):\n    pass\n"},
+	{"container element started and joined by its literal key", "pool = {}\npool[\"a\"] = threading.Thread(target=work)\npool[\"a\"].start()\npool[\"a\"].join()\n"},
 }
 
 // runSelfTest runs every probe and the scanner-level contract checks, and

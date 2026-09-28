@@ -15,10 +15,13 @@ import (
 // shapes a presence- or text-based reading accepts by mistake — and every
 // "joined" case is a launch a dominating join covers. The probes are the ones
 // the AppTheory invocation-scope round-2 sanity review and the TableTheory
-// detached-work guard rounds 1-3 used, ported here and extended with the launch
+// detached-work guard rounds 1-4 used, ported here and extended with the launch
 // forms named in this repository's guard contract (aliased imports, walrus
-// bindings, aggregates, expression positions, class-field initializers,
-// compound and chained assignments).
+// bindings, aggregates, expression positions, class-field and static-block
+// initializers, parameter initializers, module-global and class-attribute
+// targets, compound and chained assignments). The interpreter-driven scanner
+// batteries live in selftest.go and run from scripts/verify-invocation-scope.sh
+// (the rubric verifier), not from `go test`.
 
 // ---------------------------------------------------------------------------
 // Go
