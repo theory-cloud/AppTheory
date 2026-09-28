@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """AST invocation-scope scanner for Python sources.
 
-Invoked by scripts/tools/invocation_scope (the repository guard) and by the
-guard's self-tests, so the scan runs inside `make rubric` and `make test-unit`
-with the repository's own Python interpreter.
+Invoked by scripts/tools/invocation_scope (the repository guard), which
+scripts/verify-invocation-scope.sh runs — with this scanner and the guard's
+self-tests — as part of `make rubric`. `make test-unit` is `go test` only and
+never invokes this scanner, so the sweep is pinned by the rubric verifier and
+not by the unit-test target.
 
 Protocol (one request/response per process):
 
@@ -16,12 +18,13 @@ Protocol (one request/response per process):
 Proof, exactly: a launch is reported unless a join on the same target executes on
 every path from the launch to every exit of the scope that contains it. The
 source is parsed with `ast`, and each scope (module bodies, every function body,
-including async ones) gets a control-flow graph whose nodes are statements and
-whose edges are fallthrough, branches, loop back-edges, `break`/`continue`
-targets, and exception transfers into `except`/`finally` clauses. `return` of the
-owning function and an unhandled `raise` are exits; a nested `def` is an opaque
-statement, so its body's `return` is not this scope's exit and its joins are not
-this scope's joins.
+including async ones, every class body, and every constructor-expression
+position a `def`/`class` statement evaluates) gets a control-flow graph whose
+nodes are statements and whose edges are fallthrough, branches, loop back-edges,
+`break`/`continue` targets, and exception transfers into `except`/`finally`
+clauses. `return` of the owning function and an unhandled `raise` are exits; a
+nested `def` is an opaque statement, so its body's `return` is not this scope's
+exit and its joins are not this scope's joins.
 
 A launch is accepted only when no path from its statement to an exit avoids every
 join statement, where a join statement is one that executes the join
@@ -34,16 +37,38 @@ compound statement (`if cond: t.join()`, `for x in xs: t.join()`). A join in a
 both branches of an `if/else` is accepted, because the graph merges the branches.
 
 Recognized launches: `Thread`/`Timer`/`Process` `.start()` (including a thread
-reached through an alias, a tuple/list aggregate, or a `for` over an aggregate),
-`create_task` / `ensure_future` / `loop.create_task`, `asyncio.to_thread` /
-`run_in_executor`, `ThreadPoolExecutor` `.submit(` outside a `with` block, a
-thread built inside a comprehension, and a daemon thread (either `daemon=True` on
-the constructor or a later `x.daemon = True`) that is started. Targets are
-tracked by name, attribute, and container element, with simple `u = t` aliases
-resolved and `:=` walrus bindings honored. A task or offload is joined by
-`await target` (or `await asyncio.gather`/`wait` over it); a thread by
-`target.join()`. `task.cancel()` is not a join, because cancellation is
-cooperative and the task can still be running when the caller returns.
+reached through an alias, a tuple/list/dict aggregate, or a `for` over an
+aggregate), `create_task` / `ensure_future` / `loop.create_task`,
+`asyncio.to_thread` / `run_in_executor`, `ThreadPoolExecutor` `.submit(` outside
+a `with` block, a thread built inside a comprehension, and a daemon thread
+(either `daemon=True` on the constructor or a later `x.daemon = True`) that is
+started. Targets are tracked by name, attribute, and container element, with
+simple `u = t` aliases resolved and `:=` walrus bindings honored, and the binding
+of a target decides how far it is tracked:
+
+  * A plain name bound inside a function is tracked in that function's scope
+    only, and the parameter names a `def` gives default-argument constructors to
+    are tracked in that `def`'s body, because a name bound in one frame is not
+    assumed to be the same object in another.
+  * An attribute (`self.worker`, `mod.worker`) or a container element
+    (`pool["a"]`, `self.pool["a"]`) is tracked across the whole file, because the
+    target belongs to the instance or the container rather than to the frame that
+    assigned it: `self.worker` assigned in `__init__` and started in a sibling
+    method names the same target. A plain name bound at module or class-body
+    level is tracked across the whole file too (and, in a class body, also under
+    `self.<name>` and `<Class>.<name>`), because a module global or a class
+    attribute is reachable from every scope that names it.
+  * A subscript whose key does not name a tracked binding is tracked
+    conservatively: when the container it indexes holds a tracked launch, the
+    read is reported, because the key the join must name cannot be matched.
+  * The join proof stays in the function that starts the work. A join in a
+    sibling method does not clean a launch, and no join in the scope that
+    assigned the target is credited to the scope that starts it.
+
+A task or offload is joined by `await target` (or `await asyncio.gather`/`wait`
+over it); a thread by `target.join()`. `task.cancel()` is not a join, because
+cancellation is cooperative and the task can still be running when the caller
+returns.
 
 Deliberately conservative, and documented as such in
 docs/features/http-runtime.md:
@@ -61,6 +86,16 @@ docs/features/http-runtime.md:
     starts and joins it: the comprehension hides the handle the guard tracks.
   * `await`ing the same target twice, or awaiting it in one branch and exiting on
     the other, is reported; both branches must join.
+  * An attribute, container element, module global or class attribute is tracked
+    file-wide, so a scope that rebinds the same key to something else does not
+    un-track it: a later `.start()` on that key is still reported. The broader
+    tracking errs toward reporting.
+  * A constructor expression in a default argument, a decorator, or a class base
+    or keyword is always reported when it launches, because no function's joins
+    can dominate an expression evaluated where the `def`/`class` statement sits.
+    A daemon-flagged thread constructor in one of those positions is reported for
+    the same reason, even though no `.start()` in such a position could be
+    joined.
 """
 
 from __future__ import annotations
@@ -149,6 +184,36 @@ def key_of(expr: ast.AST) -> str:
         return ast.unparse(expr)
     except Exception:  # pragma: no cover - unparse is total for parsed input
         return ""
+
+
+def receiver_key(expr: ast.AST) -> str:
+    """The key a `.start()` receiver names.
+
+    `(t := Thread(...)).start()` names the same target as `t.start()`, so the
+    walrus wrapper is unwrapped before the key is built.
+    """
+    if isinstance(expr, ast.NamedExpr):
+        return key_of(expr.target)
+    return key_of(expr)
+
+
+def container_key(expr: ast.AST) -> str:
+    """The key of the container a subscript expression reads: `pool[k]` -> `pool`."""
+    cur = expr
+    while isinstance(cur, ast.Subscript):
+        cur = cur.value
+    return key_of(cur)
+
+
+def construct_kind(value: ast.AST, imports: Imports) -> str | None:
+    """The launch kind a constructor expression creates, or None."""
+    if imports.is_thread_ctor(value):
+        return "thread"
+    if isinstance(value, ast.Call) and call_short(value) in TASK_METHODS:
+        return "task"
+    if isinstance(value, ast.Call) and call_short(value) in OFFLOAD_METHODS:
+        return "offload"
+    return None
 
 
 def call_short(call: ast.AST) -> str | None:
@@ -431,7 +496,7 @@ def make_join_predicate(kind: str, target: str, canon: Callable[[str], str]):
             func = node.func
             if not isinstance(func, ast.Attribute) or func.attr != "join":
                 return False
-            return canon(key_of(func.value)) == target
+            return canon(receiver_key(func.value)) == target
 
         return predicate
 
@@ -532,24 +597,33 @@ def binding_target(call: ast.AST) -> str:
 def aggregate_kinds(value: ast.AST, is_thread: Callable[[ast.AST], bool]) -> str | None:
     """The kind of a launch aggregate, or None when the value holds no launch."""
     if isinstance(value, (ast.Tuple, ast.List)):
-        for elt in value.elts:
-            if is_thread(elt):
-                return "thread"
-            if isinstance(elt, ast.Call) and call_short(elt) in TASK_METHODS:
-                return "task"
-            if isinstance(elt, ast.Call) and call_short(elt) in OFFLOAD_METHODS:
-                return "offload"
+        elements: list[ast.AST] = list(value.elts)
+    elif isinstance(value, ast.Dict):
+        elements = [v for v in value.values if v is not None]
+    else:
+        return None
+    for elt in elements:
+        if is_thread(elt):
+            return "thread"
+        if isinstance(elt, ast.Call) and call_short(elt) in TASK_METHODS:
+            return "task"
+        if isinstance(elt, ast.Call) and call_short(elt) in OFFLOAD_METHODS:
+            return "offload"
     return None
 
 
 def collect_bindings(
-    stmts: list[ast.stmt], imports: Imports
+    stmts: list[ast.stmt], imports: Imports, seed: dict[str, str] | None = None
 ) -> tuple[dict[str, str], Callable[[str], str], set[str]]:
     """Map key -> kind ('thread' | 'task' | 'offload'), with aliases resolved.
 
-    Also returns the names bound to an aggregate (a list or tuple holding a
+    Also returns the names bound to an aggregate (a list, tuple or dict holding a
     launch handle), so a `for` over one of them starts a thread the guard can
     still track.
+
+    `seed` carries the file-wide attribute, container-element and module-level
+    bindings from `collect_container_bindings`; every binding this scope makes
+    itself, of any form, is layered on top.
     """
     pairs: list[tuple[ast.AST, ast.AST]] = []
     for node in iter_scope(stmts):
@@ -561,7 +635,7 @@ def collect_bindings(
         elif isinstance(node, ast.NamedExpr):
             pairs.append((node.target, node.value))
 
-    kinds: dict[str, str] = {}
+    kinds: dict[str, str] = dict(seed) if seed else {}
     alias: dict[str, str] = {}
     aggregates: set[str] = set()
 
@@ -629,6 +703,91 @@ def _names_of(tgt: ast.AST) -> list[str]:
     return [key_of(tgt)]
 
 
+def collect_container_bindings(
+    tree: ast.Module, imports: Imports
+) -> tuple[dict[str, str], dict[str, str], set[str]]:
+    """The file-wide launch bindings that outlive the frame that made them.
+
+    Returns `(kinds, containers, daemons)`:
+
+      kinds       key -> kind for an attribute (`self.worker`), a container
+                  element (`self.pool["a"]`), a module global, and a class
+                  attribute (also under `self.<name>` and `<Class>.<name>`).
+      containers  key -> kind for a container that holds a launch, so a subscript
+                  whose key the proof cannot match is still recognized.
+      daemons     the seeded keys whose constructor carried `daemon=True`, so the
+                  report keeps the daemon rule's name in every scope.
+
+    An attribute or a container element belongs to the instance or the container,
+    not to the frame that assigned it, so both are collected file-wide. A plain
+    name is collected only at module and class-body level, where it is a module
+    global or a class attribute rather than a local: a name bound inside one
+    function is not assumed to be the same object in another.
+    """
+    kinds: dict[str, str] = {}
+    containers: dict[str, str] = {}
+    daemons: set[str] = set()
+
+    def collect(assignments: list[tuple[list[ast.AST], ast.AST]], class_name: str | None) -> None:
+        """`class_name` is None outside a module or class body, "" in the module
+        body, and the class name inside a class body."""
+
+        def key_of_target(tgt: ast.AST) -> str | None:
+            if isinstance(tgt, (ast.Attribute, ast.Subscript)):
+                return key_of(tgt)
+            if isinstance(tgt, ast.Name) and class_name is not None:
+                return tgt.id
+            return None
+
+        for targets, value in assignments:
+            kind = construct_kind(value, imports)
+            if kind is None:
+                aggregate = aggregate_kinds(value, imports.is_thread_ctor)
+                if aggregate is None:
+                    continue
+                for tgt in targets:
+                    key = key_of_target(tgt)
+                    if key is not None:
+                        containers[key] = aggregate
+                continue
+            is_daemon = imports.is_thread_ctor(value) and _ctor_is_daemon(value)
+            for tgt in targets:
+                key = key_of_target(tgt)
+                if key is None:
+                    continue
+                if isinstance(tgt, ast.Subscript):
+                    containers[container_key(tgt)] = kind
+                bound = [key]
+                if isinstance(tgt, ast.Name) and class_name:
+                    # A class attribute is reachable as `self.<name>` and
+                    # `<Class>.<name>` from every scope that names it.
+                    bound += ["self." + key, f"{class_name}.{key}"]
+                for name in bound:
+                    kinds[name] = kind
+                    if is_daemon:
+                        daemons.add(name)
+
+    every_assignment: list[tuple[list[ast.AST], ast.AST]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            every_assignment.append((node.targets, node.value))
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            every_assignment.append(([node.target], node.value))
+    collect(every_assignment, None)
+
+    for body, class_name in [(tree.body, "")] + [
+        (node.body, node.name) for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+    ]:
+        statements: list[tuple[list[ast.AST], ast.AST]] = []
+        for stmt in body:
+            if isinstance(stmt, ast.Assign):
+                statements.append((stmt.targets, stmt.value))
+            elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+                statements.append(([stmt.target], stmt.value))
+        collect(statements, class_name)
+    return kinds, containers, daemons
+
+
 # ---------------------------------------------------------------------------
 # Scope analysis
 # ---------------------------------------------------------------------------
@@ -644,8 +803,13 @@ def analyze_scope(
     graph: Graph,
     body: list[ast.stmt],
     imports: Imports,
+    seed: dict[str, str] | None = None,
+    containers: dict[str, str] | None = None,
+    daemons: set[str] | None = None,
+    signature: bool = False,
 ) -> list[tuple[int, str]]:
-    kinds, canon, aggregates = collect_bindings(body, imports)
+    kinds, canon, aggregates = collect_bindings(body, imports, seed)
+    containers = containers or {}
     scope_nodes = list(iter_scope(body))
     statements = [n for n in scope_nodes if isinstance(n, ast.stmt)]
     calls = [n for n in scope_nodes if isinstance(n, ast.Call)]
@@ -666,6 +830,18 @@ def analyze_scope(
                 joins.update(graph.nodes_of_stmt.get(id(s), []))
         return all(dominated(n, joins) for n in nodes)
 
+    def container_holds(receiver: ast.AST, kind: str) -> bool:
+        """True when a subscript receiver reads a container that holds a launch.
+
+        `pool[key].start()` cannot be matched to a binding by key, so a container
+        the proof knows holds a launch is treated conservatively: the read is a
+        launch of that kind, reported unless a join names the same textual key.
+        """
+        if not isinstance(receiver, ast.Subscript):
+            return False
+        key = canon(container_key(receiver))
+        return containers.get(key) == kind or key in aggregates
+
     def thread_start(call: ast.Call) -> None:
         """Classify one `<receiver>.start()` call."""
         func = call.func
@@ -678,8 +854,8 @@ def analyze_scope(
             rule = "daemon-thread" if _ctor_is_daemon(receiver) else "thread-start"
             findings.append((call.lineno, rule))
             return
-        target = canon(key_of(receiver))
-        if kinds.get(target) != "thread":
+        target = canon(receiver_key(receiver))
+        if kinds.get(target) != "thread" and not container_holds(receiver, "thread"):
             return
         if not launch_joined(enclosing_stmt(call), "thread", target):
             rule = "daemon-thread" if target in daemon_threads else "thread-start"
@@ -687,7 +863,7 @@ def analyze_scope(
 
     # Threads that are started: the daemon flag only makes the report louder, and
     # the guard still reports the thread unless a join dominates.
-    daemon_threads: set[str] = set()
+    daemon_threads: set[str] = {canon(key) for key in (daemons or set())}
     for node in scope_nodes:
         if isinstance(node, ast.Call) and imports.is_thread_ctor(node):
             if _ctor_is_daemon(node):
@@ -718,6 +894,12 @@ def analyze_scope(
         if imports.is_thread_ctor(call):
             if enclosing_has(call, lambda n: isinstance(n, _COMPREHENSIONS)):
                 findings.append((call.lineno, "thread-comprehension"))
+            elif signature and _ctor_is_daemon(call):
+                # A constructor expression in a default argument, decorator or
+                # class base runs where its `def`/`class` statement sits, outside
+                # every body the join proof covers: a daemon thread there is
+                # reported even without a `.start()`.
+                findings.append((call.lineno, "daemon-thread"))
             continue
 
         if attr == "start":
@@ -799,12 +981,82 @@ def _start_stmt(nodes: list[ast.AST], name: str) -> ast.stmt | None:
     return None
 
 
-def scopes_of(tree: ast.Module) -> list[tuple[list[ast.stmt], str]]:
-    scopes = [(tree.body, "<module>")]
+def scopes_of(
+    tree: ast.Module, imports: Imports
+) -> list[tuple[list[ast.stmt], str, dict[str, str], set[str], bool]]:
+    """Every scope the proof walks: `(body, name, seed, daemons, signature)`.
+
+    The module body, every function body (including async ones), every class
+    body, and every constructor-expression position a `def`/`class` statement
+    evaluates. A function scope carries the parameter names its own default
+    arguments bind, so `def g(t=Thread(...)): t.start()` names a thread in `g`
+    and nowhere else.
+    """
+    scopes: list[tuple[list[ast.stmt], str, dict[str, str], set[str], bool]] = [
+        (tree.body, "<module>", {}, set(), False)
+    ]
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            scopes.append((node.body, scope_name(node)))
+            seed, daemons, positions = signature_positions(node, imports)
+            if positions:
+                scopes.append((positions, f"{scope_name(node)}.<signature>", {}, set(), True))
+            scopes.append((node.body, scope_name(node), seed, daemons, False))
+        elif isinstance(node, ast.ClassDef):
+            positions = class_signature_positions(node)
+            if positions:
+                scopes.append((positions, f"{scope_name(node)}.<signature>", {}, set(), True))
+            scopes.append((node.body, f"{scope_name(node)}.<class body>", {}, set(), False))
     return scopes
+
+
+def signature_positions(
+    node: ast.FunctionDef | ast.AsyncFunctionDef, imports: Imports
+) -> tuple[dict[str, str], set[str], list[ast.stmt]]:
+    """The constructor bindings a `def`'s default arguments make, and the
+    one-statement scope of the expressions the statement evaluates.
+
+    A default argument is evaluated where the `def` statement sits, outside the
+    body that follows it, so a launch in one cannot be joined. It also names the
+    parameter the body receives, so a constructor binding there seeds that body
+    and only that body: the name is not a module-level or class-level name.
+    """
+    args = node.args
+    positionals = list(args.posonlyargs) + list(args.args)
+    named_defaults = list(
+        zip(positionals[len(positionals) - len(args.defaults) :], args.defaults, strict=True)
+    )
+    named_defaults += [
+        (arg, default)
+        for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True)
+        if default is not None
+    ]
+    seed: dict[str, str] = {}
+    daemons: set[str] = set()
+    for arg, default in named_defaults:
+        kind = construct_kind(default, imports)
+        if kind is None:
+            continue
+        seed[key_of(arg)] = kind
+        if imports.is_thread_ctor(default) and _ctor_is_daemon(default):
+            daemons.add(key_of(arg))
+
+    positions = [*node.decorator_list, *(default for _, default in named_defaults)]
+    return seed, daemons, [_expression_statement(position) for position in positions]
+
+
+def class_signature_positions(node: ast.ClassDef) -> list[ast.stmt]:
+    """The one-statement scope of a class statement's decorators, bases and
+    keywords, which all run where the `class` statement sits."""
+    positions = [*node.decorator_list, *node.bases, *(kw.value for kw in node.keywords)]
+    return [_expression_statement(position) for position in positions]
+
+
+def _expression_statement(position: ast.AST) -> ast.stmt:
+    """Wrap an expression a `def`/`class` statement evaluates as its own
+    statement, so the launch rules run on it in its own scope."""
+    synthetic = ast.Expr(value=position)
+    ast.copy_location(synthetic, position)
+    return synthetic
 
 
 def scope_name(node: ast.AST) -> str:
@@ -836,11 +1088,22 @@ def scan_file(path: str, source: str) -> dict[str, Any]:
     attach_parents(tree)
     lines = source.splitlines()
     imports = collect_imports(tree)
+    seeded, containers, daemons = collect_container_bindings(tree, imports)
     findings: list[dict[str, Any]] = []
-    for body, name in scopes_of(tree):
+    for body, name, seed, scope_daemons, signature in scopes_of(tree, imports):
         graph = Graph()
         graph.seq(body, graph.exit, Ctx(graph.exit, graph.exit))
-        for lineno, rule in analyze_scope(graph, body, imports):
+        scope_seed = dict(seeded)
+        scope_seed.update(seed)
+        for lineno, rule in analyze_scope(
+            graph,
+            body,
+            imports,
+            seed=scope_seed,
+            containers=containers,
+            daemons=daemons | scope_daemons,
+            signature=signature,
+        ):
             findings.append(
                 {
                     "line": lineno,
