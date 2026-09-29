@@ -1393,6 +1393,11 @@ subprocess.run(["bash", "scripts/render-release-notes.sh", "--self-test"], check
 subprocess.run(["bash", "scripts/diagnose-release-state.sh", "--self-test"], check=True)
 subprocess.run(["bash", "scripts/sync-release-pr-generated.sh", "--self-test"], check=True)
 subprocess.run(["bash", "scripts/verify-release-please-token-safety.sh"], check=True)
+# The staging release-eligibility predicate carries the opt-in post-release main
+# back-merge exemption; its self-test proves the exemption stays narrow (a
+# chore-only feature PR, a lookalike or forked head ref, and a non-main push
+# merge all still fail).
+subprocess.run(["bash", "scripts/verify-release-eligibility.sh", "--self-test"], check=True)
 
 print("release-workflows: PASS")
 PY
