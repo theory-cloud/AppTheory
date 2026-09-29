@@ -68,6 +68,22 @@ require_job_contains() {
   ' "${path}" || fail "${description}; missing ${needle} in ${job} job"
 }
 
+require_job_not_contains() {
+  local path="$1"
+  local job="$2"
+  local needle="$3"
+  local description="$4"
+
+  if awk -v job="  ${job}:" -v needle="${needle}" '
+    $0 == job { in_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { in_job = 0 }
+    in_job && index($0, needle) { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "${path}"; then
+    fail "${description}; unexpected ${needle} in ${job} job"
+  fi
+}
+
 require_job_without_if() {
   local path="$1"
   local job="$2"
@@ -171,6 +187,25 @@ require_job_contains "${ci}" "prerelease-readiness" '--range "origin/premain..or
   "prerelease readiness must check the exact promotion range"
 require_contains "scripts/verify-release-eligibility.sh" "^(feat|fix|perf)(\\([^)]+\\))?(!)?: " \
   "the shared release-eligibility predicate must require a release-eligible conventional commit"
+
+# Post-release main back-merge exemption (the staging -> premain gate's only path
+# that can pass a range without a release-driving commit, so it must stay narrow).
+# The staging lane opts in with the pull-request head ref, the pull-request head
+# repository, and this repository; the promotion lane must never opt in, because
+# it promotes already-released content and a range with no driver there means the
+# promotion would ship nothing (or the wrong thing).
+require_contains "scripts/verify-release-eligibility.sh" "--allow-main-backmerge" \
+  "the shared release-eligibility predicate must implement the opt-in post-release main back-merge exemption"
+require_job_contains "${ci}" "staging-release-eligibility" "--allow-main-backmerge" \
+  "staging release eligibility must opt in to the post-release main back-merge exemption"
+require_job_contains "${ci}" "staging-release-eligibility" '--head-ref "${PR_HEAD_REF}"' \
+  "staging release eligibility must feed the exemption the pull-request head ref"
+require_job_contains "${ci}" "staging-release-eligibility" '--head-repo "${PR_HEAD_REPOSITORY}"' \
+  "staging release eligibility must feed the exemption the pull-request head repository, so a fork branch named main cannot take it"
+require_job_contains "${ci}" "staging-release-eligibility" '--repository "${GITHUB_REPOSITORY}"' \
+  "staging release eligibility must name this repository for the exemption's trusted-repository comparison"
+require_job_not_contains "${ci}" "prerelease-readiness" "--allow-main-backmerge" \
+  "prerelease readiness must never take the post-release main back-merge exemption"
 
 # Toolchain-provisioning parity: the promotion-path rubric job and the PR-to-
 # staging rubric job are the same job, so its pinned toolchain is provisioned

@@ -33,13 +33,29 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging'
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/verify-release-eligibility.sh
+      - name: Verify user-facing conventional commits exist
+        run: |
+          bash scripts/verify-release-eligibility.sh \
+            --range "origin/premain..origin/staging" \
+            --context "prerelease readiness"
   staging-release-eligibility:
     name: Release eligibility (staging -> premain)
     if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')
     runs-on: ubuntu-latest
     steps:
-      - run: bash scripts/verify-release-eligibility.sh
+      - name: Verify the promotion range stays release-eligible
+        env:
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          bash scripts/verify-release-eligibility.sh \
+            --range "origin/premain..HEAD" \
+            --context "staging release eligibility" \
+            --allow-main-backmerge \
+            --head-ref "${PR_HEAD_REF}" \
+            --head-repo "${PR_HEAD_REPOSITORY}" \
+            --repository "${GITHUB_REPOSITORY}"
   builds:
     name: Verify deterministic builds
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'
@@ -86,6 +102,7 @@ func evaluateText(t *testing.T, text string) ([]string, error) {
 	}
 	failures := checkParity(jobs)
 	failures = append(failures, checkExactConditions(jobs)...)
+	failures = append(failures, checkBackmergeExemption(jobs)...)
 	failures = append(failures, checkExemptionsAreLive(jobs)...)
 	failures = append(failures, checkCanary(jobs)...)
 	failures = append(failures, checkUnconditionalSteps(jobs)...)
@@ -392,4 +409,53 @@ func TestGuardAgainstRealWorkflows(t *testing.T) {
 	if result.scanned == 0 || result.classified == 0 {
 		t.Fatalf("expected the real tree to scan and classify workflows, got scanned=%d classified=%d", result.scanned, result.classified)
 	}
+}
+
+// TestGuardRejectsEligibilityBackmergeExemptionRemoval pins the fix for the
+// post-release back-merge regression: dropping the opt-in from the staging
+// eligibility step hands the gate back to the plain predicate, which fails the
+// returned main back-merge, so it must fail closed here.
+func TestGuardRejectsEligibilityBackmergeExemptionRemoval(t *testing.T) {
+	text := strings.Replace(baseWorkflow, "            --allow-main-backmerge \\\n", "", 1)
+	if text == baseWorkflow {
+		t.Fatal("failed to build the exemption-removal fixture")
+	}
+	mustFailWith(t, text, "must opt in to the post-release main back-merge exemption")
+}
+
+// TestGuardRejectsBackmergeOptInOutsideTheStagingLane: the promotion lane
+// promotes released content, so opting it into the exemption would let a range
+// with no release-driving commit pass the gate that exists to catch exactly that.
+func TestGuardRejectsBackmergeOptInOnPromotionLane(t *testing.T) {
+	text := strings.Replace(baseWorkflow, `            --context "prerelease readiness"`+"\n",
+		"            --context \"prerelease readiness\" \\\n            --allow-main-backmerge\n", 1)
+	if text == baseWorkflow {
+		t.Fatal("failed to build the promotion-lane fixture")
+	}
+	mustFailWith(t, text, "must not opt in to the post-release main back-merge exemption")
+}
+
+// TestGuardRejectsBackmergeHeadBindingsWidened: the exemption is only narrow
+// while the step feeds it the pull-request head ref, the pull-request head
+// repository, and this repository. Rebinding or dropping any of them fails.
+func TestGuardRejectsBackmergeHeadBindingsWidened(t *testing.T) {
+	cases := map[string]string{
+		"head ref rebound to the running branch": "          PR_HEAD_REF: ${{ github.ref_name }}\n",
+		"head repository binding dropped":        "",
+	}
+	for label, replacement := range cases {
+		text := strings.Replace(baseWorkflow,
+			"          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}\n", replacement, 1)
+		if text == baseWorkflow {
+			t.Fatalf("%s: fixture was not modified", label)
+		}
+		mustFailWith(t, text, "PR_HEAD_REF")
+	}
+
+	text := strings.Replace(baseWorkflow,
+		"          PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}\n", "", 1)
+	if text == baseWorkflow {
+		t.Fatal("head repository: fixture was not modified")
+	}
+	mustFailWith(t, text, "PR_HEAD_REPOSITORY")
 }
