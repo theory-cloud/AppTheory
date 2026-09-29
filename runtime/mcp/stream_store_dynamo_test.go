@@ -31,9 +31,12 @@ func TestDynamoStreamStore_CreateSubscribeReplayAndDeleteSession(t *testing.T) {
 	store1.pollInterval = time.Millisecond
 	store2.pollInterval = time.Millisecond
 
-	now := time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)
-	store1.now = func() time.Time { return now }
-	store2.now = func() time.Time { return now }
+	// The subscription pump reads the clock from its own goroutine while this test
+	// advances it, so the instant is shared through a mutex-guarded clock rather
+	// than a captured variable that the test reassigns mid-test.
+	clock := newMutableClock(time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC))
+	store1.now = clock.Now
+	store2.now = clock.Now
 
 	streamID, err := store1.Create(context.Background(), "sess-1")
 	require.NoError(t, err)
@@ -42,7 +45,7 @@ func TestDynamoStreamStore_CreateSubscribeReplayAndDeleteSession(t *testing.T) {
 	meta, ok := db.getStreamRecord("sess-1", dynamoStreamMetadataEventID(streamID))
 	require.True(t, ok)
 	require.Equal(t, dynamoStreamRecordKindStream, meta.Kind)
-	require.Equal(t, now.Add(15*time.Minute).Unix(), meta.ExpiresAt)
+	require.Equal(t, clock.Now().Add(15*time.Minute).Unix(), meta.ExpiresAt)
 
 	eventID1, err := store1.Append(context.Background(), "sess-1", streamID, json.RawMessage(`{"seq":1}`))
 	require.NoError(t, err)
@@ -53,7 +56,7 @@ func TestDynamoStreamStore_CreateSubscribeReplayAndDeleteSession(t *testing.T) {
 	require.Equal(t, dynamoStreamRecordKindEvent, event1.Kind)
 	require.Equal(t, streamID, event1.StreamID)
 	require.Equal(t, json.RawMessage(`{"seq":1}`), event1.Data)
-	require.Equal(t, now.Add(15*time.Minute).Unix(), event1.ExpiresAt)
+	require.Equal(t, clock.Now().Add(15*time.Minute).Unix(), event1.ExpiresAt)
 
 	ch, err := store2.Subscribe(context.Background(), "sess-1", streamID, "")
 	require.NoError(t, err)
@@ -61,7 +64,7 @@ func TestDynamoStreamStore_CreateSubscribeReplayAndDeleteSession(t *testing.T) {
 	require.Equal(t, eventID1, got1.ID)
 	require.JSONEq(t, `{"seq":1}`, string(got1.Data))
 
-	now = now.Add(2 * time.Minute)
+	clock.Advance(2 * time.Minute)
 	eventID2, err := store1.Append(context.Background(), "sess-1", streamID, json.RawMessage(`{"seq":2}`))
 	require.NoError(t, err)
 	require.Equal(t, dynamoStreamEventIDForSeq(2), eventID2)
@@ -76,7 +79,7 @@ func TestDynamoStreamStore_CreateSubscribeReplayAndDeleteSession(t *testing.T) {
 	meta, ok = db.getStreamRecord("sess-1", dynamoStreamMetadataEventID(streamID))
 	require.True(t, ok)
 	require.True(t, meta.Closed)
-	require.Equal(t, now.Add(15*time.Minute).Unix(), meta.ExpiresAt)
+	require.Equal(t, clock.Now().Add(15*time.Minute).Unix(), meta.ExpiresAt)
 
 	replay, err := store2.Subscribe(context.Background(), "sess-1", streamID, eventID1)
 	require.NoError(t, err)

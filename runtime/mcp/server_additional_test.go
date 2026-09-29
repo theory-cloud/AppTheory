@@ -697,4 +697,21 @@ func TestGET_NoLastEventID_ReturnsEmptySSE(t *testing.T) {
 	if len(resp.Body) != 0 {
 		t.Fatalf("expected empty SSE body, got: %q", string(resp.Body))
 	}
+	if resp.BodyReader == nil {
+		t.Fatal("expected the GET listener BodyReader to be set")
+	}
+
+	// The keepalive comment is written by a producer joined to the body: the body
+	// reports EOF only after that producer has returned. Draining it is therefore
+	// both the assertion (one keepalive frame, then EOF) and what releases the
+	// producer. A listener body that is neither read nor closed keeps its producer
+	// blocked on the pipe write for the rest of the test process, where a later
+	// invocation-scope check would attribute it to the wrong test.
+	listener, err := io.ReadAll(resp.BodyReader)
+	if err != nil {
+		t.Fatalf("read listener body: %v", err)
+	}
+	if got := string(listener); got != ": keepalive\n\n" {
+		t.Fatalf("listener body = %q, want %q", got, ": keepalive\n\n")
+	}
 }
