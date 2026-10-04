@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Bug Fixes
+
+* **cdk:** `AppTheoryVectorIndex` emits no `EncryptionConfiguration` unless `encryptionKey` is provided, so the S3 Vectors service default (SSE-S3 / AES256) applies and upgrading AppTheory no longer replaces an already-deployed vector bucket or index. Consumers that pass `encryptionKey` keep SSE-KMS unchanged.
+
 ## [5.0.0](https://github.com/theory-cloud/AppTheory/compare/v4.5.0...v5.0.0) (2026-09-28)
 
 
