@@ -99,12 +99,11 @@ const expectation = {
   advisoryId: "GHSA-rgw5-rvv9-x895",
   advisoryUrl: "https://github.com/advisories/GHSA-rgw5-rvv9-x895",
   alias: "CVE-2026-69152",
-  // Re-anchored 2026-09-22 (cdk-constructs group dependency consolidation):
-  // the group moves aws-cdk-lib 2.269.0 -> 2.270.0 across cdk/ and every
-  // examples/cdk project. Re-verified against the new lockfiles: the release
-  // still bundles the patched minimatch 10.2.5 -> brace-expansion 5.0.9 path
-  // asserted below, so only the cdkVersion anchor moves.
-  cdkVersion: "2.270.0",
+  // Re-anchored 2026-10-04 (Wave 3 CDK currency): aws-cdk-lib moves 2.270.0 ->
+  // 2.271.0 across cdk/ and every examples/cdk project. Re-verified against the
+  // new lockfile: 2.271.0 still bundles the patched minimatch 10.2.5 ->
+  // brace-expansion 5.0.9 path asserted below, so only the cdkVersion anchor moves.
+  cdkVersion: "2.271.0",
   fixedVersions: ["1.1.18", "2.1.4", "3.0.6", "5.0.9"],
   lockfile: canonicalLockfilePath(lockfilePath),
   minimatchVersion: "10.2.5",

@@ -6,7 +6,7 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.270.0",
+    "aws-cdk-lib": "2.271.0",
     "constructs": "^10.8.1"
   },
   "dependencyClosure": {
@@ -29828,5 +29828,5 @@
     }
   },
   "version": "5.0.0",
-  "fingerprint": "HoMUajK/y26y39owAN/x8cO1hgPKJZywVSEk+XwNRVw="
+  "fingerprint": "TeMlkfd1Xe1o8Lqa1mArG/RvmkUEZJc9tB2r3YfpcHs="
 }
