@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -19,53 +18,36 @@ import (
 // writer, and the streamed tool body) has returned once the body reader reaches
 // EOF or is closed, so nothing outlives the invocation that started it.
 
-func goroutineStacksContaining(marker string) string {
-	buf := make([]byte, 1<<20)
-	for {
-		n := runtime.Stack(buf, true)
-		if n < len(buf) {
-			break
-		}
-		buf = make([]byte, 2*len(buf))
-	}
+// joinWaitBudget bounds how long a test waits for an event it expects to happen.
+// It is a fail-safe that keeps a broken join from hanging the package until its
+// alarm, never a timing margin: the assertions in this file prove what they
+// claim from ordering and state, not from how long an operation took.
+const joinWaitBudget = 2 * time.Second
 
-	var leaked []string
-	for _, block := range strings.Split(string(buf), "\n\n") {
-		if strings.Contains(block, marker) {
-			leaked = append(leaked, block)
-		}
-	}
-	return strings.Join(leaked, "\n\n")
-}
-
+// assertNoGoroutineFor asserts that no goroutine containing marker is running.
+// It is not scoped to one invocation, so prefer assertNoNewGoroutineFor when the
+// test can snapshot the process's goroutines first.
 func assertNoGoroutineFor(t *testing.T, marker, when string) {
 	t.Helper()
 
-	deadline := time.Now().Add(2 * time.Second)
+	assertNoNewGoroutineFor(t, nil, marker, when)
+}
+
+// assertNoNewGoroutineFor asserts that no goroutine started after the snapshot
+// still contains marker. Scoping the check to the invocation under test keeps a
+// failure attributable: a producer that another test in the process left running
+// is that test's leak, and a passing test is never failed by its neighbors.
+func assertNoNewGoroutineFor(t *testing.T, before map[int]struct{}, marker, when string) {
+	t.Helper()
+
+	deadline := time.Now().Add(joinWaitBudget)
 	for {
-		if leaked := goroutineStacksContaining(marker); leaked == "" {
+		if leaked := goroutineStacksForNewIDs(before, marker); leaked == "" {
 			return
 		} else if time.Now().After(deadline) {
 			t.Fatalf("%s: producer goroutine outlived its invocation:\n%s", when, leaked)
 		}
 		time.Sleep(time.Millisecond)
-	}
-}
-
-// assertStreamProducersJoined asserts that none of the goroutines that can
-// produce a streamed MCP response body is still running.
-func assertStreamProducersJoined(t *testing.T, when string) {
-	t.Helper()
-
-	for _, marker := range []string{
-		"internal/streamjoin.New.func",
-		"forwardStreamEvents",
-		"(*streamScope).goRun.func",
-		"(*streamScope).goJoin.func",
-		"(*MemoryStreamStore).pumpSubscription",
-		"(*MemoryStreamStore).broadcastOnDone.func",
-	} {
-		assertNoGoroutineFor(t, marker, when)
 	}
 }
 
@@ -79,6 +61,7 @@ func TestSessionListenerJoinsProducerOnClose(t *testing.T) {
 	headers := sessionHeaders(sessionID)
 	headers["accept"] = []string{"text/event-stream"}
 
+	before := goroutineIDs()
 	resp, err := invokeHandlerWithMethod(context.Background(), s, "GET", nil, headers)
 	if err != nil {
 		t.Fatalf("invoke GET: %v", err)
@@ -101,7 +84,7 @@ func TestSessionListenerJoinsProducerOnClose(t *testing.T) {
 		t.Fatalf("close listener body: %v", err)
 	}
 
-	assertNoGoroutineFor(t, "internal/streamjoin.New.func", "session listener abandoned by the adapter")
+	assertNoNewGoroutineFor(t, before, "internal/streamjoin.New.func", "session listener abandoned by the adapter")
 }
 
 func TestSessionListenerJoinsProducerOnEOF(t *testing.T) {
@@ -111,6 +94,7 @@ func TestSessionListenerJoinsProducerOnEOF(t *testing.T) {
 	headers := sessionHeaders(sessionID)
 	headers["accept"] = []string{"text/event-stream"}
 
+	before := goroutineIDs()
 	resp, err := invokeHandlerWithMethod(context.Background(), s, "GET", nil, headers)
 	if err != nil {
 		t.Fatalf("invoke GET: %v", err)
@@ -124,7 +108,7 @@ func TestSessionListenerJoinsProducerOnEOF(t *testing.T) {
 		t.Fatalf("expected a keepalive comment, got %q", string(body))
 	}
 
-	assertNoGoroutineFor(t, "internal/streamjoin.New.func", "session listener served to EOF")
+	assertNoNewGoroutineFor(t, before, "internal/streamjoin.New.func", "session listener served to EOF")
 }
 
 func TestToolsCallStreamingJoinsToolWhenBodyCloses(t *testing.T) {
@@ -132,20 +116,20 @@ func TestToolsCallStreamingJoinsToolWhenBodyCloses(t *testing.T) {
 	sessionID := initializeSession(t, s)
 
 	toolFinished := make(chan struct{})
-	release := make(chan struct{})
 	if err := s.registry.RegisterStreamingTool(
 		ToolDef{
 			Name:        "join_tool",
-			Description: "Emits progress, then blocks",
+			Description: "Emits progress, then holds work of its own",
 			InputSchema: json.RawMessage(`{"type":"object"}`),
 		},
-		func(ctx context.Context, _ json.RawMessage, emit func(SSEEvent)) (*ToolResult, error) {
+		func(_ context.Context, _ json.RawMessage, emit func(SSEEvent)) (*ToolResult, error) {
 			emit(SSEEvent{Data: map[string]any{"seq": 1}})
 			defer close(toolFinished)
-			select {
-			case <-ctx.Done():
-			case <-release:
-			}
+			// The tool ignores cancellation and holds work of its own after its
+			// last frame. Nothing in this test releases it, so a release that
+			// joined it cannot observe it still running, and a release that
+			// skipped the join observes it immediately.
+			time.Sleep(joinDominanceLinger)
 			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
 		},
 	); err != nil {
@@ -156,6 +140,7 @@ func TestToolsCallStreamingJoinsToolWhenBodyCloses(t *testing.T) {
 	headers := sessionHeaders(sessionID)
 	headers["accept"] = []string{"application/json, text/event-stream"}
 
+	before := goroutineIDs()
 	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
@@ -174,35 +159,43 @@ func TestToolsCallStreamingJoinsToolWhenBodyCloses(t *testing.T) {
 		t.Fatal("expected the streamed body to be closable")
 	}
 
-	// The tool holds work of its own, so closing the body joins it rather than
-	// canceling it: the close must not return until the tool has finished.
+	// The tool holds work of its own, so releasing the body joins it rather than
+	// canceling it: the release must not return while the tool is still running.
+	//
+	// The assertion is ordering, not elapsed time, and it does not race: nothing
+	// else can release the tool, so the closer can only observe the tool finished
+	// if the release itself waited for it.
+	releasedWhileToolRunning := make(chan bool, 1)
 	closed := make(chan struct{})
 	go func() {
 		defer close(closed)
-		if err := closer.Close(); err != nil {
+		err := closer.Close()
+		select {
+		case <-toolFinished:
+			releasedWhileToolRunning <- false
+		default:
+			releasedWhileToolRunning <- true
+		}
+		if err != nil {
 			t.Errorf("close streamed body: %v", err)
 		}
 	}()
 
 	select {
 	case <-closed:
-		t.Fatal("closing the streamed body returned while the tool body was still running")
-	case <-time.After(20 * time.Millisecond):
-	}
-
-	close(release)
-	select {
-	case <-toolFinished:
-	case <-time.After(2 * time.Second):
-		t.Fatal("tool body did not finish")
-	}
-	select {
-	case <-closed:
-	case <-time.After(2 * time.Second):
+	case <-time.After(joinWaitBudget):
 		t.Fatal("closing the streamed body did not join the tool body")
 	}
+	select {
+	case <-toolFinished:
+	default:
+		t.Fatal("the streamed body was released while the tool body was still running")
+	}
+	if <-releasedWhileToolRunning {
+		t.Fatal("the streamed body was released before the tool body finished")
+	}
 
-	assertStreamProducersJoined(t, "streamed tools/call body abandoned by the adapter")
+	assertNoNewStreamProducers(t, before, "streamed tools/call body abandoned by the adapter")
 }
 
 func TestToolsCallStreamingJoinsToolOnEOF(t *testing.T) {
@@ -227,6 +220,7 @@ func TestToolsCallStreamingJoinsToolOnEOF(t *testing.T) {
 	headers := sessionHeaders(sessionID)
 	headers["accept"] = []string{"application/json, text/event-stream"}
 
+	before := goroutineIDs()
 	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
@@ -240,13 +234,14 @@ func TestToolsCallStreamingJoinsToolOnEOF(t *testing.T) {
 		t.Fatalf("expected the tool result in the stream, got:\n%s", string(all))
 	}
 
-	assertStreamProducersJoined(t, "streamed tools/call body served to EOF")
+	assertNoNewStreamProducers(t, before, "streamed tools/call body served to EOF")
 }
 
 func TestStreamSubscriptionJoinsPumpAndWatcher(t *testing.T) {
 	store := NewMemoryStreamStore()
 	ctx, cancel := context.WithCancel(context.Background())
 
+	before := goroutineIDs()
 	streamID, err := store.Create(ctx, "sess-join")
 	if err != nil {
 		t.Fatalf("create stream: %v", err)
@@ -260,19 +255,31 @@ func TestStreamSubscriptionJoinsPumpAndWatcher(t *testing.T) {
 		t.Fatalf("subscribe: %v", err)
 	}
 
+	delivered := make(chan struct{})
 	go func() {
 		for range events {
+			select {
+			case <-delivered:
+			default:
+				close(delivered)
+			}
 		}
 	}()
 
-	time.Sleep(10 * time.Millisecond)
+	// The pump is live once it has delivered the event appended above. Waiting on
+	// that state, rather than on a grace period, keeps the cancel from racing a
+	// pump that never started.
+	select {
+	case <-delivered:
+	case <-time.After(joinWaitBudget):
+		t.Fatal("the subscription pump never delivered the appended stream event")
+	}
 	cancel()
 
 	// The subscription's pump and the watcher it starts both stop with the
 	// subscription context; neither may keep running.
-	time.Sleep(20 * time.Millisecond)
-	assertNoGoroutineFor(t, "(*MemoryStreamStore).pumpSubscription", "stream subscription canceled")
-	assertNoGoroutineFor(t, "(*MemoryStreamStore).broadcastOnDone.func", "stream subscription canceled")
+	assertNoNewGoroutineFor(t, before, "(*MemoryStreamStore).pumpSubscription", "stream subscription canceled")
+	assertNoNewGoroutineFor(t, before, "(*MemoryStreamStore).broadcastOnDone.func", "stream subscription canceled")
 }
 
 func TestStreamedBodyReleaseJoinsScopeBeforeClosing(t *testing.T) {

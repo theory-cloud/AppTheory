@@ -27,7 +27,10 @@ type AppTheoryVectorIndexProps struct {
 	DistanceMetric *string `field:"optional" json:"distanceMetric" yaml:"distanceMetric"`
 	// KMS key for vector bucket/index encryption.
 	//
-	// When omitted, S3-managed AES256 encryption is used.
+	// When omitted, the construct emits no `EncryptionConfiguration` on the vector bucket or index, so
+	// S3 Vectors applies its own service default (SSE-S3 with AES256). Leaving the property off the
+	// template also keeps an already-deployed bucket or index from being replaced when the construct is
+	// upgraded. Provide `encryptionKey` to opt into SSE-KMS with that key.
 	EncryptionKey awskms.IKey `field:"optional" json:"encryptionKey" yaml:"encryptionKey"`
 	// Existing vector bucket name to attach the index to without creating a bucket.
 	//

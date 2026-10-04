@@ -239,17 +239,28 @@ jobs:
         with:
           fetch-depth: 0
       - name: Verify the promotion range stays release-eligible
+        env:
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
 
           # On a PR, HEAD is the pull request merge commit, so
           # origin/premain..HEAD is the range that would exist after the merge;
           # on a push it is the merged staging SHA, which is the exact range the
-          # staging → premain promotion PR re-checks.
-          git fetch origin premain staging --force
+          # staging → premain promotion PR re-checks. origin/main is fetched for
+          # the post-release main back-merge exemption only: after a stable
+          # release the returned main branch carries nothing release-please can
+          # ship, so that one merge must not read as a missing release driver.
+          git fetch origin premain staging main --force
           bash scripts/verify-release-eligibility.sh \
             --range "origin/premain..HEAD" \
-            --context "staging release eligibility"
+            --context "staging release eligibility" \
+            --allow-main-backmerge \
+            --head-ref "${PR_HEAD_REF}" \
+            --head-repo "${PR_HEAD_REPOSITORY}" \
+            --repository "${GITHUB_REPOSITORY}"
 
   version-alignment:
     name: Version alignment

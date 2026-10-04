@@ -1724,6 +1724,70 @@ test("AppTheoryVectorIndex fails closed for invalid bucket/index props", () => {
   );
 });
 
+test("AppTheoryVectorIndex omits encryption configuration when no key is provided", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryVectorIndex(stack, "VectorIndex", {
+    indexName: "semantic",
+    dimension: 3,
+  });
+
+  const template = assertions.Template.fromStack(stack);
+  const buckets = template.findResources("AWS::S3Vectors::VectorBucket");
+  const indexes = template.findResources("AWS::S3Vectors::Index");
+  assert.equal(Object.keys(buckets).length, 1, "expected one vector bucket resource");
+  assert.equal(Object.keys(indexes).length, 1, "expected one vector index resource");
+  for (const resource of [...Object.values(buckets), ...Object.values(indexes)]) {
+    assert.equal(
+      resource.Properties?.EncryptionConfiguration,
+      undefined,
+      "no-key AppTheoryVectorIndex must not emit EncryptionConfiguration so the S3 Vectors service default applies without replacing deployed resources",
+    );
+  }
+});
+
+test("AppTheoryVectorIndex emits SSE-KMS encryption configuration when a key is provided", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const key = new kms.Key(stack, "VectorKey");
+
+  new apptheory.AppTheoryVectorIndex(stack, "VectorIndex", {
+    indexName: "semantic",
+    dimension: 3,
+    encryptionKey: key,
+  });
+
+  const template = assertions.Template.fromStack(stack);
+  const bucket = Object.values(template.findResources("AWS::S3Vectors::VectorBucket"))[0];
+  const index = Object.values(template.findResources("AWS::S3Vectors::Index"))[0];
+  assert.equal(bucket.Properties?.EncryptionConfiguration?.SseType, "aws:kms");
+  assert.equal(index.Properties?.EncryptionConfiguration?.SseType, "aws:kms");
+  assert.ok(bucket.Properties?.EncryptionConfiguration?.KmsKeyArn, "bucket must carry the KMS key ARN");
+  assert.ok(index.Properties?.EncryptionConfiguration?.KmsKeyArn, "index must carry the KMS key ARN");
+});
+
+test("AppTheoryVectorIndex existing-bucket mode omits encryption configuration without a key", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryVectorIndex(stack, "VectorIndex", {
+    createVectorBucket: false,
+    existingVectorBucketName: "existing-vectors",
+    indexName: "semantic",
+    dimension: 3,
+  });
+
+  const template = assertions.Template.fromStack(stack);
+  assert.equal(
+    Object.keys(template.findResources("AWS::S3Vectors::VectorBucket")).length,
+    0,
+    "existing-bucket mode must not create a vector bucket",
+  );
+  const index = Object.values(template.findResources("AWS::S3Vectors::Index"))[0];
+  assert.equal(index.Properties?.EncryptionConfiguration, undefined);
+});
+
 test("AppTheoryKinesisStream (on-demand) synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");

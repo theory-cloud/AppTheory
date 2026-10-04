@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 )
@@ -591,20 +591,30 @@ func TestTaskRuntimeToolsCall_ConcurrentResultWaitersBoundReadPressure(t *testin
 	deadline := time.After(time.Second)
 	ticker := time.NewTicker(time.Millisecond)
 	defer ticker.Stop()
-	for store.gets.Load() < waiters {
+	for store.readCount() < waiters {
 		select {
 		case <-deadline:
-			t.Fatalf("timed out waiting for %d initial task reads; got %d", waiters, store.gets.Load())
+			t.Fatalf("timed out waiting for %d initial task reads; got %d", waiters, store.readCount())
 		case <-ticker.C:
 		}
 	}
 
-	initialReads := store.gets.Load()
+	initialReads := store.readCount()
+	firstReadAt := store.readAt(0)
 	time.Sleep(defaultTaskResultWait / 2)
-	if got := store.gets.Load(); got != initialReads {
-		t.Fatalf("expected no additional reads before %s poll floor, got initial=%d current=%d", defaultTaskResultWait, initialReads, got)
+
+	// The property is the poll floor, so the assertion is on the interval: a read
+	// inside the floor is a waiter that ignored it, while a read after it is the
+	// floor doing its job — however late this process's own sleep woke up. An
+	// assertion on the bare count would fail the second case too.
+	for i := initialReads; i < store.readCount(); i++ {
+		if gap := store.readAt(i).Sub(firstReadAt); gap < defaultTaskResultWait {
+			t.Fatalf("expected no additional reads before the %s poll floor, got one after %s (initial=%d)", defaultTaskResultWait, gap, initialReads)
+		}
 	}
 
+	// Cancellation stops every waiter: no read may happen after this point.
+	readsAtCancel := store.readCount()
 	cancel()
 	for i := 0; i < waiters; i++ {
 		select {
@@ -617,8 +627,8 @@ func TestTaskRuntimeToolsCall_ConcurrentResultWaitersBoundReadPressure(t *testin
 		}
 	}
 
-	if got := store.gets.Load(); got != initialReads {
-		t.Fatalf("expected cancellation before poll interval to avoid extra reads, got initial=%d final=%d", initialReads, got)
+	if got := store.readCount(); got != readsAtCancel {
+		t.Fatalf("expected cancellation to stop polling, got initial=%d at-cancel=%d final=%d", initialReads, readsAtCancel, got)
 	}
 }
 
@@ -1038,12 +1048,28 @@ func (s *nilListTaskStore) List(context.Context, TaskListRequest) (*TaskListResu
 
 type countingTaskStore struct {
 	TaskStore
-	gets atomic.Int64
+
+	mu    sync.Mutex
+	reads []time.Time
 }
 
 func (s *countingTaskStore) Get(ctx context.Context, lookup TaskLookup) (*TaskRecord, error) {
-	s.gets.Add(1)
+	s.mu.Lock()
+	s.reads = append(s.reads, time.Now())
+	s.mu.Unlock()
 	return s.TaskStore.Get(ctx, lookup)
+}
+
+func (s *countingTaskStore) readCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.reads)
+}
+
+func (s *countingTaskStore) readAt(i int) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reads[i]
 }
 
 func TestTaskRuntimeHelpers_ErrorBranches(t *testing.T) {

@@ -758,7 +758,8 @@ func TestJoinStreamingResponseBodyConvertsBodyStreamToAClosableReader(t *testing
 // TestStreamjoinBodyCloseWaitsForASlowProducer is the strict join test for the
 // streamjoin baseline entry: a producer that lingers after the body is closed
 // must finish before Close returns. Removing the join-wait lets Close return
-// while the producer is still running, which the elapsed-time assertion catches.
+// while the producer is still running, which the ordering assertion below
+// catches.
 func TestStreamjoinBodyCloseWaitsForASlowProducer(t *testing.T) {
 	const linger = 200 * time.Millisecond
 	finished := make(chan struct{})
@@ -769,15 +770,13 @@ func TestStreamjoinBodyCloseWaitsForASlowProducer(t *testing.T) {
 		time.Sleep(linger)
 	})
 
-	started := time.Now()
+	// The producer closes finished as it exits and Close joins the producer, so
+	// the marker is always closed by the time Close returns: the join is proven
+	// by that ordering, never by how long Close took.
 	if err := body.Close(); err != nil {
 		t.Fatalf("close streamjoin body: %v", err)
 	}
-	elapsed := time.Since(started)
-	if elapsed < linger/2 {
-		t.Fatalf("Close returned after %s, before the producer exited (linger %s)", elapsed, linger)
-	}
-	assertClosedBeforeReturn(t, finished)
+	assertExitedBeforeReturn(t, finished, "streamjoin close with a slow producer")
 	assertNoGoroutineFor(t, "internal/streamjoin.New.func", "streamjoin close with a slow producer")
 }
 
@@ -799,5 +798,20 @@ func assertClosedBeforeReturn(t *testing.T, finished <-chan struct{}) {
 	case <-finished:
 	case <-time.After(2 * time.Second):
 		t.Fatal("the adapter returned while the body's producer was still running")
+	}
+}
+
+// assertExitedBeforeReturn fails the test when the producer behind a released
+// body had not exited at the instant the release returned. It is the strict form
+// of assertClosedBeforeReturn: the release joins the producer, so the marker is
+// already closed and no grace window is needed — or wanted, because a window
+// also passes a release that returned early and let the producer finish after it.
+func assertExitedBeforeReturn(t *testing.T, finished <-chan struct{}, when string) {
+	t.Helper()
+
+	select {
+	case <-finished:
+	default:
+		t.Fatalf("%s: the body was released before its producer exited", when)
 	}
 }

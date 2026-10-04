@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -287,11 +288,15 @@ func TestEmbeddersAndSemanticIndexFailClosed(t *testing.T) {
 	if !reflect.DeepEqual(embedding, []float32{0.5, 0.25}) {
 		t.Fatalf("TitanEmbedder.Embed() = %#v", embedding)
 	}
-	if got := aws.ToString(runtime.inputs[0].ModelId); got != "custom-model" {
+	first := runtime.firstInput()
+	if first == nil {
+		t.Fatal("expected the runtime to have recorded a request")
+	}
+	if got := aws.ToString(first.ModelId); got != "custom-model" {
 		t.Fatalf("ModelId = %q, want custom-model", got)
 	}
 	var request titanEmbedRequest
-	if unmarshalErr := json.Unmarshal(runtime.inputs[0].Body, &request); unmarshalErr != nil {
+	if unmarshalErr := json.Unmarshal(first.Body, &request); unmarshalErr != nil {
 		t.Fatalf("request body JSON error = %v", unmarshalErr)
 	}
 	if request.InputText != "semantic query" || request.Dimensions != 2 || !request.Normalize {
@@ -532,7 +537,9 @@ func TestEmbeddersAndSemanticIndexAdditionalBranches(t *testing.T) {
 	if len(embedding) != DefaultEmbeddingDimensions {
 		t.Fatalf("default embedding length = %d, want %d", len(embedding), DefaultEmbeddingDimensions)
 	}
-	if got := aws.ToString(runtime.inputs[0].ModelId); got != DefaultTitanEmbedTextModelID {
+	if first := runtime.firstInput(); first == nil {
+		t.Fatal("expected the runtime to have recorded a request")
+	} else if got := aws.ToString(first.ModelId); got != DefaultTitanEmbedTextModelID {
 		t.Fatalf("default model ID = %q, want %q", got, DefaultTitanEmbedTextModelID)
 	}
 	if _, err := (*TitanEmbedder)(nil).Embed(ctx, "x"); !errors.Is(err, ErrInvalidConfig) {
@@ -637,17 +644,33 @@ func (c *recordingS3VectorsClient) DeleteVectors(_ context.Context, input *s3vec
 }
 
 type recordingBedrockRuntime struct {
+	mu     sync.Mutex
 	inputs []*bedrockruntime.InvokeModelInput
 	body   []byte
 	err    error
 }
 
 func (r *recordingBedrockRuntime) InvokeModel(_ context.Context, input *bedrockruntime.InvokeModelInput, _ ...func(*bedrockruntime.Options)) (*bedrockruntime.InvokeModelOutput, error) {
+	// EmbedBatch runs its workers concurrently, so the recorded requests are
+	// appended under a lock: an unsynchronized append loses requests to a second
+	// writer and is a data race.
+	r.mu.Lock()
 	r.inputs = append(r.inputs, input)
+	r.mu.Unlock()
 	if r.err != nil {
 		return nil, r.err
 	}
 	return &bedrockruntime.InvokeModelOutput{Body: r.body}, nil
+}
+
+// firstInput returns the earliest recorded request.
+func (r *recordingBedrockRuntime) firstInput() *bedrockruntime.InvokeModelInput {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.inputs) == 0 {
+		return nil
+	}
+	return r.inputs[0]
 }
 
 type countMismatchEmbedder struct{}

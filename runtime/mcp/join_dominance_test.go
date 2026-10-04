@@ -12,8 +12,9 @@ import (
 // scope and the stream stores' subscription pumps. Unlike the settle-window
 // checks in invocation_scope_test.go and stream_adapter_scope_test.go, these
 // tests fail if the join-wait itself is removed: each producer lingers, so a
-// join that returned without waiting for it is caught by an elapsed-time
-// assertion and by ordering channels the producers close as they exit.
+// join that returned without waiting for it is caught by the ordering channels
+// the producers close as they exit, and by the closer reporting whether the
+// producer had already finished when it returned.
 //
 // Covered baseline entries:
 //
@@ -45,7 +46,8 @@ func scopedSSEBody(t *testing.T, scope *streamScope, events <-chan StreamEvent) 
 // TestStreamScopeStopWaitsForRelayProducer is the strict test for the
 // (streamScope).goRun baseline entry: stop cancels the relay's context and waits
 // for it. The relay lingers after its context is canceled, so removing the
-// scope's wg.Wait makes stop return before the relay exited.
+// scope's wg.Wait makes stop return before the relay exited — which the ordering
+// assertion below catches, without measuring how long stop took.
 func TestStreamScopeStopWaitsForRelayProducer(t *testing.T) {
 	scope := newStreamScope(context.Background())
 
@@ -56,13 +58,8 @@ func TestStreamScopeStopWaitsForRelayProducer(t *testing.T) {
 		close(exited)
 	})
 
-	started := time.Now()
 	scope.stop()
-	elapsed := time.Since(started)
 
-	if elapsed < joinDominanceLinger/2 {
-		t.Fatalf("stop returned after %s, before the relay producer exited (linger %s)", elapsed, joinDominanceLinger)
-	}
 	select {
 	case <-exited:
 	default:
@@ -74,7 +71,8 @@ func TestStreamScopeStopWaitsForRelayProducer(t *testing.T) {
 // TestStreamScopeStopWaitsForJoinedProducer is the strict test for the
 // (streamScope).goJoin baseline entry: the joined producer holds work of its own
 // and is waited for rather than canceled. It lingers before closing finished, so
-// removing the scope's wg.Wait makes stop return before it finished.
+// removing the scope's wg.Wait makes stop return before it finished — which the
+// ordering assertion below catches, without measuring how long stop took.
 func TestStreamScopeStopWaitsForJoinedProducer(t *testing.T) {
 	scope := newStreamScope(context.Background())
 
@@ -84,13 +82,8 @@ func TestStreamScopeStopWaitsForJoinedProducer(t *testing.T) {
 		close(finished)
 	})
 
-	started := time.Now()
 	scope.stop()
-	elapsed := time.Since(started)
 
-	if elapsed < joinDominanceLinger/2 {
-		t.Fatalf("stop returned after %s, before the joined producer finished (linger %s)", elapsed, joinDominanceLinger)
-	}
 	select {
 	case <-finished:
 	default:
@@ -103,23 +96,24 @@ func TestStreamScopeStopWaitsForJoinedProducer(t *testing.T) {
 // join primitive the stream stores' Subscribe entries rely on: the forwarder
 // drains a canceled subscription to its close. The channel here closes only after
 // a linger, so deleting the drain loop makes drainClosedSubscription return
-// immediately.
+// immediately — which the ordering assertion below catches, without measuring how
+// long the drain took.
 func TestDrainClosedSubscriptionWaitsForTheStoreToClose(t *testing.T) {
 	events := make(chan StreamEvent)
 	closed := make(chan struct{})
 	go func() {
 		time.Sleep(joinDominanceLinger)
-		close(events)
+		// Signal the linger before releasing the drain: the drain returns when
+		// events closes, so closing the marker first keeps the ordering assertion
+		// below race-free. Closing events first leaves a window in which the drain
+		// has already returned while this goroutine has not yet closed the marker,
+		// which fails the assertion on a correct join.
 		close(closed)
+		close(events)
 	}()
 
-	started := time.Now()
 	drainClosedSubscription(events)
-	elapsed := time.Since(started)
 
-	if elapsed < joinDominanceLinger/2 {
-		t.Fatalf("drainClosedSubscription returned after %s, before the subscription closed (linger %s)", elapsed, joinDominanceLinger)
-	}
 	select {
 	case <-closed:
 	default:
@@ -271,15 +265,10 @@ func TestDynamoStreamStoreSubscribeJoinBlocksUntilThePumpCloses(t *testing.T) {
 
 	closer := scopedSSEBody(t, scope, subscription)
 
-	started := time.Now()
 	if closeErr := closer.Close(); closeErr != nil {
 		t.Fatalf("close streamed body: %v", closeErr)
 	}
-	elapsed := time.Since(started)
 
-	if elapsed < joinDominanceLinger/2 {
-		t.Fatalf("the streamed body was released after %s, before the store's subscription closed (linger %s)", elapsed, joinDominanceLinger)
-	}
 	select {
 	case <-closed:
 	default:
