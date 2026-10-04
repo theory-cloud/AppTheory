@@ -25,6 +25,14 @@
 #   - a step-level `if:` that runs the rubric only on a manual dispatch
 #   - pages.yml, an exempted non-gating publisher, gaining a pull_request trigger
 #
+# Round 2 covers the post-release main back-merge exemption, whose wiring must
+# stay narrow:
+#   - stripping the eligibility step's `--allow-main-backmerge` opt-in, which
+#     hands the gate back to the plain predicate and leaves the merged staging
+#     back-merge red
+#   - widening the exemption's head ref binding (to `github.ref_name`), which
+#     would exempt pull requests whose content has not been released
+#
 # plus the canonical regressions (a promotion-scoped rubric, a push-broadened
 # deterministic-build job, a `pull_request` branch filter, and YAML smuggling)
 # and green controls proving the classifier is not vacuously failing.
@@ -140,6 +148,17 @@ elif mode == "builds_replace":
 elif mode == "eligibility_pr_only":
     replace_line(ELIGIBILITY_PREFIX,
                  "    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'")
+elif mode == "eligibility_backmerge_removed":
+    if "--allow-main-backmerge" not in text:
+        raise SystemExit("eligibility back-merge opt-in fixture not found")
+    text = text.replace("--allow-main-backmerge", "", 1)
+elif mode == "eligibility_backmerge_head_ref_widened":
+    step = ("      - name: Verify the promotion range stays release-eligible\n"
+            "        env:\n")
+    binding = step + "          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}\n"
+    if binding not in text:
+        raise SystemExit("eligibility head ref binding fixture not found")
+    text = text.replace(binding, step + "          PR_HEAD_REF: ${{ github.ref_name }}\n", 1)
 elif mode == "rubric_step_event_gate":
     target = "      - name: Run full rubric\n        run: make rubric\n"
     replacement = "      - name: Run full rubric\n        if: github.event_name == 'workflow_dispatch'\n        run: make rubric\n"
@@ -216,6 +235,18 @@ expect_fail "deterministic builds broadened to a push" "staging-pull-request-onl
 reset_fixture
 mutate ci.yml eligibility_pr_only
 expect_fail "eligibility gate stripped of its push-to-staging leg" "pull-request-to-staging-plus-push-to-staging"
+
+# C2. The post-release main back-merge exemption stays wired and narrow: losing
+# the opt-in hands the gate back to the plain predicate (the released staging SHA
+# goes red), and widening the head ref binding would exempt work that has not
+# been released.
+reset_fixture
+mutate ci.yml eligibility_backmerge_removed
+expect_fail "eligibility back-merge opt-in stripped" "must opt in to the post-release main back-merge exemption"
+
+reset_fixture
+mutate ci.yml eligibility_backmerge_head_ref_widened
+expect_fail "eligibility back-merge head ref binding widened" "must bind env PR_HEAD_REF"
 
 # D. A job whose effective triggers come from `needs:` is classified accordingly.
 reset_fixture
