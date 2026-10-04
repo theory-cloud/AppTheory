@@ -31,7 +31,9 @@ vectors.grantBedrockInvokeModel(api);
 - removal policy is `RETAIN`
 - vector data type is `float32`
 - distance metric is `cosine`
-- encryption defaults to S3-managed `AES256`; pass `encryptionKey` for KMS
+- encryption: with no `encryptionKey`, no `EncryptionConfiguration` is emitted and S3 Vectors applies its
+  service default (SSE-S3 / AES256); pass `encryptionKey` for SSE-KMS. Omitting the property by default keeps an
+  already-deployed vector bucket and index from being replaced when the construct is upgraded
 - embedding env defaults target Bedrock Titan Text Embeddings V2
 
 ## Grants
