@@ -151,9 +151,6 @@
         "DataType": "float32",
         "Dimension": 3,
         "DistanceMetric": "cosine",
-        "EncryptionConfiguration": {
-          "SseType": "AES256"
-        },
         "IndexName": "semantic",
         "MetadataConfiguration": {
           "NonFilterableMetadataKeys": [
@@ -168,9 +165,6 @@
     "VectorIndexVectorBucket40689F17": {
       "DeletionPolicy": "Retain",
       "Properties": {
-        "EncryptionConfiguration": {
-          "SseType": "AES256"
-        },
         "VectorBucketName": "apptheory-vectors"
       },
       "Type": "AWS::S3Vectors::VectorBucket",

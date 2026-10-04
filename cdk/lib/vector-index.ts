@@ -55,7 +55,12 @@ export interface AppTheoryVectorIndexProps {
   readonly nonFilterableMetadataKeys?: string[];
 
   /**
-   * KMS key for vector bucket/index encryption. When omitted, S3-managed AES256 encryption is used.
+   * KMS key for vector bucket/index encryption.
+   *
+   * When omitted, the construct emits no `EncryptionConfiguration` on the vector bucket or index, so
+   * S3 Vectors applies its own service default (SSE-S3 with AES256). Leaving the property off the
+   * template also keeps an already-deployed bucket or index from being replaced when the construct is
+   * upgraded. Provide `encryptionKey` to opt into SSE-KMS with that key.
    */
   readonly encryptionKey?: kms.IKey;
 
@@ -153,9 +158,12 @@ export class AppTheoryVectorIndex extends Construct {
     }
 
     const removalPolicy = props.removalPolicy ?? RemovalPolicy.RETAIN;
+    // Emit EncryptionConfiguration only when a KMS key is supplied: the S3 Vectors service default
+    // (SSE-S3 / AES256) already applies when the property is absent, and omitting it keeps an
+    // already-deployed bucket or index from being replaced on upgrade.
     const encryptionConfiguration = props.encryptionKey
       ? { sseType: "aws:kms", kmsKeyArn: props.encryptionKey.keyArn }
-      : { sseType: "AES256" };
+      : undefined;
 
     if (createVectorBucket) {
       const vectorBucketName = props.vectorBucketName ?? generatedVectorBucketName(this);
