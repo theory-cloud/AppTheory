@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Security
+
+* **gov:** restore the repository's reviewed, self-expiring dependency-audit exception pattern for the two AWS-blocked CDK findings (`SEC-2`): `brace-expansion 5.0.9` bundled inside `aws-cdk-lib 2.271.0` (`GHSA-q2hr-2g5m-vwhr`, `GHSA-qhr7-859c-m2p7`, `GHSA-6j4f-fj2g-mc7p`) and `braces 3.0.3` reached only through the `jsii-pacmak -> jsii-rosetta -> fast-glob -> micromatch` dev chain (`GHSA-vfj7-8cjw-p6xm`). Both are exact matches over lockfile, package, version, and node path / chain, with a hard `recheck_by 2026-11-02`, registry-backed removal conditions, and the `exception-applied:` machine marker; the CDK npm-audit gate (`SEC-4`) and the OSV gate (`SEC-2`) now accept a non-zero scanner exit only for those findings. Operator-ruled 2026-10-03 and 2026-10-04; see `gov-infra/planning/apptheory-10of10-rubric.md` SEC-2.
+
 ### Bug Fixes
 
 * **cdk:** `AppTheoryVectorIndex` emits no `EncryptionConfiguration` unless `encryptionKey` is provided, so the S3 Vectors service default (SSE-S3 / AES256) applies and upgrading AppTheory no longer replaces an already-deployed vector bucket or index. Consumers that pass `encryptionKey` keep SSE-KMS unchanged.

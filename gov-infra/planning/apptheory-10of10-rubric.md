@@ -73,32 +73,63 @@ Enforcement rule (anti-drift):
 
 **10/10 definition:** SEC-1 through SEC-4 pass.
 
-### SEC-2 dependency-audit exceptions: none
+### SEC-2 dependency-audit exceptions: two operator-ruled AWS exceptions
 
-SEC-2 grants **no dependency-audit exceptions**. Every finding visible to the cdk npm-audit / OSV
-audit surface fails the gate, and a non-zero scanner exit is never explained away. Any future
-exception requires a new operator ruling; none is currently authorized.
+SEC-2 grants **no dependency-audit exceptions** beyond the two below. Each is an exact match (lockfile,
+package, version, node path / dependency chain, and advisory ids) and is **self-expiring and
+fail-closed**: it carries a hard `recheck_by` deadline, a registry-backed removal probe runs on every
+invocation so a stale exception cannot survive by never matching again, and when a removal condition is
+met the checker fails with a clear message. Any *other* finding, in any lockfile, still fails the gate.
+Nothing beyond these two may be added without a new operator ruling.
 
-This section formerly documented the one reviewed, self-expiring exception that SEC-2 carried:
-advisory `GHSA-528h-pc64-c93x` / `CVE-2026-71429` for `stream-json < 3.5.0`, reached only through
-`jsii-rosetta` (a peer of the `jsii-pacmak` cdk devDependency), operator-ruled 2026-09-20 (Factory
-sweep 2026-09; companion to PR #998) and matched exactly (no severity, count, or blanket
-allowlists). It was upstream-blocked: every patched `stream-json` release was ESM-only, which broke
-`jsii-rosetta`'s CommonJS subpath requires under `jsii-pacmak`, while every stable `jsii-rosetta`
-inside `jsii-pacmak`'s peer range (`>= 5.9.0`, 5.9.0 through 6.0.15) pinned `stream-json ^1.9.1`.
+Operator rulings, quoted verbatim:
 
-**Resolution (2026-09-22).** The exception's own removal condition fired: the npm registry published
-a STABLE `jsii-rosetta >= 6.0.16`, and `cdk/package.json` now pins `jsii-rosetta 6.0.16`.
-`jsii-pacmak 1.140.0`'s `jsii-rosetta: >=5.9.0` peer range already admitted 6.0.16, so no `jsii` or
-`jsii-pacmak` bump was required - the whole change is the one added devDependency pin.
-`jsii-rosetta 6.0.16` moves to `stream-json ^3.6.0` and consumes it through dynamic ESM `import()`
-of the extension-suffixed subpaths (`stream-json/parser.js`, `assembler.js`, `disassembler.js`,
-`stringer.js`), which is exactly what the old CJS subpath requires could not do; `cdk/package-lock.json`
-now resolves `stream-json` 3.7.0, and `npm audit` on `cdk/` reports an empty vulnerability map. The
-exception and all of its machinery - the registry-backed expiry lookup, the exception matcher, and
-the `exception-applied:` machine marker - were removed from
-`scripts/check-visible-aws-cdk-finding.mjs`, `scripts/verify-cdk-audit.sh`, and `gov-verify-rubric.sh`'s
-`osv_scan_lockfile`.
+> 2026-10-03: "if a vulnerable dependency is bundled in AWS we make an exception until its updated there."
+
+> 2026-10-04: the same treatment applies, for consistency, to AWS-published build toolchain transitive
+> chains with no upstream fix.
+
+**E1 - brace-expansion 5.0.9 bundled inside aws-cdk-lib.** Findings `GHSA-q2hr-2g5m-vwhr`,
+`GHSA-qhr7-859c-m2p7`, and `GHSA-6j4f-fj2g-mc7p` on `brace-expansion@5.0.9` at
+`node_modules/aws-cdk-lib/node_modules/brace-expansion` (bundled), reached only through aws-cdk-lib's own
+bundled `minimatch`. AWS publishes it and only AWS can publish a tarball that bundles the patched
+release (`brace-expansion >= 5.0.12` exists on npm but cannot be installed into the bundled subtree); it
+is build-time only and no AppTheory runtime package or Lambda ships it. Scope: `cdk/package-lock.json`
+and the four example lockfiles this gate routes to the same checker with the identical AWS path -
+`examples/cdk/{lambda-role,multilang,sqs-queue,ssr-site}/package-lock.json`. **Removal condition:** the
+`aws-cdk-lib` version this repository pins bundles `brace-expansion >= 5.0.12`. **Hard recheck by
+2026-11-02.**
+
+**E2 - braces 3.0.3 in the jsii build toolchain.** Finding `GHSA-vfj7-8cjw-p6xm` (high) on `braces@3.0.3`
+at `node_modules/braces`, reached only via `jsii-pacmak -> jsii-rosetta -> fast-glob -> micromatch ->
+braces`; npm also lists the derived `micromatch`, `fast-glob`, `jsii-rosetta`, and `jsii-pacmak` entries,
+which are pure propagation of this single advisory. The advisory's range is `affected <= 3.0.3` and npm
+publishes **no** patched `braces`, so no installable version pair clears it; the chain is the dev
+toolchain of the cdk devDependency `jsii-pacmak`, build-time only. Scope: `cdk/package-lock.json` only
+(the example lockfiles do not carry the jsii chain). **Removal condition:** a patched `braces` (> 3.0.3)
+is published, or the jsii toolchain no longer resolves `braces <= 3.0.3`. **Hard recheck by 2026-11-02.**
+
+Both exceptions live in the ONE shared list in `scripts/check-visible-aws-cdk-finding.mjs`; the npm and
+OSV scanner paths match findings against that same list, `scripts/verify-cdk-audit.sh` and
+`gov-verify-rubric.sh`'s `osv_scan_lockfile` accept a non-zero scanner exit only when the checker emits
+the `exception-applied:` machine marker, and the checker's `--self-test` battery proves the negative
+cases (a different advisory id, version, node path, or lockfile, an expired `recheck_by`, or a met
+removal condition) still fail closed.
+
+This section previously recorded that SEC-2 carried **no** exception. The pattern reused here is the one
+SEC-2's earlier exception established: advisory `GHSA-528h-pc64-c93x` / `CVE-2026-71429` for
+`stream-json < 3.5.0`, reached only through `jsii-rosetta` (a peer of the `jsii-pacmak` cdk
+devDependency), operator-ruled 2026-09-20 (Factory sweep 2026-09; companion to PR #998) and matched
+exactly (no severity, count, or blanket allowlists). It was upstream-blocked: every patched `stream-json`
+release was ESM-only, which broke `jsii-rosetta`'s CommonJS subpath requires under `jsii-pacmak`, while
+every stable `jsii-rosetta` inside `jsii-pacmak`'s peer range (`>= 5.9.0`, 5.9.0 through 6.0.15) pinned
+`stream-json ^1.9.1`.
+
+**Resolution (2026-09-22).** That exception's own removal condition fired: the npm registry published a
+STABLE `jsii-rosetta >= 6.0.16`, `cdk/package.json` now pins `jsii-rosetta 6.0.16`, and
+`cdk/package-lock.json` resolves `stream-json` 3.7.0, so `npm audit` on `cdk/` reported an empty
+vulnerability map. The exception and all of its machinery were removed at the time and are re-created
+here, narrowed to the two AWS-blocked findings above.
 
 ## Compliance Readiness (CMP) — auditability and evidence
 | ID | Points | Requirement | How to verify |
