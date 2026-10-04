@@ -134,6 +134,8 @@ type workflowStep struct {
 	name   string
 	hasIf  bool
 	ifText string
+	run    string
+	env    map[string]string
 	line   int
 }
 
@@ -277,6 +279,7 @@ func evaluateWorkflowFile(root, rel string) fileResult {
 	result.failures = append(result.failures, checkParity(jobs)...)
 	if result.isCI {
 		result.failures = append(result.failures, checkExactConditions(jobs)...)
+		result.failures = append(result.failures, checkBackmergeExemption(jobs)...)
 		result.failures = append(result.failures, checkExemptionsAreLive(jobs)...)
 		result.failures = append(result.failures, checkCanary(jobs)...)
 		result.failures = append(result.failures, checkUnconditionalSteps(jobs)...)
@@ -612,21 +615,8 @@ func parseSteps(node *yaml.Node) ([]workflowStep, error) {
 		}
 		step := workflowStep{line: item.Line}
 		for i := 0; i+1 < len(item.Content); i += 2 {
-			key, value := item.Content[i].Value, item.Content[i+1]
-			switch key {
-			case "name":
-				if value.Kind == yaml.ScalarNode {
-					step.name = value.Value
-				}
-			case "if":
-				if value.Kind != yaml.ScalarNode {
-					return nil, fmt.Errorf("step if: must be a scalar expression")
-				}
-				if value.Style == yaml.LiteralStyle || value.Style == yaml.FoldedStyle {
-					return nil, fmt.Errorf("step if: uses a %s block; continuation forms are not modeled", styleName(value.Style))
-				}
-				step.ifText = value.Value
-				step.hasIf = true
+			if err := applyStepField(&step, item.Content[i].Value, item.Content[i+1]); err != nil {
+				return nil, err
 			}
 		}
 		if step.name == "" {
@@ -635,6 +625,64 @@ func parseSteps(node *yaml.Node) ([]workflowStep, error) {
 		steps = append(steps, step)
 	}
 	return steps, nil
+}
+
+// applyStepField records one step field the guard models, mirroring
+// applyJobField. An unmodeled field is ignored; a modeled field in a form the
+// guard cannot read fails closed rather than being skipped.
+func applyStepField(step *workflowStep, key string, value *yaml.Node) error {
+	switch key {
+	case "name":
+		if value.Kind == yaml.ScalarNode {
+			step.name = value.Value
+		}
+	case "if":
+		if value.Kind != yaml.ScalarNode {
+			return fmt.Errorf("step if: must be a scalar expression")
+		}
+		if value.Style == yaml.LiteralStyle || value.Style == yaml.FoldedStyle {
+			return fmt.Errorf("step if: uses a %s block; continuation forms are not modeled", styleName(value.Style))
+		}
+		step.ifText = value.Value
+		step.hasIf = true
+	case "run":
+		if value.Kind != yaml.ScalarNode {
+			return fmt.Errorf("step run: must be a scalar script")
+		}
+		step.run = value.Value
+	case "env":
+		env, err := parseStepEnv(value)
+		if err != nil {
+			return err
+		}
+		step.env = env
+	}
+	return nil
+}
+
+// parseStepEnv reads a step env: block into a name -> value map. A non-scalar
+// value fails closed: only a literal binding is modeled, so an expression the
+// guard cannot read can never be mistaken for a pinned one.
+func parseStepEnv(node *yaml.Node) (map[string]string, error) {
+	if isNullNode(node) {
+		return nil, nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("step env: must be a mapping")
+	}
+	env := map[string]string{}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key := node.Content[i]
+		if key.Kind != yaml.ScalarNode {
+			return nil, fmt.Errorf("step env: names must be scalars")
+		}
+		value := node.Content[i+1]
+		if value.Kind != yaml.ScalarNode {
+			return nil, fmt.Errorf("step env: %q must bind a scalar value", key.Value)
+		}
+		env[key.Value] = value.Value
+	}
+	return env, nil
 }
 
 func scalarList(node *yaml.Node) ([]string, error) {
@@ -1075,6 +1123,107 @@ func checkExactConditions(jobs []classifiedJob) []string {
 		}
 	}
 	return failures
+}
+
+// backmergeOptInFlag is the flag the staging eligibility step passes to
+// scripts/verify-release-eligibility.sh to enable the post-release main
+// back-merge exemption. That exemption is the only path that can pass a range
+// holding no release-driving commit, so the guard pins exactly how it is wired.
+const backmergeOptInFlag = "--allow-main-backmerge"
+
+// eligibilityStepEnv pins the env bindings the eligibility step must use to feed
+// the exemption its narrow inputs: the pull-request head ref, the pull-request
+// head repository, and this repository. Binding the head repository is what
+// keeps a fork's own branch named `main` from taking the exemption.
+var eligibilityStepEnv = []struct {
+	name       string
+	expression string
+}{
+	{name: "PR_HEAD_REF", expression: "github.event.pull_request.head.ref"},
+	{name: "PR_HEAD_REPOSITORY", expression: "github.event.pull_request.head.repo.full_name"},
+	{name: "GITHUB_REPOSITORY", expression: "github.repository"},
+}
+
+// backmergeExemptionArgs are the shared-predicate arguments the eligibility step
+// must pass alongside the opt-in, so the exemption stays limited to this
+// repository's own main branch.
+var backmergeExemptionArgs = []string{"--head-ref", "--head-repo", "--repository"}
+
+// checkBackmergeExemption pins the post-release main back-merge exemption: the
+// staging eligibility step must opt in with the narrow pull-request head
+// bindings, and the promotion lane's readiness job must never opt in at all. A
+// promotion range that took the exemption would ship main's release chores as if
+// they were fresh release content, which is exactly the release-driver check the
+// promotion lane exists to make.
+func checkBackmergeExemption(jobs []classifiedJob) []string {
+	var failures []string
+	for _, job := range jobs {
+		switch job.id {
+		case eligibilityID:
+			failures = append(failures, checkEligibilityBackmergeStep(job)...)
+		case prereleaseID:
+			failures = append(failures, checkPromotionLaneBackmergeStep(job)...)
+		}
+	}
+	return failures
+}
+
+func checkEligibilityBackmergeStep(job classifiedJob) []string {
+	step := findStepRunning(job, "verify-release-eligibility.sh")
+	if step == nil {
+		return []string{fmt.Sprintf(
+			"job %q must run scripts/verify-release-eligibility.sh from a step the guard can inspect", job.id)}
+	}
+	var failures []string
+	if !strings.Contains(step.run, backmergeOptInFlag) {
+		failures = append(failures, fmt.Sprintf(
+			"job %q step %q must opt in to the post-release main back-merge exemption with %s; without it the returned main back-merge cannot pass the promotion range",
+			job.id, step.name, backmergeOptInFlag))
+	}
+	for _, arg := range backmergeExemptionArgs {
+		if !strings.Contains(step.run, arg) {
+			failures = append(failures, fmt.Sprintf(
+				"job %q step %q must pass %s so the post-release main back-merge exemption stays limited to this repository's main branch",
+				job.id, step.name, arg))
+		}
+	}
+	for _, binding := range eligibilityStepEnv {
+		got, ok := step.env[binding.name]
+		if !ok {
+			failures = append(failures, fmt.Sprintf(
+				"job %q step %q must bind env %s: %q for the post-release main back-merge exemption",
+				job.id, step.name, binding.name, binding.expression))
+			continue
+		}
+		if normalizeExpression(got) != binding.expression {
+			failures = append(failures, fmt.Sprintf(
+				"job %q step %q must bind env %s to %q, got %q",
+				job.id, step.name, binding.name, binding.expression, got))
+		}
+	}
+	return failures
+}
+
+func checkPromotionLaneBackmergeStep(job classifiedJob) []string {
+	var failures []string
+	for _, step := range job.def.steps {
+		if !strings.Contains(step.run, backmergeOptInFlag) {
+			continue
+		}
+		failures = append(failures, fmt.Sprintf(
+			"job %q step %q must not opt in to the post-release main back-merge exemption (%s): the promotion lane promotes released content and must keep requiring a release-eligible commit",
+			job.id, step.name, backmergeOptInFlag))
+	}
+	return failures
+}
+
+func findStepRunning(job classifiedJob, needle string) *workflowStep {
+	for i := range job.def.steps {
+		if strings.Contains(job.def.steps[i].run, needle) {
+			return &job.def.steps[i]
+		}
+	}
+	return nil
 }
 
 // checkUnconditionalSteps forbids a step-level condition that depends on the

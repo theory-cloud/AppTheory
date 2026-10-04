@@ -119,10 +119,14 @@ passed `npm audit` with zero vulnerabilities. The removal rationale was:
 - `yaml`: the TableTheory release asset now resolves `yaml@2.9.1`; AppTheory should not override TableTheory's
   transitive dependency unless a current advisory or contract gate requires it.
 
-As of this changeset, the repository pins AWS CDK `2.265.0`, which bundles fixed `brace-expansion@5.0.9` inside its
-published tarball. Production `aws-cdk-lib` manifests at or above `2.265.0` carry no fixed-version `brace-expansion`
-findings. The CDK npm-audit and GovTheory OSV gates verify the exact bundled graph and require empty scanner reports;
-any AWS CDK, minimatch, brace-expansion, package-path, or finding drift fails closed.
+As of this changeset, the repository pins AWS CDK `2.271.0`, which still bundles `brace-expansion@5.0.9` inside its
+published tarball; only AWS can publish a tarball that bundles the patched `>= 5.0.12` release. The CDK npm-audit and
+GovTheory OSV gates verify the exact bundled graph and accept exactly two reviewed, self-expiring exceptions -
+`brace-expansion 5.0.9` bundled in `aws-cdk-lib` (operator-ruled 2026-10-03) and `braces 3.0.3` reached only through
+the `jsii-pacmak` / `jsii-rosetta` / `fast-glob` / `micromatch` dev chain (operator-ruled 2026-10-04) - each carrying a
+hard `recheck_by 2026-11-02` and a registry-backed removal condition (see
+`gov-infra/planning/apptheory-10of10-rubric.md` SEC-2). Any other AWS CDK, minimatch, brace-expansion, package-path,
+or finding drift fails closed.
 
 The TypeScript lint graph no longer carries a `minimatch@3.x` parent. Landing the eslint 10 train
 (`eslint` 10.11.0, `@eslint/js` 10.0.1, `eslint-plugin-unicorn` ^76.0.0) with `eslint-plugin-import` swapped for the
@@ -130,5 +134,6 @@ maintained `eslint-plugin-import-x` fork dropped `@eslint/eslintrc` and hoisted 
 `minimatch@10.2.6` → `brace-expansion@5.0.12` path. The vulnerable `brace-expansion@1.1.17` instance and the
 `GHSA-rgw5-rvv9-x895` / `GHSA-mh99-v99m-4gvg` exception that covered it are therefore gone, and the `ts/` SEC-2 checker
 now grants no exception: it requires both an empty OSV report and the exact parent, minimatch, brace-expansion, and
-version graph, and any drift fails closed. Both OSV lockfile classes are now exception-free and advisory-variant
-independent, because the only remaining brace-expansion instance (`5.0.12`) is past every recorded 5.x fix.
+version graph, and any drift fails closed. The `ts/` lockfile class is therefore exception-free and advisory-variant
+independent, because the only remaining brace-expansion instance (`5.0.12`) is past every recorded 5.x fix; the
+`aws-cdk` lockfile class carries only the two AWS-blocked exceptions above.

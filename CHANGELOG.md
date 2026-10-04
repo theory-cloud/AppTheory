@@ -1,5 +1,32 @@
 # Changelog
 
+## [5.0.1-rc](https://github.com/theory-cloud/AppTheory/compare/v5.0.0...v5.0.1-rc) (2026-10-04)
+
+
+### Bug Fixes
+
+* **cdk:** omit the S3 Vectors encryption configuration unless a key is provided ([4a4d588](https://github.com/theory-cloud/AppTheory/commit/4a4d5884df4190b2ba46edcdc3f55bbc28d0cd66))
+* **cdk:** stop replacing deployed vector buckets on upgrade; move the CDK line to aws-cdk-lib 2.271.0 ([63492e8](https://github.com/theory-cloud/AppTheory/commit/63492e8e2831d25446599e18413a258588211406))
+* **ci:** exempt the post-release main back-merge from staging release eligibility ([d2d5e5e](https://github.com/theory-cloud/AppTheory/commit/d2d5e5e93547782d699f57616c4b60f9c2ac0487))
+* **ci:** exempt the post-release main back-merge from staging release eligibility ([7858957](https://github.com/theory-cloud/AppTheory/commit/78589575d9f1a73552ed3c236ef5f25ec81cb014))
+* **deps:** adopt TableTheory 4.0.1 ([c354329](https://github.com/theory-cloud/AppTheory/commit/c35432946154e4783c05573616d03ca473966a91))
+* **deps:** adopt TableTheory 4.0.1 ([4fdb4b2](https://github.com/theory-cloud/AppTheory/commit/4fdb4b221fb77d61ea708bd58fe7ab22274d8d1a))
+* **deps:** refresh CDK example synth snapshots for TableTheory 4.0.1 ([ce2c9f5](https://github.com/theory-cloud/AppTheory/commit/ce2c9f504d1769aaa0e8630e6f4304f08588d509))
+* **gov:** restore reviewed AWS CDK dependency-audit exceptions ([e39db80](https://github.com/theory-cloud/AppTheory/commit/e39db80a74b5bfd7d1653830bb898dde27148a15))
+* **test:** make the invocation-scope and drain-join tests deterministic ([9a80a25](https://github.com/theory-cloud/AppTheory/commit/9a80a2559588e535ea076d7a652a498d489f0570))
+* **test:** make the invocation-scope and drain-join tests deterministic ([b30f200](https://github.com/theory-cloud/AppTheory/commit/b30f2001bbdce07b1ad44f166f4e2bf4af0aa9e9))
+* **test:** use US spelling in the scoped-goroutine helper comment ([46891e7](https://github.com/theory-cloud/AppTheory/commit/46891e75f2d64bec5c9986a3254625fd8b1c2cc8))
+
+## [Unreleased]
+
+### Security
+
+* **gov:** restore the repository's reviewed, self-expiring dependency-audit exception pattern for the two AWS-blocked CDK findings (`SEC-2`): `brace-expansion 5.0.9` bundled inside `aws-cdk-lib 2.271.0` (`GHSA-q2hr-2g5m-vwhr`, `GHSA-qhr7-859c-m2p7`, `GHSA-6j4f-fj2g-mc7p`) and `braces 3.0.3` reached only through the `jsii-pacmak -> jsii-rosetta -> fast-glob -> micromatch` dev chain (`GHSA-vfj7-8cjw-p6xm`). Both are exact matches over lockfile, package, version, and node path / chain, with a hard `recheck_by 2026-11-02`, registry-backed removal conditions, and the `exception-applied:` machine marker; the CDK npm-audit gate (`SEC-4`) and the OSV gate (`SEC-2`) now accept a non-zero scanner exit only for those findings. Operator-ruled 2026-10-03 and 2026-10-04; see `gov-infra/planning/apptheory-10of10-rubric.md` SEC-2.
+
+### Bug Fixes
+
+* **cdk:** `AppTheoryVectorIndex` emits no `EncryptionConfiguration` unless `encryptionKey` is provided, so the S3 Vectors service default (SSE-S3 / AES256) applies and upgrading AppTheory no longer replaces an already-deployed vector bucket or index. Consumers that pass `encryptionKey` keep SSE-KMS unchanged.
+
 ## [5.0.0](https://github.com/theory-cloud/AppTheory/compare/v4.5.0...v5.0.0) (2026-09-28)
 
 

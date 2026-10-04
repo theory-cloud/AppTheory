@@ -29,11 +29,17 @@ npm --prefix cdk audit --audit-level=moderate --json >"${tmp_report}"
 audit_status=$?
 set -e
 
-# Fail closed unless the AWS CDK bundled dependency graph is exactly patched and
-# the audit surface carries zero findings. This repository grants no
-# dependency-audit exceptions; the checker below is the single place that could
-# have granted one, and its last exception retired on 2026-09-22 with the
-# jsii-rosetta 6.0.16 bump (see scripts/check-visible-aws-cdk-finding.mjs).
+# Run the checker's offline battery first: it proves the negative cases this gate
+# relies on (a different advisory id, version, node path, or lockfile, an expired
+# recheck_by, or a met removal condition) still fail closed.
+node scripts/check-visible-aws-cdk-finding.mjs --self-test
+
+# Fail closed unless the AWS CDK bundled dependency graph is exactly the reviewed
+# graph and every visible npm audit finding is one of the two reviewed,
+# self-expiring exceptions (an AWS-published bundled dependency, and an
+# AWS-published build-toolchain transitive chain). The operator rulings, exact
+# scope, and automatic registry-backed removal conditions are documented in
+# scripts/check-visible-aws-cdk-finding.mjs.
 set +e
 node scripts/check-visible-aws-cdk-finding.mjs npm "${tmp_report}" cdk/package-lock.json >"${tmp_marker}"
 filter_status=$?
@@ -44,10 +50,17 @@ if [[ "${filter_status}" -ne 0 ]]; then
   exit "${filter_status}"
 fi
 
-# npm audit exits 1 whenever it reports findings, and this project tolerates
-# none, so any non-zero exit fails closed.
+# npm audit exits 1 whenever it reports findings. That is acceptable only when
+# the exception checker above both passed and positively identified a reviewed
+# exception as the cause; any other scanner exit still fails closed.
 case "${audit_status}" in
   0) ;;
+  1)
+    if ! grep -Fq 'exception-applied: ' "${tmp_marker}"; then
+      echo "cdk-audit: FAIL (npm audit exited 1 without reporting a reviewed exception)" >&2
+      exit 1
+    fi
+    ;;
   *)
     echo "cdk-audit: FAIL (npm audit exited ${audit_status})" >&2
     exit 1

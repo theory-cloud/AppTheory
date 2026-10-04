@@ -6,7 +6,7 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.270.0",
+    "aws-cdk-lib": "2.271.0",
     "constructs": "^10.8.1"
   },
   "dependencyClosure": {
@@ -9586,7 +9586,7 @@
   },
   "description": "AppTheory CDK constructs (TS-first jsii)",
   "homepage": "https://github.com/theory-cloud/AppTheory.git",
-  "jsiiVersion": "6.0.14 (build 44649f3)",
+  "jsiiVersion": "6.0.15 (build 8b73573)",
   "license": "Apache-2.0",
   "metadata": {
     "jsii": {
@@ -28092,7 +28092,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/vector-index.ts",
-          "line": 129
+          "line": 134
         },
         "parameters": [
           {
@@ -28118,7 +28118,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/vector-index.ts",
-        "line": 120
+        "line": 125
       },
       "methods": [
         {
@@ -28127,7 +28127,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 209
+            "line": 217
           },
           "name": "bindEnvironment",
           "parameters": [
@@ -28152,7 +28152,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 221
+            "line": 229
           },
           "name": "bindTitanEmbeddingEnvironment",
           "parameters": [
@@ -28177,7 +28177,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 281
+            "line": 289
           },
           "name": "grantBedrockInvokeModel",
           "parameters": [
@@ -28207,7 +28207,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 262
+            "line": 270
           },
           "name": "grantManage",
           "parameters": [
@@ -28230,7 +28230,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 229
+            "line": 237
           },
           "name": "grantQuery",
           "parameters": [
@@ -28253,7 +28253,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 240
+            "line": 248
           },
           "name": "grantReadVectors",
           "parameters": [
@@ -28276,7 +28276,7 @@
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 251
+            "line": 259
           },
           "name": "grantWriteVectors",
           "parameters": [
@@ -28300,7 +28300,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 127
+            "line": 132
           },
           "name": "dimension",
           "type": {
@@ -28311,7 +28311,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 122
+            "line": 127
           },
           "name": "index",
           "type": {
@@ -28322,7 +28322,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 126
+            "line": 131
           },
           "name": "indexArn",
           "type": {
@@ -28333,7 +28333,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 125
+            "line": 130
           },
           "name": "indexName",
           "type": {
@@ -28344,7 +28344,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 124
+            "line": 129
           },
           "name": "vectorBucketArn",
           "type": {
@@ -28355,7 +28355,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 123
+            "line": 128
           },
           "name": "vectorBucketName",
           "type": {
@@ -28366,7 +28366,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 121
+            "line": 126
           },
           "name": "vectorBucket",
           "optional": true,
@@ -28384,7 +28384,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/vector-index.ts",
-        "line": 81
+        "line": 86
       },
       "name": "AppTheoryVectorIndexBindOptions",
       "properties": [
@@ -28397,7 +28397,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 104
+            "line": 109
           },
           "name": "embeddingDimensions",
           "optional": true,
@@ -28414,7 +28414,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 98
+            "line": 103
           },
           "name": "embeddingModelId",
           "optional": true,
@@ -28431,7 +28431,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 110
+            "line": 115
           },
           "name": "embeddingNormalize",
           "optional": true,
@@ -28448,7 +28448,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 92
+            "line": 97
           },
           "name": "embeddingProvider",
           "optional": true,
@@ -28465,7 +28465,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 86
+            "line": 91
           },
           "name": "includeEmbedding",
           "optional": true,
@@ -28572,13 +28572,13 @@
         {
           "abstract": true,
           "docs": {
-            "remarks": "When omitted, S3-managed AES256 encryption is used.",
+            "remarks": "When omitted, the construct emits no `EncryptionConfiguration` on the vector bucket or index, so\nS3 Vectors applies its own service default (SSE-S3 with AES256). Leaving the property off the\ntemplate also keeps an already-deployed bucket or index from being replaced when the construct is\nupgraded. Provide `encryptionKey` to opt into SSE-KMS with that key.",
             "summary": "KMS key for vector bucket/index encryption."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 60
+            "line": 65
           },
           "name": "encryptionKey",
           "optional": true,
@@ -28611,7 +28611,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 78
+            "line": 83
           },
           "name": "grantManageTo",
           "optional": true,
@@ -28632,7 +28632,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 69
+            "line": 74
           },
           "name": "grantQueryTo",
           "optional": true,
@@ -28653,7 +28653,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 72
+            "line": 77
           },
           "name": "grantReadVectorsTo",
           "optional": true,
@@ -28674,7 +28674,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 75
+            "line": 80
           },
           "name": "grantWriteVectorsTo",
           "optional": true,
@@ -28717,7 +28717,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 66
+            "line": 71
           },
           "name": "removalPolicy",
           "optional": true,
@@ -29827,6 +29827,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "5.0.0",
-  "fingerprint": "aMDzkpwSE3sVhJ2mzDn8OLt6CcmoxNxXOsZb3hbcd9Y="
+  "version": "5.0.1-rc",
+  "fingerprint": "9TAA/JUfpoQbK4t67L4FTkEryxNidsMSMwzYgL5F6Hk="
 }

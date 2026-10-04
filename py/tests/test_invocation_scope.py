@@ -132,7 +132,6 @@ class TestStreamingDrainScope(unittest.TestCase):
             out["response"] = aws_http.apigw_v2_response_from_response(html_stream(200, body))
 
         caller = threading.Thread(target=run, daemon=True)
-        started = time.monotonic()
         caller.start()
 
         # Past the drain budget the adapter has closed the body and is waiting
@@ -147,8 +146,9 @@ class TestStreamingDrainScope(unittest.TestCase):
         caller.join(timeout=2.0)
         self.assertFalse(caller.is_alive(), "the adapter never returned after the body was released")
 
-        elapsed = time.monotonic() - started
-        self.assertGreaterEqual(elapsed, 0.4, "the adapter returned before its drain budget expired")
+        # The 500 and the unwound worker together are the state proof that the
+        # drain budget (not luck) decided the outcome, so no elapsed-time bound is
+        # needed here.
         self.assertEqual(out["response"]["statusCode"], 500)
         self.assertTrue(body.unwound.is_set())
         self.assertEqual(_remaining_worker_threads(time.monotonic() + 2.0), 0)
@@ -249,13 +249,13 @@ class TestTimeoutMiddlewareScope(unittest.TestCase):
             side_effect.set()
             return "late"
 
-        started = time.monotonic()
         with self.assertRaises(AppError) as cm:
             mw(ctx, uncooperative)
-        elapsed = time.monotonic() - started
 
         self.assertEqual(cm.exception.code, "app.timeout")
-        self.assertGreaterEqual(elapsed, 0.05, "the middleware returned before the handler finished")
+        # The handler's own side effect having landed is the proof that the
+        # middleware ran it to completion rather than abandoning it, and it cannot
+        # land after the handler returned, so no elapsed-time bound is needed.
         self.assertTrue(side_effect.is_set(), "the handler it timed out was abandoned")
         self.assertEqual([t for t in threading.enumerate() if t.name == _TIMEOUT_THREAD_NAME], [])
 

@@ -87,11 +87,13 @@ class TestDrainJoinsItsWorker(_DrainJoinTestCase):
         body = _SlowUnwindBody(close_delay=0.05, unwind_delay=0.1)
         workers_before = len(_drain_threads())
 
-        started = time.monotonic()
         with self.assertRaises(aws_http._StreamingBodyBudgetError):
             aws_http._drain_streaming_body(body, _MAX_BYTES, 0.1)
-        elapsed = time.monotonic() - started
 
+        # The worker sets unwound only after the close and the unwind that follow
+        # the drain's own budget, and the drain joins that worker, so a drain that
+        # returned without joining cannot see it set. Ordering, not elapsed time:
+        # the assertions hold on a slow machine and fail on an unjoined drain.
         self.assertTrue(
             body.unwound.is_set(),
             "the drain returned before the worker it abandoned had exited",
@@ -101,22 +103,15 @@ class TestDrainJoinsItsWorker(_DrainJoinTestCase):
             workers_before,
             "the drain worker outlived the drain that abandoned it",
         )
-        # 0.1s drain budget + 0.05s close + 0.1s unwind is the smallest total a
-        # joined worker can produce; anything less returned while it still ran.
-        self.assertGreaterEqual(
-            elapsed,
-            0.2,
-            "the drain returned before the worker it abandoned had exited",
-        )
 
     def test_buffered_adapter_waits_for_a_worker_whose_close_is_slow(self) -> None:
         body = _SlowUnwindBody(close_delay=0.05, unwind_delay=0.1)
         workers_before = len(_drain_threads())
-        started = time.monotonic()
         response = aws_http.apigw_v2_response_from_response(html_stream(200, body))
-        elapsed = time.monotonic() - started
 
         self.assertEqual(response["statusCode"], 500)
+        # Same ordering proof as the drain test above: the adapter joins the
+        # worker, so unwound is set and the worker is gone by the time it returns.
         self.assertTrue(
             body.unwound.is_set(),
             "the adapter returned before the drain worker it abandoned had exited",
@@ -125,11 +120,6 @@ class TestDrainJoinsItsWorker(_DrainJoinTestCase):
             len(_drain_threads()),
             workers_before,
             "the drain worker outlived the adapter that abandoned it",
-        )
-        self.assertGreaterEqual(
-            elapsed,
-            0.2,
-            "the adapter returned before the drain worker it abandoned had exited",
         )
 
 

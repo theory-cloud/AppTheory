@@ -712,6 +712,7 @@ osv_scan_lockfile() {
   set -e
 
   local filter_status=0
+  local exception_marker=""
   set +e
   if [[ "${checker_kind}" == "ts" ]]; then
     check_visible_ts_brace_finding "${tmp_report}" "${lf}"
@@ -719,26 +720,30 @@ osv_scan_lockfile() {
   else
     node scripts/check-visible-aws-cdk-finding.mjs osv "${tmp_report}" "${lf}" >"${tmp_marker}"
     filter_status=$?
-    cat "${tmp_marker}"
+    exception_marker="$(cat "${tmp_marker}")"
+    [[ -z "${exception_marker}" ]] || printf '%s\n' "${exception_marker}"
   fi
   set -e
   rm -f "${tmp_report}" "${tmp_marker}"
 
-  # Neither lockfile class grants a dependency-audit exception any more. The
-  # aws-cdk checker (scripts/check-visible-aws-cdk-finding.mjs) retired its last
-  # one on 2026-09-22 with the jsii-rosetta 6.0.16 bump, and the TypeScript
-  # checker (scripts/check-visible-ts-brace-finding.mjs) retired the
-  # minimatch 3.x -> brace-expansion 1.x exception when the eslint 10 +
-  # eslint-plugin-import-x train hoisted the lint graph onto a single
-  # minimatch 10.x path. Both checkers therefore pass only on an empty findings
-  # set, and since osv-scanner exits non-zero when it reports findings, any
-  # non-zero scanner exit fails closed.
+  # The TypeScript checker (scripts/check-visible-ts-brace-finding.mjs) grants no
+  # dependency-audit exception: it passes only on an empty findings set. The
+  # aws-cdk checker (scripts/check-visible-aws-cdk-finding.mjs) grants exactly two
+  # reviewed, self-expiring exceptions - an AWS-published bundled dependency and
+  # an AWS-published build-toolchain transitive chain (operator rulings, scope,
+  # and automatic registry-backed removal conditions are documented there).
+  # osv-scanner exits non-zero when it reports findings, so a non-zero scanner
+  # exit is accepted only when the checker passed AND printed the machine marker
+  # proving an exact reviewed exception caused it; any other finding or scanner
+  # error still fails closed.
   if [[ "${filter_status}" -ne 0 ]]; then
     return "${filter_status}"
   fi
   if [[ "${scan_status}" -ne 0 ]]; then
-    echo "FAIL: osv-scanner exited ${scan_status} for ${lf} without any reviewed exception" >&2
-    return 1
+    if [[ "${checker_kind}" == "ts" ]] || ! grep -Fq 'exception-applied: ' <<<"${exception_marker}"; then
+      echo "FAIL: osv-scanner exited ${scan_status} for ${lf} without any reviewed exception" >&2
+      return 1
+    fi
   fi
 
   return "${filter_status}"

@@ -1,6 +1,6 @@
 {
   "name": "@theory-cloud/apptheory",
-  "version": "5.0.0",
+  "version": "5.0.1-rc",
   "description": "AppTheory — multi-language serverless application framework (TypeScript package)",
   "type": "module",
   "license": "Apache-2.0",
@@ -21,13 +21,13 @@
     }
   },
   "dependencies": {
-    "@aws-sdk/client-apigatewaymanagementapi": "^3.1134.0",
-    "@aws-sdk/client-bedrock-runtime": "^3.1134.0",
-    "@aws-sdk/client-lambda-microvms": "^3.1134.0",
-    "@aws-sdk/client-s3": "^3.1134.0",
-    "@aws-sdk/client-s3vectors": "^3.1134.0",
-    "@aws-sdk/s3-request-presigner": "^3.1134.0",
-    "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v4.0.0/theory-cloud-tabletheory-ts-4.0.0.tgz#sha512-qw/8a6sy5pYk6kO1eP/sO0aCNPALyEQZwHbe5FGBnqBCM6dzhfMdHFW2TkJRuDg4+5JquUZBYCWr561ooObOOA=="
+    "@aws-sdk/client-apigatewaymanagementapi": "^3.1141.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1141.0",
+    "@aws-sdk/client-lambda-microvms": "^3.1141.0",
+    "@aws-sdk/client-s3": "^3.1141.0",
+    "@aws-sdk/client-s3vectors": "^3.1141.0",
+    "@aws-sdk/s3-request-presigner": "^3.1141.0",
+    "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v4.0.1/theory-cloud-tabletheory-ts-4.0.1.tgz#sha512-fOZmjOUJCnicqtAIIJe7zkREwMc0Rfpe38vIj6nkcTVJUl+eyxeTqQI8aunIWjmUKlPzuHm5yLFeb25SJvINjg=="
   },
   "files": [
     "dist",
@@ -37,7 +37,7 @@
   ],
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@types/node": "^26.6.1",
+    "@types/node": "^24.19.0",
     "@typescript-eslint/eslint-plugin": "^8.70.0",
     "@typescript-eslint/parser": "^8.57.2",
     "eslint": "10.11.0",
@@ -46,7 +46,7 @@
     "eslint-plugin-promise": "7.3.0",
     "eslint-plugin-unicorn": "^76.0.0",
     "globals": "^17.12.0",
-    "prettier": "3.9.8",
+    "prettier": "3.9.9",
     "typescript": "5.9.3"
   },
   "engines": {
