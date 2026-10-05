@@ -53,7 +53,7 @@ const constructs_1 = require("constructs");
  * - `ttl` (configurable)
  */
 class AppTheoryJobsTable extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryJobsTable", version: "5.0.0" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryJobsTable", version: "5.0.1" };
     table;
     constructor(scope, id, props = {}) {
         super(scope, id);
