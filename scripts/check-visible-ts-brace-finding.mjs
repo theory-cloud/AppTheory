@@ -89,7 +89,7 @@ const expectation = {
     {
       dependencyRange: "^10.2.2",
       path: "node_modules/@typescript-eslint/typescript-estree",
-      version: "8.70.1",
+      version: "8.71.0",
     },
     {
       dependencyRange: "^10.2.5",
