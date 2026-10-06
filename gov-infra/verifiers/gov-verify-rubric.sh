@@ -787,13 +787,27 @@ gov_cmd_vuln() {
     fi
   done
 
+  # Every npm lockfile in the repository. Each aws-cdk-lib-carrying lockfile is
+  # routed through the reviewed, self-expiring bundled-dependency exception in
+  # scripts/check-visible-aws-cdk-finding.mjs, whose E1.lockfiles list must stay
+  # identical to the entries below (that checker's self-test compares them).
+  # Scanning the full set keeps "vulnerable" and "explicitly excepted" the two
+  # only possible outcomes; an unscanned lockfile would be neither.
   local -a node_lockfiles=(
     "ts/package-lock.json"
     "cdk/package-lock.json"
-    "examples/cdk/multilang/package-lock.json"
-    "examples/cdk/ssr-site/package-lock.json"
-    "examples/cdk/sqs-queue/package-lock.json"
+    "examples/cdk/codebuild-job-runner/package-lock.json"
+    "examples/cdk/hello-world/package-lock.json"
+    "examples/cdk/import-pipeline/package-lock.json"
+    "examples/cdk/kinesis-cloudwatch-logs/package-lock.json"
     "examples/cdk/lambda-role/package-lock.json"
+    "examples/cdk/lesser-parity/package-lock.json"
+    "examples/cdk/microvm-controller/package-lock.json"
+    "examples/cdk/multilang/package-lock.json"
+    "examples/cdk/s3-vectors-semantic-search/package-lock.json"
+    "examples/cdk/sqs-queue/package-lock.json"
+    "examples/cdk/ssr-only-provided-assets-site/package-lock.json"
+    "examples/cdk/ssr-site/package-lock.json"
   )
 
   local lf
