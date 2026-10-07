@@ -134,6 +134,65 @@ function sameStringSet(actual, expected) {
   return actualSorted.every((value, index) => value === expectedSorted[index]);
 }
 
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Pure: the OSV report entries this checker can honestly evaluate. Returns
+// { entries, problems }; a non-empty `problems` means the report shape would
+// otherwise hide findings from the loop below (a missing results array, a
+// malformed result entry, a non-array packages list, a malformed package
+// entry, or a non-array vulnerabilities list). A string-valued `packages`
+// used to iterate character by character and read as "no findings". Pure so
+// the self-test can drive it offline.
+function collectOsvEntries(report) {
+  const entries = [];
+  const problems = [];
+  if (!isRecord(report)) {
+    return {
+      entries,
+      problems: [`OSV report is not a JSON object (got ${JSON.stringify(report)})`],
+    };
+  }
+  if (!Array.isArray(report.results)) {
+    return { entries, problems: ["OSV report is missing its results array"] };
+  }
+  for (const result of report.results) {
+    if (!isRecord(result)) {
+      problems.push(`OSV report has a malformed result entry (got ${JSON.stringify(result)})`);
+      continue;
+    }
+    const packages = result.packages;
+    if (packages === undefined || packages === null) continue;
+    if (!Array.isArray(packages)) {
+      problems.push(`OSV report result.packages must be an array (got ${JSON.stringify(packages)})`);
+      continue;
+    }
+    for (const pkg of packages) {
+      if (!isRecord(pkg)) {
+        problems.push(`OSV report has a malformed package entry (got ${JSON.stringify(pkg)})`);
+        continue;
+      }
+      const vulnerabilities = pkg.vulnerabilities;
+      if (vulnerabilities === undefined || vulnerabilities === null) continue;
+      if (!Array.isArray(vulnerabilities)) {
+        problems.push(
+          `OSV report package.vulnerabilities must be an array (got ${JSON.stringify(vulnerabilities)})`,
+        );
+        continue;
+      }
+      for (const vuln of vulnerabilities) {
+        if (!isRecord(vuln)) {
+          problems.push(`OSV report has a malformed vulnerability entry (got ${JSON.stringify(vuln)})`);
+          continue;
+        }
+        entries.push({ result, pkg, vuln });
+      }
+    }
+  }
+  return { entries, problems };
+}
+
 function stringList(value) {
   return Array.isArray(value) ? value.map(String) : [];
 }
@@ -223,6 +282,7 @@ const expectation = {
   advisoryUrl: "https://github.com/advisories/GHSA-rgw5-rvv9-x895",
   alias: "CVE-2026-69152",
   cdkVersion: AWS_CDK_BUNDLE.cdkVersion,
+  // Asserted, not derived: the advisory's published fixed versions, recorded for the PASS record.
   fixedVersions: ["1.1.18", "2.1.4", "3.0.6", "5.0.9"],
   minimatchVersion: AWS_CDK_BUNDLE.minimatchVersion,
   packageName: AWS_CDK_BUNDLE.packageName,
@@ -953,6 +1013,82 @@ function runSelfTest() {
     expected: true,
   });
 
+  // (g) the OSV report contract: any shape that could hide a finding is a
+  // problem, and a well-formed finding is collected so the matcher can judge it.
+  const expectOsvEntries = (label, report, expectedEntries, expectedProblemCount) => {
+    const collected = collectOsvEntries(report);
+    cases.push({ label: `${label}: entries`, actual: collected.entries.length, expected: expectedEntries });
+    cases.push({
+      label: `${label}: problems`,
+      actual: collected.problems.length,
+      expected: expectedProblemCount,
+    });
+  };
+  expectOsvEntries("(g) an empty results array", { results: [] }, 0, 0);
+  expectOsvEntries("(g) a missing results array", {}, 0, 1);
+  expectOsvEntries("(g) a non-object report", null, 0, 1);
+  expectOsvEntries("(g) a null result entry", { results: [null] }, 0, 1);
+  expectOsvEntries("(g) a string-valued packages list", { results: [{ packages: "nope" }] }, 0, 1);
+  expectOsvEntries("(g) a result with no packages", { results: [{}] }, 0, 0);
+  expectOsvEntries(
+    "(g) a package with no vulnerabilities",
+    { results: [{ packages: [{ package: { ecosystem: "npm", name: "braces", version: "3.0.3" } }] }] },
+    0,
+    0,
+  );
+  expectOsvEntries(
+    "(g) a string-valued vulnerabilities list",
+    { results: [{ packages: [{ vulnerabilities: "nope" }] }] },
+    0,
+    1,
+  );
+  expectOsvEntries(
+    "(g) a null vulnerability entry",
+    { results: [{ packages: [{ vulnerabilities: [null] }] }] },
+    0,
+    1,
+  );
+  expectOsvEntries(
+    "(g) a well-formed finding",
+    {
+      results: [
+        {
+          source: { path: canonical },
+          packages: [
+            {
+              package: { ecosystem: "npm", name: "braces", version: "3.0.3" },
+              vulnerabilities: [{ id: E2.advisories[0].id, aliases: [E2.advisories[0].alias] }],
+            },
+          ],
+        },
+      ],
+    },
+    1,
+    0,
+  );
+
+  // (g) planted and drifted lockfile graphs still fail the reviewed-graph anchors.
+  const plantedTopLevel = { ...validPackages(), "node_modules/brace-expansion": { version: "5.0.12" } };
+  cases.push({
+    label: "(g) a planted top-level brace-expansion fails the graph",
+    actual: awsCdkBundleGraphProblems(plantedTopLevel).length > 0,
+    expected: true,
+  });
+  const driftedBundleVersion = { ...validPackages() };
+  driftedBundleVersion["node_modules/aws-cdk-lib/node_modules/brace-expansion"].version = "5.0.10";
+  cases.push({
+    label: "(g) a drifted bundled brace-expansion version fails the graph",
+    actual: awsCdkBundleGraphProblems(driftedBundleVersion).length > 0,
+    expected: true,
+  });
+  const driftedBundleMinimatch = { ...validPackages() };
+  driftedBundleMinimatch["node_modules/aws-cdk-lib/node_modules/minimatch"].version = "10.2.4";
+  cases.push({
+    label: "(g) a drifted bundled minimatch version fails the graph",
+    actual: awsCdkBundleGraphProblems(driftedBundleMinimatch).length > 0,
+    expected: true,
+  });
+
   // The clock the fake-cases above assume must be the real one's relative order.
   cases.push({
     label: "self-test: the fixture clock is before recheck_by",
@@ -1054,24 +1190,24 @@ async function main() {
       });
     }
   } else {
-    if (!Array.isArray(report.results)) {
-      fail("OSV report is missing its results array");
+    const collected = collectOsvEntries(report);
+    for (const problem of collected.problems) {
+      console.error(`${mode}-scanner: ${problem}`);
     }
-    for (const result of report.results) {
-      for (const pkg of result.packages ?? []) {
-        for (const vuln of pkg.vulnerabilities ?? []) {
-          const packageInfo = pkg?.package ?? {};
-          const exception = osvMatchingException(result, pkg, vuln, canonicalLockfile);
-          findings.push({
-            exceptionId: exception?.exceptionId ?? null,
-            fixedVersions: fixedVersions(vuln, packageInfo.name ?? "<unknown>"),
-            id: vuln.id ?? "<unknown>",
-            packageName: packageInfo.name ?? "<unknown>",
-            source: result?.source?.path ?? "<unknown>",
-            version: packageInfo.version ?? "<unknown>",
-          });
-        }
-      }
+    if (collected.problems.length > 0) {
+      fail("OSV report shape is not one this gate can evaluate");
+    }
+    for (const { result, pkg, vuln } of collected.entries) {
+      const packageInfo = pkg?.package ?? {};
+      const exception = osvMatchingException(result, pkg, vuln, canonicalLockfile);
+      findings.push({
+        exceptionId: exception?.exceptionId ?? null,
+        fixedVersions: fixedVersions(vuln, packageInfo.name ?? "<unknown>"),
+        id: vuln.id ?? "<unknown>",
+        packageName: packageInfo.name ?? "<unknown>",
+        source: result?.source?.path ?? "<unknown>",
+        version: packageInfo.version ?? "<unknown>",
+      });
     }
   }
 

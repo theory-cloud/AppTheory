@@ -223,6 +223,20 @@ GO
   run_self_test_case "unsuffixed active import" "${stale_import_dir}" 1 \
     "runtime/stale.go:3: unsuffixed root module reference"
 
+  # A maintainer can plant a nested cdk-go module path pinned to the wrong major
+  # under a scanned root (here examples/). The semantic-import gate must fail on
+  # it: a bare "/cdk-go" continuation prefix used to accept any nested major.
+  wrong_cdk_major_dir="${tmp_dir}/wrong-cdk-major"
+  copy_fixture "${wrong_cdk_major_dir}"
+  mkdir -p "${wrong_cdk_major_dir}/examples/cdk/hello-world"
+  cat > "${wrong_cdk_major_dir}/examples/cdk/hello-world/go.mod" <<'GO'
+module example.com/hello-world
+
+require github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v2 v2.0.0
+GO
+  run_self_test_case "wrong-major nested cdk-go path under examples" "${wrong_cdk_major_dir}" 1 \
+    "examples/cdk/hello-world/go.mod:3: unsupported CDK Go module path 'github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v2'"
+
   echo "version-alignment-self-test: PASS"
   exit 0
 fi
@@ -271,12 +285,21 @@ if [[ "${observed_module}" != "${expected_module}" ]]; then
 fi
 echo "version-alignment: go module state ${go_module_state} (${expected_module}; VERSION ${expected_version})"
 
-python3 - <<'PY'
+python3 - "${expected_module_major}" <<'PY'
 import sys
 from pathlib import Path
 
 root_module = "github.com/theory-cloud/apptheory"
-allowed_suffixes = ("/v5", "/cdk-go")
+module_major = sys.argv[1]
+# Active code may reference exactly two canonical module paths: the staged root
+# module's semantic import path (…/apptheory/v5) and the canonical nested CDK Go
+# module (…/cdk-go/apptheorycdk/v5). The CDK continuation is pinned to the same
+# staged major: accepting "any continuation under /cdk-go" let a planted
+# wrong-major nested path (…/cdk-go/apptheorycdk/v2) pass this gate.
+allowed_suffixes = (
+    f"/v{module_major}",
+    f"/cdk-go/apptheorycdk/v{module_major}",
+)
 # Release-pinned documentation (docs/_config_versions.yml) documents the
 # released v3.3.0 version, whose /v3 module path is historically accurate
 # and remains fetchable; the release PR advances it to /v5 with the v5.0.0
@@ -329,6 +352,7 @@ for root in (
 
 errors: list[str] = []
 boundary = set("/@=`\"' \t\r\n)")
+token_terminators = boundary - {"/"}
 for path in sorted(candidate_paths):
     if not path.exists() or path in skip_files:
         continue
@@ -352,7 +376,18 @@ for path in sorted(candidate_paths):
                 for prefix in allowed_suffixes
             )
             if not allowed and (not suffix or suffix[0] in boundary):
-                errors.append(f"{path}:{line_number}: unsuffixed root module reference")
+                token = suffix
+                for position, character in enumerate(suffix):
+                    if character in token_terminators:
+                        token = suffix[:position]
+                        break
+                if token == "/cdk-go" or token.startswith("/cdk-go/"):
+                    errors.append(
+                        f"{path}:{line_number}: unsupported CDK Go module path "
+                        f"'{root_module}{token}'"
+                    )
+                else:
+                    errors.append(f"{path}:{line_number}: unsuffixed root module reference")
             offset = index + len(root_module)
 
 if errors:

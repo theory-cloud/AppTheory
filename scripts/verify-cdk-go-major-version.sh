@@ -141,7 +141,8 @@ python3 - \
   "${summary_file}" \
   "${payload_file}" \
   "${baseline_root}" \
-  "${fixture_root}" <<'PY'
+  "${fixture_root}" \
+  "${synthetic_version}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -150,46 +151,60 @@ summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 payload = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 baseline_root = Path(sys.argv[3])
 generated_root = Path(sys.argv[4])
+synthetic_version = sys.argv[5]
 additions = set(summary.get("additions", []))
 deletions = set(summary.get("deletions", []))
 
+# jsii names the synthetic archive from the version the fixture generates, so
+# the expected artifact is derived from ${synthetic_version}: a hardcoded name
+# would compare the plan against an archive generation never wrote.
+generated_dir = "cdk-go/apptheorycdk/jsii"
+archive_name = f"theory-cloud-apptheory-cdk-{synthetic_version}.tgz"
+target_archive = f"{generated_dir}/{archive_name}"
 required_generated = {
-    "cdk-go/apptheorycdk/jsii/jsii.go",
-    "cdk-go/apptheorycdk/jsii/theory-cloud-apptheory-cdk-5.0.0-rc.tgz",
+    f"{generated_dir}/jsii.go",
+    target_archive,
 }
-target_archive = "cdk-go/apptheorycdk/jsii/theory-cloud-apptheory-cdk-5.0.0-rc.tgz"
 post_sync = baseline_root.joinpath(target_archive).is_file()
 
 if post_sync:
-    stale_generated = []
+    missing_generated = []
+    modified_generated = []
     for relative in sorted(required_generated):
         baseline_path = baseline_root / relative
         generated_path = generated_root / relative
-        if (
-            not baseline_path.is_file()
-            or not generated_path.is_file()
-            or baseline_path.read_bytes() != generated_path.read_bytes()
-        ):
-            stale_generated.append(relative)
-    if stale_generated:
+        if not baseline_path.is_file() or not generated_path.is_file():
+            missing_generated.append(relative)
+        elif baseline_path.read_bytes() != generated_path.read_bytes():
+            modified_generated.append(relative)
+    if missing_generated or modified_generated:
+        details = []
+        if missing_generated:
+            details.append(f"missing {missing_generated}")
+        if modified_generated:
+            details.append(f"modified {modified_generated}")
         raise SystemExit(
-            "cdk-go-major-version: FAIL (post-sync baseline has stale or modified v5 generated artifacts: "
-            f"{stale_generated})"
+            "cdk-go-major-version: FAIL (post-sync baseline does not match the regenerated jsii artifacts: "
+            + "; ".join(details)
+            + ")"
         )
 else:
     if summary.get("additionCount", 0) <= 0:
         raise SystemExit("cdk-go-major-version: FAIL (synthetic GitHub artifact-sync plan is empty)")
     if not required_generated.issubset(additions):
         raise SystemExit(
-            "cdk-go-major-version: FAIL (artifact-sync plan is missing v5 generated additions: "
+            "cdk-go-major-version: FAIL (artifact-sync plan is missing generated additions: "
             f"{sorted(required_generated - additions)})"
         )
-    if not any(
-        path.startswith("cdk-go/apptheorycdk/jsii/") and path.endswith(".tgz")
+    superseded_archives = sorted(
+        path
         for path in deletions
-    ):
+        if path.startswith(f"{generated_dir}/") and path.endswith(".tgz")
+    )
+    if not superseded_archives:
         raise SystemExit(
-            "cdk-go-major-version: FAIL (artifact-sync plan is missing the superseded jsii archive deletion)"
+            "cdk-go-major-version: FAIL (artifact-sync plan is missing the superseded jsii archive deletion "
+            f"under {generated_dir}/; adding {archive_name} must delete the archive it replaces)"
         )
 legacy_module_files = {"cdk-go/go.mod", "cdk-go/go.sum"}
 if legacy_module_files.intersection(additions | deletions):
