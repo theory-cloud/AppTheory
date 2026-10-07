@@ -240,11 +240,21 @@ func cleanVersion(input string) string {
 	return strings.TrimPrefix(line, "v")
 }
 
+// The semantic import path major must be canonical decimal digits. strconv.Atoi
+// also accepts a leading sign and zero padding, so "+3.0.0" and "03.0.0" would
+// otherwise scaffold a go.mod whose module path disagrees with the release tag
+// it pins.
+var goModuleMajorPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
+
 func appTheoryGoModule(version string) (string, error) {
+	invalidVersion := fmt.Errorf("apptheory-init Go version %q must begin with a numeric semantic major", version)
 	majorText, _, ok := strings.Cut(version, ".")
+	if !ok || !goModuleMajorPattern.MatchString(majorText) {
+		return "", invalidVersion
+	}
 	major, err := strconv.Atoi(majorText)
-	if !ok || err != nil || major < 0 {
-		return "", fmt.Errorf("apptheory-init Go version %q must begin with a numeric semantic major", version)
+	if err != nil {
+		return "", invalidVersion
 	}
 	module := "github.com/theory-cloud/" + "apptheory"
 	if major >= 2 {
