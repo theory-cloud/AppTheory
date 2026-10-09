@@ -14,7 +14,7 @@ class __APP_CLASS__Stack extends cdk.Stack {
       handler: "bootstrap",
       code: lambda.Code.fromAsset(projectRoot, {
         bundling: {
-          image: cdk.DockerImage.fromRegistry("golang:1.26"),
+          image: cdk.DockerImage.fromRegistry("golang:1.27"),
           command: [
             "bash",
             "-c",

@@ -104,7 +104,7 @@ export class S3VectorsSemanticSearchStack extends Stack {
           path.join(repoRoot, "go.sum"),
         ]),
         bundling: {
-          image: cdk.DockerImage.fromRegistry("golang:1.26"),
+          image: cdk.DockerImage.fromRegistry("golang:1.27"),
           command: [
             "bash",
             "-c",

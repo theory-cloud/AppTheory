@@ -20,10 +20,12 @@ Notes:
 - `SEC-3` (supply-chain) may materialize Node dependencies with scripts disabled and scan `node_modules` lifecycle hooks,
   plus lightweight scans of `go.mod` and Python dependency files. Use the allowlist only with justification:
   `gov-infra/planning/apptheory-supply-chain-allowlist.txt`.
-- The former AWS CDK `SEC-2` exceptions are retired. The patched graph uses AWS CDK `2.265.0`, which bundles
-  `brace-expansion@5.0.9`, in `cdk/` and the scanned CDK examples. The AWS CDK checker now requires both zero scanner
-  findings and the exact patched graph; any package, parent, version, path, or finding drift fails closed.
-- The former `ts/` SEC-2 exception is also retired. The eslint 10 + `eslint-plugin-import-x` train hoisted the
+- `SEC-2` carries exactly two reviewed AWS exceptions, both self-expiring with a hard `recheck_by 2026-11-02` and a
+  registry-backed removal probe: `brace-expansion@5.0.9` bundled inside AWS CDK `aws-cdk-lib@2.271.0` (every npm lockfile
+  in the repository - `cdk/` plus all `examples/cdk/*/`), and `braces@3.0.3` reached only through the `jsii-pacmak`
+  dev-toolchain chain in `cdk/`. Everything else still fails closed, and the exceptions and their exact scope are
+  recorded in `gov-infra/planning/apptheory-10of10-rubric.md` SEC-2.
+- The former `ts/` SEC-2 exception is retired. The eslint 10 + `eslint-plugin-import-x` train hoisted the
   TypeScript lint stack onto a single `minimatch@10.x` → `brace-expansion@5.x` path, which removed the
   `minimatch@3.1.4` → `brace-expansion@1.1.17` instance that exception covered. The TypeScript checker now requires
   both zero scanner findings and the exact patched graph; any parent, version, path, or finding drift fails closed.

@@ -58,7 +58,7 @@ func TestMiddleware_NonAtomic_AllowsAndRecordsRequestAndCallsHooks(t *testing.T)
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	req.RemoteAddr = "1.2.3.4:9999"
 	rr := httptest.NewRecorder()
 	handler(rr, req)
@@ -82,7 +82,7 @@ func TestMiddleware_NonAtomic_FailsOpenOnCheckLimitError(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	rr := httptest.NewRecorder()
 	handler(rr, req)
 
@@ -106,7 +106,7 @@ func TestMiddleware_SkipRequest_SkipsLimiter(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	rr := httptest.NewRecorder()
 	handler(rr, req)
 
@@ -116,25 +116,25 @@ func TestMiddleware_SkipRequest_SkipsLimiter(t *testing.T) {
 }
 
 func TestDefaultExtractIdentifier_UsesAPIKeyBearerContextAndClientIP(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	req.Header.Set("X-API-Key", "k1")
 	require.Equal(t, "k1", defaultExtractIdentifier(req))
 
-	req = httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	req.Header.Set("Authorization", "Bearer token1")
 	require.Equal(t, "token1", defaultExtractIdentifier(req))
 
-	req = httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	req = WithIdentifier(req, "id1")
 	require.Equal(t, "id1", defaultExtractIdentifier(req))
 
-	req = httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	req.RemoteAddr = "5.6.7.8:1234"
 	require.Equal(t, "5.6.7.8", defaultExtractIdentifier(req))
 }
 
 func TestDefaultExtractResource_AndGetClientIP_Branches(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "https://example.com/test/?a=b", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test/?a=b", nil)
 	require.Equal(t, "/test", defaultExtractResource(req))
 
 	// Cover the (unusual) path-with-query branch.
@@ -144,15 +144,15 @@ func TestDefaultExtractResource_AndGetClientIP_Branches(t *testing.T) {
 	req.URL.Path = ""
 	require.Equal(t, "/", defaultExtractResource(req))
 
-	req = httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	req.Header.Set("X-Forwarded-For", " 1.1.1.1, 2.2.2.2 ")
 	require.Equal(t, "1.1.1.1", getClientIP(req))
 
-	req = httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	req.Header.Set("X-Real-IP", "3.3.3.3")
 	require.Equal(t, "3.3.3.3", getClientIP(req))
 
-	req = httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	req.RemoteAddr = "4.4.4.4"
 	require.Equal(t, "4.4.4.4", getClientIP(req))
 }

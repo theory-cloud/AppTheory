@@ -65,6 +65,103 @@ func TestNormalizeLang(t *testing.T) {
 	}
 }
 
+func TestAppTheoryGoModuleDerivesSemanticImportMajor(t *testing.T) {
+	cases := []struct {
+		version string
+		want    string
+		wantErr bool
+	}{
+		{version: "0.9.0", want: "github.com/theory-cloud/apptheory"},
+		{version: "1.0.0", want: "github.com/theory-cloud/apptheory"},
+		{version: "2.0.0", want: "github.com/theory-cloud/apptheory/v2"},
+		{version: "3.0.0-rc", want: "github.com/theory-cloud/apptheory/v3"},
+		{version: "10.0.0", want: "github.com/theory-cloud/apptheory/v10"},
+		{version: "+3.0.0", wantErr: true},
+		{version: "03.0.0", wantErr: true},
+		{version: "-1.0.0", wantErr: true},
+		{version: "3", wantErr: true},
+		{version: "garbage", wantErr: true},
+		{version: "", wantErr: true},
+	}
+	for _, testCase := range cases {
+		t.Run("version="+testCase.version, func(t *testing.T) {
+			got, err := appTheoryGoModule(testCase.version)
+			if testCase.wantErr {
+				if err == nil {
+					t.Fatalf("appTheoryGoModule(%q) = %q, want error", testCase.version, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("appTheoryGoModule(%q): %v", testCase.version, err)
+			}
+			if got != testCase.want {
+				t.Fatalf("appTheoryGoModule(%q) = %q, want %q", testCase.version, got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestScaffoldGoProjectInfersVersionFromRepositoryRoot(t *testing.T) {
+	cases := []struct {
+		version    string
+		wantModule string
+		wantErr    bool
+	}{
+		{version: "0.9.0", wantModule: "github.com/theory-cloud/apptheory"},
+		{version: "1.2.3", wantModule: "github.com/theory-cloud/apptheory"},
+		{version: "2.0.0", wantModule: "github.com/theory-cloud/apptheory/v2"},
+		{version: "3.0.0-rc", wantModule: "github.com/theory-cloud/apptheory/v3"},
+		{version: "garbage", wantErr: true},
+	}
+	for _, testCase := range cases {
+		t.Run("version="+testCase.version, func(t *testing.T) {
+			root := t.TempDir()
+			writeInferredTemplateRoot(t, root, testCase.version)
+			target := filepath.Join(root, "hello-go")
+			err := run([]string{
+				"--lang=go",
+				"--template-dir=" + filepath.Join(root, "templates", "apptheory-init"),
+				target,
+			})
+			if testCase.wantErr {
+				if err == nil {
+					t.Fatalf("run with inferred version %q unexpectedly succeeded", testCase.version)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("run with inferred version %q: %v", testCase.version, err)
+			}
+			goMod := readFile(t, filepath.Join(target, "go.mod"))
+			wantRequire := "require " + testCase.wantModule + " v" + testCase.version
+			if !strings.Contains(goMod, wantRequire) {
+				t.Fatalf("inferred go.mod does not contain %q: %s", wantRequire, goMod)
+			}
+		})
+	}
+}
+
+// writeInferredTemplateRoot lays out the minimum tree the scaffolder discovers
+// when no --version is passed: templates/apptheory-init/<lang>/ plus the
+// repository VERSION file the template root's grandparent carries.
+func writeInferredTemplateRoot(t *testing.T, root string, version string) {
+	t.Helper()
+	templateRoot := filepath.Join(root, "templates", "apptheory-init")
+	for _, lang := range []string{"go", "ts", "py"} {
+		if err := os.MkdirAll(filepath.Join(templateRoot, lang), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "VERSION"), []byte(version+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	requires := "module __APP_MODULE__\n\ngo 1.26.6\n\nrequire __APPTHEORY_GO_MODULE__ __APPTHEORY_TAG__\n"
+	if err := os.WriteFile(filepath.Join(templateRoot, "go", "go.mod.tmpl"), []byte(requires), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path) //nolint:gosec // test helper reads files created under t.TempDir or generated scaffold output.

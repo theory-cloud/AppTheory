@@ -94,9 +94,13 @@ Operator rulings, quoted verbatim:
 `node_modules/aws-cdk-lib/node_modules/brace-expansion` (bundled), reached only through aws-cdk-lib's own
 bundled `minimatch`. AWS publishes it and only AWS can publish a tarball that bundles the patched
 release (`brace-expansion >= 5.0.12` exists on npm but cannot be installed into the bundled subtree); it
-is build-time only and no AppTheory runtime package or Lambda ships it. Scope: `cdk/package-lock.json`
-and the four example lockfiles this gate routes to the same checker with the identical AWS path -
-`examples/cdk/{lambda-role,multilang,sqs-queue,ssr-site}/package-lock.json`. **Removal condition:** the
+is build-time only and no AppTheory runtime package or Lambda ships it. Scope (widened 2026-10-06):
+every npm lockfile in this repository whose installed tree carries that bundled path -
+`cdk/package-lock.json` plus all twelve `examples/cdk/*/package-lock.json` files. Before the widening the
+scope was cdk/ plus four examples, which left eight example lockfiles carrying the identical vulnerable
+AWS path with no gate coverage and no recorded exception; the SEC-2 Node scan set is now the same full
+list, so every lockfile is either reported vulnerable or reported excepted. Owner: AppTheory steward
+(Factory dependency sweeps). **Removal condition:** the
 `aws-cdk-lib` version this repository pins bundles `brace-expansion >= 5.0.12`. **Hard recheck by
 2026-11-02.**
 

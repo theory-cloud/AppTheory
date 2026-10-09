@@ -21,6 +21,11 @@ bash ./gov-infra/verifiers/test-gov-retry.sh
 # guard that stops failing closed on the reproduced bypasses fails the rubric.
 bash ./scripts/test-verify-ci-trigger-parity.sh
 bash ./scripts/test-verify-npm-install-hygiene.sh
+# The visible-finding checkers decide whether a dependency-audit finding is
+# visible to CI. Run their offline fixture tables (lockfile graph drift,
+# malformed scanner reports, planted node paths) so a checker that stops
+# failing closed fails the rubric.
+bash ./scripts/test-check-visible-findings.sh
 bash ./gov-infra/verifiers/gov-verify-rubric.sh
 
 echo "rubric: PASS"
