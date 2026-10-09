@@ -214,7 +214,7 @@ for provisioned in \
   "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e" \
   "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" \
   "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97" \
-  "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0"; do
+  "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0"; do
   require_job_contains "${ci}" "rubric" "${provisioned}" \
     "full rubric must provision its pinned toolchain on every lane it runs on"
 done
