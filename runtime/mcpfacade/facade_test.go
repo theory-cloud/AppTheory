@@ -860,7 +860,7 @@ func validConfig(mode URLMode) FacadeConfig {
 }
 
 func validRootDiscoveryConfig() *RootDiscoveryConfig {
-	return &RootDiscoveryConfig{
+	return &RootDiscoveryConfig{ // #nosec G101 -- test fixture of discovery endpoints on example.com; no credential is present.
 		IssuerURL:                "https://accounts.example.com",
 		AuthorizationEndpointURL: "https://accounts.example.com/authorize",
 		TokenEndpointURL:         "https://accounts.example.com/token",
