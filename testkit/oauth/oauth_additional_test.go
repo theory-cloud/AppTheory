@@ -342,7 +342,7 @@ func TestAuthorize_DefaultsAndNilContext(t *testing.T) {
 		// Redirect URI defaults to Claude's callback.
 		ru := r.URL.Query().Get("redirect_uri")
 		require.NotEmpty(t, ru)
-		http.Redirect(w, r, ru+"?code=code1", http.StatusFound)
+		http.Redirect(w, r, ru+"?code=code1", http.StatusFound) // #nosec G710 -- test authorization server echoes the redirect_uri the test client supplied.
 	})
 	authMux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, r.ParseForm())

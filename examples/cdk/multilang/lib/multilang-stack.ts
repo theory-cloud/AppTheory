@@ -68,7 +68,7 @@ export class MultiLangStack extends Stack {
       handler: "bootstrap",
       code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "go"), {
         bundling: {
-          image: cdk.DockerImage.fromRegistry("golang:1.26"),
+          image: cdk.DockerImage.fromRegistry("golang:1.27"),
           command: [
             "bash",
             "-c",

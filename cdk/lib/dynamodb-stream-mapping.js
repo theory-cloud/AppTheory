@@ -40,7 +40,7 @@ const lambdaEventSources = __importStar(require("aws-cdk-lib/aws-lambda-event-so
 const constructs_1 = require("constructs");
 const stream_mapping_on_failure_1 = require("./private/stream-mapping-on-failure");
 class AppTheoryDynamoDBStreamMapping extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryDynamoDBStreamMapping", version: "5.0.1-rc" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryDynamoDBStreamMapping", version: "5.0.1" };
     constructor(scope, id, props) {
         super(scope, id);
         (0, stream_mapping_on_failure_1.assertEventSourceDlq)("AppTheoryDynamoDBStreamMapping", props.onFailure);

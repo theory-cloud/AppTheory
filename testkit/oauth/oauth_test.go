@@ -79,7 +79,7 @@ func TestClaudePublicClient_DCR_PKCE_Refresh(t *testing.T) {
 		qq := ru.Query()
 		qq.Set("code", code)
 		ru.RawQuery = qq.Encode()
-		http.Redirect(w, r, ru.String(), http.StatusFound)
+		http.Redirect(w, r, ru.String(), http.StatusFound) // #nosec G710 -- test authorization server echoes the redirect_uri the test client supplied.
 	})
 
 	authMux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {

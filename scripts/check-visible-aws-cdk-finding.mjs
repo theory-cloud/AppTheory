@@ -36,6 +36,12 @@
 //           publish a tarball that bundles the patched release.
 // Ruling:   2026-10-03 ("... if a vulnerable dependency is bundled in AWS we
 //           make an exception until its updated there.").
+// Scope:    every npm lockfile in this repository whose installed tree carries
+//           the bundled path above (E1.lockfiles; the SEC-2 gate scans the same
+//           set). Before 2026-10-06 the exception named only cdk/ and four
+//           examples, so eight other example lockfiles resolved the identical
+//           vulnerable AWS path with no gate coverage and no way to record it.
+// Owner:    AppTheory steward (Factory dependency sweeps).
 // Removal condition: the aws-cdk-lib version this repository pins bundles
 //           brace-expansion >= 5.0.12.
 //
@@ -128,6 +134,65 @@ function sameStringSet(actual, expected) {
   return actualSorted.every((value, index) => value === expectedSorted[index]);
 }
 
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Pure: the OSV report entries this checker can honestly evaluate. Returns
+// { entries, problems }; a non-empty `problems` means the report shape would
+// otherwise hide findings from the loop below (a missing results array, a
+// malformed result entry, a non-array packages list, a malformed package
+// entry, or a non-array vulnerabilities list). A string-valued `packages`
+// used to iterate character by character and read as "no findings". Pure so
+// the self-test can drive it offline.
+function collectOsvEntries(report) {
+  const entries = [];
+  const problems = [];
+  if (!isRecord(report)) {
+    return {
+      entries,
+      problems: [`OSV report is not a JSON object (got ${JSON.stringify(report)})`],
+    };
+  }
+  if (!Array.isArray(report.results)) {
+    return { entries, problems: ["OSV report is missing its results array"] };
+  }
+  for (const result of report.results) {
+    if (!isRecord(result)) {
+      problems.push(`OSV report has a malformed result entry (got ${JSON.stringify(result)})`);
+      continue;
+    }
+    const packages = result.packages;
+    if (packages === undefined || packages === null) continue;
+    if (!Array.isArray(packages)) {
+      problems.push(`OSV report result.packages must be an array (got ${JSON.stringify(packages)})`);
+      continue;
+    }
+    for (const pkg of packages) {
+      if (!isRecord(pkg)) {
+        problems.push(`OSV report has a malformed package entry (got ${JSON.stringify(pkg)})`);
+        continue;
+      }
+      const vulnerabilities = pkg.vulnerabilities;
+      if (vulnerabilities === undefined || vulnerabilities === null) continue;
+      if (!Array.isArray(vulnerabilities)) {
+        problems.push(
+          `OSV report package.vulnerabilities must be an array (got ${JSON.stringify(vulnerabilities)})`,
+        );
+        continue;
+      }
+      for (const vuln of vulnerabilities) {
+        if (!isRecord(vuln)) {
+          problems.push(`OSV report has a malformed vulnerability entry (got ${JSON.stringify(vuln)})`);
+          continue;
+        }
+        entries.push({ result, pkg, vuln });
+      }
+    }
+  }
+  return { entries, problems };
+}
+
 function stringList(value) {
   return Array.isArray(value) ? value.map(String) : [];
 }
@@ -217,6 +282,7 @@ const expectation = {
   advisoryUrl: "https://github.com/advisories/GHSA-rgw5-rvv9-x895",
   alias: "CVE-2026-69152",
   cdkVersion: AWS_CDK_BUNDLE.cdkVersion,
+  // Asserted, not derived: the advisory's published fixed versions, recorded for the PASS record.
   fixedVersions: ["1.1.18", "2.1.4", "3.0.6", "5.0.9"],
   minimatchVersion: AWS_CDK_BUNDLE.minimatchVersion,
   packageName: AWS_CDK_BUNDLE.packageName,
@@ -224,18 +290,31 @@ const expectation = {
   packageVersion: AWS_CDK_BUNDLE.packageVersion,
 };
 
-// The example lockfiles the governance gate routes to this checker with the
-// identical AWS bundled path (gov-verify-rubric.sh's osv_scan_lockfile). Any
-// lockfile outside this list that starts routing here still fails closed,
-// because no exception would match its findings or its lockfile.
+// Every npm lockfile in this repository whose installed tree carries the
+// bundled AWS path. Each was verified on 2026-10-06 to resolve exactly one
+// brace-expansion, at node_modules/aws-cdk-lib/node_modules/brace-expansion
+// inside the pinned aws-cdk-lib 2.271.0 tarball, and to report exactly the
+// three advisories listed below and nothing else. This list must stay identical
+// to the Node lockfile set the SEC-2 gate scans (gov-verify-rubric.sh's
+// node_lockfiles / osv_scan_lockfile); any lockfile outside this list that
+// starts routing here still fails closed, because no exception would match its
+// findings or its lockfile.
 const E1 = {
   exceptionId: "aws-cdk-lib-bundled-brace-expansion",
   kind: "bundled",
   lockfiles: [
     "cdk/package-lock.json",
+    "examples/cdk/codebuild-job-runner/package-lock.json",
+    "examples/cdk/hello-world/package-lock.json",
+    "examples/cdk/import-pipeline/package-lock.json",
+    "examples/cdk/kinesis-cloudwatch-logs/package-lock.json",
     "examples/cdk/lambda-role/package-lock.json",
+    "examples/cdk/lesser-parity/package-lock.json",
+    "examples/cdk/microvm-controller/package-lock.json",
     "examples/cdk/multilang/package-lock.json",
+    "examples/cdk/s3-vectors-semantic-search/package-lock.json",
     "examples/cdk/sqs-queue/package-lock.json",
+    "examples/cdk/ssr-only-provided-assets-site/package-lock.json",
     "examples/cdk/ssr-site/package-lock.json",
   ],
   packageName: AWS_CDK_BUNDLE.packageName,
@@ -262,9 +341,10 @@ const E1 = {
     },
   ],
   operatorRuling: "2026-10-03",
+  owner: "theory-cloud/AppTheory steward (Factory dependency sweeps)",
   recheckBy: "2026-11-02",
   justification:
-    "AWS-published: aws-cdk-lib bundles brace-expansion 5.0.9 inside its tarball and only AWS can publish a tarball that bundles the patched release. Build-time only; AppTheory ships no runtime package or Lambda with it. Operator-ruled 2026-10-03. Self-expiring; see the removal condition in this file.",
+    "AWS-published: aws-cdk-lib bundles brace-expansion 5.0.9 inside its tarball and only AWS can publish a tarball that bundles the patched release. Build-time only; AppTheory ships no runtime package or Lambda with it. Operator-ruled 2026-10-03; scope widened on 2026-10-06 to every repository lockfile carrying the identical bundled path, so the SEC-2 gate scans and reports each one instead of ignoring it. Self-expiring; see the removal condition in this file.",
   removalCondition:
     "the aws-cdk-lib version this repository pins bundles brace-expansion >= 5.0.12",
 };
@@ -295,6 +375,7 @@ const E2 = {
     },
   ],
   operatorRuling: "2026-10-04",
+  owner: "theory-cloud/AppTheory steward (Factory dependency sweeps)",
   recheckBy: "2026-11-02",
   justification:
     "AWS-published build-toolchain transitive chain with no upstream fix: braces <= 3.0.3 is affected and npm publishes no patched release, so the jsii-pacmak dev toolchain cannot be upgraded out of it. Build-time only; AppTheory ships no runtime package or Lambda with it. Operator-ruled 2026-10-04, same treatment as E1. Self-expiring; see the removal condition in this file.",
@@ -617,10 +698,35 @@ async function e2RemovalProbe() {
 // on, plus the recheck_by boundary and each removal condition).
 // ---------------------------------------------------------------------------
 
+// Reads the SEC-2 Node scan set out of the governance verifier, so the
+// exception's lockfile scope and the gate's scan surface cannot drift apart
+// silently. Returns null when the array cannot be found, which fails the
+// comparison that uses it.
+function rubricNodeLockfiles() {
+  const verifierPath = path.join(repositoryRoot, "gov-infra/verifiers/gov-verify-rubric.sh");
+  let source;
+  try {
+    source = fs.readFileSync(verifierPath, "utf8");
+  } catch {
+    return null;
+  }
+  const block = /local -a node_lockfiles=\(([\s\S]*?)\n\s*\)/.exec(source);
+  if (!block) return null;
+  const entries = [];
+  for (const line of block[1].split("\n")) {
+    const match = /^\s*"([^"]+)"\s*$/.exec(line);
+    if (match) entries.push(match[1]);
+  }
+  return entries.length > 0 ? entries : null;
+}
+
 function runSelfTest() {
   const now = "2026-10-04T00:00:00Z";
   const canonical = "cdk/package-lock.json";
   const otherLockfile = "examples/cdk/multilang/package-lock.json";
+  // A lockfile that is deliberately NOT in E1.lockfiles. It stands in for an
+  // npm lockfile that starts routing to this checker without being reviewed.
+  const unroutedLockfile = "examples/cdk/not-yet-routed-site/package-lock.json";
   const cases = [];
 
   const npmVuln = (overrides) => ({
@@ -680,6 +786,38 @@ function runSelfTest() {
     otherLockfile,
     true,
   );
+  // Every lockfile in E1.lockfiles must be able to match, so a scope widening
+  // cannot silently leave a named lockfile unmatched.
+  for (const routedLockfile of E1.lockfiles) {
+    expectNpm(
+      `npm E1 matches routed lockfile ${routedLockfile}`,
+      "brace-expansion",
+      npmVuln({}),
+      routedLockfile,
+      true,
+    );
+  }
+  // A named lockfile that does not exist in the worktree would be a silent hole
+  // in the exception's scope, so every entry must resolve to a real file.
+  for (const routedLockfile of E1.lockfiles) {
+    cases.push({
+      label: `E1 named lockfile exists: ${routedLockfile}`,
+      actual: fs.existsSync(path.join(repositoryRoot, routedLockfile)),
+      expected: true,
+    });
+  }
+  // The exception's lockfile list and the SEC-2 gate's Node scan set must not
+  // drift apart: a lockfile the gate scans but the exception omits fails the
+  // gate, and one the exception names but the gate never scans is a recorded
+  // exception over nothing.
+  cases.push({
+    label: "E1.lockfiles and gov-verify-rubric.sh node_lockfiles agree",
+    actual: sameStringSet(
+      rubricNodeLockfiles(),
+      [...E1.lockfiles, "ts/package-lock.json"],
+    ),
+    expected: true,
+  });
   expectNpm(
     "npm E2 root real shape matches",
     "braces",
@@ -817,11 +955,11 @@ function runSelfTest() {
     false,
   );
   expectOsv(
-    "(d) osv E1 from a different lockfile fails",
-    osvResult("examples/cdk/hello-world/package-lock.json"),
+    "(d) osv E1 from an unrouted lockfile fails",
+    osvResult(unroutedLockfile),
     osvPkg("brace-expansion", "5.0.9"),
     { id: E1.advisories[0].id, aliases: [E1.advisories[0].alias] },
-    "examples/cdk/hello-world/package-lock.json",
+    unroutedLockfile,
     false,
   );
   expectNpm(
@@ -872,6 +1010,82 @@ function runSelfTest() {
   cases.push({
     label: "(f) E2 stays live: no patched braces published",
     actual: e2RemovalReasons({ publishedStablePatchedBraces: [] }).length === 0,
+    expected: true,
+  });
+
+  // (g) the OSV report contract: any shape that could hide a finding is a
+  // problem, and a well-formed finding is collected so the matcher can judge it.
+  const expectOsvEntries = (label, report, expectedEntries, expectedProblemCount) => {
+    const collected = collectOsvEntries(report);
+    cases.push({ label: `${label}: entries`, actual: collected.entries.length, expected: expectedEntries });
+    cases.push({
+      label: `${label}: problems`,
+      actual: collected.problems.length,
+      expected: expectedProblemCount,
+    });
+  };
+  expectOsvEntries("(g) an empty results array", { results: [] }, 0, 0);
+  expectOsvEntries("(g) a missing results array", {}, 0, 1);
+  expectOsvEntries("(g) a non-object report", null, 0, 1);
+  expectOsvEntries("(g) a null result entry", { results: [null] }, 0, 1);
+  expectOsvEntries("(g) a string-valued packages list", { results: [{ packages: "nope" }] }, 0, 1);
+  expectOsvEntries("(g) a result with no packages", { results: [{}] }, 0, 0);
+  expectOsvEntries(
+    "(g) a package with no vulnerabilities",
+    { results: [{ packages: [{ package: { ecosystem: "npm", name: "braces", version: "3.0.3" } }] }] },
+    0,
+    0,
+  );
+  expectOsvEntries(
+    "(g) a string-valued vulnerabilities list",
+    { results: [{ packages: [{ vulnerabilities: "nope" }] }] },
+    0,
+    1,
+  );
+  expectOsvEntries(
+    "(g) a null vulnerability entry",
+    { results: [{ packages: [{ vulnerabilities: [null] }] }] },
+    0,
+    1,
+  );
+  expectOsvEntries(
+    "(g) a well-formed finding",
+    {
+      results: [
+        {
+          source: { path: canonical },
+          packages: [
+            {
+              package: { ecosystem: "npm", name: "braces", version: "3.0.3" },
+              vulnerabilities: [{ id: E2.advisories[0].id, aliases: [E2.advisories[0].alias] }],
+            },
+          ],
+        },
+      ],
+    },
+    1,
+    0,
+  );
+
+  // (g) planted and drifted lockfile graphs still fail the reviewed-graph anchors.
+  const plantedTopLevel = { ...validPackages(), "node_modules/brace-expansion": { version: "5.0.12" } };
+  cases.push({
+    label: "(g) a planted top-level brace-expansion fails the graph",
+    actual: awsCdkBundleGraphProblems(plantedTopLevel).length > 0,
+    expected: true,
+  });
+  const driftedBundleVersion = { ...validPackages() };
+  driftedBundleVersion["node_modules/aws-cdk-lib/node_modules/brace-expansion"].version = "5.0.10";
+  cases.push({
+    label: "(g) a drifted bundled brace-expansion version fails the graph",
+    actual: awsCdkBundleGraphProblems(driftedBundleVersion).length > 0,
+    expected: true,
+  });
+  const driftedBundleMinimatch = { ...validPackages() };
+  driftedBundleMinimatch["node_modules/aws-cdk-lib/node_modules/minimatch"].version = "10.2.4";
+  cases.push({
+    label: "(g) a drifted bundled minimatch version fails the graph",
+    actual: awsCdkBundleGraphProblems(driftedBundleMinimatch).length > 0,
     expected: true,
   });
 
@@ -976,24 +1190,24 @@ async function main() {
       });
     }
   } else {
-    if (!Array.isArray(report.results)) {
-      fail("OSV report is missing its results array");
+    const collected = collectOsvEntries(report);
+    for (const problem of collected.problems) {
+      console.error(`${mode}-scanner: ${problem}`);
     }
-    for (const result of report.results) {
-      for (const pkg of result.packages ?? []) {
-        for (const vuln of pkg.vulnerabilities ?? []) {
-          const packageInfo = pkg?.package ?? {};
-          const exception = osvMatchingException(result, pkg, vuln, canonicalLockfile);
-          findings.push({
-            exceptionId: exception?.exceptionId ?? null,
-            fixedVersions: fixedVersions(vuln, packageInfo.name ?? "<unknown>"),
-            id: vuln.id ?? "<unknown>",
-            packageName: packageInfo.name ?? "<unknown>",
-            source: result?.source?.path ?? "<unknown>",
-            version: packageInfo.version ?? "<unknown>",
-          });
-        }
-      }
+    if (collected.problems.length > 0) {
+      fail("OSV report shape is not one this gate can evaluate");
+    }
+    for (const { result, pkg, vuln } of collected.entries) {
+      const packageInfo = pkg?.package ?? {};
+      const exception = osvMatchingException(result, pkg, vuln, canonicalLockfile);
+      findings.push({
+        exceptionId: exception?.exceptionId ?? null,
+        fixedVersions: fixedVersions(vuln, packageInfo.name ?? "<unknown>"),
+        id: vuln.id ?? "<unknown>",
+        packageName: packageInfo.name ?? "<unknown>",
+        source: result?.source?.path ?? "<unknown>",
+        version: packageInfo.version ?? "<unknown>",
+      });
     }
   }
 

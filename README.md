@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Go"         src="https://img.shields.io/badge/Go-1.26-2EA7FF?style=flat-square&logo=go&logoColor=white">
+  <img alt="Go"         src="https://img.shields.io/badge/Go-1.27-2EA7FF?style=flat-square&logo=go&logoColor=white">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-Node%2020%2B-7A5CFF?style=flat-square&logo=typescript&logoColor=white">
   <img alt="Python"     src="https://img.shields.io/badge/Python-3.12%2B-C9A96B?style=flat-square&logo=python&logoColor=white">
 </p>

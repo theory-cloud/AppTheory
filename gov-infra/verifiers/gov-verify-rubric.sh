@@ -268,8 +268,8 @@ export PATH="${GOV_TOOLS_BIN}:${GOV_TOOLS_PY_BIN}:${GOV_TOOLS_PY_RUNTIME_BIN}:${
 
 # Tool pins (optional; populated by gov.init when possible).
 # If these remain unset, checks that depend on them should be marked BLOCKED (never "use whatever is installed").
-PIN_GOLANGCI_LINT_VERSION="v2.9.0"
-PIN_GOVULNCHECK_VERSION="v1.1.4"
+PIN_GOLANGCI_LINT_VERSION="v2.14.0"
+PIN_GOVULNCHECK_VERSION="v1.8.0"
 PIN_OSV_SCANNER_VERSION="v1.9.2"
 PIN_PIP_AUDIT_VERSION="2.10.0"
 PIN_PY_COVERAGE_VERSION="7.6.10"
@@ -787,13 +787,27 @@ gov_cmd_vuln() {
     fi
   done
 
+  # Every npm lockfile in the repository. Each aws-cdk-lib-carrying lockfile is
+  # routed through the reviewed, self-expiring bundled-dependency exception in
+  # scripts/check-visible-aws-cdk-finding.mjs, whose E1.lockfiles list must stay
+  # identical to the entries below (that checker's self-test compares them).
+  # Scanning the full set keeps "vulnerable" and "explicitly excepted" the two
+  # only possible outcomes; an unscanned lockfile would be neither.
   local -a node_lockfiles=(
     "ts/package-lock.json"
     "cdk/package-lock.json"
-    "examples/cdk/multilang/package-lock.json"
-    "examples/cdk/ssr-site/package-lock.json"
-    "examples/cdk/sqs-queue/package-lock.json"
+    "examples/cdk/codebuild-job-runner/package-lock.json"
+    "examples/cdk/hello-world/package-lock.json"
+    "examples/cdk/import-pipeline/package-lock.json"
+    "examples/cdk/kinesis-cloudwatch-logs/package-lock.json"
     "examples/cdk/lambda-role/package-lock.json"
+    "examples/cdk/lesser-parity/package-lock.json"
+    "examples/cdk/microvm-controller/package-lock.json"
+    "examples/cdk/multilang/package-lock.json"
+    "examples/cdk/s3-vectors-semantic-search/package-lock.json"
+    "examples/cdk/sqs-queue/package-lock.json"
+    "examples/cdk/ssr-only-provided-assets-site/package-lock.json"
+    "examples/cdk/ssr-site/package-lock.json"
   )
 
   local lf

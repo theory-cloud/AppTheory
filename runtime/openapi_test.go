@@ -337,7 +337,7 @@ func stringSliceEqual(left, right []string) bool {
 		return false
 	}
 	for i := range left {
-		if left[i] != right[i] {
+		if left[i] != right[i] { // #nosec G602 -- left and right are equal length (guarded above), so right[i] is always in range.
 			return false
 		}
 	}

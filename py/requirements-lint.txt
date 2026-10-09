@@ -1,3 +1,3 @@
 ruff==0.16.9
 pyright==1.1.414
-tabletheory-py @ https://github.com/theory-cloud/TableTheory/releases/download/v4.0.1/tabletheory_py-4.0.1-py3-none-any.whl#sha256=c3c91ec8d07a959e7f86ed688392b9ab86b7684ae8e8854f1010114e30edb4c7
+tabletheory-py @ https://github.com/theory-cloud/TableTheory/releases/download/v4.0.2/tabletheory_py-4.0.2-py3-none-any.whl#sha256=6ea091175f934c78b1711003044ae83d8fae379bfd07ce4cee6f22712ab76194

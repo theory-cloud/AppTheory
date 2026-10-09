@@ -10,7 +10,7 @@ concepts:
       - "Deterministic testkit helpers for event building, time control, and ID control"
       - "Public API drift gates via api-snapshots/go.txt, api-snapshots/ts.txt, api-snapshots/py.txt"
     requires:
-      - "Go 1.26.x toolchain for Go runtime development"
+      - "Go 1.27.x toolchain for Go runtime development"
       - "Node.js 20+ for TypeScript and jsii/CDK workflows"
       - "Python 3.12+ for Python runtime workflows"
     use_when:

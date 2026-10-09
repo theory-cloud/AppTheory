@@ -49,7 +49,7 @@ func TestMiddleware_AllowsAndSetsHeaders(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	rr := httptest.NewRecorder()
 	handler(rr, req)
 
@@ -81,7 +81,7 @@ func TestMiddleware_RateLimitedCallsErrorHandler(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	rr := httptest.NewRecorder()
 	handler(rr, req)
 
@@ -97,7 +97,7 @@ func TestMiddleware_FailsOpenOnLimiterError(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	rr := httptest.NewRecorder()
 	handler(rr, req)
 
@@ -108,7 +108,7 @@ func TestMiddleware_FailsOpenOnLimiterError(t *testing.T) {
 }
 
 func TestDefaultErrorHandler_Writes429JSON(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	rr := httptest.NewRecorder()
 
 	defaultErrorHandler(rr, req, nil)
@@ -119,7 +119,7 @@ func TestDefaultErrorHandler_Writes429JSON(t *testing.T) {
 }
 
 func TestWithIdentifier_SetsContextValueForDefaultExtractIdentifier(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/test", nil)
 	req = WithIdentifier(req, "user:123")
 	require.Equal(t, "user:123", defaultExtractIdentifier(req))
 }

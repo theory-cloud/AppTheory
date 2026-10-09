@@ -129,8 +129,19 @@ linters:
           audit: true
 
     goconst:
+      # golangci-lint v2.14.0 bundles goconst v1.11.0, which surfaces strings
+      # passed as call arguments and a new CompositeLit type (strings inside
+      # composite literals) that the v2.9.0 bundle (goconst v1.8.2) did not
+      # report; adopting v2.14.0 therefore raised 232 findings with no code
+      # change. Excluding the Call and CompositeLit types restores the
+      # {assignment,binary,case,return} surface the gate had before, so it stays
+      # meaningful (repeated non-call literals are still reported) without
+      # extracting a constant for every call-argument string.
       min-len: 3
       min-occurrences: 3
+      exclude-types:
+        - Call
+        - CompositeLit
 
 issues:
   max-issues-per-linter: 0
