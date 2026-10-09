@@ -1,5 +1,31 @@
 # Changelog
 
+## [5.0.2](https://github.com/theory-cloud/AppTheory/compare/v5.0.1...v5.0.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* **apptheory-init:** reject non-canonical Go module majors ([6d92ab3](https://github.com/theory-cloud/AppTheory/commit/6d92ab3e5da0bd54ccf504bf3eb3e980008ad1b2))
+* **deps:** clear the source-map-js advisory and cover every AWS-bundled lockfile ([5e5251f](https://github.com/theory-cloud/AppTheory/commit/5e5251f1bf00ae96b0114153f23873e05df3c94e))
+* **deps:** clear the source-map-js advisory in the TypeScript lint tree ([37b28a2](https://github.com/theory-cloud/AppTheory/commit/37b28a256150f1b93f931c547bdea12345d15006))
+* **deps:** pin TableTheory v4.0.2 across the Go, TypeScript, and Python runtimes ([7985c07](https://github.com/theory-cloud/AppTheory/commit/7985c079e99aa712c2c583199a28a0aa7ba06f9e))
+* **deps:** pin TableTheory v4.0.2 across the Go, TypeScript, and Python runtimes ([2d93795](https://github.com/theory-cloud/AppTheory/commit/2d937950eba7bfe2e8bc2aa414ec818f05102f15))
+* **deps:** refresh CDK example synth snapshots for TableTheory v4.0.2 ([6ae90cb](https://github.com/theory-cloud/AppTheory/commit/6ae90cb971f35519734c83d568aa5472adf273ef))
+* **deps:** take the newest in-policy AWS SDK and typescript-eslint releases ([fa55847](https://github.com/theory-cloud/AppTheory/commit/fa55847291ebafba517f01338bcf2e10987bd629))
+* **gov:** pin govulncheck to v1.8.0 for Go 1.27.2 analysis ([cd31b7e](https://github.com/theory-cloud/AppTheory/commit/cd31b7e61ffa3350c4820297153a17f5aeaae717))
+* **gov:** re-anchor the TypeScript lint-tool graph to typescript-eslint 8.71.0 ([30b1d41](https://github.com/theory-cloud/AppTheory/commit/30b1d41c0b447e5bce0ea64a1af6493a9324a3ef))
+* **gov:** scan every AWS-bundled lockfile and except it explicitly ([850492f](https://github.com/theory-cloud/AppTheory/commit/850492fb81824853377868b45935cf18e97b8724))
+* **limited:** pass context to limited-middleware test requests ([e98e1dd](https://github.com/theory-cloud/AppTheory/commit/e98e1ddb1919ee9e8f0da41ddb39dccd906c0c96))
+* **scripts:** derive the synthetic CDK Go archive name ([c3eecde](https://github.com/theory-cloud/AppTheory/commit/c3eecde083b976a49bec76dd0452b9032b071269))
+* **scripts:** fail closed on malformed dependency-audit reports ([f14fcd6](https://github.com/theory-cloud/AppTheory/commit/f14fcd6fbf46f8285e68ab246f8a5cb3fdea6478))
+* **scripts:** harden release gate scripts and scaffolder version parsing ([360e73c](https://github.com/theory-cloud/AppTheory/commit/360e73ceacfb38c4d30f437dc1a93f6114f3f8cd))
+* **scripts:** reject wrong-major nested cdk-go paths in the import gate ([6a90267](https://github.com/theory-cloud/AppTheory/commit/6a90267eb88074b4639112aab7f569066a9a1f68))
+
+
+### Reverts
+
+* **cdk:** keep the bundled minimatch override ([2dcb27a](https://github.com/theory-cloud/AppTheory/commit/2dcb27a0089a11e72c5dc9311afeddd36e7e3542))
+
 ## [5.0.2-rc](https://github.com/theory-cloud/AppTheory/compare/v5.0.1...v5.0.2-rc) (2026-10-09)
 
 
