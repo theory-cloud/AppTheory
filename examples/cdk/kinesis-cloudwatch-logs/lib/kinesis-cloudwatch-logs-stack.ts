@@ -23,7 +23,7 @@ const exampleSourceLogGroupName = "/aws/apptheory/example/cloudwatch-logs-source
 function goBootstrapCode(handlerDir: string): lambda.Code {
   return lambda.Code.fromAsset(handlerDir, {
     bundling: {
-      image: cdk.DockerImage.fromRegistry("golang:1.26"),
+      image: cdk.DockerImage.fromRegistry("golang:1.27"),
       command: [
         "bash",
         "-c",

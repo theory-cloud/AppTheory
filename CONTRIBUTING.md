@@ -30,7 +30,7 @@ go mod download
 (cd cdk && npm ci)
 ```
 
-Prerequisites: Go 1.26+, Node.js 24+, Python 3.14+, `make`, `git`.
+Prerequisites: Go 1.27+, Node.js 24+, Python 3.14+, `make`, `git`.
 
 ## Running Tests
 
