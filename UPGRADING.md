@@ -40,7 +40,7 @@ their APIs are otherwise unchanged.
 
 ### TableTheory v4 dependency floor
 
-The v5 line requires TableTheory v4.0.1 in all three runtimes. TableTheory v4 moves its Go module path to
+The v5 line requires TableTheory v4.0.2 in all three runtimes. TableTheory v4 moves its Go module path to
 `github.com/theory-cloud/tabletheory/v4`, so Go consumers must replace every TableTheory `/v3` import with `/v4` and
 require `github.com/theory-cloud/tabletheory/v4`. Because `/v3` and `/v4` TableTheory packages are distinct Go types,
 these **7 exported AppTheory constructors** now take a TableTheory v4 `tablecore.DB` and no longer accept a TableTheory
@@ -56,17 +56,17 @@ v3 client:
 | `NewDynamoTaskStore(db tablecore.DB) TaskStore` | `runtime/mcp` |
 | `NewTableTheorySessionRegistry(db tablecore.DB) (*TableTheorySessionRegistry, error)` | `runtime/microvm` |
 
-Before the v5 upgrade, Go consumers of those constructors must `go get github.com/theory-cloud/tabletheory/v4@v4.0.1`
+Before the v5 upgrade, Go consumers of those constructors must `go get github.com/theory-cloud/tabletheory/v4@v4.0.2`
 and pass a TableTheory v4 client. Do not keep both TableTheory major paths in one application — their otherwise
 similar interfaces are distinct Go types.
 
 The AppTheory TypeScript and Python release metadata continues to install TableTheory only from immutable GitHub
 Release assets. The v4 dependency assets pinned by this line are:
 
-- TypeScript: `theory-cloud-tabletheory-ts-4.0.1.tgz`, verified with SHA-512
-  `fOZmjOUJCnicqtAIIJe7zkREwMc0Rfpe38vIj6nkcTVJUl+eyxeTqQI8aunIWjmUKlPzuHm5yLFeb25SJvINjg==`.
-- Python: `tabletheory_py-4.0.1-py3-none-any.whl`, verified with SHA-256
-  `c3c91ec8d07a959e7f86ed688392b9ab86b7684ae8e8854f1010114e30edb4c7`.
+- TypeScript: `theory-cloud-tabletheory-ts-4.0.2.tgz`, verified with SHA-512
+  `PVONJcpV1x7pYr73LSEkkr5W6EirVEvQcylOdP/fL+zYDoaKydGQ58YJ60vUz6kD3OK3cMuHMddInKueHGEAqA==`.
+- Python: `tabletheory_py-4.0.2-py3-none-any.whl`, verified with SHA-256
+  `6ea091175f934c78b1711003044ae83d8fae379bfd07ce4cee6f22712ab76194`.
 
 TableTheory v4 removes the ticker-driven memory monitor: `MemoryMonitor.Start` / `Stop`,
 `ResourceProtector.StartMemoryMonitoring` / `StopMemoryMonitoring`, and `ResourceLimits.MemoryCheckInterval` are
