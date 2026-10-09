@@ -28,7 +28,7 @@ const constructs_1 = require("constructs");
  * });
  */
 class AppTheoryQueueConsumer extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryQueueConsumer", version: "5.0.1" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryQueueConsumer", version: "5.0.2-rc" };
     /**
      * The event source mapping.
      */

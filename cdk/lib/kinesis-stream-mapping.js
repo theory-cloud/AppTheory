@@ -47,7 +47,7 @@ const stream_mapping_on_failure_1 = require("./private/stream-mapping-on-failure
  * application should create or wrap the stream, then pass its `stream` here.
  */
 class AppTheoryKinesisStreamMapping extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamMapping", version: "5.0.1" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamMapping", version: "5.0.2-rc" };
     constructor(scope, id, props) {
         super(scope, id);
         const startingPosition = props.startingPosition ?? lambda.StartingPosition.LATEST;
