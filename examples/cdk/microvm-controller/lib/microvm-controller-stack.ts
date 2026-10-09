@@ -190,7 +190,7 @@ function goControllerCode(repoRoot: string): lambda.Code {
   return lambda.Code.fromAsset(path.join(repoRoot, "examples/cdk/microvm-controller/controller"), {
     assetHashType: cdk.AssetHashType.OUTPUT,
     bundling: {
-      image: cdk.DockerImage.fromRegistry("public.ecr.aws/docker/library/golang:1.26"),
+      image: cdk.DockerImage.fromRegistry("public.ecr.aws/docker/library/golang:1.27"),
       command: [
         "bash",
         "-c",

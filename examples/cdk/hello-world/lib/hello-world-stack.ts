@@ -153,7 +153,7 @@ export class HelloWorldStack extends Stack {
             assetHashType: cdk.AssetHashType.CUSTOM,
             assetHash: assetHashFor([path.join(__dirname, "..", "handlers", "go")]),
             bundling: {
-              image: cdk.DockerImage.fromRegistry("golang:1.26"),
+              image: cdk.DockerImage.fromRegistry("golang:1.27"),
               command: [
                 "bash",
                 "-c",

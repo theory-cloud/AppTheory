@@ -177,7 +177,7 @@ func resolveTemplateRoot(explicit string) (string, error) {
 			continue
 		}
 		seen[abs] = true
-		if st, err := os.Stat(abs); err == nil && st.IsDir() {
+		if st, err := os.Stat(abs); err == nil && st.IsDir() { // #nosec G703 -- candidate template roots come from the CLI flag, APPTHEORY_TEMPLATES env, or the invoking process cwd/exe; no untrusted path crosses a trust boundary.
 			if hasLanguageTemplates(abs) {
 				return abs, nil
 			}
@@ -201,7 +201,7 @@ func ascendForTemplateRoot(start string) []string {
 
 func hasLanguageTemplates(root string) bool {
 	for _, lang := range []string{"go", "ts", "py"} {
-		if st, err := os.Stat(filepath.Join(root, lang)); err != nil || !st.IsDir() {
+		if st, err := os.Stat(filepath.Join(root, lang)); err != nil || !st.IsDir() { // #nosec G703 -- lang is a fixed literal from {go,ts,py} and root is an already-resolved local template root.
 			return false
 		}
 	}
@@ -311,7 +311,7 @@ func copyTemplateTree(srcRoot string, destRoot string, ctx renderContext) error 
 		if strings.HasPrefix(filepath.Base(out), "bootstrap") || strings.HasSuffix(out, ".sh") {
 			mode = 0o755
 		}
-		if err := os.WriteFile(out, []byte(content), mode); err != nil {
+		if err := os.WriteFile(out, []byte(content), mode); err != nil { // #nosec G703 -- out stays under the operator-supplied destination inside the resolved template tree; this writes the scaffold the invoking user requested.
 			return err
 		}
 	}
