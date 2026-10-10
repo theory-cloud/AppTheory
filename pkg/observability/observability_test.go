@@ -120,6 +120,33 @@ func TestHooksFromLogger_MapsLevelsAndScopes(t *testing.T) {
 	}
 }
 
+func TestHooksFromLogger_PropagatesTraceID(t *testing.T) {
+	logger := NewTestLogger()
+	hooks := HooksFromLogger(logger)
+	if hooks.Log == nil {
+		t.Fatal("expected hooks.Log")
+	}
+
+	hooks.Log(apptheory.LogRecord{
+		Level:     "info",
+		Event:     "request.completed",
+		RequestID: "req_1",
+		TenantID:  "tenant_1",
+		TraceID:   "trace_1",
+		Method:    "GET",
+		Path:      "/x",
+		Status:    200,
+	})
+
+	entries := logger.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Fields["trace_id"] != "trace_1" {
+		t.Fatalf("expected propagated trace_id field, got %#v", entries[0].Fields)
+	}
+}
+
 func TestTestLogger_FlushHonorsContextCancel(t *testing.T) {
 	logger := NewTestLogger()
 	ctx, cancel := context.WithCancel(context.Background())
