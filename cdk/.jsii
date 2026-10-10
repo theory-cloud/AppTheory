@@ -6,7 +6,7 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.271.0",
+    "aws-cdk-lib": "2.273.0",
     "constructs": "^10.8.1"
   },
   "dependencyClosure": {
@@ -1817,6 +1817,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_eventsv2": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.EventsV2"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.eventsv2"
+            },
+            "python": {
+              "module": "aws_cdk.aws_eventsv2"
+            }
+          }
+        },
         "aws-cdk-lib.aws_evidently": {
           "targets": {
             "dotnet": {
@@ -2048,6 +2061,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_guardduty"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_healthagent": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.HealthAgent"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.healthagent"
+            },
+            "python": {
+              "module": "aws_cdk.aws_healthagent"
             }
           }
         },
@@ -2932,6 +2958,32 @@
             },
             "python": {
               "module": "aws_cdk.aws_networkmanager"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_networkmonitor": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.NetworkMonitor"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.networkmonitor"
+            },
+            "python": {
+              "module": "aws_cdk.aws_networkmonitor"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_networksecuritymanager": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.NetworkSecurityManager"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.networksecuritymanager"
+            },
+            "python": {
+              "module": "aws_cdk.aws_networksecuritymanager"
             }
           }
         },
@@ -6410,6 +6462,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_eventsv2": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.EventsV2"
+            },
+            "go": {
+              "packageName": "interfacesawseventsv2"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.eventsv2"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_eventsv2"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_evidently": {
           "targets": {
             "dotnet": {
@@ -6679,6 +6747,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_guardduty"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_healthagent": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.HealthAgent"
+            },
+            "go": {
+              "packageName": "interfacesawshealthagent"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.healthagent"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_healthagent"
             }
           }
         },
@@ -7706,6 +7790,38 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_networkmonitor": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.NetworkMonitor"
+            },
+            "go": {
+              "packageName": "interfacesawsnetworkmonitor"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.networkmonitor"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_networkmonitor"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_networksecuritymanager": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.NetworkSecurityManager"
+            },
+            "go": {
+              "packageName": "interfacesawsnetworksecuritymanager"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.networksecuritymanager"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_networksecuritymanager"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_nimblestudio": {
           "targets": {
             "dotnet": {
@@ -8055,6 +8171,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_personalize"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_pi": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.PI"
+            },
+            "go": {
+              "packageName": "interfacesawspi"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.pi"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_pi"
             }
           }
         },
@@ -9586,7 +9718,7 @@
   },
   "description": "AppTheory CDK constructs (TS-first jsii)",
   "homepage": "https://github.com/theory-cloud/AppTheory.git",
-  "jsiiVersion": "6.0.16 (build 15002ec)",
+  "jsiiVersion": "6.0.17 (build e6a458c)",
   "license": "Apache-2.0",
   "metadata": {
     "jsii": {
@@ -29828,5 +29960,5 @@
     }
   },
   "version": "5.0.2",
-  "fingerprint": "GnfP3FU+m6gDpEpUVHyIo2vcxWTAWrvTBLRAMXtfsMQ="
+  "fingerprint": "2DtvNBJhr853fgqzmlWhZEBh2o2b2wHgOCgxLHw9Gtw="
 }

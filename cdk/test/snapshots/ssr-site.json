@@ -565,6 +565,39 @@
       },
       "Type": "AWS::Lambda::Permission"
     },
+    "SiteDistributionOrigin1InvokeFunctionFromCloudFrontForTestStackSiteDistributionOrigin16964969282DA2C8C": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "SiteSsrUrl2D74149D",
+            "FunctionArn"
+          ]
+        },
+        "InvokedViaFunctionUrl": true,
+        "Principal": "cloudfront.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":cloudfront::",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":distribution/",
+              {
+                "Ref": "SiteDistribution390DED28"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
     "SiteDistributionOrigin2S3OriginAccessControlD62333BA": {
       "Properties": {
         "OriginAccessControlConfig": {

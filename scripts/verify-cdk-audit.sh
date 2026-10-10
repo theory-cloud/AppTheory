@@ -35,11 +35,10 @@ set -e
 node scripts/check-visible-aws-cdk-finding.mjs --self-test
 
 # Fail closed unless the AWS CDK bundled dependency graph is exactly the reviewed
-# graph and every visible npm audit finding is one of the two reviewed,
-# self-expiring exceptions (an AWS-published bundled dependency, and an
-# AWS-published build-toolchain transitive chain). The operator rulings, exact
-# scope, and automatic registry-backed removal conditions are documented in
-# scripts/check-visible-aws-cdk-finding.mjs.
+# graph and every visible npm audit finding is the one reviewed, self-expiring
+# exception that remains (an AWS-published build-toolchain transitive chain). The
+# operator ruling, exact scope, and automatic registry-backed removal condition
+# are documented in scripts/check-visible-aws-cdk-finding.mjs.
 set +e
 node scripts/check-visible-aws-cdk-finding.mjs npm "${tmp_report}" cdk/package-lock.json >"${tmp_marker}"
 filter_status=$?

@@ -3785,7 +3785,9 @@ test("AppTheorySsrSite signs read-only Lambda Function URL origins by default", 
   assert.equal(functionUrls[0].Properties?.AuthType, "AWS_IAM");
   assert.equal(lambdaOriginAccessControls.length, 1);
   assert.equal(cloudfrontInvokePermissions.length, 1);
-  assert.equal(cloudfrontInvokeViaUrlPermissions.length, 1);
+  // aws-cdk-lib >= 2.272.0 emits its own InvokedViaFunctionUrl grant from the FunctionUrlOrigin OAC
+  // alongside the construct's explicit grant, so the reviewed shape is exactly two and never a public one.
+  assert.equal(cloudfrontInvokeViaUrlPermissions.length, 2);
   assert.equal(publicUrlPermissions.length, 0);
 });
 
@@ -3887,7 +3889,9 @@ test("AppTheorySsrSite signs writable ssr-only mode by default", () => {
   assert.equal(functionUrls[0].Properties?.AuthType, "AWS_IAM");
   assert.equal(lambdaOriginAccessControls.length, 1);
   assert.equal(cloudfrontInvokePermissions.length, 1);
-  assert.equal(cloudfrontInvokeViaUrlPermissions.length, 1);
+  // aws-cdk-lib >= 2.272.0 emits its own InvokedViaFunctionUrl grant from the FunctionUrlOrigin OAC
+  // alongside the construct's explicit grant, so the reviewed shape is exactly two and never a public one.
+  assert.equal(cloudfrontInvokeViaUrlPermissions.length, 2);
   assert.equal(publicUrlPermissions.length, 0);
   assert.equal(distribution.Properties?.DistributionConfig?.OriginGroups?.Quantity ?? 0, 0);
   assert.equal(distribution.Properties?.DistributionConfig?.DefaultCacheBehavior?.FunctionAssociations?.length, 2);
@@ -3990,7 +3994,9 @@ test("AppTheorySsrSite signs direct SSR write paths by default", () => {
   assert.equal(functionUrls[0].Properties?.AuthType, "AWS_IAM");
   assert.equal(lambdaOriginAccessControls.length, 1);
   assert.equal(cloudfrontInvokePermissions.length, 1);
-  assert.equal(cloudfrontInvokeViaUrlPermissions.length, 1);
+  // aws-cdk-lib >= 2.272.0 emits its own InvokedViaFunctionUrl grant from the FunctionUrlOrigin OAC
+  // alongside the construct's explicit grant, so the reviewed shape is exactly two and never a public one.
+  assert.equal(cloudfrontInvokeViaUrlPermissions.length, 2);
   assert.equal(publicUrlPermissions.length, 0);
 });
 
