@@ -903,6 +903,7 @@ class App:
 
         method = str(request.method or "").strip().upper()
         path = str(request.path or "").strip() or "/"
+        route = _UNMATCHED_ROUTE_TEMPLATE
 
         request_id = (
             _first_header_value(pre_headers, "x-request-id")
@@ -923,6 +924,7 @@ class App:
                 self._record_observability(
                     method,
                     path,
+                    route,
                     request_id,
                     tenant_id,
                     trace_id,
@@ -1016,6 +1018,8 @@ class App:
                 ),
                 "app.not_found",
             )
+
+        route = match.pattern
 
         request_ctx = Context(
             request=normalized,
@@ -1124,6 +1128,7 @@ class App:
         self,
         method: str,
         path: str,
+        route: str,
         request_id: str,
         tenant_id: str,
         trace_id: str,
@@ -1164,7 +1169,15 @@ class App:
                     tags={
                         "method": method,
                         "path": path,
+                        # route and status_class are the bounded metric
+                        # dimensions: the concrete path and raw status stay on the
+                        # log and span records, while a first-party metric sink
+                        # dimensions only on these finite values so
+                        # attacker-selected paths (or tenant hints) cannot mint
+                        # unbounded CloudWatch metric series.
+                        "route": _route_template_or_unmatched(route),
                         "status": str(int(status)),
+                        "status_class": _status_class(status),
                         "error_code": error_code,
                         "tenant_id": tenant_id,
                     },
@@ -1207,7 +1220,15 @@ class App:
             return
         error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
         self._record_observability(
-            method, path, "", "", "", status, error_code, _duration_ms(started_at, self._clock.now())
+            method,
+            path,
+            _UNMATCHED_ROUTE_TEMPLATE,
+            "",
+            "",
+            "",
+            status,
+            error_code,
+            _duration_ms(started_at, self._clock.now()),
         )
 
     def serve_apigw_v2(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
@@ -2347,6 +2368,36 @@ def _extract_tenant_id(headers: dict[str, list[str]], query: dict[str, list[str]
         return tenant
     values = query.get("tenant", [])
     return values[0] if values else ""
+
+
+# _UNMATCHED_ROUTE_TEMPLATE is the bounded route label recorded for a request
+# that did not match a registered route template (an unknown path, a method
+# mismatch, an adapter decode failure). It keeps the metric route dimension
+# finite even though the concrete request path is attacker-controlled.
+_UNMATCHED_ROUTE_TEMPLATE = "unmatched"
+
+
+def _route_template_or_unmatched(route: str) -> str:
+    resolved = str(route or "").strip()
+    return resolved or _UNMATCHED_ROUTE_TEMPLATE
+
+
+def _status_class(status: int) -> str:
+    try:
+        code = int(status)
+    except (TypeError, ValueError):
+        return "unknown"
+    if 100 <= code < 200:
+        return "1xx"
+    if 200 <= code < 300:
+        return "2xx"
+    if 300 <= code < 400:
+        return "3xx"
+    if 400 <= code < 500:
+        return "4xx"
+    if 500 <= code < 600:
+        return "5xx"
+    return "unknown"
 
 
 def _is_cors_preflight(method: str, headers: dict[str, list[str]]) -> bool:

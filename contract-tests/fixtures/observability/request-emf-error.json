@@ -72,7 +72,9 @@
           "path": "/duration-error",
           "status": "500",
           "error_code": "app.internal",
-          "tenant_id": "tenant_err"
+          "tenant_id": "tenant_err",
+          "route": "/duration-error",
+          "status_class": "5xx"
         }
       }
     ],
@@ -90,7 +92,7 @@
       }
     ],
     "emf_logs": [
-      "{\"_aws\":{\"Timestamp\":13,\"CloudWatchMetrics\":[{\"Namespace\":\"AppTheory\",\"Dimensions\":[[\"service\",\"method\",\"path\",\"status\",\"tenant_id\",\"error_code\"]],\"Metrics\":[{\"Name\":\"RequestCount\",\"Unit\":\"Count\"},{\"Name\":\"RequestDuration\",\"Unit\":\"Milliseconds\"},{\"Name\":\"RequestErrors\",\"Unit\":\"Count\"}]}]},\"service\":\"apptheory\",\"method\":\"GET\",\"path\":\"/duration-error\",\"status\":\"500\",\"tenant_id\":\"tenant_err\",\"error_code\":\"app.internal\",\"RequestCount\":1,\"RequestDuration\":13,\"RequestErrors\":1}"
+      "{\"_aws\":{\"Timestamp\":13,\"CloudWatchMetrics\":[{\"Namespace\":\"AppTheory\",\"Dimensions\":[[\"service\",\"method\",\"route\",\"status_class\",\"error_code\"]],\"Metrics\":[{\"Name\":\"RequestCount\",\"Unit\":\"Count\"},{\"Name\":\"RequestDuration\",\"Unit\":\"Milliseconds\"},{\"Name\":\"RequestErrors\",\"Unit\":\"Count\"}]}]},\"service\":\"apptheory\",\"method\":\"GET\",\"route\":\"/duration-error\",\"status_class\":\"5xx\",\"error_code\":\"app.internal\",\"RequestCount\":1,\"RequestDuration\":13,\"RequestErrors\":1}"
     ]
   }
 }

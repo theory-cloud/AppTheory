@@ -52,7 +52,13 @@ type ObservabilityHooks struct {
 	Span   func(SpanRecord)
 }
 
-func (a *App) recordObservability(method, path, requestID, traceID, tenantID string, status int, errorCode string, durationMS int) {
+// unmatchedRouteTemplate is the bounded route label recorded for a request that
+// did not match a registered route template (an unknown path, a method mismatch,
+// an adapter decode failure). It keeps the metric route dimension finite even
+// though the concrete request path is attacker-controlled.
+const unmatchedRouteTemplate = "unmatched"
+
+func (a *App) recordObservability(method, path, route, requestID, traceID, tenantID string, status int, errorCode string, durationMS int) {
 	if a == nil {
 		return
 	}
@@ -88,11 +94,18 @@ func (a *App) recordObservability(method, path, requestID, traceID, tenantID str
 			Value:      1,
 			DurationMS: durationMS,
 			Tags: map[string]string{
-				"method":     method,
-				"path":       path,
-				"status":     strconv.Itoa(status),
-				"error_code": errorCode,
-				"tenant_id":  tenantID,
+				"method": method,
+				"path":   path,
+				// route and status_class are the bounded metric dimensions: the
+				// concrete path and raw status stay available on the log and
+				// span records, while a first-party metric sink dimensions only
+				// on these finite values so attacker-selected paths (or tenant
+				// hints) cannot mint unbounded CloudWatch metric series.
+				"route":        routeTemplateOrUnmatched(route),
+				"status":       strconv.Itoa(status),
+				"status_class": statusClass(status),
+				"error_code":   errorCode,
+				"tenant_id":    tenantID,
 			},
 		})
 	}
@@ -113,6 +126,35 @@ func (a *App) recordObservability(method, path, requestID, traceID, tenantID str
 			Name:       "http " + method + " " + path,
 			Attributes: attrs,
 		})
+	}
+}
+
+// routeTemplateOrUnmatched returns the bounded route label for a metric: the
+// matched route template when one was matched, or the unmatched sentinel.
+func routeTemplateOrUnmatched(route string) string {
+	route = strings.TrimSpace(route)
+	if route == "" {
+		return unmatchedRouteTemplate
+	}
+	return route
+}
+
+// statusClass maps an HTTP status code to its finite class label (1xx..5xx), so
+// a metric sink dims on the class rather than the raw code.
+func statusClass(status int) string {
+	switch {
+	case status >= 100 && status < 200:
+		return "1xx"
+	case status >= 200 && status < 300:
+		return "2xx"
+	case status >= 300 && status < 400:
+		return "3xx"
+	case status >= 400 && status < 500:
+		return "4xx"
+	case status >= 500 && status < 600:
+		return "5xx"
+	default:
+		return "unknown"
 	}
 }
 
@@ -148,7 +190,7 @@ func (a *App) recordAdapterDecodeError(startedAt time.Time, method, path string,
 	if a == nil || a.tier != TierP2 {
 		return
 	}
-	a.recordObservability(method, path, "", "", "", status, errorCodeForError(err), durationMS(startedAt, clockNow(a.clock)))
+	a.recordObservability(method, path, unmatchedRouteTemplate, "", "", "", status, errorCodeForError(err), durationMS(startedAt, clockNow(a.clock)))
 }
 
 func (a *App) recordEventObservability(observation eventObservation, outcome string, errorCode string) {

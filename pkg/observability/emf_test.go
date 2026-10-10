@@ -3,6 +3,7 @@ package observability
 import (
 	"bytes"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -23,16 +24,52 @@ func TestEMFMetricSink_EncodesRequestMetric(t *testing.T) {
 		DurationMS: 25,
 		Tags: map[string]string{
 			"method":     "GET",
-			"path":       "/duration",
+			"route":      "/duration",
+			"path":       "/duration/unique-request-path",
 			"status":     "200",
 			"error_code": "",
 			"tenant_id":  "tenant_dur",
 		},
 	})
 
-	want := `{"_aws":{"Timestamp":25,"CloudWatchMetrics":[{"Namespace":"AppTheory","Dimensions":[["service","method","path","status","tenant_id","error_code"]],"Metrics":[{"Name":"RequestCount","Unit":"Count"},{"Name":"RequestDuration","Unit":"Milliseconds"},{"Name":"RequestErrors","Unit":"Count"}]}]},"service":"apptheory","method":"GET","path":"/duration","status":"200","tenant_id":"tenant_dur","error_code":"","RequestCount":1,"RequestDuration":25,"RequestErrors":0}`
+	want := `{"_aws":{"Timestamp":25,"CloudWatchMetrics":[{"Namespace":"AppTheory","Dimensions":[["service","method","route","status_class","error_code"]],"Metrics":[{"Name":"RequestCount","Unit":"Count"},{"Name":"RequestDuration","Unit":"Milliseconds"},{"Name":"RequestErrors","Unit":"Count"}]}]},"service":"apptheory","method":"GET","route":"/duration","status_class":"2xx","error_code":"","RequestCount":1,"RequestDuration":25,"RequestErrors":0}`
 	if got := strings.TrimSpace(buf.String()); got != want {
 		t.Fatalf("EMF line mismatch:\nwant %s\n got %s", want, got)
+	}
+}
+
+func TestEMFMetricSink_DimensionsAreBounded(t *testing.T) {
+	sink := NewEMFMetricSink(WithEMFWriter(io.Discard))
+	line, err := sink.EncodeMetric(apptheory.MetricRecord{
+		Name:  "apptheory.request",
+		Value: 1,
+		Tags: map[string]string{
+			"method":     "GET",
+			"path":       "/random/attacker-unique-path",
+			"status":     "404",
+			"error_code": "app.not_found",
+			"tenant_id":  "attacker-tenant",
+		},
+	})
+	if err != nil {
+		t.Fatalf("EncodeMetric returned error: %v", err)
+	}
+	got := string(line)
+	// An unmatched, attacker-selected path and an unverified tenant hint must not
+	// reach the metric envelope as values or dimensions.
+	for _, forbidden := range []string{"attacker-unique-path", "attacker-tenant"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("EMF line leaked attacker-controlled %q: %s", forbidden, got)
+		}
+	}
+	if !strings.Contains(got, `"route":"unmatched"`) {
+		t.Fatalf("expected the unmatched route sentinel, got %s", got)
+	}
+	if !strings.Contains(got, `"status_class":"4xx"`) {
+		t.Fatalf("expected a status class dimension, got %s", got)
+	}
+	if !strings.Contains(got, `["service","method","route","status_class","error_code"]`) {
+		t.Fatalf("expected bounded dimensions, got %s", got)
 	}
 }
 

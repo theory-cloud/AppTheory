@@ -75,7 +75,9 @@
           "path": "/xray-trace",
           "status": "200",
           "error_code": "",
-          "tenant_id": "tenant_xray"
+          "tenant_id": "tenant_xray",
+          "route": "/xray-trace",
+          "status_class": "2xx"
         }
       }
     ],
