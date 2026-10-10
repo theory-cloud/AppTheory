@@ -227,7 +227,9 @@ Each language is read with its own parser, never with a text pattern:
   every static block) gets a control-flow graph; a launch is joined only when an
   `await` (or `return`) of the held target, or a
   `clearTimeout`/`clearInterval`/`clearImmediate` of a timer handle, dominates
-  every exit. A target and its join are matched on the bare expression, so a
+  every exit. `await Promise.all`/`allSettled` over the target joins it;
+  `Promise.race`/`any` settles on the first input and joins none of the losing
+  ones. A target and its join are matched on the bare expression, so a
   non-null assertion, a type assertion or parentheses around either name the same
   target (`clearTimeout(this.t!)` clears the `this.t` that armed the timer). A
   timer function bound to a variable (`const st = setTimeout; st(cb, 1)`) is

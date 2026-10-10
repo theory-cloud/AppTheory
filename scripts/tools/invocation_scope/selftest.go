@@ -59,6 +59,11 @@ var tsFlaggedProbes = []struct{ name, src, rule string }{
 	{"held promise awaited in one branch only", "async function run(c) {\n  const p = load(id).then((u) => render(u));\n  if (c) {\n    await p;\n  }\n  work();\n}", "floating-then"},
 	{"held promise awaited before a later throw", "async function run(c) {\n  const p = load(id).then((u) => render(u));\n  if (c) throw new Error('x');\n  await p;\n}", "floating-then"},
 	{"held promise awaited inside a loop body", "async function run(xs) {\n  const p = load(id).then((u) => render(u));\n  for (const x of xs) {\n    await p;\n  }\n}", "floating-then"},
+	// A race or any settles on its first input and leaves the rest pending, so
+	// awaiting or returning one does not join the losing inputs.
+	{"held promise raced against a timeout", "async function run() {\n  const p = load(id).then((u) => render(u));\n  await Promise.race([p, timeout]);\n}", "floating-then"},
+	{"held promise any of one", "async function run() {\n  const p = load(id).then((u) => render(u));\n  await Promise.any([p]);\n}", "floating-then"},
+	{"held promise returned through a race", "async function run() {\n  const p = load(id).then((u) => render(u));\n  return Promise.race([p, timeout]);\n}", "floating-then"},
 	// A join that only some paths execute is not a join: the one-line
 	// guarded, expression-position and non-declaration spellings a line-based
 	// reading accepted (invocation-scope round-2 SAN-AT1070-R2-F1).
