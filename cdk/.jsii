@@ -9586,7 +9586,7 @@
   },
   "description": "AppTheory CDK constructs (TS-first jsii)",
   "homepage": "https://github.com/theory-cloud/AppTheory.git",
-  "jsiiVersion": "6.0.16 (build 15002ec)",
+  "jsiiVersion": "6.0.17 (build e6a458c)",
   "license": "Apache-2.0",
   "metadata": {
     "jsii": {
@@ -29828,5 +29828,5 @@
     }
   },
   "version": "5.0.2",
-  "fingerprint": "GnfP3FU+m6gDpEpUVHyIo2vcxWTAWrvTBLRAMXtfsMQ="
+  "fingerprint": "sldNKeer0YQl3/kMV2WMIDYjBZdRvUL8Dpk3GIqPQa0="
 }
