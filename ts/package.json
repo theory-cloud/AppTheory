@@ -21,12 +21,12 @@
     }
   },
   "dependencies": {
-    "@aws-sdk/client-apigatewaymanagementapi": "^3.1146.0",
-    "@aws-sdk/client-bedrock-runtime": "^3.1146.0",
-    "@aws-sdk/client-lambda-microvms": "^3.1146.0",
-    "@aws-sdk/client-s3": "^3.1146.0",
-    "@aws-sdk/client-s3vectors": "^3.1146.0",
-    "@aws-sdk/s3-request-presigner": "^3.1146.0",
+    "@aws-sdk/client-apigatewaymanagementapi": "^3.1147.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1147.0",
+    "@aws-sdk/client-lambda-microvms": "^3.1147.0",
+    "@aws-sdk/client-s3": "^3.1147.0",
+    "@aws-sdk/client-s3vectors": "^3.1147.0",
+    "@aws-sdk/s3-request-presigner": "^3.1147.0",
     "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v4.0.2/theory-cloud-tabletheory-ts-4.0.2.tgz#sha512-PVONJcpV1x7pYr73LSEkkr5W6EirVEvQcylOdP/fL+zYDoaKydGQ58YJ60vUz6kD3OK3cMuHMddInKueHGEAqA=="
   },
   "files": [
@@ -37,7 +37,7 @@
   ],
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@types/node": "^24.19.0",
+    "@types/node": "^26.6.4",
     "@typescript-eslint/eslint-plugin": "^8.71.1",
     "@typescript-eslint/parser": "^8.57.2",
     "eslint": "10.12.0",
