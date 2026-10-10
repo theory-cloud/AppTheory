@@ -16,7 +16,13 @@ CloudWatchLogsSubscription = dict[str, Any]
 CloudWatchLogsSubscriptionLogEvent = dict[str, Any]
 CloudWatchLogsSubscriptionSummary = dict[str, Any]
 
-_CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_DECODED_BYTES = 6 * 1024 * 1024
+_CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_DECODED_BYTES = 2 * 1024 * 1024
+_CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_COMPRESSION_RATIO = 500
+_CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_FILTERS = 1024
+_CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_LOG_EVENTS = 10000
+_CLOUDWATCH_LOGS_SUBSCRIPTION_KNOWN_FIELDS = frozenset(
+    {"messageType", "owner", "logGroup", "logStream", "subscriptionFilters", "logEvents"}
+)
 _CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE = "apptheory: decode cloudwatch logs subscription"
 
 
@@ -35,6 +41,7 @@ def decode_cloudwatch_logs_subscription(record: dict[str, Any]) -> CloudWatchLog
 
     payload_bytes = _gunzip_cloudwatch_logs_subscription_data(record_obj)
     payload = _parse_cloudwatch_logs_subscription_payload(payload_bytes)
+    _assert_cloudwatch_logs_subscription_cardinality(payload)
     decoded = {
         "record_id": record_id,
         "message_type": _object_string(payload, "messageType"),
@@ -75,6 +82,8 @@ def _gunzip_cloudwatch_logs_subscription_data(record: dict[str, Any]) -> bytes:
 
     if len(payload) > _CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_DECODED_BYTES:
         raise RuntimeError(f"{_CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE}: payload too large")
+    if len(payload) > len(compressed) * _CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_COMPRESSION_RATIO:
+        raise RuntimeError(f"{_CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE}: payload compression ratio exceeded")
     return payload
 
 
@@ -85,7 +94,19 @@ def _parse_cloudwatch_logs_subscription_payload(payload_bytes: bytes) -> dict[st
         raise RuntimeError(f"{_CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE} json: invalid payload") from exc
     if not isinstance(parsed, dict):
         raise RuntimeError(f"{_CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE} json: expected object")
+    for key in parsed:
+        if key not in _CLOUDWATCH_LOGS_SUBSCRIPTION_KNOWN_FIELDS:
+            raise RuntimeError(f"{_CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE}: unknown field {key!r}")
     return parsed
+
+
+def _assert_cloudwatch_logs_subscription_cardinality(payload: dict[str, Any]) -> None:
+    subscription_filters = payload.get("subscriptionFilters")
+    if isinstance(subscription_filters, list) and len(subscription_filters) > _CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_FILTERS:
+        raise RuntimeError(f"{_CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE}: too many subscriptionFilters")
+    log_events = payload.get("logEvents")
+    if isinstance(log_events, list) and len(log_events) > _CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_LOG_EVENTS:
+        raise RuntimeError(f"{_CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE}: too many logEvents")
 
 
 def _validate_cloudwatch_logs_subscription(decoded: dict[str, Any]) -> None:

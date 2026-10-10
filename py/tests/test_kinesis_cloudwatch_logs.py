@@ -185,6 +185,65 @@ class CloudWatchLogsSubscriptionTests(unittest.TestCase):
         )
         self.assertEqual(decoded["safe_summary"]["log_event_count"], 1)
 
+    def test_decode_rejects_unknown_top_level_field(self) -> None:
+        payload = gzip.compress(
+            json.dumps(
+                {
+                    "messageType": "DATA_MESSAGE",
+                    "owner": "111122223333",
+                    "logGroup": "/aws/lambda/apptheory-contract",
+                    "logStream": "2026/05/26/stream-a",
+                    "subscriptionFilters": ["filter"],
+                    "logEvents": [{"id": "cwl-event-a1", "message": "m"}],
+                    "junk": [{}, {}],
+                }
+            ).encode("utf-8"),
+            mtime=0,
+        )
+        with self.assertRaisesRegex(RuntimeError, "unknown field"):
+            decode_cloudwatch_logs_subscription(
+                {"eventID": "kin-cwl-junk", "kinesis": {"data": base64.b64encode(payload).decode("ascii")}}
+            )
+
+    def test_decode_rejects_high_compression_ratio(self) -> None:
+        raw = json.dumps(
+            {
+                "messageType": "DATA_MESSAGE",
+                "owner": "111122223333",
+                "logGroup": "/aws/lambda/apptheory-contract",
+                "logStream": "2026/05/26/stream-a",
+                "subscriptionFilters": ["filter"],
+                "logEvents": [{"id": "cwl-event-a1", "timestamp": 0, "message": "A" * 1_900_000}],
+            }
+        ).encode("utf-8")
+        # Strong compression represents the attacker's own record: the decoded
+        # size stays under the decoded cap but the ratio is above the bound.
+        payload = gzip.compress(raw, compresslevel=9, mtime=0)
+        with self.assertRaisesRegex(RuntimeError, "compression ratio"):
+            decode_cloudwatch_logs_subscription(
+                {"eventID": "kin-cwl-ratio", "kinesis": {"data": base64.b64encode(payload).decode("ascii")}}
+            )
+
+    def test_decode_rejects_excessive_log_events_cardinality(self) -> None:
+        log_events = [{"id": f"cwl-event-{i}", "message": "m"} for i in range(10001)]
+        payload = gzip.compress(
+            json.dumps(
+                {
+                    "messageType": "DATA_MESSAGE",
+                    "owner": "111122223333",
+                    "logGroup": "/aws/lambda/apptheory-contract",
+                    "logStream": "2026/05/26/stream-a",
+                    "subscriptionFilters": ["filter"],
+                    "logEvents": log_events,
+                }
+            ).encode("utf-8"),
+            mtime=0,
+        )
+        with self.assertRaisesRegex(RuntimeError, "too many logEvents"):
+            decode_cloudwatch_logs_subscription(
+                {"eventID": "kin-cwl-cardinality", "kinesis": {"data": base64.b64encode(payload).decode("ascii")}}
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
