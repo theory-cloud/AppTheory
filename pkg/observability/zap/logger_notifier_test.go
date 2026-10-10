@@ -95,11 +95,11 @@ func TestZapLogger_Notifier_SendsEntry_WithIDsAndFieldOverrides(t *testing.T) {
 	}
 }
 
-// TestZapLogger_Notifier_DeliversSynchronously_AndDropsAfterClose pins E4: there
-// is no notification queue and no notifier goroutine, so an error log delivers
-// its notification before the logging call returns, and a closed logger drops
-// instead of queueing.
-func TestZapLogger_Notifier_DeliversSynchronously_AndDropsAfterClose(t *testing.T) {
+// TestZapLogger_Notifier_DeliversThroughQueue_AndDropsAfterClose pins E4: an
+// error log hands its notification to the bounded background queue instead of
+// delivering it on the request goroutine, and a closed logger drops instead of
+// queueing.
+func TestZapLogger_Notifier_DeliversThroughQueue_AndDropsAfterClose(t *testing.T) {
 	t.Parallel()
 
 	base := ubzap.New(zapcore.NewCore(
@@ -122,15 +122,18 @@ func TestZapLogger_Notifier_DeliversSynchronously_AndDropsAfterClose(t *testing.
 		t.Fatalf("expected *Logger, got %T", loggerAny)
 	}
 
-	logger.Error("delivered")
+	logger.Error("queued")
 
-	// No Flush: the delivery already happened inside the logging call, so no work
-	// is left for a later invocation of the execution environment to resume.
+	// The logging call enqueues; the background worker delivers. Flush waits for
+	// the bounded queue to drain.
+	if err := logger.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
 	notifier.mu.Lock()
 	delivered := len(notifier.entries)
 	notifier.mu.Unlock()
 	if delivered != 1 {
-		t.Fatalf("expected the notification to be delivered before Error returned, got %d", delivered)
+		t.Fatalf("expected the queued notification to be delivered, got %d", delivered)
 	}
 
 	if err := logger.Close(); err != nil {
@@ -139,7 +142,7 @@ func TestZapLogger_Notifier_DeliversSynchronously_AndDropsAfterClose(t *testing.
 
 	// A closed logger has nothing to deliver to, so the notification is dropped
 	// rather than handed to a consumer that is no longer running.
-	logger.core.notify(observability.LogEntry{})
+	logger.core.enqueueNotification(observability.LogEntry{})
 	if logger.core.entriesDropped.Load() == 0 {
 		t.Fatalf("expected a drop after close, got %#v", logger.GetStats())
 	}

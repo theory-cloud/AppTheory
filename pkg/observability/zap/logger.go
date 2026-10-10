@@ -65,6 +65,10 @@ type zapCore struct {
 	retryDelay time.Duration
 	maxRetries int
 
+	notifyMu sync.Mutex
+	notifyCh chan observability.LogEntry
+	notifyWg sync.WaitGroup
+
 	closeOnce sync.Once
 	closed    atomic.Bool
 
@@ -156,8 +160,24 @@ func NewZapLogger(config observability.LoggerConfig, options ...Option) (observa
 		notifier:   opts.notifier,
 		retryDelay: opts.retryDelay,
 		maxRetries: opts.maxRetries,
+		notifyCh:   nil,
 	}
 	zcore.lastError.Store("")
+
+	// Error notifications are delivered by one bounded background worker fed by
+	// a fixed-size channel, so a slow or failing notifier backend cannot stall
+	// the request that logged the error. The queue is bounded: when it is full,
+	// the entry is dropped and counted (entriesDropped) rather than growing the
+	// backlog, so neither the goroutine count nor the queue length can grow
+	// without bound.
+	if zcore.notifier != nil {
+		if opts.bufferSize <= 0 {
+			opts.bufferSize = 256
+		}
+		zcore.notifyCh = make(chan observability.LogEntry, opts.bufferSize)
+		notifyCh := zcore.notifyCh
+		go zcore.runNotifier(notifyCh)
+	}
 
 	return &Logger{
 		core:   zcore,
@@ -284,14 +304,17 @@ func (l *Logger) WithSpanID(spanID string) observability.StructuredLogger {
 	return next
 }
 
-// Flush syncs the underlying logger. Error notifications are already delivered by
-// the logging call that produced them, so there is no queued notifier work to
-// wait for here; the context is accepted for interface compatibility.
+// Flush syncs the underlying logger and waits, up to ctx's deadline, for the
+// bounded notification queue to drain. A nil context or one without a deadline
+// waits for the queue to drain completely; a context that is already canceled or
+// expires first returns without further waiting.
 func (l *Logger) Flush(ctx context.Context) error {
 	if l == nil || l.core == nil {
 		return nil
 	}
-	_ = ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	start := time.Now()
 	l.core.flushCount.Add(1)
@@ -300,6 +323,8 @@ func (l *Logger) Flush(ctx context.Context) error {
 		l.core.errorCount.Add(1)
 		l.core.lastError.Store(err.Error())
 	}
+
+	l.core.waitNotifier(ctx)
 
 	dur := time.Since(start)
 	l.core.lastFlushNanos.Store(time.Now().UnixNano())
@@ -383,7 +408,7 @@ func (l *Logger) logEntry(level string, message string, fields ...map[string]any
 	l.core.entriesLogged.Add(1)
 
 	if l.shouldNotify(level) {
-		l.core.notify(l.notificationEntry(level, message, callFields))
+		l.core.enqueueNotification(l.notificationEntry(level, message, callFields))
 	}
 }
 
@@ -478,29 +503,74 @@ func (l *Logger) notificationEntry(level string, message string, callFields map[
 	}
 }
 
-// notify delivers one error notification on the calling goroutine.
-//
-// There is no notifier goroutine and no queue: a process-lifetime consumer of
-// log entries outlives the Lambda invocation that produced them, resumes when
-// the environment is reused, and holds a handle to state that belongs to an
-// ended invocation, so the delivery happens inside the call that logs. The
-// delivery is bounded by the configured retry policy (maxRetries attempts with
-// retryDelay between them); a notifier that ignores its context and blocks
-// forever is bounded by the Lambda function timeout.
-func (c *zapCore) notify(entry observability.LogEntry) {
-	if c == nil || c.notifier == nil {
-		return
-	}
-	if c.closed.Load() {
+// enqueueNotification hands one error notification to the bounded background
+// worker. It never blocks the caller: when the fixed-size queue is full (or the
+// logger is closed) the entry is dropped and counted instead of growing the
+// backlog, so a slow or unavailable notifier backend cannot stall the request
+// that logged the error.
+func (c *zapCore) enqueueNotification(entry observability.LogEntry) {
+	c.notifyMu.Lock()
+	defer c.notifyMu.Unlock()
+	if c.closed.Load() || c.notifyCh == nil {
 		c.entriesDropped.Add(1)
 		return
 	}
-	if err := c.notifyWithRetries(entry); err != nil {
-		c.errorCount.Add(1)
-		c.lastError.Store(err.Error())
+
+	c.notifyWg.Add(1)
+	select {
+	case c.notifyCh <- entry:
+		return
+	default:
+		c.notifyWg.Done()
+		c.entriesDropped.Add(1)
 	}
 }
 
+// runNotifier drains the bounded notification queue with the configured retry
+// policy. It is the only goroutine a logger with a notifier starts, and it stops
+// when the queue is closed.
+func (c *zapCore) runNotifier(ch <-chan observability.LogEntry) {
+	if ch == nil {
+		return
+	}
+	for entry := range ch {
+		if err := c.notifyWithRetries(entry); err != nil {
+			c.errorCount.Add(1)
+			c.lastError.Store(err.Error())
+		}
+		c.notifyWg.Done()
+	}
+}
+
+// waitNotifier waits, up to ctx's deadline, for the notifications already queued
+// to finish. It returns as soon as ctx is done so a caller never blocks past its
+// own deadline.
+func (c *zapCore) waitNotifier(ctx context.Context) {
+	if c.notifyCh == nil {
+		return
+	}
+
+	done := make(chan struct{})
+	go func() {
+		c.notifyWg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-ctx.Done():
+		return
+	case <-done:
+		return
+	}
+}
+
+// notifyWithRetries delivers one notification with the configured retry policy.
+//
+// Each attempt runs under a single deadline derived from the retry policy, so a
+// notifier that honors its context (for example the SNS notifier, which passes
+// it to Publish) is bounded by that deadline rather than running forever. The
+// retry sleeps observe the same deadline. A notifier that ignores its context
+// and blocks forever is bounded by the Lambda function timeout.
 func (c *zapCore) notifyWithRetries(entry observability.LogEntry) error {
 	if c.notifier == nil {
 		return nil
@@ -515,12 +585,29 @@ func (c *zapCore) notifyWithRetries(entry observability.LogEntry) error {
 		retryDelay = time.Second
 	}
 
+	// Bound the whole delivery so a notifier that honors its context cannot tie
+	// up the worker indefinitely. The window fits the full retry schedule plus a
+	// margin for the calls themselves.
+	deadline := time.Duration(maxRetries)*retryDelay + time.Second
+	if deadline <= 0 {
+		deadline = 3 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		if err := c.notifier.Notify(context.Background(), entry); err != nil {
+		if err := c.notifier.Notify(ctx, entry); err != nil {
 			lastErr = err
 			if attempt < maxRetries-1 {
-				time.Sleep(retryDelay)
+				delayCtx, delayCancel := context.WithTimeout(context.Background(), retryDelay)
+				select {
+				case <-ctx.Done():
+					delayCancel()
+					return lastErr
+				case <-delayCtx.Done():
+					delayCancel()
+				}
 			}
 			continue
 		}
@@ -532,7 +619,15 @@ func (c *zapCore) notifyWithRetries(entry observability.LogEntry) error {
 func (c *zapCore) close() error {
 	var err error
 	c.closeOnce.Do(func() {
+		c.notifyMu.Lock()
 		c.closed.Store(true)
+		if c.notifyCh != nil {
+			close(c.notifyCh)
+			c.notifyCh = nil
+		}
+		c.notifyMu.Unlock()
+
+		c.notifyWg.Wait()
 		err = c.logger.Sync()
 		if err != nil {
 			c.errorCount.Add(1)
