@@ -655,6 +655,36 @@ for release_pr_workflow in (".github/workflows/prerelease-pr.yml", ".github/work
         "Sync generated CDK artifacts on release PR",
         f"{release_pr_workflow} must fail closed on template/release skew before syncing generated CDK artifacts",
     )
+
+# The release-PR producers read release history (the recorded stable release, the
+# premain RC baseline, the branch version sync and the generated PR
+# postcondition). A shallow default checkout leaves those git reads on a
+# truncated log, so both producers must check out full history.
+RELEASE_PR_CHECKOUT_STEP = "Checkout"
+
+
+def checkout_has_full_history(text: str, step_name: str) -> bool:
+    return re.search(r"(?m)^[ \t]+fetch-depth:[ \t]*0[ \t]*$", step_block(text, step_name)) is not None
+
+
+for release_pr_workflow in (".github/workflows/prerelease-pr.yml", ".github/workflows/release-pr.yml"):
+    if not checkout_has_full_history(Path(release_pr_workflow).read_text(encoding="utf-8"), RELEASE_PR_CHECKOUT_STEP):
+        raise SystemExit(
+            f"release-workflows: FAIL ({release_pr_workflow} {RELEASE_PR_CHECKOUT_STEP!r} step must set fetch-depth: 0; "
+            "a shallow checkout leaves the release-history reads unverified)"
+        )
+
+# Shallow-clone self-test: a Checkout step that does not deepen the default
+# fetch must fail the check, and one that sets fetch-depth: 0 must pass it.
+_shallow_checkout = (
+    "      - name: Checkout\n"
+    "        uses: actions/checkout@1111111111111111111111111111111111111111\n"
+)
+_deep_checkout = _shallow_checkout + "        with:\n          fetch-depth: 0\n"
+if checkout_has_full_history(_shallow_checkout, RELEASE_PR_CHECKOUT_STEP):
+    raise SystemExit("release-workflows: FAIL (shallow-clone self-test: a fetch-depth-less Checkout must not pass)")
+if not checkout_has_full_history(_deep_checkout, RELEASE_PR_CHECKOUT_STEP):
+    raise SystemExit("release-workflows: FAIL (shallow-clone self-test: a fetch-depth: 0 Checkout must pass)")
 require_contains(
     ".github/workflows/ci.yml",
     "ready_for_review",

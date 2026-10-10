@@ -32,8 +32,10 @@
  * A launch is accepted only when no path from its statement to an exit avoids
  * every join statement, where a join statement is one that executes the join
  * unconditionally whenever it executes: an `await` (or `return`) of the held
- * target, `await Promise.all/allSettled/race/any(...)` over it, or a
- * clearTimeout/clearInterval/clearImmediate of a timer handle. The target and the
+ * target, `await Promise.all/allSettled(...)` over it, or a
+ * clearTimeout/clearInterval/clearImmediate of a timer handle. `Promise.race`
+ * and `Promise.any` settle on the first input, so awaiting or returning one is
+ * not a join of the other inputs. The target and the
  * join are matched on the bare expression, so a non-null assertion, a type
  * assertion and parentheses around either name the same target
  * (`clearTimeout(this.t!)` clears the `this.t` a `this.t = setTimeout(...)` armed).
@@ -111,6 +113,10 @@ const CLEAR_NAMES = new Set(['clearTimeout', 'clearInterval', 'clearImmediate'])
 const CHAIN_NAMES = new Set(['then', 'catch', 'finally']);
 const RESOLVER_NAMES = new Set(['resolve', 'r', 'res', 'done', 'reject', '_resolve', '_r']);
 const PROMISE_STATIC_NAMES = new Set(['all', 'allSettled', 'race', 'any']);
+// FULL_JOIN_NAMES are the Promise combinators that settle every input, so
+// awaiting or returning one joins the inputs. `race` and `any` settle on the
+// first input and leave the rest pending, so they join nothing.
+const FULL_JOIN_NAMES = new Set(['all', 'allSettled']);
 const ASYNC_CALLBACK_METHODS = new Set([
   'map',
   'filter',
@@ -445,9 +451,11 @@ class Graph {
 // Join recognition
 // ---------------------------------------------------------------------------
 
-// joinedKeys lists the held targets one join expression releases. `Promise.all`,
-// `allSettled`, `race` and `any` fan out over their arguments; an array literal
-// or a tuple literal passes through. Anything else is its own key.
+// joinedKeys lists the held targets one join expression releases. `Promise.all`
+// and `Promise.allSettled` fan out over their arguments because they settle
+// every input; `Promise.race` and `Promise.any` are not a join of their inputs
+// (they settle on the first one), so they release nothing. An array literal or
+// a tuple literal passes through. Anything else is its own key.
 function joinedKeys(file, expr, out) {
   if (!expr) {
     return out;
@@ -457,7 +465,7 @@ function joinedKeys(file, expr, out) {
     const info = memberInfo(node.expression);
     const name = info ? info.name : null;
     const receiverText = info ? info.receiver.getText(file) : '';
-    if (name && PROMISE_STATIC_NAMES.has(name) && receiverText === 'Promise') {
+    if (name && FULL_JOIN_NAMES.has(name) && receiverText === 'Promise') {
       for (const arg of node.arguments) {
         joinedKeys(file, arg, out);
       }
@@ -479,7 +487,8 @@ function joinedKeys(file, expr, out) {
 
 // makeJoinPredicate recognizes a statement or expression that releases target.
 // A timer handle is released by a clear call; a promise is released by awaiting
-// or returning it (or by awaiting a Promise.all/allSettled/race/any over it).
+// or returning it (or by awaiting a Promise.all/allSettled over it). A
+// Promise.race/any settles on the first input and is not a join.
 function makeJoinPredicate(file, target, isTimer) {
   return (node) => {
     if (isTimer) {
@@ -1135,7 +1144,7 @@ function isJoinConsumer(file, call) {
     return name === 'all' || name === 'allSettled';
   }
   return (
-    PROMISE_STATIC_NAMES.has(info.name) && info.receiver.getText(file) === 'Promise'
+    FULL_JOIN_NAMES.has(info.name) && info.receiver.getText(file) === 'Promise'
   );
 }
 
