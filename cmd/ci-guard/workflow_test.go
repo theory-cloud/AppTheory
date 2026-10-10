@@ -101,6 +101,7 @@ func evaluateText(t *testing.T, text string) ([]string, error) {
 		return nil, err
 	}
 	failures := checkParity(jobs)
+	failures = append(failures, checkCIPushTrigger(workflow)...)
 	failures = append(failures, checkExactConditions(jobs)...)
 	failures = append(failures, checkBackmergeExemption(jobs)...)
 	failures = append(failures, checkExemptionsAreLive(jobs)...)
@@ -148,6 +149,19 @@ func replaceLine(text, prefix, replacement string) string {
 
 func TestGuardPassesCurrentTree(t *testing.T) {
 	mustPass(t, baseWorkflow)
+}
+
+// TestGuardRejectsPushlessCIWorkflow pins the on: push requirement: the
+// push-to-staging release-eligibility leg and the push-parity check are vacuous
+// without it, so a pushless ci.yml fails closed while the push-carrying
+// baseWorkflow above stays green.
+func TestGuardRejectsPushlessCIWorkflow(t *testing.T) {
+	pushless := strings.Replace(baseWorkflow,
+		"  push:\n    branches:\n      - staging\n      - main\n      - premain\n", "", 1)
+	if pushless == baseWorkflow {
+		t.Fatal("failed to build the pushless ci.yml fixture")
+	}
+	mustFailWith(t, pushless, "on: push")
 }
 
 func TestGuardRejectsBroadenedRubric(t *testing.T) {
