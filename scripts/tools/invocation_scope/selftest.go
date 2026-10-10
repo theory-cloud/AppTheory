@@ -244,6 +244,7 @@ var pyFlaggedProbes = []struct{ name, src, rule string }{
 	// parameter the body receives.
 	{"one-line walrus thread start", "def run():\n    (t := threading.Thread(target=work)).start()\n", "thread-start"},
 	{"two-line walrus thread start", "def run():\n    (t := threading.Thread(target=work))\n    t.start()\n", "thread-start"},
+	{"walrus join of another thread does not join the started one", "def run():\n    t = threading.Thread(target=work)\n    t.start()\n    (t := prior_done).join()\n", "thread-start"},
 	{"daemon thread in a default argument", "def g(t=threading.Thread(target=work, daemon=True)):\n    pass\n", "daemon-thread"},
 	{"thread started in a default argument", "def g(x=threading.Thread(target=work).start()):\n    pass\n", "thread-start"},
 	{"default-argument thread started in the body", "def g(t=threading.Thread(target=work)):\n    t.start()\n", "thread-start"},

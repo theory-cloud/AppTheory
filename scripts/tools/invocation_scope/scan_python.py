@@ -197,6 +197,20 @@ def receiver_key(expr: ast.AST) -> str:
     return key_of(expr)
 
 
+def joined_receiver_key(expr: ast.AST) -> str:
+    """The key a `.join()` receiver names.
+
+    `(t := other).join()` joins the object the walrus value evaluates to, not
+    the assignment target `t`: the walrus replaces `t` before the join runs, so
+    crediting the join to `t` would discharge an earlier `t.start()`. A value
+    with no stable name (a constructor or call) keeps its own key, which matches
+    no tracked target, so the join proof stays conservative.
+    """
+    if isinstance(expr, ast.NamedExpr):
+        return joined_receiver_key(expr.value)
+    return key_of(expr)
+
+
 def container_key(expr: ast.AST) -> str:
     """The key of the container a subscript expression reads: `pool[k]` -> `pool`."""
     cur = expr
@@ -496,7 +510,7 @@ def make_join_predicate(kind: str, target: str, canon: Callable[[str], str]):
             func = node.func
             if not isinstance(func, ast.Attribute) or func.attr != "join":
                 return False
-            return canon(receiver_key(func.value)) == target
+            return canon(joined_receiver_key(func.value)) == target
 
         return predicate
 

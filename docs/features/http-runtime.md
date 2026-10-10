@@ -243,8 +243,10 @@ Each language is read with its own parser, never with a text pattern:
   `await` (directly or through `gather`/`wait`), and an executor `submit` is
   joined lexically by its own `with` block. A class body and the expressions a
   `def`/`class` statement evaluates (default arguments, decorators, class bases
-  and keywords) are scopes of their own, and a walrus receiver
-  (`(t := Thread(...)).start()`) names its target. A plain name is tracked inside
+  and keywords) are scopes of their own; a walrus receiver names its target for
+  `.start()` (`(t := Thread(...)).start()`), while a `.join()` receiver is
+  credited to the value the walrus binds rather than the assignment target, so
+  `(t := other).join()` does not join a thread started as `t`. A plain name is tracked inside
   the function that binds it, plus the body of the `def` whose default argument
   bound it; an attribute (`self.worker`, `mod.worker`), a container element
   (`pool["a"]`), a module global and a class attribute (also under `self.<name>`
