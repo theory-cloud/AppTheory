@@ -119,14 +119,15 @@ passed `npm audit` with zero vulnerabilities. The removal rationale was:
 - `yaml`: the TableTheory release asset now resolves `yaml@2.9.1`; AppTheory should not override TableTheory's
   transitive dependency unless a current advisory or contract gate requires it.
 
-As of this changeset, the repository pins AWS CDK `2.271.0`, which still bundles `brace-expansion@5.0.9` inside its
-published tarball; only AWS can publish a tarball that bundles the patched `>= 5.0.12` release. The CDK npm-audit and
-GovTheory OSV gates verify the exact bundled graph and accept exactly two reviewed, self-expiring exceptions -
-`brace-expansion 5.0.9` bundled in `aws-cdk-lib` (operator-ruled 2026-10-03) and `braces 3.0.3` reached only through
-the `jsii-pacmak` / `jsii-rosetta` / `fast-glob` / `micromatch` dev chain (operator-ruled 2026-10-04) - each carrying a
-hard `recheck_by 2026-11-02` and a registry-backed removal condition (see
-`gov-infra/planning/apptheory-10of10-rubric.md` SEC-2). Any other AWS CDK, minimatch, brace-expansion, package-path,
-or finding drift fails closed.
+The repository pins AWS CDK `2.273.0`, whose published tarball bundles the patched `brace-expansion@5.0.12`. That meets
+the documented removal condition of the former `brace-expansion 5.0.9` bundled-dependency exception (operator-ruled
+2026-10-03), so that exception is retired - standard maintenance, not a new exception grant. The CDK npm-audit and
+GovTheory OSV gates still verify the exact bundled graph, now as a positive assertion (`brace-expansion >= 5.0.12`),
+and accept exactly one reviewed, self-expiring exception - `braces 3.0.3` reached only through the
+`jsii-pacmak` / `jsii-rosetta` / `fast-glob` / `micromatch` dev chain (operator-ruled 2026-10-04) - carrying a hard
+`recheck_by 2026-11-02` and a registry-backed removal condition (see
+`gov-infra/planning/apptheory-10of10-rubric.md` SEC-2). Any vulnerable bundle, AWS CDK, minimatch, brace-expansion,
+package-path, or finding drift fails closed.
 
 The TypeScript lint graph no longer carries a `minimatch@3.x` parent. Landing the eslint 10 train
 (`eslint` 10.11.0, `@eslint/js` 10.0.1, `eslint-plugin-unicorn` ^76.0.0) with `eslint-plugin-import` swapped for the
@@ -136,4 +137,4 @@ maintained `eslint-plugin-import-x` fork dropped `@eslint/eslintrc` and hoisted 
 now grants no exception: it requires both an empty OSV report and the exact parent, minimatch, brace-expansion, and
 version graph, and any drift fails closed. The `ts/` lockfile class is therefore exception-free and advisory-variant
 independent, because the only remaining brace-expansion instance (`5.0.12`) is past every recorded 5.x fix; the
-`aws-cdk` lockfile class carries only the two AWS-blocked exceptions above.
+`aws-cdk` lockfile class carries only the remaining `braces 3.0.3` jsii-toolchain exception.
