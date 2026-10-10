@@ -9,22 +9,21 @@ import (
 	"time"
 )
 
-// This file holds the strict (join-dominance) test for the buffered adapter's
-// drain worker, the drainBodyReaderForAPIGatewayV2 baseline entry.
+// This file holds the bounded-settle test for the buffered adapter's drain
+// worker, the drainBodyReaderForAPIGatewayV2 baseline entry.
 //
-// The settle-window checks in invocation_scope_test.go prove the worker is gone
-// once the drain returned. These tests instead prove the drain cannot return
-// before the worker exits: the worker lingers after the reader is closed and
-// closes its own channel only as its read returns, so a drain that dropped its
-// `<-done` join is caught by that ordering assertion — never by how long the
-// drain took.
+// The settle-window checks in invocation_scope_test.go prove a cooperative
+// worker is gone once the drain returned. These tests prove the drain cannot be
+// held open by a worker that does not respond to Close: the worker's read
+// lingers past the bounded grace window, so a drain that waited for the worker
+// unconditionally is caught by the elapsed-time bound.
 //
 // The strict tests for the limitBodyStream and streamjoin.New entries live in
 // invocation_scope_test.go.
 
 // lingerOnCloseReader blocks its Read until Close is called, then lingers before
-// reporting EOF. A drain that abandons its worker returns while Read is still
-// running, which readDone observes.
+// reporting EOF. A drain that waits for its worker unconditionally returns only
+// after the read returns, which the elapsed-time bound observes as a hold.
 type lingerOnCloseReader struct {
 	closeCh  chan struct{}
 	readDone chan struct{}
@@ -53,31 +52,39 @@ func (r *lingerOnCloseReader) Close() error {
 	return nil
 }
 
-// TestDrainBodyReaderForAPIGatewayV2WaitsForItsWorkerOnAbandon covers the
+// TestDrainBodyReaderForAPIGatewayV2AbandonIsBounded covers the
 // drainBodyReaderForAPIGatewayV2 baseline entry on its ctx-done path. The drain
-// deadline abandons the blocked read, closes the reader to unblock it, and must
-// then wait for `<-done` before returning. The worker's read lingers after the
-// close, so deleting the join-wait makes the drain return at the deadline,
-// before the worker exited.
-func TestDrainBodyReaderForAPIGatewayV2WaitsForItsWorkerOnAbandon(t *testing.T) {
-	const linger = 200 * time.Millisecond
+// deadline abandons the blocked read, closes the reader to unblock it, and joins
+// the worker for a bounded grace window. A reader whose read lingers past that
+// window must not hold the drain.
+func TestDrainBodyReaderForAPIGatewayV2AbandonIsBounded(t *testing.T) {
+	// Linger well past the bounded grace window so an unbounded `<-done` join is
+	// caught by the elapsed-time bound, not by scheduler timing.
+	const linger = 500 * time.Millisecond
 	reader := newLingerOnCloseReader(linger)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
+	started := time.Now()
 	_, err := drainBodyReaderForAPIGatewayV2(ctx, reader)
+	elapsed := time.Since(started)
 
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("drain error = %v, want context.DeadlineExceeded", err)
 	}
-	// readDone is closed by the worker's read as it returns, and the drain joins
-	// the worker, so the marker is always closed by the time the drain returns: a
-	// drain that returned without joining finds it open.
+	// The bounded join (streamingBodyDrainJoinGrace) must release the drain well
+	// before the worker's read returns.
+	if elapsed > 300*time.Millisecond {
+		t.Fatalf("drain held the invocation for %s on a lingering reader", elapsed)
+	}
 	select {
 	case <-reader.readDone:
+		t.Fatal("test reader did not linger past the grace window")
 	default:
-		t.Fatal("drain returned before its worker's read returned")
 	}
+	// The abandoned worker is the documented residual; it exits once the read
+	// returns.
+	<-reader.readDone
 	assertNoGoroutineFor(t, "drainBodyReaderForAPIGatewayV2.func", "abandoned reader body")
 }

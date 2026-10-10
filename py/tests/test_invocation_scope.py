@@ -19,8 +19,9 @@ from apptheory.response import html_stream  # noqa: E402
 # This file proves the invocation-scope invariant for the Python runtime: a
 # thread the runtime starts to produce or consume a response body has finished
 # before the adapter that owns it returns, so no work outlives the Lambda
-# invocation that started it. There is no grace window that ends in abandoning a
-# worker.
+# invocation that started it. The join is bounded: a producer that does not
+# respond to cancellation is not detached and not claimed terminated, and the
+# Lambda function timeout remains its outer bound.
 
 _DRAIN_THREAD_NAME = "apptheory-v2-streaming-drain"
 _TIMEOUT_THREAD_NAME = "apptheory-timeout-handler"
@@ -70,9 +71,10 @@ class _InterruptibleBlockingBody:
 class _UninterruptibleBlockingBody:
     """A body whose blocked read cannot be released by ``close``.
 
-    It models a source blocked inside a call it does not leave. The adapter must
-    still not return while the drain worker reads it, so the wait for the worker
-    is unconditional and the invocation (not the adapter) bounds such a body.
+    It models a source blocked inside a call it does not leave. The adapter's
+    join for the worker is bounded, so it returns once the unwind grace elapses
+    even though the worker is still blocked; the invocation (not the adapter)
+    bounds such a body.
     """
 
     def __init__(self) -> None:
@@ -102,9 +104,9 @@ class TestStreamingDrainScope(unittest.TestCase):
 
     def tearDown(self) -> None:
         aws_http._APIGATEWAY_V2_STREAMING_BODY_TIMEOUT = self._old_timeout
-        # The adapter now joins its worker unconditionally, so no worker may be
-        # left behind; this is a belt-and-braces check that the process is clean
-        # for the next test.
+        # A bounded drain can leave an uninterruptible worker as its documented
+        # residual; this is a belt-and-braces wait so the process is clean for the
+        # next test.
         _remaining_worker_threads(time.monotonic() + 2.0)
 
     def test_drain_joins_the_worker_it_abandons(self) -> None:
@@ -120,11 +122,12 @@ class TestStreamingDrainScope(unittest.TestCase):
             "drain worker outlived the adapter",
         )
 
-    def test_adapter_waits_for_an_uninterruptible_body(self) -> None:
+    def test_adapter_bounds_its_wait_for_an_uninterruptible_body(self) -> None:
         # The canonicalized response wraps the handler's stream in a generator,
         # which cannot be closed while it is executing, so the worker only exits
-        # when the source releases it. The adapter must wait for that instead of
-        # returning while the worker still reads.
+        # when the source releases it. The adapter's join is bounded: it must
+        # return once the unwind grace elapses rather than hold the invocation
+        # open for a worker that does not settle.
         body = _UninterruptibleBlockingBody()
         out: dict[str, object] = {}
 
@@ -132,25 +135,27 @@ class TestStreamingDrainScope(unittest.TestCase):
             out["response"] = aws_http.apigw_v2_response_from_response(html_stream(200, body))
 
         caller = threading.Thread(target=run, daemon=True)
+        started = time.monotonic()
         caller.start()
+        caller.join(timeout=5.0)
+        elapsed = time.monotonic() - started
 
-        # Past the drain budget the adapter has closed the body and is waiting
-        # for the worker; it must not have returned yet.
-        caller.join(timeout=0.5)
-        self.assertTrue(
+        self.assertFalse(
             caller.is_alive(),
-            "the adapter returned while the drain worker could still run",
+            "the adapter held the invocation open for an uninterruptible body",
         )
-
-        body.release.set()
-        caller.join(timeout=2.0)
-        self.assertFalse(caller.is_alive(), "the adapter never returned after the body was released")
-
-        # The 500 and the unwound worker together are the state proof that the
-        # drain budget (not luck) decided the outcome, so no elapsed-time bound is
-        # needed here.
+        self.assertLess(
+            elapsed,
+            1.5,
+            "the bounded adapter did not return within its budget plus unwind grace",
+        )
         self.assertEqual(out["response"]["statusCode"], 500)
-        self.assertTrue(body.unwound.is_set())
+        self.assertFalse(body.unwound.is_set(), "the uninterruptible worker settled unexpectedly")
+
+        # The blocked worker is the documented residual; releasing it lets it
+        # exit, so nothing outlives the test.
+        body.release.set()
+        self.assertTrue(body.unwound.wait(timeout=2.0))
         self.assertEqual(_remaining_worker_threads(time.monotonic() + 2.0), 0)
 
     def test_terminating_body_starts_no_worker_behind_the_adapter(self) -> None:
@@ -210,30 +215,39 @@ class TestBufferedAdapterScopes(unittest.TestCase):
 
 
 class TestTimeoutMiddlewareScope(unittest.TestCase):
-    def test_timeout_middleware_runs_the_handler_on_the_invoking_thread(self) -> None:
-        mw = timeout_middleware(TimeoutConfig(default_timeout_ms=5, timeout_message="too slow"))
+    def test_timeout_middleware_returns_timeout_at_the_deadline(self) -> None:
+        mw = timeout_middleware(TimeoutConfig(default_timeout_ms=10, timeout_message="too slow"))
         ctx = Context(request=Request(method="GET", path="/"))
 
-        handled_on: list[int] = []
-        invoking = threading.get_ident()
+        handler_started = threading.Event()
+        release = threading.Event()
 
-        def cooperative(handler_ctx: Context):
-            handled_on.append(threading.get_ident())
-            carrier = getattr(handler_ctx, "ctx", None)
-            cancelled = getattr(carrier, "cancelled", None)
-            if cancelled is not None:
-                cancelled.wait(timeout=2.0)
-            return "cancelled"
+        def uncooperative(_ctx: Context):
+            # Ignores the cancellation token: the middleware must report the
+            # timeout at the deadline (plus its bounded join), not after this
+            # blocks forever.
+            handler_started.set()
+            release.wait()
+            return "late"
 
         started = time.monotonic()
         with self.assertRaises(AppError) as cm:
-            mw(ctx, cooperative)
+            mw(ctx, uncooperative)
         elapsed = time.monotonic() - started
 
         self.assertEqual(cm.exception.code, "app.timeout")
-        self.assertEqual(handled_on, [invoking], "the timeout middleware ran the handler on another thread")
-        self.assertLess(elapsed, 1.0, "cooperative cancellation did not release the invocation promptly")
-        self.assertEqual([t for t in threading.enumerate() if t.name == _TIMEOUT_THREAD_NAME], [])
+        self.assertTrue(handler_started.is_set(), "the middleware never ran the handler")
+        self.assertLess(elapsed, 1.0, "the middleware held the invocation for a blocked handler")
+
+        release.set()
+        deadline = time.monotonic() + 2.0
+        while [t for t in threading.enumerate() if t.name == _TIMEOUT_THREAD_NAME] and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(
+            [t for t in threading.enumerate() if t.name == _TIMEOUT_THREAD_NAME],
+            [],
+            "the timeout handler worker outlived its invocation",
+        )
 
     def test_timeout_middleware_never_abandons_a_handler_that_ignores_cancellation(self) -> None:
         mw = timeout_middleware(TimeoutConfig(default_timeout_ms=5, timeout_message="too slow"))
@@ -242,9 +256,9 @@ class TestTimeoutMiddlewareScope(unittest.TestCase):
         side_effect = threading.Event()
 
         def uncooperative(_ctx: Context):
-            # Ignores the cancellation token: it runs to completion on the
-            # invoking thread, so its side effect is inside the invocation and
-            # the middleware reports the timeout afterwards.
+            # Ignores the cancellation token but unwinds well inside the
+            # middleware's bounded join window, so its side effect is inside the
+            # invocation and the middleware reports the timeout afterwards.
             time.sleep(0.05)
             side_effect.set()
             return "late"
@@ -254,8 +268,8 @@ class TestTimeoutMiddlewareScope(unittest.TestCase):
 
         self.assertEqual(cm.exception.code, "app.timeout")
         # The handler's own side effect having landed is the proof that the
-        # middleware ran it to completion rather than abandoning it, and it cannot
-        # land after the handler returned, so no elapsed-time bound is needed.
+        # middleware joined it rather than abandoning it, and it cannot land after
+        # the middleware returned, so no elapsed-time bound is needed.
         self.assertTrue(side_effect.is_set(), "the handler it timed out was abandoned")
         self.assertEqual([t for t in threading.enumerate() if t.name == _TIMEOUT_THREAD_NAME], [])
 

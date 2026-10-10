@@ -188,16 +188,34 @@ terminate in time fails closed with the adapter named in the message
 body.
 
 When the time budget expires, the adapter does not walk away from the body: it
-closes the reader (or the stream) so the producer can unwind and then waits for
-the read it gave up on, **unconditionally** — there is no grace window and no
-abandoned worker, so no producer goroutine/thread/promise outlives the invocation
-that started it. A body that is neither closable nor terminating — a
-handler-supplied source blocked inside a call it does not leave — cannot be
-interrupted by construction; it is read on the invoking goroutine or waited for
-unconditionally, so the Lambda function timeout is what bounds it rather than the
-adapter. Every body the runtime itself produces is closable, and every wrapper the
-runtime puts around a body forwards close to the body it wraps. See
+closes the reader (or the stream) so the producer can unwind and then joins the
+read it gave up on for a **bounded grace window** (100 ms in all three runtimes)
+before failing closed. A producer that observes the close settles well within that
+window and is never left running. A body that is neither closable nor terminating
+— a handler-supplied source blocked inside a call it does not leave — cannot be
+interrupted by construction; the adapter stops waiting at the grace window, does
+not detach that producer, and does not claim it terminated, so the Lambda function
+timeout is what bounds it rather than the adapter. The wait is bounded rather than
+unconditional: an unbounded join lets a single stalled stream hold the invocation
+until the function timeout, which is the availability regression this bound
+prevents. Every body the runtime itself produces is closable, and every wrapper
+the runtime puts around a body forwards close to the body it wraps. See
 [Invocation-scoped work](../development/planning/apptheory/supporting/apptheory-runtime-contract-v0.md#invocation-scoped-work-normative).
+
+### Timeout middleware
+
+`TimeoutMiddleware` (Go/TypeScript) and `timeout_middleware` (Python) fail a
+request closed when its timeout policy expires. The handler chain runs on a worker
+with a deadline-bearing context, and the middleware reports `app.timeout`/HTTP 408
+**at the deadline** — not after the handler returns. A handler that observes its
+canceled context returns immediately and is never left running; a handler that
+ignores cancellation is exactly the case the middleware exists to bound. After the
+deadline the middleware joins the worker for a bounded grace window (250 ms in all
+three runtimes) before it returns the timeout response, so an uncooperative
+handler cannot hold the invocation open. A synchronous handler with no
+cancellation point cannot be interrupted by the middleware by construction; it is
+the documented residual, bounded by the Lambda function timeout rather than by the
+middleware waiting for it.
 
 ### The invocation-scope guard
 

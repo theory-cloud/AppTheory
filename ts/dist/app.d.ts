@@ -331,13 +331,20 @@ export declare function createLambdaFunctionURLStreamingHandler(app: App): Lambd
 /**
  * Creates middleware that fails requests closed when timeout policy expires.
  *
- * The handler chain runs on the invoking task with an abort signal that carries
- * the deadline, and the middleware reports `app.timeout` when the signal was
- * aborted by the time the chain returned. It starts no promise or task of its
- * own: a handler that observes its signal unwinds immediately, and a handler
- * that ignores it runs until it returns, bounded by the Lambda function timeout
- * rather than abandoned by the middleware. There is no grace window and no
- * abandoned work.
+ * The handler chain runs on a task raced against the deadline signal, and the
+ * middleware reports `app.timeout` when the deadline fires while the chain is
+ * still running -- at the deadline, not after the chain returns. A handler that
+ * observes its signal unwinds immediately and is never left running; a handler
+ * that ignores cancellation is exactly the case this middleware exists to bound.
+ *
+ * The middleware does not abandon the handler: after the deadline it joins it for
+ * a bounded grace window (TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS) before returning the
+ * timeout response. A handler that ignores cancellation and does not unwind
+ * within that window is the one documented place where work the middleware
+ * started can still be running when the response returns; the Lambda function
+ * timeout remains its outer bound. A handler that never yields (for example a
+ * synchronous CPU loop with no await point) cannot be interrupted by the
+ * middleware by construction.
  */
 export declare function timeoutMiddleware(config?: TimeoutConfig): Middleware;
 //# sourceMappingURL=app.d.ts.map

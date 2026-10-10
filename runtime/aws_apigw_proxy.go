@@ -60,7 +60,7 @@ func (a *App) serveAPIGatewayProxyLambda(ctx context.Context, event events.APIGa
 	// invocation scope and joins the body before returning.
 	defer func() {
 		cancelServe()
-		joinAbandonedBodyStream(resp.BodyStream)
+		joinAbandonedBodyStream(resp.BodyStream, streamingBodyDrainJoinGrace)
 	}()
 	return apigatewayProxyResponseFromResponse(bufferedAdapterResponse(serveCtx, resp, apigatewayProxyStreamingBodyErrorMessage))
 }
@@ -307,7 +307,7 @@ func (b *joinedBodyStream) release() {
 		if b.cancel != nil {
 			b.cancel()
 		}
-		joinAbandonedBodyStream(b.stream)
+		joinAbandonedBodyStream(b.stream, streamingBodyDrainJoinGrace)
 	})
 }
 

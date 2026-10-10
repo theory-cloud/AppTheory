@@ -78,6 +78,21 @@ runtime/mcp/stream_store.go|(MemoryStreamStore).broadcastOnDone[#1]|joined: the 
 # Same contract as the memory store pump; the launched callable is a method, so
 # its body is not visible to the proof.
 runtime/mcp/stream_store_dynamo.go|(DynamoStreamStore).Subscribe[#1]|joined: it observes the subscription context and closes its channel, and the forwarder drains it to that close
+# The timeout middleware runs the handler on a worker so it can report app.timeout
+# at the deadline instead of after an uncooperative handler returns. The worker is
+# joined for a bounded grace window on the deadline path; a cooperative handler
+# returns immediately, and a handler that ignores cancellation is the documented
+# residual bounded by the Lambda function timeout.
+runtime/timeout_middleware.go|TimeoutMiddleware.<func literal>[#1]|joined: the deadline path joins the worker for a bounded grace window before returning app.timeout
+# The logger's single bounded notification consumer drains a fixed-size queue; the
+# caller enqueues without blocking (overflow is dropped and counted). It is
+# released by (*zapCore).close, which closes the queue and waits on notifyWg, and
+# by Flush, which waits on notifyWg up to its own context deadline.
+pkg/observability/zap/logger.go|NewZapLogger[#1]|joined: (*zapCore).close closes the queue and waits on notifyWg; Flush waits on notifyWg up to its context deadline
+# waitNotifier's watcher only observes the WaitGroup and closes its signal channel.
+# Its caller Flush selects on it together with its own context deadline, so it is
+# released as soon as the bounded queue drains (or promptly on Close).
+pkg/observability/zap/logger.go|(zapCore).waitNotifier[#1]|joined: Flush selects on the watcher's channel with its own context deadline; the watcher returns when the bounded queue drains
 
 # --- TypeScript -------------------------------------------------------------
 # The drain holds the read it started as `pending` (`async-read`) and only
@@ -93,3 +108,17 @@ ts/src/internal/aws-http.ts|drainStreamingBodyForBufferedAdapter[#1]|joined: the
 # see across the two callbacks, even though the finally releases the timer on
 # every path the returned promise can take.
 ts/src/internal/aws-http.ts|withDeadline.<anonymous>[#1]|joined: withDeadline's timer is cleared in the returned promise's finally on both paths (whichever side of the race wins), and its caller awaits the abandoned read before returning
+# The timeout middleware holds the handler task to race it against the deadline.
+# On the timeout path it joins that task with settleWithin(...) for a bounded
+# grace window before rethrowing app.timeout; a cooperative handler that observes
+# its abort signal settles immediately, and a handler that ignores cancellation is
+# the documented residual bounded by the Lambda function timeout.
+ts/src/app.ts|timeoutMiddleware.<anonymous>[#1]|joined: the timeout path joins the handler task with settleWithin(...) for a bounded grace window before rethrowing app.timeout
+
+# --- Python -----------------------------------------------------------------
+# The timeout middleware runs the handler on a worker thread so it can raise
+# app.timeout at the deadline instead of after an uncooperative handler returns.
+# The worker is joined for a bounded grace window on the deadline path; a
+# cooperative handler returns immediately, and a handler that ignores
+# cancellation is the documented residual bounded by the Lambda function timeout.
+py/src/apptheory/middleware.py|timeout_middleware.mw[#1]|joined: the deadline path joins the worker for a bounded grace window before raising app.timeout

@@ -311,7 +311,7 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 	defer func() {
 		cancelServe()
 		closeAbandonedBodyReader(responseBodyReader)
-		joinAbandonedBodyStream(responseBodyStream)
+		joinAbandonedBodyStream(responseBodyStream, streamingBodyDrainJoinGrace)
 	}()
 	ctx = serveCtx
 

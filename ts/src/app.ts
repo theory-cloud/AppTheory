@@ -64,6 +64,7 @@ import {
   requestFromAPIGatewayV2,
   requestFromLambdaFunctionURL,
   requestFromWebSocketEvent,
+  settleWithin,
 } from "./internal/aws-http.js";
 import {
   serveLambdaFunctionURLStreaming,
@@ -842,6 +843,7 @@ export class App {
     recordObservability(this._observability, {
       method,
       path,
+      route: UNMATCHED_ROUTE_TEMPLATE,
       requestId: "",
       tenantId: "",
       traceId: "",
@@ -1100,6 +1102,7 @@ export class App {
     let traceId = extractTraceIdFromHeaders(preHeaders);
     let method = normalizeMethod(request.method);
     let path = normalizePath(request.path);
+    let route = UNMATCHED_ROUTE_TEMPLATE;
 
     let requestId = firstHeaderValue(preHeaders, "x-request-id");
     if (!requestId) {
@@ -1123,6 +1126,7 @@ export class App {
         recordObservability(this._observability, {
           method,
           path,
+          route,
           requestId,
           tenantId,
           traceId,
@@ -1242,6 +1246,8 @@ export class App {
         "app.not_found",
       );
     }
+
+    route = match.route.pattern;
 
     const requestCtx = new Context({
       request: normalized,
@@ -2491,16 +2497,33 @@ function timeoutForContext(
   return timeoutMs;
 }
 
+// TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS bounds how long the timeout middleware waits
+// for the handler it timed out to unwind before returning the timeout response.
+//
+// A handler that observes its abort signal unwinds immediately and is never left
+// running. A handler that ignores cancellation is exactly the case this
+// middleware exists to bound, so its response is not held open for the handler's
+// full runtime; it is the one documented place where a handler the middleware
+// started can still be running when the response returns.
+const TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS = 250;
+
 /**
  * Creates middleware that fails requests closed when timeout policy expires.
  *
- * The handler chain runs on the invoking task with an abort signal that carries
- * the deadline, and the middleware reports `app.timeout` when the signal was
- * aborted by the time the chain returned. It starts no promise or task of its
- * own: a handler that observes its signal unwinds immediately, and a handler
- * that ignores it runs until it returns, bounded by the Lambda function timeout
- * rather than abandoned by the middleware. There is no grace window and no
- * abandoned work.
+ * The handler chain runs on a task raced against the deadline signal, and the
+ * middleware reports `app.timeout` when the deadline fires while the chain is
+ * still running -- at the deadline, not after the chain returns. A handler that
+ * observes its signal unwinds immediately and is never left running; a handler
+ * that ignores cancellation is exactly the case this middleware exists to bound.
+ *
+ * The middleware does not abandon the handler: after the deadline it joins it for
+ * a bounded grace window (TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS) before returning the
+ * timeout response. A handler that ignores cancellation and does not unwind
+ * within that window is the one documented place where work the middleware
+ * started can still be running when the response returns; the Lambda function
+ * timeout remains its outer bound. A handler that never yields (for example a
+ * synchronous CPU loop with no await point) cannot be interrupted by the
+ * middleware by construction.
  */
 export function timeoutMiddleware(config: TimeoutConfig = {}): Middleware {
   const cfg = normalizeTimeoutConfig(config);
@@ -2534,14 +2557,37 @@ export function timeoutMiddleware(config: TimeoutConfig = {}): Middleware {
       controller.abort(cfg.timeoutMessage);
     }, timeoutMs);
 
+    const run = Promise.resolve().then(() => next(handlerCtx));
+    let removeDeadlineAbortListener = () => {};
+    const deadlinePromise = new Promise<never>((_resolve, reject) => {
+      const onAbort = () =>
+        reject(new AppError("app.timeout", cfg.timeoutMessage));
+      if (controller.signal.aborted) {
+        onAbort();
+        return;
+      }
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      removeDeadlineAbortListener = () =>
+        controller.signal.removeEventListener("abort", onAbort);
+    });
+
     try {
-      const resp = await next(handlerCtx);
+      const resp = await Promise.race([run, deadlinePromise]);
       if (controller.signal.aborted) {
         throw new AppError("app.timeout", cfg.timeoutMessage);
       }
       return resp;
+    } catch (err) {
+      if (err instanceof AppError && err.code === "app.timeout") {
+        // The deadline won. Join the handler within the bounded grace window so a
+        // cooperative handler is never left running, then report the timeout
+        // without holding the invocation open for an uncooperative handler.
+        await settleWithin(run, TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS);
+      }
+      throw err;
     } finally {
       clearTimeout(timer);
+      removeDeadlineAbortListener();
       removeParentAbortListener();
     }
   };
@@ -2913,6 +2959,7 @@ function recordObservability(
   {
     method,
     path,
+    route,
     requestId,
     tenantId,
     traceId,
@@ -2922,6 +2969,7 @@ function recordObservability(
   }: {
     method: string;
     path: string;
+    route: string;
     requestId: string;
     tenantId: string;
     traceId: string;
@@ -2968,7 +3016,14 @@ function recordObservability(
       tags: {
         method,
         path,
+        // route and status_class are the bounded metric dimensions: the concrete
+        // path and raw status stay available on the log and span records, while a
+        // first-party metric sink dimensions only on these finite values so
+        // attacker-selected paths (or tenant hints) cannot mint unbounded
+        // CloudWatch metric series.
+        route: routeTemplateOrUnmatched(route),
         status: String(status),
+        status_class: statusClass(status),
         error_code: errorCode,
         tenant_id: tenantId,
       },
@@ -2993,6 +3048,26 @@ function recordObservability(
       attributes,
     });
   }
+}
+
+// UNMATCHED_ROUTE_TEMPLATE is the bounded route label recorded for a request that
+// did not match a registered route template (an unknown path, a method mismatch,
+// an adapter decode failure). It keeps the metric route dimension finite even
+// though the concrete request path is attacker-controlled.
+const UNMATCHED_ROUTE_TEMPLATE = "unmatched";
+
+function routeTemplateOrUnmatched(route: string): string {
+  const resolved = String(route ?? "").trim();
+  return resolved || UNMATCHED_ROUTE_TEMPLATE;
+}
+
+function statusClass(status: number): string {
+  if (status >= 100 && status < 200) return "1xx";
+  if (status >= 200 && status < 300) return "2xx";
+  if (status >= 300 && status < 400) return "3xx";
+  if (status >= 400 && status < 500) return "4xx";
+  if (status >= 500 && status < 600) return "5xx";
+  return "unknown";
 }
 
 function durationMs(startedAtMs: number, finishedAtMs: number): number {
