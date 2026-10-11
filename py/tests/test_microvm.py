@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import email.message
+import io
 import json
 import os
 import sys
 import types
 import unittest
+import urllib.request
+import urllib.response
 from unittest.mock import patch
 
 import apptheory as app
@@ -1821,6 +1825,117 @@ class MicroVMRealContractTests(unittest.TestCase):
         with self.assertRaises(app.MicroVMSafeError) as ctx:
             microvm_mod.validate_microvm_operation_contract(bad_provider)
         self.assertEqual(microvm_mod.MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE, ctx.exception.code)
+
+
+class _FakeInvokeHTTPHandler(urllib.request.HTTPSHandler):
+    """Serve one canned HTTPS response so the invoke opaque path runs without network access."""
+
+    def __init__(self, *, status: int, headers: dict[str, str], body: bytes) -> None:
+        super().__init__()
+        self.status = status
+        self.headers = headers
+        self.body = body
+        self.calls = 0
+        self.last_request: urllib.request.Request | None = None
+
+    def https_open(self, req: urllib.request.Request) -> urllib.response.addinfourl:
+        self.calls += 1
+        self.last_request = req
+        message = email.message.Message()
+        for name, value in self.headers.items():
+            message[name] = value
+        response = urllib.response.addinfourl(io.BytesIO(self.body), message, req.full_url, self.status)
+        response.msg = "status"
+        return response
+
+
+class MicroVMProviderInvokeTests(unittest.TestCase):
+    _ALLOWLISTED = "https://provider-1.microvm.us-east-1.amazonaws.com"
+
+    def _provider(self) -> app.AWSLambdaMicroVMProvider:
+        class StubClient:
+            def create_microvm_auth_token(self, **payload: object) -> dict[str, object]:
+                self.payload = payload
+                return {"authToken": {"X-aws-proxy-auth": "provider-token-value"}}
+
+        provider = object.__new__(app.AWSLambdaMicroVMProvider)
+        provider._client = StubClient()
+        provider._clock = lambda: 0.0
+        return provider
+
+    def _invoke_input(self, endpoint: str) -> app.MicroVMProviderInvokeInput:
+        return app.MicroVMProviderInvokeInput(
+            request_id="req-invoke",
+            tenant_id="tenant-1",
+            namespace="namespace-1",
+            auth_context=app.MicroVMAuthContext(subject="subject-1", tenant_id="tenant-1", namespace="namespace-1"),
+            binding=app.MicroVMProviderSessionBinding("tenant-1", "namespace-1", "session-1", "provider-1", 1),
+            endpoint=endpoint,
+            method="POST",
+            path="/hello",
+            query={"b": ["2"], "a": ["1"]},
+            headers={"x-workload": ["ok"]},
+            body=b"payload",
+            port=9090,
+            ttl_seconds=120,
+        )
+
+    def _opener(
+        self, status: int, headers: dict[str, str], body: bytes
+    ) -> tuple[urllib.request.OpenerDirector, _FakeInvokeHTTPHandler]:
+        handler = _FakeInvokeHTTPHandler(status=status, headers=headers, body=body)
+        deny_handler = microvm_mod.aws_provider._ProviderInvokeRedirectHandler()
+        return urllib.request.build_opener(handler, deny_handler), handler
+
+    def test_invoke_succeeds_and_carries_credential_for_allowlisted_endpoint(self) -> None:
+        provider = self._provider()
+        opener, handler = self._opener(201, {"Content-Type": "application/octet-stream"}, b"\x09")
+        provider._opener = opener
+        output = provider.invoke(self._invoke_input(self._ALLOWLISTED))
+        self.assertEqual(201, output.status)
+        self.assertEqual(1, handler.calls)
+        self.assertEqual(
+            "https://provider-1.microvm.us-east-1.amazonaws.com/hello?a=1&b=2",
+            handler.last_request.full_url,
+        )
+        self.assertEqual("provider-token-value", handler.last_request.get_header("X-aws-proxy-auth"))
+        self.assertEqual("9090", handler.last_request.get_header("X-aws-proxy-port"))
+
+    def test_invoke_rejects_cross_origin_redirect_without_replaying_credential(self) -> None:
+        provider = self._provider()
+        opener, handler = self._opener(302, {"Location": "https://attacker.example.com/steal"}, b"")
+        provider._opener = opener
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            provider.invoke(self._invoke_input(self._ALLOWLISTED))
+        self.assertEqual(app.MICROVM_ERROR_PROVIDER_REQUEST_INVALID, ctx.exception.code)
+        self.assertEqual(1, handler.calls, "a denied redirect must not issue a second request")
+        self.assertEqual(
+            "provider-1.microvm.us-east-1.amazonaws.com",
+            handler.last_request.host,
+        )
+        self.assertEqual("provider-token-value", handler.last_request.get_header("X-aws-proxy-auth"))
+        self.assertNotIn("attacker.example.com", str(ctx.exception))
+
+    def test_invoke_rejects_https_to_http_downgrade_redirect(self) -> None:
+        provider = self._provider()
+        opener, handler = self._opener(
+            301, {"Location": "http://provider-1.microvm.us-east-1.amazonaws.com/steal"}, b""
+        )
+        provider._opener = opener
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            provider.invoke(self._invoke_input(self._ALLOWLISTED))
+        self.assertEqual(app.MICROVM_ERROR_PROVIDER_REQUEST_INVALID, ctx.exception.code)
+        self.assertEqual(1, handler.calls)
+        self.assertEqual("https", handler.last_request.type)
+
+    def test_invoke_rejects_non_allowlisted_endpoint_before_network(self) -> None:
+        provider = self._provider()
+        opener, handler = self._opener(201, {"Content-Type": "application/json"}, b"{}")
+        provider._opener = opener
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            provider.invoke(self._invoke_input("https://evil.example.com"))
+        self.assertEqual(app.MICROVM_ERROR_PROVIDER_REQUEST_INVALID, ctx.exception.code)
+        self.assertEqual(0, handler.calls)
 
 
 if __name__ == "__main__":

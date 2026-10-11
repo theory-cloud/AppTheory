@@ -18,8 +18,20 @@ import (
 //
 // The raw AWS SDK client and loaded AWS configuration remain private implementation details.
 type AWSLambdaMicroVMProvider struct {
-	api   lambdaMicroVMAPI
-	clock Clock
+	api        lambdaMicroVMAPI
+	clock      Clock
+	httpClient *http.Client
+}
+
+// defaultProviderInvokeHTTPClient refuses every MicroVM invoke redirect. The invoke request
+// carries the minted X-aws-proxy-auth credential, so following a redirect (to a different
+// authority or over a downgraded scheme) would replay that credential against a host outside
+// the allowlisted AWS endpoint; denying every redirect keeps the credential on one authority.
+var defaultProviderInvokeHTTPClient = &http.Client{
+	CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+		req.Header.Del("X-aws-proxy-auth")
+		return safeError(ErrorCodeProviderRequestInvalid, "apptheory: microvm invoke redirect is not permitted", "")
+	},
 }
 
 // AWSLambdaMicroVMProviderOption configures the official AWS Lambda MicroVM provider adapter.
@@ -239,7 +251,7 @@ func (p *AWSLambdaMicroVMProvider) Invoke(ctx context.Context, input ProviderInv
 	}
 	req.Header.Set("X-aws-proxy-auth", authHeader)
 	req.Header.Set("X-aws-proxy-port", providerInvokePortHeader(input.Port))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := p.invokeHTTPClient().Do(req)
 	if err != nil {
 		return ProviderInvokeOutput{}, sanitizeProviderError(err, input.RequestID)
 	}
@@ -343,6 +355,15 @@ func (p *AWSLambdaMicroVMProvider) requireAPI(requestID string) (lambdaMicroVMAP
 		return nil, safeError(ErrorCodeProviderOperationFailed, "apptheory: microvm provider adapter requires official AWS Lambda MicroVM SDK client", requestID)
 	}
 	return p.api, nil
+}
+
+// invokeHTTPClient returns the client used to proxy one MicroVM invoke request. Tests inject a
+// stub through the httpClient field; production falls back to the deny-redirect package client.
+func (p *AWSLambdaMicroVMProvider) invokeHTTPClient() *http.Client {
+	if p != nil && p.httpClient != nil {
+		return p.httpClient
+	}
+	return defaultProviderInvokeHTTPClient
 }
 
 func (p *AWSLambdaMicroVMProvider) now() time.Time {

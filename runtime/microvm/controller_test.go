@@ -1278,7 +1278,7 @@ func (p *realControllerProvider) Run(_ context.Context, input ProviderRunInput) 
 		ProviderMicroVMID: "microvm-000001",
 		State:             StateRunning,
 		ProviderState:     "running",
-		Endpoint:          "https://microvm-000001.example.test",
+		Endpoint:          "https://microvm-000001.microvm.us-east-1.amazonaws.com",
 		ImageRef:          input.ImageRef,
 		ImageVersion:      input.ImageVersion,
 		StartedAt:         p.now,

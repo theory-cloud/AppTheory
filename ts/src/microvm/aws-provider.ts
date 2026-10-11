@@ -271,11 +271,21 @@ export class AWSLambdaMicroVMProvider implements MicroVMProvider {
       const init: RequestInit = {
         method: normalized.method,
         headers,
+        // Never follow a redirect: the request carries X-aws-proxy-auth, which must stay bound to
+        // the single allowlisted MicroVM endpoint. A 3xx response is refused explicitly below.
+        redirect: "manual",
       };
       if (normalized.method !== "GET" && normalized.method !== "HEAD") {
         init.body = normalized.body ?? new Uint8Array();
       }
       const response = await fetch(target, init);
+      if (response.status >= 300 && response.status < 400) {
+        throw safeError(
+          MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+          "apptheory: microvm invoke redirect is not permitted",
+          normalized.request_id,
+        );
+      }
       const body = new Uint8Array(await response.arrayBuffer());
       if (body.byteLength > maxProviderInvokeBodyBytes) {
         throw safeError(

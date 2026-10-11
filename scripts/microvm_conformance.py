@@ -586,6 +586,31 @@ class MicroVMConformanceHarness:
             raise ConformanceFailure("harness observed legacy shell-token as a canonical command")
 
 
+class _RedirectDenyingHandler(urllib.request.HTTPRedirectHandler):
+    """Abort any redirect so bearer credentials never replay against another authority."""
+
+    def redirect_request(
+        self,
+        req: Any,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        raise urllib.error.URLError("live conformance redirect is not permitted")
+
+
+_conformance_opener_cache: urllib.request.OpenerDirector | None = None
+
+
+def _conformance_opener() -> urllib.request.OpenerDirector:
+    global _conformance_opener_cache
+    if _conformance_opener_cache is None:
+        _conformance_opener_cache = urllib.request.build_opener(_RedirectDenyingHandler())
+    return _conformance_opener_cache
+
+
 class Transport:
     def request(
         self,
@@ -627,7 +652,7 @@ class HTTPTransport(Transport):
             method=method,
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310
+            with _conformance_opener().open(request, timeout=self.timeout_seconds) as response:
                 return HTTPResult(
                     status=response.status,
                     body=response.read().decode("utf-8", errors="replace"),

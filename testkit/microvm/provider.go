@@ -103,7 +103,7 @@ func (p *FakeProvider) Run(_ context.Context, input runtimemicrovm.ProviderRunIn
 		ProviderMicroVMID: fmt.Sprintf("microvm-%06d", p.next),
 		State:             runtimemicrovm.StateRunning,
 		ProviderState:     "running",
-		Endpoint:          fmt.Sprintf("https://microvm-%06d.example.test", p.next),
+		Endpoint:          fmt.Sprintf("https://microvm-%06d.microvm.us-east-1.amazonaws.com", p.next),
 		ImageRef:          strings.TrimSpace(input.ImageRef),
 		ImageVersion:      strings.TrimSpace(input.ImageVersion),
 		StartedAt:         p.now,

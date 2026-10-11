@@ -1403,6 +1403,25 @@ def _sanitize_provider_invoke_headers(headers: dict[str, Any]) -> dict[str, list
     return out
 
 
+_MICROVM_PROVIDER_ENDPOINT_DOMAINS = ("amazonaws.com", "amazonaws.com.cn")
+
+
+def _microvm_provider_endpoint_allowed(host: str) -> bool:
+    """Return True when host is an AWS service domain that can host a MicroVM endpoint.
+
+    The invoke proxy mints X-aws-proxy-auth for exactly one MicroVM endpoint, so this domain
+    allowlist is the trust boundary for that credential: IP literals, localhost, and arbitrary
+    hosts are all rejected.
+    """
+
+    normalized = str(host or "").strip().lower()
+    if not normalized:
+        return False
+    return any(
+        normalized == domain or normalized.endswith(f".{domain}") for domain in _MICROVM_PROVIDER_ENDPOINT_DOMAINS
+    )
+
+
 def _provider_invoke_url(endpoint: str, path: str, query: dict[str, list[str]]) -> str:
     raw_endpoint = str(endpoint or "").strip()
     if not raw_endpoint:
@@ -1415,6 +1434,12 @@ def _provider_invoke_url(endpoint: str, path: str, query: dict[str, list[str]]) 
         raw_endpoint = f"https://{raw_endpoint}"
     parsed = urllib.parse.urlparse(raw_endpoint)
     if not parsed.netloc:
+        raise _safe_error(
+            MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+            "apptheory: microvm invoke endpoint is invalid",
+            "",
+        )
+    if not _microvm_provider_endpoint_allowed(parsed.hostname or ""):
         raise _safe_error(
             MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
             "apptheory: microvm invoke endpoint is invalid",

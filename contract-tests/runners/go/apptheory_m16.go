@@ -783,7 +783,7 @@ func (p *microVMRouteFixtureProvider) Run(_ context.Context, input runtimemicrov
 		ProviderMicroVMID: fmt.Sprintf("microvm-%06d", p.next),
 		State:             runtimemicrovm.StateRunning,
 		ProviderState:     "running",
-		Endpoint:          fmt.Sprintf("https://microvm-%06d.example.test", p.next),
+		Endpoint:          fmt.Sprintf("https://microvm-%06d.microvm.us-east-1.amazonaws.com", p.next),
 		ImageRef:          input.ImageRef,
 		ImageVersion:      input.ImageVersion,
 		StartedAt:         p.now,

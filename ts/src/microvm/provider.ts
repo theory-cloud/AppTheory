@@ -984,6 +984,22 @@ export function sanitizeMicroVMProviderInvokeHeaders(
   return out;
 }
 
+// microVMProviderEndpointDomains are the AWS service domains that host Lambda MicroVM
+// endpoints. The invoke proxy mints X-aws-proxy-auth for exactly one MicroVM endpoint, so the
+// URL builder refuses every host outside these domains: this list is the trust boundary for the
+// proxy credential.
+const microVMProviderEndpointDomains = ["amazonaws.com", "amazonaws.com.cn"];
+
+function microVMProviderEndpointAllowed(hostname: string): boolean {
+  const host = String(hostname ?? "")
+    .trim()
+    .toLowerCase();
+  if (!host) return false;
+  return microVMProviderEndpointDomains.some(
+    (domain) => host === domain || host.endsWith(`.${domain}`),
+  );
+}
+
 export function providerInvokeURL(
   endpoint: string,
   path: string,
@@ -1003,6 +1019,7 @@ export function providerInvokeURL(
   }
   if (!parsed.host) return "";
   parsed.protocol = "https:";
+  if (!microVMProviderEndpointAllowed(parsed.hostname)) return "";
   parsed.pathname = normalizeMicroVMProviderInvokePath(path);
   parsed.search = "";
   const params = new URLSearchParams();

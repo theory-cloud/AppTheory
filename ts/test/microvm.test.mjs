@@ -1934,3 +1934,91 @@ test("microvm real M16 operation contract validates route, token, and tenant saf
     (err) => err?.code === MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE,
   );
 });
+test("microvm AWS provider invoke denies redirects and non-AWS endpoints", async () => {
+  const provider = createAWSLambdaMicroVMProvider({
+    clock: { now: () => new Date(0) },
+  });
+  const sent = [];
+  provider.client = {
+    async send(command) {
+      sent.push(command.constructor.name);
+      if (command.constructor.name === "CreateMicrovmAuthTokenCommand") {
+        return { authToken: { "X-aws-proxy-auth": "provider-token-value" } };
+      }
+      throw new Error(`unexpected command ${command.constructor.name}`);
+    },
+  };
+
+  const invokeInput = (endpoint) => ({
+    request_id: "req-invoke",
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+    auth_context: providerAuth(),
+    binding: providerBinding(),
+    endpoint,
+    method: "POST",
+    path: "/hello",
+    query: { b: ["2"], a: ["1"] },
+    headers: { "x-workload": ["ok"] },
+    body: new Uint8Array([1, 2, 3]),
+    port: 9090,
+    ttl_seconds: 120,
+  });
+  const allowlisted = "https://provider-1.microvm.us-east-1.amazonaws.com";
+
+  const originalFetch = globalThis.fetch;
+  try {
+    let calls = 0;
+    let firstInit;
+    globalThis.fetch = async (target, init) => {
+      calls += 1;
+      firstInit = init;
+      assert.equal(
+        String(target),
+        "https://provider-1.microvm.us-east-1.amazonaws.com/hello?a=1&b=2",
+      );
+      return new Response(new Uint8Array([9]), {
+        status: 201,
+        headers: { "content-type": "application/octet-stream" },
+      });
+    };
+    const ok = await provider.invoke(invokeInput(allowlisted));
+    assert.equal(ok.status, 201);
+    assert.equal(ok.is_base64, true);
+    assert.equal(calls, 1);
+    assert.equal(firstInit.redirect, "manual");
+    assert.equal(
+      firstInit.headers.get("X-aws-proxy-auth"),
+      "provider-token-value",
+    );
+
+    calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return new Response(null, {
+        status: 302,
+        headers: { location: "https://attacker.example.com/steal" },
+      });
+    };
+    await assert.rejects(
+      () => provider.invoke(invokeInput(allowlisted)),
+      (err) => err?.code === MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+    );
+    assert.equal(calls, 1, "a cross-origin redirect must not be followed");
+
+    calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      throw new Error("fetch must not be called for a non-allowlisted endpoint");
+    };
+    sent.length = 0;
+    await assert.rejects(
+      () => provider.invoke(invokeInput("https://evil.example.com")),
+      (err) => err?.code === MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+    );
+    assert.equal(calls, 0);
+    assert.deepEqual(sent, [], "the token must not be minted for a rejected endpoint");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
