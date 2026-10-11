@@ -18,7 +18,7 @@ KinesisPutRecordsResultRecord = dict[str, Any]
 _KINESIS_JSON_RECORD_INVALID_MESSAGE = "apptheory: kinesis json record invalid"
 _KINESIS_PUT_RECORDS_INVALID_MESSAGE = "apptheory: kinesis put-records result invalid"
 _KINESIS_MAX_PARTITION_KEY_BYTES = 256
-_KINESIS_MAX_RECORD_DATA_BYTES = 1024 * 1024
+_KINESIS_MAX_RECORD_BYTES = 1024 * 1024
 _KINESIS_MAX_PUT_RECORDS_RECORDS = 500
 _KINESIS_MAX_EXPLICIT_HASH_KEY = "340282366920938463463374607431768211455"
 _KINESIS_MAX_ERROR_CODE_BYTES = 128
@@ -40,6 +40,7 @@ def create_kinesis_json_record(
     normalized_partition_key = _normalize_kinesis_partition_key(partition_key)
     normalized_explicit_hash_key = _normalize_kinesis_explicit_hash_key(explicit_hash_key)
     data = _encode_kinesis_json_payload(payload)
+    _validate_kinesis_record_size(_KINESIS_JSON_RECORD_INVALID_MESSAGE, data, normalized_partition_key)
     record: KinesisJsonRecord = {
         "partition_key": normalized_partition_key,
         "data": data,
@@ -106,12 +107,17 @@ def _encode_kinesis_json_payload(payload: Any) -> bytes:
         raise RuntimeError(f"{_KINESIS_JSON_RECORD_INVALID_MESSAGE}: json encode: invalid payload") from exc
     if not encoded:
         raise RuntimeError(f"{_KINESIS_JSON_RECORD_INVALID_MESSAGE}: empty json payload")
-    if len(encoded) > _KINESIS_MAX_RECORD_DATA_BYTES:
-        raise RuntimeError(
-            f"{_KINESIS_JSON_RECORD_INVALID_MESSAGE}: json payload size {len(encoded)} "
-            f"exceeds {_KINESIS_MAX_RECORD_DATA_BYTES}"
-        )
     return bytes(encoded)
+
+
+def _validate_kinesis_record_size(prefix: str, data: bytes, partition_key: str) -> None:
+    partition_key_bytes = len(partition_key.encode("utf-8"))
+    combined = len(data) + partition_key_bytes
+    if combined > _KINESIS_MAX_RECORD_BYTES:
+        raise RuntimeError(
+            f"{prefix}: record size {combined} (data {len(data)} + partition key {partition_key_bytes}) "
+            f"exceeds {_KINESIS_MAX_RECORD_BYTES}"
+        )
 
 
 def _validate_json_payload(value: Any, seen: set[int]) -> None:
@@ -215,11 +221,10 @@ def _normalize_kinesis_report_record(record: KinesisJsonRecord, index: int) -> K
     data = record.get("data")
     if not isinstance(data, bytes | bytearray | memoryview) or len(data) == 0:
         raise RuntimeError(f"{_KINESIS_PUT_RECORDS_INVALID_MESSAGE}: empty record data at index {index}")
-    if len(data) > _KINESIS_MAX_RECORD_DATA_BYTES:
-        raise RuntimeError(
-            f"{_KINESIS_PUT_RECORDS_INVALID_MESSAGE}: record data size {len(data)} "
-            f"exceeds {_KINESIS_MAX_RECORD_DATA_BYTES} at index {index}"
-        )
+    try:
+        _validate_kinesis_record_size(_KINESIS_PUT_RECORDS_INVALID_MESSAGE, bytes(data), partition_key)
+    except RuntimeError as exc:
+        raise RuntimeError(f"{exc} at index {index}") from exc
     normalized: KinesisJsonRecord = {
         "partition_key": partition_key,
         "data": bytes(data),
