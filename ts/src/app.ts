@@ -2407,6 +2407,7 @@ function cloneContextWithTimeoutCarrier(
     _clock: Clock;
     _ids: IdGenerator;
     _values: Map<string, unknown>;
+    _securePrincipal: SecurePrincipal | null;
   };
   const clone = new Context({
     request: ctx.request,
@@ -2423,8 +2424,14 @@ function cloneContextWithTimeoutCarrier(
     webSocket: ctx.asWebSocket(),
     appSync: ctx.asAppSync(),
   });
-  const cloneInternal = clone as unknown as { _values: Map<string, unknown> };
+  const cloneInternal = clone as unknown as {
+    _values: Map<string, unknown>;
+    _securePrincipal: SecurePrincipal | null;
+  };
   cloneInternal._values = ctxInternal._values;
+  cloneInternal._securePrincipal = cloneSecurePrincipal(
+    ctxInternal._securePrincipal,
+  );
   return clone;
 }
 

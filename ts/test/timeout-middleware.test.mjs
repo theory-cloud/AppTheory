@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createApp, timeoutMiddleware } from "../dist/app.js";
+import { Authenticated, SecureApp } from "../dist/index.js";
 
 function request(path) {
   return {
@@ -95,4 +96,39 @@ test("timeoutMiddleware propagates cooperative cancellation before side effects"
     setTimeout(resolve, 30);
   });
   assert.equal(committedSideEffect, false);
+});
+
+test("timeoutMiddleware preserves the verified secure principal on the cloned context", async () => {
+  const principal = {
+    identity: "verified-user",
+    scopes: ["records:read"],
+    claims: { tenant_id: "tenant-verified" },
+    kind: "external",
+  };
+  const app = new SecureApp({
+    tier: "p0",
+    ids: { newId: () => "req_secure" },
+    principalResolver: async () => principal,
+  });
+  app.use(timeoutMiddleware({ defaultTimeoutMs: 1000 }));
+
+  let seen = null;
+  app.get(
+    "/secure",
+    async (ctx) => {
+      seen = ctx.securePrincipal();
+      return {
+        status: 200,
+        headers: { "content-type": ["text/plain; charset=utf-8"] },
+        cookies: [],
+        body: Buffer.from("ok", "utf8"),
+        isBase64: false,
+      };
+    },
+    Authenticated(),
+  );
+
+  const resp = await app.serve(request("/secure"));
+  assert.equal(resp.status, 200);
+  assert.deepEqual(seen, principal);
 });

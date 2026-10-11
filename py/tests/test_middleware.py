@@ -9,6 +9,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "py" / "src"))
 
+import apptheory  # noqa: E402
 from apptheory.context import Context  # noqa: E402
 from apptheory.errors import AppError  # noqa: E402
 from apptheory.middleware import TimeoutConfig, _normalize_timeout_config, _timeout_for_context, timeout_middleware  # noqa: E402
@@ -108,3 +109,30 @@ class TestMiddleware(unittest.TestCase):
         # The handler ran on the invoking thread, so its side effect landed inside
         # the invocation; the middleware only reports the timeout afterwards.
         self.assertTrue(side_effect.is_set())
+
+    def test_timeout_middleware_preserves_the_principal_for_authenticated_routes(self) -> None:
+        principal = apptheory.SecurePrincipal(
+            identity="verified-user",
+            kind="external",
+            scopes=["records:read"],
+            claims={"tenant_id": "tenant-verified"},
+        )
+        app = apptheory.SecureApp(principal_resolver=lambda _ctx: principal)
+        app.use(timeout_middleware(TimeoutConfig(default_timeout_ms=1000)))
+        seen: list = []
+
+        def handler(ctx) -> apptheory.Response:
+            seen.append(ctx.secure_principal())
+            return apptheory.text(200, "ok")
+
+        app.get("/secure", handler, apptheory.authenticated())
+        response = app.serve(apptheory.Request(method="GET", path="/secure"))
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(len(seen), 1)
+        observed = seen[0]
+        self.assertIsNotNone(observed)
+        self.assertEqual(observed.identity, "verified-user")
+        self.assertEqual(observed.scopes, ["records:read"])
+        self.assertEqual(observed.claims, {"tenant_id": "tenant-verified"})
+        self.assertEqual(observed.kind, "external")

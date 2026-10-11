@@ -1488,6 +1488,7 @@ function cloneContextWithTimeoutCarrier(ctx, carrier) {
     });
     const cloneInternal = clone;
     cloneInternal._values = ctxInternal._values;
+    cloneInternal._securePrincipal = cloneSecurePrincipal(ctxInternal._securePrincipal);
     return clone;
 }
 function normalizeTimeoutConfig(config) {
