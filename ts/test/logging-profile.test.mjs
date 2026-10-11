@@ -167,6 +167,53 @@ test("logging profile malformed composite values fail with validation errors", (
   }
 });
 
+test("logging profile decoder rejects invalid JSON field types", () => {
+  const malformed = {
+    schema_version: [LOGGING_PROFILE_SCHEMA_VERSION],
+    profile: [LOGGING_PROFILE_PAYTHEORY_ALERT_V1],
+    encoding: { format: ["json"] },
+    levels: { info: ["INFO"] },
+    required_fields: [["ts"]],
+    field_map: { message: { name: "message" } },
+    enrichment: {
+      static: { service: ["payments-api"] },
+      context: { request_id: ["request_id"] },
+    },
+    error_capture: { include_stack_trace: "false" },
+    sanitization: { existing_sanitized_logging: "true" },
+    alerting_hints: { fingerprint_fields: [{ field: "ts" }] },
+  };
+
+  assert.throws(
+    () => decodeLoggingProfileJSON(JSON.stringify(malformed)),
+    (error) => {
+      assert.ok(error instanceof LoggingProfileValidationError);
+      for (const expected of [
+        "schema_version: must be a string",
+        "profile: must be a string",
+        "encoding.format: must be a string",
+        "levels.info: must be a string",
+        "required_fields[0]: must be a string",
+        "field_map.message: must be a string",
+        "enrichment.static.service: must be a string",
+        "enrichment.context.request_id: must be a string",
+        "error_capture.include_stack_trace: must be a boolean",
+        "sanitization.existing_sanitized_logging: must be a boolean",
+        "alerting_hints.fingerprint_fields[0]: must be a string",
+      ]) {
+        assert.ok(error.errors.includes(expected), expected);
+      }
+      return true;
+    },
+  );
+
+  // A well-formed profile of the same shape is still accepted.
+  const config = decodeLoggingProfileJSON(
+    JSON.stringify(defaultLoggingProfile(LOGGING_PROFILE_PAYTHEORY_ALERT_V1)),
+  );
+  assert.equal(config.profile, LOGGING_PROFILE_PAYTHEORY_ALERT_V1);
+});
+
 test("logging profile encoder emits paytheory alert shape", () => {
   const cfg = defaultLoggingProfile(LOGGING_PROFILE_PAYTHEORY_ALERT_V1);
   const stackTrace = "processor.go:42\nhandler.go:7";
