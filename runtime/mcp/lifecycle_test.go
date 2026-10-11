@@ -413,15 +413,21 @@ func TestWrapToolLifecycle_EdgeCasesStaySanitized(t *testing.T) {
 		Message string `json:"message"`
 	}
 
-	t.Run("missing arguments", func(t *testing.T) {
+	t.Run("omitted arguments bind as an empty object", func(t *testing.T) {
 		rec := &lifecycleTelemetryRecorder{}
+		handlerRuns := 0
 		handler := WrapTool(ToolLifecycleOptions[args]{Name: "edge", Telemetry: rec.telemetry()}, func(context.Context, args) (*ToolResult, error) {
-			t.Fatal("handler should not run")
-			return nil, nil
+			handlerRuns++
+			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
 		})
-		_, err := handler(context.Background(), nil)
-		assertLifecycleRPCError(t, err, CodeInvalidParams, lifecycleMissingToolArgumentsMessage)
-		assertLifecycleOutcomes(t, rec.finishOutcomes(), ToolLifecycleOutcomeInvalidParams)
+		result, err := handler(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("omitted arguments must bind as {}: %v", err)
+		}
+		if result == nil || handlerRuns != 1 {
+			t.Fatalf("expected the handler to run once with empty args, runs=%d result=%+v", handlerRuns, result)
+		}
+		assertLifecycleOutcomes(t, rec.finishOutcomes(), ToolLifecycleOutcomeSuccess)
 	})
 
 	t.Run("non-object arguments", func(t *testing.T) {

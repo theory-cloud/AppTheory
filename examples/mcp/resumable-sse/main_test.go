@@ -84,6 +84,60 @@ func TestResumableSSEExample(t *testing.T) {
 	}
 }
 
+func TestResumableSSEExampleOmittedArguments(t *testing.T) {
+	cases := []struct {
+		name   string
+		params map[string]any
+	}{
+		{name: "arguments omitted", params: map[string]any{"name": "countdown", "_meta": map[string]any{"progressToken": "pt-args"}}},
+		{name: "empty argument object", params: map[string]any{"name": "countdown", "arguments": map[string]any{}, "_meta": map[string]any{"progressToken": "pt-args"}}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := testkit.New()
+			client := mcptest.NewClient(buildServer(), env)
+
+			if _, err := client.Initialize(context.Background()); err != nil {
+				t.Fatalf("initialize: %v", err)
+			}
+
+			params, err := json.Marshal(tc.params)
+			if err != nil {
+				t.Fatalf("marshal params: %v", err)
+			}
+			req := &mcpruntime.Request{JSONRPC: "2.0", ID: 2, Method: "tools/call", Params: params}
+
+			stream, err := client.RawStream(context.Background(), req, nil)
+			if err != nil {
+				t.Fatalf("RawStream: %v", err)
+			}
+			msgs, err := stream.ReadAll()
+			if err != nil {
+				t.Fatalf("ReadAll: %v", err)
+			}
+
+			sawDefaultSteps := false
+			sawResult := false
+			for _, msg := range msgs {
+				data := string(msg.Data)
+				if strings.Contains(data, `"total":3`) {
+					sawDefaultSteps = true
+				}
+				if strings.Contains(data, `"result"`) {
+					sawResult = true
+				}
+			}
+			if !sawDefaultSteps {
+				t.Fatalf("expected the omitted-arguments call to default steps to 3; messages=%d", len(msgs))
+			}
+			if !sawResult {
+				t.Fatalf("expected a final result in the stream; messages=%d", len(msgs))
+			}
+		})
+	}
+}
+
 func TestResumableSSEBuildApp(t *testing.T) {
 	env := testkit.New()
 	app := buildApp()
