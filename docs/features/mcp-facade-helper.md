@@ -132,11 +132,14 @@ It also sets `Vary` over every header consulted by request-origin reconstruction
 
 AppTheory derives and mounts paths; it does **not** implement authorize or token behavior. `HandlerFactory` receives the
 endpoint kind at installation so the application can attach its tenant-admission bridge, proxy, token validator,
-refresh coordination, telemetry, and other policy. The helper never validates credentials, issues grants, proxies an
-authorization server, or chooses scopes.
+refresh coordination, telemetry, and other policy. The helper never issues grants, proxies an authorization server, or
+chooses scopes.
 
-The MCP handler is likewise application-owned. Applications that authenticate MCP inside middleware keep that
-middleware around the supplied handler. This composition helper does not create a second authentication chain.
+The helper mounts the MCP transport routes with an authenticated posture by default: a request without a verified
+principal is rejected with HTTP 401 and the MCP handler never runs. Applications that authenticate MCP themselves
+either configure `FacadeConfig.RequireBearerToken`, which performs RFC 9728 bearer validation with the correct
+`WWW-Authenticate` challenge, or set `FacadeConfig.UnauthenticatedMcp` and keep their own middleware around the
+supplied handler.
 
 ## `theory-mcp-server` migration fitness
 
@@ -154,7 +157,8 @@ middleware around the supplied handler. This composition helper does not create 
 
 ## Non-goals
 
-- no authorization, token issuance, proxying, admission, refresh, or scope-selection logic;
+- no authorize/token behavior, grant issuance, upstream proxying, admission, or scope-selection logic beyond the
+  transport authentication posture described above;
 - no fifth/root endpoint kind or routed root authorization facade;
 - no CDK wiring or jsii/CDK-Go regeneration in this change;
 - no TypeScript or Python runtime helper in docs/061 change 4;
