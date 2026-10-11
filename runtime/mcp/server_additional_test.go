@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -544,6 +545,107 @@ func TestBatchProtocol_RespectsNegotiatedSessionVersion(t *testing.T) {
 			t.Fatalf("protocolVersion: got %v want %s", got, protocolVersionLegacy)
 		}
 	})
+}
+
+func TestBatchRequest_ItemCap(t *testing.T) {
+	buildBatch := func(n int) []byte {
+		var b strings.Builder
+		b.WriteByte('[')
+		for i := 0; i < n; i++ {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(`{"jsonrpc":"2.0","id":`)
+			b.WriteString(strconv.Itoa(i + 1))
+			b.WriteString(`,"method":"` + methodToolsList + `"}`)
+		}
+		b.WriteByte(']')
+		return []byte(b.String())
+	}
+
+	t.Run("batch at the cap processes normally", func(t *testing.T) {
+		s := newTestServer()
+		resp, err := invokeHandler(s, buildBatch(maxBatchRequestItems), nil)
+		if err != nil {
+			t.Fatalf("invoke: %v", err)
+		}
+		if resp.Status != 200 {
+			t.Fatalf("status %d body=%s", resp.Status, resp.Body)
+		}
+
+		var responses []Response
+		if err := json.Unmarshal(resp.Body, &responses); err != nil {
+			t.Fatalf("expected an array batch response: %v", err)
+		}
+		if len(responses) != maxBatchRequestItems {
+			t.Fatalf("got %d responses, want %d", len(responses), maxBatchRequestItems)
+		}
+	})
+
+	t.Run("batch above the cap is rejected as one -32600 object", func(t *testing.T) {
+		s := newTestServer()
+		resp, err := invokeHandler(s, buildBatch(maxBatchRequestItems+1), nil)
+		if err != nil {
+			t.Fatalf("invoke: %v", err)
+		}
+		if resp.Status != 200 {
+			t.Fatalf("status %d body=%s", resp.Status, resp.Body)
+		}
+		if trimmed := strings.TrimSpace(string(resp.Body)); strings.HasPrefix(trimmed, "[") {
+			t.Fatalf("oversized batch must be rejected with a single error object, got %s", trimmed)
+		}
+
+		var rpcResp Response
+		if err := json.Unmarshal(resp.Body, &rpcResp); err != nil {
+			t.Fatalf("parse response: %v", err)
+		}
+		if rpcResp.Error == nil || rpcResp.Error.Code != CodeInvalidRequest || rpcResp.Error.Message != batchTooLargeMessage {
+			t.Fatalf("expected -32600 %q, got %+v", batchTooLargeMessage, rpcResp.Error)
+		}
+	})
+}
+
+func TestBatchRequest_LegacyTaskAugmentationRejected(t *testing.T) {
+	store := NewMemoryTaskStore()
+	s := NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: store}))
+	if err := s.Registry().RegisterTool(taskCapableToolDef(), func(context.Context, json.RawMessage) (*ToolResult, error) {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "done"}}}, nil
+	}); err != nil {
+		t.Fatalf("register task tool: %v", err)
+	}
+
+	sessionID := initializeSessionWithProtocol(t, s, protocolVersionLegacy)
+	item := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"slow","arguments":{},"task":{}}}`
+	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", []byte("["+item+"]"), map[string][]string{
+		"content-type":   {"application/json"},
+		"mcp-session-id": {sessionID},
+	})
+	if err != nil {
+		t.Fatalf("invoke batch: %v", err)
+	}
+	if resp.Status != 200 {
+		t.Fatalf("status %d body=%s", resp.Status, resp.Body)
+	}
+
+	var responses []Response
+	if err := json.Unmarshal(resp.Body, &responses); err != nil {
+		t.Fatalf("expected an array batch response, got %s: %v", resp.Body, err)
+	}
+	if len(responses) != 1 {
+		t.Fatalf("expected 1 batch response, got %d", len(responses))
+	}
+	if responses[0].Error == nil || responses[0].Error.Code != CodeMethodNotFound || responses[0].Error.Message != taskNotEnabledMessage {
+		t.Fatalf("expected -32601 %q, got %+v", taskNotEnabledMessage, responses[0].Error)
+	}
+
+	// The task augmentation was rejected before any record was created.
+	list, err := store.List(context.Background(), TaskListRequest{SessionID: sessionID, Limit: defaultTaskListLimit})
+	if err != nil {
+		t.Fatalf("list tasks: %v", err)
+	}
+	if len(list.Tasks) != 0 {
+		t.Fatalf("expected no task records, got %+v", list.Tasks)
+	}
 }
 
 func TestHandleNotification_Initialized_PersistsSessionFlag(t *testing.T) {

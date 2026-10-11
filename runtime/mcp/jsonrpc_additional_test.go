@@ -2,6 +2,9 @@ package mcp
 
 import (
 	"encoding/json"
+	"errors"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -95,6 +98,28 @@ func TestParseBatchRequest_CoversObjectAndArrayErrors(t *testing.T) {
 		if _, err := ParseBatchRequest(body); err == nil {
 			t.Fatalf("bad case %d: expected error", i)
 		}
+	}
+}
+
+func TestParseBatchRequest_EnforcesItemCap(t *testing.T) {
+	items := make([]string, 0, maxBatchRequestItems+1)
+	for i := 0; i < maxBatchRequestItems; i++ {
+		items = append(items, `{"jsonrpc":"2.0","id":`+strconv.Itoa(i+1)+`,"method":"`+methodToolsList+`"}`)
+	}
+
+	atCap := []byte("[" + strings.Join(items, ",") + "]")
+	reqs, err := ParseBatchRequest(atCap)
+	if err != nil {
+		t.Fatalf("batch at the cap must parse: %v", err)
+	}
+	if len(reqs) != maxBatchRequestItems {
+		t.Fatalf("parsed %d requests, want %d", len(reqs), maxBatchRequestItems)
+	}
+
+	items = append(items, `{"jsonrpc":"2.0","id":9999,"method":"`+methodToolsList+`"}`)
+	_, err = ParseBatchRequest([]byte("[" + strings.Join(items, ",") + "]"))
+	if !errors.Is(err, errBatchTooLarge) {
+		t.Fatalf("oversized batch error = %v, want errBatchTooLarge", err)
 	}
 }
 

@@ -39,6 +39,24 @@ const (
 // jsonrpcVersion is the JSON-RPC protocol version string.
 const jsonrpcVersion = "2.0"
 
+// maxBatchRequestItems bounds how many requests one JSON-RPC batch may carry.
+//
+// Batch bodies are only accepted for the legacy protocol, but an array of
+// arbitrary length is still attacker-controlled work: every item is parsed and
+// dispatched on one invocation. The cap keeps a single body from turning into
+// unbounded fan-out.
+const maxBatchRequestItems = 100
+
+// batchTooLargeMessage is the stable client-visible message for a batch that
+// exceeds maxBatchRequestItems. It is returned as one JSON-RPC error object
+// (code -32600), never as a per-item array.
+const batchTooLargeMessage = "Invalid Request: batch exceeds maximum size"
+
+// errBatchTooLarge distinguishes the over-cap rejection from a malformed batch
+// so the transport can answer with a single -32600 object. Its text is
+// lowercase because it is a Go error, not the client-visible message.
+var errBatchTooLarge = errors.New("batch exceeds maximum size")
+
 // Request is a JSON-RPC 2.0 request message.
 type Request struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -171,6 +189,9 @@ func ParseBatchRequest(data []byte) ([]*Request, error) {
 		}
 		if len(rawMessages) == 0 {
 			return nil, errors.New("empty batch request")
+		}
+		if len(rawMessages) > maxBatchRequestItems {
+			return nil, errBatchTooLarge
 		}
 
 		requests := make([]*Request, 0, len(rawMessages))
