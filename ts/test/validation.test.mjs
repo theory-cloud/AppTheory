@@ -207,6 +207,32 @@ test("duration binding uses Go-compatible portable canonicalization", async () =
   );
 });
 
+test("duration binding rejects an oversized adjacent-segment value", async () => {
+  // ~3 MB of adjacent "1s" components (1,500,000 segments). The streaming parser
+  // caps the segment count, so this is rejected without materializing an array.
+  const oversized = "1s".repeat(1_500_000);
+  assert.equal(oversized.length, 3_000_000);
+  await assert.rejects(() =>
+    bindRequest(
+      { request: { query: { ttl: [oversized] }, headers: {} } },
+      {
+        query: true,
+        fields: { TTL: { source: "query", name: "ttl", type: "duration" } },
+      },
+    ),
+  );
+
+  // A long-but-bounded adjacent-segment value is still accumulated and accepted.
+  const req = await bindRequest(
+    { request: { query: { ttl: ["1ms".repeat(1000)] }, headers: {} } },
+    {
+      query: true,
+      fields: { TTL: { source: "query", name: "ttl", type: "duration" } },
+    },
+  );
+  assert.deepEqual(req, { TTL: "1s" });
+});
+
 test("numeric binding rejects unsafe integers and partial floats", async () => {
   const config = {
     query: true,
