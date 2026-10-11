@@ -46,10 +46,14 @@ func scopedSSEBody(t *testing.T, scope *streamScope, events <-chan StreamEvent) 
 // TestStreamScopeStopWaitsForRelayProducer is the strict test for the
 // (streamScope).goRun baseline entry: stop cancels the relay's context and waits
 // for it. The relay lingers after its context is canceled, so removing the
-// scope's wg.Wait makes stop return before the relay exited — which the ordering
-// assertion below catches, without measuring how long stop took.
+// scope's producer join makes stop return before the relay exited — which the
+// ordering assertion below catches, without measuring how long stop took.
+//
+// The scope is given an explicit join budget wider than the linger, so the join
+// is the thing under test; the bounded-release contract for a producer that
+// exceeds the budget is covered separately.
 func TestStreamScopeStopWaitsForRelayProducer(t *testing.T) {
-	scope := newStreamScope(context.Background())
+	scope := newStreamScopeWithJoinGrace(context.Background(), joinWaitBudget)
 
 	exited := make(chan struct{})
 	scope.goRun(func(ctx context.Context) {
@@ -71,10 +75,16 @@ func TestStreamScopeStopWaitsForRelayProducer(t *testing.T) {
 // TestStreamScopeStopWaitsForJoinedProducer is the strict test for the
 // (streamScope).goJoin baseline entry: the joined producer holds work of its own
 // and is waited for rather than canceled. It lingers before closing finished, so
-// removing the scope's wg.Wait makes stop return before it finished — which the
-// ordering assertion below catches, without measuring how long stop took.
+// removing the scope's producer join makes stop return before it finished —
+// which the ordering assertion below catches, without measuring how long stop
+// took.
+//
+// The scope is given an explicit join budget wider than the linger so the join
+// is the thing under test; TestStreamScopeStopReleasesAbandonedProducerWithinBudget
+// pins the other half of the contract (a producer that exceeds the budget is
+// not joined forever).
 func TestStreamScopeStopWaitsForJoinedProducer(t *testing.T) {
-	scope := newStreamScope(context.Background())
+	scope := newStreamScopeWithJoinGrace(context.Background(), joinWaitBudget)
 
 	finished := make(chan struct{})
 	scope.goJoin(func() {
@@ -90,6 +100,36 @@ func TestStreamScopeStopWaitsForJoinedProducer(t *testing.T) {
 		t.Fatal("stop returned before the joined producer finished")
 	}
 	assertNoGoroutineFor(t, "(*streamScope).goJoin.func", "scope stopped")
+}
+
+// TestStreamScopeStopReleasesAbandonedProducerWithinBudget pins the bounded half
+// of the join contract: a producer that is still blocked past the join budget
+// must not hold stop forever. The producer here never returns on its own, so an
+// unbounded join would hang the test until its alarm; the bound releases the
+// scope while the producer is still running.
+func TestStreamScopeStopReleasesAbandonedProducerWithinBudget(t *testing.T) {
+	scope := newStreamScope(context.Background())
+
+	release := make(chan struct{})
+	done := make(chan struct{})
+	scope.goJoin(func() {
+		<-release
+		close(done)
+	})
+
+	start := time.Now()
+	scope.stop()
+	elapsed := time.Since(start)
+
+	if elapsed > joinWaitBudget {
+		t.Fatalf("stop() waited %v for a producer past its budget; the join must be bounded", elapsed)
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(joinWaitBudget):
+		t.Fatal("the released producer did not exit")
+	}
 }
 
 // TestDrainClosedSubscriptionWaitsForTheStoreToClose is the strict test for the
@@ -132,7 +172,7 @@ func TestDrainClosedSubscriptionWaitsForTheStoreToClose(t *testing.T) {
 // and release the body immediately, which the assertion catches.
 func TestMemoryStreamStoreSubscribeJoinBlocksUntilThePumpCloses(t *testing.T) {
 	store := NewMemoryStreamStore()
-	scope := newStreamScope(context.Background())
+	scope := newStreamScopeWithJoinGrace(context.Background(), joinWaitBudget)
 
 	streamID, err := store.Create(scope.context(), "sess-join")
 	if err != nil {
@@ -252,7 +292,7 @@ func TestDynamoStreamStoreSubscribeJoinBlocksUntilThePumpCloses(t *testing.T) {
 	}
 	store.pollInterval = time.Millisecond
 
-	scope := newStreamScope(context.Background())
+	scope := newStreamScopeWithJoinGrace(context.Background(), joinWaitBudget)
 	streamID, err := store.Create(scope.context(), "sess-join")
 	if err != nil {
 		t.Fatalf("create stream: %v", err)
