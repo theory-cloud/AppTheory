@@ -1122,6 +1122,43 @@ test("microvm AWS Lambda client factory fails closed without SDK support", async
   );
 });
 
+test("microvm provider invoke ttl is bounded to 1..900 seconds", async () => {
+  const provider = createFakeMicroVMProvider(new Date(0));
+  const run = await provider.run(providerRunInput());
+  const binding = {
+    tenant_id: run.tenant_id,
+    namespace: run.namespace,
+    session_id: run.session_id,
+    provider_microvm_id: run.provider_microvm_id,
+    registry_version: run.registry_version,
+  };
+  // The endpoint must be an allowlisted AWS MicroVM host so the TTL bound is
+  // the check under test, not the endpoint allowlist.
+  const allowlisted = "https://provider-1.microvm.us-east-1.amazonaws.com";
+  const invokeInput = (ttl_seconds) => ({
+    request_id: "req-invoke-ttl",
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+    auth_context: providerAuth(),
+    binding,
+    endpoint: allowlisted,
+    method: "GET",
+    path: "/hello",
+    port: 9090,
+    ttl_seconds,
+  });
+
+  // The inclusive upper bound (900) is accepted.
+  const accepted = await provider.invoke(invokeInput(900));
+  assert.equal(accepted.status, 200);
+
+  // One second over the bound fails closed with the token-safety violation.
+  await assert.rejects(
+    () => provider.invoke(invokeInput(901)),
+    (err) => err?.code === MICROVM_ERROR_TOKEN_SAFETY_VIOLATION,
+  );
+});
+
 test("microvm provider validation and fake cover M16 real operations", async () => {
   assert.deepEqual(mapMicroVMProviderState("RUNNING"), {
     state: MicroVMRealState.Running,

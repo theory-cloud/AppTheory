@@ -1258,6 +1258,31 @@ class MicroVMLifecycleTests(unittest.TestCase):
                 {**token_dict, "allowed_port_scope": [{"all_ports": True, "port": 443}]},
             )
 
+    def test_provider_invoke_ttl_is_bounded(self) -> None:
+        binding_dict, _, _, _, _ = self._provider_dict_inputs()
+        # The endpoint must be an allowlisted AWS MicroVM host so the TTL bound is
+        # the check under test, not the endpoint allowlist.
+        invoke_dict: dict[str, object] = {
+            "request_id": "req-invoke-ttl",
+            "tenant_id": "tenant-1",
+            "namespace": "namespace-1",
+            "auth_context": {"subject": "subject-1", "tenant_id": "tenant-1", "namespace": "namespace-1"},
+            "binding": binding_dict,
+            "endpoint": "https://provider-1.microvm.us-east-1.amazonaws.com",
+            "method": "GET",
+            "path": "/hello",
+            "port": 9090,
+            "ttl_seconds": 900,
+        }
+
+        # The inclusive upper bound (900) is accepted.
+        app.validate_microvm_provider_invoke_input(invoke_dict)
+
+        # One second over the bound fails closed with the token-safety violation.
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            app.validate_microvm_provider_invoke_input({**invoke_dict, "ttl_seconds": 901})
+        self.assertEqual(app.MICROVM_ERROR_TOKEN_SAFETY_VIOLATION, ctx.exception.code)
+
     def test_execution_role_arn_validation_fails_closed(self) -> None:
         _, run_dict, _, _, _ = self._provider_dict_inputs()
         role_arn = "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole"
