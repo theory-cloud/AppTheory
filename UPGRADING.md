@@ -225,6 +225,28 @@ The runtime package (`ts/`) also declares `engines.node` `>=22` instead of `>=20
 while a package's declared floor sits below the floor its pinned TableTheory release requires, so the runtime package
 follows the CDK construct library onto the same floor. Consuming runtime applications must run Node.js 22 or newer.
 
+### CDK construct fail-closed defaults
+
+Several CDK construct defaults changed to fail closed. Each is a breaking default change: an existing stack that did
+not set the relevant prop synthesizes a different template after the upgrade.
+
+- `AppTheoryHttpApi` disables the default `execute-api` endpoint whenever `domain.mutualTlsAuthentication` is set, so a
+  mutual-TLS custom domain is the only way in. Non-mTLS custom domains and APIs without a domain keep the endpoint
+  enabled.
+- `AppTheoryFunction` and `AppTheoryApp` default their AppTheory-created function log groups to `RemovalPolicy.RETAIN`
+  instead of `RemovalPolicy.DESTROY`, so deleting a stack now preserves the execution logs. Set
+  `logRemovalPolicy: RemovalPolicy.DESTROY` to opt back into deleting them with the stack.
+- `AppTheoryS3VersionedIngress` rejects unresolved CDK token locations in `grantUpload`/`grantVersionedRead` instead of
+  passing them through, so every grant stays an exact, wildcard-free object key. Pass literal `namespaceSlug` and
+  `bundleId` values.
+- `AppTheoryVectorIndex.grantBedrockInvokeModel` scopes its default `bedrock:InvokeModel` resource ARN to the configured
+  Titan embedding model in the stack's partition and region instead of `"*"`. Pass `modelResourceArn` explicitly
+  (including `"*"`) to set a different scope.
+
+The generated Go and Python `apptheory-init` scaffold templates also stop shell-interpolating local build paths: they
+run `go build` and `python3 -m pip install` through an argv array, so a project path containing shell metacharacters is
+passed through literally.
+
 ### HTTP API v2 route permission scope
 
 `AppTheoryMcpServer`, `AppTheoryHttpApi`, `AppTheoryHttpIngestionEndpoint`, `AppTheoryMicrovmController`, and
@@ -256,8 +278,9 @@ stream) never sends anything. Pair `onFailure` with a bounded `retryAttempts` an
 record is retained for repair instead of blocking its shard. `reportBatchItemFailures` is independent of the destination
 and remains on by default.
 
-The destination carries metadata about the discarded batch — shard ID and sequence numbers — not the record payloads, so
-original records must be re-read from the stream while they are still inside the stream retention window. With
+An SQS or SNS destination carries metadata about the discarded batch — the shard ID and the start and end sequence
+numbers — not the record payloads, so original records must be re-read from the stream while they are still inside the
+stream retention window. An S3 destination instead receives the full records, including their payloads. With
 `bisectBatchOnError` enabled, the metadata's `BatchSize` can exceed 1 because Lambda consolidates the failed messages it
 writes to the destination.
 

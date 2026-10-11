@@ -305,13 +305,13 @@
       "Type": "AWS::Lambda::Function"
     },
     "AppFunctionLogGroupE8C68164": {
-      "DeletionPolicy": "Delete",
+      "DeletionPolicy": "Retain",
       "Properties": {
         "LogGroupName": "/aws/lambda/apptheory-test",
         "RetentionInDays": 30
       },
       "Type": "AWS::Logs::LogGroup",
-      "UpdateReplacePolicy": "Delete"
+      "UpdateReplacePolicy": "Retain"
     },
     "AppFunctionServiceRole265AF9F5": {
       "Properties": {

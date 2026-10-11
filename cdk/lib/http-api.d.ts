@@ -148,6 +148,13 @@ export interface AppTheoryHttpApiProps {
     readonly cors?: boolean | AppTheoryHttpApiCorsOptions;
     /**
      * Custom domain configuration.
+     *
+     * When `domain.mutualTlsAuthentication` is set, AppTheory fails closed and
+     * disables the default `execute-api` endpoint so the API is reachable only
+     * through the mutual-TLS custom domain. Without mutual TLS the default
+     * endpoint keeps the AWS default (enabled), so ordinary custom domains are
+     * unaffected.
+     *
      * @default undefined
      */
     readonly domain?: AppTheoryHttpApiDomainOptions;

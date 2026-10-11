@@ -57,11 +57,11 @@ permanent incomplete-upload residue.
 Literal namespace slugs must match `^[a-z0-9][a-z0-9-]{1,62}$`. Literal bundle IDs must match
 `^rel_[0-9a-z]{26}$`. Invalid literals fail synthesis instead of being trimmed, lowercased, or broadened.
 
-CloudFormation token values follow AppTheory's accepted Option A token-policy convention: structural inputs remain
-required, while `Token.isUnresolved` skips literal value validation. Literal inputs therefore remain exact and
-wildcard-free. CloudFormation resolves token values at deployment; AppTheory cannot guarantee exactness for
-token-valued inputs. The object resource remains a CloudFormation-safe join of the bucket ARN, `ns/`, namespace token,
-slash, and bundle token.
+Unresolved CDK token values are rejected: structural inputs remain required, and a token location fails synthesis
+instead of skipping literal value validation. Rejecting tokens keeps every grant exact and wildcard-free, because
+AppTheory cannot guarantee an exact object key for a location that CloudFormation only resolves at deployment. The
+object resource remains a CloudFormation-safe join of the bucket ARN, `ns/`, the namespace slug, a slash, and the
+bundle ID.
 
 ## Authority boundary
 

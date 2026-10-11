@@ -683,6 +683,67 @@ test("AppTheoryFunction rejects SNAPSHOT for its managed log group", () => {
   );
 });
 
+test("AppTheoryFunction defaults its named log group to RETAIN", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    functionName: "apptheory-retained-default",
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const logGroups = resourcesOfType(template, "AWS::Logs::LogGroup");
+
+  assert.equal(logGroups.length, 1, "Should synthesize exactly one function log group");
+  assert.equal(logGroups[0].Properties?.LogGroupName, "/aws/lambda/apptheory-retained-default");
+  assert.equal(logGroups[0].DeletionPolicy, "Retain");
+  assert.equal(logGroups[0].UpdateReplacePolicy, "Retain");
+});
+
+test("AppTheoryFunction defaults its anonymous log group to RETAIN", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  // Anonymous path: CloudFormation generates the function name, so the managed log group name is
+  // a token, but the default removal policy must still be RETAIN.
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const logGroups = resourcesOfType(template, "AWS::Logs::LogGroup");
+
+  assert.equal(logGroups.length, 1, "Should synthesize exactly one managed log group");
+  assert.equal(logGroups[0].DeletionPolicy, "Retain");
+  assert.equal(logGroups[0].UpdateReplacePolicy, "Retain");
+});
+
+test("AppTheoryFunction honors an explicit destructive logRemovalPolicy opt-in", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    functionName: "apptheory-destroy-opt-in",
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    logRemovalPolicy: cdk.RemovalPolicy.DESTROY,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const logGroups = resourcesOfType(template, "AWS::Logs::LogGroup");
+
+  assert.equal(logGroups.length, 1, "Should synthesize exactly one function log group");
+  assert.equal(logGroups[0].Properties?.LogGroupName, "/aws/lambda/apptheory-destroy-opt-in");
+  assert.equal(logGroups[0].DeletionPolicy, "Delete");
+  assert.equal(logGroups[0].UpdateReplacePolicy, "Delete");
+});
+
 test("AppTheoryFunction uses caller-provided log groups for existing-stack adoption", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -816,6 +877,73 @@ test("AppTheoryHttpApi exposes custom domain, CORS, and access logs", () => {
   assert.ok(domainName, "Should synthesize a custom domain");
   assert.ok(apiMapping, "Should synthesize a domain mapping");
   assert.ok(accessLogGroup, "Should synthesize finite-retention access logs");
+});
+
+test("AppTheoryHttpApi disables the default endpoint for a mutual-TLS custom domain", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const cert = acm.Certificate.fromCertificateArn(
+    stack,
+    "Cert",
+    "arn:aws:acm:us-east-1:123456789012:certificate/example",
+  );
+
+  const trustStore = s3.Bucket.fromBucketName(stack, "TrustStore", "example-truststore");
+
+  new apptheory.AppTheoryHttpApi(stack, "HttpApi", {
+    handler: fn,
+    apiName: "apptheory-mtls",
+    domain: {
+      domainName: "api.example.com",
+      certificate: cert,
+      mutualTlsAuthentication: { bucket: trustStore, key: "truststore.pem" },
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const api = resourcesOfType(template, "AWS::ApiGatewayV2::Api")[0];
+  assert.equal(
+    api.Properties?.DisableExecuteApiEndpoint,
+    true,
+    "an mTLS custom domain must fail closed on the default execute-api endpoint",
+  );
+  assert.equal(resourcesOfType(template, "AWS::ApiGatewayV2::DomainName").length, 1, "the custom domain is still created");
+  assert.equal(resourcesOfType(template, "AWS::ApiGatewayV2::ApiMapping").length, 1, "the custom domain still maps the stage");
+});
+
+test("AppTheoryHttpApi keeps the default endpoint enabled without mutual TLS", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const cert = acm.Certificate.fromCertificateArn(
+    stack,
+    "Cert",
+    "arn:aws:acm:us-east-1:123456789012:certificate/example",
+  );
+
+  new apptheory.AppTheoryHttpApi(stack, "HttpApi", {
+    handler: fn,
+    apiName: "apptheory-domain",
+    domain: {
+      domainName: "api.example.com",
+      certificate: cert,
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const api = resourcesOfType(template, "AWS::ApiGatewayV2::Api")[0];
+  assert.equal(api.Properties?.DisableExecuteApiEndpoint, undefined, "an ordinary custom domain keeps the default endpoint");
 });
 
 test("AppTheoryHttpApi rejects unsupported HTTP API WAF associations", () => {
@@ -1667,6 +1795,66 @@ test("AppTheoryVectorIndex (bucket/index/env/grants) synthesizes expected templa
   }
 });
 
+function bedrockInvokeModelStatements(template) {
+  return resourcesOfType(template, "AWS::IAM::Policy")
+    .flatMap((policy) => policy.Properties?.PolicyDocument?.Statement ?? [])
+    .filter((statement) => [statement.Action].flat().includes("bedrock:InvokeModel"));
+}
+
+test("AppTheoryVectorIndex scopes the default Bedrock InvokeModel grant to the configured Titan model", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const vectorIndex = new apptheory.AppTheoryVectorIndex(stack, "VectorIndex", {
+    indexName: "semantic",
+    dimension: 3,
+  });
+
+  vectorIndex.grantBedrockInvokeModel(fn);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const statements = bedrockInvokeModelStatements(template);
+  assert.equal(statements.length, 1, "Should synthesize exactly one bedrock:InvokeModel statement");
+  assert.ok(
+    !JSON.stringify(statements[0].Resource).includes('"*"'),
+    "the default grant must not scope the model to a wildcard",
+  );
+  const rendered = renderedString(statements[0].Resource);
+  assert.match(rendered, /^arn:/, "the default grant must be a concrete ARN");
+  assert.match(
+    rendered,
+    /foundation-model\/amazon\.titan-embed-text-v2:0$/,
+    "the default grant must target the configured Titan embedding model",
+  );
+});
+
+test("AppTheoryVectorIndex honors an explicit wildcard Bedrock InvokeModel opt-in", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const vectorIndex = new apptheory.AppTheoryVectorIndex(stack, "VectorIndex", {
+    indexName: "semantic",
+    dimension: 3,
+  });
+
+  vectorIndex.grantBedrockInvokeModel(fn, "*");
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const statements = bedrockInvokeModelStatements(template);
+  assert.equal(statements.length, 1, "Should synthesize exactly one bedrock:InvokeModel statement");
+  assert.equal(statements[0].Resource, "*", "an explicit wildcard must still be honored");
+});
+
 test("AppTheoryVectorIndex generated bucket names are usable by indexes", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -2180,6 +2368,25 @@ test("AppTheoryKinesisStreamMapping rejects an on-failure destination that is no
         onFailure: {},
       }),
     /AppTheoryKinesisStreamMapping requires onFailure to be a lambda\.IEventSourceDlq/,
+  );
+});
+
+test("AppTheoryKinesisStreamMapping documents full-record S3 on-failure delivery", () => {
+  const declarations = fs
+    .readFileSync(path.join(__dirname, "..", "lib", "kinesis-stream-mapping.d.ts"), "utf-8")
+    .split("\n")
+    .map((line) => line.replace(/^\s*\*?\s?/, ""))
+    .join(" ");
+
+  assert.match(
+    declarations,
+    /An Amazon S3 destination \(`S3OnFailureDestination`\) receives the full records, including their payloads/,
+    "the generated declarations must state that an S3 on-failure destination receives the full records",
+  );
+  assert.doesNotMatch(
+    declarations,
+    /receives metadata about the discarded batch, not the records themselves/,
+    "the stale metadata-only claim must be gone",
   );
 });
 
@@ -3440,7 +3647,28 @@ test("AppTheoryApp forwards logRemovalPolicy to its named function log group", (
   assert.equal(functionLogGroup.UpdateReplacePolicy, "Retain");
 });
 
-test("AppTheoryApp defaults its named function log group to DESTROY", () => {
+test("AppTheoryApp defaults its named function log group to RETAIN", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryApp(stack, "App", {
+    appName: "apptheory-retained-by-default",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const functionLogGroup = resourcesOfType(template, "AWS::Logs::LogGroup").find(
+    (resource) => resource.Properties?.LogGroupName === "/aws/lambda/apptheory-retained-by-default",
+  );
+
+  assert.ok(functionLogGroup, "Should synthesize the app function's named log group");
+  assert.equal(functionLogGroup.DeletionPolicy, "Retain");
+  assert.equal(functionLogGroup.UpdateReplacePolicy, "Retain");
+});
+
+test("AppTheoryApp honors an explicit destructive logRemovalPolicy opt-in", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
 
@@ -3449,6 +3677,7 @@ test("AppTheoryApp defaults its named function log group to DESTROY", () => {
     code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
     runtime: lambda.Runtime.NODEJS_24_X,
     handler: "index.handler",
+    logRemovalPolicy: cdk.RemovalPolicy.DESTROY,
   });
 
   const template = assertions.Template.fromStack(stack).toJSON();
@@ -3459,28 +3688,6 @@ test("AppTheoryApp defaults its named function log group to DESTROY", () => {
   assert.ok(functionLogGroup, "Should synthesize the app function's named log group");
   assert.equal(functionLogGroup.DeletionPolicy, "Delete");
   assert.equal(functionLogGroup.UpdateReplacePolicy, "Delete");
-});
-
-test("AppTheoryApp allows RETAIN to override its self-cleaning log group default", () => {
-  const app = new cdk.App();
-  const stack = new cdk.Stack(app, "TestStack");
-
-  new apptheory.AppTheoryApp(stack, "App", {
-    appName: "apptheory-retained",
-    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
-    runtime: lambda.Runtime.NODEJS_24_X,
-    handler: "index.handler",
-    logRemovalPolicy: cdk.RemovalPolicy.RETAIN,
-  });
-
-  const template = assertions.Template.fromStack(stack).toJSON();
-  const functionLogGroup = resourcesOfType(template, "AWS::Logs::LogGroup").find(
-    (resource) => resource.Properties?.LogGroupName === "/aws/lambda/apptheory-retained",
-  );
-
-  assert.ok(functionLogGroup, "Should synthesize the app function's named log group");
-  assert.equal(functionLogGroup.DeletionPolicy, "Retain");
-  assert.equal(functionLogGroup.UpdateReplacePolicy, "Retain");
 });
 
 test("AppTheoryApp rejects SNAPSHOT for its managed function log group", () => {
@@ -7865,7 +8072,7 @@ test("AppTheoryS3VersionedIngress rejects invalid literal bundle locations", () 
   }
 });
 
-test("AppTheoryS3VersionedIngress accepts token locations and preserves the key join", () => {
+test("AppTheoryS3VersionedIngress rejects unresolved token locations", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack", { synthesizer: new cdk.BootstraplessSynthesizer() });
   const ingress = new apptheory.AppTheoryS3VersionedIngress(stack, "Ingress");
@@ -7874,29 +8081,29 @@ test("AppTheoryS3VersionedIngress accepts token locations and preserves the key 
   });
   const slug = new cdk.CfnParameter(stack, "NamespaceSlug", { type: "String" });
   const bundleId = new cdk.CfnParameter(stack, "BundleId", { type: "String" });
+  const validBundleId = "rel_0123456789abcdefghijklmnop";
 
-  ingress.grantUpload(role, slug.valueAsString, bundleId.valueAsString);
+  // A CloudFormation-resolved token (which may resolve to a wildcard) cannot yield an exact-key
+  // grant, so AppTheory fails closed at synthesis for both location inputs.
+  assert.throws(
+    () => ingress.grantUpload(role, slug.valueAsString, validBundleId),
+    /namespaceSlug must be a literal value/,
+  );
+  assert.throws(
+    () => ingress.grantVersionedRead(role, "acme", bundleId.valueAsString),
+    /bundleId must be a literal value/,
+  );
+  assert.throws(
+    () => ingress.grantUpload(role, slug.valueAsString, bundleId.valueAsString),
+    /namespaceSlug must be a literal value/,
+  );
 
   const template = assertions.Template.fromStack(stack).toJSON();
-  const statements = resourcesOfType(template, "AWS::IAM::Policy")[0].Properties.PolicyDocument.Statement;
-  assert.deepEqual(statements, [
-    {
-      Action: "s3:PutObject",
-      Effect: "Allow",
-      Resource: {
-        "Fn::Join": [
-          "",
-          [
-            { "Fn::GetAtt": ["IngressBucket08FFB5F0", "Arn"] },
-            "/ns/",
-            { Ref: "NamespaceSlug" },
-            "/",
-            { Ref: "BundleId" },
-          ],
-        ],
-      },
-    },
-  ]);
+  assert.deepEqual(
+    resourcesOfType(template, "AWS::IAM::Policy"),
+    [],
+    "a rejected token location must add no grant policy",
+  );
 });
 
 test("AppTheoryS3VersionedIngress keeps structural grant guards unconditional", () => {

@@ -107,8 +107,10 @@ an S3 bucket. Binding the DLQ adds exactly the permission the destination needs 
 `sqs:SendMessage` (with the read-only `sqs:GetQueueAttributes` and `sqs:GetQueueUrl` actions CDK pairs with it) or
 `sns:Publish`.
 
-The destination receives metadata about the discarded batch, not the records themselves: the shard ID and sequence
-numbers identify records to re-read from the stream while they remain inside the stream retention window. Lambda only
+What a destination receives depends on its type. An SQS or SNS destination receives metadata about the discarded
+batch — the shard ID and the start and end sequence numbers — which identify records to re-read from the stream while
+they remain inside the stream retention window; it does not receive the record payloads. An S3 destination receives the
+full records, including their payloads. Lambda only
 sends to the destination once retries are exhausted or the record ages out, so a mapping that leaves `retryAttempts` and
 `maxRecordAge` unbounded (the AWS Lambda default of `-1`, retry until the record expires) never sends anything. Configure
 a bounded `retryAttempts` with `bisectBatchOnError: true` so a poison record is retained for repair instead of blocking
