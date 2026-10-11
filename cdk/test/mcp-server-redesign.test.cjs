@@ -808,7 +808,11 @@ test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => 
     assert.ok(constructBlocks.length > 0, "AgentCore guides must show an explicit singleton construct");
     for (const block of constructBlocks) {
       assert.match(block, /(?:routeFamily|route_family)[\s\S]*patterns[\s\S]*["']\/mcp["']/);
-      assert.match(block, /(?:unauthenticatedMcp|unauthenticated_mcp)[\s=:]+true/i);
+      assert.match(
+        block,
+        /unauthenticated_?mcp[\s=:]+true|transport_?authorizer/i,
+        "AgentCore construct blocks must declare an explicit transport authorization posture",
+      );
     }
   }
   assert.match(

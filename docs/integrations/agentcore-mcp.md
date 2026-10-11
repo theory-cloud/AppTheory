@@ -111,21 +111,29 @@ func main() {
 
 ## Deploy with AppTheory CDK (`AppTheoryMcpServer`)
 
-Use an explicit noncanonical family for the application-owned `POST /mcp` registration shown above:
+Use an explicit noncanonical family for the application-owned `POST /mcp` registration shown above. The construct
+authenticates MCP transport routes by default — API Gateway attaches an AWS IAM authorizer, or a JWT authorizer when
+`transportAuthorizer` supplies an issuer and audience — so a credential-free request is rejected before the runtime
+handler runs:
 
 ```ts
 const mcp = new AppTheoryMcpServer(this, "McpServer", {
   handler,
   routeFamily: { patterns: ["/mcp"] },
-  // No OAuth facade is deployed; authentication remains application-owned.
-  unauthenticatedMcp: true,
+  // MCP transport routes are authenticated by default. AWS IAM (SigV4) is the zero-configuration
+  // authorizer, so AgentCore must sign its POST /mcp calls with IAM credentials. Use
+  // `transportAuthorizer: { kind: AppTheoryMcpTransportAuthorizerKind.JWT, issuer, audience }`
+  // for JWT instead.
+  transportAuthorizer: { kind: AppTheoryMcpTransportAuthorizerKind.IAM },
 });
 ```
 
 The construct wires the MCP transport methods for `/mcp`; AgentCore uses `POST`, and the application registers the
-matching runtime handler. If a singleton deployment needs the full OAuth facade instead, omit `unauthenticatedMcp`
-and register every derived `routeInventory` entry in application code. Do not use `RegisterMCPFacade`: it serves only
-the canonical default family.
+matching runtime handler. To expose the endpoint without transport credentials for a trusted private path, opt out
+explicitly with `unauthenticatedMcp: true` and secure it in the application. If a singleton deployment needs
+application-owned OAuth bearer validation instead of the API Gateway authorizer, register every derived
+`routeInventory` entry in application code and validate the token in the handler. Do not use `RegisterMCPFacade`: it
+serves only the canonical default family.
 
 Every route the construct wires adds its own route-scoped Lambda invoke permission by default. When the application
 shares one Lambda across the MCP facade and its own route bundle, set `scopePermissionToRoute: false` to collapse
@@ -342,10 +350,11 @@ curl -N \
 ## Security checklist (don’t ship an open tool endpoint)
 
 `AppTheoryMcpServer` authenticates the MCP transport routes by default (IAM, or a configured JWT
-`transportAuthorizer`). This AgentCore path explicitly opts out with `unauthenticatedMcp: true`, which makes the
-endpoint public; you must intentionally secure it.
+`transportAuthorizer`). The quick start above keeps that default, so a credential-free request to `/mcp` is rejected
+before the runtime handler runs. Only opt out with `unauthenticatedMcp: true` when you deliberately secure the endpoint
+another way.
 
-Common approaches:
+If you do opt out, secure it yourself:
 
 - **Enforce auth in your handler** (e.g., require a shared secret header or JWT verification).
 - **Put the endpoint on a custom domain** and front it with CloudFront/WAF (if that matches your platform).
