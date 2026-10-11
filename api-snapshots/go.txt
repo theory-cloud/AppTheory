@@ -1875,6 +1875,7 @@ type App struct {
 	cors             CORSConfig
 	auth             AuthHook
 	principalAuth    PrincipalAuthHook
+	tenantClaim      string
 	obs              ObservabilityHooks
 	policy           PolicyHook
 	secure           bool
@@ -2027,6 +2028,10 @@ type Context struct {
 	AuthPrincipal   *AuthPrincipal
 	RemainingMS     int
 	MiddlewareTrace []string
+
+	TenantBound bool
+
+	TenantBindingRequired bool
 
 	ws              *WebSocketContext
 	appsync         *AppSyncContext
@@ -2350,6 +2355,7 @@ type SecureOptions struct {
 	Limits                 Limits
 	CORS                   CORSConfig
 	PrincipalResolver      SecurePrincipalResolver
+	TenantClaim            string
 	Observability          ObservabilityHooks
 	PolicyHook             PolicyHook
 	WebSocketSupport       bool
@@ -2586,6 +2592,8 @@ func WithLimits(Limits) Option
 func WithObservability(ObservabilityHooks) Option
 
 func WithPolicyHook(PolicyHook) Option
+
+func WithTenantClaim(string) Option
 
 func WithTier(Tier) Option
 
@@ -4099,8 +4107,9 @@ const StateValidated LifecycleState = "validated"
 const StateValidating LifecycleState = "validating"
 
 type AWSLambdaMicroVMProvider struct {
-	api   lambdaMicroVMAPI
-	clock Clock
+	api        lambdaMicroVMAPI
+	clock      Clock
+	httpClient *http.Client
 }
 
 type AWSLambdaMicroVMProviderOption func(*awsLambdaMicroVMProviderConfig)
