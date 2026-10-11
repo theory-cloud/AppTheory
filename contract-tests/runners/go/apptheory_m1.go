@@ -851,16 +851,33 @@ func builtInEventBridgeHandler(name string) apptheory.EventBridgeHandler {
 	}
 }
 
+// fixtureM1DeadlineContext carries the fixture's logical Lambda deadline without
+// installing a wall-clock timer. Deadline reports the fixed logical instant
+// (fixture clock + remaining_ms) while Done and Err stay live, which is how the
+// TypeScript and Python runners pass remaining_ms through as a plain value.
+// Anchoring a real timer to the fixture clock would hand the runtime and the
+// handler a context that is already expired before the invocation starts.
+type fixtureM1DeadlineContext struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c fixtureM1DeadlineContext) Deadline() (time.Time, bool) {
+	return c.deadline, true
+}
+
 func fixtureM1LambdaContext(now time.Time, input FixtureContext) (context.Context, context.CancelFunc) {
 	ctx := context.Background()
-	var cancel context.CancelFunc
 	if input.RemainingMS > 0 {
-		ctx, cancel = context.WithDeadline(ctx, now.Add(time.Duration(input.RemainingMS)*time.Millisecond))
+		ctx = fixtureM1DeadlineContext{
+			Context:  ctx,
+			deadline: now.Add(time.Duration(input.RemainingMS) * time.Millisecond),
+		}
 	}
 	if requestID := strings.TrimSpace(input.AWSRequestID); requestID != "" {
 		ctx = lambdacontext.NewContext(ctx, &lambdacontext.LambdaContext{AwsRequestID: requestID})
 	}
-	return ctx, cancel
+	return ctx, nil
 }
 
 func containsAny(value string, sentinels []string) bool {
