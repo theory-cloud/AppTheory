@@ -78,14 +78,14 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>718 exported top-level symbols</summary>
+<summary>720 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest
 APIGatewayProxyResponse, APIGatewayV2HTTPRequest, APIGatewayV2HTTPResponse, APIGatewayWebSocketProxyRequest, App
 AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError
 AppTheoryErrorDetails, appTheoryErrorFromAppError, AppTheoryErrorOptions, AtomicRateLimiter, Authenticated, AuthenticatedAnyOf, AuthHook
-AuthorizationServerMetadata, AuthorizationServerMetadataOptions, authorizationServerMetadataHandler, AuthPosture, AuthPostureKind
+AuthorizationServerMetadata, AuthorizationServerMetadataOptions, authorizationServerMetadataHandler, AuthPosture, AuthPostureKind, AuthPrincipal
 AWSLambdaMicroVMClientOptions, AWSLambdaMicroVMProvider, AWSLambdaMicroVMProviderOptions, baseName, BearerTokenClaims
 bearerTokenClaimsFromContext, BearerTokenClaimsValidator, bearerTokenFromHeaders, BearerTokenRecord
 BearerTokenValidationOptions, BearerTokenValidator, BedrockRuntimeLike, binary, BindConfig, BindFieldSpec
@@ -199,7 +199,7 @@ ObjectStoreGetInput, ObjectStoreGetOutput, ObjectStoreOperation, ObjectStorePutI
 OpenAPIAuthSchemes, OpenAPIDocument, OpenAPIFieldSource, OpenAPIFieldSpec, OpenAPIFieldType, OpenAPIRequestSpec
 OpenAPIResponseSpec, OpenAPIRouteSpec, OpenAPISpec, OpenAPIValidationRuleSpec, Optional, originalHost, originalURI
 originURL, parseMcpTestSSEFrames, parseObjectRef, pattern, paymentXMLPatterns, pkceChallengeS256, pkceVerifyS256
-PolicyDecision, PolicyHook, PrincipalKind, ProfileLogger, ProfileLoggerOptions, ProtectedResourceMetadata
+PolicyDecision, PolicyHook, PrincipalAuthHook, PrincipalKind, ProfileLogger, ProfileLoggerOptions, ProtectedResourceMetadata
 protectedResourceMetadataHandler, protectedResourceWWWAuthenticate, Public, PutVectorsInput, Query, QueryHit
 QueryVectorsInput, RandomIdGenerator, rapidConnectXMLPatterns, RateLimitEntry, RateLimiter, RateLimiterError
 RateLimitKey, RateLimitStrategy, rateLimitTableName, RateLimitWindow, RealClock, ReconstructingMicroVMSessionRegistry
