@@ -49,6 +49,37 @@ func (a *App) authenticate(ctx *Context) (*AuthPrincipal, error) {
 	return &AuthPrincipal{Identity: identity}, nil
 }
 
+// tenantBindingRequired reports whether the app is configured with a
+// principal-aware resolver and therefore must require a claim-derived tenant.
+func (a *App) tenantBindingRequired() bool {
+	if a == nil {
+		return false
+	}
+	return a.principalAuth != nil || (a.secure && a.secureResolver != nil)
+}
+
+// bindVerifiedTenant sets the request tenant from the verified principal's
+// configured tenant claim when that claim carries a non-empty string.
+func (a *App) bindVerifiedTenant(ctx *Context, claims map[string]any) {
+	if a == nil || ctx == nil || a.tenantClaim == "" {
+		return
+	}
+	value, ok := claims[a.tenantClaim]
+	if !ok {
+		return
+	}
+	text, ok := value.(string)
+	if !ok {
+		return
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	ctx.TenantID = text
+	ctx.TenantBound = true
+}
+
 func normalizeAuthPrincipal(principal *AuthPrincipal) *AuthPrincipal {
 	if principal == nil {
 		return nil

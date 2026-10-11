@@ -3,6 +3,7 @@ export declare class MemoryMicroVMSessionRegistry implements MicroVMSessionRegis
     private readonly records;
     put(record: MicroVMSessionRecord): Promise<MicroVMSessionRecord>;
     get(key: MicroVMSessionKey): Promise<MicroVMSessionRecord>;
+    private legacyRecord;
     delete(key: MicroVMSessionKey): Promise<void>;
     list(input: MicroVMSessionListInput): Promise<MicroVMSessionRecord[]>;
 }

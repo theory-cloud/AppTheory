@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -256,13 +257,23 @@ func SessionRegistryTableName() string {
 }
 
 // SessionRegistryPartitionKey derives the TableTheory partition key for a tenant-bound namespace.
+//
+// The encoding is injective: each trimmed identity is framed by its UTF-8 byte length in canonical
+// decimal, so no two distinct (tenant, namespace) pairs can encode to the same literal. The
+// un-prefixed TENANT#<tenant>#NAMESPACE#<namespace> form was not injective because a value
+// containing "#NAMESPACE#" could straddle the boundary.
+//
+// MIGRATION: items persisted by an earlier release used the un-prefixed
+// TENANT#<tenant>#NAMESPACE#<namespace> form. Registry reads fall back to that key and re-persist a
+// resolved item under this key, so items migrate as they are touched; a read-modify-write re-key
+// pass is optional cleanup for items that are never read again.
 func SessionRegistryPartitionKey(tenantID, namespace string) string {
 	tenantID = strings.TrimSpace(tenantID)
 	namespace = strings.TrimSpace(namespace)
 	if tenantID == "" || namespace == "" {
 		return ""
 	}
-	return "TENANT#" + tenantID + "#NAMESPACE#" + namespace
+	return "TENANT#" + strconv.Itoa(len(tenantID)) + "#" + tenantID + "#NAMESPACE#" + strconv.Itoa(len(namespace)) + "#" + namespace
 }
 
 // SessionRegistrySortKey derives the TableTheory sort key for a session.
@@ -274,9 +285,42 @@ func SessionRegistrySortKey(sessionID string) string {
 	return "SESSION#" + sessionID
 }
 
+// legacySessionRegistryPartitionKey reconstructs the pre-M1 partition key
+// "TENANT#<tenant>#NAMESPACE#<namespace>" that this package persisted before the encodings became
+// injective. Both identities are trimmed and an empty identity yields "", matching the pre-M1
+// implementation exactly. It exists only so a read can fall back to an item written by an earlier
+// release; the write path never produces this form.
+func legacySessionRegistryPartitionKey(tenantID, namespace string) string {
+	tenantID = strings.TrimSpace(tenantID)
+	namespace = strings.TrimSpace(namespace)
+	if tenantID == "" || namespace == "" {
+		return ""
+	}
+	return "TENANT#" + tenantID + "#NAMESPACE#" + namespace
+}
+
+// sessionRegistryPartitionKeyMatches reports whether pk is the canonical length-framed partition key
+// for the identity, or — when allowLegacyKey is set — the pre-M1 un-prefixed key carried by an item
+// written by an earlier release. A record whose pk matches neither derivation is rejected, so a
+// record that contradicts both is still fail-closed.
+func sessionRegistryPartitionKeyMatches(pk, tenantID, namespace string, allowLegacyKey bool) bool {
+	if pk == SessionRegistryPartitionKey(tenantID, namespace) {
+		return true
+	}
+	return allowLegacyKey && pk == legacySessionRegistryPartitionKey(tenantID, namespace)
+}
+
 // ValidateSessionRegistryRecord fails closed when a durable registry item is incomplete, unsafe,
 // or its derived TableTheory keys do not match its tenant/session identity.
 func ValidateSessionRegistryRecord(record SessionRegistryRecord) error {
+	return validateSessionRegistryRecord(record, false)
+}
+
+// validateSessionRegistryRecord is the shared implementation behind the exported validator and the
+// read paths. When allowLegacyKey is set it also accepts the pre-M1 partition key, so a dual-read
+// fallback can validate an item written by an earlier release; the item's own attributes must still
+// derive that key, and every other field is validated unchanged.
+func validateSessionRegistryRecord(record SessionRegistryRecord, allowLegacyKey bool) error {
 	record = normalizeSessionRegistryRecord(record)
 	session := sessionRecordFromRegistryNoValidate(record)
 	if err := validateSessionRecordIdentity(session); err != nil {
@@ -291,7 +335,7 @@ func ValidateSessionRegistryRecord(record SessionRegistryRecord) error {
 	if record.PK == "" || record.SK == "" || record.TTL <= 0 || record.Version <= 0 {
 		return safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry keys are incomplete", record.LastCommandID)
 	}
-	if record.PK != SessionRegistryPartitionKey(record.TenantID, record.Namespace) || record.SK != SessionRegistrySortKey(record.SessionID) {
+	if !sessionRegistryPartitionKeyMatches(record.PK, record.TenantID, record.Namespace, allowLegacyKey) || record.SK != SessionRegistrySortKey(record.SessionID) {
 		return safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry tenant/session key mismatch", record.LastCommandID)
 	}
 	if record.TTL != record.ExpiresAt.UTC().Unix() {
@@ -373,6 +417,21 @@ func SessionRecordFromRegistryRecord(record SessionRegistryRecord) (SessionRecor
 	return out, nil
 }
 
+// sessionRecordFromRegistryRecordAllowLegacy converts a durable registry item for a read path that
+// arrived through the legacy-key fallback. It accepts the pre-M1 partition key when the item's
+// attributes derive it, and still rejects an item whose key contradicts both derivations.
+func sessionRecordFromRegistryRecordAllowLegacy(record SessionRegistryRecord) (SessionRecord, error) {
+	record = normalizeSessionRegistryRecord(record)
+	if err := validateSessionRegistryRecord(record, true); err != nil {
+		return SessionRecord{}, err
+	}
+	out := sessionRecordFromRegistryNoValidate(record)
+	if err := ValidateSessionRecord(out); err != nil {
+		return SessionRecord{}, err
+	}
+	return out, nil
+}
+
 // TableTheorySessionRegistry stores MicroVM session registry records through the blessed TableTheory DB path.
 type TableTheorySessionRegistry struct {
 	db tablecore.DB
@@ -406,7 +465,9 @@ func (r *TableTheorySessionRegistry) Put(ctx context.Context, record SessionReco
 	return SessionRecordFromRegistryRecord(registry)
 }
 
-// Get retrieves a tenant-bound session record through TableTheory.
+// Get retrieves a tenant-bound session record through TableTheory. It reads the canonical
+// length-framed partition key first and falls back to the pre-M1 key so items written by an earlier
+// release stay resolvable; a legacy item that resolves is re-written under the canonical key.
 func (r *TableTheorySessionRegistry) Get(ctx context.Context, key SessionKey) (SessionRecord, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -424,13 +485,55 @@ func (r *TableTheorySessionRegistry) Get(ctx context.Context, key SessionKey) (S
 		Where("PK", "=", SessionRegistryPartitionKey(key.TenantID, key.Namespace)).
 		Where("SK", "=", SessionRegistrySortKey(key.SessionID)).
 		First(&record)
+	if err == nil {
+		return SessionRecordFromRegistryRecord(record)
+	}
+	if !tableerrors.IsNotFound(err) {
+		return SessionRecord{}, sessionRegistryOperationError("")
+	}
+	legacyKey := legacySessionRegistryPartitionKey(key.TenantID, key.Namespace)
+	if legacyKey == "" || legacyKey == SessionRegistryPartitionKey(key.TenantID, key.Namespace) {
+		return SessionRecord{}, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry record not found", "")
+	}
+	var legacyRecord SessionRegistryRecord
+	err = r.db.Model(&SessionRegistryRecord{}).
+		WithContext(ctx).
+		Where("PK", "=", legacyKey).
+		Where("SK", "=", SessionRegistrySortKey(key.SessionID)).
+		First(&legacyRecord)
 	if err != nil {
 		if tableerrors.IsNotFound(err) {
 			return SessionRecord{}, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry record not found", "")
 		}
 		return SessionRecord{}, sessionRegistryOperationError("")
 	}
-	return SessionRecordFromRegistryRecord(record)
+	// A colliding pre-M1 key can address more than one identity; require the item to be exactly the
+	// one that was requested before accepting it.
+	if legacyRecord.TenantID != key.TenantID || legacyRecord.Namespace != key.Namespace || legacyRecord.SessionID != key.SessionID {
+		return SessionRecord{}, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry tenant/session key mismatch", "")
+	}
+	session, err := sessionRecordFromRegistryRecordAllowLegacy(legacyRecord)
+	if err != nil {
+		return SessionRecord{}, err
+	}
+	r.rekeySessionRecord(ctx, session)
+	return session, nil
+}
+
+// rekeySessionRecord re-persists an item read through the legacy-key fallback under the canonical
+// length-framed partition key so items migrate on touch. It is best-effort: the read already
+// succeeded, so a store error must not fail it. The legacy item is left in place for its existing
+// TTL to retire, and the re-key reuses the same upsert the write path uses rather than adding store
+// machinery.
+func (r *TableTheorySessionRegistry) rekeySessionRecord(ctx context.Context, session SessionRecord) {
+	migrated, err := SessionRecordToRegistryRecord(session)
+	if err != nil {
+		return
+	}
+	if err := r.db.Model(&migrated).WithContext(ctx).CreateOrUpdate(); err != nil {
+		// Best-effort re-key: the read already succeeded, so a store failure must not fail it.
+		return
+	}
 }
 
 // Delete removes a tenant-bound session record through TableTheory.
@@ -452,10 +555,23 @@ func (r *TableTheorySessionRegistry) Delete(ctx context.Context, key SessionKey)
 		Delete(); err != nil {
 		return sessionRegistryOperationError("")
 	}
+	// Also drop the pre-M1 item, so a session that only ever lived under the legacy key cannot be
+	// resurrected by the dual-read fallback after it was deleted.
+	if legacyKey := legacySessionRegistryPartitionKey(key.TenantID, key.Namespace); legacyKey != "" && legacyKey != SessionRegistryPartitionKey(key.TenantID, key.Namespace) {
+		if err := r.db.Model(&SessionRegistryRecord{}).
+			WithContext(ctx).
+			Where("PK", "=", legacyKey).
+			Where("SK", "=", SessionRegistrySortKey(key.SessionID)).
+			Delete(); err != nil {
+			return sessionRegistryOperationError("")
+		}
+	}
 	return nil
 }
 
-// List retrieves tenant-bound session records through TableTheory.
+// List retrieves tenant-bound session records through TableTheory. It reads the canonical
+// length-framed partition and unions in the pre-M1 partition so items written by an earlier release
+// stay listable mid-migration; when both partitions hold a session the canonical item wins.
 func (r *TableTheorySessionRegistry) List(ctx context.Context, input SessionListInput) ([]SessionRecord, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -474,9 +590,20 @@ func (r *TableTheorySessionRegistry) List(ctx context.Context, input SessionList
 		All(&records); err != nil {
 		return nil, sessionRegistryOperationError(input.RequestID)
 	}
-	out := make([]SessionRecord, 0, len(records))
+	canonical := make(map[string]struct{}, len(records))
 	for _, record := range records {
-		session, err := SessionRecordFromRegistryRecord(record)
+		canonical[record.SessionID] = struct{}{}
+	}
+	legacyRecords, err := r.listLegacyRecords(ctx, input, canonical)
+	if err != nil {
+		return nil, err
+	}
+	combined := make([]SessionRegistryRecord, 0, len(records)+len(legacyRecords))
+	combined = append(combined, records...)
+	combined = append(combined, legacyRecords...)
+	out := make([]SessionRecord, 0, len(combined))
+	for _, record := range combined {
+		session, err := sessionRecordFromRegistryRecordAllowLegacy(record)
 		if err != nil {
 			return nil, err
 		}
@@ -485,6 +612,34 @@ func (r *TableTheorySessionRegistry) List(ctx context.Context, input SessionList
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].SessionID < out[j].SessionID
 	})
+	return out, nil
+}
+
+// listLegacyRecords reads the pre-M1 partition and returns the records for the requested identity
+// that are not already present in the canonical partition, so List can union the two partitions
+// while keeping the canonical item when both forms exist.
+func (r *TableTheorySessionRegistry) listLegacyRecords(ctx context.Context, input SessionListInput, canonical map[string]struct{}) ([]SessionRegistryRecord, error) {
+	legacyKey := legacySessionRegistryPartitionKey(input.TenantID, input.Namespace)
+	if legacyKey == "" || legacyKey == SessionRegistryPartitionKey(input.TenantID, input.Namespace) {
+		return nil, nil
+	}
+	var legacyRecords []SessionRegistryRecord
+	if err := r.db.Model(&SessionRegistryRecord{}).
+		WithContext(ctx).
+		Where("PK", "=", legacyKey).
+		All(&legacyRecords); err != nil {
+		return nil, sessionRegistryOperationError(input.RequestID)
+	}
+	out := make([]SessionRegistryRecord, 0, len(legacyRecords))
+	for _, record := range legacyRecords {
+		if record.TenantID != input.TenantID || record.Namespace != input.Namespace {
+			continue
+		}
+		if _, ok := canonical[record.SessionID]; ok {
+			continue
+		}
+		out = append(out, record)
+	}
 	return out, nil
 }
 
@@ -519,7 +674,9 @@ func (r *MemorySessionRegistry) Put(_ context.Context, record SessionRecord) (Se
 	return SessionRecordFromRegistryRecord(registry)
 }
 
-// Get loads a record from memory by its tenant-bound key.
+// Get loads a record from memory by its tenant-bound key. It reads the canonical length-framed key
+// first and falls back to the pre-M1 key, moving an item that resolves to the canonical key so it
+// migrates on touch.
 func (r *MemorySessionRegistry) Get(_ context.Context, key SessionKey) (SessionRecord, error) {
 	if r == nil {
 		return SessionRecord{}, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry is not configured", "")
@@ -532,7 +689,33 @@ func (r *MemorySessionRegistry) Get(_ context.Context, key SessionKey) (SessionR
 	defer r.mu.Unlock()
 	record, ok := r.records[registryRecordKeyFromKey(key)]
 	if !ok {
-		return SessionRecord{}, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry record not found", "")
+		legacyKey := legacySessionRegistryPartitionKey(key.TenantID, key.Namespace)
+		if legacyKey == "" || legacyKey == SessionRegistryPartitionKey(key.TenantID, key.Namespace) {
+			return SessionRecord{}, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry record not found", "")
+		}
+		legacyRecordKey := lengthPrefixedJoin(legacyKey, SessionRegistrySortKey(key.SessionID))
+		record, ok = r.records[legacyRecordKey]
+		if !ok {
+			return SessionRecord{}, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry record not found", "")
+		}
+		// A colliding pre-M1 key can address more than one identity; require the item to be exactly
+		// the one that was requested before accepting it.
+		if record.TenantID != key.TenantID || record.Namespace != key.Namespace || record.SessionID != key.SessionID {
+			return SessionRecord{}, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry tenant/session key mismatch", "")
+		}
+		session, err := sessionRecordFromRegistryRecordAllowLegacy(cloneSessionRegistryRecord(record))
+		if err != nil {
+			return SessionRecord{}, err
+		}
+		migrated, err := SessionRecordToRegistryRecord(session)
+		if err != nil {
+			return SessionRecord{}, err
+		}
+		// The in-memory store has no TTL, so the legacy entry is moved rather than copied, which keeps
+		// a later List from returning the same session twice.
+		r.records[registryRecordKey(migrated)] = cloneSessionRegistryRecord(migrated)
+		delete(r.records, legacyRecordKey)
+		return SessionRecordFromRegistryRecord(migrated)
 	}
 	return SessionRecordFromRegistryRecord(cloneSessionRegistryRecord(record))
 }
@@ -549,10 +732,16 @@ func (r *MemorySessionRegistry) Delete(_ context.Context, key SessionKey) error 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.records, registryRecordKeyFromKey(key))
+	// Also drop the pre-M1 item so a deleted session cannot be resurrected by the dual-read fallback.
+	if legacyKey := legacySessionRegistryPartitionKey(key.TenantID, key.Namespace); legacyKey != "" && legacyKey != SessionRegistryPartitionKey(key.TenantID, key.Namespace) {
+		delete(r.records, lengthPrefixedJoin(legacyKey, SessionRegistrySortKey(key.SessionID)))
+	}
 	return nil
 }
 
-// List returns records for exactly one tenant and namespace.
+// List returns records for exactly one tenant and namespace. It unions the canonical and pre-M1
+// partition membership so items written by an earlier release stay listable; when both forms exist
+// for a session the canonical item wins.
 func (r *MemorySessionRegistry) List(_ context.Context, input SessionListInput) ([]SessionRecord, error) {
 	if r == nil {
 		return nil, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry is not configured", input.RequestID)
@@ -563,15 +752,32 @@ func (r *MemorySessionRegistry) List(_ context.Context, input SessionListInput) 
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	canonicalPK := SessionRegistryPartitionKey(input.TenantID, input.Namespace)
 	out := make([]SessionRecord, 0)
+	seen := make(map[string]struct{})
 	for _, record := range r.records {
-		if record.TenantID != input.TenantID || record.Namespace != input.Namespace {
+		if record.TenantID != input.TenantID || record.Namespace != input.Namespace || record.PK != canonicalPK {
 			continue
 		}
 		session, err := SessionRecordFromRegistryRecord(cloneSessionRegistryRecord(record))
 		if err != nil {
 			return nil, err
 		}
+		seen[session.SessionID] = struct{}{}
+		out = append(out, session)
+	}
+	for _, record := range r.records {
+		if record.TenantID != input.TenantID || record.Namespace != input.Namespace || record.PK == canonicalPK {
+			continue
+		}
+		if _, ok := seen[record.SessionID]; ok {
+			continue
+		}
+		session, err := sessionRecordFromRegistryRecordAllowLegacy(cloneSessionRegistryRecord(record))
+		if err != nil {
+			return nil, err
+		}
+		seen[session.SessionID] = struct{}{}
 		out = append(out, session)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -712,12 +918,26 @@ func sessionRecordIsStale(record SessionRecord, now time.Time, staleAfter time.D
 	return record.LastObservedAt.Add(staleAfter).Before(now) || !record.ExpiresAt.After(now)
 }
 
+// lengthPrefixedJoin frames each part as its UTF-8 byte length, a colon, and the part text,
+// concatenated with no separator. Each framed part is self-delimiting, so the encoding is
+// injective: distinct part slices can never produce the same string, unlike a NUL-joined
+// encoding where a NUL inside a part would make the boundary ambiguous.
+func lengthPrefixedJoin(parts ...string) string {
+	var b strings.Builder
+	for _, part := range parts {
+		b.WriteString(strconv.Itoa(len(part)))
+		b.WriteByte(':')
+		b.WriteString(part)
+	}
+	return b.String()
+}
+
 func registryRecordKey(record SessionRegistryRecord) string {
-	return record.PK + "\x00" + record.SK
+	return lengthPrefixedJoin(record.PK, record.SK)
 }
 
 func registryRecordKeyFromKey(key SessionKey) string {
-	return SessionRegistryPartitionKey(key.TenantID, key.Namespace) + "\x00" + SessionRegistrySortKey(key.SessionID)
+	return lengthPrefixedJoin(SessionRegistryPartitionKey(key.TenantID, key.Namespace), SessionRegistrySortKey(key.SessionID))
 }
 
 func cloneSessionRegistryRecord(record SessionRegistryRecord) SessionRegistryRecord {

@@ -58,6 +58,17 @@ export declare class Context {
     authIdentity: string;
     remainingMs: number;
     middlewareTrace: string[];
+    /**
+     * Reports that `tenantId` was derived from the verified principal's
+     * configured tenant claim rather than a caller-supplied header or query value.
+     */
+    tenantBound: boolean;
+    /**
+     * Reports that the app is configured with a principal-aware resolver, so
+     * surfaces that bind tenant to identity must require a claim-derived tenant.
+     * False in legacy mode.
+     */
+    tenantBindingRequired: boolean;
     private readonly _clock;
     private readonly _ids;
     private readonly _webSocket;
@@ -74,6 +85,8 @@ export declare class Context {
         traceId?: string;
         tenantId?: string;
         authIdentity?: string;
+        tenantBound?: boolean;
+        tenantBindingRequired?: boolean;
         remainingMs?: number;
         middlewareTrace?: string[];
         webSocket?: WebSocketContext | null;

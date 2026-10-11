@@ -144,6 +144,18 @@ export interface RouteOptions {
 /** Hook that resolves the authenticated identity for protected routes. */
 export type AuthHook = (ctx: Context) => string | Promise<string>;
 
+/** Richer auth state resolved for a request by a principal-aware auth hook. */
+export interface AuthPrincipal {
+  identity: string;
+  scopes?: string[];
+  claims?: Record<string, unknown>;
+}
+
+/** Principal-aware auth hook resolving the current request principal. */
+export type PrincipalAuthHook = (
+  ctx: Context,
+) => AuthPrincipal | null | Promise<AuthPrincipal | null>;
+
 /** Decision returned by a P2 policy hook to fail a request closed. */
 export interface PolicyDecision {
   code: string;
@@ -428,6 +440,7 @@ export interface SecureOptions {
   limits?: Limits;
   cors?: CORSConfig;
   principalResolver?: SecurePrincipalResolver;
+  tenantClaim?: string;
   policyHook?: PolicyHook;
   observability?: ObservabilityHooks;
   webSocketSupport?: boolean;
@@ -448,6 +461,8 @@ interface AppOptions {
   limits?: Limits;
   cors?: CORSConfig;
   authHook?: AuthHook;
+  authPrincipalHook?: PrincipalAuthHook;
+  tenantClaim?: string;
   policyHook?: PolicyHook;
   observability?: ObservabilityHooks;
   webSocketClientFactory?: WebSocketClientFactory;
@@ -526,6 +541,8 @@ export class App {
   private readonly _limits: NormalizedLimits;
   private readonly _cors: NormalizedCORSConfig;
   private readonly _authHook: AuthHook | null;
+  private readonly _authPrincipalHook: PrincipalAuthHook | null;
+  private readonly _tenantClaim: string;
   private readonly _policyHook: PolicyHook | null;
   private readonly _observability: ObservabilityHooks | null;
   private readonly _webSocketRoutes: Array<
@@ -561,6 +578,8 @@ export class App {
     };
     this._cors = normalizeCorsConfig(options.cors);
     this._authHook = options.authHook ?? null;
+    this._authPrincipalHook = options.authPrincipalHook ?? null;
+    this._tenantClaim = String(options.tenantClaim ?? "").trim();
     this._policyHook = options.policyHook ?? null;
     this._observability = options.observability ?? null;
     this._webSocketRoutes = [];
@@ -908,6 +927,7 @@ export class App {
       requestCtx as unknown as { _securePrincipal: SecurePrincipal | null }
     )._securePrincipal = cloneSecurePrincipal(principal);
     requestCtx.authIdentity = principal.identity;
+    this._bindVerifiedTenant(requestCtx, principal.claims);
     if (
       posture === "authenticated" &&
       secureRoute.scopes.some((scope) => !principal.scopes.includes(scope))
@@ -923,6 +943,54 @@ export class App {
     if (posture === "internal_only" && principal.kind !== "internal") {
       throw new AppError("app.forbidden", "forbidden");
     }
+  }
+
+  private _tenantBindingRequired(): boolean {
+    return (
+      this._authPrincipalHook !== null || this._securePrincipalResolver !== null
+    );
+  }
+
+  private async _authenticate(
+    requestCtx: Context,
+  ): Promise<AuthPrincipal | null> {
+    if (this._authPrincipalHook) {
+      const resolved = await this._authPrincipalHook(requestCtx);
+      if (!resolved) return null;
+      const identity = String(resolved.identity ?? "").trim();
+      if (!identity) return null;
+      const claims: Record<string, unknown> = {};
+      if (resolved.claims && typeof resolved.claims === "object") {
+        for (const [key, value] of Object.entries(resolved.claims)) {
+          claims[key] = value;
+        }
+      }
+      return {
+        identity,
+        scopes: Array.isArray(resolved.scopes)
+          ? resolved.scopes.map((scope) => String(scope ?? ""))
+          : [],
+        claims,
+      };
+    }
+    if (!this._authHook) return null;
+    const identity = String((await this._authHook(requestCtx)) ?? "").trim();
+    if (!identity) return null;
+    return { identity };
+  }
+
+  private _bindVerifiedTenant(
+    requestCtx: Context,
+    claims: Record<string, unknown> | null | undefined,
+  ): void {
+    const claim = this._tenantClaim;
+    if (!claim) return;
+    const value = claims?.[claim];
+    if (typeof value !== "string") return;
+    const text = value.trim();
+    if (!text) return;
+    requestCtx.tenantId = text;
+    requestCtx.tenantBound = true;
   }
 
   /** Registers a WebSocket route handler by route key. */
@@ -1069,6 +1137,7 @@ export class App {
         ids: this._ids,
         ctx,
         traceId: normalized.traceId,
+        tenantBindingRequired: this._tenantBindingRequired(),
         appSync: contextOptions?.appSync ?? null,
       });
       contextOptions?.configure?.(requestCtx);
@@ -1261,6 +1330,7 @@ export class App {
       authIdentity: "",
       remainingMs,
       middlewareTrace,
+      tenantBindingRequired: this._tenantBindingRequired(),
       appSync: contextOptions?.appSync ?? null,
     });
     contextOptions?.configure?.(requestCtx);
@@ -1318,14 +1388,12 @@ export class App {
     } else if (match.route.authRequired) {
       middlewareTrace.push("auth");
       try {
-        if (!this._authHook) {
+        const principal = await this._authenticate(requestCtx);
+        if (!principal) {
           throw new AppError("app.unauthorized", "unauthorized");
         }
-        const identity = await this._authHook(requestCtx);
-        if (!String(identity ?? "").trim()) {
-          throw new AppError("app.unauthorized", "unauthorized");
-        }
-        requestCtx.authIdentity = String(identity);
+        requestCtx.authIdentity = principal.identity;
+        this._bindVerifiedTenant(requestCtx, principal.claims);
       } catch (err) {
         const code = errorCodeFrom(err);
         return finish(
@@ -1631,6 +1699,7 @@ export class App {
       authIdentity: "",
       remainingMs: extractRemainingMs(ctx),
       middlewareTrace: [],
+      tenantBindingRequired: this._tenantBindingRequired(),
       webSocket: wsCtx,
     });
 
@@ -2099,6 +2168,7 @@ const SECURE_OPTION_KEYS = new Set([
   "limits",
   "cors",
   "principalResolver",
+  "tenantClaim",
   "policyHook",
   "observability",
   "webSocketSupport",
@@ -2143,6 +2213,9 @@ export class SecureApp {
         : {}),
       ...(options.limits !== undefined ? { limits: options.limits } : {}),
       ...(options.cors !== undefined ? { cors: options.cors } : {}),
+      ...(options.tenantClaim !== undefined
+        ? { tenantClaim: options.tenantClaim }
+        : {}),
       ...(options.policyHook !== undefined
         ? { policyHook: options.policyHook }
         : {}),
@@ -2324,6 +2397,8 @@ export function createApp(
     limits?: Limits;
     cors?: CORSConfig;
     authHook?: AuthHook;
+    authPrincipalHook?: PrincipalAuthHook;
+    tenantClaim?: string;
     policyHook?: PolicyHook;
     observability?: ObservabilityHooks;
     webSocketClientFactory?: WebSocketClientFactory;
@@ -2434,6 +2509,8 @@ function cloneContextWithTimeoutCarrier(
     traceId: ctx.traceId,
     tenantId: ctx.tenantId,
     authIdentity: ctx.authIdentity,
+    tenantBound: ctx.tenantBound,
+    tenantBindingRequired: ctx.tenantBindingRequired,
     remainingMs: ctx.remainingMs,
     middlewareTrace: ctx.middlewareTrace,
     webSocket: ctx.asWebSocket(),

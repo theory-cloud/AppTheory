@@ -184,21 +184,6 @@ def microvm_session_registry_table_name() -> str:
     )
 
 
-def microvm_session_registry_partition_key(tenant_id: str, namespace: str) -> str:
-    tenant = str(tenant_id or "").strip()
-    ns = str(namespace or "").strip()
-    if not tenant or not ns:
-        return ""
-    return f"TENANT#{tenant}#NAMESPACE#{ns}"
-
-
-def microvm_session_registry_sort_key(session_id: str) -> str:
-    session = str(session_id or "").strip()
-    if not session:
-        return ""
-    return f"SESSION#{session}"
-
-
 def microvm_session_registry_model_definition(*, table_name: str | None = None) -> Any:
     try:
         from tabletheory_py import ModelDefinition  # type: ignore[import-not-found]

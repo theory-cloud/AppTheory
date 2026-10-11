@@ -16,7 +16,46 @@ from .model import *  # noqa: F403
 from .shared import *  # noqa: F403
 
 
+class _ProviderInvokeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Deny every MicroVM invoke redirect.
+
+    The invoke request carries the minted X-aws-proxy-auth credential, so urllib's default
+    redirect machinery would replay that credential against a different authority (or a
+    downgraded scheme). Refusing every redirect keeps the credential bound to the single
+    allowlisted AWS endpoint.
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        raise _safe_error(
+            MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+            "apptheory: microvm invoke redirect is not permitted",
+            "",
+        )
+
+
+_default_provider_invoke_opener: urllib.request.OpenerDirector | None = None
+
+
+def _provider_invoke_opener() -> urllib.request.OpenerDirector:
+    global _default_provider_invoke_opener
+    if _default_provider_invoke_opener is None:
+        _default_provider_invoke_opener = urllib.request.build_opener(_ProviderInvokeRedirectHandler())
+    return _default_provider_invoke_opener
+
+
 class AWSLambdaMicroVMProvider:
+    # _opener is an internal seam: production uses the package deny-redirect opener, and tests
+    # inject their own opener to exercise the invoke path without network access.
+    _opener: urllib.request.OpenerDirector | None = None
+
     def __init__(self, *, region_name: str | None = None, clock: Callable[[], float] | None = None) -> None:
         self._client = _load_aws_lambda_microvm_provider_client(region_name=region_name)
         self._clock = clock or time.time
@@ -142,8 +181,9 @@ class AWSLambdaMicroVMProvider:
                     request.add_header(name, value)
             request.add_header("X-aws-proxy-auth", auth_header)
             request.add_header("X-aws-proxy-port", _provider_invoke_port_header(normalized.port))
+            opener = self._invoke_opener()
             try:
-                with urllib.request.urlopen(request) as response:  # noqa: S310
+                with opener.open(request) as response:
                     body = response.read(_MAX_PROVIDER_INVOKE_BODY_BYTES + 1)
                     status = int(getattr(response, "status", 0) or response.getcode() or 0)
                     headers = _response_headers(response)
@@ -180,6 +220,10 @@ class AWSLambdaMicroVMProvider:
             return _provider_session_from_get_output(normalized.request_id, normalized.binding, output)
         except Exception as exc:  # noqa: BLE001
             raise _as_provider_safe_error(exc, normalized.request_id) from None
+
+    def _invoke_opener(self) -> urllib.request.OpenerDirector:
+        opener = self._opener
+        return opener if opener is not None else _provider_invoke_opener()
 
     def _now(self) -> float:
         value = float(self._clock() or 0.0)

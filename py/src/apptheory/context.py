@@ -77,6 +77,13 @@ class Context:
     appsync: AppSyncContext | None
     _values: dict[str, Any]
     _secure_principal: SecurePrincipal | None
+    # TenantBound reports that TenantID was derived from the verified principal's
+    # configured tenant claim rather than a caller-supplied header/query value.
+    tenant_bound: bool
+    # TenantBindingRequired reports that the app is configured with a
+    # principal-aware resolver, so surfaces that bind tenant to identity must
+    # require a claim-derived tenant. False in legacy mode.
+    tenant_binding_required: bool
 
     def __init__(
         self,
@@ -94,6 +101,8 @@ class Context:
         middleware_trace: list[str] | None = None,
         websocket: WebSocketContext | None = None,
         appsync: AppSyncContext | None = None,
+        tenant_bound: bool = False,
+        tenant_binding_required: bool = False,
     ) -> None:
         self.request = request
         self.params = params or {}
@@ -110,6 +119,8 @@ class Context:
         self.appsync = appsync
         self._values = {}
         self._secure_principal = None
+        self.tenant_bound = bool(tenant_bound)
+        self.tenant_binding_required = bool(tenant_binding_required)
 
     def now(self) -> dt.datetime:
         """Return the request clock time using the configured clock."""

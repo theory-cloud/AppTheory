@@ -1,5 +1,7 @@
 package apptheory
 
+import "strings"
+
 // App is the root container for an AppTheory application.
 //
 // AppTheory's runtime behavior is defined by a fixture-backed, versioned contract:
@@ -14,6 +16,7 @@ type App struct {
 	cors             CORSConfig
 	auth             AuthHook
 	principalAuth    PrincipalAuthHook
+	tenantClaim      string
 	obs              ObservabilityHooks
 	policy           PolicyHook
 	secure           bool
@@ -127,6 +130,16 @@ func WithAuthHook(hook AuthHook) Option {
 	return func(app *App) {
 		app.auth = hook
 		app.principalAuth = nil
+	}
+}
+
+// WithTenantClaim names the verified-principal claim that is authoritative for
+// tenant. When set and a principal-aware resolver is configured, surfaces that
+// bind tenant to identity derive the tenant from this claim and reject
+// caller-supplied tenants that disagree with it.
+func WithTenantClaim(claim string) Option {
+	return func(app *App) {
+		app.tenantClaim = strings.TrimSpace(claim)
 	}
 }
 

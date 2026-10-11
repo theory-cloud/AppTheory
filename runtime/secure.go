@@ -315,6 +315,7 @@ type SecureOptions struct {
 	Limits                 Limits
 	CORS                   CORSConfig
 	PrincipalResolver      SecurePrincipalResolver
+	TenantClaim            string
 	Observability          ObservabilityHooks
 	PolicyHook             PolicyHook
 	WebSocketSupport       bool
@@ -359,6 +360,7 @@ func NewSecure(opts SecureOptions) *SecureApp {
 		policy:                 opts.PolicyHook,
 		secure:                 true,
 		secureResolver:         opts.PrincipalResolver,
+		tenantClaim:            strings.TrimSpace(opts.TenantClaim),
 		webSocketEnabled:       opts.WebSocketSupport,
 		webSocketClientFactory: factory,
 	}
@@ -527,6 +529,7 @@ func (a *App) secureGate(route route, requestCtx *Context) error {
 	if principal.Claims != nil {
 		requestCtx.AuthPrincipal.Claims = cloneSecureClaims(principal.Claims)
 	}
+	a.bindVerifiedTenant(requestCtx, principal.Claims)
 	if !securePrincipalSatisfiesScopes(principal, posture) {
 		return &AppError{Code: errorCodeForbidden, Message: errorMessageForbidden}
 	}

@@ -584,7 +584,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1059 exported top-level symbols</summary>
+<summary>1060 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins, APIGatewayV2Request
@@ -761,7 +761,7 @@ WithLogger, WithLoggingLevelHook, WithObservability, WithOriginValidator, WithPo
 WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter, WithRegistryClientTTL, WithResourceSubscriptionHooks
 WithRevocationEndpoint, WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata, WithSessionReconstructionClock
 WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamIDGenerator, WithStreamStore, WithTaskRuntime
-WithTier, WithToolContextHook, WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
+WithTenantClaim, WithTier, WithToolContextHook, WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured,
 AccountAssertionState, AccountAssertionUnavailable, AccountAssertionVerified, ArtifactEntry,
 ArtifactVerificationArchiveInvalid, ArtifactVerificationDigestMismatch, ArtifactVerificationInvalidRequest,

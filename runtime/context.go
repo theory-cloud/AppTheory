@@ -23,6 +23,15 @@ type Context struct {
 	RemainingMS     int
 	MiddlewareTrace []string
 
+	// TenantBound reports that TenantID was derived from the verified
+	// principal's configured tenant claim rather than a caller-supplied
+	// header or query value.
+	TenantBound bool
+	// TenantBindingRequired reports that the app is configured with a
+	// principal-aware resolver, so surfaces that bind tenant to identity must
+	// require a claim-derived tenant. False in legacy mode.
+	TenantBindingRequired bool
+
 	ws              *WebSocketContext
 	appsync         *AppSyncContext
 	securePrincipal *SecurePrincipal

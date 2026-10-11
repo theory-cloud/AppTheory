@@ -183,7 +183,7 @@ class FakeMicroVMProvider:
             state=STATE_RUNNING,
             provider_state="running",
             terminal=False,
-            endpoint=f"https://microvm-{self._next:06d}.example.test",
+            endpoint=f"https://microvm-{self._next:06d}.microvm.us-east-1.amazonaws.com",
             image_ref=normalized.image_ref,
             image_version=normalized.image_version,
             started_at=self._now,

@@ -28,6 +28,14 @@ export interface RouteOptions {
 }
 /** Hook that resolves the authenticated identity for protected routes. */
 export type AuthHook = (ctx: Context) => string | Promise<string>;
+/** Richer auth state resolved for a request by a principal-aware auth hook. */
+export interface AuthPrincipal {
+    identity: string;
+    scopes?: string[];
+    claims?: Record<string, unknown>;
+}
+/** Principal-aware auth hook resolving the current request principal. */
+export type PrincipalAuthHook = (ctx: Context) => AuthPrincipal | null | Promise<AuthPrincipal | null>;
 /** Decision returned by a P2 policy hook to fail a request closed. */
 export interface PolicyDecision {
     code: string;
@@ -131,6 +139,7 @@ export interface SecureOptions {
     limits?: Limits;
     cors?: CORSConfig;
     principalResolver?: SecurePrincipalResolver;
+    tenantClaim?: string;
     policyHook?: PolicyHook;
     observability?: ObservabilityHooks;
     webSocketSupport?: boolean;
@@ -145,6 +154,8 @@ interface AppOptions {
     limits?: Limits;
     cors?: CORSConfig;
     authHook?: AuthHook;
+    authPrincipalHook?: PrincipalAuthHook;
+    tenantClaim?: string;
     policyHook?: PolicyHook;
     observability?: ObservabilityHooks;
     webSocketClientFactory?: WebSocketClientFactory;
@@ -168,6 +179,8 @@ export declare class App {
     private readonly _limits;
     private readonly _cors;
     private readonly _authHook;
+    private readonly _authPrincipalHook;
+    private readonly _tenantClaim;
     private readonly _policyHook;
     private readonly _observability;
     private readonly _webSocketRoutes;
@@ -224,6 +237,9 @@ export declare class App {
     private _recordAdapterDecodeError;
     private _responseForHTTPErrorWithRequestIdTraceId;
     private _authorizeSecure;
+    private _tenantBindingRequired;
+    private _authenticate;
+    private _bindVerifiedTenant;
     /** Registers a WebSocket route handler by route key. */
     webSocket(routeKey: string, handler: Handler): this;
     /** Registers an SQS queue handler by queue name. */
@@ -320,6 +336,8 @@ export declare function createApp(options?: {
     limits?: Limits;
     cors?: CORSConfig;
     authHook?: AuthHook;
+    authPrincipalHook?: PrincipalAuthHook;
+    tenantClaim?: string;
     policyHook?: PolicyHook;
     observability?: ObservabilityHooks;
     webSocketClientFactory?: WebSocketClientFactory;
