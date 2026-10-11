@@ -8,14 +8,44 @@ import (
 // OriginURL reconstructs the canonical origin URL (scheme + host) from edge-copied original-host
 // headers first, then falls back to generic forwarded headers when needed.
 func OriginURL(headers map[string][]string) string {
-	headers = canonicalizeHeaders(headers)
+	canonical := canonicalizeHeaders(headers)
+	return originURLForHost(canonical, originalHostFromCanonicalizedHeaders(canonical))
+}
 
-	forwardedProto, _ := parseForwardedHeader(firstHeaderValue(headers, "forwarded"))
+// AuthoritativeOriginURL derives the origin for metadata that must name the
+// deployment's own authority rather than a value the caller supplied.
+//
+// The platform-set `host` header is deployment-authoritative. With
+// honorForwardedHost false the origin is derived from `host` alone: the
+// forwarded-host headers (x-apptheory-original-host, x-facetheory-original-host,
+// x-forwarded-host, and the Forwarded `host=` parameter) are ignored, so an
+// injected forwarded host cannot steer the result.
+//
+// With honorForwardedHost true — the caller has an explicit trusted-host
+// allowlist and must still verify the result — the edge forward chain is
+// consulted with the same priority as OriginURL, then falls back to `host`. The
+// caller is responsible for rejecting an origin whose authority is not
+// allowlisted.
+func AuthoritativeOriginURL(headers map[string][]string, honorForwardedHost bool) string {
+	canonical := canonicalizeHeaders(headers)
+	if honorForwardedHost {
+		return originURLForHost(canonical, originalHostFromCanonicalizedHeaders(canonical))
+	}
+	return originURLForHost(canonical, hostHeaderValue(canonical))
+}
 
-	host := originalHostFromCanonicalizedHeaders(headers)
+// hostHeaderValue reads the platform-set `host` header, trimming a comma suffix.
+func hostHeaderValue(headers map[string][]string) string {
+	return strings.TrimSpace(firstCommaToken(firstHeaderValue(headers, "host")))
+}
+
+// originURLForHost combines a host with the protocol the edge recorded, defaulting to https.
+func originURLForHost(headers map[string][]string, host string) string {
 	if host == "" {
 		return ""
 	}
+
+	forwardedProto, _ := parseForwardedHeader(firstHeaderValue(headers, "forwarded"))
 
 	proto := firstHeaderValue(headers, "cloudfront-forwarded-proto")
 	if proto == "" {
