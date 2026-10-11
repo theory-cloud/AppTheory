@@ -85,10 +85,10 @@ noncurrent-version deletion because the governed artifact flow does not authoriz
 `s3:GetObjectVersion`. For literal inputs, each grant targets one exact `ns/<namespaceSlug>/<bundleId>` object ARN with
 no wildcard. `s3:PutObject` inherently covers multipart create, part upload, and completion on that key, but the helper
 does not grant the separate abort or part-listing actions; the lifecycle rule prevents permanent incomplete-upload
-residue. Literal slugs and bundle IDs are synthesis-validated against the application-release patterns. Under the
-accepted Option A policy, unresolved CDK tokens skip literal value validation but remain required and render through a
-CloudFormation-safe join. CloudFormation resolves them at deployment; AppTheory cannot guarantee exactness for
-token-valued inputs. Bucket identity is exposed through `bucketName` and `bucketArn`; the canonical root is
+residue. Both inputs must be literal strings: literal slugs and bundle IDs are synthesis-validated against the
+application-release patterns, and unresolved CDK tokens are rejected at synthesis, because a grant cannot guarantee an
+exact object key for a location that CloudFormation only resolves at deployment. Bucket identity is exposed through
+`bucketName` and `bucketArn`; the canonical root is
 `AppTheoryS3VersionedIngress.KEY_ROOT` and the instance `keyRoot` accessor. See
 [S3 Versioned Artifact Ingress](../features/s3-versioned-ingress.md).
 
@@ -127,10 +127,11 @@ new AppTheoryApp(this, "Runtime", {
 });
 ```
 
-All AppTheory-created function log groups default to `RemovalPolicy.DESTROY`, including the anonymous path whose
-function name CloudFormation generates. This matches the prototype's self-cleaning posture; for named functions it
-also prevents failed deployments from leaving `/aws/lambda/<function-name>` behind and blocking a recreate. Set
-`RemovalPolicy.RETAIN` explicitly when the logs must survive stack deletion. `RemovalPolicy.SNAPSHOT` fails synthesis
+All AppTheory-created function log groups default to `RemovalPolicy.RETAIN`, including the anonymous path whose
+function name CloudFormation generates, so deleting a stack preserves the execution logs. This is a breaking default
+change: an existing deployment that did not set `logRemovalPolicy` flips its function log group to `RETAIN` on its next
+update. Set `RemovalPolicy.DESTROY` explicitly when the logs should be deleted with the stack. `RemovalPolicy.SNAPSHOT`
+fails synthesis
 because `AWS::Logs::LogGroup` does not support snapshot removal policies. The prop supersedes direct
 `CfnLogGroup.applyRemovalPolicy(...)` escape hatches for AppTheory-created function log groups.
 
