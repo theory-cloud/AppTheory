@@ -164,7 +164,10 @@ function runTemplateBundling(template, rootDir) {
   const logPath = path.join(toolDir, "argv.log");
   writeToolStub(toolDir, template.tool, logPath);
 
-  const outputDir = path.join(toolDir, "output");
+  // The output directory sits under the project root so its path inherits the project root's
+  // shell metacharacters. The Go template interpolated only this output path (the project root
+  // was its cwd), so the hostile-path control must reach it here, not just in the project root.
+  const outputDir = path.join(rootDir, "cdk.out");
   let returned;
   withStubbedPath(toolDir, () => {
     returned = tryBundle(outputDir);
