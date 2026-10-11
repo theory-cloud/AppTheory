@@ -72,6 +72,36 @@ class OpenAPITests(unittest.TestCase):
         self.assertEqual(operation["parameters"][0]["required"], True)
         self.assertEqual(operation["parameters"][1]["schema"], {"type": "boolean"})
 
+    def test_large_integral_float_uses_shortest_round_trip(self) -> None:
+        spec = {
+            "title": "API",
+            "version": "v1",
+            "routes": [
+                {
+                    "method": "GET",
+                    "path": "/x",
+                    "operation_id": "one",
+                    "request": {
+                        "fields": [
+                            {
+                                "field": "huge",
+                                "source": "query",
+                                "name": "huge",
+                                "type": "number",
+                                "validation": [{"rule": "min", "value": 1.0000000000000001e21}],
+                            }
+                        ]
+                    },
+                    "response": {},
+                }
+            ],
+        }
+        text = apptheory.generate_openapi_json(spec)
+        # Shortest round-trip digits (matching Go and TypeScript), not the exact
+        # binary integer value of the float.
+        self.assertIn('"minimum":1000000000000000100000', text)
+        self.assertNotIn("1000000000000000131072", text)
+
     def test_validation_errors_fail_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "title is required"):
             apptheory.generate_openapi({"title": "", "version": "v1", "routes": []})

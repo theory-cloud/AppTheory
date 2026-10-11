@@ -410,7 +410,7 @@ def _number_value(value: Any) -> int | float | None:
     if isinstance(value, int | float):
         if isinstance(value, float) and not math.isfinite(value):
             return None
-        return int(value) if isinstance(value, float) and value.is_integer() else value
+        return value
     if isinstance(value, str):
         trimmed = value.strip()
         if _JSON_NUMBER_PATTERN.fullmatch(trimmed) is None:
@@ -421,7 +421,7 @@ def _number_value(value: Any) -> int | float | None:
             return None
         if not math.isfinite(parsed):
             return None
-        return int(parsed) if parsed.is_integer() else parsed
+        return parsed
     return None
 
 
@@ -486,8 +486,6 @@ def _canonical_number_string(value: int | float) -> str:
         raise ValueError("apptheory: openapi number must be finite")
     if value == 0:
         return "0"
-    if value.is_integer():
-        return str(int(value))
     text = repr(value)
     if "e" in text or "E" in text:
         text = format(Decimal(text), "f")
