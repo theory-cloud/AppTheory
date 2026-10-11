@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -1008,5 +1009,132 @@ func TestValidateBoundRequest_InvalidRuleConfigFailsClosed(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("error %d: expected %#v, got %#v", i, want[i], got[i])
 		}
+	}
+}
+
+func TestValidateBoundRequest_NonFiniteActualsFailClosed(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Lower float64 `json:"lower" validate:"min=0"`
+		Upper float64 `json:"upper" validate:"max=0"`
+	}
+
+	for _, tc := range []struct {
+		name  string
+		value float64
+	}{
+		{name: "nan", value: math.NaN()},
+		{name: "positive_infinity", value: math.Inf(1)},
+		{name: "negative_infinity", value: math.Inf(-1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validateBoundRequest(requestModel{Lower: tc.value, Upper: tc.value})
+			if err == nil {
+				t.Fatal("expected a non-finite actual to fail both min and max")
+			}
+			appErr, ok := err.(*AppTheoryError)
+			if !ok {
+				t.Fatalf("expected AppTheoryError, got %T", err)
+			}
+			got, ok := appErr.Details["errors"].([]ValidationFieldError)
+			if !ok {
+				t.Fatalf("expected validation field errors, got %#v", appErr.Details["errors"])
+			}
+			want := []ValidationFieldError{
+				{Field: "lower", Rule: ValidationRuleMin, Message: "lower must be >= 0"},
+				{Field: "upper", Rule: ValidationRuleMax, Message: "upper must be <= 0"},
+			}
+			if len(got) != len(want) {
+				t.Fatalf("expected %d errors, got %#v", len(want), got)
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("error %d: expected %#v, got %#v", i, want[i], got[i])
+				}
+			}
+		})
+	}
+}
+
+func TestValidateBoundRequest_NonFiniteRuleConfigFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Lower  float64 `json:"lower" validate:"min=NaN"`
+		Upper  float64 `json:"upper" validate:"max=+Inf"`
+		NegInf float64 `json:"neg_inf" validate:"min=-Inf"`
+	}
+
+	err := validateBoundRequest(requestModel{Lower: 1, Upper: 1, NegInf: 1})
+	if err == nil {
+		t.Fatal("expected a non-finite rule config to fail closed")
+	}
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	got, ok := appErr.Details["errors"].([]ValidationFieldError)
+	if !ok {
+		t.Fatalf("expected validation field errors, got %#v", appErr.Details["errors"])
+	}
+	want := []ValidationFieldError{
+		{Field: "lower", Rule: ValidationRuleMin, Message: "lower has invalid validation rule min"},
+		{Field: "upper", Rule: ValidationRuleMax, Message: "upper has invalid validation rule max"},
+		{Field: "neg_inf", Rule: ValidationRuleMin, Message: "neg_inf has invalid validation rule min"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d errors, got %#v", len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("error %d: expected %#v, got %#v", i, want[i], got[i])
+		}
+	}
+}
+
+func TestValidateBoundRequest_NumericBoundariesAndNonNumericNA(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Value float64 `json:"value" validate:"min=1,max=3"`
+		Text  string  `json:"text" validate:"min=1,max=3"`
+	}
+
+	for _, tc := range []struct {
+		name  string
+		value float64
+		want  []ValidationFieldError
+	}{
+		{name: "below_min", value: 0.5, want: []ValidationFieldError{{Field: "value", Rule: ValidationRuleMin, Message: "value must be >= 1"}}},
+		{name: "at_min", value: 1},
+		{name: "in_range", value: 2},
+		{name: "at_max", value: 3},
+		{name: "above_max", value: 3.5, want: []ValidationFieldError{{Field: "value", Rule: ValidationRuleMax, Message: "value must be <= 3"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validateBoundRequest(requestModel{Value: tc.value, Text: "not a number"})
+			if len(tc.want) == 0 {
+				if err != nil {
+					t.Fatalf("expected finite value %v to pass, got %v", tc.value, err)
+				}
+				return
+			}
+			got, ok := err.(*AppTheoryError)
+			if !ok {
+				t.Fatalf("expected AppTheoryError, got %T", err)
+			}
+			gotErrors, ok := got.Details["errors"].([]ValidationFieldError)
+			if !ok {
+				t.Fatalf("expected validation field errors, got %#v", got.Details["errors"])
+			}
+			if len(gotErrors) != len(tc.want) || gotErrors[0] != tc.want[0] {
+				t.Fatalf("expected %#v, got %#v", tc.want, gotErrors)
+			}
+		})
 	}
 }
