@@ -1040,6 +1040,147 @@ test("microvm registry reconstruction hooks fail closed", async () => {
   );
 });
 
+// Mirrors the package's length-prefixed record framing so the test can seed a store the way an
+// earlier release left it. The framing is asserted through the migrated canonical key below.
+const preM1PartitionKey = (tenant, namespace) =>
+  `TENANT#${tenant}#NAMESPACE#${namespace}`;
+const recordKeyString = (pk, sk) =>
+  `${new TextEncoder().encode(pk).length}:${pk}${new TextEncoder().encode(sk).length}:${sk}`;
+
+test("microvm session registry dual-reads the pre-M1 partition key", async () => {
+  const record = validRecord({ metadata: { safe: "ok" } });
+  const canonical = microVMSessionRecordToRegistryRecord(record);
+
+  // (c) New writes never produce the legacy key.
+  assert.equal(
+    canonical.pk,
+    microVMSessionRegistryPartitionKey(record.tenant_id, record.namespace),
+  );
+  assert.notEqual(
+    canonical.pk,
+    preM1PartitionKey(record.tenant_id, record.namespace),
+  );
+
+  // (e) The strict validator still rejects a legacy-format record; only the read path accepts it.
+  assert.throws(
+    () =>
+      validateMicroVMSessionRegistryRecord({
+        ...canonical,
+        pk: preM1PartitionKey(record.tenant_id, record.namespace),
+      }),
+    (err) => err?.code === MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+  );
+
+  // Seed the store as an earlier release left it: the item lives under the pre-M1 key.
+  const registry = createMemoryMicroVMSessionRegistry();
+  const legacyRecord = {
+    ...canonical,
+    pk: preM1PartitionKey(record.tenant_id, record.namespace),
+  };
+  registry.records.set(
+    recordKeyString(legacyRecord.pk, legacyRecord.sk),
+    legacyRecord,
+  );
+
+  // (a) A legacy-format item resolves via the fallback.
+  const loaded = await registry.get(microVMSessionKey(record));
+  assert.equal(loaded.session_id, "session-1");
+  assert.equal(loaded.metadata.safe, "ok");
+
+  // (b) The fallback read re-wrote the item under the new key (lazy re-write).
+  assert.equal(
+    registry.records.has(recordKeyString(legacyRecord.pk, legacyRecord.sk)),
+    false,
+  );
+  assert.equal(
+    registry.records.has(recordKeyString(canonical.pk, canonical.sk)),
+    true,
+  );
+  const reloaded = await registry.get(microVMSessionKey(record));
+  assert.equal(reloaded.session_id, "session-1");
+
+  // (d) The canonical encoding still isolates the THE-3413 collision witness.
+  assert.notEqual(
+    microVMSessionRegistryPartitionKey("a", "b#NAMESPACE#c"),
+    microVMSessionRegistryPartitionKey("a#NAMESPACE#b", "c"),
+  );
+
+  // A colliding pre-M1 key that addresses another identity fails closed instead of leaking it.
+  const colliding = microVMSessionRecordToRegistryRecord(
+    validRecord({
+      tenant_id: "a",
+      namespace: "b#NAMESPACE#c",
+      session_id: "session-collide",
+    }),
+  );
+  const collidingLegacy = {
+    ...colliding,
+    pk: preM1PartitionKey("a", "b#NAMESPACE#c"),
+  };
+  const collidingStore = createMemoryMicroVMSessionRegistry();
+  collidingStore.records.set(
+    recordKeyString(collidingLegacy.pk, collidingLegacy.sk),
+    collidingLegacy,
+  );
+  await assert.rejects(
+    () =>
+      collidingStore.get({
+        tenant_id: "a#NAMESPACE#b",
+        namespace: "c",
+        session_id: "session-collide",
+      }),
+    (err) => err?.code === MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+  );
+});
+
+test("microvm TableTheory registry dual-reads and re-keys a legacy item", async () => {
+  const saved = [];
+  let storedItem;
+  const db = {
+    async save(modelName, item) {
+      storedItem = item;
+      saved.push({ modelName, item });
+    },
+    async get(modelName, key) {
+      if (!storedItem || key.pk !== storedItem.pk) {
+        throw new Error("apptheory: microvm session registry record not found");
+      }
+      return storedItem;
+    },
+    async delete() {},
+    async list() {
+      return [];
+    },
+  };
+  const registry = createTableTheoryMicroVMSessionRegistry(db, {
+    auto_register: false,
+  });
+
+  const written = await registry.put(validRecord({ metadata: { safe: "ok" } }));
+  assert.equal(
+    saved[0].item.pk,
+    microVMSessionRegistryPartitionKey("tenant-1", "namespace-1"),
+  );
+
+  // Simulate the item an earlier release persisted under the pre-M1 key.
+  const legacyPK = preM1PartitionKey("tenant-1", "namespace-1");
+  storedItem = {
+    ...saved[0].item,
+    pk: legacyPK,
+  };
+
+  // (a) The legacy item resolves via the fallback.
+  const loaded = await registry.get(microVMSessionKey(written));
+  assert.equal(loaded.session_id, "session-1");
+
+  // (b) A successful fallback read re-persists the item under the new key.
+  assert.equal(
+    saved.at(-1).item.pk,
+    microVMSessionRegistryPartitionKey("tenant-1", "namespace-1"),
+  );
+  assert.notEqual(saved.at(-1).item.pk, legacyPK);
+});
+
 test("microvm TableTheory registry adapter uses constrained storage model", async () => {
   const registered = [];
   const saved = [];

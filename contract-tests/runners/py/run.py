@@ -1262,6 +1262,20 @@ def exercise_microvm_session_registry(runtime: Any) -> None:
         or round_trip.last_action != record.last_action
     ):
         raise RuntimeError("apptheory: microvm session registry round trip incomplete")
+    # Dual-read migration surface: a canonical write must never carry the pre-M1 key, and the
+    # collision witness the M1 fix closed must stay closed. The fallback + lazy re-write path needs a
+    # raw pre-M1 item, which the contract runners cannot seed through the public registry surface, so
+    # it is pinned by the per-runtime unit tests.
+    if registry_record.pk == f"TENANT#{record.tenant_id}#NAMESPACE#{record.namespace}":
+        raise RuntimeError(
+            "apptheory: microvm session registry canonical write reused the pre-M1 partition key"
+        )
+    if runtime.microvm_session_registry_partition_key(
+        "a", "b#NAMESPACE#c"
+    ) == runtime.microvm_session_registry_partition_key("a#NAMESPACE#b", "c"):
+        raise RuntimeError(
+            "apptheory: microvm session registry partition key collision witness regressed"
+        )
     store = runtime.create_memory_microvm_session_registry()
     stored = store.put(record)
     if stored.last_action != "start":

@@ -57,9 +57,9 @@ def microvm_session_registry_partition_key(tenant_id: str, namespace: str) -> st
     ``#NAMESPACE#`` could straddle the boundary.
 
     MIGRATION: items persisted by an earlier release used the un-prefixed
-    ``TENANT#<tenant>#NAMESPACE#<namespace>`` form. Re-key existing items with a read-modify-write
-    pass that reads each item, recomputes pk from its tenant_id and namespace attributes, and
-    writes it back under the new length-framed key.
+    ``TENANT#<tenant>#NAMESPACE#<namespace>`` form. Registry reads fall back to that key and
+    re-persist a resolved item under this key, so items migrate as they are touched; a
+    read-modify-write re-key pass is optional cleanup for items that are never read again.
     """
     tenant = str(tenant_id or "").strip()
     ns = str(namespace or "").strip()

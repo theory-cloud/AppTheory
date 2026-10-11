@@ -820,6 +820,95 @@ class MicroVMLifecycleTests(unittest.TestCase):
         self.assertEqual(app.COMMAND_START, status.last_action)
         self.assertEqual(2, status.registry_version)
 
+    def test_microvm_session_registry_dual_reads_pre_m1_partition_key(self) -> None:
+        record = self._valid_record(
+            state=app.STATE_STARTING,
+            desired_state=app.STATE_STARTED,
+            generation=7,
+            last_action=app.COMMAND_START,
+        )
+        canonical = app.microvm_session_record_to_registry_record(record)
+
+        # (c) New writes never produce the pre-M1 key.
+        self.assertEqual(
+            app.microvm_session_registry_partition_key(record.tenant_id, record.namespace),
+            canonical.pk,
+        )
+        self.assertNotEqual("TENANT#tenant-1#NAMESPACE#namespace-1", canonical.pk)
+
+        # (e) The strict validator rejects a legacy-format record; only the read path accepts it.
+        legacy = app.microvm_session_record_to_registry_record(record)
+        legacy.pk = "TENANT#tenant-1#NAMESPACE#namespace-1"
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_session_registry_record(legacy)
+
+        registry = app.create_memory_microvm_session_registry()
+        # Seed the store as an earlier release left it: the item lives under the pre-M1 key.
+        registry._records[(legacy.pk, legacy.sk)] = legacy
+
+        # (a) A legacy-format item resolves via the fallback.
+        loaded = registry.get(record)
+        self.assertEqual(record.session_id, loaded.session_id)
+        self.assertEqual(record.provider_id, loaded.provider_id)
+
+        # (b) The fallback read re-wrote the item under the new key (lazy re-write).
+        self.assertNotIn((legacy.pk, legacy.sk), registry._records)
+        self.assertIn((canonical.pk, canonical.sk), registry._records)
+        self.assertEqual(record.session_id, registry.get(record).session_id)
+
+        # (d) The canonical encoding still isolates the THE-3413 collision witness.
+        self.assertNotEqual(
+            app.microvm_session_registry_partition_key("a", "b#NAMESPACE#c"),
+            app.microvm_session_registry_partition_key("a#NAMESPACE#b", "c"),
+        )
+        colliding = app.microvm_session_record_to_registry_record(
+            self._valid_record(tenant_id="a", namespace="b#NAMESPACE#c", session_id="session-collide")
+        )
+        colliding.pk = "TENANT#a#NAMESPACE#b#NAMESPACE#c"
+        colliding_store = app.create_memory_microvm_session_registry()
+        colliding_store._records[(colliding.pk, colliding.sk)] = colliding
+        # A colliding pre-M1 key that addresses another identity fails closed instead of leaking it.
+        with self.assertRaises(app.MicroVMSafeError):
+            colliding_store.get(("a#NAMESPACE#b", "c", "session-collide"))
+
+    def test_microvm_tabletheory_registry_dual_reads_and_rekeys_legacy_item(self) -> None:
+        class _Table:
+            def __init__(self) -> None:
+                self.items: dict[str, object] = {}
+                self.put_calls: list[object] = []
+
+            def put(self, record: object) -> None:
+                self.put_calls.append(record)
+                self.items[str(getattr(record, "pk"))] = record
+
+            def get(self, pk: str, sk: str) -> object | None:
+                item = self.items.get(pk)
+                if item is None or getattr(item, "sk") != sk:
+                    return None
+                return item
+
+            def delete(self, pk: str, sk: str) -> None:
+                item = self.items.get(pk)
+                if item is not None and getattr(item, "sk") == sk:
+                    self.items.pop(pk, None)
+
+        record = self._valid_record(generation=7, last_action=app.COMMAND_START)
+        table = _Table()
+        registry = app.create_tabletheory_microvm_session_registry(table)
+        registry.put(record)
+        canonical_pk = app.microvm_session_registry_partition_key(record.tenant_id, record.namespace)
+        self.assertEqual(canonical_pk, getattr(table.put_calls[0], "pk"))
+
+        # Simulate the item an earlier release persisted under the pre-M1 key.
+        legacy_item = table.items.pop(canonical_pk)
+        setattr(legacy_item, "pk", "TENANT#tenant-1#NAMESPACE#namespace-1")
+        table.items[getattr(legacy_item, "pk")] = legacy_item
+
+        # (a) The legacy item resolves via the fallback, and (b) the read re-keys it.
+        loaded = registry.get(record)
+        self.assertEqual(record.session_id, loaded.session_id)
+        self.assertEqual(canonical_pk, getattr(table.put_calls[-1], "pk"))
+
     def test_microvm_registry_reconstruction_hooks_fail_closed(self) -> None:
         request = app.MicroVMSessionReconstructionRequest(
             request_id="req-reconstruct",

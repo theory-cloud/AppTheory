@@ -31,12 +31,63 @@ import {
   normalizeMicroVMSessionKey,
   normalizeMicroVMSessionRecord,
   normalizeMicroVMSessionReconstructionRequest,
+  normalizeMicroVMSessionRegistryRecord,
   registryRecordFromTableItem,
   registryRecordToTableItem,
   validateMicroVMSessionKey,
   validateMicroVMSessionRecord,
 } from "./session.js";
 import { cloneMicroVMDate, validDate } from "./time.js";
+
+// legacySessionRegistryPartitionKey reconstructs the pre-M1 partition key
+// "TENANT#<tenant>#NAMESPACE#<namespace>" that an earlier release persisted; both identities are
+// trimmed and an empty identity yields "", matching the pre-M1 implementation. It exists only so a
+// read can fall back to an item written by an earlier release — the write path never produces it.
+function legacySessionRegistryPartitionKey(
+  tenantID: string,
+  namespace: string,
+): string {
+  const tenant = String(tenantID ?? "").trim();
+  const ns = String(namespace ?? "").trim();
+  return tenant && ns ? `TENANT#${tenant}#NAMESPACE#${ns}` : "";
+}
+
+// legacyRegistryRecordKey frames a pk/sk pair exactly as microVMSessionRegistryRecordKey does, so a
+// legacy-key lookup addresses the same entry the write path would have stored.
+function legacyRegistryRecordKey(pk: string, sk: string): string {
+  return microVMSessionRegistryRecordKey({
+    pk,
+    sk,
+  } as MicroVMSessionRegistryRecord);
+}
+
+// sessionFromRegistryRecordForRead converts a durable item for a read path. When allowLegacyKey is
+// set it accepts the pre-M1 partition key carried by an item written by an earlier release and
+// validates the item under the canonical key; an item whose key matches neither derivation is still
+// rejected.
+function sessionFromRegistryRecordForRead(
+  record: MicroVMSessionRegistryRecord,
+  allowLegacyKey: boolean,
+): MicroVMSessionRecord {
+  const normalized = normalizeMicroVMSessionRegistryRecord(record);
+  if (
+    allowLegacyKey &&
+    normalized.pk ===
+      legacySessionRegistryPartitionKey(
+        normalized.tenant_id,
+        normalized.namespace,
+      )
+  ) {
+    return microVMSessionFromRegistryRecord({
+      ...normalized,
+      pk: microVMSessionRegistryPartitionKey(
+        normalized.tenant_id,
+        normalized.namespace,
+      ),
+    });
+  }
+  return microVMSessionFromRegistryRecord(normalized);
+}
 
 export class MemoryMicroVMSessionRegistry implements MicroVMSessionRegistry {
   private readonly records = new Map<string, MicroVMSessionRegistryRecord>();
@@ -53,10 +104,35 @@ export class MemoryMicroVMSessionRegistry implements MicroVMSessionRegistry {
   async get(key: MicroVMSessionKey): Promise<MicroVMSessionRecord> {
     const normalized = normalizeMicroVMSessionKey(key);
     validateMicroVMSessionKey(normalized);
-    const record = this.records.get(
+    let record = this.records.get(
       microVMSessionRegistryRecordKeyFromKey(normalized),
     );
     if (!record) {
+      record = this.legacyRecord(normalized);
+      if (record) {
+        // The in-memory store has no TTL, so move the legacy entry rather than copy it, which keeps
+        // a later list from returning the same session twice.
+        const migrated = microVMSessionRecordToRegistryRecord(
+          sessionFromRegistryRecordForRead(
+            cloneMicroVMSessionRegistryRecord(record),
+            true,
+          ),
+        );
+        this.records.set(
+          microVMSessionRegistryRecordKey(migrated),
+          cloneMicroVMSessionRegistryRecord(migrated),
+        );
+        this.records.delete(
+          legacyRegistryRecordKey(
+            legacySessionRegistryPartitionKey(
+              normalized.tenant_id,
+              normalized.namespace,
+            ),
+            microVMSessionRegistrySortKey(normalized.session_id),
+          ),
+        );
+        return microVMSessionFromRegistryRecord(migrated);
+      }
       throw safeError(
         MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
         "apptheory: microvm session registry record not found",
@@ -68,10 +144,70 @@ export class MemoryMicroVMSessionRegistry implements MicroVMSessionRegistry {
     );
   }
 
+  // legacyRecord looks up the pre-M1 entry for a key, requiring it to be exactly the requested
+  // identity so a colliding pre-M1 partition key cannot return another tenant's item.
+  private legacyRecord(
+    normalized: MicroVMSessionKey,
+  ): MicroVMSessionRegistryRecord | undefined {
+    const legacyPK = legacySessionRegistryPartitionKey(
+      normalized.tenant_id,
+      normalized.namespace,
+    );
+    if (
+      !legacyPK ||
+      legacyPK ===
+        microVMSessionRegistryPartitionKey(
+          normalized.tenant_id,
+          normalized.namespace,
+        )
+    ) {
+      return undefined;
+    }
+    const record = this.records.get(
+      legacyRegistryRecordKey(
+        legacyPK,
+        microVMSessionRegistrySortKey(normalized.session_id),
+      ),
+    );
+    if (
+      record &&
+      (record.tenant_id !== normalized.tenant_id ||
+        record.namespace !== normalized.namespace ||
+        record.session_id !== normalized.session_id)
+    ) {
+      throw safeError(
+        MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+        "apptheory: microvm session registry tenant/session key mismatch",
+        "",
+      );
+    }
+    return record;
+  }
+
   async delete(key: MicroVMSessionKey): Promise<void> {
     const normalized = normalizeMicroVMSessionKey(key);
     validateMicroVMSessionKey(normalized);
     this.records.delete(microVMSessionRegistryRecordKeyFromKey(normalized));
+    // Also drop the pre-M1 entry so a deleted session cannot be resurrected by the dual-read fallback.
+    const legacyPK = legacySessionRegistryPartitionKey(
+      normalized.tenant_id,
+      normalized.namespace,
+    );
+    if (
+      legacyPK &&
+      legacyPK !==
+        microVMSessionRegistryPartitionKey(
+          normalized.tenant_id,
+          normalized.namespace,
+        )
+    ) {
+      this.records.delete(
+        legacyRegistryRecordKey(
+          legacyPK,
+          microVMSessionRegistrySortKey(normalized.session_id),
+        ),
+      );
+    }
   }
 
   async list(input: MicroVMSessionListInput): Promise<MicroVMSessionRecord[]> {
@@ -84,16 +220,38 @@ export class MemoryMicroVMSessionRegistry implements MicroVMSessionRegistry {
         String(input?.request_id ?? "").trim(),
       );
     }
+    const canonicalPK = microVMSessionRegistryPartitionKey(tenant, namespace);
     const out: MicroVMSessionRecord[] = [];
+    const seen = new Set<string>();
     for (const record of this.records.values()) {
-      if (record.tenant_id !== tenant || record.namespace !== namespace) {
+      if (
+        record.tenant_id !== tenant ||
+        record.namespace !== namespace ||
+        record.pk !== canonicalPK
+      ) {
         continue;
       }
-      out.push(
-        microVMSessionFromRegistryRecord(
-          cloneMicroVMSessionRegistryRecord(record),
-        ),
+      const session = microVMSessionFromRegistryRecord(
+        cloneMicroVMSessionRegistryRecord(record),
       );
+      seen.add(session.session_id);
+      out.push(session);
+    }
+    for (const record of this.records.values()) {
+      if (
+        record.tenant_id !== tenant ||
+        record.namespace !== namespace ||
+        record.pk === canonicalPK
+      ) {
+        continue;
+      }
+      if (seen.has(record.session_id)) continue;
+      const session = sessionFromRegistryRecordForRead(
+        cloneMicroVMSessionRegistryRecord(record),
+        true,
+      );
+      seen.add(session.session_id);
+      out.push(session);
     }
     out.sort((a, b) => a.session_id.localeCompare(b.session_id));
     return out;
@@ -281,17 +439,74 @@ export class TableTheoryMicroVMSessionRegistry implements MicroVMSessionRegistry
   async get(key: MicroVMSessionKey): Promise<MicroVMSessionRecord> {
     const normalized = normalizeMicroVMSessionKey(key);
     validateMicroVMSessionKey(normalized);
+    const canonicalPK = microVMSessionRegistryPartitionKey(
+      normalized.tenant_id,
+      normalized.namespace,
+    );
+    const sk = microVMSessionRegistrySortKey(normalized.session_id);
     try {
-      const item = await this.db.get(this.modelName, {
-        pk: microVMSessionRegistryPartitionKey(
-          normalized.tenant_id,
-          normalized.namespace,
-        ),
-        sk: microVMSessionRegistrySortKey(normalized.session_id),
-      });
-      return microVMSessionFromRegistryRecord(
-        registryRecordFromTableItem(item),
+      let item: Record<string, unknown> | undefined;
+      try {
+        item = await this.db.get(this.modelName, { pk: canonicalPK, sk });
+      } catch {
+        // The client does not distinguish a miss from an error, so treat a failed canonical read as a
+        // candidate miss and let the legacy fallback (or the error below) decide.
+        item = undefined;
+      }
+      if (item) {
+        return microVMSessionFromRegistryRecord(
+          registryRecordFromTableItem(item),
+        );
+      }
+      const legacyPK = legacySessionRegistryPartitionKey(
+        normalized.tenant_id,
+        normalized.namespace,
       );
+      if (!legacyPK || legacyPK === canonicalPK) {
+        throw safeError(
+          MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+          "apptheory: microvm session registry record not found",
+          "",
+        );
+      }
+      const legacyItem = await this.db.get(this.modelName, {
+        pk: legacyPK,
+        sk,
+      });
+      if (!legacyItem) {
+        throw safeError(
+          MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+          "apptheory: microvm session registry record not found",
+          "",
+        );
+      }
+      const legacyRecord = registryRecordFromTableItem(legacyItem);
+      // A colliding pre-M1 key can address more than one identity; require the item to be exactly
+      // the one requested before accepting it.
+      if (
+        legacyRecord.tenant_id !== normalized.tenant_id ||
+        legacyRecord.namespace !== normalized.namespace ||
+        legacyRecord.session_id !== normalized.session_id
+      ) {
+        throw safeError(
+          MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+          "apptheory: microvm session registry tenant/session key mismatch",
+          "",
+        );
+      }
+      const session = sessionFromRegistryRecordForRead(legacyRecord, true);
+      try {
+        // Lazy re-write: migrate the item on touch. Best-effort, because the read already succeeded.
+        await this.db.save(
+          this.modelName,
+          registryRecordToTableItem(
+            microVMSessionRecordToRegistryRecord(session),
+          ),
+        );
+      } catch {
+        // Ignore: the legacy item keeps resolving until its TTL retires it.
+      }
+      return session;
     } catch (err) {
       throw asMicroVMSessionRegistryError(err, "");
     }
@@ -308,6 +523,24 @@ export class TableTheoryMicroVMSessionRegistry implements MicroVMSessionRegistry
         ),
         sk: microVMSessionRegistrySortKey(normalized.session_id),
       });
+      // Also drop the pre-M1 item so a deleted session cannot be resurrected by the dual-read fallback.
+      const legacyPK = legacySessionRegistryPartitionKey(
+        normalized.tenant_id,
+        normalized.namespace,
+      );
+      if (
+        legacyPK &&
+        legacyPK !==
+          microVMSessionRegistryPartitionKey(
+            normalized.tenant_id,
+            normalized.namespace,
+          )
+      ) {
+        await this.db.delete(this.modelName, {
+          pk: legacyPK,
+          sk: microVMSessionRegistrySortKey(normalized.session_id),
+        });
+      }
     } catch (err) {
       throw asMicroVMSessionRegistryError(err, "");
     }
@@ -330,15 +563,40 @@ export class TableTheoryMicroVMSessionRegistry implements MicroVMSessionRegistry
         String(input?.request_id ?? "").trim(),
       );
     }
+    const canonicalPK = microVMSessionRegistryPartitionKey(tenant, namespace);
     try {
-      const items = await this.db.list(this.modelName, {
-        pk: microVMSessionRegistryPartitionKey(tenant, namespace),
-      });
-      return items
-        .map((item) =>
-          microVMSessionFromRegistryRecord(registryRecordFromTableItem(item)),
-        )
-        .sort((a, b) => a.session_id.localeCompare(b.session_id));
+      const items = await this.db.list(this.modelName, { pk: canonicalPK });
+      const out: MicroVMSessionRecord[] = [];
+      const seen = new Set<string>();
+      for (const item of items) {
+        const session = microVMSessionFromRegistryRecord(
+          registryRecordFromTableItem(item),
+        );
+        seen.add(session.session_id);
+        out.push(session);
+      }
+      // Union in the pre-M1 partition so un-migrated items stay listable; the canonical item wins.
+      const legacyPK = legacySessionRegistryPartitionKey(tenant, namespace);
+      if (legacyPK && legacyPK !== canonicalPK) {
+        const legacyItems = await this.db.list(this.modelName, {
+          pk: legacyPK,
+        });
+        for (const item of legacyItems) {
+          const record = registryRecordFromTableItem(item);
+          if (
+            record.tenant_id !== tenant ||
+            record.namespace !== namespace ||
+            seen.has(record.session_id)
+          ) {
+            continue;
+          }
+          const session = sessionFromRegistryRecordForRead(record, true);
+          seen.add(session.session_id);
+          out.push(session);
+        }
+      }
+      out.sort((a, b) => a.session_id.localeCompare(b.session_id));
+      return out;
     } catch (err) {
       if (err instanceof MicroVMSafeError) throw err;
       throw asMicroVMSessionRegistryError(err, String(input?.request_id ?? ""));
