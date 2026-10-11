@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import binascii
 import contextlib
 import datetime as dt
 import inspect
@@ -893,11 +892,14 @@ class DynamoMcpTaskStore:
         session_id = str(_field(lookup, "session_id") or _field(lookup, "sessionId") or "").strip()
         task_id = str(_field(lookup, "task_id") or _field(lookup, "taskId") or "").strip()
         try:
-            return _item_to_task_record(self._table.get(session_id, task_id))
+            item = self._table.get(session_id, task_id)
         except Exception as exc:
             if _is_not_found_error(exc):
                 raise McpTaskNotFoundError() from exc
             raise
+        if _task_item_expired(item, self._clock.now()):
+            raise McpTaskNotFoundError()
+        return _item_to_task_record(item)
 
     def update(self, task: McpTaskRecord | dict[str, Any]) -> McpTaskRecord:
         record = _clone_task_record(task)
@@ -913,14 +915,23 @@ class DynamoMcpTaskStore:
         if not session_id:
             return McpTaskListResult()
         try:
-            page = self._table.query(session_id, limit=_task_list_limit(_int_field(request, "limit")))
+            page = self._table.query(
+                session_id,
+                limit=_task_list_limit(_int_field(request, "limit")),
+                cursor=str(_field(request, "cursor") or ""),
+            )
+            now = self._clock.now()
             records = sorted(
-                (_item_to_task_record(item) for item in getattr(page, "items", [])),
+                (
+                    _item_to_task_record(item)
+                    for item in getattr(page, "items", [])
+                    if not _task_item_expired(item, now)
+                ),
                 key=lambda r: (r.task.created_at, r.task.task_id),
             )
             return McpTaskListResult(
                 tasks=[_clone_task(record.task) for record in records],
-                next_cursor=str(getattr(page, "cursor", "") or ""),
+                next_cursor=str(getattr(page, "next_cursor", None) or getattr(page, "cursor", "") or ""),
             )
         except Exception as exc:
             if _is_not_found_error(exc):
@@ -938,10 +949,27 @@ class DynamoMcpTaskStore:
         return self.update(record)
 
     def delete_session(self, session_id: str) -> None:
-        tasks = self.list({"session_id": session_id, "limit": MAX_TASK_LIST_LIMIT}).tasks
-        for task in tasks:
+        sid = str(session_id or "").strip()
+        if not sid:
+            return
+        # Collect every page before deleting: the cursor is a position, so
+        # deleting as we page would shift the remaining items and leak tasks.
+        # Expired items are deleted too, so this bypasses `list`'s filter.
+        task_ids: list[str] = []
+        cursor = ""
+        while True:
+            page = self._table.query(sid, limit=MAX_TASK_LIST_LIMIT, cursor=cursor)
+            task_ids.extend(
+                str(_field(item, "task_id") or _field(item, "taskId") or "")
+                for item in getattr(page, "items", []) or []
+            )
+            next_cursor = str(getattr(page, "next_cursor", None) or getattr(page, "cursor", "") or "")
+            if not next_cursor:
+                break
+            cursor = next_cursor
+        for task_id in task_ids:
             try:
-                self._table.delete(str(session_id or "").strip(), _field(task, "task_id") or _field(task, "taskId"))
+                self._table.delete(sid, task_id)
             except Exception as exc:
                 if not _is_not_found_error(exc):
                     raise
@@ -1307,7 +1335,7 @@ class McpServer:
         elif request.method == "tools/list":
             response = _new_result_response(request.id, {"tools": self.tool_registry.list()})
         elif request.method == "tools/call":
-            response = self._handle_tools_call(request, session_id)
+            response = self._handle_tools_call(request, session_id, protocol_version)
         elif request.method == "resources/list":
             response = _new_result_response(request.id, {"resources": self.resource_registry.list()})
         elif request.method == "resources/read":
@@ -1406,14 +1434,16 @@ class McpServer:
             capabilities["extensions"] = _json_clone(self.extension_capabilities)
         return capabilities
 
-    def _handle_tools_call(self, request: _ParsedRPCRequest, session_id: str) -> dict[str, Any]:
+    def _handle_tools_call(self, request: _ParsedRPCRequest, session_id: str, protocol_version: str) -> dict[str, Any]:
         params = _params_record(request.params)
         name = str(params.get("name") or "").strip()
         if not name:
             return _new_error_response(request.id, MCP_CODE_INVALID_PARAMS, "Invalid params: missing tool name")
         task_support = self.tool_registry.task_support(name)
         if "task" in params:
-            if not self._tasks_enabled():
+            # Task-augmented tools/call belongs to the 2025-11-25 protocol
+            # surface only; earlier versions reuse the disabled-task error.
+            if protocol_version != MCP_PROTOCOL_VERSION or not self._tasks_enabled():
                 return _new_error_response(request.id, MCP_CODE_METHOD_NOT_FOUND, "Method not found: tasks not enabled")
             return self._handle_task_tools_call(request, session_id, name, params)
         if task_support == "required":
@@ -2272,7 +2302,10 @@ def _decode_routing_header_name(value: str) -> tuple[str, bool]:
     try:
         decoded = base64.b64decode(encoded, validate=True)
         text = decoded.decode("utf-8")
-    except (binascii.Error, UnicodeDecodeError):
+    except ValueError:
+        # binascii.Error and UnicodeDecodeError are both ValueError subclasses,
+        # and a non-ASCII payload raises a bare ValueError from the ASCII
+        # pre-encode, so this single handler covers every malformed encoding.
         return "", True
     if base64.b64encode(decoded).decode("ascii") != encoded:
         return "", True
@@ -2844,6 +2877,39 @@ def _task_ttl(runtime: _NormalizedTaskRuntime, meta: dict[str, Any]) -> dict[str
     return {"value": ttl, "error": ""}
 
 
+def _task_expires_at_epoch(created_at: str, ttl_ms: int) -> int:
+    created = _parse_task_created_at(created_at)
+    duration_ms = int(ttl_ms) if int(ttl_ms) > 0 else DEFAULT_TASK_MAX_TTL_MS
+    return int((created + dt.timedelta(milliseconds=duration_ms)).timestamp())
+
+
+def _parse_task_created_at(value: str) -> dt.datetime:
+    text = str(value or "").strip()
+    if text:
+        try:
+            parsed = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            return parsed.astimezone(dt.UTC) if parsed.tzinfo else parsed.replace(tzinfo=dt.UTC)
+    return dt.datetime.now(dt.UTC)
+
+
+def _task_item_expires_at(item: Any) -> int:
+    try:
+        return int(_field(item, "expires_at") or _field(item, "expiresAt") or 0)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _task_item_expired(item: Any, now: dt.datetime) -> bool:
+    expires_at = _task_item_expires_at(item)
+    if expires_at <= 0:
+        return False
+    now_utc = now.astimezone(dt.UTC) if now.tzinfo else now.replace(tzinfo=dt.UTC)
+    return now_utc.timestamp() >= expires_at
+
+
 def _task_lookup_from_request(request: _ParsedRPCRequest, session_id: str) -> tuple[McpTaskLookup, str]:
     task_id = str(_params_record(request.params).get("taskId") or "").strip()
     if not task_id:
@@ -3098,6 +3164,7 @@ class _McpTaskItem:
     status_message: str = _s("statusMessage", omitempty=True)
     created_at: str = _s("createdAt")
     last_updated_at: str = _s("lastUpdatedAt")
+    expires_at: int = _n("expiresAt", roles=["ttl"])
     ttl: int = _n("ttl", omitempty=True)
     poll_interval: int = _n("pollInterval", omitempty=True)
     result: dict[str, Any] | None = _MCP_TASK_RESULT_FIELD
@@ -3126,6 +3193,9 @@ def _task_record_to_item(record: McpTaskRecord) -> _McpTaskItem:
         status_message=record.task.status_message,
         created_at=record.task.created_at,
         last_updated_at=record.task.last_updated_at,
+        # Epoch-seconds attribute consumed by the DynamoDB TTL setting on the
+        # task table. `ttl` stays the duration in milliseconds.
+        expires_at=_task_expires_at_epoch(record.task.created_at, int(record.task.ttl or 0)),
         ttl=record.task.ttl,
         poll_interval=record.task.poll_interval or 0,
         result=record.result if isinstance(record.result, dict) else None,
