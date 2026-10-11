@@ -76,6 +76,39 @@ test("createKinesisJsonRecord fails closed for invalid inputs", () => {
   );
 });
 
+test("createKinesisJsonRecord enforces the combined data plus partition key ceiling", () => {
+  const partitionKey = "k".repeat(256);
+  // {"blob":"aaa…"} is n+11 encoded bytes, so a data blob of exactly 1 MiB with
+  // the 256-byte key is over the ceiling the old data-only check accepted.
+  assert.throws(
+    () =>
+      createKinesisJsonRecord({
+        partitionKey,
+        payload: { blob: "a".repeat(1_048_576 - 11) },
+      }),
+    /record size/,
+  );
+
+  const record = createKinesisJsonRecord({
+    partitionKey,
+    payload: { blob: "a".repeat(1_048_576 - 11 - 256) },
+  });
+  assert.equal(
+    record.data.byteLength + Buffer.byteLength(partitionKey, "utf8"),
+    1_048_576,
+  );
+
+  // The failure-report validator applies the same combined ceiling.
+  assert.throws(
+    () =>
+      reportKinesisPutRecordsFailures(
+        [{ partition_key: partitionKey, data: Buffer.alloc(1_048_576, 97) }],
+        [{ error_code: "ProvisionedThroughputExceededException" }],
+      ),
+    /record size/,
+  );
+});
+
 test("reportKinesisPutRecordsFailures aligns failures and omits payload bodies", () => {
   const first = createKinesisJsonRecord({
     partitionKey: "pk-1",

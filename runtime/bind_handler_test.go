@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -536,6 +537,46 @@ func TestBindRequest_DurationBindingRejectsNonPortableEdges(t *testing.T) {
 	}
 }
 
+func TestBindRequest_DurationBindingCapsAdjacentSegments(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		TTL time.Duration `query:"ttl"`
+	}
+
+	req, err := BindRequest(&Context{
+		Request: Request{Query: map[string][]string{"ttl": {strings.Repeat("1ms", maxDurationSegments)}}},
+	}, BindConfig[requestModel]{Query: true})
+	if err != nil {
+		t.Fatalf("expected a bounded duration to bind: %v", err)
+	}
+	if req.TTL != 1024*time.Millisecond {
+		t.Fatalf("unexpected bounded duration: %v", req.TTL)
+	}
+
+	for name, raw := range map[string]string{
+		"one over the cap": strings.Repeat("1ms", maxDurationSegments+1),
+		"oversized value":  strings.Repeat("1ms", 1_500_000),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := BindRequest(&Context{
+				Request: Request{Query: map[string][]string{"ttl": {raw}}},
+			}, BindConfig[requestModel]{Query: true})
+			if err == nil {
+				t.Fatal("expected duration binding error")
+			}
+			appErr, ok := err.(*AppTheoryError)
+			if !ok {
+				t.Fatalf("expected AppTheoryError, got %T", err)
+			}
+			if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 {
+				t.Fatalf("unexpected duration binding error: %#v", appErr)
+			}
+		})
+	}
+}
+
 func TestBindRequest_ValidateMapsToValidationFailed(t *testing.T) {
 	t.Parallel()
 
@@ -664,6 +705,70 @@ func TestBindRequest_RequiredValidationUsesPresence(t *testing.T) {
 		if errorsValue[i] != want[i] {
 			t.Fatalf("error %d: expected %#v, got %#v", i, want[i], errorsValue[i])
 		}
+	}
+}
+
+func TestBindRequest_RequiredValidationIsPerSource(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		BodyID string `json:"id" validate:"required"`
+		PathID string `path:"id"`
+	}
+
+	// A path value sharing the body field's external name must not satisfy the
+	// required body field.
+	for _, tc := range []struct {
+		name   string
+		body   string
+		strict bool
+	}{
+		{name: "missing", body: `{}`},
+		{name: "null", body: `{"id":null}`},
+		{name: "strict-missing", body: `{}`, strict: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := BindRequest(&Context{
+				Request: Request{Body: []byte(tc.body)},
+				Params:  map[string]string{"id": "path-id"},
+			}, BindConfig[requestModel]{
+				Body:       true,
+				Path:       true,
+				StrictJSON: tc.strict,
+			})
+			if err == nil {
+				t.Fatal("expected the required body field to fail when only the path carries the name")
+			}
+			appErr, ok := err.(*AppTheoryError)
+			if !ok {
+				t.Fatalf("expected AppTheoryError, got %T", err)
+			}
+			errorsValue, ok := appErr.Details["errors"].([]ValidationFieldError)
+			if !ok {
+				t.Fatalf("expected validation field errors, got %#v", appErr.Details["errors"])
+			}
+			want := ValidationFieldError{Field: "id", Rule: ValidationRuleRequired, Message: "id is required"}
+			if len(errorsValue) != 1 || errorsValue[0] != want {
+				t.Fatalf("expected %#v, got %#v", want, errorsValue)
+			}
+		})
+	}
+
+	// A present body value still satisfies the required body field alongside the
+	// same-named path field.
+	req, err := BindRequest(&Context{
+		Request: Request{Body: []byte(`{"id":"body-id"}`)},
+		Params:  map[string]string{"id": "path-id"},
+	}, BindConfig[requestModel]{
+		Body: true,
+		Path: true,
+	})
+	if err != nil {
+		t.Fatalf("expected a present body id to satisfy required, got %v", err)
+	}
+	if req.BodyID != "body-id" || req.PathID != "path-id" {
+		t.Fatalf("unexpected bound request: %#v", req)
 	}
 }
 

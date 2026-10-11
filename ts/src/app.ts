@@ -2049,7 +2049,10 @@ export class App {
         );
       }
       if (rc["http"] && typeof rc["http"] === "object") {
-        if ("routeKey" in record) {
+        if (
+          "routeKey" in record &&
+          !isLambdaFunctionUrlDomain(rc["domainName"])
+        ) {
           return this.serveAPIGatewayV2(event as APIGatewayV2HTTPRequest, ctx);
         }
         return this.serveLambdaFunctionURL(
@@ -2399,6 +2402,18 @@ function timeoutContextCarrier(parent: unknown, signal: AbortSignal): unknown {
   return { parent, signal };
 }
 
+// isLambdaFunctionUrlDomain reports whether a provider requestContext domainName
+// belongs to a Lambda Function URL endpoint, for example
+// "abcd1234.lambda-url.us-east-1.on.aws". Function URL payloads carry a
+// top-level routeKey just like API Gateway v2, so routeKey presence alone is not
+// a safe discriminator.
+function isLambdaFunctionUrlDomain(value: unknown): boolean {
+  const host = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return host.includes(".lambda-url.") && host.endsWith(".on.aws");
+}
+
 function cloneContextWithTimeoutCarrier(
   ctx: Context,
   carrier: unknown,
@@ -2407,6 +2422,7 @@ function cloneContextWithTimeoutCarrier(
     _clock: Clock;
     _ids: IdGenerator;
     _values: Map<string, unknown>;
+    _securePrincipal: SecurePrincipal | null;
   };
   const clone = new Context({
     request: ctx.request,
@@ -2423,8 +2439,14 @@ function cloneContextWithTimeoutCarrier(
     webSocket: ctx.asWebSocket(),
     appSync: ctx.asAppSync(),
   });
-  const cloneInternal = clone as unknown as { _values: Map<string, unknown> };
+  const cloneInternal = clone as unknown as {
+    _values: Map<string, unknown>;
+    _securePrincipal: SecurePrincipal | null;
+  };
   cloneInternal._values = ctxInternal._values;
+  cloneInternal._securePrincipal = cloneSecurePrincipal(
+    ctxInternal._securePrincipal,
+  );
   return clone;
 }
 

@@ -53,6 +53,32 @@ class KinesisProducerTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "non-finite number"):
             create_kinesis_json_record(partition_key="pk-1", payload={"bad": math.inf})
 
+    def test_create_kinesis_json_record_enforces_combined_record_size(self) -> None:
+        partition_key = "k" * 256
+        # {"blob":"aaa…"} is n+11 encoded bytes, so a data blob of exactly 1 MiB
+        # with the 256-byte key is over the ceiling the old data-only check accepted.
+        with self.assertRaisesRegex(RuntimeError, "record size"):
+            create_kinesis_json_record(
+                partition_key=partition_key,
+                payload={"blob": "a" * (1_048_576 - 11)},
+            )
+
+        record = create_kinesis_json_record(
+            partition_key=partition_key,
+            payload={"blob": "a" * (1_048_576 - 11 - 256)},
+        )
+        self.assertEqual(
+            len(record["data"]) + len(partition_key.encode("utf-8")),
+            1_048_576,
+        )
+
+        # The failure-report validator applies the same combined ceiling.
+        with self.assertRaisesRegex(RuntimeError, "record size"):
+            report_kinesis_put_records_failures(
+                [{"partition_key": partition_key, "data": b"a" * 1_048_576}],
+                [{"error_code": "ProvisionedThroughputExceededException"}],
+            )
+
     def test_report_kinesis_put_records_failures_aligns_failures_and_omits_payload_bodies(self) -> None:
         first = create_kinesis_json_record(partition_key="pk-1", payload={"customer": "alpha"})
         second = create_kinesis_json_record(

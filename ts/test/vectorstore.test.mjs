@@ -224,6 +224,28 @@ test("semantic index composes embedding and vector storage through the single pa
   });
 });
 
+test("semantic index enforces configurable ingest budgets before embedding", async () => {
+  const store = createFakeVectorStore(2);
+  const embedder = new FakeEmbedder({ doc: [1, 0] });
+
+  const recordBudget = new SemanticIndex({ store, embedder, dimension: 2, maxRecords: 1 });
+  await assert.rejects(
+    () => recordBudget.putText([{ key: "r/1", text: "doc" }, { key: "r/2", text: "doc" }]),
+    { code: VECTORSTORE_ERROR_INVALID_INPUT },
+  );
+
+  const byteBudget = new SemanticIndex({ store, embedder, dimension: 2, maxTextBytes: 1 });
+  await assert.rejects(
+    () => byteBudget.putText([{ key: "b/1", text: "doc" }]),
+    { code: VECTORSTORE_ERROR_INVALID_INPUT },
+  );
+  assert.equal(embedder.calls.length, 0, "over-budget ingest must not call the embedder");
+
+  const bounded = new SemanticIndex({ store, embedder, dimension: 2, maxRecords: 2, maxTextBytes: 8 });
+  await bounded.putText([{ key: "ok/1", text: "doc" }]);
+  assert.deepEqual(embedder.calls, ["doc"]);
+});
+
 class RecordingS3VectorsClient {
   commands = [];
   error = null;

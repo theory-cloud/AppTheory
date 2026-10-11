@@ -84,6 +84,19 @@ The 274 contract vectors span these behavior areas (counts approximate; see `con
 | Object store | The `objectstore/` fixture tier pins strict object refs, Put, bounded Get, Delete, deterministic fake call logs, the bounded upload grant (signed content length, content type, and SHA-256 checksum with a fifteen-minute cap), and forbidden list, generic presign, presign-get, multipart, copy, head, and raw-client operations across Go, TypeScript, and Python. |
 | Lambda MicroVM support | M15 foundation fixtures plus M16 real operations `run/get/list/suspend/resume/terminate/invoke/auth-token/shell-auth-token`, provider-state mappings, protected controller routes, token-hidden workload invoke, endpoint-dispatched no-hook example images, deployment execution-role propagation, tenant-bound list/recovery, token no-leak denial, and raw SDK/lifecycle bypass denial. The feature line is evidence-bounded to repo-local runtime/CDK/example/conformance harness proof plus verified example-path live smoke, not EqualToAI/Host, customer workload, arbitrary cloud mutation, or unauthenticated-controller proof. |
 
+## Compatibility notes
+
+Two portable behaviors were tightened so that non-canonical input now fails closed instead of being accepted or
+coerced. Both apply identically in Go, TypeScript, and Python.
+
+- **Duration binding.** The `duration` conversion accepts at most 1024 adjacent `<number><unit>` segments (for example
+  `1s500ms`). Values with more adjacent segments now fail closed with the standard binding-error envelope; ordinary
+  portable durations, including long sub-second values and the signed and precision-boundary cases in
+  `binding/duration-canonical-edges.json`, are unaffected.
+- **Logging-profile JSON.** The logging-profile JSON decoder now rejects wrong-typed known fields (arrays where strings
+  are required, strings where booleans are required, and non-string array/map entries) with per-field validation errors.
+  See [Logging Profiles](../features/logging-profiles.md).
+
 ## Running the fixtures
 
 ```bash

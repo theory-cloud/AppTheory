@@ -423,12 +423,25 @@ class SemanticRecord:
     metadata: dict[str, Any] | None = None
 
 
+def _normalize_budget(value: Any) -> int:
+    try:
+        budget = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return budget if budget > 0 else 0
+
+
 @dataclass(frozen=True)
 class SemanticIndexConfig:
     store: VectorStore
     embedder: Embedder
     dimension: int
     required_metadata_keys: list[str] = field(default_factory=list)
+    # Budgets bound the record count and cumulative UTF-8 text bytes ``put_text``
+    # accepts before it calls the embedder. Zero (the default) leaves each bound
+    # unbounded, preserving the previous behavior.
+    max_records: int = 0
+    max_text_bytes: int = 0
 
 
 class SemanticIndex:
@@ -437,6 +450,8 @@ class SemanticIndex:
         self.embedder = config.embedder
         self.dimension = config.dimension
         self.required_metadata_keys = list(config.required_metadata_keys)
+        self.max_records = _normalize_budget(config.max_records)
+        self.max_text_bytes = _normalize_budget(config.max_text_bytes)
         validate_dimension(self.dimension)
 
     def put_text(self, records: list[SemanticRecord]) -> None:
@@ -444,6 +459,18 @@ class SemanticIndex:
             raise VectorStoreError(
                 VECTORSTORE_ERROR_INVALID_INPUT, "vectorstore: at least one semantic record is required"
             )
+        if self.max_records > 0 and len(records) > self.max_records:
+            raise VectorStoreError(
+                VECTORSTORE_ERROR_INVALID_INPUT,
+                f"vectorstore: semantic ingest exceeds the record budget of {self.max_records}",
+            )
+        if self.max_text_bytes > 0:
+            total_bytes = sum(len(record.text.encode("utf-8")) for record in records)
+            if total_bytes > self.max_text_bytes:
+                raise VectorStoreError(
+                    VECTORSTORE_ERROR_INVALID_INPUT,
+                    f"vectorstore: semantic ingest exceeds the text byte budget of {self.max_text_bytes}",
+                )
         for record in records:
             _validate_key(record.key)
             if not record.text.strip():

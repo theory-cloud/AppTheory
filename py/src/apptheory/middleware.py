@@ -7,6 +7,7 @@ from typing import Any
 
 from apptheory.app import Context, Middleware, NextHandler
 from apptheory.errors import AppError
+from apptheory.secure_types import clone_secure_principal
 
 
 @dataclass(slots=True)
@@ -80,6 +81,7 @@ def _clone_context_with_timeout_ctx(ctx: Context, carrier: Any) -> Context:
         appsync=ctx.appsync,
     )
     clone._values = ctx._values
+    clone._secure_principal = clone_secure_principal(ctx._secure_principal)
     return clone
 
 

@@ -411,3 +411,67 @@ func TestServeSNS_PanickingHandlerMapsToEventWorkloadError(t *testing.T) {
 		t.Fatalf("expected established event-workload error, got %q", err.Error())
 	}
 }
+
+func TestHandleLambda_DiscriminatesFunctionURLFromAPIGatewayV2(t *testing.T) {
+	t.Parallel()
+
+	app := New()
+
+	// A standard Function URL payload carries a top-level routeKey of "$default"
+	// and a *.lambda-url.*.on.aws requestContext domainName.
+	functionURLEvent := json.RawMessage(`{
+		"version": "2.0",
+		"routeKey": "$default",
+		"rawPath": "/source",
+		"rawQueryString": "",
+		"headers": {},
+		"requestContext": {
+			"domainName": "abcd1234.lambda-url.us-east-1.on.aws",
+			"http": {"method": "GET", "path": "/source", "sourceIp": "198.51.100.10"}
+		},
+		"body": "",
+		"isBase64Encoded": false
+	}`)
+	out, err := app.HandleLambda(context.Background(), functionURLEvent)
+	if err != nil {
+		t.Fatalf("HandleLambda(function url) error: %v", err)
+	}
+	if _, ok := out.(events.LambdaFunctionURLResponse); !ok {
+		t.Fatalf("expected a Function URL response, got %T", out)
+	}
+
+	// API Gateway v2 default and custom domains both carry routeKey, so they must
+	// stay on the API Gateway v2 adapter.
+	for _, tc := range []struct {
+		name       string
+		routeKey   string
+		domainName string
+	}{
+		{name: "default-domain", routeKey: "$default", domainName: "abcd1234.execute-api.us-east-1.amazonaws.com"},
+		{name: "custom-domain", routeKey: "GET /source", domainName: "api.example.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			event := json.RawMessage(`{
+				"version": "2.0",
+				"routeKey": "` + tc.routeKey + `",
+				"rawPath": "/source",
+				"rawQueryString": "",
+				"headers": {},
+				"requestContext": {
+					"domainName": "` + tc.domainName + `",
+					"http": {"method": "GET", "path": "/source", "sourceIp": "198.51.100.11"}
+				},
+				"body": "",
+				"isBase64Encoded": false
+			}`)
+			out, err := app.HandleLambda(context.Background(), event)
+			if err != nil {
+				t.Fatalf("HandleLambda(apigw v2) error: %v", err)
+			}
+			if _, ok := out.(events.APIGatewayV2HTTPResponse); !ok {
+				t.Fatalf("expected an API Gateway v2 response, got %T", out)
+			}
+		})
+	}
+}

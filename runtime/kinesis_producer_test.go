@@ -93,6 +93,28 @@ func TestNewKinesisJSONRecord_FailsClosed(t *testing.T) {
 	}
 }
 
+func TestNewKinesisJSONRecord_EnforcesCombinedRecordSize(t *testing.T) {
+	t.Parallel()
+
+	partitionKey := strings.Repeat("k", 256)
+	// {"blob":"aaa…"} is n+11 encoded bytes, so a data blob of exactly 1 MiB
+	// combined with the 256-byte key is over the ceiling the old data-only check
+	// accepted.
+	overBudget := map[string]any{"blob": strings.Repeat("a", 1_048_576-11)}
+	if _, err := NewKinesisJSONRecord(KinesisJSONRecordOptions{PartitionKey: partitionKey, Payload: overBudget}); err == nil {
+		t.Fatal("expected data plus partition key over the combined ceiling to fail")
+	}
+
+	atBudget := map[string]any{"blob": strings.Repeat("a", 1_048_576-11-256)}
+	record, err := NewKinesisJSONRecord(KinesisJSONRecordOptions{PartitionKey: partitionKey, Payload: atBudget})
+	if err != nil {
+		t.Fatalf("expected a record at the combined ceiling to be accepted, got %v", err)
+	}
+	if got := len(record.Data) + len([]byte(record.PartitionKey)); got != 1_048_576 {
+		t.Fatalf("expected combined size 1048576, got %d", got)
+	}
+}
+
 func TestReportKinesisPutRecordsFailures_AlignsByIndexAndOmitsPayloads(t *testing.T) {
 	t.Parallel()
 
