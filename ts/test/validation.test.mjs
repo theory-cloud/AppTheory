@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   bindRequest,
+  max,
   min,
   oneOf,
   pattern,
@@ -312,5 +313,58 @@ test("strict json rejects unknown keys with zero declared body fields", async ()
       assert.deepEqual(err.details, { source: "body", name: "extra" });
       return true;
     },
+  );
+});
+
+test("non-finite numeric actuals fail closed under min and max", () => {
+  const schema = {
+    lower: [min(0)],
+    upper: [max(0)],
+  };
+
+  for (const value of [
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+  ]) {
+    assert.deepEqual(validateValue({ lower: value, upper: value }, schema), [
+      { field: "lower", rule: "min", message: "lower must be >= 0" },
+      { field: "upper", rule: "max", message: "upper must be <= 0" },
+    ]);
+  }
+
+  // Finite boundaries keep the ordinary comparisons.
+  assert.deepEqual(validateValue({ lower: -1, upper: 1 }, schema), [
+    { field: "lower", rule: "min", message: "lower must be >= 0" },
+    { field: "upper", rule: "max", message: "upper must be <= 0" },
+  ]);
+  assert.deepEqual(validateValue({ lower: 0, upper: 0 }, schema), []);
+
+  // Non-numeric inputs retain rule-N/A semantics.
+  assert.deepEqual(validateValue({ lower: "0", upper: null }, schema), []);
+  assert.deepEqual(validateValue({ lower: true, upper: false }, schema), []);
+});
+
+test("non-finite numeric rule config fails closed", () => {
+  assert.deepEqual(
+    validateValue(
+      { lower: 1, upper: 1 },
+      {
+        lower: [min(Number.NaN)],
+        upper: [max(Number.POSITIVE_INFINITY)],
+      },
+    ),
+    [
+      {
+        field: "lower",
+        rule: "min",
+        message: "lower has invalid validation rule min",
+      },
+      {
+        field: "upper",
+        rule: "max",
+        message: "upper has invalid validation rule max",
+      },
+    ],
   );
 });

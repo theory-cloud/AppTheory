@@ -10,18 +10,21 @@ from apptheory import (
     AppError,
     AppTheoryError,
     BindConfig,
+    ValidationFieldError,
     ValidationRule,
     bind_handler,
     bind_request,
     body,
     format_duration,
     header,
+    max_value,
     min_value,
     one_of,
     path,
     pattern,
     query,
     required,
+    validate_value,
 )
 from apptheory.context import Context
 from apptheory.request import Request
@@ -439,6 +442,36 @@ class BindHandlerTests(unittest.TestCase):
             bind_request(ctx, BindConfig(model=PlainRequest, body=True, validate=unexpected))
         self.assertEqual(generic.exception.code, "app.validation_failed")
         self.assertEqual(generic.exception.status_code, 422)
+
+    def test_non_finite_numeric_actuals_fail_closed_under_bounds(self) -> None:
+        schema = {"lower": [min_value(0)], "upper": [max_value(0)]}
+        expected = [
+            ValidationFieldError(field="lower", rule="min", message="lower must be >= 0"),
+            ValidationFieldError(field="upper", rule="max", message="upper must be <= 0"),
+        ]
+
+        for value in (float("nan"), float("inf"), float("-inf")):
+            self.assertEqual(validate_value({"lower": value, "upper": value}, schema), expected)
+
+        # Finite boundaries keep the ordinary comparisons.
+        self.assertEqual(validate_value({"lower": -1, "upper": 1}, schema), expected)
+        self.assertEqual(validate_value({"lower": 0, "upper": 0}, schema), [])
+
+        # Non-numeric inputs retain rule-N/A semantics.
+        self.assertEqual(validate_value({"lower": "0", "upper": None}, schema), [])
+        self.assertEqual(validate_value({"lower": True, "upper": False}, schema), [])
+
+    def test_non_finite_numeric_rule_config_fails_closed(self) -> None:
+        self.assertEqual(
+            validate_value(
+                {"lower": 1, "upper": 1},
+                {"lower": [ValidationRule("min", float("nan"))], "upper": [ValidationRule("max", float("inf"))]},
+            ),
+            [
+                ValidationFieldError(field="lower", rule="min", message="lower has invalid validation rule min"),
+                ValidationFieldError(field="upper", rule="max", message="upper has invalid validation rule max"),
+            ],
+        )
 
 
 if __name__ == "__main__":

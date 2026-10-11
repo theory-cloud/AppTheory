@@ -2,6 +2,7 @@ package apptheory
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -179,8 +180,8 @@ func validateRuleConfig(fieldName string, rule validationRuleSpec) (ValidationFi
 	case ValidationRuleRequired:
 		invalid = strings.TrimSpace(rule.value) != ""
 	case ValidationRuleMin, ValidationRuleMax:
-		_, ok := parseValidationFloat(rule.value)
-		invalid = !ok
+		limit, ok := parseValidationFloat(rule.value)
+		invalid = !ok || !isFiniteFloat(limit)
 	case ValidationRuleMinLength, ValidationRuleMaxLength:
 		_, ok := parseValidationInt(rule.value)
 		invalid = !ok
@@ -233,10 +234,13 @@ func validateNumericRule(
 		return ValidationFieldError{}, false
 	}
 	actual, ok := validationNumericValue(value)
-	if !ok || !fails(actual, limit) {
+	if !ok {
 		return ValidationFieldError{}, false
 	}
-	return validationFieldError(fieldName, rule.rule, fmt.Sprintf("%s must be %s %s", fieldName, operator, rule.value)), true
+	if !isFiniteFloat(actual) || fails(actual, limit) {
+		return validationFieldError(fieldName, rule.rule, fmt.Sprintf("%s must be %s %s", fieldName, operator, rule.value)), true
+	}
+	return ValidationFieldError{}, false
 }
 
 func validateLengthRule(
@@ -347,6 +351,10 @@ func validationStringValue(v reflect.Value) (string, bool) {
 func parseValidationFloat(value string) (float64, bool) {
 	out, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
 	return out, err == nil
+}
+
+func isFiniteFloat(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func parseValidationInt(value string) (int, bool) {
