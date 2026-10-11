@@ -109,7 +109,7 @@ func validateStructValue(target reflect.Value, presence *validationPresence) []V
 		}
 
 		fieldName := validationFieldName(fieldType)
-		presenceState, presenceTracked := presence.lookup(fieldName)
+		presenceState, presenceTracked := presence.lookup(validationPresenceFieldKey(fieldType))
 		for _, rule := range rules {
 			fieldErr, ok := validateFieldRule(fieldName, fieldValue, presenceState, presenceTracked, rule)
 			if !ok {
@@ -377,6 +377,28 @@ func validationFieldName(field reflect.StructField) string {
 		return "field"
 	}
 	return strings.ToLower(name[:1]) + name[1:]
+}
+
+// validationPresenceKey namespaces a presence entry by its request source so a
+// value bound from one source cannot satisfy a required field declared on a
+// different source that happens to share the same external name.
+func validationPresenceKey(source, name string) string {
+	return source + "\x00" + name
+}
+
+// validationPresenceFieldKey is the presence key a field's required rule looks
+// up, mirroring the source precedence used when binding tagged fields.
+func validationPresenceFieldKey(field reflect.StructField) string {
+	if name := bindTagValue(field, bindSourcePath); name != "" {
+		return validationPresenceKey(bindSourcePath, name)
+	}
+	if name := bindTagValue(field, bindSourceQuery); name != "" {
+		return validationPresenceKey(bindSourceQuery, name)
+	}
+	if name := bindTagValue(field, bindSourceHeader); name != "" {
+		return validationPresenceKey(bindSourceHeader, name)
+	}
+	return validationPresenceKey(bindSourceBody, validationFieldName(field))
 }
 
 func validationFieldError(field, rule, message string) ValidationFieldError {

@@ -299,7 +299,7 @@ func collectBodyPresenceFields(target reflect.Value, fields map[string]string) {
 			}
 		}
 
-		fields[name] = validationFieldName(fieldType)
+		fields[name] = validationPresenceKey(bindSourceBody, validationFieldName(fieldType))
 	}
 }
 
@@ -428,12 +428,12 @@ func bindStructFields(
 			continue
 		}
 
-		if hasEnabledBindSource(fieldType, sourceNames) {
-			presence.track(validationFieldName(fieldType))
+		if key, ok := bindPresenceFieldKey(fieldType, sourceNames); ok {
+			presence.track(key)
 		}
 
 		if values, tag, ok := resolveBindValues(fieldType, ctx, sources); ok {
-			presence.mark(validationFieldName(fieldType), true)
+			presence.mark(validationPresenceKey(tag.source, tag.name), true)
 			if err := setBoundField(fieldValue, values); err != nil {
 				return bindSourceError(tag.source, tag.name, fieldType.Name, err)
 			}
@@ -443,13 +443,13 @@ func bindStructFields(
 	return nil
 }
 
-func hasEnabledBindSource(field reflect.StructField, sourceNames []string) bool {
+func bindPresenceFieldKey(field reflect.StructField, sourceNames []string) (string, bool) {
 	for _, name := range sourceNames {
-		if bindTagValue(field, name) != "" {
-			return true
+		if value := bindTagValue(field, name); value != "" {
+			return validationPresenceKey(name, value), true
 		}
 	}
-	return false
+	return "", false
 }
 
 type bindTag struct {
