@@ -128,7 +128,22 @@
             {
               "Action": "bedrock:InvokeModel",
               "Effect": "Allow",
-              "Resource": "*"
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":bedrock:",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    "::foundation-model/amazon.titan-embed-text-v2:0"
+                  ]
+                ]
+              }
             }
           ],
           "Version": "2012-10-17"
