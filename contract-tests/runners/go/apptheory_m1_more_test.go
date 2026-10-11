@@ -5,8 +5,10 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambdacontext"
 
 	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
 	"github.com/theory-cloud/apptheory/v5/testkit"
@@ -362,5 +364,75 @@ func cloudWatchLogsSubscriptionFixtureForTest() Fixture {
 				},
 			},
 		},
+	}
+}
+
+func TestFixtureM1LambdaContext_HonorsPositiveRemainingMS(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(0, 0).UTC()
+	ctx, cancel := fixtureM1LambdaContext(now, FixtureContext{RemainingMS: 25000})
+	if cancel != nil {
+		defer cancel()
+	}
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("expected the logical fixture deadline to be reported for positive remaining_ms")
+	}
+	if want := now.Add(25 * time.Second); !deadline.Equal(want) {
+		t.Fatalf("expected logical deadline %s, got %s", want, deadline)
+	}
+	if got := deadline.UnixMilli(); got != 25000 {
+		t.Fatalf("expected deadline_unix_ms 25000, got %d", got)
+	}
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("expected a live context (Err()==nil) for positive remaining_ms, got %v", err)
+	}
+	if done := ctx.Done(); done != nil {
+		t.Fatalf("expected a live context (Done()==nil) for positive remaining_ms, got %v", done)
+	}
+}
+
+func TestFixtureM1LambdaContext_KeepsLogicalDeadlineUnderLambdaContext(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(0, 0).UTC()
+	ctx, cancel := fixtureM1LambdaContext(now, FixtureContext{RemainingMS: 1, AWSRequestID: "aws-req-fallback"})
+	if cancel != nil {
+		defer cancel()
+	}
+
+	lambdaContext, ok := lambdacontext.FromContext(ctx)
+	if !ok || lambdaContext.AwsRequestID != "aws-req-fallback" {
+		t.Fatalf("expected the Lambda request id to survive the fixture context, got ok=%v ctx=%v", ok, lambdaContext)
+	}
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("expected the logical fixture deadline through the Lambda context wrapper")
+	}
+	if got := deadline.UnixMilli(); got != 1 {
+		t.Fatalf("expected deadline_unix_ms 1 through the Lambda context wrapper, got %d", got)
+	}
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("expected a live context through the Lambda context wrapper, got %v", err)
+	}
+}
+
+func TestFixtureM1LambdaContext_NoDeadlineWithoutRemainingMS(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(0, 0).UTC()
+	ctx, cancel := fixtureM1LambdaContext(now, FixtureContext{AWSRequestID: "aws-req-none"})
+	if cancel != nil {
+		defer cancel()
+	}
+
+	if _, ok := ctx.Deadline(); ok {
+		t.Fatal("expected no deadline when remaining_ms is unset")
+	}
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("expected a live context when remaining_ms is unset, got %v", err)
 	}
 }

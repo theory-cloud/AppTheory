@@ -2,6 +2,88 @@
 # Purpose: upload already-built release assets to an existing GitHub Release.
 set -euo pipefail
 
+# assert_exact_published_asset_set compares the uploaded asset names on a
+# published release against the expected uploaded basenames. Both directions
+# matter: a missing expected asset and an unexpected uploaded asset are equally
+# untrustworthy. GitHub's auto-generated source archives are exposed as
+# zipball_url/tarball_url and never appear in `gh release view --json assets`,
+# so exact set equality needs no carve-out for them.
+assert_exact_published_asset_set() {
+  local published_names="$1"
+  shift
+  local expected_names=("$@")
+
+  local expected_name
+  for expected_name in "${expected_names[@]}"; do
+    if ! grep -Fxq "${expected_name}" <<<"${published_names}"; then
+      echo "release-assets: FAIL (published release is missing immutable asset ${expected_name})" >&2
+      return 1
+    fi
+  done
+
+  local published_name
+  while IFS= read -r published_name; do
+    if [[ -z "${published_name}" ]]; then
+      continue
+    fi
+
+    local is_expected=false
+    for expected_name in "${expected_names[@]}"; do
+      if [[ "${published_name}" == "${expected_name}" ]]; then
+        is_expected=true
+        break
+      fi
+    done
+
+    if [[ "${is_expected}" != "true" ]]; then
+      echo "release-assets: FAIL (published release carries unexpected uploaded asset ${published_name}; refusing to trust assets outside the current build)" >&2
+      return 1
+    fi
+  done <<<"${published_names}"
+
+  return 0
+}
+
+self_test() {
+  local failures=0
+
+  if ! assert_exact_published_asset_set \
+    $'dist/apptheory-5.0.2-py3-none-any.whl\ndist/SHA256SUMS.txt' \
+    'dist/apptheory-5.0.2-py3-none-any.whl' 'dist/SHA256SUMS.txt' >/dev/null 2>&1; then
+    echo "release-assets: self-test FAIL (an exact uploaded asset set must pass)" >&2
+    failures=$((failures + 1))
+  fi
+
+  if assert_exact_published_asset_set \
+    $'dist/apptheory-5.0.2-py3-none-any.whl\ndist/unexpected-extra.tgz' \
+    'dist/apptheory-5.0.2-py3-none-any.whl' >/dev/null 2>&1; then
+    echo "release-assets: self-test FAIL (an extra uploaded asset must fail the inverse set check)" >&2
+    failures=$((failures + 1))
+  fi
+
+  if assert_exact_published_asset_set \
+    $'dist/apptheory-5.0.2-py3-none-any.whl' \
+    'dist/apptheory-5.0.2-py3-none-any.whl' 'dist/SHA256SUMS.txt' >/dev/null 2>&1; then
+    echo "release-assets: self-test FAIL (a missing uploaded asset must fail)" >&2
+    failures=$((failures + 1))
+  fi
+
+  if (( failures > 0 )); then
+    echo "release-assets: self-test FAIL (${failures} case(s))" >&2
+    return 1
+  fi
+
+  echo "release-assets: self-test PASS"
+  return 0
+}
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  if self_test; then
+    exit 0
+  fi
+  exit 1
+fi
+
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 tag="${1:-}"
@@ -124,6 +206,7 @@ verify_published_release_assets() {
   local current_target=""
   local download_dir=""
   local published_names=""
+  local expected_names=()
 
   current_target="$(release_target_commitish)"
   assert_release_target_matches_source "${current_target}"
@@ -138,6 +221,7 @@ verify_published_release_assets() {
 
   for asset_path in "${asset_paths[@]}"; do
     asset_name="$(basename "${asset_path}")"
+    expected_names+=("${asset_name}")
     if ! grep -Fxq "${asset_name}" <<<"${published_names}"; then
       echo "release-assets: FAIL (${tag} published release is missing immutable asset ${asset_name})" >&2
       exit 1
@@ -157,6 +241,11 @@ verify_published_release_assets() {
       exit 1
     fi
   done
+
+  if ! assert_exact_published_asset_set "${published_names}" "${expected_names[@]}"; then
+    echo "release-assets: FAIL (${tag} uploaded asset set is not exactly the current build)" >&2
+    exit 1
+  fi
 
   trap - RETURN
   cleanup_download_dir

@@ -146,6 +146,27 @@ def target_has_no_extra_non_merge_content(ancestor_ref: str, descendant_ref: str
     return result.stdout.strip() == "0"
 
 
+def target_content_is_absorbed_by_descendant(ancestor_ref: str, descendant_ref: str) -> bool:
+    # The non-merge commit count above cannot see an "evil merge": a merge commit
+    # may resolve to content that neither parent carried, adding to the ancestor
+    # while still leaving no extra non-merge commit behind. Re-merging the ancestor
+    # into the descendant must therefore leave the descendant tree untouched for
+    # the promotion to be content-preserving.
+    result = run(
+        ["git", "merge-tree", "--write-tree", descendant_ref, ancestor_ref],
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+
+    merged_tree = result.stdout.splitlines()[0].strip() if result.stdout.strip() else ""
+    if not merged_tree:
+        return False
+
+    descendant_tree = run(["git", "rev-parse", f"{descendant_ref}^{{tree}}"]).stdout.strip()
+    return merged_tree == descendant_tree
+
+
 def github_api_json(repository: str, path: str) -> dict[str, object]:
     repository = normalize_repository(repository)
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
@@ -462,6 +483,7 @@ def validate(
             plan.ancestor_branch in RELEASE_BRANCHES
             and plan.descendant_branch in RELEASE_BRANCHES
             and target_has_no_extra_non_merge_content(ancestor_ref, descendant_ref)
+            and target_content_is_absorbed_by_descendant(ancestor_ref, descendant_ref)
         ):
             print(f"release-train-promotion: PASS ({plan.message}; {head} → {base})")
             return
@@ -675,6 +697,31 @@ def self_test_git_topology() -> None:
                 contains="staging → premain prerelease promotion",
             )
             print("release-train-promotion: positive staging → premain benign merge divergence accepted")
+            restore_staging_premain()
+
+            run(["git", "switch", "-q", "premain"])
+            run(["git", "merge", "-q", "--no-ff", "--no-commit", "staging"])
+            Path("evil-merge-injection.txt").write_text("introduced by a merge resolution\n", encoding="utf-8")
+            run(["git", "add", "evil-merge-injection.txt"])
+            run(["git", "commit", "-q", "-m", "merge staging into premain"])
+            run(["git", "push", "-q", "--force", "origin", "premain"])
+            run(["git", "switch", "-q", "staging"])
+            commit_marker("staging-after-evil-merge")
+            run(["git", "push", "-q", "--force", "origin", "staging"])
+            if is_ancestor("premain", "staging"):
+                raise AssertionError("evil merge divergence must not preserve literal premain → staging ancestry")
+            evil_count = run(["git", "rev-list", "--no-merges", "--count", "staging..premain"]).stdout.strip()
+            if evil_count != "0":
+                raise AssertionError(f"evil merge must hide behind merge commits alone, got {evil_count} non-merge commit(s)")
+            assert_validation(
+                "premain",
+                "staging",
+                1,
+                base_ref="premain",
+                head_ref="staging",
+                contains="premain is not an ancestor of staging",
+            )
+            print("release-train-promotion: negative staging → premain evil merge resolution rejected")
             restore_staging_premain()
 
             run(["git", "switch", "-q", "premain"])
