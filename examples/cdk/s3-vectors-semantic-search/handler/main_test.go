@@ -10,7 +10,9 @@ import (
 	"github.com/theory-cloud/apptheory/v5/testkit"
 )
 
-func TestSemanticSearchRoutes(t *testing.T) {
+const testToken = "example-test-token"
+
+func testProvider() dependencyProvider {
 	store := vectorstore.NewFakeStore(3)
 	embeddings := map[string][]float32{}
 	for index, record := range sampleRecords(defaultTenant, defaultNamespace) {
@@ -18,7 +20,7 @@ func TestSemanticSearchRoutes(t *testing.T) {
 	}
 	embeddings["middleware ordering"] = sampleVector(1)
 	embedder := vectorstore.NewFakeEmbedder(embeddings)
-	provider := dependencyProviderFunc(func(context.Context) (*semanticDeps, error) {
+	return dependencyProviderFunc(func(context.Context) (*semanticDeps, error) {
 		return &semanticDeps{
 			Store:            store,
 			Embedder:         embedder,
@@ -29,11 +31,70 @@ func TestSemanticSearchRoutes(t *testing.T) {
 			Normalize:        true,
 		}, nil
 	})
+}
+
+func authHeaders(token string) map[string][]string {
+	return map[string][]string{"authorization": {"Bearer " + token}}
+}
+
+func TestSeedAndSearchRequireAuth(t *testing.T) {
+	t.Setenv(exampleTokenEnv, testToken)
+	app := buildApp(testProvider(), "p2")
+	env := testkit.New()
+
+	cases := []struct {
+		name    string
+		request apptheory.Request
+		headers map[string][]string
+	}{
+		{
+			name:    "seed without token",
+			request: apptheory.Request{Method: "POST", Path: "/seed"},
+		},
+		{
+			name: "search without token",
+			request: apptheory.Request{Method: "GET", Path: "/search", Query: map[string][]string{
+				"q": {"middleware ordering"},
+			}},
+		},
+		{
+			name:    "seed with wrong token",
+			request: apptheory.Request{Method: "POST", Path: "/seed"},
+			headers: authHeaders("wrong-token"),
+		},
+		{
+			name: "search with wrong token",
+			request: apptheory.Request{Method: "GET", Path: "/search", Query: map[string][]string{
+				"q": {"middleware ordering"},
+			}},
+			headers: authHeaders("wrong-token"),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			request := tc.request
+			request.Headers = tc.headers
+			resp := env.Invoke(context.Background(), app, request)
+			if resp.Status != 401 {
+				t.Fatalf("status=%d body=%s", resp.Status, string(resp.Body))
+			}
+		})
+	}
+}
+
+func TestSemanticSearchRoutes(t *testing.T) {
+	t.Setenv(exampleTokenEnv, testToken)
+	provider := testProvider()
 
 	env := testkit.New()
-	app := buildApp(provider, "p0")
+	app := buildApp(provider, "p2")
 
-	seed := env.Invoke(context.Background(), app, apptheory.Request{Method: "POST", Path: "/seed"})
+	seed := env.Invoke(context.Background(), app, apptheory.Request{
+		Method:  "POST",
+		Path:    "/seed",
+		Headers: authHeaders(testToken),
+	})
 	if seed.Status != 200 {
 		t.Fatalf("seed status=%d body=%s", seed.Status, string(seed.Body))
 	}
@@ -51,6 +112,7 @@ func TestSemanticSearchRoutes(t *testing.T) {
 		Query: map[string][]string{
 			"q": {"middleware ordering"},
 		},
+		Headers: authHeaders(testToken),
 	})
 	if search.Status != 200 {
 		t.Fatalf("search status=%d body=%s", search.Status, string(search.Body))
@@ -70,6 +132,25 @@ func TestSemanticSearchRoutes(t *testing.T) {
 	}
 	if searchBody.Hits[0].Title != "Middleware ordering is part of the contract" {
 		t.Fatalf("unexpected first hit: %#v", searchBody.Hits[0])
+	}
+}
+
+func TestSearchRejectsOversizedTopK(t *testing.T) {
+	t.Setenv(exampleTokenEnv, testToken)
+	app := buildApp(testProvider(), "p2")
+	env := testkit.New()
+
+	resp := env.Invoke(context.Background(), app, apptheory.Request{
+		Method: "GET",
+		Path:   "/search",
+		Query: map[string][]string{
+			"q":     {"middleware ordering"},
+			"top_k": {"26"},
+		},
+		Headers: authHeaders(testToken),
+	})
+	if resp.Status != 400 {
+		t.Fatalf("status=%d body=%s", resp.Status, string(resp.Body))
 	}
 }
 
