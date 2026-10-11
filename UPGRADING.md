@@ -154,7 +154,9 @@ _, err = mcpfacade.RegisterMCPFacade(app, config)
 The default runtime tier enforces the route-level authenticated posture. The explicit `apptheory.TierP0` preflight fast
 path does not evaluate route-level auth; applications on that tier must rely on the API Gateway authorizer or wrap the
 MCP handler themselves. Applications that already wrap the handler or configure
-`apptheory.WithAuthPrincipalHook` are unaffected: the default posture delegates to that principal hook.
+`apptheory.WithAuthPrincipalHook` are unaffected: the default posture delegates to that principal hook. Wrapping the
+MCP handler without also configuring a principal hook does not exempt an application — route authorization runs before
+middleware and the handler, so every MCP transport request is still rejected with HTTP `401`.
 
 ## v4.x line
 
