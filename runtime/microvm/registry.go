@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -256,13 +257,23 @@ func SessionRegistryTableName() string {
 }
 
 // SessionRegistryPartitionKey derives the TableTheory partition key for a tenant-bound namespace.
+//
+// The encoding is injective: each trimmed identity is framed by its UTF-8 byte length in canonical
+// decimal, so no two distinct (tenant, namespace) pairs can encode to the same literal. The
+// un-prefixed TENANT#<tenant>#NAMESPACE#<namespace> form was not injective because a value
+// containing "#NAMESPACE#" could straddle the boundary.
+//
+// MIGRATION: items persisted by an earlier release used the un-prefixed
+// TENANT#<tenant>#NAMESPACE#<namespace> form. Re-key existing items with a read-modify-write pass
+// that reads each item, recomputes PK from its tenant_id and namespace attributes, and writes it
+// back under the new length-framed key.
 func SessionRegistryPartitionKey(tenantID, namespace string) string {
 	tenantID = strings.TrimSpace(tenantID)
 	namespace = strings.TrimSpace(namespace)
 	if tenantID == "" || namespace == "" {
 		return ""
 	}
-	return "TENANT#" + tenantID + "#NAMESPACE#" + namespace
+	return "TENANT#" + strconv.Itoa(len(tenantID)) + "#" + tenantID + "#NAMESPACE#" + strconv.Itoa(len(namespace)) + "#" + namespace
 }
 
 // SessionRegistrySortKey derives the TableTheory sort key for a session.
@@ -712,12 +723,26 @@ func sessionRecordIsStale(record SessionRecord, now time.Time, staleAfter time.D
 	return record.LastObservedAt.Add(staleAfter).Before(now) || !record.ExpiresAt.After(now)
 }
 
+// lengthPrefixedJoin frames each part as its UTF-8 byte length, a colon, and the part text,
+// concatenated with no separator. Each framed part is self-delimiting, so the encoding is
+// injective: distinct part slices can never produce the same string, unlike a NUL-joined
+// encoding where a NUL inside a part would make the boundary ambiguous.
+func lengthPrefixedJoin(parts ...string) string {
+	var b strings.Builder
+	for _, part := range parts {
+		b.WriteString(strconv.Itoa(len(part)))
+		b.WriteByte(':')
+		b.WriteString(part)
+	}
+	return b.String()
+}
+
 func registryRecordKey(record SessionRegistryRecord) string {
-	return record.PK + "\x00" + record.SK
+	return lengthPrefixedJoin(record.PK, record.SK)
 }
 
 func registryRecordKeyFromKey(key SessionKey) string {
-	return SessionRegistryPartitionKey(key.TenantID, key.Namespace) + "\x00" + SessionRegistrySortKey(key.SessionID)
+	return lengthPrefixedJoin(SessionRegistryPartitionKey(key.TenantID, key.Namespace), SessionRegistrySortKey(key.SessionID))
 }
 
 func cloneSessionRegistryRecord(record SessionRegistryRecord) SessionRegistryRecord {

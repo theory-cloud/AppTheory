@@ -145,10 +145,34 @@ export function microVMSessionRegistryTableName() {
     return (String(process.env[MICROVM_SESSION_REGISTRY_TABLE_ENV] ?? "").trim() ||
         MICROVM_SESSION_REGISTRY_TABLE_NAME);
 }
+// TS-internal: Go and Py have no counterpart. Frames each part as its UTF-8 byte length, a colon,
+// and the part text, concatenated with no separator. Each framed part is self-delimiting, so the
+// encoding is injective where a NUL join would be ambiguous if a part contained a NUL.
+function lengthPrefixedJoin(parts) {
+    let out = "";
+    for (const part of parts)
+        out += `${utf8ByteLength(part)}:${part}`;
+    return out;
+}
+function utf8ByteLength(value) {
+    return new TextEncoder().encode(value).length;
+}
+// microVMSessionRegistryPartitionKey derives the TableTheory partition key for a tenant-bound
+// namespace. The encoding is injective: each trimmed identity is framed by its UTF-8 byte length,
+// so distinct (tenant, namespace) pairs can never share a key. The un-prefixed
+// TENANT#<tenant>#NAMESPACE#<namespace> form was not injective because a value containing
+// "#NAMESPACE#" could straddle the boundary.
+//
+// MIGRATION: items persisted by an earlier release used the un-prefixed
+// TENANT#<tenant>#NAMESPACE#<namespace> form. Re-key existing items with a read-modify-write pass
+// that reads each item, recomputes pk from its tenant_id and namespace attributes, and writes it
+// back under the new length-framed key.
 export function microVMSessionRegistryPartitionKey(tenantID, namespace) {
     const tenant = String(tenantID ?? "").trim();
     const ns = String(namespace ?? "").trim();
-    return tenant && ns ? `TENANT#${tenant}#NAMESPACE#${ns}` : "";
+    return tenant && ns
+        ? `TENANT#${utf8ByteLength(tenant)}#${tenant}#NAMESPACE#${utf8ByteLength(ns)}#${ns}`
+        : "";
 }
 export function microVMSessionRegistrySortKey(sessionID) {
     const session = String(sessionID ?? "").trim();
@@ -529,10 +553,13 @@ export function validateMicroVMSessionKey(key) {
     }
 }
 export function microVMSessionRegistryRecordKey(record) {
-    return `${record.pk}\u0000${record.sk}`;
+    return lengthPrefixedJoin([record.pk, record.sk]);
 }
 export function microVMSessionRegistryRecordKeyFromKey(key) {
-    return `${microVMSessionRegistryPartitionKey(key.tenant_id, key.namespace)}\u0000${microVMSessionRegistrySortKey(key.session_id)}`;
+    return lengthPrefixedJoin([
+        microVMSessionRegistryPartitionKey(key.tenant_id, key.namespace),
+        microVMSessionRegistrySortKey(key.session_id),
+    ]);
 }
 export function microVMSessionRecordIsStale(record, now, staleAfterMs) {
     if (staleAfterMs <= 0 || !validDate(now))
@@ -693,7 +720,13 @@ export function recordTokenMetadataField(item, key) {
 export function microVMSessionRecordKey(record) {
     return microVMSessionKeyString(record.tenant_id, record.namespace, record.session_id);
 }
+// TS-internal: Go keys by a SessionKey struct and Py by a tuple, so this framed string has no
+// Go/Py counterpart. It is used as a Map key, and the length-prefixed framing keeps it injective.
 export function microVMSessionKeyString(tenantID, namespace, sessionID) {
-    return `${String(tenantID ?? "").trim()}\u0000${String(namespace ?? "").trim()}\u0000${String(sessionID ?? "").trim()}`;
+    return lengthPrefixedJoin([
+        String(tenantID ?? "").trim(),
+        String(namespace ?? "").trim(),
+        String(sessionID ?? "").trim(),
+    ]);
 }
 //# sourceMappingURL=session.js.map

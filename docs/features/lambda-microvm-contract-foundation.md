@@ -212,9 +212,15 @@ Canonical keys are derived from tenant and session identity:
 
 | Field | Canonical value |
 | --- | --- |
-| `pk` | `TENANT#<tenant_id>#NAMESPACE#<namespace>` |
+| `pk` | `TENANT#<tenant_id_utf8_byte_len>#<tenant_id>#NAMESPACE#<namespace_utf8_byte_len>#<namespace>` |
 | `sk` | `SESSION#<session_id>` |
 | `ttl` | Unix expiry derived from `expires_at` |
+
+The partition key frames each identity with its UTF-8 byte length so distinct tenant/namespace pairs
+can never collide. Items written by an earlier release used the un-prefixed
+`TENANT#<tenant_id>#NAMESPACE#<namespace>` form; re-key them with a read-modify-write pass that reads
+each item, recomputes `pk` from its `tenant_id` and `namespace` attributes, and writes it back under
+the new length-framed key.
 
 Canonical durable records include tenant, namespace, session, image, connector, provider binding, AWS lifecycle,
 registry version, timestamps, generation/version fields, last action metadata, auth subject, token metadata, and safe

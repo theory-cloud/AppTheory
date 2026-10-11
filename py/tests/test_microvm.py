@@ -739,7 +739,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
             last_action=app.COMMAND_START,
         )
         registry_record = app.microvm_session_record_to_registry_record(record)
-        self.assertEqual("TENANT#tenant-1#NAMESPACE#namespace-1", registry_record.pk)
+        self.assertEqual("TENANT#8#tenant-1#NAMESPACE#11#namespace-1", registry_record.pk)
         self.assertEqual("SESSION#session-1", registry_record.sk)
         self.assertEqual(3601, registry_record.ttl)
         self.assertEqual(7, registry_record.version)
@@ -756,6 +756,23 @@ class MicroVMLifecycleTests(unittest.TestCase):
         self.assertEqual(record.provider_id, round_trip.provider_id)
         self.assertEqual(record.token_metadata[0].token_id, round_trip.token_metadata[0].token_id)
         self.assertEqual(record.last_action, round_trip.last_action)
+
+        # THE-3413 collision witness: the un-prefixed form mapped both pairs to the same key.
+        self.assertNotEqual(
+            app.microvm_session_registry_partition_key("a", "b#NAMESPACE#c"),
+            app.microvm_session_registry_partition_key("a#NAMESPACE#b", "c"),
+        )
+        self.assertNotEqual(
+            app.microvm_session_registry_partition_key("10", "abc"),
+            app.microvm_session_registry_partition_key("1", "0abc"),
+        )
+        framed = app.microvm_session_record_to_registry_record(self._valid_record(namespace="b#NAMESPACE#c"))
+        self.assertEqual(
+            app.microvm_session_registry_partition_key("tenant-1", "b#NAMESPACE#c"),
+            framed.pk,
+        )
+        app.validate_microvm_session_registry_record(framed)
+        self.assertEqual("b#NAMESPACE#c", app.microvm_session_from_registry_record(framed).namespace)
 
         bad = app.microvm_session_record_to_registry_record(record)
         bad.pk = "TENANT#other#NAMESPACE#namespace-1"

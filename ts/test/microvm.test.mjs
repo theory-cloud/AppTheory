@@ -808,7 +808,7 @@ test("microvm session registry conversions keep TableTheory shape", () => {
 
   assert.equal(
     microVMSessionRegistryPartitionKey(" tenant-1 ", " namespace-1 "),
-    "TENANT#tenant-1#NAMESPACE#namespace-1",
+    "TENANT#8#tenant-1#NAMESPACE#11#namespace-1",
   );
   assert.equal(microVMSessionRegistryPartitionKey("", "namespace-1"), "");
   assert.equal(
@@ -816,6 +816,29 @@ test("microvm session registry conversions keep TableTheory shape", () => {
     "SESSION#session-1",
   );
   assert.equal(microVMSessionRegistrySortKey(""), "");
+
+  // THE-3413 collision witness: the un-prefixed form mapped both pairs to the same key.
+  assert.notEqual(
+    microVMSessionRegistryPartitionKey("a", "b#NAMESPACE#c"),
+    microVMSessionRegistryPartitionKey("a#NAMESPACE#b", "c"),
+  );
+  assert.notEqual(
+    microVMSessionRegistryPartitionKey("10", "abc"),
+    microVMSessionRegistryPartitionKey("1", "0abc"),
+  );
+
+  const framed = microVMSessionRecordToRegistryRecord(
+    validRecord({ namespace: "b#NAMESPACE#c" }),
+  );
+  assert.equal(
+    framed.pk,
+    microVMSessionRegistryPartitionKey("tenant-1", "b#NAMESPACE#c"),
+  );
+  validateMicroVMSessionRegistryRecord(framed);
+  assert.equal(
+    microVMSessionFromRegistryRecord(framed).namespace,
+    "b#NAMESPACE#c",
+  );
 
   const model = microVMSessionRegistryModel("microvm-table");
   assert.equal(model.tableName, "microvm-table");
@@ -828,7 +851,7 @@ test("microvm session registry conversions keep TableTheory shape", () => {
     metadata: { safe: "ok" },
   });
   const registry = microVMSessionRecordToRegistryRecord(record);
-  assert.equal(registry.pk, "TENANT#tenant-1#NAMESPACE#namespace-1");
+  assert.equal(registry.pk, "TENANT#8#tenant-1#NAMESPACE#11#namespace-1");
   assert.equal(registry.sk, "SESSION#session-1");
   assert.equal(registry.ttl, Math.trunc(record.expires_at.getTime() / 1000));
   assert.equal(registry.version, record.generation);
@@ -1031,7 +1054,7 @@ test("microvm TableTheory registry adapter uses constrained storage model", asyn
     async get(modelName, key) {
       assert.equal(modelName, "MicroVMCustomModel");
       assert.deepEqual(key, {
-        pk: "TENANT#tenant-1#NAMESPACE#namespace-1",
+        pk: "TENANT#8#tenant-1#NAMESPACE#11#namespace-1",
         sk: "SESSION#session-1",
       });
       return saved[0].item;
@@ -1050,7 +1073,7 @@ test("microvm TableTheory registry adapter uses constrained storage model", asyn
   const stored = await registry.put(validRecord({ metadata: { safe: "ok" } }));
   assert.equal(stored.session_id, "session-1");
   assert.equal(saved[0].modelName, "MicroVMCustomModel");
-  assert.equal(saved[0].item.pk, "TENANT#tenant-1#NAMESPACE#namespace-1");
+  assert.equal(saved[0].item.pk, "TENANT#8#tenant-1#NAMESPACE#11#namespace-1");
   assert.equal(saved[0].item.created_at, new Date(1000).toISOString());
   assert.deepEqual(saved[0].item.metadata, { safe: "ok" });
 

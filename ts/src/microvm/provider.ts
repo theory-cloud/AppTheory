@@ -1073,12 +1073,28 @@ function providerInvokeForbiddenHeaders(): Set<string> {
   ]);
 }
 
+// TS-internal: Go keys by a SessionKey struct and Py by a tuple, so this framed string has no
+// Go/Py counterpart. It is used as a Map key, and the length-prefixed framing keeps it injective.
+function lengthPrefixedJoin(parts: string[]): string {
+  let out = "";
+  for (const part of parts) out += `${utf8ByteLength(part)}:${part}`;
+  return out;
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
 export function microVMProviderSessionKeyString(
   tenantID: string,
   namespace: string,
   sessionID: string,
 ): string {
-  return `${String(tenantID ?? "").trim()}\u0000${String(namespace ?? "").trim()}\u0000${String(sessionID ?? "").trim()}`;
+  return lengthPrefixedJoin([
+    String(tenantID ?? "").trim(),
+    String(namespace ?? "").trim(),
+    String(sessionID ?? "").trim(),
+  ]);
 }
 
 export function providerEgressConnectorRefs(
@@ -1167,7 +1183,7 @@ export function safeMicroVMProviderTokenID(
     ...scope,
   ];
   const digest = createHash("sha256")
-    .update(parts.join("\u0000"))
+    .update(lengthPrefixedJoin(parts))
     .digest("hex")
     .slice(0, 16);
   return `${tokenType}-${digest}`;

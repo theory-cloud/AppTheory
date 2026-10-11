@@ -222,9 +222,15 @@ Records use the TableTheory/DynamoDB key shape:
 
 | Field | Canonical value |
 | --- | --- |
-| `pk` | `TENANT#<tenant_id>#NAMESPACE#<namespace>` |
+| `pk` | `TENANT#<tenant_id_utf8_byte_len>#<tenant_id>#NAMESPACE#<namespace_utf8_byte_len>#<namespace>` |
 | `sk` | `SESSION#<session_id>` |
 | `ttl` | Unix expiry derived from `expires_at` |
+
+The partition key frames each identity with its UTF-8 byte length so distinct tenant/namespace pairs
+can never collide. Items written by an earlier release used the un-prefixed
+`TENANT#<tenant_id>#NAMESPACE#<namespace>` form; re-key them with a read-modify-write pass that reads
+each item, recomputes `pk` from its `tenant_id` and `namespace` attributes, and writes it back under
+the new length-framed key.
 
 Controller/session handlers must use this registry table rather than route-local memory, ad-hoc tables, or raw SDK
 storage. The durable record is tenant-bound and includes session state, desired state, image/network refs, provider

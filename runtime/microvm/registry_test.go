@@ -54,6 +54,34 @@ func TestSessionRegistryRecordConversionAndValidation(t *testing.T) {
 	require.Error(t, ValidateSessionRegistryRecord(bad))
 }
 
+func TestSessionRegistryPartitionKeyIsInjective(t *testing.T) {
+	require.Equal(t, "TENANT#8#tenant-1#NAMESPACE#11#namespace-1", SessionRegistryPartitionKey("tenant-1", "namespace-1"))
+	require.Equal(t, "", SessionRegistryPartitionKey("", "namespace-1"))
+	require.Equal(t, "", SessionRegistryPartitionKey("tenant-1", "   "))
+
+	// Collision witness from THE-3413: the un-prefixed form mapped both pairs to the same key.
+	require.NotEqual(t,
+		SessionRegistryPartitionKey("a", "b#NAMESPACE#c"),
+		SessionRegistryPartitionKey("a#NAMESPACE#b", "c"),
+	)
+	require.NotEqual(t,
+		SessionRegistryPartitionKey("10", "abc"),
+		SessionRegistryPartitionKey("1", "0abc"),
+	)
+
+	now := time.Unix(100, 0).UTC()
+	record := registryTestRecord(now)
+	record.Namespace = "b#NAMESPACE#c"
+	registry, err := SessionRecordToRegistryRecord(record)
+	require.NoError(t, err)
+	require.Equal(t, SessionRegistryPartitionKey("tenant-1", "b#NAMESPACE#c"), registry.PK)
+	require.NoError(t, ValidateSessionRegistryRecord(registry))
+
+	roundTrip, err := SessionRecordFromRegistryRecord(registry)
+	require.NoError(t, err)
+	require.Equal(t, record.Namespace, roundTrip.Namespace)
+}
+
 func TestMemorySessionRegistryAndRegistryClient(t *testing.T) {
 	now := time.Unix(200, 0).UTC()
 	registry := NewMemorySessionRegistry()
