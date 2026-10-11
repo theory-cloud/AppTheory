@@ -32,6 +32,10 @@ type AppTheoryVectorIndex interface {
 	// Bind canonical Bedrock Titan embedding environment variables.
 	BindTitanEmbeddingEnvironment(fn awslambda.Function, options *AppTheoryVectorIndexBindOptions)
 	// Grant Bedrock InvokeModel for explicit Titan embedding helpers.
+	//
+	// The default resource ARN is scoped to the configured Titan embedding model
+	// in this stack's partition and region. Pass `modelResourceArn` explicitly -
+	// for example `"*"` - to opt into a different or wider resource scope.
 	GrantBedrockInvokeModel(grantee awsiam.IGrantable, modelResourceArn *string) awsiam.Grant
 	// Grant read, query, write, and management permissions.
 	GrantManage(grantee awsiam.IGrantable) awsiam.Grant

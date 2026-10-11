@@ -228,7 +228,7 @@ export class AppTheoryVectorIndex extends Construct {
   /** Bind canonical Bedrock Titan embedding environment variables. */
   public bindTitanEmbeddingEnvironment(fn: lambda.Function, options: AppTheoryVectorIndexBindOptions = {}): void {
     fn.addEnvironment("APPTHEORY_EMBEDDING_PROVIDER", options.embeddingProvider ?? "bedrock");
-    fn.addEnvironment("APPTHEORY_EMBEDDING_MODEL_ID", options.embeddingModelId ?? "amazon.titan-embed-text-v2:0");
+    fn.addEnvironment("APPTHEORY_EMBEDDING_MODEL_ID", options.embeddingModelId ?? TITAN_EMBED_DEFAULT_MODEL_ID);
     fn.addEnvironment("APPTHEORY_EMBEDDING_DIMENSIONS", String(options.embeddingDimensions ?? this.dimension));
     fn.addEnvironment("APPTHEORY_EMBEDDING_NORMALIZE", String(options.embeddingNormalize ?? true));
   }
@@ -285,12 +285,18 @@ export class AppTheoryVectorIndex extends Construct {
     );
   }
 
-  /** Grant Bedrock InvokeModel for explicit Titan embedding helpers. */
-  public grantBedrockInvokeModel(grantee: iam.IGrantable, modelResourceArn: string = "*"): iam.Grant {
+  /**
+   * Grant Bedrock InvokeModel for explicit Titan embedding helpers.
+   *
+   * The default resource ARN is scoped to the configured Titan embedding model
+   * in this stack's partition and region. Pass `modelResourceArn` explicitly -
+   * for example `"*"` - to opt into a different or wider resource scope.
+   */
+  public grantBedrockInvokeModel(grantee: iam.IGrantable, modelResourceArn?: string): iam.Grant {
     return iam.Grant.addToPrincipal({
       grantee,
       actions: ["bedrock:InvokeModel"],
-      resourceArns: [modelResourceArn],
+      resourceArns: [modelResourceArn ?? titanModelResourceArn()],
     });
   }
 
@@ -301,6 +307,14 @@ export class AppTheoryVectorIndex extends Construct {
       resourceArns: [this.vectorBucketArn, this.indexArn],
     });
   }
+}
+
+const TITAN_EMBED_DEFAULT_MODEL_ID = "amazon.titan-embed-text-v2:0";
+
+function titanModelResourceArn(modelId: string = TITAN_EMBED_DEFAULT_MODEL_ID): string {
+  // Bedrock foundation-model ARNs carry no account segment; the region resolves
+  // from the stack so the grant is scoped to the configured model, not `*`.
+  return `arn:${Aws.PARTITION}:bedrock:${Aws.REGION}::foundation-model/${modelId}`;
 }
 
 function normalizeKeys(values: string[]): string[] {

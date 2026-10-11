@@ -123,7 +123,13 @@ export declare class AppTheoryVectorIndex extends Construct {
     grantWriteVectors(grantee: iam.IGrantable): iam.Grant;
     /** Grant read, query, write, and management permissions. */
     grantManage(grantee: iam.IGrantable): iam.Grant;
-    /** Grant Bedrock InvokeModel for explicit Titan embedding helpers. */
+    /**
+     * Grant Bedrock InvokeModel for explicit Titan embedding helpers.
+     *
+     * The default resource ARN is scoped to the configured Titan embedding model
+     * in this stack's partition and region. Pass `modelResourceArn` explicitly -
+     * for example `"*"` - to opt into a different or wider resource scope.
+     */
     grantBedrockInvokeModel(grantee: iam.IGrantable, modelResourceArn?: string): iam.Grant;
     private grant;
 }

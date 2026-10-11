@@ -28,7 +28,7 @@ export interface AppTheoryAppProps {
      * `logGroup` and `logRemovalPolicy` fails synthesis because caller-provided
      * log groups own their removal policy.
      *
-     * @default RemovalPolicy.DESTROY
+     * @default RemovalPolicy.RETAIN
      */
     readonly logRemovalPolicy?: RemovalPolicy;
     readonly vpc?: ec2.IVpc;

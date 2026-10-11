@@ -14,6 +14,12 @@ type AppTheoryHttpApiProps struct {
 	//
 	Cors interface{} `field:"optional" json:"cors" yaml:"cors"`
 	// Custom domain configuration.
+	//
+	// When `domain.mutualTlsAuthentication` is set, AppTheory fails closed and
+	// disables the default `execute-api` endpoint so the API is reachable only
+	// through the mutual-TLS custom domain. Without mutual TLS the default
+	// endpoint keeps the AWS default (enabled), so ordinary custom domains are
+	// unaffected.
 	// Default: undefined.
 	//
 	Domain *AppTheoryHttpApiDomainOptions `field:"optional" json:"domain" yaml:"domain"`

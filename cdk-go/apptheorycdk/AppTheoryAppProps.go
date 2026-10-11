@@ -37,7 +37,7 @@ type AppTheoryAppProps struct {
 	// The value is forwarded unchanged to AppTheoryFunction. Supplying both
 	// `logGroup` and `logRemovalPolicy` fails synthesis because caller-provided
 	// log groups own their removal policy.
-	// Default: RemovalPolicy.DESTROY
+	// Default: RemovalPolicy.RETAIN
 	//
 	LogRemovalPolicy   awscdk.RemovalPolicy  `field:"optional" json:"logRemovalPolicy" yaml:"logRemovalPolicy"`
 	LogRetention       awslogs.RetentionDays `field:"optional" json:"logRetention" yaml:"logRetention"`

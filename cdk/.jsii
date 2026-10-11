@@ -10456,7 +10456,7 @@
         {
           "abstract": true,
           "docs": {
-            "default": "RemovalPolicy.DESTROY",
+            "default": "RemovalPolicy.RETAIN",
             "remarks": "The value is forwarded unchanged to AppTheoryFunction. Supplying both\n`logGroup` and `logRemovalPolicy` fails synthesis because caller-provided\nlog groups own their removal policy.",
             "summary": "Removal policy for the app function's AppTheory-managed named log group."
           },
@@ -13681,7 +13681,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/function.ts",
-          "line": 143
+          "line": 145
         },
         "parameters": [
           {
@@ -13707,7 +13707,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/function.ts",
-        "line": 137
+        "line": 139
       },
       "name": "AppTheoryFunction",
       "properties": [
@@ -13715,7 +13715,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 138
+            "line": 140
           },
           "name": "fn",
           "type": {
@@ -13726,7 +13726,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 140
+            "line": 142
           },
           "name": "alias",
           "optional": true,
@@ -13738,7 +13738,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 141
+            "line": 143
           },
           "name": "deploymentGroup",
           "optional": true,
@@ -13750,7 +13750,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 139
+            "line": 141
           },
           "name": "logGroup",
           "optional": true,
@@ -14118,7 +14118,7 @@
       "assembly": "@theory-cloud/apptheory-cdk",
       "datatype": true,
       "docs": {
-        "remarks": "AppTheory overrides the inherited `logRemovalPolicy` default for log groups\nit creates: they use `RemovalPolicy.DESTROY`. Combining an explicit\n`logRemovalPolicy` with a caller-provided `logGroup` fails synthesis because\ncaller-provided resources own their removal policy.",
+        "remarks": "AppTheory overrides the inherited `logRemovalPolicy` default for log groups\nit creates: they use `RemovalPolicy.RETAIN`, so deleting a stack preserves\nthe execution logs. Pass `RemovalPolicy.DESTROY` explicitly to opt back into\nthe destructive behavior. Combining an explicit `logRemovalPolicy` with a\ncaller-provided `logGroup` fails synthesis because caller-provided resources\nown their removal policy.",
         "summary": "Properties for an AppTheory-managed Lambda function."
       },
       "fqn": "@theory-cloud/apptheory-cdk.AppTheoryFunctionProps",
@@ -14128,7 +14128,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/function.ts",
-        "line": 113
+        "line": 115
       },
       "name": "AppTheoryFunctionProps",
       "properties": [
@@ -14142,7 +14142,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 134
+            "line": 136
           },
           "name": "alias",
           "optional": true,
@@ -14160,7 +14160,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 124
+            "line": 126
           },
           "name": "roleName",
           "optional": true,
@@ -14486,7 +14486,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/http-api.ts",
-          "line": 206
+          "line": 213
         },
         "parameters": [
           {
@@ -14512,7 +14512,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/http-api.ts",
-        "line": 200
+        "line": 207
       },
       "name": "AppTheoryHttpApi",
       "properties": [
@@ -14520,7 +14520,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 201
+            "line": 208
           },
           "name": "api",
           "type": {
@@ -14531,7 +14531,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 202
+            "line": 209
           },
           "name": "stage",
           "type": {
@@ -14542,7 +14542,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 203
+            "line": 210
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -14554,7 +14554,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 204
+            "line": 211
           },
           "name": "domain",
           "optional": true,
@@ -14951,12 +14951,13 @@
           "abstract": true,
           "docs": {
             "default": "undefined",
+            "remarks": "When `domain.mutualTlsAuthentication` is set, AppTheory fails closed and\ndisables the default `execute-api` endpoint so the API is reachable only\nthrough the mutual-TLS custom domain. Without mutual TLS the default\nendpoint keeps the AWS default (enabled), so ordinary custom domains are\nunaffected.",
             "summary": "Custom domain configuration."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 179
+            "line": 186
           },
           "name": "domain",
           "optional": true,
@@ -14991,7 +14992,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 185
+            "line": 192
           },
           "name": "stage",
           "optional": true,
@@ -15011,7 +15012,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 197
+            "line": 204
           },
           "name": "waf",
           "optional": true,
@@ -16398,7 +16399,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/kinesis-stream-mapping.ts",
-          "line": 125
+          "line": 127
         },
         "parameters": [
           {
@@ -16424,7 +16425,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/kinesis-stream-mapping.ts",
-        "line": 124
+        "line": 126
       },
       "name": "AppTheoryKinesisStreamMapping",
       "symbolId": "lib/kinesis-stream-mapping:AppTheoryKinesisStreamMapping"
@@ -16545,13 +16546,13 @@
           "abstract": true,
           "docs": {
             "default": "- discarded records are dropped",
-            "remarks": "Pass an event source DLQ, such as `new lambdaEventSources.SqsDlq(queue)` or\n`new lambdaEventSources.SnsDlq(topic)`. Binding that DLQ grants the consumer role exactly the\npermission the destination needs (`sqs:SendMessage` or `sns:Publish`); an Amazon S3 bucket\n(`new lambdaEventSources.S3OnFailureDestination(bucket)`) is also supported.\n\nThe destination receives metadata about the discarded batch, not the records themselves: the\nshard ID and sequence numbers identify records to re-read from the stream while they are still\ninside the stream retention window. It only receives anything once retries are exhausted or\n`maxRecordAge` is exceeded, so a mapping that leaves both unbounded (the AWS Lambda default is\n`-1`, retry until the record expires) has nothing to send. Pair this prop with a bounded\n`retryAttempts` and `bisectBatchOnError: true` so a poison record is retained for repair instead\nof blocking its shard.",
+            "remarks": "Pass an event source DLQ, such as `new lambdaEventSources.SqsDlq(queue)` or\n`new lambdaEventSources.SnsDlq(topic)`. Binding that DLQ grants the consumer role exactly the\npermission the destination needs (`sqs:SendMessage` or `sns:Publish`); an Amazon S3 bucket\n(`new lambdaEventSources.S3OnFailureDestination(bucket)`) is also supported.\n\nWhat the destination receives depends on its type. An Amazon SQS or Amazon SNS destination\nreceives metadata about the discarded batch - the shard ID and the start and end sequence\nnumbers - which identify records to re-read from the stream while they are still inside the\nstream retention window; it does not receive the record payloads. An Amazon S3 destination\n(`S3OnFailureDestination`) receives the full records, including their payloads. The destination\nonly receives anything once retries are exhausted or `maxRecordAge` is exceeded, so a mapping\nthat leaves both unbounded (the AWS Lambda default is `-1`, retry until the record expires) has\nnothing to send. Pair this prop with a bounded `retryAttempts` and `bisectBatchOnError: true` so\na poison record is retained for repair instead of blocking its shard.",
             "summary": "Destination for the records Lambda discards after retries are exhausted or `maxRecordAge` elapses."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/kinesis-stream-mapping.ts",
-            "line": 115
+            "line": 117
           },
           "name": "onFailure",
           "optional": true,
@@ -26989,7 +26990,7 @@
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
       "docs": {
-        "remarks": "The construct owns one hardened, versioned bucket, its seven-day incomplete\nmultipart-upload reaping rule, and the one-action IAM grant path for\nnamespace bundles. Literal inputs produce exact-key grants. CloudFormation\nresolves unresolved token inputs at deployment; AppTheory cannot guarantee\nexactness for token-valued locations. It does not issue temporary\ncredentials, mint bundle identifiers, or define artifact URI schemes.",
+        "remarks": "The construct owns one hardened, versioned bucket, its seven-day incomplete\nmultipart-upload reaping rule, and the one-action IAM grant path for\nnamespace bundles. Grant locations must be literal values, so every grant\ntargets one exact object key; unresolved token locations are rejected. It\ndoes not issue temporary credentials, mint bundle identifiers, or define\nartifact URI schemes.",
         "summary": "Version-pinned artifact ingress bucket for Theory Cloud namespace releases."
       },
       "fqn": "@theory-cloud/apptheory-cdk.AppTheoryS3VersionedIngress",
@@ -27028,7 +27029,7 @@
       "methods": [
         {
           "docs": {
-            "remarks": "`s3:PutObject` inherently covers multipart create, part upload, and\ncompletion on the same key; separate abort and part-listing actions remain\nungranted. Literal location values are validated at synthesis. CDK tokens\nskip literal value validation and are resolved by CloudFormation at\ndeployment; AppTheory cannot guarantee exactness for token-valued\nlocations. Missing inputs still fail closed before any grant is added.",
+            "remarks": "`s3:PutObject` inherently covers multipart create, part upload, and\ncompletion on the same key; separate abort and part-listing actions remain\nungranted. Location values must be literal strings: AppTheory validates them\nat synthesis and rejects unresolved CDK tokens, because a grant cannot\nguarantee an exact key for a location that CloudFormation only resolves at\ndeployment. Missing inputs still fail closed before any grant is added.",
             "summary": "Grant one principal `s3:PutObject` on one namespace bundle resource."
           },
           "locationInModule": {
@@ -27064,12 +27065,12 @@
         },
         {
           "docs": {
-            "remarks": "The grant includes only `s3:GetObjectVersion`. Literal inputs target one\nexact bundle key. CloudFormation resolves token inputs at deployment;\nAppTheory cannot guarantee exactness for token-valued locations.\nUnversioned reads and bucket listing remain ungranted.",
+            "remarks": "The grant includes only `s3:GetObjectVersion`. Inputs must be literal\nstrings and target one exact bundle key; unresolved CDK tokens are rejected.\nUnversioned reads and bucket listing remain ungranted.",
             "summary": "Grant one principal permission to read one pinned namespace bundle version."
           },
           "locationInModule": {
             "filename": "lib/s3-versioned-ingress.ts",
-            "line": 87
+            "line": 86
           },
           "name": "grantVersionedRead",
           "parameters": [
@@ -28305,11 +28306,12 @@
         },
         {
           "docs": {
+            "remarks": "The default resource ARN is scoped to the configured Titan embedding model\nin this stack's partition and region. Pass `modelResourceArn` explicitly -\nfor example `\"*\"` - to opt into a different or wider resource scope.",
             "summary": "Grant Bedrock InvokeModel for explicit Titan embedding helpers."
           },
           "locationInModule": {
             "filename": "lib/vector-index.ts",
-            "line": 289
+            "line": 295
           },
           "name": "grantBedrockInvokeModel",
           "parameters": [
@@ -29960,5 +29962,5 @@
     }
   },
   "version": "5.0.2",
-  "fingerprint": "2DtvNBJhr853fgqzmlWhZEBh2o2b2wHgOCgxLHw9Gtw="
+  "fingerprint": "t7r/Q6oPUogfFOzcXEk/qesxlgqkfdQpzctl6ylR6jw="
 }
