@@ -32,17 +32,8 @@ func (i *SemanticIndex) PutText(ctx context.Context, records []SemanticRecord) e
 	if len(records) == 0 {
 		return NewError(ErrorCodeInvalidInput, "vectorstore: at least one semantic record is required", nil)
 	}
-	if i.MaxRecords > 0 && len(records) > i.MaxRecords {
-		return NewError(ErrorCodeInvalidInput, fmt.Sprintf("vectorstore: semantic ingest exceeds the record budget of %d", i.MaxRecords), nil)
-	}
-	if i.MaxTextBytes > 0 {
-		totalBytes := 0
-		for _, record := range records {
-			totalBytes += len(record.Text)
-		}
-		if totalBytes > i.MaxTextBytes {
-			return NewError(ErrorCodeInvalidInput, fmt.Sprintf("vectorstore: semantic ingest exceeds the text byte budget of %d", i.MaxTextBytes), nil)
-		}
+	if err := i.enforceIngestBudget(records); err != nil {
+		return err
 	}
 	texts := make([]string, 0, len(records))
 	for _, record := range records {
@@ -72,6 +63,22 @@ func (i *SemanticIndex) PutText(ctx context.Context, records []SemanticRecord) e
 		vectors = append(vectors, VectorRecord{Key: record.Key, Data: embeddings[idx], Metadata: CloneMetadata(record.Metadata)})
 	}
 	return i.Store.PutVectors(ctx, PutInput{Records: vectors})
+}
+
+func (i *SemanticIndex) enforceIngestBudget(records []SemanticRecord) error {
+	if i.MaxRecords > 0 && len(records) > i.MaxRecords {
+		return NewError(ErrorCodeInvalidInput, fmt.Sprintf("vectorstore: semantic ingest exceeds the record budget of %d", i.MaxRecords), nil)
+	}
+	if i.MaxTextBytes > 0 {
+		totalBytes := 0
+		for _, record := range records {
+			totalBytes += len(record.Text)
+		}
+		if totalBytes > i.MaxTextBytes {
+			return NewError(ErrorCodeInvalidInput, fmt.Sprintf("vectorstore: semantic ingest exceeds the text byte budget of %d", i.MaxTextBytes), nil)
+		}
+	}
+	return nil
 }
 
 func (i *SemanticIndex) QueryText(ctx context.Context, text string, input QueryInput) ([]QueryHit, error) {

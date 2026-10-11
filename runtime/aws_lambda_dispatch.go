@@ -113,7 +113,7 @@ func (a *App) handleLambdaRequestContext(ctx context.Context, event json.RawMess
 	}
 
 	if len(probe.HTTP) > 0 {
-		if env.RouteKey != nil && !isLambdaFunctionURLDomain(probe.DomainName) {
+		if isAPIGatewayV2HTTPEvent(env.RouteKey, probe.DomainName) {
 			var http events.APIGatewayV2HTTPRequest
 			if err := json.Unmarshal(event, &http); err != nil {
 				return nil, true, fmt.Errorf("apptheory: parse apigw v2 event: %w", err)
@@ -169,6 +169,14 @@ func (a *App) handleLambdaRequestContext(ctx context.Context, event json.RawMess
 func isLambdaFunctionURLDomain(domainName string) bool {
 	host := strings.ToLower(strings.TrimSpace(domainName))
 	return strings.Contains(host, ".lambda-url.") && strings.HasSuffix(host, ".on.aws")
+}
+
+// isAPIGatewayV2HTTPEvent reports whether an HTTP-context Lambda event came from
+// API Gateway v2 (HTTP API) rather than a Lambda Function URL. Both provider
+// payloads carry a top-level routeKey, so the routeKey only counts once the
+// requestContext domainName rules out a Function URL endpoint.
+func isAPIGatewayV2HTTPEvent(routeKey *string, domainName string) bool {
+	return routeKey != nil && !isLambdaFunctionURLDomain(domainName)
 }
 
 // HandleLambda routes an untyped Lambda event to the correct AppTheory entrypoint.
