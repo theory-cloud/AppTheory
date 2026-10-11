@@ -1720,6 +1720,10 @@ type SemanticIndex struct {
 	Embedder             Embedder
 	Dimension            int
 	RequiredMetadataKeys []string
+
+	MaxRecords int
+
+	MaxTextBytes int
 }
 
 type SemanticRecord struct {

@@ -2,6 +2,7 @@ package vectorstore
 
 import (
 	"context"
+	"fmt"
 	"strings"
 )
 
@@ -16,6 +17,12 @@ type SemanticIndex struct {
 	Embedder             Embedder
 	Dimension            int
 	RequiredMetadataKeys []string
+	// MaxRecords bounds the number of records PutText accepts before it calls the
+	// embedder. Zero leaves the record count unbounded.
+	MaxRecords int
+	// MaxTextBytes bounds the cumulative UTF-8 text bytes PutText accepts before
+	// it calls the embedder. Zero leaves the cumulative size unbounded.
+	MaxTextBytes int
 }
 
 func (i *SemanticIndex) PutText(ctx context.Context, records []SemanticRecord) error {
@@ -24,6 +31,18 @@ func (i *SemanticIndex) PutText(ctx context.Context, records []SemanticRecord) e
 	}
 	if len(records) == 0 {
 		return NewError(ErrorCodeInvalidInput, "vectorstore: at least one semantic record is required", nil)
+	}
+	if i.MaxRecords > 0 && len(records) > i.MaxRecords {
+		return NewError(ErrorCodeInvalidInput, fmt.Sprintf("vectorstore: semantic ingest exceeds the record budget of %d", i.MaxRecords), nil)
+	}
+	if i.MaxTextBytes > 0 {
+		totalBytes := 0
+		for _, record := range records {
+			totalBytes += len(record.Text)
+		}
+		if totalBytes > i.MaxTextBytes {
+			return NewError(ErrorCodeInvalidInput, fmt.Sprintf("vectorstore: semantic ingest exceeds the text byte budget of %d", i.MaxTextBytes), nil)
+		}
 	}
 	texts := make([]string, 0, len(records))
 	for _, record := range records {
