@@ -6,7 +6,7 @@ import os
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, NotRequired, TypedDict, cast
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
 from apptheory.app import LogRecord, ObservabilityHooks
 from apptheory.logger import StructuredLogger
@@ -739,9 +739,13 @@ def _int_field(fields: dict[str, Any], name: str) -> int:
     return 0
 
 
+_JSONOptionType = Literal["string", "boolean", "stringArray", "stringMap"]
+
+
 class _JSONOptionSchema(TypedDict):
     allowed: set[str]
     nested: NotRequired[dict[str, _JSONOptionSchema]]
+    types: NotRequired[dict[str, _JSONOptionType]]
 
 
 def _option_name_set(*names: str) -> set[str]:
@@ -762,6 +766,14 @@ _LOGGING_PROFILE_JSON_OPTIONS: _JSONOptionSchema = {
         "sanitization",
         "alerting_hints",
     ),
+    "types": {
+        "schema_version": "string",
+        "profile": "string",
+        "levels": "stringMap",
+        "required_fields": "stringArray",
+        "recommended_fields": "stringArray",
+        "field_map": "stringMap",
+    },
     "nested": {
         "encoding": {
             "allowed": _option_name_set(
@@ -770,9 +782,19 @@ _LOGGING_PROFILE_JSON_OPTIONS: _JSONOptionSchema = {
                 "timestamp_format",
                 "level_field",
                 "message_field",
-            )
+            ),
+            "types": {
+                "format": "string",
+                "timestamp_field": "string",
+                "timestamp_format": "string",
+                "level_field": "string",
+                "message_field": "string",
+            },
         },
-        "enrichment": {"allowed": _option_name_set("static", "context")},
+        "enrichment": {
+            "allowed": _option_name_set("static", "context"),
+            "types": {"static": "stringMap", "context": "stringMap"},
+        },
         "error_capture": {
             "allowed": _option_name_set(
                 "include_error_type",
@@ -781,10 +803,24 @@ _LOGGING_PROFILE_JSON_OPTIONS: _JSONOptionSchema = {
                 "stack_trace_field",
                 "stack_hash_field",
                 "stack_hash_algorithm",
-            )
+            ),
+            "types": {
+                "include_error_type": "boolean",
+                "include_error_code": "boolean",
+                "include_stack_trace": "boolean",
+                "stack_trace_field": "string",
+                "stack_hash_field": "string",
+                "stack_hash_algorithm": "string",
+            },
         },
-        "sanitization": {"allowed": _option_name_set("existing_sanitized_logging", "notes")},
-        "alerting_hints": {"allowed": _option_name_set("fingerprint_fields", "keeper_lookup_fields")},
+        "sanitization": {
+            "allowed": _option_name_set("existing_sanitized_logging", "notes"),
+            "types": {"existing_sanitized_logging": "boolean", "notes": "string"},
+        },
+        "alerting_hints": {
+            "allowed": _option_name_set("fingerprint_fields", "keeper_lookup_fields"),
+            "types": {"fingerprint_fields": "stringArray", "keeper_lookup_fields": "stringArray"},
+        },
     },
 }
 
@@ -792,16 +828,41 @@ _LOGGING_PROFILE_JSON_OPTIONS: _JSONOptionSchema = {
 def _validate_logging_profile_json_options(path: str, obj: dict[str, Any], schema: _JSONOptionSchema) -> list[str]:
     errors: list[str] = []
     nested = schema.get("nested", {})
+    types = schema.get("types", {})
     for key in sorted(obj):
         child_path = f"{path}.{key}" if path else key
         if key not in schema["allowed"]:
             errors.append(child_path + ": unsupported option")
             continue
+        value = obj.get(key)
         child_schema = nested.get(key)
-        child = obj.get(key)
-        if child_schema is not None and isinstance(child, dict):
-            errors.extend(_validate_logging_profile_json_options(child_path, child, child_schema))
+        if child_schema is not None:
+            # A non-object value for a nested option is reported by
+            # logging_profile_validation_errors; recurse only into objects so the
+            # declared field types are strictly checked.
+            if isinstance(value, dict):
+                errors.extend(_validate_logging_profile_json_options(child_path, value, child_schema))
+            continue
+        option_type = types.get(key)
+        if option_type is not None:
+            errors.extend(_validate_logging_json_option_type(child_path, value, option_type))
     return errors
+
+
+def _validate_logging_json_option_type(path: str, value: Any, option_type: _JSONOptionType) -> list[str]:
+    if option_type == "string":
+        return [] if isinstance(value, str) else [path + ": must be a string"]
+    if option_type == "boolean":
+        return [] if isinstance(value, bool) else [path + ": must be a boolean"]
+    if option_type == "stringArray":
+        if not isinstance(value, list):
+            return []
+        return [f"{path}[{index}]: must be a string" for index, entry in enumerate(value) if not isinstance(entry, str)]
+    if option_type == "stringMap":
+        if not isinstance(value, dict):
+            return []
+        return [f"{path}.{key}: must be a string" for key in sorted(value) if not isinstance(value[key], str)]
+    return []
 
 
 def _base_json_profile(profile: str) -> LoggingProfileConfig:
