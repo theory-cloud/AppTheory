@@ -1230,7 +1230,8 @@ export class App {
                 return this.serveWebSocket(event, ctx);
             }
             if (rc["http"] && typeof rc["http"] === "object") {
-                if ("routeKey" in record) {
+                if ("routeKey" in record &&
+                    !isLambdaFunctionUrlDomain(rc["domainName"])) {
                     return this.serveAPIGatewayV2(event, ctx);
                 }
                 return this.serveLambdaFunctionURL(event, ctx);
@@ -1468,6 +1469,17 @@ function timeoutContextCarrier(parent, signal) {
         return { ...parent, signal };
     }
     return { parent, signal };
+}
+// isLambdaFunctionUrlDomain reports whether a provider requestContext domainName
+// belongs to a Lambda Function URL endpoint, for example
+// "abcd1234.lambda-url.us-east-1.on.aws". Function URL payloads carry a
+// top-level routeKey just like API Gateway v2, so routeKey presence alone is not
+// a safe discriminator.
+function isLambdaFunctionUrlDomain(value) {
+    const host = String(value ?? "")
+        .trim()
+        .toLowerCase();
+    return host.includes(".lambda-url.") && host.endsWith(".on.aws");
 }
 function cloneContextWithTimeoutCarrier(ctx, carrier) {
     const ctxInternal = ctx;

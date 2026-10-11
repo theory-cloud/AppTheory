@@ -99,6 +99,17 @@ EventBridgeHandler = Callable[[EventContext, dict[str, Any]], object | Awaitable
 WebSocketHandler = Callable[[Context], Response | Awaitable[Response]]
 
 
+def _is_lambda_function_url_domain(value: Any) -> bool:
+    """Return whether a provider requestContext domainName is a Lambda Function URL endpoint.
+
+    Function URL payloads carry a top-level ``routeKey`` just like API Gateway v2, so routeKey
+    presence alone is not a safe discriminator; the provider-assigned
+    ``<url-id>.lambda-url.<region>.on.aws`` domain is.
+    """
+    host = str(value or "").strip().lower()
+    return ".lambda-url." in host and host.endswith(".on.aws")
+
+
 def _canonical_route_key(method: str, path: str) -> tuple[str, str, str]:
     method_value = str(method or "").strip().upper()
     if not method_value:
@@ -1708,7 +1719,7 @@ class App:
             if isinstance(request_context, dict) and request_context.get("connectionId") and self._websocket_enabled:
                 return self.serve_websocket(event, ctx=ctx)
             if isinstance(request_context, dict) and "http" in request_context:
-                if "routeKey" in event:
+                if "routeKey" in event and not _is_lambda_function_url_domain(request_context.get("domainName")):
                     return self.serve_apigw_v2(event, ctx=ctx)
                 return self.serve_lambda_function_url(event, ctx=ctx)
             if (

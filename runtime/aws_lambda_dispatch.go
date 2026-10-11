@@ -106,13 +106,14 @@ func (a *App) handleLambdaRequestContext(ctx context.Context, event json.RawMess
 		HTTP         json.RawMessage `json:"http"`
 		ConnectionID *string         `json:"connectionId"`
 		ELB          json.RawMessage `json:"elb"`
+		DomainName   string          `json:"domainName"`
 	}
 	if err := json.Unmarshal(env.RequestContext, &probe); err != nil {
 		return nil, false, nil
 	}
 
 	if len(probe.HTTP) > 0 {
-		if env.RouteKey != nil {
+		if env.RouteKey != nil && !isLambdaFunctionURLDomain(probe.DomainName) {
 			var http events.APIGatewayV2HTTPRequest
 			if err := json.Unmarshal(event, &http); err != nil {
 				return nil, true, fmt.Errorf("apptheory: parse apigw v2 event: %w", err)
@@ -158,6 +159,16 @@ func (a *App) handleLambdaRequestContext(ctx context.Context, event json.RawMess
 	}
 
 	return nil, false, nil
+}
+
+// isLambdaFunctionURLDomain reports whether a provider requestContext domainName
+// belongs to a Lambda Function URL endpoint, for example
+// "abcd1234.lambda-url.us-east-1.on.aws". Function URL payloads carry a
+// top-level routeKey just like API Gateway v2, so routeKey presence alone is not
+// a safe discriminator.
+func isLambdaFunctionURLDomain(domainName string) bool {
+	host := strings.ToLower(strings.TrimSpace(domainName))
+	return strings.Contains(host, ".lambda-url.") && strings.HasSuffix(host, ".on.aws")
 }
 
 // HandleLambda routes an untyped Lambda event to the correct AppTheory entrypoint.
