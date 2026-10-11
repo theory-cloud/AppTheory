@@ -27,7 +27,9 @@ Put this in `renovate.json` (or merge the same fields into your existing Renovat
       ],
       "matchStrings": [
         "github\\.com/theory-cloud/AppTheory/releases/download/v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc(?:\\.\\d+)?)?)",
-        "github\\.com/theory-cloud/apptheory/v5\\s+v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc(?:\\.\\d+)?)?)"
+        "github\\.com/theory-cloud/apptheory/v5\\s+v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc(?:\\.\\d+)?)?)",
+        "theory-cloud-apptheory(?:-cdk)?-(?<currentValue>\\d+\\.\\d+\\.\\d+)\\.tgz",
+        "apptheory(?:_cdk)?-(?<currentValue>\\d+\\.\\d+\\.\\d+)-py3-none-any\\.whl"
       ],
       "depNameTemplate": "theory-cloud/AppTheory",
       "datasourceTemplate": "github-releases",
@@ -41,7 +43,9 @@ Put this in `renovate.json` (or merge the same fields into your existing Renovat
       ],
       "matchStrings": [
         "github\\.com/theory-cloud/TableTheory/releases/download/v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc\\.\\d+)?)",
-        "github\\.com/theory-cloud/tabletheory\\s+v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc\\.\\d+)?)"
+        "github\\.com/theory-cloud/tabletheory\\s+v(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-rc\\.\\d+)?)",
+        "theory-cloud-tabletheory(?:-ts)?-(?<currentValue>\\d+\\.\\d+\\.\\d+)\\.tgz",
+        "tabletheory_py-(?<currentValue>\\d+\\.\\d+\\.\\d+)-py3-none-any\\.whl"
       ],
       "depNameTemplate": "theory-cloud/TableTheory",
       "datasourceTemplate": "github-releases",
@@ -67,6 +71,14 @@ https://github.com/theory-cloud/AppTheory/releases/download/v4.0.0/theory-cloud-
 https://github.com/theory-cloud/AppTheory/releases/download/v4.0.0/apptheory-4.0.0-py3-none-any.whl
 https://github.com/theory-cloud/AppTheory/releases/download/v4.0.0/apptheory_cdk-4.0.0-py3-none-any.whl
 ```
+
+Each release asset URL carries the version twice — once in the `download/v<version>` tag path and once in the file name.
+A regex manager updates one occurrence per `matchString`, so the config above matches both: the tag-relative strings
+and the release-version file-name strings (`*-<version>.tgz`, `*-<version>-py3-none-any.whl`). Without the file-name
+strings, a bump rewrites only the tag path, leaves the file name pinned to the old version, and produces an asset URL
+that 404s — the install path fails closed rather than silently pinning a stale asset. Pre-release lines normalize the
+Python wheel file name pre-release suffix differently (`-rc` becomes `rc0`), so treat a pre-release bump as needing a
+manual check of the file name.
 
 When Renovate opens a bump PR, keep AppTheory's runtime package, CDK package, and generated lockfiles in the same PR.
 If your app also consumes TableTheory directly, review that bump in the same change so TableTheory data-layer pins and
