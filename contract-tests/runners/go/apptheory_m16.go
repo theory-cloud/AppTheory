@@ -312,9 +312,19 @@ func newMicroVMRouteFixtureRuntime(setup FixtureMicroVMRouteSetup) (microVMRoute
 		apptheory.WithIDGenerator(microVMRouteFixtureIDs{id: "req-m16-route-fallback"}),
 	}
 	if setup.Authenticated {
-		appOpts = append(appOpts, apptheory.WithAuthHook(func(*apptheory.Context) (string, error) {
-			return "subject-1", nil
-		}))
+		if setup.TenantClaim != "" && setup.PrincipalTenantID != "" {
+			claims := map[string]any{setup.TenantClaim: setup.PrincipalTenantID}
+			appOpts = append(appOpts,
+				apptheory.WithAuthPrincipalHook(func(*apptheory.Context) (*apptheory.AuthPrincipal, error) {
+					return &apptheory.AuthPrincipal{Identity: "subject-1", Claims: claims}, nil
+				}),
+				apptheory.WithTenantClaim(setup.TenantClaim),
+			)
+		} else {
+			appOpts = append(appOpts, apptheory.WithAuthHook(func(*apptheory.Context) (string, error) {
+				return "subject-1", nil
+			}))
+		}
 	}
 	app := apptheory.New(appOpts...)
 	if _, registerErr := runtimemicrovm.RegisterMicroVMControllerRoutes(app, controller); registerErr != nil {
@@ -647,6 +657,8 @@ func normalizeMicroVMRouteSetup(setup FixtureMicroVMRouteSetup) FixtureMicroVMRo
 	if setup.SessionID == "" {
 		setup.SessionID = defaultMicroVMFixtureSessionID
 	}
+	setup.TenantClaim = strings.TrimSpace(setup.TenantClaim)
+	setup.PrincipalTenantID = strings.TrimSpace(setup.PrincipalTenantID)
 	setup.DeploymentDefaults = normalizeMicroVMDeploymentDefaults(setup.DeploymentDefaults)
 	return setup
 }

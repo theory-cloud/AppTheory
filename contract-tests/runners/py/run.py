@@ -1569,7 +1569,15 @@ def compare_microvm_controller_route_fixture(
 
     kwargs: dict[str, Any] = {"tier": "p1"}
     if setup["authenticated"]:
-        kwargs["auth_hook"] = lambda _ctx: "subject-1"
+        if setup["tenant_claim"] and setup["principal_tenant_id"]:
+            claim = setup["tenant_claim"]
+            principal_tenant = setup["principal_tenant_id"]
+            kwargs["auth_principal_hook"] = lambda _ctx, _claim=claim, _tenant=principal_tenant: runtime.AuthPrincipal(
+                identity="subject-1", claims={_claim: _tenant}
+            )
+            kwargs["tenant_claim"] = claim
+        else:
+            kwargs["auth_hook"] = lambda _ctx: "subject-1"
     route_app = runtime.create_app(**kwargs)
     runtime.register_microvm_controller_routes(route_app, controller)
 
@@ -1875,6 +1883,8 @@ def normalize_microvm_controller_route_setup(setup: dict[str, Any]) -> dict[str,
         "tenant_id": tenant_id,
         "namespace": namespace,
         "session_id": session_id,
+        "tenant_claim": str(setup.get("tenant_claim") or "").strip(),
+        "principal_tenant_id": str(setup.get("principal_tenant_id") or "").strip(),
         "deployment_defaults": normalize_microvm_deployment_defaults(
             setup.get("deployment_defaults") or {}
         ),

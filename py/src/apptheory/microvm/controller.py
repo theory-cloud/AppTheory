@@ -1031,6 +1031,32 @@ def _controller_request_from_http(ctx: Any, command: str) -> MicroVMControllerRe
     query = getattr(getattr(ctx, "request", None), "query", {}) or {}
     headers = getattr(getattr(ctx, "request", None), "headers", {}) or {}
     query_tenant = _first_query_value(query, "tenant_id")
+    # Tenant binding on the MicroVM controller surface.
+    #
+    # When the app is configured with a principal-aware resolver, the tenant MUST be
+    # derived from the verified principal claim (tenant_claim). A caller-supplied
+    # tenant that disagrees with the verified claim — the x-tenant-id header, the
+    # tenant_id body field, or the tenant_id query parameter — is rejected with
+    # m16.microvm.tenant_binding_violation.
+    #
+    # LEGACY MODE (no principal-aware resolver configured): there is no verified
+    # tenant, and the caller-supplied x-tenant-id header / tenant query parameter
+    # remains the only tenant source. That path is UNAUTHENTICATED by design and is
+    # retained only for backward compatibility.
+    if getattr(ctx, "tenant_binding_required", False):
+        if not getattr(ctx, "tenant_bound", False):
+            return _safe_error(
+                MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+                "apptheory: microvm controller route tenant is not derived from the verified claim",
+                request_id,
+            )
+        header_tenant = _first_header_value(headers, "x-tenant-id")
+        if header_tenant and header_tenant != ctx_tenant:
+            return _safe_error(
+                MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+                "apptheory: microvm controller route tenant binding mismatch",
+                request_id,
+            )
     if ctx_tenant and body_tenant and body_tenant != ctx_tenant:
         return _safe_error(
             MICROVM_ERROR_TENANT_BINDING_VIOLATION,
@@ -1089,6 +1115,32 @@ def _controller_invoke_request_from_http(ctx: Any) -> MicroVMControllerInvokeReq
     headers = getattr(request_obj, "headers", {}) or {}
     ctx_tenant = str(getattr(ctx, "tenant_id", "") or "").strip()
     query_tenant = _first_query_value(query, "tenant_id")
+    # Tenant binding on the MicroVM controller surface.
+    #
+    # When the app is configured with a principal-aware resolver, the tenant MUST be
+    # derived from the verified principal claim (tenant_claim). A caller-supplied
+    # tenant that disagrees with the verified claim — the x-tenant-id header or the
+    # tenant_id query parameter — is rejected with
+    # m16.microvm.tenant_binding_violation.
+    #
+    # LEGACY MODE (no principal-aware resolver configured): there is no verified
+    # tenant, and the caller-supplied x-tenant-id header / tenant query parameter
+    # remains the only tenant source. That path is UNAUTHENTICATED by design and is
+    # retained only for backward compatibility.
+    if getattr(ctx, "tenant_binding_required", False):
+        if not getattr(ctx, "tenant_bound", False):
+            return _safe_error(
+                MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+                "apptheory: microvm controller route tenant is not derived from the verified claim",
+                request_id,
+            )
+        header_tenant = _first_header_value(headers, "x-tenant-id")
+        if header_tenant and header_tenant != ctx_tenant:
+            return _safe_error(
+                MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+                "apptheory: microvm controller route tenant binding mismatch",
+                request_id,
+            )
     if ctx_tenant and query_tenant and query_tenant != ctx_tenant:
         return _safe_error(
             MICROVM_ERROR_TENANT_BINDING_VIOLATION,

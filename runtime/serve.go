@@ -224,12 +224,13 @@ func (a *App) serveP0(ctx context.Context, req Request, opts serveOptions) (resp
 	}
 
 	requestCtx := &Context{
-		ctx:     ctx,
-		Request: normalized,
-		Params:  match.Params,
-		clock:   a.clock,
-		ids:     a.ids,
-		TraceID: normalized.TraceID,
+		ctx:                   ctx,
+		Request:               normalized,
+		Params:                match.Params,
+		clock:                 a.clock,
+		ids:                   a.ids,
+		TraceID:               normalized.TraceID,
+		TenantBindingRequired: a.tenantBindingRequired(),
 	}
 	if opts.configure != nil {
 		opts.configure(requestCtx)
@@ -335,15 +336,16 @@ func (a *App) servePortableCore(ctx context.Context, req Request, tier Tier, sta
 	state.tenantID = extractTenantID(normalized.Headers, normalized.Query)
 
 	requestCtx := &Context{
-		ctx:             ctx,
-		Request:         normalized,
-		clock:           a.clock,
-		ids:             a.ids,
-		RequestID:       state.requestID,
-		TraceID:         state.traceID,
-		TenantID:        state.tenantID,
-		RemainingMS:     remainingMS,
-		MiddlewareTrace: trace,
+		ctx:                   ctx,
+		Request:               normalized,
+		clock:                 a.clock,
+		ids:                   a.ids,
+		RequestID:             state.requestID,
+		TraceID:               state.traceID,
+		TenantID:              state.tenantID,
+		RemainingMS:           remainingMS,
+		MiddlewareTrace:       trace,
+		TenantBindingRequired: a.tenantBindingRequired(),
 	}
 	if opts.configure != nil {
 		opts.configure(requestCtx)
@@ -592,6 +594,7 @@ func (a *App) authorize(
 
 	requestCtx.AuthIdentity = principal.Identity
 	requestCtx.AuthPrincipal = principal
+	a.bindVerifiedTenant(requestCtx, principal.Claims)
 
 	if len(route.RequiredScopes) > 0 && !principalHasAllScopes(principal, route.RequiredScopes) {
 		return a.authorizeDenied(errorCodeForbidden, errorMessageForbidden, requestCtx.Request, requestID, errorResponder)

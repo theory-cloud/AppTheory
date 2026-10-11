@@ -704,6 +704,115 @@ func TestRealControllerRoutesEnforceAuthAndBindings(t *testing.T) {
 	require.Contains(t, string(crossTenant.Body), ErrorCodeTenantBindingViolation)
 }
 
+func TestRealControllerRoutesBindTenantToVerifiedClaim(t *testing.T) {
+	now := time.Unix(4000, 0).UTC()
+	registry := NewMemorySessionRegistry()
+	provider := newRealControllerProvider(now)
+	controller, err := NewRealController(
+		provider,
+		registry,
+		withDisabledControllerLogging(),
+		WithControllerClock(fixedControllerClock{now: now}),
+		WithControllerIDGenerator(fixedControllerIDs{id: "session-claim"}),
+	)
+	require.NoError(t, err)
+
+	claimApp := func(claims map[string]any) *apptheory.App {
+		app := apptheory.New(
+			apptheory.WithTier(apptheory.TierP1),
+			apptheory.WithClock(fixedControllerClock{now: now}),
+			apptheory.WithIDGenerator(fixedControllerIDs{id: "req-claim"}),
+			apptheory.WithAuthPrincipalHook(func(*apptheory.Context) (*apptheory.AuthPrincipal, error) {
+				return &apptheory.AuthPrincipal{Identity: "subject-1", Claims: claims}, nil
+			}),
+			apptheory.WithTenantClaim("tenant_id"),
+		)
+		_, registerErr := RegisterControllerRoutes(app, controller)
+		require.NoError(t, registerErr)
+		return app
+	}
+	runBody := func(tenantID string) []byte {
+		return []byte(`{"tenant_id":"` + tenantID + `","namespace":"namespace-1","image_ref":"image-ref","network_connector_ref":"network-ref"}`)
+	}
+
+	// NEGATIVE: the caller-supplied x-tenant-id disagrees with the verified claim.
+	headerMismatch := claimApp(map[string]any{"tenant_id": "tenant-1"}).Serve(context.Background(), apptheory.Request{
+		Method: "POST",
+		Path:   "/microvms",
+		Headers: map[string][]string{
+			"x-tenant-id":    {"tenant-2"},
+			"x-namespace-id": {"namespace-1"},
+			"x-request-id":   {"req-claim-header-mismatch"},
+			"content-type":   {"application/json"},
+		},
+		Body: runBody("tenant-2"),
+	})
+	require.Equal(t, 403, headerMismatch.Status)
+	require.Contains(t, string(headerMismatch.Body), ErrorCodeTenantBindingViolation)
+	require.Equal(t, ProviderRunInput{}, provider.lastRunInput)
+
+	// NEGATIVE: the body tenant_id disagrees with the verified claim.
+	bodyMismatch := claimApp(map[string]any{"tenant_id": "tenant-1"}).Serve(context.Background(), apptheory.Request{
+		Method: "POST",
+		Path:   "/microvms",
+		Headers: map[string][]string{
+			"x-tenant-id":    {"tenant-1"},
+			"x-namespace-id": {"namespace-1"},
+			"x-request-id":   {"req-claim-body-mismatch"},
+			"content-type":   {"application/json"},
+		},
+		Body: runBody("tenant-2"),
+	})
+	require.Equal(t, 403, bodyMismatch.Status)
+	require.Contains(t, string(bodyMismatch.Body), ErrorCodeTenantBindingViolation)
+	require.Equal(t, ProviderRunInput{}, provider.lastRunInput)
+
+	// NEGATIVE: the verified principal carries no tenant claim, so the tenant is
+	// not derived from the verified principal and the surface fails closed.
+	unbound := claimApp(map[string]any{"other": "value"}).Serve(context.Background(), apptheory.Request{
+		Method: "POST",
+		Path:   "/microvms",
+		Headers: map[string][]string{
+			"x-tenant-id":    {"tenant-1"},
+			"x-namespace-id": {"namespace-1"},
+			"x-request-id":   {"req-claim-unbound"},
+			"content-type":   {"application/json"},
+		},
+		Body: runBody("tenant-1"),
+	})
+	require.Equal(t, 403, unbound.Status)
+	require.Contains(t, string(unbound.Body), ErrorCodeTenantBindingViolation)
+	require.Equal(t, ProviderRunInput{}, provider.lastRunInput)
+
+	// NEGATIVE: the invoke adapter applies the same fail-closed tenant guard.
+	invokeMismatch := claimApp(map[string]any{"tenant_id": "tenant-1"}).Serve(context.Background(), apptheory.Request{
+		Method: "GET",
+		Path:   "/microvms/session-claim/invoke/hello",
+		Query:  map[string][]string{"tenant_id": {"tenant-2"}},
+		Headers: map[string][]string{
+			"x-tenant-id":  {"tenant-2"},
+			"x-request-id": {"req-claim-invoke-mismatch"},
+		},
+	})
+	require.Equal(t, 403, invokeMismatch.Status)
+	require.Contains(t, string(invokeMismatch.Body), ErrorCodeTenantBindingViolation)
+
+	// POSITIVE: the verified claim agrees with the caller tenant.
+	bound := claimApp(map[string]any{"tenant_id": "tenant-1"}).Serve(context.Background(), apptheory.Request{
+		Method: "POST",
+		Path:   "/microvms",
+		Headers: map[string][]string{
+			"x-tenant-id":    {"tenant-1"},
+			"x-namespace-id": {"namespace-1"},
+			"x-request-id":   {"req-claim-bound"},
+			"content-type":   {"application/json"},
+		},
+		Body: runBody("tenant-1"),
+	})
+	require.Equal(t, 200, bound.Status)
+	require.Equal(t, "tenant-1", provider.lastRunInput.TenantID)
+}
+
 func TestRealControllerOptionsAndFailureBranches(t *testing.T) {
 	now := time.Unix(3000, 0).UTC()
 	registry := NewMemorySessionRegistry()

@@ -1735,7 +1735,15 @@ async function compareMicroVMControllerRouteFixture(fixture) {
     clock: { now: () => new Date(now.valueOf()) },
   };
   if (setup.authenticated) {
-    appOptions.authHook = () => "subject-1";
+    if (setup.tenant_claim && setup.principal_tenant_id) {
+      appOptions.authPrincipalHook = () => ({
+        identity: "subject-1",
+        claims: { [setup.tenant_claim]: setup.principal_tenant_id },
+      });
+      appOptions.tenantClaim = setup.tenant_claim;
+    } else {
+      appOptions.authHook = () => "subject-1";
+    }
   }
   const app = runtime.createApp(appOptions);
   runtime.registerMicroVMControllerRoutes(app, controller);
@@ -2024,6 +2032,8 @@ function normalizeMicroVMControllerRouteSetup(setup) {
     namespace: String(setup.namespace ?? "namespace-1").trim() || "namespace-1",
     session_id:
       String(setup.session_id ?? "fixture-session").trim() || "fixture-session",
+    tenant_claim: String(setup.tenant_claim ?? "").trim(),
+    principal_tenant_id: String(setup.principal_tenant_id ?? "").trim(),
     deployment_defaults: normalizeMicroVMDeploymentDefaults(
       setup.deployment_defaults ?? {},
     ),

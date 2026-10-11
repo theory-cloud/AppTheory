@@ -1604,6 +1604,104 @@ test("microvm controller route adapter enforces auth and tenant binding", async 
   assert.equal(denied.status, 401);
 });
 
+test("microvm controller route adapter binds tenant to the verified claim", async () => {
+  const provider = createFakeMicroVMProvider(new Date(0));
+  const registry = createMemoryMicroVMSessionRegistry();
+  const controller = createRealMicroVMController(provider, registry, {
+    ids: { newID: () => "claim-session" },
+    clock: { now: () => new Date(1000) },
+    logging: { disabled: true },
+  });
+
+  const claimApp = (claims) => {
+    const app = createApp({
+      tier: "p1",
+      authPrincipalHook: () => ({ identity: "subject-1", claims }),
+      tenantClaim: "tenant_id",
+    });
+    registerMicroVMControllerRoutes(app, controller);
+    return app;
+  };
+
+  const serve = (app, method, path, body = {}, headers = {}) =>
+    app.serve({
+      method,
+      path,
+      headers: {
+        "content-type": ["application/json"],
+        "x-tenant-id": ["tenant-1"],
+        "x-request-id": [`req-claim-${method}-${path}`],
+        ...headers,
+      },
+      body: Buffer.from(JSON.stringify(body), "utf8"),
+    });
+
+  const runBody = {
+    tenant_id: "tenant-2",
+    namespace: "namespace-1",
+    image_ref: "image-ref",
+    image_version: "1",
+    network_connector_ref: "network-ref",
+  };
+
+  const headerMismatch = await serve(
+    claimApp({ tenant_id: "tenant-1" }),
+    "POST",
+    "/microvms",
+    runBody,
+    { "x-tenant-id": ["tenant-2"] },
+  );
+  assert.equal(headerMismatch.status, 403);
+  assert.equal(
+    jsonBody(headerMismatch).error.code,
+    MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+  );
+
+  const bodyMismatch = await serve(
+    claimApp({ tenant_id: "tenant-1" }),
+    "POST",
+    "/microvms",
+    runBody,
+  );
+  assert.equal(bodyMismatch.status, 403);
+  assert.equal(
+    jsonBody(bodyMismatch).error.code,
+    MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+  );
+
+  const unbound = await serve(claimApp({ other: "value" }), "POST", "/microvms", {
+    ...runBody,
+    tenant_id: "tenant-1",
+  });
+  assert.equal(unbound.status, 403);
+  assert.equal(
+    jsonBody(unbound).error.code,
+    MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+  );
+
+  const invokeMismatch = await claimApp({ tenant_id: "tenant-1" }).serve({
+    method: "GET",
+    path: "/microvms/claim-session/invoke/hello",
+    query: { tenant_id: ["tenant-2"] },
+    headers: {
+      "x-tenant-id": ["tenant-2"],
+      "x-request-id": ["req-claim-invoke-mismatch"],
+    },
+  });
+  assert.equal(invokeMismatch.status, 403);
+  assert.equal(
+    jsonBody(invokeMismatch).error.code,
+    MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+  );
+
+  const bound = await serve(claimApp({ tenant_id: "tenant-1" }), "POST", "/microvms", {
+    ...runBody,
+    tenant_id: "tenant-1",
+  });
+  assert.equal(bound.status, 200);
+  assert.equal(jsonBody(bound).session_id, "claim-session");
+});
+
 test("microvm AWS provider uses official command classes and sanitizes tokens", async () => {
   assert.equal(typeof AWSLambdaMicroVMProvider, "function");
   const provider = createAWSLambdaMicroVMProvider({

@@ -1566,6 +1566,105 @@ class MicroVMLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(401, denied.status)
 
+    def test_real_controller_route_adapter_binds_tenant_to_verified_claim(self) -> None:
+        provider = app.create_fake_microvm_provider(now=1.0)
+        registry = app.create_memory_microvm_session_registry()
+        controller = app.create_real_microvm_controller(
+            provider,
+            registry,
+            id_generator=lambda: "claim-session",
+            clock=lambda: 10.0,
+            logging={"disabled": True},
+        )
+
+        def claim_runtime(claims: dict[str, object]) -> app.App:
+            runtime = app.create_app(
+                tier="p1",
+                auth_principal_hook=lambda _ctx, _claims=claims: app.AuthPrincipal(
+                    identity="subject-1", claims=dict(_claims)
+                ),
+                tenant_claim="tenant_id",
+            )
+            app.register_microvm_controller_routes(runtime, controller)
+            return runtime
+
+        def serve(
+            runtime: app.App,
+            method: str,
+            path: str,
+            body: dict[str, object],
+            *,
+            tenant_id: str = "tenant-1",
+        ) -> app.Response:
+            return runtime.serve(
+                app.Request(
+                    method=method,
+                    path=path,
+                    headers={
+                        "content-type": ["application/json"],
+                        "x-tenant-id": [tenant_id],
+                        "x-request-id": [f"req-claim-{method}-{path}"],
+                    },
+                    body=json.dumps(body).encode("utf-8"),
+                )
+            )
+
+        run_body = {
+            "namespace": "namespace-1",
+            "image_ref": "image-ref",
+            "image_version": "1",
+            "network_connector_ref": "network-ref",
+        }
+        for case in ("header", "body"):
+            payload = {**run_body, "tenant_id": "tenant-2"}
+            rejection = serve(
+                claim_runtime({"tenant_id": "tenant-1"}),
+                "POST",
+                "/microvms",
+                payload,
+                tenant_id="tenant-2" if case == "header" else "tenant-1",
+            )
+            self.assertEqual(403, rejection.status)
+            self.assertEqual(
+                app.MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+                json.loads(rejection.body.decode())["error"]["code"],
+            )
+
+        unbound = serve(
+            claim_runtime({"other": "value"}),
+            "POST",
+            "/microvms",
+            {**run_body, "tenant_id": "tenant-1"},
+        )
+        self.assertEqual(403, unbound.status)
+        self.assertEqual(
+            app.MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+            json.loads(unbound.body.decode())["error"]["code"],
+        )
+
+        invoke_mismatch = claim_runtime({"tenant_id": "tenant-1"}).serve(
+            app.Request(
+                method="GET",
+                path="/microvms/claim-session/invoke/hello",
+                query={"tenant_id": ["tenant-2"]},
+                headers={"x-tenant-id": ["tenant-2"], "x-request-id": ["req-claim-invoke-mismatch"]},
+            )
+        )
+        self.assertEqual(403, invoke_mismatch.status)
+        self.assertEqual(
+            app.MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+            json.loads(invoke_mismatch.body.decode())["error"]["code"],
+        )
+
+        bound = serve(
+            claim_runtime({"tenant_id": "tenant-1"}),
+            "POST",
+            "/microvms",
+            {**run_body, "tenant_id": "tenant-1"},
+        )
+        self.assertEqual(200, bound.status)
+        self.assertEqual("claim-session", json.loads(bound.body.decode())["session_id"])
+
     def test_official_sdk_provider_gate_and_safe_mapping(self) -> None:
         binding_dict, run_dict, session_dict, list_dict, token_dict = self._provider_dict_inputs()
         required_operations = _required_lambda_microvm_operations()
