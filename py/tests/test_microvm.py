@@ -1510,6 +1510,175 @@ class MicroVMLifecycleTests(unittest.TestCase):
         self.assertIsNotNone(override.error)
         self.assertEqual(app.MICROVM_ERROR_INVALID_CONTROLLER_REQUEST, override.error.code)
 
+    def test_real_controller_registry_miss_fails_closed_before_provider_call(self) -> None:
+        provider = app.create_fake_microvm_provider(now=1.0)
+        controller = app.create_real_microvm_controller(
+            provider,
+            app.create_memory_microvm_session_registry(),
+            id_generator=lambda: "session-pin",
+            clock=lambda: 10.0,
+            logging={"disabled": True},
+        )
+
+        get = controller.handle(
+            self._controller_request(
+                command=app.COMMAND_GET, request_id="req-pin-miss-get", session_id="session-absent"
+            )
+        )
+        self.assertIsNotNone(get.error)
+        self.assertEqual(app.MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, get.error.code)
+        self.assertEqual([], provider.calls())
+
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            controller.invoke(
+                {
+                    "request_id": "req-pin-miss-invoke",
+                    "tenant_id": "tenant-1",
+                    "namespace": "namespace-1",
+                    "auth_context": {
+                        "subject": "subject-1",
+                        "tenant_id": "tenant-1",
+                        "namespace": "namespace-1",
+                    },
+                    "session_id": "session-absent",
+                    "method": "GET",
+                    "path": "pin",
+                    "port": 8081,
+                    "ttl_seconds": 30,
+                }
+            )
+        self.assertEqual(app.MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, ctx.exception.code)
+        self.assertEqual([], provider.calls())
+
+        token = controller.handle(
+            self._controller_request(
+                command=app.COMMAND_AUTH_TOKEN,
+                request_id="req-pin-miss-token",
+                session_id="session-absent",
+                allowed_port_scope=[{"port": 443}],
+            )
+        )
+        self.assertIsNotNone(token.error)
+        self.assertEqual(app.MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, token.error.code)
+        self.assertEqual([], provider.calls())
+
+    def test_real_controller_binds_provider_call_to_registry_record(self) -> None:
+        base_provider = app.create_fake_microvm_provider(now=1.0)
+
+        class RecordingProvider:
+            session_input: object | None = None
+            invoke_input: object | None = None
+            token_input: object | None = None
+
+            def run(self, input_: object) -> object:
+                return base_provider.run(input_)
+
+            def get(self, input_: object) -> object:
+                self.session_input = input_
+                return base_provider.get(input_)
+
+            def list(self, input_: object) -> object:
+                return base_provider.list(input_)
+
+            def suspend(self, input_: object) -> object:
+                return base_provider.suspend(input_)
+
+            def resume(self, input_: object) -> object:
+                return base_provider.resume(input_)
+
+            def terminate(self, input_: object) -> object:
+                return base_provider.terminate(input_)
+
+            def invoke(self, input_: object) -> object:
+                self.invoke_input = input_
+                return base_provider.invoke(input_)
+
+            def create_auth_token(self, input_: object) -> object:
+                self.token_input = input_
+                return base_provider.create_auth_token(input_)
+
+            def create_shell_token(self, input_: object) -> object:
+                self.token_input = input_
+                return base_provider.create_shell_token(input_)
+
+        provider = RecordingProvider()
+        registry = app.create_memory_microvm_session_registry()
+        controller = app.create_real_microvm_controller(
+            provider,
+            registry,
+            id_generator=lambda: "session-pin",
+            clock=lambda: 10.0,
+            logging={"disabled": True},
+        )
+
+        run = controller.handle(self._controller_request(session_id=""))
+        self.assertIsNone(run.error)
+        stored = registry.get(("tenant-1", "namespace-1", "session-pin"))
+
+        get = controller.handle(
+            self._controller_request(command=app.COMMAND_GET, request_id="req-pin-get", session_id="session-pin")
+        )
+        self.assertIsNone(get.error)
+        session_input = provider.session_input
+        if session_input is None:
+            self.fail("provider get input must be captured")
+        self.assertEqual(stored.provider_microvm_id, session_input.binding.provider_microvm_id)
+        self.assertEqual(stored.tenant_id, session_input.binding.tenant_id)
+        self.assertEqual(stored.namespace, session_input.binding.namespace)
+        self.assertEqual(stored.session_id, session_input.binding.session_id)
+        self.assertEqual(stored.generation, session_input.binding.registry_version)
+
+        # DECOY: the request carries a different provider MicroVM identity and endpoint in its
+        # headers and query; the provider call must still use the registry record's values.
+        invoked = controller.invoke(
+            {
+                "request_id": "req-pin-invoke",
+                "tenant_id": "tenant-1",
+                "namespace": "namespace-1",
+                "auth_context": {
+                    "subject": "subject-1",
+                    "tenant_id": "tenant-1",
+                    "namespace": "namespace-1",
+                },
+                "session_id": "session-pin",
+                "method": "GET",
+                "path": "pin",
+                "headers": {
+                    "x-provider-microvm-id": ["provider-microvm-decoy"],
+                    "x-microvm-endpoint": ["https://provider-microvm-decoy.microvm.us-east-1.amazonaws.com"],
+                },
+                "query": {
+                    "provider_microvm_id": ["provider-microvm-decoy"],
+                    "endpoint": ["https://provider-microvm-decoy.microvm.us-east-1.amazonaws.com"],
+                },
+                "port": 8081,
+                "ttl_seconds": 30,
+            }
+        )
+        self.assertEqual(200, invoked.status)
+        invoke_input = provider.invoke_input
+        if invoke_input is None:
+            self.fail("provider invoke input must be captured")
+        self.assertEqual(stored.endpoint, invoke_input.endpoint)
+        self.assertEqual(stored.provider_microvm_id, invoke_input.binding.provider_microvm_id)
+        self.assertNotEqual("provider-microvm-decoy", invoke_input.binding.provider_microvm_id)
+        self.assertNotEqual("https://provider-microvm-decoy.microvm.us-east-1.amazonaws.com", invoke_input.endpoint)
+
+        token = controller.handle(
+            self._controller_request(
+                command=app.COMMAND_AUTH_TOKEN,
+                request_id="req-pin-token",
+                session_id="session-pin",
+                allowed_port_scope=[{"port": 443}],
+            )
+        )
+        self.assertIsNone(token.error)
+        token_input = provider.token_input
+        if token_input is None:
+            self.fail("provider token input must be captured")
+        self.assertEqual(stored.provider_microvm_id, token_input.binding.provider_microvm_id)
+        self.assertEqual(stored.tenant_id, token_input.binding.tenant_id)
+
     def test_real_controller_route_adapter_enforces_auth_and_tenant_binding(self) -> None:
         provider = app.create_fake_microvm_provider(now=1.0)
         registry = app.create_memory_microvm_session_registry()

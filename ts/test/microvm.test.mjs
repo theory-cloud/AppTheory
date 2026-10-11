@@ -1549,6 +1549,163 @@ test("microvm real controller applies deployment-pinned defaults", async () => {
   }
 });
 
+test("microvm controller registry miss fails closed before any provider call", async () => {
+  const provider = createFakeMicroVMProvider(new Date(0));
+  const controller = createRealMicroVMController(
+    provider,
+    createMemoryMicroVMSessionRegistry(),
+    {
+      ids: { newID: () => "session-pin" },
+      clock: { now: () => new Date(1000) },
+      logging: { disabled: true },
+    },
+  );
+
+  const missGet = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.Get,
+      request_id: "req-pin-miss-get",
+      session_id: "session-absent",
+    }),
+  );
+  assert.equal(missGet.error?.code, MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE);
+  assert.equal(provider.calls().length, 0);
+
+  await assert.rejects(
+    controller.invoke({
+      request_id: "req-pin-miss-invoke",
+      tenant_id: "tenant-1",
+      namespace: "namespace-1",
+      auth_context: {
+        subject: "subject-1",
+        tenant_id: "tenant-1",
+        namespace: "namespace-1",
+      },
+      session_id: "session-absent",
+      method: "GET",
+      path: "pin",
+      port: 8081,
+      ttl_seconds: 30,
+    }),
+  );
+  assert.equal(provider.calls().length, 0);
+
+  const missToken = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.AuthToken,
+      request_id: "req-pin-miss-token",
+      session_id: "session-absent",
+    }),
+  );
+  assert.equal(missToken.error?.code, MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE);
+  assert.equal(provider.calls().length, 0);
+});
+
+test("microvm controller dispatches provider calls bound to the registry record", async () => {
+  const base = createFakeMicroVMProvider(new Date(0));
+  let sessionInput;
+  let invokeInput;
+  let tokenInput;
+  const provider = {
+    run: (input) => base.run(input),
+    get: (input) => {
+      sessionInput = input;
+      return base.get(input);
+    },
+    list: (input) => base.list(input),
+    suspend: (input) => base.suspend(input),
+    resume: (input) => base.resume(input),
+    terminate: (input) => base.terminate(input),
+    invoke: (input) => {
+      invokeInput = input;
+      return base.invoke(input);
+    },
+    createAuthToken: (input) => {
+      tokenInput = input;
+      return base.createAuthToken(input);
+    },
+    createShellToken: (input) => {
+      tokenInput = input;
+      return base.createShellToken(input);
+    },
+  };
+  const registry = createMemoryMicroVMSessionRegistry();
+  const controller = createRealMicroVMController(provider, registry, {
+    ids: { newID: () => "session-pin" },
+    clock: { now: () => new Date(1000) },
+    logging: { disabled: true },
+  });
+
+  const run = await controller.handle(controllerRequest({ session_id: "" }));
+  assert.equal(run.error, undefined);
+  const stored = await registry.get({
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+    session_id: "session-pin",
+  });
+
+  const get = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.Get,
+      request_id: "req-pin-get",
+      session_id: "session-pin",
+    }),
+  );
+  assert.equal(get.error, undefined);
+  assert.equal(sessionInput.binding.provider_microvm_id, stored.provider_microvm_id);
+  assert.equal(sessionInput.binding.tenant_id, stored.tenant_id);
+  assert.equal(sessionInput.binding.namespace, stored.namespace);
+  assert.equal(sessionInput.binding.session_id, stored.session_id);
+  assert.equal(sessionInput.binding.registry_version, stored.generation);
+
+  const invoked = await controller.invoke({
+    request_id: "req-pin-invoke",
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+    auth_context: {
+      subject: "subject-1",
+      tenant_id: "tenant-1",
+      namespace: "namespace-1",
+    },
+    session_id: "session-pin",
+    method: "GET",
+    path: "pin",
+    headers: {
+      "x-provider-microvm-id": ["provider-microvm-decoy"],
+      "x-microvm-endpoint": [
+        "https://provider-microvm-decoy.microvm.us-east-1.amazonaws.com",
+      ],
+    },
+    query: {
+      provider_microvm_id: ["provider-microvm-decoy"],
+      endpoint: [
+        "https://provider-microvm-decoy.microvm.us-east-1.amazonaws.com",
+      ],
+    },
+    port: 8081,
+    ttl_seconds: 30,
+  });
+  assert.equal(invoked.status, 200);
+  assert.equal(invokeInput.endpoint, stored.endpoint);
+  assert.equal(invokeInput.binding.provider_microvm_id, stored.provider_microvm_id);
+  assert.notEqual(invokeInput.binding.provider_microvm_id, "provider-microvm-decoy");
+  assert.notEqual(
+    invokeInput.endpoint,
+    "https://provider-microvm-decoy.microvm.us-east-1.amazonaws.com",
+  );
+
+  const token = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.AuthToken,
+      request_id: "req-pin-token",
+      session_id: "session-pin",
+    }),
+  );
+  assert.equal(token.error, undefined);
+  assert.equal(tokenInput.binding.provider_microvm_id, stored.provider_microvm_id);
+  assert.equal(tokenInput.binding.tenant_id, stored.tenant_id);
+});
+
 test("microvm controller route adapter enforces auth and tenant binding", async () => {
   const provider = createFakeMicroVMProvider(new Date(0));
   const registry = createMemoryMicroVMSessionRegistry();
