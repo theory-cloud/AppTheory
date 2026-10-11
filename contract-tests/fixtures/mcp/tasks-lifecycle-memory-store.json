@@ -10,7 +10,8 @@
       },
       "id_sequence": [
         "sess-task",
-        "task-1"
+        "task-1",
+        "sess-legacy"
       ],
       "tools": [
         {
@@ -192,6 +193,52 @@
             "body": {
               "encoding": "utf8",
               "value": "{\"jsonrpc\":\"2.0\",\"id\":\"cancel\",\"method\":\"tasks/cancel\",\"params\":{\"taskId\":\"task-1\"}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "legacy_initialize",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"legacy-init\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\"}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "legacy_task_augmentation_rejected",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-protocol-version": [
+                "2025-06-18"
+              ],
+              "mcp-session-id": [
+                "sess-legacy"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"legacy-task\",\"method\":\"tools/call\",\"params\":{\"name\":\"task_echo\",\"arguments\":{\"message\":\"legacy task\"},\"task\":{}}}"
             },
             "is_base64": false
           }
@@ -379,6 +426,57 @@
             "error": {
               "code": -32602,
               "message": "task already terminal"
+            }
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ],
+            "mcp-session-id": [
+              "sess-legacy"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "legacy-init",
+            "result": {
+              "capabilities": {
+                "tools": {}
+              },
+              "protocolVersion": "2025-06-18",
+              "serverInfo": {
+                "name": "ContractMCP",
+                "version": "sp09"
+              }
+            }
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "legacy-task",
+            "error": {
+              "code": -32601,
+              "message": "Method not found: tasks not enabled"
             }
           }
         }
