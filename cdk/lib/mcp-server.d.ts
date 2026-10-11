@@ -6,6 +6,26 @@ import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
+/** Authorizer applied to the AppTheoryMcpServer MCP transport routes. */
+export declare enum AppTheoryMcpTransportAuthorizerKind {
+    /** AWS IAM (SigV4) authorization. The zero-configuration default. */
+    IAM = "iam",
+    /** JSON Web Token authorization against an OIDC/Cognito issuer. */
+    JWT = "jwt"
+}
+/** Authenticated authorizer configuration for the MCP transport routes. */
+export interface AppTheoryMcpTransportAuthorizerOptions {
+    /** @default AppTheoryMcpTransportAuthorizerKind.IAM */
+    readonly kind?: AppTheoryMcpTransportAuthorizerKind;
+    /** Absolute HTTPS JWT issuer URL. Required when kind is JWT. @default undefined */
+    readonly issuer?: string;
+    /** Accepted JWT audiences. Required when kind is JWT. @default undefined */
+    readonly audience?: string[];
+    /** Identity sources for the JWT authorizer. JWT only. @default ["$request.header.Authorization"] */
+    readonly identitySource?: string[];
+    /** JWT authorizer resource name. JWT only. @default the authorizer construct id */
+    readonly authorizerName?: string;
+}
 /** Custom domain configuration for an AppTheory-owned MCP HTTP API. */
 export interface AppTheoryMcpServerDomainOptions {
     /** The custom domain name (for example, `mcp.example.com`). */
@@ -156,13 +176,30 @@ export interface AppTheoryMcpServerProps {
     readonly routeFamily?: AppTheoryMcpRouteFamily;
     /**
      * Explicitly opt out of the OAuth facade and wire only MCP transport routes.
-     * This cannot be combined with legacy authorization props or root discovery.
-     * `runtime/mcpfacade.RegisterMCPFacade` always installs the authenticated
-     * canonical facade, so applications using this opt-out must own runtime
-     * registration for the transport routes.
+     *
+     * This cannot be combined with legacy authorization props, root discovery, or
+     * `transportAuthorizer`. The Go helper `runtime/mcpfacade.RegisterMCPFacade`
+     * installs the authenticated canonical facade by default and exposes
+     * `FacadeConfig.UnauthenticatedMcp` for the same transport opt-out, so
+     * applications using this opt-out must own runtime registration for the
+     * transport routes.
      * @default false
      */
     readonly unauthenticatedMcp?: boolean;
+    /**
+     * Authorizer applied to the MCP transport routes only.
+     *
+     * Transport routes are the POST, GET, and DELETE routes on every MCP pattern.
+     * When `unauthenticatedMcp` is false (the default) those routes require
+     * credentials and default to IAM, so credential-free requests are rejected by
+     * API Gateway with 403. Discovery, protected-resource metadata, authorize,
+     * and token routes remain explicitly public (`NONE`) because OAuth clients
+     * must fetch them before they hold a token.
+     *
+     * Cannot be combined with `unauthenticatedMcp: true`.
+     * @default AppTheoryMcpTransportAuthorizerKind.IAM
+     */
+    readonly transportAuthorizer?: AppTheoryMcpTransportAuthorizerOptions;
     /**
      * Session-state table configuration. The table defaults on.
      * @default enabled with production defaults

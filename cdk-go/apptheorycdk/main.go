@@ -708,6 +708,18 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpSessionStateOptions",
 		reflect.TypeOf((*AppTheoryMcpSessionStateOptions)(nil)).Elem(),
 	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpTransportAuthorizerKind",
+		reflect.TypeOf((*AppTheoryMcpTransportAuthorizerKind)(nil)).Elem(),
+		map[string]interface{}{
+			"IAM": AppTheoryMcpTransportAuthorizerKind_IAM,
+			"JWT": AppTheoryMcpTransportAuthorizerKind_JWT,
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpTransportAuthorizerOptions",
+		reflect.TypeOf((*AppTheoryMcpTransportAuthorizerOptions)(nil)).Elem(),
+	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryMediaCdn",
 		reflect.TypeOf((*AppTheoryMediaCdn)(nil)).Elem(),
