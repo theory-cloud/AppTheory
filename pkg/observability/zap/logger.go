@@ -67,7 +67,14 @@ type zapCore struct {
 
 	notifyMu sync.Mutex
 	notifyCh chan observability.LogEntry
-	notifyWg sync.WaitGroup
+
+	// notifyPending counts the entries handed to the queue but not yet delivered.
+	// notifyDone is non-nil exactly while notifyPending is positive; the worker
+	// closes it when the count returns to zero. A waiter captures the channel
+	// under notifyMu and selects on it, so waiting never adds a goroutine and the
+	// channel is closed exactly once, under notifyMu.
+	notifyPending int
+	notifyDone    chan struct{}
 
 	closeOnce sync.Once
 	closed    atomic.Bool
@@ -168,8 +175,9 @@ func NewZapLogger(config observability.LoggerConfig, options ...Option) (observa
 	// a fixed-size channel, so a slow or failing notifier backend cannot stall
 	// the request that logged the error. The queue is bounded: when it is full,
 	// the entry is dropped and counted (entriesDropped) rather than growing the
-	// backlog, so neither the goroutine count nor the queue length can grow
-	// without bound.
+	// backlog. Flush and Close wait on a drain signal the worker closes when the
+	// last queued entry is delivered, so neither waiting nor the queue length
+	// grows without bound.
 	if zcore.notifier != nil {
 		if opts.bufferSize <= 0 {
 			opts.bufferSize = 256
@@ -507,7 +515,8 @@ func (l *Logger) notificationEntry(level string, message string, callFields map[
 // worker. It never blocks the caller: when the fixed-size queue is full (or the
 // logger is closed) the entry is dropped and counted instead of growing the
 // backlog, so a slow or unavailable notifier backend cannot stall the request
-// that logged the error.
+// that logged the error. A successful hand-off arms the drain signal the worker
+// closes once the last queued entry is delivered.
 func (c *zapCore) enqueueNotification(entry observability.LogEntry) {
 	c.notifyMu.Lock()
 	defer c.notifyMu.Unlock()
@@ -516,19 +525,21 @@ func (c *zapCore) enqueueNotification(entry observability.LogEntry) {
 		return
 	}
 
-	c.notifyWg.Add(1)
 	select {
 	case c.notifyCh <- entry:
-		return
+		c.notifyPending++
+		if c.notifyPending == 1 {
+			c.notifyDone = make(chan struct{})
+		}
 	default:
-		c.notifyWg.Done()
 		c.entriesDropped.Add(1)
 	}
 }
 
 // runNotifier drains the bounded notification queue with the configured retry
-// policy. It is the only goroutine a logger with a notifier starts, and it stops
-// when the queue is closed.
+// policy. It is the only goroutine a logger with a notifier starts: waiting for
+// the queue to drain never starts another, and this worker stops when the queue
+// is closed.
 func (c *zapCore) runNotifier(ch <-chan observability.LogEntry) {
 	if ch == nil {
 		return
@@ -538,30 +549,69 @@ func (c *zapCore) runNotifier(ch <-chan observability.LogEntry) {
 			c.errorCount.Add(1)
 			c.lastError.Store(err.Error())
 		}
-		c.notifyWg.Done()
+		c.markDelivered()
+	}
+}
+
+// markDelivered records that the worker finished one queued entry and closes the
+// drain signal once none are left, waking every waiter. The count and the signal
+// are updated under notifyMu, so the signal is closed exactly once and no waiter
+// can race an increment.
+func (c *zapCore) markDelivered() {
+	c.notifyMu.Lock()
+	defer c.notifyMu.Unlock()
+	if c.notifyPending > 0 {
+		c.notifyPending--
+	}
+	if c.notifyPending == 0 && c.notifyDone != nil {
+		close(c.notifyDone)
+		c.notifyDone = nil
 	}
 }
 
 // waitNotifier waits, up to ctx's deadline, for the notifications already queued
-// to finish. It returns as soon as ctx is done so a caller never blocks past its
-// own deadline.
+// to finish. It waits on the drain signal the worker closes instead of spawning a
+// watcher goroutine, so a waiter that returns at its own deadline — or gives up
+// while a notifier blocks — leaves nothing behind. It returns as soon as nothing
+// is pending or the logger is closed.
 func (c *zapCore) waitNotifier(ctx context.Context) {
-	if c.notifyCh == nil {
-		return
-	}
+	for {
+		c.notifyMu.Lock()
+		if c.notifyCh == nil {
+			c.notifyMu.Unlock()
+			return
+		}
+		done := c.notifyDone
+		c.notifyMu.Unlock()
+		if done == nil {
+			return
+		}
 
-	done := make(chan struct{})
-	go func() {
-		c.notifyWg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-ctx.Done():
-		return
-	case <-done:
-		return
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+		}
 	}
+}
+
+// deliveryDeadline bounds one notification's full retry schedule plus a margin
+// for the calls themselves. It is both the per-delivery context deadline and the
+// grace Close waits for the queue to drain.
+func (c *zapCore) deliveryDeadline() time.Duration {
+	maxRetries := c.maxRetries
+	if maxRetries <= 0 {
+		maxRetries = 3
+	}
+	retryDelay := c.retryDelay
+	if retryDelay <= 0 {
+		retryDelay = time.Second
+	}
+	deadline := time.Duration(maxRetries)*retryDelay + time.Second
+	if deadline <= 0 {
+		deadline = 3 * time.Second
+	}
+	return deadline
 }
 
 // notifyWithRetries delivers one notification with the configured retry policy.
@@ -570,7 +620,9 @@ func (c *zapCore) waitNotifier(ctx context.Context) {
 // notifier that honors its context (for example the SNS notifier, which passes
 // it to Publish) is bounded by that deadline rather than running forever. The
 // retry sleeps observe the same deadline. A notifier that ignores its context
-// and blocks forever is bounded by the Lambda function timeout.
+// and blocks forever is bounded by the Lambda function timeout, and the worker it
+// holds up is the single one the logger starts; waiting for the queue never adds
+// another.
 func (c *zapCore) notifyWithRetries(entry observability.LogEntry) error {
 	if c.notifier == nil {
 		return nil
@@ -588,11 +640,7 @@ func (c *zapCore) notifyWithRetries(entry observability.LogEntry) error {
 	// Bound the whole delivery so a notifier that honors its context cannot tie
 	// up the worker indefinitely. The window fits the full retry schedule plus a
 	// margin for the calls themselves.
-	deadline := time.Duration(maxRetries)*retryDelay + time.Second
-	if deadline <= 0 {
-		deadline = 3 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	ctx, cancel := context.WithTimeout(context.Background(), c.deliveryDeadline())
 	defer cancel()
 
 	var lastErr error
@@ -625,9 +673,24 @@ func (c *zapCore) close() error {
 			close(c.notifyCh)
 			c.notifyCh = nil
 		}
+		done := c.notifyDone
 		c.notifyMu.Unlock()
 
-		c.notifyWg.Wait()
+		// Wait a bounded grace for the queued notifications to finish, so an
+		// ordinary Close still drains the queue. If the notifier ignores its
+		// context and is still blocked when the grace expires, Close returns
+		// anyway: the single worker may remain alive, the same residual the
+		// delivery path documents, bounded by the Lambda function timeout rather
+		// than by Close.
+		if done != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), c.deliveryDeadline())
+			select {
+			case <-done:
+			case <-ctx.Done():
+			}
+			cancel()
+		}
+
 		err = c.logger.Sync()
 		if err != nil {
 			c.errorCount.Add(1)

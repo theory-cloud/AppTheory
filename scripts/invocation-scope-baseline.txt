@@ -85,14 +85,12 @@ runtime/mcp/stream_store_dynamo.go|(DynamoStreamStore).Subscribe[#1]|joined: it 
 # residual bounded by the Lambda function timeout.
 runtime/timeout_middleware.go|TimeoutMiddleware.<func literal>[#1]|joined: the deadline path joins the worker for a bounded grace window before returning app.timeout
 # The logger's single bounded notification consumer drains a fixed-size queue; the
-# caller enqueues without blocking (overflow is dropped and counted). It is
-# released by (*zapCore).close, which closes the queue and waits on notifyWg, and
-# by Flush, which waits on notifyWg up to its own context deadline.
-pkg/observability/zap/logger.go|NewZapLogger[#1]|joined: (*zapCore).close closes the queue and waits on notifyWg; Flush waits on notifyWg up to its context deadline
-# waitNotifier's watcher only observes the WaitGroup and closes its signal channel.
-# Its caller Flush selects on it together with its own context deadline, so it is
-# released as soon as the bounded queue drains (or promptly on Close).
-pkg/observability/zap/logger.go|(zapCore).waitNotifier[#1]|joined: Flush selects on the watcher's channel with its own context deadline; the watcher returns when the bounded queue drains
+# caller enqueues without blocking (overflow is dropped and counted). The worker
+# closes a drain-signal channel when the last queued entry is delivered; Flush
+# waits on it up to its own context deadline, and (*zapCore).close closes the queue
+# and waits on it for a bounded grace before it returns. Waiting never starts a
+# second goroutine, so this consumer is the only one the logger starts.
+pkg/observability/zap/logger.go|NewZapLogger[#1]|joined: (*zapCore).close closes the queue and waits on the worker's drain signal for a bounded grace; Flush waits on it up to its own context deadline
 
 # --- TypeScript -------------------------------------------------------------
 # The drain holds the read it started as `pending` (`async-read`) and only
