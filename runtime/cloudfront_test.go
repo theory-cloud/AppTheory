@@ -62,10 +62,10 @@ func TestAuthoritativeOriginURL(t *testing.T) {
 	}
 
 	// A forwarded host with no host header has no authoritative source.
-	if got := AuthoritativeOriginURL(map[string][]string{
+	if routed := AuthoritativeOriginURL(map[string][]string{
 		"X-Forwarded-Host": {"evil.example.com"},
-	}, false); got != "" {
-		t.Fatalf("expected empty authoritative origin without host, got %q", got)
+	}, false); routed != "" {
+		t.Fatalf("expected empty authoritative origin without host, got %q", routed)
 	}
 
 	// With forwarded-host trust the edge forward chain is honored, matching

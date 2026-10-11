@@ -628,8 +628,8 @@ func TestBatchRequest_LegacyTaskAugmentationRejected(t *testing.T) {
 	}
 
 	var responses []Response
-	if err := json.Unmarshal(resp.Body, &responses); err != nil {
-		t.Fatalf("expected an array batch response, got %s: %v", resp.Body, err)
+	if decodeErr := json.Unmarshal(resp.Body, &responses); decodeErr != nil {
+		t.Fatalf("expected an array batch response, got %s: %v", resp.Body, decodeErr)
 	}
 	if len(responses) != 1 {
 		t.Fatalf("expected 1 batch response, got %d", len(responses))

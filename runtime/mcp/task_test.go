@@ -1126,9 +1126,8 @@ func toolsCallTaskRequestWithTTL(id int, name string, ttl *int64) *Request {
 func newTaskAugmentedServer(t *testing.T, store TaskStore, opts ...ServerOption) *Server {
 	t.Helper()
 
-	serverOpts := []ServerOption{
-		WithTaskRuntime(TaskRuntimeOptions{Store: store}),
-	}
+	serverOpts := make([]ServerOption, 0, 1+len(opts))
+	serverOpts = append(serverOpts, WithTaskRuntime(TaskRuntimeOptions{Store: store}))
 	serverOpts = append(serverOpts, opts...)
 	s := NewServer("test", "dev", serverOpts...)
 	if err := s.Registry().RegisterTool(taskCapableToolDef(), func(context.Context, json.RawMessage) (*ToolResult, error) {
