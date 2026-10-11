@@ -542,6 +542,9 @@ func parseBoundValue(field reflect.Value, raw string) error {
 }
 
 func setBoundDuration(field reflect.Value, raw string) error {
+	if exceedsDurationSegmentLimit(raw, maxDurationSegments) {
+		return fmt.Errorf("invalid duration")
+	}
 	v, err := time.ParseDuration(raw)
 	if err != nil {
 		return err
@@ -551,6 +554,35 @@ func setBoundDuration(field reflect.Value, raw string) error {
 	}
 	field.SetInt(int64(v))
 	return nil
+}
+
+// maxDurationSegments bounds the adjacent <number><unit> components a portable
+// duration may carry, matching the TypeScript and Python streaming parsers.
+// Canonical durations use a handful of segments, so this rejects a
+// multi-megabyte "1s"-repeated value cheaply.
+const maxDurationSegments = 1024
+
+// exceedsDurationSegmentLimit reports whether raw carries more adjacent
+// <number><unit> components than limit. The single pass allocates nothing, so
+// an oversized value is rejected before time.ParseDuration does its work.
+func exceedsDurationSegmentLimit(raw string, limit int) bool {
+	segments := 0
+	inNumber := false
+	for i := 0; i < len(raw); i++ {
+		switch c := raw[i]; {
+		case c >= '0' && c <= '9', c == '.':
+			inNumber = true
+		default:
+			if inNumber {
+				segments++
+				if segments > limit {
+					return true
+				}
+				inNumber = false
+			}
+		}
+	}
+	return false
 }
 
 func setBoundSignedInteger(field reflect.Value, raw string) error {

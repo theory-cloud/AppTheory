@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -522,6 +523,46 @@ func TestBindRequest_DurationBindingRejectsNonPortableEdges(t *testing.T) {
 			}, BindConfig[requestModel]{
 				Query: true,
 			})
+			if err == nil {
+				t.Fatal("expected duration binding error")
+			}
+			appErr, ok := err.(*AppTheoryError)
+			if !ok {
+				t.Fatalf("expected AppTheoryError, got %T", err)
+			}
+			if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 {
+				t.Fatalf("unexpected duration binding error: %#v", appErr)
+			}
+		})
+	}
+}
+
+func TestBindRequest_DurationBindingCapsAdjacentSegments(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		TTL time.Duration `query:"ttl"`
+	}
+
+	req, err := BindRequest(&Context{
+		Request: Request{Query: map[string][]string{"ttl": {strings.Repeat("1ms", maxDurationSegments)}}},
+	}, BindConfig[requestModel]{Query: true})
+	if err != nil {
+		t.Fatalf("expected a bounded duration to bind: %v", err)
+	}
+	if req.TTL != 1024*time.Millisecond {
+		t.Fatalf("unexpected bounded duration: %v", req.TTL)
+	}
+
+	for name, raw := range map[string]string{
+		"one over the cap": strings.Repeat("1ms", maxDurationSegments+1),
+		"oversized value":  strings.Repeat("1ms", 1_500_000),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := BindRequest(&Context{
+				Request: Request{Query: map[string][]string{"ttl": {raw}}},
+			}, BindConfig[requestModel]{Query: true})
 			if err == nil {
 				t.Fatal("expected duration binding error")
 			}

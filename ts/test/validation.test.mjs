@@ -233,6 +233,28 @@ test("duration binding rejects an oversized adjacent-segment value", async () =>
   assert.deepEqual(req, { TTL: "1s" });
 });
 
+test("duration binding enforces the adjacent-segment ceiling", async () => {
+  const config = {
+    query: true,
+    fields: { TTL: { source: "query", name: "ttl", type: "duration" } },
+  };
+
+  // Exactly the 1024-segment ceiling is accepted.
+  const atCap = await bindRequest(
+    { request: { query: { ttl: ["1ms".repeat(1024)] }, headers: {} } },
+    config,
+  );
+  assert.deepEqual(atCap, { TTL: "1.024s" });
+
+  // One segment over the ceiling is rejected.
+  await assert.rejects(() =>
+    bindRequest(
+      { request: { query: { ttl: ["1ms".repeat(1025)] }, headers: {} } },
+      config,
+    ),
+  );
+});
+
 test("numeric binding rejects unsafe integers and partial floats", async () => {
   const config = {
     query: true,

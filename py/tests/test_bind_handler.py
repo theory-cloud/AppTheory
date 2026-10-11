@@ -370,6 +370,32 @@ class BindHandlerTests(unittest.TestCase):
                         BindConfig(model=DurationRequest, query=True),
                     )
 
+    def test_duration_binding_caps_adjacent_segments(self) -> None:
+        @dataclass
+        class DurationRequest:
+            TTL: timedelta = query("ttl", value_type="duration")
+
+        ctx = Context(
+            request=Request(
+                method="GET",
+                path="/duration",
+                query={"ttl": ["1ms" * 1024]},
+                headers={},
+                body=b"",
+                is_base64=False,
+            )
+        )
+        req = bind_request(ctx, BindConfig(model=DurationRequest, query=True))
+        self.assertEqual(format_duration(req.TTL), "1.024s")
+
+        for raw in ("1ms" * 1025, "1ms" * 1_500_000):
+            with self.subTest(segments=len(raw) // 3):
+                with self.assertRaises(AppTheoryError):
+                    bind_request(
+                        Context(request=Request(method="GET", path="/duration", query={"ttl": [raw]})),
+                        BindConfig(model=DurationRequest, query=True),
+                    )
+
     def test_numeric_binding_rejects_unsafe_and_partial_values(self) -> None:
         @dataclass
         class NumericRequest:
