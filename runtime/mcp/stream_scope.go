@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"time"
 
 	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
 )
@@ -26,18 +27,56 @@ import (
 //     scope only waits for it. Canceling it would discard the in-flight result,
 //     which is the durability the streamed tools/call contract promises a client
 //     that reconnects with Last-Event-ID.
+//
+// The join is bounded. A producer that observes the canceled context settles
+// well inside the scope's join budget, so the normal completion path (where the
+// body only reaches EOF after the producers have already returned) is
+// unchanged. A producer that is stalled inside a call it does not leave — for
+// example a tool that ignores cancellation — would otherwise hold the
+// invocation forever; the scope stops waiting at the budget instead, leaving the
+// Lambda function timeout as the outer bound on that producer. This mirrors the
+// buffered adapter's bounded join (runtime.joinAbandonedBodyStream).
 type streamScope struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	ctx       context.Context
+	cancel    context.CancelFunc
+	joinGrace time.Duration
+
+	mu        sync.Mutex
+	active    int
+	drained   chan struct{}
+	drainOnce sync.Once
 }
 
+// streamScopeJoinGrace is the floor and fallback for the scoped producer join.
+// It mirrors runtime's streamingBodyDrainJoinGrace so both bounded joins use the
+// same window.
+const streamScopeJoinGrace = 100 * time.Millisecond
+
+// streamScopeJoinSafetyBuffer keeps the bounded join from consuming the last of
+// an invocation's remaining time.
+const streamScopeJoinSafetyBuffer = 100 * time.Millisecond
+
+// streamScopeJoinMaxBudget caps the bounded join even when the invocation still
+// has plenty of time left.
+const streamScopeJoinMaxBudget = 5 * time.Second
+
 func newStreamScope(ctx context.Context) *streamScope {
+	return newStreamScopeWithJoinGrace(ctx, 0)
+}
+
+// newStreamScopeWithJoinGrace creates a scope with an explicit join budget. A
+// non-positive joinGrace derives the budget from the context deadline.
+func newStreamScopeWithJoinGrace(ctx context.Context, joinGrace time.Duration) *streamScope {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	scopeCtx, cancel := context.WithCancel(ctx)
-	return &streamScope{ctx: scopeCtx, cancel: cancel}
+	return &streamScope{
+		ctx:       scopeCtx,
+		cancel:    cancel,
+		joinGrace: joinGrace,
+		drained:   make(chan struct{}),
+	}
 }
 
 // context is the subscription context every producer in the scope observes.
@@ -54,9 +93,9 @@ func (s *streamScope) goRun(run func(ctx context.Context)) {
 		return
 	}
 
-	s.wg.Add(1)
+	s.begin()
 	go func() {
-		defer s.wg.Done()
+		defer s.end()
 		run(s.ctx)
 	}()
 }
@@ -68,21 +107,83 @@ func (s *streamScope) goJoin(run func()) {
 		return
 	}
 
-	s.wg.Add(1)
+	s.begin()
 	go func() {
-		defer s.wg.Done()
+		defer s.end()
 		run()
 	}()
 }
 
-// stop releases the scope's relay producers and waits for every producer in the
-// scope, including the ones that are only joined.
+func (s *streamScope) begin() {
+	s.mu.Lock()
+	s.active++
+	s.mu.Unlock()
+}
+
+func (s *streamScope) end() {
+	s.mu.Lock()
+	s.active--
+	last := s.active <= 0
+	s.mu.Unlock()
+	if last {
+		s.drainOnce.Do(func() { close(s.drained) })
+	}
+}
+
+// stop releases the scope's relay producers and waits, for at most the scope's
+// join budget, for every producer in the scope, including the ones that are only
+// joined.
 func (s *streamScope) stop() {
 	if s == nil {
 		return
 	}
 	s.cancel()
-	s.wg.Wait()
+	s.joinProducers()
+}
+
+func (s *streamScope) joinProducers() {
+	// A scope with no live producers (a startup failure before any producer
+	// started) releases immediately, exactly like a zero WaitGroup.
+	s.mu.Lock()
+	idle := s.active <= 0
+	s.mu.Unlock()
+	if idle {
+		return
+	}
+
+	timer := time.NewTimer(s.producerJoinBudget())
+	defer timer.Stop()
+
+	select {
+	case <-s.drained:
+	case <-timer.C:
+	}
+}
+
+// producerJoinBudget bounds the post-abandonment join. It uses as much of the
+// invocation's remaining time as it safely can (the context deadline carries the
+// Lambda remaining-time budget, and RemainingMS is derived from it), floored at
+// the fixed grace and capped so a long invocation still releases promptly.
+func (s *streamScope) producerJoinBudget() time.Duration {
+	if s == nil {
+		return streamScopeJoinGrace
+	}
+	if s.joinGrace > 0 {
+		return s.joinGrace
+	}
+
+	budget := streamScopeJoinGrace
+	if s.ctx != nil {
+		if deadline, ok := s.ctx.Deadline(); ok {
+			if remaining := time.Until(deadline) - streamScopeJoinSafetyBuffer; remaining > budget {
+				budget = remaining
+			}
+		}
+	}
+	if budget > streamScopeJoinMaxBudget {
+		budget = streamScopeJoinMaxBudget
+	}
+	return budget
 }
 
 // scopedBodyReader binds a response body reader to the scope that produced it.
@@ -203,14 +304,15 @@ func forwardStreamEvents(ctx context.Context, events <-chan StreamEvent, out cha
 
 // drainClosedSubscription waits for a canceled subscription's channel to close.
 //
-// The wait is unconditional. A subscription the invocation opened must not still
-// have a producer running once the streamed body's reader is released, so the
-// forwarder waits for the channel to close rather than giving up on a grace
-// window. Every store the runtime ships closes its channel when the subscription
-// context is done; a custom StreamStore MUST do the same (see the StreamStore
-// interface contract), which is what keeps this join prompt. A store that
-// ignores its context is bounded by the Lambda function timeout, not abandoned
-// by the framework.
+// The drain itself is unconditional: a subscription the invocation opened should
+// not still have a producer running once the streamed body's reader is released,
+// so the forwarder waits for the channel to close rather than giving up on a
+// grace window. Every store the runtime ships closes its channel when the
+// subscription context is done; a custom StreamStore MUST do the same (see the
+// StreamStore interface contract), which is what keeps this join prompt. The
+// scope that owns the forwarder still bounds how long it waits for the drain, so
+// a store that ignores its context cannot hang the invocation: it is bounded by
+// the scope's join budget and ultimately by the Lambda function timeout.
 func drainClosedSubscription(events <-chan StreamEvent) {
 	if events == nil {
 		return

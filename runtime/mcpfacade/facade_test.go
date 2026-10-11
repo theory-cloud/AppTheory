@@ -13,6 +13,7 @@ import (
 
 	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
 	"github.com/theory-cloud/apptheory/v5/runtime/mcproutes"
+	"github.com/theory-cloud/apptheory/v5/runtime/oauth"
 )
 
 var testEndpoints = []mcproutes.EndpointPath{
@@ -65,6 +66,9 @@ func TestRegisterMCPFacadeRegistersCompleteContractSurface(t *testing.T) {
 	config := validConfig(URLModePublicBaseURL)
 	config.AuthorizeHandler = kindHandlerFactory("authorize")
 	config.TokenHandler = kindHandlerFactory("token")
+	// This test pins facade composition, so it opts the transport routes out of
+	// the authenticated default and keeps exercising them credential-free.
+	config.UnauthenticatedMcp = true
 
 	inventory, err := RegisterMCPFacade(app, config)
 	require.NoError(t, err)
@@ -644,7 +648,11 @@ func TestMissingPlugPointsLeaveAuthorizationRoutesUnregistered(t *testing.T) {
 func TestMalformedAndUnknownPathsFailClosed(t *testing.T) {
 	t.Parallel()
 	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
-	_, err := RegisterMCPFacade(app, validConfig(URLModePublicBaseURL))
+	config := validConfig(URLModePublicBaseURL)
+	// Transport hardening would reject the malformed params before the handler
+	// runs, so opt out to keep asserting the handler-level fail-closed behavior.
+	config.UnauthenticatedMcp = true
+	_, err := RegisterMCPFacade(app, config)
 	require.NoError(t, err)
 
 	require.Equal(t, 500, serve(app, "POST", "/ /mcp", nil).Status)
@@ -834,6 +842,142 @@ func TestMetadataRequestFailuresPreserveTypeAndNilContextSemantics(t *testing.T)
 	response, ok = metadataRequestFailure(err)
 	require.True(t, ok)
 	require.Equal(t, 400, response.Status)
+}
+
+func TestTransportRoutesDefaultToAuthenticatedPosture(t *testing.T) {
+	t.Parallel()
+	// The default (portable) tier enforces the route-level authenticated posture;
+	// the explicit TierP0 preflight fast path does not evaluate route auth.
+	app := apptheory.New()
+	invocations := 0
+	config := validConfig(URLModePublicBaseURL)
+	config.MCPHandler = func(*apptheory.Context) (*apptheory.Response, error) {
+		invocations++
+		return apptheory.NoContent(), nil
+	}
+	_, err := RegisterMCPFacade(app, config)
+	require.NoError(t, err)
+
+	for _, endpoint := range testEndpoints {
+		mcpPath := mustPath(t, endpoint.MCPPath)
+		for _, method := range []string{"POST", "GET", "DELETE"} {
+			response := serve(app, method, mcpPath, nil)
+			require.Equalf(t, 401, response.Status, "%s %s: %s", method, mcpPath, response.Body)
+		}
+	}
+	require.Zero(t, invocations, "the MCP handler must never run for credential-free transport requests")
+}
+
+func TestPublicFacadeRoutesStayReachableCredentialFree(t *testing.T) {
+	t.Parallel()
+	app := apptheory.New()
+	config := validConfig(URLModePublicBaseURL)
+	config.AuthorizeHandler = kindHandlerFactory("authorize")
+	config.TokenHandler = kindHandlerFactory("token")
+	config.RootAuthorizationServer = validRootDiscoveryConfig()
+	_, err := RegisterMCPFacade(app, config)
+	require.NoError(t, err)
+
+	for _, endpoint := range testEndpoints {
+		require.Equal(t, 200, serve(app, "GET", mustPath(t, endpoint.ProtectedResourcePath), nil).Status)
+		require.Equal(t, 200, serve(app, "GET", mustPath(t, endpoint.OAuthAuthorizationServerPath), nil).Status)
+		require.Equal(t, 200, serve(app, "GET", mustPath(t, endpoint.OAuthAuthorizationServerSuffixPath), nil).Status)
+		require.Equal(t, 200, serve(app, "GET", mustPath(t, endpoint.OAuthAuthorizePath), nil).Status)
+		require.Equal(t, 200, serve(app, "POST", mustPath(t, endpoint.OAuthTokenPath), nil).Status)
+	}
+	require.Equal(t, 200, serve(app, "GET", mcproutes.AuthorizationServerPathForResourcePath("/"), nil).Status)
+}
+
+func TestTransportRoutesRequireValidBearerTokenWhenConfigured(t *testing.T) {
+	t.Parallel()
+	// The default (portable) tier enforces the route-level authenticated posture.
+	app := apptheory.New()
+	reached := 0
+	config := validConfig(URLModePublicBaseURL)
+	config.MCPHandler = func(*apptheory.Context) (*apptheory.Response, error) {
+		reached++
+		return apptheory.Text(200, "mcp-ok"), nil
+	}
+	const resourceMetadataURL = "https://front.example.com/.well-known/oauth-protected-resource/acme/mcp"
+	config.RequireBearerToken = &oauth.RequireBearerTokenOptions{
+		ResourceMetadataURL: resourceMetadataURL,
+		ClaimsValidator: oauth.NewMemoryBearerTokenValidator(
+			[]oauth.BearerTokenRecord{{
+				Token:    "valid-token",
+				Subject:  "acme",
+				Audience: "https://front.example.com",
+			}},
+			oauth.BearerTokenValidationOptions{},
+		),
+	}
+	_, err := RegisterMCPFacade(app, config)
+	require.NoError(t, err)
+
+	mcpPath := mustPath(t, testEndpoints[0].MCPPath)
+	denied := serve(app, "POST", mcpPath, nil)
+	require.Equal(t, 401, denied.Status)
+	require.Equal(t, []string{oauth.ProtectedResourceWWWAuthenticate(resourceMetadataURL)}, denied.Headers["www-authenticate"])
+	require.Zero(t, reached)
+
+	allowed := serve(app, "POST", mcpPath, map[string][]string{"authorization": {"Bearer valid-token"}})
+	require.Equal(t, 200, allowed.Status)
+	require.Equal(t, "mcp-ok", string(allowed.Body))
+	require.Equal(t, 1, reached)
+}
+
+func TestTransportRoutesDelegateToApplicationPrincipalHook(t *testing.T) {
+	t.Parallel()
+	app := apptheory.New(
+		apptheory.WithAuthPrincipalHook(func(*apptheory.Context) (*apptheory.AuthPrincipal, error) {
+			return &apptheory.AuthPrincipal{Identity: "acme"}, nil
+		}),
+	)
+	config := validConfig(URLModePublicBaseURL)
+	_, err := RegisterMCPFacade(app, config)
+	require.NoError(t, err)
+
+	mcpPath := mustPath(t, testEndpoints[0].MCPPath)
+	for _, method := range []string{"POST", "GET", "DELETE"} {
+		require.Equalf(t, 204, serve(app, method, mcpPath, nil).Status, "%s %s", method, mcpPath)
+	}
+}
+
+func TestUnauthenticatedMcpPreservesTheExplicitOptOut(t *testing.T) {
+	t.Parallel()
+	app := apptheory.New()
+	reached := 0
+	config := validConfig(URLModePublicBaseURL)
+	config.UnauthenticatedMcp = true
+	config.MCPHandler = func(*apptheory.Context) (*apptheory.Response, error) {
+		reached++
+		return apptheory.Text(200, "mcp-ok"), nil
+	}
+	_, err := RegisterMCPFacade(app, config)
+	require.NoError(t, err)
+
+	mcpPath := mustPath(t, testEndpoints[0].MCPPath)
+	response := serve(app, "POST", mcpPath, nil)
+	require.Equal(t, 200, response.Status)
+	require.Equal(t, "mcp-ok", string(response.Body))
+	require.Equal(t, 1, reached)
+
+	// The opt-out only hardens transport; metadata and discovery stay public.
+	require.Equal(t, 200, serve(app, "GET", mustPath(t, testEndpoints[0].ProtectedResourcePath), nil).Status)
+	require.Equal(t, 200, serve(app, "GET", mustPath(t, testEndpoints[0].OAuthAuthorizationServerPath), nil).Status)
+}
+
+func TestUnauthenticatedMcpRejectsBearerTokenConfiguration(t *testing.T) {
+	t.Parallel()
+	config := validConfig(URLModePublicBaseURL)
+	config.UnauthenticatedMcp = true
+	config.RequireBearerToken = &oauth.RequireBearerTokenOptions{
+		Validator: func(context.Context, string) error { return nil },
+	}
+	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	inventory, err := RegisterMCPFacade(app, config)
+	require.Nil(t, inventory)
+	require.ErrorContains(t, err, "UnauthenticatedMcp cannot be combined with RequireBearerToken")
+	require.Equal(t, 404, serve(app, "POST", "/acme/mcp", nil).Status)
 }
 
 func validConfig(mode URLMode) FacadeConfig {

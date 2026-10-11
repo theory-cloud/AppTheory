@@ -1,6 +1,7 @@
 import { RemovalPolicy, Stack, Token } from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
+import * as apigwv2Authorizers from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
@@ -13,6 +14,29 @@ import { AppTheoryMcpRouteAlgebra } from "./mcp-route-algebra";
 const DEFAULT_THROTTLING_RATE_LIMIT = 100;
 const DEFAULT_THROTTLING_BURST_LIMIT = 200;
 const DEFAULT_SESSION_TTL_MINUTES = 60;
+const MCP_TRANSPORT_AUTHORIZER_ID = "McpTransportAuthorizer";
+
+/** Authorizer applied to the AppTheoryMcpServer MCP transport routes. */
+export enum AppTheoryMcpTransportAuthorizerKind {
+  /** AWS IAM (SigV4) authorization. The zero-configuration default. */
+  IAM = "iam",
+  /** JSON Web Token authorization against an OIDC/Cognito issuer. */
+  JWT = "jwt",
+}
+
+/** Authenticated authorizer configuration for the MCP transport routes. */
+export interface AppTheoryMcpTransportAuthorizerOptions {
+  /** @default AppTheoryMcpTransportAuthorizerKind.IAM */
+  readonly kind?: AppTheoryMcpTransportAuthorizerKind;
+  /** Absolute HTTPS JWT issuer URL. Required when kind is JWT. @default undefined */
+  readonly issuer?: string;
+  /** Accepted JWT audiences. Required when kind is JWT. @default undefined */
+  readonly audience?: string[];
+  /** Identity sources for the JWT authorizer. JWT only. @default ["$request.header.Authorization"] */
+  readonly identitySource?: string[];
+  /** JWT authorizer resource name. JWT only. @default the authorizer construct id */
+  readonly authorizerName?: string;
+}
 
 /** Custom domain configuration for an AppTheory-owned MCP HTTP API. */
 export interface AppTheoryMcpServerDomainOptions {
@@ -190,13 +214,31 @@ export interface AppTheoryMcpServerProps {
 
   /**
    * Explicitly opt out of the OAuth facade and wire only MCP transport routes.
-   * This cannot be combined with legacy authorization props or root discovery.
-   * `runtime/mcpfacade.RegisterMCPFacade` always installs the authenticated
-   * canonical facade, so applications using this opt-out must own runtime
-   * registration for the transport routes.
+   *
+   * This cannot be combined with legacy authorization props, root discovery, or
+   * `transportAuthorizer`. The Go helper `runtime/mcpfacade.RegisterMCPFacade`
+   * installs the authenticated canonical facade by default and exposes
+   * `FacadeConfig.UnauthenticatedMcp` for the same transport opt-out, so
+   * applications using this opt-out must own runtime registration for the
+   * transport routes.
    * @default false
    */
   readonly unauthenticatedMcp?: boolean;
+
+  /**
+   * Authorizer applied to the MCP transport routes only.
+   *
+   * Transport routes are the POST, GET, and DELETE routes on every MCP pattern.
+   * When `unauthenticatedMcp` is false (the default) those routes require
+   * credentials and default to IAM, so credential-free requests are rejected by
+   * API Gateway with 403. Discovery, protected-resource metadata, authorize,
+   * and token routes remain explicitly public (`NONE`) because OAuth clients
+   * must fetch them before they hold a token.
+   *
+   * Cannot be combined with `unauthenticatedMcp: true`.
+   * @default AppTheoryMcpTransportAuthorizerKind.IAM
+   */
+  readonly transportAuthorizer?: AppTheoryMcpTransportAuthorizerOptions;
 
   /**
    * Session-state table configuration. The table defaults on.
@@ -390,10 +432,11 @@ export class AppTheoryMcpServer extends Construct {
         scopePermissionToRoute: props.scopePermissionToRoute ?? true,
       },
     );
+    const transportAuthorizer = resolveTransportAuthorizer(props);
     const runtimeOwnedAuth = new apigwv2.HttpNoneAuthorizer();
     for (const route of this.routeInventory.routes) {
       for (const method of route.mcpMethods) {
-        this.addRuntimeRoute(route.mcpPattern, toHttpMethod(method), integration, runtimeOwnedAuth);
+        this.addRuntimeRoute(route.mcpPattern, toHttpMethod(method), integration, transportAuthorizer);
       }
       if (!unauthenticatedMcp) {
         this.addRuntimeRoute(route.protectedResourcePattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
@@ -463,7 +506,7 @@ export class AppTheoryMcpServer extends Construct {
     path: string,
     method: apigwv2.HttpMethod,
     integration: apigwv2Integrations.HttpLambdaIntegration,
-    authorizer: apigwv2.HttpNoneAuthorizer,
+    authorizer: apigwv2.IHttpRouteAuthorizer,
   ): void {
     new apigwv2.HttpRoute(this, `Route${this.routeSequence++}`, {
       httpApi: this.api,
@@ -797,6 +840,81 @@ function normalizeLegacyAuthConfig(props: AppTheoryMcpServerProps): void {
       "jwksUri must be an absolute HTTPS URL with no userinfo or fragment",
     );
   }
+}
+
+function resolveTransportAuthorizer(
+  props: AppTheoryMcpServerProps,
+): apigwv2.IHttpRouteAuthorizer {
+  const configured = props.transportAuthorizer;
+  if (props.unauthenticatedMcp ?? false) {
+    if (configured !== undefined) {
+      throw new Error(
+        "AppTheoryMcpServer: transportAuthorizer cannot be combined with unauthenticatedMcp: true",
+      );
+    }
+    return new apigwv2.HttpNoneAuthorizer();
+  }
+
+  const kind = configured?.kind ?? AppTheoryMcpTransportAuthorizerKind.IAM;
+  switch (kind) {
+    case AppTheoryMcpTransportAuthorizerKind.IAM: {
+      const jwtOnly = jwtOnlyTransportFields(configured);
+      if (jwtOnly.length !== 0) {
+        throw new Error(
+          `AppTheoryMcpServer: transportAuthorizer ${jwtOnly.join(", ")} can only be set when kind is AppTheoryMcpTransportAuthorizerKind.JWT`,
+        );
+      }
+      return new apigwv2Authorizers.HttpIamAuthorizer();
+    }
+    case AppTheoryMcpTransportAuthorizerKind.JWT: {
+      const issuer = String(configured?.issuer ?? "").trim();
+      if (issuer === "") {
+        throw new Error(
+          "AppTheoryMcpServer: transportAuthorizer.issuer is required when kind is AppTheoryMcpTransportAuthorizerKind.JWT",
+        );
+      }
+      if (!Token.isUnresolved(issuer)) {
+        validateLiteralOAuthURL(
+          issuer,
+          false,
+          "transportAuthorizer.issuer must be an absolute HTTPS URL with no query or fragment",
+        );
+      }
+      const audience = (configured?.audience ?? [])
+        .map((value) => String(value).trim())
+        .filter((value) => value !== "");
+      if (audience.length === 0) {
+        throw new Error(
+          "AppTheoryMcpServer: transportAuthorizer.audience requires at least one accepted audience when kind is AppTheoryMcpTransportAuthorizerKind.JWT",
+        );
+      }
+      return new apigwv2Authorizers.HttpJwtAuthorizer(
+        MCP_TRANSPORT_AUTHORIZER_ID,
+        issuer,
+        {
+          jwtAudience: audience,
+          identitySource: configured?.identitySource,
+          authorizerName: configured?.authorizerName,
+        },
+      );
+    }
+    default:
+      throw new Error(
+        "AppTheoryMcpServer: transportAuthorizer.kind must be AppTheoryMcpTransportAuthorizerKind.IAM or AppTheoryMcpTransportAuthorizerKind.JWT",
+      );
+  }
+}
+
+function jwtOnlyTransportFields(
+  options?: AppTheoryMcpTransportAuthorizerOptions,
+): string[] {
+  if (options === undefined) return [];
+  const fields: string[] = [];
+  if (options.issuer !== undefined) fields.push("issuer");
+  if (options.audience !== undefined) fields.push("audience");
+  if (options.identitySource !== undefined) fields.push("identitySource");
+  if (options.authorizerName !== undefined) fields.push("authorizerName");
+  return fields;
 }
 
 function validateLiteralOAuthURL(value: string, allowQuery: boolean, message: string): void {

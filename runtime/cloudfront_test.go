@@ -47,6 +47,47 @@ func TestOriginURL(t *testing.T) {
 	}
 }
 
+func TestAuthoritativeOriginURL(t *testing.T) {
+	// Without forwarded-host trust, only the platform-set host header is used.
+	got := AuthoritativeOriginURL(map[string][]string{
+		"Host":                       {"real.example.com"},
+		"X-AppTheory-Original-Host":  {"evil.example.com"},
+		"X-FaceTheory-Original-Host": {"evil.example.com"},
+		"X-Forwarded-Host":           {"evil.example.com"},
+		"Forwarded":                  {`host="evil.example.com"`},
+		"X-Forwarded-Proto":          {"https"},
+	}, false)
+	if got != "https://real.example.com" {
+		t.Fatalf("authoritative origin ignored the host header: %q", got)
+	}
+
+	// A forwarded host with no host header has no authoritative source.
+	if routed := AuthoritativeOriginURL(map[string][]string{
+		"X-Forwarded-Host": {"evil.example.com"},
+	}, false); routed != "" {
+		t.Fatalf("expected empty authoritative origin without host, got %q", routed)
+	}
+
+	// With forwarded-host trust the edge forward chain is honored, matching
+	// OriginURL's priority.
+	got = AuthoritativeOriginURL(map[string][]string{
+		"Host":              {"internal.example.com"},
+		"X-Forwarded-Host":  {"edge.example.com"},
+		"X-Forwarded-Proto": {"https"},
+	}, true)
+	if got != "https://edge.example.com" {
+		t.Fatalf("expected the forwarded host to be honored when trusted, got %q", got)
+	}
+
+	// A comma suffix is trimmed in both modes.
+	got = AuthoritativeOriginURL(map[string][]string{
+		"Host": {"real.example.com, internal.example.com"},
+	}, false)
+	if got != "https://real.example.com" {
+		t.Fatalf("expected comma suffix to be trimmed, got %q", got)
+	}
+}
+
 func TestOriginalHostAndURI(t *testing.T) {
 	headers := map[string][]string{
 		"X-AppTheory-Original-Host": {"app.example.com"},

@@ -273,6 +273,7 @@ function fakeDb() {
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const db = {
     registered,
+    items,
     register(model) {
       registered.push(model.name);
     },
@@ -611,6 +612,82 @@ test("mcp task runtime handles lifecycle and error paths", async () => {
   const noTasksInit = await initialize(noTasks);
   const noTasksHeaders = { [MCP_HEADER_SESSION_ID]: [noTasksInit.sessionId], [MCP_HEADER_PROTOCOL_VERSION]: [MCP_PROTOCOL_VERSION] };
   assert.equal((await json(await post(noTasks, rpc("task-disabled", "tools/call", { name: "plain", task: {} }), noTasksHeaders))).error.code, MCP_CODE_METHOD_NOT_FOUND);
+});
+
+test("mcp tools/call task augmentation is gated to the 2025-11-25 protocol", async () => {
+  const taskStore = new MemoryMcpTaskStore({ now: () => new Date("2026-07-03T00:00:02Z") });
+  const server = createMcpServer("Task Gate MCP", "1", {
+    idGenerator: sequenceIdGenerator(["sess-1125", "task-1", "sess-618", "sess-326"]),
+    taskRuntime: { store: taskStore, defaultTtlMs: 60000 },
+  });
+  server.registry().registerTool(
+    { name: "task_echo", inputSchema: {}, execution: { taskSupport: "optional" } },
+    (args) => ({ content: [textBlock(`echo ${args.message}`)] }),
+  );
+
+  const callTask = (sessionId, protocolVersion, id) =>
+    post(
+      server,
+      rpc(id, "tools/call", { name: "task_echo", arguments: { message: "hi" }, task: {} }),
+      { [MCP_HEADER_SESSION_ID]: [sessionId], [MCP_HEADER_PROTOCOL_VERSION]: [protocolVersion] },
+    );
+
+  const okInit = await initialize(server, "init-ok", MCP_PROTOCOL_VERSION);
+  const ok = await json(await callTask(okInit.sessionId, MCP_PROTOCOL_VERSION, "ok"));
+  assert.equal(ok.result.task.taskId, "task-1");
+  assert.equal((await taskStore.list({ sessionId: okInit.sessionId })).tasks.length, 1);
+
+  for (const protocolVersion of ["2025-06-18", "2025-03-26"]) {
+    const init = await initialize(server, `init-${protocolVersion}`, protocolVersion);
+    const denied = await json(await callTask(init.sessionId, protocolVersion, `denied-${protocolVersion}`));
+    assert.equal(denied.error.code, MCP_CODE_METHOD_NOT_FOUND, protocolVersion);
+    assert.equal(denied.error.message, "Method not found: tasks not enabled", protocolVersion);
+    assert.deepEqual(await taskStore.list({ sessionId: init.sessionId }), { tasks: [] }, protocolVersion);
+  }
+});
+
+test("dynamo task store enforces task expiry and deletes every session page", async () => {
+  const db = fakeDb();
+  const taskModel = defaultMcpTaskModel("unit-tasks-expiry");
+  const writer = new DynamoMcpTaskStore(db, { model: taskModel, now: () => new Date("2026-07-03T00:00:05Z") });
+  const created = await writer.create(taskRecord());
+  assert.equal(created.task.status, "working");
+  assert.equal(created.task.ttl, 60000);
+
+  const stored = db.items.get(`${taskModel.name}:sess-1:task-1`);
+  assert.equal(stored.expiresAt, Math.floor((Date.parse("2026-07-03T00:00:00Z") + 60000) / 1000));
+  // A fresh task is returned normally and keeps its ttl duration.
+  const fresh = await writer.get({ sessionId: "sess-1", taskId: "task-1" });
+  assert.equal(fresh.task.taskId, "task-1");
+  assert.equal(fresh.task.ttl, 60000);
+
+  // Once `now` passes `expiresAt`, the record is never surfaced.
+  const later = new DynamoMcpTaskStore(db, { model: taskModel, now: () => new Date("2026-07-03T01:00:00Z") });
+  await assert.rejects(() => later.get({ sessionId: "sess-1", taskId: "task-1" }), McpTaskNotFoundError);
+  assert.deepEqual(await later.list({ sessionId: "sess-1" }), { tasks: [] });
+
+  const pageModel = defaultMcpTaskModel("unit-tasks-pages");
+  const paged = new DynamoMcpTaskStore(db, { model: pageModel, now: () => new Date("2026-07-03T00:00:05Z") });
+  for (let index = 0; index < 1200; index += 1) {
+    await paged.create(
+      taskRecord({
+        task: {
+          taskId: `task-${String(index).padStart(4, "0")}`,
+          status: "working",
+          createdAt: "2026-07-03T00:00:00Z",
+          lastUpdatedAt: "2026-07-03T00:00:00Z",
+          ttl: 60000,
+          pollInterval: 100,
+        },
+      }),
+    );
+  }
+  const firstPage = await paged.list({ sessionId: "sess-1", limit: 500 });
+  assert.equal(firstPage.tasks.length, 500);
+  assert.equal(firstPage.nextCursor, "500");
+  await paged.deleteSession("sess-1");
+  assert.deepEqual(await paged.list({ sessionId: "sess-1" }), { tasks: [] });
+  assert.equal([...db.items.keys()].filter((key) => key.startsWith(`${pageModel.name}:sess-1:`)).length, 0);
 });
 
 test("dynamo-backed MCP stores use TableTheory clients without raw SDK escape hatches", async () => {

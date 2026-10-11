@@ -107,17 +107,23 @@ request time.
 
 ## Authenticated by default
 
-The full facade is wired by default. API Gateway routes explicitly use `NONE` authorization so a supplied API's default
-authorizer cannot intercept discovery or OAuth traffic: authentication, scope policy, and authorize/token behavior
-belong to the AppTheory runtime composition helper. Applications must call `RegisterMCPFacade` with non-empty per-kind
-scopes and an application-owned authorize/token handler pair. The helper fails closed if that pair is partial and does
-not install authorize/token runtime routes when both are absent.
+The full facade is wired by default, and the three MCP transport routes (`POST`, `GET`, and `DELETE` on every MCP
+pattern) now require credentials. They default to an IAM authorizer, or a JWT authorizer when `transportAuthorizer`
+supplies an issuer and audience, so a credential-free request to a transport route is rejected by API Gateway before
+the runtime handler runs.
+
+Discovery, protected-resource metadata, authorize, and token routes stay explicitly `NONE` so a supplied API's default
+authorizer cannot intercept OAuth traffic: OAuth clients must fetch those documents before they hold a token. Scope
+policy and authorize/token behavior belong to the AppTheory runtime composition helper. Applications must call
+`RegisterMCPFacade` with non-empty per-kind scopes and an application-owned authorize/token handler pair. The helper
+fails closed if that pair is partial and does not install authorize/token runtime routes when both are absent.
 
 For a genuinely public MCP application, `unauthenticatedMcp: true` is the explicit CDK opt-out. It wires only the three
-MCP transport methods and no OAuth facade. It cannot be combined with root discovery or the deprecated issuer/JWKS
-props. `RegisterMCPFacade` has no unauthenticated mode and therefore is not the runtime counterpart for this opt-out;
-the application must own transport-route registration. Omitting runtime auth config is not an opt-out: the default CDK
-facade remains present and the runtime must initialize its explicit `FacadeConfig` successfully.
+MCP transport methods and no OAuth facade, and it cannot be combined with `transportAuthorizer`, root discovery, or the
+deprecated issuer/JWKS props. `RegisterMCPFacade` now registers the MCP transport routes with an authenticated posture
+by default and exposes `FacadeConfig.UnauthenticatedMcp` for the same opt-out, or `FacadeConfig.RequireBearerToken` to
+validate RFC 9728 bearer tokens on those routes. Omitting runtime auth config is not an opt-out: the default CDK facade
+remains present and the runtime must initialize its explicit `FacadeConfig` successfully.
 
 The v3.1.x `authorizationServerIssuer` and `jwksUri` props are deprecated together. They remain pair-validated for
 migration safety but no longer control facade wiring and no longer become environment variables. Move them into
@@ -142,7 +148,8 @@ must configure those controls on its own stage rather than asking an attached ch
 
 The construct and `runtime/mcpfacade` share routes, not configuration environment variables. `FacadeConfig` has no env
 reads. Issuer, JWKS, optional registration endpoint, URL mode, public base URL or hostname allowlist, per-kind scopes,
-capabilities, MCP handler, authorize/token factories, and optional root discovery are app-owned values.
+capabilities, MCP handler, authorize/token factories, optional root discovery, and the transport authentication posture
+(`UnauthenticatedMcp` or `RequireBearerToken`) are app-owned values.
 
 The construct writes only environment variables consumed by existing runtime code:
 

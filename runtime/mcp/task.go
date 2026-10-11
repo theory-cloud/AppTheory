@@ -21,6 +21,11 @@ const (
 	defaultTaskResultMaxWait = 30 * time.Second
 	defaultTaskListLimit     = 100
 	maxTaskListLimit         = 500
+
+	// defaultTaskMaxInFlight bounds how many task-augmented invocations one
+	// server admits at once. Above it, admission fails closed rather than
+	// letting in-flight task state grow without bound.
+	defaultTaskMaxInFlight = 64
 )
 
 const (
@@ -28,6 +33,15 @@ const (
 	relatedTaskMetadataKey            = "io.modelcontextprotocol/related-task"
 	modelImmediateResponseMetadataKey = "io.modelcontextprotocol/model-immediate-response"
 	taskCanceledMessage               = "task canceled"
+
+	// taskNotEnabledMessage is returned when task augmentation is unavailable:
+	// either the task runtime is not configured, or the request's negotiated
+	// protocol version does not carry the task extension.
+	taskNotEnabledMessage = "Method not found: tasks not enabled"
+
+	// taskCapacityExceededMessage is returned when admitting a task would push
+	// the server past its in-flight task quota.
+	taskCapacityExceededMessage = "Task capacity exceeded"
 )
 
 // TaskSupport declares whether a tool can be invoked through MCP task
@@ -139,6 +153,7 @@ type TaskRuntimeOptions struct {
 	MaxTTL                 time.Duration
 	PollInterval           time.Duration
 	ListLimit              int
+	MaxInFlight            int
 	ModelImmediateResponse string
 }
 
@@ -148,6 +163,7 @@ type taskRuntimeConfig struct {
 	maxTTL                 time.Duration
 	pollInterval           time.Duration
 	listLimit              int
+	maxInFlight            int
 	modelImmediateResponse string
 }
 
@@ -178,12 +194,18 @@ func normalizeTaskRuntimeOptions(opts TaskRuntimeOptions) taskRuntimeConfig {
 		listLimit = maxTaskListLimit
 	}
 
+	maxInFlight := opts.MaxInFlight
+	if maxInFlight <= 0 {
+		maxInFlight = defaultTaskMaxInFlight
+	}
+
 	return taskRuntimeConfig{
 		store:                  opts.Store,
 		defaultTTL:             defaultTTL,
 		maxTTL:                 maxTTL,
 		pollInterval:           pollInterval,
 		listLimit:              listLimit,
+		maxInFlight:            maxInFlight,
 		modelImmediateResponse: strings.TrimSpace(opts.ModelImmediateResponse),
 	}
 }
@@ -202,9 +224,16 @@ func (s *Server) hasTaskRuntime() bool {
 	return s != nil && s.taskRuntime.store != nil
 }
 
-func (s *Server) handleTaskToolsCall(ctx context.Context, req *Request, sessionID string, params toolsCallParams) *Response {
+func (s *Server) handleTaskToolsCall(ctx context.Context, req *Request, sessionID, requestPV string, params toolsCallParams) *Response {
 	if !s.tasksEnabled() {
-		return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: tasks not enabled")
+		return NewErrorResponse(req.ID, CodeMethodNotFound, taskNotEnabledMessage)
+	}
+	// Task augmentation of tools/call is part of the 2025-11-25 task extension,
+	// exactly like the tasks/get|result|list|cancel methods. A request that
+	// negotiated an earlier protocol version is rejected with the same
+	// not-enabled error the server returns when the task runtime is absent.
+	if requestPV != protocolVersion {
+		return NewErrorResponse(req.ID, CodeMethodNotFound, taskNotEnabledMessage)
 	}
 	if strings.TrimSpace(sessionID) == "" {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing session id")
@@ -227,6 +256,17 @@ func (s *Server) handleTaskToolsCall(ctx context.Context, req *Request, sessionI
 	if taskID == "" {
 		return NewErrorResponse(req.ID, CodeInternalError, "task id generator returned empty id")
 	}
+
+	// Reserve an in-flight slot before the task record is created, so a server
+	// at capacity fails closed without leaving a task behind. The slot is
+	// released when the body finishes (or when the create below fails).
+	taskCtx, cancel := context.WithCancel(ctx)
+	finish, admitted := s.taskExecutions.tryTrack(sessionID, taskID, cancel, s.taskRuntime.maxInFlight)
+	if !admitted {
+		cancel()
+		return NewErrorResponse(req.ID, CodeServerError, taskCapacityExceededMessage)
+	}
+	defer finish()
 
 	record := TaskRecord{
 		SessionID: sessionID,
@@ -257,10 +297,6 @@ func (s *Server) handleTaskToolsCall(ctx context.Context, req *Request, sessionI
 	// could stay `working` forever, lose its result, or half-apply its writes —
 	// the process is frozen between invocations, so the work resumes at an
 	// unpredictable time (or never) on a later invocation of the same environment.
-	taskCtx, cancel := context.WithCancel(ctx)
-	finish := s.taskExecutions.track(sessionID, created.Task.TaskID, cancel)
-	defer finish()
-
 	task := s.runTaskTool(taskCtx, *created, params.Arguments)
 
 	meta := map[string]any{relatedTaskMetadataKey: RelatedTaskMetadata{TaskID: task.TaskID}}
@@ -556,12 +592,16 @@ func newTaskExecutionTracker() *taskExecutionTracker {
 	return &taskExecutionTracker{cancels: map[string]context.CancelFunc{}}
 }
 
-func (t *taskExecutionTracker) track(sessionID, taskID string, cancel context.CancelFunc) func() {
+func (t *taskExecutionTracker) tryTrack(sessionID, taskID string, cancel context.CancelFunc, limit int) (func(), bool) {
 	if t == nil || cancel == nil {
-		return func() {}
+		return func() {}, true
 	}
 	key := taskExecutionKey(sessionID, taskID)
 	t.mu.Lock()
+	if limit > 0 && len(t.cancels) >= limit {
+		t.mu.Unlock()
+		return nil, false
+	}
 	t.cancels[key] = cancel
 	t.mu.Unlock()
 	return func() {
@@ -572,7 +612,16 @@ func (t *taskExecutionTracker) track(sessionID, taskID string, cancel context.Ca
 		// from the request context, so this only frees its timer and child
 		// state; a concurrent tasks/cancel that already ran it is idempotent.
 		cancel()
+	}, true
+}
+
+func (t *taskExecutionTracker) count() int {
+	if t == nil {
+		return 0
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.cancels)
 }
 
 func (t *taskExecutionTracker) cancel(sessionID, taskID string) bool {

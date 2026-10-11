@@ -1077,7 +1077,10 @@ func TestTaskRuntimeHelpers_ErrorBranches(t *testing.T) {
 		t.Fatal("expected non-positive duration to return zero milliseconds")
 	}
 
-	finish := (*taskExecutionTracker)(nil).track("sess", "task", func() {})
+	finish, admitted := (*taskExecutionTracker)(nil).tryTrack("sess", "task", func() {}, 0)
+	if !admitted {
+		t.Fatal("expected a nil tracker to admit a task")
+	}
 	finish()
 	if (*taskExecutionTracker)(nil).cancel("sess", "task") {
 		t.Fatal("expected nil task execution tracker cancel to return false")
@@ -1118,4 +1121,108 @@ func TestMemoryTaskStore_FailsClosedOnInvalidWrites(t *testing.T) {
 func toolsCallTaskRequestWithTTL(id int, name string, ttl *int64) *Request {
 	params := toolsCallParams{Name: name, Arguments: json.RawMessage(`{}`), Task: &TaskMetadata{TTL: ttl}}
 	return &Request{JSONRPC: jsonrpcVersion, ID: id, Method: methodToolsCall, Params: mustMarshalTaskParams(params)}
+}
+
+func newTaskAugmentedServer(t *testing.T, store TaskStore, opts ...ServerOption) *Server {
+	t.Helper()
+
+	serverOpts := make([]ServerOption, 0, 1+len(opts))
+	serverOpts = append(serverOpts, WithTaskRuntime(TaskRuntimeOptions{Store: store}))
+	serverOpts = append(serverOpts, opts...)
+	s := NewServer("test", "dev", serverOpts...)
+	if err := s.Registry().RegisterTool(taskCapableToolDef(), func(context.Context, json.RawMessage) (*ToolResult, error) {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "done"}}}, nil
+	}); err != nil {
+		t.Fatalf("register task tool: %v", err)
+	}
+	return s
+}
+
+func TestTaskRuntimeToolsCall_ProtocolGate(t *testing.T) {
+	t.Run("latest protocol starts the task", func(t *testing.T) {
+		store := NewMemoryTaskStore()
+		s := newTaskAugmentedServer(t, store)
+
+		resp := s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(1, "slow"), protocolVersion, "sess-1")
+		if resp.Error != nil {
+			t.Fatalf("expected task augmentation under %s, got %+v", protocolVersion, resp.Error)
+		}
+		if _, ok := resp.Result.(CreateTaskResult); !ok {
+			t.Fatalf("expected a create task result, got %#v", resp.Result)
+		}
+	})
+
+	for _, requestPV := range []string{protocolVersionPrior, protocolVersionLegacy} {
+		t.Run("rejects task augmentation under "+requestPV, func(t *testing.T) {
+			store := NewMemoryTaskStore()
+			s := newTaskAugmentedServer(t, store)
+
+			resp := s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(1, "slow"), requestPV, "sess-1")
+			if resp.Error == nil || resp.Error.Code != CodeMethodNotFound || resp.Error.Message != taskNotEnabledMessage {
+				t.Fatalf("expected -32601 %q under %s, got %+v", taskNotEnabledMessage, requestPV, resp.Error)
+			}
+
+			list, err := store.List(context.Background(), TaskListRequest{SessionID: "sess-1", Limit: defaultTaskListLimit})
+			if err != nil {
+				t.Fatalf("list tasks: %v", err)
+			}
+			if len(list.Tasks) != 0 {
+				t.Fatalf("rejected task call created a record: %+v", list.Tasks)
+			}
+		})
+	}
+}
+
+func TestTaskRuntimeToolsCall_InFlightQuota(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+
+	store := NewMemoryTaskStore()
+	s := newTaskAugmentedServer(t, store, WithTaskRuntime(TaskRuntimeOptions{Store: store, MaxInFlight: 1}))
+	// Override the registered tool with one that blocks so the first task stays
+	// in flight while the second admission is attempted.
+	s.registry = NewToolRegistry()
+	if err := s.Registry().RegisterTool(taskCapableToolDef(), func(context.Context, json.RawMessage) (*ToolResult, error) {
+		started <- struct{}{}
+		<-release
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "done"}}}, nil
+	}); err != nil {
+		t.Fatalf("register blocking tool: %v", err)
+	}
+
+	firstDone := make(chan *Response, 1)
+	go func() {
+		firstDone <- s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(1, "slow"), protocolVersion, "sess-1")
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("the first task never started")
+	}
+
+	// At the quota, one more admission fails closed with a stable error.
+	rejected := s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(2, "slow"), protocolVersion, "sess-1")
+	if rejected.Error == nil || rejected.Error.Code != CodeServerError || rejected.Error.Message != taskCapacityExceededMessage {
+		t.Fatalf("expected %d %q at capacity, got %+v", CodeServerError, taskCapacityExceededMessage, rejected.Error)
+	}
+
+	// A terminal task frees its slot.
+	close(release)
+	select {
+	case resp := <-firstDone:
+		if resp.Error != nil {
+			t.Fatalf("first task failed: %+v", resp.Error)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the first task did not finish")
+	}
+	if got := s.taskExecutions.count(); got != 0 {
+		t.Fatalf("expected the slot to be released, %d still tracked", got)
+	}
+
+	admitted := s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(3, "slow"), protocolVersion, "sess-1")
+	if admitted.Error != nil {
+		t.Fatalf("expected a freed slot to admit a task, got %+v", admitted.Error)
+	}
 }

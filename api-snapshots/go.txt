@@ -2451,6 +2451,8 @@ func Authenticated(...string) AuthPosture
 
 func AuthenticatedAnyOf(...string) AuthPosture
 
+func AuthoritativeOriginURL(map[string][]string, bool) string
+
 func Binary(int, []byte, string) *Response
 
 func BindHandler[Req, Resp any](BindConfig[Req], func(*Context, Req) (Resp, error)) Handler
@@ -3177,6 +3179,8 @@ type DynamoStreamStore struct {
 	maxEventBytes  int
 }
 
+type DynamoStreamStoreOption func(*dynamoStreamStoreOptions)
+
 type DynamoTaskStore struct {
 	db  tablecore.DB
 	now func() time.Time
@@ -3456,6 +3460,7 @@ type TaskRuntimeOptions struct {
 	MaxTTL                 time.Duration
 	PollInterval           time.Duration
 	ListLimit              int
+	MaxInFlight            int
 	ModelImmediateResponse string
 }
 
@@ -3565,7 +3570,7 @@ func MarshalResponse(*Response) ([]byte, error)
 
 func NewDynamoSessionStore(tablecore.DB) SessionStore
 
-func NewDynamoStreamStore(tablecore.DB) StreamStore
+func NewDynamoStreamStore(tablecore.DB, ...DynamoStreamStoreOption) StreamStore
 
 func NewDynamoTaskStore(tablecore.DB) TaskStore
 
@@ -3602,6 +3607,8 @@ func WithCapabilityConfig(CapabilityConfig) ServerOption
 func WithClock(apptheory.Clock) MemorySessionStoreOption
 
 func WithCompletionHooks(CompletionHook, CompletionHook) ServerOption
+
+func WithDynamoStreamSpillEncryption(objectstore.S3EncryptionConfig) DynamoStreamStoreOption
 
 func WithExtensionCapabilities(map[string]map[string]any) ServerOption
 
@@ -3781,6 +3788,10 @@ type FacadeConfig struct {
 	TokenHandler     HandlerFactory
 
 	RootAuthorizationServer *RootDiscoveryConfig
+
+	UnauthenticatedMcp bool
+
+	RequireBearerToken *oauth.RequireBearerTokenOptions
 }
 
 type HandlerFactory func(mcproutes.EndpointKind) apptheory.Handler
@@ -5030,6 +5041,8 @@ type MCPServerConfig struct {
 	AuthorizationServerIssuer string
 
 	JWKSURI string
+
+	AllowedHostnames []string
 }
 
 type MemoryAuthorizationCodeStore struct {

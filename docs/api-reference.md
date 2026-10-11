@@ -584,13 +584,13 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1060 exported top-level symbols</summary>
+<summary>1063 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins, APIGatewayV2Request
 App, AppError, AppSyncContext, AppSyncEvent, AppSyncEventOptions, AppSyncResolverEvent, AppSyncResolverInfo
 AppSyncResolverRequest, AppTheoryError, AppTheoryErrorFromAppError, AsAppTheoryError, AssertError, AssertHasTools
-AssertToolResult, AtomicRateLimiter, AuthContext, Authenticated, AuthenticatedAnyOf, AuthHook, AuthorizationCodeRecord
+AssertToolResult, AtomicRateLimiter, AuthContext, Authenticated, AuthenticatedAnyOf, AuthoritativeOriginURL, AuthHook, AuthorizationCodeRecord
 AuthorizationCodeStore, AuthorizationServerMetadata, AuthorizationServerMetadataHandler, AuthorizationServerMetadataOption, AuthorizeOptions, AuthPosture
 AuthPostureAuthenticated, AuthPostureAuthenticatedAnyOf, AuthPostureInternalOnly, AuthPostureKind, AuthPostureOptional, AuthPosturePublic
 AuthPrincipal, AWSLambdaMicroVMProvider, AWSLambdaMicroVMProviderID, AWSLambdaMicroVMProviderOption, BaseName
@@ -620,7 +620,7 @@ DefaultTitanEmbedTextModelID, DeleteInput, DetectProtocolVersion, DetectProtocol
 Discovery, DynamicClientRegistrationPolicy, DynamicClientRegistrationRequest, DynamicClientRegistrationResponse
 DynamoDBEventBus, DynamoDBStreamEvent, DynamoDBStreamEventOptions, DynamoDBStreamHandler, DynamoDBStreamRecordOptions
 DynamoDBStreamRecordSummary, DynamoJobLedger, DynamoRateLimiter, DynamoSessionStore, DynamoStreamStore
-DynamoTaskStore, Embedder, EmbeddingErrorCode, EMFMetricSink, EMFMetricSinkOption, EncodeLoggingProfileEvent
+DynamoStreamStoreOption, DynamoTaskStore, Embedder, EmbeddingErrorCode, EMFMetricSink, EMFMetricSinkOption, EncodeLoggingProfileEvent
 EncodeLoggingProfileEventWithSanitizer, Env, EnvEgressNetworkConnectorRefs, EnvEmbeddingDimensions
 EnvEmbeddingModelID, EnvEmbeddingNormalize, EnvEmbeddingProvider, EnvExecutionRoleArn, EnvImageRef
 EnvIngressNetworkConnectorRefs, EnvironmentErrorNotificationsOptions, EnvJobsTableName, EnvLogging
@@ -754,7 +754,7 @@ WebSocketEventOptions, WebSocketHandler, WindowConfig, WindowLimit, WithAPI, Wit
 WithAWSConfig, WithAWSLambdaMicroVMClock, WithAWSLambdaMicroVMRegion, WithCacheableResultConfig, WithCapabilityConfig
 WithClock, WithCompletionHooks, WithControllerClock, WithControllerDeploymentDefaults, WithControllerExecutionRoleArn
 WithControllerID, WithControllerIDGenerator, WithControllerLogging, WithControllerProviderID, WithControllerSessionTTL
-WithCORS, WithDeviceAuthorizationEndpoint, WithEMFClock, WithEMFNamespace, WithEMFService, WithEMFWriter, WithEnvironmentErrorNotifications
+WithCORS, WithDeviceAuthorizationEndpoint, WithDynamoStreamSpillEncryption, WithEMFClock, WithEMFNamespace, WithEMFService, WithEMFWriter, WithEnvironmentErrorNotifications
 WithErrorNotifier, WithExtensionCapabilities, WithHTTPErrorFormat, WithIdentifier, WithIDGenerator
 WithInitialSessionListenerBudget, WithLegacyHTTPErrorShape, WithLifecycleContract, WithLifecycleHandler, WithLimits
 WithLogger, WithLoggingLevelHook, WithObservability, WithOriginValidator, WithPolicyHook, WithProfileClock

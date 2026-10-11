@@ -341,7 +341,9 @@ curl -N \
 
 ## Security checklist (don’t ship an open tool endpoint)
 
-`AppTheoryMcpServer` creates a public HTTP endpoint by default. You should intentionally secure it.
+`AppTheoryMcpServer` authenticates the MCP transport routes by default (IAM, or a configured JWT
+`transportAuthorizer`). This AgentCore path explicitly opts out with `unauthenticatedMcp: true`, which makes the
+endpoint public; you must intentionally secure it.
 
 Common approaches:
 
