@@ -28,6 +28,17 @@ const (
 	// transport mismatch instead of spinning on an empty 200.
 	apigatewayV2StreamingBodyTimeout = 5 * time.Second
 
+	// streamingBodyDrainJoinGrace bounds how long a buffered adapter waits for
+	// the abandoned body-drain worker and a handler-supplied BodyStream it gave
+	// up on to settle after the adapter unblocks (closes) them. The wait is
+	// bounded rather than unbounded: a producer that observes the canceled
+	// invocation context or honors Close settles well within this window, while
+	// a producer that is blocked inside a call it does not leave (for example a
+	// live listener waiting on a queue) is not detached and not claimed
+	// terminated -- the adapter stops waiting here and the Lambda function
+	// timeout remains the outer bound on that uninterruptible producer.
+	streamingBodyDrainJoinGrace = 100 * time.Millisecond
+
 	// apigatewayV2StreamingBodyErrorMessage is the documented client-visible
 	// error for a streaming response body the HTTP API v2 adapter cannot
 	// deliver for a non-size reason (a stream that did not terminate in time or
@@ -109,7 +120,7 @@ func (a *App) serveForBufferedAdapter(ctx context.Context, req Request) (context
 	serveCtx, cancelServe, resp := a.serveScoped(ctx, req)
 	return serveCtx, resp, func() {
 		cancelServe()
-		joinAbandonedBodyStream(resp.BodyStream)
+		joinAbandonedBodyStream(resp.BodyStream, streamingBodyDrainJoinGrace)
 	}
 }
 
@@ -308,28 +319,40 @@ func apigatewayV2ResponseFromResponse(ctx context.Context, resp Response) events
 	return out
 }
 
-// joinAbandonedBodyStream waits for the runtime's own BodyStream producer to
-// exit after the invocation's serve context has been canceled.
+// joinAbandonedBodyStream waits, for at most grace, for the runtime's own
+// BodyStream producer to exit after the invocation's serve context has been
+// canceled.
 //
 // The buffered adapters cancel the serve context before returning, which is what
-// stops a stream limiter (limitBodyStream) blocked on an abandoned body. The
-// producer closes its output channel as it returns, so draining it here is the
-// join. The join is unconditional: a producer the invocation started must not be
-// running once the adapter returns, so the adapter waits for the channel to
-// close rather than giving up on a grace window. Every producer the runtime
-// creates observes the invocation context and closes its channel with it; a
-// handler that supplies a BodyStream is responsible for closing it when the
-// context passed to Serve is done, and the adapter then waits for the handler's
-// producer exactly as it waits for its own. A producer that never closes is
-// bounded by the Lambda function timeout, not abandoned by the framework.
-func joinAbandonedBodyStream(stream BodyStream) {
+// stops a stream limiter (limitBodyStream) blocked on an abandoned body. Every
+// producer the runtime creates observes the invocation context and closes its
+// channel with it; a handler-supplied BodyStream is responsible for closing it
+// when the context passed to Serve is done. The producer closes its output
+// channel as it returns, so draining it here is the join.
+//
+// The join is bounded. The adapter must not return while a producer the
+// invocation started can still run, so it drains to the close -- but a producer
+// that does not respond to cancellation is not detached and not claimed
+// terminated: the drain stops at the grace window and the Lambda function
+// timeout remains the outer bound on that producer. An unbounded join here
+// instead lets a single stalled stream hold the invocation until the function
+// timeout, which is exactly the availability regression this bound prevents.
+func joinAbandonedBodyStream(stream BodyStream, grace time.Duration) {
 	if stream == nil {
 		return
 	}
 
+	settleCtx, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+
 	for {
-		// Draining to the close is the join.
-		if _, ok := <-stream; !ok {
+		select {
+		case _, ok := <-stream:
+			// Draining to the close is the join.
+			if !ok {
+				return
+			}
+		case <-settleCtx.Done():
 			return
 		}
 	}
@@ -406,9 +429,10 @@ func deadlineReachedByWallClock(ctx context.Context) bool {
 //     a blocked read. When the deadline fires the adapter closes the reader
 //     first (io.Closer guarantees Close unblocks a blocked Read, which covers
 //     every reader the runtime produces and handler-supplied bodies that own an
-//     external resource) and then waits for the worker unconditionally. A closer
-//     that violates the io.Closer contract is bounded by the Lambda function
-//     timeout, not abandoned.
+//     external resource) and then waits for the worker up to a bounded grace
+//     window. A closer that violates the io.Closer contract is not detached and
+//     not claimed terminated; the Lambda function timeout remains its outer
+//     bound.
 //   - A reader that is not closable is read on the invoking goroutine. There is
 //     no worker to abandon, and nothing the adapter could use to interrupt the
 //     read by construction, so the invocation — not the adapter — bounds a
@@ -458,10 +482,21 @@ func drainBodyReaderForAPIGatewayV2(ctx context.Context, reader io.Reader) ([]by
 		// The invocation is abandoning this body. Unblock the drain worker and
 		// wait for it to exit before returning: a worker left reading a body
 		// that nobody consumes would outlive the invocation it was started in.
+		//
+		// The wait is bounded. io.Closer requires Close to unblock a blocked
+		// Read, so a conforming reader settles well within the grace window; the
+		// bound covers a closer that violates the contract, which is not
+		// detached and not claimed terminated -- the Lambda function timeout
+		// remains its outer bound.
 		if closeErr := closer.Close(); closeErr != nil {
 			_ = closeErr
 		}
-		<-done
+		settleCtx, settleCancel := context.WithTimeout(context.Background(), streamingBodyDrainJoinGrace)
+		defer settleCancel()
+		select {
+		case <-done:
+		case <-settleCtx.Done():
+		}
 		return nil, ctx.Err()
 	}
 }

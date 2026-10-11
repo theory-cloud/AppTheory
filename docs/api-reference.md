@@ -203,7 +203,11 @@ handler on `HandleLambda`, `handleLambda`, or `handle_lambda`.
 
 Kinesis handler failures are returned as Lambda partial-batch failures by record `eventID`; successful records are
 omitted. `DecodeCloudWatchLogsSubscription` and its TypeScript/Python equivalents decode the gzip CloudWatch Logs
-subscription envelope carried in Kinesis data and return a `safe_summary` that excludes raw log messages. The producer
+subscription envelope carried in Kinesis data and return a `safe_summary` that excludes raw log messages. The decoder
+bounds its work before it materializes the payload: the decompressed document is capped at 2 MiB, the
+decoded/compressed ratio is capped, the `subscriptionFilters` and `logEvents` arrays have cardinality limits, and any
+top-level field outside the documented envelope is rejected, so a small, highly compressed producer record cannot
+expand into a memory-exhausting object graph. The producer
 helpers create deterministic JSON record bytes and safe failure summaries without introducing a second per-service
 record or failure shape.
 

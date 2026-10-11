@@ -55,7 +55,9 @@
           "path": "/context",
           "status": "200",
           "error_code": "",
-          "tenant_id": "tenant_abc"
+          "tenant_id": "tenant_abc",
+          "route": "/context",
+          "status_class": "2xx"
         },
         "duration_ms": 0
       }

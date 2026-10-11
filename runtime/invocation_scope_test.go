@@ -501,7 +501,7 @@ func TestLimitBodyStreamProducerStopsOnServeContextCancel(t *testing.T) {
 	cancelServe()
 
 	started := time.Now()
-	joinAbandonedBodyStream(resp.BodyStream)
+	joinAbandonedBodyStream(resp.BodyStream, streamingBodyDrainJoinGrace)
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("join of the abandoned stream took %s", elapsed)
 	}
@@ -542,7 +542,7 @@ func TestJoinAbandonedBodyStreamJoinsProducer(t *testing.T) {
 	close(closed)
 
 	started := time.Now()
-	joinAbandonedBodyStream(closed)
+	joinAbandonedBodyStream(closed, streamingBodyDrainJoinGrace)
 	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
 		t.Fatalf("join of a closed stream took %s", elapsed)
 	}
@@ -558,47 +558,81 @@ func TestJoinAbandonedBodyStreamJoinsProducer(t *testing.T) {
 		cancelServe()
 	}()
 
-	joinAbandonedBodyStream(stream)
+	joinAbandonedBodyStream(stream, streamingBodyDrainJoinGrace)
 	<-released
 	assertNoGoroutineFor(t, "limitBodyStream.func", "abandoned body stream")
 
-	joinAbandonedBodyStream(nil)
+	joinAbandonedBodyStream(nil, streamingBodyDrainJoinGrace)
 }
 
-// TestTimeoutMiddlewareRunsHandlerOnTheInvokingGoroutine covers E1: the handler
-// chain runs on the invoking goroutine with a deadline-bearing context instead
-// of on a goroutine the middleware abandons when the deadline fires.
-func TestTimeoutMiddlewareRunsHandlerOnTheInvokingGoroutine(t *testing.T) {
-	app := New(WithTier(TierP0))
-	app.Use(TimeoutMiddleware(TimeoutConfig{DefaultTimeout: 5 * time.Millisecond}))
+// TestJoinAbandonedBodyStreamIsBounded covers E1: an abandoned producer that does
+// not respond to cancellation must not hold the adapter past the bounded join.
+func TestJoinAbandonedBodyStreamIsBounded(t *testing.T) {
+	never := make(chan StreamChunk) // never closed; nothing cancels it
 
-	handlerGoroutine := make(chan int, 1)
-	app.Get("/cooperative", func(ctx *Context) (*Response, error) {
-		handlerGoroutine <- currentGoroutineID(t)
-		<-ctx.Context().Done()
-		return Text(200, "canceled"), nil
+	started := time.Now()
+	joinAbandonedBodyStream(never, 20*time.Millisecond)
+	elapsed := time.Since(started)
+	if elapsed < 15*time.Millisecond {
+		t.Fatalf("join returned before its grace window (%s)", elapsed)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("bounded join held for %s on a never-closing stream", elapsed)
+	}
+}
+
+// TestTimeoutMiddlewareReturnsTimeoutAtDeadline covers E1: a handler that blocks
+// or ignores cancellation must not hold the invocation past the deadline. The
+// middleware reports app.timeout at the deadline (plus its bounded join) rather
+// than after the handler finishes.
+func TestTimeoutMiddlewareReturnsTimeoutAtDeadline(t *testing.T) {
+	app := New(WithTier(TierP0))
+	app.Use(TimeoutMiddleware(TimeoutConfig{DefaultTimeout: 10 * time.Millisecond}))
+
+	release := make(chan struct{})
+	handlerStarted := make(chan struct{})
+	app.Get("/blocked", func(_ *Context) (*Response, error) {
+		close(handlerStarted)
+		<-release
+		return Text(200, "late"), nil
 	})
 
-	servingGoroutine := currentGoroutineID(t)
-	resp := app.Serve(context.Background(), Request{Method: "GET", Path: "/cooperative"})
-	if resp.Status != 408 {
-		t.Fatalf("expected timeout response (408), got %d", resp.Status)
-	}
+	started := time.Now()
+	done := make(chan Response, 1)
+	go func() {
+		done <- app.Serve(context.Background(), Request{Method: "GET", Path: "/blocked"})
+	}()
 
 	select {
-	case got := <-handlerGoroutine:
-		if got != servingGoroutine {
-			t.Fatalf("timeout middleware ran the handler on goroutine %d, want the invoking goroutine %d", got, servingGoroutine)
-		}
+	case <-handlerStarted:
 	case <-time.After(time.Second):
 		t.Fatal("timeout middleware never ran its handler")
 	}
+
+	var resp Response
+	select {
+	case resp = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout middleware did not return while the handler was blocked")
+	}
+	if resp.Status != 408 {
+		t.Fatalf("expected timeout response (408), got %d", resp.Status)
+	}
+	// The deadline is 10ms and the post-deadline join is bounded, so the response
+	// must be available well before the handler would ever return.
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("timeout middleware held the invocation for %s on a blocked handler", elapsed)
+	}
+
+	close(release)
+	time.Sleep(20 * time.Millisecond)
 	assertNoGoroutineFor(t, "TimeoutMiddleware.func", "timeout middleware returned")
 }
 
 // TestTimeoutMiddlewareNeverAbandonsAnUncooperativeHandler covers the other half
-// of E1: a handler that ignores cancellation simply runs until it returns, on the
-// invoking goroutine, and nothing runs after the middleware returns.
+// of E1: a handler that ignores cancellation is joined for the bounded grace
+// window, so a handler that unwinds within that window finishes inside the
+// invocation rather than after the middleware returns.
 func TestTimeoutMiddlewareNeverAbandonsAnUncooperativeHandler(t *testing.T) {
 	app := New(WithTier(TierP0))
 	app.Use(TimeoutMiddleware(TimeoutConfig{DefaultTimeout: 5 * time.Millisecond}))
@@ -615,8 +649,9 @@ func TestTimeoutMiddlewareNeverAbandonsAnUncooperativeHandler(t *testing.T) {
 		t.Fatalf("expected timeout response (408), got %d", resp.Status)
 	}
 
-	// The handler ran on the invoking goroutine, so its side effect is already
-	// inside the invocation: it cannot land after the middleware returned.
+	// The handler unwinds inside the middleware's bounded join (30ms < 250ms), so
+	// its side effect is already inside the invocation: it cannot land after the
+	// middleware returned.
 	select {
 	case <-sideEffect:
 	default:

@@ -105,6 +105,15 @@ func (sink *EMFMetricSink) RecordMetric(record apptheory.MetricRecord) {
 }
 
 // EncodeMetric returns the exact JSON log line for an AppTheory request metric.
+//
+// The CloudWatch dimension tuple is bounded to service, method, route template,
+// status class, and error code. The concrete request path, raw status code, and
+// any client-supplied tenant hint are deliberately excluded: they are
+// attacker-influenced and would let unauthenticated requests mint unbounded
+// custom metric series (and billing) for every unique value. Those concrete
+// values remain available on the framework's request log and span records, which
+// carry no metric-cardinality cost; an authenticated, bounded tenant identity
+// could be added as a dimension later, but no such binding is invented here.
 func (sink *EMFMetricSink) EncodeMetric(record apptheory.MetricRecord) ([]byte, error) {
 	if sink == nil {
 		sink = NewEMFMetricSink(WithEMFWriter(io.Discard))
@@ -117,7 +126,7 @@ func (sink *EMFMetricSink) EncodeMetric(record apptheory.MetricRecord) ([]byte, 
 			CloudWatchMetrics: []emfCloudWatchMetrics{
 				{
 					Namespace:  strings.TrimSpace(sink.namespace),
-					Dimensions: [][]string{{"service", "method", "path", "status", "tenant_id", "error_code"}},
+					Dimensions: [][]string{{"service", "method", "route", "status_class", "error_code"}},
 					Metrics: []emfMetricDefinition{
 						{Name: "RequestCount", Unit: "Count"},
 						{Name: "RequestDuration", Unit: "Milliseconds"},
@@ -128,9 +137,8 @@ func (sink *EMFMetricSink) EncodeMetric(record apptheory.MetricRecord) ([]byte, 
 		},
 		Service:         strings.TrimSpace(sink.service),
 		Method:          strings.TrimSpace(record.Tags["method"]),
-		Path:            strings.TrimSpace(record.Tags["path"]),
-		Status:          status,
-		TenantID:        strings.TrimSpace(record.Tags["tenant_id"]),
+		Route:           emfRouteTemplate(record.Tags["route"]),
+		StatusClass:     emfStatusClass(status, record.Tags["status_class"]),
 		ErrorCode:       errorCode,
 		RequestCount:    record.Value,
 		RequestDuration: nonNegativeInt(record.DurationMS),
@@ -145,13 +153,51 @@ func (sink *EMFMetricSink) EncodeMetric(record apptheory.MetricRecord) ([]byte, 
 	return json.Marshal(envelope)
 }
 
+// emfUnmatchedRoute is the bounded route dimension value used when a metric
+// carries no matched route template.
+const emfUnmatchedRoute = "unmatched"
+
+func emfRouteTemplate(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return emfUnmatchedRoute
+	}
+	return value
+}
+
+// emfStatusClass prefers the explicit status_class tag the runtime supplies and
+// otherwise derives the finite class from the raw status tag, so a metric never
+// dimensions on a raw or unknown-arbitrary code.
+func emfStatusClass(statusValue string, classValue string) string {
+	if class := strings.TrimSpace(classValue); class != "" {
+		return class
+	}
+	code, err := strconv.Atoi(strings.TrimSpace(statusValue))
+	if err != nil {
+		return "unknown"
+	}
+	switch {
+	case code >= 100 && code < 200:
+		return "1xx"
+	case code >= 200 && code < 300:
+		return "2xx"
+	case code >= 300 && code < 400:
+		return "3xx"
+	case code >= 400 && code < 500:
+		return "4xx"
+	case code >= 500 && code < 600:
+		return "5xx"
+	default:
+		return "unknown"
+	}
+}
+
 type emfRequestEnvelope struct {
 	AWS             emfAWSMetadata `json:"_aws"`
 	Service         string         `json:"service"`
 	Method          string         `json:"method"`
-	Path            string         `json:"path"`
-	Status          string         `json:"status"`
-	TenantID        string         `json:"tenant_id"`
+	Route           string         `json:"route"`
+	StatusClass     string         `json:"status_class"`
 	ErrorCode       string         `json:"error_code"`
 	RequestCount    int            `json:"RequestCount"`
 	RequestDuration int            `json:"RequestDuration"`

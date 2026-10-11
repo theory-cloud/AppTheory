@@ -28,9 +28,18 @@ _APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES = 4 * 1024 * 1024
 # an empty 200.
 _APIGATEWAY_V2_STREAMING_BODY_TIMEOUT = 5.0
 
-# There is no unwind-grace constant here: a body the adapter gives up on is always
-# interrupted (close) and then waited for unconditionally, so there is no grace
-# window that ends in abandoning a worker.
+# There is no unbounded unwind wait here: a body the adapter gives up on is always
+# interrupted (close) and then waited for only up to _STREAMING_BODY_UNWIND_GRACE.
+# A producer that observes the close settles well within that window; a producer
+# blocked inside a call it does not leave is not detached and not claimed
+# terminated: the adapter stops waiting at the bound and the Lambda function
+# timeout remains its outer bound.
+
+# _STREAMING_BODY_UNWIND_GRACE bounds how long the buffered adapters wait for an
+# abandoned drain worker to settle after they unblock (close) the stream. An
+# unbounded join here lets a single stalled stream hold the invocation until the
+# function timeout, which is the availability regression this bound prevents.
+_STREAMING_BODY_UNWIND_GRACE = 0.1
 
 # _APIGATEWAY_PROXY_STREAMING_BODY_ERROR_MESSAGE is the documented client-visible
 # error for a streaming response body the buffered API Gateway REST v1 adapter
@@ -129,12 +138,13 @@ def _drain_streaming_body(body_stream: Any, max_bytes: int, timeout: float) -> b
     The drain runs in a worker thread so a never-terminating stream (a live
     listener) cannot hold the invocation past its budget: ``join(timeout)``
     enforces that budget. When the budget expires the adapter closes the stream so
-    the worker can exit, and then waits for it **unconditionally**: a worker the
-    adapter started may not still be reading when the adapter returns, because the
-    Lambda execution environment is frozen once the handler returns and detached
-    work resumes at an unpredictable time (or never). There is no grace window and
-    no abandoned worker. A source that cannot be interrupted by construction is
-    bounded by the Lambda function timeout, not by the adapter giving up on it.
+    the worker can exit, and then waits for it for a bounded unwind grace window:
+    a worker the adapter started must not still be reading when the adapter
+    returns, because the Lambda execution environment is frozen once the handler
+    returns and detached work resumes at an unpredictable time (or never). A
+    source that cannot be interrupted by construction is not detached and not
+    claimed terminated -- the adapter stops waiting at the grace window and the
+    Lambda function timeout remains its outer bound.
 
     A stream that closed empty only because the budget fired fails closed
     deterministically.
@@ -156,7 +166,7 @@ def _drain_streaming_body(body_stream: Any, max_bytes: int, timeout: float) -> b
     worker.join(timeout=timeout)
     if worker.is_alive():
         _unblock_streaming_body(body_stream)
-        worker.join()
+        worker.join(timeout=_STREAMING_BODY_UNWIND_GRACE)
         raise _StreamingBodyBudgetError("streaming body did not terminate within the adapter budget")
     error = box.get("error")
     if error is not None:

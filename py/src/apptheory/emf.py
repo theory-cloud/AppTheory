@@ -4,12 +4,16 @@ import datetime as dt
 import json
 import sys
 from collections.abc import Callable
-from typing import TextIO
+from typing import Any, TextIO
 
 from apptheory.app import MetricRecord, ObservabilityHooks
 
 _DEFAULT_EMF_NAMESPACE = "AppTheory"
 _DEFAULT_EMF_SERVICE = "apptheory"
+
+# _EMF_UNMATCHED_ROUTE is the bounded route dimension value used when a metric
+# carries no matched route template.
+_EMF_UNMATCHED_ROUTE = "unmatched"
 
 
 class EMFMetricSink:
@@ -37,13 +41,22 @@ class EMFMetricSink:
         tags = dict(record.tags or {})
         status = str(tags.get("status") or "").strip()
         error_code = str(tags.get("error_code") or "").strip()
+        # The CloudWatch dimension tuple is bounded to service, method, route
+        # template, status class, and error code. The concrete request path, raw
+        # status code, and any client-supplied tenant hint are deliberately
+        # excluded: they are attacker-influenced and would let unauthenticated
+        # requests mint unbounded custom metric series (and billing) for every
+        # unique value. Those concrete values remain on the framework's request
+        # log and span records, which carry no metric-cardinality cost; an
+        # authenticated, bounded tenant identity could be added as a dimension
+        # later, but no such binding is invented here.
         envelope = {
             "_aws": {
                 "Timestamp": _unix_millis(self.clock()),
                 "CloudWatchMetrics": [
                     {
                         "Namespace": self.namespace,
-                        "Dimensions": [["service", "method", "path", "status", "tenant_id", "error_code"]],
+                        "Dimensions": [["service", "method", "route", "status_class", "error_code"]],
                         "Metrics": [
                             {"Name": "RequestCount", "Unit": "Count"},
                             {"Name": "RequestDuration", "Unit": "Milliseconds"},
@@ -54,9 +67,8 @@ class EMFMetricSink:
             },
             "service": self.service,
             "method": str(tags.get("method") or "").strip(),
-            "path": str(tags.get("path") or "").strip(),
-            "status": status,
-            "tenant_id": str(tags.get("tenant_id") or "").strip(),
+            "route": _emf_route_template(tags.get("route")),
+            "status_class": _emf_status_class(status, tags.get("status_class")),
             "error_code": error_code,
             "RequestCount": int(record.value or 0),
             "RequestDuration": max(0, int(record.duration_ms)),
@@ -85,6 +97,32 @@ def _unix_millis(value: dt.datetime) -> int:
     if value.tzinfo is None:
         value = value.replace(tzinfo=dt.UTC)
     return int(value.timestamp() * 1000)
+
+
+def _emf_route_template(value: Any) -> str:
+    route = str(value or "").strip()
+    return route or _EMF_UNMATCHED_ROUTE
+
+
+def _emf_status_class(status_value: Any, class_value: Any) -> str:
+    explicit = str(class_value or "").strip()
+    if explicit:
+        return explicit
+    try:
+        code = int(str(status_value or "").strip())
+    except ValueError:
+        return "unknown"
+    if 100 <= code < 200:
+        return "1xx"
+    if 200 <= code < 300:
+        return "2xx"
+    if 300 <= code < 400:
+        return "3xx"
+    if 400 <= code < 500:
+        return "4xx"
+    if 500 <= code < 600:
+        return "5xx"
+    return "unknown"
 
 
 def _request_error_metric_value(status: str, error_code: str) -> int:

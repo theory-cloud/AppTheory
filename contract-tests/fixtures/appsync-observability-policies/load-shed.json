@@ -60,7 +60,9 @@
           "path": "/shed",
           "status": "503",
           "error_code": "app.overloaded",
-          "tenant_id": "tenant_abc"
+          "tenant_id": "tenant_abc",
+          "route": "/shed",
+          "status_class": "5xx"
         },
         "duration_ms": 0
       }
