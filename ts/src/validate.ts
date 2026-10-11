@@ -147,7 +147,11 @@ function validateRule(
     case VALIDATION_RULE_MIN: {
       const actual = numericValue(value);
       const limit = Number(rule.value);
-      if (actual !== null && Number.isFinite(limit) && actual < limit) {
+      if (
+        actual !== null &&
+        Number.isFinite(limit) &&
+        (!Number.isFinite(actual) || actual < limit)
+      ) {
         return fieldError(
           field,
           rule.rule,
@@ -159,7 +163,11 @@ function validateRule(
     case VALIDATION_RULE_MAX: {
       const actual = numericValue(value);
       const limit = Number(rule.value);
-      if (actual !== null && Number.isFinite(limit) && actual > limit) {
+      if (
+        actual !== null &&
+        Number.isFinite(limit) &&
+        (!Number.isFinite(actual) || actual > limit)
+      ) {
         return fieldError(
           field,
           rule.rule,
@@ -279,8 +287,7 @@ function isEmptyValue(value: unknown): boolean {
 }
 
 function numericValue(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  return value;
+  return typeof value === "number" ? value : null;
 }
 
 function lengthValue(value: unknown): number | null {

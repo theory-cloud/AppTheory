@@ -84,7 +84,9 @@ function validateRule(field, value, rule) {
         case VALIDATION_RULE_MIN: {
             const actual = numericValue(value);
             const limit = Number(rule.value);
-            if (actual !== null && Number.isFinite(limit) && actual < limit) {
+            if (actual !== null &&
+                Number.isFinite(limit) &&
+                (!Number.isFinite(actual) || actual < limit)) {
                 return fieldError(field, rule.rule, rule.message ?? `${field} must be >= ${String(rule.value)}`);
             }
             return null;
@@ -92,7 +94,9 @@ function validateRule(field, value, rule) {
         case VALIDATION_RULE_MAX: {
             const actual = numericValue(value);
             const limit = Number(rule.value);
-            if (actual !== null && Number.isFinite(limit) && actual > limit) {
+            if (actual !== null &&
+                Number.isFinite(limit) &&
+                (!Number.isFinite(actual) || actual > limit)) {
                 return fieldError(field, rule.rule, rule.message ?? `${field} must be <= ${String(rule.value)}`);
             }
             return null;
@@ -180,9 +184,7 @@ function isEmptyValue(value) {
     return false;
 }
 function numericValue(value) {
-    if (typeof value !== "number" || !Number.isFinite(value))
-        return null;
-    return value;
+    return typeof value === "number" ? value : null;
 }
 function lengthValue(value) {
     if (typeof value === "string" || Array.isArray(value))
