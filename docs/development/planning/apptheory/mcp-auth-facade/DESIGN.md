@@ -224,8 +224,11 @@ in-memory implementation and a documented durability contract:
 Consume-once and compare-and-swap are **required** operations, not conventions: replay handling (a replayed
 facade code revokes the broker record) and single-flight refresh depend on them. The reference in-memory
 stores are for tests only; durable implementations are application-owned (TMS/Autheory use TableTheory-backed
-stores). Encrypted upstream material is stored only in the broker record; the facade code record holds no
-upstream token.
+stores). **No upstream material is persisted unencrypted.** The durable upstream refresh token lives in the
+broker record; the code record may hold the **encrypted** token response (`encrypted_token_response`), which
+embeds the upstream-minted access token (and any upstream refresh/`id_token` from the exchange) in encrypted
+form only — that is deliberate, so the code exchange can return the access token **byte-for-byte unmodified**.
+Nothing upstream is stored in the clear.
 
 ## 8. Facade mechanics (`m17.mcp-auth-facade/v1`)
 

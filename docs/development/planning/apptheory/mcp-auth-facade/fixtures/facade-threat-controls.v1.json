@@ -1,0 +1,69 @@
+{
+  "contract": {
+    "id": "m17.mcp-auth-facade/v1",
+    "section": "threat-controls",
+    "status": "design (M0)",
+    "notes": "Machine-readable form of THREAT_MODEL.md. Each row names the attack class, the framework control, and the fixture/test that pins it. A pin is a test that fails if the control is removed."
+  },
+  "controls": [
+    {
+      "id": "T1",
+      "threat": "authorize_open_redirect",
+      "control": "validate the registered client and the exact registered redirect URI (loopback port flexibility only) before any redirect; pre-validation errors never redirect",
+      "pin": ["facade-journey:authorize-unregistered-client", "facade-journey:authorize-unmatched-redirect"]
+    },
+    {
+      "id": "T2",
+      "threat": "code_replay",
+      "control": "single-use facade codes via atomic Consume; replay returns invalid_grant and revokes the broker record; upstream state consumed single-use",
+      "pin": ["facade-journey:token-replay-code", "facade-journey:refresh-revoked-handle", "store-spi:consume-once"]
+    },
+    {
+      "id": "T3",
+      "threat": "pkce_downgrade",
+      "control": "code_challenge required; code_challenge_method must be exactly S256; absent or plain refused; verifier bound to the code",
+      "pin": ["facade-journey:authorize-missing-challenge", "facade-journey:authorize-plain-challenge", "facade-journey:token-wrong-verifier"]
+    },
+    {
+      "id": "T4",
+      "threat": "mix_up_confused_deputy",
+      "control": "facade's own upstream client + fresh distinct upstream state + own PKCE verifier; verify upstream RFC 9207 iss on the callback; per-route issuer; single-use state",
+      "pin": ["facade-journey:callback-iss-mismatch", "facade-journey:callback-replayed-state", "facade-route-model:issuer_modes.route"]
+    },
+    {
+      "id": "T5",
+      "threat": "dcr_abuse",
+      "control": "public clients only; https or loopback redirects; server-assigned ids >= 128 bits, hash-stored; bound to the advertising route; per-route rate limit before work",
+      "pin": ["facade-journey:register-disallowed-redirect", "facade-journey:register-rate-limited", "store-spi:RateLimitStore"]
+    },
+    {
+      "id": "T6",
+      "threat": "refresh_material_leakage",
+      "control": "no unencrypted upstream material stored: the durable upstream refresh token in the broker record, and any upstream material transiently carried in the code record (the encrypted token response), are encrypted only; opaque handle to the client; token response drops id_token; upstream error bodies never forwarded; access token byte-identical passthrough",
+      "pin": ["facade-journey:token-code-exchange", "facade-journey:token-refresh", "facade-journey:negative_assertions"]
+    },
+    {
+      "id": "T7",
+      "threat": "audience_resource_confusion",
+      "control": "RFC 8707 resource accepted/canonicalized/required to equal the route resource; audience must exactly equal the route URL; validated before broker mutation and at bearer time",
+      "pin": ["facade-journey:authorize-wrong-resource", "facade-journey:transport-wrong-audience"]
+    },
+    {
+      "id": "T8",
+      "threat": "ssrf_discovery_jwks_bootstrap",
+      "control": "https required; discovery doc issuer must equal the configured upstream issuer before trusting endpoints; cross-origin redirect and non-public host rejected; endpoints pinned to the verified issuer",
+      "pin": ["provider-spi:Discovery.fail_closed"]
+    },
+    {
+      "id": "T9",
+      "threat": "jwks_alg_confusion_cache_poisoning",
+      "control": "RS256 only; alg none and HMAC rejected; key type must match RSA signing key; keys cached by kid; unknown kid triggers a bounded cooldown-gated refresh; cache expires; issuer checked before and after verification",
+      "pin": ["design:validator-alg-pinning", "future:jwks-validator-fixtures"]
+    }
+  ],
+  "cross_cutting": [
+    "fail closed on every rejection path",
+    "bounded error vocabularies; no upstream error body forwarding",
+    "no bearer material, upstream token, or PKCE verifier in logs/metrics/error bodies"
+  ]
+}
