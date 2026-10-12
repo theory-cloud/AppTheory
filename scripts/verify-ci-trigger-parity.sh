@@ -7,19 +7,26 @@
 #
 # Requirements enforced (R-F1 as amended by the operator ruling of 2026-09-28,
 # "the rubric is only needed in staging; premain and main only ever come from
-# staging and do not need to repeat the full rubric"):
+# staging and do not need to repeat the full rubric", and by the operator
+# decision of 2026-10-12 that scopes the release-eligibility gate to the
+# promotion lane):
 #   A. the rubric job runs only for pull requests targeting staging, plus the
 #      opt-in manual dispatch, and nowhere else;
 #   B. the deterministic-build job has the same staging-pull-request-only shape;
-#   C. the staging release-eligibility gate keeps both its pull-request-to-
-#      staging leg and its push-to-staging leg;
-#   D. every other job that can run on a push to staging/premain/main can also
-#      run on a pull request to staging, including jobs reached through `uses:`
-#      reusable workflows and jobs whose effective runnability comes from a
-#      `needs:` edge;
+#   C. the release-eligibility gate runs on the staging -> premain promotion pull
+#      request and on the push to staging, and is deliberately skipped for pull
+#      requests into staging, where the post-release range carries no
+#      release-driving commit; the one recorded staging-lane scope exception
+#      (cmd/ci-guard stagingLaneScopeExceptions) fails closed if the push leg
+#      goes or the pull-request-to-staging leg comes back;
+#   D. save for that recorded exception, every other job that can run on a push
+#      to staging/premain/main can also run on a pull request to staging,
+#      including jobs reached through `uses:` reusable workflows and jobs whose
+#      effective runnability comes from a `needs:` edge;
 #   E. every job that runs only on a promotion pull request has a pull-request-
 #      to-staging equivalent, or is an exemption with a recorded counterpart and
-#      reason;
+#      reason (a recorded staging-lane scope exception counts as that
+#      counterpart);
 #   F. both promotion lanes are covered (staging->premain and premain->main);
 #   G. every workflow file in .github/workflows/ is accounted for: ci.yml is
 #      classified, a justified non-gating publisher must stay non-gating (no
