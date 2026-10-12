@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	runtimemicrovm "github.com/theory-cloud/apptheory/v5/runtime/microvm"
+	runtimemicrovm "github.com/theory-cloud/apptheory/v6/runtime/microvm"
 )
 
 // Call records one fake client operation.

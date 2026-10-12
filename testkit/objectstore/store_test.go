@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	store "github.com/theory-cloud/apptheory/v5/pkg/objectstore"
+	store "github.com/theory-cloud/apptheory/v6/pkg/objectstore"
 )
 
 func TestFakeStorePutGetDeleteAndCallOrder(t *testing.T) {
