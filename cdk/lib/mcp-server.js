@@ -67,7 +67,7 @@ var AppTheoryMcpTransportAuthorizerKind;
  * `mcpfacade.RegisterMCPFacade`.
  */
 class AppTheoryMcpServer extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpServer", version: "5.0.2" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpServer", version: "6.0.0-rc" };
     routeSequence = 0;
     api;
     ownedApi;
