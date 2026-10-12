@@ -35,7 +35,7 @@
       "id": "T5",
       "threat": "dcr_abuse",
       "control": "public clients only; https or loopback redirects; server-assigned ids >= 128 bits, hash-stored; bound to the advertising route; per-route rate limit before work",
-      "pin": ["facade-journey:register-disallowed-redirect", "facade-journey:register-rate-limited", "store-spi:RateLimitStore"]
+      "pin": ["facade-journey:register-disallowed-redirect", "facade-journey:register-public-client", "facade-journey:register-rate-limited", "store-spi:RateLimitStore"]
     },
     {
       "id": "T6",
