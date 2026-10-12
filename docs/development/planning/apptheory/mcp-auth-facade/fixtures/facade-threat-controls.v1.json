@@ -52,13 +52,13 @@
       "id": "T8",
       "threat": "ssrf_discovery_jwks_bootstrap",
       "control": "https required; discovery doc issuer must equal the configured upstream issuer before trusting endpoints; cross-origin redirect and non-public host rejected; endpoints pinned to the verified issuer",
-      "pin": ["provider-spi:Discovery.fail_closed"]
+      "pin": ["m2-fixture:discovery-bootstrap (issuer mismatch rejected, non-HTTPS rejected, cross-origin redirect rejected)", "provider-spi:Discovery.fail_closed"]
     },
     {
       "id": "T9",
       "threat": "jwks_alg_confusion_cache_poisoning",
       "control": "RS256 only; alg none and HMAC rejected; key type must match RSA signing key; keys cached by kid; unknown kid triggers a bounded cooldown-gated refresh; cache expires; issuer checked before and after verification",
-      "pin": ["design:validator-alg-pinning", "future:jwks-validator-fixtures"]
+      "pin": ["m2-fixture:jwks-validator (alg-none rejected, HS256 rejected, unknown-kid triggers one refresh, expired-key refresh, issuer-mismatch rejected)", "design:validator-alg-pinning"]
     },
     {
       "id": "T10",
