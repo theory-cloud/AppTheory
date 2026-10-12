@@ -18,8 +18,8 @@ Consuming it is the apps' work (M5); AppTheory specifies and, in M4, provides th
 
 | # | Surface | Consumer | Artifact / handle |
 | --- | --- | --- | --- |
-| S1 | Go runtime module `github.com/theory-cloud/apptheory/v6` | TMS Go API, Autheory Go services | exported source tree of the pinned commit |
-| S2 | Go CDK bindings module `github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v6` | Go CDK consumers | exported source tree of the pinned commit |
+| S1 | Go runtime module `github.com/theory-cloud/apptheory/v6` | TMS Go API, Autheory Go services | exported **root Go module** tree of the pinned commit (the `git archive` of the repository minus the nested `cdk-go` module) |
+| S2 | Go CDK bindings module `github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v6` | Go CDK consumers | exported **`cdk-go/apptheorycdk` module** tree of the pinned commit (a distinct subtree, so its hash differs from S1's) |
 | S3 | npm CDK package `@theory-cloud/apptheory-cdk` | TMS CDK (`cdk/lib/mcp-server-surface.ts` import) | `theory-cloud-apptheory-cdk-<version>.tgz` |
 | S4 | npm TS runtime `@theory-cloud/apptheory` | TS consumers | `theory-cloud-apptheory-<version>.tgz` |
 | S5 | Python runtime `apptheory` | Python consumers | `apptheory-<version>-py3-none-any.whl`, `apptheory-<version>.tar.gz` |
@@ -75,7 +75,8 @@ All artifact builds already honor `SOURCE_DATE_EPOCH` (`scripts/verify-ts-pack.s
 
 | Surface | Command (builder-invoked) | Expected output |
 | --- | --- | --- |
-| S1/S2 | `git -C <apptheory> archive --format=tar <commit>` → `sha256`; unpack into a scratch module dir | `go_runtime.sha256` / `go_cdk.sha256` over the exported tree |
+| S1 (go_runtime) | `git -C <apptheory> archive --format=tar <commit> -- . ':(exclude)cdk-go'` → `sha256`; unpack into a scratch module dir | `go_runtime.sha256` over the exported **root Go module** tree (`github.com/theory-cloud/apptheory/v6`; excludes the nested `cdk-go` module) |
+| S2 (go_cdk) | `git -C <apptheory> archive --format=tar <commit> -- cdk-go/apptheorycdk` → `sha256`; unpack into a scratch module dir | `go_cdk.sha256` over the exported **`cdk-go/apptheorycdk` module** tree (`github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v6`) |
 | S3 | `(cd cdk && npm ci --ignore-scripts && npm run build && npm pack)` with `SOURCE_DATE_EPOCH` | `theory-cloud-apptheory-cdk-<version>.tgz` |
 | S4 | `(cd ts && npm ci --ignore-scripts && npm run build && npm pack)` with `SOURCE_DATE_EPOCH` | `theory-cloud-apptheory-<version>.tgz` |
 | S5 | `(cd py && python -m build)` with `SOURCE_DATE_EPOCH` | `apptheory-<version>-py3-none-any.whl`, `apptheory-<version>.tar.gz` |
