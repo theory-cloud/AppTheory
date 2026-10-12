@@ -1,0 +1,100 @@
+{
+  "contract": {
+    "id": "m17.mcp-route-algebra/v2",
+    "extends": "m17.mcp-route-algebra/v1",
+    "status": "design (M0)",
+    "notes": "v2 is a superset of v1: the four canonical MCP patterns and the v1 derivations (protected resource, canonical/suffix RFC 8414 discovery, authorize, token) are unchanged. v2 adds the derived register path per kind, one stage-global callback path, and per-route issuer/resource derivation.",
+    "protected_resource_prefix": "/.well-known/oauth-protected-resource",
+    "authorization_server_prefix": "/.well-known/oauth-authorization-server",
+    "endpoint_kinds": ["namespace", "partner_namespace", "agent", "partner_agent"],
+    "default_callback_path": "/_oauth/mcp/callback",
+    "parameters": ["client_namespace", "partner_id", "agent_id"]
+  },
+  "issuer_modes": {
+    "family": {
+      "description": "One FacadeConfig.IssuerURL for the whole facade; routed metadata advertises it. Current v1 behavior; retained for single-tenant/root-only deployments.",
+      "resource": "absolute MCP resource URL",
+      "authorization_servers": ["<FacadeConfig.IssuerURL>"],
+      "discovery_issuer": "<FacadeConfig.IssuerURL>",
+      "jwks_uri": "<FacadeConfig.JWKSURI>"
+    },
+    "route": {
+      "description": "Each route is its own authorization server issuer. Required for single-domain proxying of an upstream provider and for RFC 9207 iss-aware clients (THE-2843).",
+      "resource": "<public base> + <mcp path resolved for the route>",
+      "authorization_servers": ["<route URL>"],
+      "discovery_issuer": "<route URL>",
+      "jwks_uri": "<upstream JWKS URI — the upstream signs the access tokens the route hands to clients>",
+      "registration_endpoint": "<public base> + <register path>",
+      "authorization_endpoint": "<public base> + <canonical discovery path> + /authorize",
+      "token_endpoint": "<public base> + <canonical discovery path> + /token",
+      "client_redirect_iss": "<route URL>"
+    }
+  },
+  "patterns": [
+    {
+      "kind": "namespace",
+      "mcp_pattern": "/{client_namespace}/mcp",
+      "protected_resource_pattern": "/.well-known/oauth-protected-resource/{client_namespace}/mcp",
+      "discovery_canonical_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/mcp",
+      "discovery_suffix_pattern": "/{client_namespace}/mcp/.well-known/oauth-authorization-server",
+      "authorize_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/mcp/authorize",
+      "token_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/mcp/token",
+      "register_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/mcp/register"
+    },
+    {
+      "kind": "partner_namespace",
+      "mcp_pattern": "/{client_namespace}/partners/{partner_id}/mcp",
+      "protected_resource_pattern": "/.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/mcp",
+      "discovery_canonical_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp",
+      "discovery_suffix_pattern": "/{client_namespace}/partners/{partner_id}/mcp/.well-known/oauth-authorization-server",
+      "authorize_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/authorize",
+      "token_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/token",
+      "register_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/register"
+    },
+    {
+      "kind": "agent",
+      "mcp_pattern": "/{client_namespace}/agents/{agent_id}/mcp",
+      "protected_resource_pattern": "/.well-known/oauth-protected-resource/{client_namespace}/agents/{agent_id}/mcp",
+      "discovery_canonical_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp",
+      "discovery_suffix_pattern": "/{client_namespace}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server",
+      "authorize_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/authorize",
+      "token_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/token",
+      "register_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/register"
+    },
+    {
+      "kind": "partner_agent",
+      "mcp_pattern": "/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+      "protected_resource_pattern": "/.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+      "discovery_canonical_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+      "discovery_suffix_pattern": "/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server",
+      "authorize_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/authorize",
+      "token_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/token",
+      "register_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/register"
+    }
+  ],
+  "stage_global": [
+    {
+      "name": "upstream_callback",
+      "pattern": "/_oauth/mcp/callback",
+      "methods": ["GET"],
+      "authorization": "public",
+      "notes": "One callback route per deployment; correlated by the single-use upstream state recorded in the transaction store, so no per-kind callback multiply."
+    }
+  ],
+  "worked_example": {
+    "public_base_url": "https://mcp.example.com",
+    "issuer_mode": "route",
+    "kind": "namespace",
+    "params": { "client_namespace": "acme" },
+    "resolved": {
+      "resource": "https://mcp.example.com/acme/mcp",
+      "protected_resource_metadata_url": "https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp",
+      "discovery_url": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp",
+      "authorization_endpoint": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/authorize",
+      "token_endpoint": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/token",
+      "registration_endpoint": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/register",
+      "issuer": "https://mcp.example.com/acme/mcp",
+      "authorization_servers": ["https://mcp.example.com/acme/mcp"]
+    }
+  }
+}

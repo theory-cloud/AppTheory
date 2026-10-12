@@ -25,6 +25,7 @@ Primary goals:
 - `docs/development/planning/apptheory/s3-vectors/LIVE-VALIDATION.md` (S3 Vectors example live validation)
 - `docs/development/planning/apptheory/ssr-site-mixed-auth-coorigins.md` (AppTheorySsrSite mixed-auth Lambda Function URL co-origins)
 - `docs/development/planning/apptheory/ssr-site-ssr-data-sidecar.md` (AppTheorySsrSite SSR data sidecar routing for FaceTheory)
+- `docs/development/planning/apptheory/mcp-auth-facade/README.md` (full MCP auth facade program: single-domain upstream-provider proxying, Go/TS/Py/CDK parity)
 - `docs/development/planning/apptheory/apptheory-gap-analysis.md` (current gaps + remediation roadmap)
 - `docs/development/planning/apptheory/apptheory-gap-analysis-lift-parity.md` (Lift parity gaps for Pay Theory: Autheory + K3, plus Lesser)
 - `docs/development/planning/apptheory/apptheory-gap-analysis-lesser.md` (Lift parity gaps derived from `equaltoai/lesser`)
