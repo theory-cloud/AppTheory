@@ -21,10 +21,20 @@ const (
 	rubricCondition = "(github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')"
 	buildsCondition = "github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'"
 
-	// eligibilityCondition is the staging release-eligibility gate: it must keep
-	// the push-to-staging leg as well as the pull-request-to-staging leg,
-	// because the merged staging SHA is a path that can promote code (R-F1).
-	eligibilityCondition = "(github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')"
+	// eligibilityCondition is the release-eligibility gate: the staging -> premain
+	// promotion pull request, plus the push to staging whose merged SHA carries the
+	// range the promotion re-checks.
+	//
+	// Operator decision 2026-10-12: enforcement moved off pull requests into
+	// staging. Such a pull request asked the gate for a verdict on staging's whole
+	// post-release range, which legitimately holds no release-driving commit until
+	// the next feat:/fix:/perf: lands, so every docs-, chore-, test- and CI-only
+	// pull request failed a gate it could not fix. The pre-merge surface that can
+	// actually ship the range is the promotion pull request, where the gate now
+	// runs alongside its prerelease-readiness sibling; the push keeps the
+	// merged-SHA signal the staging lane always had. The narrowing is recorded in
+	// stagingLaneScopeExceptions, which fails closed if that push leg goes.
+	eligibilityCondition = "(github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')"
 
 	stagingBranch = "staging"
 	premainBranch = "premain"
@@ -276,12 +286,13 @@ func evaluateWorkflowFile(root, rel string) fileResult {
 		return fileResult{failures: []string{err.Error()}}
 	}
 	result := fileResult{classified: 1, jobs: len(jobs), isCI: rel == ciWorkflowPath}
-	result.failures = append(result.failures, checkParity(jobs)...)
+	result.failures = append(result.failures, checkParity(jobs, result.isCI)...)
 	if result.isCI {
 		result.failures = append(result.failures, checkCIPushTrigger(wf)...)
 		result.failures = append(result.failures, checkExactConditions(jobs)...)
 		result.failures = append(result.failures, checkBackmergeExemption(jobs)...)
 		result.failures = append(result.failures, checkExemptionsAreLive(jobs)...)
+		result.failures = append(result.failures, checkStagingLaneScopeExceptions(jobs)...)
 		result.failures = append(result.failures, checkCanary(jobs)...)
 		result.failures = append(result.failures, checkUnconditionalSteps(jobs)...)
 	}
@@ -1016,26 +1027,35 @@ func intersectClasses(class, needed *jobClass) *jobClass {
 	return merged
 }
 
-func checkParity(jobs []classifiedJob) []string {
-	failures := checkPushParity(jobs)
-	failures = append(failures, checkPromotionParity(jobs)...)
+func checkParity(jobs []classifiedJob, isCI bool) []string {
+	failures := checkPushParity(jobs, isCI)
+	failures = append(failures, checkPromotionParity(jobs, isCI)...)
 	return failures
 }
 
-func checkPushParity(jobs []classifiedJob) []string {
+func checkPushParity(jobs []classifiedJob, isCI bool) []string {
 	var failures []string
 	for _, job := range jobs {
 		class := job.class
-		if len(class.pushRefs) > 0 && !class.prBases[stagingBranch] {
-			failures = append(failures, fmt.Sprintf(
-				"job %q (%s) can run on a push (%s) but not on a pull request to staging (R-F1 push parity)",
-				job.id, class.name, strings.Join(class.pushRefs, ", ")))
+		if len(class.pushRefs) == 0 || class.prBases[stagingBranch] {
+			continue
 		}
+		// A recorded staging-lane scope exception covers the staging lane through
+		// its push leg instead of a pull-request-to-staging leg;
+		// checkStagingLaneScopeExceptions fails closed if that leg goes. It is only
+		// honored in ci.yml, where checkExactConditions pins the job's condition, so
+		// a same-named job in another workflow file cannot inherit the carve-out.
+		if isCI && findStagingLaneScopeException(job.id) != nil {
+			continue
+		}
+		failures = append(failures, fmt.Sprintf(
+			"job %q (%s) can run on a push (%s) but not on a pull request to staging (R-F1 push parity)",
+			job.id, class.name, strings.Join(class.pushRefs, ", ")))
 	}
 	return failures
 }
 
-func checkPromotionParity(jobs []classifiedJob) []string {
+func checkPromotionParity(jobs []classifiedJob, isCI bool) []string {
 	var failures []string
 	for _, job := range jobs {
 		class := job.class
@@ -1043,6 +1063,13 @@ func checkPromotionParity(jobs []classifiedJob) []string {
 			continue
 		}
 		if exemption := findPromotionExemption(class.id); exemption != nil {
+			continue
+		}
+		// A recorded staging-lane scope exception is this job's own record: it
+		// names the push leg that keeps the staging lane covered, and
+		// checkStagingLaneScopeExceptions fails closed when that leg goes. As in
+		// checkPushParity it is only honored in ci.yml.
+		if isCI && findStagingLaneScopeException(class.id) != nil {
 			continue
 		}
 		failures = append(failures, fmt.Sprintf(
@@ -1065,8 +1092,73 @@ var promotionParityExemptions = []parityExemption{
 	{
 		job:         prereleaseID,
 		counterpart: eligibilityID,
-		reason:      "promotion-edge release-eligibility gate; the staging lane runs the same predicate through " + eligibilityID,
+		reason:      "promotion-edge release-eligibility gate; the staging lane runs the same predicate through " + eligibilityID + ", which covers the staging lane on the pushed staging SHA",
 	},
+}
+
+// stagingLaneScopeException records a job the operator deliberately moved off
+// the pull-requests-to-staging lane (operator decision 2026-10-12 for the
+// release-eligibility gate) while keeping its push-to-staging leg. Both R-F1
+// parity rules would otherwise flag such a job, so it is recorded once here,
+// together with the pushed branch it must keep: the exception is only valid
+// while the job it names still carries that leg, because that leg is the whole
+// of the job's staging-lane coverage. If the leg goes, or the job starts running
+// on pull requests into staging again, the exception is stale and the guard
+// fails closed rather than leaving a vacated lane behind it.
+type stagingLaneScopeException struct {
+	job        string
+	pushBranch string
+	reason     string
+}
+
+var stagingLaneScopeExceptions = []stagingLaneScopeException{
+	{
+		job:        eligibilityID,
+		pushBranch: stagingBranch,
+		reason:     "operator decision 2026-10-12: the release-eligibility gate runs on the staging -> premain promotion pull request and on the push to staging, and is skipped for pull requests into staging, where the post-release range carries no release-driving commit",
+	},
+}
+
+func findStagingLaneScopeException(jobID string) *stagingLaneScopeException {
+	for i := range stagingLaneScopeExceptions {
+		if stagingLaneScopeExceptions[i].job == jobID {
+			return &stagingLaneScopeExceptions[i]
+		}
+	}
+	return nil
+}
+
+func hasPushBranch(class *jobClass, branch string) bool {
+	for _, candidate := range class.pushRefs {
+		if candidate == branch {
+			return true
+		}
+	}
+	return false
+}
+
+// checkStagingLaneScopeExceptions keeps every recorded scope exception live: the
+// job must still exist, must keep the pushed branch that covers the staging lane,
+// and must not run on pull requests into staging again, which would make the
+// exception unnecessary and could hide a widened condition behind it.
+func checkStagingLaneScopeExceptions(jobs []classifiedJob) []string {
+	classes := classIndex(jobs)
+	var failures []string
+	for i := range stagingLaneScopeExceptions {
+		exception := &stagingLaneScopeExceptions[i]
+		class, ok := classes[exception.job]
+		if !ok {
+			failures = append(failures, fmt.Sprintf("staging-lane scope exception for %q is stale: the job is gone", exception.job))
+			continue
+		}
+		if !hasPushBranch(class, exception.pushBranch) {
+			failures = append(failures, fmt.Sprintf("staging-lane scope exception for %q is stale: the job must keep its push %s leg, or the staging lane has no release-eligibility coverage", exception.job, exception.pushBranch))
+		}
+		if class.prBases[stagingBranch] {
+			failures = append(failures, fmt.Sprintf("staging-lane scope exception for %q is stale: the job runs on pull requests to staging again, so remove the exception", exception.job))
+		}
+	}
+	return failures
 }
 
 func checkExemptionsAreLive(jobs []classifiedJob) []string {
@@ -1087,7 +1179,10 @@ func checkExemptionsAreLive(jobs []classifiedJob) []string {
 			failures = append(failures, fmt.Sprintf("job %q is exempt from R-F1 parity but its counterpart %q is missing", exemption.job, exemption.counterpart))
 			continue
 		}
-		if !counterpart.prBases[stagingBranch] {
+		// A counterpart covers the staging lane either through a pull request to
+		// staging or -- for a recorded scope exception -- through the push to
+		// staging whose liveness checkStagingLaneScopeExceptions enforces.
+		if !counterpart.prBases[stagingBranch] && findStagingLaneScopeException(exemption.counterpart) == nil {
 			failures = append(failures, fmt.Sprintf("job %q is exempt from R-F1 parity but its counterpart %q does not run on pull requests to staging", exemption.job, exemption.counterpart))
 		}
 	}
@@ -1110,9 +1205,9 @@ func checkCIPushTrigger(wf *workflowFile) []string {
 
 // checkExactConditions pins the conditions of the jobs whose trigger set the
 // operator ruling fixes: the rubric and deterministic builds are staging-
-// pull-request-only, and the staging release-eligibility gate must keep both
-// its pull-request-to-staging and push-to-staging legs (ADV-1073-R1-01: a
-// semantically weaker push-leg removal must not pass).
+// pull-request-only, and the release-eligibility gate is the staging -> premain
+// promotion pull request plus the push to staging (operator decision 2026-10-12;
+// ADV-1073-R1-01: a semantically weaker push-leg removal must not pass).
 func checkExactConditions(jobs []classifiedJob) []string {
 	classes := classIndex(jobs)
 	expected := []struct {
@@ -1122,7 +1217,7 @@ func checkExactConditions(jobs []classifiedJob) []string {
 	}{
 		{"rubric", rubricCondition, "staging-pull-request-only"},
 		{"builds", buildsCondition, "staging-pull-request-only"},
-		{eligibilityID, eligibilityCondition, "pull-request-to-staging-plus-push-to-staging"},
+		{eligibilityID, eligibilityCondition, "promotion-pull-request-plus-push-to-staging"},
 	}
 	var failures []string
 	for _, want := range expected {
