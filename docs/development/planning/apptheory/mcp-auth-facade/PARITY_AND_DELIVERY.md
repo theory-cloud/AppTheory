@@ -14,7 +14,7 @@ Legend: **Y** = exists today; **part** = partial; **–** = absent. "Work" is wh
 
 | # | Capability (gap) | Go | TS | Py | CDK | Work needed |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Route algebra v2 incl. `/register` + callback + per-route issuer/resource (G2, G3) | Y (v1) | Y (v1) | – | Y (v1) | v2 derivations + `IssuerMode` in Go/TS/CDK; **new Py algebra** |
+| 1 | Route algebra v2 incl. `/register` + callback + per-route issuer/resource (G2, G3) | Y (v1) | part (metadata endpoints only) | – | Y (v1) | v2 derivations + `IssuerMode` in Go/TS/CDK; **new TS route algebra** (`ts/src` has only issuer-based metadata builders — no route/path derivation); **new Py algebra** |
 | 2 | Facade registrar `RegisterMCPFacade` / `registerMcpFacade` / `register_mcp_facade` (G3) | Y | – | – | part | **M1: TS/Py registrar skeletons** (posture field + fail-closed pairing, no handlers); **M3: fill all three with facade mechanics**; extend Go for register/callback/provider/stores |
 | 3 | Transport posture + CDK↔runtime pairing (G1) | part | – | – | part | posture vocabulary + pairing + fail-closed in all four (M1; TS/Py via the M1 registrar skeletons) |
 | 4 | Route-aware validator context + route-derived audience/scopes (G5) | part | Y | Y | n/a | Go validator signature change; route-derived inputs in all three |
@@ -23,7 +23,7 @@ Legend: **Y** = exists today; **part** = partial; **–** = absent. "Work" is wh
 | 7 | RFC 8707 resource indicators (G8) | – | – | – | n/a | new in all three (authorize + token + audience exact-match) |
 | 8 | Front-channel termination + upstream callback (G7) | – | – | – | n/a | new in all three (seam exists in Go only) |
 | 9 | Facade code store + replay → broker revoke (G7) | part | – | – | n/a | store SPI + reference stores + replay-revoke semantics, all three |
-| 10 | DCR endpoint handler + derived `/register` route + rate limit (G2, G7) | part | part | part | – | endpoint handler + route mount + rate limit, all three; CDK derives route |
+| 10 | DCR endpoint handler + derived `/register` route + rate limit (G2, G7) | part | part (metadata field only) | part (metadata field only) | – | endpoint handler + route mount + rate limit, all three; TS/Py "part" today is only the `registration_endpoint` metadata field (`ts/src/oauth/index.ts`), no handler; CDK derives route |
 | 11 | Brokered refresh (lock/coalesce/grace/rotation) + hidden upstream material (G7) | – | – | – | n/a | new in all three |
 | 12 | Provider SPI (+ Autheory adapter) | – | – | – | n/a | new in all three |
 | 13 | Store SPI + in-memory reference stores | part | – | – | n/a | new in all three (Go has two in-memory stores today) |
