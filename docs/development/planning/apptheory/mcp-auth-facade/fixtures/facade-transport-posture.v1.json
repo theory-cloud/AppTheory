@@ -1,0 +1,86 @@
+{
+  "contract": {
+    "id": "m17.mcp-transport-posture/v1",
+    "status": "design (M0)",
+    "notes": "Pins the transport-route authorization posture, its CDK<->runtime pairing, and the fail-closed default resolution. The conformance kit (CONFORMANCE_KIT.md) iterates the route inventory against this table so a newly derived route cannot be added without an authorization assertion."
+  },
+  "postures": {
+    "iam": {
+      "transport_authorization_type": "AWS_IAM",
+      "oauth_surface_authorization_type": "NONE",
+      "runtime_validation_required": false,
+      "requires": []
+    },
+    "jwt": {
+      "transport_authorization_type": "JWT",
+      "transport_authorizer": {
+        "issuer": "absolute https, no query/fragment",
+        "audience": "non-empty static list"
+      },
+      "oauth_surface_authorization_type": "NONE",
+      "runtime_validation_required": false,
+      "requires": []
+    },
+    "runtime-bearer": {
+      "transport_authorization_type": "NONE",
+      "oauth_surface_authorization_type": "NONE",
+      "runtime_validation_required": true,
+      "requires": ["throttling", "origin_reachability", "denial_signal"],
+      "notes": "Gateway authorizer is NONE, so every request reaches the runtime; the runtime must fail closed with 401 + RFC 9728 challenge. DD-1/DD-2/DD-3 in DEFENSE_IN_DEPTH.md are mandatory."
+    },
+    "none-public": {
+      "transport_authorization_type": "NONE",
+      "oauth_surface_authorization_type": "NONE",
+      "runtime_validation_required": false,
+      "requires": ["throttling", "origin_reachability", "denial_signal"],
+      "explicit_only": true,
+      "notes": "Deliberately public MCP server. Never a default; must be named."
+    }
+  },
+  "oauth_surface_routes": [
+    "protected_resource",
+    "discovery_canonical",
+    "discovery_suffix",
+    "authorize",
+    "token",
+    "register",
+    "upstream_callback"
+  ],
+  "default_resolution": [
+    {
+      "if": "construct is facade-configured (facade routes attached / routeFamily present)",
+      "default_posture": "runtime-bearer"
+    },
+    {
+      "if": "construct is a plain transport server",
+      "default_posture": "iam"
+    },
+    {
+      "if": "transportPosture is explicitly set",
+      "default_posture": "the explicit value (none-public still requires the floor)"
+    }
+  ],
+  "posture_marker": {
+    "location": "synthesized template metadata on the construct",
+    "purpose": "lets the conformance kit read the posture from a synthesized/deployed template and compare it with the runtime registration output",
+    "fields": ["posture", "contract_id", "route_count", "runtime_posture_declared"]
+  },
+  "fail_closed": [
+    { "condition": "runtime-bearer without a runtime posture declaration prop", "expected": "synth throws" },
+    { "condition": "runtime-bearer without a recorded throttle setting", "expected": "synth throws" },
+    { "condition": "runtime-bearer without an origin reachability decision", "expected": "synth throws" },
+    { "condition": "none-public without the floor", "expected": "synth throws" },
+    { "condition": "jwt without issuer and non-empty audience", "expected": "synth throws" },
+    { "condition": "runtime TransportPosture == runtime-bearer without RequireBearerToken", "expected": "registerMCPFacade returns an error before any route is registered" },
+    { "condition": "runtime TransportPosture == runtime-bearer with UnauthenticatedMcp", "expected": "registration error" },
+    { "condition": "synthesized posture marker != runtime registration output", "expected": "conformance kit fails" }
+  ],
+  "credential_free_behaviour": {
+    "request": "MCP transport request with no Authorization header",
+    "status": 401,
+    "headers": {
+      "www-authenticate": "Bearer resource_metadata=\"<route protected-resource metadata URL>\""
+    },
+    "handler_invocations": 0
+  }
+}
