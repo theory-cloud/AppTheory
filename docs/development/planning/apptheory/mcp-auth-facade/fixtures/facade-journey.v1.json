@@ -169,8 +169,13 @@
     {
       "n": 6.1,
       "name": "callback-iss-mismatch",
-      "request": { "method": "GET", "path": "/_oauth/mcp/callback", "query": { "code": "c", "state": "s", "iss": "https://evil.example" } },
-      "expect": { "status": 400, "no_location": true, "reason": "upstream iss mismatch rejected" }
+      "precondition": {
+        "name": "authorize-mint-fresh-state-for-iss-check",
+        "request": { "method": "GET", "path": "/.well-known/oauth-authorization-server/acme/mcp/authorize", "query": { "client_id": "<registered client>", "redirect_uri": "https://client.example/callback", "response_type": "code", "code_challenge": "<S256>", "code_challenge_method": "S256", "state": "iss-mismatch-client-state", "resource": "https://mcp.example.com/acme/mcp" } },
+        "expect": { "status": 302, "mints_upstream_state": true }
+      },
+      "request": { "method": "GET", "path": "/_oauth/mcp/callback", "query": { "code": "c", "state": "<upstream state minted by the precondition authorize>", "iss": "https://evil.example" } },
+      "expect": { "status": 400, "no_location": true, "reason": "the callback presents a facade-minted (hence valid) upstream state, so the state check passes and only the upstream RFC 9207 iss mismatch can produce this rejection; the precondition makes the iss check the pin rather than a redundant second check on an unminted state" }
     },
     {
       "n": 6.2,

@@ -28,7 +28,8 @@
       "id": "T4",
       "threat": "mix_up_confused_deputy",
       "control": "facade's own upstream client + fresh distinct upstream state + own PKCE verifier; verify upstream RFC 9207 iss on the callback; per-route issuer; single-use state",
-      "pin": ["facade-journey:callback-iss-mismatch", "facade-journey:callback-replayed-state", "facade-route-model:issuer_modes.route"]
+      "pin": ["facade-journey:callback-iss-mismatch", "facade-journey:callback-replayed-state", "facade-route-model:issuer_modes.route"],
+      "notes": "callback-iss-mismatch mints a fresh upstream state through a precondition authorize and then calls back with that minted state plus a mismatched upstream iss (evil.example); because the state is facade-minted and valid, the state check passes, so only the iss verification can yield the 400 — the pin fails if iss verification is removed"
     },
     {
       "id": "T5",
