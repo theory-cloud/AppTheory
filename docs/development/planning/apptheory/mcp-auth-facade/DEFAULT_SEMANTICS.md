@@ -27,12 +27,31 @@ carries the defense-in-depth floor, and is conformance-pinned.
 
 ### Option A — Facade-scoped default flip (recommended)
 
-`AppTheoryMcpServer` resolves transport posture as:
+`AppTheoryMcpServer` resolves transport posture from **one precise predicate** (ADV-1134-8 / SAN-1134-3):
 
 | Construct shape | Default posture |
 | --- | --- |
-| Facade-configured (facade routes / `routeFamily` attached) | `runtime-bearer` |
-| Plain transport only | `iam` (unchanged from v6.0.0) |
+| **Facade-configured**: the OAuth facade attachment (`facade`, the upstream-provider attach) is present | `runtime-bearer` |
+| Plain transport only (no `facade` attachment) | `iam` (unchanged from v6.0.0) |
+
+**The predicate is the `facade` attachment and nothing else.** `facade` is the construct property that attaches
+a named upstream provider to the server, i.e. declares it fronts an auth provider on one domain. `routeFamily`
+is **not** the predicate: `normalizeRouteFamily` default-fills it from the supported endpoint templates, so a
+`routeFamily` object is present on essentially every construct, and the OAuth surface routes
+(PRM/discovery/authorize/token) are derived for every server — so neither "routeFamily present" nor "facade
+routes attached" distinguishes a facade server from a plain one. Only the `facade` attachment can.
+
+Consequences, stated so M1 needs no interpretation:
+
+- A plain transport server with `routeFamily` present that performs **its own validation** but does **not**
+  attach the facade keeps `iam`. There is no inference from validation code: the app that wants
+  runtime-validated bearer either attaches the facade (selecting `runtime-bearer`) or sets
+  `transportPosture: runtime-bearer` explicitly.
+- A `routeFamily`-only server that **explicitly** sets `transportPosture: runtime-bearer` is supported and must
+  satisfy the pairing + defense-in-depth floor or synth fails closed (§Failure behavior). The explicit
+  selection, not `routeFamily`, moves it.
+- A facade server that wants a **different** posture sets `transportPosture` explicitly (e.g. `jwt`), which
+  overrides the facade default; the pairing rules still apply.
 
 `transportPosture` is a single selection: `iam` | `jwt` | `runtime-bearer` | `none-public`. `unauthenticatedMcp`
 is removed. Selecting `runtime-bearer` is paired with the runtime posture at registration and synth (§Failure
