@@ -154,7 +154,7 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
+        "AuthorizationType": "AWS_IAM",
         "RouteKey": "POST /{client_namespace}/mcp",
         "Target": {
           "Fn::Join": [
@@ -228,7 +228,7 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
+        "AuthorizationType": "AWS_IAM",
         "RouteKey": "DELETE /{client_namespace}/partners/{partner_id}/mcp",
         "Target": {
           "Fn::Join": [
@@ -576,7 +576,7 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
+        "AuthorizationType": "AWS_IAM",
         "RouteKey": "POST /{client_namespace}/agents/{agent_id}/mcp",
         "Target": {
           "Fn::Join": [
@@ -634,7 +634,7 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
+        "AuthorizationType": "AWS_IAM",
         "RouteKey": "GET /{client_namespace}/agents/{agent_id}/mcp",
         "Target": {
           "Fn::Join": [
@@ -692,7 +692,7 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
+        "AuthorizationType": "AWS_IAM",
         "RouteKey": "DELETE /{client_namespace}/agents/{agent_id}/mcp",
         "Target": {
           "Fn::Join": [
@@ -808,7 +808,7 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
+        "AuthorizationType": "AWS_IAM",
         "RouteKey": "GET /{client_namespace}/mcp",
         "Target": {
           "Fn::Join": [
@@ -1098,7 +1098,7 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
+        "AuthorizationType": "AWS_IAM",
         "RouteKey": "DELETE /{client_namespace}/mcp",
         "Target": {
           "Fn::Join": [
@@ -1119,7 +1119,7 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
+        "AuthorizationType": "AWS_IAM",
         "RouteKey": "POST /{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
         "Target": {
           "Fn::Join": [
@@ -1177,7 +1177,7 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
+        "AuthorizationType": "AWS_IAM",
         "RouteKey": "GET /{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
         "Target": {
           "Fn::Join": [
@@ -1235,7 +1235,7 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
+        "AuthorizationType": "AWS_IAM",
         "RouteKey": "DELETE /{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
         "Target": {
           "Fn::Join": [
@@ -1910,7 +1910,7 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
+        "AuthorizationType": "AWS_IAM",
         "RouteKey": "POST /{client_namespace}/partners/{partner_id}/mcp",
         "Target": {
           "Fn::Join": [
@@ -1968,7 +1968,7 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
+        "AuthorizationType": "AWS_IAM",
         "RouteKey": "GET /{client_namespace}/partners/{partner_id}/mcp",
         "Target": {
           "Fn::Join": [

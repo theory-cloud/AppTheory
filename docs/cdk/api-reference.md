@@ -12,9 +12,10 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryHttpApi`: API Gateway HTTP API v2 plus Lambda proxy routes
 - `AppTheoryRestApi`: API Gateway REST API v1 plus single-Lambda proxy routes
 - `AppTheoryRestApiRouter`: REST API v1 multi-Lambda routing with streaming support
-- `AppTheoryMcpServer`: attach-first HTTP API v2 route-family facade with MCP `POST`/`GET`/`DELETE`, RFC 9728,
-  canonical and suffix RFC 8414 discovery, and application-owned authorize/token routes; owned API, session state,
-  logging, and throttling are the standalone specialization with production defaults
+- `AppTheoryMcpServer`: attach-first HTTP API v2 route-family facade with authenticated MCP `POST`/`GET`/`DELETE`
+  transport routes (IAM by default, or a configured JWT authorizer), public RFC 9728 and canonical/suffix RFC 8414
+  discovery, and application-owned authorize/token routes; owned API, session state, logging, and throttling are the
+  standalone specialization with production defaults
 - `AppTheoryMcpRouteAlgebra`: versioned MCP patterns and every protected-resource, discovery, authorize, and token
   derivation consumed by the construct and mirrored Go runtime helper
 - `AppTheoryMcpPaths`: canonical MCP and OAuth discovery route paths
@@ -85,10 +86,10 @@ noncurrent-version deletion because the governed artifact flow does not authoriz
 `s3:GetObjectVersion`. For literal inputs, each grant targets one exact `ns/<namespaceSlug>/<bundleId>` object ARN with
 no wildcard. `s3:PutObject` inherently covers multipart create, part upload, and completion on that key, but the helper
 does not grant the separate abort or part-listing actions; the lifecycle rule prevents permanent incomplete-upload
-residue. Literal slugs and bundle IDs are synthesis-validated against the application-release patterns. Under the
-accepted Option A policy, unresolved CDK tokens skip literal value validation but remain required and render through a
-CloudFormation-safe join. CloudFormation resolves them at deployment; AppTheory cannot guarantee exactness for
-token-valued inputs. Bucket identity is exposed through `bucketName` and `bucketArn`; the canonical root is
+residue. Both inputs must be literal strings: literal slugs and bundle IDs are synthesis-validated against the
+application-release patterns, and unresolved CDK tokens are rejected at synthesis, because a grant cannot guarantee an
+exact object key for a location that CloudFormation only resolves at deployment. Bucket identity is exposed through
+`bucketName` and `bucketArn`; the canonical root is
 `AppTheoryS3VersionedIngress.KEY_ROOT` and the instance `keyRoot` accessor. See
 [S3 Versioned Artifact Ingress](../features/s3-versioned-ingress.md).
 
@@ -127,10 +128,11 @@ new AppTheoryApp(this, "Runtime", {
 });
 ```
 
-All AppTheory-created function log groups default to `RemovalPolicy.DESTROY`, including the anonymous path whose
-function name CloudFormation generates. This matches the prototype's self-cleaning posture; for named functions it
-also prevents failed deployments from leaving `/aws/lambda/<function-name>` behind and blocking a recreate. Set
-`RemovalPolicy.RETAIN` explicitly when the logs must survive stack deletion. `RemovalPolicy.SNAPSHOT` fails synthesis
+All AppTheory-created function log groups default to `RemovalPolicy.RETAIN`, including the anonymous path whose
+function name CloudFormation generates, so deleting a stack preserves the execution logs. This is a breaking default
+change: an existing deployment that did not set `logRemovalPolicy` flips its function log group to `RETAIN` on its next
+update. Set `RemovalPolicy.DESTROY` explicitly when the logs should be deleted with the stack. `RemovalPolicy.SNAPSHOT`
+fails synthesis
 because `AWS::Logs::LogGroup` does not support snapshot removal policies. The prop supersedes direct
 `CfnLogGroup.applyRemovalPolicy(...)` escape hatches for AppTheory-created function log groups.
 
@@ -152,8 +154,12 @@ CloudFormation generates the physical names for all six groups, none can hit the
 - Use `AppTheoryRestApi` when you need REST API v1 but not multi-Lambda routing
 - Use `AppTheoryRestApiRouter` when you need SSE or response streaming
 - Use `AppTheoryMcpServer` for the route-algebra MCP facade. Supply `api` for a shared front door or omit it for the
-  standalone owned API; then use Go `mcpfacade.RegisterMCPFacade` with explicit app-owned issuer, JWKS, scopes,
-  capabilities, and handlers. Public unauthenticated MCP requires the explicit `unauthenticatedMcp` opt-out.
+  standalone owned API; the MCP transport routes require credentials by default (IAM, or a JWT `transportAuthorizer`),
+  while OAuth discovery, protected-resource metadata, authorize, and token routes stay public. Then use Go
+  `mcpfacade.RegisterMCPFacade` with explicit app-owned issuer, JWKS, scopes, capabilities, and handlers. Public
+  unauthenticated MCP requires the explicit `unauthenticatedMcp` opt-out on the construct, or
+  `FacadeConfig.UnauthenticatedMcp` on the Go helper; `FacadeConfig.RequireBearerToken` validates bearer tokens on the
+  transport routes instead.
 - Use `AppTheoryRemoteMcpServer` when REST API v1 response streaming and resumable Remote MCP transport are required;
   do not start new namespace applications on the URL-valued `AppTheoryMcpProtectedResource` compatibility construct.
 - Use `AppTheorySsrSite` when you need the canonical FaceTheory-first SSR/SSG/ISR deployment story

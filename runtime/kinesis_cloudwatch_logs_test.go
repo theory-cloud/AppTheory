@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -165,4 +166,91 @@ func gzipCloudWatchLogsSubscriptionTestPayload(t *testing.T, value any) []byte {
 		t.Fatalf("close gzip payload: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func TestDecodeCloudWatchLogsSubscription_RejectsUnknownTopLevelField(t *testing.T) {
+	t.Parallel()
+
+	_, err := DecodeCloudWatchLogsSubscription(events.KinesisEventRecord{
+		EventID: "kin-cwl-junk",
+		Kinesis: events.KinesisRecord{Data: gzipCloudWatchLogsSubscriptionTestPayload(t, map[string]any{
+			"messageType":         "DATA_MESSAGE",
+			"owner":               "111122223333",
+			"logGroup":            "/aws/lambda/apptheory-contract",
+			"logStream":           "2026/05/26/stream-a",
+			"subscriptionFilters": []string{"filter"},
+			"logEvents":           []map[string]any{{"id": "e1", "message": "m"}},
+			"junk":                []map[string]any{{}, {}},
+		})},
+	})
+	if err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("expected unknown-field rejection, got %v", err)
+	}
+}
+
+func TestDecodeCloudWatchLogsSubscription_RejectsHighCompressionRatio(t *testing.T) {
+	t.Parallel()
+
+	// A payload whose decoded size stays under the decoded cap but decodes to far
+	// more than the space it occupied (the "junk bomb" pattern) must be rejected
+	// before JSON parsing materializes it. The record is compressed at the
+	// strongest level an attacker would use, so the decoded/compressed ratio is
+	// well above the bound.
+	raw, err := json.Marshal(map[string]any{
+		"messageType":         "DATA_MESSAGE",
+		"owner":               "111122223333",
+		"logGroup":            "/aws/lambda/apptheory-contract",
+		"logStream":           "2026/05/26/stream-a",
+		"subscriptionFilters": []string{"filter"},
+		"logEvents": []map[string]any{
+			{"id": "e1", "timestamp": int64(0), "message": strings.Repeat("A", 1_900_000)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	var buf bytes.Buffer
+	writer, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	if err != nil {
+		t.Fatalf("gzip writer: %v", err)
+	}
+	if _, err := writer.Write(raw); err != nil {
+		t.Fatalf("gzip payload: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close gzip payload: %v", err)
+	}
+
+	_, decodeErr := DecodeCloudWatchLogsSubscription(events.KinesisEventRecord{
+		EventID: "kin-cwl-ratio",
+		Kinesis: events.KinesisRecord{Data: buf.Bytes()},
+	})
+	if decodeErr == nil || !strings.Contains(decodeErr.Error(), "compression ratio") {
+		t.Fatalf("expected compression-ratio rejection, got %v", decodeErr)
+	}
+}
+
+func TestDecodeCloudWatchLogsSubscription_RejectsExcessiveCardinality(t *testing.T) {
+	t.Parallel()
+
+	// Unique ids keep the payload compressible only modestly, so this exercises the
+	// cardinality bound rather than the compression-ratio bound.
+	logEvents := make([]map[string]any, cloudWatchLogsSubscriptionMaxLogEvents+1)
+	for i := range logEvents {
+		logEvents[i] = map[string]any{"id": fmt.Sprintf("event-%d", i), "message": "m"}
+	}
+	_, err := DecodeCloudWatchLogsSubscription(events.KinesisEventRecord{
+		EventID: "kin-cwl-cardinality",
+		Kinesis: events.KinesisRecord{Data: gzipCloudWatchLogsSubscriptionTestPayload(t, map[string]any{
+			"messageType":         "DATA_MESSAGE",
+			"owner":               "111122223333",
+			"logGroup":            "/aws/lambda/apptheory-contract",
+			"logStream":           "2026/05/26/stream-a",
+			"subscriptionFilters": []string{"filter"},
+			"logEvents":           logEvents,
+		})},
+	})
+	if err == nil || !strings.Contains(err.Error(), "too many logEvents") {
+		t.Fatalf("expected cardinality rejection, got %v", err)
+	}
 }

@@ -38,9 +38,10 @@ def _live_stream(first: bytes):
     """A live listener that never terminates on its own.
 
     It does not race its own unwind, so asking it to unwind cannot complete until
-    it is released. That is exactly the body the adapter must still join instead
-    of abandoning, so the test releases it once the drain budget has expired and
-    asserts the adapter waited.
+    it is released. That is exactly the body whose producer cannot be
+    interrupted: the adapter's join is bounded, so it returns at its budget plus
+    the unwind grace while this body is still blocked, and the test releases it
+    afterwards to confirm the residual producer exits.
     """
     release = threading.Event()
     unwound = threading.Event()
@@ -56,19 +57,23 @@ def _live_stream(first: bytes):
     return gen(), release, unwound
 
 
-def _assert_live_body_joined(testcase: unittest.TestCase, out: dict, message: str, unwound: threading.Event) -> None:
+def _assert_live_body_bounded(
+    testcase: unittest.TestCase,
+    out: dict,
+    message: str,
+    unwound: threading.Event,
+    release: threading.Event,
+) -> None:
     _assert_streaming_error(testcase, out, message)
-    testcase.assertTrue(
+    # The adapter's join is bounded, so it returns at its budget plus the unwind
+    # grace without waiting for the live body, which is still blocked.
+    testcase.assertFalse(
         unwound.is_set(),
-        "the adapter returned while the live body it gave up on could still run",
+        "the adapter waited for the live body instead of returning at its bound",
     )
-
-
-def _release_after_budget(release: threading.Event) -> threading.Timer:
-    timer = threading.Timer(aws_http._APIGATEWAY_V2_STREAMING_BODY_TIMEOUT + 0.1, release.set)
-    timer.daemon = True
-    timer.start()
-    return timer
+    # The blocked producer is the documented residual; releasing it lets it exit.
+    release.set()
+    testcase.assertTrue(unwound.wait(timeout=5.0), "the live body's producer was never released")
 
 
 def _error_stream():
@@ -126,14 +131,10 @@ class TestStreamingAdapters(unittest.TestCase):
         self.assertEqual(out["body"], "data: first\n\ndata: second\n\n")
         self.assertFalse(out["isBase64Encoded"])
 
-    def test_apigw_v2_live_stream_fails_closed_and_is_joined(self) -> None:
+    def test_apigw_v2_live_stream_fails_closed_and_is_bounded(self) -> None:
         stream, release, unwound = _live_stream(b"data: first\n\n")
-        timer = _release_after_budget(release)
-        try:
-            out = apigw_v2_response_from_response(_streaming_response(stream))
-        finally:
-            timer.cancel()
-        _assert_live_body_joined(self, out, V2_ERROR_MESSAGE, unwound)
+        out = apigw_v2_response_from_response(_streaming_response(stream))
+        _assert_live_body_bounded(self, out, V2_ERROR_MESSAGE, unwound, release)
 
     def test_apigw_v2_overrun_stream_maps_to_413(self) -> None:
         out = apigw_v2_response_from_response(
@@ -154,14 +155,10 @@ class TestStreamingAdapters(unittest.TestCase):
         self.assertEqual(out["body"], "data: first\n\ndata: second\n\n")
         self.assertFalse(out["isBase64Encoded"])
 
-    def test_lambda_function_url_live_stream_fails_closed_and_is_joined(self) -> None:
+    def test_lambda_function_url_live_stream_fails_closed_and_is_bounded(self) -> None:
         stream, release, unwound = _live_stream(b"data: first\n\n")
-        timer = _release_after_budget(release)
-        try:
-            out = lambda_function_url_response_from_response(_streaming_response(stream))
-        finally:
-            timer.cancel()
-        _assert_live_body_joined(self, out, URL_ERROR_MESSAGE, unwound)
+        out = lambda_function_url_response_from_response(_streaming_response(stream))
+        _assert_live_body_bounded(self, out, URL_ERROR_MESSAGE, unwound, release)
 
     def test_lambda_function_url_overrun_stream_maps_to_413(self) -> None:
         out = lambda_function_url_response_from_response(
@@ -189,16 +186,12 @@ class TestStreamingThroughApp(unittest.TestCase):
         self.assertEqual(out["statusCode"], 200)
         self.assertEqual(out["body"], "data: first\n\ndata: second\n\n")
 
-    def test_serve_apigw_v2_live_streaming_handler_fails_closed_and_is_joined(self) -> None:
+    def test_serve_apigw_v2_live_streaming_handler_fails_closed_and_is_bounded(self) -> None:
         stream, release, unwound = _live_stream(b"data: first\n\n")
         app = create_app(tier="p0")
         app.get("/live", lambda _ctx: _streaming_response(stream))
-        timer = _release_after_budget(release)
-        try:
-            out = app.serve_apigw_v2(build_apigw_v2_request("GET", "/live"))
-        finally:
-            timer.cancel()
-        _assert_live_body_joined(self, out, V2_ERROR_MESSAGE, unwound)
+        out = app.serve_apigw_v2(build_apigw_v2_request("GET", "/live"))
+        _assert_live_body_bounded(self, out, V2_ERROR_MESSAGE, unwound, release)
 
     def test_serve_lambda_function_url_delivers_terminating_streaming_handler(self) -> None:
         app = create_app(tier="p0")
@@ -207,16 +200,12 @@ class TestStreamingThroughApp(unittest.TestCase):
         self.assertEqual(out["statusCode"], 200)
         self.assertEqual(out["body"], "data: first\n\ndata: second\n\n")
 
-    def test_serve_lambda_function_url_live_streaming_handler_fails_closed_and_is_joined(self) -> None:
+    def test_serve_lambda_function_url_live_streaming_handler_fails_closed_and_is_bounded(self) -> None:
         stream, release, unwound = _live_stream(b"data: first\n\n")
         app = create_app(tier="p0")
         app.get("/live", lambda _ctx: _streaming_response(stream))
-        timer = _release_after_budget(release)
-        try:
-            out = app.serve_lambda_function_url(build_lambda_function_url_request("GET", "/live"))
-        finally:
-            timer.cancel()
-        _assert_live_body_joined(self, out, URL_ERROR_MESSAGE, unwound)
+        out = app.serve_lambda_function_url(build_lambda_function_url_request("GET", "/live"))
+        _assert_live_body_bounded(self, out, URL_ERROR_MESSAGE, unwound, release)
 
     def test_serve_apigw_v2_max_response_bytes_limiter_overrun_maps_to_413(self) -> None:
         # The MaxResponseBytes limiter wraps the stream in the portable serve

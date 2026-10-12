@@ -763,7 +763,9 @@ func safeProviderTokenID(binding ProviderSessionBinding, tokenType string, expir
 		expiresAt.UTC().Format(time.RFC3339Nano),
 	)
 	parts = append(parts, scope...)
-	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	// lengthPrefixedJoin keeps the digest input injective: distinct part slices never share a
+	// preimage, so two bindings cannot collide on the same token ID.
+	sum := sha256.Sum256([]byte(lengthPrefixedJoin(parts...)))
 	return tokenType + "-" + hex.EncodeToString(sum[:8])
 }
 

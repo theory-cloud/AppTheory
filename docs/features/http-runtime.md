@@ -5,7 +5,7 @@ description: Tiered middleware, routing, normalization, and the AppTheory error 
 
 # HTTP Runtime (P0–P2)
 
-The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [274-vector corpus](../reference/contract-fixtures.md) includes 272 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the two Go/CDK-TS MCP route/facade tables. <!-- apptheory-fixture-count: 274 -->
+The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [276-vector corpus](../reference/contract-fixtures.md) includes 274 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the two Go/CDK-TS MCP route/facade tables. <!-- apptheory-fixture-count: 276 -->
 
 The runtime is **tiered.** You opt into a tier when you create the app:
 
@@ -188,16 +188,34 @@ terminate in time fails closed with the adapter named in the message
 body.
 
 When the time budget expires, the adapter does not walk away from the body: it
-closes the reader (or the stream) so the producer can unwind and then waits for
-the read it gave up on, **unconditionally** — there is no grace window and no
-abandoned worker, so no producer goroutine/thread/promise outlives the invocation
-that started it. A body that is neither closable nor terminating — a
-handler-supplied source blocked inside a call it does not leave — cannot be
-interrupted by construction; it is read on the invoking goroutine or waited for
-unconditionally, so the Lambda function timeout is what bounds it rather than the
-adapter. Every body the runtime itself produces is closable, and every wrapper the
-runtime puts around a body forwards close to the body it wraps. See
+closes the reader (or the stream) so the producer can unwind and then joins the
+read it gave up on for a **bounded grace window** (100 ms in all three runtimes)
+before failing closed. A producer that observes the close settles well within that
+window and is never left running. A body that is neither closable nor terminating
+— a handler-supplied source blocked inside a call it does not leave — cannot be
+interrupted by construction; the adapter stops waiting at the grace window, does
+not detach that producer, and does not claim it terminated, so the Lambda function
+timeout is what bounds it rather than the adapter. The wait is bounded rather than
+unconditional: an unbounded join lets a single stalled stream hold the invocation
+until the function timeout, which is the availability regression this bound
+prevents. Every body the runtime itself produces is closable, and every wrapper
+the runtime puts around a body forwards close to the body it wraps. See
 [Invocation-scoped work](../development/planning/apptheory/supporting/apptheory-runtime-contract-v0.md#invocation-scoped-work-normative).
+
+### Timeout middleware
+
+`TimeoutMiddleware` (Go/TypeScript) and `timeout_middleware` (Python) fail a
+request closed when its timeout policy expires. The handler chain runs on a worker
+with a deadline-bearing context, and the middleware reports `app.timeout`/HTTP 408
+**at the deadline** — not after the handler returns. A handler that observes its
+canceled context returns immediately and is never left running; a handler that
+ignores cancellation is exactly the case the middleware exists to bound. After the
+deadline the middleware joins the worker for a bounded grace window (250 ms in all
+three runtimes) before it returns the timeout response, so an uncooperative
+handler cannot hold the invocation open. A synchronous handler with no
+cancellation point cannot be interrupted by the middleware by construction; it is
+the documented residual, bounded by the Lambda function timeout rather than by the
+middleware waiting for it.
 
 ### The invocation-scope guard
 
@@ -227,7 +245,9 @@ Each language is read with its own parser, never with a text pattern:
   every static block) gets a control-flow graph; a launch is joined only when an
   `await` (or `return`) of the held target, or a
   `clearTimeout`/`clearInterval`/`clearImmediate` of a timer handle, dominates
-  every exit. A target and its join are matched on the bare expression, so a
+  every exit. `await Promise.all`/`allSettled` over the target joins it;
+  `Promise.race`/`any` settles on the first input and joins none of the losing
+  ones. A target and its join are matched on the bare expression, so a
   non-null assertion, a type assertion or parentheses around either name the same
   target (`clearTimeout(this.t!)` clears the `this.t` that armed the timer). A
   timer function bound to a variable (`const st = setTimeout; st(cb, 1)`) is
@@ -241,8 +261,10 @@ Each language is read with its own parser, never with a text pattern:
   `await` (directly or through `gather`/`wait`), and an executor `submit` is
   joined lexically by its own `with` block. A class body and the expressions a
   `def`/`class` statement evaluates (default arguments, decorators, class bases
-  and keywords) are scopes of their own, and a walrus receiver
-  (`(t := Thread(...)).start()`) names its target. A plain name is tracked inside
+  and keywords) are scopes of their own; a walrus receiver names its target for
+  `.start()` (`(t := Thread(...)).start()`), while a `.join()` receiver is
+  credited to the value the walrus binds rather than the assignment target, so
+  `(t := other).join()` does not join a thread started as `t`. A plain name is tracked inside
   the function that binds it, plus the body of the `def` whose default argument
   bound it; an attribute (`self.worker`, `mod.worker`), a container element
   (`pool["a"]`), a module global and a class attribute (also under `self.<name>`
@@ -322,4 +344,4 @@ Deliberately conservative, and reported rather than assumed joined:
 - [Logging Profiles](logging-profiles.md) — profile-backed structured JSON log output
 - [Sanitization](sanitization.md) — safe logging helpers
 - [Event Workloads](event-workloads.md) — the non-HTTP side of the runtime
-- [Contract Fixtures](../reference/contract-fixtures.md) — 274 vectors: 272 generic fixtures across Go/TS/Python plus two Go/CDK-TS MCP route/facade tables <!-- apptheory-fixture-count: 274 -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — 276 vectors: 274 generic fixtures across Go/TS/Python plus two Go/CDK-TS MCP route/facade tables <!-- apptheory-fixture-count: 276 -->

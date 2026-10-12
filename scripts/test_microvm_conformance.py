@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import copy
+import http.server
 import importlib.util
 import json
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from typing import Any
@@ -204,6 +206,46 @@ class MicroVMConformanceHarnessTests(unittest.TestCase):
 
     def _fixture(self) -> dict[str, Any]:
         return copy.deepcopy(microvm_conformance.load_config(NO_LEAK_FIXTURE_PATH))
+
+
+class MicroVMConformanceTransportTests(unittest.TestCase):
+    def test_live_transport_aborts_cross_origin_redirect(self) -> None:
+        class RedirectHandler(http.server.BaseHTTPRequestHandler):
+            calls = 0
+
+            def do_GET(self) -> None:  # noqa: N802
+                type(self).calls += 1
+                self.send_response(302)
+                self.send_header("Location", "https://attacker.example.com/steal")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, _format: str, *args: Any) -> None:
+                del args
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            transport = microvm_conformance.HTTPTransport(
+                f"http://127.0.0.1:{server.server_address[1]}",
+                timeout_seconds=5.0,
+            )
+            with self.assertRaises(microvm_conformance.ConformanceFailure) as raised:
+                transport.request(
+                    "GET",
+                    "/microvms/session-fixture",
+                    None,
+                    {"Authorization": "Bearer conformance-secret"},
+                    "run",
+                )
+            self.assertIn("live conformance redirect is not permitted", str(raised.exception))
+            self.assertNotIn("conformance-secret", str(raised.exception))
+            self.assertEqual(1, RedirectHandler.calls, "a denied redirect must not be followed")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
 
 if __name__ == "__main__":

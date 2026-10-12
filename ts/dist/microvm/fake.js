@@ -172,7 +172,7 @@ export class FakeMicroVMProvider {
             provider_microvm_id: `microvm-${String(this.next).padStart(6, "0")}`,
             state: MicroVMRealState.Running,
             provider_state: "running",
-            endpoint: `https://microvm-${String(this.next).padStart(6, "0")}.example.test`,
+            endpoint: `https://microvm-${String(this.next).padStart(6, "0")}.microvm.us-east-1.amazonaws.com`,
             image_ref: normalized.image_ref,
             terminal: false,
             registry_version: this.next,

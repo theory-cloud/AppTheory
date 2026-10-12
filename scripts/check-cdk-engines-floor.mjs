@@ -4,11 +4,14 @@
 // ===========================================================================
 // Floor semantics
 // ===========================================================================
-// cdk/package.json declares the CDK Node floor as an exact `>=N` major claim,
+// cdk/package.json declares the CDK Node floor as an exact `>=N[.M[.P]]` claim,
 // so this checker reads the floor from that manifest instead of hardcoding it.
 // The matching CI leg installs the newest Node N.x release, which makes the
-// floor runtime the whole `N.x` line: a dependency passes only when its
-// declared engines.node range admits at least one Node N.x *release*.
+// floor runtime the whole `N.x` line from the declared floor upward: a
+// dependency passes only when its declared engines.node range admits at least
+// one Node N.x *release* at or above the declared floor. The floor's minor and
+// patch components are retained, so a `>=22.13` floor rejects a dependency that
+// stops below 22.13 rather than judging it against the whole 22.x line.
 //
 //   floor >=22 | engines >=22                  -> pass
 //   floor >=22 | engines ^22.13.0              -> pass (22.13.x is a 22.x)
@@ -84,19 +87,41 @@ function readJsonFile(absolutePath, description, label) {
 
 // === floor =================================================================
 
-function readFloorMajor() {
+function readFloor() {
   const manifest = readJson(CDK_MANIFEST, "CDK manifest");
   const spec = manifest?.engines?.node;
   if (typeof spec !== "string") {
     fail(`${CDK_MANIFEST} must declare engines.node as a string`);
   }
-  const match = /^\s*>=\s*(\d+)(?:\.\d+){0,2}\s*$/.exec(spec);
+  const match = /^\s*>=\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?\s*$/.exec(spec);
   if (match === null) {
     fail(
-      `${CDK_MANIFEST} engines.node must use an exact >=N Node major floor, found ${JSON.stringify(spec)}`,
+      `${CDK_MANIFEST} engines.node must use an exact >=N[.M[.P]] Node floor, found ${JSON.stringify(spec)}`,
     );
   }
-  return { major: Number(match[1]), spec };
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2] ?? 0),
+    patch: Number(match[3] ?? 0),
+    spec,
+  };
+}
+
+// floorVersion accepts either a full floor object or a bare major number (the
+// self-test's shorthand for `>=N`) and returns a concrete release.
+function floorVersion(floor) {
+  if (typeof floor === "number") return { major: floor, minor: 0, patch: 0, prerelease: null };
+  return {
+    major: floor.major,
+    minor: floor.minor ?? 0,
+    patch: floor.patch ?? 0,
+    prerelease: null,
+  };
+}
+
+function floorText(floor) {
+  const version = floorVersion(floor);
+  return `${version.major}.${version.minor}.${version.patch}`;
 }
 
 // === semver range support ==================================================
@@ -369,25 +394,29 @@ function bandAdmitsRelease(bounds, band) {
   return upper.inclusive ? order <= 0 : order < 0;
 }
 
-// True when the declared range admits at least one release on the floor's
-// major line, i.e. when a release in [floorMajor.0.0, (floorMajor + 1).0.0)
-// satisfies it.
-function rangeAdmitsFloorMajor(rawRange, floorMajor) {
+// True when the declared range admits at least one release in the floor's own
+// major line at or above the declared floor, i.e. a release in
+// [floor, (floor.major + 1).0.0) satisfies it. Retaining the floor's minor and
+// patch is what makes a `>=22.13` floor reject a `<22.10` dependency: the band
+// starts at 22.13.0, not at 22.0.0.
+function rangeAdmitsFloor(rawRange, floor) {
+  const base = floorVersion(floor);
   const band = {
-    lower: { version: { major: floorMajor, minor: 0, patch: 0, prerelease: null }, inclusive: true },
-    upper: { version: { major: floorMajor + 1, minor: 0, patch: 0, prerelease: null }, inclusive: false },
+    lower: { version: base, inclusive: true },
+    upper: { version: { major: base.major + 1, minor: 0, patch: 0, prerelease: null }, inclusive: false },
   };
   return parseBranches(rawRange).some((bounds) => bandAdmitsRelease(bounds, band));
 }
 
-// True when the declared range admits a release below the floor line, i.e.
-// when a release in [0.0.0, floorMajor.0.0) satisfies it. This is the
-// project-floor rule: a floor claim that admits a Node release the CDK floor
-// no longer supports is drift.
-function rangeAdmitsBelowFloorMajor(rawRange, floorMajor) {
+// True when the declared range admits a release below the declared floor, i.e.
+// a release in [0.0.0, floor) satisfies it. This is the project-floor rule: a
+// floor claim that admits a Node release the CDK floor no longer supports is
+// drift.
+function rangeAdmitsBelowFloor(rawRange, floor) {
+  const base = floorVersion(floor);
   const band = {
     lower: null,
-    upper: { version: { major: floorMajor, minor: 0, patch: 0, prerelease: null }, inclusive: false },
+    upper: { version: base, inclusive: false },
   };
   return parseBranches(rawRange).some((bounds) => bandAdmitsRelease(bounds, band));
 }
@@ -445,7 +474,7 @@ function judge(declared, predicate, label, packagePath) {
   }
 }
 
-function scanLockfile(lockfile, floorMajor) {
+function scanLockfile(lockfile, floor) {
   const { absolute, label } = lockfile;
   const packages = readJsonFile(absolute, "lockfile", label)?.packages;
   if (packages === undefined || typeof packages !== "object" || packages === null) {
@@ -476,7 +505,7 @@ function scanLockfile(lockfile, floorMajor) {
       result.projectFloors += 1;
       const belowFloor = judge(
         declared,
-        (range) => rangeAdmitsBelowFloorMajor(range, floorMajor),
+        (range) => rangeAdmitsBelowFloor(range, floor),
         label,
         packagePath,
       );
@@ -497,7 +526,7 @@ function scanLockfile(lockfile, floorMajor) {
       fail(`${label} ${packagePath} engines.node is not a string`);
     }
     result.checked += 1;
-    const admits = judge(declared, (range) => rangeAdmitsFloorMajor(range, floorMajor), label, packagePath);
+    const admits = judge(declared, (range) => rangeAdmitsFloor(range, floor), label, packagePath);
     if (!admits) {
       result.violations.push({
         kind: "dependency",
@@ -511,23 +540,24 @@ function scanLockfile(lockfile, floorMajor) {
   return result;
 }
 
-function describeViolation(violation, floorMajor, floorSpec) {
+function describeViolation(violation, floor, floorSpec) {
+  const floorRelease = floorText(floor);
   if (violation.kind === "project-absent") {
     return (
       `cdk-engines-floor: project floor absent in ${violation.lockfile} <root>, which declares no engines.node, ` +
-      `so the ${CDK_MANIFEST} floor ${JSON.stringify(floorSpec)} (Node ${floorMajor}.0.0) is unjudged`
+      `so the ${CDK_MANIFEST} floor ${JSON.stringify(floorSpec)} (Node ${floorRelease}) is unjudged`
     );
   }
   if (violation.kind === "project") {
     return (
       `cdk-engines-floor: project floor ${JSON.stringify(violation.declared)} in ${violation.lockfile} ` +
-      `admits a Node release below ${floorMajor}.0.0 (the ${CDK_MANIFEST} floor ${JSON.stringify(floorSpec)})`
+      `admits a Node release below ${floorRelease} (the ${CDK_MANIFEST} floor ${JSON.stringify(floorSpec)})`
     );
   }
   return (
     `cdk-engines-floor: unexpected engines.node ${JSON.stringify(violation.declared)} in ` +
     `${violation.packagePath}@${violation.version} from ${violation.lockfile} ` +
-    `(excludes Node ${floorMajor}.x, the ${CDK_MANIFEST} floor ${JSON.stringify(floorSpec)})`
+    `(admits no Node release in [${floorRelease}, ${floorVersion(floor).major + 1}.0.0), the ${CDK_MANIFEST} floor ${JSON.stringify(floorSpec)})`
   );
 }
 
@@ -680,22 +710,54 @@ function runSelfTest() {
     ["no project floor declared beside a clean dependency", null, "^22.13.0", true],
   ];
 
+  // The floor retains its minor and patch, so the band a dependency must admit
+  // starts at the full floor release, not at the major line's 0.0.0.
+  const minorFloor = { major: 22, minor: 13, patch: 0 };
+  const minorFloorCases = [
+    ["<22.10", minorFloor, false],
+    ["<=22.12", minorFloor, false],
+    [">=22.13", minorFloor, true],
+    [">=22.14", minorFloor, true],
+    [">22.12", minorFloor, true],
+    [">=22", minorFloor, true],
+    [">=20", minorFloor, true],
+    ["22.x", minorFloor, true],
+    ["<23", minorFloor, true],
+    [">=24", minorFloor, false],
+    ["24.x", minorFloor, false],
+    ["<22.13", minorFloor, false],
+  ];
+  const minorProjectFloorCases = [
+    [">=22", minorFloor, true],
+    [">=22.12", minorFloor, true],
+    [">=22.13", minorFloor, false],
+    [">=22.13.1", minorFloor, false],
+    [">=20", minorFloor, true],
+    [">=24", minorFloor, false],
+  ];
+  const minorPolicyCases = [
+    ["dependency stopping below the minor CDK floor", ">=22.13", "<22.10", true],
+    ["dependency admitting the minor CDK floor", ">=22.13", ">=22.13", false],
+    ["project floor below the minor CDK floor", ">=22", ">=22.13", true],
+    ["project floor at the minor CDK floor", ">=22.13", ">=22.13", false],
+  ];
+
   let failures = 0;
   let cases = 0;
 
-  for (const [range, floor, expected] of matcherCases) {
+  for (const [range, floor, expected] of [...matcherCases, ...minorFloorCases]) {
     cases += 1;
     let actual;
     try {
-      actual = rangeAdmitsFloorMajor(range, floor);
+      actual = rangeAdmitsFloor(range, floor);
     } catch (err) {
-      console.error(`  self-test: ${JSON.stringify(range)} at floor ${floor} threw ${err.message}`);
+      console.error(`  self-test: ${JSON.stringify(range)} at floor ${JSON.stringify(floor)} threw ${err.message}`);
       failures += 1;
       continue;
     }
     if (actual !== expected) {
       console.error(
-        `  self-test: ${JSON.stringify(range)} at floor ${floor} expected ${expected}, got ${actual}`,
+        `  self-test: ${JSON.stringify(range)} at floor ${JSON.stringify(floor)} expected ${expected}, got ${actual}`,
       );
       failures += 1;
     }
@@ -705,7 +767,7 @@ function runSelfTest() {
     cases += 1;
     let actual;
     try {
-      actual = rangeAdmitsBelowFloorMajor(range, FLOOR);
+      actual = rangeAdmitsBelowFloor(range, FLOOR);
     } catch (err) {
       console.error(`  self-test: project floor ${JSON.stringify(range)} threw ${err.message}`);
       failures += 1;
@@ -717,11 +779,29 @@ function runSelfTest() {
     }
   }
 
+  for (const [range, floor, expected] of minorProjectFloorCases) {
+    cases += 1;
+    let actual;
+    try {
+      actual = rangeAdmitsBelowFloor(range, floor);
+    } catch (err) {
+      console.error(`  self-test: minor project floor ${JSON.stringify(range)} threw ${err.message}`);
+      failures += 1;
+      continue;
+    }
+    if (actual !== expected) {
+      console.error(
+        `  self-test: minor project floor ${JSON.stringify(range)} at floor ${JSON.stringify(floor)} expected ${expected}, got ${actual}`,
+      );
+      failures += 1;
+    }
+  }
+
   for (const range of UNMODELLED_CASES) {
     cases += 1;
     let refused = false;
     try {
-      rangeAdmitsFloorMajor(range, FLOOR);
+      rangeAdmitsFloor(range, FLOOR);
     } catch (err) {
       if (!(err instanceof UnmodelledRange)) {
         console.error(`  self-test: unmodelled ${JSON.stringify(range)} threw ${err.message}`);
@@ -740,11 +820,15 @@ function runSelfTest() {
   cases += probe.cases;
   failures += probe.failures;
 
+  const minorProbe = runPolicyProbes(minorFloor, minorPolicyCases);
+  cases += minorProbe.cases;
+  failures += minorProbe.failures;
+
   if (failures > 0) fail(`self-test failed (${failures} of ${cases} cases)`);
   return cases;
 }
 
-function runPolicyProbes(floorMajor, policyCases) {
+function runPolicyProbes(floor, policyCases) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cdk-engines-floor-probe-"));
   let failures = 0;
   try {
@@ -764,7 +848,7 @@ function runPolicyProbes(floorMajor, policyCases) {
 
       let violated;
       try {
-        violated = scanLockfile({ absolute, label: `probe-${index}` }, floorMajor).violations.length > 0;
+        violated = scanLockfile({ absolute, label: `probe-${index}` }, floor).violations.length > 0;
       } catch (err) {
         console.error(`  policy probe: ${description} threw ${err.message}`);
         failures += 1;
@@ -786,7 +870,8 @@ function main() {
   const selfTest = args[0] === "--self-test";
   const lockfileArgs = selfTest ? args.slice(1) : args;
 
-  const { major: floorMajor, spec: floorSpec } = readFloorMajor();
+  const floor = readFloor();
+  const floorSpec = floor.spec;
   const selfTestCases = selfTest ? runSelfTest() : 0;
 
   const lockfiles =
@@ -797,7 +882,7 @@ function main() {
   let projectFloorsAbsent = 0;
   const violations = [];
   for (const lockfile of lockfiles) {
-    const result = scanLockfile(lockfile, floorMajor);
+    const result = scanLockfile(lockfile, floor);
     checked += result.checked;
     projectFloors += result.projectFloors;
     projectFloorsAbsent += result.projectFloorsAbsent;
@@ -806,11 +891,11 @@ function main() {
 
   if (violations.length > 0) {
     for (const violation of violations) {
-      console.error(describeViolation(violation, floorMajor, floorSpec));
+      console.error(describeViolation(violation, floor, floorSpec));
     }
     fail(
       `${violations.length} engine floor violation(s) in ${lockfiles.length} CDK lockfiles against ` +
-        `the Node ${floorMajor} floor`,
+        `the Node ${floorText(floor)} floor`,
     );
   }
 

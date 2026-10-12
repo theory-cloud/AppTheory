@@ -22,7 +22,7 @@ func TestRecordObservability_EmitsAllHooks(t *testing.T) {
 		},
 	}))
 
-	app.recordObservability("GET", "/x", "req_1", "trace_1", "tenant_1", 503, errorCodeOverloaded, 42)
+	app.recordObservability("GET", "/x", "/x", "req_1", "trace_1", "tenant_1", 503, errorCodeOverloaded, 42)
 
 	if gotLog == nil || gotMetric == nil || gotSpan == nil {
 		t.Fatalf("expected all hooks to be invoked (log=%v metric=%v span=%v)", gotLog, gotMetric, gotSpan)
@@ -38,6 +38,9 @@ func TestRecordObservability_EmitsAllHooks(t *testing.T) {
 	}
 	if gotMetric.Tags["status"] != "503" || gotMetric.Tags["tenant_id"] != "tenant_1" {
 		t.Fatalf("unexpected metric tags: %v", gotMetric.Tags)
+	}
+	if gotMetric.Tags["route"] != "/x" || gotMetric.Tags["status_class"] != "5xx" {
+		t.Fatalf("expected bounded route/status_class metric tags, got %v", gotMetric.Tags)
 	}
 	if gotSpan.Attributes["http.status_code"] != "503" || gotSpan.Attributes["error.code"] != errorCodeOverloaded {
 		t.Fatalf("unexpected span attributes: %v", gotSpan.Attributes)

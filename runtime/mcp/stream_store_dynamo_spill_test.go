@@ -101,6 +101,44 @@ func TestDynamoStreamStoreSpillReadLimitUsesRecordMetadata(t *testing.T) {
 	require.Equal(t, 1024, store.spillReadLimitBytes(dynamoStreamRecord{DataBytes: 2048}))
 }
 
+func TestDynamoStreamSpillStoreEncryptionConfig(t *testing.T) {
+	t.Run("default requests the bucket default", func(t *testing.T) {
+		t.Setenv(envStreamSpillBucket, "spill-bucket")
+		store, ok := NewDynamoStreamStore(newFakeMCPTableDB()).(*DynamoStreamStore)
+		require.True(t, ok)
+
+		spill, ok := store.spillStore.(*dynamoStreamObjectSpillStore)
+		require.True(t, ok)
+		// A zero-value encryption config emits no server-side-encryption header,
+		// so a bucket whose default is KMS keeps KMS.
+		require.Equal(t, objectstore.S3EncryptionConfig{}, spill.s3StoreConfig().Encryption)
+	})
+
+	t.Run("explicit KMS config is threaded through", func(t *testing.T) {
+		t.Setenv(envStreamSpillBucket, "spill-bucket")
+		encryption := objectstore.S3EncryptionConfig{
+			Mode:     objectstore.S3EncryptionKMS,
+			KMSKeyID: "arn:aws:kms:us-east-1:123456789012:key/abc",
+		}
+		store, ok := NewDynamoStreamStore(newFakeMCPTableDB(), WithDynamoStreamSpillEncryption(encryption)).(*DynamoStreamStore)
+		require.True(t, ok)
+
+		spill, ok := store.spillStore.(*dynamoStreamObjectSpillStore)
+		require.True(t, ok)
+		require.Equal(t, objectstore.S3StoreConfig{Encryption: encryption}, spill.s3StoreConfig())
+	})
+
+	t.Run("no spill store when the bucket is unset", func(t *testing.T) {
+		t.Setenv(envStreamSpillBucket, "")
+		store, ok := NewDynamoStreamStore(
+			newFakeMCPTableDB(),
+			WithDynamoStreamSpillEncryption(objectstore.S3EncryptionConfig{Mode: objectstore.S3EncryptionBucketDefault}),
+		).(*DynamoStreamStore)
+		require.True(t, ok)
+		require.Nil(t, store.spillStore)
+	})
+}
+
 func TestDynamoStreamS3SpillStoreNilAndLoadErrors(t *testing.T) {
 	var nilStore *dynamoStreamObjectSpillStore
 	_, err := nilStore.get(context.Background(), "key", 0)

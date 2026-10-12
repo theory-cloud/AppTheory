@@ -343,6 +343,37 @@ func TestEmbeddersAndSemanticIndexFailClosed(t *testing.T) {
 	}
 }
 
+func TestSemanticIndexEnforcesIngestBudget(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewFakeStore(2)
+
+	// countMismatchEmbedder would surface ErrEmbeddingFailed if the budget checks
+	// did not run first, so receiving ErrInvalidInput proves the ingest was
+	// rejected before any embedding call.
+	countBudget := &SemanticIndex{Store: store, Embedder: countMismatchEmbedder{}, Dimension: 2, MaxRecords: 1}
+	if err := countBudget.PutText(ctx, []SemanticRecord{{Key: "r/1", Text: "a"}, {Key: "r/2", Text: "b"}}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("record budget error = %v, want ErrInvalidInput", err)
+	}
+
+	byteBudget := &SemanticIndex{Store: store, Embedder: countMismatchEmbedder{}, Dimension: 2, MaxTextBytes: 1}
+	if err := byteBudget.PutText(ctx, []SemanticRecord{{Key: "b/1", Text: "aa"}}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("text byte budget error = %v, want ErrInvalidInput", err)
+	}
+
+	// An ingest within both budgets still reaches the embedder and the store.
+	ok := &SemanticIndex{
+		Store:        store,
+		Embedder:     NewFakeEmbedder(map[string][]float32{"abc": {1, 0}}),
+		Dimension:    2,
+		MaxRecords:   3,
+		MaxTextBytes: 5,
+	}
+	if err := ok.PutText(ctx, []SemanticRecord{{Key: "ok/1", Text: "abc"}}); err != nil {
+		t.Fatalf("in-budget PutText() error = %v", err)
+	}
+}
+
 func TestVectorStoreAdditionalFailClosedBranches(t *testing.T) {
 	ctx := context.Background()
 	var nilStore *FakeStore

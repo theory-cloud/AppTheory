@@ -1380,6 +1380,26 @@ async function exerciseRuntimeSessionRegistry(runtime) {
       "apptheory: microvm session registry round trip incomplete",
     );
   }
+  // Dual-read migration surface: a canonical write must never carry the pre-M1 key, and the
+  // collision witness the M1 fix closed must stay closed. The fallback + lazy re-write path needs a
+  // raw pre-M1 item, which the contract runners cannot seed through the public registry surface, so
+  // it is pinned by the per-runtime unit tests.
+  if (
+    registryRecord.pk ===
+    `TENANT#${record.tenant_id}#NAMESPACE#${record.namespace}`
+  ) {
+    throw new Error(
+      "apptheory: microvm session registry canonical write reused the pre-M1 partition key",
+    );
+  }
+  if (
+    runtime.microVMSessionRegistryPartitionKey("a", "b#NAMESPACE#c") ===
+    runtime.microVMSessionRegistryPartitionKey("a#NAMESPACE#b", "c")
+  ) {
+    throw new Error(
+      "apptheory: microvm session registry partition key collision witness regressed",
+    );
+  }
   const store = runtime.createMemoryMicroVMSessionRegistry();
   const stored = await store.put(record);
   if (stored.last_action !== "start") {
@@ -1735,7 +1755,15 @@ async function compareMicroVMControllerRouteFixture(fixture) {
     clock: { now: () => new Date(now.valueOf()) },
   };
   if (setup.authenticated) {
-    appOptions.authHook = () => "subject-1";
+    if (setup.tenant_claim && setup.principal_tenant_id) {
+      appOptions.authPrincipalHook = () => ({
+        identity: "subject-1",
+        claims: { [setup.tenant_claim]: setup.principal_tenant_id },
+      });
+      appOptions.tenantClaim = setup.tenant_claim;
+    } else {
+      appOptions.authHook = () => "subject-1";
+    }
   }
   const app = runtime.createApp(appOptions);
   runtime.registerMicroVMControllerRoutes(app, controller);
@@ -2024,6 +2052,8 @@ function normalizeMicroVMControllerRouteSetup(setup) {
     namespace: String(setup.namespace ?? "namespace-1").trim() || "namespace-1",
     session_id:
       String(setup.session_id ?? "fixture-session").trim() || "fixture-session",
+    tenant_claim: String(setup.tenant_claim ?? "").trim(),
+    principal_tenant_id: String(setup.principal_tenant_id ?? "").trim(),
     deployment_defaults: normalizeMicroVMDeploymentDefaults(
       setup.deployment_defaults ?? {},
     ),

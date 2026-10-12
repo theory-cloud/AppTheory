@@ -60,7 +60,9 @@
           "path": "/limited",
           "status": "429",
           "error_code": "app.rate_limited",
-          "tenant_id": "tenant_abc"
+          "tenant_id": "tenant_abc",
+          "route": "/limited",
+          "status_class": "4xx"
         },
         "duration_ms": 0
       }

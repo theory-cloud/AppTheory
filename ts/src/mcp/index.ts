@@ -1046,8 +1046,14 @@ export class DynamoMcpTaskStore implements McpTaskStore {
   async get(lookup: McpTaskLookup): Promise<McpTaskRecord> {
     try {
       const item = await this.db.get(this.model.name, taskKey(lookup));
+      if (taskItemExpired(item, this.now())) {
+        throw new McpTaskNotFoundError();
+      }
       return itemToTaskRecord(item);
     } catch (err) {
+      if (err instanceof McpTaskNotFoundError) {
+        throw err;
+      }
       if (isNotFoundError(err)) {
         throw new McpTaskNotFoundError();
       }
@@ -1081,7 +1087,11 @@ export class DynamoMcpTaskStore implements McpTaskStore {
         .limit(taskListLimit(request.limit))
         .cursor(String(request.cursor ?? ""))
         .page();
-      const records = page.items.map(itemToTaskRecord).sort(compareTaskRecords);
+      const now = this.now();
+      const records = page.items
+        .filter((item) => !taskItemExpired(item, now))
+        .map(itemToTaskRecord)
+        .sort(compareTaskRecords);
       const result: McpTaskListResult = {
         tasks: records.map((record) => cloneTask(record.task)),
       };
@@ -1117,18 +1127,31 @@ export class DynamoMcpTaskStore implements McpTaskStore {
     if (!sid) {
       return;
     }
-    const records = await this.list({
-      sessionId: sid,
-      limit: MAX_TASK_LIST_LIMIT,
-    });
-    await Promise.all(
-      records.tasks.map((task) =>
-        this.db.delete(this.model.name, {
-          sessionId: sid,
-          taskId: task.taskId,
-        }),
-      ),
-    );
+    // Collect every page before deleting: the cursor is an offset, so deleting
+    // as we page would shift the remaining items under the cursor and leak
+    // tasks. Expired items are deleted too, so this bypasses `list`.
+    const keys: Record<string, unknown>[] = [];
+    let cursor = "";
+    for (;;) {
+      const page = await this.db
+        .query(this.model.name)
+        .partitionKey(sid)
+        .sort("ASC")
+        .limit(MAX_TASK_LIST_LIMIT)
+        .cursor(cursor)
+        .page();
+      for (const item of page.items) {
+        keys.push({
+          sessionId: String(item["sessionId"] ?? sid),
+          taskId: String(item["taskId"] ?? ""),
+        });
+      }
+      if (!page.cursor) {
+        break;
+      }
+      cursor = String(page.cursor);
+    }
+    await Promise.all(keys.map((key) => this.db.delete(this.model.name, key)));
   }
 }
 
@@ -1750,7 +1773,11 @@ export class McpServer {
         });
         break;
       case "tools/call":
-        response = await this.handleToolsCall(request, sessionId);
+        response = await this.handleToolsCall(
+          request,
+          sessionId,
+          protocolVersion,
+        );
         break;
       case "resources/list":
         response = newResultResponse(request.id, {
@@ -1917,6 +1944,7 @@ export class McpServer {
   private async handleToolsCall(
     request: ParsedRPCRequest,
     sessionId: string,
+    protocolVersion: string,
   ): Promise<McpRPCResponse> {
     const params = paramsRecord(request.params);
     const name = String(params["name"] ?? "").trim();
@@ -1929,7 +1957,9 @@ export class McpServer {
     }
     const taskSupport = this.toolRegistry.taskSupport(name);
     if (Object.prototype.hasOwnProperty.call(params, "task")) {
-      if (!this.tasksEnabled()) {
+      // Task-augmented tools/call is part of the 2025-11-25 protocol surface
+      // only; earlier versions use the disabled-task error for the same rule.
+      if (protocolVersion !== MCP_PROTOCOL_VERSION || !this.tasksEnabled()) {
         return newErrorResponse(
           request.id,
           MCP_CODE_METHOD_NOT_FOUND,
@@ -2466,6 +2496,7 @@ export function defaultMcpTaskModel(tableName?: string): Model {
       { attribute: "statusMessage", type: "S", optional: true },
       { attribute: "createdAt", type: "S", required: true },
       { attribute: "lastUpdatedAt", type: "S", required: true },
+      { attribute: "expiresAt", type: "N", optional: true, roles: ["ttl"] },
       { attribute: "ttl", type: "N", optional: true },
       { attribute: "pollInterval", type: "N", optional: true },
       { attribute: "result", type: "M", optional: true, json: true },
@@ -4082,6 +4113,23 @@ function taskKey(lookup: McpTaskLookup): Record<string, unknown> {
   };
 }
 
+function taskExpiresAtEpochSeconds(createdAt: string, ttlMs: number): number {
+  const parsed = Date.parse(String(createdAt ?? ""));
+  const base = Number.isFinite(parsed) ? parsed : Date.now();
+  const duration = ttlMs > 0 ? ttlMs : DEFAULT_TASK_MAX_TTL_MS;
+  return Math.floor((base + duration) / 1000);
+}
+
+function taskItemExpiresAt(item: Record<string, unknown>): number {
+  const value = Number(item["expiresAt"] ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function taskItemExpired(item: Record<string, unknown>, now: Date): boolean {
+  const expiresAt = taskItemExpiresAt(item);
+  return expiresAt > 0 && now.getTime() >= expiresAt * 1000;
+}
+
 function taskRecordToItem(record: McpTaskRecord): Record<string, unknown> {
   const item: Record<string, unknown> = {
     sessionId: String(record.sessionId ?? "").trim(),
@@ -4090,6 +4138,12 @@ function taskRecordToItem(record: McpTaskRecord): Record<string, unknown> {
     status: record.task.status,
     createdAt: record.task.createdAt,
     lastUpdatedAt: record.task.lastUpdatedAt,
+    // Epoch-seconds attribute consumed by the DynamoDB TTL setting configured on
+    // the task table. `ttl` below stays the duration in milliseconds.
+    expiresAt: taskExpiresAtEpochSeconds(
+      record.task.createdAt,
+      Number(record.task.ttl ?? 0),
+    ),
     ttl: record.task.ttl,
   };
   if (record.toolName) {

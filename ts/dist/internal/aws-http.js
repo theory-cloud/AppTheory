@@ -18,6 +18,14 @@ const APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES = 4 * 1024 * 1024;
 // loudly and cheaply lets clients surface the transport mismatch instead of
 // spinning on an empty 200.
 const APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS = 5000;
+// STREAMING_BODY_UNWIND_GRACE_MS bounds how long the buffered adapters wait for
+// an abandoned producer to settle after they unblock (destroy) it. The wait is
+// bounded rather than unbounded: a producer that observes its abort signal or
+// honors destroy settles well within this window, while a producer blocked
+// inside an await it never leaves is not detached and not claimed terminated --
+// the adapter stops waiting here and the Lambda function timeout remains the
+// outer bound on that uninterruptible producer.
+const STREAMING_BODY_UNWIND_GRACE_MS = 100;
 // APIGATEWAY_V2_STREAMING_BODY_ERROR_MESSAGE is the documented client-visible
 // error for a streaming response body the HTTP API v2 adapter cannot deliver
 // for a non-size reason (it did not terminate within the budget, or the stream
@@ -284,17 +292,35 @@ export function requestFromLambdaFunctionURL(event) {
         sourceProvenance: sourceProvenanceFromProviderRequestContext("lambda-url", event.requestContext?.http?.sourceIp),
     };
 }
-// unblockStreamingBody unblocks a pending async read so the drain can exit, and
-// waits for the producer to unwind before returning. Waiting is unconditional:
-// there is no grace window, because a producer the runtime started must not be
-// running once the adapter returns. In Lambda the execution environment is
-// frozen once the handler returns, so an abandoned producer resumes at an
-// unpredictable time (or never); a producer that cannot be interrupted is
-// bounded by the Lambda function timeout instead of being abandoned here.
+// settleWithin resolves once the promise settles or the grace window elapses,
+// whichever happens first. Callers use it to join work they started without
+// holding the invocation open for a producer that never settles.
+export async function settleWithin(promise, graceMs) {
+    let timer;
+    try {
+        await Promise.race([
+            promise.then(() => { }, () => { }),
+            new Promise((resolve) => {
+                timer = setTimeout(resolve, graceMs);
+            }),
+        ]);
+    }
+    finally {
+        if (timer !== undefined)
+            clearTimeout(timer);
+    }
+}
+// unblockStreamingBody unblocks a pending async read so the drain can exit. The
+// unblock itself is bounded: a Node.js Readable is destroyed (a synchronous
+// teardown), and an async generator object is asked to unwind through
+// iterator.return(), whose completion is awaited only up to the unwind grace
+// window. A producer the runtime started must not be running once the adapter
+// returns, so the caller additionally joins the abandoned read within the same
+// grace window rather than waiting for it unconditionally.
 //
-// It is the TS-idiomatic counterpart of the Go adapter closing a body reader: a
-// Node.js Readable is destroyed (and its close promise awaited); an async
-// generator object is asked to unwind through iterator.return().
+// It is the TS-idiomatic counterpart of the Go adapter closing a body reader. A
+// producer blocked inside an await that never resolves is not detached and not
+// claimed terminated; the Lambda function timeout remains its outer bound.
 async function unblockStreamingBody(bodyStream) {
     const unblockable = bodyStream;
     if (unblockable === null || unblockable === undefined)
@@ -302,21 +328,17 @@ async function unblockStreamingBody(bodyStream) {
     if (typeof unblockable.destroy === "function") {
         try {
             unblockable.destroy();
+            return;
         }
         catch {
             // fall through to iterator.return()
-        }
-        const closed = unblockable.closed;
-        if (closed && typeof closed.then === "function") {
-            await closed.catch(() => undefined);
-            return;
         }
     }
     if (typeof unblockable.return === "function") {
         try {
             const result = unblockable.return();
             if (result && typeof result.then === "function") {
-                await result.catch(() => undefined);
+                await settleWithin(result, STREAMING_BODY_UNWIND_GRACE_MS);
             }
         }
         catch {
@@ -365,12 +387,12 @@ async function drainStreamingBodyForBufferedAdapter(bodyStream, maxBytes, timeou
         catch (err) {
             if (err instanceof StreamingBodyBudgetError) {
                 // The deadline won while this read was still pending. Unblock the
-                // producer and wait for the abandoned read to settle before failing
-                // closed, so the drain cannot return while a producer it started is
-                // still running. The read's own outcome is dropped: the budget error is
-                // what the adapter reports.
+                // producer and join the abandoned read within the bounded unwind grace
+                // window before failing closed, so the drain cannot return while a
+                // producer it started is still running. The read's own outcome is
+                // dropped: the budget error is what the adapter reports.
                 await unblockStreamingBody(bodyStream);
-                await pending.then(() => undefined, () => undefined);
+                await settleWithin(pending, STREAMING_BODY_UNWIND_GRACE_MS);
             }
             throw err;
         }

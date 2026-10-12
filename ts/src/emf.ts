@@ -39,6 +39,15 @@ export class EMFMetricSink {
     const tags = record.tags ?? {};
     const status = String(tags["status"] ?? "").trim();
     const errorCode = String(tags["error_code"] ?? "").trim();
+    // The CloudWatch dimension tuple is bounded to service, method, route
+    // template, status class, and error code. The concrete request path, raw
+    // status code, and any client-supplied tenant hint are deliberately
+    // excluded: they are attacker-influenced and would let unauthenticated
+    // requests mint unbounded custom metric series (and billing) for every
+    // unique value. Those concrete values remain on the framework's request log
+    // and span records, which carry no metric-cardinality cost; an authenticated,
+    // bounded tenant identity could be added as a dimension later, but no such
+    // binding is invented here.
     const envelope = {
       _aws: {
         Timestamp: this.clock().getTime(),
@@ -46,14 +55,7 @@ export class EMFMetricSink {
           {
             Namespace: this.namespace,
             Dimensions: [
-              [
-                "service",
-                "method",
-                "path",
-                "status",
-                "tenant_id",
-                "error_code",
-              ],
+              ["service", "method", "route", "status_class", "error_code"],
             ],
             Metrics: [
               { Name: "RequestCount", Unit: "Count" },
@@ -65,9 +67,8 @@ export class EMFMetricSink {
       },
       service: this.service,
       method: String(tags["method"] ?? "").trim(),
-      path: String(tags["path"] ?? "").trim(),
-      status,
-      tenant_id: String(tags["tenant_id"] ?? "").trim(),
+      route: emfRouteTemplate(tags["route"]),
+      status_class: emfStatusClass(status, tags["status_class"]),
       error_code: errorCode,
       RequestCount: Math.trunc(Number(record.value ?? 0)),
       RequestDuration: nonNegativeInteger(record.durationMs),
@@ -75,6 +76,26 @@ export class EMFMetricSink {
     };
     return JSON.stringify(envelope);
   }
+}
+
+const EMF_UNMATCHED_ROUTE = "unmatched";
+
+function emfRouteTemplate(value: unknown): string {
+  const route = String(value ?? "").trim();
+  return route || EMF_UNMATCHED_ROUTE;
+}
+
+function emfStatusClass(statusValue: unknown, classValue: unknown): string {
+  const explicit = String(classValue ?? "").trim();
+  if (explicit) return explicit;
+  const parsed = Number.parseInt(String(statusValue ?? "").trim(), 10);
+  if (!Number.isFinite(parsed)) return "unknown";
+  if (parsed >= 100 && parsed < 200) return "1xx";
+  if (parsed >= 200 && parsed < 300) return "2xx";
+  if (parsed >= 300 && parsed < 400) return "3xx";
+  if (parsed >= 400 && parsed < 500) return "4xx";
+  if (parsed >= 500 && parsed < 600) return "5xx";
+  return "unknown";
 }
 
 export function createEMFMetricSink(

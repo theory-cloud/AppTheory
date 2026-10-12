@@ -151,12 +151,24 @@ export interface SemanticIndexConfig {
     embedder: Embedder;
     dimension: number;
     requiredMetadataKeys?: string[] | undefined;
+    /**
+     * Bounds the number of records putText accepts before it calls the embedder.
+     * Zero or undefined leaves the record count unbounded.
+     */
+    maxRecords?: number | undefined;
+    /**
+     * Bounds the cumulative UTF-8 text bytes putText accepts before it calls the
+     * embedder. Zero or undefined leaves the cumulative size unbounded.
+     */
+    maxTextBytes?: number | undefined;
 }
 export declare class SemanticIndex {
     private readonly store;
     private readonly embedder;
     private readonly dimension;
     private readonly requiredMetadataKeys;
+    private readonly maxRecords;
+    private readonly maxTextBytes;
     constructor(config: SemanticIndexConfig);
     putText(records: SemanticRecord[]): Promise<void>;
     queryText(text: string, input?: Omit<QueryVectorsInput, "vector">): Promise<QueryHit[]>;

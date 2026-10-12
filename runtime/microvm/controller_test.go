@@ -568,6 +568,155 @@ func TestRealControllerInvokeAndRoutesProxyWorkload(t *testing.T) {
 	require.Contains(t, string(mismatch.Body), ErrorCodeTenantBindingViolation)
 }
 
+// recordingControllerProvider is a spy around realControllerProvider. It counts the provider
+// calls the controller reaches and captures the exact input each call saw, so tests can pin the
+// registry-derived binding a provider call is dispatched with.
+type recordingControllerProvider struct {
+	*realControllerProvider
+	calls        int
+	sessionInput ProviderSessionInput
+	invokeInput  ProviderInvokeInput
+	tokenInput   ProviderTokenInput
+}
+
+func (p *recordingControllerProvider) Get(ctx context.Context, input ProviderSessionInput) (ProviderSession, error) {
+	p.calls++
+	p.sessionInput = input
+	return p.realControllerProvider.Get(ctx, input)
+}
+
+func (p *recordingControllerProvider) Invoke(ctx context.Context, input ProviderInvokeInput) (ProviderInvokeOutput, error) {
+	p.calls++
+	p.invokeInput = input
+	return p.realControllerProvider.Invoke(ctx, input)
+}
+
+func (p *recordingControllerProvider) CreateAuthToken(ctx context.Context, input ProviderTokenInput) (ProviderToken, error) {
+	p.calls++
+	p.tokenInput = input
+	return p.realControllerProvider.CreateAuthToken(ctx, input)
+}
+
+func (p *recordingControllerProvider) CreateShellToken(ctx context.Context, input ProviderTokenInput) (ProviderToken, error) {
+	p.calls++
+	p.tokenInput = input
+	return p.realControllerProvider.CreateShellToken(ctx, input)
+}
+
+func TestRealControllerRegistryMissSkipsProviderCall(t *testing.T) {
+	now := time.Unix(9000, 0).UTC()
+	provider := &recordingControllerProvider{realControllerProvider: newRealControllerProvider(now)}
+	controller, err := NewRealController(
+		provider,
+		NewMemorySessionRegistry(),
+		withDisabledControllerLogging(),
+		WithControllerClock(fixedControllerClock{now: now}),
+	)
+	require.NoError(t, err)
+
+	getResult, err := controller.Handle(context.Background(), validRealControllerRequest(CommandGet, "req-pin-miss-get", "session-absent"))
+	require.Error(t, err)
+	require.NotNil(t, getResult.Error)
+	require.Equal(t, ErrorCodeSessionRegistryIncomplete, getResult.Error.Code)
+	require.Zero(t, provider.calls)
+
+	_, err = controller.Invoke(context.Background(), ControllerInvokeRequest{
+		RequestID:   "req-pin-miss-invoke",
+		TenantID:    "tenant-1",
+		Namespace:   "namespace-1",
+		AuthContext: AuthContext{Subject: "subject-1", TenantID: "tenant-1", Namespace: "namespace-1"},
+		SessionID:   "session-absent",
+		Method:      "get",
+		Path:        "pin",
+		Port:        8081,
+		TTLSeconds:  30,
+	})
+	requireSafeError(t, err, ErrorCodeSessionRegistryIncomplete)
+	require.Zero(t, provider.calls)
+
+	tokenReq := validRealControllerRequest(CommandAuthToken, "req-pin-miss-token", "session-absent")
+	tokenReq.AllowedPortScope = []ProviderPortScope{{Port: 443}}
+	_, err = controller.Handle(context.Background(), tokenReq)
+	requireSafeError(t, err, ErrorCodeSessionRegistryIncomplete)
+	require.Zero(t, provider.calls)
+}
+
+func TestRealControllerBindingComesFromRegistryRecord(t *testing.T) {
+	now := time.Unix(9500, 0).UTC()
+	registry := NewMemorySessionRegistry()
+	provider := &recordingControllerProvider{realControllerProvider: newRealControllerProvider(now)}
+	controller, err := NewRealController(
+		provider,
+		registry,
+		withDisabledControllerLogging(),
+		WithControllerClock(fixedControllerClock{now: now}),
+	)
+	require.NoError(t, err)
+
+	const sessionID = "session-pin"
+	record := realSessionRecord("tenant-1", "namespace-1", sessionID, now)
+	record.ProviderMicroVMID = "provider-microvm-record"
+	record.Endpoint = "https://provider-microvm-record.microvm.us-east-1.amazonaws.com"
+	record.Generation = 4
+	stored, err := registry.Put(context.Background(), record)
+	require.NoError(t, err)
+	provider.sessions[stored.Key()] = ProviderSession{
+		TenantID:          stored.TenantID,
+		Namespace:         stored.Namespace,
+		SessionID:         stored.SessionID,
+		ProviderMicroVMID: stored.ProviderMicroVMID,
+		State:             StateRunning,
+		ProviderState:     "running",
+		Endpoint:          stored.Endpoint,
+		RegistryVersion:   stored.Generation,
+	}
+
+	getResult, err := controller.Handle(context.Background(), validRealControllerRequest(CommandGet, "req-pin-get", sessionID))
+	require.NoError(t, err)
+	require.Nil(t, getResult.Error)
+	require.Equal(t, stored.ProviderMicroVMID, provider.sessionInput.Binding.ProviderMicroVMID)
+	require.Equal(t, stored.TenantID, provider.sessionInput.Binding.TenantID)
+	require.Equal(t, stored.Namespace, provider.sessionInput.Binding.Namespace)
+	require.Equal(t, stored.SessionID, provider.sessionInput.Binding.SessionID)
+	require.Equal(t, stored.Generation, provider.sessionInput.Binding.RegistryVersion)
+
+	// DECOY: the request carries a different provider MicroVM identity and endpoint in its
+	// headers and query; the provider call must still use the registry record's values.
+	invokeOutput, err := controller.Invoke(context.Background(), ControllerInvokeRequest{
+		RequestID:   "req-pin-invoke",
+		TenantID:    "tenant-1",
+		Namespace:   "namespace-1",
+		AuthContext: AuthContext{Subject: "subject-1", TenantID: "tenant-1", Namespace: "namespace-1"},
+		SessionID:   sessionID,
+		Method:      "get",
+		Path:        "pin",
+		Headers: map[string][]string{
+			"x-provider-microvm-id": {"provider-microvm-decoy"},
+			"x-microvm-endpoint":    {"https://provider-microvm-decoy.microvm.us-east-1.amazonaws.com"},
+		},
+		Query: map[string][]string{
+			"provider_microvm_id": {"provider-microvm-decoy"},
+			"endpoint":            {"https://provider-microvm-decoy.microvm.us-east-1.amazonaws.com"},
+		},
+		Port:       8081,
+		TTLSeconds: 30,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 200, invokeOutput.Status)
+	require.Equal(t, stored.Endpoint, provider.invokeInput.Endpoint)
+	require.Equal(t, stored.ProviderMicroVMID, provider.invokeInput.Binding.ProviderMicroVMID)
+	require.NotEqual(t, "provider-microvm-decoy", provider.invokeInput.Binding.ProviderMicroVMID)
+	require.NotEqual(t, "https://provider-microvm-decoy.microvm.us-east-1.amazonaws.com", provider.invokeInput.Endpoint)
+
+	tokenReq := validRealControllerRequest(CommandAuthToken, "req-pin-token", sessionID)
+	tokenReq.AllowedPortScope = []ProviderPortScope{{Port: 443}}
+	tokenResult, err := controller.Handle(context.Background(), tokenReq)
+	require.NoError(t, err)
+	require.Nil(t, tokenResult.Error)
+	require.Equal(t, stored.ProviderMicroVMID, provider.tokenInput.Binding.ProviderMicroVMID)
+	require.Equal(t, stored.TenantID, provider.tokenInput.Binding.TenantID)
+}
+
 func TestRealControllerCarriesExecutionRoleFromEnvironment(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	t.Setenv(EnvExecutionRoleArn, "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole")
@@ -702,6 +851,115 @@ func TestRealControllerRoutesEnforceAuthAndBindings(t *testing.T) {
 	})
 	require.Equal(t, 403, crossTenant.Status)
 	require.Contains(t, string(crossTenant.Body), ErrorCodeTenantBindingViolation)
+}
+
+func TestRealControllerRoutesBindTenantToVerifiedClaim(t *testing.T) {
+	now := time.Unix(4000, 0).UTC()
+	registry := NewMemorySessionRegistry()
+	provider := newRealControllerProvider(now)
+	controller, err := NewRealController(
+		provider,
+		registry,
+		withDisabledControllerLogging(),
+		WithControllerClock(fixedControllerClock{now: now}),
+		WithControllerIDGenerator(fixedControllerIDs{id: "session-claim"}),
+	)
+	require.NoError(t, err)
+
+	claimApp := func(claims map[string]any) *apptheory.App {
+		app := apptheory.New(
+			apptheory.WithTier(apptheory.TierP1),
+			apptheory.WithClock(fixedControllerClock{now: now}),
+			apptheory.WithIDGenerator(fixedControllerIDs{id: "req-claim"}),
+			apptheory.WithAuthPrincipalHook(func(*apptheory.Context) (*apptheory.AuthPrincipal, error) {
+				return &apptheory.AuthPrincipal{Identity: "subject-1", Claims: claims}, nil
+			}),
+			apptheory.WithTenantClaim("tenant_id"),
+		)
+		_, registerErr := RegisterControllerRoutes(app, controller)
+		require.NoError(t, registerErr)
+		return app
+	}
+	runBody := func(tenantID string) []byte {
+		return []byte(`{"tenant_id":"` + tenantID + `","namespace":"namespace-1","image_ref":"image-ref","network_connector_ref":"network-ref"}`)
+	}
+
+	// NEGATIVE: the caller-supplied x-tenant-id disagrees with the verified claim.
+	headerMismatch := claimApp(map[string]any{"tenant_id": "tenant-1"}).Serve(context.Background(), apptheory.Request{
+		Method: "POST",
+		Path:   "/microvms",
+		Headers: map[string][]string{
+			"x-tenant-id":    {"tenant-2"},
+			"x-namespace-id": {"namespace-1"},
+			"x-request-id":   {"req-claim-header-mismatch"},
+			"content-type":   {"application/json"},
+		},
+		Body: runBody("tenant-2"),
+	})
+	require.Equal(t, 403, headerMismatch.Status)
+	require.Contains(t, string(headerMismatch.Body), ErrorCodeTenantBindingViolation)
+	require.Equal(t, ProviderRunInput{}, provider.lastRunInput)
+
+	// NEGATIVE: the body tenant_id disagrees with the verified claim.
+	bodyMismatch := claimApp(map[string]any{"tenant_id": "tenant-1"}).Serve(context.Background(), apptheory.Request{
+		Method: "POST",
+		Path:   "/microvms",
+		Headers: map[string][]string{
+			"x-tenant-id":    {"tenant-1"},
+			"x-namespace-id": {"namespace-1"},
+			"x-request-id":   {"req-claim-body-mismatch"},
+			"content-type":   {"application/json"},
+		},
+		Body: runBody("tenant-2"),
+	})
+	require.Equal(t, 403, bodyMismatch.Status)
+	require.Contains(t, string(bodyMismatch.Body), ErrorCodeTenantBindingViolation)
+	require.Equal(t, ProviderRunInput{}, provider.lastRunInput)
+
+	// NEGATIVE: the verified principal carries no tenant claim, so the tenant is
+	// not derived from the verified principal and the surface fails closed.
+	unbound := claimApp(map[string]any{"other": "value"}).Serve(context.Background(), apptheory.Request{
+		Method: "POST",
+		Path:   "/microvms",
+		Headers: map[string][]string{
+			"x-tenant-id":    {"tenant-1"},
+			"x-namespace-id": {"namespace-1"},
+			"x-request-id":   {"req-claim-unbound"},
+			"content-type":   {"application/json"},
+		},
+		Body: runBody("tenant-1"),
+	})
+	require.Equal(t, 403, unbound.Status)
+	require.Contains(t, string(unbound.Body), ErrorCodeTenantBindingViolation)
+	require.Equal(t, ProviderRunInput{}, provider.lastRunInput)
+
+	// NEGATIVE: the invoke adapter applies the same fail-closed tenant guard.
+	invokeMismatch := claimApp(map[string]any{"tenant_id": "tenant-1"}).Serve(context.Background(), apptheory.Request{
+		Method: "GET",
+		Path:   "/microvms/session-claim/invoke/hello",
+		Query:  map[string][]string{"tenant_id": {"tenant-2"}},
+		Headers: map[string][]string{
+			"x-tenant-id":  {"tenant-2"},
+			"x-request-id": {"req-claim-invoke-mismatch"},
+		},
+	})
+	require.Equal(t, 403, invokeMismatch.Status)
+	require.Contains(t, string(invokeMismatch.Body), ErrorCodeTenantBindingViolation)
+
+	// POSITIVE: the verified claim agrees with the caller tenant.
+	bound := claimApp(map[string]any{"tenant_id": "tenant-1"}).Serve(context.Background(), apptheory.Request{
+		Method: "POST",
+		Path:   "/microvms",
+		Headers: map[string][]string{
+			"x-tenant-id":    {"tenant-1"},
+			"x-namespace-id": {"namespace-1"},
+			"x-request-id":   {"req-claim-bound"},
+			"content-type":   {"application/json"},
+		},
+		Body: runBody("tenant-1"),
+	})
+	require.Equal(t, 200, bound.Status)
+	require.Equal(t, "tenant-1", provider.lastRunInput.TenantID)
 }
 
 func TestRealControllerOptionsAndFailureBranches(t *testing.T) {
@@ -1169,7 +1427,7 @@ func (p *realControllerProvider) Run(_ context.Context, input ProviderRunInput) 
 		ProviderMicroVMID: "microvm-000001",
 		State:             StateRunning,
 		ProviderState:     "running",
-		Endpoint:          "https://microvm-000001.example.test",
+		Endpoint:          "https://microvm-000001.microvm.us-east-1.amazonaws.com",
 		ImageRef:          input.ImageRef,
 		ImageVersion:      input.ImageVersion,
 		StartedAt:         p.now,

@@ -453,6 +453,18 @@ func exerciseRuntimeSessionRegistry() error {
 	if err := validateRuntimeSessionRegistryRecord(record); err != nil {
 		return err
 	}
+	// Dual-read migration surface: a canonical write must never carry the pre-M1 key, and the
+	// collision witness the M1 fix closed must stay closed. The fallback + lazy re-write path needs a
+	// raw pre-M1 item, which the contract runners cannot seed through the public registry surface, so
+	// it is pinned by the per-runtime unit tests.
+	if runtimemicrovm.SessionRegistryPartitionKey(record.TenantID, record.Namespace) ==
+		"TENANT#"+record.TenantID+"#NAMESPACE#"+record.Namespace {
+		return fmt.Errorf("apptheory: microvm session registry canonical write reused the pre-M1 partition key")
+	}
+	if runtimemicrovm.SessionRegistryPartitionKey("a", "b#NAMESPACE#c") ==
+		runtimemicrovm.SessionRegistryPartitionKey("a#NAMESPACE#b", "c") {
+		return fmt.Errorf("apptheory: microvm session registry partition key collision witness regressed")
+	}
 	store := runtimemicrovm.NewMemorySessionRegistry()
 	if err := exerciseRuntimeMemoryRegistry(store, record); err != nil {
 		return err

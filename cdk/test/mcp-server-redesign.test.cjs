@@ -38,6 +38,34 @@ function routeKeys(template) {
     .sort();
 }
 
+function routeAuthorizations(template) {
+  return resourcesOfType(template, "AWS::ApiGatewayV2::Route")
+    .map((route) => ({
+      key: route.Properties.RouteKey,
+      authorizationType: route.Properties.AuthorizationType ?? "NONE",
+    }))
+    .sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function authorizationTypeByRouteKey(template) {
+  return new Map(routeAuthorizations(template).map((route) => [route.key, route.authorizationType]));
+}
+
+function transportRouteKeys() {
+  return fixture.routes.flatMap((route) =>
+    route.mcp_methods.map((method) => `${method} ${route.mcp_pattern}`));
+}
+
+function publicRouteKeys() {
+  return fixture.routes.flatMap((route) => [
+    `GET ${route.protected_resource_pattern}`,
+    `GET ${route.discovery_canonical_pattern}`,
+    `GET ${route.discovery_suffix_pattern}`,
+    `GET ${route.authorize_pattern}`,
+    `POST ${route.token_pattern}`,
+  ]);
+}
+
 function fixtureRouteKeys() {
   return fixture.routes.flatMap((route) => [
     ...route.mcp_methods.map((method) => `${method} ${route.mcp_pattern}`),
@@ -147,7 +175,15 @@ test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL author
       "sessionTableName",
       "sessionTtlMinutes",
       "stage",
+      "transportAuthorizer",
       "unauthenticatedMcp",
+    ],
+    AppTheoryMcpTransportAuthorizerOptions: [
+      "audience",
+      "authorizerName",
+      "identitySource",
+      "issuer",
+      "kind",
     ],
     AppTheoryMcpRouteFamily: ["patterns", "rootAuthorizationServerDiscovery"],
     AppTheoryMcpServerOwnedApiOptions: ["apiName", "domain", "stage"],
@@ -177,6 +213,16 @@ test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL author
       `${typeName} must not acquire an unreviewed token, origin, or URL-valued prop`,
     );
   }
+
+  const transportKind = assembly.types[
+    "@theory-cloud/apptheory-cdk.AppTheoryMcpTransportAuthorizerKind"
+  ];
+  assert.ok(transportKind, "the transport authorizer kind enum must be published");
+  assert.deepEqual(
+    transportKind.members.map((member) => member.name).sort(),
+    ["IAM", "JWT"],
+    "the transport authorizer kind must stay a bounded enum, not a string-literal union",
+  );
 });
 
 test("AppTheoryMcpServer attach mode wires the runtime inventory without owning an API", () => {
@@ -725,7 +771,7 @@ test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => 
   );
   assert.match(
     propsByName.get("unauthenticatedMcp").docs.remarks,
-    /RegisterMCPFacade.*always installs the authenticated\s+canonical facade/s,
+    /RegisterMCPFacade`\s+installs the authenticated canonical facade by default/s,
   );
 
   const guide = fs.readFileSync(
@@ -733,7 +779,7 @@ test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => 
     "utf8",
   );
   assert.match(guide, /RegisterMCPFacade` serves exactly this canonical four-pattern family/);
-  assert.match(guide, /RegisterMCPFacade` has no unauthenticated mode/);
+  assert.match(guide, /RegisterMCPFacade` now registers the MCP transport routes with an authenticated posture/);
   assert.deepEqual(
     literalSingletonRouteFamilies(guide),
     [],
@@ -762,7 +808,11 @@ test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => 
     assert.ok(constructBlocks.length > 0, "AgentCore guides must show an explicit singleton construct");
     for (const block of constructBlocks) {
       assert.match(block, /(?:routeFamily|route_family)[\s\S]*patterns[\s\S]*["']\/mcp["']/);
-      assert.match(block, /(?:unauthenticatedMcp|unauthenticated_mcp)[\s=:]+true/i);
+      assert.match(
+        block,
+        /unauthenticated_?mcp[\s=:]+true|transport_?authorizer/i,
+        "AgentCore construct blocks must declare an explicit transport authorization posture",
+      );
     }
   }
   assert.match(
@@ -889,5 +939,150 @@ test("AppTheoryMcpServer default template is unchanged for existing users", () =
     writeSnapshot("mcp-server-permission-scope-default", template);
   } else {
     expectSnapshot("mcp-server-permission-scope-default", template);
+  }
+});
+
+test("AppTheoryMcpServer defaults MCP transport routes to IAM and keeps OAuth routes public", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TransportAuthorizerDefaultStack");
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack),
+    sessionState: { enabled: false },
+  });
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const authorizations = authorizationTypeByRouteKey(template);
+
+  for (const key of transportRouteKeys()) {
+    assert.equal(authorizations.get(key), "AWS_IAM", `${key} must require credentials by default`);
+  }
+  for (const key of publicRouteKeys()) {
+    assert.equal(authorizations.get(key), "NONE", `${key} must stay public`);
+  }
+  assert.deepEqual(
+    resourcesOfType(template, "AWS::ApiGatewayV2::Authorizer"),
+    [],
+    "IAM authorization must not synthesize an explicit authorizer resource",
+  );
+});
+
+test("AppTheoryMcpServer wires an explicit JWT transport authorizer", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TransportAuthorizerJwtStack");
+  const server = new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack),
+    sessionState: { enabled: false },
+    transportAuthorizer: {
+      kind: apptheory.AppTheoryMcpTransportAuthorizerKind.JWT,
+      issuer: "https://accounts.example.com",
+      audience: ["https://mcp.example.com"],
+      authorizerName: "McpJwtAuthorizer",
+    },
+  });
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const authorizations = authorizationTypeByRouteKey(template);
+
+  for (const key of transportRouteKeys()) {
+    assert.equal(authorizations.get(key), "JWT", `${key} must use the configured JWT authorizer`);
+  }
+  for (const key of publicRouteKeys()) {
+    assert.equal(authorizations.get(key), "NONE", `${key} must stay public`);
+  }
+
+  const authorizers = resourcesOfType(template, "AWS::ApiGatewayV2::Authorizer");
+  assert.equal(authorizers.length, 1, "Should synthesize exactly one transport authorizer");
+  assert.equal(authorizers[0].Properties.AuthorizerType, "JWT");
+  assert.equal(authorizers[0].Properties.Name, "McpJwtAuthorizer");
+  assert.equal(authorizers[0].Properties.IdentitySource[0], "$request.header.Authorization");
+  assert.deepEqual(authorizers[0].Properties.JwtConfiguration, {
+    Audience: ["https://mcp.example.com"],
+    Issuer: "https://accounts.example.com",
+  });
+  assert.equal(server.routeInventory.routes.length, fixture.routes.length);
+});
+
+test("AppTheoryMcpServer unauthenticatedMcp keeps every route public", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TransportAuthorizerOptOutStack");
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack),
+    routeFamily: { patterns: ["/mcp"] },
+    unauthenticatedMcp: true,
+    sessionState: { enabled: false },
+    ownedApi: { stage: { accessLogging: false, throttlingEnabled: false } },
+  });
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const routes = routeAuthorizations(template);
+  assert.deepEqual(routes.map((route) => route.key), ["DELETE /mcp", "GET /mcp", "POST /mcp"]);
+  for (const route of routes) {
+    assert.equal(route.authorizationType, "NONE", `${route.key} must stay public under the opt-out`);
+  }
+  assert.deepEqual(resourcesOfType(template, "AWS::ApiGatewayV2::Authorizer"), []);
+});
+
+test("AppTheoryMcpServer rejects invalid transport authorizer configuration", () => {
+  const cases = [
+    {
+      name: "jwt missing issuer",
+      props: {
+        transportAuthorizer: { kind: apptheory.AppTheoryMcpTransportAuthorizerKind.JWT },
+      },
+      error: /transportAuthorizer\.issuer is required/,
+    },
+    {
+      name: "jwt insecure issuer",
+      props: {
+        transportAuthorizer: {
+          kind: apptheory.AppTheoryMcpTransportAuthorizerKind.JWT,
+          issuer: "http://accounts.example.com",
+          audience: ["https://mcp.example.com"],
+        },
+      },
+      error: /transportAuthorizer\.issuer must be an absolute HTTPS URL/,
+    },
+    {
+      name: "jwt missing audience",
+      props: {
+        transportAuthorizer: {
+          kind: apptheory.AppTheoryMcpTransportAuthorizerKind.JWT,
+          issuer: "https://accounts.example.com",
+        },
+      },
+      error: /transportAuthorizer\.audience requires at least one accepted audience/,
+    },
+    {
+      name: "iam with a jwt-only field",
+      props: {
+        transportAuthorizer: {
+          kind: apptheory.AppTheoryMcpTransportAuthorizerKind.IAM,
+          issuer: "https://accounts.example.com",
+        },
+      },
+      error: /transportAuthorizer issuer can only be set when kind is/,
+    },
+    {
+      name: "unknown kind",
+      props: { transportAuthorizer: { kind: "custom" } },
+      error: /transportAuthorizer\.kind must be/,
+    },
+    {
+      name: "opt-out combined with a transport authorizer",
+      props: {
+        unauthenticatedMcp: true,
+        transportAuthorizer: { kind: apptheory.AppTheoryMcpTransportAuthorizerKind.IAM },
+      },
+      error: /transportAuthorizer cannot be combined with unauthenticatedMcp/,
+    },
+  ];
+  for (const [index, item] of cases.entries()) {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, `TransportAuthorizerInvalid${index}`);
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        ...item.props,
+      }),
+      item.error,
+      item.name,
+    );
   }
 });

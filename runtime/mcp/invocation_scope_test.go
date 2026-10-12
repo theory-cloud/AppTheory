@@ -126,10 +126,11 @@ func TestToolsCallStreamingJoinsToolWhenBodyCloses(t *testing.T) {
 			emit(SSEEvent{Data: map[string]any{"seq": 1}})
 			defer close(toolFinished)
 			// The tool ignores cancellation and holds work of its own after its
-			// last frame. Nothing in this test releases it, so a release that
-			// joined it cannot observe it still running, and a release that
-			// skipped the join observes it immediately.
-			time.Sleep(joinDominanceLinger)
+			// last frame. The hold stays inside the scope's join budget, so the
+			// release still joins the tool rather than giving up on it; nothing
+			// else releases the tool, so a release that skipped the join would
+			// observe it immediately.
+			time.Sleep(joinDominanceLinger / 10)
 			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
 		},
 	); err != nil {
@@ -235,6 +236,75 @@ func TestToolsCallStreamingJoinsToolOnEOF(t *testing.T) {
 	}
 
 	assertNoNewStreamProducers(t, before, "streamed tools/call body served to EOF")
+}
+
+// TestToolsCallStreamingAbandonedJoinIsBounded pins the bounded-release contract
+// on the real handler path: a streamed tool that ignores cancellation and blocks
+// past the scope's join budget must not hold the invocation. The body is
+// abandoned mid-stream and its close is measured; an unbounded join would never
+// return here because nothing releases the tool until the test does.
+func TestToolsCallStreamingAbandonedJoinIsBounded(t *testing.T) {
+	s := NewServer("test-server", "1.0.0")
+	sessionID := initializeSession(t, s)
+
+	release := make(chan struct{})
+	toolStarted := make(chan struct{})
+	if err := s.registry.RegisterStreamingTool(
+		ToolDef{
+			Name:        "stuck_tool",
+			Description: "Emits progress and then blocks past the join budget",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+		},
+		func(_ context.Context, _ json.RawMessage, emit func(SSEEvent)) (*ToolResult, error) {
+			emit(SSEEvent{Data: map[string]any{"seq": 1}})
+			close(toolStarted)
+			<-release
+			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
+		},
+	); err != nil {
+		t.Fatalf("register streaming tool: %v", err)
+	}
+
+	body := streamToolsCallBody(t, "stuck_tool")
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"application/json, text/event-stream"}
+
+	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+
+	reader := bufio.NewReader(resp.BodyReader)
+	if _, err := readSSEFrame(reader); err != nil {
+		t.Fatalf("read priming frame: %v", err)
+	}
+	if _, err := readSSEFrame(reader); err != nil {
+		t.Fatalf("read progress frame: %v", err)
+	}
+	select {
+	case <-toolStarted:
+	case <-time.After(joinWaitBudget):
+		t.Fatal("the streamed tool never started")
+	}
+
+	closer, ok := resp.BodyReader.(io.Closer)
+	if !ok {
+		t.Fatal("expected the streamed body to be closable")
+	}
+
+	start := time.Now()
+	if err := closer.Close(); err != nil {
+		t.Fatalf("close streamed body: %v", err)
+	}
+	elapsed := time.Since(start)
+	if elapsed > joinWaitBudget {
+		t.Fatalf("closing an abandoned streamed body took %v; the post-abandonment join must be bounded", elapsed)
+	}
+
+	// The tool ignores cancellation, so releasing it is what lets the body's
+	// producer unwind; the join above already proved the close did not wait for
+	// it.
+	close(release)
 }
 
 func TestStreamSubscriptionJoinsPumpAndWatcher(t *testing.T) {

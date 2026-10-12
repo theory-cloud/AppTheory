@@ -227,45 +227,8 @@ function parseDuration(raw: string): string {
   }
   if (!body) throw new Error("invalid duration");
 
-  const segments = parseDurationSegments(body);
   let totalNs = 0n;
-  for (const segment of segments) {
-    totalNs += decimalDurationToNs(segment.amount, segment.unit);
-  }
-  totalNs *= sign;
-  if (totalNs % 1000n !== 0n) {
-    throw new Error("duration precision below one microsecond is not portable");
-  }
-  return formatDurationNs(totalNs);
-}
-
-function durationUnitNs(unit: string): bigint {
-  switch (unit) {
-    case "h":
-      return 3_600_000_000_000n;
-    case "m":
-      return 60_000_000_000n;
-    case "s":
-      return 1_000_000_000n;
-    case "ms":
-      return 1_000_000n;
-    case "us":
-    case "µs":
-      return 1_000n;
-    case "ns":
-      return 1n;
-    default:
-      throw new Error("invalid duration");
-  }
-}
-
-interface DurationSegment {
-  readonly amount: string;
-  readonly unit: string;
-}
-
-function parseDurationSegments(body: string): DurationSegment[] {
-  const segments: DurationSegment[] = [];
+  let segments = 0;
   let index = 0;
   while (index < body.length) {
     const amountStart = index;
@@ -294,13 +257,52 @@ function parseDurationSegments(body: string): DurationSegment[] {
       throw new Error("invalid duration");
     }
     index += unit.length;
-    segments.push({ amount, unit });
+
+    // Accumulate each segment as it is parsed so an attacker-supplied value
+    // never materializes a per-segment object array. The segment cap keeps the
+    // work bounded: a 3 MB "1s"-repeated value is rejected after a few KB
+    // instead of allocating ~1.5 million segment objects.
+    if (segments >= MAX_DURATION_SEGMENTS) {
+      throw new Error("invalid duration");
+    }
+    segments += 1;
+    totalNs += decimalDurationToNs(amount, unit);
   }
-  if (segments.length === 0) {
+  if (segments === 0) {
     throw new Error("invalid duration");
   }
-  return segments;
+  totalNs *= sign;
+  if (totalNs % 1000n !== 0n) {
+    throw new Error("duration precision below one microsecond is not portable");
+  }
+  return formatDurationNs(totalNs);
 }
+
+function durationUnitNs(unit: string): bigint {
+  switch (unit) {
+    case "h":
+      return 3_600_000_000_000n;
+    case "m":
+      return 60_000_000_000n;
+    case "s":
+      return 1_000_000_000n;
+    case "ms":
+      return 1_000_000n;
+    case "us":
+    case "µs":
+      return 1_000n;
+    case "ns":
+      return 1n;
+    default:
+      throw new Error("invalid duration");
+  }
+}
+
+// Bound the number of adjacent segments the streaming parser accumulates.
+// Canonical durations use only a handful of segments, so this cap rejects a
+// multi-megabyte "1s"-repeated value cheaply without retaining per-segment
+// objects, while staying far above any realistic duration.
+const MAX_DURATION_SEGMENTS = 1024;
 
 function readDurationUnit(body: string, index: number): string {
   for (const unit of ["ns", "us", "µs", "ms", "s", "m", "h"]) {

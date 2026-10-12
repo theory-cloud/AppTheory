@@ -1,0 +1,44 @@
+{
+  "id": "m16_microvm_controller_route_invoke_token_ttl_901",
+  "tier": "m16",
+  "name": "M16 canonical MicroVM invoke route rejects a provider token TTL above 900 seconds",
+  "setup": {
+    "microvm_controller_route": {
+      "authenticated": true,
+      "seed_session": true,
+      "tenant_id": "tenant-1",
+      "namespace": "namespace-1",
+      "session_id": "fixture-session"
+    }
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/microvms/fixture-session/invoke/hello",
+      "headers": {
+        "x-tenant-id": ["tenant-1"],
+        "x-namespace-id": ["namespace-1"],
+        "x-request-id": ["req-m16-route-invoke-token-ttl-901"],
+        "x-apptheory-microvm-port": ["8080"],
+        "x-apptheory-microvm-token-ttl": ["901"]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "microvm_controller_route": {
+      "status": 400,
+      "error_code": "m16.microvm.token_safety_violation",
+      "forbidden_body_substrings": [
+        "token_value",
+        "bearer_token",
+        "x-aws-proxy-auth",
+        "session_token_plaintext"
+      ]
+    }
+  }
+}

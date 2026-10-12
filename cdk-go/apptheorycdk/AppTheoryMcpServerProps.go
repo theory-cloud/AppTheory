@@ -80,12 +80,27 @@ type AppTheoryMcpServerProps struct {
 	SessionTtlMinutes *float64 `field:"optional" json:"sessionTtlMinutes" yaml:"sessionTtlMinutes"`
 	// Deprecated: Use `ownedApi.stage`. Stage options are invalid in attach mode.
 	Stage *AppTheoryMcpServerStageOptions `field:"optional" json:"stage" yaml:"stage"`
+	// Authorizer applied to the MCP transport routes only.
+	//
+	// Transport routes are the POST, GET, and DELETE routes on every MCP pattern.
+	// When `unauthenticatedMcp` is false (the default) those routes require
+	// credentials and default to IAM, so credential-free requests are rejected by
+	// API Gateway with 403. Discovery, protected-resource metadata, authorize,
+	// and token routes remain explicitly public (`NONE`) because OAuth clients
+	// must fetch them before they hold a token.
+	//
+	// Cannot be combined with `unauthenticatedMcp: true`.
+	// Default: AppTheoryMcpTransportAuthorizerKind.IAM
+	//
+	TransportAuthorizer *AppTheoryMcpTransportAuthorizerOptions `field:"optional" json:"transportAuthorizer" yaml:"transportAuthorizer"`
 	// Explicitly opt out of the OAuth facade and wire only MCP transport routes.
 	//
-	// This cannot be combined with legacy authorization props or root discovery.
-	// `runtime/mcpfacade.RegisterMCPFacade` always installs the authenticated
-	// canonical facade, so applications using this opt-out must own runtime
-	// registration for the transport routes.
+	// This cannot be combined with legacy authorization props, root discovery, or
+	// `transportAuthorizer`. The Go helper `runtime/mcpfacade.RegisterMCPFacade`
+	// installs the authenticated canonical facade by default and exposes
+	// `FacadeConfig.UnauthenticatedMcp` for the same transport opt-out, so
+	// applications using this opt-out must own runtime registration for the
+	// transport routes.
 	// Default: false.
 	//
 	UnauthenticatedMcp *bool `field:"optional" json:"unauthenticatedMcp" yaml:"unauthenticatedMcp"`

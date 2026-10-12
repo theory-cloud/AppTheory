@@ -116,11 +116,9 @@ func TestAWSLambdaMicroVMProviderInvokeMintsInternalTokenAndSanitizes(t *testing
 	now := time.Unix(550, 0).UTC()
 	api := newRecordingLambdaMicroVMAPI(now)
 	provider := &AWSLambdaMicroVMProvider{api: api, clock: providerClock{now: now}}
-	oldClient := http.DefaultClient
-	defer func() { http.DefaultClient = oldClient }()
 
 	var captured *http.Request
-	http.DefaultClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	provider.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		captured = req
 		return &http.Response{
 			StatusCode: 201,
@@ -139,7 +137,7 @@ func TestAWSLambdaMicroVMProviderInvokeMintsInternalTokenAndSanitizes(t *testing
 		Namespace:   "namespace-1",
 		AuthContext: validProviderAuth(),
 		Binding:     ProviderSessionBinding{TenantID: "tenant-1", Namespace: "namespace-1", SessionID: "session-1", ProviderMicroVMID: "provider-1"},
-		Endpoint:    "microvm.example.test",
+		Endpoint:    "provider-1.microvm.us-east-1.amazonaws.com",
 		Method:      "post",
 		Path:        "hello",
 		Query:       map[string][]string{"b": {"2"}, "a": {"1"}},
@@ -161,7 +159,7 @@ func TestAWSLambdaMicroVMProviderInvokeMintsInternalTokenAndSanitizes(t *testing
 	require.NotContains(t, output.Headers, "x-aws-proxy-auth")
 	require.NotNil(t, captured)
 	require.Equal(t, "POST", captured.Method)
-	require.Equal(t, "https://microvm.example.test/hello?a=1&b=2", captured.URL.String())
+	require.Equal(t, "https://provider-1.microvm.us-east-1.amazonaws.com/hello?a=1&b=2", captured.URL.String())
 	require.Equal(t, recordingRawToken(), captured.Header.Get("X-aws-proxy-auth"))
 	require.Equal(t, "9090", captured.Header.Get("X-aws-proxy-port"))
 	require.Equal(t, "yes", captured.Header.Get("x-workload-request"))
@@ -182,16 +180,78 @@ func TestAWSLambdaMicroVMProviderInvokeFailureBranches(t *testing.T) {
 	_, err = provider.Invoke(context.Background(), validProviderInvokeInput())
 	requireSafeError(t, err, ErrorCodeTokenSafetyViolation)
 
-	oldClient := http.DefaultClient
-	defer func() { http.DefaultClient = oldClient }()
-	http.DefaultClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return nil, errors.New("raw bearer_token transport failure")
-	})}
 	api = newRecordingLambdaMicroVMAPI(time.Unix(570, 0).UTC())
 	provider = &AWSLambdaMicroVMProvider{api: api, clock: providerClock{now: time.Unix(570, 0).UTC()}}
+	provider.httpClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("raw bearer_token transport failure")
+	})}
 	_, err = provider.Invoke(context.Background(), validProviderInvokeInput())
 	requireSafeError(t, err, ErrorCodeProviderOperationFailed)
 	require.NotContains(t, err.Error(), "bearer_token")
+}
+
+func TestAWSLambdaMicroVMProviderInvokeRejectsCrossOriginRedirect(t *testing.T) {
+	now := time.Unix(575, 0).UTC()
+	provider := &AWSLambdaMicroVMProvider{api: newRecordingLambdaMicroVMAPI(now), clock: providerClock{now: now}}
+
+	var requests []*http.Request
+	provider.httpClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests = append(requests, req)
+			return &http.Response{
+				StatusCode: http.StatusFound,
+				Header:     http.Header{"Location": {"https://attacker.example.com/steal"}},
+				Body:       http.NoBody,
+			}, nil
+		}),
+		CheckRedirect: defaultProviderInvokeHTTPClient.CheckRedirect,
+	}
+
+	_, err := provider.Invoke(context.Background(), validProviderInvokeInput())
+	requireSafeError(t, err, ErrorCodeProviderRequestInvalid)
+	require.Len(t, requests, 1, "a denied redirect must not issue a second request")
+	require.Equal(t, "provider-1.microvm.us-east-1.amazonaws.com", requests[0].URL.Host)
+	require.Equal(t, recordingRawToken(), requests[0].Header.Get("X-aws-proxy-auth"), "the credential rides only the first, allowlisted request")
+	for _, req := range requests {
+		require.NotEqual(t, "attacker.example.com", req.URL.Hostname())
+	}
+}
+
+func TestAWSLambdaMicroVMProviderInvokeRejectsSchemeDowngradeRedirect(t *testing.T) {
+	now := time.Unix(576, 0).UTC()
+	provider := &AWSLambdaMicroVMProvider{api: newRecordingLambdaMicroVMAPI(now), clock: providerClock{now: now}}
+
+	var requests []*http.Request
+	provider.httpClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests = append(requests, req)
+			return &http.Response{
+				StatusCode: http.StatusMovedPermanently,
+				Header:     http.Header{"Location": {"http://provider-1.microvm.us-east-1.amazonaws.com/steal"}},
+				Body:       http.NoBody,
+			}, nil
+		}),
+		CheckRedirect: defaultProviderInvokeHTTPClient.CheckRedirect,
+	}
+
+	_, err := provider.Invoke(context.Background(), validProviderInvokeInput())
+	requireSafeError(t, err, ErrorCodeProviderRequestInvalid)
+	require.Len(t, requests, 1, "an HTTPS to HTTP downgrade must not be followed")
+	require.Equal(t, "https", requests[0].URL.Scheme)
+}
+
+func TestAWSLambdaMicroVMProviderInvokeRejectsNonAllowlistedEndpoint(t *testing.T) {
+	now := time.Unix(577, 0).UTC()
+	provider := &AWSLambdaMicroVMProvider{api: newRecordingLambdaMicroVMAPI(now), clock: providerClock{now: now}}
+	provider.httpClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("a non-allowlisted endpoint must be rejected before any HTTP request")
+		return nil, nil
+	})}
+
+	input := validProviderInvokeInput()
+	input.Endpoint = "https://evil.example.com"
+	_, err := provider.Invoke(context.Background(), input)
+	requireSafeError(t, err, ErrorCodeProviderRequestInvalid)
 }
 
 func TestProviderInvokeValidationAndHelpers(t *testing.T) {
@@ -225,9 +285,15 @@ func TestProviderInvokeValidationAndHelpers(t *testing.T) {
 	}, normalized.Headers)
 	require.Equal(t, map[string][]string{"z": {"last"}}, normalized.Query)
 
-	target, err := providerInvokeURL("http://microvm.example.test/base", "hello", map[string][]string{"b": {"2"}, "a": {"1"}})
+	target, err := providerInvokeURL("http://provider-1.microvm.us-east-1.amazonaws.com/base", "hello", map[string][]string{"b": {"2"}, "a": {"1"}})
 	require.NoError(t, err)
-	require.Equal(t, "https://microvm.example.test/hello?a=1&b=2", target)
+	require.Equal(t, "https://provider-1.microvm.us-east-1.amazonaws.com/hello?a=1&b=2", target)
+	require.True(t, microVMProviderEndpointAllowed("provider-1.microvm.us-east-1.amazonaws.com"))
+	require.True(t, microVMProviderEndpointAllowed("amazonaws.com.cn"))
+	require.False(t, microVMProviderEndpointAllowed("evil.example.com"))
+	require.False(t, microVMProviderEndpointAllowed("notamazonaws.com"))
+	require.False(t, microVMProviderEndpointAllowed("127.0.0.1"))
+	require.False(t, microVMProviderEndpointAllowed(""))
 	require.Equal(t, "8080", providerInvokePortHeader(0))
 	require.False(t, providerInvokeResponseIsBase64(map[string][]string{"Content-Type": {"application/json"}}))
 	require.True(t, providerInvokeResponseIsBase64(map[string][]string{"content-type": {"application/octet-stream"}}))
@@ -241,6 +307,8 @@ func TestProviderInvokeValidationAndHelpers(t *testing.T) {
 		{"unsupported method", func(input *ProviderInvokeInput) { input.Method = "TRACE" }, ErrorCodeProviderRequestInvalid},
 		{"invalid endpoint", func(input *ProviderInvokeInput) { input.Endpoint = "http://" }, ErrorCodeProviderRequestInvalid},
 		{"forbidden endpoint", func(input *ProviderInvokeInput) { input.Endpoint = "bearer_token" }, ErrorCodeProviderRequestInvalid},
+		{"non allowlisted endpoint", func(input *ProviderInvokeInput) { input.Endpoint = "https://evil.example.com" }, ErrorCodeProviderRequestInvalid},
+		{"loopback endpoint", func(input *ProviderInvokeInput) { input.Endpoint = "https://127.0.0.1" }, ErrorCodeProviderRequestInvalid},
 		{"invalid path", func(input *ProviderInvokeInput) { input.Path = "bad\x00path" }, ErrorCodeProviderRequestInvalid},
 		{"invalid port", func(input *ProviderInvokeInput) { input.Port = 70000 }, ErrorCodeTokenSafetyViolation},
 		{"invalid ttl", func(input *ProviderInvokeInput) { input.TTLSeconds = 901 }, ErrorCodeTokenSafetyViolation},
@@ -723,7 +791,7 @@ func validProviderInvokeInput() ProviderInvokeInput {
 		Namespace:   "namespace-1",
 		AuthContext: validProviderAuth(),
 		Binding:     binding,
-		Endpoint:    "microvm.example.test",
+		Endpoint:    "provider-1.microvm.us-east-1.amazonaws.com",
 		Method:      "GET",
 		Path:        "/",
 		Port:        defaultProviderInvokePort,

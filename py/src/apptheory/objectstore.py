@@ -617,11 +617,16 @@ def _parse_presign_put_expiry(raw: str) -> int | None:
     ``int()`` is lenient: it accepts surrounding whitespace, underscores (``9_00``) and non-ASCII
     decimal digits (East Asian fullwidth digits, for example), so a padded or non-canonical expiry
     would satisfy a post-condition that the Go and TypeScript runtimes refuse. Requiring ``[0-9]+``
-    keeps all three runtimes' post-condition on exactly the same input domain.
+    keeps all three runtimes' post-condition on exactly the same input domain, and a digit string
+    longer than Python's integer-string conversion limit (4300 digits on 3.12+) is refused rather
+    than raising ``ValueError`` out of the fail-closed path.
     """
     if not raw or any(ch < "0" or ch > "9" for ch in raw):
         return None
-    return int(raw)
+    try:
+        return int(raw)
+    except ValueError:
+        return None
 
 
 def _presign_query_value(query: dict[str, list[str]], name: str) -> str | None:

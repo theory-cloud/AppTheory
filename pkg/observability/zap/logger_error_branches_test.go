@@ -57,15 +57,22 @@ func TestZapCore_NotifyWithRetries_DefaultsAndStopsOnSuccess(t *testing.T) {
 	}
 }
 
-func TestZapCore_RunNotifier_RemovedWithTheQueue(t *testing.T) {
+func TestZapCore_EnqueueNotification_BoundedQueue(t *testing.T) {
 	t.Parallel()
 
-	// The process-lifetime notifier goroutine is gone: a nil-notifier core
-	// delivers nothing and starts nothing.
-	var core zapCore
-	core.notify(observability.LogEntry{})
-	if core.entriesDropped.Load() != 0 {
-		t.Fatalf("expected no drops for a nil notifier, got %d", core.entriesDropped.Load())
+	// A core with no queue (no notifier) drops the entry rather than blocking.
+	var empty zapCore
+	empty.enqueueNotification(observability.LogEntry{})
+	if empty.entriesDropped.Load() != 1 {
+		t.Fatalf("expected a drop for a nil queue, got %d", empty.entriesDropped.Load())
+	}
+
+	// A full queue drops the overflow entry instead of growing the backlog.
+	core := &zapCore{notifyCh: make(chan observability.LogEntry, 1)}
+	core.enqueueNotification(observability.LogEntry{Message: "first"})
+	core.enqueueNotification(observability.LogEntry{Message: "second"})
+	if core.entriesDropped.Load() != 1 {
+		t.Fatalf("expected the overflow entry to be dropped, got drops=%d", core.entriesDropped.Load())
 	}
 }
 

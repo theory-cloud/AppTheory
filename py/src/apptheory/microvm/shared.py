@@ -49,11 +49,25 @@ def microvm_session_key(record: MicroVMSessionRecord) -> tuple[str, str, str]:
 
 
 def microvm_session_registry_partition_key(tenant_id: str, namespace: str) -> str:
+    """Derive the TableTheory partition key for a tenant-bound namespace.
+
+    The encoding is injective: each trimmed identity is framed by its UTF-8 byte length in
+    canonical decimal, so no two distinct (tenant, namespace) pairs share a key. The un-prefixed
+    ``TENANT#<tenant>#NAMESPACE#<namespace>`` form was not injective because a value containing
+    ``#NAMESPACE#`` could straddle the boundary.
+
+    MIGRATION: items persisted by an earlier release used the un-prefixed
+    ``TENANT#<tenant>#NAMESPACE#<namespace>`` form. Registry reads fall back to that key and
+    re-persist a resolved item under this key, so items migrate as they are touched; a
+    read-modify-write re-key pass is optional cleanup for items that are never read again.
+    """
     tenant = str(tenant_id or "").strip()
     ns = str(namespace or "").strip()
     if not tenant or not ns:
         return ""
-    return f"TENANT#{tenant}#NAMESPACE#{ns}"
+    tenant_len = len(tenant.encode("utf-8"))
+    namespace_len = len(ns.encode("utf-8"))
+    return f"TENANT#{tenant_len}#{tenant}#NAMESPACE#{namespace_len}#{ns}"
 
 
 def microvm_session_registry_sort_key(session_id: str) -> str:
@@ -626,6 +640,7 @@ def _registry_key_tuple(key: tuple[str, str, str]) -> tuple[str, str]:
 
 
 def _registry_record_key(record: MicroVMSessionRegistryRecord) -> tuple[str, str]:
+    # A tuple is already injective as an in-memory key, so it needs no length-prefixed framing.
     return (record.pk, record.sk)
 
 
@@ -1388,6 +1403,25 @@ def _sanitize_provider_invoke_headers(headers: dict[str, Any]) -> dict[str, list
     return out
 
 
+_MICROVM_PROVIDER_ENDPOINT_DOMAINS = ("amazonaws.com", "amazonaws.com.cn")
+
+
+def _microvm_provider_endpoint_allowed(host: str) -> bool:
+    """Return True when host is an AWS service domain that can host a MicroVM endpoint.
+
+    The invoke proxy mints X-aws-proxy-auth for exactly one MicroVM endpoint, so this domain
+    allowlist is the trust boundary for that credential: IP literals, localhost, and arbitrary
+    hosts are all rejected.
+    """
+
+    normalized = str(host or "").strip().lower()
+    if not normalized:
+        return False
+    return any(
+        normalized == domain or normalized.endswith(f".{domain}") for domain in _MICROVM_PROVIDER_ENDPOINT_DOMAINS
+    )
+
+
 def _provider_invoke_url(endpoint: str, path: str, query: dict[str, list[str]]) -> str:
     raw_endpoint = str(endpoint or "").strip()
     if not raw_endpoint:
@@ -1400,6 +1434,12 @@ def _provider_invoke_url(endpoint: str, path: str, query: dict[str, list[str]]) 
         raw_endpoint = f"https://{raw_endpoint}"
     parsed = urllib.parse.urlparse(raw_endpoint)
     if not parsed.netloc:
+        raise _safe_error(
+            MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+            "apptheory: microvm invoke endpoint is invalid",
+            "",
+        )
+    if not _microvm_provider_endpoint_allowed(parsed.hostname or ""):
         raise _safe_error(
             MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
             "apptheory: microvm invoke endpoint is invalid",
@@ -1753,6 +1793,15 @@ def _provider_token_scope(operation: str, scopes: list[MicroVMProviderPortScope]
     return sorted(out)
 
 
+def _length_prefixed_join(parts: list[str]) -> str:
+    """Frame each part as ``<utf8-byte-length>:<part>`` and concatenate with no separator.
+
+    Each framed part is self-delimiting, so the encoding is injective: distinct part lists can
+    never produce the same string, unlike a NUL join where a NUL inside a part is ambiguous.
+    """
+    return "".join(str(len(part.encode("utf-8"))) + ":" + part for part in parts)
+
+
 def _safe_provider_token_id(
     binding: MicroVMProviderSessionBinding, token_type: str, expires_at: float, scope: list[str]
 ) -> str:
@@ -1765,7 +1814,8 @@ def _safe_provider_token_id(
         str(float(expires_at or 0.0)),
         *scope,
     ]
-    digest = hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()[:16]
+    # _length_prefixed_join keeps the digest input injective, so two bindings cannot collide on the same token ID.
+    digest = hashlib.sha256(_length_prefixed_join(parts).encode("utf-8")).hexdigest()[:16]
     return f"{token_type}-{digest}"
 
 
@@ -1913,6 +1963,8 @@ __all__ = [
     "_validate_provider_session_input",
     "_validate_provider_token_input",
     "_validate_safe_connector_refs",
+    "microvm_session_registry_partition_key",
+    "microvm_session_registry_sort_key",
     "validate_microvm_provider_invoke_input",
     "validate_microvm_provider_list_input",
     "validate_microvm_provider_run_input",

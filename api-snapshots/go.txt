@@ -1720,6 +1720,10 @@ type SemanticIndex struct {
 	Embedder             Embedder
 	Dimension            int
 	RequiredMetadataKeys []string
+
+	MaxRecords int
+
+	MaxTextBytes int
 }
 
 type SemanticRecord struct {
@@ -1871,6 +1875,7 @@ type App struct {
 	cors             CORSConfig
 	auth             AuthHook
 	principalAuth    PrincipalAuthHook
+	tenantClaim      string
 	obs              ObservabilityHooks
 	policy           PolicyHook
 	secure           bool
@@ -2023,6 +2028,10 @@ type Context struct {
 	AuthPrincipal   *AuthPrincipal
 	RemainingMS     int
 	MiddlewareTrace []string
+
+	TenantBound bool
+
+	TenantBindingRequired bool
 
 	ws              *WebSocketContext
 	appsync         *AppSyncContext
@@ -2346,6 +2355,7 @@ type SecureOptions struct {
 	Limits                 Limits
 	CORS                   CORSConfig
 	PrincipalResolver      SecurePrincipalResolver
+	TenantClaim            string
 	Observability          ObservabilityHooks
 	PolicyHook             PolicyHook
 	WebSocketSupport       bool
@@ -2440,6 +2450,8 @@ func AsAppTheoryError(error) (*AppTheoryError, bool)
 func Authenticated(...string) AuthPosture
 
 func AuthenticatedAnyOf(...string) AuthPosture
+
+func AuthoritativeOriginURL(map[string][]string, bool) string
 
 func Binary(int, []byte, string) *Response
 
@@ -2582,6 +2594,8 @@ func WithLimits(Limits) Option
 func WithObservability(ObservabilityHooks) Option
 
 func WithPolicyHook(PolicyHook) Option
+
+func WithTenantClaim(string) Option
 
 func WithTier(Tier) Option
 
@@ -3165,6 +3179,8 @@ type DynamoStreamStore struct {
 	maxEventBytes  int
 }
 
+type DynamoStreamStoreOption func(*dynamoStreamStoreOptions)
+
 type DynamoTaskStore struct {
 	db  tablecore.DB
 	now func() time.Time
@@ -3444,6 +3460,7 @@ type TaskRuntimeOptions struct {
 	MaxTTL                 time.Duration
 	PollInterval           time.Duration
 	ListLimit              int
+	MaxInFlight            int
 	ModelImmediateResponse string
 }
 
@@ -3553,7 +3570,7 @@ func MarshalResponse(*Response) ([]byte, error)
 
 func NewDynamoSessionStore(tablecore.DB) SessionStore
 
-func NewDynamoStreamStore(tablecore.DB) StreamStore
+func NewDynamoStreamStore(tablecore.DB, ...DynamoStreamStoreOption) StreamStore
 
 func NewDynamoTaskStore(tablecore.DB) TaskStore
 
@@ -3590,6 +3607,8 @@ func WithCapabilityConfig(CapabilityConfig) ServerOption
 func WithClock(apptheory.Clock) MemorySessionStoreOption
 
 func WithCompletionHooks(CompletionHook, CompletionHook) ServerOption
+
+func WithDynamoStreamSpillEncryption(objectstore.S3EncryptionConfig) DynamoStreamStoreOption
 
 func WithExtensionCapabilities(map[string]map[string]any) ServerOption
 
@@ -3769,6 +3788,10 @@ type FacadeConfig struct {
 	TokenHandler     HandlerFactory
 
 	RootAuthorizationServer *RootDiscoveryConfig
+
+	UnauthenticatedMcp bool
+
+	RequireBearerToken *oauth.RequireBearerTokenOptions
 }
 
 type HandlerFactory func(mcproutes.EndpointKind) apptheory.Handler
@@ -4095,8 +4118,9 @@ const StateValidated LifecycleState = "validated"
 const StateValidating LifecycleState = "validating"
 
 type AWSLambdaMicroVMProvider struct {
-	api   lambdaMicroVMAPI
-	clock Clock
+	api        lambdaMicroVMAPI
+	clock      Clock
+	httpClient *http.Client
 }
 
 type AWSLambdaMicroVMProviderOption func(*awsLambdaMicroVMProviderConfig)
@@ -5017,6 +5041,8 @@ type MCPServerConfig struct {
 	AuthorizationServerIssuer string
 
 	JWKSURI string
+
+	AllowedHostnames []string
 }
 
 type MemoryAuthorizationCodeStore struct {

@@ -13,10 +13,39 @@ import (
 )
 
 const (
-	cloudWatchLogsSubscriptionMaxDecodedBytes   = 6 * 1024 * 1024
+	// cloudWatchLogsSubscriptionMaxDecodedBytes is the schema-appropriate ceiling
+	// for one decompressed CloudWatch Logs subscription document. CloudWatch Logs
+	// caps its uncompressed payload near 1 MB, so this bound (down from 6 MiB) is
+	// generous for a real payload while keeping a hostile, highly compressed
+	// record from expanding into a far larger in-memory object graph.
+	cloudWatchLogsSubscriptionMaxDecodedBytes = 2 * 1024 * 1024
+	// cloudWatchLogsSubscriptionMaxCompressionRatio bounds the decoded/compressed
+	// ratio. A legitimate gzip of JSON log text is far below this; a payload that
+	// decodes to many times the space it occupied (the "junk bomb" pattern) is
+	// rejected before JSON parsing materializes it.
+	cloudWatchLogsSubscriptionMaxCompressionRatio = 500
+	// cloudWatchLogsSubscriptionMaxFilters and cloudWatchLogsSubscriptionMaxLogEvents
+	// bound array cardinality before the accepted arrays are copied into the
+	// decoded result.
+	cloudWatchLogsSubscriptionMaxFilters   = 1024
+	cloudWatchLogsSubscriptionMaxLogEvents = 10000
+
 	cloudWatchLogsSubscriptionDecodeMessage     = "apptheory: decode cloudwatch logs subscription"
 	cloudWatchLogsSubscriptionDecodeGzipMessage = cloudWatchLogsSubscriptionDecodeMessage + " gzip: %w"
 )
+
+// cloudWatchLogsSubscriptionKnownField reports whether key is one of the
+// documented top-level CloudWatch Logs subscription envelope fields. The decoder
+// rejects any other top-level field so an ignored, attacker-sized array (for
+// example a "junk" array) cannot be smuggled into the document.
+func cloudWatchLogsSubscriptionKnownField(key string) bool {
+	switch key {
+	case "messageType", "owner", "logGroup", "logStream", "subscriptionFilters", "logEvents":
+		return true
+	default:
+		return false
+	}
+}
 
 // CloudWatchLogsSubscription is a decoded CloudWatch Logs subscription envelope carried by a Kinesis record.
 type CloudWatchLogsSubscription struct {
@@ -75,8 +104,23 @@ func DecodeCloudWatchLogsSubscription(record events.KinesisEventRecord) (CloudWa
 	}
 
 	var payload cloudWatchLogsSubscriptionPayload
+	var rawFields map[string]json.RawMessage
+	if err := json.Unmarshal(payloadBytes, &rawFields); err != nil {
+		return decoded, fmt.Errorf(cloudWatchLogsSubscriptionDecodeMessage+" json: %w", err)
+	}
+	for key := range rawFields {
+		if !cloudWatchLogsSubscriptionKnownField(key) {
+			return decoded, fmt.Errorf(cloudWatchLogsSubscriptionDecodeMessage+": unknown field %q", key)
+		}
+	}
 	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
 		return decoded, fmt.Errorf(cloudWatchLogsSubscriptionDecodeMessage+" json: %w", err)
+	}
+	if len(payload.SubscriptionFilters) > cloudWatchLogsSubscriptionMaxFilters {
+		return decoded, errors.New(cloudWatchLogsSubscriptionDecodeMessage + ": too many subscriptionFilters")
+	}
+	if len(payload.LogEvents) > cloudWatchLogsSubscriptionMaxLogEvents {
+		return decoded, errors.New(cloudWatchLogsSubscriptionDecodeMessage + ": too many logEvents")
 	}
 
 	decoded.MessageType = strings.TrimSpace(payload.MessageType)
@@ -112,6 +156,9 @@ func gunzipCloudWatchLogsSubscriptionData(data []byte) ([]byte, error) {
 	}
 	if len(payload) > cloudWatchLogsSubscriptionMaxDecodedBytes {
 		return nil, errors.New(cloudWatchLogsSubscriptionDecodeMessage + ": payload too large")
+	}
+	if int64(len(payload)) > int64(cloudWatchLogsSubscriptionMaxCompressionRatio)*int64(len(data)) {
+		return nil, errors.New(cloudWatchLogsSubscriptionDecodeMessage + ": payload compression ratio exceeded")
 	}
 	return payload, nil
 }

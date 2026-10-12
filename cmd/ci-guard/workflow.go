@@ -278,6 +278,7 @@ func evaluateWorkflowFile(root, rel string) fileResult {
 	result := fileResult{classified: 1, jobs: len(jobs), isCI: rel == ciWorkflowPath}
 	result.failures = append(result.failures, checkParity(jobs)...)
 	if result.isCI {
+		result.failures = append(result.failures, checkCIPushTrigger(wf)...)
 		result.failures = append(result.failures, checkExactConditions(jobs)...)
 		result.failures = append(result.failures, checkBackmergeExemption(jobs)...)
 		result.failures = append(result.failures, checkExemptionsAreLive(jobs)...)
@@ -1091,6 +1092,20 @@ func checkExemptionsAreLive(jobs []classifiedJob) []string {
 		}
 	}
 	return failures
+}
+
+// checkCIPushTrigger requires ci.yml to declare an on: push trigger. The
+// push-to-staging leg of the release-eligibility gate and the whole push-parity
+// check are vacuous without it: a job can be classified as promotion-only, or a
+// push lane can disappear, while every remaining check still passes, so a
+// pushless ci.yml fails closed instead of leaving gating push paths unmodeled.
+func checkCIPushTrigger(wf *workflowFile) []string {
+	if wf.ctx.hasPush {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"%s must declare an on: push trigger; without it the push-to-staging release-eligibility leg and the push-parity check are vacuous",
+		ciWorkflowPath)}
 }
 
 // checkExactConditions pins the conditions of the jobs whose trigger set the

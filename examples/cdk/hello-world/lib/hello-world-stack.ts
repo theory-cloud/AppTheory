@@ -151,7 +151,12 @@ export class HelloWorldStack extends Stack {
           handler: "bootstrap",
           code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "go"), {
             assetHashType: cdk.AssetHashType.CUSTOM,
-            assetHash: assetHashFor([path.join(__dirname, "..", "handlers", "go")]),
+            assetHash: assetHashFor([
+              path.join(__dirname, "..", "handlers", "go"),
+              path.join(repoRoot, "runtime"),
+              path.join(repoRoot, "go.mod"),
+              path.join(repoRoot, "go.sum"),
+            ]),
             bundling: {
               image: cdk.DockerImage.fromRegistry("golang:1.27"),
               command: [
@@ -193,10 +198,8 @@ export class HelloWorldStack extends Stack {
           code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "ts"), {
             assetHashType: cdk.AssetHashType.CUSTOM,
             assetHash: assetHashFor([
-              path.join(__dirname, "..", "handlers", "ts", "app.mjs"),
-              path.join(__dirname, "..", "handlers", "ts", "handler.mjs"),
-              path.join(__dirname, "..", "handlers", "ts", "package.json"),
-              path.join(repoRoot, "ts", "dist", "index.js"),
+              path.join(__dirname, "..", "handlers", "ts"),
+              path.join(repoRoot, "ts", "dist"),
             ]),
             bundling: {
               image: lambda.Runtime.NODEJS_24_X.bundlingImage,
@@ -208,8 +211,7 @@ export class HelloWorldStack extends Stack {
                   copyFileSync(path.join(handlerDir, "app.mjs"), path.join(outputDir, "app.mjs"));
                   copyFileSync(path.join(handlerDir, "handler.mjs"), path.join(outputDir, "handler.mjs"));
                   copyFileSync(path.join(handlerDir, "package.json"), path.join(outputDir, "package.json"));
-                  mkdirSync(path.join(outputDir, "vendor", "apptheory"), { recursive: true });
-                  copyFileSync(path.join(repoRoot, "ts", "dist", "index.js"), path.join(outputDir, "vendor", "apptheory", "index.js"));
+                  copyDir(path.join(repoRoot, "ts", "dist"), path.join(outputDir, "vendor", "apptheory"));
                   return true;
                 },
               },

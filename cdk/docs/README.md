@@ -101,7 +101,7 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `cdk/.jsii`.
 
 <details>
-<summary>150 exported top-level symbols</summary>
+<summary>152 exported top-level symbols</summary>
 
 ```text
 ApiBypassConfig, AppTheoryApiDomain, AppTheoryApiDomainProps, AppTheoryApp, AppTheoryAppProps
@@ -117,7 +117,8 @@ AppTheoryHttpIngestionEndpointProps, AppTheoryHttpIngestionEndpointStageOptions,
 AppTheoryKinesisStreamMapping, AppTheoryKinesisStreamMappingProps, AppTheoryKinesisStreamProps, AppTheoryKmsKey, AppTheoryKmsKeyProps
 AppTheoryLambdaRole, AppTheoryLambdaRoleProps, AppTheoryLambdaTrafficShiftType, AppTheoryMcpPaths, AppTheoryMcpProtectedResource, AppTheoryMcpProtectedResourceProps
 AppTheoryMcpRouteFamily, AppTheoryMcpServer, AppTheoryMcpServerDomainOptions, AppTheoryMcpServerFacadeRoute, AppTheoryMcpServerOwnedApiOptions
-AppTheoryMcpServerProps, AppTheoryMcpServerRouteInventory, AppTheoryMcpServerStageOptions, AppTheoryMcpSessionStateOptions, AppTheoryMediaCdn
+AppTheoryMcpServerProps, AppTheoryMcpServerRouteInventory, AppTheoryMcpServerStageOptions, AppTheoryMcpSessionStateOptions, AppTheoryMcpTransportAuthorizerKind
+AppTheoryMcpTransportAuthorizerOptions, AppTheoryMediaCdn
 AppTheoryMediaCdnProps, AppTheoryMicrovmController, AppTheoryMicrovmControllerFunctionProps, AppTheoryMicrovmControllerProps, AppTheoryMicrovmControllerStageOptions
 AppTheoryMicrovmHookMode, AppTheoryMicrovmImage, AppTheoryMicrovmImageBuildHooks, AppTheoryMicrovmImageCloudWatchLogging, AppTheoryMicrovmImageCodeArtifact
 AppTheoryMicrovmImageCpuArchitecture, AppTheoryMicrovmImageCpuConfiguration, AppTheoryMicrovmImageEnvironmentVariable, AppTheoryMicrovmImageHooks, AppTheoryMicrovmImageLogging

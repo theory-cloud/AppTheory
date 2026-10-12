@@ -42,7 +42,7 @@ vectors.grantBedrockInvokeModel(api);
 - `grantReadVectors`: `GetVectorBucket`, `GetIndex`, `GetVectors`, `ListVectors`
 - `grantWriteVectors`: `GetVectorBucket`, `GetIndex`, `PutVectors`, `DeleteVectors`
 - `grantManage`: read/query/write plus index and bucket management actions
-- `grantBedrockInvokeModel`: explicit `bedrock:InvokeModel` for embedding helpers
+- `grantBedrockInvokeModel`: explicit `bedrock:InvokeModel` for embedding helpers; the default resource ARN is scoped to the configured Titan model in the stack's partition and region, and an explicit `modelResourceArn` (including `"*"`) sets a different scope
 
 ## Contract boundary
 

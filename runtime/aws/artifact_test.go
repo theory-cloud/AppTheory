@@ -553,6 +553,152 @@ func TestVerifyVersionedArtifactRejectsTooManyEntries(t *testing.T) {
 	assertArchiveInvalid(t, tarArchive(t, members))
 }
 
+// TestArtifactMemberIsSparse covers both archive forms that expand members on
+// read: the old GNU sparse type flag and the GNU PAX 1.0/0.1 form surfaced as a
+// regular file with GNU.sparse.* records.
+func TestArtifactMemberIsSparse(t *testing.T) {
+	t.Parallel()
+
+	if artifactMemberIsSparse(nil) {
+		t.Fatal("nil header must not be sparse")
+	}
+	if artifactMemberIsSparse(&tar.Header{Typeflag: tar.TypeReg}) {
+		t.Fatal("a plain regular file must not be sparse")
+	}
+	if !artifactMemberIsSparse(&tar.Header{Typeflag: tar.TypeGNUSparse}) {
+		t.Fatal("the old GNU sparse type flag must be detected")
+	}
+	if !artifactMemberIsSparse(&tar.Header{
+		Typeflag:   tar.TypeReg,
+		PAXRecords: map[string]string{"GNU.sparse.major": "1"},
+	}) {
+		t.Fatal("a GNU PAX sparse regular file must be detected")
+	}
+}
+
+// TestVerifyVersionedArtifactRejectsSparseMembers covers F4: a small physical tar
+// whose members are GNU PAX sparse regular files (far larger logical than
+// physical) must be rejected before any member is materialized.
+func TestVerifyVersionedArtifactRejectsSparseMembers(t *testing.T) {
+	t.Parallel()
+
+	const logicalSize = 1 << 20 // 1 MiB logical from a single 512-byte physical block
+	raw := sparsePAXArchive(t, logicalSize)
+
+	// Prove the crafted shape first, so this test fails loudly if the craft stops
+	// producing a PAX sparse regular file rather than silently testing nothing.
+	tr := tar.NewReader(bytes.NewReader(raw))
+	hdr, err := tr.Next()
+	if err != nil {
+		t.Fatalf("crafted archive Next() error = %v", err)
+	}
+	if hdr.Typeflag != tar.TypeReg || hdr.Size != logicalSize || hdr.PAXRecords["GNU.sparse.major"] == "" {
+		t.Fatalf("crafted member is not a PAX sparse regular file: type=%q size=%d pax=%v", hdr.Typeflag, hdr.Size, hdr.PAXRecords)
+	}
+	if int64(len(raw)) > MaxVersionedArtifactBytes {
+		t.Fatalf("crafted archive is %d physical bytes, want <= %d", len(raw), MaxVersionedArtifactBytes)
+	}
+
+	assertArchiveInvalidReason(t, raw, "is a sparse file")
+}
+
+// TestReadVersionedArtifactArchiveRejectsCumulativeLogicalOverflow covers F4's
+// cumulative logical ceiling directly: two members that each satisfy the
+// per-member ceiling but whose sum exceeds the cumulative ceiling are rejected
+// before the overflowing member is allocated.
+func TestReadVersionedArtifactArchiveRejectsCumulativeLogicalOverflow(t *testing.T) {
+	t.Parallel()
+
+	perMember := MaxVersionedArtifactBytes/2 + 1
+	raw := tarArchive(t, []archiveMember{
+		{path: "a.bin", content: strings.Repeat("a", int(perMember)), typeflag: tar.TypeReg},
+		{path: "b.bin", content: strings.Repeat("b", int(perMember)), typeflag: tar.TypeReg},
+	})
+	_, err := readVersionedArtifactArchive(raw)
+	if err == nil || !strings.Contains(err.Error(), "archive logical content exceeds") {
+		t.Fatalf("readVersionedArtifactArchive() error = %v, want cumulative logical overflow", err)
+	}
+}
+
+// sparsePAXArchive hand-encodes a GNU PAX 0.1 archive with one sparse regular
+// member: the PAX records carry the logical size and the sparse map, while the
+// member occupies a single 512-byte physical block. Go's archive/tar expands it
+// to logicalSize on read, which is the amplification the artifact verifier must
+// reject.
+func sparsePAXArchive(t *testing.T, logicalSize int64) []byte {
+	t.Helper()
+
+	pax := tarPAXRecord("GNU.sparse.major", "0") +
+		tarPAXRecord("GNU.sparse.minor", "1") +
+		tarPAXRecord("GNU.sparse.name", "member.bin") +
+		tarPAXRecord("GNU.sparse.size", fmt.Sprintf("%d", logicalSize)) +
+		tarPAXRecord("GNU.sparse.numblocks", "1") +
+		tarPAXRecord("GNU.sparse.map", "0,512")
+
+	var buf bytes.Buffer
+	buf.Write(tarHeaderBlock(t, "PaxHeaders.0/member.bin", int64(len(pax)), tar.TypeXHeader))
+	buf.WriteString(pax)
+	if pad := (512 - len(pax)%512) % 512; pad > 0 {
+		buf.Write(make([]byte, pad))
+	}
+	buf.Write(tarHeaderBlock(t, "member.bin", 512, tar.TypeReg))
+	buf.Write(make([]byte, 512))
+	buf.Write(make([]byte, 1024)) // end-of-archive marker
+	return buf.Bytes()
+}
+
+// tarPAXRecord encodes one POSIX PAX extended-header record ("<len> key=value\n").
+func tarPAXRecord(key, value string) string {
+	body := " " + key + "=" + value + "\n"
+	length := len(body) + 1
+	for {
+		digits := fmt.Sprintf("%d", length)
+		if len(digits)+len(body) == length {
+			return digits + body
+		}
+		length = len(digits) + len(body)
+	}
+}
+
+// tarHeaderBlock encodes one raw 512-byte tar header block.
+func tarHeaderBlock(t *testing.T, name string, size int64, typeflag byte) []byte {
+	t.Helper()
+
+	block := make([]byte, 512)
+	copy(block[0:100], name)
+	copy(block[100:108], tarOctalField(0o644, 8))
+	copy(block[108:116], tarOctalField(0, 8))
+	copy(block[116:124], tarOctalField(0, 8))
+	copy(block[124:136], tarOctalField(size, 12))
+	copy(block[136:148], tarOctalField(0, 12))
+	for i := 148; i < 156; i++ {
+		block[i] = ' '
+	}
+	block[156] = typeflag
+	copy(block[257:263], "ustar\x00")
+	copy(block[263:265], "00")
+	var sum int64
+	for _, value := range block {
+		sum += int64(value)
+	}
+	copy(block[148:154], fmt.Sprintf("%06o", sum))
+	block[154] = 0
+	block[155] = ' '
+	return block
+}
+
+// tarOctalField encodes a numeric tar field as N-1 octal digits terminated by NUL.
+func tarOctalField(value int64, width int) []byte {
+	out := make([]byte, width)
+	for i := range out {
+		out[i] = '0'
+	}
+	digits := fmt.Sprintf("%o", value)
+	copy(out[width-1-len(digits):width-1], digits)
+	out[width-1] = 0
+	return out
+}
+
 func TestVerifyVersionedArtifactRejectsDuplicateMemberPaths(t *testing.T) {
 	t.Parallel()
 

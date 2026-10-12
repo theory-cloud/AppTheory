@@ -349,22 +349,45 @@ export class TitanEmbedder {
         return out;
     }
 }
+function normalizeBudget(value) {
+    const budget = Math.floor(Number(value ?? 0));
+    return Number.isFinite(budget) && budget > 0 ? budget : 0;
+}
+function assertIngestBudget(records, maxRecords, maxTextBytes) {
+    if (maxRecords > 0 && records.length > maxRecords) {
+        throw new VectorStoreError(VECTORSTORE_ERROR_INVALID_INPUT, `vectorstore: semantic ingest exceeds the record budget of ${maxRecords}`);
+    }
+    if (maxTextBytes > 0) {
+        let totalBytes = 0;
+        for (const record of records) {
+            totalBytes += Buffer.byteLength(String(record.text ?? ""), "utf8");
+        }
+        if (totalBytes > maxTextBytes) {
+            throw new VectorStoreError(VECTORSTORE_ERROR_INVALID_INPUT, `vectorstore: semantic ingest exceeds the text byte budget of ${maxTextBytes}`);
+        }
+    }
+}
 export class SemanticIndex {
     store;
     embedder;
     dimension;
     requiredMetadataKeys;
+    maxRecords;
+    maxTextBytes;
     constructor(config) {
         this.store = config.store;
         this.embedder = config.embedder;
         this.dimension = config.dimension;
         this.requiredMetadataKeys = config.requiredMetadataKeys ?? [];
+        this.maxRecords = normalizeBudget(config.maxRecords);
+        this.maxTextBytes = normalizeBudget(config.maxTextBytes);
         validateDimension(this.dimension);
     }
     async putText(records) {
         if (!records.length) {
             throw new VectorStoreError(VECTORSTORE_ERROR_INVALID_INPUT, "vectorstore: at least one semantic record is required");
         }
+        assertIngestBudget(records, this.maxRecords, this.maxTextBytes);
         for (const record of records) {
             validateKey(record.key);
             if (!record.text.trim()) {

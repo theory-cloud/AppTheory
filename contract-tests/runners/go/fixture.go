@@ -443,6 +443,8 @@ type FixtureMicroVMRouteSetup struct {
 	TenantID           string                           `json:"tenant_id,omitempty"`
 	Namespace          string                           `json:"namespace,omitempty"`
 	SessionID          string                           `json:"session_id,omitempty"`
+	TenantClaim        string                           `json:"tenant_claim,omitempty"`
+	PrincipalTenantID  string                           `json:"principal_tenant_id,omitempty"`
 	DeploymentDefaults FixtureMicroVMDeploymentDefaults `json:"deployment_defaults,omitempty"`
 }
 

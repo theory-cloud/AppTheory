@@ -1,11 +1,11 @@
 module github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v5
 
-go 1.25.0
+go 1.26.0
 
 require (
-	github.com/aws/aws-cdk-go/awscdk/v2 v2.271.0
+	github.com/aws/aws-cdk-go/awscdk/v2 v2.273.0
 	github.com/aws/constructs-go/constructs/v10 v10.8.1
-	github.com/aws/jsii-runtime-go v1.140.0
+	github.com/aws/jsii-runtime-go v1.141.0
 )
 
 require (

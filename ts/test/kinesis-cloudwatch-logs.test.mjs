@@ -212,6 +212,78 @@ test("cloudWatchLogsSubscriptionData builds synthetic payloads that decode throu
   assert.equal(decoded.safe_summary.log_event_count, 1);
 });
 
+test("decodeCloudWatchLogsSubscription rejects an unknown top-level field", () => {
+  assert.throws(
+    () =>
+      decodeCloudWatchLogsSubscription({
+        eventID: "kin-cwl-junk",
+        kinesis: {
+          data: gzipPayload({
+            messageType: "DATA_MESSAGE",
+            owner: "111122223333",
+            logGroup: "/aws/lambda/apptheory-contract",
+            logStream: "2026/05/26/stream-a",
+            subscriptionFilters: ["filter"],
+            logEvents: [{ id: "cwl-event-a1", message: "m" }],
+            junk: [{}, {}],
+          }).toString("base64"),
+        },
+      }),
+    /unknown field/,
+  );
+});
+
+test("decodeCloudWatchLogsSubscription rejects a high compression ratio", () => {
+  const raw = Buffer.from(
+    JSON.stringify({
+      messageType: "DATA_MESSAGE",
+      owner: "111122223333",
+      logGroup: "/aws/lambda/apptheory-contract",
+      logStream: "2026/05/26/stream-a",
+      subscriptionFilters: ["filter"],
+      logEvents: [
+        { id: "cwl-event-a1", timestamp: 0, message: "A".repeat(1_900_000) },
+      ],
+    }),
+    "utf8",
+  );
+  // Strong compression represents the attacker's own record: the decoded size
+  // stays under the decoded cap but the ratio is well above the bound.
+  const compressed = gzipSync(raw, { level: 9 });
+  assert.throws(
+    () =>
+      decodeCloudWatchLogsSubscription({
+        eventID: "kin-cwl-ratio",
+        kinesis: { data: compressed.toString("base64") },
+      }),
+    /compression ratio/,
+  );
+});
+
+test("decodeCloudWatchLogsSubscription rejects excessive logEvents cardinality", () => {
+  const logEvents = [];
+  for (let i = 0; i < 10001; i += 1) {
+    logEvents.push({ id: `cwl-event-${i}`, message: "m" });
+  }
+  assert.throws(
+    () =>
+      decodeCloudWatchLogsSubscription({
+        eventID: "kin-cwl-cardinality",
+        kinesis: {
+          data: gzipPayload({
+            messageType: "DATA_MESSAGE",
+            owner: "111122223333",
+            logGroup: "/aws/lambda/apptheory-contract",
+            logStream: "2026/05/26/stream-a",
+            subscriptionFilters: ["filter"],
+            logEvents,
+          }).toString("base64"),
+        },
+      }),
+    /too many logEvents/,
+  );
+});
+
 function gzipPayload(value) {
   return gzipSync(Buffer.from(JSON.stringify(value), "utf8"));
 }

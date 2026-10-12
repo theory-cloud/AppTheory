@@ -80,7 +80,9 @@
           "path": "/limited/store-failure",
           "status": "503",
           "error_code": "app.overloaded",
-          "tenant_id": "tenant_store"
+          "tenant_id": "tenant_store",
+          "route": "/limited/store-failure",
+          "status_class": "5xx"
         },
         "duration_ms": 0
       }

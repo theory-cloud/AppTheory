@@ -1,49 +1,23 @@
 // Purpose: validate the reviewed AWS CDK dependency graph - cdk/package-lock.json
 // plus every example lockfile the governance gate routes here - and prove that
-// the only vulnerability findings visible to the cdk npm-audit / OSV audit
-// surface are the two reviewed, self-expiring exceptions documented below.
+// the only vulnerability finding visible to the cdk npm-audit / OSV audit
+// surface is the one reviewed, self-expiring exception documented below.
 //
 // ===========================================================================
-// Reviewed, self-expiring dependency-audit exceptions
+// Reviewed, self-expiring dependency-audit exception
 // ===========================================================================
-// Operator rulings quoted verbatim. These are the rulings that
+// Operator ruling quoted verbatim. This is the ruling that
 // gov-infra/planning/apptheory-10of10-rubric.md SEC-2 ("none may be added
 // without an operator ruling") requires:
 //
-//   * 2026-10-03: "if a vulnerable dependency is bundled in AWS we make an
-//     exception until its updated there."
-//   * 2026-10-04: the same treatment applies, for consistency, to AWS-published
-//     build toolchain transitive chains with no upstream fix.
+//   * 2026-10-04: an AWS-published build-toolchain transitive chain with no
+//     upstream fix gets the same treatment as an AWS-published bundled
+//     dependency ("if a vulnerable dependency is bundled in AWS we make an
+//     exception until its updated there", 2026-10-03).
 //
-// Both exceptions live in ONE shared list (EXCEPTIONS below). The npm scanner
-// path and the OSV scanner path match findings against that same list and
-// nothing else; no other code path can suppress a finding.
-//
-// ---------------------------------------------------------------------------
-// E1 - brace-expansion 5.0.9 bundled inside aws-cdk-lib
-// ---------------------------------------------------------------------------
-// Finding   GHSA-q2hr-2g5m-vwhr (moderate), GHSA-qhr7-859c-m2p7 (high), and
-//           GHSA-6j4f-fj2g-mc7p (high) on brace-expansion@5.0.9 at
-//           node_modules/aws-cdk-lib/node_modules/brace-expansion (inBundle),
-//           reached only through aws-cdk-lib's own bundled minimatch. AWS
-//           publishes it; AppTheory never ships it (aws-cdk-lib is a
-//           synth/deploy-time library, not a Lambda runtime dependency, so no
-//           runtime package or Lambda bundle contains the vulnerable code).
-// Why an upgrade cannot resolve it (2026-10-04): aws-cdk-lib 2.271.0 still
-//           bundles brace-expansion 5.0.9 inside its published tarball. The
-//           upstream fix (brace-expansion >= 5.0.12) exists on npm, but no
-//           consumer can install it into the bundled subtree - only AWS can
-//           publish a tarball that bundles the patched release.
-// Ruling:   2026-10-03 ("... if a vulnerable dependency is bundled in AWS we
-//           make an exception until its updated there.").
-// Scope:    every npm lockfile in this repository whose installed tree carries
-//           the bundled path above (E1.lockfiles; the SEC-2 gate scans the same
-//           set). Before 2026-10-06 the exception named only cdk/ and four
-//           examples, so eight other example lockfiles resolved the identical
-//           vulnerable AWS path with no gate coverage and no way to record it.
-// Owner:    AppTheory steward (Factory dependency sweeps).
-// Removal condition: the aws-cdk-lib version this repository pins bundles
-//           brace-expansion >= 5.0.12.
+// One exception remains (EXCEPTIONS below). The npm scanner path and the OSV
+// scanner path match findings against that list and nothing else; no other code
+// path can suppress a finding.
 //
 // ---------------------------------------------------------------------------
 // E2 - braces 3.0.3 in the jsii build toolchain
@@ -61,27 +35,44 @@
 //           jsii-rosetta / fast-glob / micromatch chain has no newer release
 //           that drops the braces dependency.
 // Ruling:   2026-10-04 (AWS-published build-toolchain transitive chain with no
-//           upstream fix, same treatment as E1).
+//           upstream fix).
 // Removal condition: a patched braces (> 3.0.3) is published, or the jsii
 //           toolchain no longer resolves braces <= 3.0.3.
 //
 // ---------------------------------------------------------------------------
+// Retired 2026-10-10 - brace-expansion bundled inside aws-cdk-lib
+// ---------------------------------------------------------------------------
+// The former E1 exception covered GHSA-6j4f-fj2g-mc7p, GHSA-q2hr-2g5m-vwhr, and
+// GHSA-qhr7-859c-m2p7 on brace-expansion@5.0.9 at
+// node_modules/aws-cdk-lib/node_modules/brace-expansion (inBundle), reached only
+// through aws-cdk-lib's own bundled minimatch. Its documented removal condition -
+// "the aws-cdk-lib version this repository pins bundles brace-expansion >=
+// 5.0.12" - is now met: this repository pins aws-cdk-lib 2.273.0, whose
+// published tarball bundles brace-expansion 5.0.12. Retiring the exception is
+// STANDARD MAINTENANCE, not a new exception grant.
+//
+// Nothing excuses the bundled path any more. Exactly as before, every routed
+// lockfile must satisfy the reviewed bundled-graph anchor below, and that anchor
+// now asserts the FIXED graph positively (brace-expansion >= 5.0.12). A
+// vulnerable bundle, an advisory on the bundled path, or any graph / node-path
+// drift fails closed as an unexpected finding.
+//
+// ---------------------------------------------------------------------------
 // Enforcement
 // ---------------------------------------------------------------------------
-// Both exceptions are exact: lockfile, package, version, node path / dependency
-// chain, and advisory ids. They are ALSO self-expiring and fail closed:
-//   * recheck_by 2026-11-02 - after that date neither exception applies and the
-//     checker fails, forcing a fresh review;
+// The remaining exception is exact: lockfile, package, version, node path /
+// dependency chain, and advisory ids. It is ALSO self-expiring and fail closed:
+//   * recheck_by 2026-11-02 - after that date the exception no longer applies
+//     and the checker fails, forcing a fresh review;
 //   * a removal probe runs on every invocation (never only when a finding
 //     happens to appear), so a stale exception cannot survive by simply never
 //     matching again; when a removal condition is met the checker fails with a
 //     clear "removal condition met" message.
-// The npm registry exposes only bundle NAMES, not the versions AWS bundles, so
-// E1's removal probe combines a registry check (the pinned aws-cdk-lib still
-// declares the bundled minimatch, and the patched brace-expansion release this
-// exception waits on is still published) with the lockfile's authoritative
-// record of the bundle version. An unreachable npm registry is reported as
-// BLOCKED (exit 2), never assumed clean.
+// The bundled-graph anchor is lockfile-local and needs no network: it fails
+// closed on a vulnerable bundle (any version below the patched floor), a
+// different bundled version, or any node-path drift. The E2 removal probe reads
+// the npm registry; an unreachable registry is reported as BLOCKED (exit 2),
+// never assumed clean.
 // Machine contract: when an exception is applied the checker prints one line to
 // stdout per exception beginning "exception-applied: " so a calling gate can
 // prove that a non-zero scanner exit was caused by exactly the reviewed finding.
@@ -266,15 +257,19 @@ function canonicalLockfilePath(value) {
 // The one shared exception list.
 // ---------------------------------------------------------------------------
 
-// The patched bundled graph anchor: the exact AWS CDK bundled brace-expansion
-// path this repository resolves after the aws-cdk-lib 2.271.0 bump. It is not an
+// The reviewed bundled graph anchor: the exact AWS CDK bundled brace-expansion
+// path this repository resolves after the aws-cdk-lib 2.273.0 bump, whose
+// published tarball bundles the patched brace-expansion 5.0.12. It is not an
 // exception; it is the integrity assertion every routed lockfile must satisfy.
+// It fails closed on a vulnerable bundle (any version below the patched floor),
+// on a different bundled version, and on any node-path drift.
 const AWS_CDK_BUNDLE = {
   packageName: "brace-expansion",
   packagePath: "node_modules/aws-cdk-lib/node_modules/brace-expansion",
-  packageVersion: "5.0.9",
-  cdkVersion: "2.271.0",
+  packageVersion: "5.0.12",
+  cdkVersion: "2.273.0",
   minimatchVersion: "10.2.5",
+  patchedFloor: "5.0.12",
 };
 
 const expectation = {
@@ -291,63 +286,29 @@ const expectation = {
 };
 
 // Every npm lockfile in this repository whose installed tree carries the
-// bundled AWS path. Each was verified on 2026-10-06 to resolve exactly one
-// brace-expansion, at node_modules/aws-cdk-lib/node_modules/brace-expansion
-// inside the pinned aws-cdk-lib 2.271.0 tarball, and to report exactly the
-// three advisories listed below and nothing else. This list must stay identical
-// to the Node lockfile set the SEC-2 gate scans (gov-verify-rubric.sh's
-// node_lockfiles / osv_scan_lockfile); any lockfile outside this list that
-// starts routing here still fails closed, because no exception would match its
-// findings or its lockfile.
-const E1 = {
-  exceptionId: "aws-cdk-lib-bundled-brace-expansion",
-  kind: "bundled",
-  lockfiles: [
-    "cdk/package-lock.json",
-    "examples/cdk/codebuild-job-runner/package-lock.json",
-    "examples/cdk/hello-world/package-lock.json",
-    "examples/cdk/import-pipeline/package-lock.json",
-    "examples/cdk/kinesis-cloudwatch-logs/package-lock.json",
-    "examples/cdk/lambda-role/package-lock.json",
-    "examples/cdk/lesser-parity/package-lock.json",
-    "examples/cdk/microvm-controller/package-lock.json",
-    "examples/cdk/multilang/package-lock.json",
-    "examples/cdk/s3-vectors-semantic-search/package-lock.json",
-    "examples/cdk/sqs-queue/package-lock.json",
-    "examples/cdk/ssr-only-provided-assets-site/package-lock.json",
-    "examples/cdk/ssr-site/package-lock.json",
-  ],
-  packageName: AWS_CDK_BUNDLE.packageName,
-  packagePath: AWS_CDK_BUNDLE.packagePath,
-  packageVersion: AWS_CDK_BUNDLE.packageVersion,
-  patchedFloor: "5.0.12",
-  cdkVersion: AWS_CDK_BUNDLE.cdkVersion,
-  bundleAnchor: "minimatch",
-  advisories: [
-    {
-      id: "GHSA-6j4f-fj2g-mc7p",
-      alias: "CVE-2026-102276",
-      url: "https://github.com/advisories/GHSA-6j4f-fj2g-mc7p",
-    },
-    {
-      id: "GHSA-q2hr-2g5m-vwhr",
-      alias: "CVE-2026-102277",
-      url: "https://github.com/advisories/GHSA-q2hr-2g5m-vwhr",
-    },
-    {
-      id: "GHSA-qhr7-859c-m2p7",
-      alias: "CVE-2026-102278",
-      url: "https://github.com/advisories/GHSA-qhr7-859c-m2p7",
-    },
-  ],
-  operatorRuling: "2026-10-03",
-  owner: "theory-cloud/AppTheory steward (Factory dependency sweeps)",
-  recheckBy: "2026-11-02",
-  justification:
-    "AWS-published: aws-cdk-lib bundles brace-expansion 5.0.9 inside its tarball and only AWS can publish a tarball that bundles the patched release. Build-time only; AppTheory ships no runtime package or Lambda with it. Operator-ruled 2026-10-03; scope widened on 2026-10-06 to every repository lockfile carrying the identical bundled path, so the SEC-2 gate scans and reports each one instead of ignoring it. Self-expiring; see the removal condition in this file.",
-  removalCondition:
-    "the aws-cdk-lib version this repository pins bundles brace-expansion >= 5.0.12",
-};
+// bundled AWS CDK path. Each resolves exactly one brace-expansion, at
+// node_modules/aws-cdk-lib/node_modules/brace-expansion inside the pinned
+// aws-cdk-lib tarball, and the SEC-2 gate scans this same set (plus
+// ts/package-lock.json, whose class routes to the TypeScript checker instead).
+// This list must stay identical to the Node lockfile set gov-verify-rubric.sh
+// scans; any lockfile outside this list that starts routing here still fails
+// closed, because the bundled-graph anchor above is enforced on every routed
+// lockfile.
+const AWS_CDK_LOCKFILES = [
+  "cdk/package-lock.json",
+  "examples/cdk/codebuild-job-runner/package-lock.json",
+  "examples/cdk/hello-world/package-lock.json",
+  "examples/cdk/import-pipeline/package-lock.json",
+  "examples/cdk/kinesis-cloudwatch-logs/package-lock.json",
+  "examples/cdk/lambda-role/package-lock.json",
+  "examples/cdk/lesser-parity/package-lock.json",
+  "examples/cdk/microvm-controller/package-lock.json",
+  "examples/cdk/multilang/package-lock.json",
+  "examples/cdk/s3-vectors-semantic-search/package-lock.json",
+  "examples/cdk/sqs-queue/package-lock.json",
+  "examples/cdk/ssr-only-provided-assets-site/package-lock.json",
+  "examples/cdk/ssr-site/package-lock.json",
+];
 
 const E2 = {
   exceptionId: "jsii-toolchain-braces",
@@ -378,12 +339,12 @@ const E2 = {
   owner: "theory-cloud/AppTheory steward (Factory dependency sweeps)",
   recheckBy: "2026-11-02",
   justification:
-    "AWS-published build-toolchain transitive chain with no upstream fix: braces <= 3.0.3 is affected and npm publishes no patched release, so the jsii-pacmak dev toolchain cannot be upgraded out of it. Build-time only; AppTheory ships no runtime package or Lambda with it. Operator-ruled 2026-10-04, same treatment as E1. Self-expiring; see the removal condition in this file.",
+    "AWS-published build-toolchain transitive chain with no upstream fix: braces <= 3.0.3 is affected and npm publishes no patched release, so the jsii-pacmak dev toolchain cannot be upgraded out of it. Build-time only; AppTheory ships no runtime package or Lambda with it. Operator-ruled 2026-10-04, same treatment as the retired bundled-dependency exception. Self-expiring; see the removal condition in this file.",
   removalCondition:
     "a patched braces (> 3.0.3) is published, or the jsii toolchain no longer resolves braces <= 3.0.3",
 };
 
-const EXCEPTIONS = [E1, E2];
+const EXCEPTIONS = [E2];
 
 function exceptionById(exceptionId) {
   return EXCEPTIONS.find((exception) => exception.exceptionId === exceptionId) ?? null;
@@ -417,50 +378,36 @@ function npmViaPropagationNames(via) {
   return entries.slice();
 }
 
+// The only reviewed finding shapes are E2's: the braces root and its exact
+// propagation chain, on the cdk lockfile alone. A finding on the bundled
+// aws-cdk-lib path (the retired E1 shape) no longer matches anything here.
 function npmMatchingException(name, vuln, canonicalLockfile) {
-  for (const exception of EXCEPTIONS) {
-    if (!exception.lockfiles.includes(canonicalLockfile)) continue;
-    if (exception === E1) {
-      const urls = npmViaAdvisoryUrls(vuln.via);
-      if (
-        name === exception.packageName &&
-        vuln.name === exception.packageName &&
-        urls !== null &&
-        sameStringSet(urls, exception.advisories.map((advisory) => advisory.url)) &&
-        sameStringSet(stringList(vuln.nodes), [exception.packagePath]) &&
-        sameStringSet(stringList(vuln.effects), [])
-      ) {
-        return exception;
-      }
-      continue;
+  const exception = E2;
+  if (!exception.lockfiles.includes(canonicalLockfile)) return null;
+  if (name === exception.packageName) {
+    const urls = npmViaAdvisoryUrls(vuln.via);
+    if (
+      vuln.name === exception.packageName &&
+      urls !== null &&
+      sameStringSet(urls, exception.advisories.map((advisory) => advisory.url)) &&
+      sameStringSet(stringList(vuln.nodes), [exception.packagePath]) &&
+      sameStringSet(stringList(vuln.effects), exception.effects)
+    ) {
+      return exception;
     }
-    if (exception === E2) {
-      if (name === exception.packageName) {
-        const urls = npmViaAdvisoryUrls(vuln.via);
-        if (
-          vuln.name === exception.packageName &&
-          urls !== null &&
-          sameStringSet(urls, exception.advisories.map((advisory) => advisory.url)) &&
-          sameStringSet(stringList(vuln.nodes), [exception.packagePath]) &&
-          sameStringSet(stringList(vuln.effects), exception.effects)
-        ) {
-          return exception;
-        }
-        continue;
-      }
-      const link = exception.chain.find((candidate) => candidate.name === name);
-      if (!link) continue;
-      const propagation = npmViaPropagationNames(vuln.via);
-      if (
-        vuln.name === link.name &&
-        propagation !== null &&
-        sameStringSet(propagation, [link.via]) &&
-        sameStringSet(stringList(vuln.nodes), [link.path]) &&
-        sameStringSet(stringList(vuln.effects), link.effects)
-      ) {
-        return exception;
-      }
-    }
+    return null;
+  }
+  const link = exception.chain.find((candidate) => candidate.name === name);
+  if (!link) return null;
+  const propagation = npmViaPropagationNames(vuln.via);
+  if (
+    vuln.name === link.name &&
+    propagation !== null &&
+    sameStringSet(propagation, [link.via]) &&
+    sameStringSet(stringList(vuln.nodes), [link.path]) &&
+    sameStringSet(stringList(vuln.effects), link.effects)
+  ) {
+    return exception;
   }
   return null;
 }
@@ -497,8 +444,8 @@ function osvMatchingException(result, pkg, vuln, canonicalLockfile) {
 // Lockfile graph assertions (the fail-closed anchors)
 // ---------------------------------------------------------------------------
 
-// Problems with the patched bundled AWS CDK brace-expansion graph. An empty
-// list means the lockfile matches the reviewed bundle exactly. Pure so the
+// Problems with the fixed bundled AWS CDK brace-expansion graph. An empty list
+// means the lockfile matches the reviewed fixed bundle exactly. Pure so the
 // self-test can drive it.
 function awsCdkBundleGraphProblems(packages) {
   const problems = [];
@@ -524,20 +471,20 @@ function awsCdkBundleGraphProblems(packages) {
 
   if (!graphMatches) {
     problems.push(
-      `lockfile graph no longer matches the patched AWS CDK bundled ${expectation.packageName} path`,
+      `lockfile graph no longer matches the reviewed fixed AWS CDK bundled ${expectation.packageName} path`,
     );
     return problems;
   }
 
   const bundledVersion = bracePackage?.version;
   if (bundledVersion !== expectation.packageVersion) {
-    if (bundledVersion && compareVersionStrings(bundledVersion, E1.patchedFloor) >= 0) {
+    if (bundledVersion && compareVersionStrings(bundledVersion, AWS_CDK_BUNDLE.patchedFloor) < 0) {
       problems.push(
-        `reviewed exception ${E1.exceptionId} removal condition met: the pinned aws-cdk-lib bundles ${E1.packageName} ${bundledVersion} >= ${E1.patchedFloor}; remove the exception`,
+        `the bundled aws-cdk-lib ${expectation.packageName} ${bundledVersion} is below the fixed floor ${AWS_CDK_BUNDLE.patchedFloor}; the vulnerable bundle must not ship`,
       );
     } else {
       problems.push(
-        `lockfile graph no longer matches the patched AWS CDK bundled ${expectation.packageName} path`,
+        `lockfile graph no longer matches the reviewed fixed AWS CDK bundled ${expectation.packageName} path`,
       );
     }
   }
@@ -605,24 +552,6 @@ function recheckExpired(nowIso, recheckBy) {
   return Date.parse(nowIso) >= Date.parse(`${recheckBy}T00:00:00Z`);
 }
 
-function e1RemovalReasons({ bundledVersion, cdkBundlesAnchor, publishedStableFixes }) {
-  const reasons = [];
-  if (cdkBundlesAnchor === false) {
-    reasons.push(`aws-cdk-lib@${E1.cdkVersion} no longer declares bundled ${E1.bundleAnchor}`);
-  }
-  if (publishedStableFixes.length === 0) {
-    reasons.push(
-      `the patched ${E1.packageName} release (>= ${E1.patchedFloor}) named by the removal condition is not published to npm`,
-    );
-  }
-  if (bundledVersion && compareVersionStrings(bundledVersion, E1.patchedFloor) >= 0) {
-    reasons.push(
-      `the pinned aws-cdk-lib bundles ${E1.packageName} ${bundledVersion} >= ${E1.patchedFloor}`,
-    );
-  }
-  return reasons;
-}
-
 function e2RemovalReasons({ publishedStablePatchedBraces }) {
   const reasons = [];
   if (publishedStablePatchedBraces.length > 0) {
@@ -657,28 +586,6 @@ async function fetchRegistryDocument(url, description, accept = "application/jso
   }
 }
 
-function bundleNames(manifest) {
-  const names = manifest?.bundleDependencies ?? manifest?.bundledDependencies;
-  return Array.isArray(names) ? names.map(String) : [];
-}
-
-async function e1RemovalProbe(packages) {
-  const braceDocument = await fetchRegistryDocument(
-    `${registryBaseUrl}/${E1.packageName}`,
-    `${E1.packageName} versions`,
-    "application/vnd.npm.install-v1+json",
-  );
-  const cdkDocument = await fetchRegistryDocument(
-    `${registryBaseUrl}/aws-cdk-lib/${encodeURIComponent(E1.cdkVersion)}`,
-    `aws-cdk-lib@${E1.cdkVersion} manifest`,
-  );
-  return e1RemovalReasons({
-    bundledVersion: packages[E1.packagePath]?.version,
-    cdkBundlesAnchor: bundleNames(cdkDocument).includes(E1.bundleAnchor),
-    publishedStableFixes: stableVersionsAtLeast(Object.keys(braceDocument.versions ?? {}), E1.patchedFloor),
-  });
-}
-
 async function e2RemovalProbe() {
   const bracesDocument = await fetchRegistryDocument(
     `${registryBaseUrl}/${E2.packageName}`,
@@ -698,10 +605,10 @@ async function e2RemovalProbe() {
 // on, plus the recheck_by boundary and each removal condition).
 // ---------------------------------------------------------------------------
 
-// Reads the SEC-2 Node scan set out of the governance verifier, so the
-// exception's lockfile scope and the gate's scan surface cannot drift apart
-// silently. Returns null when the array cannot be found, which fails the
-// comparison that uses it.
+// Reads the SEC-2 Node scan set out of the governance verifier, so the scanned
+// lockfile scope and the gate's scan surface cannot drift apart silently.
+// Returns null when the array cannot be found, which fails the comparison that
+// uses it.
 function rubricNodeLockfiles() {
   const verifierPath = path.join(repositoryRoot, "gov-infra/verifiers/gov-verify-rubric.sh");
   let source;
@@ -724,22 +631,15 @@ function runSelfTest() {
   const now = "2026-10-04T00:00:00Z";
   const canonical = "cdk/package-lock.json";
   const otherLockfile = "examples/cdk/multilang/package-lock.json";
-  // A lockfile that is deliberately NOT in E1.lockfiles. It stands in for an
-  // npm lockfile that starts routing to this checker without being reviewed.
+  // A lockfile that is deliberately NOT in AWS_CDK_LOCKFILES. It stands in for
+  // an npm lockfile that starts routing to this checker without being reviewed.
   const unroutedLockfile = "examples/cdk/not-yet-routed-site/package-lock.json";
   const cases = [];
 
-  const npmVuln = (overrides) => ({
-    name: "brace-expansion",
-    nodes: [E1.packagePath],
-    effects: [],
-    via: E1.advisories.map((advisory) => ({ url: advisory.url })),
-    ...overrides,
-  });
   const osvResult = (lockfile) => ({ source: { path: lockfile } });
   const osvPkg = (name, version) => ({ package: { ecosystem: "npm", name, version } });
 
-  // A synthetic lockfile that matches the reviewed bundles exactly, used to
+  // A synthetic lockfile that matches the reviewed fixed bundle exactly, used to
   // drive the graph assertions.
   const validPackages = () => ({
     "node_modules/aws-cdk-lib": { version: expectation.cdkVersion, bundleDependencies: ["minimatch"] },
@@ -749,7 +649,7 @@ function runSelfTest() {
       dependencies: { "brace-expansion": "^5.0.5" },
     },
     "node_modules/aws-cdk-lib/node_modules/brace-expansion": {
-      version: "5.0.9",
+      version: "5.0.12",
       inBundle: true,
       dependencies: { "balanced-match": "^4.0.2" },
     },
@@ -777,47 +677,7 @@ function runSelfTest() {
       expected,
     });
 
-  // Real positive shapes.
-  expectNpm("npm E1 real shape matches", "brace-expansion", npmVuln({}), canonical, true);
-  expectNpm(
-    "npm E1 real shape matches for a routed example lockfile",
-    "brace-expansion",
-    npmVuln({}),
-    otherLockfile,
-    true,
-  );
-  // Every lockfile in E1.lockfiles must be able to match, so a scope widening
-  // cannot silently leave a named lockfile unmatched.
-  for (const routedLockfile of E1.lockfiles) {
-    expectNpm(
-      `npm E1 matches routed lockfile ${routedLockfile}`,
-      "brace-expansion",
-      npmVuln({}),
-      routedLockfile,
-      true,
-    );
-  }
-  // A named lockfile that does not exist in the worktree would be a silent hole
-  // in the exception's scope, so every entry must resolve to a real file.
-  for (const routedLockfile of E1.lockfiles) {
-    cases.push({
-      label: `E1 named lockfile exists: ${routedLockfile}`,
-      actual: fs.existsSync(path.join(repositoryRoot, routedLockfile)),
-      expected: true,
-    });
-  }
-  // The exception's lockfile list and the SEC-2 gate's Node scan set must not
-  // drift apart: a lockfile the gate scans but the exception omits fails the
-  // gate, and one the exception names but the gate never scans is a recorded
-  // exception over nothing.
-  cases.push({
-    label: "E1.lockfiles and gov-verify-rubric.sh node_lockfiles agree",
-    actual: sameStringSet(
-      rubricNodeLockfiles(),
-      [...E1.lockfiles, "ts/package-lock.json"],
-    ),
-    expected: true,
-  });
+  // Real positive shape: E2's exact braces chain, on the cdk lockfile only.
   expectNpm(
     "npm E2 root real shape matches",
     "braces",
@@ -835,22 +695,6 @@ function runSelfTest() {
     );
   }
   expectOsv(
-    "osv E1 real shape matches",
-    osvResult(canonical),
-    osvPkg("brace-expansion", "5.0.9"),
-    { id: E1.advisories[0].id, aliases: [E1.advisories[0].alias] },
-    canonical,
-    true,
-  );
-  expectOsv(
-    "osv E1 matches an absolute source path for a routed example lockfile",
-    osvResult(`${repositoryRoot}/${otherLockfile}`),
-    osvPkg("brace-expansion", "5.0.9"),
-    { id: E1.advisories[2].id, aliases: [E1.advisories[2].alias] },
-    otherLockfile,
-    true,
-  );
-  expectOsv(
     "osv E2 real shape matches",
     osvResult(canonical),
     osvPkg("braces", "3.0.3"),
@@ -859,26 +703,65 @@ function runSelfTest() {
     true,
   );
 
-  // (a) a different advisory id on the same package still fails.
+  // The retired E1 exception must excuse nothing: the exact bundled
+  // brace-expansion shapes it used to cover now fail on every routed lockfile.
+  const retiredE1Vuln = {
+    name: "brace-expansion",
+    nodes: [expectation.packagePath],
+    effects: [],
+    via: [
+      { url: "https://github.com/advisories/GHSA-6j4f-fj2g-mc7p" },
+      { url: "https://github.com/advisories/GHSA-q2hr-2g5m-vwhr" },
+      { url: "https://github.com/advisories/GHSA-qhr7-859c-m2p7" },
+    ],
+  };
   expectNpm(
-    "(a) npm E1 extra advisory id fails",
+    "retired E1: the former bundled brace-expansion npm shape is no longer excepted",
     "brace-expansion",
-    npmVuln({ via: [...E1.advisories.map((a) => ({ url: a.url })), { url: "https://github.com/advisories/GHSA-0000-0000-0000" }] }),
+    retiredE1Vuln,
     canonical,
     false,
   );
+  expectNpm(
+    "retired E1: the former bundled npm shape is not excepted for a routed example lockfile",
+    "brace-expansion",
+    retiredE1Vuln,
+    otherLockfile,
+    false,
+  );
+  expectOsv(
+    "retired E1: an osv brace-expansion 5.0.9 finding is no longer excepted",
+    osvResult(canonical),
+    osvPkg("brace-expansion", "5.0.9"),
+    { id: "GHSA-6j4f-fj2g-mc7p", aliases: ["CVE-2026-102276"] },
+    canonical,
+    false,
+  );
+
+  // Every lockfile in AWS_CDK_LOCKFILES is a real, reviewed file: a named
+  // lockfile that does not exist in the worktree would be a silent hole in the
+  // scanned set, so every entry must resolve to a real file.
+  for (const routedLockfile of AWS_CDK_LOCKFILES) {
+    cases.push({
+      label: `AWS_CDK_LOCKFILES named lockfile exists: ${routedLockfile}`,
+      actual: fs.existsSync(path.join(repositoryRoot, routedLockfile)),
+      expected: true,
+    });
+  }
+  // The reviewed bundled lockfile set and the SEC-2 gate's Node scan set must
+  // not drift apart: a lockfile the gate scans but this checker omits fails the
+  // gate, and one this checker names but the gate never scans is unexamined.
+  cases.push({
+    label: "AWS_CDK_LOCKFILES and gov-verify-rubric.sh node_lockfiles agree",
+    actual: sameStringSet(rubricNodeLockfiles(), [...AWS_CDK_LOCKFILES, "ts/package-lock.json"]),
+    expected: true,
+  });
+
+  // (a) a different advisory id on the same package still fails.
   expectNpm(
     "(a) npm E2 a different advisory url fails",
     "braces",
     { name: "braces", nodes: [E2.packagePath], effects: ["micromatch"], via: [{ url: "https://github.com/advisories/GHSA-0000-0000-0000" }] },
-    canonical,
-    false,
-  );
-  expectOsv(
-    "(a) osv E1 a different advisory id fails",
-    osvResult(canonical),
-    osvPkg("brace-expansion", "5.0.9"),
-    { id: "GHSA-0000-0000-0000", aliases: ["CVE-2026-000000"] },
     canonical,
     false,
   );
@@ -893,14 +776,6 @@ function runSelfTest() {
 
   // (b) a different version still fails.
   expectOsv(
-    "(b) osv E1 a different version fails",
-    osvResult(canonical),
-    osvPkg("brace-expansion", "5.0.10"),
-    { id: E1.advisories[0].id, aliases: [E1.advisories[0].alias] },
-    canonical,
-    false,
-  );
-  expectOsv(
     "(b) osv E2 a different version fails",
     osvResult(canonical),
     osvPkg("braces", "3.0.2"),
@@ -909,20 +784,19 @@ function runSelfTest() {
     false,
   );
 
-  // (c) a non-bundled / different-path copy still fails. OSV reports carry no
-  // node paths, so the bundled-vs-elsewhere distinction is enforced by the
-  // lockfile graph assertions, which these cases drive directly.
-  expectNpm(
-    "(c) npm E1 a different node path fails",
-    "brace-expansion",
-    npmVuln({ nodes: ["node_modules/brace-expansion"] }),
-    canonical,
-    false,
-  );
-  const nonBundledPackages = { ...validPackages(), "node_modules/brace-expansion": { version: "5.0.9" } };
+  // (c) a different-path copy still fails. OSV reports carry no node paths, so
+  // the bundled-vs-elsewhere distinction is enforced by the lockfile graph
+  // assertions, which the cases below drive directly.
+  const nonBundledPackages = { ...validPackages(), "node_modules/brace-expansion": { version: "5.0.12" } };
   cases.push({
-    label: "(c) E1 a non-bundled copy of brace-expansion fails the graph",
+    label: "(c) a non-bundled copy of brace-expansion fails the fixed-graph anchor",
     actual: awsCdkBundleGraphProblems(nonBundledPackages).length > 0,
+    expected: true,
+  });
+  const plantedTopLevel = { ...validPackages(), "node_modules/brace-expansion": { version: "5.0.12" } };
+  cases.push({
+    label: "(c) a planted top-level brace-expansion fails the fixed-graph anchor",
+    actual: awsCdkBundleGraphProblems(plantedTopLevel).length > 0,
     expected: true,
   });
   const nestedBraces = { ...validPackages() };
@@ -938,7 +812,7 @@ function runSelfTest() {
     expected: true,
   });
   cases.push({
-    label: "(c) the reviewed graph itself must be clean",
+    label: "(c) the reviewed fixed graph itself must be clean",
     actual:
       awsCdkBundleGraphProblems(validPackages()).length === 0 &&
       jsiiBracesChainProblems(validPackages()).length === 0,
@@ -954,14 +828,6 @@ function runSelfTest() {
     canonical,
     false,
   );
-  expectOsv(
-    "(d) osv E1 from an unrouted lockfile fails",
-    osvResult(unroutedLockfile),
-    osvPkg("brace-expansion", "5.0.9"),
-    { id: E1.advisories[0].id, aliases: [E1.advisories[0].alias] },
-    unroutedLockfile,
-    false,
-  );
   expectNpm(
     "(d) npm E2 chain link from an unrouted lockfile fails",
     "micromatch",
@@ -970,38 +836,59 @@ function runSelfTest() {
     false,
   );
 
-  // (e) after recheck_by both exceptions stop applying.
+  // (d2) the fixed-graph anchor fails closed on a vulnerable bundle, a drifted
+  // bundled version, or a drifted bundled minimatch.
+  const vulnerableBundle = { ...validPackages() };
+  vulnerableBundle["node_modules/aws-cdk-lib/node_modules/brace-expansion"] = {
+    version: "5.0.9",
+    inBundle: true,
+    dependencies: { "balanced-match": "^4.0.2" },
+  };
+  cases.push({
+    label: "(d2) a vulnerable bundled brace-expansion (5.0.9) fails the fixed-graph anchor",
+    actual: awsCdkBundleGraphProblems(vulnerableBundle).length > 0,
+    expected: true,
+  });
+  const driftedBundleVersion = { ...validPackages() };
+  driftedBundleVersion["node_modules/aws-cdk-lib/node_modules/brace-expansion"].version = "5.0.13";
+  cases.push({
+    label: "(d2) a drifted bundled brace-expansion version fails the fixed-graph anchor",
+    actual: awsCdkBundleGraphProblems(driftedBundleVersion).length > 0,
+    expected: true,
+  });
+  const driftedBundleMinimatch = { ...validPackages() };
+  driftedBundleMinimatch["node_modules/aws-cdk-lib/node_modules/minimatch"].version = "10.2.4";
+  cases.push({
+    label: "(d2) a drifted bundled minimatch version fails the fixed-graph anchor",
+    actual: awsCdkBundleGraphProblems(driftedBundleMinimatch).length > 0,
+    expected: true,
+  });
+  const driftedCdk = { ...validPackages() };
+  driftedCdk["node_modules/aws-cdk-lib"].version = "2.272.0";
+  cases.push({
+    label: "(d2) a drifted aws-cdk-lib version fails the fixed-graph anchor",
+    actual: awsCdkBundleGraphProblems(driftedCdk).length > 0,
+    expected: true,
+  });
+
+  // (e) after recheck_by the remaining exception stops applying.
   cases.push({
     label: "(e) recheck_by boundary: the day before is live",
-    actual: recheckExpired("2026-11-01T23:59:59Z", E1.recheckBy) || recheckExpired("2026-11-01T23:59:59Z", E2.recheckBy),
+    actual: recheckExpired("2026-11-01T23:59:59Z", E2.recheckBy),
     expected: false,
   });
   cases.push({
     label: "(e) recheck_by boundary: the deadline itself expires",
-    actual: recheckExpired("2026-11-02T00:00:00Z", E1.recheckBy) && recheckExpired("2026-11-02T00:00:00Z", E2.recheckBy),
+    actual: recheckExpired("2026-11-02T00:00:00Z", E2.recheckBy),
     expected: true,
   });
   cases.push({
     label: "(e) recheck_by boundary: after the deadline expires",
-    actual: recheckExpired("2026-12-01T00:00:00Z", E1.recheckBy) && recheckExpired("2026-12-01T00:00:00Z", E2.recheckBy),
+    actual: recheckExpired("2026-12-01T00:00:00Z", E2.recheckBy),
     expected: true,
   });
 
-  // (f) each removal condition is detected.
-  cases.push({
-    label: "(f) E1 removal: the pinned bundle moves to >= 5.0.12",
-    actual:
-      e1RemovalReasons({ bundledVersion: "5.0.12", cdkBundlesAnchor: true, publishedStableFixes: ["5.0.12"] }).length >
-      0,
-    expected: true,
-  });
-  cases.push({
-    label: "(f) E1 stays live: bundle 5.0.9 with the fix published upstream",
-    actual:
-      e1RemovalReasons({ bundledVersion: "5.0.9", cdkBundlesAnchor: true, publishedStableFixes: ["5.0.12"] }).length ===
-      0,
-    expected: true,
-  });
+  // (f) the removal condition is detected.
   cases.push({
     label: "(f) E2 removal: a patched braces is published",
     actual: e2RemovalReasons({ publishedStablePatchedBraces: ["3.0.4"] }).length > 0,
@@ -1067,32 +954,10 @@ function runSelfTest() {
     0,
   );
 
-  // (g) planted and drifted lockfile graphs still fail the reviewed-graph anchors.
-  const plantedTopLevel = { ...validPackages(), "node_modules/brace-expansion": { version: "5.0.12" } };
-  cases.push({
-    label: "(g) a planted top-level brace-expansion fails the graph",
-    actual: awsCdkBundleGraphProblems(plantedTopLevel).length > 0,
-    expected: true,
-  });
-  const driftedBundleVersion = { ...validPackages() };
-  driftedBundleVersion["node_modules/aws-cdk-lib/node_modules/brace-expansion"].version = "5.0.10";
-  cases.push({
-    label: "(g) a drifted bundled brace-expansion version fails the graph",
-    actual: awsCdkBundleGraphProblems(driftedBundleVersion).length > 0,
-    expected: true,
-  });
-  const driftedBundleMinimatch = { ...validPackages() };
-  driftedBundleMinimatch["node_modules/aws-cdk-lib/node_modules/minimatch"].version = "10.2.4";
-  cases.push({
-    label: "(g) a drifted bundled minimatch version fails the graph",
-    actual: awsCdkBundleGraphProblems(driftedBundleMinimatch).length > 0,
-    expected: true,
-  });
-
   // The clock the fake-cases above assume must be the real one's relative order.
   cases.push({
     label: "self-test: the fixture clock is before recheck_by",
-    actual: recheckExpired(now, E1.recheckBy) || recheckExpired(now, E2.recheckBy),
+    actual: recheckExpired(now, E2.recheckBy),
     expected: false,
   });
 
@@ -1109,7 +974,7 @@ function runSelfTest() {
     console.error(`self-test: FAIL (${failures} of ${cases.length} cases)`);
     return 1;
   }
-  console.log(`self-test: PASS (${cases.length} cases; exception matchers, recheck_by, removal conditions)`);
+  console.log(`self-test: PASS (${cases.length} cases; exception matcher, recheck_by, removal condition, fixed-graph anchor)`);
   return 0;
 }
 
@@ -1136,7 +1001,8 @@ async function main() {
     }
   }
 
-  // Fail-closed integrity anchors.
+  // Fail-closed integrity anchors. The bundled-graph anchor runs for every
+  // routed lockfile; the jsii chain anchor only where its exception is in scope.
   const graphProblems = awsCdkBundleGraphProblems(packages);
   if (inScopeExceptions.includes(E2)) {
     graphProblems.push(...jsiiBracesChainProblems(packages));
@@ -1151,9 +1017,6 @@ async function main() {
   // Registry-backed removal probe: unconditional for every in-scope exception,
   // so a stale exception cannot survive by simply never matching a finding.
   const removalReasons = [];
-  if (inScopeExceptions.includes(E1)) {
-    removalReasons.push(...(await e1RemovalProbe(packages)));
-  }
   if (inScopeExceptions.includes(E2)) {
     removalReasons.push(...(await e2RemovalProbe()));
   }

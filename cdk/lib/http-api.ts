@@ -174,6 +174,13 @@ export interface AppTheoryHttpApiProps {
 
   /**
    * Custom domain configuration.
+   *
+   * When `domain.mutualTlsAuthentication` is set, AppTheory fails closed and
+   * disables the default `execute-api` endpoint so the API is reachable only
+   * through the mutual-TLS custom domain. Without mutual TLS the default
+   * endpoint keeps the AWS default (enabled), so ordinary custom domains are
+   * unaffected.
+   *
    * @default undefined
    */
   readonly domain?: AppTheoryHttpApiDomainOptions;
@@ -223,6 +230,7 @@ export class AppTheoryHttpApi extends Construct {
       apiName: props.apiName,
       corsPreflight: buildCorsPreflight(props.cors),
       createDefaultStage: !needsExplicitStage,
+      disableExecuteApiEndpoint: props.domain?.mutualTlsAuthentication !== undefined ? true : undefined,
     });
 
     const stage = needsExplicitStage
