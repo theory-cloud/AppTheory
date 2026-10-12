@@ -1,0 +1,261 @@
+{
+  "contract": {
+    "id": "m17.mcp-auth-facade/v1",
+    "section": "journey",
+    "status": "design (M0)",
+    "name": "Minimal non-TMS consumer journey (single domain, upstream provider)",
+    "notes": "The ordered transcript that proves scenario (a) by construction. HTTP-shaped so M1-M3 can lift each step into a tier:facade single-envelope fixture. Steps 1-11 correspond to MINIMAL_CONSUMER.md. Convention (T1): every authorize step that expects a 302 carries a valid registered client_id and redirect_uri, because errors raised before redirect-URI validation never redirect; only the pre-validation failures (unknown client, unmatched redirect URI) expect 400 with no location."
+  },
+  "world": {
+    "public_base_url": "https://mcp.example.com",
+    "route_kind": "namespace",
+    "client_namespace": "acme",
+    "resource": "https://mcp.example.com/acme/mcp",
+    "issuer": "https://mcp.example.com/acme/mcp",
+    "provider_issuer": "https://id.example.com",
+    "protected_resource_metadata_url": "https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp",
+    "discovery_url": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp",
+    "authorization_endpoint": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/authorize",
+    "token_endpoint": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/token",
+    "registration_endpoint": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/register",
+    "callback_url": "https://mcp.example.com/_oauth/mcp/callback"
+  },
+  "steps": [
+    {
+      "n": 1,
+      "name": "transport-credential-free",
+      "request": { "method": "POST", "path": "/acme/mcp", "headers": {}, "body": "jsonrpc" },
+      "expect": {
+        "status": 401,
+        "headers": {
+          "www-authenticate": "Bearer resource_metadata=\"https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp\""
+        },
+        "handler_invocations": 0
+      }
+    },
+    {
+      "n": 2,
+      "name": "protected-resource-metadata",
+      "request": { "method": "GET", "path": "/.well-known/oauth-protected-resource/acme/mcp" },
+      "expect": {
+        "status": 200,
+        "body_json": {
+          "resource": "https://mcp.example.com/acme/mcp",
+          "authorization_servers": ["https://mcp.example.com/acme/mcp"]
+        },
+        "headers": { "cache-control": "no-store" }
+      }
+    },
+    {
+      "n": 3,
+      "name": "authorization-server-metadata",
+      "request": { "method": "GET", "path": "/.well-known/oauth-authorization-server/acme/mcp" },
+      "expect": {
+        "status": 200,
+        "body_json": {
+          "issuer": "https://mcp.example.com/acme/mcp",
+          "authorization_endpoint": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/authorize",
+          "token_endpoint": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/token",
+          "registration_endpoint": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/register",
+          "jwks_uri": "https://id.example.com/.well-known/jwks.json",
+          "code_challenge_methods_supported": ["S256"]
+        }
+      }
+    },
+    {
+      "n": 4,
+      "name": "register-public-client",
+      "request": {
+        "method": "POST",
+        "path": "/.well-known/oauth-authorization-server/acme/mcp/register",
+        "body_json": {
+          "redirect_uris": ["https://client.example/callback"],
+          "token_endpoint_auth_method": "none",
+          "grant_types": ["authorization_code", "refresh_token"],
+          "response_types": ["code"]
+        }
+      },
+      "expect": {
+        "status": 201,
+        "body_has": ["client_id"],
+        "body_json": { "token_endpoint_auth_method": "none" },
+        "bound_route": "https://mcp.example.com/acme/mcp",
+        "headers": { "cache-control": "no-store" }
+      }
+    },
+    {
+      "n": 4.1,
+      "name": "register-disallowed-redirect",
+      "request": {
+        "method": "POST",
+        "path": "/.well-known/oauth-authorization-server/acme/mcp/register",
+        "body_json": { "redirect_uris": ["http://evil.example/cb"], "token_endpoint_auth_method": "none" }
+      },
+      "expect": { "status": 400 }
+    },
+    {
+      "n": 4.2,
+      "name": "register-rate-limited",
+      "request": { "method": "POST", "path": "/.well-known/oauth-authorization-server/acme/mcp/register" },
+      "expect": { "status": 429, "error": "temporarily_unavailable", "headers_have": ["retry-after"] }
+    },
+    {
+      "n": 5,
+      "name": "authorize-front-channel",
+      "request": {
+        "method": "GET",
+        "path": "/.well-known/oauth-authorization-server/acme/mcp/authorize",
+        "query": {
+          "client_id": "<registered client>",
+          "redirect_uri": "https://client.example/callback",
+          "response_type": "code",
+          "code_challenge": "<S256>",
+          "code_challenge_method": "S256",
+          "state": "client-state-1",
+          "resource": "https://mcp.example.com/acme/mcp"
+        }
+      },
+      "expect": {
+        "status": 302,
+        "location_host": "https://id.example.com",
+        "location_query_has": ["client_id", "redirect_uri", "code_challenge", "code_challenge_method=S256", "state", "resource"],
+        "upstream_state_distinct_from_client_state": true,
+        "transaction_recorded": "single-use"
+      }
+    },
+    {
+      "n": 5.1,
+      "name": "authorize-unregistered-client",
+      "request": { "method": "GET", "path": "/.well-known/oauth-authorization-server/acme/mcp/authorize", "query": { "client_id": "unknown", "redirect_uri": "https://client.example/callback" } },
+      "expect": { "status": 400, "error": "invalid_client", "no_location": true }
+    },
+    {
+      "n": 5.2,
+      "name": "authorize-unmatched-redirect",
+      "request": { "method": "GET", "path": "/.well-known/oauth-authorization-server/acme/mcp/authorize", "query": { "client_id": "<registered client>", "redirect_uri": "https://evil.example/cb", "state": "s" } },
+      "expect": { "status": 400, "no_location": true, "notes": "error page, never a redirect (open-redirect defense)" }
+    },
+    {
+      "n": 5.3,
+      "name": "authorize-missing-challenge",
+      "request": { "method": "GET", "path": "/.well-known/oauth-authorization-server/acme/mcp/authorize", "query": { "client_id": "<registered client>", "redirect_uri": "https://client.example/callback", "response_type": "code", "state": "s" } },
+      "expect": { "status": 302, "error": "invalid_request", "reason": "code_challenge required" }
+    },
+    {
+      "n": 5.4,
+      "name": "authorize-plain-challenge",
+      "request": { "method": "GET", "path": "/.well-known/oauth-authorization-server/acme/mcp/authorize", "query": { "client_id": "<registered client>", "redirect_uri": "https://client.example/callback", "response_type": "code", "state": "s", "code_challenge": "<plain challenge>", "code_challenge_method": "plain" } },
+      "expect": { "status": 302, "error": "invalid_request", "reason": "S256 required; plain refused" }
+    },
+    {
+      "n": 5.5,
+      "name": "authorize-wrong-resource",
+      "request": { "method": "GET", "path": "/.well-known/oauth-authorization-server/acme/mcp/authorize", "query": { "client_id": "<registered client>", "redirect_uri": "https://client.example/callback", "response_type": "code", "state": "s", "resource": "https://mcp.example.com/other/mcp" } },
+      "expect": { "status": 302, "error": "invalid_target", "reason": "resource must equal the route resource" }
+    },
+    {
+      "n": 6,
+      "name": "callback-upstream-return",
+      "request": { "method": "GET", "path": "/_oauth/mcp/callback", "query": { "code": "<upstream code>", "state": "<upstream state>", "iss": "https://id.example.com" } },
+      "expect": {
+        "status": 302,
+        "location_host": "https://client.example",
+        "location_query_has": ["code", "state=client-state-1", "iss=https%3A%2F%2Fmcp.example.com%2Facme%2Fmcp"],
+        "assert_absent_in_location": ["<upstream code>", "<upstream refresh token>", "id_token"],
+        "handler_invocations": 0
+      }
+    },
+    {
+      "n": 6.1,
+      "name": "callback-iss-mismatch",
+      "request": { "method": "GET", "path": "/_oauth/mcp/callback", "query": { "code": "c", "state": "s", "iss": "https://evil.example" } },
+      "expect": { "status": 400, "no_location": true, "reason": "upstream iss mismatch rejected" }
+    },
+    {
+      "n": 6.2,
+      "name": "callback-replayed-state",
+      "request": { "method": "GET", "path": "/_oauth/mcp/callback", "query": { "code": "c", "state": "<consumed state>" } },
+      "expect": { "terminal": "already completed, restart sign-in", "re_exchange": false }
+    },
+    {
+      "n": 7,
+      "name": "token-code-exchange",
+      "request": {
+        "method": "POST",
+        "path": "/.well-known/oauth-authorization-server/acme/mcp/token",
+        "form": { "grant_type": "authorization_code", "code": "<facade code>", "code_verifier": "<verifier>", "redirect_uri": "https://client.example/callback", "client_id": "<registered client>" }
+      },
+      "expect": {
+        "status": 200,
+        "body_json": { "token_type": "Bearer" },
+        "body_has": ["access_token", "refresh_token", "expires_in", "scope"],
+        "refresh_token_is_opaque_handle": true,
+        "access_token_byte_identical_to_upstream": true,
+        "assert_absent": ["id_token"],
+        "handler_invocations": 0
+      }
+    },
+    {
+      "n": 7.1,
+      "name": "token-replay-code",
+      "request": { "method": "POST", "path": "/.well-known/oauth-authorization-server/acme/mcp/token", "form": { "grant_type": "authorization_code", "code": "<facade code>", "code_verifier": "<verifier>", "client_id": "<registered client>" } },
+      "expect": { "status": 400, "error": "invalid_grant", "side_effect": "revokes the broker record the code minted" }
+    },
+    {
+      "n": 7.2,
+      "name": "token-wrong-verifier",
+      "request": { "method": "POST", "path": "/.well-known/oauth-authorization-server/acme/mcp/token", "form": { "grant_type": "authorization_code", "code": "<fresh code>", "code_verifier": "<wrong>", "client_id": "<registered client>" } },
+      "expect": { "status": 400, "error": "invalid_grant" }
+    },
+    {
+      "n": 8,
+      "name": "transport-with-valid-token",
+      "request": { "method": "POST", "path": "/acme/mcp", "headers": { "authorization": "Bearer <access token>" }, "body": "jsonrpc" },
+      "expect": { "status": 200, "handler_invocations": 1 }
+    },
+    {
+      "n": 8.1,
+      "name": "transport-wrong-audience",
+      "request": { "method": "POST", "path": "/acme/mcp", "headers": { "authorization": "Bearer <token for another route>" } },
+      "expect": { "status": 403, "handler_invocations": 0 }
+    },
+    {
+      "n": 9,
+      "name": "token-refresh",
+      "request": { "method": "POST", "path": "/.well-known/oauth-authorization-server/acme/mcp/token", "form": { "grant_type": "refresh_token", "refresh_token": "<route handle>", "client_id": "<registered client>" } },
+      "expect": {
+        "status": 200,
+        "rotated_refresh_handle": true,
+        "access_token_byte_identical_to_upstream": true,
+        "assert_absent": ["<upstream refresh token>", "id_token"],
+        "concurrent_callers": "single-flighted; second caller served the winner's grace response with no second upstream call"
+      }
+    },
+    {
+      "n": 9.1,
+      "name": "refresh-revoked-handle",
+      "request": { "method": "POST", "path": "/.well-known/oauth-authorization-server/acme/mcp/token", "form": { "grant_type": "refresh_token", "refresh_token": "<handle revoked by step 7.1>", "client_id": "<registered client>" } },
+      "expect": { "status": 400, "error": "invalid_grant" }
+    },
+    {
+      "n": 10,
+      "name": "transport-expired-token",
+      "request": { "method": "POST", "path": "/acme/mcp", "headers": { "authorization": "Bearer <expired>" } },
+      "expect": { "status": 401, "headers": { "www-authenticate": "Bearer resource_metadata=\"https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp\"" }, "handler_invocations": 0 }
+    },
+    {
+      "n": 11,
+      "name": "transport-insufficient-scope",
+      "request": { "method": "POST", "path": "/acme/mcp", "headers": { "authorization": "Bearer <token missing mcp:tools>" } },
+      "expect": { "status": 403, "www_authenticate_error": "insufficient_scope", "www_authenticate_scope": "mcp:tools", "handler_invocations": 0 }
+    }
+  ],
+  "negative_assertions": [
+    "no upstream authorization code in any client-visible response",
+    "no upstream refresh token in any client-visible response",
+    "no id_token in any client-visible response",
+    "access_token is byte-identical to the upstream-minted token",
+    "a token for one route is refused at another route",
+    "handler_invocations == 0 on every denied transport step"
+  ]
+}
