@@ -6,9 +6,9 @@ import (
 	"net/url"
 	"strings"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
-	"github.com/theory-cloud/apptheory/v5/runtime/mcproutes"
-	"github.com/theory-cloud/apptheory/v5/runtime/oauth"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	"github.com/theory-cloud/apptheory/v6/runtime/mcproutes"
+	"github.com/theory-cloud/apptheory/v6/runtime/oauth"
 )
 
 const (

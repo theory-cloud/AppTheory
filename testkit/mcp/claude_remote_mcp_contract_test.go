@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v5/runtime/mcp"
-	oauthruntime "github.com/theory-cloud/apptheory/v5/runtime/oauth"
-	"github.com/theory-cloud/apptheory/v5/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v6/runtime/mcp"
+	oauthruntime "github.com/theory-cloud/apptheory/v6/runtime/oauth"
+	"github.com/theory-cloud/apptheory/v6/testkit"
 )
 
 func TestClaudeRemoteMcp_UnauthorizedChallenge_AndProtectedResourceMetadata(t *testing.T) {

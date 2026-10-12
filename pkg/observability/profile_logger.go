@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/theory-cloud/apptheory/v5/pkg/sanitization"
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
+	"github.com/theory-cloud/apptheory/v6/pkg/sanitization"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
 )
 
 type LoggingProfileEvent struct {

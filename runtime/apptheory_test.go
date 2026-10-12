@@ -3,7 +3,7 @@ package apptheory_test
 import (
 	"testing"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
 )
 
 func TestNew(t *testing.T) {

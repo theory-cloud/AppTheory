@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
-	runtimemicrovm "github.com/theory-cloud/apptheory/v5/runtime/microvm"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	runtimemicrovm "github.com/theory-cloud/apptheory/v6/runtime/microvm"
 )
 
 const (

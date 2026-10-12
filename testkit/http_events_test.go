@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
-	"github.com/theory-cloud/apptheory/v5/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	"github.com/theory-cloud/apptheory/v6/testkit"
 )
 
 func TestInvokeAPIGatewayV2(t *testing.T) {

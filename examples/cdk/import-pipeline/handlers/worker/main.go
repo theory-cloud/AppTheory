@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 
-	"github.com/theory-cloud/apptheory/v5/pkg/jobs"
+	"github.com/theory-cloud/apptheory/v6/pkg/jobs"
 	"github.com/theory-cloud/tabletheory/v5"
 )
 
