@@ -241,10 +241,18 @@ registration-time pairing of §4.2 — and **M3 fills them with the numbered mec
    `state`, `resource`, and scope; record a single-use transaction; redirect the browser upstream with the
    facade's own client/callback/PKCE/fresh state/`resource`/hints/scopes. **Errors raised before the redirect
    URI is validated never redirect** (open-redirect defense).
-2. `/callback` (GET) — **upstream callback.** Verify upstream RFC 9207 `iss`, consume the upstream `state`
-   single-use, exchange the upstream code server-side, validate the upstream token fail-closed, open the
-   broker record, mint a facade code, and redirect the client with `code`, the client's own `state`, and
-   `iss` = route URL. The facade never sends the client's `client_id`/`redirect_uri` upstream.
+2. `/callback` (GET) — **upstream callback.** Verify upstream RFC 9207 `iss` **before consuming the state or
+   exchanging the code**, consume the upstream `state` single-use, exchange the upstream code server-side,
+   validate the upstream token fail-closed, open the broker record, mint a facade code, and redirect the
+   client with `code`, the client's own `state`, and `iss` = route URL. The facade never sends the client's
+   `client_id`/`redirect_uri` upstream. An upstream code-exchange **failure** is never returned in the same
+   `(400, no Location)` shape as the facade's own callback rejections (`iss` mismatch, unminted or replayed
+   `state`, missing/replayed code): it is a provider-call failure in the gateway class, so it maps to a
+   distinct **502** carrying the fixed error code `upstream_error` (error page, no client redirect), while
+   `400` stays the facade's own request-class vocabulary (`invalid_client`/`invalid_request`/`invalid_target`
+   at authorize), and keeping the two distinguishable is what makes the callback `iss` and `state` pins hold
+   — an implementation that skips either check reaches the exchange and changes the fixture's expected
+   result instead of coincidentally reproducing `400`.
 3. `/register` (POST) — **RFC 7591 DCR.** Public clients (`token_endpoint_auth_method=none`), https or
    loopback redirect URIs, server-assigned ids ≥128 bits, bound to the advertising route, per-route rate
    limited, hash-stored.
