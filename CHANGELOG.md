@@ -1,5 +1,68 @@
 # Changelog
 
+## [6.0.0-rc](https://github.com/theory-cloud/AppTheory/compare/v5.0.2...v6.0.0-rc) (2026-10-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** the AppTheory Go module path is now github.com/theory-cloud/apptheory/v6, so every Go consumer must rewrite its AppTheory imports from /v5 to /v6, and CDK Go consumers move to github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v6. The Go API surface is unchanged beyond import paths: the api-snapshot diff is header-path-only.
+* **apptheory-init:** run scaffold local builds through argv arrays
+* **cdk:** the four defaults above change the synthesized template for an existing stack that did not set the affected prop.
+* **binding:** duration values with more than 1024 adjacent segments, which previously bound in Go and Python, now fail closed with the standard binding error. Ordinary portable durations are unaffected.
+* **observability:** malformed logging-profile JSON that previously validated only because a wrong-typed value was coerced now fails closed.
+
+### Bug Fixes
+
+* **apptheory-init:** run scaffold local builds through argv arrays ([8898861](https://github.com/theory-cloud/AppTheory/commit/8898861e8a6302e85f77add2c61b7c01ecd472fb))
+* **binding:** cap adjacent duration segments in Go and Python [149c3adc] ([bd3ad03](https://github.com/theory-cloud/AppTheory/commit/bd3ad0323c585aa82d18841b3c8e87e4a9544c9f))
+* **binding:** stream the duration parser and cap segments (TypeScript) [149c3adc] ([ced65ae](https://github.com/theory-cloud/AppTheory/commit/ced65ae07b6549b170f054448c4b9c193a74f5f9))
+* **cdk:** fail closed on the CDK construct security defaults ([d70860d](https://github.com/theory-cloud/AppTheory/commit/d70860d1004379b9472b18dbfc4bf6bd5ab23e94))
+* **cdk:** verify cached CDK dependency content before reuse ([893a82b](https://github.com/theory-cloud/AppTheory/commit/893a82bdbc73d788d30cacc63c065ea038690bb8))
+* **ci-guard:** require an on: push trigger in ci.yml ([ac4696c](https://github.com/theory-cloud/AppTheory/commit/ac4696c95922b85949d90ec506698d0bd39ff337))
+* **contract-tests:** anchor the Go M1 fixture deadline to the logical clock ([2f85570](https://github.com/theory-cloud/AppTheory/commit/2f85570f243e1e4d0e3af68caf9923c3a072a8f2))
+* **deps:** adopt aws-cdk-lib 2.273.0 for the fixed bundled brace-expansion ([bfff013](https://github.com/theory-cloud/AppTheory/commit/bfff013388b12c1a2d592a5e675bbe6356111e16))
+* **deps:** adopt aws-cdk-lib 2.273.0, retire the brace-expansion exception, and fold the Dependabot groups ([569e5a0](https://github.com/theory-cloud/AppTheory/commit/569e5a0e7d92cb711eed879be906a626acf7162c))
+* **deps:** move the Go module path to github.com/theory-cloud/apptheory/v6 ([d26cc66](https://github.com/theory-cloud/AppTheory/commit/d26cc66656003fa572c5e7cba0d43505de50fc05))
+* **deps:** pin TableTheory v5.0.0 across the Go, TypeScript, and Python runtimes ([86891f1](https://github.com/theory-cloud/AppTheory/commit/86891f19789a826f5f64b693ae2bd4ad1874c454))
+* **deps:** pin TableTheory v5.0.0 across the Go, TypeScript, and Python runtimes ([aa9ff4a](https://github.com/theory-cloud/AppTheory/commit/aa9ff4a98bb0520c1d67dd18ef802ce651235ae5))
+* **deps:** refresh CDK example synth snapshots for TableTheory v5.0.0 ([2ec32e2](https://github.com/theory-cloud/AppTheory/commit/2ec32e282d6f1f87da326d9508b9dcaf90256f67))
+* **deps:** refresh CDK example synth snapshots for the AppTheory v6 module path ([c531691](https://github.com/theory-cloud/AppTheory/commit/c5316911c6bfb52182cec0a496a84996cc116014))
+* **deps:** restore the Node 24 @types/node typing line in cdk and ts ([69acce9](https://github.com/theory-cloud/AppTheory/commit/69acce9513ceda3bdfabf272be6cc432dc49029a))
+* **gov-infra:** accept only osv-scanner exit 1 with a reviewed exception ([477ad7e](https://github.com/theory-cloud/AppTheory/commit/477ad7e90ec79da6ed1d8906ffc879a678b792eb))
+* **invocation-scope:** credit a walrus .join() to the joined value ([1f10da3](https://github.com/theory-cloud/AppTheory/commit/1f10da3ef5b05dd6960c41a92fab21eaa1f2d3a3))
+* **invocation-scope:** stop crediting Promise.race/any as a promise join ([b5d09bd](https://github.com/theory-cloud/AppTheory/commit/b5d09bdd86c341de4bcc71ffd7b17f0331dbb185))
+* **kinesis:** bound CloudWatch Logs subscription decoding (Go/TS/Py) ([89c61c6](https://github.com/theory-cloud/AppTheory/commit/89c61c6baf7f43c4c2a32d7857c2f3f6c4e5bdb9))
+* **kinesis:** enforce the combined data plus partition-key record ceiling (Go/TS/Py) [01e67e58] ([2ff00ae](https://github.com/theory-cloud/AppTheory/commit/2ff00ae01c9a8159ef8c656a889c6e8f01a356cf))
+* **microvm:** M1 MicroVM authorization and credential hardening (Go/TS/Py) ([#1123](https://github.com/theory-cloud/AppTheory/issues/1123)) ([f1df96d](https://github.com/theory-cloud/AppTheory/commit/f1df96d993ed89f6f8d916e79f9da3407a74c394))
+* **objectstore:** fail closed on an oversized presign expiry (Python) [191dcbe5] ([27018d5](https://github.com/theory-cloud/AppTheory/commit/27018d527209cfb06a8b9adbb0ee6308a48f8600))
+* **observability:** bound the notify wait without a per-Flush goroutine [4ba937de] ([2dd9bc2](https://github.com/theory-cloud/AppTheory/commit/2dd9bc26fec6cad6aba65c8a4e6b415bb79a64bd))
+* **observability:** deliver error notifications through a bounded queue ([e0bbbcd](https://github.com/theory-cloud/AppTheory/commit/e0bbbcd067734244a188b9e1899261f9fcfaccf5))
+* **observability:** dimension EMF metrics on bounded values (Go/TS/Py) ([0b425c4](https://github.com/theory-cloud/AppTheory/commit/0b425c43daa8756319fe89762362d43d3cd52d11))
+* **observability:** propagate the request trace id through the logger adapter ([7027808](https://github.com/theory-cloud/AppTheory/commit/70278089ee42c0a0c883fdac4d58591228708415))
+* **observability:** reject invalid JSON field types in the logging-profile decoder (Python) [01638202] ([2262128](https://github.com/theory-cloud/AppTheory/commit/2262128c6a1b713f61f2f4bd40e6ce6dcfe9a2b2))
+* **observability:** reject invalid JSON field types in the logging-profile decoder (TypeScript) [01638202] ([9890dd2](https://github.com/theory-cloud/AppTheory/commit/9890dd27f18357c55dbc5928edd864e03a799292))
+* **openapi:** canonicalize large integral floats by shortest round-trip (Python) [bce491f8] ([61b37b3](https://github.com/theory-cloud/AppTheory/commit/61b37b36c53a5de31db5f32dace8722fd9d0286d))
+* **release-workflows:** check out full history in the release-PR producers ([5da1490](https://github.com/theory-cloud/AppTheory/commit/5da1490d97adcf2fc6927f788be0ccac8e015baa))
+* **release:** APP64 M6b release integrity and Go fixture deadline (WHOLE4) ([26e45d8](https://github.com/theory-cloud/AppTheory/commit/26e45d82964a304dbcda805d608eb248350caf5b))
+* **release:** compare tree content alongside ancestry in promotion checks ([98f50ab](https://github.com/theory-cloud/AppTheory/commit/98f50ab98843f21a94a0faa0144104bf21d20014))
+* **release:** require the exact uploaded asset set on a published release ([7aa2cee](https://github.com/theory-cloud/AppTheory/commit/7aa2cee2b95ea01813f9fa3ea9d53e9810c643a2))
+* **runtime/aws:** reject sparse artifact members and cap cumulative content ([f527f5e](https://github.com/theory-cloud/AppTheory/commit/f527f5eb2a138dddf32f1675f328618656eab4af))
+* **runtime:** bound the adapter settle join and the timeout join (Go/TS/Py) ([47b14af](https://github.com/theory-cloud/AppTheory/commit/47b14af567111a1e35c25906ceb820fba7964ab8))
+* **runtime:** discriminate Function URL from API Gateway v2 in the universal dispatcher (Go/TS/Py) [4732095b] ([8e5722e](https://github.com/theory-cloud/AppTheory/commit/8e5722e4342dc987cae963c77ec991ef9a360db2))
+* **runtime:** fail closed on non-finite Go min/max validation ([1527faa](https://github.com/theory-cloud/AppTheory/commit/1527faa6253a225ff27074f07ddf8b00bb6e14b2))
+* **runtime:** fail closed on non-finite numeric validation (APP64 M8 WHOLE3) ([212b76c](https://github.com/theory-cloud/AppTheory/commit/212b76c02e22f7eb69b03041e1e8d7a5e1482f84))
+* **runtime:** fail closed on non-finite Python min/max validation ([a8d9ec7](https://github.com/theory-cloud/AppTheory/commit/a8d9ec74a76870239c9a213e2e053f5fe0222bd5))
+* **runtime:** fail closed on non-finite TypeScript min/max validation ([467ed28](https://github.com/theory-cloud/AppTheory/commit/467ed285b7b6d5d9d389856c34014eee2da7020e))
+* **runtime:** key binding presence by request source (Go) [6c6f4776] ([c111d30](https://github.com/theory-cloud/AppTheory/commit/c111d30733b99276b215227cdf5a321d82d7a1bf))
+* **runtime:** M3 runtime availability, timeout & observability hardening (WHOLE 7) ([60fe17f](https://github.com/theory-cloud/AppTheory/commit/60fe17f5d4d47cacf8a9d907d734b130de186ff1))
+* **runtime:** propagate the secure principal through the TS/Python timeout clone [73544e2b] ([752d95a](https://github.com/theory-cloud/AppTheory/commit/752d95af6263899a48463890914c2ff05b3c4e74))
+* **scripts:** compare the CDK engines floor at full N.M.P ([79b137d](https://github.com/theory-cloud/AppTheory/commit/79b137d32fd381b0f3c64f17fac2aba91ebbd269))
+* **security:** APP64-M4 binding, validation, provenance & parity (WHOLE9) ([4bf2ad3](https://github.com/theory-cloud/AppTheory/commit/4bf2ad3655752e28acb6c37ad03b508878d9e4e6))
+* **security:** harden six CI/security/release gates (APP64-M6a) ([9ecaf83](https://github.com/theory-cloud/AppTheory/commit/9ecaf83fdbe19743dd3f1dd91e60275a8eddb1ed))
+* **security:** M2 MCP facade authentication and task runtime hardening (Go/TS/Py/CDK) ([#1124](https://github.com/theory-cloud/AppTheory/issues/1124)) ([b3ef924](https://github.com/theory-cloud/AppTheory/commit/b3ef9246302107ec6576a5049a8a89a40be4dd78))
+* **security:** M7 examples and docs hygiene (whole-6) ([#1125](https://github.com/theory-cloud/AppTheory/issues/1125)) ([5ff6f18](https://github.com/theory-cloud/AppTheory/commit/5ff6f189d82126c04415923e35c23e4fabe54e4b))
+* **vectorstore:** bound semantic ingest by record and byte budgets (Go/TS/Py) [08e8c67e] ([f013471](https://github.com/theory-cloud/AppTheory/commit/f01347134a5bdcfc5439ab6bc1fc0138e9cd4236))
+
 ## [5.0.2](https://github.com/theory-cloud/AppTheory/compare/v5.0.1...v5.0.2) (2026-10-09)
 
 
