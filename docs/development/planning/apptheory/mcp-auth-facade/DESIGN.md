@@ -174,7 +174,9 @@ No JWT/JWKS validator ships today (gap G4). The facade adds one, in all three ru
 - **Multi-spelling bridge:** the framework emits the canonical `www-authenticate` challenge and can bridge
   compatible aliases for edges/proxies that remap headers (TMS emits three spellings:
   `www-authenticate`, `mcp-www-authenticate`, `x-theory-www-authenticate`). The framework's bridge is
-  **configurable and off by default**; see `FRAMEWORK_VS_POLICY.md`.
+  **configurable and off by default**; see `FRAMEWORK_VS_POLICY.md`. Separately from the bridge, the §9
+  front-door restoration **always** reads AWS's REST v1 remap artifact
+  (`x-amzn-remapped-www-authenticate`), which AWS produces whether or not the alias bridge is enabled.
 
 ## 6. Provider SPI (provider-neutral upstream IdP adapter)
 
@@ -264,8 +266,16 @@ end-to-end walkthrough that proves scenario (a) by construction.
   stage, so it fails synth unless the app records the owning API's throttling/lock decision.
 - The CloudFront `WWW-Authenticate` restoration edge function (today app-owned in TMS,
   `cdk/lib/public-api-frontdoor.ts:56-82`) becomes a framework front-door concern: a framework construct for
-  REST v1 origins that restores the canonical header from the bridge spelling, and is a documented no-op on
-  HTTP API v2.
+  REST v1 origins that restores the canonical `www-authenticate` header, and is a documented no-op on HTTP API
+  v2. The restore **source set** is, in priority order:
+  1. **`x-amzn-remapped-www-authenticate`** — the artifact **AWS itself** produces when REST v1 remaps the
+     origin's header. This source is **always** consulted and does **not** depend on the optional alias bridge,
+     so the construct restores the challenge even for a canonical-only app on REST v1.
+  2. the bridge aliases (`x-theory-www-authenticate`, `mcp-www-authenticate`) **only when the optional alias
+     bridge** is enabled (`FRAMEWORK_VS_POLICY.md` row 11).
+  After restoring, the construct removes the consumed alias/remap headers from the response. TMS restores from
+  all three sources today (`cdk/lib/public-api-frontdoor.ts:56-82`, at `origin/staging`); the design keeps AWS's
+  own remap artifact in the mandatory set and makes the alias spellings the optional part.
 
 ## 10. What this design deliberately does not own
 
