@@ -63,6 +63,10 @@ milestone that ships Go without TS/Py/CDK is not done.
 - JWKS/RS256 validator with OIDC discovery bootstrap + alg pinning + issuer/audience/azp checks in all three.
 - Route-derived RFC 9728 challenge, 403 `insufficient_scope` with the remediation scope set, RFC 8707 resource
   indicators — all three.
+- **Acceptance fixtures M2 must ship** (ADV-1134-7): the JWKS validator fixture set pins T9's five cases —
+  `alg-none` rejected, `HS256` rejected, `unknown-kid` triggers one bounded refresh, `expired-key` refresh,
+  `issuer-mismatch` rejected — and the discovery-bootstrap fixture pins T8's cases — issuer mismatch rejected,
+  non-HTTPS rejected, cross-origin redirect rejected. Both run in Go/TS/Py from the shared fixture.
 - Parity: Go, TS, Py, CDK together.
 
 ### M3 — Facade module + SPIs (closes G7; completes G3 for this surface)
@@ -82,8 +86,10 @@ milestone that ships Go without TS/Py/CDK is not done.
 
 ## 3. G12 — deterministic `TestCloseEndsStreamEarlyForReader`
 
-**Defect (grounded):** `runtime/internal/streamjoin/streamjoin_test.go:182` synchronizes with
-`time.Sleep(10 * time.Millisecond)` and then asserts a blocked `Read` returns `io.ErrClosedPipe`.
+**Defect (grounded):** `TestCloseEndsStreamEarlyForReader` (`runtime/internal/streamjoin/streamjoin_test.go:182`)
+synchronizes with `time.Sleep(10 * time.Millisecond)` at
+`runtime/internal/streamjoin/streamjoin_test.go:194` and then asserts a blocked `Read` returns
+`io.ErrClosedPipe`.
 `Body.Close` (`runtime/internal/streamjoin/streamjoin.go`) currently does `b.cancel()` **then** `b.pr.Close()`.
 Two paths can release the blocked read:
 
