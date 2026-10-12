@@ -32,9 +32,9 @@
       "transport_authorization_type": "NONE",
       "oauth_surface_authorization_type": "NONE",
       "runtime_validation_required": false,
-      "requires": ["throttling", "origin_reachability", "denial_signal"],
+      "requires": ["throttling", "origin_reachability"],
       "explicit_only": true,
-      "notes": "Deliberately public MCP server. Never a default; must be named."
+      "notes": "Deliberately public MCP server. Never a default; must be named. It performs no validation, so it produces no auth denials: denial_signal does NOT apply; the API Gateway access log is the only signal."
     }
   },
   "oauth_surface_routes": [

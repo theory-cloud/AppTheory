@@ -21,7 +21,7 @@ app := apptheory.New()
 
 _, err := mcpfacade.RegisterMCPFacade(app, mcpfacade.FacadeConfig{
     URLMode:       mcpfacade.URLModePublicBaseURL,
-    PublicBaseURL: "https://mcp.acme.example",     // the single domain
+    PublicBaseURL: "https://mcp.example.com",     // the single domain
     IssuerMode:    mcpfacade.IssuerModeRoute,      // each route is its own AS issuer
     TransportPosture: mcpfacade.TransportPostureRuntimeBearer,
     RequireBearerToken: &oauth.RequireBearerTokenOptions{
@@ -73,17 +73,19 @@ callback routes; it does **not** require the app to spell a single route string.
 
 ## The journey (what a client does, and what the framework answers)
 
-Base URL `https://mcp.acme.example`; route resource `https://mcp.acme.example/acme/mcp`; provider issuer
-`https://id.acme.example`.
+Base URL `https://mcp.example.com`; route resource `https://mcp.example.com/acme/mcp`; provider issuer
+`https://id.example.com`. These are exactly the fixture `world` domains in
+`fixtures/facade-journey.v1.json`, so the prose and the machine-readable transcript agree; the fictional
+provider `Acme ID` issues from `https://id.example.com`.
 
 | # | Client action | Framework answer |
 | --- | --- | --- |
-| 1 | `POST /acme/mcp` with no token | `401` + `WWW-Authenticate: Bearer resource_metadata="https://mcp.acme.example/.well-known/oauth-protected-resource/acme/mcp"`; **handler not invoked** |
-| 2 | `GET /.well-known/oauth-protected-resource/acme/mcp` | `200` `{ resource: "https://mcp.acme.example/acme/mcp", authorization_servers: ["https://mcp.acme.example/acme/mcp"], scopes_supported: [...] }` |
-| 3 | `GET /.well-known/oauth-authorization-server/acme/mcp` | `200` `{ issuer: "https://mcp.acme.example/acme/mcp", authorization_endpoint: ".../authorize", token_endpoint: ".../token", registration_endpoint: ".../register", jwks_uri: "https://id.acme.example/.well-known/jwks.json" }` |
+| 1 | `POST /acme/mcp` with no token | `401` + `WWW-Authenticate: Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp"`; **handler not invoked** |
+| 2 | `GET /.well-known/oauth-protected-resource/acme/mcp` | `200` `{ resource: "https://mcp.example.com/acme/mcp", authorization_servers: ["https://mcp.example.com/acme/mcp"], scopes_supported: [...] }` |
+| 3 | `GET /.well-known/oauth-authorization-server/acme/mcp` | `200` `{ issuer: "https://mcp.example.com/acme/mcp", authorization_endpoint: ".../authorize", token_endpoint: ".../token", registration_endpoint: ".../register", jwks_uri: "https://id.example.com/.well-known/jwks.json" }` |
 | 4 | `POST .../acme/mcp/register` (public client, PKCE, loopback https redirect) | `201` `{ client_id: "acme_…", token_endpoint_auth_method: "none", … }`; bound to the route; rate limited |
-| 5 | `GET .../authorize?client_id=…&redirect_uri=…&response_type=code&code_challenge=…&code_challenge_method=S256&state=…&resource=https://mcp.acme.example/acme/mcp` | `302` to the provider with the facade's own upstream client/callback/PKCE/fresh state/`resource`; single-use transaction recorded |
-| 6 | provider redirects to `/_oauth/mcp/callback?code=…&state=…&iss=https://id.acme.example` | facade verifies `iss`, consumes the state single-use, exchanges the code server-side, validates the upstream token fail-closed, opens the broker record, and `302`s to the client with `code=<facade code>&state=<client state>&iss=https://mcp.acme.example/acme/mcp` |
+| 5 | `GET .../authorize?client_id=…&redirect_uri=…&response_type=code&code_challenge=…&code_challenge_method=S256&state=…&resource=https://mcp.example.com/acme/mcp` | `302` to the provider with the facade's own upstream client/callback/PKCE/fresh state/`resource`; single-use transaction recorded |
+| 6 | provider redirects to `/_oauth/mcp/callback?code=…&state=…&iss=https://id.example.com` | facade verifies `iss`, consumes the state single-use, exchanges the code server-side, validates the upstream token fail-closed, opens the broker record, and `302`s to the client with `code=<facade code>&state=<client state>&iss=https://mcp.example.com/acme/mcp` |
 | 7 | `POST .../token` `grant_type=authorization_code&code=<facade code>&code_verifier=…&redirect_uri=…&client_id=…` | `200` `{ access_token: <upstream token, byte-for-byte>, refresh_token: "rt_…" (opaque handle), token_type: "Bearer", expires_in, scope }` — **no `id_token`** |
 | 8 | `POST /acme/mcp` with the access token | `200` MCP response; **handler invoked exactly once** |
 | 9 | `POST .../token` `grant_type=refresh_token&refresh_token=rt_…` | `200` rotated handle + a fresh access token; upstream refresh material never serialized; concurrent callers single-flighted |

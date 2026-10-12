@@ -50,7 +50,7 @@ The kit proves misconfiguration fails closed (§3).
 The kit consumes versioned contract tables (the `routing/mcp-route-algebra/` precedent: a nested table loaded
 directly by the Go and CDK-TS suites rather than by the generic three-language fixture runner):
 
-- `facade-transport-posture.v1.json` — `posture → { transport_authorization_type, oauth_surface_authorization_type, requires: [throttling, origin_reachability, denial_signal] }` plus the per-posture expectation rows.
+- `facade-transport-posture.v1.json` — `posture → { transport_authorization_type, oauth_surface_authorization_type, requires: [...] }` plus the per-posture expectation rows. The `requires` set is per posture: `runtime-bearer` requires `[throttling, origin_reachability, denial_signal]`; `none-public` requires `[throttling, origin_reachability]` (no validation, so no denial signal).
 - `facade-route-model.v1.json` — the v2 route inventory (patterns + derived `register`/`callback` + issuer/resource derivation) that Layer A iterates.
 
 M0 authors both tables under this planning directory in the repo's contract-table shape. **M1 moves them into
