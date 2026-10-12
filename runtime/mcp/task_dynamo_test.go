@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	tableerrors "github.com/theory-cloud/tabletheory/v4/pkg/errors"
-	tablemocks "github.com/theory-cloud/tabletheory/v4/pkg/mocks"
+	tableerrors "github.com/theory-cloud/tabletheory/v5/pkg/errors"
+	tablemocks "github.com/theory-cloud/tabletheory/v5/pkg/mocks"
 )
 
 func TestDynamoTaskRecord_TableName(t *testing.T) {

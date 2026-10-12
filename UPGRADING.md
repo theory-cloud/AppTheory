@@ -38,13 +38,13 @@ The v5.0.0-rc tag is the first v5 release; pin the exact v5 release or RC tag yo
 AppTheory major paths in one application: packages from `/v4` and `/v5` have distinct Go type identities even where
 their APIs are otherwise unchanged.
 
-### TableTheory v4 dependency floor
+### TableTheory v5 dependency floor
 
-The v5 line requires TableTheory v4.0.2 in all three runtimes. TableTheory v4 moves its Go module path to
-`github.com/theory-cloud/tabletheory/v4`, so Go consumers must replace every TableTheory `/v3` import with `/v4` and
-require `github.com/theory-cloud/tabletheory/v4`. Because `/v3` and `/v4` TableTheory packages are distinct Go types,
-these **7 exported AppTheory constructors** now take a TableTheory v4 `tablecore.DB` and no longer accept a TableTheory
-v3 client:
+The v5 line requires TableTheory v5.0.0 in all three runtimes. TableTheory's Go module path moves with the major to
+`github.com/theory-cloud/tabletheory/v5`, so Go consumers must replace every TableTheory `/v4` import with `/v5` and
+require `github.com/theory-cloud/tabletheory/v5`. Because `/v4` and `/v5` TableTheory packages are distinct Go types,
+these **7 exported AppTheory constructors** now take a TableTheory v5 `tablecore.DB` and no longer accept a TableTheory
+v4 client:
 
 | Constructor | Package |
 | --- | --- |
@@ -56,19 +56,31 @@ v3 client:
 | `NewDynamoTaskStore(db tablecore.DB) TaskStore` | `runtime/mcp` |
 | `NewTableTheorySessionRegistry(db tablecore.DB) (*TableTheorySessionRegistry, error)` | `runtime/microvm` |
 
-Before the v5 upgrade, Go consumers of those constructors must `go get github.com/theory-cloud/tabletheory/v4@v4.0.2`
-and pass a TableTheory v4 client. Do not keep both TableTheory major paths in one application — their otherwise
+Before the v5 upgrade, Go consumers of those constructors must `go get github.com/theory-cloud/tabletheory/v5@v5.0.0`
+and pass a TableTheory v5 client. Do not keep both TableTheory major paths in one application — their otherwise
 similar interfaces are distinct Go types.
 
+TableTheory v5 changes one TypeScript type declaration and no Go or Python API. On the default `TheorydbClient`
+(`numberUnmarshalMode: 'string'`), typed items now declare a DynamoDB `N` attribute as `string` and `NS` as
+`string[]`; both were declared as `number` and `number[]` before. Runtime behavior is unchanged, so the break is
+compile-time only: a TypeScript consumer that reads numeric attributes through the typed item surface must either
+handle the canonical decimal strings, which the documented default always produced, or construct the client in
+explicit `'number'` mode where a number is genuinely intended. AppTheory converts numeric attributes at the call site
+and does not read through the typed item surface, so it needs no adapter.
+
 The AppTheory TypeScript and Python release metadata continues to install TableTheory only from immutable GitHub
-Release assets. The v4 dependency assets pinned by this line are:
+Release assets. The v5 dependency assets pinned by this line are:
 
-- TypeScript: `theory-cloud-tabletheory-ts-4.0.2.tgz`, verified with SHA-512
-  `PVONJcpV1x7pYr73LSEkkr5W6EirVEvQcylOdP/fL+zYDoaKydGQ58YJ60vUz6kD3OK3cMuHMddInKueHGEAqA==`.
-- Python: `tabletheory_py-4.0.2-py3-none-any.whl`, verified with SHA-256
-  `6ea091175f934c78b1711003044ae83d8fae379bfd07ce4cee6f22712ab76194`.
+- TypeScript: `theory-cloud-tabletheory-ts-5.0.0.tgz`, verified with SHA-512
+  `17WgG31fbj2URjvPTBJDJW0EOzkBXZixLdgWCYyekmfRxc2zzDYMPpa6Gkt90TJUzDVmFxFKCg6Jt4YCWj2y3g==`.
+- Python: `tabletheory_py-5.0.0-py3-none-any.whl`, verified with SHA-256
+  `b1105db11f8dfd06b2fd615f9e92f0e420080940878feccd07dcdb9f9168d65a`.
 
-TableTheory v4 removes the ticker-driven memory monitor: `MemoryMonitor.Start` / `Stop`,
+Use those pinned assets through AppTheory's package metadata; do not substitute registry-published packages or
+mutable URLs.
+
+Consumers crossing from an AppTheory v4 line, which pinned TableTheory v3, additionally inherit the TableTheory v4
+changes. TableTheory v4 removes the ticker-driven memory monitor: `MemoryMonitor.Start` / `Stop`,
 `ResourceProtector.StartMemoryMonitoring` / `StopMemoryMonitoring`, and `ResourceLimits.MemoryCheckInterval` are
 gone, replaced by on-demand `MemoryMonitor.Sample`, `ResourceProtector.SampleMemory`, and
 `ResourceProtector.SetMemoryAlertCallback`. A caller samples inside the request whose memory it records, so nothing
@@ -76,9 +88,6 @@ a sample starts can outlive the invocation. AppTheory does not use the removed A
 `ErrInvalidOperator` from `ConsistentRead()` on GSI queries instead of silently dropping the flag, and converges
 `[]byte`/set-tagged DynamoDB write shapes on the cross-runtime DMS matrix; AppTheory's TableTheory queries use
 base-table key conditions, so the GSI change does not apply and no persisted-shape migration is required.
-
-Use those pinned assets through AppTheory's package metadata; do not substitute registry-published packages or
-mutable URLs.
 
 ### MCP transport routes require credentials by default
 
