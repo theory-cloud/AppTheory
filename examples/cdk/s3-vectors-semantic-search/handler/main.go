@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -19,6 +20,8 @@ import (
 const (
 	defaultTenant    = "demo"
 	defaultNamespace = "apptheory"
+	exampleTokenEnv  = "APPTHEORY_EXAMPLE_API_TOKEN"
+	maxExampleTopK   = 25
 )
 
 type dependencyProvider interface {
@@ -75,7 +78,10 @@ func buildApp(provider dependencyProvider, tier string) *apptheory.App {
 	if strings.TrimSpace(tier) == "" {
 		tier = "p2"
 	}
-	app := apptheory.New(apptheory.WithTier(apptheory.Tier(tier)))
+	app := apptheory.New(
+		apptheory.WithTier(apptheory.Tier(tier)),
+		apptheory.WithAuthPrincipalHook(authPrincipalHook(os.Getenv)),
+	)
 	app.Get("/", func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		return health(ctx, provider)
 	})
@@ -84,10 +90,10 @@ func buildApp(provider dependencyProvider, tier string) *apptheory.App {
 	})
 	app.Post("/seed", func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		return seed(ctx, provider)
-	})
+	}, apptheory.RequireAuth())
 	app.Get("/search", func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		return search(ctx, provider)
-	})
+	}, apptheory.RequireAuth())
 	return app
 }
 
@@ -301,7 +307,10 @@ func parseTopK(raw string) (int, error) {
 	if err != nil || value <= 0 {
 		return 0, fmt.Errorf("top_k must be a positive integer")
 	}
-	return vectorstore.NormalizeTopK(value), nil
+	if value > maxExampleTopK {
+		return 0, fmt.Errorf("top_k must be at most %d", maxExampleTopK)
+	}
+	return value, nil
 }
 
 func parsePositiveInt(raw string, name string) (int, error) {
@@ -377,6 +386,32 @@ func jsonResponse(status int, value any) (*apptheory.Response, error) {
 
 func errorResponse(status int, code string, message string) (*apptheory.Response, error) {
 	return jsonResponse(status, map[string]any{"error": map[string]any{"code": code, "message": message}})
+}
+
+func bearerToken(ctx *apptheory.Context) string {
+	const prefix = "bearer "
+	header := strings.TrimSpace(ctx.Header("authorization"))
+	if len(header) < len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
+		return ""
+	}
+	return strings.TrimSpace(header[len(prefix):])
+}
+
+func authPrincipalHook(env func(string) string) apptheory.PrincipalAuthHook {
+	if env == nil {
+		env = os.Getenv
+	}
+	return func(ctx *apptheory.Context) (*apptheory.AuthPrincipal, error) {
+		expected := strings.TrimSpace(env(exampleTokenEnv))
+		token := bearerToken(ctx)
+		if expected == "" || token == "" {
+			return nil, nil
+		}
+		if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
+			return nil, nil
+		}
+		return &apptheory.AuthPrincipal{Identity: "s3-vectors-example"}, nil
+	}
 }
 
 func main() {
