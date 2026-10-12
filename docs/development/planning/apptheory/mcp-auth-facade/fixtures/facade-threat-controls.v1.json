@@ -59,6 +59,20 @@
       "threat": "jwks_alg_confusion_cache_poisoning",
       "control": "RS256 only; alg none and HMAC rejected; key type must match RSA signing key; keys cached by kid; unknown kid triggers a bounded cooldown-gated refresh; cache expires; issuer checked before and after verification",
       "pin": ["design:validator-alg-pinning", "future:jwks-validator-fixtures"]
+    },
+    {
+      "id": "T10",
+      "threat": "callback_csrf_session_swap",
+      "control": "facade-minted single-use upstream state keyed by hash(upstream state); an unminted state is rejected (400, no client redirect); the callback correlates client + client state + redirect_uri + S256 challenge and exchanges the upstream code server-side only; upstream iss verified; the facade code is bound to the client's PKCE verifier at /token",
+      "pin": ["facade-journey:callback-iss-mismatch", "facade-journey:callback-replayed-state", "facade-journey:callback-forged-state", "facade-journey:token-wrong-verifier"],
+      "residual": "client-side state + PKCE-verifier binding: an attacker code cannot be redeemed without the client's verifier, but a client that ignores its own state cannot detect the swap"
+    },
+    {
+      "id": "T11",
+      "threat": "metadata_caching",
+      "control": "route-derived PRM and discovery documents carry cache-control: no-store so a route-specific issuer/resource is never cached for another route; family mode may set a bounded public max-age; the facade emits its own route-derived document rather than proxying the upstream's cacheable discovery verbatim",
+      "pin": ["facade-journey:protected-resource-metadata", "facade-journey:authorization-server-metadata", "conformance-kit:Layer B per-route metadata"],
+      "residual": "a client or shared cache that ignores no-store is out of framework scope; a family-mode deployment that overrides no-store accepts standard shared-cache staleness"
     }
   ],
   "cross_cutting": [
