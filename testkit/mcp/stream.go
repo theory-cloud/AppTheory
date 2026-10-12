@@ -9,8 +9,8 @@ import (
 	"io"
 	"strings"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v5/runtime/mcp"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v6/runtime/mcp"
 )
 
 // SSEMessage is a parsed Server-Sent Events frame.

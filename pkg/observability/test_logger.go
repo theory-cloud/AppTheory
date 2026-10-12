@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/theory-cloud/apptheory/v5/pkg/sanitization"
+	"github.com/theory-cloud/apptheory/v6/pkg/sanitization"
 )
 
 type testLoggerCore struct {

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
 )
 
 type staticIDGenerator struct {

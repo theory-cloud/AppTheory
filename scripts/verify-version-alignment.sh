@@ -152,38 +152,38 @@ PY
 
   prerelease_split_dir="${tmp_dir}/prerelease-split"
   copy_fixture "${prerelease_split_dir}"
-  write_version_state "${prerelease_split_dir}" "5.0.0-rc" "2.0.2" "5.0.0-rc" "5"
-  run_self_test_case "prerelease manifest split" "${prerelease_split_dir}" 0 "version-alignment: PASS (5.0.0-rc)"
+  write_version_state "${prerelease_split_dir}" "6.0.0-rc" "2.0.2" "6.0.0-rc" "6"
+  run_self_test_case "prerelease manifest split" "${prerelease_split_dir}" 0 "version-alignment: PASS (6.0.0-rc)"
 
   wrong_premain_dir="${tmp_dir}/wrong-premain"
   copy_fixture "${wrong_premain_dir}"
-  write_version_state "${wrong_premain_dir}" "5.0.0-rc" "2.0.2" "2.0.2" "5"
+  write_version_state "${wrong_premain_dir}" "6.0.0-rc" "2.0.2" "2.0.2" "6"
   run_self_test_case "wrong prerelease premain manifest" "${wrong_premain_dir}" 1 ".release-please-manifest.premain.json"
 
   stable_manifest_skew_dir="${tmp_dir}/stable-manifest-skew"
   copy_fixture "${stable_manifest_skew_dir}"
-  write_version_state "${stable_manifest_skew_dir}" "5.0.0" "2.0.2" "5.0.0" "5"
+  write_version_state "${stable_manifest_skew_dir}" "6.0.0" "2.0.2" "6.0.0" "6"
   run_self_test_case "stable manifest skew" "${stable_manifest_skew_dir}" 1 ".release-please-manifest.json"
 
-  staged_v5_dir="${tmp_dir}/staged-v5"
-  copy_fixture "${staged_v5_dir}"
-  write_version_state "${staged_v5_dir}" "4.5.0" "4.5.0" "4.5.0" "5"
-  run_self_test_case "staged v5 module" "${staged_v5_dir}" 0 \
-    "go module state staged-next-major (github.com/theory-cloud/apptheory/v5; VERSION 4.5.0)"
+  staged_v6_dir="${tmp_dir}/staged-v6"
+  copy_fixture "${staged_v6_dir}"
+  write_version_state "${staged_v6_dir}" "5.5.0" "5.5.0" "5.5.0" "6"
+  run_self_test_case "staged v6 module" "${staged_v6_dir}" 0 \
+    "go module state staged-next-major (github.com/theory-cloud/apptheory/v6; VERSION 5.5.0)"
 
-  released_v5_dir="${tmp_dir}/released-v5"
-  copy_fixture "${released_v5_dir}"
-  write_version_state "${released_v5_dir}" "5.0.0-rc" "2.0.2" "5.0.0-rc" "5"
-  run_self_test_case "released v5 module" "${released_v5_dir}" 0 \
-    "go module state released-major (github.com/theory-cloud/apptheory/v5; VERSION 5.0.0-rc)"
+  released_v6_dir="${tmp_dir}/released-v6"
+  copy_fixture "${released_v6_dir}"
+  write_version_state "${released_v6_dir}" "6.0.0-rc" "2.0.2" "6.0.0-rc" "6"
+  run_self_test_case "released v6 module" "${released_v6_dir}" 0 \
+    "go module state released-major (github.com/theory-cloud/apptheory/v6; VERSION 6.0.0-rc)"
 
-  legacy_cdk_in_v5_dir="${tmp_dir}/legacy-cdk-in-v5"
-  copy_fixture "${legacy_cdk_in_v5_dir}"
-  write_version_state "${legacy_cdk_in_v5_dir}" "4.5.0" "4.5.0" "4.5.0" "5"
+  legacy_cdk_in_v6_dir="${tmp_dir}/legacy-cdk-in-v6"
+  copy_fixture "${legacy_cdk_in_v6_dir}"
+  write_version_state "${legacy_cdk_in_v6_dir}" "5.5.0" "5.5.0" "5.5.0" "6"
   cp \
-    "${legacy_cdk_in_v5_dir}/cdk-go/apptheorycdk/go.mod" \
-    "${legacy_cdk_in_v5_dir}/cdk-go/go.mod"
-  run_self_test_case "legacy CDK module retained in v5" "${legacy_cdk_in_v5_dir}" 1 \
+    "${legacy_cdk_in_v6_dir}/cdk-go/apptheorycdk/go.mod" \
+    "${legacy_cdk_in_v6_dir}/cdk-go/go.mod"
+  run_self_test_case "legacy CDK module retained in v6" "${legacy_cdk_in_v6_dir}" 1 \
     "must not retain legacy cdk-go/go.mod or cdk-go/go.sum"
 
   wrong_module_dir="${tmp_dir}/wrong-module"
@@ -196,7 +196,7 @@ path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 path.write_text(
     text.replace(
-        "module github.com/theory-cloud/apptheory/v5\n",
+        "module github.com/theory-cloud/apptheory/v6\n",
         "module github.com/theory-cloud/apptheory\n",
         1,
     ),
@@ -204,13 +204,13 @@ path.write_text(
 )
 PY
   run_self_test_case "unsuffixed root module" "${wrong_module_dir}" 1 \
-    "go.mod module 'github.com/theory-cloud/apptheory' != 'github.com/theory-cloud/apptheory/v5'"
+    "go.mod module 'github.com/theory-cloud/apptheory' != 'github.com/theory-cloud/apptheory/v6'"
 
   wrong_module_major_dir="${tmp_dir}/wrong-module-major"
   copy_fixture "${wrong_module_major_dir}"
-  write_version_state "${wrong_module_major_dir}" "6.0.0" "6.0.0" "6.0.0" "5"
+  write_version_state "${wrong_module_major_dir}" "7.0.0" "7.0.0" "7.0.0" "6"
   run_self_test_case "unsupported VERSION major" "${wrong_module_major_dir}" 1 \
-    "VERSION major 6 is incompatible with Go module major 5"
+    "VERSION major 7 is incompatible with Go module major 6"
 
   stale_import_dir="${tmp_dir}/stale-import"
   copy_fixture "${stale_import_dir}"
@@ -241,8 +241,8 @@ GO
   exit 0
 fi
 
-expected_module="github.com/theory-cloud/apptheory/v5"
-expected_module_major=5
+expected_module="github.com/theory-cloud/apptheory/v6"
+expected_module_major=6
 
 if [[ ! -f "VERSION" ]]; then
   echo "version-alignment: FAIL (missing VERSION)"
@@ -292,8 +292,8 @@ from pathlib import Path
 root_module = "github.com/theory-cloud/apptheory"
 module_major = sys.argv[1]
 # Active code may reference exactly two canonical module paths: the staged root
-# module's semantic import path (…/apptheory/v5) and the canonical nested CDK Go
-# module (…/cdk-go/apptheorycdk/v5). The CDK continuation is pinned to the same
+# module's semantic import path (…/apptheory/v6) and the canonical nested CDK Go
+# module (…/cdk-go/apptheorycdk/v6). The CDK continuation is pinned to the same
 # staged major: accepting "any continuation under /cdk-go" let a planted
 # wrong-major nested path (…/cdk-go/apptheorycdk/v2) pass this gate.
 allowed_suffixes = (
@@ -302,14 +302,14 @@ allowed_suffixes = (
 )
 # Release-pinned documentation (docs/_config_versions.yml) documents the
 # released v3.3.0 version, whose /v3 module path is historically accurate
-# and remains fetchable; the release PR advances it to /v5 with the v5.0.0
+# and remains fetchable; the release PR advances it to /v6 with the v6.0.0
 # bump. docs/_data/runtimes.yml is that mechanism's checked-in local-preview
 # fallback: it pins the latest published release (currently v4.0.0 on the /v4
 # module path) so local previews never advertise an unpublished tag, and
 # pages.yml derives the live Go install from the deploy tag at build time.
 # cmd/apptheory-init/main_test.go pins a v3.0.0-rc scaffold to prove
 # the version->module-major derivation still maps v3-era pins to /v3.
-# Everything else must reference the staged /v5 import path.
+# Everything else must reference the staged /v6 import path.
 skip_files = {
     Path("cmd/apptheory-init/main_test.go"),
     Path("docs/_config_versions.yml"),

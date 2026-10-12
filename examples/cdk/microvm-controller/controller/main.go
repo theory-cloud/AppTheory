@@ -15,8 +15,8 @@ import (
 
 	"github.com/aws/aws-lambda-go/lambda"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
-	"github.com/theory-cloud/apptheory/v5/runtime/microvm"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	"github.com/theory-cloud/apptheory/v6/runtime/microvm"
 	"github.com/theory-cloud/tabletheory/v5"
 )
 

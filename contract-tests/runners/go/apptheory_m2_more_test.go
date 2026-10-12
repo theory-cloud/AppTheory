@@ -10,9 +10,9 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	"github.com/theory-cloud/apptheory/v5/pkg/streamer"
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
-	"github.com/theory-cloud/apptheory/v5/testkit"
+	"github.com/theory-cloud/apptheory/v6/pkg/streamer"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	"github.com/theory-cloud/apptheory/v6/testkit"
 )
 
 func TestCanonicalizeAPIGatewayProxyResponse_Base64DecodeError(t *testing.T) {

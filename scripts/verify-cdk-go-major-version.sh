@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Purpose: prove the staged AppTheory 5.0 Go module survives jsii release generation and artifact sync.
+# Purpose: prove the staged AppTheory 6.0 Go module survives jsii release generation and artifact sync.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -12,7 +12,7 @@ for cmd in go npm npx python3 rsync; do
 done
 
 synthetic_version="5.0.0-rc"
-canonical_module="github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v5"
+canonical_module="github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v6"
 tmp_dir="$(mktemp -d)"
 cleanup() {
   rm -rf "${tmp_dir}"
@@ -77,13 +77,13 @@ cp -a "${fixture_root}/cdk-go/." "${baseline_root}/cdk-go/"
 (cd "${fixture_root}" && bash scripts/update-cdk-generated.sh >/dev/null)
 
 if [[ -e "${fixture_root}/cdk-go/go.mod" || -e "${fixture_root}/cdk-go/go.sum" ]]; then
-  echo "cdk-go-major-version: FAIL (synthetic v5 generation retained legacy parent module files)" >&2
+  echo "cdk-go-major-version: FAIL (synthetic v6 generation retained legacy parent module files)" >&2
   exit 1
 fi
 
 canonical_go_mod="${fixture_root}/cdk-go/apptheorycdk/go.mod"
 if [[ ! -f "${canonical_go_mod}" ]]; then
-  echo "cdk-go-major-version: FAIL (synthetic v5 generation did not create nested go.mod)" >&2
+  echo "cdk-go-major-version: FAIL (synthetic v6 generation did not create nested go.mod)" >&2
   exit 1
 fi
 observed_module="$(awk '/^module[[:space:]]+/{print $2; exit}' "${canonical_go_mod}")"
@@ -107,7 +107,7 @@ if grep -R -F \
   "${fixture_root}/cdk-go/apptheorycdk" \
   --include='*.go' >/dev/null
 then
-  echo "cdk-go-major-version: FAIL (generated v5 bindings contain legacy internal imports)" >&2
+  echo "cdk-go-major-version: FAIL (generated v6 bindings contain legacy internal imports)" >&2
   exit 1
 fi
 if ! grep -R -F \
@@ -115,7 +115,7 @@ if ! grep -R -F \
   "${fixture_root}/cdk-go/apptheorycdk" \
   --include='*.go' >/dev/null
 then
-  echo "cdk-go-major-version: FAIL (generated v5 bindings do not use canonical internal imports)" >&2
+  echo "cdk-go-major-version: FAIL (generated v6 bindings do not use canonical internal imports)" >&2
   exit 1
 fi
 
@@ -208,7 +208,7 @@ else:
         )
 legacy_module_files = {"cdk-go/go.mod", "cdk-go/go.sum"}
 if legacy_module_files.intersection(additions | deletions):
-    raise SystemExit("cdk-go-major-version: FAIL (v5 artifact sync touched legacy parent module files)")
+    raise SystemExit("cdk-go-major-version: FAIL (v6 artifact sync touched legacy parent module files)")
 
 file_changes = payload.get("variables", {}).get("input", {}).get("fileChanges", {})
 if len(file_changes.get("additions", [])) != summary["additionCount"]:
