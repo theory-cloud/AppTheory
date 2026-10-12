@@ -4,7 +4,7 @@
     "section": "journey",
     "status": "design (M0)",
     "name": "Minimal non-TMS consumer journey (single domain, upstream provider)",
-    "notes": "The ordered transcript that proves scenario (a) by construction. HTTP-shaped so M1-M3 can lift each step into a tier:facade single-envelope fixture. Steps 1-11 correspond to MINIMAL_CONSUMER.md. Convention (T1): every authorize step that expects a 302 carries a valid registered client_id and redirect_uri, because errors raised before redirect-URI validation never redirect; only the pre-validation failures (unknown client, unmatched redirect URI) expect 400 with no location."
+    "notes": "The ordered transcript that proves scenario (a) by construction. HTTP-shaped so M1-M3 can lift each step into a tier:facade single-envelope fixture. Steps 1-11 correspond to MINIMAL_CONSUMER.md. Convention (T1): every authorize step that expects a 302 carries a valid registered client_id and redirect_uri, because errors raised before redirect-URI validation never redirect; only the pre-validation failures (unknown client, unmatched redirect URI) expect 400 with no location. By the same order (DESIGN §8.1: client -> redirect_uri -> response_type -> S256 PKCE -> state -> resource), every authorize step that expects an error raised later (missing or plain challenge, wrong resource) carries all earlier-validated parameters valid — response_type and, unless the step is itself testing it, S256 code_challenge/code_challenge_method — so the expected error is the only reachable outcome."
   },
   "world": {
     "public_base_url": "https://mcp.example.com",
@@ -151,8 +151,8 @@
     {
       "n": 5.5,
       "name": "authorize-wrong-resource",
-      "request": { "method": "GET", "path": "/.well-known/oauth-authorization-server/acme/mcp/authorize", "query": { "client_id": "<registered client>", "redirect_uri": "https://client.example/callback", "response_type": "code", "state": "s", "resource": "https://mcp.example.com/other/mcp" } },
-      "expect": { "status": 302, "error": "invalid_target", "reason": "resource must equal the route resource" }
+      "request": { "method": "GET", "path": "/.well-known/oauth-authorization-server/acme/mcp/authorize", "query": { "client_id": "<registered client>", "redirect_uri": "https://client.example/callback", "response_type": "code", "code_challenge": "<S256>", "code_challenge_method": "S256", "state": "s", "resource": "https://mcp.example.com/other/mcp" } },
+      "expect": { "status": 302, "error": "invalid_target", "reason": "resource must equal the route resource; every earlier-validated parameter (client, redirect URI, response_type, S256 PKCE, state) is valid, so under the DESIGN §8.1 validation order this error is the only reachable outcome" }
     },
     {
       "n": 6,
