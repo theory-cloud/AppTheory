@@ -13,6 +13,37 @@ for `CHANGELOG.md`:
 Every minor release line that changes runtime behavior, deployment constructs, generated artifacts, dependency floors,
 or deprecation posture must add or update a section here before the release is promoted.
 
+## v6.x line
+
+AppTheory v6 moves the Go runtime and the generated CDK Go bindings onto the next semantic import version. The release
+range from the v5 line also carries other breaking runtime, CDK, TypeScript, and Python changes; read `CHANGELOG.md` and
+the v6 release notes for the commit-level detail, and treat the import-path move below as the mechanical part of the
+upgrade.
+
+### Go module import paths
+
+AppTheory v6 moves the Go runtime and the generated CDK Go bindings onto the next semantic import version. Replace the
+`/v5` suffix on every AppTheory runtime import with the canonical `github.com/theory-cloud/apptheory/v6` path, pin the
+v6 module tag, and run `go mod tidy`:
+
+```bash
+go get github.com/theory-cloud/apptheory/v6@v6.0.0-rc
+```
+
+Update the generated CDK Go bindings in the same release transaction: replace
+`github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v5` with
+`github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v6`, pin the matching v6 CDK module tag, and run `go mod tidy` in
+the CDK application's module. Runtime and CDK module tags continue to target the same immutable release commit; do not
+mix major lines or substitute registry-published artifacts.
+
+The v6.0.0-rc tag is the first v6 release; pin the exact v6 release or RC tag you are moving to. Do not retain both
+AppTheory major paths in one application: packages from `/v5` and `/v6` have distinct Go type identities even where
+their APIs are otherwise unchanged.
+
+Within the `/v5` to `/v6` module migration itself the Go API surface is unchanged beyond import paths: the api-snapshot
+diff between the two lines is header-path-only, so Go code that compiles on v5 compiles on v6. The TypeScript and Python
+runtimes carry no module-path change.
+
 ## v5.x line
 
 AppTheory v5 is a major release on two axes: the Go module path moves to the next semantic import version, and the Go
