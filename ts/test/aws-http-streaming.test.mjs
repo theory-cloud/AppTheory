@@ -46,30 +46,34 @@ function liveStream(firstChunk) {
 // Mirrors APIGATEWAY_V2_STREAMING_BODY_TIMEOUT_MS in src/internal/aws-http.ts.
 const STREAMING_BODY_TIMEOUT_MS = 5000;
 
-// assertLiveBodyJoined runs a buffered adapter call for a live body, releases the
-// body once the drain budget has expired, and asserts the adapter waited for it.
-async function assertLiveBodyJoined(t, live, call, expectedMessage) {
+// assertLiveBodyBounded runs a buffered adapter call for a live body and asserts
+// the adapter's join is bounded: it returns at its budget plus the unwind grace
+// without waiting for the live body, then releases the blocked producer and
+// confirms it exits. The live body is the documented residual, not work the
+// adapter is required to wait out.
+async function assertLiveBodyBounded(live, call, expectedMessage) {
   const startedAt = Date.now();
-  const timer = setTimeout(() => live.release(), STREAMING_BODY_TIMEOUT_MS + 100);
-  try {
-    const out = await call();
-    assert.equal(out.statusCode, 500);
-    assert.match(
-      JSON.stringify(out),
-      new RegExp(expectedMessage.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
-    );
-    assert.equal(
-      live.unwound(),
-      true,
-      "the adapter returned while the live body it gave up on could still run",
-    );
-    assert.ok(
-      Date.now() - startedAt >= STREAMING_BODY_TIMEOUT_MS,
-      "the adapter returned before its drain budget expired",
-    );
-  } finally {
-    clearTimeout(timer);
-  }
+  const out = await call();
+  const elapsed = Date.now() - startedAt;
+  assert.equal(out.statusCode, 500);
+  assert.match(
+    JSON.stringify(out),
+    new RegExp(expectedMessage.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+  );
+  assert.ok(
+    elapsed >= STREAMING_BODY_TIMEOUT_MS,
+    "the adapter returned before its drain budget expired",
+  );
+  assert.ok(
+    elapsed < STREAMING_BODY_TIMEOUT_MS + 2000,
+    "the adapter did not bound its wait for the live body",
+  );
+
+  // The blocked producer is the residual; releasing it lets it exit.
+  live.release();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(live.unwound(), true, "the live body's producer was never released");
 }
 
 function errorStream() {
@@ -141,13 +145,12 @@ test("apigateway v2 adapter delivers a terminating streaming body as buffered co
   assert.equal(out.isBase64Encoded, false);
 });
 
-test("apigateway v2 adapter fails closed on a live streaming body and joins it", async () => {
+test("apigateway v2 adapter fails closed on a live streaming body and bounds its join", async () => {
   const app = createApp();
   const live = liveStream("data: first\n\n");
   app.get("/live", () => htmlStream(200, live.stream));
 
-  await assertLiveBodyJoined(
-    null,
+  await assertLiveBodyBounded(
     live,
     () => app.serveAPIGatewayV2(apigwV2Event("/live")),
     APIGATEWAY_V2_STREAMING_ERROR_MESSAGE,
@@ -187,13 +190,12 @@ test("lambda function url adapter delivers a terminating streaming body as buffe
   assert.equal(out.isBase64Encoded, false);
 });
 
-test("lambda function url adapter fails closed on a live streaming body and joins it", async () => {
+test("lambda function url adapter fails closed on a live streaming body and bounds its join", async () => {
   const app = createApp();
   const live = liveStream("data: first\n\n");
   app.get("/live", () => htmlStream(200, live.stream));
 
-  await assertLiveBodyJoined(
-    null,
+  await assertLiveBodyBounded(
     live,
     () => app.serveLambdaFunctionURL(lambdaFunctionURLEvent("/live")),
     LAMBDA_FUNCTION_URL_STREAMING_ERROR_MESSAGE,

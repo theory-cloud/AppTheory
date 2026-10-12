@@ -222,9 +222,26 @@ Records use the TableTheory/DynamoDB key shape:
 
 | Field | Canonical value |
 | --- | --- |
-| `pk` | `TENANT#<tenant_id>#NAMESPACE#<namespace>` |
+| `pk` | `TENANT#<tenant_id_utf8_byte_len>#<tenant_id>#NAMESPACE#<namespace_utf8_byte_len>#<namespace>` |
 | `sk` | `SESSION#<session_id>` |
 | `ttl` | Unix expiry derived from `expires_at` |
+
+The partition key frames each identity with its UTF-8 byte length so distinct tenant/namespace pairs
+can never collide. Items written by an earlier release used the un-prefixed
+`TENANT#<tenant_id>#NAMESPACE#<namespace>` form, which is not injective: a value containing the
+literal `#NAMESPACE#` can straddle the boundary.
+
+Reads self-heal across the upgrade. Every registry read queries the new length-framed key and, on a
+miss, falls back to the pre-M1 key. A pre-M1 item that resolves is validated against the pre-M1
+derivation and then re-persisted under the new key, so items migrate as they are touched; a record
+whose attributes contradict both derivations is still rejected. Because a re-key is additive, the
+pre-M1 item remains until its own `ttl` retires it (DynamoDB TTL deletion can lag), so a namespace
+can briefly hold both forms for one session — list results deduplicate by session and prefer the
+canonical item.
+
+A manual read-modify-write re-key pass is optional cleanup for items that are never read again: it
+reads each remaining pre-M1 item, recomputes `pk` from its `tenant_id` and `namespace` attributes,
+and writes it back under the new length-framed key.
 
 Controller/session handlers must use this registry table rather than route-local memory, ad-hoc tables, or raw SDK
 storage. The durable record is tenant-bound and includes session state, desired state, image/network refs, provider

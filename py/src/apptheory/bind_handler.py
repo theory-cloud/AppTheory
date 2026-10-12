@@ -304,6 +304,9 @@ def _type_name(annotation: Any) -> str:
     return str(annotation)
 
 
+_MAX_DURATION_SEGMENTS = 1024
+
+
 def _parse_duration(raw: str) -> dt.timedelta:
     text = raw.strip()
     if not text:
@@ -318,10 +321,16 @@ def _parse_duration(raw: str) -> dt.timedelta:
     pattern = re.compile(r"(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|ms|s|m|h)")
     pos = 0
     total_ns = 0
+    segments = 0
     while pos < len(text):
         match = pattern.match(text, pos)
         if match is None:
             raise ValueError("invalid duration")
+        # Bound the adjacent segment count so a multi-megabyte "1s"-repeated value
+        # is rejected cheaply, matching the Go and TypeScript parsers.
+        if segments >= _MAX_DURATION_SEGMENTS:
+            raise ValueError("invalid duration")
+        segments += 1
         total_ns += _decimal_duration_to_ns(match.group(1), match.group(2))
         pos = match.end()
     total_ns *= sign

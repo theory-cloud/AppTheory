@@ -30,6 +30,7 @@ AtomicRateLimiter	interface
 AuthHook	type
 AuthPosture	interface
 AuthPostureKind	type
+AuthPrincipal	interface
 Authenticated	function
 AuthenticatedAnyOf	function
 AuthorizationServerMetadata	interface
@@ -418,6 +419,7 @@ OpenAPIValidationRuleSpec	interface
 Optional	function
 PolicyDecision	interface
 PolicyHook	type
+PrincipalAuthHook	type
 PrincipalKind	type
 ProfileLogger	class
 ProfileLoggerOptions	interface

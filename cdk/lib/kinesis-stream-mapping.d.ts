@@ -85,13 +85,15 @@ export interface AppTheoryKinesisStreamMappingProps {
      * permission the destination needs (`sqs:SendMessage` or `sns:Publish`); an Amazon S3 bucket
      * (`new lambdaEventSources.S3OnFailureDestination(bucket)`) is also supported.
      *
-     * The destination receives metadata about the discarded batch, not the records themselves: the
-     * shard ID and sequence numbers identify records to re-read from the stream while they are still
-     * inside the stream retention window. It only receives anything once retries are exhausted or
-     * `maxRecordAge` is exceeded, so a mapping that leaves both unbounded (the AWS Lambda default is
-     * `-1`, retry until the record expires) has nothing to send. Pair this prop with a bounded
-     * `retryAttempts` and `bisectBatchOnError: true` so a poison record is retained for repair instead
-     * of blocking its shard.
+     * What the destination receives depends on its type. An Amazon SQS or Amazon SNS destination
+     * receives metadata about the discarded batch - the shard ID and the start and end sequence
+     * numbers - which identify records to re-read from the stream while they are still inside the
+     * stream retention window; it does not receive the record payloads. An Amazon S3 destination
+     * (`S3OnFailureDestination`) receives the full records, including their payloads. The destination
+     * only receives anything once retries are exhausted or `maxRecordAge` is exceeded, so a mapping
+     * that leaves both unbounded (the AWS Lambda default is `-1`, retry until the record expires) has
+     * nothing to send. Pair this prop with a bounded `retryAttempts` and `bisectBatchOnError: true` so
+     * a poison record is retained for repair instead of blocking its shard.
      *
      * @default - discarded records are dropped
      */

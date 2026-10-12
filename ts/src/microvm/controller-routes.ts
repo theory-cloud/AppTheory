@@ -215,6 +215,38 @@ export function microVMControllerRequestFromHTTP(
       ctx.requestId,
     );
   }
+  // Tenant binding on the MicroVM controller surface.
+  //
+  // When the app is configured with a principal-aware resolver, the tenant MUST be
+  // derived from the verified principal claim (tenantClaim). A caller-supplied
+  // tenant that disagrees with the verified claim — the x-tenant-id header, the
+  // tenant_id body field, or the tenant_id query parameter — is rejected with
+  // m16.microvm.tenant_binding_violation.
+  //
+  // LEGACY MODE (no principal-aware resolver configured): there is no verified
+  // tenant, and the caller-supplied x-tenant-id header / tenant query parameter
+  // remains the only tenant source. That path is UNAUTHENTICATED by design and is
+  // retained only for backward compatibility.
+  if (ctx.tenantBindingRequired) {
+    if (!ctx.tenantBound) {
+      return safeError(
+        MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+        "apptheory: microvm controller route tenant is not derived from the verified claim",
+        ctx.requestId,
+      );
+    }
+    const headerTenant = firstHeaderValueFromMap(
+      ctx.request.headers,
+      "x-tenant-id",
+    );
+    if (headerTenant && headerTenant !== String(ctx.tenantId ?? "").trim()) {
+      return safeError(
+        MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+        "apptheory: microvm controller route tenant binding mismatch",
+        ctx.requestId,
+      );
+    }
+  }
   const ctxTenant = String(ctx.tenantId ?? "").trim();
   const bodyTenant = stringFromPayload(payload, "tenant_id");
   const queryTenant = firstQueryValue(ctx.request.query, "tenant_id");
@@ -283,6 +315,38 @@ export function microVMControllerInvokeRequestFromHTTP(
       "apptheory: microvm controller route context is missing",
       "",
     );
+  }
+  // Tenant binding on the MicroVM controller surface.
+  //
+  // When the app is configured with a principal-aware resolver, the tenant MUST be
+  // derived from the verified principal claim (tenantClaim). A caller-supplied
+  // tenant that disagrees with the verified claim — the x-tenant-id header or the
+  // tenant_id query parameter — is rejected with
+  // m16.microvm.tenant_binding_violation.
+  //
+  // LEGACY MODE (no principal-aware resolver configured): there is no verified
+  // tenant, and the caller-supplied x-tenant-id header / tenant query parameter
+  // remains the only tenant source. That path is UNAUTHENTICATED by design and is
+  // retained only for backward compatibility.
+  if (ctx.tenantBindingRequired) {
+    if (!ctx.tenantBound) {
+      return safeError(
+        MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+        "apptheory: microvm controller route tenant is not derived from the verified claim",
+        ctx.requestId,
+      );
+    }
+    const headerTenant = firstHeaderValueFromMap(
+      ctx.request.headers,
+      "x-tenant-id",
+    );
+    if (headerTenant && headerTenant !== String(ctx.tenantId ?? "").trim()) {
+      return safeError(
+        MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+        "apptheory: microvm controller route tenant binding mismatch",
+        ctx.requestId,
+      );
+    }
   }
   const ctxTenant = String(ctx.tenantId ?? "").trim();
   const queryTenant = firstQueryValue(ctx.request.query, "tenant_id");

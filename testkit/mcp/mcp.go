@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"testing"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
-	mcpruntime "github.com/theory-cloud/apptheory/v5/runtime/mcp"
-	"github.com/theory-cloud/apptheory/v5/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	mcpruntime "github.com/theory-cloud/apptheory/v6/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v6/testkit"
 )
 
 // Client is a test MCP client that invokes an in-process MCP server.

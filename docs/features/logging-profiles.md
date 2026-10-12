@@ -56,6 +56,20 @@ Supported context sources are intentionally finite: request ID, tenant ID, user 
 route, method, path, status, and job name. If a service needs another portable context source, add it to the contract
 and fixtures before relying on it.
 
+## Field types fail closed
+
+The JSON decoder validates the declared type of every known field in all three runtimes (Go, TypeScript, and Python),
+not only the option names. Scalar fields (`schema_version`, `profile`, `encoding.*`, `error_capture.stack_trace_field`
+/ `stack_hash_field` / `stack_hash_algorithm`, `sanitization.notes`) must be JSON strings; `error_capture.include_*`
+and `sanitization.existing_sanitized_logging` must be JSON booleans; `required_fields`, `recommended_fields`,
+`alerting_hints.fingerprint_fields` / `keeper_lookup_fields`, and the `levels`, `field_map`, `enrichment.static`, and
+`enrichment.context` maps must hold strings.
+
+A composite or wrong-type value in one of those slots (for example `levels: {"info": ["INFO"]}`,
+`error_capture: {"include_stack_trace": "false"}`, or `enrichment: {"static": {"service": ["api"]}}`) fails closed with
+a per-field validation error rather than being silently string- or boolean-coerced. Profiles that previously passed
+only because a malformed value was coerced now fail closed; well-formed profiles are unaffected.
+
 ## Ownership boundary
 
 AppTheory owns:
@@ -89,8 +103,8 @@ package main
 import (
 	"log"
 
-	"github.com/theory-cloud/apptheory/v5/pkg/observability"
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
+	"github.com/theory-cloud/apptheory/v6/pkg/observability"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
 )
 
 func buildApp() *apptheory.App {

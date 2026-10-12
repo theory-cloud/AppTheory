@@ -10,10 +10,11 @@ import (
 	"strings"
 	"time"
 
-	tablecore "github.com/theory-cloud/tabletheory/v4/pkg/core"
-	tableerrors "github.com/theory-cloud/tabletheory/v4/pkg/errors"
+	tablecore "github.com/theory-cloud/tabletheory/v5/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/v5/pkg/errors"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
+	"github.com/theory-cloud/apptheory/v6/pkg/objectstore"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
 )
 
 const (
@@ -85,15 +86,50 @@ type dynamoStreamTransactWriter interface {
 	TransactWrite(context.Context, func(tablecore.TransactionBuilder) error) error
 }
 
+// DynamoStreamStoreOption configures NewDynamoStreamStore.
+type DynamoStreamStoreOption func(*dynamoStreamStoreOptions)
+
+type dynamoStreamStoreOptions struct {
+	spillEncryption objectstore.S3EncryptionConfig
+}
+
+// WithDynamoStreamSpillEncryption sets the server-side encryption the stream
+// spill store requests for its S3 writes.
+//
+// The default (no option) emits no server-side-encryption header, so a bucket
+// whose default is KMS keeps KMS. KMS mode requires a key id and is validated
+// when the store is constructed; an invalid configuration fails closed.
+func WithDynamoStreamSpillEncryption(encryption objectstore.S3EncryptionConfig) DynamoStreamStoreOption {
+	return func(options *dynamoStreamStoreOptions) {
+		options.spillEncryption = encryption
+	}
+}
+
 // NewDynamoStreamStore creates a DynamoDB-backed StreamStore.
-func NewDynamoStreamStore(db tablecore.DB) StreamStore {
+//
+// The optional configuration applies to the S3 spill store that holds large
+// stream events; the default leaves the bucket's own encryption default in
+// place.
+func NewDynamoStreamStore(db tablecore.DB, opts ...DynamoStreamStoreOption) StreamStore {
+	options := dynamoStreamStoreOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&options)
+		}
+	}
+
+	spillStore := newDynamoStreamSpillStoreFromEnv()
+	if spill, ok := spillStore.(*dynamoStreamObjectSpillStore); ok && spill != nil {
+		spill.encryption = options.spillEncryption
+	}
+
 	return &DynamoStreamStore{
 		db:             db,
 		idGen:          apptheory.RandomIDGenerator{},
 		now:            func() time.Time { return time.Now().UTC() },
 		pollInterval:   defaultDynamoStreamPollInterval,
 		batchSize:      defaultDynamoStreamBatchSize,
-		spillStore:     newDynamoStreamSpillStoreFromEnv(),
+		spillStore:     spillStore,
 		inlineMaxBytes: dynamoStreamSpillInlineMaxBytes(),
 		maxEventBytes:  dynamoStreamMaxEventBytes(),
 	}

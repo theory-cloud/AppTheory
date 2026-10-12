@@ -2,13 +2,13 @@ package apptheorycdk
 
 import (
 	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
-	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v5/jsii"
+	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v6/jsii"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3vectors"
 	"github.com/aws/constructs-go/constructs/v10"
-	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v5/internal"
+	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v6/internal"
 )
 
 // AppTheory's canonical S3 Vectors deployment primitive.
@@ -32,6 +32,10 @@ type AppTheoryVectorIndex interface {
 	// Bind canonical Bedrock Titan embedding environment variables.
 	BindTitanEmbeddingEnvironment(fn awslambda.Function, options *AppTheoryVectorIndexBindOptions)
 	// Grant Bedrock InvokeModel for explicit Titan embedding helpers.
+	//
+	// The default resource ARN is scoped to the configured Titan embedding model
+	// in this stack's partition and region. Pass `modelResourceArn` explicitly -
+	// for example `"*"` - to opt into a different or wider resource scope.
 	GrantBedrockInvokeModel(grantee awsiam.IGrantable, modelResourceArn *string) awsiam.Grant
 	// Grant read, query, write, and management permissions.
 	GrantManage(grantee awsiam.IGrantable) awsiam.Grant

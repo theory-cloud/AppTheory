@@ -15,7 +15,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/theory-cloud/apptheory/v5/pkg/objectstore"
+	"github.com/theory-cloud/apptheory/v6/pkg/objectstore"
 )
 
 const (
@@ -23,6 +23,15 @@ const (
 	MaxVersionedArtifactBytes int64 = 32 << 20
 	// MaxVersionedArtifactEntries is the hard ceiling for archive members.
 	MaxVersionedArtifactEntries = 512
+	// maxVersionedArtifactLogicalBytes is the hard ceiling for the cumulative
+	// logical content of all regular members in one archive. The artifact is an
+	// uncompressed tar, so a legitimate archive's total member content can never
+	// exceed its physical size (<= MaxVersionedArtifactBytes); this cumulative
+	// bound is what stops many maximum-sized members -- in particular
+	// reader-expanded GNU/PAX sparse members, whose logical size is far larger
+	// than the space they occupy -- from retaining far more memory than the
+	// physical object ceiling allows.
+	maxVersionedArtifactLogicalBytes int64 = MaxVersionedArtifactBytes
 	// maxArtifactTrailingZeroBytes bounds trailing tar padding to one GNU tar
 	// blocking-factor-20 record: 20 512-byte blocks, or 10,240 bytes. GNU tar
 	// 1.35 appends at most 19 zero blocks (9,728 bytes) after the EOF marker;
@@ -255,6 +264,7 @@ func readVersionedArtifactArchive(raw []byte) ([]ArtifactEntry, error) {
 	entries := make([]ArtifactEntry, 0)
 	entryPaths := make(map[string]struct{})
 	members := 0
+	var logicalBytes int64
 	for {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
@@ -267,11 +277,12 @@ func readVersionedArtifactArchive(raw []byte) ([]ArtifactEntry, error) {
 		if members > MaxVersionedArtifactEntries {
 			return nil, fmt.Errorf("archive holds more than %d members", MaxVersionedArtifactEntries)
 		}
-		entry, err := readVersionedArtifactEntry(reader, header)
+		entry, err := readVersionedArtifactEntry(reader, header, maxVersionedArtifactLogicalBytes-logicalBytes)
 		if err != nil {
 			return nil, err
 		}
 		if entry != nil {
+			logicalBytes += int64(len(entry.content))
 			if _, exists := entryPaths[entry.Path]; exists {
 				return nil, fmt.Errorf("archive contains duplicate member path %q", entry.Path)
 			}
@@ -301,7 +312,7 @@ func allZeroArtifactBytes(input []byte) bool {
 	return true
 }
 
-func readVersionedArtifactEntry(reader *tar.Reader, header *tar.Header) (*ArtifactEntry, error) {
+func readVersionedArtifactEntry(reader *tar.Reader, header *tar.Header, remainingLogical int64) (*ArtifactEntry, error) {
 	name, err := validateArtifactMemberPath(header.Name)
 	if err != nil {
 		return nil, err
@@ -312,8 +323,18 @@ func readVersionedArtifactEntry(reader *tar.Reader, header *tar.Header) (*Artifa
 	if header.Typeflag != tar.TypeReg {
 		return nil, fmt.Errorf("archive member %q is not a regular file", name)
 	}
+	// A reader-expanded GNU/PAX sparse member is surfaced as an ordinary
+	// regular file (TypeReg) whose logical Header.Size is far larger than the
+	// space it occupies in the archive. Rejecting it here keeps a small physical
+	// object from expanding into gigabytes of retained allocation.
+	if artifactMemberIsSparse(header) {
+		return nil, fmt.Errorf("archive member %q is a sparse file", name)
+	}
 	if header.Size < 0 || header.Size > MaxVersionedArtifactBytes {
 		return nil, fmt.Errorf("archive member %q has an invalid size", name)
+	}
+	if header.Size > remainingLogical {
+		return nil, fmt.Errorf("archive logical content exceeds %d bytes", maxVersionedArtifactLogicalBytes)
 	}
 	content := make([]byte, header.Size)
 	if _, err := io.ReadFull(reader, content); err != nil {
@@ -326,6 +347,26 @@ func readVersionedArtifactEntry(reader *tar.Reader, header *tar.Header) (*Artifa
 		content: content,
 		digest:  hex.EncodeToString(sum[:]),
 	}, nil
+}
+
+// artifactMemberIsSparse reports whether a tar header describes an
+// archive that expands members on read. Both the old GNU sparse form (a
+// dedicated type flag) and the GNU PAX 1.0 form (regular type plus GNU.sparse.*
+// extended records) are rejected: archive/tar expands either into its logical
+// Header.Size, which a physical-size check alone cannot bound.
+func artifactMemberIsSparse(header *tar.Header) bool {
+	if header == nil {
+		return false
+	}
+	if header.Typeflag == tar.TypeGNUSparse {
+		return true
+	}
+	for key := range header.PAXRecords {
+		if strings.HasPrefix(key, "GNU.sparse.") {
+			return true
+		}
+	}
+	return false
 }
 
 func validateArtifactMemberPath(name string) (string, error) {

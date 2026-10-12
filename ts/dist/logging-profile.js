@@ -563,19 +563,50 @@ function numberField(fields, name) {
 }
 const loggingProfileJSONOptions = {
     allowed: optionNameSet("schema_version", "profile", "encoding", "levels", "required_fields", "recommended_fields", "field_map", "enrichment", "error_capture", "sanitization", "alerting_hints"),
+    types: {
+        schema_version: "string",
+        profile: "string",
+        levels: "stringMap",
+        required_fields: "stringArray",
+        recommended_fields: "stringArray",
+        field_map: "stringMap",
+    },
     nested: {
         encoding: {
             allowed: optionNameSet("format", "timestamp_field", "timestamp_format", "level_field", "message_field"),
+            types: {
+                format: "string",
+                timestamp_field: "string",
+                timestamp_format: "string",
+                level_field: "string",
+                message_field: "string",
+            },
         },
-        enrichment: { allowed: optionNameSet("static", "context") },
+        enrichment: {
+            allowed: optionNameSet("static", "context"),
+            types: { static: "stringMap", context: "stringMap" },
+        },
         error_capture: {
             allowed: optionNameSet("include_error_type", "include_error_code", "include_stack_trace", "stack_trace_field", "stack_hash_field", "stack_hash_algorithm"),
+            types: {
+                include_error_type: "boolean",
+                include_error_code: "boolean",
+                include_stack_trace: "boolean",
+                stack_trace_field: "string",
+                stack_hash_field: "string",
+                stack_hash_algorithm: "string",
+            },
         },
         sanitization: {
             allowed: optionNameSet("existing_sanitized_logging", "notes"),
+            types: { existing_sanitized_logging: "boolean", notes: "string" },
         },
         alerting_hints: {
             allowed: optionNameSet("fingerprint_fields", "keeper_lookup_fields"),
+            types: {
+                fingerprint_fields: "stringArray",
+                keeper_lookup_fields: "stringArray",
+            },
         },
     },
 };
@@ -587,13 +618,53 @@ function validateLoggingProfileJSONOptions(path, object, schema) {
             errors.push(`${childPath}: unsupported option`);
             continue;
         }
+        const value = object[key];
         const childSchema = schema.nested?.[key];
-        const child = object[key];
-        if (!childSchema || !isRecord(child))
+        if (childSchema) {
+            // A non-object value for a nested option is reported by
+            // loggingProfileValidationErrors; here we recurse only into objects so the
+            // declared field types are strictly checked.
+            if (isRecord(value)) {
+                errors.push(...validateLoggingProfileJSONOptions(childPath, value, childSchema));
+            }
             continue;
-        errors.push(...validateLoggingProfileJSONOptions(childPath, child, childSchema));
+        }
+        const type = schema.types?.[key];
+        if (type) {
+            errors.push(...validateLoggingJSONOptionType(childPath, value, type));
+        }
     }
     return errors;
+}
+function validateLoggingJSONOptionType(path, value, type) {
+    switch (type) {
+        case "string":
+            return typeof value === "string" ? [] : [`${path}: must be a string`];
+        case "boolean":
+            return typeof value === "boolean" ? [] : [`${path}: must be a boolean`];
+        case "stringArray": {
+            if (!Array.isArray(value))
+                return [];
+            const errors = [];
+            value.forEach((entry, index) => {
+                if (typeof entry !== "string") {
+                    errors.push(`${path}[${index}]: must be a string`);
+                }
+            });
+            return errors;
+        }
+        case "stringMap": {
+            if (!isRecord(value))
+                return [];
+            const errors = [];
+            for (const key of sortedKeys(value)) {
+                if (typeof value[key] !== "string") {
+                    errors.push(`${path}.${key}: must be a string`);
+                }
+            }
+            return errors;
+        }
+    }
 }
 function profileJSONOptionPath(parent, key) {
     return parent ? `${parent}.${key}` : key;

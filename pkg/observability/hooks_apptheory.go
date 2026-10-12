@@ -1,6 +1,10 @@
 package observability
 
-import apptheory "github.com/theory-cloud/apptheory/v5/runtime"
+import (
+	"strings"
+
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+)
 
 func HooksFromLogger(logger StructuredLogger) apptheory.ObservabilityHooks {
 	if logger == nil {
@@ -21,6 +25,15 @@ func HooksFromLogger(logger StructuredLogger) apptheory.ObservabilityHooks {
 			scoped := logger.
 				WithRequestID(record.RequestID).
 				WithTenantID(record.TenantID)
+
+			// Propagate the runtime's validated inbound trace ID so the
+			// documented first-party logging profiles emit trace_id on request
+			// logs (and map request.trace_id), matching the span and error
+			// envelope that already carry it.
+			if traceID := strings.TrimSpace(record.TraceID); traceID != "" {
+				fields["trace_id"] = traceID
+				scoped = scoped.WithTraceID(traceID)
+			}
 
 			switch record.Level {
 			case "error":

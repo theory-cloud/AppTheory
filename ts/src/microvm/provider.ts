@@ -984,6 +984,22 @@ export function sanitizeMicroVMProviderInvokeHeaders(
   return out;
 }
 
+// microVMProviderEndpointDomains are the AWS service domains that host Lambda MicroVM
+// endpoints. The invoke proxy mints X-aws-proxy-auth for exactly one MicroVM endpoint, so the
+// URL builder refuses every host outside these domains: this list is the trust boundary for the
+// proxy credential.
+const microVMProviderEndpointDomains = ["amazonaws.com", "amazonaws.com.cn"];
+
+function microVMProviderEndpointAllowed(hostname: string): boolean {
+  const host = String(hostname ?? "")
+    .trim()
+    .toLowerCase();
+  if (!host) return false;
+  return microVMProviderEndpointDomains.some(
+    (domain) => host === domain || host.endsWith(`.${domain}`),
+  );
+}
+
 export function providerInvokeURL(
   endpoint: string,
   path: string,
@@ -1003,6 +1019,7 @@ export function providerInvokeURL(
   }
   if (!parsed.host) return "";
   parsed.protocol = "https:";
+  if (!microVMProviderEndpointAllowed(parsed.hostname)) return "";
   parsed.pathname = normalizeMicroVMProviderInvokePath(path);
   parsed.search = "";
   const params = new URLSearchParams();
@@ -1073,12 +1090,28 @@ function providerInvokeForbiddenHeaders(): Set<string> {
   ]);
 }
 
+// TS-internal: Go keys by a SessionKey struct and Py by a tuple, so this framed string has no
+// Go/Py counterpart. It is used as a Map key, and the length-prefixed framing keeps it injective.
+function lengthPrefixedJoin(parts: string[]): string {
+  let out = "";
+  for (const part of parts) out += `${utf8ByteLength(part)}:${part}`;
+  return out;
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
 export function microVMProviderSessionKeyString(
   tenantID: string,
   namespace: string,
   sessionID: string,
 ): string {
-  return `${String(tenantID ?? "").trim()}\u0000${String(namespace ?? "").trim()}\u0000${String(sessionID ?? "").trim()}`;
+  return lengthPrefixedJoin([
+    String(tenantID ?? "").trim(),
+    String(namespace ?? "").trim(),
+    String(sessionID ?? "").trim(),
+  ]);
 }
 
 export function providerEgressConnectorRefs(
@@ -1167,7 +1200,7 @@ export function safeMicroVMProviderTokenID(
     ...scope,
   ];
   const digest = createHash("sha256")
-    .update(parts.join("\u0000"))
+    .update(lengthPrefixedJoin(parts))
     .digest("hex")
     .slice(0, 16);
   return `${tokenType}-${digest}`;

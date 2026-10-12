@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import email.message
+import io
 import json
 import os
 import sys
 import types
 import unittest
+import urllib.request
+import urllib.response
 from unittest.mock import patch
 
 import apptheory as app
@@ -739,7 +743,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
             last_action=app.COMMAND_START,
         )
         registry_record = app.microvm_session_record_to_registry_record(record)
-        self.assertEqual("TENANT#tenant-1#NAMESPACE#namespace-1", registry_record.pk)
+        self.assertEqual("TENANT#8#tenant-1#NAMESPACE#11#namespace-1", registry_record.pk)
         self.assertEqual("SESSION#session-1", registry_record.sk)
         self.assertEqual(3601, registry_record.ttl)
         self.assertEqual(7, registry_record.version)
@@ -756,6 +760,23 @@ class MicroVMLifecycleTests(unittest.TestCase):
         self.assertEqual(record.provider_id, round_trip.provider_id)
         self.assertEqual(record.token_metadata[0].token_id, round_trip.token_metadata[0].token_id)
         self.assertEqual(record.last_action, round_trip.last_action)
+
+        # THE-3413 collision witness: the un-prefixed form mapped both pairs to the same key.
+        self.assertNotEqual(
+            app.microvm_session_registry_partition_key("a", "b#NAMESPACE#c"),
+            app.microvm_session_registry_partition_key("a#NAMESPACE#b", "c"),
+        )
+        self.assertNotEqual(
+            app.microvm_session_registry_partition_key("10", "abc"),
+            app.microvm_session_registry_partition_key("1", "0abc"),
+        )
+        framed = app.microvm_session_record_to_registry_record(self._valid_record(namespace="b#NAMESPACE#c"))
+        self.assertEqual(
+            app.microvm_session_registry_partition_key("tenant-1", "b#NAMESPACE#c"),
+            framed.pk,
+        )
+        app.validate_microvm_session_registry_record(framed)
+        self.assertEqual("b#NAMESPACE#c", app.microvm_session_from_registry_record(framed).namespace)
 
         bad = app.microvm_session_record_to_registry_record(record)
         bad.pk = "TENANT#other#NAMESPACE#namespace-1"
@@ -798,6 +819,95 @@ class MicroVMLifecycleTests(unittest.TestCase):
         status = client.status(self._query_input(request_id="req-status"))
         self.assertEqual(app.COMMAND_START, status.last_action)
         self.assertEqual(2, status.registry_version)
+
+    def test_microvm_session_registry_dual_reads_pre_m1_partition_key(self) -> None:
+        record = self._valid_record(
+            state=app.STATE_STARTING,
+            desired_state=app.STATE_STARTED,
+            generation=7,
+            last_action=app.COMMAND_START,
+        )
+        canonical = app.microvm_session_record_to_registry_record(record)
+
+        # (c) New writes never produce the pre-M1 key.
+        self.assertEqual(
+            app.microvm_session_registry_partition_key(record.tenant_id, record.namespace),
+            canonical.pk,
+        )
+        self.assertNotEqual("TENANT#tenant-1#NAMESPACE#namespace-1", canonical.pk)
+
+        # (e) The strict validator rejects a legacy-format record; only the read path accepts it.
+        legacy = app.microvm_session_record_to_registry_record(record)
+        legacy.pk = "TENANT#tenant-1#NAMESPACE#namespace-1"
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_session_registry_record(legacy)
+
+        registry = app.create_memory_microvm_session_registry()
+        # Seed the store as an earlier release left it: the item lives under the pre-M1 key.
+        registry._records[(legacy.pk, legacy.sk)] = legacy
+
+        # (a) A legacy-format item resolves via the fallback.
+        loaded = registry.get(record)
+        self.assertEqual(record.session_id, loaded.session_id)
+        self.assertEqual(record.provider_id, loaded.provider_id)
+
+        # (b) The fallback read re-wrote the item under the new key (lazy re-write).
+        self.assertNotIn((legacy.pk, legacy.sk), registry._records)
+        self.assertIn((canonical.pk, canonical.sk), registry._records)
+        self.assertEqual(record.session_id, registry.get(record).session_id)
+
+        # (d) The canonical encoding still isolates the THE-3413 collision witness.
+        self.assertNotEqual(
+            app.microvm_session_registry_partition_key("a", "b#NAMESPACE#c"),
+            app.microvm_session_registry_partition_key("a#NAMESPACE#b", "c"),
+        )
+        colliding = app.microvm_session_record_to_registry_record(
+            self._valid_record(tenant_id="a", namespace="b#NAMESPACE#c", session_id="session-collide")
+        )
+        colliding.pk = "TENANT#a#NAMESPACE#b#NAMESPACE#c"
+        colliding_store = app.create_memory_microvm_session_registry()
+        colliding_store._records[(colliding.pk, colliding.sk)] = colliding
+        # A colliding pre-M1 key that addresses another identity fails closed instead of leaking it.
+        with self.assertRaises(app.MicroVMSafeError):
+            colliding_store.get(("a#NAMESPACE#b", "c", "session-collide"))
+
+    def test_microvm_tabletheory_registry_dual_reads_and_rekeys_legacy_item(self) -> None:
+        class _Table:
+            def __init__(self) -> None:
+                self.items: dict[str, object] = {}
+                self.put_calls: list[object] = []
+
+            def put(self, record: object) -> None:
+                self.put_calls.append(record)
+                self.items[str(getattr(record, "pk"))] = record
+
+            def get(self, pk: str, sk: str) -> object | None:
+                item = self.items.get(pk)
+                if item is None or getattr(item, "sk") != sk:
+                    return None
+                return item
+
+            def delete(self, pk: str, sk: str) -> None:
+                item = self.items.get(pk)
+                if item is not None and getattr(item, "sk") == sk:
+                    self.items.pop(pk, None)
+
+        record = self._valid_record(generation=7, last_action=app.COMMAND_START)
+        table = _Table()
+        registry = app.create_tabletheory_microvm_session_registry(table)
+        registry.put(record)
+        canonical_pk = app.microvm_session_registry_partition_key(record.tenant_id, record.namespace)
+        self.assertEqual(canonical_pk, getattr(table.put_calls[0], "pk"))
+
+        # Simulate the item an earlier release persisted under the pre-M1 key.
+        legacy_item = table.items.pop(canonical_pk)
+        setattr(legacy_item, "pk", "TENANT#tenant-1#NAMESPACE#namespace-1")
+        table.items[getattr(legacy_item, "pk")] = legacy_item
+
+        # (a) The legacy item resolves via the fallback, and (b) the read re-keys it.
+        loaded = registry.get(record)
+        self.assertEqual(record.session_id, loaded.session_id)
+        self.assertEqual(canonical_pk, getattr(table.put_calls[-1], "pk"))
 
     def test_microvm_registry_reconstruction_hooks_fail_closed(self) -> None:
         request = app.MicroVMSessionReconstructionRequest(
@@ -1237,6 +1347,31 @@ class MicroVMLifecycleTests(unittest.TestCase):
                 {**token_dict, "allowed_port_scope": [{"all_ports": True, "port": 443}]},
             )
 
+    def test_provider_invoke_ttl_is_bounded(self) -> None:
+        binding_dict, _, _, _, _ = self._provider_dict_inputs()
+        # The endpoint must be an allowlisted AWS MicroVM host so the TTL bound is
+        # the check under test, not the endpoint allowlist.
+        invoke_dict: dict[str, object] = {
+            "request_id": "req-invoke-ttl",
+            "tenant_id": "tenant-1",
+            "namespace": "namespace-1",
+            "auth_context": {"subject": "subject-1", "tenant_id": "tenant-1", "namespace": "namespace-1"},
+            "binding": binding_dict,
+            "endpoint": "https://provider-1.microvm.us-east-1.amazonaws.com",
+            "method": "GET",
+            "path": "/hello",
+            "port": 9090,
+            "ttl_seconds": 900,
+        }
+
+        # The inclusive upper bound (900) is accepted.
+        app.validate_microvm_provider_invoke_input(invoke_dict)
+
+        # One second over the bound fails closed with the token-safety violation.
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            app.validate_microvm_provider_invoke_input({**invoke_dict, "ttl_seconds": 901})
+        self.assertEqual(app.MICROVM_ERROR_TOKEN_SAFETY_VIOLATION, ctx.exception.code)
+
     def test_execution_role_arn_validation_fails_closed(self) -> None:
         _, run_dict, _, _, _ = self._provider_dict_inputs()
         role_arn = "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole"
@@ -1489,6 +1624,175 @@ class MicroVMLifecycleTests(unittest.TestCase):
         self.assertIsNotNone(override.error)
         self.assertEqual(app.MICROVM_ERROR_INVALID_CONTROLLER_REQUEST, override.error.code)
 
+    def test_real_controller_registry_miss_fails_closed_before_provider_call(self) -> None:
+        provider = app.create_fake_microvm_provider(now=1.0)
+        controller = app.create_real_microvm_controller(
+            provider,
+            app.create_memory_microvm_session_registry(),
+            id_generator=lambda: "session-pin",
+            clock=lambda: 10.0,
+            logging={"disabled": True},
+        )
+
+        get = controller.handle(
+            self._controller_request(
+                command=app.COMMAND_GET, request_id="req-pin-miss-get", session_id="session-absent"
+            )
+        )
+        self.assertIsNotNone(get.error)
+        self.assertEqual(app.MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, get.error.code)
+        self.assertEqual([], provider.calls())
+
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            controller.invoke(
+                {
+                    "request_id": "req-pin-miss-invoke",
+                    "tenant_id": "tenant-1",
+                    "namespace": "namespace-1",
+                    "auth_context": {
+                        "subject": "subject-1",
+                        "tenant_id": "tenant-1",
+                        "namespace": "namespace-1",
+                    },
+                    "session_id": "session-absent",
+                    "method": "GET",
+                    "path": "pin",
+                    "port": 8081,
+                    "ttl_seconds": 30,
+                }
+            )
+        self.assertEqual(app.MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, ctx.exception.code)
+        self.assertEqual([], provider.calls())
+
+        token = controller.handle(
+            self._controller_request(
+                command=app.COMMAND_AUTH_TOKEN,
+                request_id="req-pin-miss-token",
+                session_id="session-absent",
+                allowed_port_scope=[{"port": 443}],
+            )
+        )
+        self.assertIsNotNone(token.error)
+        self.assertEqual(app.MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, token.error.code)
+        self.assertEqual([], provider.calls())
+
+    def test_real_controller_binds_provider_call_to_registry_record(self) -> None:
+        base_provider = app.create_fake_microvm_provider(now=1.0)
+
+        class RecordingProvider:
+            session_input: object | None = None
+            invoke_input: object | None = None
+            token_input: object | None = None
+
+            def run(self, input_: object) -> object:
+                return base_provider.run(input_)
+
+            def get(self, input_: object) -> object:
+                self.session_input = input_
+                return base_provider.get(input_)
+
+            def list(self, input_: object) -> object:
+                return base_provider.list(input_)
+
+            def suspend(self, input_: object) -> object:
+                return base_provider.suspend(input_)
+
+            def resume(self, input_: object) -> object:
+                return base_provider.resume(input_)
+
+            def terminate(self, input_: object) -> object:
+                return base_provider.terminate(input_)
+
+            def invoke(self, input_: object) -> object:
+                self.invoke_input = input_
+                return base_provider.invoke(input_)
+
+            def create_auth_token(self, input_: object) -> object:
+                self.token_input = input_
+                return base_provider.create_auth_token(input_)
+
+            def create_shell_token(self, input_: object) -> object:
+                self.token_input = input_
+                return base_provider.create_shell_token(input_)
+
+        provider = RecordingProvider()
+        registry = app.create_memory_microvm_session_registry()
+        controller = app.create_real_microvm_controller(
+            provider,
+            registry,
+            id_generator=lambda: "session-pin",
+            clock=lambda: 10.0,
+            logging={"disabled": True},
+        )
+
+        run = controller.handle(self._controller_request(session_id=""))
+        self.assertIsNone(run.error)
+        stored = registry.get(("tenant-1", "namespace-1", "session-pin"))
+
+        get = controller.handle(
+            self._controller_request(command=app.COMMAND_GET, request_id="req-pin-get", session_id="session-pin")
+        )
+        self.assertIsNone(get.error)
+        session_input = provider.session_input
+        if session_input is None:
+            self.fail("provider get input must be captured")
+        self.assertEqual(stored.provider_microvm_id, session_input.binding.provider_microvm_id)
+        self.assertEqual(stored.tenant_id, session_input.binding.tenant_id)
+        self.assertEqual(stored.namespace, session_input.binding.namespace)
+        self.assertEqual(stored.session_id, session_input.binding.session_id)
+        self.assertEqual(stored.generation, session_input.binding.registry_version)
+
+        # DECOY: the request carries a different provider MicroVM identity and endpoint in its
+        # headers and query; the provider call must still use the registry record's values.
+        invoked = controller.invoke(
+            {
+                "request_id": "req-pin-invoke",
+                "tenant_id": "tenant-1",
+                "namespace": "namespace-1",
+                "auth_context": {
+                    "subject": "subject-1",
+                    "tenant_id": "tenant-1",
+                    "namespace": "namespace-1",
+                },
+                "session_id": "session-pin",
+                "method": "GET",
+                "path": "pin",
+                "headers": {
+                    "x-provider-microvm-id": ["provider-microvm-decoy"],
+                    "x-microvm-endpoint": ["https://provider-microvm-decoy.microvm.us-east-1.amazonaws.com"],
+                },
+                "query": {
+                    "provider_microvm_id": ["provider-microvm-decoy"],
+                    "endpoint": ["https://provider-microvm-decoy.microvm.us-east-1.amazonaws.com"],
+                },
+                "port": 8081,
+                "ttl_seconds": 30,
+            }
+        )
+        self.assertEqual(200, invoked.status)
+        invoke_input = provider.invoke_input
+        if invoke_input is None:
+            self.fail("provider invoke input must be captured")
+        self.assertEqual(stored.endpoint, invoke_input.endpoint)
+        self.assertEqual(stored.provider_microvm_id, invoke_input.binding.provider_microvm_id)
+        self.assertNotEqual("provider-microvm-decoy", invoke_input.binding.provider_microvm_id)
+        self.assertNotEqual("https://provider-microvm-decoy.microvm.us-east-1.amazonaws.com", invoke_input.endpoint)
+
+        token = controller.handle(
+            self._controller_request(
+                command=app.COMMAND_AUTH_TOKEN,
+                request_id="req-pin-token",
+                session_id="session-pin",
+                allowed_port_scope=[{"port": 443}],
+            )
+        )
+        self.assertIsNone(token.error)
+        token_input = provider.token_input
+        if token_input is None:
+            self.fail("provider token input must be captured")
+        self.assertEqual(stored.provider_microvm_id, token_input.binding.provider_microvm_id)
+        self.assertEqual(stored.tenant_id, token_input.binding.tenant_id)
+
     def test_real_controller_route_adapter_enforces_auth_and_tenant_binding(self) -> None:
         provider = app.create_fake_microvm_provider(now=1.0)
         registry = app.create_memory_microvm_session_registry()
@@ -1565,6 +1869,105 @@ class MicroVMLifecycleTests(unittest.TestCase):
             )
         )
         self.assertEqual(401, denied.status)
+
+    def test_real_controller_route_adapter_binds_tenant_to_verified_claim(self) -> None:
+        provider = app.create_fake_microvm_provider(now=1.0)
+        registry = app.create_memory_microvm_session_registry()
+        controller = app.create_real_microvm_controller(
+            provider,
+            registry,
+            id_generator=lambda: "claim-session",
+            clock=lambda: 10.0,
+            logging={"disabled": True},
+        )
+
+        def claim_runtime(claims: dict[str, object]) -> app.App:
+            runtime = app.create_app(
+                tier="p1",
+                auth_principal_hook=lambda _ctx, _claims=claims: app.AuthPrincipal(
+                    identity="subject-1", claims=dict(_claims)
+                ),
+                tenant_claim="tenant_id",
+            )
+            app.register_microvm_controller_routes(runtime, controller)
+            return runtime
+
+        def serve(
+            runtime: app.App,
+            method: str,
+            path: str,
+            body: dict[str, object],
+            *,
+            tenant_id: str = "tenant-1",
+        ) -> app.Response:
+            return runtime.serve(
+                app.Request(
+                    method=method,
+                    path=path,
+                    headers={
+                        "content-type": ["application/json"],
+                        "x-tenant-id": [tenant_id],
+                        "x-request-id": [f"req-claim-{method}-{path}"],
+                    },
+                    body=json.dumps(body).encode("utf-8"),
+                )
+            )
+
+        run_body = {
+            "namespace": "namespace-1",
+            "image_ref": "image-ref",
+            "image_version": "1",
+            "network_connector_ref": "network-ref",
+        }
+        for case in ("header", "body"):
+            payload = {**run_body, "tenant_id": "tenant-2"}
+            rejection = serve(
+                claim_runtime({"tenant_id": "tenant-1"}),
+                "POST",
+                "/microvms",
+                payload,
+                tenant_id="tenant-2" if case == "header" else "tenant-1",
+            )
+            self.assertEqual(403, rejection.status)
+            self.assertEqual(
+                app.MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+                json.loads(rejection.body.decode())["error"]["code"],
+            )
+
+        unbound = serve(
+            claim_runtime({"other": "value"}),
+            "POST",
+            "/microvms",
+            {**run_body, "tenant_id": "tenant-1"},
+        )
+        self.assertEqual(403, unbound.status)
+        self.assertEqual(
+            app.MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+            json.loads(unbound.body.decode())["error"]["code"],
+        )
+
+        invoke_mismatch = claim_runtime({"tenant_id": "tenant-1"}).serve(
+            app.Request(
+                method="GET",
+                path="/microvms/claim-session/invoke/hello",
+                query={"tenant_id": ["tenant-2"]},
+                headers={"x-tenant-id": ["tenant-2"], "x-request-id": ["req-claim-invoke-mismatch"]},
+            )
+        )
+        self.assertEqual(403, invoke_mismatch.status)
+        self.assertEqual(
+            app.MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+            json.loads(invoke_mismatch.body.decode())["error"]["code"],
+        )
+
+        bound = serve(
+            claim_runtime({"tenant_id": "tenant-1"}),
+            "POST",
+            "/microvms",
+            {**run_body, "tenant_id": "tenant-1"},
+        )
+        self.assertEqual(200, bound.status)
+        self.assertEqual("claim-session", json.loads(bound.body.decode())["session_id"])
 
     def test_official_sdk_provider_gate_and_safe_mapping(self) -> None:
         binding_dict, run_dict, session_dict, list_dict, token_dict = self._provider_dict_inputs()
@@ -1705,6 +2108,117 @@ class MicroVMRealContractTests(unittest.TestCase):
         with self.assertRaises(app.MicroVMSafeError) as ctx:
             microvm_mod.validate_microvm_operation_contract(bad_provider)
         self.assertEqual(microvm_mod.MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE, ctx.exception.code)
+
+
+class _FakeInvokeHTTPHandler(urllib.request.HTTPSHandler):
+    """Serve one canned HTTPS response so the invoke opaque path runs without network access."""
+
+    def __init__(self, *, status: int, headers: dict[str, str], body: bytes) -> None:
+        super().__init__()
+        self.status = status
+        self.headers = headers
+        self.body = body
+        self.calls = 0
+        self.last_request: urllib.request.Request | None = None
+
+    def https_open(self, req: urllib.request.Request) -> urllib.response.addinfourl:
+        self.calls += 1
+        self.last_request = req
+        message = email.message.Message()
+        for name, value in self.headers.items():
+            message[name] = value
+        response = urllib.response.addinfourl(io.BytesIO(self.body), message, req.full_url, self.status)
+        response.msg = "status"
+        return response
+
+
+class MicroVMProviderInvokeTests(unittest.TestCase):
+    _ALLOWLISTED = "https://provider-1.microvm.us-east-1.amazonaws.com"
+
+    def _provider(self) -> app.AWSLambdaMicroVMProvider:
+        class StubClient:
+            def create_microvm_auth_token(self, **payload: object) -> dict[str, object]:
+                self.payload = payload
+                return {"authToken": {"X-aws-proxy-auth": "provider-token-value"}}
+
+        provider = object.__new__(app.AWSLambdaMicroVMProvider)
+        provider._client = StubClient()
+        provider._clock = lambda: 0.0
+        return provider
+
+    def _invoke_input(self, endpoint: str) -> app.MicroVMProviderInvokeInput:
+        return app.MicroVMProviderInvokeInput(
+            request_id="req-invoke",
+            tenant_id="tenant-1",
+            namespace="namespace-1",
+            auth_context=app.MicroVMAuthContext(subject="subject-1", tenant_id="tenant-1", namespace="namespace-1"),
+            binding=app.MicroVMProviderSessionBinding("tenant-1", "namespace-1", "session-1", "provider-1", 1),
+            endpoint=endpoint,
+            method="POST",
+            path="/hello",
+            query={"b": ["2"], "a": ["1"]},
+            headers={"x-workload": ["ok"]},
+            body=b"payload",
+            port=9090,
+            ttl_seconds=120,
+        )
+
+    def _opener(
+        self, status: int, headers: dict[str, str], body: bytes
+    ) -> tuple[urllib.request.OpenerDirector, _FakeInvokeHTTPHandler]:
+        handler = _FakeInvokeHTTPHandler(status=status, headers=headers, body=body)
+        deny_handler = microvm_mod.aws_provider._ProviderInvokeRedirectHandler()
+        return urllib.request.build_opener(handler, deny_handler), handler
+
+    def test_invoke_succeeds_and_carries_credential_for_allowlisted_endpoint(self) -> None:
+        provider = self._provider()
+        opener, handler = self._opener(201, {"Content-Type": "application/octet-stream"}, b"\x09")
+        provider._opener = opener
+        output = provider.invoke(self._invoke_input(self._ALLOWLISTED))
+        self.assertEqual(201, output.status)
+        self.assertEqual(1, handler.calls)
+        self.assertEqual(
+            "https://provider-1.microvm.us-east-1.amazonaws.com/hello?a=1&b=2",
+            handler.last_request.full_url,
+        )
+        self.assertEqual("provider-token-value", handler.last_request.get_header("X-aws-proxy-auth"))
+        self.assertEqual("9090", handler.last_request.get_header("X-aws-proxy-port"))
+
+    def test_invoke_rejects_cross_origin_redirect_without_replaying_credential(self) -> None:
+        provider = self._provider()
+        opener, handler = self._opener(302, {"Location": "https://attacker.example.com/steal"}, b"")
+        provider._opener = opener
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            provider.invoke(self._invoke_input(self._ALLOWLISTED))
+        self.assertEqual(app.MICROVM_ERROR_PROVIDER_REQUEST_INVALID, ctx.exception.code)
+        self.assertEqual(1, handler.calls, "a denied redirect must not issue a second request")
+        self.assertEqual(
+            "provider-1.microvm.us-east-1.amazonaws.com",
+            handler.last_request.host,
+        )
+        self.assertEqual("provider-token-value", handler.last_request.get_header("X-aws-proxy-auth"))
+        self.assertNotIn("attacker.example.com", str(ctx.exception))
+
+    def test_invoke_rejects_https_to_http_downgrade_redirect(self) -> None:
+        provider = self._provider()
+        opener, handler = self._opener(
+            301, {"Location": "http://provider-1.microvm.us-east-1.amazonaws.com/steal"}, b""
+        )
+        provider._opener = opener
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            provider.invoke(self._invoke_input(self._ALLOWLISTED))
+        self.assertEqual(app.MICROVM_ERROR_PROVIDER_REQUEST_INVALID, ctx.exception.code)
+        self.assertEqual(1, handler.calls)
+        self.assertEqual("https", handler.last_request.type)
+
+    def test_invoke_rejects_non_allowlisted_endpoint_before_network(self) -> None:
+        provider = self._provider()
+        opener, handler = self._opener(201, {"Content-Type": "application/json"}, b"{}")
+        provider._opener = opener
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            provider.invoke(self._invoke_input("https://evil.example.com"))
+        self.assertEqual(app.MICROVM_ERROR_PROVIDER_REQUEST_INVALID, ctx.exception.code)
+        self.assertEqual(0, handler.calls)
 
 
 if __name__ == "__main__":

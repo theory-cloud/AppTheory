@@ -1,4 +1,4 @@
-const { execSync } = require("node:child_process");
+const { execFileSync } = require("node:child_process");
 const path = require("node:path");
 
 const cdk = require("aws-cdk-lib");
@@ -22,11 +22,23 @@ class __APP_CLASS__Stack extends cdk.Stack {
           ],
           local: {
             tryBundle(outputDir) {
-              execSync(`go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o ${path.join(outputDir, "bootstrap")} .`, {
-                cwd: projectRoot,
-                stdio: "inherit",
-                env: { ...process.env, GOOS: "linux", GOARCH: "arm64", CGO_ENABLED: "0" },
-              });
+              execFileSync(
+                "go",
+                [
+                  "build",
+                  "-trimpath",
+                  "-buildvcs=false",
+                  "-ldflags=-s -w -buildid=",
+                  "-o",
+                  path.join(outputDir, "bootstrap"),
+                  ".",
+                ],
+                {
+                  cwd: projectRoot,
+                  stdio: "inherit",
+                  env: { ...process.env, GOOS: "linux", GOARCH: "arm64", CGO_ENABLED: "0" },
+                },
+              );
               return true;
             },
           },

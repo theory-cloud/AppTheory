@@ -71,6 +71,63 @@ function sseChunks(...chunks) {
   })();
 }
 
+function sourceProvenanceRoute(app) {
+  app.get("/source", (ctx) => {
+    const provenance = ctx.sourceProvenance();
+    return {
+      status: 200,
+      headers: { "content-type": ["application/json; charset=utf-8"] },
+      cookies: [],
+      body: Buffer.from(JSON.stringify({ provider: provenance.provider }), "utf8"),
+      isBase64: false,
+    };
+  });
+}
+
+test("handleLambda discriminates real Function URL events from API Gateway v2", async () => {
+  const app = createApp();
+  sourceProvenanceRoute(app);
+
+  // A standard Function URL payload carries a top-level routeKey of "$default"
+  // and a *.lambda-url.*.on.aws requestContext domainName.
+  const functionURL = {
+    version: "2.0",
+    routeKey: "$default",
+    rawPath: "/source",
+    rawQueryString: "",
+    cookies: [],
+    headers: {},
+    requestContext: {
+      domainName: "abcd1234.lambda-url.us-east-1.on.aws",
+      http: { method: "GET", path: "/source", sourceIp: "198.51.100.10" },
+    },
+    body: "",
+    isBase64Encoded: false,
+  };
+
+  const urlOut = await app.handleLambda(functionURL);
+  assert.equal(urlOut.statusCode, 200);
+  assert.deepEqual(JSON.parse(String(urlOut.body)), { provider: "lambda-url" });
+
+  // API Gateway v2 default and custom domains both carry routeKey, so they must
+  // stay on the API Gateway v2 adapter.
+  for (const domainName of [
+    "abcd1234.execute-api.us-east-1.amazonaws.com",
+    "api.example.com",
+  ]) {
+    const v2Out = await app.handleLambda({
+      ...functionURL,
+      routeKey: "GET /source",
+      requestContext: {
+        domainName,
+        http: { method: "GET", path: "/source", sourceIp: "198.51.100.11" },
+      },
+    });
+    assert.equal(v2Out.statusCode, 200);
+    assert.deepEqual(JSON.parse(String(v2Out.body)), { provider: "apigw-v2" });
+  }
+});
+
 test("function url streaming adapter streams a bodyStream to the transport", async () => {
   const app = createApp();
   app.get("/sse", () => htmlStream(200, sseChunks("one", "two")));

@@ -1,11 +1,11 @@
 ---
 title: Contract Fixtures
-description: "The 274 contract vectors: 272 shared runtime fixtures plus two Go/CDK-TS MCP route/facade tables." # apptheory-fixture-count: 274
+description: "The 276 contract vectors: 274 shared runtime fixtures plus two Go/CDK-TS MCP route/facade tables." # apptheory-fixture-count: 276
 ---
 
 # Contract Fixtures
 
-AppTheory ships **274 machine-readable contract vectors** in `contract-tests/fixtures/`. <!-- apptheory-fixture-count: 274 --> Go, TypeScript, and Python execute 272 shared runner fixtures on every commit, including the `tier: mcp` SP09 runtime contracts, the `tier: oauth` SP12 protected-resource, bearer, DCR, and PKCE contracts, and the `tier: objectstore` SP13 bounded object-store contract. The remaining two vectors are the shared MCP route-algebra expectation table and facade route-inventory table consumed by Go and CDK-TS tests; Python is explicitly outside those versioned contracts' scope.
+AppTheory ships **276 machine-readable contract vectors** in `contract-tests/fixtures/`. <!-- apptheory-fixture-count: 276 --> Go, TypeScript, and Python execute 274 shared runner fixtures on every commit, including the `tier: mcp` SP09 runtime contracts, the `tier: oauth` SP12 protected-resource, bearer, DCR, and PKCE contracts, and the `tier: objectstore` SP13 bounded object-store contract. The remaining two vectors are the shared MCP route-algebra expectation table and facade route-inventory table consumed by Go and CDK-TS tests; Python is explicitly outside those versioned contracts' scope.
 
 This page explains what the fixtures are, what they cover, and how to evolve them safely.
 
@@ -55,7 +55,7 @@ its `tier` field and stable `id`. Directory names are organizational metadata, n
 
 ## Categories
 
-The 274 contract vectors span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory). All three runtimes execute the 272 generic fixtures; Go and CDK-TS additionally consume the MCP route-algebra and facade-inventory tables. <!-- apptheory-fixture-count: 274 -->
+The 276 contract vectors span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory). All three runtimes execute the 274 generic fixtures; Go and CDK-TS additionally consume the MCP route-algebra and facade-inventory tables. <!-- apptheory-fixture-count: 276 -->
 
 | Category | Covers |
 | --- | --- |
@@ -84,13 +84,26 @@ The 274 contract vectors span these behavior areas (counts approximate; see `con
 | Object store | The `objectstore/` fixture tier pins strict object refs, Put, bounded Get, Delete, deterministic fake call logs, the bounded upload grant (signed content length, content type, and SHA-256 checksum with a fifteen-minute cap), and forbidden list, generic presign, presign-get, multipart, copy, head, and raw-client operations across Go, TypeScript, and Python. |
 | Lambda MicroVM support | M15 foundation fixtures plus M16 real operations `run/get/list/suspend/resume/terminate/invoke/auth-token/shell-auth-token`, provider-state mappings, protected controller routes, token-hidden workload invoke, endpoint-dispatched no-hook example images, deployment execution-role propagation, tenant-bound list/recovery, token no-leak denial, and raw SDK/lifecycle bypass denial. The feature line is evidence-bounded to repo-local runtime/CDK/example/conformance harness proof plus verified example-path live smoke, not EqualToAI/Host, customer workload, arbitrary cloud mutation, or unauthenticated-controller proof. |
 
+## Compatibility notes
+
+Two portable behaviors were tightened so that non-canonical input now fails closed instead of being accepted or
+coerced. Both apply identically in Go, TypeScript, and Python.
+
+- **Duration binding.** The `duration` conversion accepts at most 1024 adjacent `<number><unit>` segments (for example
+  `1s500ms`). Values with more adjacent segments now fail closed with the standard binding-error envelope; ordinary
+  portable durations, including long sub-second values and the signed and precision-boundary cases in
+  `binding/duration-canonical-edges.json`, are unaffected.
+- **Logging-profile JSON.** The logging-profile JSON decoder now rejects wrong-typed known fields (arrays where strings
+  are required, strings where booleans are required, and non-string array/map entries) with per-field validation errors.
+  See [Logging Profiles](../features/logging-profiles.md).
+
 ## Running the fixtures
 
 ```bash
 ./scripts/verify-contract-tests.sh
 ```
 
-This validates the 272 generic fixture envelopes and runs the Go, TypeScript, and Python runners against that tree. The Go and CDK unit suites load the two nested route-algebra/facade tables directly. `make rubric` runs all of these gates alongside lint, build, API snapshots, and example synthesis. <!-- apptheory-fixture-count: 274 -->
+This validates the 274 generic fixture envelopes and runs the Go, TypeScript, and Python runners against that tree. The Go and CDK unit suites load the two nested route-algebra/facade tables directly. `make rubric` runs all of these gates alongside lint, build, API snapshots, and example synthesis. <!-- apptheory-fixture-count: 276 -->
 
 For single-runtime debugging from the repository root:
 

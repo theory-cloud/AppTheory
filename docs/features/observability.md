@@ -33,7 +33,9 @@ Trace propagation is extraction and recording only:
 The extracted value is available on the request/context (`TraceID` / `traceId` / `trace_id`) and via the trace-context
 helper (`TraceContextID()` / `traceContextId()` / `trace_context_id()`). P2 log records include `trace_id`, P2 span
 attributes include `trace.id`, and nested AppTheory HTTP error envelopes include `trace_id` when an inbound trace ID was
-available.
+available. The first-party logger adapters (`HooksFromLogger`, `HooksFromProfileLogger`, and
+`HooksFromLoggerAndEMFMetricSink`) propagate `record.TraceID` to the structured logger scope and emit it as a `trace_id`
+field on request logs, so the documented first-party profiles correlate request logs with the span and error envelope.
 
 AppTheory does not start spans, sample traces, inject downstream headers, run an OpenTelemetry provider, or send data to
 OTLP/X-Ray. Bring your own OpenTelemetry SDK or AWS instrumentation at the application edge if a service needs full
@@ -53,6 +55,12 @@ Use the EMF sink when CloudWatch metrics are the desired output:
 
 If a service needs different metric dimensions or alert destinations, add contract-visible fields or wire downstream AWS
 resources outside AppTheory. Do not bypass the P2 hook path with per-route raw SDK calls.
+
+The sink dimensions only on bounded values — `service`, `method`, route template, status class, and error code — so it
+cannot mint a new CloudWatch custom metric per request. The concrete request path, the raw status code, and any
+client-supplied tenant hint are excluded from both the dimensions and the EMF envelope; they remain on the request log
+and span records, which carry no metric-cardinality cost. A request that matches no route wears the `unmatched` route
+value, and every status code maps to its class (`1xx`..`5xx`, else `unknown`).
 
 ## Relationship to logging profiles
 

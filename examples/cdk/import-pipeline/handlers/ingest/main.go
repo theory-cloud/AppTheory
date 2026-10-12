@@ -16,8 +16,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 
-	"github.com/theory-cloud/apptheory/v5/pkg/jobs"
-	"github.com/theory-cloud/tabletheory/v4"
+	"github.com/theory-cloud/apptheory/v6/pkg/jobs"
+	"github.com/theory-cloud/tabletheory/v5"
 )
 
 type s3ObjectCreatedDetail struct {

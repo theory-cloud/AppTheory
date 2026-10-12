@@ -121,9 +121,9 @@ def _validate_numeric_rule(field: str, value: Any, rule: ValidationRule) -> Vali
     limit = _rule_number(rule.value)
     if actual is None or limit is None:
         return None
-    if rule.rule == VALIDATION_RULE_MIN and actual < limit:
+    if rule.rule == VALIDATION_RULE_MIN and (not isfinite(actual) or actual < limit):
         return _field_error(field, rule, rule.message or f"{field} must be >= {rule.value}")
-    if rule.rule == VALIDATION_RULE_MAX and actual > limit:
+    if rule.rule == VALIDATION_RULE_MAX and (not isfinite(actual) or actual > limit):
         return _field_error(field, rule, rule.message or f"{field} must be <= {rule.value}")
     return None
 

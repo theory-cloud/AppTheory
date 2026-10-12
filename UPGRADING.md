@@ -13,6 +13,37 @@ for `CHANGELOG.md`:
 Every minor release line that changes runtime behavior, deployment constructs, generated artifacts, dependency floors,
 or deprecation posture must add or update a section here before the release is promoted.
 
+## v6.x line
+
+AppTheory v6 moves the Go runtime and the generated CDK Go bindings onto the next semantic import version. The release
+range from the v5 line also carries other breaking runtime, CDK, TypeScript, and Python changes; read `CHANGELOG.md` and
+the v6 release notes for the commit-level detail, and treat the import-path move below as the mechanical part of the
+upgrade.
+
+### Go module import paths
+
+AppTheory v6 moves the Go runtime and the generated CDK Go bindings onto the next semantic import version. Replace the
+`/v5` suffix on every AppTheory runtime import with the canonical `github.com/theory-cloud/apptheory/v6` path, pin the
+v6 module tag, and run `go mod tidy`:
+
+```bash
+go get github.com/theory-cloud/apptheory/v6@v6.0.0-rc
+```
+
+Update the generated CDK Go bindings in the same release transaction: replace
+`github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v5` with
+`github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/v6`, pin the matching v6 CDK module tag, and run `go mod tidy` in
+the CDK application's module. Runtime and CDK module tags continue to target the same immutable release commit; do not
+mix major lines or substitute registry-published artifacts.
+
+The v6.0.0-rc tag is the first v6 release; pin the exact v6 release or RC tag you are moving to. Do not retain both
+AppTheory major paths in one application: packages from `/v5` and `/v6` have distinct Go type identities even where
+their APIs are otherwise unchanged.
+
+Within the `/v5` to `/v6` module migration itself the Go API surface is unchanged beyond import paths: the api-snapshot
+diff between the two lines is header-path-only, so Go code that compiles on v5 compiles on v6. The TypeScript and Python
+runtimes carry no module-path change.
+
 ## v5.x line
 
 AppTheory v5 is a major release on two axes: the Go module path moves to the next semantic import version, and the Go
@@ -38,13 +69,13 @@ The v5.0.0-rc tag is the first v5 release; pin the exact v5 release or RC tag yo
 AppTheory major paths in one application: packages from `/v4` and `/v5` have distinct Go type identities even where
 their APIs are otherwise unchanged.
 
-### TableTheory v4 dependency floor
+### TableTheory v5 dependency floor
 
-The v5 line requires TableTheory v4.0.2 in all three runtimes. TableTheory v4 moves its Go module path to
-`github.com/theory-cloud/tabletheory/v4`, so Go consumers must replace every TableTheory `/v3` import with `/v4` and
-require `github.com/theory-cloud/tabletheory/v4`. Because `/v3` and `/v4` TableTheory packages are distinct Go types,
-these **7 exported AppTheory constructors** now take a TableTheory v4 `tablecore.DB` and no longer accept a TableTheory
-v3 client:
+The v5 line requires TableTheory v5.0.0 in all three runtimes. TableTheory's Go module path moves with the major to
+`github.com/theory-cloud/tabletheory/v5`, so Go consumers must replace every TableTheory `/v4` import with `/v5` and
+require `github.com/theory-cloud/tabletheory/v5`. Because `/v4` and `/v5` TableTheory packages are distinct Go types,
+these **7 exported AppTheory constructors** now take a TableTheory v5 `tablecore.DB` and no longer accept a TableTheory
+v4 client:
 
 | Constructor | Package |
 | --- | --- |
@@ -56,19 +87,31 @@ v3 client:
 | `NewDynamoTaskStore(db tablecore.DB) TaskStore` | `runtime/mcp` |
 | `NewTableTheorySessionRegistry(db tablecore.DB) (*TableTheorySessionRegistry, error)` | `runtime/microvm` |
 
-Before the v5 upgrade, Go consumers of those constructors must `go get github.com/theory-cloud/tabletheory/v4@v4.0.2`
-and pass a TableTheory v4 client. Do not keep both TableTheory major paths in one application — their otherwise
+Before the v5 upgrade, Go consumers of those constructors must `go get github.com/theory-cloud/tabletheory/v5@v5.0.0`
+and pass a TableTheory v5 client. Do not keep both TableTheory major paths in one application — their otherwise
 similar interfaces are distinct Go types.
 
+TableTheory v5 changes one TypeScript type declaration and no Go or Python API. On the default `TheorydbClient`
+(`numberUnmarshalMode: 'string'`), typed items now declare a DynamoDB `N` attribute as `string` and `NS` as
+`string[]`; both were declared as `number` and `number[]` before. Runtime behavior is unchanged, so the break is
+compile-time only: a TypeScript consumer that reads numeric attributes through the typed item surface must either
+handle the canonical decimal strings, which the documented default always produced, or construct the client in
+explicit `'number'` mode where a number is genuinely intended. AppTheory converts numeric attributes at the call site
+and does not read through the typed item surface, so it needs no adapter.
+
 The AppTheory TypeScript and Python release metadata continues to install TableTheory only from immutable GitHub
-Release assets. The v4 dependency assets pinned by this line are:
+Release assets. The v5 dependency assets pinned by this line are:
 
-- TypeScript: `theory-cloud-tabletheory-ts-4.0.2.tgz`, verified with SHA-512
-  `PVONJcpV1x7pYr73LSEkkr5W6EirVEvQcylOdP/fL+zYDoaKydGQ58YJ60vUz6kD3OK3cMuHMddInKueHGEAqA==`.
-- Python: `tabletheory_py-4.0.2-py3-none-any.whl`, verified with SHA-256
-  `6ea091175f934c78b1711003044ae83d8fae379bfd07ce4cee6f22712ab76194`.
+- TypeScript: `theory-cloud-tabletheory-ts-5.0.0.tgz`, verified with SHA-512
+  `17WgG31fbj2URjvPTBJDJW0EOzkBXZixLdgWCYyekmfRxc2zzDYMPpa6Gkt90TJUzDVmFxFKCg6Jt4YCWj2y3g==`.
+- Python: `tabletheory_py-5.0.0-py3-none-any.whl`, verified with SHA-256
+  `b1105db11f8dfd06b2fd615f9e92f0e420080940878feccd07dcdb9f9168d65a`.
 
-TableTheory v4 removes the ticker-driven memory monitor: `MemoryMonitor.Start` / `Stop`,
+Use those pinned assets through AppTheory's package metadata; do not substitute registry-published packages or
+mutable URLs.
+
+Consumers crossing from an AppTheory v4 line, which pinned TableTheory v3, additionally inherit the TableTheory v4
+changes. TableTheory v4 removes the ticker-driven memory monitor: `MemoryMonitor.Start` / `Stop`,
 `ResourceProtector.StartMemoryMonitoring` / `StopMemoryMonitoring`, and `ResourceLimits.MemoryCheckInterval` are
 gone, replaced by on-demand `MemoryMonitor.Sample`, `ResourceProtector.SampleMemory`, and
 `ResourceProtector.SetMemoryAlertCallback`. A caller samples inside the request whose memory it records, so nothing
@@ -77,8 +120,83 @@ a sample starts can outlive the invocation. AppTheory does not use the removed A
 `[]byte`/set-tagged DynamoDB write shapes on the cross-runtime DMS matrix; AppTheory's TableTheory queries use
 base-table key conditions, so the GSI change does not apply and no persisted-shape migration is required.
 
-Use those pinned assets through AppTheory's package metadata; do not substitute registry-published packages or
-mutable URLs.
+### MCP transport routes require credentials by default
+
+This is a deliberate, declared security contract change. `AppTheoryMcpServer` MCP transport routes (`POST`, `GET`, and
+`DELETE` on every MCP pattern) now attach an authorizer instead of API Gateway `NONE`. The default authorizer is AWS
+IAM, or a JWT authorizer when `transportAuthorizer` supplies an issuer and audience. A credential-free request to a
+transport route is now rejected by API Gateway (HTTP `403` for IAM, `401` for JWT) before the runtime handler runs.
+
+The OAuth surface is unchanged: RFC 9728 protected-resource metadata, canonical and suffix RFC 8414 discovery, the
+authorize route, and the token route remain explicitly public (`NONE`) because OAuth clients must fetch those documents
+before they hold a token.
+
+Existing deployments that let the runtime validate OAuth bearer tokens must either configure the transport authorizer
+to match their issuer and audience, or set the explicit opt-out to keep the previous behavior.
+
+CDK before / after:
+
+```ts
+// Before: every route was public and the runtime owned bearer validation.
+new AppTheoryMcpServer(this, "McpServer", { handler });
+
+// After (recommended): API Gateway validates JWTs before the runtime runs.
+new AppTheoryMcpServer(this, "McpServer", {
+  handler,
+  transportAuthorizer: {
+    kind: AppTheoryMcpTransportAuthorizerKind.JWT,
+    issuer: "https://accounts.example.com",
+    audience: ["https://mcp.example.com"],
+  },
+});
+
+// After (opt-out): keep the previous all-public behavior explicitly.
+new AppTheoryMcpServer(this, "McpServer", { handler, unauthenticatedMcp: true });
+```
+
+On the Go side, `mcpfacade.RegisterMCPFacade` now registers the MCP transport routes with an authenticated posture by
+default: a request without a verified principal is rejected with HTTP `401` and the MCP handler never runs. The new
+`FacadeConfig.UnauthenticatedMcp` field is the runtime counterpart of the CDK opt-out, and the new
+`FacadeConfig.RequireBearerToken` field validates an RFC 9728 bearer token on those routes with the correct
+`WWW-Authenticate` challenge. Applications that own transport authentication must set one of them. `UnauthenticatedMcp`
+and `RequireBearerToken` are mutually exclusive.
+
+Go before / after:
+
+```go
+// Before: transport routes inherited whatever the application did.
+_, err := mcpfacade.RegisterMCPFacade(app, mcpfacade.FacadeConfig{
+    IssuerURL:    issuer,
+    JWKSURI:      jwksURI,
+    URLMode:      mcpfacade.URLModePublicBaseURL,
+    PublicBaseURL: baseURL,
+    Scopes:       scopes,
+    MCPHandler:   mcpHandler,
+})
+
+// After (recommended): validate bearer tokens on the transport routes.
+_, err = mcpfacade.RegisterMCPFacade(app, mcpfacade.FacadeConfig{
+    IssuerURL:    issuer,
+    JWKSURI:      jwksURI,
+    URLMode:      mcpfacade.URLModePublicBaseURL,
+    PublicBaseURL: baseURL,
+    Scopes:       scopes,
+    MCPHandler:   mcpHandler,
+    RequireBearerToken: &oauth.RequireBearerTokenOptions{Validator: myValidator},
+})
+
+// After (opt-out): the application owns transport authentication.
+config := mcpfacade.FacadeConfig{ /* as before */ }
+config.UnauthenticatedMcp = true
+_, err = mcpfacade.RegisterMCPFacade(app, config)
+```
+
+The default runtime tier enforces the route-level authenticated posture. The explicit `apptheory.TierP0` preflight fast
+path does not evaluate route-level auth; applications on that tier must rely on the API Gateway authorizer or wrap the
+MCP handler themselves. Applications that already wrap the handler or configure
+`apptheory.WithAuthPrincipalHook` are unaffected: the default posture delegates to that principal hook. Wrapping the
+MCP handler without also configuring a principal hook does not exempt an application — route authorization runs before
+middleware and the handler, so every MCP transport request is still rejected with HTTP `401`.
 
 ## v4.x line
 
@@ -225,6 +343,28 @@ The runtime package (`ts/`) also declares `engines.node` `>=22` instead of `>=20
 while a package's declared floor sits below the floor its pinned TableTheory release requires, so the runtime package
 follows the CDK construct library onto the same floor. Consuming runtime applications must run Node.js 22 or newer.
 
+### CDK construct fail-closed defaults
+
+Several CDK construct defaults changed to fail closed. Each is a breaking default change: an existing stack that did
+not set the relevant prop synthesizes a different template after the upgrade.
+
+- `AppTheoryHttpApi` disables the default `execute-api` endpoint whenever `domain.mutualTlsAuthentication` is set, so a
+  mutual-TLS custom domain is the only way in. Non-mTLS custom domains and APIs without a domain keep the endpoint
+  enabled.
+- `AppTheoryFunction` and `AppTheoryApp` default their AppTheory-created function log groups to `RemovalPolicy.RETAIN`
+  instead of `RemovalPolicy.DESTROY`, so deleting a stack now preserves the execution logs. Set
+  `logRemovalPolicy: RemovalPolicy.DESTROY` to opt back into deleting them with the stack.
+- `AppTheoryS3VersionedIngress` rejects unresolved CDK token locations in `grantUpload`/`grantVersionedRead` instead of
+  passing them through, so every grant stays an exact, wildcard-free object key. Pass literal `namespaceSlug` and
+  `bundleId` values.
+- `AppTheoryVectorIndex.grantBedrockInvokeModel` scopes its default `bedrock:InvokeModel` resource ARN to the configured
+  Titan embedding model in the stack's partition and region instead of `"*"`. Pass `modelResourceArn` explicitly
+  (including `"*"`) to set a different scope.
+
+The generated Go and Python `apptheory-init` scaffold templates also stop shell-interpolating local build paths: they
+run `go build` and `python3 -m pip install` through an argv array, so a project path containing shell metacharacters is
+passed through literally.
+
 ### HTTP API v2 route permission scope
 
 `AppTheoryMcpServer`, `AppTheoryHttpApi`, `AppTheoryHttpIngestionEndpoint`, `AppTheoryMicrovmController`, and
@@ -256,8 +396,9 @@ stream) never sends anything. Pair `onFailure` with a bounded `retryAttempts` an
 record is retained for repair instead of blocking its shard. `reportBatchItemFailures` is independent of the destination
 and remains on by default.
 
-The destination carries metadata about the discarded batch — shard ID and sequence numbers — not the record payloads, so
-original records must be re-read from the stream while they are still inside the stream retention window. With
+An SQS or SNS destination carries metadata about the discarded batch — the shard ID and the start and end sequence
+numbers — not the record payloads, so original records must be re-read from the stream while they are still inside the
+stream retention window. An S3 destination instead receives the full records, including their payloads. With
 `bisectBatchOnError` enabled, the metadata's `BatchSize` can exceed 1 because Lambda consolidates the failed messages it
 writes to the destination.
 

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
-	"github.com/theory-cloud/apptheory/v5/testkit"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	"github.com/theory-cloud/apptheory/v6/testkit"
 )
 
 func TestEnvDeterministicTime(t *testing.T) {

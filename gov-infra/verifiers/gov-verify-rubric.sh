@@ -732,14 +732,19 @@ osv_scan_lockfile() {
   # reviewed, self-expiring exceptions - an AWS-published bundled dependency and
   # an AWS-published build-toolchain transitive chain (operator rulings, scope,
   # and automatic registry-backed removal conditions are documented there).
-  # osv-scanner exits non-zero when it reports findings, so a non-zero scanner
-  # exit is accepted only when the checker passed AND printed the machine marker
-  # proving an exact reviewed exception caused it; any other finding or scanner
-  # error still fails closed.
+  # osv-scanner exits exactly 1 when it reports findings, and a different status
+  # for an operational error (a timeout, a killed scan, or no scanner output at
+  # all). Only exit 1 is accepted, and only when the checker passed AND printed
+  # the machine marker proving an exact reviewed exception caused it; every other
+  # status, or a status-1 finding without the marker, fails closed.
   if [[ "${filter_status}" -ne 0 ]]; then
     return "${filter_status}"
   fi
   if [[ "${scan_status}" -ne 0 ]]; then
+    if [[ "${scan_status}" -ne 1 ]]; then
+      echo "FAIL: osv-scanner exited ${scan_status} for ${lf}; only exit 1 (findings) is accepted, and any other status is an operational error" >&2
+      return 1
+    fi
     if [[ "${checker_kind}" == "ts" ]] || ! grep -Fq 'exception-applied: ' <<<"${exception_marker}"; then
       echo "FAIL: osv-scanner exited ${scan_status} for ${lf} without any reviewed exception" >&2
       return 1

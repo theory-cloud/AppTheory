@@ -106,9 +106,11 @@ export interface AppTheoryFunctionAliasOptions {
  * Properties for an AppTheory-managed Lambda function.
  *
  * AppTheory overrides the inherited `logRemovalPolicy` default for log groups
- * it creates: they use `RemovalPolicy.DESTROY`. Combining an explicit
- * `logRemovalPolicy` with a caller-provided `logGroup` fails synthesis because
- * caller-provided resources own their removal policy.
+ * it creates: they use `RemovalPolicy.RETAIN`, so deleting a stack preserves
+ * the execution logs. Pass `RemovalPolicy.DESTROY` explicitly to opt back into
+ * the destructive behavior. Combining an explicit `logRemovalPolicy` with a
+ * caller-provided `logGroup` fails synthesis because caller-provided resources
+ * own their removal policy.
  */
 export interface AppTheoryFunctionProps extends lambda.FunctionProps {
   /**
@@ -170,7 +172,7 @@ export class AppTheoryFunction extends Construct {
         this,
         `/aws/lambda/${lambdaProps.functionName}`,
         logRetention,
-        requestedLogRemovalPolicy ?? RemovalPolicy.DESTROY,
+        requestedLogRemovalPolicy ?? RemovalPolicy.RETAIN,
       );
     }
 
@@ -215,7 +217,7 @@ export class AppTheoryFunction extends Construct {
         this,
         `/aws/lambda/${this.fn.functionName}`,
         logRetention,
-        requestedLogRemovalPolicy ?? RemovalPolicy.DESTROY,
+        requestedLogRemovalPolicy ?? RemovalPolicy.RETAIN,
       );
       (this as { logGroup?: logs.ILogGroupRef }).logGroup = logGroup;
     }

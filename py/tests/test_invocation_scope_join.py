@@ -12,20 +12,18 @@ sys.path.insert(0, str(REPO_ROOT / "py" / "src"))
 import apptheory.aws_http as aws_http  # noqa: E402
 from apptheory.response import html_stream  # noqa: E402
 
-# This file proves the invocation-scope invariant for the Python drain launch
-# site:
+# This file proves the invocation-scope bound for the Python drain launch site:
 #
 #   py/src/apptheory/aws_http.py|_drain_streaming_body[#1]
 #
-# The guard's Python scanner now discharges this site itself: `worker.join(...)`
+# The guard's Python scanner discharges this site itself: `worker.join(...)`
 # dominates every exit of `_drain_streaming_body`, so the site is no longer in
-# scripts/invocation-scope-baseline.txt. This test is what still pins the join —
-# the guard proves dominance, and this proves the waiting is real.
+# scripts/invocation-scope-baseline.txt.
 #
-# The tests are strict: the worker only records that it unwound after the slow
-# release completes, so a drain that returned without joining its worker is
-# caught by an ordering assertion, not by a settle window. Nothing here is left
-# to wall-clock slack.
+# The tests are strict: a worker whose close + unwind takes longer than the
+# drain's unwind grace must not hold the drain open, so the drain returns before
+# the worker records that it unwound. The worker is the documented residual and
+# exits once its source releases it.
 
 _DRAIN_THREAD_NAME = "apptheory-v2-streaming-drain"
 _MAX_BYTES = aws_http._APIGATEWAY_V2_STREAMING_BODY_MAX_BYTES
@@ -83,44 +81,41 @@ class _DrainJoinTestCase(unittest.TestCase):
 
 
 class TestDrainJoinsItsWorker(_DrainJoinTestCase):
-    def test_drain_waits_for_a_worker_whose_close_is_slow(self) -> None:
-        body = _SlowUnwindBody(close_delay=0.05, unwind_delay=0.1)
-        workers_before = len(_drain_threads())
-
+    def test_drain_bounds_its_wait_for_a_slow_worker(self) -> None:
+        # close + unwind together take longer than the drain's unwind grace, so a
+        # bounded drain returns before the worker finishes: it must not hold the
+        # invocation open for a worker that does not settle within the bound.
+        body = _SlowUnwindBody(close_delay=0.05, unwind_delay=0.5)
+        started = time.monotonic()
         with self.assertRaises(aws_http._StreamingBodyBudgetError):
             aws_http._drain_streaming_body(body, _MAX_BYTES, 0.1)
+        elapsed = time.monotonic() - started
 
-        # The worker sets unwound only after the close and the unwind that follow
-        # the drain's own budget, and the drain joins that worker, so a drain that
-        # returned without joining cannot see it set. Ordering, not elapsed time:
-        # the assertions hold on a slow machine and fail on an unjoined drain.
-        self.assertTrue(
-            body.unwound.is_set(),
-            "the drain returned before the worker it abandoned had exited",
-        )
-        self.assertEqual(
-            len(_drain_threads()),
-            workers_before,
-            "the drain worker outlived the drain that abandoned it",
-        )
+        self.assertLess(elapsed, 0.9, "the bounded drain waited for a worker that did not settle")
+        self.assertFalse(body.unwound.is_set(), "the worker settled within the grace window after all")
 
-    def test_buffered_adapter_waits_for_a_worker_whose_close_is_slow(self) -> None:
-        body = _SlowUnwindBody(close_delay=0.05, unwind_delay=0.1)
-        workers_before = len(_drain_threads())
+        # The slow worker is the documented residual; releasing it lets it exit.
+        self.assertTrue(body.unwound.wait(timeout=2.0))
+        deadline = time.monotonic() + 2.0
+        while _drain_threads() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(len(_drain_threads()), 0, "the drain worker outlived the drain")
+
+    def test_buffered_adapter_bounds_its_wait_for_a_slow_worker(self) -> None:
+        body = _SlowUnwindBody(close_delay=0.05, unwind_delay=0.5)
+        started = time.monotonic()
         response = aws_http.apigw_v2_response_from_response(html_stream(200, body))
+        elapsed = time.monotonic() - started
 
         self.assertEqual(response["statusCode"], 500)
-        # Same ordering proof as the drain test above: the adapter joins the
-        # worker, so unwound is set and the worker is gone by the time it returns.
-        self.assertTrue(
-            body.unwound.is_set(),
-            "the adapter returned before the drain worker it abandoned had exited",
-        )
-        self.assertEqual(
-            len(_drain_threads()),
-            workers_before,
-            "the drain worker outlived the adapter that abandoned it",
-        )
+        self.assertLess(elapsed, 0.9, "the bounded adapter waited for a worker that did not settle")
+        self.assertFalse(body.unwound.is_set(), "the worker settled within the grace window after all")
+
+        self.assertTrue(body.unwound.wait(timeout=2.0))
+        deadline = time.monotonic() + 2.0
+        while _drain_threads() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(len(_drain_threads()), 0, "the drain worker outlived the adapter")
 
 
 if __name__ == "__main__":

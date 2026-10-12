@@ -89,7 +89,9 @@
           "path": "/limited/multi-window",
           "status": "429",
           "error_code": "app.rate_limited",
-          "tenant_id": "tenant_multi"
+          "tenant_id": "tenant_multi",
+          "route": "/limited/multi-window",
+          "status_class": "4xx"
         },
         "duration_ms": 0
       }

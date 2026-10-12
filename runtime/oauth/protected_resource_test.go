@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
 )
 
 func TestProtectedResourceWWWAuthenticate(t *testing.T) {
@@ -74,12 +74,14 @@ func TestMCPProtectedResourceDiscoveryHandlerDerivesRequestResource(t *testing.T
 			resource: "https://family-heart.theorycloud.app/mcp",
 		},
 		{
-			name: "viewer host wins and comma suffix is removed",
+			name: "injected forwarded hosts are ignored in favor of the host header",
 			headers: map[string][]string{
+				"host":                      {"internal.example.com"},
 				"x-apptheory-original-host": {"keeper.example.com, internal.example.com"},
+				"x-forwarded-host":          {"evil.example.com"},
 				"x-forwarded-proto":         {"https"},
 			},
-			resource: "https://keeper.example.com/mcp",
+			resource: "https://internal.example.com/mcp",
 		},
 		{
 			name: "loopback http with port",
@@ -124,6 +126,117 @@ func TestMCPProtectedResourceDiscoveryHandlerDerivesRequestResource(t *testing.T
 			require.Len(t, document, 2)
 			require.NotContains(t, document, "jwks_uri")
 		})
+	}
+}
+
+func TestMCPProtectedResourceDiscoveryHandlerIgnoresInjectedForwardedHost(t *testing.T) {
+	handler, err := NewMCPProtectedResourceDiscoveryHandler(MCPServerConfig{
+		AuthorizationServerIssuer: "https://auth.example.com",
+		JWKSURI:                   "https://auth.example.com/.well-known/jwks.json",
+	})
+	require.NoError(t, err)
+
+	// An injected forwarded host must never reach the emitted metadata; the
+	// deployment-authoritative host header is the only source without an
+	// allowlist.
+	resp, handlerErr := handler(&apptheory.Context{Request: apptheory.Request{Headers: map[string][]string{
+		"host":                      {"real.example.com"},
+		"x-forwarded-host":          {"evil.example.com"},
+		"x-apptheory-original-host": {"evil.example.com"},
+	}}})
+	require.NoError(t, handlerErr)
+	require.Equal(t, http.StatusOK, resp.Status)
+
+	var got ProtectedResourceMetadata
+	require.NoError(t, json.Unmarshal(resp.Body, &got))
+	require.Equal(t, "https://real.example.com/mcp", got.Resource)
+	require.NotContains(t, got.Resource, "evil.example.com")
+
+	// A forwarded host with no host header at all has no authoritative source
+	// and fails closed.
+	resp, handlerErr = handler(&apptheory.Context{Request: apptheory.Request{Headers: map[string][]string{
+		"x-forwarded-host":          {"evil.example.com"},
+		"x-apptheory-original-host": {"evil.example.com"},
+		"x-forwarded-proto":         {"https"},
+	}}})
+	require.NoError(t, handlerErr)
+	require.Equal(t, http.StatusBadRequest, resp.Status)
+	require.NotContains(t, string(resp.Body), "evil.example.com")
+}
+
+func TestMCPProtectedResourceDiscoveryHandlerTrustedHostAllowlist(t *testing.T) {
+	handler, err := NewMCPProtectedResourceDiscoveryHandler(MCPServerConfig{
+		AuthorizationServerIssuer: "https://auth.example.com",
+		JWKSURI:                   "https://auth.example.com/.well-known/jwks.json",
+		AllowedHostnames:          []string{"mcp.example.com", "internal.example.com:443"},
+	})
+	require.NoError(t, err)
+
+	t.Run("allowlisted forwarded host is honored", func(t *testing.T) {
+		resp, handlerErr := handler(&apptheory.Context{Request: apptheory.Request{Headers: map[string][]string{
+			"host":              {"internal.example.com"},
+			"x-forwarded-host":  {"mcp.example.com"},
+			"x-forwarded-proto": {"https"},
+		}}})
+		require.NoError(t, handlerErr)
+		require.Equal(t, http.StatusOK, resp.Status)
+
+		var got ProtectedResourceMetadata
+		require.NoError(t, json.Unmarshal(resp.Body, &got))
+		require.Equal(t, "https://mcp.example.com/mcp", got.Resource)
+	})
+
+	t.Run("allowlisted host header with a default port is honored", func(t *testing.T) {
+		resp, handlerErr := handler(&apptheory.Context{Request: apptheory.Request{Headers: map[string][]string{
+			"host": {"internal.example.com:443"},
+		}}})
+		require.NoError(t, handlerErr)
+		require.Equal(t, http.StatusOK, resp.Status)
+
+		var got ProtectedResourceMetadata
+		require.NoError(t, json.Unmarshal(resp.Body, &got))
+		require.Equal(t, "https://internal.example.com/mcp", got.Resource)
+	})
+
+	t.Run("non-allowlisted forwarded host fails closed", func(t *testing.T) {
+		resp, handlerErr := handler(&apptheory.Context{Request: apptheory.Request{Headers: map[string][]string{
+			"host":             {"internal.example.com"},
+			"x-forwarded-host": {"evil.example.com"},
+		}}})
+		require.NoError(t, handlerErr)
+		require.Equal(t, http.StatusBadRequest, resp.Status)
+		require.JSONEq(t, `{"error":"invalid_request_host"}`, string(resp.Body))
+	})
+
+	t.Run("non-allowlisted host fails closed", func(t *testing.T) {
+		resp, handlerErr := handler(&apptheory.Context{Request: apptheory.Request{Headers: map[string][]string{
+			"host": {"evil.example.com"},
+		}}})
+		require.NoError(t, handlerErr)
+		require.Equal(t, http.StatusBadRequest, resp.Status)
+		require.JSONEq(t, `{"error":"invalid_request_host"}`, string(resp.Body))
+	})
+
+	t.Run("missing host fails closed", func(t *testing.T) {
+		resp, handlerErr := handler(&apptheory.Context{Request: apptheory.Request{Headers: map[string][]string{}}})
+		require.NoError(t, handlerErr)
+		require.Equal(t, http.StatusBadRequest, resp.Status)
+		require.JSONEq(t, `{"error":"invalid_request_host"}`, string(resp.Body))
+	})
+}
+
+func TestMCPProtectedResourceDiscoveryHandlerRejectsInvalidAllowlist(t *testing.T) {
+	for _, allowed := range [][]string{
+		{"https://mcp.example.com"},
+		{"mcp.example.com/"},
+		{""},
+	} {
+		_, err := NewMCPProtectedResourceDiscoveryHandler(MCPServerConfig{
+			AuthorizationServerIssuer: "https://auth.example.com",
+			JWKSURI:                   "https://auth.example.com/.well-known/jwks.json",
+			AllowedHostnames:          allowed,
+		})
+		require.Error(t, err)
 	}
 }
 

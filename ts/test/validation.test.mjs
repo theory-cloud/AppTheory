@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   bindRequest,
+  max,
   min,
   oneOf,
   pattern,
@@ -207,6 +208,54 @@ test("duration binding uses Go-compatible portable canonicalization", async () =
   );
 });
 
+test("duration binding rejects an oversized adjacent-segment value", async () => {
+  // ~3 MB of adjacent "1s" components (1,500,000 segments). The streaming parser
+  // caps the segment count, so this is rejected without materializing an array.
+  const oversized = "1s".repeat(1_500_000);
+  assert.equal(oversized.length, 3_000_000);
+  await assert.rejects(() =>
+    bindRequest(
+      { request: { query: { ttl: [oversized] }, headers: {} } },
+      {
+        query: true,
+        fields: { TTL: { source: "query", name: "ttl", type: "duration" } },
+      },
+    ),
+  );
+
+  // A long-but-bounded adjacent-segment value is still accumulated and accepted.
+  const req = await bindRequest(
+    { request: { query: { ttl: ["1ms".repeat(1000)] }, headers: {} } },
+    {
+      query: true,
+      fields: { TTL: { source: "query", name: "ttl", type: "duration" } },
+    },
+  );
+  assert.deepEqual(req, { TTL: "1s" });
+});
+
+test("duration binding enforces the adjacent-segment ceiling", async () => {
+  const config = {
+    query: true,
+    fields: { TTL: { source: "query", name: "ttl", type: "duration" } },
+  };
+
+  // Exactly the 1024-segment ceiling is accepted.
+  const atCap = await bindRequest(
+    { request: { query: { ttl: ["1ms".repeat(1024)] }, headers: {} } },
+    config,
+  );
+  assert.deepEqual(atCap, { TTL: "1.024s" });
+
+  // One segment over the ceiling is rejected.
+  await assert.rejects(() =>
+    bindRequest(
+      { request: { query: { ttl: ["1ms".repeat(1025)] }, headers: {} } },
+      config,
+    ),
+  );
+});
+
 test("numeric binding rejects unsafe integers and partial floats", async () => {
   const config = {
     query: true,
@@ -264,5 +313,58 @@ test("strict json rejects unknown keys with zero declared body fields", async ()
       assert.deepEqual(err.details, { source: "body", name: "extra" });
       return true;
     },
+  );
+});
+
+test("non-finite numeric actuals fail closed under min and max", () => {
+  const schema = {
+    lower: [min(0)],
+    upper: [max(0)],
+  };
+
+  for (const value of [
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+  ]) {
+    assert.deepEqual(validateValue({ lower: value, upper: value }, schema), [
+      { field: "lower", rule: "min", message: "lower must be >= 0" },
+      { field: "upper", rule: "max", message: "upper must be <= 0" },
+    ]);
+  }
+
+  // Finite boundaries keep the ordinary comparisons.
+  assert.deepEqual(validateValue({ lower: -1, upper: 1 }, schema), [
+    { field: "lower", rule: "min", message: "lower must be >= 0" },
+    { field: "upper", rule: "max", message: "upper must be <= 0" },
+  ]);
+  assert.deepEqual(validateValue({ lower: 0, upper: 0 }, schema), []);
+
+  // Non-numeric inputs retain rule-N/A semantics.
+  assert.deepEqual(validateValue({ lower: "0", upper: null }, schema), []);
+  assert.deepEqual(validateValue({ lower: true, upper: false }, schema), []);
+});
+
+test("non-finite numeric rule config fails closed", () => {
+  assert.deepEqual(
+    validateValue(
+      { lower: 1, upper: 1 },
+      {
+        lower: [min(Number.NaN)],
+        upper: [max(Number.POSITIVE_INFINITY)],
+      },
+    ),
+    [
+      {
+        field: "lower",
+        rule: "min",
+        message: "lower has invalid validation rule min",
+      },
+      {
+        field: "upper",
+        rule: "max",
+        message: "upper has invalid validation rule max",
+      },
+    ],
   );
 });

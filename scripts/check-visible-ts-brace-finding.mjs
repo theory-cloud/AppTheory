@@ -82,6 +82,10 @@ const expectation = {
   // dropped `@eslint/eslintrc` and moved to `minimatch ^10.2.5`, and the swap
   // replaced the eslint-plugin-import parent with eslint-plugin-import-x. Every
   // remaining parent now resolves the single hoisted minimatch 10.x below.
+  // Re-anchored again for the 2026-10-10 ts-runtime group: eslint 10.12.0 and
+  // @typescript-eslint/typescript-estree 8.71.1; the minimatch / brace-expansion
+  // path below is unchanged, and the gate still requires an exact graph plus an
+  // empty scanner report.
   minimatchParents: [
     {
       dependencyRange: "^10.2.4",
@@ -91,12 +95,12 @@ const expectation = {
     {
       dependencyRange: "^10.2.2",
       path: "node_modules/@typescript-eslint/typescript-estree",
-      version: "8.71.0",
+      version: "8.71.1",
     },
     {
       dependencyRange: "^10.2.5",
       path: "node_modules/eslint",
-      version: "10.11.0",
+      version: "10.12.0",
     },
     {
       dependencyRange: "^9.0.3 || ^10.1.2",
@@ -237,10 +241,10 @@ function runSelfTest() {
     },
     "node_modules/@eslint/config-array": { version: "0.23.5", dependencies: { minimatch: "^10.2.4" } },
     "node_modules/@typescript-eslint/typescript-estree": {
-      version: "8.71.0",
+      version: "8.71.1",
       dependencies: { minimatch: "^10.2.2" },
     },
-    "node_modules/eslint": { version: "10.11.0", dependencies: { minimatch: "^10.2.5" } },
+    "node_modules/eslint": { version: "10.12.0", dependencies: { minimatch: "^10.2.5" } },
     "node_modules/eslint-plugin-import-x": {
       version: "4.17.1",
       dependencies: { minimatch: "^9.0.3 || ^10.1.2" },

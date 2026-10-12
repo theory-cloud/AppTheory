@@ -2,6 +2,7 @@ package apptheory
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -109,7 +110,7 @@ func validateStructValue(target reflect.Value, presence *validationPresence) []V
 		}
 
 		fieldName := validationFieldName(fieldType)
-		presenceState, presenceTracked := presence.lookup(fieldName)
+		presenceState, presenceTracked := presence.lookup(validationPresenceFieldKey(fieldType))
 		for _, rule := range rules {
 			fieldErr, ok := validateFieldRule(fieldName, fieldValue, presenceState, presenceTracked, rule)
 			if !ok {
@@ -179,8 +180,8 @@ func validateRuleConfig(fieldName string, rule validationRuleSpec) (ValidationFi
 	case ValidationRuleRequired:
 		invalid = strings.TrimSpace(rule.value) != ""
 	case ValidationRuleMin, ValidationRuleMax:
-		_, ok := parseValidationFloat(rule.value)
-		invalid = !ok
+		limit, ok := parseValidationFloat(rule.value)
+		invalid = !ok || !isFiniteFloat(limit)
 	case ValidationRuleMinLength, ValidationRuleMaxLength:
 		_, ok := parseValidationInt(rule.value)
 		invalid = !ok
@@ -233,10 +234,13 @@ func validateNumericRule(
 		return ValidationFieldError{}, false
 	}
 	actual, ok := validationNumericValue(value)
-	if !ok || !fails(actual, limit) {
+	if !ok {
 		return ValidationFieldError{}, false
 	}
-	return validationFieldError(fieldName, rule.rule, fmt.Sprintf("%s must be %s %s", fieldName, operator, rule.value)), true
+	if !isFiniteFloat(actual) || fails(actual, limit) {
+		return validationFieldError(fieldName, rule.rule, fmt.Sprintf("%s must be %s %s", fieldName, operator, rule.value)), true
+	}
+	return ValidationFieldError{}, false
 }
 
 func validateLengthRule(
@@ -349,6 +353,10 @@ func parseValidationFloat(value string) (float64, bool) {
 	return out, err == nil
 }
 
+func isFiniteFloat(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
 func parseValidationInt(value string) (int, bool) {
 	out, err := strconv.Atoi(strings.TrimSpace(value))
 	return out, err == nil
@@ -377,6 +385,28 @@ func validationFieldName(field reflect.StructField) string {
 		return "field"
 	}
 	return strings.ToLower(name[:1]) + name[1:]
+}
+
+// validationPresenceKey namespaces a presence entry by its request source so a
+// value bound from one source cannot satisfy a required field declared on a
+// different source that happens to share the same external name.
+func validationPresenceKey(source, name string) string {
+	return source + "\x00" + name
+}
+
+// validationPresenceFieldKey is the presence key a field's required rule looks
+// up, mirroring the source precedence used when binding tagged fields.
+func validationPresenceFieldKey(field reflect.StructField) string {
+	if name := bindTagValue(field, bindSourcePath); name != "" {
+		return validationPresenceKey(bindSourcePath, name)
+	}
+	if name := bindTagValue(field, bindSourceQuery); name != "" {
+		return validationPresenceKey(bindSourceQuery, name)
+	}
+	if name := bindTagValue(field, bindSourceHeader); name != "" {
+		return validationPresenceKey(bindSourceHeader, name)
+	}
+	return validationPresenceKey(bindSourceBody, validationFieldName(field))
 }
 
 func validationFieldError(field, rule, message string) ValidationFieldError {

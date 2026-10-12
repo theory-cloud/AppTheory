@@ -77,7 +77,9 @@
           "path": "/trace-error",
           "status": "500",
           "error_code": "app.internal",
-          "tenant_id": "tenant_trace_error"
+          "tenant_id": "tenant_trace_error",
+          "route": "/trace-error",
+          "status_class": "5xx"
         }
       }
     ],

@@ -199,6 +199,31 @@ class VectorStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(app.VectorStoreError, "embedding count mismatch"):
             bad.put_text([app.SemanticRecord(key="c", text="hello")])
 
+    def test_semantic_index_enforces_ingest_budget_before_embedding(self) -> None:
+        store = app.create_fake_vector_store(2)
+        embedder = app.FakeEmbedder({"doc": [0, 0]})
+
+        record_budget = app.SemanticIndex(
+            app.SemanticIndexConfig(store=store, embedder=embedder, dimension=2, max_records=1)
+        )
+        with self.assertRaisesRegex(app.VectorStoreError, "record budget of 1"):
+            record_budget.put_text(
+                [app.SemanticRecord(key="r/1", text="doc"), app.SemanticRecord(key="r/2", text="doc")]
+            )
+
+        byte_budget = app.SemanticIndex(
+            app.SemanticIndexConfig(store=store, embedder=embedder, dimension=2, max_text_bytes=1)
+        )
+        with self.assertRaisesRegex(app.VectorStoreError, "text byte budget of 1"):
+            byte_budget.put_text([app.SemanticRecord(key="b/1", text="doc")])
+        self.assertEqual(embedder.calls, [])
+
+        bounded = app.SemanticIndex(
+            app.SemanticIndexConfig(store=store, embedder=embedder, dimension=2, max_records=2, max_text_bytes=8)
+        )
+        bounded.put_text([app.SemanticRecord(key="ok/1", text="doc")])
+        self.assertEqual(embedder.calls, ["doc"])
+
     def test_fake_embedder_defaults_and_missing_embeddings(self) -> None:
         embedder = app.FakeEmbedder({"known": [1, 2]})
         self.assertEqual(embedder.embed(" known "), [1, 2])

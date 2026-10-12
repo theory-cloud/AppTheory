@@ -14,6 +14,7 @@ class Match:
     handler: Any
     params: dict[str, str]
     auth_required: bool
+    pattern: str = ""
     secure_surface: str = ""
     secure_posture: str = ""
     secure_scopes: list[str] | None = None
@@ -119,6 +120,7 @@ class Router:
             handler=best.handler,
             params=best_params,
             auth_required=best.auth_required,
+            pattern=best.pattern,
             secure_surface=best.secure_surface,
             secure_posture=best.secure_posture,
             secure_scopes=list(best.secure_scopes),

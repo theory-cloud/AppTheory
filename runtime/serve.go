@@ -224,12 +224,13 @@ func (a *App) serveP0(ctx context.Context, req Request, opts serveOptions) (resp
 	}
 
 	requestCtx := &Context{
-		ctx:     ctx,
-		Request: normalized,
-		Params:  match.Params,
-		clock:   a.clock,
-		ids:     a.ids,
-		TraceID: normalized.TraceID,
+		ctx:                   ctx,
+		Request:               normalized,
+		Params:                match.Params,
+		clock:                 a.clock,
+		ids:                   a.ids,
+		TraceID:               normalized.TraceID,
+		TenantBindingRequired: a.tenantBindingRequired(),
 	}
 	if opts.configure != nil {
 		opts.configure(requestCtx)
@@ -273,6 +274,7 @@ func (a *App) serveP2(ctx context.Context, req Request, opts serveOptions) (resp
 type portableServeState struct {
 	method    string
 	path      string
+	route     string
 	requestID string
 	traceID   string
 	origin    string
@@ -294,7 +296,7 @@ func (a *App) servePortable(ctx context.Context, req Request, tier Tier, opts se
 		}
 		resp = finalizeP1Response(resp, state.requestID, state.origin, a.cors)
 		if tier == TierP2 {
-			a.recordObservability(state.method, state.path, state.requestID, state.traceID, state.tenantID, resp.Status, state.errorCode, durationMS(startedAt, clockNow(a.clock)))
+			a.recordObservability(state.method, state.path, state.route, state.requestID, state.traceID, state.tenantID, resp.Status, state.errorCode, durationMS(startedAt, clockNow(a.clock)))
 		}
 	}()
 
@@ -308,6 +310,7 @@ func (a *App) servePortableCore(ctx context.Context, req Request, tier Tier, sta
 
 	state.method = strings.ToUpper(strings.TrimSpace(req.Method))
 	state.path = normalizePath(req.Path)
+	state.route = unmatchedRouteTemplate
 	state.requestID = a.resolvePortableRequestID(headers, opts)
 	state.traceID = extractTraceIDFromHeaders(headers)
 
@@ -333,15 +336,16 @@ func (a *App) servePortableCore(ctx context.Context, req Request, tier Tier, sta
 	state.tenantID = extractTenantID(normalized.Headers, normalized.Query)
 
 	requestCtx := &Context{
-		ctx:             ctx,
-		Request:         normalized,
-		clock:           a.clock,
-		ids:             a.ids,
-		RequestID:       state.requestID,
-		TraceID:         state.traceID,
-		TenantID:        state.tenantID,
-		RemainingMS:     remainingMS,
-		MiddlewareTrace: trace,
+		ctx:                   ctx,
+		Request:               normalized,
+		clock:                 a.clock,
+		ids:                   a.ids,
+		RequestID:             state.requestID,
+		TraceID:               state.traceID,
+		TenantID:              state.tenantID,
+		RemainingMS:           remainingMS,
+		MiddlewareTrace:       trace,
+		TenantBindingRequired: a.tenantBindingRequired(),
 	}
 	if opts.configure != nil {
 		opts.configure(requestCtx)
@@ -375,6 +379,7 @@ func (a *App) portableRouteNotFound(normalized Request, allowed []string, state 
 }
 
 func (a *App) servePortableMatch(tier Tier, normalized Request, match *routeMatch, requestCtx *Context, state *portableServeState, opts serveOptions) Response {
+	state.route = match.Route.Pattern
 	if resp, errorCode, ok := a.applyPolicy(tier, requestCtx, state.requestID, opts.errorResponder); ok {
 		state.errorCode = errorCode
 		return resp
@@ -589,6 +594,7 @@ func (a *App) authorize(
 
 	requestCtx.AuthIdentity = principal.Identity
 	requestCtx.AuthPrincipal = principal
+	a.bindVerifiedTenant(requestCtx, principal.Claims)
 
 	if len(route.RequiredScopes) > 0 && !principalHasAllScopes(principal, route.RequiredScopes) {
 		return a.authorizeDenied(errorCodeForbidden, errorMessageForbidden, requestCtx.Request, requestID, errorResponder)

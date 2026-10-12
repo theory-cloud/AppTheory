@@ -10,18 +10,21 @@ from apptheory import (
     AppError,
     AppTheoryError,
     BindConfig,
+    ValidationFieldError,
     ValidationRule,
     bind_handler,
     bind_request,
     body,
     format_duration,
     header,
+    max_value,
     min_value,
     one_of,
     path,
     pattern,
     query,
     required,
+    validate_value,
 )
 from apptheory.context import Context
 from apptheory.request import Request
@@ -370,6 +373,32 @@ class BindHandlerTests(unittest.TestCase):
                         BindConfig(model=DurationRequest, query=True),
                     )
 
+    def test_duration_binding_caps_adjacent_segments(self) -> None:
+        @dataclass
+        class DurationRequest:
+            TTL: timedelta = query("ttl", value_type="duration")
+
+        ctx = Context(
+            request=Request(
+                method="GET",
+                path="/duration",
+                query={"ttl": ["1ms" * 1024]},
+                headers={},
+                body=b"",
+                is_base64=False,
+            )
+        )
+        req = bind_request(ctx, BindConfig(model=DurationRequest, query=True))
+        self.assertEqual(format_duration(req.TTL), "1.024s")
+
+        for raw in ("1ms" * 1025, "1ms" * 1_500_000):
+            with self.subTest(segments=len(raw) // 3):
+                with self.assertRaises(AppTheoryError):
+                    bind_request(
+                        Context(request=Request(method="GET", path="/duration", query={"ttl": [raw]})),
+                        BindConfig(model=DurationRequest, query=True),
+                    )
+
     def test_numeric_binding_rejects_unsafe_and_partial_values(self) -> None:
         @dataclass
         class NumericRequest:
@@ -413,6 +442,36 @@ class BindHandlerTests(unittest.TestCase):
             bind_request(ctx, BindConfig(model=PlainRequest, body=True, validate=unexpected))
         self.assertEqual(generic.exception.code, "app.validation_failed")
         self.assertEqual(generic.exception.status_code, 422)
+
+    def test_non_finite_numeric_actuals_fail_closed_under_bounds(self) -> None:
+        schema = {"lower": [min_value(0)], "upper": [max_value(0)]}
+        expected = [
+            ValidationFieldError(field="lower", rule="min", message="lower must be >= 0"),
+            ValidationFieldError(field="upper", rule="max", message="upper must be <= 0"),
+        ]
+
+        for value in (float("nan"), float("inf"), float("-inf")):
+            self.assertEqual(validate_value({"lower": value, "upper": value}, schema), expected)
+
+        # Finite boundaries keep the ordinary comparisons.
+        self.assertEqual(validate_value({"lower": -1, "upper": 1}, schema), expected)
+        self.assertEqual(validate_value({"lower": 0, "upper": 0}, schema), [])
+
+        # Non-numeric inputs retain rule-N/A semantics.
+        self.assertEqual(validate_value({"lower": "0", "upper": None}, schema), [])
+        self.assertEqual(validate_value({"lower": True, "upper": False}, schema), [])
+
+    def test_non_finite_numeric_rule_config_fails_closed(self) -> None:
+        self.assertEqual(
+            validate_value(
+                {"lower": 1, "upper": 1},
+                {"lower": [ValidationRule("min", float("nan"))], "upper": [ValidationRule("max", float("inf"))]},
+            ),
+            [
+                ValidationFieldError(field="lower", rule="min", message="lower has invalid validation rule min"),
+                ValidationFieldError(field="upper", rule="max", message="upper has invalid validation rule max"),
+            ],
+        )
 
 
 if __name__ == "__main__":

@@ -217,6 +217,57 @@ class TestApp(unittest.TestCase):
             },
         )
 
+    def test_handle_lambda_discriminates_function_url_from_apigw_v2(self) -> None:
+        app: App = create_app(tier="p0")
+
+        def source_handler(ctx) -> Response:
+            provenance = ctx.source_provenance()
+            return Response(
+                status=200,
+                headers={"content-type": ["application/json; charset=utf-8"]},
+                cookies=[],
+                body=json.dumps({"provider": provenance.provider}).encode("utf-8"),
+                is_base64=False,
+            )
+
+        app.get("/source", source_handler)
+
+        # A standard Function URL payload carries a top-level routeKey of
+        # "$default" and a *.lambda-url.*.on.aws requestContext domainName.
+        function_url = {
+            "version": "2.0",
+            "routeKey": "$default",
+            "rawPath": "/source",
+            "rawQueryString": "",
+            "cookies": [],
+            "headers": {},
+            "requestContext": {
+                "domainName": "abcd1234.lambda-url.us-east-1.on.aws",
+                "http": {"method": "GET", "path": "/source", "sourceIp": "198.51.100.10"},
+            },
+            "body": "",
+            "isBase64Encoded": False,
+        }
+        out = app.handle_lambda(function_url)
+        self.assertEqual(out["statusCode"], 200)
+        self.assertEqual(json.loads(out["body"]), {"provider": "lambda-url"})
+
+        # API Gateway v2 default and custom domains both carry routeKey, so they
+        # must stay on the API Gateway v2 adapter.
+        for domain_name in ("abcd1234.execute-api.us-east-1.amazonaws.com", "api.example.com"):
+            with self.subTest(domain_name=domain_name):
+                event = {
+                    **function_url,
+                    "routeKey": "GET /source",
+                    "requestContext": {
+                        "domainName": domain_name,
+                        "http": {"method": "GET", "path": "/source", "sourceIp": "198.51.100.11"},
+                    },
+                }
+                out = app.handle_lambda(event)
+                self.assertEqual(out["statusCode"], 200)
+                self.assertEqual(json.loads(out["body"]), {"provider": "apigw-v2"})
+
     def test_handle_strict_rejects_invalid_patterns(self) -> None:
         app: App = create_app(tier="p0")
         with self.assertRaises(AppTheoryError) as cm:

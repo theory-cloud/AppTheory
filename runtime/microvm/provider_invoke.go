@@ -13,7 +13,28 @@ const (
 	defaultProviderInvokePort       = int32(8080)
 	defaultProviderInvokeTTLSeconds = int32(60)
 	maxProviderInvokeBodyBytes      = 6 * 1024 * 1024
+	microVMProviderEndpointDomain   = "amazonaws.com"
+	microVMProviderEndpointCN       = "amazonaws.com.cn"
 )
+
+// microVMProviderEndpointDomains are the AWS service domains that host Lambda MicroVM
+// endpoints. The invoke proxy mints X-aws-proxy-auth for exactly one MicroVM endpoint, so the
+// URL builder refuses every host outside these domains: this list is the trust boundary for the
+// proxy credential.
+var microVMProviderEndpointDomains = [...]string{microVMProviderEndpointDomain, microVMProviderEndpointCN}
+
+func microVMProviderEndpointAllowed(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return false
+	}
+	for _, domain := range microVMProviderEndpointDomains {
+		if host == domain || strings.HasSuffix(host, "."+domain) {
+			return true
+		}
+	}
+	return false
+}
 
 var providerInvokeMethods = map[string]struct{}{
 	"DELETE":  {},
@@ -185,6 +206,9 @@ func providerInvokeURL(endpoint string, path string, query map[string][]string) 
 		return "", safeError(ErrorCodeProviderRequestInvalid, "apptheory: microvm invoke endpoint is invalid", "")
 	}
 	base.Scheme = "https"
+	if !microVMProviderEndpointAllowed(base.Hostname()) {
+		return "", safeError(ErrorCodeProviderRequestInvalid, "apptheory: microvm invoke endpoint is invalid", "")
+	}
 	base.Path = normalizeProviderInvokePath(path)
 	values := url.Values{}
 	keys := make([]string, 0, len(query))

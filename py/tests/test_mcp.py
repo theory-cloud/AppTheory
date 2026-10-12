@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import unittest
+from datetime import UTC, datetime
 from typing import Any
 
 from apptheory import (
+    MCP_CODE_HEADER_MISMATCH,
     MCP_CODE_INVALID_PARAMS,
     MCP_CODE_METHOD_NOT_FOUND,
     MCP_CODE_PARSE_ERROR,
@@ -73,13 +75,22 @@ def _post_headers(*, session_id: str = "", accept: str = "application/json, text
 
 
 class _Page:
-    def __init__(self, items: list[Any], cursor: str = "") -> None:
+    def __init__(self, items: list[Any], cursor: str = "", next_cursor: str = "") -> None:
         self.items = items
         self.cursor = cursor
+        self.next_cursor = next_cursor or cursor
 
 
 class _FakeNotFound(Exception):
     pass
+
+
+class _FixedClock:
+    def __init__(self, moment: datetime) -> None:
+        self._moment = moment
+
+    def now(self) -> datetime:
+        return self._moment
 
 
 class _FakeTheoryTable:
@@ -98,9 +109,11 @@ class _FakeTheoryTable:
             raise _FakeNotFound("not found")
         return self.items[key]
 
-    def query(self, session_id: str, *, limit: int = 1000) -> _Page:
+    def query(self, session_id: str, *, limit: int = 1000, cursor: str = "") -> _Page:
         selected = [item for (pk, _), item in self.items.items() if pk == str(session_id)]
-        return _Page(selected[:limit], cursor="next" if len(selected) > limit else "")
+        start = int(str(cursor or "0") or "0")
+        next_cursor = str(start + limit) if start + limit < len(selected) else ""
+        return _Page(selected[start : start + limit], cursor=next_cursor, next_cursor=next_cursor)
 
     def delete(self, session_id: str, item_id: str) -> None:
         self.items.pop((str(session_id), str(item_id)), None)
@@ -884,6 +897,47 @@ class McpRuntimeTests(unittest.TestCase):
         missing_cancel_id = harness.call(session_id, "tasks/cancel", {}, "missing-cancel")
         self.assertEqual(missing_cancel_id.body_json["error"]["code"], MCP_CODE_INVALID_PARAMS)
 
+    def test_tools_call_task_augmentation_is_protocol_gated(self) -> None:
+        task_store = MemoryMcpTaskStore()
+        server = create_mcp_server(
+            "PyMCP",
+            "test",
+            {
+                "id_generator": sequence_mcp_id_generator(["sess-1125", "task-1", "sess-618", "sess-326"]),
+                "task_runtime": {"store": task_store, "defaultTtlMs": 1000, "maxTtlMs": 5000},
+            },
+        )
+        server.registry().register_tool(
+            {"name": "task_echo", "inputSchema": {}, "execution": {"taskSupport": "optional"}},
+            lambda args, _ctx: {"content": [{"type": "text", "text": str((args or {}).get("message") or "")}]},
+        )
+        harness = create_mcp_test_harness(server)
+
+        def call_task(session_id: str, protocol_version: str, request_id: str) -> Any:
+            return harness.invoke(
+                session_id=session_id,
+                protocol_version=protocol_version,
+                body_json={
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "tools/call",
+                    "params": {"name": "task_echo", "arguments": {"message": "hi"}, "task": {}},
+                },
+            )
+
+        ok_session = harness.initialize(id="init-ok").response.headers["mcp-session-id"][0]
+        ok = call_task(ok_session, MCP_PROTOCOL_VERSION, "ok")
+        self.assertEqual(ok.body_json["result"]["task"]["taskId"], "task-1")
+        self.assertEqual(len(task_store.list({"sessionId": ok_session}).tasks), 1)
+
+        for protocol_version in ("2025-06-18", "2025-03-26"):
+            init = harness.initialize(id=f"init-{protocol_version}", protocol_version=protocol_version)
+            session_id = init.response.headers["mcp-session-id"][0]
+            denied = call_task(session_id, protocol_version, f"denied-{protocol_version}")
+            self.assertEqual(denied.body_json["error"]["code"], MCP_CODE_METHOD_NOT_FOUND)
+            self.assertEqual(denied.body_json["error"]["message"], "Method not found: tasks not enabled")
+            self.assertEqual(task_store.list({"sessionId": session_id}).tasks, [])
+
     def test_memory_stores_and_expired_sessions(self) -> None:
         session_store = MemoryMcpSessionStore(
             seed=[McpSession(id="expired", expires_at="2020-01-01T00:00:00Z", data={"k": "v"})]
@@ -942,7 +996,7 @@ class McpRuntimeTests(unittest.TestCase):
 
     def test_dynamo_backed_task_and_stream_stores(self) -> None:
         task_table = _FakeTheoryTable()
-        task_store = DynamoMcpTaskStore(table=task_table)
+        task_store = DynamoMcpTaskStore(table=task_table, clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)))
         record = McpTaskRecord(
             session_id="sess",
             method="tools/call",
@@ -990,6 +1044,110 @@ class McpRuntimeTests(unittest.TestCase):
         stream_store.delete_session("sess")
         with self.assertRaises(McpStreamNotFoundError):
             stream_store.append("sess", stream_id, "missing")
+
+    def test_dynamo_store_enforces_task_expiry(self) -> None:
+        task_table = _FakeTheoryTable()
+        writer = DynamoMcpTaskStore(table=task_table, clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 5, tzinfo=UTC)))
+        record = McpTaskRecord(
+            session_id="sess",
+            method="tools/call",
+            tool_name="tool",
+            task=McpTask(task_id="task", created_at="2026-01-01T00:00:00Z", ttl=60000),
+        )
+        created = writer.create(record)
+        self.assertEqual(created.task.task_id, "task")
+        self.assertEqual(created.task.ttl, 60000)
+
+        stored = task_table.items[("sess", "task")]
+        self.assertEqual(stored.expires_at, int(datetime(2026, 1, 1, 0, 1, 0, tzinfo=UTC).timestamp()))
+        # A fresh task is returned normally and keeps its ttl duration.
+        fresh = writer.get({"sessionId": "sess", "taskId": "task"})
+        self.assertEqual(fresh.task.task_id, "task")
+        self.assertEqual(fresh.task.ttl, 60000)
+
+        # ttl <= 0 falls back to the maximum task TTL (1 hour).
+        fallback_table = _FakeTheoryTable()
+        DynamoMcpTaskStore(table=fallback_table, clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 5, tzinfo=UTC))).create(
+            McpTaskRecord(
+                session_id="fallback",
+                method="tools/call",
+                task=McpTask(task_id="task", created_at="2026-01-01T00:00:00Z", ttl=0),
+            )
+        )
+        self.assertEqual(
+            fallback_table.items[("fallback", "task")].expires_at,
+            int(datetime(2026, 1, 1, 1, 0, 0, tzinfo=UTC).timestamp()),
+        )
+
+        # Once `now` passes `expires_at`, the record is never surfaced.
+        later = DynamoMcpTaskStore(table=task_table, clock=_FixedClock(datetime(2026, 1, 1, 1, 0, 0, tzinfo=UTC)))
+        with self.assertRaises(McpTaskNotFoundError):
+            later.get({"sessionId": "sess", "taskId": "task"})
+        self.assertEqual(later.list({"sessionId": "sess"}).tasks, [])
+
+    def test_dynamo_store_delete_session_follows_cursors(self) -> None:
+        bulk_table = _FakeTheoryTable()
+        bulk_store = DynamoMcpTaskStore(table=bulk_table, clock=_FixedClock(datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)))
+        for index in range(1200):
+            bulk_store.create(
+                McpTaskRecord(
+                    session_id="bulk",
+                    method="tools/call",
+                    task=McpTask(
+                        task_id=f"task-{index:04d}",
+                        created_at="2026-01-01T00:00:00Z",
+                        last_updated_at="2026-01-01T00:00:00Z",
+                        ttl=60000,
+                    ),
+                )
+            )
+        first_page = bulk_store.list({"session_id": "bulk", "limit": 500})
+        self.assertEqual(len(first_page.tasks), 500)
+        self.assertEqual(first_page.next_cursor, "500")
+        bulk_store.delete_session("bulk")
+        self.assertEqual(bulk_store.list({"session_id": "bulk"}).tasks, [])
+        self.assertEqual([key for key in bulk_table.items if key[0] == "bulk"], [])
+
+    def test_malformed_non_ascii_routing_name_is_rejected(self) -> None:
+        server = create_mcp_server("PyMCP", "test", {"id_generator": sequence_mcp_id_generator(["sess-non-ascii"])})
+        headers = _post_headers()
+        headers[MCP_HEADER_PROTOCOL_VERSION] = [MCP_PROTOCOL_VERSION_2026_07_28]
+        headers[MCP_HEADER_METHOD] = ["tools/call"]
+        headers[MCP_HEADER_NAME] = ["=?base64?\u00e9?="]
+
+        response = server.serve(
+            {
+                "method": "POST",
+                "headers": headers,
+                "body": json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "non-ascii",
+                        "method": "tools/call",
+                        "params": {
+                            "name": "echo",
+                            "arguments": {"message": "non-ascii"},
+                            "_meta": {
+                                "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION_2026_07_28,
+                                "io.modelcontextprotocol/clientCapabilities": {},
+                            },
+                        },
+                    }
+                ),
+            }
+        )
+        self.assertEqual(response.status, 400)
+        self.assertEqual(
+            _response_json(response),
+            {
+                "jsonrpc": "2.0",
+                "id": "non-ascii",
+                "error": {
+                    "code": MCP_CODE_HEADER_MISMATCH,
+                    "message": "Header mismatch: malformed Mcp-Name Base64 encoding",
+                },
+            },
+        )
 
 
 if __name__ == "__main__":

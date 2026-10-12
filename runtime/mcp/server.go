@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
-	"github.com/theory-cloud/apptheory/v5/runtime/internal/streamjoin"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	"github.com/theory-cloud/apptheory/v6/runtime/internal/streamjoin"
 )
 
 // protocolVersion is the latest session-ful MCP protocol version supported by this server.
@@ -726,16 +726,16 @@ func (s *Server) dispatchNonTaskMethod(
 	case methodPing:
 		return NewResultResponse(req.ID, map[string]any{})
 	default:
-		return s.dispatchRegistryMethod(ctx, req, sessionID)
+		return s.dispatchRegistryMethod(ctx, req, sessionID, protocolVersion)
 	}
 }
 
-func (s *Server) dispatchRegistryMethod(ctx context.Context, req *Request, sessionID string) *Response {
+func (s *Server) dispatchRegistryMethod(ctx context.Context, req *Request, sessionID, requestPV string) *Response {
 	switch req.Method {
 	case methodToolsList:
 		return s.handleToolsList(req)
 	case methodToolsCall:
-		return s.handleToolsCall(ctx, req, sessionID)
+		return s.handleToolsCall(ctx, req, sessionID, requestPV)
 	case methodResourcesList:
 		return s.handleResourcesList(req)
 	case methodResourcesRead:
@@ -917,7 +917,7 @@ func normalizeProgressToken(raw json.RawMessage) json.RawMessage {
 }
 
 // handleToolsCall invokes a registered tool by name (buffered JSON mode).
-func (s *Server) handleToolsCall(ctx context.Context, req *Request, sessionID string) (resp *Response) {
+func (s *Server) handleToolsCall(ctx context.Context, req *Request, sessionID, requestPV string) (resp *Response) {
 	var params toolsCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: "+err.Error())
@@ -928,10 +928,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request, sessionID st
 	}
 	taskSupport := s.registry.taskSupport(params.Name)
 	if params.Task != nil {
-		if !s.tasksEnabled() {
-			return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: tasks not enabled")
-		}
-		return s.handleTaskToolsCall(ctx, req, sessionID, params)
+		return s.handleTaskToolsCall(ctx, req, sessionID, requestPV, params)
 	}
 	if taskSupport == TaskSupportRequired {
 		return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: tool requires task execution")
@@ -1081,6 +1078,9 @@ func (s *Server) handleBatch(ctx context.Context, body []byte, headers map[strin
 
 	requests, err := ParseBatchRequest(body)
 	if err != nil {
+		if errors.Is(err, errBatchTooLarge) {
+			return s.batchTooLargeResponse(), nil
+		}
 		return s.batchParseErrorResponse(ctx, err)
 	}
 
@@ -1134,6 +1134,24 @@ func (s *Server) batchParseErrorResponse(ctx context.Context, err error) (*appth
 		Headers: respHeaders,
 		Body:    data,
 	}, nil
+}
+
+// batchTooLargeResponse rejects the whole batch with one JSON-RPC error object.
+// An oversized batch is a request-level fault, so the reply is a single error
+// (code -32600) rather than a per-item array.
+func (s *Server) batchTooLargeResponse() *apptheory.Response {
+	resp := NewErrorResponse(nil, CodeInvalidRequest, batchTooLargeMessage)
+	data, err := MarshalResponse(resp)
+	if err != nil {
+		return internalServerError()
+	}
+	return &apptheory.Response{
+		Status: 200,
+		Headers: map[string][]string{
+			"content-type": {"application/json"},
+		},
+		Body: data,
+	}
 }
 
 func (s *Server) loadBatchSession(ctx context.Context, sessionID string) (*Session, *apptheory.Response) {

@@ -176,6 +176,43 @@ class TestLoggingProfile(unittest.TestCase):
                     decode_logging_profile_json(json.dumps(cfg))
                 self.assertIn(expected, decode_ctx.exception.errors)
 
+    def test_decode_json_rejects_invalid_field_types(self) -> None:
+        malformed = {
+            "schema_version": [LOGGING_PROFILE_SCHEMA_VERSION],
+            "profile": [LOGGING_PROFILE_PAYTHEORY_ALERT_V1],
+            "encoding": {"format": ["json"]},
+            "levels": {"info": ["INFO"]},
+            "required_fields": [["ts"]],
+            "field_map": {"message": {"name": "message"}},
+            "enrichment": {
+                "static": {"service": ["payments-api"]},
+                "context": {"request_id": ["request_id"]},
+            },
+            "error_capture": {"include_stack_trace": "false"},
+            "sanitization": {"existing_sanitized_logging": "true"},
+            "alerting_hints": {"fingerprint_fields": [{"field": "ts"}]},
+        }
+        with self.assertRaises(LoggingProfileValidationError) as ctx:
+            decode_logging_profile_json(json.dumps(malformed))
+        for expected in (
+            "schema_version: must be a string",
+            "profile: must be a string",
+            "encoding.format: must be a string",
+            "levels.info: must be a string",
+            "required_fields[0]: must be a string",
+            "field_map.message: must be a string",
+            "enrichment.static.service: must be a string",
+            "enrichment.context.request_id: must be a string",
+            "error_capture.include_stack_trace: must be a boolean",
+            "sanitization.existing_sanitized_logging: must be a boolean",
+            "alerting_hints.fingerprint_fields[0]: must be a string",
+        ):
+            self.assertIn(expected, ctx.exception.errors)
+
+        # A well-formed profile of the same shape is still accepted.
+        decoded = decode_logging_profile_json(json.dumps(default_logging_profile(LOGGING_PROFILE_PAYTHEORY_ALERT_V1)))
+        self.assertEqual(decoded["profile"], LOGGING_PROFILE_PAYTHEORY_ALERT_V1)
+
     def test_decode_json_valid_profile_still_passes(self) -> None:
         cfg = default_logging_profile(LOGGING_PROFILE_PAYTHEORY_ALERT_V1)
         decoded = decode_logging_profile_json(json.dumps(cfg))

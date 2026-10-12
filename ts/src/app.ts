@@ -64,6 +64,7 @@ import {
   requestFromAPIGatewayV2,
   requestFromLambdaFunctionURL,
   requestFromWebSocketEvent,
+  settleWithin,
 } from "./internal/aws-http.js";
 import {
   serveLambdaFunctionURLStreaming,
@@ -142,6 +143,18 @@ export interface RouteOptions {
 
 /** Hook that resolves the authenticated identity for protected routes. */
 export type AuthHook = (ctx: Context) => string | Promise<string>;
+
+/** Richer auth state resolved for a request by a principal-aware auth hook. */
+export interface AuthPrincipal {
+  identity: string;
+  scopes?: string[];
+  claims?: Record<string, unknown>;
+}
+
+/** Principal-aware auth hook resolving the current request principal. */
+export type PrincipalAuthHook = (
+  ctx: Context,
+) => AuthPrincipal | null | Promise<AuthPrincipal | null>;
 
 /** Decision returned by a P2 policy hook to fail a request closed. */
 export interface PolicyDecision {
@@ -427,6 +440,7 @@ export interface SecureOptions {
   limits?: Limits;
   cors?: CORSConfig;
   principalResolver?: SecurePrincipalResolver;
+  tenantClaim?: string;
   policyHook?: PolicyHook;
   observability?: ObservabilityHooks;
   webSocketSupport?: boolean;
@@ -447,6 +461,8 @@ interface AppOptions {
   limits?: Limits;
   cors?: CORSConfig;
   authHook?: AuthHook;
+  authPrincipalHook?: PrincipalAuthHook;
+  tenantClaim?: string;
   policyHook?: PolicyHook;
   observability?: ObservabilityHooks;
   webSocketClientFactory?: WebSocketClientFactory;
@@ -525,6 +541,8 @@ export class App {
   private readonly _limits: NormalizedLimits;
   private readonly _cors: NormalizedCORSConfig;
   private readonly _authHook: AuthHook | null;
+  private readonly _authPrincipalHook: PrincipalAuthHook | null;
+  private readonly _tenantClaim: string;
   private readonly _policyHook: PolicyHook | null;
   private readonly _observability: ObservabilityHooks | null;
   private readonly _webSocketRoutes: Array<
@@ -560,6 +578,8 @@ export class App {
     };
     this._cors = normalizeCorsConfig(options.cors);
     this._authHook = options.authHook ?? null;
+    this._authPrincipalHook = options.authPrincipalHook ?? null;
+    this._tenantClaim = String(options.tenantClaim ?? "").trim();
     this._policyHook = options.policyHook ?? null;
     this._observability = options.observability ?? null;
     this._webSocketRoutes = [];
@@ -842,6 +862,7 @@ export class App {
     recordObservability(this._observability, {
       method,
       path,
+      route: UNMATCHED_ROUTE_TEMPLATE,
       requestId: "",
       tenantId: "",
       traceId: "",
@@ -906,6 +927,7 @@ export class App {
       requestCtx as unknown as { _securePrincipal: SecurePrincipal | null }
     )._securePrincipal = cloneSecurePrincipal(principal);
     requestCtx.authIdentity = principal.identity;
+    this._bindVerifiedTenant(requestCtx, principal.claims);
     if (
       posture === "authenticated" &&
       secureRoute.scopes.some((scope) => !principal.scopes.includes(scope))
@@ -921,6 +943,54 @@ export class App {
     if (posture === "internal_only" && principal.kind !== "internal") {
       throw new AppError("app.forbidden", "forbidden");
     }
+  }
+
+  private _tenantBindingRequired(): boolean {
+    return (
+      this._authPrincipalHook !== null || this._securePrincipalResolver !== null
+    );
+  }
+
+  private async _authenticate(
+    requestCtx: Context,
+  ): Promise<AuthPrincipal | null> {
+    if (this._authPrincipalHook) {
+      const resolved = await this._authPrincipalHook(requestCtx);
+      if (!resolved) return null;
+      const identity = String(resolved.identity ?? "").trim();
+      if (!identity) return null;
+      const claims: Record<string, unknown> = {};
+      if (resolved.claims && typeof resolved.claims === "object") {
+        for (const [key, value] of Object.entries(resolved.claims)) {
+          claims[key] = value;
+        }
+      }
+      return {
+        identity,
+        scopes: Array.isArray(resolved.scopes)
+          ? resolved.scopes.map((scope) => String(scope ?? ""))
+          : [],
+        claims,
+      };
+    }
+    if (!this._authHook) return null;
+    const identity = String((await this._authHook(requestCtx)) ?? "").trim();
+    if (!identity) return null;
+    return { identity };
+  }
+
+  private _bindVerifiedTenant(
+    requestCtx: Context,
+    claims: Record<string, unknown> | null | undefined,
+  ): void {
+    const claim = this._tenantClaim;
+    if (!claim) return;
+    const value = claims?.[claim];
+    if (typeof value !== "string") return;
+    const text = value.trim();
+    if (!text) return;
+    requestCtx.tenantId = text;
+    requestCtx.tenantBound = true;
   }
 
   /** Registers a WebSocket route handler by route key. */
@@ -1067,6 +1137,7 @@ export class App {
         ids: this._ids,
         ctx,
         traceId: normalized.traceId,
+        tenantBindingRequired: this._tenantBindingRequired(),
         appSync: contextOptions?.appSync ?? null,
       });
       contextOptions?.configure?.(requestCtx);
@@ -1100,6 +1171,7 @@ export class App {
     let traceId = extractTraceIdFromHeaders(preHeaders);
     let method = normalizeMethod(request.method);
     let path = normalizePath(request.path);
+    let route = UNMATCHED_ROUTE_TEMPLATE;
 
     let requestId = firstHeaderValue(preHeaders, "x-request-id");
     if (!requestId) {
@@ -1123,6 +1195,7 @@ export class App {
         recordObservability(this._observability, {
           method,
           path,
+          route,
           requestId,
           tenantId,
           traceId,
@@ -1243,6 +1316,8 @@ export class App {
       );
     }
 
+    route = match.route.pattern;
+
     const requestCtx = new Context({
       request: normalized,
       params: match.params,
@@ -1255,6 +1330,7 @@ export class App {
       authIdentity: "",
       remainingMs,
       middlewareTrace,
+      tenantBindingRequired: this._tenantBindingRequired(),
       appSync: contextOptions?.appSync ?? null,
     });
     contextOptions?.configure?.(requestCtx);
@@ -1312,14 +1388,12 @@ export class App {
     } else if (match.route.authRequired) {
       middlewareTrace.push("auth");
       try {
-        if (!this._authHook) {
+        const principal = await this._authenticate(requestCtx);
+        if (!principal) {
           throw new AppError("app.unauthorized", "unauthorized");
         }
-        const identity = await this._authHook(requestCtx);
-        if (!String(identity ?? "").trim()) {
-          throw new AppError("app.unauthorized", "unauthorized");
-        }
-        requestCtx.authIdentity = String(identity);
+        requestCtx.authIdentity = principal.identity;
+        this._bindVerifiedTenant(requestCtx, principal.claims);
       } catch (err) {
         const code = errorCodeFrom(err);
         return finish(
@@ -1625,6 +1699,7 @@ export class App {
       authIdentity: "",
       remainingMs: extractRemainingMs(ctx),
       middlewareTrace: [],
+      tenantBindingRequired: this._tenantBindingRequired(),
       webSocket: wsCtx,
     });
 
@@ -2043,7 +2118,10 @@ export class App {
         );
       }
       if (rc["http"] && typeof rc["http"] === "object") {
-        if ("routeKey" in record) {
+        if (
+          "routeKey" in record &&
+          !isLambdaFunctionUrlDomain(rc["domainName"])
+        ) {
           return this.serveAPIGatewayV2(event as APIGatewayV2HTTPRequest, ctx);
         }
         return this.serveLambdaFunctionURL(
@@ -2090,6 +2168,7 @@ const SECURE_OPTION_KEYS = new Set([
   "limits",
   "cors",
   "principalResolver",
+  "tenantClaim",
   "policyHook",
   "observability",
   "webSocketSupport",
@@ -2134,6 +2213,9 @@ export class SecureApp {
         : {}),
       ...(options.limits !== undefined ? { limits: options.limits } : {}),
       ...(options.cors !== undefined ? { cors: options.cors } : {}),
+      ...(options.tenantClaim !== undefined
+        ? { tenantClaim: options.tenantClaim }
+        : {}),
       ...(options.policyHook !== undefined
         ? { policyHook: options.policyHook }
         : {}),
@@ -2315,6 +2397,8 @@ export function createApp(
     limits?: Limits;
     cors?: CORSConfig;
     authHook?: AuthHook;
+    authPrincipalHook?: PrincipalAuthHook;
+    tenantClaim?: string;
     policyHook?: PolicyHook;
     observability?: ObservabilityHooks;
     webSocketClientFactory?: WebSocketClientFactory;
@@ -2393,6 +2477,18 @@ function timeoutContextCarrier(parent: unknown, signal: AbortSignal): unknown {
   return { parent, signal };
 }
 
+// isLambdaFunctionUrlDomain reports whether a provider requestContext domainName
+// belongs to a Lambda Function URL endpoint, for example
+// "abcd1234.lambda-url.us-east-1.on.aws". Function URL payloads carry a
+// top-level routeKey just like API Gateway v2, so routeKey presence alone is not
+// a safe discriminator.
+function isLambdaFunctionUrlDomain(value: unknown): boolean {
+  const host = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return host.includes(".lambda-url.") && host.endsWith(".on.aws");
+}
+
 function cloneContextWithTimeoutCarrier(
   ctx: Context,
   carrier: unknown,
@@ -2401,6 +2497,7 @@ function cloneContextWithTimeoutCarrier(
     _clock: Clock;
     _ids: IdGenerator;
     _values: Map<string, unknown>;
+    _securePrincipal: SecurePrincipal | null;
   };
   const clone = new Context({
     request: ctx.request,
@@ -2412,13 +2509,21 @@ function cloneContextWithTimeoutCarrier(
     traceId: ctx.traceId,
     tenantId: ctx.tenantId,
     authIdentity: ctx.authIdentity,
+    tenantBound: ctx.tenantBound,
+    tenantBindingRequired: ctx.tenantBindingRequired,
     remainingMs: ctx.remainingMs,
     middlewareTrace: ctx.middlewareTrace,
     webSocket: ctx.asWebSocket(),
     appSync: ctx.asAppSync(),
   });
-  const cloneInternal = clone as unknown as { _values: Map<string, unknown> };
+  const cloneInternal = clone as unknown as {
+    _values: Map<string, unknown>;
+    _securePrincipal: SecurePrincipal | null;
+  };
   cloneInternal._values = ctxInternal._values;
+  cloneInternal._securePrincipal = cloneSecurePrincipal(
+    ctxInternal._securePrincipal,
+  );
   return clone;
 }
 
@@ -2491,16 +2596,33 @@ function timeoutForContext(
   return timeoutMs;
 }
 
+// TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS bounds how long the timeout middleware waits
+// for the handler it timed out to unwind before returning the timeout response.
+//
+// A handler that observes its abort signal unwinds immediately and is never left
+// running. A handler that ignores cancellation is exactly the case this
+// middleware exists to bound, so its response is not held open for the handler's
+// full runtime; it is the one documented place where a handler the middleware
+// started can still be running when the response returns.
+const TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS = 250;
+
 /**
  * Creates middleware that fails requests closed when timeout policy expires.
  *
- * The handler chain runs on the invoking task with an abort signal that carries
- * the deadline, and the middleware reports `app.timeout` when the signal was
- * aborted by the time the chain returned. It starts no promise or task of its
- * own: a handler that observes its signal unwinds immediately, and a handler
- * that ignores it runs until it returns, bounded by the Lambda function timeout
- * rather than abandoned by the middleware. There is no grace window and no
- * abandoned work.
+ * The handler chain runs on a task raced against the deadline signal, and the
+ * middleware reports `app.timeout` when the deadline fires while the chain is
+ * still running -- at the deadline, not after the chain returns. A handler that
+ * observes its signal unwinds immediately and is never left running; a handler
+ * that ignores cancellation is exactly the case this middleware exists to bound.
+ *
+ * The middleware does not abandon the handler: after the deadline it joins it for
+ * a bounded grace window (TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS) before returning the
+ * timeout response. A handler that ignores cancellation and does not unwind
+ * within that window is the one documented place where work the middleware
+ * started can still be running when the response returns; the Lambda function
+ * timeout remains its outer bound. A handler that never yields (for example a
+ * synchronous CPU loop with no await point) cannot be interrupted by the
+ * middleware by construction.
  */
 export function timeoutMiddleware(config: TimeoutConfig = {}): Middleware {
   const cfg = normalizeTimeoutConfig(config);
@@ -2534,14 +2656,37 @@ export function timeoutMiddleware(config: TimeoutConfig = {}): Middleware {
       controller.abort(cfg.timeoutMessage);
     }, timeoutMs);
 
+    const run = Promise.resolve().then(() => next(handlerCtx));
+    let removeDeadlineAbortListener = () => {};
+    const deadlinePromise = new Promise<never>((_resolve, reject) => {
+      const onAbort = () =>
+        reject(new AppError("app.timeout", cfg.timeoutMessage));
+      if (controller.signal.aborted) {
+        onAbort();
+        return;
+      }
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      removeDeadlineAbortListener = () =>
+        controller.signal.removeEventListener("abort", onAbort);
+    });
+
     try {
-      const resp = await next(handlerCtx);
+      const resp = await Promise.race([run, deadlinePromise]);
       if (controller.signal.aborted) {
         throw new AppError("app.timeout", cfg.timeoutMessage);
       }
       return resp;
+    } catch (err) {
+      if (err instanceof AppError && err.code === "app.timeout") {
+        // The deadline won. Join the handler within the bounded grace window so a
+        // cooperative handler is never left running, then report the timeout
+        // without holding the invocation open for an uncooperative handler.
+        await settleWithin(run, TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS);
+      }
+      throw err;
     } finally {
       clearTimeout(timer);
+      removeDeadlineAbortListener();
       removeParentAbortListener();
     }
   };
@@ -2913,6 +3058,7 @@ function recordObservability(
   {
     method,
     path,
+    route,
     requestId,
     tenantId,
     traceId,
@@ -2922,6 +3068,7 @@ function recordObservability(
   }: {
     method: string;
     path: string;
+    route: string;
     requestId: string;
     tenantId: string;
     traceId: string;
@@ -2968,7 +3115,14 @@ function recordObservability(
       tags: {
         method,
         path,
+        // route and status_class are the bounded metric dimensions: the concrete
+        // path and raw status stay available on the log and span records, while a
+        // first-party metric sink dimensions only on these finite values so
+        // attacker-selected paths (or tenant hints) cannot mint unbounded
+        // CloudWatch metric series.
+        route: routeTemplateOrUnmatched(route),
         status: String(status),
+        status_class: statusClass(status),
         error_code: errorCode,
         tenant_id: tenantId,
       },
@@ -2993,6 +3147,26 @@ function recordObservability(
       attributes,
     });
   }
+}
+
+// UNMATCHED_ROUTE_TEMPLATE is the bounded route label recorded for a request that
+// did not match a registered route template (an unknown path, a method mismatch,
+// an adapter decode failure). It keeps the metric route dimension finite even
+// though the concrete request path is attacker-controlled.
+const UNMATCHED_ROUTE_TEMPLATE = "unmatched";
+
+function routeTemplateOrUnmatched(route: string): string {
+  const resolved = String(route ?? "").trim();
+  return resolved || UNMATCHED_ROUTE_TEMPLATE;
+}
+
+function statusClass(status: number): string {
+  if (status >= 100 && status < 200) return "1xx";
+  if (status >= 200 && status < 300) return "2xx";
+  if (status >= 300 && status < 400) return "3xx";
+  if (status >= 400 && status < 500) return "4xx";
+  if (status >= 500 && status < 600) return "5xx";
+  return "unknown";
 }
 
 function durationMs(startedAtMs: number, finishedAtMs: number): number {

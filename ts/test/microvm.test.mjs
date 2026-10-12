@@ -808,7 +808,7 @@ test("microvm session registry conversions keep TableTheory shape", () => {
 
   assert.equal(
     microVMSessionRegistryPartitionKey(" tenant-1 ", " namespace-1 "),
-    "TENANT#tenant-1#NAMESPACE#namespace-1",
+    "TENANT#8#tenant-1#NAMESPACE#11#namespace-1",
   );
   assert.equal(microVMSessionRegistryPartitionKey("", "namespace-1"), "");
   assert.equal(
@@ -816,6 +816,29 @@ test("microvm session registry conversions keep TableTheory shape", () => {
     "SESSION#session-1",
   );
   assert.equal(microVMSessionRegistrySortKey(""), "");
+
+  // THE-3413 collision witness: the un-prefixed form mapped both pairs to the same key.
+  assert.notEqual(
+    microVMSessionRegistryPartitionKey("a", "b#NAMESPACE#c"),
+    microVMSessionRegistryPartitionKey("a#NAMESPACE#b", "c"),
+  );
+  assert.notEqual(
+    microVMSessionRegistryPartitionKey("10", "abc"),
+    microVMSessionRegistryPartitionKey("1", "0abc"),
+  );
+
+  const framed = microVMSessionRecordToRegistryRecord(
+    validRecord({ namespace: "b#NAMESPACE#c" }),
+  );
+  assert.equal(
+    framed.pk,
+    microVMSessionRegistryPartitionKey("tenant-1", "b#NAMESPACE#c"),
+  );
+  validateMicroVMSessionRegistryRecord(framed);
+  assert.equal(
+    microVMSessionFromRegistryRecord(framed).namespace,
+    "b#NAMESPACE#c",
+  );
 
   const model = microVMSessionRegistryModel("microvm-table");
   assert.equal(model.tableName, "microvm-table");
@@ -828,7 +851,7 @@ test("microvm session registry conversions keep TableTheory shape", () => {
     metadata: { safe: "ok" },
   });
   const registry = microVMSessionRecordToRegistryRecord(record);
-  assert.equal(registry.pk, "TENANT#tenant-1#NAMESPACE#namespace-1");
+  assert.equal(registry.pk, "TENANT#8#tenant-1#NAMESPACE#11#namespace-1");
   assert.equal(registry.sk, "SESSION#session-1");
   assert.equal(registry.ttl, Math.trunc(record.expires_at.getTime() / 1000));
   assert.equal(registry.version, record.generation);
@@ -1017,6 +1040,147 @@ test("microvm registry reconstruction hooks fail closed", async () => {
   );
 });
 
+// Mirrors the package's length-prefixed record framing so the test can seed a store the way an
+// earlier release left it. The framing is asserted through the migrated canonical key below.
+const preM1PartitionKey = (tenant, namespace) =>
+  `TENANT#${tenant}#NAMESPACE#${namespace}`;
+const recordKeyString = (pk, sk) =>
+  `${new TextEncoder().encode(pk).length}:${pk}${new TextEncoder().encode(sk).length}:${sk}`;
+
+test("microvm session registry dual-reads the pre-M1 partition key", async () => {
+  const record = validRecord({ metadata: { safe: "ok" } });
+  const canonical = microVMSessionRecordToRegistryRecord(record);
+
+  // (c) New writes never produce the legacy key.
+  assert.equal(
+    canonical.pk,
+    microVMSessionRegistryPartitionKey(record.tenant_id, record.namespace),
+  );
+  assert.notEqual(
+    canonical.pk,
+    preM1PartitionKey(record.tenant_id, record.namespace),
+  );
+
+  // (e) The strict validator still rejects a legacy-format record; only the read path accepts it.
+  assert.throws(
+    () =>
+      validateMicroVMSessionRegistryRecord({
+        ...canonical,
+        pk: preM1PartitionKey(record.tenant_id, record.namespace),
+      }),
+    (err) => err?.code === MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+  );
+
+  // Seed the store as an earlier release left it: the item lives under the pre-M1 key.
+  const registry = createMemoryMicroVMSessionRegistry();
+  const legacyRecord = {
+    ...canonical,
+    pk: preM1PartitionKey(record.tenant_id, record.namespace),
+  };
+  registry.records.set(
+    recordKeyString(legacyRecord.pk, legacyRecord.sk),
+    legacyRecord,
+  );
+
+  // (a) A legacy-format item resolves via the fallback.
+  const loaded = await registry.get(microVMSessionKey(record));
+  assert.equal(loaded.session_id, "session-1");
+  assert.equal(loaded.metadata.safe, "ok");
+
+  // (b) The fallback read re-wrote the item under the new key (lazy re-write).
+  assert.equal(
+    registry.records.has(recordKeyString(legacyRecord.pk, legacyRecord.sk)),
+    false,
+  );
+  assert.equal(
+    registry.records.has(recordKeyString(canonical.pk, canonical.sk)),
+    true,
+  );
+  const reloaded = await registry.get(microVMSessionKey(record));
+  assert.equal(reloaded.session_id, "session-1");
+
+  // (d) The canonical encoding still isolates the THE-3413 collision witness.
+  assert.notEqual(
+    microVMSessionRegistryPartitionKey("a", "b#NAMESPACE#c"),
+    microVMSessionRegistryPartitionKey("a#NAMESPACE#b", "c"),
+  );
+
+  // A colliding pre-M1 key that addresses another identity fails closed instead of leaking it.
+  const colliding = microVMSessionRecordToRegistryRecord(
+    validRecord({
+      tenant_id: "a",
+      namespace: "b#NAMESPACE#c",
+      session_id: "session-collide",
+    }),
+  );
+  const collidingLegacy = {
+    ...colliding,
+    pk: preM1PartitionKey("a", "b#NAMESPACE#c"),
+  };
+  const collidingStore = createMemoryMicroVMSessionRegistry();
+  collidingStore.records.set(
+    recordKeyString(collidingLegacy.pk, collidingLegacy.sk),
+    collidingLegacy,
+  );
+  await assert.rejects(
+    () =>
+      collidingStore.get({
+        tenant_id: "a#NAMESPACE#b",
+        namespace: "c",
+        session_id: "session-collide",
+      }),
+    (err) => err?.code === MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+  );
+});
+
+test("microvm TableTheory registry dual-reads and re-keys a legacy item", async () => {
+  const saved = [];
+  let storedItem;
+  const db = {
+    async save(modelName, item) {
+      storedItem = item;
+      saved.push({ modelName, item });
+    },
+    async get(modelName, key) {
+      if (!storedItem || key.pk !== storedItem.pk) {
+        throw new Error("apptheory: microvm session registry record not found");
+      }
+      return storedItem;
+    },
+    async delete() {},
+    async list() {
+      return [];
+    },
+  };
+  const registry = createTableTheoryMicroVMSessionRegistry(db, {
+    auto_register: false,
+  });
+
+  const written = await registry.put(validRecord({ metadata: { safe: "ok" } }));
+  assert.equal(
+    saved[0].item.pk,
+    microVMSessionRegistryPartitionKey("tenant-1", "namespace-1"),
+  );
+
+  // Simulate the item an earlier release persisted under the pre-M1 key.
+  const legacyPK = preM1PartitionKey("tenant-1", "namespace-1");
+  storedItem = {
+    ...saved[0].item,
+    pk: legacyPK,
+  };
+
+  // (a) The legacy item resolves via the fallback.
+  const loaded = await registry.get(microVMSessionKey(written));
+  assert.equal(loaded.session_id, "session-1");
+
+  // (b) A successful fallback read re-persists the item under the new key.
+  assert.equal(
+    saved.at(-1).item.pk,
+    microVMSessionRegistryPartitionKey("tenant-1", "namespace-1"),
+  );
+  assert.notEqual(saved.at(-1).item.pk, legacyPK);
+});
+
 test("microvm TableTheory registry adapter uses constrained storage model", async () => {
   const registered = [];
   const saved = [];
@@ -1031,7 +1195,7 @@ test("microvm TableTheory registry adapter uses constrained storage model", asyn
     async get(modelName, key) {
       assert.equal(modelName, "MicroVMCustomModel");
       assert.deepEqual(key, {
-        pk: "TENANT#tenant-1#NAMESPACE#namespace-1",
+        pk: "TENANT#8#tenant-1#NAMESPACE#11#namespace-1",
         sk: "SESSION#session-1",
       });
       return saved[0].item;
@@ -1050,7 +1214,7 @@ test("microvm TableTheory registry adapter uses constrained storage model", asyn
   const stored = await registry.put(validRecord({ metadata: { safe: "ok" } }));
   assert.equal(stored.session_id, "session-1");
   assert.equal(saved[0].modelName, "MicroVMCustomModel");
-  assert.equal(saved[0].item.pk, "TENANT#tenant-1#NAMESPACE#namespace-1");
+  assert.equal(saved[0].item.pk, "TENANT#8#tenant-1#NAMESPACE#11#namespace-1");
   assert.equal(saved[0].item.created_at, new Date(1000).toISOString());
   assert.deepEqual(saved[0].item.metadata, { safe: "ok" });
 
@@ -1096,6 +1260,43 @@ test("microvm AWS Lambda client factory fails closed without SDK support", async
   await assert.rejects(
     () => createAWSLambdaMicroVMClient(),
     (err) => err?.code === MICROVM_ERROR_CONTROLLER_INCOMPLETE,
+  );
+});
+
+test("microvm provider invoke ttl is bounded to 1..900 seconds", async () => {
+  const provider = createFakeMicroVMProvider(new Date(0));
+  const run = await provider.run(providerRunInput());
+  const binding = {
+    tenant_id: run.tenant_id,
+    namespace: run.namespace,
+    session_id: run.session_id,
+    provider_microvm_id: run.provider_microvm_id,
+    registry_version: run.registry_version,
+  };
+  // The endpoint must be an allowlisted AWS MicroVM host so the TTL bound is
+  // the check under test, not the endpoint allowlist.
+  const allowlisted = "https://provider-1.microvm.us-east-1.amazonaws.com";
+  const invokeInput = (ttl_seconds) => ({
+    request_id: "req-invoke-ttl",
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+    auth_context: providerAuth(),
+    binding,
+    endpoint: allowlisted,
+    method: "GET",
+    path: "/hello",
+    port: 9090,
+    ttl_seconds,
+  });
+
+  // The inclusive upper bound (900) is accepted.
+  const accepted = await provider.invoke(invokeInput(900));
+  assert.equal(accepted.status, 200);
+
+  // One second over the bound fails closed with the token-safety violation.
+  await assert.rejects(
+    () => provider.invoke(invokeInput(901)),
+    (err) => err?.code === MICROVM_ERROR_TOKEN_SAFETY_VIOLATION,
   );
 });
 
@@ -1526,6 +1727,163 @@ test("microvm real controller applies deployment-pinned defaults", async () => {
   }
 });
 
+test("microvm controller registry miss fails closed before any provider call", async () => {
+  const provider = createFakeMicroVMProvider(new Date(0));
+  const controller = createRealMicroVMController(
+    provider,
+    createMemoryMicroVMSessionRegistry(),
+    {
+      ids: { newID: () => "session-pin" },
+      clock: { now: () => new Date(1000) },
+      logging: { disabled: true },
+    },
+  );
+
+  const missGet = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.Get,
+      request_id: "req-pin-miss-get",
+      session_id: "session-absent",
+    }),
+  );
+  assert.equal(missGet.error?.code, MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE);
+  assert.equal(provider.calls().length, 0);
+
+  await assert.rejects(
+    controller.invoke({
+      request_id: "req-pin-miss-invoke",
+      tenant_id: "tenant-1",
+      namespace: "namespace-1",
+      auth_context: {
+        subject: "subject-1",
+        tenant_id: "tenant-1",
+        namespace: "namespace-1",
+      },
+      session_id: "session-absent",
+      method: "GET",
+      path: "pin",
+      port: 8081,
+      ttl_seconds: 30,
+    }),
+  );
+  assert.equal(provider.calls().length, 0);
+
+  const missToken = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.AuthToken,
+      request_id: "req-pin-miss-token",
+      session_id: "session-absent",
+    }),
+  );
+  assert.equal(missToken.error?.code, MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE);
+  assert.equal(provider.calls().length, 0);
+});
+
+test("microvm controller dispatches provider calls bound to the registry record", async () => {
+  const base = createFakeMicroVMProvider(new Date(0));
+  let sessionInput;
+  let invokeInput;
+  let tokenInput;
+  const provider = {
+    run: (input) => base.run(input),
+    get: (input) => {
+      sessionInput = input;
+      return base.get(input);
+    },
+    list: (input) => base.list(input),
+    suspend: (input) => base.suspend(input),
+    resume: (input) => base.resume(input),
+    terminate: (input) => base.terminate(input),
+    invoke: (input) => {
+      invokeInput = input;
+      return base.invoke(input);
+    },
+    createAuthToken: (input) => {
+      tokenInput = input;
+      return base.createAuthToken(input);
+    },
+    createShellToken: (input) => {
+      tokenInput = input;
+      return base.createShellToken(input);
+    },
+  };
+  const registry = createMemoryMicroVMSessionRegistry();
+  const controller = createRealMicroVMController(provider, registry, {
+    ids: { newID: () => "session-pin" },
+    clock: { now: () => new Date(1000) },
+    logging: { disabled: true },
+  });
+
+  const run = await controller.handle(controllerRequest({ session_id: "" }));
+  assert.equal(run.error, undefined);
+  const stored = await registry.get({
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+    session_id: "session-pin",
+  });
+
+  const get = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.Get,
+      request_id: "req-pin-get",
+      session_id: "session-pin",
+    }),
+  );
+  assert.equal(get.error, undefined);
+  assert.equal(sessionInput.binding.provider_microvm_id, stored.provider_microvm_id);
+  assert.equal(sessionInput.binding.tenant_id, stored.tenant_id);
+  assert.equal(sessionInput.binding.namespace, stored.namespace);
+  assert.equal(sessionInput.binding.session_id, stored.session_id);
+  assert.equal(sessionInput.binding.registry_version, stored.generation);
+
+  const invoked = await controller.invoke({
+    request_id: "req-pin-invoke",
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+    auth_context: {
+      subject: "subject-1",
+      tenant_id: "tenant-1",
+      namespace: "namespace-1",
+    },
+    session_id: "session-pin",
+    method: "GET",
+    path: "pin",
+    headers: {
+      "x-provider-microvm-id": ["provider-microvm-decoy"],
+      "x-microvm-endpoint": [
+        "https://provider-microvm-decoy.microvm.us-east-1.amazonaws.com",
+      ],
+    },
+    query: {
+      provider_microvm_id: ["provider-microvm-decoy"],
+      endpoint: [
+        "https://provider-microvm-decoy.microvm.us-east-1.amazonaws.com",
+      ],
+    },
+    port: 8081,
+    ttl_seconds: 30,
+  });
+  assert.equal(invoked.status, 200);
+  assert.equal(invokeInput.endpoint, stored.endpoint);
+  assert.equal(invokeInput.binding.provider_microvm_id, stored.provider_microvm_id);
+  assert.notEqual(invokeInput.binding.provider_microvm_id, "provider-microvm-decoy");
+  assert.notEqual(
+    invokeInput.endpoint,
+    "https://provider-microvm-decoy.microvm.us-east-1.amazonaws.com",
+  );
+
+  const token = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.AuthToken,
+      request_id: "req-pin-token",
+      session_id: "session-pin",
+    }),
+  );
+  assert.equal(token.error, undefined);
+  assert.equal(tokenInput.binding.provider_microvm_id, stored.provider_microvm_id);
+  assert.equal(tokenInput.binding.tenant_id, stored.tenant_id);
+});
+
 test("microvm controller route adapter enforces auth and tenant binding", async () => {
   const provider = createFakeMicroVMProvider(new Date(0));
   const registry = createMemoryMicroVMSessionRegistry();
@@ -1602,6 +1960,104 @@ test("microvm controller route adapter enforces auth and tenant binding", async 
     },
   });
   assert.equal(denied.status, 401);
+});
+
+test("microvm controller route adapter binds tenant to the verified claim", async () => {
+  const provider = createFakeMicroVMProvider(new Date(0));
+  const registry = createMemoryMicroVMSessionRegistry();
+  const controller = createRealMicroVMController(provider, registry, {
+    ids: { newID: () => "claim-session" },
+    clock: { now: () => new Date(1000) },
+    logging: { disabled: true },
+  });
+
+  const claimApp = (claims) => {
+    const app = createApp({
+      tier: "p1",
+      authPrincipalHook: () => ({ identity: "subject-1", claims }),
+      tenantClaim: "tenant_id",
+    });
+    registerMicroVMControllerRoutes(app, controller);
+    return app;
+  };
+
+  const serve = (app, method, path, body = {}, headers = {}) =>
+    app.serve({
+      method,
+      path,
+      headers: {
+        "content-type": ["application/json"],
+        "x-tenant-id": ["tenant-1"],
+        "x-request-id": [`req-claim-${method}-${path}`],
+        ...headers,
+      },
+      body: Buffer.from(JSON.stringify(body), "utf8"),
+    });
+
+  const runBody = {
+    tenant_id: "tenant-2",
+    namespace: "namespace-1",
+    image_ref: "image-ref",
+    image_version: "1",
+    network_connector_ref: "network-ref",
+  };
+
+  const headerMismatch = await serve(
+    claimApp({ tenant_id: "tenant-1" }),
+    "POST",
+    "/microvms",
+    runBody,
+    { "x-tenant-id": ["tenant-2"] },
+  );
+  assert.equal(headerMismatch.status, 403);
+  assert.equal(
+    jsonBody(headerMismatch).error.code,
+    MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+  );
+
+  const bodyMismatch = await serve(
+    claimApp({ tenant_id: "tenant-1" }),
+    "POST",
+    "/microvms",
+    runBody,
+  );
+  assert.equal(bodyMismatch.status, 403);
+  assert.equal(
+    jsonBody(bodyMismatch).error.code,
+    MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+  );
+
+  const unbound = await serve(claimApp({ other: "value" }), "POST", "/microvms", {
+    ...runBody,
+    tenant_id: "tenant-1",
+  });
+  assert.equal(unbound.status, 403);
+  assert.equal(
+    jsonBody(unbound).error.code,
+    MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+  );
+
+  const invokeMismatch = await claimApp({ tenant_id: "tenant-1" }).serve({
+    method: "GET",
+    path: "/microvms/claim-session/invoke/hello",
+    query: { tenant_id: ["tenant-2"] },
+    headers: {
+      "x-tenant-id": ["tenant-2"],
+      "x-request-id": ["req-claim-invoke-mismatch"],
+    },
+  });
+  assert.equal(invokeMismatch.status, 403);
+  assert.equal(
+    jsonBody(invokeMismatch).error.code,
+    MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+  );
+
+  const bound = await serve(claimApp({ tenant_id: "tenant-1" }), "POST", "/microvms", {
+    ...runBody,
+    tenant_id: "tenant-1",
+  });
+  assert.equal(bound.status, 200);
+  assert.equal(jsonBody(bound).session_id, "claim-session");
 });
 
 test("microvm AWS provider uses official command classes and sanitizes tokens", async () => {
@@ -1812,4 +2268,92 @@ test("microvm real M16 operation contract validates route, token, and tenant saf
     () => validateMicroVMOperationContract(badProvider),
     (err) => err?.code === MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE,
   );
+});
+test("microvm AWS provider invoke denies redirects and non-AWS endpoints", async () => {
+  const provider = createAWSLambdaMicroVMProvider({
+    clock: { now: () => new Date(0) },
+  });
+  const sent = [];
+  provider.client = {
+    async send(command) {
+      sent.push(command.constructor.name);
+      if (command.constructor.name === "CreateMicrovmAuthTokenCommand") {
+        return { authToken: { "X-aws-proxy-auth": "provider-token-value" } };
+      }
+      throw new Error(`unexpected command ${command.constructor.name}`);
+    },
+  };
+
+  const invokeInput = (endpoint) => ({
+    request_id: "req-invoke",
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+    auth_context: providerAuth(),
+    binding: providerBinding(),
+    endpoint,
+    method: "POST",
+    path: "/hello",
+    query: { b: ["2"], a: ["1"] },
+    headers: { "x-workload": ["ok"] },
+    body: new Uint8Array([1, 2, 3]),
+    port: 9090,
+    ttl_seconds: 120,
+  });
+  const allowlisted = "https://provider-1.microvm.us-east-1.amazonaws.com";
+
+  const originalFetch = globalThis.fetch;
+  try {
+    let calls = 0;
+    let firstInit;
+    globalThis.fetch = async (target, init) => {
+      calls += 1;
+      firstInit = init;
+      assert.equal(
+        String(target),
+        "https://provider-1.microvm.us-east-1.amazonaws.com/hello?a=1&b=2",
+      );
+      return new Response(new Uint8Array([9]), {
+        status: 201,
+        headers: { "content-type": "application/octet-stream" },
+      });
+    };
+    const ok = await provider.invoke(invokeInput(allowlisted));
+    assert.equal(ok.status, 201);
+    assert.equal(ok.is_base64, true);
+    assert.equal(calls, 1);
+    assert.equal(firstInit.redirect, "manual");
+    assert.equal(
+      firstInit.headers.get("X-aws-proxy-auth"),
+      "provider-token-value",
+    );
+
+    calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return new Response(null, {
+        status: 302,
+        headers: { location: "https://attacker.example.com/steal" },
+      });
+    };
+    await assert.rejects(
+      () => provider.invoke(invokeInput(allowlisted)),
+      (err) => err?.code === MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+    );
+    assert.equal(calls, 1, "a cross-origin redirect must not be followed");
+
+    calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      throw new Error("fetch must not be called for a non-allowlisted endpoint");
+    };
+    sent.length = 0;
+    await assert.rejects(
+      () => provider.invoke(invokeInput("https://evil.example.com")),
+      (err) => err?.code === MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+    );
+    assert.equal(calls, 0);
+    assert.deepEqual(sent, [], "the token must not be minted for a rejected endpoint");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

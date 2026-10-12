@@ -9,6 +9,7 @@ import * as cdk from "aws-cdk-lib";
 import { CfnOutput, Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import type { Construct } from "constructs";
 
 const titanTextEmbeddingModelId = "amazon.titan-embed-text-v2:0";
@@ -151,6 +152,19 @@ export class S3VectorsSemanticSearchStack extends Stack {
     vectors.grantWriteVectors(handler.fn);
     vectors.grantBedrockInvokeModel(handler.fn, this.foundationModelArn(titanTextEmbeddingModelId));
 
+    const apiToken = new secretsmanager.Secret(this, "ApiToken", {
+      description: "Bearer token required by the AppTheory S3 Vectors semantic search example",
+      generateSecretString: {
+        secretStringTemplate: "{}",
+        generateStringKey: "token",
+        excludePunctuation: true,
+      },
+    });
+    handler.fn.addEnvironment(
+      "APPTHEORY_EXAMPLE_API_TOKEN",
+      apiToken.secretValueFromJson("token").unsafeUnwrap(),
+    );
+
     const api = new AppTheoryHttpApi(this, "Api", {
       handler: handler.fn,
       apiName: "apptheory-s3-vectors-semantic-search",
@@ -165,9 +179,12 @@ export class S3VectorsSemanticSearchStack extends Stack {
     new CfnOutput(this, "ApiUrl", { value: api.api.apiEndpoint });
     new CfnOutput(this, "VectorBucketName", { value: vectors.vectorBucketName });
     new CfnOutput(this, "VectorIndexName", { value: vectors.indexName });
-    new CfnOutput(this, "SeedCommand", { value: `curl -s -X POST ${api.api.apiEndpoint}/seed` });
+    new CfnOutput(this, "ApiTokenSecretArn", { value: apiToken.secretArn });
+    new CfnOutput(this, "SeedCommand", {
+      value: `curl -s -X POST -H "Authorization: Bearer $API_TOKEN" ${api.api.apiEndpoint}/seed`,
+    });
     new CfnOutput(this, "SearchCommand", {
-      value: `curl -s '${api.api.apiEndpoint}/search?q=middleware%20ordering'`,
+      value: `curl -s -H "Authorization: Bearer $API_TOKEN" '${api.api.apiEndpoint}/search?q=middleware%20ordering'`,
     });
   }
 

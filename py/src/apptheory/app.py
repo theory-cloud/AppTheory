@@ -6,7 +6,7 @@ import inspect
 import json
 import os
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, TypeVar, cast
 
 from apptheory.aws_events import AppSyncResolverEvent
@@ -88,6 +88,18 @@ Handler = Callable[[Context], Response | Awaitable[Response]]
 NextHandler = Callable[[Context], Response]
 Middleware = Callable[[Context, NextHandler], Response | Awaitable[Response]]
 AuthHook = Callable[[Context], str | Awaitable[str]]
+PrincipalAuthHook = Callable[[Context], "AuthPrincipal | Awaitable[AuthPrincipal | None] | None"]
+
+
+@dataclass(slots=True)
+class AuthPrincipal:
+    """Richer auth state resolved for a request by a principal-aware auth hook."""
+
+    identity: str = ""
+    scopes: list[str] = field(default_factory=list)
+    claims: dict[str, Any] = field(default_factory=dict)
+
+
 PolicyHook = Callable[[Context], "PolicyDecision | Awaitable[PolicyDecision | None] | None"]
 EventHandler = Callable[[EventContext, dict[str, Any]], object | Awaitable[object]]
 EventMiddleware = Callable[[EventContext, dict[str, Any], Callable[[], object]], object | Awaitable[object]]
@@ -97,6 +109,17 @@ SNSHandler = Callable[[EventContext, dict[str, Any]], object | Awaitable[object]
 DynamoDBStreamHandler = Callable[[EventContext, dict[str, Any]], Awaitable[None] | None]
 EventBridgeHandler = Callable[[EventContext, dict[str, Any]], object | Awaitable[object]]
 WebSocketHandler = Callable[[Context], Response | Awaitable[Response]]
+
+
+def _is_lambda_function_url_domain(value: Any) -> bool:
+    """Return whether a provider requestContext domainName is a Lambda Function URL endpoint.
+
+    Function URL payloads carry a top-level ``routeKey`` just like API Gateway v2, so routeKey
+    presence alone is not a safe discriminator; the provider-assigned
+    ``<url-id>.lambda-url.<region>.on.aws`` domain is.
+    """
+    host = str(value or "").strip().lower()
+    return ".lambda-url." in host and host.endswith(".on.aws")
 
 
 def _canonical_route_key(method: str, path: str) -> tuple[str, str, str]:
@@ -266,6 +289,8 @@ class App:
     _limits: Limits
     _cors: CORSConfig
     _auth_hook: AuthHook | None
+    _auth_principal_hook: PrincipalAuthHook | None
+    _tenant_claim: str
     _observability: ObservabilityHooks
     _policy_hook: PolicyHook | None
     _sqs_routes: list[tuple[str, SQSHandler]]
@@ -292,6 +317,8 @@ class App:
         limits: Limits | None = None,
         cors: CORSConfig | None = None,
         auth_hook: AuthHook | None = None,
+        auth_principal_hook: PrincipalAuthHook | None = None,
+        tenant_claim: str = "",
         observability: ObservabilityHooks | None = None,
         policy_hook: PolicyHook | None = None,
         websocket_client_factory: WebSocketClientFactory | None = None,
@@ -307,6 +334,8 @@ class App:
         self._limits = limits or Limits()
         self._cors = _normalize_cors_config(cors)
         self._auth_hook = auth_hook
+        self._auth_principal_hook = auth_principal_hook
+        self._tenant_claim = str(tenant_claim or "").strip()
         self._observability = observability or ObservabilityHooks()
         self._policy_hook = policy_hook
         self._sqs_routes = []
@@ -713,6 +742,7 @@ class App:
             id_generator=self._id_generator,
             ctx=ctx,
             trace_id=normalized.trace_id,
+            tenant_binding_required=self._tenant_binding_required(),
             appsync=appsync,
         )
         if context_configurer is not None:
@@ -793,7 +823,7 @@ class App:
             return None
 
         trace.append("auth")
-        if self._auth_hook is None:
+        if self._auth_hook is None and self._auth_principal_hook is None:
             if error_responder is not None:
                 return (
                     error_responder(AppError("app.unauthorized", "unauthorized"), request_ctx.request, request_id),
@@ -808,14 +838,14 @@ class App:
             return resp, "app.unauthorized"
 
         try:
-            identity = _resolve(self._auth_hook(request_ctx))
+            principal = self._authenticate(request_ctx)
         except Exception as exc:  # noqa: BLE001
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
             if error_responder is not None:
                 return error_responder(exc, request_ctx.request, request_id), error_code
             return self._response_for_http_error_with_request_id_trace_id(exc, request_id, trace_id), error_code
 
-        if not str(identity or "").strip():
+        if principal is None or not str(principal.identity or "").strip():
             if error_responder is not None:
                 return (
                     error_responder(AppError("app.unauthorized", "unauthorized"), request_ctx.request, request_id),
@@ -829,8 +859,47 @@ class App:
             )
             return resp, "app.unauthorized"
 
-        request_ctx.auth_identity = str(identity)
+        request_ctx.auth_identity = str(principal.identity).strip()
+        self._bind_verified_tenant(request_ctx, principal.claims)
         return None
+
+    def _authenticate(self, request_ctx: Context) -> AuthPrincipal | None:
+        if self._auth_principal_hook is not None:
+            resolved = _resolve(self._auth_principal_hook(request_ctx))
+            if resolved is None:
+                return None
+            identity = str(getattr(resolved, "identity", "") or "").strip()
+            if not identity:
+                return None
+            scopes_value = getattr(resolved, "scopes", None) or []
+            claims_value = getattr(resolved, "claims", None) or {}
+            return AuthPrincipal(
+                identity=identity,
+                scopes=[str(scope) for scope in list(scopes_value)],
+                claims=dict(claims_value),
+            )
+        if self._auth_hook is None:
+            return None
+        identity = str(_resolve(self._auth_hook(request_ctx)) or "").strip()
+        if not identity:
+            return None
+        return AuthPrincipal(identity=identity)
+
+    def _tenant_binding_required(self) -> bool:
+        return self._auth_principal_hook is not None or self._secure_principal_resolver is not None
+
+    def _bind_verified_tenant(self, request_ctx: Context, claims: dict[str, Any] | None) -> None:
+        claim = self._tenant_claim
+        if not claim:
+            return
+        value = dict(claims or {}).get(claim)
+        if not isinstance(value, str):
+            return
+        text = value.strip()
+        if not text:
+            return
+        request_ctx.tenant_id = text
+        request_ctx.tenant_bound = True
 
     def _secure_gate(
         self,
@@ -861,6 +930,7 @@ class App:
             raise AppError("app.unauthorized", "unauthorized")
         request_ctx._secure_principal = clone_secure_principal(principal)
         request_ctx.auth_identity = principal.identity
+        self._bind_verified_tenant(request_ctx, principal.claims)
         required_scopes = list(scopes or [])
         if kind == AuthPostureKind.AUTHENTICATED and any(scope not in principal.scopes for scope in required_scopes):
             raise AppError("app.forbidden", "forbidden")
@@ -903,6 +973,7 @@ class App:
 
         method = str(request.method or "").strip().upper()
         path = str(request.path or "").strip() or "/"
+        route = _UNMATCHED_ROUTE_TEMPLATE
 
         request_id = (
             _first_header_value(pre_headers, "x-request-id")
@@ -923,6 +994,7 @@ class App:
                 self._record_observability(
                     method,
                     path,
+                    route,
                     request_id,
                     tenant_id,
                     trace_id,
@@ -1017,6 +1089,8 @@ class App:
                 "app.not_found",
             )
 
+        route = match.pattern
+
         request_ctx = Context(
             request=normalized,
             params=match.params,
@@ -1029,6 +1103,7 @@ class App:
             auth_identity="",
             remaining_ms=remaining_ms,
             middleware_trace=trace,
+            tenant_binding_required=self._tenant_binding_required(),
             appsync=appsync,
         )
         if context_configurer is not None:
@@ -1124,6 +1199,7 @@ class App:
         self,
         method: str,
         path: str,
+        route: str,
         request_id: str,
         tenant_id: str,
         trace_id: str,
@@ -1164,7 +1240,15 @@ class App:
                     tags={
                         "method": method,
                         "path": path,
+                        # route and status_class are the bounded metric
+                        # dimensions: the concrete path and raw status stay on the
+                        # log and span records, while a first-party metric sink
+                        # dimensions only on these finite values so
+                        # attacker-selected paths (or tenant hints) cannot mint
+                        # unbounded CloudWatch metric series.
+                        "route": _route_template_or_unmatched(route),
                         "status": str(int(status)),
+                        "status_class": _status_class(status),
                         "error_code": error_code,
                         "tenant_id": tenant_id,
                     },
@@ -1207,7 +1291,15 @@ class App:
             return
         error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
         self._record_observability(
-            method, path, "", "", "", status, error_code, _duration_ms(started_at, self._clock.now())
+            method,
+            path,
+            _UNMATCHED_ROUTE_TEMPLATE,
+            "",
+            "",
+            "",
+            status,
+            error_code,
+            _duration_ms(started_at, self._clock.now()),
         )
 
     def serve_apigw_v2(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
@@ -1397,6 +1489,7 @@ class App:
             auth_identity="",
             remaining_ms=remaining_ms,
             middleware_trace=[],
+            tenant_binding_required=self._tenant_binding_required(),
             websocket=ws_ctx,
         )
 
@@ -1687,7 +1780,7 @@ class App:
             if isinstance(request_context, dict) and request_context.get("connectionId") and self._websocket_enabled:
                 return self.serve_websocket(event, ctx=ctx)
             if isinstance(request_context, dict) and "http" in request_context:
-                if "routeKey" in event:
+                if "routeKey" in event and not _is_lambda_function_url_domain(request_context.get("domainName")):
                     return self.serve_apigw_v2(event, ctx=ctx)
                 return self.serve_lambda_function_url(event, ctx=ctx)
             if (
@@ -1727,6 +1820,7 @@ class SecureApp:
         limits: Limits | None = None,
         cors: CORSConfig | None = None,
         principal_resolver: SecurePrincipalResolver | None = None,
+        tenant_claim: str = "",
         observability: ObservabilityHooks | None = None,
         policy_hook: PolicyHook | None = None,
         websocket_support: bool = False,
@@ -1752,6 +1846,7 @@ class SecureApp:
         )
         self.__core._secure = True
         self.__core._secure_principal_resolver = principal_resolver
+        self.__core._tenant_claim = str(tenant_claim or "").strip()
         self.__core._secure_routes = []
         self.__core._websocket_enabled = bool(websocket_support)
 
@@ -1892,6 +1987,8 @@ def create_app(
     limits: Limits | None = None,
     cors: CORSConfig | None = None,
     auth_hook: AuthHook | None = None,
+    auth_principal_hook: PrincipalAuthHook | None = None,
+    tenant_claim: str = "",
     observability: ObservabilityHooks | None = None,
     policy_hook: PolicyHook | None = None,
     websocket_client_factory: WebSocketClientFactory | None = None,
@@ -1905,6 +2002,8 @@ def create_app(
         limits=limits,
         cors=cors,
         auth_hook=auth_hook,
+        auth_principal_hook=auth_principal_hook,
+        tenant_claim=tenant_claim,
         observability=observability,
         policy_hook=policy_hook,
         websocket_client_factory=websocket_client_factory,
@@ -2347,6 +2446,36 @@ def _extract_tenant_id(headers: dict[str, list[str]], query: dict[str, list[str]
         return tenant
     values = query.get("tenant", [])
     return values[0] if values else ""
+
+
+# _UNMATCHED_ROUTE_TEMPLATE is the bounded route label recorded for a request
+# that did not match a registered route template (an unknown path, a method
+# mismatch, an adapter decode failure). It keeps the metric route dimension
+# finite even though the concrete request path is attacker-controlled.
+_UNMATCHED_ROUTE_TEMPLATE = "unmatched"
+
+
+def _route_template_or_unmatched(route: str) -> str:
+    resolved = str(route or "").strip()
+    return resolved or _UNMATCHED_ROUTE_TEMPLATE
+
+
+def _status_class(status: int) -> str:
+    try:
+        code = int(status)
+    except (TypeError, ValueError):
+        return "unknown"
+    if 100 <= code < 200:
+        return "1xx"
+    if 200 <= code < 300:
+        return "2xx"
+    if 300 <= code < 400:
+        return "3xx"
+    if 400 <= code < 500:
+        return "4xx"
+    if 500 <= code < 600:
+        return "5xx"
+    return "unknown"
 
 
 def _is_cors_preflight(method: str, headers: dict[str, list[str]]) -> bool:

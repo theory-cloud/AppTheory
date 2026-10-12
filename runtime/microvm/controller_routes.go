@@ -6,7 +6,12 @@ import (
 	"strconv"
 	"strings"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+)
+
+const (
+	controllerTenantBindingMismatchMessage = "apptheory: microvm controller route tenant binding mismatch"
+	controllerTenantNotVerifiedMessage     = "apptheory: microvm controller route tenant is not derived from the verified claim"
 )
 
 // RegisterControllerRoutes registers the canonical M16 MicroVM controller HTTP routes on an AppTheory app.
@@ -145,14 +150,30 @@ func controllerRequestFromHTTP(ctx *apptheory.Context, command Command) (Control
 		err := safeError(ErrorCodeTenantBindingViolation, "apptheory: microvm controller route session binding mismatch", request.RequestID)
 		return request, err
 	}
+	// Tenant binding on the MicroVM controller surface.
+	//
+	// When the app is configured with a principal-aware resolver, the tenant MUST be
+	// derived from the verified principal claim (WithTenantClaim). A caller-supplied
+	// tenant that disagrees with the verified claim — the x-tenant-id header, the
+	// tenant_id body field, or the tenant_id query parameter — is rejected with
+	// m16.microvm.tenant_binding_violation.
+	//
+	// LEGACY MODE (no principal-aware resolver configured): there is no verified
+	// tenant, and the caller-supplied x-tenant-id header / tenant query parameter
+	// remains the only tenant source. That path is UNAUTHENTICATED by design and is
+	// retained only for backward compatibility.
+	if safe := controllerTenantBindingError(ctx); safe.Code != "" {
+		request.RequestID = strings.TrimSpace(ctx.RequestID)
+		return request, safe
+	}
 	if ctx.TenantID != "" && strings.TrimSpace(payload.TenantID) != "" && strings.TrimSpace(payload.TenantID) != strings.TrimSpace(ctx.TenantID) {
 		request.RequestID = strings.TrimSpace(ctx.RequestID)
-		err := safeError(ErrorCodeTenantBindingViolation, "apptheory: microvm controller route tenant binding mismatch", request.RequestID)
+		err := safeError(ErrorCodeTenantBindingViolation, controllerTenantBindingMismatchMessage, request.RequestID)
 		return request, err
 	}
 	if ctx.TenantID != "" && strings.TrimSpace(ctx.Query("tenant_id")) != "" && strings.TrimSpace(ctx.Query("tenant_id")) != strings.TrimSpace(ctx.TenantID) {
 		request.RequestID = strings.TrimSpace(ctx.RequestID)
-		err := safeError(ErrorCodeTenantBindingViolation, "apptheory: microvm controller route tenant binding mismatch", request.RequestID)
+		err := safeError(ErrorCodeTenantBindingViolation, controllerTenantBindingMismatchMessage, request.RequestID)
 		return request, err
 	}
 	sessionID := defaultString(pathSessionID, bodySessionID)
@@ -187,9 +208,25 @@ func controllerInvokeRequestFromHTTP(ctx *apptheory.Context) (ControllerInvokeRe
 		err := safeError(ErrorCodeInvalidControllerRequest, "apptheory: microvm controller route context is missing", "")
 		return request, err
 	}
+	// Tenant binding on the MicroVM controller surface.
+	//
+	// When the app is configured with a principal-aware resolver, the tenant MUST be
+	// derived from the verified principal claim (WithTenantClaim). A caller-supplied
+	// tenant that disagrees with the verified claim — the x-tenant-id header or the
+	// tenant_id query parameter — is rejected with
+	// m16.microvm.tenant_binding_violation.
+	//
+	// LEGACY MODE (no principal-aware resolver configured): there is no verified
+	// tenant, and the caller-supplied x-tenant-id header / tenant query parameter
+	// remains the only tenant source. That path is UNAUTHENTICATED by design and is
+	// retained only for backward compatibility.
+	if safe := controllerTenantBindingError(ctx); safe.Code != "" {
+		request.RequestID = strings.TrimSpace(ctx.RequestID)
+		return request, safe
+	}
 	if ctx.TenantID != "" && strings.TrimSpace(ctx.Query("tenant_id")) != "" && strings.TrimSpace(ctx.Query("tenant_id")) != strings.TrimSpace(ctx.TenantID) {
 		request.RequestID = strings.TrimSpace(ctx.RequestID)
-		err := safeError(ErrorCodeTenantBindingViolation, "apptheory: microvm controller route tenant binding mismatch", request.RequestID)
+		err := safeError(ErrorCodeTenantBindingViolation, controllerTenantBindingMismatchMessage, request.RequestID)
 		return request, err
 	}
 	sessionID := strings.TrimSpace(ctx.Param("session_id"))
@@ -213,6 +250,23 @@ func controllerInvokeRequestFromHTTP(ctx *apptheory.Context) (ControllerInvokeRe
 		TTLSeconds:  firstPositiveInt32(parseInt32(ctx.Header("x-apptheory-microvm-token-ttl")), defaultProviderInvokeTTLSeconds),
 	}
 	return normalizeControllerInvokeRequest(request), SafeError{}
+}
+
+// controllerTenantBindingError fails closed when the request tenant is not
+// derived from the verified principal claim. It returns an empty SafeError when
+// tenant binding is not required or the request satisfies it.
+func controllerTenantBindingError(ctx *apptheory.Context) SafeError {
+	if !ctx.TenantBindingRequired {
+		return SafeError{}
+	}
+	requestID := strings.TrimSpace(ctx.RequestID)
+	if !ctx.TenantBound {
+		return safeError(ErrorCodeTenantBindingViolation, controllerTenantNotVerifiedMessage, requestID)
+	}
+	if headerTenant := strings.TrimSpace(ctx.Header("x-tenant-id")); headerTenant != "" && headerTenant != strings.TrimSpace(ctx.TenantID) {
+		return safeError(ErrorCodeTenantBindingViolation, controllerTenantBindingMismatchMessage, requestID)
+	}
+	return SafeError{}
 }
 
 func controllerHTTPResponse(response ControllerResponse) *apptheory.Response {

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/theory-cloud/apptheory/v5/pkg/objectstore"
+	"github.com/theory-cloud/apptheory/v6/pkg/objectstore"
 )
 
 const (
@@ -35,6 +35,11 @@ type dynamoStreamSpillStore interface {
 type dynamoStreamObjectSpillStore struct {
 	bucket string
 	prefix string
+
+	// encryption is the explicit server-side encryption configuration the spill
+	// store asks S3 for. The zero value emits no server-side-encryption header,
+	// so a bucket whose default is KMS keeps KMS.
+	encryption objectstore.S3EncryptionConfig
 
 	mu        sync.Mutex
 	store     objectstore.Store
@@ -128,7 +133,9 @@ func (s *dynamoStreamObjectSpillStore) objectStore(ctx context.Context) (objects
 
 	loadStore := s.loadStore
 	if loadStore == nil {
-		loadStore = newDynamoStreamObjectStore
+		loadStore = func(ctx context.Context) (objectstore.Store, error) {
+			return objectstore.NewS3Store(ctx, s.s3StoreConfig())
+		}
 	}
 	store, err := loadStore(ctx)
 	if err != nil {
@@ -139,10 +146,14 @@ func (s *dynamoStreamObjectSpillStore) objectStore(ctx context.Context) (objects
 	return s.store, nil
 }
 
-func newDynamoStreamObjectStore(ctx context.Context) (objectstore.Store, error) {
-	return objectstore.NewS3Store(ctx, objectstore.S3StoreConfig{
-		Encryption: objectstore.S3EncryptionConfig{Mode: objectstore.S3EncryptionS3Managed},
-	})
+// s3StoreConfig is the configuration the spill store hands to the S3 object
+// store. The zero-value encryption leaves the server-side encryption header
+// unset, deferring to the bucket's own default (including KMS).
+func (s *dynamoStreamObjectSpillStore) s3StoreConfig() objectstore.S3StoreConfig {
+	if s == nil {
+		return objectstore.S3StoreConfig{}
+	}
+	return objectstore.S3StoreConfig{Encryption: s.encryption}
 }
 
 func (s *dynamoStreamObjectSpillStore) objectKey(sessionID, eventID string) string {

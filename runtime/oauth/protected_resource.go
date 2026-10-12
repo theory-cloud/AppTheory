@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
 )
 
 const (
@@ -35,8 +35,9 @@ const (
 const protectedResourceMetadataPath = OAuthProtectedResourcePath
 
 // MCPServerConfig configures AppTheory's secure MCP route bundle. The
-// protected resource origin is deliberately absent: discovery derives it from
-// each request while the authorization server and JWKS remain install config.
+// protected resource origin is derived from each request by default (from the
+// deployment-authoritative `host` header) while the authorization server and
+// JWKS remain install config.
 type MCPServerConfig struct {
 	// MCPPath overrides the conventional /mcp endpoint path.
 	MCPPath string
@@ -49,6 +50,15 @@ type MCPServerConfig struct {
 	// tokens. It is not the protected resource's own key set and is therefore
 	// not advertised by RFC 9728 discovery.
 	JWKSURI string
+
+	// AllowedHostnames is an optional trusted-host allowlist for discovery.
+	// When it is empty the discovery origin is derived from the
+	// deployment-authoritative `host` header alone, and forwarded-host headers
+	// are ignored. When it is non-empty, forwarded-host headers may be honored,
+	// but only a request whose canonical authority is on this list produces
+	// metadata; anything else fails closed with HTTP 400
+	// `{"error":"invalid_request_host"}`.
+	AllowedHostnames []string
 }
 
 // ProtectedResourceMetadata is the RFC9728 discovery document hosted by a
@@ -146,11 +156,24 @@ func mcpProtectedResourceDiscoveryHandler(config MCPServerConfig) apptheory.Hand
 		if ctx != nil {
 			headers = ctx.Request.Headers
 		}
-		requestOrigin, ok := NormalizeRequestOrigin(apptheory.OriginURL(headers))
+
+		// The `host` header is deployment-authoritative. Forwarded-host headers
+		// are consulted only when the operator has configured an explicit
+		// trusted-host allowlist, and then only a request whose canonical
+		// authority is on that list is served, so a caller cannot steer
+		// discovery metadata with an injected forwarded host.
+		trustedHosts := len(config.AllowedHostnames) > 0
+		requestOrigin, ok := NormalizeRequestOrigin(apptheory.AuthoritativeOriginURL(headers, trustedHosts))
 		if !ok {
+			if trustedHosts {
+				return invalidRequestHostResponse()
+			}
 			return jsonResponse(400, map[string]string{
 				"error": "request host is required for OAuth protected-resource discovery",
 			})
+		}
+		if trustedHosts && !allowedRequestHost(requestOrigin, config.AllowedHostnames) {
+			return invalidRequestHostResponse()
 		}
 
 		metadata := &ProtectedResourceMetadata{
@@ -159,6 +182,35 @@ func mcpProtectedResourceDiscoveryHandler(config MCPServerConfig) apptheory.Hand
 		}
 		return jsonResponse(200, metadata)
 	}
+}
+
+// invalidRequestHostResponse is the fail-closed discovery response for a
+// request host that is absent from the configured trusted-host allowlist. It
+// matches the shape used by the MCP facade.
+func invalidRequestHostResponse() (*apptheory.Response, error) {
+	return &apptheory.Response{
+		Status: 400,
+		Headers: map[string][]string{
+			"cache-control": {"no-store"},
+			"content-type":  {"application/json"},
+		},
+		Body: []byte(`{"error":"invalid_request_host"}`),
+	}, nil
+}
+
+// allowedRequestHost reports whether the canonical authority of an already
+// normalized request origin is exactly one of the configured allowed hostnames.
+func allowedRequestHost(requestOrigin string, allowed []string) bool {
+	origin, ok := parseAbsoluteURL(requestOrigin)
+	if !ok {
+		return false
+	}
+	for _, candidate := range allowed {
+		if candidate == origin.Host {
+			return true
+		}
+	}
+	return false
 }
 
 func jsonResponse(status int, value any) (*apptheory.Response, error) {
@@ -189,11 +241,65 @@ func normalizeMCPServerConfig(config MCPServerConfig) (MCPServerConfig, error) {
 	if !ok {
 		return MCPServerConfig{}, fmt.Errorf("oauth: JWKS URI must be an absolute HTTPS URL")
 	}
+	allowedHostnames, err := normalizeAllowedHostnames(config.AllowedHostnames)
+	if err != nil {
+		return MCPServerConfig{}, err
+	}
 	return MCPServerConfig{
 		MCPPath:                   mcpPath,
 		AuthorizationServerIssuer: issuer,
 		JWKSURI:                   jwksURI,
+		AllowedHostnames:          allowedHostnames,
 	}, nil
+}
+
+func normalizeAllowedHostnames(configured []string) ([]string, error) {
+	if len(configured) == 0 {
+		return nil, nil
+	}
+	normalized := make([]string, 0, len(configured))
+	for _, raw := range configured {
+		hostname, ok := normalizeAllowedHostname(raw)
+		if !ok {
+			return nil, fmt.Errorf("oauth: allowed hostname %q must be a hostname or hostname:port", raw)
+		}
+		normalized = append(normalized, hostname)
+	}
+	return normalized, nil
+}
+
+// normalizeAllowedHostname canonicalizes one trusted-host entry to a bare
+// authority (host or host:port) with the default HTTP and HTTPS ports removed,
+// mirroring the MCP facade's allowlist normalization.
+func normalizeAllowedHostname(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.Contains(raw, "/") || strings.ContainsAny(raw, "?#@") {
+		return "", false
+	}
+	u, err := url.Parse("//" + raw)
+	if err != nil || u.Host == "" || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", false
+	}
+	hostname := canonicalAllowedHostname(u.Hostname())
+	if hostname == "" {
+		return "", false
+	}
+	port := u.Port()
+	if port == "80" || port == "443" {
+		port = ""
+	}
+	if port != "" {
+		return net.JoinHostPort(strings.Trim(hostname, "[]"), port), true
+	}
+	return hostname, true
+}
+
+func canonicalAllowedHostname(hostname string) string {
+	hostname = strings.ToLower(strings.TrimSuffix(hostname, "."))
+	if strings.Contains(hostname, ":") {
+		return "[" + hostname + "]"
+	}
+	return hostname
 }
 
 func normalizeMCPRoutePath(raw string) (string, bool) {

@@ -9,20 +9,23 @@ import (
 	"io"
 	"time"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
 )
 
 const (
 	lifecycleInvalidToolArgumentsMessage = "Invalid params: invalid tool arguments"
-	lifecycleMissingToolArgumentsMessage = "Invalid params: missing tool arguments"
 	lifecycleNoArgsMessage               = "Invalid params: tool accepts no arguments"
 	lifecycleValidationMessage           = "Invalid params: validation failed"
 	lifecycleInternalMessage             = "internal error"
 )
 
+// emptyToolLifecycleArgumentsJSON is the argument object an omitted or
+// whitespace-only `arguments` field decodes as, so a tool whose schema has only
+// optional properties still binds successfully.
+var emptyToolLifecycleArgumentsJSON = []byte("{}")
+
 var (
 	errToolLifecycleInvalidArguments = errors.New("invalid tool arguments")
-	errToolLifecycleMissingArguments = errors.New("missing tool arguments")
 	errToolLifecycleNoArgs           = errors.New("tool accepts no arguments")
 	errToolLifecycleValidation       = errors.New("validation failed")
 	errToolLifecycleInternal         = errors.New("internal tool lifecycle error")
@@ -229,7 +232,10 @@ func bindToolLifecycleArgs[Args any](ctx context.Context, raw json.RawMessage, o
 
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
-		return args, errToolLifecycleMissingArguments
+		// An omitted `arguments` field is an empty argument object. A tool whose
+		// schema has no required properties must still run, and the other
+		// runtimes pass omitted args straight through to the handler.
+		trimmed = emptyToolLifecycleArgumentsJSON
 	}
 	if trimmed[0] != '{' {
 		return args, errToolLifecycleInvalidArguments
@@ -297,8 +303,6 @@ func toolLifecycleRPCError(err error) (*RPCError, bool) {
 	switch {
 	case errors.Is(err, errToolLifecycleInvalidArguments):
 		return &RPCError{Code: CodeInvalidParams, Message: lifecycleInvalidToolArgumentsMessage}, true
-	case errors.Is(err, errToolLifecycleMissingArguments):
-		return &RPCError{Code: CodeInvalidParams, Message: lifecycleMissingToolArgumentsMessage}, true
 	case errors.Is(err, errToolLifecycleNoArgs):
 		return &RPCError{Code: CodeInvalidParams, Message: lifecycleNoArgsMessage}, true
 	case errors.Is(err, errToolLifecycleValidation):

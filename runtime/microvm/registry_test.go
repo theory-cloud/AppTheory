@@ -10,7 +10,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	tablemocks "github.com/theory-cloud/tabletheory/v4/pkg/mocks"
+	tableerrors "github.com/theory-cloud/tabletheory/v5/pkg/errors"
+	tablemocks "github.com/theory-cloud/tabletheory/v5/pkg/mocks"
 )
 
 func TestSessionRegistryRecordConversionAndValidation(t *testing.T) {
@@ -52,6 +53,162 @@ func TestSessionRegistryRecordConversionAndValidation(t *testing.T) {
 	bad = registry
 	bad.TTL++
 	require.Error(t, ValidateSessionRegistryRecord(bad))
+}
+
+func TestSessionRegistryPartitionKeyIsInjective(t *testing.T) {
+	require.Equal(t, "TENANT#8#tenant-1#NAMESPACE#11#namespace-1", SessionRegistryPartitionKey("tenant-1", "namespace-1"))
+	require.Equal(t, "", SessionRegistryPartitionKey("", "namespace-1"))
+	require.Equal(t, "", SessionRegistryPartitionKey("tenant-1", "   "))
+
+	// Collision witness from THE-3413: the un-prefixed form mapped both pairs to the same key.
+	require.NotEqual(t,
+		SessionRegistryPartitionKey("a", "b#NAMESPACE#c"),
+		SessionRegistryPartitionKey("a#NAMESPACE#b", "c"),
+	)
+	require.NotEqual(t,
+		SessionRegistryPartitionKey("10", "abc"),
+		SessionRegistryPartitionKey("1", "0abc"),
+	)
+
+	now := time.Unix(100, 0).UTC()
+	record := registryTestRecord(now)
+	record.Namespace = "b#NAMESPACE#c"
+	registry, err := SessionRecordToRegistryRecord(record)
+	require.NoError(t, err)
+	require.Equal(t, SessionRegistryPartitionKey("tenant-1", "b#NAMESPACE#c"), registry.PK)
+	require.NoError(t, ValidateSessionRegistryRecord(registry))
+
+	roundTrip, err := SessionRecordFromRegistryRecord(registry)
+	require.NoError(t, err)
+	require.Equal(t, record.Namespace, roundTrip.Namespace)
+}
+
+func TestSessionRegistryDualReadLegacyFallback(t *testing.T) {
+	now := time.Unix(600, 0).UTC()
+	record := registryTestRecord(now)
+	canonical, err := SessionRecordToRegistryRecord(record)
+	require.NoError(t, err)
+
+	// (c) The write path produces only the canonical key; the legacy derivation is never written.
+	require.NotEqual(t, legacySessionRegistryPartitionKey(record.TenantID, record.Namespace), canonical.PK)
+	require.Equal(t, "TENANT#tenant-1#NAMESPACE#namespace-1", legacySessionRegistryPartitionKey(record.TenantID, record.Namespace))
+
+	// The exported validator stays strict: a legacy-format item only validates through the read path.
+	legacy := canonical
+	legacy.PK = legacySessionRegistryPartitionKey(record.TenantID, record.Namespace)
+	require.Error(t, ValidateSessionRegistryRecord(legacy))
+	_, err = SessionRecordFromRegistryRecord(legacy)
+	require.Error(t, err)
+
+	store := NewMemorySessionRegistry()
+	// Seed the store as an earlier release left it: the item still lives under the legacy key.
+	store.records[registryRecordKey(legacy)] = cloneSessionRegistryRecord(legacy)
+
+	// (a) A legacy-format item resolves through the fallback (the pre-M1 collision-free case).
+	loaded, err := store.Get(context.Background(), record.Key())
+	require.NoError(t, err)
+	require.Equal(t, record.SessionID, loaded.SessionID)
+	require.Equal(t, record.ProviderID, loaded.ProviderID)
+
+	// (b) The fallback read re-wrote the item under the canonical key (lazy re-write), and the
+	// in-memory store moved it off the legacy key rather than leaving a duplicate.
+	_, ok := store.records[lengthPrefixedJoin(legacy.PK, legacy.SK)]
+	require.False(t, ok, "legacy entry should have migrated to the canonical key")
+	migrated, ok := store.records[registryRecordKey(canonical)]
+	require.True(t, ok)
+	require.Equal(t, canonical.PK, migrated.PK)
+	reloaded, err := store.Get(context.Background(), record.Key())
+	require.NoError(t, err)
+	require.Equal(t, record.ProviderID, reloaded.ProviderID)
+}
+
+func TestSessionRegistryDualReadRejectsLegacyCollision(t *testing.T) {
+	now := time.Unix(620, 0).UTC()
+	// The two pairs below collided under the pre-M1 key: both legacy-derive the same partition key.
+	first := registryTestRecord(now)
+	first.TenantID = "a"
+	first.Namespace = "b#NAMESPACE#c"
+	first.SessionID = "session-collide"
+	firstLegacy, err := SessionRecordToRegistryRecord(first)
+	require.NoError(t, err)
+	firstLegacy.PK = legacySessionRegistryPartitionKey(first.TenantID, first.Namespace)
+	require.Equal(t,
+		legacySessionRegistryPartitionKey("a", "b#NAMESPACE#c"),
+		legacySessionRegistryPartitionKey("a#NAMESPACE#b", "c"),
+	)
+
+	// (d) The canonical encoding still isolates the colliding pairs.
+	require.NotEqual(t,
+		SessionRegistryPartitionKey("a", "b#NAMESPACE#c"),
+		SessionRegistryPartitionKey("a#NAMESPACE#b", "c"),
+	)
+
+	store := NewMemorySessionRegistry()
+	store.records[registryRecordKey(firstLegacy)] = cloneSessionRegistryRecord(firstLegacy)
+
+	// A request for the colliding identity must fail closed rather than return the other tenant's item.
+	_, err = store.Get(context.Background(), SessionKey{TenantID: "a#NAMESPACE#b", Namespace: "c", SessionID: "session-collide"})
+	require.Error(t, err)
+
+	// (e) A record whose key contradicts both derivations is rejected by the read-path validator too.
+	contradiction := firstLegacy
+	contradiction.PK = "TENANT#neither-derivation#NAMESPACE#c"
+	require.Error(t, validateSessionRegistryRecord(contradiction, true))
+}
+
+func TestTableTheorySessionRegistryDualReadRekeysLegacyItem(t *testing.T) {
+	ctx := context.Background()
+	now := time.Unix(640, 0).UTC()
+	record := registryTestRecord(now)
+	canonical, err := SessionRecordToRegistryRecord(record)
+	require.NoError(t, err)
+	legacy := canonical
+	legacy.PK = legacySessionRegistryPartitionKey(record.TenantID, record.Namespace)
+	require.NotEqual(t, canonical.PK, legacy.PK)
+
+	db := new(tablemocks.MockDB)
+	primary := new(tablemocks.MockQuery)
+	fallback := new(tablemocks.MockQuery)
+	rekey := new(tablemocks.MockQuery)
+
+	db.On("Model", mock.Anything).Return(primary).Once()
+	primary.On("WithContext", mock.Anything).Return(primary).Once()
+	primary.On("Where", "PK", "=", canonical.PK).Return(primary).Once()
+	primary.On("Where", "SK", "=", canonical.SK).Return(primary).Once()
+	primary.On("First", mock.Anything).Return(tableerrors.ErrItemNotFound).Once()
+
+	db.On("Model", mock.Anything).Return(fallback).Once()
+	fallback.On("WithContext", mock.Anything).Return(fallback).Once()
+	fallback.On("Where", "PK", "=", legacy.PK).Return(fallback).Once()
+	fallback.On("Where", "SK", "=", legacy.SK).Return(fallback).Once()
+	fallback.On("First", mock.Anything).Run(func(args mock.Arguments) {
+		dest, ok := args.Get(0).(*SessionRegistryRecord)
+		require.True(t, ok)
+		*dest = legacy
+	}).Return(nil).Once()
+
+	var rekeyed *SessionRegistryRecord
+	db.On("Model", mock.Anything).Run(func(args mock.Arguments) {
+		if model, ok := args.Get(0).(*SessionRegistryRecord); ok {
+			rekeyed = model
+		}
+	}).Return(rekey).Once()
+	rekey.On("WithContext", mock.Anything).Return(rekey).Once()
+	rekey.On("CreateOrUpdate").Return(nil).Once()
+
+	store, err := NewTableTheorySessionRegistry(db)
+	require.NoError(t, err)
+	loaded, err := store.Get(ctx, record.Key())
+	require.NoError(t, err)
+	require.Equal(t, record.ProviderID, loaded.ProviderID)
+	require.NotNil(t, rekeyed)
+	require.Equal(t, canonical.PK, rekeyed.PK)
+	require.Equal(t, canonical.PK, SessionRegistryPartitionKey(rekeyed.TenantID, rekeyed.Namespace))
+
+	db.AssertExpectations(t)
+	primary.AssertExpectations(t)
+	fallback.AssertExpectations(t)
+	rekey.AssertExpectations(t)
 }
 
 func TestMemorySessionRegistryAndRegistryClient(t *testing.T) {
@@ -431,16 +588,18 @@ func TestTableTheorySessionRegistryGetAndDelete(t *testing.T) {
 
 	db := new(tablemocks.MockDB)
 	q := new(tablemocks.MockQuery)
-	db.On("Model", mock.Anything).Return(q).Twice()
-	q.On("WithContext", mock.Anything).Return(q).Twice()
+	legacyPK := legacySessionRegistryPartitionKey(record.TenantID, record.Namespace)
+	db.On("Model", mock.Anything).Return(q).Times(3)
+	q.On("WithContext", mock.Anything).Return(q).Times(3)
 	q.On("Where", "PK", "=", registryRecord.PK).Return(q).Twice()
-	q.On("Where", "SK", "=", registryRecord.SK).Return(q).Twice()
+	q.On("Where", "PK", "=", legacyPK).Return(q).Once()
+	q.On("Where", "SK", "=", registryRecord.SK).Return(q).Times(3)
 	q.On("First", mock.Anything).Run(func(args mock.Arguments) {
 		dest, ok := args.Get(0).(*SessionRegistryRecord)
 		require.True(t, ok)
 		*dest = registryRecord
 	}).Return(nil).Once()
-	q.On("Delete").Return(nil).Once()
+	q.On("Delete").Return(nil).Twice()
 
 	store, err := NewTableTheorySessionRegistry(db)
 	require.NoError(t, err)

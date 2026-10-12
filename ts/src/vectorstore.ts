@@ -554,11 +554,51 @@ export interface SemanticRecord {
   metadata?: Record<string, unknown> | undefined;
 }
 
+function normalizeBudget(value: number | undefined): number {
+  const budget = Math.floor(Number(value ?? 0));
+  return Number.isFinite(budget) && budget > 0 ? budget : 0;
+}
+
+function assertIngestBudget(
+  records: readonly SemanticRecord[],
+  maxRecords: number,
+  maxTextBytes: number,
+): void {
+  if (maxRecords > 0 && records.length > maxRecords) {
+    throw new VectorStoreError(
+      VECTORSTORE_ERROR_INVALID_INPUT,
+      `vectorstore: semantic ingest exceeds the record budget of ${maxRecords}`,
+    );
+  }
+  if (maxTextBytes > 0) {
+    let totalBytes = 0;
+    for (const record of records) {
+      totalBytes += Buffer.byteLength(String(record.text ?? ""), "utf8");
+    }
+    if (totalBytes > maxTextBytes) {
+      throw new VectorStoreError(
+        VECTORSTORE_ERROR_INVALID_INPUT,
+        `vectorstore: semantic ingest exceeds the text byte budget of ${maxTextBytes}`,
+      );
+    }
+  }
+}
+
 export interface SemanticIndexConfig {
   store: VectorStore;
   embedder: Embedder;
   dimension: number;
   requiredMetadataKeys?: string[] | undefined;
+  /**
+   * Bounds the number of records putText accepts before it calls the embedder.
+   * Zero or undefined leaves the record count unbounded.
+   */
+  maxRecords?: number | undefined;
+  /**
+   * Bounds the cumulative UTF-8 text bytes putText accepts before it calls the
+   * embedder. Zero or undefined leaves the cumulative size unbounded.
+   */
+  maxTextBytes?: number | undefined;
 }
 
 export class SemanticIndex {
@@ -566,12 +606,16 @@ export class SemanticIndex {
   private readonly embedder: Embedder;
   private readonly dimension: number;
   private readonly requiredMetadataKeys: string[];
+  private readonly maxRecords: number;
+  private readonly maxTextBytes: number;
 
   constructor(config: SemanticIndexConfig) {
     this.store = config.store;
     this.embedder = config.embedder;
     this.dimension = config.dimension;
     this.requiredMetadataKeys = config.requiredMetadataKeys ?? [];
+    this.maxRecords = normalizeBudget(config.maxRecords);
+    this.maxTextBytes = normalizeBudget(config.maxTextBytes);
     validateDimension(this.dimension);
   }
 
@@ -582,6 +626,7 @@ export class SemanticIndex {
         "vectorstore: at least one semantic record is required",
       );
     }
+    assertIngestBudget(records, this.maxRecords, this.maxTextBytes);
     for (const record of records) {
       validateKey(record.key);
       if (!record.text.trim()) {

@@ -3,7 +3,7 @@ import { logSafeValue } from "./internal/safe-log.js";
 const KINESIS_JSON_RECORD_INVALID_MESSAGE = "apptheory: kinesis json record invalid";
 const KINESIS_PUT_RECORDS_INVALID_MESSAGE = "apptheory: kinesis put-records result invalid";
 const KINESIS_MAX_PARTITION_KEY_BYTES = 256;
-const KINESIS_MAX_RECORD_DATA_BYTES = 1024 * 1024;
+const KINESIS_MAX_RECORD_BYTES = 1024 * 1024;
 const KINESIS_MAX_PUT_RECORDS_RECORDS = 500;
 const KINESIS_MAX_EXPLICIT_HASH_KEY = "340282366920938463463374607431768211455";
 const KINESIS_MAX_ERROR_CODE_BYTES = 128;
@@ -19,6 +19,7 @@ export function createKinesisJsonRecord(options) {
     const partitionKey = normalizeKinesisPartitionKey(options.partitionKey);
     const explicitHashKey = normalizeKinesisExplicitHashKey(options.explicitHashKey);
     const data = encodeKinesisJsonPayload(options.payload);
+    assertKinesisRecordSize(KINESIS_JSON_RECORD_INVALID_MESSAGE, data, partitionKey);
     const record = {
         partition_key: partitionKey,
         data,
@@ -64,10 +65,14 @@ function encodeKinesisJsonPayload(payload) {
     if (data.byteLength === 0) {
         throw new Error(`${KINESIS_JSON_RECORD_INVALID_MESSAGE}: empty json payload`);
     }
-    if (data.byteLength > KINESIS_MAX_RECORD_DATA_BYTES) {
-        throw new Error(`${KINESIS_JSON_RECORD_INVALID_MESSAGE}: json payload size ${data.byteLength} exceeds ${KINESIS_MAX_RECORD_DATA_BYTES}`);
-    }
     return Uint8Array.from(data);
+}
+function assertKinesisRecordSize(prefix, data, partitionKey) {
+    const partitionKeyBytes = Buffer.byteLength(partitionKey, "utf8");
+    const combined = data.byteLength + partitionKeyBytes;
+    if (combined > KINESIS_MAX_RECORD_BYTES) {
+        throw new Error(`${prefix}: record size ${combined} (data ${data.byteLength} + partition key ${partitionKeyBytes}) exceeds ${KINESIS_MAX_RECORD_BYTES}`);
+    }
 }
 function normalizeKinesisPartitionKey(value) {
     const partitionKey = String(value ?? "").trim();
@@ -125,8 +130,13 @@ function normalizeKinesisReportRecord(record, index) {
     if (!(record.data instanceof Uint8Array) || record.data.byteLength === 0) {
         throw new Error(`${KINESIS_PUT_RECORDS_INVALID_MESSAGE}: empty record data at index ${index}`);
     }
-    if (record.data.byteLength > KINESIS_MAX_RECORD_DATA_BYTES) {
-        throw new Error(`${KINESIS_PUT_RECORDS_INVALID_MESSAGE}: record data size ${record.data.byteLength} exceeds ${KINESIS_MAX_RECORD_DATA_BYTES} at index ${index}`);
+    try {
+        assertKinesisRecordSize(KINESIS_PUT_RECORDS_INVALID_MESSAGE, record.data, partitionKey);
+    }
+    catch (error) {
+        throw new Error(`${String(error.message)} at index ${index}`, {
+            cause: error,
+        });
     }
     const normalized = {
         partition_key: partitionKey,

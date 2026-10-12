@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/theory-cloud/apptheory/v5/pkg/limited"
+	"github.com/theory-cloud/apptheory/v6/pkg/limited"
 )
 
 type contextKey string

@@ -12,7 +12,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	"github.com/theory-cloud/apptheory/v5/pkg/streamer"
+	"github.com/theory-cloud/apptheory/v6/pkg/streamer"
 )
 
 type WebSocketHandler func(*Context) (*Response, error)
@@ -311,7 +311,7 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 	defer func() {
 		cancelServe()
 		closeAbandonedBodyReader(responseBodyReader)
-		joinAbandonedBodyStream(responseBodyStream)
+		joinAbandonedBodyStream(responseBodyStream, streamingBodyDrainJoinGrace)
 	}()
 	ctx = serveCtx
 
@@ -368,15 +368,16 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 	}
 
 	requestCtx := &Context{
-		ctx:         ctx,
-		Request:     normalized,
-		Params:      nil,
-		clock:       a.clock,
-		ids:         a.ids,
-		RequestID:   requestID,
-		TenantID:    extractTenantID(normalized.Headers, normalized.Query),
-		RemainingMS: remainingMSFromContext(ctx, a.clock),
-		ws:          wsCtx,
+		ctx:                   ctx,
+		Request:               normalized,
+		Params:                nil,
+		clock:                 a.clock,
+		ids:                   a.ids,
+		RequestID:             requestID,
+		TenantID:              extractTenantID(normalized.Headers, normalized.Query),
+		RemainingMS:           remainingMSFromContext(ctx, a.clock),
+		ws:                    wsCtx,
+		TenantBindingRequired: a.tenantBindingRequired(),
 	}
 
 	defer func() {

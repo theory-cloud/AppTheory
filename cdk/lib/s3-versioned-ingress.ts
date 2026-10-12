@@ -24,10 +24,10 @@ export interface AppTheoryS3VersionedIngressProps {
  *
  * The construct owns one hardened, versioned bucket, its seven-day incomplete
  * multipart-upload reaping rule, and the one-action IAM grant path for
- * namespace bundles. Literal inputs produce exact-key grants. CloudFormation
- * resolves unresolved token inputs at deployment; AppTheory cannot guarantee
- * exactness for token-valued locations. It does not issue temporary
- * credentials, mint bundle identifiers, or define artifact URI schemes.
+ * namespace bundles. Grant locations must be literal values, so every grant
+ * targets one exact object key; unresolved token locations are rejected. It
+ * does not issue temporary credentials, mint bundle identifiers, or define
+ * artifact URI schemes.
  */
 export class AppTheoryS3VersionedIngress extends Construct {
   /** Canonical object-key root for every namespace release bundle. */
@@ -67,10 +67,10 @@ export class AppTheoryS3VersionedIngress extends Construct {
    *
    * `s3:PutObject` inherently covers multipart create, part upload, and
    * completion on the same key; separate abort and part-listing actions remain
-   * ungranted. Literal location values are validated at synthesis. CDK tokens
-   * skip literal value validation and are resolved by CloudFormation at
-   * deployment; AppTheory cannot guarantee exactness for token-valued
-   * locations. Missing inputs still fail closed before any grant is added.
+   * ungranted. Location values must be literal strings: AppTheory validates them
+   * at synthesis and rejects unresolved CDK tokens, because a grant cannot
+   * guarantee an exact key for a location that CloudFormation only resolves at
+   * deployment. Missing inputs still fail closed before any grant is added.
    */
   public grantUpload(grantee: iam.IGrantable, namespaceSlug: string, bundleId: string): iam.Grant {
     return this.grantExactObject(grantee, namespaceSlug, bundleId, "s3:PutObject");
@@ -79,9 +79,8 @@ export class AppTheoryS3VersionedIngress extends Construct {
   /**
    * Grant one principal permission to read one pinned namespace bundle version.
    *
-   * The grant includes only `s3:GetObjectVersion`. Literal inputs target one
-   * exact bundle key. CloudFormation resolves token inputs at deployment;
-   * AppTheory cannot guarantee exactness for token-valued locations.
+   * The grant includes only `s3:GetObjectVersion`. Inputs must be literal
+   * strings and target one exact bundle key; unresolved CDK tokens are rejected.
    * Unversioned reads and bucket listing remain ungranted.
    */
   public grantVersionedRead(grantee: iam.IGrantable, namespaceSlug: string, bundleId: string): iam.Grant {
@@ -115,7 +114,9 @@ function validateLocationValue(value: string, propName: string, pattern: RegExp)
     throw new Error(`AppTheoryS3VersionedIngress requires ${propName}`);
   }
   if (Token.isUnresolved(value)) {
-    return value;
+    throw new Error(
+      `AppTheoryS3VersionedIngress ${propName} must be a literal value; unresolved CDK tokens are rejected because AppTheory cannot guarantee an exact-key grant for a CloudFormation-resolved location`,
+    );
   }
   if (!pattern.test(value)) {
     throw new Error(`AppTheoryS3VersionedIngress ${propName} must match ${pattern.source}`);

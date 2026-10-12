@@ -14,7 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	oauthruntime "github.com/theory-cloud/apptheory/v5/runtime/oauth"
+	oauthruntime "github.com/theory-cloud/apptheory/v6/runtime/oauth"
 )
 
 func mustWrite(w http.ResponseWriter, b []byte) {

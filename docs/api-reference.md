@@ -203,7 +203,11 @@ handler on `HandleLambda`, `handleLambda`, or `handle_lambda`.
 
 Kinesis handler failures are returned as Lambda partial-batch failures by record `eventID`; successful records are
 omitted. `DecodeCloudWatchLogsSubscription` and its TypeScript/Python equivalents decode the gzip CloudWatch Logs
-subscription envelope carried in Kinesis data and return a `safe_summary` that excludes raw log messages. The producer
+subscription envelope carried in Kinesis data and return a `safe_summary` that excludes raw log messages. The decoder
+bounds its work before it materializes the payload: the decompressed document is capped at 2 MiB, the
+decoded/compressed ratio is capped, the `subscriptionFilters` and `logEvents` arrays have cardinality limits, and any
+top-level field outside the documented envelope is rejected, so a small, highly compressed producer record cannot
+expand into a memory-exhausting object graph. The producer
 helpers create deterministic JSON record bytes and safe failure summaries without introducing a second per-service
 record or failure shape.
 
@@ -580,13 +584,13 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1059 exported top-level symbols</summary>
+<summary>1063 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins, APIGatewayV2Request
 App, AppError, AppSyncContext, AppSyncEvent, AppSyncEventOptions, AppSyncResolverEvent, AppSyncResolverInfo
 AppSyncResolverRequest, AppTheoryError, AppTheoryErrorFromAppError, AsAppTheoryError, AssertError, AssertHasTools
-AssertToolResult, AtomicRateLimiter, AuthContext, Authenticated, AuthenticatedAnyOf, AuthHook, AuthorizationCodeRecord
+AssertToolResult, AtomicRateLimiter, AuthContext, Authenticated, AuthenticatedAnyOf, AuthoritativeOriginURL, AuthHook, AuthorizationCodeRecord
 AuthorizationCodeStore, AuthorizationServerMetadata, AuthorizationServerMetadataHandler, AuthorizationServerMetadataOption, AuthorizeOptions, AuthPosture
 AuthPostureAuthenticated, AuthPostureAuthenticatedAnyOf, AuthPostureInternalOnly, AuthPostureKind, AuthPostureOptional, AuthPosturePublic
 AuthPrincipal, AWSLambdaMicroVMProvider, AWSLambdaMicroVMProviderID, AWSLambdaMicroVMProviderOption, BaseName
@@ -616,7 +620,7 @@ DefaultTitanEmbedTextModelID, DeleteInput, DetectProtocolVersion, DetectProtocol
 Discovery, DynamicClientRegistrationPolicy, DynamicClientRegistrationRequest, DynamicClientRegistrationResponse
 DynamoDBEventBus, DynamoDBStreamEvent, DynamoDBStreamEventOptions, DynamoDBStreamHandler, DynamoDBStreamRecordOptions
 DynamoDBStreamRecordSummary, DynamoJobLedger, DynamoRateLimiter, DynamoSessionStore, DynamoStreamStore
-DynamoTaskStore, Embedder, EmbeddingErrorCode, EMFMetricSink, EMFMetricSinkOption, EncodeLoggingProfileEvent
+DynamoStreamStoreOption, DynamoTaskStore, Embedder, EmbeddingErrorCode, EMFMetricSink, EMFMetricSinkOption, EncodeLoggingProfileEvent
 EncodeLoggingProfileEventWithSanitizer, Env, EnvEgressNetworkConnectorRefs, EnvEmbeddingDimensions
 EnvEmbeddingModelID, EnvEmbeddingNormalize, EnvEmbeddingProvider, EnvExecutionRoleArn, EnvImageRef
 EnvIngressNetworkConnectorRefs, EnvironmentErrorNotificationsOptions, EnvJobsTableName, EnvLogging
@@ -750,14 +754,14 @@ WebSocketEventOptions, WebSocketHandler, WindowConfig, WindowLimit, WithAPI, Wit
 WithAWSConfig, WithAWSLambdaMicroVMClock, WithAWSLambdaMicroVMRegion, WithCacheableResultConfig, WithCapabilityConfig
 WithClock, WithCompletionHooks, WithControllerClock, WithControllerDeploymentDefaults, WithControllerExecutionRoleArn
 WithControllerID, WithControllerIDGenerator, WithControllerLogging, WithControllerProviderID, WithControllerSessionTTL
-WithCORS, WithDeviceAuthorizationEndpoint, WithEMFClock, WithEMFNamespace, WithEMFService, WithEMFWriter, WithEnvironmentErrorNotifications
+WithCORS, WithDeviceAuthorizationEndpoint, WithDynamoStreamSpillEncryption, WithEMFClock, WithEMFNamespace, WithEMFService, WithEMFWriter, WithEnvironmentErrorNotifications
 WithErrorNotifier, WithExtensionCapabilities, WithHTTPErrorFormat, WithIdentifier, WithIDGenerator
 WithInitialSessionListenerBudget, WithLegacyHTTPErrorShape, WithLifecycleContract, WithLifecycleHandler, WithLimits
 WithLogger, WithLoggingLevelHook, WithObservability, WithOriginValidator, WithPolicyHook, WithProfileClock
 WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter, WithRegistryClientTTL, WithResourceSubscriptionHooks
 WithRevocationEndpoint, WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata, WithSessionReconstructionClock
 WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamIDGenerator, WithStreamStore, WithTaskRuntime
-WithTier, WithToolContextHook, WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
+WithTenantClaim, WithTier, WithToolContextHook, WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured,
 AccountAssertionState, AccountAssertionUnavailable, AccountAssertionVerified, ArtifactEntry,
 ArtifactVerificationArchiveInvalid, ArtifactVerificationDigestMismatch, ArtifactVerificationInvalidRequest,

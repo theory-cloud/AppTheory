@@ -78,7 +78,9 @@
           "path": "/trace",
           "status": "200",
           "error_code": "",
-          "tenant_id": "tenant_trace"
+          "tenant_id": "tenant_trace",
+          "route": "/trace",
+          "status_class": "2xx"
         }
       }
     ],

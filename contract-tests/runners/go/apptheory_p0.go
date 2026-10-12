@@ -13,9 +13,9 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	"github.com/theory-cloud/apptheory/v5/pkg/naming"
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
-	"github.com/theory-cloud/apptheory/v5/testkit"
+	"github.com/theory-cloud/apptheory/v6/pkg/naming"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	"github.com/theory-cloud/apptheory/v6/testkit"
 )
 
 func runFixtureP0(f Fixture) error {

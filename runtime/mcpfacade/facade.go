@@ -6,9 +6,9 @@ import (
 	"net/url"
 	"strings"
 
-	apptheory "github.com/theory-cloud/apptheory/v5/runtime"
-	"github.com/theory-cloud/apptheory/v5/runtime/mcproutes"
-	"github.com/theory-cloud/apptheory/v5/runtime/oauth"
+	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	"github.com/theory-cloud/apptheory/v6/runtime/mcproutes"
+	"github.com/theory-cloud/apptheory/v6/runtime/oauth"
 )
 
 const (
@@ -104,6 +104,29 @@ type FacadeConfig struct {
 	// RootAuthorizationServer optionally installs one static GET at the
 	// algebra-derived root authorization-server discovery path.
 	RootAuthorizationServer *RootDiscoveryConfig
+
+	// UnauthenticatedMcp opts the MCP transport routes (POST, GET, and DELETE on
+	// every MCP pattern) out of the authenticated default.
+	//
+	// When false (the default) transport routes are registered with an
+	// authenticated posture: requests without a verified principal are rejected
+	// with HTTP 401 and the MCP handler never runs. Set it to true only when the
+	// application owns authentication for those routes, for example by wrapping
+	// MCPHandler.
+	//
+	// The posture is evaluated by the portable tier pipeline and by SecureApp.
+	// TierP0 is the frozen legacy pipeline and does not evaluate route-level
+	// postures, so an application that explicitly selects TierP0 must supply
+	// RequireBearerToken or own transport authentication itself.
+	UnauthenticatedMcp bool
+
+	// RequireBearerToken, when supplied, validates an RFC 9728 bearer token on
+	// every MCP transport route instead of relying on the application's
+	// principal posture. Credential-free or invalid requests are rejected with
+	// HTTP 401 and the RFC 9728 WWW-Authenticate challenge that points at the
+	// protected-resource metadata. This holds for every tier, including TierP0.
+	// Ignored (and rejected together with) UnauthenticatedMcp.
+	RequireBearerToken *oauth.RequireBearerTokenOptions
 }
 
 // Route describes one endpoint-kind route family installed by the helper.
@@ -141,12 +164,15 @@ type normalizedConfig struct {
 	tokenHandlers           map[mcproutes.EndpointKind]apptheory.Handler
 	rootAuthorizationServer *oauth.AuthorizationServerMetadata
 	rootDiscoveryPath       string
+	unauthenticatedMcp      bool
+	requireBearerToken      *oauth.RequireBearerTokenOptions
 }
 
 type routeRegistration struct {
 	method  string
 	pattern string
 	handler apptheory.Handler
+	options []apptheory.RouteOption
 }
 
 // RegisterMCPFacade installs the complete MCP OAuth facade described by
@@ -179,6 +205,9 @@ func RegisterMCPFacade(app *apptheory.App, config FacadeConfig) (*RouteInventory
 func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 	if config.MCPHandler == nil {
 		return normalizedConfig{}, fmt.Errorf("mcpfacade: MCP handler is required")
+	}
+	if config.UnauthenticatedMcp && config.RequireBearerToken != nil {
+		return normalizedConfig{}, fmt.Errorf("mcpfacade: UnauthenticatedMcp cannot be combined with RequireBearerToken")
 	}
 
 	issuerURL, ok := normalizeHTTPSURL(config.IssuerURL, true)
@@ -234,6 +263,8 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 		tokenHandlers:           tokenHandlers,
 		rootAuthorizationServer: rootAuthorizationServer,
 		rootDiscoveryPath:       rootDiscoveryPath,
+		unauthenticatedMcp:      config.UnauthenticatedMcp,
+		requireBearerToken:      config.RequireBearerToken,
 	}, nil
 }
 
@@ -297,12 +328,16 @@ func normalizeURLMode(config FacadeConfig) (string, map[string]struct{}, error) 
 
 func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]routeRegistration, error) {
 	registrations := make([]routeRegistration, 0, len(inventory.Routes)*8+1)
+	transportOptions := transportRouteOptions(config)
 	for _, route := range inventory.Routes {
 		mcpHandler := checkedMCPHandler(route.Kind, config.mcpHandler)
+		if config.requireBearerToken != nil {
+			mcpHandler = oauth.RequireBearerTokenMiddleware(*config.requireBearerToken)(mcpHandler)
+		}
 		registrations = append(registrations,
-			routeRegistration{method: "POST", pattern: route.MCPPattern, handler: mcpHandler},
-			routeRegistration{method: "GET", pattern: route.MCPPattern, handler: mcpHandler},
-			routeRegistration{method: "DELETE", pattern: route.MCPPattern, handler: mcpHandler},
+			routeRegistration{method: "POST", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions},
+			routeRegistration{method: "GET", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions},
+			routeRegistration{method: "DELETE", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions},
 			routeRegistration{method: "GET", pattern: route.ProtectedResourcePattern, handler: protectedResourceHandler(config, route.Kind)},
 		)
 
@@ -348,7 +383,7 @@ func validateRouteRegistrations(registrations []routeRegistration) error {
 			return fmt.Errorf("mcpfacade: duplicate route inventory entry %s", key)
 		}
 		seen[key] = struct{}{}
-		if err := handleRoute(probe, method, registration.pattern, registration.handler); err != nil {
+		if err := handleRoute(probe, method, registration.pattern, registration.handler, registration.options...); err != nil {
 			return fmt.Errorf("mcpfacade: invalid or duplicate route inventory entry %s: %w", key, err)
 		}
 	}
@@ -357,14 +392,14 @@ func validateRouteRegistrations(registrations []routeRegistration) error {
 
 func registerRoutes(app *apptheory.App, registrations []routeRegistration) error {
 	for _, registration := range registrations {
-		if err := handleRoute(app, registration.method, registration.pattern, registration.handler); err != nil {
+		if err := handleRoute(app, registration.method, registration.pattern, registration.handler, registration.options...); err != nil {
 			return fmt.Errorf("mcpfacade: register %s %s: %w", registration.method, registration.pattern, err)
 		}
 	}
 	return nil
 }
 
-func handleRoute(app *apptheory.App, method, pattern string, handler apptheory.Handler) (err error) {
+func handleRoute(app *apptheory.App, method, pattern string, handler apptheory.Handler, options ...apptheory.RouteOption) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			switch value := recovered.(type) {
@@ -375,8 +410,23 @@ func handleRoute(app *apptheory.App, method, pattern string, handler apptheory.H
 			}
 		}
 	}()
-	app.Handle(method, pattern, handler)
+	app.Handle(method, pattern, handler, options...)
 	return nil
+}
+
+// transportRouteOptions returns the route-level authenticated posture for the
+// three MCP transport routes (POST, GET, and DELETE on every MCP pattern).
+//
+// The either/or is deliberate: RequireAuth delegates to the application's
+// principal hook when one exists (so apps using WithAuthPrincipalHook keep
+// working unchanged), while a supplied bearer validator performs full RFC 9728
+// bearer validation with the correct WWW-Authenticate challenge and must not
+// additionally demand an app-level principal.
+func transportRouteOptions(config normalizedConfig) []apptheory.RouteOption {
+	if config.unauthenticatedMcp || config.requireBearerToken != nil {
+		return nil
+	}
+	return []apptheory.RouteOption{apptheory.RequireAuth()}
 }
 
 func indexFacadeTemplates(templates []mcproutes.OAuthFacadeTemplate) map[mcproutes.EndpointKind]mcproutes.OAuthFacadeTemplate {

@@ -1262,6 +1262,20 @@ def exercise_microvm_session_registry(runtime: Any) -> None:
         or round_trip.last_action != record.last_action
     ):
         raise RuntimeError("apptheory: microvm session registry round trip incomplete")
+    # Dual-read migration surface: a canonical write must never carry the pre-M1 key, and the
+    # collision witness the M1 fix closed must stay closed. The fallback + lazy re-write path needs a
+    # raw pre-M1 item, which the contract runners cannot seed through the public registry surface, so
+    # it is pinned by the per-runtime unit tests.
+    if registry_record.pk == f"TENANT#{record.tenant_id}#NAMESPACE#{record.namespace}":
+        raise RuntimeError(
+            "apptheory: microvm session registry canonical write reused the pre-M1 partition key"
+        )
+    if runtime.microvm_session_registry_partition_key(
+        "a", "b#NAMESPACE#c"
+    ) == runtime.microvm_session_registry_partition_key("a#NAMESPACE#b", "c"):
+        raise RuntimeError(
+            "apptheory: microvm session registry partition key collision witness regressed"
+        )
     store = runtime.create_memory_microvm_session_registry()
     stored = store.put(record)
     if stored.last_action != "start":
@@ -1569,7 +1583,15 @@ def compare_microvm_controller_route_fixture(
 
     kwargs: dict[str, Any] = {"tier": "p1"}
     if setup["authenticated"]:
-        kwargs["auth_hook"] = lambda _ctx: "subject-1"
+        if setup["tenant_claim"] and setup["principal_tenant_id"]:
+            claim = setup["tenant_claim"]
+            principal_tenant = setup["principal_tenant_id"]
+            kwargs["auth_principal_hook"] = lambda _ctx, _claim=claim, _tenant=principal_tenant: runtime.AuthPrincipal(
+                identity="subject-1", claims={_claim: _tenant}
+            )
+            kwargs["tenant_claim"] = claim
+        else:
+            kwargs["auth_hook"] = lambda _ctx: "subject-1"
     route_app = runtime.create_app(**kwargs)
     runtime.register_microvm_controller_routes(route_app, controller)
 
@@ -1875,6 +1897,8 @@ def normalize_microvm_controller_route_setup(setup: dict[str, Any]) -> dict[str,
         "tenant_id": tenant_id,
         "namespace": namespace,
         "session_id": session_id,
+        "tenant_claim": str(setup.get("tenant_claim") or "").strip(),
+        "principal_tenant_id": str(setup.get("principal_tenant_id") or "").strip(),
         "deployment_defaults": normalize_microvm_deployment_defaults(
             setup.get("deployment_defaults") or {}
         ),

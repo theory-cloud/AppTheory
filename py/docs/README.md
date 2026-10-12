@@ -73,12 +73,12 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>657 exported top-level symbols</summary>
+<summary>659 exported top-level symbols</summary>
 
 ```text
 App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError
 AtomicRateLimiter, authenticated, authenticated_any_of, authorization_server_metadata_handler, AuthorizationServerMetadata, AuthPosture
-AuthPostureKind, AWSLambdaMicroVMClient, AWSLambdaMicroVMProvider, base_name, bearer_token_claims_from_context
+AuthPostureKind, AuthPrincipal, AWSLambdaMicroVMClient, AWSLambdaMicroVMProvider, base_name, bearer_token_claims_from_context
 bearer_token_from_headers, BearerTokenClaims, BearerTokenClaimsValidator, BearerTokenRecord
 BearerTokenValidationOptions, BearerTokenValidator, binary, bind_handler, bind_request, BindConfig, BindField, body
 build_alb_target_group_request, build_apigw_v2_request, build_appsync_event, build_dynamodb_stream_event
@@ -186,7 +186,7 @@ OpenAPIAuthSchemes, OpenAPIFieldSpec, OpenAPIRequestSpec, OpenAPIResponseSpec, O
 OpenAPIValidationRule, OPERATION_AUTH_TOKEN, OPERATION_GET, OPERATION_INVOKE, OPERATION_LIST, OPERATION_RESUME
 OPERATION_RUN, OPERATION_SHELL_AUTH_TOKEN, OPERATION_SHELL_TOKEN, OPERATION_SUSPEND, OPERATION_TERMINATE, optional
 origin_url, original_host, original_uri, parse_mcp_test_sse_frames, parse_object_ref, path, pattern
-payment_xml_patterns, pkce_challenge_s256, pkce_verify_s256, PolicyDecision, PrincipalKind, ProfileLogger
+payment_xml_patterns, pkce_challenge_s256, pkce_verify_s256, PolicyDecision, PrincipalAuthHook, PrincipalKind, ProfileLogger
 ProfileLoggerOptions, protected_resource_metadata_handler, protected_resource_www_authenticate
 ProtectedResourceMetadata, public, PutVectorsInput, query, QueryHit, QueryVectorsInput, rapid_connect_xml_patterns
 rate_limit_table_name, RateLimitEntry, RateLimiter, RateLimiterError, RateLimitKey, RateLimitStrategy, RateLimitWindow

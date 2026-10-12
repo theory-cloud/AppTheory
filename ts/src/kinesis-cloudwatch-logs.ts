@@ -4,9 +4,37 @@ import { gunzipSync } from "node:zlib";
 import type { KinesisEventRecord } from "./aws-types.js";
 import { logSafeValue } from "./internal/safe-log.js";
 
-const CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_DECODED_BYTES = 6 * 1024 * 1024;
+// CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_DECODED_BYTES is the schema-appropriate
+// ceiling for one decompressed CloudWatch Logs subscription document.
+// CloudWatch Logs caps its uncompressed payload near 1 MB, so this bound (down
+// from 6 MiB) is generous for a real payload while keeping a hostile, highly
+// compressed record from expanding into a far larger JavaScript object graph
+// than the Lambda memory allocation can hold.
+const CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_DECODED_BYTES = 2 * 1024 * 1024;
+// CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_COMPRESSION_RATIO bounds the
+// decoded/compressed ratio. A legitimate gzip of JSON log text is far below
+// this; a record that decodes to many times the space it occupied (the "junk
+// bomb" pattern) is rejected before JSON.parse materializes it.
+const CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_COMPRESSION_RATIO = 500;
+// CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_FILTERS and ..._MAX_LOG_EVENTS bound array
+// cardinality before the accepted arrays are copied into the decoded result.
+const CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_FILTERS = 1024;
+const CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_LOG_EVENTS = 10000;
 const CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE =
   "apptheory: decode cloudwatch logs subscription";
+
+// CLOUDWATCH_LOGS_SUBSCRIPTION_KNOWN_FIELDS is the documented top-level
+// CloudWatch Logs subscription envelope. Any other top-level field is rejected
+// so an ignored, attacker-sized array (for example a "junk" array) cannot be
+// smuggled into the document.
+const CLOUDWATCH_LOGS_SUBSCRIPTION_KNOWN_FIELDS = new Set([
+  "messageType",
+  "owner",
+  "logGroup",
+  "logStream",
+  "subscriptionFilters",
+  "logEvents",
+]);
 
 /** One decoded CloudWatch Logs subscription envelope carried by a Kinesis record. */
 export interface CloudWatchLogsSubscription {
@@ -67,6 +95,7 @@ export function decodeCloudWatchLogsSubscription(
     record?.kinesis?.data,
   );
   const payload = parseCloudWatchLogsSubscriptionPayload(payloadBytes);
+  assertCloudWatchLogsSubscriptionCardinality(payload);
   const decoded: CloudWatchLogsSubscriptionWithoutSummary = {
     record_id: recordId,
     message_type: payloadString(payload, "messageType"),
@@ -118,6 +147,14 @@ function gunzipCloudWatchLogsSubscriptionData(
       `${CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE}: payload too large`,
     );
   }
+  if (
+    payload.length >
+    compressed.length * CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_COMPRESSION_RATIO
+  ) {
+    throw new Error(
+      `${CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE}: payload compression ratio exceeded`,
+    );
+  }
   return payload;
 }
 
@@ -137,7 +174,37 @@ function parseCloudWatchLogsSubscriptionPayload(
       `${CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE} json: expected object`,
     );
   }
+  for (const key of Object.keys(parsed as Record<string, unknown>)) {
+    if (!CLOUDWATCH_LOGS_SUBSCRIPTION_KNOWN_FIELDS.has(key)) {
+      throw new Error(
+        `${CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE}: unknown field ${JSON.stringify(key)}`,
+      );
+    }
+  }
   return parsed as Record<string, unknown>;
+}
+
+function assertCloudWatchLogsSubscriptionCardinality(
+  payload: Record<string, unknown>,
+): void {
+  const filters = payload["subscriptionFilters"];
+  if (
+    Array.isArray(filters) &&
+    filters.length > CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_FILTERS
+  ) {
+    throw new Error(
+      `${CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE}: too many subscriptionFilters`,
+    );
+  }
+  const logEvents = payload["logEvents"];
+  if (
+    Array.isArray(logEvents) &&
+    logEvents.length > CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_LOG_EVENTS
+  ) {
+    throw new Error(
+      `${CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE}: too many logEvents`,
+    );
+  }
 }
 
 function validateCloudWatchLogsSubscription(

@@ -498,6 +498,9 @@ class ObjectStoreTests(unittest.TestCase):
             ("expires-fractional", _presigned_url(expires="900.0"), 900),
             ("expires-scientific", _presigned_url(expires="9e2"), 900),
             ("expires-fullwidth-digits", _presigned_url(expires=quote(chr(0xFF19) + chr(0xFF10) * 2)), 900),
+            # A bare-digit value past Python's int()-string digit limit (4300 since 3.12) must fail
+            # closed as invalid_store_config rather than escaping as an uncaught ValueError.
+            ("expires-oversized-digits", _presigned_url(expires="9" * 5000), 900),
             ("signed-headers-missing", "https://s3.amazonaws.com/bucket-a/objects/alpha.txt?X-Amz-Expires=900", 900),
             ("queryless", "https://s3.amazonaws.com/bucket-a/objects/alpha.txt", 900),
         ]

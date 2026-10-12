@@ -5,7 +5,7 @@ import json as jsonlib
 import os
 import time
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, cast
 
 # ruff: noqa: F401,F405
@@ -14,6 +14,56 @@ from .model import *  # noqa: F403
 from .model import _MicroVMSessionRegistryKeyInput
 from .session import *  # noqa: F403
 from .shared import *  # noqa: F403
+
+
+def _legacy_session_registry_partition_key(tenant_id: str, namespace: str) -> str:
+    """Reconstruct the pre-M1 partition key ``TENANT#<tenant>#NAMESPACE#<namespace>``.
+
+    Both identities are trimmed and an empty identity yields ``""``, matching the pre-M1
+    implementation. It exists only so a read can fall back to an item written by an earlier release;
+    the write path never produces this form.
+    """
+    tenant = str(tenant_id or "").strip()
+    ns = str(namespace or "").strip()
+    if not tenant or not ns:
+        return ""
+    return f"TENANT#{tenant}#NAMESPACE#{ns}"
+
+
+def _legacy_registry_key(tenant_id: str, namespace: str, session_id: str) -> tuple[str, str] | None:
+    """Return the pre-M1 (pk, sk) key, or ``None`` when it cannot differ from the canonical key."""
+    legacy_pk = _legacy_session_registry_partition_key(tenant_id, namespace)
+    canonical_pk = microvm_session_registry_partition_key(tenant_id, namespace)
+    if not legacy_pk or legacy_pk == canonical_pk:
+        return None
+    return (legacy_pk, microvm_session_registry_sort_key(session_id))
+
+
+def _session_from_registry_record_for_read(
+    record: MicroVMSessionRegistryRecord | dict[str, Any], *, allow_legacy_key: bool
+) -> MicroVMSessionRecord:
+    """Convert a durable item for a read path.
+
+    When ``allow_legacy_key`` is set it accepts the pre-M1 partition key carried by an item written by
+    an earlier release and validates the item under the canonical key; an item whose key matches
+    neither derivation is still rejected.
+    """
+    normalized = _normalize_session_registry_record(record)
+    if allow_legacy_key and normalized.pk == _legacy_session_registry_partition_key(
+        normalized.tenant_id, normalized.namespace
+    ):
+        normalized = replace(
+            normalized,
+            pk=microvm_session_registry_partition_key(normalized.tenant_id, normalized.namespace),
+        )
+    return microvm_session_from_registry_record(normalized)
+
+
+def _call_registry_list(list_fn: Any, partition_key: str) -> list[Any]:
+    try:
+        return list(cast(Any, list_fn(partition_key)) or [])
+    except TypeError:
+        return list(cast(Any, list_fn(pk=partition_key)) or [])
 
 
 class MemoryMicroVMSessionRegistry:
@@ -29,6 +79,19 @@ class MemoryMicroVMSessionRegistry:
         normalized = _normalize_session_registry_key(key)
         record = self._records.get(_registry_key_tuple(normalized))
         if record is None:
+            record = self._legacy_record(normalized)
+            if record is not None:
+                session = _session_from_registry_record_for_read(
+                    _clone_session_registry_record(record), allow_legacy_key=True
+                )
+                migrated = microvm_session_record_to_registry_record(session)
+                # The in-memory store has no TTL, so move the legacy entry rather than copy it, which
+                # keeps a later list from returning the same session twice.
+                self._records[_registry_record_key(migrated)] = _clone_session_registry_record(migrated)
+                legacy_key = _legacy_registry_key(normalized[0], normalized[1], normalized[2])
+                if legacy_key is not None:
+                    self._records.pop(legacy_key, None)
+                return microvm_session_from_registry_record(migrated)
             raise _safe_error(
                 MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
                 "apptheory: microvm session registry record not found",
@@ -36,17 +99,59 @@ class MemoryMicroVMSessionRegistry:
             )
         return microvm_session_from_registry_record(_clone_session_registry_record(record))
 
+    def _legacy_record(self, normalized: tuple[str, str, str]) -> MicroVMSessionRegistryRecord | None:
+        legacy_key = _legacy_registry_key(normalized[0], normalized[1], normalized[2])
+        if legacy_key is None:
+            return None
+        record = self._records.get(legacy_key)
+        # A colliding pre-M1 key can address more than one identity; require the item to be exactly the
+        # one that was requested before accepting it.
+        if record is not None and (
+            record.tenant_id != normalized[0] or record.namespace != normalized[1] or record.session_id != normalized[2]
+        ):
+            raise _safe_error(
+                MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+                "apptheory: microvm session registry tenant/session key mismatch",
+                "",
+            )
+        return record
+
     def delete(self, key: _MicroVMSessionRegistryKeyInput) -> None:
         normalized = _normalize_session_registry_key(key)
         self._records.pop(_registry_key_tuple(normalized), None)
+        # Also drop the pre-M1 entry so a deleted session cannot be resurrected by the dual-read fallback.
+        legacy_key = _legacy_registry_key(normalized[0], normalized[1], normalized[2])
+        if legacy_key is not None:
+            self._records.pop(legacy_key, None)
 
     def list(self, input_: MicroVMSessionListInput | dict[str, Any]) -> list[MicroVMSessionRecord]:
         normalized = _normalize_session_list_input(input_)
+        canonical_pk = microvm_session_registry_partition_key(normalized.tenant_id, normalized.namespace)
         out: list[MicroVMSessionRecord] = []
+        seen: set[str] = set()
         for record in self._records.values():
-            if record.tenant_id != normalized.tenant_id or record.namespace != normalized.namespace:
+            if (
+                record.tenant_id != normalized.tenant_id
+                or record.namespace != normalized.namespace
+                or record.pk != canonical_pk
+            ):
                 continue
-            out.append(microvm_session_from_registry_record(_clone_session_registry_record(record)))
+            session = microvm_session_from_registry_record(_clone_session_registry_record(record))
+            seen.add(session.session_id)
+            out.append(session)
+        for record in self._records.values():
+            if (
+                record.tenant_id != normalized.tenant_id
+                or record.namespace != normalized.namespace
+                or record.pk == canonical_pk
+                or record.session_id in seen
+            ):
+                continue
+            session = _session_from_registry_record_for_read(
+                _clone_session_registry_record(record), allow_legacy_key=True
+            )
+            seen.add(session.session_id)
+            out.append(session)
         out.sort(key=lambda record: record.session_id)
         return out
 
@@ -222,21 +327,58 @@ class TableTheoryMicroVMSessionRegistry:
 
     def get(self, key: _MicroVMSessionRegistryKeyInput) -> MicroVMSessionRecord:
         normalized = _normalize_session_registry_key(key)
+        canonical_pk = microvm_session_registry_partition_key(normalized[0], normalized[1])
+        sort_key = microvm_session_registry_sort_key(normalized[2])
         try:
             get = getattr(self._table, "get", None)
             if not callable(get):
                 raise RuntimeError("table get unavailable")
-            item = get(
-                microvm_session_registry_partition_key(normalized[0], normalized[1]),
-                microvm_session_registry_sort_key(normalized[2]),
-            )
-            if item is None:
+            try:
+                item = get(canonical_pk, sort_key)
+            except Exception:  # noqa: BLE001 - a failed canonical read is treated as a candidate miss.
+                item = None
+            if item is not None:
+                return microvm_session_from_registry_record(cast(MicroVMSessionRegistryRecord | dict[str, Any], item))
+            legacy_key = _legacy_registry_key(normalized[0], normalized[1], normalized[2])
+            if legacy_key is None:
                 raise _safe_error(
                     MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
                     "apptheory: microvm session registry record not found",
                     "",
                 )
-            return microvm_session_from_registry_record(cast(MicroVMSessionRegistryRecord | dict[str, Any], item))
+            legacy_item = get(legacy_key[0], legacy_key[1])
+            if legacy_item is None:
+                raise _safe_error(
+                    MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+                    "apptheory: microvm session registry record not found",
+                    "",
+                )
+            legacy_record = _normalize_session_registry_record(
+                cast(MicroVMSessionRegistryRecord | dict[str, Any], legacy_item)
+            )
+            # A colliding pre-M1 key can address more than one identity; require the item to be exactly
+            # the one that was requested before accepting it.
+            if (
+                legacy_record.tenant_id != normalized[0]
+                or legacy_record.namespace != normalized[1]
+                or legacy_record.session_id != normalized[2]
+            ):
+                raise _safe_error(
+                    MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+                    "apptheory: microvm session registry tenant/session key mismatch",
+                    "",
+                )
+            session = _session_from_registry_record_for_read(
+                cast(MicroVMSessionRegistryRecord | dict[str, Any], legacy_item), allow_legacy_key=True
+            )
+            try:
+                # Lazy re-write: migrate the item on touch. Best-effort, because the read already succeeded.
+                put = getattr(self._table, "put", None) or getattr(self._table, "save", None)
+                if callable(put):
+                    put(microvm_session_record_to_registry_record(session))
+            except Exception:  # noqa: BLE001,S110 - best-effort; the legacy item resolves until its TTL retires it.
+                pass
+            return session
         except Exception as exc:
             if isinstance(exc, MicroVMSafeError):
                 raise exc
@@ -244,14 +386,17 @@ class TableTheoryMicroVMSessionRegistry:
 
     def delete(self, key: _MicroVMSessionRegistryKeyInput) -> None:
         normalized = _normalize_session_registry_key(key)
+        canonical_pk = microvm_session_registry_partition_key(normalized[0], normalized[1])
+        sort_key = microvm_session_registry_sort_key(normalized[2])
         try:
             delete = getattr(self._table, "delete", None)
             if not callable(delete):
                 raise RuntimeError("table delete unavailable")
-            delete(
-                microvm_session_registry_partition_key(normalized[0], normalized[1]),
-                microvm_session_registry_sort_key(normalized[2]),
-            )
+            delete(canonical_pk, sort_key)
+            # Also drop the pre-M1 item so a deleted session cannot be resurrected by the dual-read fallback.
+            legacy_key = _legacy_registry_key(normalized[0], normalized[1], normalized[2])
+            if legacy_key is not None:
+                delete(legacy_key[0], legacy_key[1])
         except Exception as exc:
             if isinstance(exc, MicroVMSafeError):
                 raise exc
@@ -259,19 +404,33 @@ class TableTheoryMicroVMSessionRegistry:
 
     def list(self, input_: MicroVMSessionListInput | dict[str, Any]) -> list[MicroVMSessionRecord]:
         normalized = _normalize_session_list_input(input_)
+        canonical_pk = microvm_session_registry_partition_key(normalized.tenant_id, normalized.namespace)
         try:
             list_fn = getattr(self._table, "list", None) or getattr(self._table, "all", None)
             if not callable(list_fn):
                 raise RuntimeError("table list unavailable")
-            partition_key = microvm_session_registry_partition_key(normalized.tenant_id, normalized.namespace)
-            try:
-                items = list_fn(partition_key)
-            except TypeError:
-                items = list_fn(pk=partition_key)
-            out = [
-                microvm_session_from_registry_record(cast(MicroVMSessionRegistryRecord | dict[str, Any], item))
-                for item in list(cast(Any, items) or [])
-            ]
+            out: list[MicroVMSessionRecord] = []
+            seen: set[str] = set()
+            for item in _call_registry_list(list_fn, canonical_pk):
+                session = microvm_session_from_registry_record(
+                    cast(MicroVMSessionRegistryRecord | dict[str, Any], item)
+                )
+                seen.add(session.session_id)
+                out.append(session)
+            # Union in the pre-M1 partition so un-migrated items stay listable; the canonical item wins.
+            legacy_pk = _legacy_session_registry_partition_key(normalized.tenant_id, normalized.namespace)
+            if legacy_pk and legacy_pk != canonical_pk:
+                for item in _call_registry_list(list_fn, legacy_pk):
+                    record = _normalize_session_registry_record(item)
+                    if (
+                        record.tenant_id != normalized.tenant_id
+                        or record.namespace != normalized.namespace
+                        or record.session_id in seen
+                    ):
+                        continue
+                    session = _session_from_registry_record_for_read(item, allow_legacy_key=True)
+                    seen.add(session.session_id)
+                    out.append(session)
             out.sort(key=lambda record: record.session_id)
             return out
         except Exception as exc:

@@ -12,7 +12,7 @@ const (
 	kinesisJSONRecordInvalidMessage = "apptheory: kinesis json record invalid"
 	kinesisPutRecordsInvalidMessage = "apptheory: kinesis put-records result invalid"
 	kinesisMaxPartitionKeyBytes     = 256
-	kinesisMaxRecordDataBytes       = 1024 * 1024
+	kinesisMaxRecordBytes           = 1024 * 1024
 	kinesisMaxPutRecordsRecords     = 500
 	kinesisMaxExplicitHashKey       = "340282366920938463463374607431768211455"
 	kinesisMaxErrorCodeBytes        = 128
@@ -98,6 +98,9 @@ func NewKinesisJSONRecord(opts KinesisJSONRecordOptions) (KinesisJSONRecord, err
 	if err != nil {
 		return KinesisJSONRecord{}, err
 	}
+	if err := validateKinesisRecordSize(kinesisJSONRecordInvalidMessage, data, partitionKey); err != nil {
+		return KinesisJSONRecord{}, err
+	}
 
 	record := KinesisJSONRecord{
 		PartitionKey:    partitionKey,
@@ -168,15 +171,26 @@ func encodeKinesisJSONPayload(payload any) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, errors.New(kinesisJSONRecordInvalidMessage + ": empty json payload")
 	}
-	if len(data) > kinesisMaxRecordDataBytes {
-		return nil, fmt.Errorf(
-			"%s: json payload size %d exceeds %d",
-			kinesisJSONRecordInvalidMessage,
-			len(data),
-			kinesisMaxRecordDataBytes,
-		)
-	}
 	return append([]byte(nil), data...), nil
+}
+
+// validateKinesisRecordSize enforces the combined Kinesis record ceiling: the
+// encoded data bytes plus the UTF-8 partition-key bytes must not exceed the
+// stream's maximum record size (the default 1 MiB ceiling).
+func validateKinesisRecordSize(prefix string, data []byte, partitionKey string) error {
+	partitionKeyBytes := len([]byte(partitionKey))
+	combined := len(data) + partitionKeyBytes
+	if combined <= kinesisMaxRecordBytes {
+		return nil
+	}
+	return fmt.Errorf(
+		"%s: record size %d (data %d + partition key %d) exceeds %d",
+		prefix,
+		combined,
+		len(data),
+		partitionKeyBytes,
+		kinesisMaxRecordBytes,
+	)
 }
 
 func normalizeKinesisPartitionKey(value string) (string, error) {
@@ -248,14 +262,8 @@ func normalizeKinesisReportRecord(record KinesisJSONRecord, index int) (KinesisJ
 	if len(record.Data) == 0 {
 		return KinesisJSONRecord{}, fmt.Errorf("%s: empty record data at index %d", kinesisPutRecordsInvalidMessage, index)
 	}
-	if len(record.Data) > kinesisMaxRecordDataBytes {
-		return KinesisJSONRecord{}, fmt.Errorf(
-			"%s: record data size %d exceeds %d at index %d",
-			kinesisPutRecordsInvalidMessage,
-			len(record.Data),
-			kinesisMaxRecordDataBytes,
-			index,
-		)
+	if err := validateKinesisRecordSize(kinesisPutRecordsInvalidMessage, record.Data, partitionKey); err != nil {
+		return KinesisJSONRecord{}, fmt.Errorf("%s at index %d", err.Error(), index)
 	}
 	record.PartitionKey = partitionKey
 	record.ExplicitHashKey = explicitHashKey

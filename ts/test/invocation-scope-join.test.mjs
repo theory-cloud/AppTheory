@@ -37,6 +37,9 @@ const STREAMING_BODY_TIMEOUT_MS = 5000;
 
 const MIDDLEWARE_TIMEOUT_MS = 20;
 
+// Mirrors TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS in src/app.ts.
+const TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS = 250;
+
 function flush() {
   return new Promise((resolve) => {
     setImmediate(resolve);
@@ -301,7 +304,7 @@ test("http api v2 adapter clears its drain budget timer on every read", async ()
   }
 });
 
-test("timeout middleware runs the handler on the invoking task and never abandons it", async () => {
+test("timeout middleware returns at the deadline for an uncooperative handler", async () => {
   mock.timers.enable({ apis: ["setTimeout", "Date"] });
   try {
     const middleware = timeoutMiddleware({
@@ -313,21 +316,15 @@ test("timeout middleware runs the handler on the invoking task and never abandon
     const state = { settled: false, error: null };
 
     const served = middleware(ctx, async () => {
-      // Runs to completion on the invoking task after ignoring the abort
-      // signal: the middleware may only settle once this returns.
+      // Ignores the abort signal: the middleware must report the timeout at the
+      // deadline (plus its bounded join), not after this finishes.
       order.push("handler:start");
       await new Promise((resolve) => {
-        setTimeout(resolve, 150);
+        setTimeout(resolve, 10_000);
       });
       order.push("handler:finish");
       return okResponse("late");
     });
-
-    assert.deepEqual(
-      order,
-      ["handler:start"],
-      "the middleware did not start the handler on the invoking task",
-    );
 
     const settled = served.then(
       () => {
@@ -344,26 +341,29 @@ test("timeout middleware runs the handler on the invoking task and never abandon
     mock.timers.tick(MIDDLEWARE_TIMEOUT_MS);
     await flush();
 
+    assert.ok(
+      order.includes("handler:start"),
+      "the middleware did not start the handler",
+    );
     assert.equal(
       state.settled,
       false,
-      "the middleware abandoned a handler that was still running",
+      "the middleware settled before its bounded join grace elapsed",
     );
 
-    mock.timers.tick(150);
+    // Advance past the bounded join grace: the middleware settles with
+    // app.timeout even though the handler is still running.
+    mock.timers.tick(TIMEOUT_MIDDLEWARE_JOIN_GRACE_MS + 1);
     await flush();
     await settled;
 
     assert.equal(state.error?.code, "app.timeout");
-    assert.ok(
-      order.indexOf("handler:finish") < order.indexOf("middleware:settled"),
-      "the middleware settled before the handler it started finished",
+    assert.equal(
+      order.includes("handler:finish"),
+      false,
+      "the middleware waited for the handler it timed out",
     );
-    assert.deepEqual(order, [
-      "handler:start",
-      "handler:finish",
-      "middleware:settled",
-    ]);
+    assert.equal(order[order.length - 1], "middleware:settled");
   } finally {
     mock.timers.reset();
   }
