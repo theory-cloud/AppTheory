@@ -27,7 +27,14 @@ import {
   resourceIndicatorMatches,
   resourceMetadataURLFromMcpEndpoint,
 } from "../dist/index.js";
-import { DEFAULT_FETCH_TIMEOUT_SECONDS } from "../dist/oauth/jwks.js";
+import {
+  DEFAULT_FETCH_TIMEOUT_SECONDS,
+  DEFAULT_MAX_KEY_ENTRIES,
+  DEFAULT_MAX_KID_LENGTH,
+  DEFAULT_MAX_UNKNOWN_KID_FETCHES,
+  DEFAULT_MAX_WINDOW_ENTRIES,
+  DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS,
+} from "../dist/oauth/jwks.js";
 
 const FIXTURE_DIR = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -432,6 +439,79 @@ const JWKS_CASE_EXECUTORS = {
       assert.equal(env.state.fetches, 1, `${row.name}: jwks fetches`);
     });
   },
+
+  "oversized-kid-refused-without-a-fetch": async (row) => {
+    const fixture = loadFixture("jwks-validator.v1.json");
+    await withEnv({ jwks: () => ({ body: { keys: [KEY_A.jwk] } }) }, async (env) => {
+      const validate = await newJwksValidator(validatorOptions(env));
+      const oversizedKid = "k".repeat(fixture.defaults.max_kid_length + 1);
+      const token = signToken({
+        header: { alg: "RS256", kid: oversizedKid, typ: "JWT" },
+        payload: claims(env),
+        material: KEY_B,
+      });
+      await assertRejectedWithReason(validate, token, row.reason, row.name);
+      assert.equal(
+        env.state.fetches,
+        row.jwks_fetches,
+        `${row.name}: an oversized kid must be refused without a fetch`,
+      );
+    });
+  },
+
+  "distinct-attacker-kids-are-globally-bounded": async (row) => {
+    const fixture = loadFixture("jwks-validator.v1.json");
+    await withEnv({ jwks: () => ({ body: { keys: [KEY_A.jwk] } }) }, async (env) => {
+      const validate = await newJwksValidator(validatorOptions(env));
+      for (let index = 0; index < row.distinct_kids; index += 1) {
+        const token = signToken({
+          header: { alg: "RS256", kid: `attacker-kid-${index}`, typ: "JWT" },
+          payload: claims(env),
+          material: KEY_B,
+        });
+        await assertRejectedWithReason(
+          validate,
+          token,
+          row.reason,
+          `${row.name}#${index}`,
+        );
+      }
+      assert.equal(
+        env.state.fetches,
+        fixture.defaults.max_unknown_kid_fetches,
+        `${row.name}: the global budget must cap distinct-kid key-set fetches`,
+      );
+    });
+  },
+
+  "evicted-kid-window-allows-one-refetch": async (row) => {
+    await withEnv({ jwks: () => ({ body: { keys: [jwkWithKid(KEY_A, "published")] } }) }, async (env) => {
+      const validate = await newJwksValidator(
+        validatorOptions(env, { maxWindowEntries: row.max_window_entries }),
+      );
+      const tokenFor = (kid) =>
+        signToken({
+          header: { alg: "RS256", kid, typ: "JWT" },
+          payload: claims(env),
+          material: KEY_B,
+        });
+      // Resolving kid-b evicts kid-a's window, so kid-a is fetched again
+      // instead of being refused by its own cooldown.
+      for (const kid of ["kid-a", "kid-b", "kid-a"]) {
+        await assertRejectedWithReason(
+          validate,
+          tokenFor(kid),
+          row.reason,
+          `${row.name}:${kid}`,
+        );
+      }
+      assert.equal(
+        env.state.fetches,
+        row.jwks_fetches,
+        `${row.name}: evicting kid-a's window must allow one refetch round`,
+      );
+    });
+  },
 };
 
 const DISCOVERY_CASE_EXECUTORS = {
@@ -778,6 +858,67 @@ test("jwks-validator.v1 pins the shared fetch timeout default", () => {
     "the fixture default must equal the exported framework default",
   );
   assert.equal(DEFAULT_FETCH_TIMEOUT_SECONDS, 10);
+});
+
+test("jwks-validator.v1 pins the bounded per-validator state defaults", () => {
+  const fixture = loadFixture("jwks-validator.v1.json");
+  const defaults = fixture.defaults;
+  assert.equal(defaults.max_kid_length, DEFAULT_MAX_KID_LENGTH);
+  assert.equal(defaults.max_window_entries, DEFAULT_MAX_WINDOW_ENTRIES);
+  assert.equal(defaults.max_key_entries, DEFAULT_MAX_KEY_ENTRIES);
+  assert.equal(defaults.max_unknown_kid_fetches, DEFAULT_MAX_UNKNOWN_KID_FETCHES);
+  assert.equal(
+    defaults.unknown_kid_fetch_window_seconds,
+    DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS,
+  );
+  assert.equal(DEFAULT_MAX_KID_LENGTH, 256);
+  assert.equal(DEFAULT_MAX_WINDOW_ENTRIES, 1024);
+  assert.equal(DEFAULT_MAX_KEY_ENTRIES, 128);
+  assert.equal(DEFAULT_MAX_UNKNOWN_KID_FETCHES, 32);
+  assert.equal(DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS, 60);
+});
+
+test("the key cache is bounded and evicts the earliest-expiring entries", async () => {
+  const published = Array.from({ length: 16 }, (_, index) =>
+    jwkWithKid(KEY_A, `doc-key-${index}`),
+  );
+  await withEnv({ jwks: () => ({ body: { keys: published } }) }, async (env) => {
+    const validate = await newJwksValidator(
+      validatorOptions(env, { maxKeyEntries: 4 }),
+    );
+    const tokenFor = (kid) =>
+      signToken({
+        header: { alg: "RS256", kid, typ: "JWT" },
+        payload: claims(env),
+        material: KEY_A,
+      });
+
+    // The first document key was evicted by the bound, so its token stays
+    // unknown even after the refresh round that republished it.
+    await assertRejectedWithReason(
+      validate,
+      tokenFor("doc-key-0"),
+      "unknown_kid",
+      "evicted key",
+    );
+    assert.equal(
+      env.state.fetches,
+      2,
+      "an evicted key must be refetched rather than served from the cache",
+    );
+
+    // The last document key survived the bound and is served from the cache.
+    const cached = await validate(
+      routeContext("/acme/mcp"),
+      tokenFor("doc-key-15"),
+    );
+    assert.equal(cached.subject, "acme", "the retained key must validate");
+    assert.equal(
+      env.state.fetches,
+      2,
+      "a retained key must be served from the cache without a fetch",
+    );
+  });
 });
 
 test("the JWKS document cap is enforced while reading the body", async () => {

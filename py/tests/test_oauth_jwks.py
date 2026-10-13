@@ -72,6 +72,7 @@ _JWKS_REASON_CODES = {
     "issuer_mismatch": ERR_INVALID_BEARER_TOKEN,
     "audience_mismatch": ERR_BEARER_TOKEN_INVALID_AUDIENCE,
     "expired": ERR_BEARER_TOKEN_EXPIRED,
+    "unknown_kid": ERR_INVALID_BEARER_TOKEN,
 }
 
 _DISCOVERY_REASON_CODES = {
@@ -358,6 +359,19 @@ class JwksValidatorFixtureTests(unittest.TestCase):
             jwks.HTTP_TIMEOUT_SECONDS,
         )
 
+    def test_bounded_state_defaults_are_pinned(self) -> None:
+        defaults = self.fixture["defaults"]
+        self.assertEqual(defaults["max_kid_length"], jwks.DEFAULT_MAX_KID_LENGTH)
+        self.assertEqual(defaults["max_window_entries"], jwks.DEFAULT_MAX_WINDOW_ENTRIES)
+        self.assertEqual(defaults["max_key_entries"], jwks.DEFAULT_MAX_KEY_ENTRIES)
+        self.assertEqual(defaults["max_unknown_kid_fetches"], jwks.DEFAULT_MAX_UNKNOWN_KID_FETCHES)
+        self.assertEqual(defaults["unknown_kid_fetch_window_seconds"], jwks.DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS)
+        self.assertEqual(jwks.DEFAULT_MAX_KID_LENGTH, 256)
+        self.assertEqual(jwks.DEFAULT_MAX_WINDOW_ENTRIES, 1024)
+        self.assertEqual(jwks.DEFAULT_MAX_KEY_ENTRIES, 128)
+        self.assertEqual(jwks.DEFAULT_MAX_UNKNOWN_KID_FETCHES, 32)
+        self.assertEqual(jwks.DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS, 60)
+
     def test_fixture_cases(self) -> None:
         scenarios = {
             "alg-none-rejected": self._case_alg_none_rejected,
@@ -368,6 +382,9 @@ class JwksValidatorFixtureTests(unittest.TestCase):
             "issuer-mismatch-rejected": self._case_issuer_mismatch_rejected,
             "audience-mismatch-rejected": self._case_audience_mismatch_rejected,
             "expired-token-rejected": self._case_expired_token_rejected,
+            "oversized-kid-refused-without-a-fetch": self._case_oversized_kid_refused,
+            "distinct-attacker-kids-are-globally-bounded": self._case_distinct_attacker_kids_are_bounded,
+            "evicted-kid-window-allows-one-refetch": self._case_evicted_kid_window_allows_refetch,
         }
         cases = self.fixture["cases"]
         self.assertTrue(cases)
@@ -384,6 +401,8 @@ class JwksValidatorFixtureTests(unittest.TestCase):
                     self.assertEqual(outcome.fetch_count, case["jwks_fetches"])
                 if case.get("bounded_refresh"):
                     self.assertLessEqual(outcome.fetch_count, case["jwks_fetches"])
+                if case.get("bounded_global_fetch_budget"):
+                    self.assertEqual(outcome.fetch_count, self.fixture["defaults"]["max_unknown_kid_fetches"])
                 if "reason" in case:
                     expected_code = _JWKS_REASON_CODES.get(case["reason"])
                     self.assertIsNotNone(expected_code, f"unmapped fixture reason {case['reason']}")
@@ -464,6 +483,39 @@ class JwksValidatorFixtureTests(unittest.TestCase):
         transport.push_json(JWKS_URI, _jwks(_jwk("k1", key)))
         token = _jwt(key, "k1", _claims(expires_in=-120))
         accepted, code = _validate(validator, token)
+        return _Outcome(accepted=accepted, fetch_count=transport.fetch_count, error_code=code)
+
+    def _case_oversized_kid_refused(self) -> _Outcome:
+        key = _test_key("oversized-kid")
+        validator, transport, _clock = self._env()
+        transport.push_json(JWKS_URI, _jwks(_jwk("k1", key)))
+        oversized = "k" * (self.fixture["defaults"]["max_kid_length"] + 1)
+        token = _jwt(key, oversized, _claims())
+        accepted, code = _validate(validator, token)
+        return _Outcome(accepted=accepted, fetch_count=transport.fetch_count, error_code=code)
+
+    def _case_distinct_attacker_kids_are_bounded(self) -> _Outcome:
+        key = _test_key("attack-budget")
+        validator, transport, _clock = self._env()
+        transport.push_json(JWKS_URI, _jwks(_jwk("published", key)))
+        code = ""
+        accepted = False
+        for index in range(200):
+            accepted, code = _validate(validator, _jwt(key, f"attacker-kid-{index}", _claims()))
+            if accepted:
+                break
+        return _Outcome(accepted=accepted, fetch_count=transport.fetch_count, error_code=code)
+
+    def _case_evicted_kid_window_allows_refetch(self) -> _Outcome:
+        key = _test_key("evicted-window")
+        validator, transport, _clock = self._env(max_window_entries=1)
+        transport.push_json(JWKS_URI, _jwks(_jwk("published", key)))
+        code = ""
+        accepted = False
+        for kid in ("kid-a", "kid-b", "kid-a"):
+            accepted, code = _validate(validator, _jwt(key, kid, _claims()))
+            if accepted:
+                break
         return _Outcome(accepted=accepted, fetch_count=transport.fetch_count, error_code=code)
 
 
@@ -744,6 +796,54 @@ class JwksValidatorBehaviourTests(unittest.TestCase):
         transport.push_json(JWKS_URI, _jwks(_jwk("k1", key)))
         validator = _new_env(transport, clock, **options)
         return validator, transport, clock
+
+    def _raw_validator(self, transport: _CountingTransport, clock: _Clock, **options: Any) -> Any:
+        """Builds the module-level validator directly so its bounded state is
+        observable; the public factory only returns the bound ``validate``."""
+        options.setdefault("max_refresh_per_kid", 1)
+        return jwks._JWKSValidator(
+            JWKSValidatorOptions(
+                issuer=ISSUER,
+                jwks_uri=JWKS_URI,
+                http_get=transport,
+                now=clock,
+                cache_ttl_seconds=CACHE_TTL_SECONDS,
+                refresh_cooldown_seconds=REFRESH_COOLDOWN_SECONDS,
+                **options,
+            ),
+            ISSUER,
+            JWKS_URI,
+            "",
+            set(),
+        )
+
+    def test_key_cache_is_bounded_and_evicts_the_earliest_expiring_entries(self) -> None:
+        key = _test_key("cache-bound")
+        transport = _CountingTransport()
+        clock = _Clock(NOW)
+        transport.push_json(JWKS_URI, _jwks(*[_jwk(f"doc-key-{index}", key) for index in range(16)]))
+        validator = self._raw_validator(transport, clock, max_key_entries=4)
+
+        accepted, _code = _validate(validator.validate, _jwt(key, "doc-key-0", _claims()))
+        self.assertFalse(accepted, "the first document key must be evicted by the cache bound")
+        self.assertLessEqual(len(validator._keys), 4)
+        self.assertEqual(transport.fetch_count, 2)
+
+        accepted, _code = _validate(validator.validate, _jwt(key, "doc-key-15", _claims()))
+        self.assertTrue(accepted, "the last document key must survive the cache bound")
+        self.assertLessEqual(len(validator._keys), 4)
+        self.assertEqual(transport.fetch_count, 2, "the retained key must be served from the cache")
+
+    def test_kid_window_map_is_bounded(self) -> None:
+        key = _test_key("window-bound")
+        transport = _CountingTransport()
+        clock = _Clock(NOW)
+        transport.push_json(JWKS_URI, _jwks(_jwk("published", key)))
+        validator = self._raw_validator(transport, clock, max_window_entries=4)
+
+        for index in range(20):
+            _validate(validator.validate, _jwt(key, f"missing-kid-{index}", _claims()))
+        self.assertEqual(len(validator._windows), 4)
 
 
 class FetchTimeoutTests(unittest.TestCase):

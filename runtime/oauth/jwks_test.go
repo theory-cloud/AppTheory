@@ -65,6 +65,8 @@ func jwksFailureReason(err error) string {
 		return "audience_mismatch"
 	case errors.Is(err, errAZPNotAllowed):
 		return "azp_not_allowed"
+	case errors.Is(err, errUnknownKey):
+		return "unknown_kid"
 	case errors.Is(err, ErrBearerTokenExpired):
 		return "expired"
 	case errors.Is(err, errInsecureURL):
@@ -92,24 +94,33 @@ type jwksValidatorFixture struct {
 		Rejected []string `json:"rejected"`
 	} `json:"algorithm"`
 	Defaults struct {
-		UnknownKidRefresh   string `json:"unknown_kid_refresh"`
-		MaxRefreshPerKid    int    `json:"max_refresh_per_kid"`
-		FetchTimeoutSeconds int    `json:"fetch_timeout_seconds"`
-		Cache               string `json:"cache"`
-		IssuerCheck         string `json:"issuer_check"`
-		AudienceCheck       string `json:"audience_check"`
-		AZPCheck            string `json:"azp_check"`
+		UnknownKidRefresh            string `json:"unknown_kid_refresh"`
+		MaxRefreshPerKid             int    `json:"max_refresh_per_kid"`
+		FetchTimeoutSeconds          int    `json:"fetch_timeout_seconds"`
+		MaxKidLength                 int    `json:"max_kid_length"`
+		MaxWindowEntries             int    `json:"max_window_entries"`
+		MaxKeyEntries                int    `json:"max_key_entries"`
+		MaxUnknownKidFetches         int    `json:"max_unknown_kid_fetches"`
+		UnknownKidFetchWindowSeconds int    `json:"unknown_kid_fetch_window_seconds"`
+		Cache                        string `json:"cache"`
+		IssuerCheck                  string `json:"issuer_check"`
+		AudienceCheck                string `json:"audience_check"`
+		AZPCheck                     string `json:"azp_check"`
 	} `json:"defaults"`
 	Cases []jwksValidatorFixtureCase `json:"cases"`
 }
 
 type jwksValidatorFixtureCase struct {
-	Name           string `json:"name"`
-	Scenario       string `json:"scenario"`
-	Expect         string `json:"expect"`
-	Reason         string `json:"reason"`
-	JWKSFetches    int    `json:"jwks_fetches"`
-	BoundedRefresh bool   `json:"bounded_refresh"`
+	Name                     string `json:"name"`
+	Scenario                 string `json:"scenario"`
+	Expect                   string `json:"expect"`
+	Reason                   string `json:"reason"`
+	JWKSFetches              int    `json:"jwks_fetches"`
+	BoundedRefresh           bool   `json:"bounded_refresh"`
+	DistinctKids             int    `json:"distinct_kids"`
+	MaxWindowEntries         int    `json:"max_window_entries"`
+	BoundedGlobalFetchBudget bool   `json:"bounded_global_fetch_budget"`
+	BoundedWindowMap         bool   `json:"bounded_window_map"`
 }
 
 // jwksValidatorCaseRunners maps every fixture case name to its scenario. The
@@ -117,14 +128,17 @@ type jwksValidatorFixtureCase struct {
 // fails the test instead of silently shrinking coverage.
 func jwksValidatorCaseRunners() map[string]func(*testing.T, jwksValidatorFixtureCase) (*BearerTokenClaims, error) {
 	return map[string]func(*testing.T, jwksValidatorFixtureCase) (*BearerTokenClaims, error){
-		"alg-none-rejected":                runFixtureAlgNoneRejected,
-		"hs256-rejected":                   runFixtureHS256Rejected,
-		"unknown-kid-triggers-one-refresh": runFixtureUnknownKidTriggersOneRefresh,
-		"unknown-kid-refresh-is-bounded":   runFixtureUnknownKidRefreshIsBounded,
-		"expired-key-refresh":              runFixtureExpiredKeyRefresh,
-		"issuer-mismatch-rejected":         runFixtureIssuerMismatchRejected,
-		"audience-mismatch-rejected":       runFixtureAudienceMismatchRejected,
-		"expired-token-rejected":           runFixtureExpiredTokenRejected,
+		"alg-none-rejected":                           runFixtureAlgNoneRejected,
+		"hs256-rejected":                              runFixtureHS256Rejected,
+		"unknown-kid-triggers-one-refresh":            runFixtureUnknownKidTriggersOneRefresh,
+		"unknown-kid-refresh-is-bounded":              runFixtureUnknownKidRefreshIsBounded,
+		"expired-key-refresh":                         runFixtureExpiredKeyRefresh,
+		"issuer-mismatch-rejected":                    runFixtureIssuerMismatchRejected,
+		"audience-mismatch-rejected":                  runFixtureAudienceMismatchRejected,
+		"expired-token-rejected":                      runFixtureExpiredTokenRejected,
+		"oversized-kid-refused-without-a-fetch":       runFixtureOversizedKidRefusedWithoutAFetch,
+		"distinct-attacker-kids-are-globally-bounded": runFixtureDistinctAttackerKidsAreGloballyBounded,
+		"evicted-kid-window-allows-one-refetch":       runFixtureEvictedKidWindowAllowsOneRefetch,
 	}
 }
 
@@ -139,6 +153,16 @@ func TestJWKSValidatorFixture(t *testing.T) {
 		"the validator default must equal the fixture's defaults.max_refresh_per_kid")
 	require.Equal(t, int(defaultJWKSFetchTimeout/time.Second), fixture.Defaults.FetchTimeoutSeconds,
 		"the validator fetch bound must equal the fixture's defaults.fetch_timeout_seconds")
+	require.Equal(t, defaultJWKSMaxKidLength, fixture.Defaults.MaxKidLength,
+		"the kid-length cap must equal the fixture's defaults.max_kid_length")
+	require.Equal(t, defaultJWKSMaxWindowEntries, fixture.Defaults.MaxWindowEntries,
+		"the kid-window bound must equal the fixture's defaults.max_window_entries")
+	require.Equal(t, defaultJWKSMaxKeyEntries, fixture.Defaults.MaxKeyEntries,
+		"the key-cache bound must equal the fixture's defaults.max_key_entries")
+	require.Equal(t, defaultJWKSMaxUnknownKidFetches, fixture.Defaults.MaxUnknownKidFetches,
+		"the global fetch budget must equal the fixture's defaults.max_unknown_kid_fetches")
+	require.Equal(t, int(defaultJWKSUnknownKidFetchWindow/time.Second), fixture.Defaults.UnknownKidFetchWindowSeconds,
+		"the budget window must equal the fixture's defaults.unknown_kid_fetch_window_seconds")
 
 	runners := jwksValidatorCaseRunners()
 	require.Len(t, runners, len(fixture.Cases),
@@ -355,6 +379,89 @@ func runFixtureExpiredTokenRejected(t *testing.T, _ jwksValidatorFixtureCase) (*
 	})))
 	require.ErrorIs(t, expiredErr, ErrBearerTokenExpired)
 	return nil, expiredErr
+}
+
+// runFixtureOversizedKidRefusedWithoutAFetch pins the kid-length cap: an
+// oversized kid is refused without entering any map and without a fetch.
+func runFixtureOversizedKidRefusedWithoutAFetch(t *testing.T, fixtureCase jwksValidatorFixtureCase) (*BearerTokenClaims, error) {
+	t.Helper()
+	require.Equal(t, 0, fixtureCase.JWKSFetches, "the fixture pins this case as fetch-free")
+	key := newTestRSAKey(t)
+	server := newJWKSTestServer(t, testJWK(t, "key-1", key))
+	validator := newTestJWKSValidator(t, JWKSValidatorOptions{
+		Issuer:     jwksFixtureIssuer,
+		JWKSURI:    server.jwksURL(),
+		HTTPClient: server.client(),
+		Now:        frozenJWKSClock(jwksFixtureNow),
+	})
+
+	oversized := strings.Repeat("k", defaultJWKSMaxKidLength+1)
+	claims, err := validateTestToken(validator, signTestRS256Token(t, oversized, key, testJWKSClaims(nil)))
+	require.Equal(t, 0, server.fetchCount(), "an oversized kid must not trigger a key-set fetch")
+	return claims, err
+}
+
+// runFixtureDistinctAttackerKidsAreGloballyBounded pins the global unknown-kid
+// fetch budget: many distinct attacker kids cannot multiply key-set fetches.
+func runFixtureDistinctAttackerKidsAreGloballyBounded(t *testing.T, fixtureCase jwksValidatorFixtureCase) (*BearerTokenClaims, error) {
+	t.Helper()
+	require.True(t, fixtureCase.BoundedGlobalFetchBudget, "the fixture pins this case as globally bounded")
+	require.Greater(t, fixtureCase.DistinctKids, defaultJWKSMaxUnknownKidFetches,
+		"the case must present more kids than the budget allows")
+
+	key := newTestRSAKey(t)
+	server := newJWKSTestServer(t, testJWK(t, "key-1", key))
+	validator := newTestJWKSValidator(t, JWKSValidatorOptions{
+		Issuer:     jwksFixtureIssuer,
+		JWKSURI:    server.jwksURL(),
+		HTTPClient: server.client(),
+		Now:        frozenJWKSClock(jwksFixtureNow),
+	})
+
+	var lastErr error
+	for index := 0; index < fixtureCase.DistinctKids; index++ {
+		kid := fmt.Sprintf("attacker-%d", index)
+		_, lastErr = validateTestToken(validator, signTestRS256Token(t, kid, key, testJWKSClaims(nil)))
+		require.Error(t, lastErr, "an unpublished kid must be refused")
+	}
+	require.Equal(t, defaultJWKSMaxUnknownKidFetches, server.fetchCount(),
+		"the global budget caps the key-set fetches no matter how many kids arrive")
+	return nil, lastErr
+}
+
+// runFixtureEvictedKidWindowAllowsOneRefetch pins the kid-window map bound: at
+// capacity the oldest window is evicted, so a kid whose window was evicted is
+// fetched once more instead of being refused by its cooldown.
+func runFixtureEvictedKidWindowAllowsOneRefetch(t *testing.T, fixtureCase jwksValidatorFixtureCase) (*BearerTokenClaims, error) {
+	t.Helper()
+	require.True(t, fixtureCase.BoundedWindowMap, "the fixture pins this case as a bounded window map")
+	require.Positive(t, fixtureCase.MaxWindowEntries, "the case pins the window-map capacity")
+
+	keyA, keyB := newTestRSAKey(t), newTestRSAKey(t)
+	server := newJWKSTestServer(t, testJWK(t, "key-1", keyA))
+	validator := newTestJWKSValidator(t, JWKSValidatorOptions{
+		Issuer:           jwksFixtureIssuer,
+		JWKSURI:          server.jwksURL(),
+		HTTPClient:       server.client(),
+		Now:              frozenJWKSClock(jwksFixtureNow),
+		MaxWindowEntries: fixtureCase.MaxWindowEntries,
+	})
+
+	resolve := func(kid string, key *rsa.PrivateKey) error {
+		t.Helper()
+		_, err := validateTestToken(validator, signTestRS256Token(t, kid, key, testJWKSClaims(nil)))
+		require.Error(t, err, "an unpublished kid is refused")
+		return err
+	}
+
+	lastErr := resolve("kid-a", keyA)
+	require.Equal(t, 2, server.fetchCount(), "the first kid spends its own bounded refresh")
+	lastErr = resolve("kid-b", keyB)
+	require.Equal(t, 4, server.fetchCount(), "the second kid is resolved independently")
+	lastErr = resolve("kid-a", keyA)
+	require.Equal(t, fixtureCase.JWKSFetches, server.fetchCount(),
+		"the evicted kid window allows exactly one more bounded refresh")
+	return nil, lastErr
 }
 
 // ---------------------------------------------------------------------------
@@ -1072,6 +1179,69 @@ func TestJWKSValidatorHungFetchDoesNotStallOtherValidations(t *testing.T) {
 	}
 	require.EqualValues(t, 2, server.fetchCount(),
 		"a hung fetch is shared, not multiplied, by other validations")
+}
+
+// TestJWKSValidatorStateIsBounded proves the per-validator state stays inside
+// its bounds however many distinct attacker kids arrive.
+func TestJWKSValidatorStateIsBounded(t *testing.T) {
+	key := newTestRSAKey(t)
+	server := newJWKSTestServer(t, testJWK(t, "key-1", key))
+	state := newTestJWKSValidatorState(t, JWKSValidatorOptions{
+		Issuer:               jwksFixtureIssuer,
+		JWKSURI:              server.jwksURL(),
+		HTTPClient:           server.client(),
+		Now:                  frozenJWKSClock(jwksFixtureNow),
+		MaxWindowEntries:     8,
+		MaxUnknownKidFetches: 4,
+	})
+
+	for index := 0; index < 200; index++ {
+		kid := fmt.Sprintf("attacker-%d", index)
+		_, err := state.validate(nil, signTestRS256Token(t, kid, key, testJWKSClaims(nil)))
+		require.Error(t, err, "an unpublished kid is refused")
+	}
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	require.LessOrEqual(t, len(state.windows), 8, "the kid-window map stays inside its bound")
+	require.LessOrEqual(t, len(state.keys), defaultJWKSMaxKeyEntries, "the key cache stays inside its bound")
+}
+
+// TestJWKSValidatorKeyCacheEvictsTheEarliestInsertedKey proves the key cache is
+// bounded and evicts in document order, so its behaviour is identical in every
+// runtime.
+func TestJWKSValidatorKeyCacheEvictsTheEarliestInsertedKey(t *testing.T) {
+	keyA, keyB, keyC := newTestRSAKey(t), newTestRSAKey(t), newTestRSAKey(t)
+	server := newJWKSTestServer(t,
+		testJWK(t, "key-a", keyA), testJWK(t, "key-b", keyB), testJWK(t, "key-c", keyC))
+	state := newTestJWKSValidatorState(t, JWKSValidatorOptions{
+		Issuer:        jwksFixtureIssuer,
+		JWKSURI:       server.jwksURL(),
+		HTTPClient:    server.client(),
+		Now:           frozenJWKSClock(jwksFixtureNow),
+		MaxKeyEntries: 2,
+	})
+
+	// Only MaxKeyEntries keys survive one fetch, so the validator is exercised
+	// through a key that is still cached; evicting a key fails closed rather
+	// than serving a stale one.
+	require.NoError(t, validateTestTokenKey(t, state.validate, "key-c", keyC))
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	require.Len(t, state.keys, 2, "the key cache never exceeds MaxKeyEntries")
+	_, keptB := state.keys["key-b"]
+	_, keptC := state.keys["key-c"]
+	require.True(t, keptB && keptC, "the last two document keys survive")
+	_, keptA := state.keys["key-a"]
+	require.False(t, keptA, "the earliest-inserted key is evicted first")
+}
+
+func newTestJWKSValidatorState(t *testing.T, options JWKSValidatorOptions) *jwksValidator {
+	t.Helper()
+	state, err := newJWKSValidatorState(options)
+	require.NoError(t, err)
+	return state
 }
 
 // hungJWKSTestServer serves healthy key sets for the first healthyFetches

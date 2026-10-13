@@ -52,6 +52,14 @@ _BASE64URL_RE = re.compile(r"[A-Za-z0-9_-]*")
 _DEFAULT_CACHE_TTL_SECONDS = 900
 _DEFAULT_REFRESH_COOLDOWN_SECONDS = 30
 
+# Framework bounds on per-validator state, shared with the Go and TypeScript
+# validators. A non-positive option means the framework default.
+DEFAULT_MAX_KID_LENGTH = 256
+DEFAULT_MAX_WINDOW_ENTRIES = 1024
+DEFAULT_MAX_KEY_ENTRIES = 128
+DEFAULT_MAX_UNKNOWN_KID_FETCHES = 32
+DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS = 60.0
+
 
 def _positive_or_default(value: int | None, default: int) -> int:
     if value is None:
@@ -85,6 +93,13 @@ class JWKSValidatorOptions:
     cache_ttl_seconds: int = 900
     refresh_cooldown_seconds: int = 30
     max_refresh_per_kid: int = 1
+    # Bounds on per-validator state, shared with the Go and TypeScript
+    # validators. A non-positive value means the framework default.
+    max_kid_length: int = DEFAULT_MAX_KID_LENGTH
+    max_window_entries: int = DEFAULT_MAX_WINDOW_ENTRIES
+    max_key_entries: int = DEFAULT_MAX_KEY_ENTRIES
+    max_unknown_kid_fetches: int = DEFAULT_MAX_UNKNOWN_KID_FETCHES
+    unknown_kid_fetch_window_seconds: float = DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS
     allowed_azp: list[str] = field(default_factory=list)
     required_audience: str | Callable[[Context], str] | None = None
     required_scopes: list[str] | Callable[[Context], list[str]] | None = None
@@ -188,9 +203,22 @@ class _JWKSValidator:
             seconds=_positive_or_default(options.refresh_cooldown_seconds, _DEFAULT_REFRESH_COOLDOWN_SECONDS)
         )
         self._max_refresh_per_kid = _positive_or_default(options.max_refresh_per_kid, 1)
+        self._max_kid_length = _positive_or_default(options.max_kid_length, DEFAULT_MAX_KID_LENGTH)
+        self._max_window_entries = _positive_or_default(options.max_window_entries, DEFAULT_MAX_WINDOW_ENTRIES)
+        self._max_key_entries = _positive_or_default(options.max_key_entries, DEFAULT_MAX_KEY_ENTRIES)
+        self._max_unknown_kid_fetches = _positive_or_default(
+            options.max_unknown_kid_fetches, DEFAULT_MAX_UNKNOWN_KID_FETCHES
+        )
+        self._fetch_window = timedelta(
+            seconds=_positive_float_or_default(
+                options.unknown_kid_fetch_window_seconds, DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS
+            )
+        )
         self._jwks_uri = jwks_uri
         self._keys: dict[str, _CachedKey] = {}
         self._windows: dict[str, datetime] = {}
+        self._fetch_window_start: datetime | None = None
+        self._fetch_budget_used = 0
 
     def validate(self, ctx: Context, token: str) -> BearerTokenClaims:
         header, claims, signing_input, signature = _parse_compact_jws(token)
@@ -218,7 +246,27 @@ class _JWKSValidator:
             expires_at=expires_at,
         )
 
-    def _refresh(self, now: datetime) -> None:
+    def _take_fetch_budget(self, now: datetime) -> bool:
+        """Consumes one unit of the global unknown-kid fetch budget.
+
+        The window reopens once the configured window has elapsed since it
+        opened; an exhausted budget refuses the fetch so a stream of distinct
+        attacker-chosen kids cannot amplify token traffic into unbounded
+        key-set traffic.
+        """
+        if self._fetch_window_start is None or now - self._fetch_window_start >= self._fetch_window:
+            self._fetch_window_start = now
+            self._fetch_budget_used = 0
+        if self._fetch_budget_used >= self._max_unknown_kid_fetches:
+            return False
+        self._fetch_budget_used += 1
+        return True
+
+    def _refresh(self, now: datetime) -> bool:
+        # Returns False when the global unknown-kid fetch budget refuses the
+        # fetch; the caller then fails closed as an unknown key.
+        if not self._take_fetch_budget(now):
+            return False
         if not self._jwks_uri:
             self._jwks_uri = bootstrap_oidc_discovery(self._discovery_url, self._issuer, self._http_get)
         document = _http_get_document(self._http_get, self._jwks_uri)
@@ -234,26 +282,65 @@ class _JWKSValidator:
             if parsed is None:
                 continue
             kid, modulus, exponent = parsed
+            if len(kid) > self._max_kid_length:
+                continue
             if kid in refreshed:
                 continue
             refreshed[kid] = _CachedKey(n=modulus, e=exponent, expires_at=expires_at)
-        self._keys.update(refreshed)
+        for kid, entry in refreshed.items():
+            # Re-store at the tail so every refresh orders the cache by the
+            # document's key order, which keeps eviction deterministic.
+            self._keys.pop(kid, None)
+            self._keys[kid] = entry
+        self._prune_keys(now)
+        return True
+
+    def _prune_keys(self, now: datetime) -> None:
+        """Drops cache entries whose expiry has passed, then evicts the
+        earliest-expiring entries until the cache holds at most
+        ``max_key_entries`` entries."""
+        for kid in [key for key, entry in self._keys.items() if now >= entry.expires_at]:
+            del self._keys[kid]
+        while len(self._keys) > self._max_key_entries:
+            oldest = min(self._keys, key=lambda key: self._keys[key].expires_at)
+            del self._keys[oldest]
+
+    def _record_window(self, kid: str, now: datetime) -> None:
+        """Records a kid's resolution window.
+
+        Entries older than the refresh cooldown are dropped, and a full map
+        evicts its oldest entry first, so the map never holds more than
+        ``max_window_entries`` entries however many distinct attacker-chosen
+        kids arrive.
+        """
+        for existing in [key for key, started_at in self._windows.items() if now - started_at >= self._cooldown]:
+            del self._windows[existing]
+        if len(self._windows) >= self._max_window_entries:
+            oldest = min(self._windows, key=lambda key: self._windows[key])
+            del self._windows[oldest]
+        self._windows[kid] = now
 
     def _key_for(self, kid: str, now: datetime) -> _CachedKey | None:
-        # An unknown kid opens one resolution window per refresh cooldown: the
-        # first fetch populates the cache and up to max_refresh_per_kid further
-        # fetches absorb key publication lag. Every further unknown-kid token
-        # inside the cooldown is rejected without another fetch, so token
-        # traffic cannot be amplified into key-set traffic.
+        # A kid longer than max_kid_length is refused as unknown without
+        # touching any map and without a fetch. An unknown kid opens one
+        # resolution window per refresh cooldown: the first fetch populates the
+        # cache and up to max_refresh_per_kid further fetches absorb key
+        # publication lag. Every further unknown-kid token inside the cooldown
+        # is rejected without another fetch, and the global unknown-kid fetch
+        # budget caps the fetches distinct kids can trigger, so token traffic
+        # cannot be amplified into key-set traffic.
+        if len(kid) > self._max_kid_length:
+            return None
         key = self._cached_key(kid, now)
         if key is not None:
             return key
         started_at = self._windows.get(kid)
         if started_at is not None and now - started_at < self._cooldown:
             return None
-        self._windows[kid] = now
+        self._record_window(kid, now)
         for _ in range(self._max_refresh_per_kid + 1):
-            self._refresh(now)
+            if not self._refresh(now):
+                return None
             key = self._cached_key(kid, now)
             if key is not None:
                 return key

@@ -45,6 +45,20 @@ const (
 	// jwksRefreshWaitSlack is added to the fetch timeout to bound how long a
 	// validation waits on a refresh another validation already started.
 	jwksRefreshWaitSlack = 250 * time.Millisecond
+
+	// defaultJWKSMaxKidLength bounds a kid string before it may enter any cache,
+	// so attacker-chosen keys cannot grow the validator's state.
+	defaultJWKSMaxKidLength = 256
+	// defaultJWKSMaxWindowEntries bounds the per-kid refresh-window map.
+	defaultJWKSMaxWindowEntries = 1024
+	// defaultJWKSMaxKeyEntries bounds the cached signing keys.
+	defaultJWKSMaxKeyEntries = 128
+	// defaultJWKSMaxUnknownKidFetches is the global key-set fetch budget inside
+	// one budget window, on top of the per-kid refresh cooldown: distinct
+	// attacker kids cannot amplify token traffic into key-set traffic.
+	defaultJWKSMaxUnknownKidFetches = 32
+	// defaultJWKSUnknownKidFetchWindow is the rolling window of that budget.
+	defaultJWKSUnknownKidFetchWindow = 60 * time.Second
 )
 
 // Validator failure markers. Every one of them is wrapped together with an
@@ -115,6 +129,26 @@ type JWKSValidatorOptions struct {
 	// of 1.
 	MaxRefreshPerKid int
 
+	// MaxKidLength bounds a kid string before it may enter any cache. Zero means
+	// the default of 256.
+	MaxKidLength int
+
+	// MaxWindowEntries bounds the per-kid refresh-window map. Zero means the
+	// default of 1024.
+	MaxWindowEntries int
+
+	// MaxKeyEntries bounds the cached signing keys. Zero means the default of
+	// 128.
+	MaxKeyEntries int
+
+	// MaxUnknownKidFetches is the global key-set fetch budget inside one
+	// UnknownKidFetchWindow. Zero means the default of 32.
+	MaxUnknownKidFetches int
+
+	// UnknownKidFetchWindow is the rolling window of MaxUnknownKidFetches. Zero
+	// means the default of 60s.
+	UnknownKidFetchWindow time.Duration
+
 	// AllowedAZP is an exact-match allow-list for the token's azp claim, falling
 	// back to client_id. An empty list disables the check.
 	AllowedAZP []string
@@ -138,6 +172,17 @@ type JWKSValidatorOptions struct {
 // scope mismatch, or a disallowed azp. It never returns claims for a token it
 // could not fully verify, and it never logs the token or key material.
 func NewJWKSValidator(opts JWKSValidatorOptions) (BearerTokenClaimsValidator, error) {
+	validator, err := newJWKSValidatorState(opts)
+	if err != nil {
+		return nil, err
+	}
+	return validator.validate, nil
+}
+
+// newJWKSValidatorState builds the stateful validator behind NewJWKSValidator.
+// It is separate so the package's own tests can assert the bounds of the state
+// the returned closure keeps.
+func newJWKSValidatorState(opts JWKSValidatorOptions) (*jwksValidator, error) {
 	issuer, ok := CanonicalizeIssuerURL(opts.Issuer)
 	if !ok {
 		return nil, fmt.Errorf("%w: jwks validator issuer must be an absolute URL", ErrInvalidURL)
@@ -188,24 +233,44 @@ func NewJWKSValidator(opts JWKSValidatorOptions) (BearerTokenClaimsValidator, er
 	if maxRefreshPerKid <= 0 {
 		maxRefreshPerKid = defaultMaxRefreshPerKid
 	}
+	maxKidLength := positiveIntOr(opts.MaxKidLength, defaultJWKSMaxKidLength)
+	maxWindowEntries := positiveIntOr(opts.MaxWindowEntries, defaultJWKSMaxWindowEntries)
+	maxKeyEntries := positiveIntOr(opts.MaxKeyEntries, defaultJWKSMaxKeyEntries)
+	maxUnknownKidFetches := positiveIntOr(opts.MaxUnknownKidFetches, defaultJWKSMaxUnknownKidFetches)
+	unknownKidFetchWindow := opts.UnknownKidFetchWindow
+	if unknownKidFetchWindow <= 0 {
+		unknownKidFetchWindow = defaultJWKSUnknownKidFetchWindow
+	}
 
 	validator := &jwksValidator{
-		issuer:           issuer,
-		jwksURI:          jwksURI,
-		client:           client,
-		fetchTimeout:     fetchTimeout,
-		now:              now,
-		clockSkew:        opts.ClockSkew,
-		cacheTTL:         cacheTTL,
-		refreshCooldown:  refreshCooldown,
-		maxRefreshPerKid: maxRefreshPerKid,
-		allowedAZP:       allowedAZPSet(opts.AllowedAZP),
-		requiredAudience: opts.RequiredAudience,
-		requiredScopes:   opts.RequiredScopes,
-		keys:             make(map[string]jwksCachedKey),
-		windows:          make(map[string]time.Time),
+		issuer:                issuer,
+		jwksURI:               jwksURI,
+		client:                client,
+		fetchTimeout:          fetchTimeout,
+		now:                   now,
+		clockSkew:             opts.ClockSkew,
+		cacheTTL:              cacheTTL,
+		refreshCooldown:       refreshCooldown,
+		maxRefreshPerKid:      maxRefreshPerKid,
+		maxKidLength:          maxKidLength,
+		maxWindowEntries:      maxWindowEntries,
+		maxKeyEntries:         maxKeyEntries,
+		maxUnknownKidFetches:  maxUnknownKidFetches,
+		unknownKidFetchWindow: unknownKidFetchWindow,
+		allowedAZP:            allowedAZPSet(opts.AllowedAZP),
+		requiredAudience:      opts.RequiredAudience,
+		requiredScopes:        opts.RequiredScopes,
+		keys:                  make(map[string]jwksCachedKey),
+		windows:               make(map[string]jwksKidWindow),
 	}
-	return validator.validate, nil
+	return validator, nil
+}
+
+func positiveIntOr(value, fallback int) int {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }
 
 // BootstrapOIDCDiscovery fetches an OIDC discovery document, verifies that the
@@ -251,32 +316,52 @@ func BootstrapOIDCDiscovery(ctx context.Context, discoveryURL string, issuer str
 	return normalized, nil
 }
 
-// jwksCachedKey is one bounded, expiry-driven cache entry.
+// jwksCachedKey is one bounded, expiry-driven cache entry. seq records the
+// insertion order so eviction is deterministic under equal expiry times.
 type jwksCachedKey struct {
 	key       *rsa.PublicKey
 	expiresAt time.Time
+	seq       uint64
+}
+
+// jwksKidWindow is one kid's refresh window. seq records the insertion order so
+// evicting the oldest window is deterministic across runtimes.
+type jwksKidWindow struct {
+	startedAt time.Time
+	seq       uint64
 }
 
 // jwksValidator is the stateful validator behind NewJWKSValidator. The mutex
 // covers key resolution only, so the fetch that populates the cache and the
 // cooldown bookkeeping that bounds it observe one consistent state per token.
 type jwksValidator struct {
-	issuer           string
-	jwksURI          string
-	client           *http.Client
-	fetchTimeout     time.Duration
-	now              func() time.Time
-	clockSkew        time.Duration
-	cacheTTL         time.Duration
-	refreshCooldown  time.Duration
-	maxRefreshPerKid int
-	allowedAZP       map[string]struct{}
-	requiredAudience func(*apptheory.Context) (string, error)
-	requiredScopes   func(*apptheory.Context) ([]string, error)
+	issuer                string
+	jwksURI               string
+	client                *http.Client
+	fetchTimeout          time.Duration
+	now                   func() time.Time
+	clockSkew             time.Duration
+	cacheTTL              time.Duration
+	refreshCooldown       time.Duration
+	maxRefreshPerKid      int
+	maxKidLength          int
+	maxWindowEntries      int
+	maxKeyEntries         int
+	maxUnknownKidFetches  int
+	unknownKidFetchWindow time.Duration
+	allowedAZP            map[string]struct{}
+	requiredAudience      func(*apptheory.Context) (string, error)
+	requiredScopes        func(*apptheory.Context) ([]string, error)
 
 	mu      sync.Mutex
 	keys    map[string]jwksCachedKey
-	windows map[string]time.Time
+	windows map[string]jwksKidWindow
+	// nextSeq orders cache and window insertions for deterministic eviction.
+	nextSeq uint64
+	// budgetWindowStart and budgetUsed implement the global unknown-kid fetch
+	// budget: at most maxUnknownKidFetches key-set fetches per window.
+	budgetWindowStart time.Time
+	budgetUsed        int
 	// flight is the one refresh fetch currently in progress, if any. Validations
 	// that need a fetch join it instead of starting their own, so a hung upstream
 	// costs one connection and no goroutine holds mu while waiting on the network.
@@ -437,19 +522,25 @@ func (v *jwksValidator) checkAZP(claims jwksClaims) error {
 // into key-set traffic. No lock is held across the network: a hung upstream
 // costs one connection and one bounded wait.
 func (v *jwksValidator) keyForKid(ctx context.Context, kid string) (*rsa.PublicKey, error) {
+	// An oversized kid never reaches a map: it is refused as an unknown key
+	// without a fetch, so a hostile kid cannot grow the validator's state.
+	if len(kid) > v.maxKidLength {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidBearerToken, errUnknownKey)
+	}
+
 	v.mu.Lock()
 	now := v.now()
 	if key, ok := v.cachedKey(kid, now); ok {
 		v.mu.Unlock()
 		return key, nil
 	}
-	if startedAt, ok := v.windows[kid]; ok && now.Sub(startedAt) < v.refreshCooldown {
+	if window, ok := v.windows[kid]; ok && now.Sub(window.startedAt) < v.refreshCooldown {
 		v.mu.Unlock()
 		return nil, fmt.Errorf("%w: %w", ErrInvalidBearerToken, errUnknownKey)
 	}
 	// The window is recorded before the fetch, so a failed or hung fetch cannot
 	// be re-triggered by the same kid inside the cooldown.
-	v.windows[kid] = now
+	v.recordWindowLocked(kid, now)
 	v.mu.Unlock()
 
 	for attempt := 0; attempt <= v.maxRefreshPerKid; attempt++ {
@@ -485,6 +576,10 @@ func (v *jwksValidator) refresh(ctx context.Context, now time.Time) error {
 		v.mu.Unlock()
 		return v.awaitFlight(ctx, flight)
 	}
+	if !v.consumeFetchBudgetLocked(now) {
+		v.mu.Unlock()
+		return fmt.Errorf("%w: %w", ErrInvalidBearerToken, errUnknownKey)
+	}
 	flight := &jwksRefreshFlight{done: make(chan struct{})}
 	v.flight = flight
 	v.mu.Unlock()
@@ -499,6 +594,55 @@ func (v *jwksValidator) refresh(ctx context.Context, now time.Time) error {
 	return err
 }
 
+// consumeFetchBudgetLocked reports whether one more key-set fetch is inside the
+// global unknown-kid budget. Every refresh is triggered by a key-resolution
+// miss, so the budget bounds the validator as a whole rather than one kid.
+func (v *jwksValidator) consumeFetchBudgetLocked(now time.Time) bool {
+	if v.budgetWindowStart.IsZero() || now.Before(v.budgetWindowStart) ||
+		now.Sub(v.budgetWindowStart) >= v.unknownKidFetchWindow {
+		v.budgetWindowStart = now
+		v.budgetUsed = 0
+	}
+	if v.budgetUsed >= v.maxUnknownKidFetches {
+		return false
+	}
+	v.budgetUsed++
+	return true
+}
+
+// recordWindowLocked records one kid's refresh window, keeping the window map
+// bounded: expired windows are dropped and, at capacity, the oldest window is
+// evicted so distinct attacker kids cannot grow it without bound.
+func (v *jwksValidator) recordWindowLocked(kid string, now time.Time) {
+	v.nextSeq++
+	window := jwksKidWindow{startedAt: now, seq: v.nextSeq}
+	if _, exists := v.windows[kid]; !exists && len(v.windows) >= v.maxWindowEntries {
+		v.pruneWindowsLocked(now)
+	}
+	v.windows[kid] = window
+}
+
+func (v *jwksValidator) pruneWindowsLocked(now time.Time) {
+	oldest := ""
+	var oldestAt time.Time
+	var oldestSeq uint64
+	found := false
+	for existing, window := range v.windows {
+		if now.Sub(window.startedAt) >= v.refreshCooldown {
+			delete(v.windows, existing)
+			continue
+		}
+		if !found || window.startedAt.Before(oldestAt) ||
+			(window.startedAt.Equal(oldestAt) && window.seq < oldestSeq) {
+			oldest, oldestAt, oldestSeq, found = existing, window.startedAt, window.seq, true
+		}
+	}
+	// Drop the oldest surviving window so the map stays inside its bound.
+	if found && len(v.windows) >= v.maxWindowEntries {
+		delete(v.windows, oldest)
+	}
+}
+
 // fetchKeys fetches and parses one key set and stores its keys.
 func (v *jwksValidator) fetchKeys(ctx context.Context, now time.Time) error {
 	body, err := fetchBoundedDocument(ctx, v.client, v.jwksURI)
@@ -511,10 +655,42 @@ func (v *jwksValidator) fetchKeys(ctx context.Context, now time.Time) error {
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	for kid, key := range keys {
-		v.keys[kid] = jwksCachedKey{key: key, expiresAt: now.Add(v.cacheTTL)}
+	for _, parsed := range keys {
+		// An oversized document kid never enters the cache.
+		if len(parsed.kid) > v.maxKidLength {
+			continue
+		}
+		v.nextSeq++
+		v.keys[parsed.kid] = jwksCachedKey{key: parsed.key, expiresAt: now.Add(v.cacheTTL), seq: v.nextSeq}
 	}
+	v.evictKeysLocked(now)
 	return nil
+}
+
+// evictKeysLocked drops expired keys and, while the cache is over its bound,
+// the entry that expires soonest (insertion order breaks ties).
+func (v *jwksValidator) evictKeysLocked(now time.Time) {
+	for kid, entry := range v.keys {
+		if !now.Before(entry.expiresAt) {
+			delete(v.keys, kid)
+		}
+	}
+	for len(v.keys) > v.maxKeyEntries {
+		oldest := ""
+		var oldestAt time.Time
+		var oldestSeq uint64
+		found := false
+		for kid, entry := range v.keys {
+			if !found || entry.expiresAt.Before(oldestAt) ||
+				(entry.expiresAt.Equal(oldestAt) && entry.seq < oldestSeq) {
+				oldest, oldestAt, oldestSeq, found = kid, entry.expiresAt, entry.seq, true
+			}
+		}
+		if !found {
+			return
+		}
+		delete(v.keys, oldest)
+	}
 }
 
 // awaitFlight waits for another validation's fetch without holding any lock.
@@ -715,7 +891,14 @@ type jwk struct {
 	E   string `json:"e"`
 }
 
-func parseJWKSKeys(body []byte) (map[string]*rsa.PublicKey, error) {
+// jwksParsedKey is one usable signing key, kept in document order so cache
+// insertion order (and therefore eviction order) is identical in every runtime.
+type jwksParsedKey struct {
+	kid string
+	key *rsa.PublicKey
+}
+
+func parseJWKSKeys(body []byte) ([]jwksParsedKey, error) {
 	var document struct {
 		Keys []jwk `json:"keys"`
 	}
@@ -729,17 +912,20 @@ func parseJWKSKeys(body []byte) (map[string]*rsa.PublicKey, error) {
 		return nil, errTooManyKeys
 	}
 
-	keys := make(map[string]*rsa.PublicKey, len(document.Keys))
+	keys := make([]jwksParsedKey, 0, len(document.Keys))
+	seen := make(map[string]struct{}, len(document.Keys))
 	for _, entry := range document.Keys {
 		kid := strings.TrimSpace(entry.Kid)
 		if kid == "" {
 			continue
 		}
-		if _, exists := keys[kid]; exists {
+		// First occurrence wins, matching the other runtimes.
+		if _, exists := seen[kid]; exists {
 			continue
 		}
 		if key, ok := rsaPublicKeyFromJWK(entry); ok {
-			keys[kid] = key
+			seen[kid] = struct{}{}
+			keys = append(keys, jwksParsedKey{kid: kid, key: key})
 		}
 	}
 	return keys, nil

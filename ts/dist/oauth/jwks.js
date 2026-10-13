@@ -19,6 +19,16 @@ const DEFAULT_REFRESH_COOLDOWN_SECONDS = 30;
 const DEFAULT_MAX_REFRESH_PER_KID = 1;
 /** Framework default bound on one discovery or JWKS fetch, shared with Go and Python. */
 export const DEFAULT_FETCH_TIMEOUT_SECONDS = 10;
+/** Framework default bound on a token `kid`'s length, shared with Go and Python. */
+export const DEFAULT_MAX_KID_LENGTH = 256;
+/** Framework default bound on a validator's distinct `kid` resolution windows. */
+export const DEFAULT_MAX_WINDOW_ENTRIES = 1024;
+/** Framework default bound on a validator's cached signing keys. */
+export const DEFAULT_MAX_KEY_ENTRIES = 128;
+/** Framework default bound on key-set fetches inside one unknown-kid fetch window. */
+export const DEFAULT_MAX_UNKNOWN_KID_FETCHES = 32;
+/** Framework default length, in seconds, of the unknown-kid fetch budget window. */
+export const DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS = 60;
 /**
  * Fetches the OIDC discovery document at `discoveryUrl`, verifies that its
  * `issuer` equals `issuer`, and returns the document's `jwks_uri`. The
@@ -48,7 +58,8 @@ export async function bootstrapOidcDiscovery(discoveryUrl, issuer, fetchImpl, ti
  * Builds a fail-closed RS256/JWKS claims validator.
  *
  * The returned validator resolves signing keys from a bounded `kid` cache that
- * `refreshCooldownSeconds` rate-limits, verifies RSASSA-PKCS1-v1_5/SHA-256
+ * `refreshCooldownSeconds` rate-limits and a global unknown-`kid` fetch budget
+ * caps, verifies RSASSA-PKCS1-v1_5/SHA-256
  * signatures, and refuses the request on every doubt: a malformed token, a
  * non-RS256 algorithm, a missing `kid`, an unknown or inconsistent key, a
  * signature mismatch, an issuer mismatch, a missing or expired `exp`, a `nbf`
@@ -72,6 +83,11 @@ export async function newJwksValidator(options) {
     const cacheTtlSeconds = positiveSeconds(options.cacheTtlSeconds, DEFAULT_CACHE_TTL_SECONDS);
     const refreshCooldownSeconds = positiveSeconds(options.refreshCooldownSeconds, DEFAULT_REFRESH_COOLDOWN_SECONDS);
     const maxRefreshPerKid = positiveInteger(options.maxRefreshPerKid, DEFAULT_MAX_REFRESH_PER_KID);
+    const maxKidLength = positiveInteger(options.maxKidLength, DEFAULT_MAX_KID_LENGTH);
+    const maxWindowEntries = positiveInteger(options.maxWindowEntries, DEFAULT_MAX_WINDOW_ENTRIES);
+    const maxKeyEntries = positiveInteger(options.maxKeyEntries, DEFAULT_MAX_KEY_ENTRIES);
+    const maxUnknownKidFetches = positiveInteger(options.maxUnknownKidFetches, DEFAULT_MAX_UNKNOWN_KID_FETCHES);
+    const unknownKidFetchWindowMs = positiveSeconds(options.unknownKidFetchWindowSeconds, DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS) * 1000;
     const cacheTtlMs = cacheTtlSeconds * 1000;
     const refreshCooldownMs = refreshCooldownSeconds * 1000;
     const azpAllowList = new Set(normalizeClaimValues(options.allowedAzp ?? []));
@@ -91,24 +107,122 @@ export async function newJwksValidator(options) {
     }
     const keys = new Map();
     const windows = new Map();
+    let fetchBudgetWindowStart = Number.NEGATIVE_INFINITY;
+    let fetchBudgetUsed = 0;
+    let inFlightRefresh = null;
+    /**
+     * Consumes one unit of the global unknown-`kid` fetch budget. The window
+     * resets once `unknownKidFetchWindowMs` has elapsed since it opened; when the
+     * budget is exhausted the caller must fail closed without fetching, so a
+     * stream of distinct attacker-chosen kids cannot amplify token traffic into
+     * unbounded key-set traffic.
+     */
+    const takeFetchBudget = (at) => {
+        if (at - fetchBudgetWindowStart >= unknownKidFetchWindowMs) {
+            fetchBudgetWindowStart = at;
+            fetchBudgetUsed = 0;
+        }
+        if (fetchBudgetUsed >= maxUnknownKidFetches)
+            return false;
+        fetchBudgetUsed += 1;
+        return true;
+    };
+    /**
+     * Drops cache entries whose expiry has passed, then evicts the
+     * earliest-expiring entry until the cache holds at most `maxKeyEntries`
+     * entries, so the cache stays bounded however many keys are published.
+     */
+    const pruneKeys = (at) => {
+        for (const [kid, entry] of keys) {
+            if (at >= entry.expiresAt)
+                keys.delete(kid);
+        }
+        while (keys.size > maxKeyEntries) {
+            let victim;
+            let earliest = Number.POSITIVE_INFINITY;
+            for (const [kid, entry] of keys) {
+                if (entry.expiresAt < earliest) {
+                    earliest = entry.expiresAt;
+                    victim = kid;
+                }
+            }
+            if (victim === undefined)
+                break;
+            keys.delete(victim);
+        }
+    };
+    /**
+     * Fetches and stores the key set once, returning false when the global
+     * unknown-`kid` fetch budget refuses the fetch. A caller that joins an
+     * already-started refresh consumes no additional budget unit. Document entries
+     * with an oversized `kid` are never cached.
+     */
     const refresh = async (at) => {
-        const document = await fetchDocument(jwksUri, fetchImpl, "jwks", fetchTimeoutMs);
-        const published = document["keys"];
-        if (!Array.isArray(published) || published.length === 0) {
-            throw new Error(`${ERROR_PREFIX} document_invalid: jwks document must carry a non-empty keys array`);
+        if (inFlightRefresh) {
+            await inFlightRefresh;
+            return true;
         }
-        if (published.length > MAX_KEYS) {
-            throw new Error(`${ERROR_PREFIX} too_many_keys: jwks document exceeds the maximum key count`);
+        if (!takeFetchBudget(at))
+            return false;
+        const pending = (async () => {
+            const document = await fetchDocument(jwksUri, fetchImpl, "jwks", fetchTimeoutMs);
+            const published = document["keys"];
+            if (!Array.isArray(published) || published.length === 0) {
+                throw new Error(`${ERROR_PREFIX} document_invalid: jwks document must carry a non-empty keys array`);
+            }
+            if (published.length > MAX_KEYS) {
+                throw new Error(`${ERROR_PREFIX} too_many_keys: jwks document exceeds the maximum key count`);
+            }
+            const imported = new Map();
+            for (const raw of published) {
+                const entry = importSigningKey(raw);
+                if (entry &&
+                    entry.kid.length <= maxKidLength &&
+                    !imported.has(entry.kid)) {
+                    imported.set(entry.kid, entry.key);
+                }
+            }
+            for (const [kid, key] of imported) {
+                // Re-store at the tail so every refresh orders the cache by the
+                // document's key order, which keeps eviction deterministic.
+                keys.delete(kid);
+                keys.set(kid, { key, expiresAt: at + cacheTtlMs });
+            }
+            pruneKeys(at);
+        })();
+        inFlightRefresh = pending;
+        try {
+            await pending;
         }
-        const imported = new Map();
-        for (const raw of published) {
-            const entry = importSigningKey(raw);
-            if (entry && !imported.has(entry.kid))
-                imported.set(entry.kid, entry.key);
+        finally {
+            inFlightRefresh = null;
         }
-        for (const [kid, key] of imported) {
-            keys.set(kid, { key, expiresAt: at + cacheTtlMs });
+        return true;
+    };
+    /**
+     * Records the resolution window for `kid`. Entries older than the refresh
+     * cooldown are dropped, and a full map evicts its oldest entry first, so the
+     * map never holds more than `maxWindowEntries` entries however many distinct
+     * attacker-chosen kids arrive.
+     */
+    const recordWindow = (kid, at) => {
+        for (const [existing, startedAt] of windows) {
+            if (at - startedAt >= refreshCooldownMs)
+                windows.delete(existing);
         }
+        if (windows.size >= maxWindowEntries) {
+            let victim;
+            let oldest = Number.POSITIVE_INFINITY;
+            for (const [existing, startedAt] of windows) {
+                if (startedAt < oldest) {
+                    oldest = startedAt;
+                    victim = existing;
+                }
+            }
+            if (victim !== undefined)
+                windows.delete(victim);
+        }
+        windows.set(kid, at);
     };
     const cachedKey = (kid, at) => {
         const entry = keys.get(kid);
@@ -117,14 +231,18 @@ export async function newJwksValidator(options) {
         return entry.key;
     };
     /**
-     * Resolves a signing key for `kid` from the bounded cache. An unknown `kid`
-     * opens one resolution window per `refreshCooldownSeconds`: the first fetch
-     * populates the cache and up to `maxRefreshPerKid` further fetches absorb key
-     * publication lag. Every further unknown-`kid` token inside the cooldown is
-     * rejected without another fetch, so an attacker cannot amplify token traffic
-     * into key-set traffic.
+     * Resolves a signing key for `kid` from the bounded cache. A `kid` longer than
+     * `maxKidLength` is refused as unknown without touching any map and without a
+     * fetch. An unknown `kid` opens one resolution window per
+     * `refreshCooldownSeconds`: the first fetch populates the cache and up to
+     * `maxRefreshPerKid` further fetches absorb key publication lag. Every further
+     * unknown-`kid` token inside the cooldown is rejected without another fetch,
+     * and the global unknown-`kid` fetch budget caps the fetches distinct kids can
+     * trigger, so an attacker cannot amplify token traffic into key-set traffic.
      */
     const keyForKid = async (kid) => {
+        if (kid.length > maxKidLength)
+            return null;
         const at = now().getTime();
         const cached = cachedKey(kid, at);
         if (cached)
@@ -133,9 +251,10 @@ export async function newJwksValidator(options) {
         if (startedAt !== undefined && at - startedAt < refreshCooldownMs) {
             return null;
         }
-        windows.set(kid, at);
+        recordWindow(kid, at);
         for (let attempt = 0; attempt <= maxRefreshPerKid; attempt += 1) {
-            await refresh(at);
+            if (!(await refresh(at)))
+                return null;
             const found = cachedKey(kid, at);
             if (found)
                 return found;

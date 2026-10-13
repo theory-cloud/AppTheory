@@ -2,6 +2,16 @@ import type { Context } from "../context.js";
 import { type BearerTokenClaimsValidator } from "./index.js";
 /** Framework default bound on one discovery or JWKS fetch, shared with Go and Python. */
 export declare const DEFAULT_FETCH_TIMEOUT_SECONDS = 10;
+/** Framework default bound on a token `kid`'s length, shared with Go and Python. */
+export declare const DEFAULT_MAX_KID_LENGTH = 256;
+/** Framework default bound on a validator's distinct `kid` resolution windows. */
+export declare const DEFAULT_MAX_WINDOW_ENTRIES = 1024;
+/** Framework default bound on a validator's cached signing keys. */
+export declare const DEFAULT_MAX_KEY_ENTRIES = 128;
+/** Framework default bound on key-set fetches inside one unknown-kid fetch window. */
+export declare const DEFAULT_MAX_UNKNOWN_KID_FETCHES = 32;
+/** Framework default length, in seconds, of the unknown-kid fetch budget window. */
+export declare const DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS = 60;
 export interface JWKSValidatorOptions {
     /**
      * Required. The expected token issuer; every accepted token's `iss` must
@@ -42,6 +52,35 @@ export interface JWKSValidatorOptions {
      * fetch that populates the cache. Zero means the default of 1.
      */
     maxRefreshPerKid?: number;
+    /**
+     * Bounds the length of a token `kid` this validator resolves. A longer `kid`
+     * is refused as unknown without a fetch or any state change, and document
+     * entries with a longer `kid` are not cached. Zero or absent means the
+     * framework default of 256.
+     */
+    maxKidLength?: number;
+    /**
+     * Bounds the distinct `kid` resolution windows held by one validator; a full
+     * map evicts its oldest window first. Zero or absent means the framework
+     * default of 1024.
+     */
+    maxWindowEntries?: number;
+    /**
+     * Bounds the signing keys cached by one validator; the cache evicts the
+     * earliest-expiring entry first. Zero or absent means the framework default
+     * of 128.
+     */
+    maxKeyEntries?: number;
+    /**
+     * Bounds the key-set fetches triggered by unknown-`kid` resolution inside one
+     * unknown-kid fetch window. Zero or absent means the framework default of 32.
+     */
+    maxUnknownKidFetches?: number;
+    /**
+     * Length in seconds of the global unknown-`kid` fetch budget window. Zero or
+     * absent means the framework default of 60.
+     */
+    unknownKidFetchWindowSeconds?: number;
     /** Exact-match `azp`/`client_id` allow-list; empty disables the check. */
     allowedAzp?: string[];
     /**
@@ -68,7 +107,8 @@ export declare function bootstrapOidcDiscovery(discoveryUrl: string, issuer: str
  * Builds a fail-closed RS256/JWKS claims validator.
  *
  * The returned validator resolves signing keys from a bounded `kid` cache that
- * `refreshCooldownSeconds` rate-limits, verifies RSASSA-PKCS1-v1_5/SHA-256
+ * `refreshCooldownSeconds` rate-limits and a global unknown-`kid` fetch budget
+ * caps, verifies RSASSA-PKCS1-v1_5/SHA-256
  * signatures, and refuses the request on every doubt: a malformed token, a
  * non-RS256 algorithm, a missing `kid`, an unknown or inconsistent key, a
  * signature mismatch, an issuer mismatch, a missing or expired `exp`, a `nbf`

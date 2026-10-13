@@ -12,6 +12,11 @@
     "unknown_kid_refresh": "one bounded refresh per kid, then cooldown",
     "max_refresh_per_kid": 1,
     "fetch_timeout_seconds": 10,
+    "max_kid_length": 256,
+    "max_window_entries": 1024,
+    "max_key_entries": 128,
+    "max_unknown_kid_fetches": 32,
+    "unknown_kid_fetch_window_seconds": 60,
     "cache": "bounded, expiry-driven rotation refresh",
     "issuer_check": "before and after signature verification",
     "audience_check": "exact match against the route-derived audience",
@@ -68,6 +73,30 @@
       "scenario": "a correctly signed token whose exp is in the past",
       "expect": "rejected",
       "reason": "expired"
+    },
+    {
+      "name": "oversized-kid-refused-without-a-fetch",
+      "scenario": "a token whose kid is longer than defaults.max_kid_length is refused as an unknown key without touching any map and without a key-set fetch",
+      "expect": "rejected",
+      "reason": "unknown_kid",
+      "jwks_fetches": 0
+    },
+    {
+      "name": "distinct-attacker-kids-are-globally-bounded",
+      "scenario": "many distinct attacker-chosen kids are presented; the global unknown-kid fetch budget caps the key-set fetches at defaults.max_unknown_kid_fetches and every further kid is refused without another fetch",
+      "expect": "rejected",
+      "reason": "unknown_kid",
+      "distinct_kids": 200,
+      "bounded_global_fetch_budget": true
+    },
+    {
+      "name": "evicted-kid-window-allows-one-refetch",
+      "scenario": "with a kid-window map of max_window_entries, resolving a third kid evicts the first kid's window, so that kid is fetched again instead of being refused by its cooldown",
+      "expect": "rejected",
+      "reason": "unknown_kid",
+      "max_window_entries": 1,
+      "jwks_fetches": 6,
+      "bounded_window_map": true
     }
   ]
 }
