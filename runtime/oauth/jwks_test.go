@@ -1433,6 +1433,27 @@ func TestBootstrapOIDCDiscoveryRefusesNonPublicEndpoints(t *testing.T) {
 	}
 }
 
+// TestBootstrapOIDCDiscoveryHonorsACallerSuppliedTransport pins the transport
+// boundary the loopback opt-in rides on: a caller-supplied client is
+// caller-owned, so the framework never re-installs its host guard over it —
+// which is exactly what lets NewJWKSValidator's AllowPrivateHosts reach the
+// bootstrap, and what the TypeScript and Python bootstraps do with an injected
+// transport. Port 1 is closed, so the failure is a connection error rather than
+// a guard refusal.
+func TestBootstrapOIDCDiscoveryHonorsACallerSuppliedTransport(t *testing.T) {
+	loopback := "https://127.0.0.1:1/.well-known/openid-configuration"
+
+	_, err := BootstrapOIDCDiscovery(context.Background(), loopback, "https://127.0.0.1:1", &http.Client{})
+	require.Error(t, err)
+	require.NotErrorIs(t, err, errHostNotPublic,
+		"a caller-supplied transport keeps its own connection policy")
+	require.NotContains(t, err.Error(), "not a public address")
+
+	// With no caller transport the framework still installs its guarded default.
+	_, guardedErr := BootstrapOIDCDiscovery(context.Background(), loopback, "https://127.0.0.1:1", nil)
+	require.ErrorIs(t, guardedErr, errHostNotPublic)
+}
+
 // hungJWKSTestServer serves healthy key sets for the first healthyFetches
 // requests and then hangs every later request until the test releases it,
 // modeling a dead or hostile upstream.

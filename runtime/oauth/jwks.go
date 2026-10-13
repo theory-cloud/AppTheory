@@ -288,6 +288,11 @@ func positiveIntOr(value, fallback int) int {
 // jwks_uri. The discovery URL and the returned key-set URL must both be
 // absolute HTTPS URLs; a document that omits jwks_uri, an issuer mismatch, and
 // any redirect all fail closed.
+//
+// A non-nil client is caller-owned and keeps its own connection policy, so a
+// caller can point the bootstrap at a loopback server for local development;
+// when it is nil the framework installs its own transport, which refuses any
+// endpoint host that is not a public address.
 func BootstrapOIDCDiscovery(ctx context.Context, discoveryURL string, issuer string, client *http.Client) (jwksURI string, err error) {
 	configuredIssuer, ok := CanonicalizeIssuerURL(issuer)
 	if !ok {
@@ -298,7 +303,18 @@ func BootstrapOIDCDiscovery(ctx context.Context, discoveryURL string, issuer str
 		return "", fmt.Errorf("%w: %w", ErrInvalidURL, errInsecureURL)
 	}
 
-	body, err := fetchBoundedDocument(ctx, jwksHTTPClient(client, 0, false), requestURL)
+	// A caller-supplied transport is caller-owned: it carries its own connection
+	// policy (including the documented loopback opt-in and the loopback test
+	// suites), so the framework applies only its fetch hygiene over it and never
+	// re-installs the host guard. That matches NewJWKSValidator, which configures
+	// AllowPrivateHosts before it calls this function, and the TypeScript and
+	// Python bootstraps, which never re-plumb an injected transport. With no
+	// caller transport the framework installs its own guarded default.
+	fetchClient := jwksHTTPClient(nil, 0, false)
+	if client != nil {
+		fetchClient = jwksHTTPClient(client, 0, true)
+	}
+	body, err := fetchBoundedDocument(ctx, fetchClient, requestURL)
 	if err != nil {
 		return "", err
 	}
