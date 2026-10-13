@@ -5107,11 +5107,25 @@ type JWKSValidatorOptions struct {
 
 	ClockSkew time.Duration
 
+	FetchTimeout time.Duration
+
+	AllowPrivateHosts bool
+
 	CacheTTL time.Duration
 
 	RefreshCooldown time.Duration
 
 	MaxRefreshPerKid int
+
+	MaxKidLength int
+
+	MaxWindowEntries int
+
+	MaxKeyEntries int
+
+	MaxUnknownKidFetches int
+
+	UnknownKidFetchWindow time.Duration
 
 	AllowedAZP []string
 
