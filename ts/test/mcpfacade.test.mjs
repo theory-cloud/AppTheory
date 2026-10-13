@@ -939,3 +939,54 @@ test("default capabilities and defensive inventory clone", () => {
   const fresh = registerMcpFacade(createApp({ tier: "p0" }), validConfig());
   assert.equal(fresh.routes[0].mcpMethods[0], "POST");
 });
+
+// ---------------------------------------------------------------------------
+// Shared URL normalization rows (Go is the reference runtime)
+// ---------------------------------------------------------------------------
+
+const NAMESPACE_AUTHORIZATION_SERVER_PATH =
+  "/.well-known/oauth-authorization-server/acme/mcp";
+
+test("advertised URLs match the shared normalization rows", async () => {
+  const rows = EXPECTATIONS.url_normalization;
+  assert.equal(rows.length, 61);
+
+  for (const row of rows) {
+    const app = createApp({ tier: "p0" });
+    const config = validConfig();
+    if (row.issuer) {
+      config.issuerURL = row.input;
+    } else {
+      config.jwksURI = row.input;
+      config.registrationEndpointURL = row.input;
+    }
+
+    if (row.reject) {
+      assert.throws(
+        () => registerMcpFacade(app, config),
+        undefined,
+        `${row.name} must be rejected`,
+      );
+      continue;
+    }
+
+    registerMcpFacade(app, config);
+    const document = JSON.parse(
+      bodyString(
+        await serve(app, "GET", NAMESPACE_AUTHORIZATION_SERVER_PATH),
+      ),
+    );
+    if (row.issuer) {
+      assert.equal(document.issuer, row.expect, row.name);
+      // The registration endpoint derives from the normalized issuer.
+      assert.equal(
+        document.registration_endpoint,
+        `${row.expect}/register`,
+        row.name,
+      );
+    } else {
+      assert.equal(document.jwks_uri, row.expect, row.name);
+      assert.equal(document.registration_endpoint, row.expect, row.name);
+    }
+  }
+});

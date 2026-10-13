@@ -944,14 +944,92 @@ class _ParsedURL:
     host: str  # host without userinfo, as given (trailing dot and case preserved)
     hostname: str  # host without brackets
     port: str
+    # Percent-decoded path as a byte string (one Latin-1 code point per decoded
+    # byte), mirroring Go's decoded ``url.URL.Path``. Re-encoding goes through
+    # ``_encode_path_bytes``, never through the input text.
     path: str
-    search: str
-    hash: str
+    search: str  # raw query including the leading "?", as given
+    hash: str  # raw fragment including the leading "#", or "" when empty/absent
     has_user: bool
 
 
 _SCHEME_PATTERN = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*):")
 _PORT_PATTERN = re.compile(r"^\d+$")
+_HEX_PAIR_PATTERN = re.compile(r"^[0-9A-Fa-f]{2}$")
+
+
+# UTF-8 bytes that Go's ``net/url`` ``encodePath`` leaves unescaped.
+_PATH_LITERAL_BYTES = frozenset(
+    (
+        *range(0x30, 0x3A),
+        *range(0x41, 0x5B),
+        *range(0x61, 0x7B),
+        *(ord(char) for char in "-._~$&+,/:;=@"),
+    )
+)
+
+
+def _decode_path_bytes(raw_path: str) -> str | None:
+    """Percent-decode a raw path into a byte string, or None on a bad escape.
+
+    Mirrors Go's ``url.Parse``, which fails the whole parse on a malformed
+    escape such as ``%zz``.
+    """
+    decoded = bytearray()
+    segment: list[str] = []
+    index = 0
+    while index < len(raw_path):
+        char = raw_path[index]
+        if char != "%":
+            segment.append(char)
+            index += 1
+            continue
+        hex_digits = raw_path[index + 1 : index + 3]
+        if len(hex_digits) != 2 or _HEX_PAIR_PATTERN.match(hex_digits) is None:
+            return None
+        if segment:
+            decoded.extend("".join(segment).encode("utf-8"))
+            segment = []
+        decoded.append(int(hex_digits, 16))
+        index += 3
+    if segment:
+        decoded.extend("".join(segment).encode("utf-8"))
+    return decoded.decode("latin-1")
+
+
+def _encode_path_bytes(path: str) -> str:
+    """Escape a byte-string path with Go's ``encodePath`` rule (uppercase hex)."""
+    encoded: list[str] = []
+    for byte in path.encode("latin-1"):
+        if byte in _PATH_LITERAL_BYTES:
+            encoded.append(chr(byte))
+        else:
+            encoded.append(f"%{byte:02X}")
+    return "".join(encoded)
+
+
+def _split_path_search_hash(rest: str) -> tuple[str, str, str] | None:
+    """Split a path from its raw query and fragment, decoding the path bytes.
+
+    Returns ``(path, search, hash_value)`` where ``search`` and ``hash_value``
+    keep their leading delimiters, or None when the path carries a malformed
+    percent escape. A bare trailing "#" is an empty fragment, matching Go.
+    """
+    hash_value = ""
+    hash_index = rest.find("#")
+    if hash_index >= 0:
+        fragment = rest[hash_index + 1 :]
+        hash_value = "" if fragment == "" else rest[hash_index:]
+        rest = rest[:hash_index]
+    search = ""
+    query_index = rest.find("?")
+    if query_index >= 0:
+        search = rest[query_index:]
+        rest = rest[:query_index]
+    path = _decode_path_bytes(rest)
+    if path is None:
+        return None
+    return path, search, hash_value
 
 
 def _parse_url(raw: str) -> _ParsedURL | None:
@@ -1007,17 +1085,10 @@ def _parse_url(raw: str) -> _ParsedURL | None:
     if port != "" and _PORT_PATTERN.match(port) is None:
         return None
 
-    path = rest
-    hash_value = ""
-    hash_index = path.find("#")
-    if hash_index >= 0:
-        hash_value = path[hash_index:]
-        path = path[:hash_index]
-    search = ""
-    query_index = path.find("?")
-    if query_index >= 0:
-        search = path[query_index:]
-        path = path[:query_index]
+    split = _split_path_search_hash(rest)
+    if split is None:
+        return None
+    path, search, hash_value = split
 
     return _ParsedURL(
         scheme=scheme,
@@ -1077,9 +1148,9 @@ def _normalize_https_url(raw: str, issuer: bool) -> str | None:
     authority = _canonical_authority(parsed)
     if authority == "":
         return None
-    path = parsed.path
-    if issuer:
-        path = path.rstrip("/")
+    # Go clears RawPath and re-serializes the decoded path, so ``%41`` becomes ``A``.
+    decoded_path = parsed.path.rstrip("/") if issuer else parsed.path
+    path = _encode_path_bytes(decoded_path)
     query = "" if issuer else parsed.search
     return f"{parsed.scheme}://{authority}{path}{query}"
 
@@ -1107,11 +1178,10 @@ def _absolute_url_for_path(base_url: str, route_path: str) -> str | None:
     parsed = _parse_absolute_url(base_url)
     if parsed is None or not route_path.startswith("/"):
         return None
-    authority = _canonical_authority(parsed)
-    if authority == "":
-        return None
-    path = parsed.path.rstrip("/") + route_path
-    return f"{parsed.scheme}://{authority}{path}"
+    # Go keeps the parsed host verbatim and drops the query and fragment.
+    decoded_path = parsed.path.rstrip("/") + route_path.encode("utf-8").decode("latin-1")
+    path = _encode_path_bytes(decoded_path)
+    return f"{parsed.scheme}://{parsed.host}{path}"
 
 
 def normalize_request_origin(raw: str) -> str | None:

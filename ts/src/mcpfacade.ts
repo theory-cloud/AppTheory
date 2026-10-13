@@ -1240,10 +1240,95 @@ interface ParsedURL {
   /** Hostname without brackets. */
   hostname: string;
   port: string;
+  /**
+   * Percent-decoded path as a byte string: every code unit is one decoded byte
+   * (0-255), mirroring Go's decoded `url.URL.Path`. Re-encoding goes through
+   * {@link encodePathBytes}, never through the input text.
+   */
   path: string;
+  /** Raw query including the leading "?", as given. */
   search: string;
+  /** Raw fragment including the leading "#", or "" for an absent/empty fragment. */
   hash: string;
   hasUser: boolean;
+}
+
+/** UTF-8 bytes that `encodePath` leaves unescaped, matching Go's `net/url`. */
+const PATH_LITERAL_BYTES = (() => {
+  const table = new Uint8Array(256);
+  const literals = "-._~$&+,/:;=@";
+  for (let code = 0; code < 256; code += 1) {
+    const isAlphanumeric =
+      (code >= 0x30 && code <= 0x39) ||
+      (code >= 0x41 && code <= 0x5a) ||
+      (code >= 0x61 && code <= 0x7a);
+    table[code] = isAlphanumeric ? 1 : 0;
+  }
+  for (const ch of literals) {
+    table[ch.charCodeAt(0)] = 1;
+  }
+  return table;
+})();
+
+const HEX_PAIR = /^[0-9A-Fa-f]{2}$/;
+
+/**
+ * Percent-decodes a raw path into a byte string (one code unit per byte),
+ * mirroring Go's `url.Parse`, which fails the whole parse on a malformed escape
+ * such as `%zz`. Returns null on a malformed escape.
+ */
+function decodePathBytes(rawPath: string): string | null {
+  let decoded = "";
+  let segment = "";
+  let index = 0;
+  while (index < rawPath.length) {
+    const ch = rawPath[index] ?? "";
+    if (ch !== "%") {
+      segment += ch;
+      index += 1;
+      continue;
+    }
+    if (index + 2 >= rawPath.length) {
+      return null;
+    }
+    const hex = rawPath.slice(index + 1, index + 3);
+    if (!HEX_PAIR.test(hex)) {
+      return null;
+    }
+    if (segment !== "") {
+      decoded += utf8ByteString(segment);
+      segment = "";
+    }
+    decoded += String.fromCharCode(Number.parseInt(hex, 16));
+    index += 3;
+  }
+  if (segment !== "") {
+    decoded += utf8ByteString(segment);
+  }
+  return decoded;
+}
+
+/** Re-encodes UTF-8 text as a byte string (one code unit per byte). */
+function utf8ByteString(text: string): string {
+  let out = "";
+  for (const byte of Buffer.from(text, "utf8")) {
+    out += String.fromCharCode(byte);
+  }
+  return out;
+}
+
+/** Escapes a byte-string path with Go's `encodePath` rule (uppercase hex). */
+function encodePathBytes(path: string): string {
+  let out = "";
+  for (let index = 0; index < path.length; index += 1) {
+    const code = path.charCodeAt(index);
+    if (code < 256 && PATH_LITERAL_BYTES[code] === 1) {
+      out += path[index];
+    } else {
+      out += `%${code.toString(16).toUpperCase().padStart(2, "0")}`;
+    }
+  }
+  return out;
 }
 
 /**
@@ -1312,18 +1397,23 @@ function parseURL(raw: string): ParsedURL | null {
     return null;
   }
 
-  let path = rest;
+  let rawPath = rest;
   let hash = "";
-  const hashIndex = path.indexOf("#");
+  const hashIndex = rawPath.indexOf("#");
   if (hashIndex >= 0) {
-    hash = path.slice(hashIndex);
-    path = path.slice(0, hashIndex);
+    const fragment = rawPath.slice(hashIndex + 1);
+    hash = fragment === "" ? "" : rawPath.slice(hashIndex);
+    rawPath = rawPath.slice(0, hashIndex);
   }
   let search = "";
-  const queryIndex = path.indexOf("?");
+  const queryIndex = rawPath.indexOf("?");
   if (queryIndex >= 0) {
-    search = path.slice(queryIndex);
-    path = path.slice(0, queryIndex);
+    search = rawPath.slice(queryIndex);
+    rawPath = rawPath.slice(0, queryIndex);
+  }
+  const path = decodePathBytes(rawPath);
+  if (path === null) {
+    return null;
   }
 
   return {
@@ -1395,10 +1485,9 @@ function normalizeHTTPSURL(raw: string, issuer: boolean): string | null {
   if (authority === "") {
     return null;
   }
-  let path = u.path;
-  if (issuer) {
-    path = trimTrailingSlashes(path);
-  }
+  // Go clears RawPath and re-serializes the decoded path, so `%41` becomes `A`.
+  const decodedPath = issuer ? trimTrailingSlashes(u.path) : u.path;
+  const path = encodePathBytes(decodedPath);
   const query = issuer ? "" : u.search;
   return `${u.scheme}://${authority}${path}${query}`;
 }
@@ -1436,12 +1525,11 @@ function absoluteURLForPath(baseURL: string, routePath: string): string | null {
   if (u === null || !routePath.startsWith("/")) {
     return null;
   }
-  const authority = canonicalAuthority(u);
-  if (authority === "") {
-    return null;
-  }
-  const path = trimTrailingSlashes(u.path) + routePath;
-  return `${u.scheme}://${authority}${path}`;
+  // Go keeps the parsed host verbatim and drops the query and fragment.
+  const path = encodePathBytes(
+    trimTrailingSlashes(u.path) + utf8ByteString(routePath),
+  );
+  return `${u.scheme}://${u.host}${path}`;
 }
 
 /** Removes every trailing "/" without a backtracking regex (ReDoS-safe). */

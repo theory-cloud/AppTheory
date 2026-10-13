@@ -262,6 +262,37 @@ class McpFacadeMetadataDocumentTests(unittest.TestCase):
                 self.assertEqual(200, suffix.status)
                 self.assertEqual(row["authorization_server_document"], suffix.body.decode())
 
+    def test_advertised_urls_match_the_shared_normalization_rows(self) -> None:
+        rows = json.loads(_EXPECTATIONS_PATH.read_text(encoding="utf-8"))["url_normalization"]
+        self.assertEqual(61, len(rows))
+
+        for row in rows:
+            with self.subTest(name=row["name"]):
+                config = _valid_config(URL_MODE_PUBLIC_BASE_URL)
+                if row["issuer"]:
+                    config.issuer_url = row["input"]
+                else:
+                    config.jwks_uri = row["input"]
+                    config.registration_endpoint_url = row["input"]
+
+                if row.get("reject"):
+                    with self.assertRaises(ValueError):
+                        register_mcp_facade(create_app(tier="p0"), config)
+                    continue
+
+                app = create_app(tier="p0")
+                register_mcp_facade(app, config)
+                document = json.loads(
+                    _serve(app, "GET", "/.well-known/oauth-authorization-server/acme/mcp").body.decode()
+                )
+                if row["issuer"]:
+                    self.assertEqual(row["expect"], document["issuer"])
+                    # The registration endpoint derives from the normalized issuer.
+                    self.assertEqual(f"{row['expect']}/register", document["registration_endpoint"])
+                else:
+                    self.assertEqual(row["expect"], document["jwks_uri"])
+                    self.assertEqual(row["expect"], document["registration_endpoint"])
+
     def test_every_metadata_response_is_no_store_and_varies_on_origin_headers(self) -> None:
         for mode in (URL_MODE_PUBLIC_BASE_URL, URL_MODE_REQUEST_HOST):
             with self.subTest(mode=mode):
@@ -1055,6 +1086,15 @@ class McpFacadeHelperTests(unittest.TestCase):
         )
         self.assertIsNone(_absolute_url_for_path("not-a-url", "/route"))
         self.assertIsNone(_absolute_url_for_path("https://example.com", "relative"))
+
+    def test_absolute_url_for_path_keeps_the_parsed_host_verbatim(self) -> None:
+        # Go keeps the parsed host byte-for-byte and re-encodes the decoded path.
+        self.assertEqual(
+            "https://Example.com:443/v1/x", _absolute_url_for_path("https://Example.com:443/v1/", "/x")
+        )
+        self.assertEqual("https://example.com/A/x", _absolute_url_for_path("https://example.com/%41", "/x"))
+        self.assertEqual("https://example.com/a%20b/x", _absolute_url_for_path("https://example.com/a b", "/x"))
+        self.assertEqual("https://example.com/a/x", _absolute_url_for_path("https://example.com/a?b=c", "/x"))
 
     def test_metadata_request_failures_preserve_type_and_render_400(self) -> None:
         self.assertIsNone(_metadata_request_failure(ValueError("internal failure")))

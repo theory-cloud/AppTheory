@@ -86,6 +86,18 @@ type documentFixtureFile struct {
 	Documents []documentFixture `json:"documents"`
 }
 
+type urlNormalizationFixtureRow struct {
+	Name   string `json:"name"`
+	Issuer bool   `json:"issuer"`
+	Input  string `json:"input"`
+	Expect string `json:"expect"`
+	Reject bool   `json:"reject"`
+}
+
+type urlNormalizationFixtureFile struct {
+	URLNormalization []urlNormalizationFixtureRow `json:"url_normalization"`
+}
+
 func TestRegisterMCPFacadeRegistersCompleteContractSurface(t *testing.T) {
 	t.Parallel()
 	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
@@ -280,6 +292,40 @@ func TestSharedFixturePinsRoutedDocumentBytesPerKindAndMode(t *testing.T) {
 			suffix := serve(app, "GET", fixture.AuthorizationServerSuffixPath, headers)
 			require.Equal(t, 200, suffix.Status)
 			require.Equal(t, fixture.AuthorizationServerDocument, string(suffix.Body))
+		})
+	}
+}
+
+// TestSharedFixturePinsURLNormalizationAcrossFlags pins the shared
+// url_normalization rows against Go's normalizer, which is the reference
+// behavior for the TypeScript and Python ports.
+func TestSharedFixturePinsURLNormalizationAcrossFlags(t *testing.T) {
+	t.Parallel()
+	contents, err := os.ReadFile(documentExpectationsPath)
+	require.NoError(t, err)
+	var fixtures urlNormalizationFixtureFile
+	require.NoError(t, json.Unmarshal(contents, &fixtures))
+	require.Len(t, fixtures.URLNormalization, 61)
+
+	for _, fixture := range fixtures.URLNormalization {
+		t.Run(fixture.Name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := normalizeHTTPSURL(fixture.Input, fixture.Issuer)
+			if fixture.Reject {
+				require.False(t, ok)
+				require.Empty(t, got)
+				return
+			}
+			require.NotEmpty(t, fixture.Expect)
+			require.True(t, ok)
+			require.Equal(t, fixture.Expect, got)
+			if fixture.Issuer {
+				// The facade derives the registration endpoint from the
+				// normalized issuer; the builder must be idempotent over it.
+				derived, derivedOK := absoluteURLForPath(fixture.Expect, "/register")
+				require.True(t, derivedOK)
+				require.Equal(t, fixture.Expect+"/register", derived)
+			}
 		})
 	}
 }
