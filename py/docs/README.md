@@ -51,6 +51,11 @@ operator-facing API guidance. Keep these human-authored groups current when the 
   `build_appsync_event`, `build_sqs_event`, `build_kinesis_event`, and the corresponding `serve_*` entrypoints.
 - MCP/OAuth surfaces: `McpServer`, registries, in-memory/Dynamo stores, bearer-token middleware, metadata handlers,
   DCR, PKCE, and protected-resource helpers.
+- MCP transport posture: `register_mcp_facade` registers the facade routes with one explicit `TRANSPORT_POSTURES`
+  value (`iam` | `jwt` | `runtime-bearer` | `none-public`) and fails closed when the posture and the runtime bearer
+  assertion disagree. The testkit helpers `counting_transport_handler`, `assert_credential_free_transport_denied`, and
+  `assert_bearer_token_reaches_transport_handler` pin that a credential-free transport request is denied before it
+  reaches the handler, and that a valid bearer token does reach it.
 - Storage and data helpers: `ObjectStore`, `ObjectRef`, `create_s3_object_store`, `ObjectStoreUploadGranter`, `DynamoJobLedger`, and rate-limit
   primitives.
 - Semantic vector helpers: `VectorStore`, `VectorRecord`, `QueryHit`, `SemanticIndex`, `SemanticRecord`,
@@ -73,10 +78,10 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>659 exported top-level symbols</summary>
+<summary>666 exported top-level symbols</summary>
 
 ```text
-App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError
+App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError, assert_bearer_token_reaches_transport_handler, assert_credential_free_transport_denied
 AtomicRateLimiter, authenticated, authenticated_any_of, authorization_server_metadata_handler, AuthorizationServerMetadata, AuthPosture
 AuthPostureKind, AuthPrincipal, AWSLambdaMicroVMClient, AWSLambdaMicroVMProvider, base_name, bearer_token_claims_from_context
 bearer_token_from_headers, BearerTokenClaims, BearerTokenClaimsValidator, BearerTokenRecord
@@ -89,7 +94,7 @@ claude_dynamic_client_registration_policy, client_ip, Clock, cloudwatch_logs_sub
 CloudWatchLogsSubscription, CloudWatchLogsSubscriptionLogEvent, CloudWatchLogsSubscriptionSummary, COMMAND_AUTH_TOKEN
 COMMAND_CREATE, COMMAND_GET, COMMAND_INVOKE, COMMAND_LIST, COMMAND_RESUME, COMMAND_RUN, COMMAND_SESSION
 COMMAND_SHELL_AUTH_TOKEN, COMMAND_SHELL_TOKEN, COMMAND_START, COMMAND_STATUS, COMMAND_STOP, COMMAND_SUSPEND
-COMMAND_TERMINATE, Config, Context, CONTEXT_KEY_BEARER_CLAIMS, CONTEXT_KEY_BEARER_TOKEN, CORSConfig, create_app
+COMMAND_TERMINATE, Config, Context, CONTEXT_KEY_BEARER_CLAIMS, CONTEXT_KEY_BEARER_TOKEN, CORSConfig, counting_transport_handler, CountingTransportHandler, create_app
 create_aws_lambda_microvm_client, create_aws_lambda_microvm_provider, create_emf_metric_sink
 create_fake_microvm_client, create_fake_microvm_provider, create_fake_object_store, create_fake_vector_store
 create_fake_websocket_client_factory, create_kinesis_json_record, create_mcp_server, create_mcp_test_harness
@@ -135,7 +140,7 @@ MCP_CODE_UNSUPPORTED_PROTOCOL_VERSION, MCP_HEADER_LAST_EVENT_ID, MCP_HEADER_METH
 MCP_HEADER_PROTOCOL_VERSION, MCP_HEADER_SESSION_ID, MCP_PROTOCOL_SHAPE_2025_11_25, MCP_PROTOCOL_SHAPE_2026_07_28
 MCP_PROTOCOL_SHAPE_UNKNOWN, MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_2026_07_28, MCP_PROTOCOL_VERSION_LEGACY
 MCP_PROTOCOL_VERSION_PRIOR, MCP_RESULT_TYPE_COMPLETE, MCP_RESULT_TYPE_INPUT_REQUIRED, McpCacheableResultConfig
-McpCacheHint, McpCacheScope, McpContentBlock, McpDiscoverResult, McpEventNotFoundError, McpExtensionCapabilities
+McpCacheHint, McpCacheScope, McpContentBlock, McpDiscoverResult, McpEventNotFoundError, McpExtensionCapabilities, McpFacadeRegistration
 McpInputRequest, McpInputRequiredResult, McpJSONRecord, McpJSONValue, McpPromptArgument, McpPromptDef
 McpPromptHandler, McpPromptMessage, McpPromptRegistry, McpPromptResult, McpProtocolShape, McpRequestID
 McpResourceContent, McpResourceContext, McpResourceDef, McpResourceHandler, McpResourceRegistry
@@ -191,7 +196,7 @@ ProfileLoggerOptions, protected_resource_metadata_handler, protected_resource_ww
 ProtectedResourceMetadata, public, PutVectorsInput, query, QueryHit, QueryVectorsInput, rapid_connect_xml_patterns
 rate_limit_table_name, RateLimitEntry, RateLimiter, RateLimiterError, RateLimitKey, RateLimitStrategy, RateLimitWindow
 RealClock, RealIdGenerator, reconstruct_microvm_session_record, ReconstructingMicroVMSessionRegistry
-register_controller_routes, register_microvm_controller_routes, report_kinesis_put_records_failures, Request
+register_controller_routes, register_mcp_facade, register_microvm_controller_routes, report_kinesis_put_records_failures, Request
 require_bearer_token_middleware, require_eventbridge_workload_envelope, RequireBearerTokenOptions, required
 required_forbidden_microvm_operation_fields, resource_metadata_url_from_mcp_endpoint, resource_name, Response
 rfc9728_resource_metadata_url, S3_ENCRYPTION_BUCKET_DEFAULT, S3_ENCRYPTION_KMS, S3_ENCRYPTION_S3_MANAGED
@@ -204,7 +209,7 @@ STATE_IMAGE_PREPARING, STATE_READINESS_PROBING, STATE_READY, STATE_REQUESTED, ST
 STATE_STARTED, STATE_STARTING, STATE_STOPPED, STATE_STOPPING, STATE_SUSPENDED, STATE_SUSPENDING, STATE_TEARING_DOWN
 STATE_TERMINATED, STATE_TERMINATING, STATE_VALIDATED, STATE_VALIDATING, stepfunctions_task_token, StreamResult
 StructuredLogger, TableTheoryMicroVMSessionRegistry, TestEnv, text, timeout_middleware, TimeoutConfig, TimeWindow
-TitanEmbedder, TitanEmbedderConfig, unix_seconds, unsupported_object_store_operation, UsageStats, UsageWindow
+TitanEmbedder, TitanEmbedderConfig, TRANSPORT_POSTURES, unix_seconds, unsupported_object_store_operation, UsageStats, UsageWindow
 validate_dimension, validate_dynamic_client_registration_request, validate_logging_profile
 validate_microvm_controller_contract, validate_microvm_controller_request, validate_microvm_escape_hatches
 validate_microvm_lifecycle_contract, validate_microvm_operation_contract, validate_microvm_provider_invoke_input

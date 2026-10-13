@@ -11,9 +11,10 @@ from apptheory.app import App, AuthHook, Limits, ObservabilityHooks, PolicyHook,
 from apptheory.aws_events import AppSyncResolverEvent
 from apptheory.aws_events import build_appsync_event as _build_appsync_event
 from apptheory.clock import ManualClock
-from apptheory.context import WebSocketClientFactory
+from apptheory.context import Context, WebSocketClientFactory
 from apptheory.errors import AppError, AppTheoryError
 from apptheory.ids import IdGenerator, ManualIdGenerator
+from apptheory.oauth import protected_resource_www_authenticate
 from apptheory.request import Request
 from apptheory.response import Response
 
@@ -576,3 +577,90 @@ def _mcp_has_json_response(response: Response) -> bool:
     return any(
         str(value).lower().startswith("application/json") for value in (response.headers or {}).get("content-type", [])
     )
+
+
+class CountingTransportHandler:
+    """Counting MCP transport handler used by the facade conformance assertions.
+
+    Every request is counted and answered with 204 No Content, so a test can
+    prove whether a denied request reached the application handler.
+    """
+
+    def __init__(self) -> None:
+        self._invocations = 0
+
+    @property
+    def invocations(self) -> int:
+        return self._invocations
+
+    def __call__(self, _ctx: Context) -> Response:
+        self._invocations += 1
+        return Response(status=204, headers={}, cookies=[], body=b"", is_base64=False)
+
+
+def counting_transport_handler() -> CountingTransportHandler:
+    return CountingTransportHandler()
+
+
+def assert_credential_free_transport_denied(
+    app: App,
+    method: str,
+    path: str,
+    resource_metadata_url: str,
+    handler: CountingTransportHandler,
+) -> None:
+    """Asserts the RFC 9728 denial for a credential-free transport request.
+
+    The request must return 401 with the exact WWW-Authenticate challenge for
+    resource_metadata_url, and the application handler must never run.
+    """
+    response = app.serve(_transport_request(method, path))
+    if response.status != 401:
+        raise AssertionError(f"mcpfacade: credential-free {method} {path}: status = {response.status}, want 401")
+    expected = protected_resource_www_authenticate(resource_metadata_url)
+    actual = _transport_header(response.headers, "www-authenticate")
+    if actual != expected:
+        raise AssertionError(
+            f"mcpfacade: credential-free {method} {path}: www-authenticate = {actual!r}, want {expected!r}"
+        )
+    if handler.invocations != 0:
+        raise AssertionError(
+            f"mcpfacade: credential-free {method} {path}: MCP handler invoked {handler.invocations} times, want 0"
+        )
+
+
+def assert_bearer_token_reaches_transport_handler(
+    app: App,
+    method: str,
+    path: str,
+    token: str,
+    handler: CountingTransportHandler,
+) -> None:
+    """Positive control: an accepted token reaches the handler exactly once."""
+    before = handler.invocations
+    response = app.serve(_transport_request(method, path, {"authorization": [f"Bearer {token}"]}))
+    if response.status != 204:
+        raise AssertionError(f"mcpfacade: bearer {method} {path}: status = {response.status}, want 204")
+    if handler.invocations != before + 1:
+        raise AssertionError(
+            f"mcpfacade: bearer {method} {path}: MCP handler invocations = {handler.invocations}, want {before + 1}"
+        )
+
+
+def _transport_request(method: str, path: str, headers: dict[str, list[str]] | None = None) -> Request:
+    return Request(
+        method=str(method).strip().upper(),
+        path=str(path),
+        headers=dict(headers or {}),
+        body=b"",
+        is_base64=False,
+    )
+
+
+def _transport_header(headers: dict[str, Any], name: str) -> str:
+    key = str(name).strip().lower()
+    for raw_key, values in (headers or {}).items():
+        if str(raw_key).strip().lower() != key:
+            continue
+        return str((values or [""])[0])
+    return ""
