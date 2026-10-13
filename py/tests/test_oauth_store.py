@@ -8,12 +8,16 @@ from typing import Any
 
 from apptheory.clock import ManualClock
 from apptheory.oauth.store import (
+    STATUS_EXPIRED,
+    STATUS_REFRESHING,
+    STATUS_REVOKED,
     AuthorizationCodeRecord,
     BrokerLockedError,
     BrokerRevokedError,
     BrokerVersionConflictError,
     ClientRecord,
     ClientVersionConflictError,
+    ConsumeResult,
     MemoryAuthorizationCodeStore,
     MemoryClientStore,
     MemoryRateLimitStore,
@@ -36,6 +40,53 @@ STORE_CLASSES = {
     "route_refresh_broker": MemoryRouteRefreshBrokerStore,
     "rate_limit": MemoryRateLimitStore,
 }
+
+
+class NonTerminalCodeStore(MemoryAuthorizationCodeStore):
+    """Deliberately broken: a replayed or expired-burned consume looks fresh."""
+
+    def consume(self, code_hash: str) -> ConsumeResult | None:
+        result = super().consume(code_hash)
+        if result is not None and (result.replayed or result.record.status == STATUS_EXPIRED):
+            return ConsumeResult(record=result.record, replayed=False)
+        return result
+
+
+class TTLIgnoringBrokerStore(MemoryRouteRefreshBrokerStore):
+    """Deliberately broken: the requested TTL is ignored and handles outlive the table."""
+
+    TTL_SECONDS = 360000
+
+    def __init__(self, now: Any = None, ttl: int | None = None, lock_ttl_seconds: int = 30) -> None:
+        super().__init__(now=now, ttl=self.TTL_SECONDS, lock_ttl_seconds=lock_ttl_seconds)
+
+
+class NonBumpingBrokerStore(MemoryRouteRefreshBrokerStore):
+    """Deliberately broken: a read hides the version bump a lock or revoke advanced.
+
+    The Go and TypeScript reference brokers mark a locked record ``refreshing``;
+    this reference broker keeps it ``active`` and records the lock only in the
+    owner/expiry fields, so a currently held lock counts as the bumped record a
+    read must report one version lower.
+    """
+
+    def get(self, handle_hash: str) -> RouteRefreshBrokerRecord | None:
+        record = super().get(handle_hash)
+        if record is None:
+            return None
+        holds_lock = bool(record.refresh_lock_owner) and (
+            record.refresh_lock_expires_at is not None and self._now() < record.refresh_lock_expires_at
+        )
+        if record.status in (STATUS_REVOKED, STATUS_REFRESHING) or holds_lock:
+            record.version -= 1
+        return record
+
+
+# A row run against a broken store fails either as a conformance assertion
+# mismatch or as the store's own error surfacing through a scenario that assumes
+# the operation succeeds: hiding a lock's version bump makes the versioned-swap
+# row present a stale version, so its store call raises a version conflict.
+_BROKEN_STORE_FAILURES = (AssertionError, BrokerVersionConflictError)
 
 
 def _load_fixture(name: str) -> dict[str, Any]:
@@ -276,6 +327,78 @@ class SliceIsolationTests(unittest.TestCase):
         stored.scopes[0] = "mutated-returned"
         again = store.get("handle")
         self.assertEqual(again.scopes, ["scope-a"])
+
+
+class StoreConformanceNonVacuityTests(unittest.TestCase):
+    """The shared table must fail one deliberately-broken store per semantic it pins."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.fixture = _load_fixture(FIXTURE_NAME)
+        cls.cases = cls.fixture["cases"]
+
+    def _new_clock(self) -> ManualClock:
+        return ManualClock(_epoch(self.fixture["clock"]["epoch"]))
+
+    def _stores(self, **overrides: Any) -> dict[str, Any]:
+        stores = dict(STORE_CLASSES)
+        stores.update(overrides)
+        return stores
+
+    def _failing_row_ids(self, stores: dict[str, Any]) -> list[str]:
+        """Runs each row on its own, so one broken bundle reports every failing row."""
+        failed: list[str] = []
+        for case in self.cases:
+            try:
+                run_store_conformance(stores, [case], self._new_clock())
+            except _BROKEN_STORE_FAILURES:
+                failed.append(case["id"])
+        return failed
+
+    def _assert_broken_bundle_fails(self, stores: dict[str, Any], expected_rows: list[str]) -> None:
+        # The full table must not run to completion against a broken store.
+        with self.assertRaises(_BROKEN_STORE_FAILURES):
+            run_store_conformance(stores, self.cases, self._new_clock())
+
+        failed = self._failing_row_ids(stores)
+        self.assertGreaterEqual(len(failed), 1, "the conformance table reported no failing row")
+        for row in expected_rows:
+            self.assertIn(row, failed, f"expected row {row} to fail; failing rows: {failed}")
+        print("failing rows: " + ", ".join(failed))
+
+    def test_good_baseline_reports_zero_failures(self) -> None:
+        ran = run_store_conformance(self._stores(), self.cases, self._new_clock())
+        self.assertEqual(ran, len(self.cases))
+
+    def test_non_terminal_code_store_fails_the_table(self) -> None:
+        self._assert_broken_bundle_fails(
+            self._stores(authorization_code=NonTerminalCodeStore),
+            [
+                "store.authorization_code.consume_is_single_use_then_replayed",
+                "store.authorization_code.expired_consume_then_replay",
+                "store.authorization_code.clock_back_after_consume_is_replayed",
+                "store.authorization_code.clock_back_after_expired_burn_is_replayed",
+            ],
+        )
+
+    def test_ttl_ignoring_broker_store_fails_the_table(self) -> None:
+        self._assert_broken_bundle_fails(
+            self._stores(route_refresh_broker=TTLIgnoringBrokerStore),
+            [
+                "store.route_refresh_broker.record_expired_at_ttl_boundary",
+                "store.route_refresh_broker.expired_record_refuses_lock",
+                "store.route_refresh_broker.expired_record_refuses_swap",
+            ],
+        )
+
+    def test_non_bumping_broker_store_fails_the_table(self) -> None:
+        self._assert_broken_bundle_fails(
+            self._stores(route_refresh_broker=NonBumpingBrokerStore),
+            [
+                "store.route_refresh_broker.acquire_lock_bumps_version",
+                "store.route_refresh_broker.revoke_bumps_version",
+            ],
+        )
 
 
 if __name__ == "__main__":
