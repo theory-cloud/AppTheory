@@ -3781,8 +3781,12 @@ type FacadeConfig struct {
 
 	RegistrationEndpointURL string
 
+	IssuerMode mcproutes.IssuerMode
+
 	URLMode       URLMode
 	PublicBaseURL string
+
+	UpstreamCallbackPath string
 
 	AllowedHostnames []string
 
@@ -3794,6 +3798,10 @@ type FacadeConfig struct {
 
 	AuthorizeHandler HandlerFactory
 	TokenHandler     HandlerFactory
+
+	RegisterHandler HandlerFactory
+
+	CallbackHandler apptheory.Handler
 
 	RootAuthorizationServer *RootDiscoveryConfig
 
@@ -3822,6 +3830,7 @@ type Route struct {
 	DiscoverySuffixPattern    string
 	AuthorizePattern          string
 	TokenPattern              string
+	RegisterPattern           string
 
 	AuthorizationRoutesAttached bool
 }
@@ -3831,6 +3840,10 @@ type RouteInventory struct {
 	Routes                          []Route
 	RootAuthorizationServerPattern  string
 	RootAuthorizationServerAttached bool
+
+	CallbackPattern string
+
+	IssuerMode mcproutes.IssuerMode
 }
 
 type TransportPosture string
@@ -3849,7 +3862,13 @@ const AgentMCPPattern = "/{client_namespace}/agents/{agent_id}/mcp"
 
 const AuthorizationServerPrefix = "/.well-known/oauth-authorization-server"
 
-const ContractVersion = "m17.mcp-route-algebra/v1"
+const CallbackPatternKey = "upstream_callback"
+
+const ContractVersion = "m17.mcp-route-algebra/v2"
+
+const ContractVersionV1 = "m17.mcp-route-algebra/v1"
+
+const DefaultCallbackPath = "/_oauth/mcp/callback"
 
 const EndpointKindAgent EndpointKind = "agent"
 
@@ -3858,6 +3877,10 @@ const EndpointKindNamespace EndpointKind = "namespace"
 const EndpointKindPartnerAgent EndpointKind = "partner_agent"
 
 const EndpointKindPartnerNamespace EndpointKind = "partner_namespace"
+
+const IssuerModeFamily IssuerMode = "family"
+
+const IssuerModeRoute IssuerMode = "route"
 
 const NamespaceMCPPattern = "/{client_namespace}/mcp"
 
@@ -3888,6 +3911,8 @@ type EndpointTemplate struct {
 	ProtectedResourcePath string
 }
 
+type IssuerMode string
+
 type OAuthDiscoveryTemplate struct {
 	Kind             EndpointKind
 	CanonicalPattern string
@@ -3898,15 +3923,28 @@ type OAuthFacadeTemplate struct {
 	Kind             EndpointKind
 	AuthorizePattern string
 	TokenPattern     string
+	RegisterPattern  string
+}
+
+type StageGlobalRoute struct {
+	Name    string
+	Pattern string
+	Methods []string
 }
 
 func AuthorizationAuthorizePathForResourcePath(string) string
+
+func AuthorizationRegisterPathForResourcePath(string) string
 
 func AuthorizationServerPathForResourcePath(string) string
 
 func AuthorizationServerSuffixPathForResourcePath(string) string
 
 func AuthorizationTokenPathForResourcePath(string) string
+
+func CallbackPathForConfiguredPath(string) (string, bool)
+
+func NormalizeCallbackPath(string) (string, bool)
 
 func ParseMCPPath(string) (EndpointPath, error)
 
@@ -3918,9 +3956,13 @@ func ResourcePathFromProtectedResourcePath(string) (string, error)
 
 func SupportedEndpointTemplates() []EndpointTemplate
 
+func SupportedIssuerModes() []IssuerMode
+
 func SupportedOAuthDiscoveryTemplates() []OAuthDiscoveryTemplate
 
 func SupportedOAuthFacadeTemplates() []OAuthFacadeTemplate
+
+func SupportedStageGlobalRoutes() []StageGlobalRoute
 
 func (EndpointPath) MCPPath() (string, error)
 
@@ -3929,6 +3971,8 @@ func (EndpointPath) OAuthAuthorizationServerPath() (string, error)
 func (EndpointPath) OAuthAuthorizationServerSuffixPath() (string, error)
 
 func (EndpointPath) OAuthAuthorizePath() (string, error)
+
+func (EndpointPath) OAuthRegisterPath() (string, error)
 
 func (EndpointPath) OAuthTokenPath() (string, error)
 
@@ -5004,7 +5048,7 @@ type BearerTokenClaims struct {
 	ExpiresAt time.Time
 }
 
-type BearerTokenClaimsValidator func(context.Context, string) (*BearerTokenClaims, error)
+type BearerTokenClaimsValidator func(*apptheory.Context, string) (*BearerTokenClaims, error)
 
 type BearerTokenRecord struct {
 	Token     string
@@ -5018,10 +5062,14 @@ type BearerTokenRecord struct {
 type BearerTokenValidationOptions struct {
 	RequiredAudience string
 	RequiredScopes   []string
-	Now              func() time.Time
+
+	RequiredAudienceFunc func(*apptheory.Context) (string, error)
+
+	RequiredScopesFunc func(*apptheory.Context) ([]string, error)
+	Now                func() time.Time
 }
 
-type BearerTokenValidator func(context.Context, string) error
+type BearerTokenValidator func(*apptheory.Context, string) error
 
 type DynamicClientRegistrationPolicy struct {
 	AllowedRedirectURIs []string
@@ -5044,6 +5092,32 @@ type DynamicClientRegistrationResponse struct {
 	ClientSecret          string `json:"client_secret,omitempty"`
 	ClientIDIssuedAt      int64  `json:"client_id_issued_at,omitempty"`
 	ClientSecretExpiresAt int64  `json:"client_secret_expires_at,omitempty"`
+}
+
+type JWKSValidatorOptions struct {
+	Issuer string
+
+	JWKSURI string
+
+	DiscoveryURL string
+
+	HTTPClient *http.Client
+
+	Now func() time.Time
+
+	ClockSkew time.Duration
+
+	CacheTTL time.Duration
+
+	RefreshCooldown time.Duration
+
+	MaxRefreshPerKid int
+
+	AllowedAZP []string
+
+	RequiredAudience func(*apptheory.Context) (string, error)
+
+	RequiredScopes func(*apptheory.Context) ([]string, error)
 }
 
 type MCPServerConfig struct {
@@ -5092,9 +5166,13 @@ type RefreshTokenStore interface {
 type RequireBearerTokenOptions struct {
 	ResourceMetadataURL string
 
+	ResourceMetadataURLFunc func(*apptheory.Context) (string, error)
+
 	Validator BearerTokenValidator
 
 	ClaimsValidator BearerTokenClaimsValidator
+
+	RequiredScopesFunc func(*apptheory.Context) ([]string, error)
 }
 
 func AuthorizationServerMetadataHandler(*AuthorizationServerMetadata) apptheory.Handler
@@ -5103,13 +5181,19 @@ func BearerTokenClaimsFromContext(*apptheory.Context) (BearerTokenClaims, bool)
 
 func BearerTokenFromHeaders(map[string][]string) (string, error)
 
+func BootstrapOIDCDiscovery(context.Context, string, string, *http.Client) (string, error)
+
 func CanonicalResourceURL(string) string
 
 func CanonicalizeIssuerURL(string) (string, bool)
 
 func ClaudeDynamicClientRegistrationPolicy() DynamicClientRegistrationPolicy
 
+func InsufficientScopeWWWAuthenticate([]string, string) string
+
 func NewAuthorizationServerMetadata(string, ...AuthorizationServerMetadataOption) (*AuthorizationServerMetadata, error)
+
+func NewJWKSValidator(JWKSValidatorOptions) (BearerTokenClaimsValidator, error)
 
 func NewMCPProtectedResourceDiscoveryHandler(MCPServerConfig) (apptheory.Handler, error)
 
@@ -5550,6 +5634,8 @@ type Handler struct {
 func AssertBearerTokenReachesHandler(testing.TB, *testkit.Env, *apptheory.App, string, string, string, *Handler)
 
 func AssertCredentialFreeDenied(testing.TB, *testkit.Env, *apptheory.App, string, string, string, *Handler)
+
+func AssertInsufficientScopeRemediation(testing.TB, *testkit.Env, *apptheory.App, string, string, string, string, *Handler)
 
 func NewHandler() *Handler
 
