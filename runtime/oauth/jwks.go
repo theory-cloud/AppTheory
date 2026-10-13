@@ -12,11 +12,13 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
@@ -84,6 +86,7 @@ var (
 	errResponseTooLarge    = errors.New("oauth: response exceeds the maximum size")
 	errTooManyKeys         = errors.New("oauth: key set exceeds the maximum key count")
 	errFetchUnavailable    = errors.New("oauth: document fetch failed")
+	errHostNotPublic       = errors.New("oauth: endpoint host is not a public address")
 )
 
 // JWKSValidatorOptions configures NewJWKSValidator.
@@ -115,6 +118,13 @@ type JWKSValidatorOptions struct {
 	// already carries its own Timeout keeps that Timeout unless FetchTimeout is
 	// set explicitly.
 	FetchTimeout time.Duration
+
+	// AllowPrivateHosts disables the non-public-host check on the framework's
+	// discovery/JWKS transport. It is off by default and the framework never
+	// enables it: local development and the repository's loopback test suites
+	// opt in explicitly. A caller-supplied HTTPClient keeps its own connection
+	// policy either way.
+	AllowPrivateHosts bool
 
 	// CacheTTL is how long a fetched key stays usable before a refresh. Zero
 	// means the default.
@@ -188,7 +198,7 @@ func newJWKSValidatorState(opts JWKSValidatorOptions) (*jwksValidator, error) {
 		return nil, fmt.Errorf("%w: jwks validator issuer must be an absolute URL", ErrInvalidURL)
 	}
 
-	client := jwksHTTPClient(opts.HTTPClient, opts.FetchTimeout)
+	client := jwksHTTPClient(opts.HTTPClient, opts.FetchTimeout, opts.AllowPrivateHosts)
 	fetchTimeout := resolvedFetchTimeout(opts.HTTPClient, opts.FetchTimeout)
 
 	discoveryURL := strings.TrimSpace(opts.DiscoveryURL)
@@ -288,7 +298,7 @@ func BootstrapOIDCDiscovery(ctx context.Context, discoveryURL string, issuer str
 		return "", fmt.Errorf("%w: %w", ErrInvalidURL, errInsecureURL)
 	}
 
-	body, err := fetchBoundedDocument(ctx, jwksHTTPClient(client, 0), requestURL)
+	body, err := fetchBoundedDocument(ctx, jwksHTTPClient(client, 0, false), requestURL)
 	if err != nil {
 		return "", err
 	}
@@ -1077,7 +1087,7 @@ func resolvedFetchTimeout(base *http.Client, override time.Duration) time.Durati
 	return defaultJWKSFetchTimeout
 }
 
-func jwksHTTPClient(client *http.Client, fetchTimeout time.Duration) *http.Client {
+func jwksHTTPClient(client *http.Client, fetchTimeout time.Duration, allowPrivateHosts bool) *http.Client {
 	base := client
 	if base == nil {
 		base = http.DefaultClient
@@ -1085,13 +1095,88 @@ func jwksHTTPClient(client *http.Client, fetchTimeout time.Duration) *http.Clien
 	clone := *base
 	// Every discovery and JWKS fetch is bounded, so a hung or hostile upstream
 	// cannot stall a validation indefinitely.
-	clone.Timeout = resolvedFetchTimeout(client, fetchTimeout)
+	timeout := resolvedFetchTimeout(client, fetchTimeout)
+	clone.Timeout = timeout
 	// Never follow a redirect: the caller must not be steered to another
 	// origin, and a 3xx is reported as a failure by fetchBoundedDocument.
 	clone.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
+	// The SSRF host guard is installed whenever the framework chooses the
+	// transport. A caller-supplied transport keeps its own connection policy, so
+	// an injected (for example loopback test) transport stays usable.
+	switch {
+	case allowPrivateHosts:
+		if clone.Transport == nil {
+			// Pin the transport explicitly so a later clone cannot re-apply the
+			// guard the caller opted out of.
+			clone.Transport = http.DefaultTransport
+		}
+	case clone.Transport == nil:
+		clone.Transport = guardedJWKSTransport(timeout)
+	}
 	return &clone
+}
+
+// guardedJWKSTransport returns the framework discovery/JWKS transport: a clone
+// of the default transport whose dialer refuses every connection to a
+// non-public address.
+func guardedJWKSTransport(timeout time.Duration) *http.Transport {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		base = &http.Transport{}
+	}
+	transport := base.Clone()
+	transport.DialContext = (&net.Dialer{
+		Timeout:   timeout,
+		KeepAlive: 30 * time.Second,
+		Control:   guardJWKSConnection,
+	}).DialContext
+	return transport
+}
+
+// guardJWKSConnection is the connect-time SSRF guard. net.Dialer runs Control
+// with the address it has resolved and is about to connect to, so the address
+// that is checked is the address that is used: a name that resolves to a
+// non-public address cannot slip through between the check and the connection.
+func guardJWKSConnection(network, address string, _ syscall.RawConn) error {
+	if !strings.HasPrefix(network, "tcp") {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("%w: %s", errHostNotPublic, address)
+	}
+	if ip := net.ParseIP(host); ip == nil || !isPublicHostAddress(ip) {
+		return fmt.Errorf("%w: %s", errHostNotPublic, host)
+	}
+	return nil
+}
+
+// isPublicHostAddress reports whether ip may be connected to. The guard refuses
+// loopback, link-local (including the cloud metadata address), private,
+// unspecified, and multicast addresses; an IPv4-mapped IPv6 address is judged by
+// the IPv4 address it maps to. It matches the shared classification table in
+// contract-tests/fixtures/routing/mcp-auth-facade/discovery-bootstrap.v1.json.
+func isPublicHostAddress(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		ip = ip4
+	}
+	switch {
+	case ip.IsLoopback(),
+		ip.IsLinkLocalUnicast(),
+		ip.IsLinkLocalMulticast(),
+		ip.IsUnspecified(),
+		ip.IsPrivate(),
+		ip.IsMulticast(),
+		ip.IsInterfaceLocalMulticast():
+		return false
+	default:
+		return true
+	}
 }
 
 func allowedAZPSet(values []string) map[string]struct{} {

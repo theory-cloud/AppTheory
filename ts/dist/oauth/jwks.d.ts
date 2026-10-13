@@ -31,6 +31,11 @@ export interface JWKSValidatorOptions {
     discoveryUrl?: string;
     /** Injectable fetch, used by tests to serve keys without network egress. */
     fetchImpl?: typeof fetch;
+    /**
+     * Disables the non-public-host check. Off by default; the framework never
+     * enables it. Local development and the loopback test suites opt in.
+     */
+    allowPrivateHosts?: boolean;
     /** Overrides the clock used for `exp`/`nbf`, cache expiry, and cooldown. */
     now?: () => Date;
     /** Tolerance applied to `exp` and `nbf`. */
@@ -117,4 +122,22 @@ export declare function bootstrapOidcDiscovery(discoveryUrl: string, issuer: str
  * the token or key material.
  */
 export declare function newJwksValidator(options: JWKSValidatorOptions): Promise<BearerTokenClaimsValidator>;
+/**
+ * The connectivity class of one host address literal. `invalid` is not an
+ * address literal at all and is never connectable, so the classifier fails
+ * closed. The classes are shared with the Go and Python validators through the
+ * discovery-bootstrap contract fixture's `host_guard` table.
+ */
+export type HostAddressClass = "loopback" | "link_local" | "private" | "unspecified" | "multicast" | "public" | "invalid";
+/**
+ * Classifies one IP address literal. An IPv4-mapped IPv6 address is classified
+ * by the IPv4 address it maps to, so `::ffff:127.0.0.1` is loopback. Refused
+ * classes are loopback (`127.0.0.0/8`, `::1`), link-local (`169.254.0.0/16`,
+ * `fe80::/10`), private (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+ * `fc00::/7`), unspecified (`0.0.0.0`, `::`), and multicast (`224.0.0.0/4`,
+ * `ff00::/8`); everything else is public.
+ */
+export declare function classifyHostAddress(address: string): HostAddressClass;
+/** Reports whether one host address literal may be connected to. */
+export declare function isPublicHostAddress(address: string): boolean;
 //# sourceMappingURL=jwks.d.ts.map

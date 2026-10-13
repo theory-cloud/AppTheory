@@ -1,5 +1,8 @@
 import { Buffer } from "node:buffer";
 import { createPublicKey, verify } from "node:crypto";
+import { lookup as dnsLookup } from "node:dns";
+import { request as httpsRequest } from "node:https";
+import { isIP } from "node:net";
 import { ERR_BEARER_TOKEN_EXPIRED, ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE, ERR_BEARER_TOKEN_INVALID_AUDIENCE, ERR_INVALID_BEARER_TOKEN, OAuthBearerError, } from "./index.js";
 const ERROR_PREFIX = "jwks:";
 /**
@@ -43,7 +46,7 @@ export async function bootstrapOidcDiscovery(discoveryUrl, issuer, fetchImpl, ti
         throw new Error(`${ERROR_PREFIX} invalid_url: configured issuer must be an absolute URL`);
     }
     const requestUrl = secureURL(discoveryUrl, "discovery url");
-    const document = await fetchDocument(requestUrl, fetchImpl ?? fetch, "discovery", positiveSeconds(timeoutSeconds, DEFAULT_FETCH_TIMEOUT_SECONDS) * 1000);
+    const document = await fetchDocument(requestUrl, fetchImpl ?? frameworkFetch(), "discovery", positiveSeconds(timeoutSeconds, DEFAULT_FETCH_TIMEOUT_SECONDS) * 1000);
     const documentIssuer = canonicalIssuer(stringClaim(document, "issuer"));
     if (!documentIssuer || documentIssuer !== configuredIssuer) {
         throw new Error(`${ERROR_PREFIX} issuer_mismatch: discovery issuer does not match the configured issuer`);
@@ -75,7 +78,11 @@ export async function newJwksValidator(options) {
     if (!configuredIssuer) {
         throw new Error(`${ERROR_PREFIX} invalid_url: jwks validator issuer must be an absolute URL`);
     }
-    const fetchImpl = options.fetchImpl ?? fetch;
+    // Only the framework's own transport carries the non-public-host guard; an
+    // injected `fetchImpl` is caller-owned and is never re-plumbed. The
+    // `allowPrivateHosts` override drops the guard by not installing it at all.
+    const fetchImpl = options.fetchImpl ??
+        (options.allowPrivateHosts === true ? fetch : frameworkFetch());
     const now = options.now ?? (() => new Date());
     const clockSkewMs = nonNegativeSeconds(options.clockSkewSeconds, 0) * 1000;
     const fetchTimeoutSeconds = positiveSeconds(options.fetchTimeoutSeconds, DEFAULT_FETCH_TIMEOUT_SECONDS);
@@ -503,8 +510,13 @@ async function fetchDocument(url, fetchImpl, label, timeoutMs) {
             signal,
         }), timeoutMs);
     }
-    catch {
-        throw new Error(`${ERROR_PREFIX} discovery_unavailable: ${label} document cannot be fetched`);
+    catch (err) {
+        // A framed refusal from the framework transport (the non-public-host
+        // guard) is a first-class rejection, not a fetch failure, so its reason
+        // survives to the caller instead of being flattened.
+        if (err instanceof OAuthBearerError)
+            throw err;
+        throw new Error(`${ERROR_PREFIX} discovery_unavailable: ${label} document cannot be fetched`, { cause: err });
     }
     if (response.status >= 300 && response.status < 400) {
         throw redirectFailure(url, response.headers.get("location") ?? "");
@@ -708,5 +720,265 @@ function positiveInteger(value, fallback) {
     return typeof value === "number" && Number.isInteger(value) && value > 0
         ? value
         : fallback;
+}
+/**
+ * Classifies one IP address literal. An IPv4-mapped IPv6 address is classified
+ * by the IPv4 address it maps to, so `::ffff:127.0.0.1` is loopback. Refused
+ * classes are loopback (`127.0.0.0/8`, `::1`), link-local (`169.254.0.0/16`,
+ * `fe80::/10`), private (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+ * `fc00::/7`), unspecified (`0.0.0.0`, `::`), and multicast (`224.0.0.0/4`,
+ * `ff00::/8`); everything else is public.
+ */
+export function classifyHostAddress(address) {
+    const text = String(address ?? "").trim();
+    const family = isIP(text);
+    if (family === 4) {
+        const octets = ipv4Octets(text);
+        return octets ? classifyIpv4Octets(octets) : "invalid";
+    }
+    if (family === 6) {
+        const bytes = ipv6Bytes(text);
+        return bytes ? classifyIpv6Bytes(bytes) : "invalid";
+    }
+    return "invalid";
+}
+/** Reports whether one host address literal may be connected to. */
+export function isPublicHostAddress(address) {
+    return classifyHostAddress(address) === "public";
+}
+/** The refusal phrase every runtime's non-public-host failure carries. */
+const NON_PUBLIC_HOST_PHRASE = "not a public address";
+function nonPublicHostError(subject) {
+    return new OAuthBearerError(ERR_INVALID_BEARER_TOKEN, `${ERROR_PREFIX} non_public_host: ${subject} is ${NON_PUBLIC_HOST_PHRASE}`);
+}
+/**
+ * The framework's own document transport, and the only place the
+ * non-public-host guard is installed.
+ *
+ * The guard runs inside `lookup`, on the addresses the name actually resolved
+ * to, and Node connects to the address `lookup` hands back. Resolving,
+ * checking, and connecting are therefore one step, so there is no window in
+ * which a name could resolve to a public address for the check and to a
+ * non-public one for the connection. TLS keeps its defaults: the request
+ * carries the original URL, so the certificate is still verified against the
+ * URL's host name even though the socket connects to an address of that name.
+ */
+function frameworkFetch() {
+    return async (input, init) => {
+        const url = new URL(String(input));
+        const literal = urlIpLiteral(url);
+        if (literal && !isPublicHostAddress(literal)) {
+            throw nonPublicHostError(literal);
+        }
+        const options = {
+            method: "GET",
+            headers: { accept: "application/json" },
+            lookup: guardedLookup,
+        };
+        const signal = init?.signal;
+        if (signal)
+            options.signal = signal;
+        return await new Promise((resolve, reject) => {
+            const request = httpsRequest(url, options, (response) => {
+                try {
+                    resolve(buildFetchResponse(response));
+                }
+                catch (err) {
+                    response.resume();
+                    reject(err instanceof Error ? err : new Error(String(err)));
+                }
+            });
+            request.on("error", (err) => {
+                reject(err);
+            });
+            request.end();
+        });
+    };
+}
+/**
+ * Resolves a name and hands back only public addresses. When none survives,
+ * the request is refused with the guard's message before any socket is
+ * opened, so a name that resolves to a non-public address is never connected
+ * to.
+ */
+const guardedLookup = (hostname, options, callback) => {
+    dnsLookup(hostname, { all: true, verbatim: true }, (err, addresses) => {
+        if (err) {
+            callback(err, []);
+            return;
+        }
+        const allowed = addresses.filter((entry) => isPublicHostAddress(entry.address));
+        if (allowed.length === 0) {
+            callback(nonPublicHostError(hostname), []);
+            return;
+        }
+        if (options.all === true) {
+            callback(null, allowed);
+            return;
+        }
+        const first = allowed[0];
+        if (!first) {
+            callback(nonPublicHostError(hostname), []);
+            return;
+        }
+        callback(null, first.address, first.family);
+    });
+};
+/**
+ * Returns the URL's host when it is already an IP address literal, and an
+ * empty string when it is a name. Node skips `lookup` for a literal, so a
+ * literal host has to be classified here as well.
+ */
+function urlIpLiteral(url) {
+    let host = url.hostname;
+    if (host.startsWith("[") && host.endsWith("]"))
+        host = host.slice(1, -1);
+    return isIP(host) === 0 ? "" : host;
+}
+/**
+ * Adapts a Node response to the web `Response` shape the document reader
+ * expects: `status`, `headers.get`, and a `body` web `ReadableStream`.
+ */
+function buildFetchResponse(response) {
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(response.headers)) {
+        if (value === undefined)
+            continue;
+        headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+    }
+    const body = new ReadableStream({
+        start(controller) {
+            response.on("data", (chunk) => {
+                controller.enqueue(chunk);
+            });
+            response.on("end", () => {
+                controller.close();
+            });
+            response.on("error", (err) => {
+                controller.error(err);
+            });
+        },
+        cancel(reason) {
+            response.destroy(reason instanceof Error ? reason : undefined);
+        },
+    });
+    return new Response(body, { status: response.statusCode ?? 502, headers });
+}
+function classifyIpv4Octets(octets) {
+    const [a = 0, b = 0, c = 0, d = 0] = octets;
+    if (a === 127)
+        return "loopback";
+    if (a === 169 && b === 254)
+        return "link_local";
+    if (a === 10 ||
+        (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && b === 168)) {
+        return "private";
+    }
+    if (a === 0 && b === 0 && c === 0 && d === 0)
+        return "unspecified";
+    if (a >= 224 && a <= 239)
+        return "multicast";
+    return "public";
+}
+function classifyIpv6Bytes(raw) {
+    const bytes = [...raw];
+    const at = (index) => bytes[index] ?? 0;
+    if (at(10) === 0xff &&
+        at(11) === 0xff &&
+        bytes.slice(0, 10).every((value) => value === 0)) {
+        return classifyIpv4Octets([at(12), at(13), at(14), at(15)]);
+    }
+    if (bytes.every((value) => value === 0))
+        return "unspecified";
+    if (at(15) === 1 && bytes.slice(0, 15).every((value) => value === 0)) {
+        return "loopback";
+    }
+    const first = at(0);
+    const second = at(1);
+    if (first === 0xfe && (second & 0xc0) === 0x80)
+        return "link_local";
+    if ((first & 0xfe) === 0xfc)
+        return "private";
+    if (first === 0xff)
+        return "multicast";
+    return "public";
+}
+function ipv4Octets(text) {
+    const pieces = text.split(".");
+    if (pieces.length !== 4)
+        return null;
+    const octets = [];
+    for (const piece of pieces) {
+        if (!/^\d{1,3}$/u.test(piece))
+            return null;
+        const value = Number.parseInt(piece, 10);
+        if (value > 255)
+            return null;
+        octets.push(value);
+    }
+    return octets;
+}
+function ipv6Bytes(address) {
+    const groups = ipv6Groups(address);
+    if (!groups)
+        return null;
+    const bytes = new Uint8Array(16);
+    for (let index = 0; index < 8; index += 1) {
+        const group = groups[index] ?? 0;
+        bytes[index * 2] = group >> 8;
+        bytes[index * 2 + 1] = group & 0xff;
+    }
+    return bytes;
+}
+/**
+ * Expands an IPv6 literal into its eight 16-bit groups, handling `::`
+ * compression and an embedded IPv4 tail such as `::ffff:127.0.0.1`. A zone
+ * index is stripped; the caller has already validated the literal with
+ * `isIP`.
+ */
+function ipv6Groups(address) {
+    const zone = address.indexOf("%");
+    const text = zone === -1 ? address : address.slice(0, zone);
+    const marker = text.indexOf("::");
+    if (marker !== -1 && text.slice(marker + 2).includes("::"))
+        return null;
+    const headText = marker === -1 ? text : text.slice(0, marker);
+    const tailText = marker === -1 ? "" : text.slice(marker + 2);
+    const head = ipv6GroupList(headText);
+    const tail = ipv6GroupList(tailText);
+    if (!head || !tail)
+        return null;
+    if (marker === -1)
+        return head.length === 8 ? head : null;
+    const fill = 8 - head.length - tail.length;
+    if (fill < 1)
+        return null;
+    const groups = [...head];
+    for (let index = 0; index < fill; index += 1)
+        groups.push(0);
+    groups.push(...tail);
+    return groups;
+}
+function ipv6GroupList(part) {
+    if (part === "")
+        return [];
+    const pieces = part.split(":");
+    const groups = [];
+    for (let index = 0; index < pieces.length; index += 1) {
+        const piece = pieces[index] ?? "";
+        if (index === pieces.length - 1 && piece.includes(".")) {
+            const octets = ipv4Octets(piece);
+            if (!octets)
+                return null;
+            const [a = 0, b = 0, c = 0, d = 0] = octets;
+            groups.push((a << 8) | b, (c << 8) | d);
+            continue;
+        }
+        if (!/^[0-9A-Fa-f]{1,4}$/u.test(piece))
+            return null;
+        groups.push(Number.parseInt(piece, 16));
+    }
+    return groups;
 }
 //# sourceMappingURL=jwks.js.map

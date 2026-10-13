@@ -539,6 +539,21 @@ class DiscoveryBootstrapFixtureTests(unittest.TestCase):
         self.assertEqual(security["cross_origin_redirect"], "rejected")
         self.assertTrue(security["endpoints_pinned_to_verified_issuer"])
 
+    def test_host_guard_table_classifies_every_shared_address(self) -> None:
+        guard = self.fixture["host_guard"]
+        self.assertEqual(guard["default"], "reject any endpoint host that is not a public address")
+        rows = guard["addresses"]
+        self.assertTrue(rows, "the shared host-guard table must not be empty")
+        for row in rows:
+            with self.subTest(address=row["address"]):
+                self.assertEqual(jwks.classify_host_address(row["address"]), row["class"])
+                self.assertEqual(jwks.is_public_host_address(row["address"]), row["public"])
+        # A name is never an address literal, and an unparsed address is never
+        # treated as public.
+        self.assertEqual(jwks.classify_host_address("localhost"), "invalid")
+        self.assertFalse(jwks.is_public_host_address("localhost"))
+        self.assertFalse(jwks.is_public_host_address("mcp.example.test"))
+
     def test_fixture_cases(self) -> None:
         scenarios = {
             "same-origin-https-accepted": self._case_same_origin_accepted,
@@ -897,11 +912,15 @@ class FetchTimeoutTests(unittest.TestCase):
 
     def test_hung_upstream_fails_closed_inside_the_bound(self) -> None:
         key = _test_key("hung-upstream")
+        # The listener is on loopback, which the framework transport refuses by
+        # default, so the loopback suite opts in to the documented override and
+        # this test keeps exercising the fetch timeout rather than the guard.
         validator = new_jwks_validator(
             JWKSValidatorOptions(
                 issuer=ISSUER,
                 jwks_uri=f"https://127.0.0.1:{self._port}/jwks.json",
                 http_timeout_seconds=0.2,
+                allow_private_hosts=True,
             )
         )
         started = time.monotonic()
@@ -921,6 +940,64 @@ class FetchTimeoutTests(unittest.TestCase):
         validator = _new_env(transport, _Clock(NOW))
         accepted, code = _validate(validator, _jwt(key, "k1", _claims()))
         self.assertTrue(accepted, code)
+
+
+GUARD_ISSUER = "https://issuer.example.test"
+
+
+class HostGuardTransportTests(unittest.TestCase):
+    """The framework's own transport must refuse non-public endpoints.
+
+    Port 1 is closed, so nothing is ever served however far a call gets; each
+    assertion therefore measures the guard, not a response.
+    """
+
+    def _guard_failure(self, jwks_uri: str, **options: Any) -> tuple[str, float]:
+        key = _test_key("host-guard")
+        validator = new_jwks_validator(
+            JWKSValidatorOptions(
+                issuer=GUARD_ISSUER,
+                jwks_uri=jwks_uri,
+                http_timeout_seconds=5.0,
+                **options,
+            )
+        )
+        started = time.monotonic()
+        with self.assertRaises(OAuthBearerError) as caught:
+            validator(_ctx(), _jwt(key, "k1", _claims(issuer=GUARD_ISSUER)))
+        return str(caught.exception), time.monotonic() - started
+
+    def test_default_transport_refuses_a_non_public_endpoint(self) -> None:
+        for jwks_uri in (
+            "https://127.0.0.1:1/jwks.json",
+            "https://[::1]:1/jwks.json",
+            "https://[::ffff:127.0.0.1]:1/jwks.json",
+            "https://localhost:1/jwks.json",
+        ):
+            with self.subTest(jwks_uri=jwks_uri):
+                message, elapsed = self._guard_failure(jwks_uri)
+                self.assertIn("not a public address", message)
+                self.assertLess(elapsed, 3.0, f"{jwks_uri} took {elapsed:.2f}s")
+
+    def test_allow_private_hosts_drops_the_guard(self) -> None:
+        for jwks_uri in ("https://127.0.0.1:1/jwks.json", "https://localhost:1/jwks.json"):
+            with self.subTest(jwks_uri=jwks_uri):
+                message, elapsed = self._guard_failure(jwks_uri, allow_private_hosts=True)
+                self.assertNotIn("not a public address", message)
+                self.assertLess(elapsed, 3.0, f"{jwks_uri} took {elapsed:.2f}s")
+
+    def test_only_an_explicit_true_enables_the_override(self) -> None:
+        message, _elapsed = self._guard_failure("https://127.0.0.1:1/jwks.json", allow_private_hosts="yes")
+        self.assertIn("not a public address", message)
+
+    def test_allow_private_hosts_leaves_the_injected_loopback_transport_validating(self) -> None:
+        key = _test_key("guard-override")
+        transport = _CountingTransport()
+        transport.push_json(JWKS_URI, _jwks(_jwk("k1", key)))
+        validator = _new_env(transport, _Clock(NOW), allow_private_hosts=True)
+        accepted, code = _validate(validator, _jwt(key, "k1", _claims()))
+        self.assertTrue(accepted, code)
+        self.assertEqual(transport.fetch_count, 1)
 
 
 if __name__ == "__main__":

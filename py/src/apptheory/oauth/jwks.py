@@ -12,8 +12,11 @@ import binascii
 import functools
 import hashlib
 import hmac
+import http.client
+import ipaddress
 import json as jsonlib
 import re
+import socket
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -60,6 +63,59 @@ DEFAULT_MAX_KEY_ENTRIES = 128
 DEFAULT_MAX_UNKNOWN_KID_FETCHES = 32
 DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS = 60.0
 
+# Explicit RFC 1918 and fc00::/7 membership, rather than ``is_private`` alone:
+# from Python 3.13 ``IPv4Address.is_private`` also reports the documentation
+# ranges (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24, ...), which would make
+# this runtime disagree with Go and TypeScript about those addresses.
+_PRIVATE_V4_NETWORKS = (
+    ipaddress.IPv4Network("10.0.0.0/8"),
+    ipaddress.IPv4Network("172.16.0.0/12"),
+    ipaddress.IPv4Network("192.168.0.0/16"),
+)
+_PRIVATE_V6_NETWORK = ipaddress.IPv6Network("fc00::/7")
+
+
+def classify_host_address(address: str) -> str:
+    """Classifies one IP address literal as one of the shared host classes.
+
+    The refused classes are loopback (``127.0.0.0/8``, ``::1``), link-local
+    (``169.254.0.0/16``, ``fe80::/10``), private (``10.0.0.0/8``,
+    ``172.16.0.0/12``, ``192.168.0.0/16``, ``fc00::/7``), unspecified
+    (``0.0.0.0``, ``::``) and multicast (``224.0.0.0/4``, ``ff00::/8``);
+    everything else is ``public``. An IPv4-mapped IPv6 address is classified by
+    the IPv4 address it maps to, so ``::ffff:127.0.0.1`` is loopback. Anything
+    that is not an address literal is ``invalid``, which is never connectable.
+    """
+    try:
+        parsed = ipaddress.ip_address(str(address or "").strip())
+    except ValueError:
+        return "invalid"
+    mapped = parsed.ipv4_mapped if isinstance(parsed, ipaddress.IPv6Address) else None
+    if mapped is not None:
+        parsed = mapped
+    if parsed.is_loopback:
+        return "loopback"
+    if parsed.is_link_local:
+        return "link_local"
+    if _is_private_address(parsed):
+        return "private"
+    if parsed.is_unspecified:
+        return "unspecified"
+    if parsed.is_multicast:
+        return "multicast"
+    return "public"
+
+
+def _is_private_address(parsed: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if isinstance(parsed, ipaddress.IPv4Address):
+        return any(parsed in network for network in _PRIVATE_V4_NETWORKS)
+    return parsed in _PRIVATE_V6_NETWORK
+
+
+def is_public_host_address(address: str) -> bool:
+    """Reports whether one host address literal may be connected to."""
+    return classify_host_address(address) == "public"
+
 
 def _positive_or_default(value: int | None, default: int) -> int:
     if value is None:
@@ -84,6 +140,9 @@ class JWKSValidatorOptions:
     jwks_uri: str = ""
     discovery_url: str = ""
     http_get: HTTPGet | None = None
+    # Disables the non-public-host check. Off by default; the framework never
+    # enables it. Local development and the loopback test suites opt in.
+    allow_private_hosts: bool = False
     # Bounds one discovery or JWKS fetch; the default matches the Go and
     # TypeScript validators. A non-positive value means the framework default,
     # so the three runtimes share one set of timing defaults.
@@ -187,12 +246,15 @@ class _JWKSValidator:
         self._issuer = issuer
         self._discovery_url = discovery_url
         self._allowed_azp = allowed_azp
-        # An explicitly injected transport is caller-owned and is not re-timed;
-        # only the framework default transport is bound to the configured
-        # timeout.
+        # An explicitly injected transport is caller-owned and is not re-timed
+        # and never re-plumbed with the non-public-host guard; only the
+        # framework default transport is bound to the configured timeout and
+        # carries the guard. The documented override drops the guard by
+        # switching the transport back to the stock connection class.
         self._http_get = options.http_get or functools.partial(
             _default_http_get,
             timeout=_positive_float_or_default(options.http_timeout_seconds, HTTP_TIMEOUT_SECONDS),
+            allow_private_hosts=options.allow_private_hosts is True,
         )
         self._now = options.now or _utc_now
         self._skew = max(0, int(options.clock_skew_seconds or 0))
@@ -567,10 +629,15 @@ def _http_get_bytes(http_get: HTTPGet, url: str) -> tuple[int, dict[str, str], b
     return code, dict(headers or {}), bytes(body)
 
 
-def _default_http_get(url: str, timeout: float = HTTP_TIMEOUT_SECONDS) -> tuple[int, dict[str, str], bytes]:
+def _default_http_get(
+    url: str, timeout: float = HTTP_TIMEOUT_SECONDS, *, allow_private_hosts: bool = False
+) -> tuple[int, dict[str, str], bytes]:
     # The caller validates that the URL is https before reaching this transport.
     request = urllib.request.Request(url, method="GET", headers={"accept": "application/json"})  # noqa: S310
-    opener = urllib.request.build_opener(_RefuseRedirectHandler())
+    opener = urllib.request.build_opener(
+        _RefuseRedirectHandler(),
+        _GuardedHTTPSHandler(allow_private_hosts=allow_private_hosts),
+    )
     try:
         with opener.open(request, timeout=timeout) as response:
             body = response.read(MAX_HTTP_RESPONSE_BYTES + 1)
@@ -589,6 +656,73 @@ class _RefuseRedirectHandler(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
         return None
+
+
+_AddressInfo = tuple[int, int, int, str, tuple[str, int] | tuple[str, int, int, int]]
+
+
+def _public_addresses(host: str, port: int | None) -> list[_AddressInfo]:
+    """Resolves ``host`` and keeps only the addresses that are public."""
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    return [info for info in infos if is_public_host_address(str(info[4][0]))]
+
+
+class _GuardedHTTPSConnection(http.client.HTTPSConnection):
+    """An HTTPS connection that only ever dials a public address.
+
+    Resolving the name, classifying every address it resolves to, and opening
+    the socket are one step, so there is no window in which a name could
+    resolve to a public address for the check and to a non-public one for the
+    connection. The certificate is still verified against the URL's host name,
+    because ``server_hostname`` is the host, not the address connected to.
+    """
+
+    def connect(self) -> None:  # type: ignore[override]
+        addresses = _public_addresses(self.host, self.port)
+        if not addresses:
+            raise OAuthBearerError(ERR_INVALID_BEARER_TOKEN, "endpoint host is not a public address")
+        last_error: OSError | None = None
+        sock: socket.socket | None = None
+        for family, socktype, proto, _canonical, sockaddr in addresses:
+            candidate = socket.socket(family, socktype, proto)
+            try:
+                if isinstance(self.timeout, int | float):
+                    candidate.settimeout(self.timeout)
+                if self.source_address:
+                    candidate.bind(self.source_address)
+                candidate.connect(sockaddr)
+            except OSError as exc:
+                candidate.close()
+                last_error = exc
+                continue
+            sock = candidate
+            break
+        if sock is None:
+            raise last_error or OSError(f"connection to {self.host!r} failed")
+        self.sock = sock
+        if self._tunnel_host:
+            self._tunnel()
+            server_hostname = self._tunnel_host
+        else:
+            server_hostname = self.host
+        self.sock = self._context.wrap_socket(self.sock, server_hostname=server_hostname)
+
+
+class _GuardedHTTPSHandler(urllib.request.HTTPSHandler):
+    """An HTTPS handler whose connections refuse non-public addresses.
+
+    ``allow_private_hosts`` switches the handler back to the stock connection
+    class, so the framework's documented override drops the guard instead of
+    re-plumbing an injected transport.
+    """
+
+    def __init__(self, *, allow_private_hosts: bool = False, context: Any = None, check_hostname: bool | None = None):
+        super().__init__(context=context, check_hostname=check_hostname)
+        self._allow_private_hosts = allow_private_hosts
+
+    def https_open(self, req):  # type: ignore[override]
+        connection = http.client.HTTPSConnection if self._allow_private_hosts else _GuardedHTTPSConnection
+        return self.do_open(connection, req, context=self._context)
 
 
 def _normalize_secure_url(raw: str) -> str | None:

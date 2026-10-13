@@ -34,6 +34,8 @@ import {
   DEFAULT_MAX_UNKNOWN_KID_FETCHES,
   DEFAULT_MAX_WINDOW_ENTRIES,
   DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS,
+  classifyHostAddress,
+  isPublicHostAddress,
 } from "../dist/oauth/jwks.js";
 
 const FIXTURE_DIR = path.join(
@@ -994,5 +996,129 @@ test("the shared fetch timeout default leaves the happy path intact", async () =
       "acme",
       "the framework default timeout must not disturb validation",
     );
+  });
+});
+
+const GUARD_ISSUER = "https://issuer.example.com";
+
+function guardToken() {
+  const nowSeconds = Math.floor(BASE_MS / 1000);
+  return signToken({
+    header: { alg: "RS256", kid: KEY_A.kid, typ: "JWT" },
+    payload: {
+      iss: GUARD_ISSUER,
+      aud: AUDIENCE,
+      sub: "acme",
+      scope: "mcp:read",
+      iat: nowSeconds,
+      exp: nowSeconds + 300,
+    },
+    material: KEY_A,
+  });
+}
+
+/**
+ * Builds a validator over the framework's own transport (no injected fetch)
+ * and validates one token, reporting the failure and how long it took. Port 1
+ * is closed, so nothing is ever served however far a call gets.
+ */
+async function guardRefusal(jwksUri, extra) {
+  const validate = await newJwksValidator({
+    issuer: GUARD_ISSUER,
+    jwksUri,
+    now: () => new Date(BASE_MS),
+    ...extra,
+  });
+  const started = Date.now();
+  try {
+    await validate(routeContext("/acme/mcp"), guardToken());
+  } catch (err) {
+    return { error: err, elapsed: Date.now() - started };
+  }
+  return { error: null, elapsed: Date.now() - started };
+}
+
+test("discovery-bootstrap.v1 host_guard classifies every shared address row", () => {
+  const fixture = loadFixture("discovery-bootstrap.v1.json");
+  const guard = fixture.host_guard;
+  assert.equal(guard.default, "reject any endpoint host that is not a public address");
+  const rows = guard.addresses;
+  assert.ok(rows.length > 0, "the shared host-guard table must not be empty");
+
+  for (const row of rows) {
+    assert.equal(
+      classifyHostAddress(row.address),
+      row.class,
+      `${row.address}: class`,
+    );
+    assert.equal(
+      isPublicHostAddress(row.address),
+      row.public,
+      `${row.address}: public`,
+    );
+  }
+  // The classifier refuses anything that is not an address literal rather than
+  // treating an unparsed name as public.
+  assert.equal(classifyHostAddress("localhost"), "invalid");
+  assert.equal(isPublicHostAddress("localhost"), false);
+  assert.equal(isPublicHostAddress("mcp.example.com"), false);
+});
+
+test("the default transport refuses an endpoint that is not a public address", async () => {
+  for (const jwksUri of [
+    "https://127.0.0.1:1/jwks.json",
+    "https://[::1]:1/jwks.json",
+    "https://localhost:1/jwks.json",
+  ]) {
+    const { error, elapsed } = await guardRefusal(jwksUri);
+    assert.ok(
+      error instanceof OAuthBearerError,
+      `${jwksUri}: want OAuthBearerError, got ${error}`,
+    );
+    assert.equal(error.oauthCode, ERR_INVALID_BEARER_TOKEN, `${jwksUri}: code`);
+    assert.match(
+      error.message,
+      /not a public address/u,
+      `${jwksUri}: the refusal must name the guard`,
+    );
+    assert.ok(
+      elapsed < 3000,
+      `${jwksUri}: the guard must refuse without connecting, took ${elapsed}ms`,
+    );
+  }
+});
+
+test("allowPrivateHosts drops the guard and surfaces the connection error instead", async () => {
+  for (const jwksUri of ["https://127.0.0.1:1/jwks.json", "https://localhost:1/jwks.json"]) {
+    const { error, elapsed } = await guardRefusal(jwksUri, {
+      allowPrivateHosts: true,
+    });
+    assert.ok(
+      error instanceof OAuthBearerError,
+      `${jwksUri}: want OAuthBearerError, got ${error}`,
+    );
+    assert.doesNotMatch(
+      error.message,
+      /not a public address/u,
+      `${jwksUri}: the override must not apply the guard: ${error.message}`,
+    );
+    assert.ok(elapsed < 3000, `${jwksUri}: took ${elapsed}ms`);
+  }
+
+  // A non-boolean override value does not enable the check bypass.
+  const { error } = await guardRefusal("https://127.0.0.1:1/jwks.json", {
+    allowPrivateHosts: "yes",
+  });
+  assert.match(error.message, /not a public address/u, "only `true` disables");
+});
+
+test("allowPrivateHosts leaves an injected loopback transport validating", async () => {
+  await withEnv({ jwks: () => ({ body: { keys: [KEY_A.jwk] } }) }, async (env) => {
+    const validate = await newJwksValidator(
+      validatorOptions(env, { allowPrivateHosts: true }),
+    );
+    const result = await validate(routeContext("/acme/mcp"), rs256Token(env, KEY_A));
+    assert.equal(result.subject, "acme", "an opt-in loopback transport still validates");
+    assert.equal(env.state.fetches, 1, `${JSON.stringify(env.state.urls)}`);
   });
 });

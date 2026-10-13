@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"hash"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -454,11 +455,11 @@ func runFixtureEvictedKidWindowAllowsOneRefetch(t *testing.T, fixtureCase jwksVa
 		return err
 	}
 
-	lastErr := resolve("kid-a", keyA)
+	require.Error(t, resolve("kid-a", keyA))
 	require.Equal(t, 2, server.fetchCount(), "the first kid spends its own bounded refresh")
-	lastErr = resolve("kid-b", keyB)
+	require.Error(t, resolve("kid-b", keyB))
 	require.Equal(t, 4, server.fetchCount(), "the second kid is resolved independently")
-	lastErr = resolve("kid-a", keyA)
+	lastErr := resolve("kid-a", keyA)
 	require.Equal(t, fixtureCase.JWKSFetches, server.fetchCount(),
 		"the evicted kid window allows exactly one more bounded refresh")
 	return nil, lastErr
@@ -483,6 +484,16 @@ type discoveryFixture struct {
 		Expect   string `json:"expect"`
 		Reason   string `json:"reason"`
 	} `json:"cases"`
+	HostGuard struct {
+		Default   string   `json:"default"`
+		Override  string   `json:"override"`
+		Classes   []string `json:"classes"`
+		Addresses []struct {
+			Address string `json:"address"`
+			Class   string `json:"class"`
+			Public  bool   `json:"public"`
+		} `json:"addresses"`
+	} `json:"host_guard"`
 }
 
 func TestOIDCDiscoveryBootstrapFixture(t *testing.T) {
@@ -1092,7 +1103,7 @@ func TestRequireBearerTokenMiddlewareMapsJWKSValidatorFailures(t *testing.T) {
 func TestJWKSValidatorFetchBound(t *testing.T) {
 	require.Equal(t, 10*time.Second, defaultJWKSFetchTimeout,
 		"the shared framework fetch bound is 10 seconds")
-	require.Equal(t, defaultJWKSFetchTimeout, jwksHTTPClient(nil, 0).Timeout,
+	require.Equal(t, defaultJWKSFetchTimeout, jwksHTTPClient(nil, 0, false).Timeout,
 		"the framework client carries the default fetch bound")
 	require.Equal(t, 3*time.Second, resolvedFetchTimeout(nil, 3*time.Second),
 		"an explicit override wins")
@@ -1208,7 +1219,7 @@ func TestJWKSValidatorStateIsBounded(t *testing.T) {
 }
 
 // TestJWKSValidatorKeyCacheEvictsTheEarliestInsertedKey proves the key cache is
-// bounded and evicts in document order, so its behaviour is identical in every
+// bounded and evicts in document order, so its behavior is identical in every
 // runtime.
 func TestJWKSValidatorKeyCacheEvictsTheEarliestInsertedKey(t *testing.T) {
 	keyA, keyB, keyC := newTestRSAKey(t), newTestRSAKey(t), newTestRSAKey(t)
@@ -1244,9 +1255,112 @@ func newTestJWKSValidatorState(t *testing.T, options JWKSValidatorOptions) *jwks
 	return state
 }
 
+// TestHostGuardMatchesTheSharedClassificationTable pins the SSRF guard against
+// the address table all three runtimes execute.
+func TestHostGuardMatchesTheSharedClassificationTable(t *testing.T) {
+	var fixture discoveryFixture
+	loadMCPAuthFacadeFixture(t, "discovery-bootstrap.v1.json", &fixture)
+
+	guard := fixture.HostGuard
+	require.Contains(t, guard.Default, "not a public address", "the guard is on by default")
+	require.Contains(t, guard.Override, "off by default", "the override is documented")
+	require.ElementsMatch(t,
+		[]string{"loopback", "link_local", "private", "unspecified", "multicast", "public"},
+		guard.Classes)
+	require.NotEmpty(t, guard.Addresses, "the shared table must pin addresses")
+
+	exercised := make(map[string]bool, len(guard.Classes))
+	for _, row := range guard.Addresses {
+		t.Run(row.Address, func(t *testing.T) {
+			ip := net.ParseIP(row.Address)
+			require.NotNilf(t, ip, "the shared table must carry a parsable address: %s", row.Address)
+			require.Equalf(t, row.Public, isPublicHostAddress(ip), "row %s (%s)", row.Address, row.Class)
+		})
+		exercised[row.Class] = true
+	}
+	for _, class := range guard.Classes {
+		require.Truef(t, exercised[class], "the shared table must exercise the %s class", class)
+	}
+}
+
+// TestJWKSHostGuardIsInstalledAtConnectTime proves the framework transport hooks
+// the guard, and that the hook judges the address the dialer is about to use.
+func TestJWKSHostGuardIsInstalledAtConnectTime(t *testing.T) {
+	transport, ok := jwksHTTPClient(nil, 0, false).Transport.(*http.Transport)
+	require.True(t, ok, "the framework client must install its own guarded transport")
+	require.NotNil(t, transport.DialContext, "the guarded transport must dial through the guard")
+
+	require.ErrorIs(t, guardJWKSConnection("tcp", "127.0.0.1:443", nil), errHostNotPublic)
+	require.ErrorIs(t, guardJWKSConnection("tcp", "[::1]:443", nil), errHostNotPublic)
+	require.ErrorIs(t, guardJWKSConnection("tcp", "169.254.169.254:80", nil), errHostNotPublic)
+	require.ErrorIs(t, guardJWKSConnection("tcp", "10.0.0.1:443", nil), errHostNotPublic)
+	require.NoError(t, guardJWKSConnection("tcp", "8.8.8.8:443", nil))
+	require.NoError(t, guardJWKSConnection("tcp", "[2606:4700:4700::1111]:443", nil))
+
+	// The override pins the caller-facing transport instead of the guard.
+	overridden := jwksHTTPClient(nil, 0, true)
+	require.NotNil(t, overridden.Transport)
+	require.Same(t, http.DefaultTransport, overridden.Transport,
+		"allow-private must leave the default transport in place")
+}
+
+// TestJWKSValidatorRefusesNonPublicEndpoints proves the guard is active by
+// default for literal addresses and for names that resolve to a non-public
+// address, and that the documented override lifts it. Neither case reaches a
+// server.
+func TestJWKSValidatorRefusesNonPublicEndpoints(t *testing.T) {
+	endpoints := []string{
+		"https://127.0.0.1:1/jwks.json",
+		"https://localhost:1/jwks.json",
+		"https://169.254.169.254/jwks.json",
+	}
+	key := newTestRSAKey(t)
+	for _, endpoint := range endpoints {
+		t.Run(endpoint, func(t *testing.T) {
+			_, guardedErr := validateTestToken(newTestJWKSValidator(t, JWKSValidatorOptions{
+				Issuer:       jwksFixtureIssuer,
+				JWKSURI:      endpoint,
+				Now:          frozenJWKSClock(jwksFixtureNow),
+				FetchTimeout: 500 * time.Millisecond,
+			}), signTestRS256Token(t, "key-1", key, testJWKSClaims(nil)))
+			require.Error(t, guardedErr)
+			require.ErrorIs(t, guardedErr, errHostNotPublic,
+				"a non-public endpoint must be refused by the host guard")
+			require.Contains(t, guardedErr.Error(), "not a public address")
+
+			_, openErr := validateTestToken(newTestJWKSValidator(t, JWKSValidatorOptions{
+				Issuer:            jwksFixtureIssuer,
+				JWKSURI:           endpoint,
+				Now:               frozenJWKSClock(jwksFixtureNow),
+				FetchTimeout:      500 * time.Millisecond,
+				AllowPrivateHosts: true,
+			}), signTestRS256Token(t, "key-1", key, testJWKSClaims(nil)))
+			require.Error(t, openErr, "the endpoint stays unreachable")
+			require.NotErrorIs(t, openErr, errHostNotPublic,
+				"the documented allow-private override lifts the guard")
+		})
+	}
+}
+
+// TestBootstrapOIDCDiscoveryRefusesNonPublicEndpoints proves the guard covers
+// the discovery bootstrap, not only JWKS fetches.
+func TestBootstrapOIDCDiscoveryRefusesNonPublicEndpoints(t *testing.T) {
+	for _, discoveryURL := range []string{
+		"https://127.0.0.1:1/.well-known/openid-configuration",
+		"https://169.254.169.254/latest/meta-data/iam/security-credentials/",
+		"https://localhost:1/.well-known/openid-configuration",
+	} {
+		t.Run(discoveryURL, func(t *testing.T) {
+			_, err := BootstrapOIDCDiscovery(context.Background(), discoveryURL, "https://127.0.0.1:1", nil)
+			require.Error(t, err)
+			require.ErrorIs(t, err, errHostNotPublic)
+		})
+	}
+}
+
 // hungJWKSTestServer serves healthy key sets for the first healthyFetches
 // requests and then hangs every later request until the test releases it,
-// modelling a dead or hostile upstream.
+// modeling a dead or hostile upstream.
 type hungJWKSTestServer struct {
 	server  *httptest.Server
 	key     map[string]string

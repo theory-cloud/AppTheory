@@ -10,6 +10,37 @@
     "cross_origin_redirect": "rejected",
     "endpoints_pinned_to_verified_issuer": true
   },
+  "host_guard": {
+    "default": "reject any endpoint host that is not a public address",
+    "override": "allowPrivateHosts (Go, TypeScript) / allow_private_hosts (Python); off by default, never enabled by the framework",
+    "enforced_at": "connect time, on the address the name actually resolved to, so there is no DNS-rebinding window between the check and the connection",
+    "classes": ["loopback", "link_local", "private", "unspecified", "multicast", "public"],
+    "notes": "An IPv4-mapped IPv6 address is classified by the IPv4 address it maps to (for example ::ffff:127.0.0.1 is loopback). The guard applies to both the discovery fetch and every JWKS fetch. The public rows are genuinely globally reachable addresses: documentation/test ranges are deliberately absent because language runtimes disagree about whether they count as private.",
+    "addresses": [
+      { "address": "127.0.0.1", "class": "loopback", "public": false },
+      { "address": "127.9.9.9", "class": "loopback", "public": false },
+      { "address": "::1", "class": "loopback", "public": false },
+      { "address": "::ffff:127.0.0.1", "class": "loopback", "public": false },
+      { "address": "169.254.169.254", "class": "link_local", "public": false },
+      { "address": "169.254.0.1", "class": "link_local", "public": false },
+      { "address": "fe80::1", "class": "link_local", "public": false },
+      { "address": "10.0.0.1", "class": "private", "public": false },
+      { "address": "172.16.0.1", "class": "private", "public": false },
+      { "address": "172.31.255.254", "class": "private", "public": false },
+      { "address": "192.168.1.1", "class": "private", "public": false },
+      { "address": "fd00::1", "class": "private", "public": false },
+      { "address": "0.0.0.0", "class": "unspecified", "public": false },
+      { "address": "::", "class": "unspecified", "public": false },
+      { "address": "224.0.0.1", "class": "multicast", "public": false },
+      { "address": "239.255.255.250", "class": "multicast", "public": false },
+      { "address": "ff02::1", "class": "multicast", "public": false },
+      { "address": "8.8.8.8", "class": "public", "public": true },
+      { "address": "1.1.1.1", "class": "public", "public": true },
+      { "address": "9.9.9.9", "class": "public", "public": true },
+      { "address": "2606:4700:4700::1111", "class": "public", "public": true },
+      { "address": "2001:4860:4860::8888", "class": "public", "public": true }
+    ]
+  },
   "cases": [
     {
       "name": "same-origin-https-accepted",
