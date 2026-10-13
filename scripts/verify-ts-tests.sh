@@ -35,6 +35,14 @@ trap cleanup EXIT
 
 cp -a ts "${tmp_dir}/ts"
 
+# The TS unit suite loads the shared nested contract tables (the MCP route
+# algebra, the MCP auth-facade, and the M2 JWKS/discovery/route-challenge
+# fixtures) through the repo-relative path `../../contract-tests/...`. Mirror
+# that path in the isolated copy so the gate exercises the same shared rows.
+if [[ -d "contract-tests" ]]; then
+  cp -a contract-tests "${tmp_dir}/contract-tests"
+fi
+
 (cd "${tmp_dir}/ts" && npm ci --ignore-scripts >/dev/null)
 
 if ! (cd "${tmp_dir}/ts" && npm run build >"${tmp_log}" 2>&1 && node --test test/*.test.mjs >>"${tmp_log}" 2>&1); then
