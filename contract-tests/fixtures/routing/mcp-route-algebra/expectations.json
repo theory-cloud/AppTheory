@@ -1177,7 +1177,10 @@
     {"name": "jwks rejects a stray opening bracket after a label", "kind": "jwks", "input": "https://exa[mple.com/x", "reject": true},
     {"name": "jwks rejects an unclosed opening bracket", "kind": "jwks", "input": "https://a[b/x", "reject": true},
     {"name": "jwks rejects a stray bracket before a port", "kind": "jwks", "input": "https://x[a]y:8443/x", "reject": true},
-    {"name": "jwks keeps a malformed query key escape", "kind": "jwks", "input": "https://example.com/jwks.json?%zz=1", "accept": {"value": "https://example.com/jwks.json?%zz=1"}}
+    {"name": "jwks keeps a malformed query key escape", "kind": "jwks", "input": "https://example.com/jwks.json?%zz=1", "accept": {"value": "https://example.com/jwks.json?%zz=1"}},
+    {"name": "issuer rejects an empty-userinfo authority", "kind": "issuer", "input": "https://@example.com/x", "reject": true},
+    {"name": "jwks rejects an empty-userinfo authority", "kind": "jwks", "input": "https://@example.com/jwks.json", "reject": true},
+    {"name": "registration endpoint rejects an empty-userinfo authority", "kind": "registration", "input": "https://@example.com/register", "reject": true}
   ],
   "request_host_allowlist": [
     {"name": "request host accepts a literal non-ascii allowed hostname", "allowed_hostnames": ["caf\u00e9.example"], "request_host": "caf\u00e9.example", "expect_status": 200, "expect_resource": "https://caf%C3%A9.example/acme/mcp"},

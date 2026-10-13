@@ -1313,13 +1313,10 @@ def _parse_url(raw: str) -> _ParsedURL | None:
         authority = rest[:end]
         rest = rest[end:]
 
-    userinfo = ""
     hostport = authority
     at_index = authority.rfind("@")
     if at_index >= 0:
-        userinfo = authority[:at_index]
         hostport = authority[at_index + 1 :]
-
     split_host = _split_host_port(hostport)
     if split_host is None:
         return None
@@ -1340,7 +1337,9 @@ def _parse_url(raw: str) -> _ParsedURL | None:
         path=path,
         search=search,
         hash=hash_value,
-        has_user=userinfo != "",
+        # Go's parseAuthority treats the authority as carrying userinfo whenever
+        # it holds an "@", so an empty userinfo ("https://@host/") is userinfo too.
+        has_user=at_index >= 0,
     )
 
 

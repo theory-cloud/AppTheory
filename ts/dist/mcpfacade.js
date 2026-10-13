@@ -1090,11 +1090,9 @@ function parseURL(raw) {
         authority = rest.slice(0, end);
         rest = rest.slice(end);
     }
-    let userinfo = "";
     let hostport = authority;
     const at = authority.lastIndexOf("@");
     if (at >= 0) {
-        userinfo = authority.slice(0, at);
         hostport = authority.slice(at + 1);
     }
     let hostname = hostport;
@@ -1165,7 +1163,9 @@ function parseURL(raw) {
         path,
         search,
         hash,
-        hasUser: userinfo !== "",
+        // Go's parseAuthority treats the authority as carrying userinfo whenever it
+        // holds an "@", so an empty userinfo ("https://@host/") is userinfo too.
+        hasUser: at >= 0,
     };
 }
 /** Mirrors the Go helper: a scheme, an authority, and no userinfo. */

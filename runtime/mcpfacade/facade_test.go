@@ -365,7 +365,7 @@ func TestSharedFixturePinsRegistrationRejections(t *testing.T) {
 	require.NoError(t, err)
 	var fixtures rejectionFixtureFile
 	require.NoError(t, json.Unmarshal(contents, &fixtures))
-	require.Len(t, fixtures.RejectionRows, 47)
+	require.Len(t, fixtures.RejectionRows, 50)
 
 	for _, fixture := range fixtures.RejectionRows {
 		t.Run(fixture.Name, func(t *testing.T) {
@@ -379,6 +379,14 @@ func TestSharedFixturePinsRegistrationRejections(t *testing.T) {
 				got, ok = normalizeHTTPSURL(fixture.Input, true)
 			case "jwks":
 				got, ok = normalizeHTTPSURL(fixture.Input, false)
+			case "registration":
+				// The registration endpoint option normalizes through the same
+				// non-issuer rule, so a row pins the endpoint position itself.
+				app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+				config := validConfig(URLModePublicBaseURL)
+				config.RegistrationEndpointURL = fixture.Input
+				_, registerErr := RegisterMCPFacade(app, config)
+				got, ok = "", registerErr == nil
 			default:
 				t.Fatalf("unknown rejection row kind %q", fixture.Kind)
 			}

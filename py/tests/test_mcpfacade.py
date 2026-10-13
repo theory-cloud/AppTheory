@@ -295,7 +295,7 @@ class McpFacadeMetadataDocumentTests(unittest.TestCase):
 
     def test_registration_rejections_match_the_shared_rejection_rows(self) -> None:
         rows = json.loads(_EXPECTATIONS_PATH.read_text(encoding="utf-8"))["rejection_rows"]
-        self.assertEqual(47, len(rows))
+        self.assertEqual(50, len(rows))
 
         for row in rows:
             with self.subTest(name=row["name"]):
@@ -305,6 +305,10 @@ class McpFacadeMetadataDocumentTests(unittest.TestCase):
                     config.allowed_hostnames = [row["input"]]
                 elif row["kind"] == "issuer":
                     config.issuer_url = row["input"]
+                elif row["kind"] == "registration":
+                    # The registration endpoint option normalizes through the
+                    # same non-issuer rule, so a row pins the endpoint itself.
+                    config.registration_endpoint_url = row["input"]
                 else:
                     config.jwks_uri = row["input"]
                     config.registration_endpoint_url = row["input"]
