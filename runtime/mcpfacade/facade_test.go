@@ -319,7 +319,7 @@ func TestSharedFixturePinsURLNormalizationAcrossFlags(t *testing.T) {
 	require.NoError(t, err)
 	var fixtures urlNormalizationFixtureFile
 	require.NoError(t, json.Unmarshal(contents, &fixtures))
-	require.Len(t, fixtures.URLNormalization, 65)
+	require.Len(t, fixtures.URLNormalization, 66)
 
 	for _, fixture := range fixtures.URLNormalization {
 		t.Run(fixture.Name, func(t *testing.T) {
@@ -353,7 +353,7 @@ func TestSharedFixturePinsRegistrationRejections(t *testing.T) {
 	require.NoError(t, err)
 	var fixtures rejectionFixtureFile
 	require.NoError(t, json.Unmarshal(contents, &fixtures))
-	require.Len(t, fixtures.RejectionRows, 39)
+	require.Len(t, fixtures.RejectionRows, 47)
 
 	for _, fixture := range fixtures.RejectionRows {
 		t.Run(fixture.Name, func(t *testing.T) {

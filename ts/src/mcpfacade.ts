@@ -1639,7 +1639,14 @@ function parseURL(raw: string): ParsedURL | null {
 
   let hostname = hostport;
   let port = "";
-  const bracketed = hostport.startsWith("[");
+  // Go's parseHost rejects any host whose last "[" is not the leading byte, so a
+  // stray "[" outside a bracketed IP literal fails the whole parse. A stray "]"
+  // is an ordinary reg-name byte and still passes.
+  const openBracket = hostport.lastIndexOf("[");
+  if (openBracket > 0) {
+    return null;
+  }
+  const bracketed = openBracket === 0;
   if (bracketed) {
     const close = hostport.indexOf("]");
     if (close < 0) {

@@ -1127,7 +1127,8 @@
     {"name": "issuer re-encodes a utf8 host byte with uppercase hex", "issuer": true, "input": "https://caf%C3%A9.example/jwks.json", "expect": "https://caf%C3%A9.example/jwks.json"},
     {"name": "jwks re-encodes a utf8 host byte with uppercase hex", "issuer": false, "input": "https://caf%C3%A9.example/jwks.json", "expect": "https://caf%C3%A9.example/jwks.json"},
     {"name": "jwks escapes a literal utf8 host byte", "issuer": false, "input": "https://café.example/jwks.json", "expect": "https://caf%C3%A9.example/jwks.json"},
-    {"name": "jwks replaces an invalid utf8 host byte", "issuer": false, "input": "https://exa%FFmple.com/jwks.json", "expect": "https://exa%EF%BF%BDmple.com/jwks.json"}
+    {"name": "jwks replaces an invalid utf8 host byte", "issuer": false, "input": "https://exa%FFmple.com/jwks.json", "expect": "https://exa%EF%BF%BDmple.com/jwks.json"},
+    {"name": "jwks keeps a stray closing bracket", "issuer": false, "input": "https://a]b/x", "expect": "https://a]b/x"}
   ],
   "rejection_rows": [
     {"name": "allowed hostname rejects an interior space", "kind": "allowed_hostname", "input": "bad host", "reject": true},
@@ -1157,6 +1158,10 @@
     {"name": "issuer rejects a bracket that is not an IP literal", "kind": "issuer", "input": "https://[notanip]/x", "reject": true},
     {"name": "issuer rejects a bracketed IPvFuture host", "kind": "issuer", "input": "https://[v1.fe80::1]/x", "reject": true},
     {"name": "issuer rejects a bracketed host with an empty zone", "kind": "issuer", "input": "https://[fe80::1%25]/x", "reject": true},
+    {"name": "issuer rejects a stray opening bracket before a label", "kind": "issuer", "input": "https://a[b]/x", "reject": true},
+    {"name": "issuer rejects a stray opening bracket after a label", "kind": "issuer", "input": "https://exa[mple.com/x", "reject": true},
+    {"name": "issuer rejects an unclosed opening bracket", "kind": "issuer", "input": "https://a[b/x", "reject": true},
+    {"name": "issuer rejects a stray bracket before a port", "kind": "issuer", "input": "https://x[a]y:8443/x", "reject": true},
     {"name": "jwks keeps a malformed query escape", "kind": "jwks", "input": "https://example.com/jwks.json?a=%zz", "accept": {"value": "https://example.com/jwks.json?a=%zz"}},
     {"name": "jwks keeps a redundant query escape", "kind": "jwks", "input": "https://example.com/jwks.json?a=%41", "accept": {"value": "https://example.com/jwks.json?a=%41"}},
     {"name": "jwks keeps a trailing percent in the query", "kind": "jwks", "input": "https://example.com/jwks.json?a=%", "accept": {"value": "https://example.com/jwks.json?a=%"}},
@@ -1168,6 +1173,10 @@
     {"name": "jwks rejects a bracket that is not an IP literal", "kind": "jwks", "input": "https://[notanip]/x", "reject": true},
     {"name": "jwks rejects a bracketed IPvFuture host", "kind": "jwks", "input": "https://[v1.fe80::1]/x", "reject": true},
     {"name": "jwks rejects a bracketed host with an empty zone", "kind": "jwks", "input": "https://[fe80::1%25]/x", "reject": true},
+    {"name": "jwks rejects a stray opening bracket before a label", "kind": "jwks", "input": "https://a[b]/x", "reject": true},
+    {"name": "jwks rejects a stray opening bracket after a label", "kind": "jwks", "input": "https://exa[mple.com/x", "reject": true},
+    {"name": "jwks rejects an unclosed opening bracket", "kind": "jwks", "input": "https://a[b/x", "reject": true},
+    {"name": "jwks rejects a stray bracket before a port", "kind": "jwks", "input": "https://x[a]y:8443/x", "reject": true},
     {"name": "jwks keeps a malformed query key escape", "kind": "jwks", "input": "https://example.com/jwks.json?%zz=1", "accept": {"value": "https://example.com/jwks.json?%zz=1"}}
   ]
 }

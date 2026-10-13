@@ -264,7 +264,7 @@ class McpFacadeMetadataDocumentTests(unittest.TestCase):
 
     def test_advertised_urls_match_the_shared_normalization_rows(self) -> None:
         rows = json.loads(_EXPECTATIONS_PATH.read_text(encoding="utf-8"))["url_normalization"]
-        self.assertEqual(65, len(rows))
+        self.assertEqual(66, len(rows))
 
         for row in rows:
             with self.subTest(name=row["name"]):
@@ -295,7 +295,7 @@ class McpFacadeMetadataDocumentTests(unittest.TestCase):
 
     def test_registration_rejections_match_the_shared_rejection_rows(self) -> None:
         rows = json.loads(_EXPECTATIONS_PATH.read_text(encoding="utf-8"))["rejection_rows"]
-        self.assertEqual(39, len(rows))
+        self.assertEqual(47, len(rows))
 
         for row in rows:
             with self.subTest(name=row["name"]):

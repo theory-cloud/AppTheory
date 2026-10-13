@@ -1254,7 +1254,13 @@ def _split_host_port(hostport: str) -> tuple[str, str] | None:
     """
     hostname = hostport
     port = ""
-    bracketed = hostport.startswith("[")
+    # Go's parseHost rejects any host whose last "[" is not the leading byte, so
+    # a stray "[" outside a bracketed IP literal fails the whole parse. A stray
+    # "]" is an ordinary reg-name byte and still passes.
+    open_bracket = hostport.rfind("[")
+    if open_bracket > 0:
+        return None
+    bracketed = open_bracket == 0
     if bracketed:
         close = hostport.find("]")
         if close < 0:

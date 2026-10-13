@@ -949,7 +949,7 @@ const NAMESPACE_AUTHORIZATION_SERVER_PATH =
 
 test("advertised URLs match the shared normalization rows", async () => {
   const rows = EXPECTATIONS.url_normalization;
-  assert.equal(rows.length, 65);
+  assert.equal(rows.length, 66);
 
   for (const row of rows) {
     const app = createApp({ tier: "p0" });
@@ -999,7 +999,7 @@ const PROTECTED_RESOURCE_PATH = "/.well-known/oauth-protected-resource/acme/mcp"
 
 test("registration rejections match the shared rejection rows", async () => {
   const rows = EXPECTATIONS.rejection_rows;
-  assert.equal(rows.length, 39);
+  assert.equal(rows.length, 47);
 
   for (const row of rows) {
     const mode = row.kind === "allowed_hostname" ? "request_host" : "public_base_url";
