@@ -47,10 +47,12 @@ type facadeTransportPostureFixture struct {
 }
 
 type routeInventoryFixture struct {
-	ContractVersion                 string         `json:"contract_version"`
-	Routes                          []routeFixture `json:"routes"`
-	RootAuthorizationServerPattern  string         `json:"root_authorization_server_pattern"`
-	RootAuthorizationServerAttached bool           `json:"root_authorization_server_attached"`
+	ContractVersion                 string               `json:"contract_version"`
+	Routes                          []routeFixture       `json:"routes"`
+	RootAuthorizationServerPattern  string               `json:"root_authorization_server_pattern"`
+	RootAuthorizationServerAttached bool                 `json:"root_authorization_server_attached"`
+	CallbackPattern                 string               `json:"callback_pattern"`
+	IssuerMode                      mcproutes.IssuerMode `json:"issuer_mode"`
 }
 
 type routeFixture struct {
@@ -62,6 +64,7 @@ type routeFixture struct {
 	DiscoverySuffixPattern      string                 `json:"discovery_suffix_pattern"`
 	AuthorizePattern            string                 `json:"authorize_pattern"`
 	TokenPattern                string                 `json:"token_pattern"`
+	RegisterPattern             string                 `json:"register_pattern"`
 	AuthorizationRoutesAttached bool                   `json:"authorization_routes_attached"`
 }
 
@@ -86,13 +89,16 @@ func TestRegisterMCPFacadeRegistersCompleteContractSurface(t *testing.T) {
 	config := validConfig(URLModePublicBaseURL)
 	config.AuthorizeHandler = kindHandlerFactory("authorize")
 	config.TokenHandler = kindHandlerFactory("token")
-	// This test pins facade composition, so it selects the explicit public
-	// posture and keeps exercising the transport routes credential-free.
-	config.TransportPosture = TransportPostureNonePublic
+	config.RegisterHandler = kindHandlerFactory("register")
+	config.CallbackHandler = func(*apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.Text(200, "callback"), nil
+	}
 
 	inventory, err := RegisterMCPFacade(app, config)
 	require.NoError(t, err)
 	require.Equal(t, mcproutes.ContractVersion, inventory.ContractVersion)
+	require.Equal(t, mcproutes.IssuerModeFamily, inventory.IssuerMode)
+	require.Equal(t, mcproutes.DefaultCallbackPath, inventory.CallbackPattern)
 	require.Len(t, inventory.Routes, 4)
 
 	endpoints := mcproutes.SupportedEndpointTemplates()
@@ -107,9 +113,9 @@ func TestRegisterMCPFacadeRegistersCompleteContractSurface(t *testing.T) {
 		require.Equal(t, discovery[index].SuffixPattern, route.DiscoverySuffixPattern)
 		require.Equal(t, facades[index].AuthorizePattern, route.AuthorizePattern)
 		require.Equal(t, facades[index].TokenPattern, route.TokenPattern)
-		// The inventory field reports whether transport authorization is attached,
-		// so the explicit public posture clears it.
-		require.False(t, route.AuthorizationRoutesAttached)
+		require.Equal(t, facades[index].RegisterPattern, route.RegisterPattern)
+		// The default iam posture attaches the OAuth surface.
+		require.True(t, route.AuthorizationRoutesAttached)
 	}
 
 	// Literal spots keep this test independent of an accidentally reduced algebra enumeration.
@@ -140,7 +146,17 @@ func TestRegisterMCPFacadeRegistersCompleteContractSurface(t *testing.T) {
 		tokenResponse := serve(app, "POST", tokenPath, nil)
 		require.Equal(t, 200, tokenResponse.Status)
 		require.Equal(t, "token:"+string(endpoint.Kind), string(tokenResponse.Body))
+
+		registerPath := mustPath(t, endpoint.OAuthRegisterPath)
+		registerResponse := serve(app, "POST", registerPath, nil)
+		require.Equal(t, 200, registerResponse.Status)
+		require.Equal(t, "register:"+string(endpoint.Kind), string(registerResponse.Body))
 	}
+
+	// The callback is one stage-global route, not per kind.
+	callbackResponse := serve(app, "GET", mcproutes.DefaultCallbackPath, nil)
+	require.Equal(t, 200, callbackResponse.Status)
+	require.Equal(t, "callback", string(callbackResponse.Body))
 }
 
 func TestRegisterMCPFacadeInventoryMatchesSharedConstructFixture(t *testing.T) {
@@ -160,6 +176,8 @@ func TestRegisterMCPFacadeInventoryMatchesSharedConstructFixture(t *testing.T) {
 	require.Equal(t, fixture.ContractVersion, inventory.ContractVersion)
 	require.Equal(t, fixture.RootAuthorizationServerPattern, inventory.RootAuthorizationServerPattern)
 	require.Equal(t, fixture.RootAuthorizationServerAttached, inventory.RootAuthorizationServerAttached)
+	require.Equal(t, fixture.CallbackPattern, inventory.CallbackPattern)
+	require.Equal(t, fixture.IssuerMode, inventory.IssuerMode)
 	require.Len(t, inventory.Routes, len(fixture.Routes))
 	for index, expected := range fixture.Routes {
 		require.Equal(t, expected, routeFixture{
@@ -171,6 +189,7 @@ func TestRegisterMCPFacadeInventoryMatchesSharedConstructFixture(t *testing.T) {
 			DiscoverySuffixPattern:      inventory.Routes[index].DiscoverySuffixPattern,
 			AuthorizePattern:            inventory.Routes[index].AuthorizePattern,
 			TokenPattern:                inventory.Routes[index].TokenPattern,
+			RegisterPattern:             inventory.Routes[index].RegisterPattern,
 			AuthorizationRoutesAttached: inventory.Routes[index].AuthorizationRoutesAttached,
 		})
 	}
@@ -591,7 +610,7 @@ func TestInvalidDerivedInventoryFailsBeforeTargetRegistration(t *testing.T) {
 	t.Parallel()
 	normalized, err := normalizeConfig(validConfig(URLModePublicBaseURL))
 	require.NoError(t, err)
-	inventory, err := buildInventory(false, false)
+	inventory, err := buildInventory(normalized)
 	require.NoError(t, err)
 	inventory.Routes[1].MCPPattern = inventory.Routes[0].MCPPattern
 
@@ -673,10 +692,6 @@ func TestMalformedAndUnknownPathsFailClosed(t *testing.T) {
 	t.Parallel()
 	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
 	config := validConfig(URLModePublicBaseURL)
-	// Transport hardening would reject the malformed params before the handler
-	// runs, so select the public posture to keep asserting the handler-level
-	// fail-closed behavior.
-	config.TransportPosture = TransportPostureNonePublic
 	_, err := RegisterMCPFacade(app, config)
 	require.NoError(t, err)
 
@@ -828,7 +843,7 @@ func TestHelpersCanonicalizeURLsAndDefensivelyCloneInventory(t *testing.T) {
 	_, ok = absoluteURLForPath("https://example.com", "relative")
 	require.False(t, ok)
 
-	inventory, err := buildInventory(true, false)
+	inventory, err := buildInventory(normalizedConfig{transportPosture: TransportPostureIAM})
 	require.NoError(t, err)
 	cloned := cloneInventory(inventory)
 	cloned.Routes[0].MCPMethods[0] = "PATCH"
@@ -968,7 +983,7 @@ func TestTransportRoutesDelegateToApplicationPrincipalHook(t *testing.T) {
 	}
 }
 
-func TestNonePublicPosturePreservesTheExplicitPublicOptOut(t *testing.T) {
+func TestNonePublicPostureRegistersNoOAuthSurface(t *testing.T) {
 	t.Parallel()
 	app := apptheory.New()
 	reached := 0
@@ -990,9 +1005,71 @@ func TestNonePublicPosturePreservesTheExplicitPublicOptOut(t *testing.T) {
 	require.Equal(t, "mcp-ok", string(response.Body))
 	require.Equal(t, 1, reached)
 
-	// The public posture only relaxes transport; metadata and discovery stay public.
-	require.Equal(t, 200, serve(app, "GET", mustPath(t, testEndpoints[0].ProtectedResourcePath), nil).Status)
-	require.Equal(t, 200, serve(app, "GET", mustPath(t, testEndpoints[0].OAuthAuthorizationServerPath), nil).Status)
+	// The posture-derived inventory is authoritative: none-public attaches no
+	// OAuth surface, so metadata and discovery are not registered either. This is
+	// the one rule shared with the CDK construct's authorizationRoutesAttached.
+	require.Equal(t, 404, serve(app, "GET", mustPath(t, testEndpoints[0].ProtectedResourcePath), nil).Status)
+	require.Equal(t, 404, serve(app, "GET", mustPath(t, testEndpoints[0].OAuthAuthorizationServerPath), nil).Status)
+	require.Equal(t, 404, serve(app, "GET", mustPath(t, testEndpoints[0].OAuthAuthorizationServerSuffixPath), nil).Status)
+	require.Equal(t, 404, serve(app, "GET", mustPath(t, testEndpoints[0].OAuthAuthorizePath), nil).Status)
+	require.Equal(t, 404, serve(app, "POST", mustPath(t, testEndpoints[0].OAuthTokenPath), nil).Status)
+	require.Equal(t, 404, serve(app, "POST", mustPath(t, testEndpoints[0].OAuthRegisterPath), nil).Status)
+	require.Equal(t, 404, serve(app, "GET", mcproutes.DefaultCallbackPath, nil).Status)
+}
+
+func TestNonePublicPostureRejectsOAuthSurfaceConfiguration(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		mutate       func(*FacadeConfig)
+		errorMessage string
+	}{
+		{
+			name: "authorize and token handlers",
+			mutate: func(config *FacadeConfig) {
+				config.AuthorizeHandler = kindHandlerFactory("authorize")
+				config.TokenHandler = kindHandlerFactory("token")
+			},
+			errorMessage: "none-public registers no OAuth surface; authorize/token handlers",
+		},
+		{
+			name: "register handler",
+			mutate: func(config *FacadeConfig) {
+				config.RegisterHandler = kindHandlerFactory("register")
+			},
+			errorMessage: "none-public registers no OAuth surface; RegisterHandler",
+		},
+		{
+			name: "callback handler",
+			mutate: func(config *FacadeConfig) {
+				config.CallbackHandler = func(*apptheory.Context) (*apptheory.Response, error) {
+					return apptheory.Text(200, "callback"), nil
+				}
+			},
+			errorMessage: "none-public registers no OAuth surface; CallbackHandler",
+		},
+		{
+			name: "root authorization server",
+			mutate: func(config *FacadeConfig) {
+				config.RootAuthorizationServer = validRootDiscoveryConfig()
+			},
+			errorMessage: "none-public cannot enable RootAuthorizationServer",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+			config := validConfig(URLModePublicBaseURL)
+			config.TransportPosture = TransportPostureNonePublic
+			test.mutate(&config)
+
+			inventory, err := RegisterMCPFacade(app, config)
+			require.Nil(t, inventory)
+			require.ErrorContains(t, err, test.errorMessage)
+			require.Equal(t, 404, serve(app, "POST", "/acme/mcp", nil).Status)
+		})
+	}
 }
 
 func TestNonePublicPostureRejectsBearerTokenConfiguration(t *testing.T) {
