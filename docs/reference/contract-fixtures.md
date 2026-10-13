@@ -1,11 +1,11 @@
 ---
 title: Contract Fixtures
-description: "The 276 contract vectors: 274 shared runtime fixtures plus two Go/CDK-TS MCP route/facade tables." # apptheory-fixture-count: 276
+description: "The 278 contract vectors: 274 shared runtime fixtures plus four Go/CDK-TS MCP route/facade tables." # apptheory-fixture-count: 278
 ---
 
 # Contract Fixtures
 
-AppTheory ships **276 machine-readable contract vectors** in `contract-tests/fixtures/`. <!-- apptheory-fixture-count: 276 --> Go, TypeScript, and Python execute 274 shared runner fixtures on every commit, including the `tier: mcp` SP09 runtime contracts, the `tier: oauth` SP12 protected-resource, bearer, DCR, and PKCE contracts, and the `tier: objectstore` SP13 bounded object-store contract. The remaining two vectors are the shared MCP route-algebra expectation table and facade route-inventory table consumed by Go and CDK-TS tests; Python is explicitly outside those versioned contracts' scope.
+AppTheory ships **278 machine-readable contract vectors** in `contract-tests/fixtures/`. <!-- apptheory-fixture-count: 278 --> Go, TypeScript, and Python execute 274 shared runner fixtures on every commit, including the `tier: mcp` SP09 runtime contracts, the `tier: oauth` SP12 protected-resource, bearer, DCR, and PKCE contracts, and the `tier: objectstore` SP13 bounded object-store contract. The remaining four vectors are the shared MCP route-algebra expectation and facade route-inventory tables plus the MCP auth-facade transport-posture and route-model tables, consumed by Go and CDK-TS tests; Python is explicitly outside those versioned contracts' scope.
 
 This page explains what the fixtures are, what they cover, and how to evolve them safely.
 
@@ -37,7 +37,7 @@ its `tier` field and stable `id`. Directory names are organizational metadata, n
 | `binding/` | `p0.binding.*` / `tier = p0` | Canonical typed-handler body/query/path/header binding, conversions, strict JSON, and binding-error envelopes. |
 | `validation/` | `p0.validation.*` / `tier = p0` | Declarative validation vocabulary, canonical 422 field-error envelope, and binding/validation precedence. |
 | `errors/` | `p0.errors.*` / `tier = p0` | Canonical framework error envelopes, panic recovery, 404/405, and Lift flat-legacy JSON parse compatibility. |
-| `routing/` | `p0.routing.*` / `tier = p0`, plus nested route/facade expectations | Fail-closed route registration plus the shared Go/CDK-TS MCP algebra and facade-inventory tables. |
+| `routing/` | `p0.routing.*` / `tier = p0`, plus nested route/facade expectations | Fail-closed route registration plus the shared Go/CDK-TS MCP route-algebra (`mcp-route-algebra/`), facade inventory, and MCP auth-facade (`mcp-auth-facade/`) tables. |
 | `openapi/` | `p0.openapi.*` / `tier = p0` | Descriptive OpenAPI generation and byte-pinned canonical JSON output. |
 | `middleware-guardrails/` | `p1.*` / `tier = p1` | P1 request-id, tenant, auth, CORS, guardrails, and legacy flat-error behavior. |
 | `appsync-observability-policies/` | `p2.*` / `tier = p2` | P2 AppSync, observability, logging profiles, rate limiting, and load shedding. |
@@ -55,7 +55,7 @@ its `tier` field and stable `id`. Directory names are organizational metadata, n
 
 ## Categories
 
-The 276 contract vectors span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory). All three runtimes execute the 274 generic fixtures; Go and CDK-TS additionally consume the MCP route-algebra and facade-inventory tables. <!-- apptheory-fixture-count: 276 -->
+The 278 contract vectors span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory). All three runtimes execute the 274 generic fixtures; Go and CDK-TS additionally consume the MCP route-algebra, facade-inventory, and auth-facade tables. <!-- apptheory-fixture-count: 278 -->
 
 | Category | Covers |
 | --- | --- |
@@ -103,7 +103,7 @@ coerced. Both apply identically in Go, TypeScript, and Python.
 ./scripts/verify-contract-tests.sh
 ```
 
-This validates the 274 generic fixture envelopes and runs the Go, TypeScript, and Python runners against that tree. The Go and CDK unit suites load the two nested route-algebra/facade tables directly. `make rubric` runs all of these gates alongside lint, build, API snapshots, and example synthesis. <!-- apptheory-fixture-count: 276 -->
+This validates the 274 generic fixture envelopes and runs the Go, TypeScript, and Python runners against that tree. The Go and CDK unit suites load the four nested route-algebra, facade-inventory, and auth-facade tables directly. `make rubric` runs all of these gates alongside lint, build, API snapshots, and example synthesis. <!-- apptheory-fixture-count: 278 -->
 
 For single-runtime debugging from the repository root:
 
