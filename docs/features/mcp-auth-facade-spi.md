@@ -55,6 +55,10 @@ Typed errors map to a closed client-facing vocabulary, so a caller never has to 
 | `invalid_request` | 400 (adapter-side; never reaches the upstream) |
 | `reauth_required` | 400 (terminal; only an explicit upstream stale/replaced signal) |
 
+An upstream OAuth `invalid_request` maps onto the terminal `invalid_grant` (a client-facing 400, not a 502): a
+facade request bug that reaches the upstream surfaces as a request-class error, and every other non-2xx —
+including an unrecognized upstream error code — is an `upstream_error`.
+
 ### Autheory adapter (first adapter)
 
 The adapter is discovery-driven: it takes `authorization_endpoint`, `token_endpoint` and `jwks_uri` from the

@@ -207,6 +207,9 @@ ValidateAccessToken(ctx, token string, expected TokenExpectations) (*TokenClaims
 - `ValidateAccessToken` returns claims; it never mutates the token.
 - The SPI returns provider errors mapped to a closed client-facing vocabulary; raw upstream error bodies are
   never forwarded (they may echo hidden material).
+- Within that vocabulary an upstream OAuth `invalid_request` maps onto the terminal `invalid_grant` (a
+  client-facing 400, not a 502): a facade request bug that reaches the upstream surfaces as a request-class
+  error, and only an explicit upstream stale/replaced signal produces `reauth_required`.
 
 Autheory adapter mapping (first adapter): issuer per stage (`https://auth.lab.autheory.app` /
 `https://auth.autheory.app`), authorize/token/jwks from RFC 8414 discovery, RFC 9207 `iss` supported, RFC 8707
