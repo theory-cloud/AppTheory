@@ -658,7 +658,13 @@ class _RefuseRedirectHandler(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_AddressInfo = tuple[int, int, int, str, tuple[str, int] | tuple[str, int, int, int]]
+_AddressInfo = tuple[
+    socket.AddressFamily,
+    socket.SocketKind,
+    int,
+    str,
+    tuple[str, int] | tuple[str, int, int, int] | tuple[int, bytes],
+]
 
 
 def _public_addresses(host: str, port: int | None) -> list[_AddressInfo]:
@@ -667,45 +673,53 @@ def _public_addresses(host: str, port: int | None) -> list[_AddressInfo]:
     return [info for info in infos if is_public_host_address(str(info[4][0]))]
 
 
-class _GuardedHTTPSConnection(http.client.HTTPSConnection):
-    """An HTTPS connection that only ever dials a public address.
+def _guarded_create_connection(
+    address: tuple[str, int],
+    timeout: float | None = None,
+    source_address: tuple[str, int] | None = None,
+) -> socket.socket:
+    """Dials one address, but only after resolving and classifying it.
 
     Resolving the name, classifying every address it resolves to, and opening
     the socket are one step, so there is no window in which a name could
     resolve to a public address for the check and to a non-public one for the
-    connection. The certificate is still verified against the URL's host name,
-    because ``server_hostname`` is the host, not the address connected to.
+    connection.
+    """
+    host, port = address
+    addresses = _public_addresses(host, port)
+    if not addresses:
+        raise OAuthBearerError(ERR_INVALID_BEARER_TOKEN, "endpoint host is not a public address")
+    last_error: OSError | None = None
+    for family, socktype, proto, _canonical, sockaddr in addresses:
+        candidate = socket.socket(family, socktype, proto)
+        try:
+            if timeout is not None:
+                candidate.settimeout(timeout)
+            if source_address:
+                candidate.bind(source_address)
+            candidate.connect(sockaddr)
+        except OSError as exc:
+            candidate.close()
+            last_error = exc
+            continue
+        return candidate
+    raise last_error or OSError(f"connection to {host!r} failed")
+
+
+class _GuardedHTTPSConnection(http.client.HTTPSConnection):
+    """An HTTPS connection that only ever dials a public address.
+
+    The certificate is still verified against the URL's host name: the
+    inherited ``connect`` wraps the socket returned here with
+    ``server_hostname`` set to the host, never to the address dialed.
     """
 
-    def connect(self) -> None:  # type: ignore[override]
-        addresses = _public_addresses(self.host, self.port)
-        if not addresses:
-            raise OAuthBearerError(ERR_INVALID_BEARER_TOKEN, "endpoint host is not a public address")
-        last_error: OSError | None = None
-        sock: socket.socket | None = None
-        for family, socktype, proto, _canonical, sockaddr in addresses:
-            candidate = socket.socket(family, socktype, proto)
-            try:
-                if isinstance(self.timeout, int | float):
-                    candidate.settimeout(self.timeout)
-                if self.source_address:
-                    candidate.bind(self.source_address)
-                candidate.connect(sockaddr)
-            except OSError as exc:
-                candidate.close()
-                last_error = exc
-                continue
-            sock = candidate
-            break
-        if sock is None:
-            raise last_error or OSError(f"connection to {self.host!r} failed")
-        self.sock = sock
-        if self._tunnel_host:
-            self._tunnel()
-            server_hostname = self._tunnel_host
-        else:
-            server_hostname = self.host
-        self.sock = self._context.wrap_socket(self.sock, server_hostname=server_hostname)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # HTTPConnection.__init__ binds the dialer as an instance attribute, so
+        # the guard replaces that binding rather than shadowing a class method:
+        # connect() then reaches the resolver only through _create_connection.
+        self._create_connection = _guarded_create_connection
 
 
 class _GuardedHTTPSHandler(urllib.request.HTTPSHandler):
@@ -719,10 +733,17 @@ class _GuardedHTTPSHandler(urllib.request.HTTPSHandler):
     def __init__(self, *, allow_private_hosts: bool = False, context: Any = None, check_hostname: bool | None = None):
         super().__init__(context=context, check_hostname=check_hostname)
         self._allow_private_hosts = allow_private_hosts
+        # HTTPSHandler builds its own default context when none is given. Read it
+        # back through getattr so the connection this handler opens shares that
+        # context (including any check_hostname override) instead of building a
+        # second one.
+        if context is None:
+            context = getattr(self, "_context", None)
+        self._framework_context = context
 
     def https_open(self, req):  # type: ignore[override]
         connection = http.client.HTTPSConnection if self._allow_private_hosts else _GuardedHTTPSConnection
-        return self.do_open(connection, req, context=self._context)
+        return self.do_open(connection, req, context=self._framework_context)
 
 
 def _normalize_secure_url(raw: str) -> str | None:
