@@ -783,23 +783,26 @@ async function withFetchTimeout<T>(
   timeoutMs: number,
 ): Promise<T> {
   const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let failOnTimeout: (error: Error) => void = () => {};
   const expired = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      reject(
-        new Error(
-          `${ERROR_PREFIX} fetch_timeout: document fetch exceeded the timeout`,
-        ),
-      );
-    }, timeoutMs);
-    // Never keep the Node process (or a test run) alive for a pending timeout.
-    if (typeof timer.unref === "function") timer.unref();
+    failOnTimeout = reject;
   });
+  // The handle lives in this scope and every exit clears it, so the timer
+  // cannot outlive the invocation that started it.
+  const timer = setTimeout(() => {
+    controller.abort();
+    failOnTimeout(
+      new Error(
+        `${ERROR_PREFIX} fetch_timeout: document fetch exceeded the timeout`,
+      ),
+    );
+  }, timeoutMs);
+  // Never keep the Node process (or a test run) alive for a pending timeout.
+  if (typeof timer.unref === "function") timer.unref();
   try {
     return await Promise.race([run(controller.signal), expired]);
   } finally {
-    if (timer !== undefined) clearTimeout(timer);
+    clearTimeout(timer);
   }
 }
 
