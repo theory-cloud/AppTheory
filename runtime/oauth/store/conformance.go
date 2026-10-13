@@ -124,6 +124,7 @@ var conformanceScenarios = map[string]func(*conformanceHarness, ConformanceCase)
 	"acquire_lock_exclusive_with_expiry": (*conformanceHarness).brokerAcquireLockExclusive,
 	"compare_and_swap_versioned":         (*conformanceHarness).brokerCompareAndSwapVersioned,
 	"compare_and_swap_unknown":           (*conformanceHarness).brokerCompareAndSwapUnknown,
+	"negative_expected_version":          (*conformanceHarness).brokerNegativeExpectedVersion,
 	"revoke_idempotent":                  (*conformanceHarness).brokerRevokeIdempotent,
 	"revoke_then_lock":                   (*conformanceHarness).brokerRevokeThenLock,
 	"revoke_then_swap":                   (*conformanceHarness).brokerRevokeThenSwap,
@@ -560,6 +561,26 @@ func (h *conformanceHarness) brokerCompareAndSwapUnknown(testCase ConformanceCas
 	key := h.key(testCase, "handle")
 	_, err := h.stores.RouteRefreshBroker.CompareAndSwap(h.ctx(), &RouteRefreshBrokerRecord{HandleHash: key}, 0)
 	return map[string]any{"swap": outcomeFor(err)}, nil
+}
+
+// brokerNegativeExpectedVersion pins that a negative expected version is never a
+// skip-version-check wildcard: the store reports a version conflict for it, on
+// both the swap and the lock, in every runtime, so no caller can rely on one.
+func (h *conformanceHarness) brokerNegativeExpectedVersion(testCase ConformanceCase) (map[string]any, error) {
+	key := h.key(testCase, "handle")
+	if err := h.putBroker(key); err != nil {
+		return nil, err
+	}
+	record, err := h.stores.RouteRefreshBroker.Get(h.ctx(), key)
+	if err != nil {
+		return nil, err
+	}
+	_, swapErr := h.stores.RouteRefreshBroker.CompareAndSwap(h.ctx(), record, -1)
+	_, lockErr := h.stores.RouteRefreshBroker.AcquireLock(h.ctx(), key, "owner-negative", -1)
+	return map[string]any{
+		"swap":         outcomeFor(swapErr),
+		"acquire_lock": outcomeFor(lockErr),
+	}, nil
 }
 
 func (h *conformanceHarness) brokerRevokeIdempotent(testCase ConformanceCase) (map[string]any, error) {

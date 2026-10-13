@@ -69,8 +69,9 @@ type ClientStore interface {
 // lock whose RefreshLockExpiresAt has elapsed may be re-acquired, and a revoked
 // record reports ErrBrokerRevoked. CompareAndSwap is versioned and reports
 // ErrBrokerVersionConflict on a stale version and ErrBrokerRevoked on a revoked
-// record. Revoke is idempotent and terminal. A negative expectedVersion skips
-// the version check (the lock and revocation checks still apply).
+// record. Revoke is idempotent and terminal. The expected version must be the
+// version the caller read, so a negative value is never a skip-version-check
+// wildcard: it reports ErrBrokerVersionConflict like any other mismatch.
 type RouteRefreshBrokerStore interface {
 	Get(ctx context.Context, handleHash string) (*RouteRefreshBrokerRecord, error)
 	AcquireLock(

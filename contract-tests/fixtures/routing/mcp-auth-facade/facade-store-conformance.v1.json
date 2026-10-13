@@ -167,6 +167,13 @@
       "expect": { "swap": "not_found" }
     },
     {
+      "id": "store.route_refresh_broker.negative_expected_version_conflicts",
+      "store": "route_refresh_broker",
+      "scenario": "negative_expected_version",
+      "params": { "put": 1 },
+      "expect": { "swap": "version_conflict", "acquire_lock": "version_conflict" }
+    },
+    {
       "id": "store.route_refresh_broker.revoke_is_idempotent_and_terminal",
       "store": "route_refresh_broker",
       "scenario": "revoke_idempotent",

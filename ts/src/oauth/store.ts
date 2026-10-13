@@ -838,6 +838,26 @@ async function runStoreCase(
       // not-found in every runtime and creation stays the seeder's own path.
       return { swap: await brokerSwapOutcome(stores, brokerRecord(key), 0) };
     }
+    case "negative_expected_version": {
+      // A negative expected version is never a skip-version-check wildcard:
+      // the swap and the lock both report a version conflict, in every runtime.
+      await seedBrokerRecord(stores, brokerRecord(key));
+      const record = await stores.routeRefreshBroker.get(key);
+      if (record === null) {
+        throw new Error(
+          `store conformance case ${testCase.id}: the seeded handle is missing`,
+        );
+      }
+      const swap = await brokerSwapOutcome(stores, record, -1);
+      let acquireLock: string;
+      try {
+        await stores.routeRefreshBroker.acquireLock(key, "owner-negative", -1);
+        acquireLock = "ok";
+      } catch (err) {
+        acquireLock = brokerErrorOutcome(err);
+      }
+      return { swap, acquire_lock: acquireLock };
+    }
     case "revoke_idempotent": {
       await seedBrokerRecord(stores, brokerRecord(key));
       const first = await revokeOutcome(stores, key);

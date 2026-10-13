@@ -423,7 +423,7 @@ func (s *MemoryRouteRefreshBrokerStore) AcquireLock(
 	if record.RefreshLockOwner != "" && now.Before(record.RefreshLockExpiresAt) {
 		return nil, ErrBrokerLocked
 	}
-	if expectedVersion >= 0 && expectedVersion != record.Version {
+	if expectedVersion != record.Version {
 		return nil, ErrBrokerVersionConflict
 	}
 	record.RefreshLockOwner = lockOwner
@@ -455,7 +455,7 @@ func (s *MemoryRouteRefreshBrokerStore) CompareAndSwap(
 	if current.Status == BrokerStatusRevoked {
 		return nil, ErrBrokerRevoked
 	}
-	if expectedVersion >= 0 && expectedVersion != current.Version {
+	if expectedVersion != current.Version {
 		return nil, ErrBrokerVersionConflict
 	}
 

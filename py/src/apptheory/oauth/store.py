@@ -829,9 +829,11 @@ def _scenario_broker_get_unknown(
     _assert_expected(expect, {"get": "not_found" if store.get("unknown") is None else "ok"})
 
 
-def _broker_swap_outcome(store: Any, record: RouteRefreshBrokerRecord) -> str:
+def _broker_swap_outcome(
+    store: Any, record: RouteRefreshBrokerRecord, expected_version: int | None = None
+) -> str:
     try:
-        store.compare_and_swap(record, record.version)
+        store.compare_and_swap(record, record.version if expected_version is None else expected_version)
     except BrokerRevokedError:
         return "revoked"
     except BrokerVersionConflictError:
@@ -896,6 +898,18 @@ def _scenario_broker_compare_and_swap_unknown(
     store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
     record = RouteRefreshBrokerRecord(handle_hash="handle-hash", version=0)
     _assert_expected(expect, {"swap": _broker_swap_outcome(store, record)})
+
+
+def _scenario_broker_negative_expected_version(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    """A negative expected version is never a skip-version-check wildcard."""
+    store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
+    store.put(RouteRefreshBrokerRecord(handle_hash="handle-hash"))
+    record = store.get("handle-hash")
+    swap = _broker_swap_outcome(store, record, expected_version=-1)
+    acquire = _acquire_lock_outcome(store, "handle-hash", "owner-negative", -1)
+    _assert_expected(expect, {"swap": swap, "acquire_lock": acquire})
 
 
 def _scenario_broker_revoke_idempotent(
@@ -1097,6 +1111,7 @@ _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
     ("route_refresh_broker", "acquire_lock_exclusive_with_expiry"): _scenario_broker_acquire_lock_exclusive_with_expiry,
     ("route_refresh_broker", "compare_and_swap_versioned"): _scenario_broker_compare_and_swap_versioned,
     ("route_refresh_broker", "compare_and_swap_unknown"): _scenario_broker_compare_and_swap_unknown,
+    ("route_refresh_broker", "negative_expected_version"): _scenario_broker_negative_expected_version,
     ("route_refresh_broker", "revoke_idempotent"): _scenario_broker_revoke_idempotent,
     ("route_refresh_broker", "revoke_then_lock"): _scenario_broker_revoke_then_lock,
     ("route_refresh_broker", "broker_ttl_boundary"): _scenario_broker_ttl_boundary,
