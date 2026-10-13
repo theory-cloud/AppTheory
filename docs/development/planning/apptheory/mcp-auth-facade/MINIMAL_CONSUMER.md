@@ -104,9 +104,10 @@ provider `Acme ID` issues from `https://id.example.com`.
 
 - `fixtures/facade-journey.v1.json` — the ordered transcript above (steps 1–11) with expected statuses,
   headers, and bodies.
-- `fixtures/facade-route-model.v1.json` — the derived paths and the `route` issuer/resource derivation the app
-  never wrote.
-- `fixtures/facade-transport-posture.v1.json` — the posture expectations pinned by the conformance kit.
+- `contract-tests/fixtures/routing/mcp-auth-facade/facade-route-model.v1.json` — the derived paths and the `route`
+  issuer/resource derivation the app never wrote (moved into the corpus in M1).
+- `contract-tests/fixtures/routing/mcp-auth-facade/facade-transport-posture.v1.json` — the posture expectations pinned
+  by the conformance kit (moved into the corpus in M1).
 - `fixtures/facade-provider-spi.v1.json` / `facade-store-spi.v1.json` — the seams the app *did* supply (the
   provider adapter and the durable stores).
 

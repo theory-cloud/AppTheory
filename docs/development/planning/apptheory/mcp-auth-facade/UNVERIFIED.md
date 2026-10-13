@@ -14,7 +14,7 @@ These were checked directly during M0 and are safe to treat as fact:
 | Claim | Evidence |
 | --- | --- |
 | CDK transport authorizer is a closed `IAM | JWT` enum; `IAM` is the default | `cdk/lib/mcp-server.ts:20-25`, `858` |
-| `unauthenticatedMcp` throws with `rootAuthorizationServerDiscovery` and with legacy issuer/jwks props | `cdk/lib/mcp-server.ts:359-371` |
+| The public transport posture throws with `rootAuthorizationServerDiscovery` and with legacy issuer/jwks props. M0 recorded this as the `unauthenticatedMcp` opt-out; M1 removed that prop and moved the guard to `transportPosture: none-public` | `cdk/lib/mcp-server.ts:1044-1075` (`validatePostureGuards`) |
 | JWT authorizer requires a static issuer + non-empty audience | `cdk/lib/mcp-server.ts:869-900` |
 | Route inventory derives no `/register` and no callback route | `cdk/lib/mcp-server.ts:649-675`; `runtime/mcproutes` |
 | Go bearer validator receives `context.Context`; TS/Py validators receive the app context | `runtime/oauth/bearer.go:23,27`; `ts/src/oauth/index.ts:96,101`; `py/src/apptheory/oauth/__init__.py:163,164` |
