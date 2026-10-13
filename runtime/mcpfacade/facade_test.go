@@ -98,6 +98,20 @@ type urlNormalizationFixtureFile struct {
 	URLNormalization []urlNormalizationFixtureRow `json:"url_normalization"`
 }
 
+type rejectionFixtureRow struct {
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`
+	Input  string `json:"input"`
+	Accept *struct {
+		Value string `json:"value"`
+	} `json:"accept"`
+	Reject bool `json:"reject"`
+}
+
+type rejectionFixtureFile struct {
+	RejectionRows []rejectionFixtureRow `json:"rejection_rows"`
+}
+
 func TestRegisterMCPFacadeRegistersCompleteContractSurface(t *testing.T) {
 	t.Parallel()
 	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
@@ -305,7 +319,7 @@ func TestSharedFixturePinsURLNormalizationAcrossFlags(t *testing.T) {
 	require.NoError(t, err)
 	var fixtures urlNormalizationFixtureFile
 	require.NoError(t, json.Unmarshal(contents, &fixtures))
-	require.Len(t, fixtures.URLNormalization, 61)
+	require.Len(t, fixtures.URLNormalization, 65)
 
 	for _, fixture := range fixtures.URLNormalization {
 		t.Run(fixture.Name, func(t *testing.T) {
@@ -326,6 +340,44 @@ func TestSharedFixturePinsURLNormalizationAcrossFlags(t *testing.T) {
 				require.True(t, derivedOK)
 				require.Equal(t, fixture.Expect+"/register", derived)
 			}
+		})
+	}
+}
+
+// TestSharedFixturePinsRegistrationRejections pins the shared rejection_rows
+// against Go's normalizers, which are the reference behavior for the
+// TypeScript and Python ports.
+func TestSharedFixturePinsRegistrationRejections(t *testing.T) {
+	t.Parallel()
+	contents, err := os.ReadFile(documentExpectationsPath)
+	require.NoError(t, err)
+	var fixtures rejectionFixtureFile
+	require.NoError(t, json.Unmarshal(contents, &fixtures))
+	require.Len(t, fixtures.RejectionRows, 39)
+
+	for _, fixture := range fixtures.RejectionRows {
+		t.Run(fixture.Name, func(t *testing.T) {
+			t.Parallel()
+			var got string
+			var ok bool
+			switch fixture.Kind {
+			case "allowed_hostname":
+				got, ok = normalizeAllowedHostname(fixture.Input)
+			case "issuer":
+				got, ok = normalizeHTTPSURL(fixture.Input, true)
+			case "jwks":
+				got, ok = normalizeHTTPSURL(fixture.Input, false)
+			default:
+				t.Fatalf("unknown rejection row kind %q", fixture.Kind)
+			}
+			if fixture.Reject {
+				require.False(t, ok)
+				require.Empty(t, got)
+				return
+			}
+			require.NotNil(t, fixture.Accept)
+			require.True(t, ok)
+			require.Equal(t, fixture.Accept.Value, got)
 		})
 	}
 }

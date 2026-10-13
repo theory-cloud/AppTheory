@@ -942,7 +942,12 @@ def _with_metadata_headers(next_handler: Callable[[Context], Response]) -> Calla
 class _ParsedURL:
     scheme: str
     host: str  # host without userinfo, as given (trailing dot and case preserved)
-    hostname: str  # host without brackets
+    hostname: str  # host without brackets, as given
+    # Host and hostname percent-decoded into byte strings (one Latin-1 code
+    # point per decoded byte), mirroring Go's decoded ``url.URL.Host`` and
+    # ``url.URL.Hostname()``. Re-encoding goes through ``_encode_host_bytes``.
+    decoded_host: str
+    decoded_hostname: str
     port: str
     # Percent-decoded path as a byte string (one Latin-1 code point per decoded
     # byte), mirroring Go's decoded ``url.URL.Path``. Re-encoding goes through
@@ -956,6 +961,8 @@ class _ParsedURL:
 _SCHEME_PATTERN = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*):")
 _PORT_PATTERN = re.compile(r"^\d+$")
 _HEX_PAIR_PATTERN = re.compile(r"^[0-9A-Fa-f]{2}$")
+_HEX_DIGIT_PATTERN = re.compile(r"[0-9A-Fa-f]")
+_DECIMAL_FIELD_PATTERN = re.compile(r"^[0-9]{1,3}$")
 
 
 # UTF-8 bytes that Go's ``net/url`` ``encodePath`` leaves unescaped.
@@ -967,6 +974,47 @@ _PATH_LITERAL_BYTES = frozenset(
         *(ord(char) for char in "-._~$&+,/:;=@"),
     )
 )
+
+# ASCII bytes that Go's ``net/url`` leaves unescaped in a reg-name host.
+_HOST_LITERAL_BYTES = frozenset(
+    (
+        *range(0x30, 0x3A),
+        *range(0x41, 0x5B),
+        *range(0x61, 0x7B),
+        *(ord(char) for char in "!$&'()*+,;=:[]<>\"-._~"),
+    )
+)
+
+
+def _contains_control_byte(value: str) -> bool:
+    """True when the text carries a C0 control byte or DEL, which Go's ``net/url`` rejects."""
+    return any(ord(char) < 0x20 or ord(char) == 0x7F for char in value)
+
+
+def _valid_host_bytes(host: str) -> bool:
+    """Mirror Go's ``url.Parse`` host validation (``unescape(host, encodeHost)``).
+
+    A malformed percent escape, or an ASCII byte outside the reg-name set, fails
+    the whole parse. Bytes above 0x7f and the redundant ``%25`` escape pass.
+    """
+    index = 0
+    length = len(host)
+    while index < length:
+        if host[index] == "%":
+            if index + 2 >= length:
+                return False
+            hex_digits = host[index + 1 : index + 3]
+            if _HEX_PAIR_PATTERN.match(hex_digits) is None:
+                return False
+            if int(hex_digits, 16) < 0x80 and host[index : index + 3] != "%25":
+                return False
+            index += 3
+            continue
+        code = ord(host[index])
+        if code < 0x80 and code not in _HOST_LITERAL_BYTES:
+            return False
+        index += 1
+    return True
 
 
 def _decode_path_bytes(raw_path: str) -> str | None:
@@ -1008,6 +1056,76 @@ def _encode_path_bytes(path: str) -> str:
     return "".join(encoded)
 
 
+def _utf8_sequence_length(byte: int) -> int:
+    """Width of a UTF-8 lead byte, or 0 when the byte cannot start a sequence."""
+    if byte < 0x80:
+        return 1
+    if 0xC2 <= byte <= 0xDF:
+        return 2
+    if 0xE0 <= byte <= 0xEF:
+        return 3
+    if 0xF0 <= byte <= 0xF4:
+        return 4
+    return 0
+
+
+def _decode_utf8_lenient(value: str) -> str:
+    """Decode a byte string the way Go's ``for range`` does.
+
+    A valid UTF-8 sequence becomes its rune; every invalid byte becomes one
+    U+FFFD, which is what ``strings.ToLower`` then sees.
+    """
+    raw = value.encode("latin-1")
+    out: list[str] = []
+    index = 0
+    while index < len(raw):
+        byte = raw[index]
+        if byte < 0x80:
+            out.append(chr(byte))
+            index += 1
+            continue
+        size = _utf8_sequence_length(byte)
+        if size > 1 and index + size <= len(raw):
+            try:
+                out.append(raw[index : index + size].decode("utf-8"))
+                index += size
+                continue
+            except UnicodeDecodeError:
+                pass
+        out.append("\ufffd")
+        index += 1
+    return "".join(out)
+
+
+def _lowercase_host_bytes(value: str) -> str:
+    """Lowercase a decoded host byte string the way Go's ``strings.ToLower`` does."""
+    return _decode_utf8_lenient(value).lower().encode("utf-8").decode("latin-1")
+
+
+def _decode_host_bytes(host: str) -> str:
+    """Percent-decode a raw host into a byte string, mirroring Go's ``unescape(host, encodeHost)``.
+
+    The caller has already checked the escapes with :func:`_valid_host_bytes`.
+    """
+    decoded = _decode_path_bytes(host)
+    return "" if decoded is None else decoded
+
+
+def _encode_host_bytes(host: str) -> str:
+    """Escape a byte-string host with Go's ``encodeHost`` rule (uppercase hex).
+
+    Literal host bytes pass through; a literal percent and every UTF-8 byte are
+    re-encoded, so ``%c3%a9`` becomes ``%C3%A9``.
+    """
+    encoded: list[str] = []
+    for byte in host.encode("latin-1"):
+        if byte < 0x80 and byte in _HOST_LITERAL_BYTES:
+            encoded.append(chr(byte))
+        else:
+            encoded.append(f"%{byte:02X}")
+    return "".join(encoded)
+
+
 def _split_path_search_hash(rest: str) -> tuple[str, str, str] | None:
     """Split a path from its raw query and fragment, decoding the path bytes.
 
@@ -1032,6 +1150,135 @@ def _split_path_search_hash(rest: str) -> tuple[str, str, str] | None:
     return path, search, hash_value
 
 
+def _valid_ipv4_quad(text: str) -> bool:
+    """Mirror Go's ``parseIPv4Fields`` for the dotted quad embedded in an IPv6 literal."""
+    parts = text.split(".")
+    if len(parts) != 4:
+        return False
+    for part in parts:
+        if _DECIMAL_FIELD_PATTERN.match(part) is None:
+            return False
+        if len(part) > 1 and part.startswith("0"):
+            return False
+        if int(part) > 255:
+            return False
+    return True
+
+
+def _ipv6_group_length(text: str) -> int:
+    """Number of leading hex digits, or 0 when the text does not start with one."""
+    digits = 0
+    while digits < len(text) and _HEX_DIGIT_PATTERN.match(text[digits]) is not None:
+        digits += 1
+    return digits
+
+
+def _valid_ipv6_embedded_ipv4(remainder: str, bits: int, ellipsis: int) -> bool:
+    """Validate the dotted quad that replaces the final two 16-bit fields."""
+    if ellipsis < 0 and bits != 12:
+        return False
+    if bits + 4 > 16:
+        return False
+    return _valid_ipv4_quad(remainder)
+
+
+def _ipv6_address_is_complete(bits: int, remainder: str, ellipsis: int) -> bool:
+    """Mirror the tail of netip's parser: no leftover text, and ``::`` expands to a zero field."""
+    if remainder != "":
+        return False
+    if bits < 16:
+        return ellipsis >= 0
+    return ellipsis < 0
+
+
+def _valid_ipv6_address(text: str) -> bool:
+    """True when ``text`` is a bare IPv6 literal, mirroring ``netip.ParseAddr``.
+
+    This is the address grammar RFC 3986 allows between square brackets; a zone
+    identifier is stripped by the caller.
+    """
+    if text == "":
+        return False
+    remainder = text
+    ellipsis = -1
+    if remainder.startswith("::"):
+        ellipsis = 0
+        remainder = remainder[2:]
+    bits = 0
+    while bits < 16 and remainder != "":
+        digits = _ipv6_group_length(remainder)
+        if digits == 0 or digits > 4:
+            return False
+        if digits < len(remainder) and remainder[digits] == ".":
+            if not _valid_ipv6_embedded_ipv4(remainder, bits, ellipsis):
+                return False
+            bits += 4
+            remainder = ""
+            break
+        bits += 2
+        remainder = remainder[digits:]
+        if remainder == "":
+            break
+        if remainder[0] != ":":
+            return False
+        remainder = remainder[1:]
+        if remainder == "":
+            return False
+        if remainder[0] != ":":
+            continue
+        if ellipsis >= 0:
+            return False
+        ellipsis = bits
+        remainder = remainder[1:]
+    return _ipv6_address_is_complete(bits, remainder, ellipsis)
+
+
+def _valid_bracketed_hostname(raw: str) -> bool:
+    """Mirror ``net/url``'s IP-literal rule.
+
+    The text between square brackets must be an IPv6 address, optionally with a
+    ``%25``-escaped zone identifier.
+    """
+    zone = raw.find("%25")
+    if zone < 0:
+        return _valid_ipv6_address(raw)
+    return raw[zone + 3 :] != "" and _valid_ipv6_address(raw[:zone])
+
+
+def _split_host_port(hostport: str) -> tuple[str, str] | None:
+    """Split a host authority into ``(hostname, port)``, mirroring Go's host parse.
+
+    Rejects a malformed IPv6 authority, a bracketed host that does not hold an
+    IPv6 literal, a non-numeric port, and any host byte Go's ``net/url`` would
+    reject (see :func:`_valid_host_bytes`).
+    """
+    hostname = hostport
+    port = ""
+    bracketed = hostport.startswith("[")
+    if bracketed:
+        close = hostport.find("]")
+        if close < 0:
+            return None
+        hostname = hostport[1:close]
+        after = hostport[close + 1 :]
+        if after != "":
+            if not after.startswith(":"):
+                return None
+            port = after[1:]
+    else:
+        colon = hostport.find(":")
+        if colon >= 0:
+            hostname = hostport[:colon]
+            port = hostport[colon + 1 :]
+    if port != "" and _PORT_PATTERN.match(port) is None:
+        return None
+    if not _valid_host_bytes(hostport):
+        return None
+    if bracketed and not _valid_bracketed_hostname(hostname):
+        return None
+    return hostname, port
+
+
 def _parse_url(raw: str) -> _ParsedURL | None:
     """A minimal absolute-URL parser mirroring the Go facade's url.Parse usage.
 
@@ -1040,6 +1287,8 @@ def _parse_url(raw: str) -> _ParsedURL | None:
     """
     trimmed = str(raw or "").strip()
     if trimmed == "":
+        return None
+    if _contains_control_byte(trimmed):
         return None
     scheme_match = _SCHEME_PATTERN.match(trimmed)
     if scheme_match is None:
@@ -1065,25 +1314,10 @@ def _parse_url(raw: str) -> _ParsedURL | None:
         userinfo = authority[:at_index]
         hostport = authority[at_index + 1 :]
 
-    hostname = hostport
-    port = ""
-    if hostport.startswith("["):
-        close = hostport.find("]")
-        if close < 0:
-            return None
-        hostname = hostport[1:close]
-        after = hostport[close + 1 :]
-        if after != "":
-            if not after.startswith(":"):
-                return None
-            port = after[1:]
-    else:
-        colon = hostport.find(":")
-        if colon >= 0:
-            hostname = hostport[:colon]
-            port = hostport[colon + 1 :]
-    if port != "" and _PORT_PATTERN.match(port) is None:
+    split_host = _split_host_port(hostport)
+    if split_host is None:
         return None
+    hostname, port = split_host
 
     split = _split_path_search_hash(rest)
     if split is None:
@@ -1094,6 +1328,8 @@ def _parse_url(raw: str) -> _ParsedURL | None:
         scheme=scheme,
         host=hostport,
         hostname=hostname,
+        decoded_host=_decode_host_bytes(hostport),
+        decoded_hostname=_decode_host_bytes(hostname),
         port=port,
         path=path,
         search=search,
@@ -1112,8 +1348,13 @@ def _parse_absolute_url(raw: str) -> _ParsedURL | None:
     return parsed
 
 
-def _canonical_hostname(hostname: str) -> str:
-    lowered = hostname.lower()
+def _canonical_hostname(decoded_hostname: str) -> str:
+    """Canonicalize a decoded hostname.
+
+    Go lowercases the decoded host and drops one trailing root dot, then
+    re-brackets an IPv6 literal.
+    """
+    lowered = _lowercase_host_bytes(decoded_hostname)
     if lowered.endswith("."):
         lowered = lowered[:-1]
     if ":" in lowered:
@@ -1122,7 +1363,7 @@ def _canonical_hostname(hostname: str) -> str:
 
 
 def _canonical_authority(parsed: _ParsedURL) -> str:
-    hostname = _canonical_hostname(parsed.hostname)
+    hostname = _canonical_hostname(parsed.decoded_hostname)
     if hostname == "":
         return ""
     port = parsed.port
@@ -1152,7 +1393,8 @@ def _normalize_https_url(raw: str, issuer: bool) -> str | None:
     decoded_path = parsed.path.rstrip("/") if issuer else parsed.path
     path = _encode_path_bytes(decoded_path)
     query = "" if issuer else parsed.search
-    return f"{parsed.scheme}://{authority}{path}{query}"
+    # Go re-escapes the decoded host, so ``%c3%a9`` becomes ``%C3%A9``.
+    return f"{parsed.scheme}://{_encode_host_bytes(authority)}{path}{query}"
 
 
 def _normalize_public_base_url(raw: str) -> str | None:
@@ -1168,7 +1410,7 @@ def _normalize_allowed_hostname(raw: str) -> str | None:
         return None
     port = parsed.port
     if port in ("80", "443"):
-        hostname = _canonical_hostname(parsed.hostname)
+        hostname = _canonical_hostname(parsed.decoded_hostname)
         return hostname or None
     authority = _canonical_authority(parsed)
     return authority or None
@@ -1178,10 +1420,10 @@ def _absolute_url_for_path(base_url: str, route_path: str) -> str | None:
     parsed = _parse_absolute_url(base_url)
     if parsed is None or not route_path.startswith("/"):
         return None
-    # Go keeps the parsed host verbatim and drops the query and fragment.
+    # Go keeps the parsed authority's text and re-encodes it from its decoded bytes.
     decoded_path = parsed.path.rstrip("/") + route_path.encode("utf-8").decode("latin-1")
     path = _encode_path_bytes(decoded_path)
-    return f"{parsed.scheme}://{parsed.host}{path}"
+    return f"{parsed.scheme}://{_encode_host_bytes(parsed.decoded_host)}{path}"
 
 
 def normalize_request_origin(raw: str) -> str | None:

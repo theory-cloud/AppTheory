@@ -949,7 +949,7 @@ const NAMESPACE_AUTHORIZATION_SERVER_PATH =
 
 test("advertised URLs match the shared normalization rows", async () => {
   const rows = EXPECTATIONS.url_normalization;
-  assert.equal(rows.length, 61);
+  assert.equal(rows.length, 65);
 
   for (const row of rows) {
     const app = createApp({ tier: "p0" });
@@ -987,6 +987,63 @@ test("advertised URLs match the shared normalization rows", async () => {
     } else {
       assert.equal(document.jwks_uri, row.expect, row.name);
       assert.equal(document.registration_endpoint, row.expect, row.name);
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Shared registration rejection rows (Go is the reference runtime)
+// ---------------------------------------------------------------------------
+
+const PROTECTED_RESOURCE_PATH = "/.well-known/oauth-protected-resource/acme/mcp";
+
+test("registration rejections match the shared rejection rows", async () => {
+  const rows = EXPECTATIONS.rejection_rows;
+  assert.equal(rows.length, 39);
+
+  for (const row of rows) {
+    const mode = row.kind === "allowed_hostname" ? "request_host" : "public_base_url";
+    const app = createApp({ tier: "p0" });
+    const config = validConfig(mode);
+    if (row.kind === "allowed_hostname") {
+      config.allowedHostnames = [row.input];
+    } else if (row.kind === "issuer") {
+      config.issuerURL = row.input;
+    } else {
+      config.jwksURI = row.input;
+      config.registrationEndpointURL = row.input;
+    }
+
+    if (row.reject) {
+      assert.throws(
+        () => registerMcpFacade(app, config),
+        undefined,
+        `${row.name} must be rejected`,
+      );
+      continue;
+    }
+
+    registerMcpFacade(app, config);
+    if (row.kind === "allowed_hostname") {
+      const response = await serve(app, "GET", PROTECTED_RESOURCE_PATH, {
+        host: [row.input],
+        "x-forwarded-proto": ["https"],
+      });
+      assert.equal(response.status, 200, row.name);
+      assert.equal(
+        JSON.parse(bodyString(response)).resource,
+        `https://${row.accept.value}/acme/mcp`,
+        row.name,
+      );
+    } else {
+      const document = JSON.parse(
+        bodyString(await serve(app, "GET", NAMESPACE_AUTHORIZATION_SERVER_PATH)),
+      );
+      if (row.kind === "issuer") {
+        assert.equal(document.issuer, row.accept.value, row.name);
+      } else {
+        assert.equal(document.jwks_uri, row.accept.value, row.name);
+      }
     }
   }
 });
