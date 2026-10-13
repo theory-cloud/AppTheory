@@ -134,6 +134,9 @@ EventBridgeWorkloadEnvelope	interface
 EventContext	class
 EventHandler	type
 EventMiddleware	type
+FacadeCapabilities	interface
+FacadeConfig	interface
+FacadeRoute	interface
 FakeAccessTokenClaims	interface
 FakeEmbedder	class
 FakeMicroVMClient	class
@@ -150,6 +153,7 @@ HTTPErrorFormat	type
 HTTP_ERROR_FORMAT_FLAT_LEGACY	const
 HTTP_ERROR_FORMAT_NESTED	const
 Handler	type
+HandlerFactory	type
 Headers	type
 IDGenerator	type
 ISSUER_MODE_FAMILY	const
@@ -279,7 +283,6 @@ McpContentBlock	interface
 McpDiscoverResult	interface
 McpEventNotFoundError	class
 McpExtensionCapabilities	type
-McpFacadeRegistration	interface
 McpInputRequest	interface
 McpInputRequiredResult	interface
 McpJSONRecord	type
@@ -508,12 +511,14 @@ RecordStatus	type
 RefreshLeaseInput	type
 RefreshRequest	interface
 RefreshSemaphoreSlotInput	type
-RegisterMcpFacadeOptions	interface
 ReleaseLeaseInput	type
 ReleaseSemaphoreSlotInput	type
 Request	interface
 RequireBearerTokenOptions	interface
+ResolvedCapabilities	interface
 Response	interface
+RootDiscoveryConfig	interface
+RouteInventory	interface
 RouteOptions	interface
 RouteRefreshBrokerRecord	interface
 RouteRefreshBrokerStatus	type
@@ -553,6 +558,7 @@ StageGlobalRoute	interface
 StoreConformanceCase	interface
 Stores	interface
 StructuredLogger	interface
+TRANSPORT_POSTURES	const
 TableTheoryMicroVMSessionRegistry	class
 TableTheoryMicroVMSessionRegistryOptions	interface
 TestEnv	class
@@ -569,7 +575,10 @@ TransactionStatus	type
 TransactionStore	interface
 TransitionJobStatusInput	type
 TypedHandler	type
+URL_MODE_PUBLIC_BASE_URL	const
+URL_MODE_REQUEST_HOST	const
 UpsertRecordStatusInput	type
+UrlMode	type
 UsageStats	interface
 UsageWindow	interface
 VALIDATION_RULE_ENUM	const
@@ -666,6 +675,7 @@ createTableTheoryMicroVMSessionRegistry	function
 createTestEnv	function
 decodeCloudWatchLogsSubscription	function
 decodeLoggingProfileJSON	function
+defaultCapabilities	function
 defaultConfig	function
 defaultJobsConfig	function
 defaultJobsTableName	const
@@ -743,6 +753,7 @@ normalizeDynamoDBStreamRecord	function
 normalizeEventBridgeScheduledWorkload	function
 normalizeEventBridgeWorkloadEnvelope	function
 normalizeHTTPErrorFormat	function
+normalizeRequestOrigin	function
 normalizeStage	function
 normalizeTopK	function
 oauthAuthorizationServerPath	function

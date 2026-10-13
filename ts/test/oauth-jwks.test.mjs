@@ -817,7 +817,16 @@ test("an RS256 token from OIDC discovery reaches the MCP transport handler", asy
     const app = createApp();
     const handler = countingTransportHandler();
     registerMcpFacade(app, {
-      mcpPaths: ["/acme/mcp"],
+      issuerURL: "https://issuer.example.com",
+      jwksURI: "https://issuer.example.com/jwks.json",
+      urlMode: "public_base_url",
+      publicBaseURL: "https://front.example.com",
+      scopes: {
+        namespace: ["mcp:read"],
+        partner_namespace: ["mcp:read"],
+        agent: ["mcp:read"],
+        partner_agent: ["mcp:read"],
+      },
       mcpHandler: handler.handler,
       transportPosture: "runtime-bearer",
       requireBearerToken: {
