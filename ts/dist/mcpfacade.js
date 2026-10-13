@@ -704,7 +704,7 @@ function buildAbsoluteURL(config, ctx, routePath) {
         if (origin === null) {
             throw new Error(`${ERROR_PREFIX} normalized request origin is invalid`);
         }
-        if (!config.allowedHostnames.has(origin.host)) {
+        if (!config.allowedHostnames.has(requestHostAllowlistKey(origin))) {
             throw new MetadataRequestError("request host is not allowlisted");
         }
     }
@@ -1192,6 +1192,28 @@ function canonicalHostname(decodedHostname) {
         return `[${lower}]`;
     }
     return lower;
+}
+/**
+ * The allowlist key for a normalized request origin.
+ *
+ * The allowlist is stored as decoded, canonicalized authorities (see
+ * {@link normalizeAllowedHostname}), so the request authority must be
+ * canonicalized the same way before the lookup: Go compares the decoded request
+ * host against the decoded allowlist set, while a raw comparison would reject
+ * every allowed hostname whose raw form differs from its canonical form
+ * (non-ASCII, percent-escaped, or an IPv6 zone). {@link normalizeRequestOrigin}
+ * has already lowercased the authority and stripped the request scheme's own
+ * default port, so only the decoded bytes need canonicalizing here.
+ */
+function requestHostAllowlistKey(u) {
+    const hostname = canonicalHostname(u.decodedHostname);
+    if (hostname === "") {
+        return "";
+    }
+    if (u.port === "") {
+        return hostname;
+    }
+    return joinHostPort(hostname.replace(/^\[/, "").replace(/\]$/, ""), u.port);
 }
 function canonicalAuthority(u) {
     const hostname = canonicalHostname(u.decodedHostname);

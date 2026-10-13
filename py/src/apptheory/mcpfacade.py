@@ -867,7 +867,7 @@ def _build_absolute_url(config: _NormalizedConfig, ctx: Context | None, route_pa
         origin = _parse_absolute_url(base_url)
         if origin is None:
             raise ValueError(f"{_ERROR_PREFIX} normalized request origin is invalid")
-        if origin.host not in config.allowed_hostnames:
+        if _request_host_allowlist_key(origin) not in config.allowed_hostnames:
             raise _MetadataRequestError("request host is not allowlisted")
     absolute = _absolute_url_for_path(base_url, route_path)
     if absolute is None:
@@ -1384,6 +1384,26 @@ def _join_host_port(host: str, port: str) -> str:
     if ":" in host:
         return f"[{host}]:{port}"
     return f"{host}:{port}"
+
+
+def _request_host_allowlist_key(parsed: _ParsedURL) -> str:
+    """The allowlist key for a normalized request origin.
+
+    The allowlist is stored as decoded, canonicalized authorities (see
+    :func:`_normalize_allowed_hostname`), so the request authority must be
+    canonicalized the same way before the lookup: Go compares the decoded request
+    host against the decoded allowlist set, while a raw comparison would reject
+    every allowed hostname whose raw form differs from its canonical form
+    (non-ASCII, percent-escaped, or an IPv6 zone). :func:`normalize_request_origin`
+    has already lowercased the authority and stripped the request scheme's own
+    default port, so only the decoded bytes need canonicalizing here.
+    """
+    hostname = _canonical_hostname(parsed.decoded_hostname)
+    if hostname == "":
+        return ""
+    if parsed.port == "":
+        return hostname
+    return _join_host_port(hostname.removeprefix("[").removesuffix("]"), parsed.port)
 
 
 def _normalize_https_url(raw: str, issuer: bool) -> str | None:

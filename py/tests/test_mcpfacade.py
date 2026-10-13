@@ -337,6 +337,32 @@ class McpFacadeMetadataDocumentTests(unittest.TestCase):
                     else:
                         self.assertEqual(row["accept"]["value"], document["jwks_uri"])
 
+    def test_request_host_allowlist_canonicalizes_the_request_authority(self) -> None:
+        rows = json.loads(_EXPECTATIONS_PATH.read_text(encoding="utf-8"))["request_host_allowlist"]
+        self.assertEqual(6, len(rows))
+
+        for row in rows:
+            with self.subTest(name=row["name"]):
+                app = create_app(tier="p0")
+                config = _valid_config(URL_MODE_REQUEST_HOST)
+                config.allowed_hostnames = list(row["allowed_hostnames"])
+                register_mcp_facade(app, config)
+                response = _serve(
+                    app,
+                    "GET",
+                    "/.well-known/oauth-protected-resource/acme/mcp",
+                    {"host": [row["request_host"]], "x-forwarded-proto": ["https"]},
+                )
+                self.assertEqual(row["expect_status"], response.status, row["name"])
+                if row["expect_status"] != 200:
+                    self.assertEqual(b'{"error":"invalid_request_host"}', response.body, row["name"])
+                    continue
+                self.assertEqual(
+                    row["expect_resource"],
+                    json.loads(response.body.decode())["resource"],
+                    row["name"],
+                )
+
     def test_every_metadata_response_is_no_store_and_varies_on_origin_headers(self) -> None:
         for mode in (URL_MODE_PUBLIC_BASE_URL, URL_MODE_REQUEST_HOST):
             with self.subTest(mode=mode):

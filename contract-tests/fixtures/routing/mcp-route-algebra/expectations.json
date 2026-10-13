@@ -1178,5 +1178,13 @@
     {"name": "jwks rejects an unclosed opening bracket", "kind": "jwks", "input": "https://a[b/x", "reject": true},
     {"name": "jwks rejects a stray bracket before a port", "kind": "jwks", "input": "https://x[a]y:8443/x", "reject": true},
     {"name": "jwks keeps a malformed query key escape", "kind": "jwks", "input": "https://example.com/jwks.json?%zz=1", "accept": {"value": "https://example.com/jwks.json?%zz=1"}}
+  ],
+  "request_host_allowlist": [
+    {"name": "request host accepts a literal non-ascii allowed hostname", "allowed_hostnames": ["caf\u00e9.example"], "request_host": "caf\u00e9.example", "expect_status": 200, "expect_resource": "https://caf%C3%A9.example/acme/mcp"},
+    {"name": "request host accepts a percent-escaped request for a decoded allowed hostname", "allowed_hostnames": ["caf\u00e9.example"], "request_host": "caf%C3%A9.example", "expect_status": 200, "expect_resource": "https://caf%C3%A9.example/acme/mcp"},
+    {"name": "request host accepts a percent-escaped allowed hostname", "allowed_hostnames": ["exa%C3%A9mple.com"], "request_host": "exa%C3%A9mple.com", "expect_status": 200, "expect_resource": "https://exa%C3%A9mple.com/acme/mcp"},
+    {"name": "request host accepts an ipv6 zone allowed hostname", "allowed_hostnames": ["[fe80::1%25en0]"], "request_host": "[fe80::1%25en0]", "expect_status": 200, "expect_resource": "https://[fe80::1%25en0]/acme/mcp"},
+    {"name": "request host accepts mixed case, a trailing dot, and a default port", "allowed_hostnames": ["DIRECT.EXAMPLE.COM.:443"], "request_host": "Direct.Example.com.:443", "expect_status": 200, "expect_resource": "https://direct.example.com/acme/mcp"},
+    {"name": "request host rejects a hostname outside the allowlist", "allowed_hostnames": ["caf\u00e9.example"], "request_host": "other.example", "expect_status": 400}
   ]
 }

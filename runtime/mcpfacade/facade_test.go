@@ -112,6 +112,18 @@ type rejectionFixtureFile struct {
 	RejectionRows []rejectionFixtureRow `json:"rejection_rows"`
 }
 
+type requestHostAllowlistFixtureRow struct {
+	Name             string   `json:"name"`
+	AllowedHostnames []string `json:"allowed_hostnames"`
+	RequestHost      string   `json:"request_host"`
+	ExpectStatus     int      `json:"expect_status"`
+	ExpectResource   string   `json:"expect_resource"`
+}
+
+type requestHostAllowlistFixtureFile struct {
+	RequestHostAllowlist []requestHostAllowlistFixtureRow `json:"request_host_allowlist"`
+}
+
 func TestRegisterMCPFacadeRegistersCompleteContractSurface(t *testing.T) {
 	t.Parallel()
 	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
@@ -378,6 +390,41 @@ func TestSharedFixturePinsRegistrationRejections(t *testing.T) {
 			require.NotNil(t, fixture.Accept)
 			require.True(t, ok)
 			require.Equal(t, fixture.Accept.Value, got)
+		})
+	}
+}
+
+// TestSharedFixturePinsRequestHostAllowlistCanonicalization pins the shared
+// request_host_allowlist rows end to end: a request-host config registers, and a
+// served request whose raw authority differs from its decoded canonical form
+// (non-ASCII, percent-escaped, IPv6 zone, mixed case/trailing dot/default port)
+// must match the allowlist exactly as Go does.
+func TestSharedFixturePinsRequestHostAllowlistCanonicalization(t *testing.T) {
+	t.Parallel()
+	contents, err := os.ReadFile(documentExpectationsPath)
+	require.NoError(t, err)
+	var fixtures requestHostAllowlistFixtureFile
+	require.NoError(t, json.Unmarshal(contents, &fixtures))
+	require.Len(t, fixtures.RequestHostAllowlist, 6)
+
+	for _, fixture := range fixtures.RequestHostAllowlist {
+		t.Run(fixture.Name, func(t *testing.T) {
+			t.Parallel()
+			app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+			config := validConfig(URLModeRequestHost)
+			config.AllowedHostnames = fixture.AllowedHostnames
+			_, registerErr := RegisterMCPFacade(app, config)
+			require.NoError(t, registerErr)
+
+			response := serve(app, "GET", "/.well-known/oauth-protected-resource/acme/mcp", map[string][]string{
+				"host": {fixture.RequestHost}, "x-forwarded-proto": {"https"},
+			})
+			require.Equal(t, fixture.ExpectStatus, response.Status)
+			if fixture.ExpectStatus != 200 {
+				require.Equal(t, `{"error":"invalid_request_host"}`, string(response.Body))
+				return
+			}
+			require.Equal(t, expectedProtectedResourceJSON(fixture.ExpectResource, mcproutes.EndpointKindNamespace), string(response.Body))
 		})
 	}
 }

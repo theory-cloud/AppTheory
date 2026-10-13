@@ -460,6 +460,33 @@ test("request-host mode allows only normalized allowlist matches", async () => {
   assert.equal(bodyString(wrongPort), '{"error":"invalid_request_host"}');
 });
 
+// Pins the shared request_host_allowlist rows: a request whose raw authority
+// differs from its decoded canonical form (non-ASCII, percent-escaped, IPv6
+// zone, mixed case/trailing dot/default port) must match the allowlist exactly
+// as Go does.
+test("request-host allowlist canonicalizes the request authority like the shared rows", async () => {
+  const rows = EXPECTATIONS.request_host_allowlist;
+  assert.ok(rows.length > 0);
+  for (const row of rows) {
+    const app = createApp({ tier: "p0" });
+    const config = validConfig("request_host");
+    config.allowedHostnames = [...row.allowed_hostnames];
+    registerMcpFacade(app, config);
+    const response = await serve(
+      app,
+      "GET",
+      "/.well-known/oauth-protected-resource/acme/mcp",
+      { host: [row.request_host], "x-forwarded-proto": ["https"] },
+    );
+    assert.equal(response.status, row.expect_status, row.name);
+    if (row.expect_status !== 200) {
+      assert.equal(bodyString(response), '{"error":"invalid_request_host"}', row.name);
+      continue;
+    }
+    assert.equal(JSON.parse(bodyString(response)).resource, row.expect_resource, row.name);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Root authorization-server discovery
 // ---------------------------------------------------------------------------
