@@ -1159,6 +1159,69 @@ func TestTransportPostureDefaultsToIAM(t *testing.T) {
 	require.Len(t, transportRouteOptions(normalized), 1)
 }
 
+func TestIssuerModeRouteDerivesPerRouteIssuerAndResource(t *testing.T) {
+	t.Parallel()
+	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	config := validConfig(URLModePublicBaseURL)
+	config.IssuerMode = mcproutes.IssuerModeRoute
+	inventory, err := RegisterMCPFacade(app, config)
+	require.NoError(t, err)
+	require.Equal(t, mcproutes.IssuerModeRoute, inventory.IssuerMode)
+
+	// Each route is its own authorization server: the route URL is the resource,
+	// the advertised authorization server, and the issuer.
+	routeURL := "https://front.example.com/acme/mcp"
+	protected := serve(app, "GET", "/.well-known/oauth-protected-resource/acme/mcp", nil)
+	require.Equal(t, 200, protected.Status)
+	require.JSONEq(t, `{"resource":"`+routeURL+`","authorization_servers":["`+routeURL+`"],"jwks_uri":"https://issuer.example.com/jwks.json?set=active","scopes_supported":["namespace:use"]}`, string(protected.Body))
+
+	discovery := serve(app, "GET", "/.well-known/oauth-authorization-server/acme/mcp", nil)
+	require.Equal(t, 200, discovery.Status)
+	require.JSONEq(t, `{"issuer":"`+routeURL+`","authorization_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/authorize","token_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/token","registration_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/register","jwks_uri":"https://issuer.example.com/jwks.json?set=active","response_types_supported":["code"],"grant_types_supported":["authorization_code","refresh_token"],"token_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":["namespace:use"]}`, string(discovery.Body))
+
+	// family mode keeps advertising one family-wide issuer.
+	familyApp := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	familyConfig := validConfig(URLModePublicBaseURL)
+	familyInventory, err := RegisterMCPFacade(familyApp, familyConfig)
+	require.NoError(t, err)
+	require.Equal(t, mcproutes.IssuerModeFamily, familyInventory.IssuerMode)
+	familyProtected := serve(familyApp, "GET", "/.well-known/oauth-protected-resource/acme/mcp", nil)
+	require.Contains(t, string(familyProtected.Body), `"authorization_servers":["https://issuer.example.com"]`)
+}
+
+func TestIssuerModeRejectsUnknownValue(t *testing.T) {
+	t.Parallel()
+	config := validConfig(URLModePublicBaseURL)
+	config.IssuerMode = mcproutes.IssuerMode("tenant")
+	_, err := RegisterMCPFacade(apptheory.New(apptheory.WithTier(apptheory.TierP0)), config)
+	require.ErrorContains(t, err, "IssuerMode \"tenant\" must be one of family, route")
+}
+
+func TestUpstreamCallbackPathIsOverridableAndDefaultsToTheContractDefault(t *testing.T) {
+	t.Parallel()
+	defaultApp := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	defaultConfig := validConfig(URLModePublicBaseURL)
+	defaultConfig.CallbackHandler = func(*apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.Text(200, "callback"), nil
+	}
+	defaultInventory, err := RegisterMCPFacade(defaultApp, defaultConfig)
+	require.NoError(t, err)
+	require.Equal(t, mcproutes.DefaultCallbackPath, defaultInventory.CallbackPattern)
+	require.Equal(t, 200, serve(defaultApp, "GET", mcproutes.DefaultCallbackPath, nil).Status)
+
+	customApp := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	customConfig := validConfig(URLModePublicBaseURL)
+	customConfig.UpstreamCallbackPath = "/_oauth/callback"
+	customConfig.CallbackHandler = func(*apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.Text(200, "callback"), nil
+	}
+	customInventory, err := RegisterMCPFacade(customApp, customConfig)
+	require.NoError(t, err)
+	require.Equal(t, "/_oauth/callback", customInventory.CallbackPattern)
+	require.Equal(t, 200, serve(customApp, "GET", "/_oauth/callback", nil).Status)
+	require.Equal(t, 404, serve(customApp, "GET", mcproutes.DefaultCallbackPath, nil).Status)
+}
+
 func TestTransportPostureFixture(t *testing.T) {
 	t.Parallel()
 	contents, err := os.ReadFile(facadeTransportPosturePath)
