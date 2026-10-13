@@ -368,7 +368,11 @@ test("route issuer mode metadata is no-store on both discovery shapes", async ()
     assert.equal(response.status, 200, path);
     assertMetadataHeaders(response);
     // In route issuer mode the route is its own authorization server.
-    assert.ok(bodyString(response).includes(routeURL), path);
+    const document = JSON.parse(bodyString(response));
+    assert.ok(
+      document.resource === routeURL || document.issuer === routeURL,
+      `${path} must name the route as its own authorization server`,
+    );
   }
 });
 

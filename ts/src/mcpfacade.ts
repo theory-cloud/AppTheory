@@ -1397,7 +1397,7 @@ function normalizeHTTPSURL(raw: string, issuer: boolean): string | null {
   }
   let path = u.path;
   if (issuer) {
-    path = path.replace(/\/+$/, "");
+    path = trimTrailingSlashes(path);
   }
   const query = issuer ? "" : u.search;
   return `${u.scheme}://${authority}${path}${query}`;
@@ -1440,8 +1440,17 @@ function absoluteURLForPath(baseURL: string, routePath: string): string | null {
   if (authority === "") {
     return null;
   }
-  const path = u.path.replace(/\/+$/, "") + routePath;
+  const path = trimTrailingSlashes(u.path) + routePath;
   return `${u.scheme}://${authority}${path}`;
+}
+
+/** Removes every trailing "/" without a backtracking regex (ReDoS-safe). */
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(0, end);
 }
 
 /**
