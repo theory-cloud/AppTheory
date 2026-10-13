@@ -1,0 +1,44 @@
+{
+  "contract": {
+    "id": "m17.mcp-auth-facade/discovery-bootstrap/v1",
+    "status": "registered (M2)",
+    "notes": "Pins the OIDC discovery bootstrap's T8 cases. Each case is executed by the Go, TypeScript, and Python loader tests against a real local HTTP(S) server; no network egress to real hosts. The bootstrap fetches the configured OIDC discovery document once, verifies its issuer equals the configured upstream issuer, and takes jwks_uri from it; every failure fails closed."
+  },
+  "security": {
+    "https_only": true,
+    "issuer_must_match_discovery_document": true,
+    "cross_origin_redirect": "rejected",
+    "endpoints_pinned_to_verified_issuer": true
+  },
+  "cases": [
+    {
+      "name": "same-origin-https-accepted",
+      "scenario": "discovery document served over HTTPS with issuer equal to the configured issuer",
+      "expect": "accepted"
+    },
+    {
+      "name": "issuer-mismatch-rejected",
+      "scenario": "discovery document issuer differs from the configured issuer",
+      "expect": "rejected",
+      "reason": "issuer_mismatch"
+    },
+    {
+      "name": "non-https-rejected",
+      "scenario": "discovery URL scheme is http",
+      "expect": "rejected",
+      "reason": "non_https"
+    },
+    {
+      "name": "cross-origin-redirect-rejected",
+      "scenario": "the discovery fetch responds with a redirect to a different origin",
+      "expect": "rejected",
+      "reason": "cross_origin_redirect"
+    },
+    {
+      "name": "missing-jwks-uri-rejected",
+      "scenario": "a valid discovery document that omits jwks_uri",
+      "expect": "rejected",
+      "reason": "missing_jwks_uri"
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "contract": {
+    "id": "m17.mcp-auth-facade/route-challenge/v1",
+    "status": "registered (M2)",
+    "notes": "Pins the route-derived RFC 9728 / RFC 6750 denial surface: a credential-free or invalid request returns 401 with the WWW-Authenticate challenge for the exact matched route's protected-resource metadata URL, a scope failure returns 403 insufficient_scope carrying the remediation scope set from the route scope map, and every other forbidden denial (for example an audience mismatch) advertises neither an error code nor a scope set. Loaded directly by the Go, TypeScript, and Python tests."
+  },
+  "challenge": {
+    "missing_token": {
+      "status": 401,
+      "www_authenticate": "Bearer resource_metadata=\"<route protected-resource metadata URL>\"",
+      "handler_invocations": 0
+    },
+    "invalid_token": {
+      "status": 401,
+      "www_authenticate": "Bearer resource_metadata=\"<route protected-resource metadata URL>\"",
+      "handler_invocations": 0
+    },
+    "expired_token": {
+      "status": 401,
+      "www_authenticate": "Bearer resource_metadata=\"<route protected-resource metadata URL>\"",
+      "handler_invocations": 0
+    },
+    "insufficient_scope": {
+      "status": 403,
+      "www_authenticate": "Bearer error=\"insufficient_scope\", scope=\"<space-joined remediation scopes>\", resource_metadata=\"<route protected-resource metadata URL>\"",
+      "body_error_code": "app.insufficient_scope",
+      "handler_invocations": 0
+    },
+    "invalid_audience": {
+      "status": 403,
+      "www_authenticate": null,
+      "body_error_code": "app.forbidden",
+      "handler_invocations": 0
+    }
+  },
+  "route_derived": {
+    "per_route": true,
+    "example": {
+      "route": "/acme/mcp",
+      "resource": "https://mcp.example.com/acme/mcp",
+      "resource_metadata_url": "https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp",
+      "challenge": "Bearer resource_metadata=\"https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp\""
+    },
+    "note": "The challenge's resource_metadata is the matched route's metadata URL, never a process-global value."
+  },
+  "resource_indicator": {
+    "rule": "RFC 8707 resource is canonicalized and must exactly equal the route resource; any other value is refused",
+    "accept": [
+      {
+        "route_resource": "https://mcp.example.com/acme/mcp",
+        "requested": "https://mcp.example.com/acme/mcp",
+        "match": true
+      },
+      {
+        "route_resource": "https://mcp.example.com/acme/mcp",
+        "requested": "https://mcp.example.com/acme/mcp/",
+        "match": true
+      }
+    ],
+    "reject": [
+      { "route_resource": "https://mcp.example.com/acme/mcp", "requested": "https://mcp.example.com/other/mcp" },
+      { "route_resource": "https://mcp.example.com/acme/mcp", "requested": "https://mcp.example.com/acme/mcp/extra" },
+      { "route_resource": "https://mcp.example.com/acme/mcp", "requested": "https://evil.example.com/acme/mcp" },
+      { "route_resource": "https://mcp.example.com/acme/mcp", "requested": "" }
+    ]
+  }
+}
