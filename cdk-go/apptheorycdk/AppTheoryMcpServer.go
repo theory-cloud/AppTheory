@@ -53,6 +53,12 @@ type AppTheoryMcpServer interface {
 	ProtectedResourceMetadataPaths() *[]*string
 	RouteInventory() *AppTheoryMcpServerRouteInventory
 	SessionTable() awsdynamodb.ITable
+	// Resolved transport-route authorization posture.
+	//
+	// Facade-configured servers resolve to `runtime-bearer` unless
+	// `transportPosture` overrides the default; plain transport servers resolve
+	// to `iam`. Deliberately public servers must select `none-public` explicitly.
+	TransportPosture() AppTheoryMcpTransportPosture
 	// Returns a string representation of this construct.
 	ToString() *string
 	// Applies one or more mixins to this construct.
@@ -216,6 +222,16 @@ func (j *jsiiProxy_AppTheoryMcpServer) SessionTable() awsdynamodb.ITable {
 	_jsii_.Get(
 		j,
 		"sessionTable",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryMcpServer) TransportPosture() AppTheoryMcpTransportPosture {
+	var returns AppTheoryMcpTransportPosture
+	_jsii_.Get(
+		j,
+		"transportPosture",
 		&returns,
 	)
 	return returns
