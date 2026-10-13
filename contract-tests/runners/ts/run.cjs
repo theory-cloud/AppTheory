@@ -2790,13 +2790,15 @@ async function newOAuthFixtureApp(runtime, setup) {
   metadata.bearer_methods_supported = ["header"];
   app.get(oauthPathFromURL(metadataURL), runtime.protectedResourceMetadataHandler(metadata));
 
+  const routeScopes = () => (setup.required_scopes ?? []).map(String);
   const validator = runtime.newMemoryBearerTokenValidator(oauthTokenRecords(setup), {
     requiredAudience: String(setup.required_audience ?? resource).trim(),
-    requiredScopes: (setup.required_scopes ?? []).map(String),
+    requiredScopes: routeScopes,
     now: fixedNow,
   });
   const bearerMiddleware = runtime.requireBearerTokenMiddleware({
     resourceMetadataURL: metadataURL,
+    requiredScopes: routeScopes,
     claimsValidator: validator,
   });
   const protectedNext = async (ctx) => {

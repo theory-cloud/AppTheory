@@ -80,12 +80,32 @@ export interface BearerTokenRecord extends BearerTokenClaims {
 export type BearerTokenValidator = (ctx: Context, token: string) => void | Promise<void>;
 export type BearerTokenClaimsValidator = (ctx: Context, token: string) => BearerTokenClaims | Promise<BearerTokenClaims>;
 export interface BearerTokenValidationOptions {
-    requiredAudience?: string;
-    requiredScopes?: string[];
+    /**
+     * Static audience the token must be bound to, or a route-derived resolver
+     * that returns the exact matched-route audience. A function takes
+     * precedence, so audience can be the matched route URL rather than a
+     * process-global value.
+     */
+    requiredAudience?: string | ((ctx: Context) => string | Promise<string>);
+    /**
+     * Static scope set the token must carry, or a route-derived resolver that
+     * returns the scope set for the matched route. A function takes precedence.
+     */
+    requiredScopes?: string[] | ((ctx: Context) => string[] | Promise<string[]>);
     now?: () => Date;
 }
 export interface RequireBearerTokenOptions {
-    resourceMetadataURL?: string;
+    /**
+     * Static protected-resource metadata URL for the RFC 9728 challenge, or a
+     * route-derived resolver for the matched route. A function takes precedence.
+     */
+    resourceMetadataURL?: string | ((ctx: Context) => string | Promise<string>);
+    /**
+     * Route-derived scope set used to build the 403 insufficient_scope
+     * remediation challenge. Consulted only when a validator reports a scope
+     * failure.
+     */
+    requiredScopes?: string[] | ((ctx: Context) => string[] | Promise<string[]>);
     validator?: BearerTokenValidator;
     claimsValidator?: BearerTokenClaimsValidator;
 }
@@ -98,6 +118,18 @@ export declare function newAuthorizationServerMetadata(issuer: string, options?:
 export declare function protectedResourceMetadataHandler(metadata: ProtectedResourceMetadata): Handler;
 export declare function authorizationServerMetadataHandler(metadata: AuthorizationServerMetadata): Handler;
 export declare function protectedResourceWWWAuthenticate(resourceMetadataURL: string): string;
+/**
+ * Builds the RFC 6750 (RFC 9728-extended) insufficient_scope challenge
+ * carrying the route-derived remediation scope set. Order matches Go:
+ * `error`, then `scope` when non-empty, then `resource_metadata` when
+ * non-empty.
+ */
+export declare function insufficientScopeWWWAuthenticate(scopes: string[], resourceMetadataURL?: string): string;
+/**
+ * Reports whether two RFC 8707 resource indicators denote the same protected
+ * resource after canonicalization. An empty expected indicator never matches.
+ */
+export declare function resourceIndicatorMatches(expected: string, requested: string): boolean;
 export declare function rfc9728ResourceMetadataURL(resourceURL: string): string | null;
 export declare function resourceMetadataURLFromMcpEndpoint(mcpEndpoint: string): string | null;
 export declare function canonicalResourceURL(raw: string): string;
