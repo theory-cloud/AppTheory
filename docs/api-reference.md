@@ -584,12 +584,12 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1063 exported top-level symbols</summary>
+<summary>1071 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, AllowedFields, AllowOrigins, APIGatewayV2Request
 App, AppError, AppSyncContext, AppSyncEvent, AppSyncEventOptions, AppSyncResolverEvent, AppSyncResolverInfo
-AppSyncResolverRequest, AppTheoryError, AppTheoryErrorFromAppError, AsAppTheoryError, AssertError, AssertHasTools
+AppSyncResolverRequest, AppTheoryError, AppTheoryErrorFromAppError, AsAppTheoryError, AssertBearerTokenReachesHandler, AssertCredentialFreeDenied, AssertError, AssertHasTools
 AssertToolResult, AtomicRateLimiter, AuthContext, Authenticated, AuthenticatedAnyOf, AuthoritativeOriginURL, AuthHook, AuthorizationCodeRecord
 AuthorizationCodeStore, AuthorizationServerMetadata, AuthorizationServerMetadataHandler, AuthorizationServerMetadataOption, AuthorizeOptions, AuthPosture
 AuthPostureAuthenticated, AuthPostureAuthenticatedAnyOf, AuthPostureInternalOnly, AuthPostureKind, AuthPostureOptional, AuthPosturePublic
@@ -677,7 +677,7 @@ MultiWindowStrategy, MustJSON, MustSSEResponse, New, NewAppTheoryError, NewAutho
 NewAWSLambdaMicroVMProvider, NewClaudePublicClient, NewClient, NewController, NewDynamoDBEventBus, NewDynamoJobLedger
 NewDynamoRateLimiter, NewDynamoSessionStore, NewDynamoStreamStore, NewDynamoTaskStore, NewEMFMetricSink, NewError
 NewErrorEnvelope, NewErrorResponse, NewEvent, NewFakeClient, NewFakeClientWithTime, NewFakeEmbedder, NewFakeProvider
-NewFakeProviderWithTime, NewFakeSNSClient, NewFakeStore, NewFakeStreamerClient, NewFixedWindowStrategy, NewJobLock
+NewFakeProviderWithTime, NewFakeSNSClient, NewFakeStore, NewFakeStreamerClient, NewFixedWindowStrategy, NewHandler, NewJobLock
 NewJobMeta, NewJobRecord, NewJobRequest, NewKinesisJSONRecord, NewLifecycleAdapter, NewManualClock
 NewManualIDGenerator, NewMemoryAuthorizationCodeStore, NewMemoryBearerTokenValidator, NewMemoryEventBus
 NewMemoryRefreshTokenStore, NewMemorySessionRegistry, NewMemorySessionStore, NewMemoryStreamStore, NewMemoryTaskStore
@@ -741,7 +741,7 @@ ToolInputFromContext, ToolLifecycleFinish, ToolLifecycleOptions, ToolLifecycleOu
 ToolLifecycleOutcomeContextCanceled, ToolLifecycleOutcomeHandledError, ToolLifecycleOutcomeInvalidParams
 ToolLifecycleOutcomePanic, ToolLifecycleOutcomeSuccess, ToolLifecycleOutcomeTimeout
 ToolLifecycleOutcomeUnhandledError, ToolLifecycleStart, ToolLifecycleTelemetry, ToolRegistry, ToolResult
-TransitionJobStatusInput, UpsertRecordStatusInput, UsageStats, UsageWindow, ValidateControllerContract
+TransitionJobStatusInput, TransportPosture, TransportPostureIAM, TransportPostureJWT, TransportPostureNonePublic, TransportPostureRuntimeBearer, UpsertRecordStatusInput, UsageStats, UsageWindow, ValidateControllerContract
 ValidateDimension, ValidateDynamicClientRegistrationRequest, ValidateEscapeHatches, ValidateKey
 ValidateLifecycleContract, ValidateLoggingProfile, ValidateOperationContract, ValidatePKCECodeVerifier
 ValidateProviderInvokeInput, ValidateProviderListInput, ValidateProviderRunInput, ValidateProviderSession

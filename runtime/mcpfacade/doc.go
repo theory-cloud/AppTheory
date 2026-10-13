@@ -8,7 +8,7 @@
 // MCP transport routes (POST, GET, and DELETE on every MCP pattern) are
 // registered with an authenticated posture by default: requests without a
 // verified principal are rejected with HTTP 401 and the MCP handler never runs.
-// Set FacadeConfig.UnauthenticatedMcp to opt out, or supply
-// FacadeConfig.RequireBearerToken to validate an RFC 9728 bearer token on those
-// routes.
+// Set FacadeConfig.TransportPosture to select another posture: runtime-bearer
+// pairs with FacadeConfig.RequireBearerToken to validate an RFC 9728 bearer
+// token in the runtime, and none-public is the explicit public posture.
 package mcpfacade
