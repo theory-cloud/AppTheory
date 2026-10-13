@@ -408,7 +408,7 @@ func SupportedStageGlobalRoutes() []StageGlobalRoute {
 // CallbackPathForConfiguredPath resolves the effective callback path for a
 // configuration value, falling back to the contract default when unset.
 func CallbackPathForConfiguredPath(configured string) (string, bool) {
-	configured = strings.TrimSpace(configured)
+	configured = strings.Trim(configured, asciiWhitespaceTrimCutset)
 	if configured == "" {
 		return DefaultCallbackPath, true
 	}

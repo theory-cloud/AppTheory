@@ -19,6 +19,26 @@ type routeAlgebraExpectations struct {
 	WhitespaceBoundary       []whitespaceExpectation    `json:"whitespace_boundary"`
 	ProtectedResourceInverse inverseExpectations        `json:"protected_resource_inverse"`
 	Builders                 []builderExpectation       `json:"builders"`
+	StageGlobal              []stageGlobalExpectation   `json:"stage_global"`
+	IssuerModes              []IssuerMode               `json:"issuer_modes"`
+	CallbackPath             callbackPathExpectation    `json:"callback_path"`
+}
+
+type stageGlobalExpectation struct {
+	Name    string   `json:"name"`
+	Pattern string   `json:"pattern"`
+	Methods []string `json:"methods"`
+}
+
+type callbackPathExpectation struct {
+	Default string             `json:"default"`
+	Accept  []callbackPathCase `json:"accept"`
+	Reject  []string           `json:"reject"`
+}
+
+type callbackPathCase struct {
+	Configured string `json:"configured"`
+	Expected   string `json:"expected"`
 }
 
 type contractExpectations struct {
@@ -357,36 +377,32 @@ func TestSharedBuilderExpectations(t *testing.T) {
 
 func TestStageGlobalCallbackAndIssuerModes(t *testing.T) {
 	t.Parallel()
+	expected := loadExpectations(t)
 	routes := SupportedStageGlobalRoutes()
-	if len(routes) != 1 {
-		t.Fatalf("SupportedStageGlobalRoutes() = %d routes, want 1", len(routes))
+	if len(routes) != len(expected.StageGlobal) || len(routes) != 1 {
+		t.Fatalf("SupportedStageGlobalRoutes() = %d routes, want %d", len(routes), len(expected.StageGlobal))
 	}
-	if routes[0].Name != CallbackPatternKey || routes[0].Pattern != DefaultCallbackPath {
-		t.Fatalf("stage-global route = %#v, want the default upstream callback", routes[0])
+	row := expected.StageGlobal[0]
+	if routes[0].Name != row.Name || routes[0].Pattern != row.Pattern {
+		t.Fatalf("stage-global route = %#v, want %#v", routes[0], row)
 	}
-	if !reflect.DeepEqual(routes[0].Methods, []string{"GET"}) {
-		t.Fatalf("callback methods = %#v, want [GET]", routes[0].Methods)
+	if !reflect.DeepEqual(routes[0].Methods, row.Methods) {
+		t.Fatalf("callback methods = %#v, want %#v", routes[0].Methods, row.Methods)
 	}
-	if got := SupportedIssuerModes(); !reflect.DeepEqual(got, []IssuerMode{IssuerModeFamily, IssuerModeRoute}) {
-		t.Fatalf("SupportedIssuerModes() = %#v", got)
+	if got := SupportedIssuerModes(); !reflect.DeepEqual(got, expected.IssuerModes) {
+		t.Fatalf("SupportedIssuerModes() = %#v, want %#v", got, expected.IssuerModes)
+	}
+	if DefaultCallbackPath != expected.CallbackPath.Default {
+		t.Fatalf("DefaultCallbackPath = %q, want %q", DefaultCallbackPath, expected.CallbackPath.Default)
 	}
 
-	good := []struct {
-		configured string
-		want       string
-	}{
-		{configured: "", want: DefaultCallbackPath},
-		{configured: "/_oauth/mcp/callback", want: DefaultCallbackPath},
-		{configured: "/custom/cb", want: "/custom/cb"},
-		{configured: "  /custom/cb/  ", want: "/custom/cb"},
-	}
-	for _, test := range good {
-		got, ok := CallbackPathForConfiguredPath(test.configured)
-		if !ok || got != test.want {
-			t.Fatalf("CallbackPathForConfiguredPath(%q) = %q, %v; want %q, true", test.configured, got, ok, test.want)
+	for _, test := range expected.CallbackPath.Accept {
+		got, ok := CallbackPathForConfiguredPath(test.Configured)
+		if !ok || got != test.Expected {
+			t.Fatalf("CallbackPathForConfiguredPath(%q) = %q, %v; want %q, true", test.Configured, got, ok, test.Expected)
 		}
 	}
-	for _, bad := range []string{"callback", "?query", "/cb#frag", "/a/../b"} {
+	for _, bad := range expected.CallbackPath.Reject {
 		if got, ok := NormalizeCallbackPath(bad); ok {
 			t.Fatalf("NormalizeCallbackPath(%q) = %q, true; want failure", bad, got)
 		}

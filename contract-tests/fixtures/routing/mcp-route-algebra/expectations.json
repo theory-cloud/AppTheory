@@ -997,5 +997,45 @@
       "protected_resource_document": "{\"resource\":\"https://direct.example.com/acme/partners/reseller/agents/helper/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"partner_agent:use\"]}",
       "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp/authorize\",\"token_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"partner_agent:use\"]}"
     }
-  ]
+    ],
+  "stage_global": [
+    {
+      "name": "upstream_callback",
+      "pattern": "/_oauth/mcp/callback",
+      "methods": [
+        "GET"
+      ]
+    }
+  ],
+  "issuer_modes": [
+    "family",
+    "route"
+  ],
+  "callback_path": {
+    "default": "/_oauth/mcp/callback",
+    "accept": [
+      {
+        "configured": "",
+        "expected": "/_oauth/mcp/callback"
+      },
+      {
+        "configured": "  /_oauth/mcp/callback  ",
+        "expected": "/_oauth/mcp/callback"
+      },
+      {
+        "configured": "/custom/cb",
+        "expected": "/custom/cb"
+      },
+      {
+        "configured": "/custom/cb/",
+        "expected": "/custom/cb"
+      }
+    ],
+    "reject": [
+      "callback",
+      "?query",
+      "/cb#frag",
+      "/a/../b"
+    ]
+  }
 }
