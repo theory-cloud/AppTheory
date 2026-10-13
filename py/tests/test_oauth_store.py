@@ -221,5 +221,62 @@ class RateLimitStoreTests(unittest.TestCase):
         self.assertEqual(result.remaining, 0)
 
 
+class SliceIsolationTests(unittest.TestCase):
+    """A list the store hands out, or a caller hands in, must never alias stored state."""
+
+    def setUp(self) -> None:
+        self.clock = ManualClock(_epoch("2026-01-01T00:00:00Z"))
+
+    def test_transaction_store_copies_the_caller_scopes(self) -> None:
+        store = MemoryTransactionStore(now=self.clock.now)
+        record = TransactionRecord(state_hash="tx", scopes=["scope-a"])
+        store.put(record)
+        record.scopes[0] = "mutated-caller"
+        consumed = store.consume("tx")
+        self.assertEqual(consumed.scopes, ["scope-a"])
+
+    def test_authorization_code_store_copies_returned_scopes(self) -> None:
+        store = MemoryAuthorizationCodeStore(now=self.clock.now)
+        record = AuthorizationCodeRecord(code_hash="code", scopes=["scope-a"])
+        store.put(record)
+        record.scopes[0] = "mutated-caller"
+        first = store.consume("code")
+        self.assertEqual(first.record.scopes, ["scope-a"])
+        first.record.scopes[0] = "mutated-returned"
+        replayed = store.consume("code")
+        self.assertEqual(replayed.record.scopes, ["scope-a"])
+
+    def test_client_store_copies_returned_lists(self) -> None:
+        store = MemoryClientStore(now=self.clock.now)
+        record = ClientRecord(
+            client_id_hash="client",
+            redirect_uris=["https://a.example.test/cb"],
+            grant_types=["authorization_code"],
+            response_types=["code"],
+        )
+        store.put(record)
+        record.redirect_uris[0] = "mutated-caller"
+        stored = store.get("client")
+        self.assertEqual(stored.redirect_uris, ["https://a.example.test/cb"])
+        stored.redirect_uris[0] = "mutated-returned"
+        stored.grant_types[0] = "mutated-returned"
+        stored.response_types[0] = "mutated-returned"
+        again = store.get("client")
+        self.assertEqual(again.redirect_uris, ["https://a.example.test/cb"])
+        self.assertEqual(again.grant_types, ["authorization_code"])
+        self.assertEqual(again.response_types, ["code"])
+
+    def test_broker_store_copies_returned_scopes(self) -> None:
+        store = MemoryRouteRefreshBrokerStore(now=self.clock.now, ttl=900, lock_ttl_seconds=30)
+        record = RouteRefreshBrokerRecord(handle_hash="handle", status="active", scopes=["scope-a"])
+        store.put(record)
+        record.scopes[0] = "mutated-caller"
+        stored = store.get("handle")
+        self.assertEqual(stored.scopes, ["scope-a"])
+        stored.scopes[0] = "mutated-returned"
+        again = store.get("handle")
+        self.assertEqual(again.scopes, ["scope-a"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -261,6 +261,115 @@ func TestRouteRefreshBrokerTTLBoundary(t *testing.T) {
 	}
 }
 
+// TestReferenceStoresDeepCopySlices pins that a slice a reference store hands
+// out (and the slice a caller hands in) is never the stored slice: mutating one
+// cannot reach the other, so an application cannot corrupt retained state.
+func TestReferenceStoresDeepCopySlices(t *testing.T) {
+	ctx := context.Background()
+	clock := store.NewManualClock(store.ConformanceEpoch)
+
+	t.Run("transaction", func(t *testing.T) {
+		transactions := store.NewMemoryTransactionStore(store.TransactionStoreOptions{Now: clock.Now})
+		record := &store.TransactionRecord{StateHash: "alias-tx", Scopes: []string{"scope-a"}}
+		if err := transactions.Put(ctx, record); err != nil {
+			t.Fatalf("put: %v", err)
+		}
+		record.Scopes[0] = "mutated-caller"
+		consumed, err := transactions.Consume(ctx, "alias-tx")
+		if err != nil {
+			t.Fatalf("consume: %v", err)
+		}
+		if got := consumed.Scopes[0]; got != "scope-a" {
+			t.Fatalf("stored scopes aliased the caller: got %q, want %q", got, "scope-a")
+		}
+	})
+
+	t.Run("authorization_code", func(t *testing.T) {
+		codes := store.NewMemoryAuthorizationCodeStore(store.AuthorizationCodeStoreOptions{Now: clock.Now})
+		record := &store.AuthorizationCodeRecord{CodeHash: "alias-code", Scopes: []string{"scope-a"}}
+		if err := codes.Put(ctx, record); err != nil {
+			t.Fatalf("put: %v", err)
+		}
+		record.Scopes[0] = "mutated-caller"
+		first, err := codes.Consume(ctx, "alias-code")
+		if err != nil {
+			t.Fatalf("consume: %v", err)
+		}
+		if got := first.Scopes[0]; got != "scope-a" {
+			t.Fatalf("stored scopes aliased the caller: got %q", got)
+		}
+		first.Scopes[0] = "mutated-returned"
+		replayed, err := codes.Consume(ctx, "alias-code")
+		if !errors.Is(err, store.ErrAuthorizationCodeReplayed) {
+			t.Fatalf("second consume error = %v, want ErrAuthorizationCodeReplayed", err)
+		}
+		if got := replayed.Scopes[0]; got != "scope-a" {
+			t.Fatalf("stored scopes aliased a returned copy: got %q", got)
+		}
+	})
+
+	t.Run("client", func(t *testing.T) {
+		clients := store.NewMemoryClientStore(store.ClientStoreOptions{Now: clock.Now})
+		record := &store.ClientRecord{
+			ClientIDHash:  "alias-client",
+			RedirectURIs:  []string{"https://a.example.test/cb"},
+			GrantTypes:    []string{"authorization_code"},
+			ResponseTypes: []string{"code"},
+		}
+		if err := clients.Put(ctx, record); err != nil {
+			t.Fatalf("put: %v", err)
+		}
+		record.RedirectURIs[0] = "mutated-caller"
+		stored, err := clients.Get(ctx, "alias-client")
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if got := stored.RedirectURIs[0]; got != "https://a.example.test/cb" {
+			t.Fatalf("stored redirect uris aliased the caller: got %q", got)
+		}
+		stored.RedirectURIs[0] = "mutated-returned"
+		stored.GrantTypes[0] = "mutated-returned"
+		stored.ResponseTypes[0] = "mutated-returned"
+		again, err := clients.Get(ctx, "alias-client")
+		if err != nil {
+			t.Fatalf("get again: %v", err)
+		}
+		if again.RedirectURIs[0] != "https://a.example.test/cb" ||
+			again.GrantTypes[0] != "authorization_code" ||
+			again.ResponseTypes[0] != "code" {
+			t.Fatalf("stored client aliased a returned copy: %+v", again)
+		}
+	})
+
+	t.Run("route_refresh_broker", func(t *testing.T) {
+		brokers := store.NewMemoryRouteRefreshBrokerStore(store.RouteRefreshBrokerStoreOptions{Now: clock.Now})
+		record := &store.RouteRefreshBrokerRecord{
+			HandleHash: "alias-broker",
+			Status:     store.BrokerStatusActive,
+			Scopes:     []string{"scope-a"},
+		}
+		if err := brokers.Put(ctx, record); err != nil {
+			t.Fatalf("put: %v", err)
+		}
+		record.Scopes[0] = "mutated-caller"
+		stored, err := brokers.Get(ctx, "alias-broker")
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if got := stored.Scopes[0]; got != "scope-a" {
+			t.Fatalf("stored scopes aliased the caller: got %q", got)
+		}
+		stored.Scopes[0] = "mutated-returned"
+		again, err := brokers.Get(ctx, "alias-broker")
+		if err != nil {
+			t.Fatalf("get again: %v", err)
+		}
+		if got := again.Scopes[0]; got != "scope-a" {
+			t.Fatalf("stored scopes aliased a returned copy: got %q", got)
+		}
+	})
+}
+
 func TestRateLimitStoreWindowAndBudget(t *testing.T) {
 	ctx := context.Background()
 	clock := store.NewManualClock(store.ConformanceEpoch)

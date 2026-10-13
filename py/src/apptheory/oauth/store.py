@@ -14,7 +14,7 @@ result of the call.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
@@ -226,6 +226,21 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def _copy_record(record: Any, **overrides: Any) -> Any:
+    """Return a copy of a store record with independent list fields.
+
+    ``dataclasses.replace`` copies the record but leaves its list fields shared,
+    so a caller that mutates a list the store handed out -- or a list handed in
+    -- could reach stored state. This clones every list field as well.
+    """
+    cloned = replace(record, **overrides)
+    for info in fields(cloned):
+        value = getattr(cloned, info.name)
+        if isinstance(value, list):
+            setattr(cloned, info.name, list(value))
+    return cloned
+
+
 class MemoryTransactionStore:
     """Single-use, TTL-bounded transaction store."""
 
@@ -240,7 +255,7 @@ class MemoryTransactionStore:
         self._lock = threading.Lock()
 
     def put(self, record: TransactionRecord) -> None:
-        stored = replace(record)
+        stored = _copy_record(record)
         stored.status = STATUS_ISSUED
         stored.version = 1
         if stored.expires_at is None and self._ttl is not None:
@@ -254,8 +269,8 @@ class MemoryTransactionStore:
         if stored is None:
             return None
         if _is_expired(stored.expires_at, self._now()):
-            return replace(stored, status=STATUS_EXPIRED)
-        return replace(stored, status=STATUS_CONSUMED)
+            return _copy_record(stored, status=STATUS_EXPIRED)
+        return _copy_record(stored, status=STATUS_CONSUMED)
 
 
 class MemoryAuthorizationCodeStore:
@@ -272,7 +287,7 @@ class MemoryAuthorizationCodeStore:
         self._lock = threading.Lock()
 
     def put(self, record: AuthorizationCodeRecord) -> None:
-        stored = replace(record)
+        stored = _copy_record(record)
         stored.status = STATUS_ISSUED
         stored.version = 1
         if stored.expires_at is None and self._ttl is not None:
@@ -289,9 +304,9 @@ class MemoryAuthorizationCodeStore:
             if not replayed:
                 stored.status = STATUS_CONSUMED
                 stored.version += 1
-            snapshot = replace(stored)
+            snapshot = _copy_record(stored)
         if _is_expired(snapshot.expires_at, self._now()):
-            return ConsumeResult(record=replace(snapshot, status=STATUS_EXPIRED), replayed=replayed)
+            return ConsumeResult(record=_copy_record(snapshot, status=STATUS_EXPIRED), replayed=replayed)
         return ConsumeResult(record=snapshot, replayed=replayed)
 
 
@@ -304,18 +319,18 @@ class MemoryClientStore:
         self._lock = threading.Lock()
 
     def put(self, record: ClientRecord) -> ClientRecord:
-        stored = replace(record)
+        stored = _copy_record(record)
         stored.version = 1
         if stored.created_at is None:
             stored.created_at = self._now()
         with self._lock:
             self._records[stored.client_id_hash] = stored
-        return replace(stored)
+        return _copy_record(stored)
 
     def get(self, client_id_hash: str) -> ClientRecord | None:
         with self._lock:
             stored = self._records.get(client_id_hash)
-        return replace(stored) if stored is not None else None
+        return _copy_record(stored) if stored is not None else None
 
     def update(self, record: ClientRecord, expected_version: int) -> ClientRecord:
         with self._lock:
@@ -323,12 +338,12 @@ class MemoryClientStore:
             current_version = stored.version if stored is not None else 0
             if current_version != expected_version:
                 raise ClientVersionConflictError(f"client version conflict for {record.client_id_hash!r}")
-            updated = replace(record)
+            updated = _copy_record(record)
             updated.version = current_version + 1
             if updated.created_at is None:
                 updated.created_at = stored.created_at if stored is not None else self._now()
             self._records[updated.client_id_hash] = updated
-        return replace(updated)
+        return _copy_record(updated)
 
 
 class MemoryRouteRefreshBrokerStore:
@@ -355,7 +370,7 @@ class MemoryRouteRefreshBrokerStore:
         self._lock = threading.Lock()
 
     def put(self, record: RouteRefreshBrokerRecord) -> None:
-        stored = replace(record)
+        stored = _copy_record(record)
         stored.status = stored.status or STATUS_ACTIVE
         stored.version = 1
         with self._lock:
@@ -375,7 +390,7 @@ class MemoryRouteRefreshBrokerStore:
     def get(self, handle_hash: str) -> RouteRefreshBrokerRecord | None:
         with self._lock:
             stored = self._live(handle_hash, self._now())
-        return replace(stored) if stored is not None else None
+        return _copy_record(stored) if stored is not None else None
 
     def acquire_lock(self, handle_hash: str, lock_owner: str, expected_version: int) -> RouteRefreshBrokerRecord:
         with self._lock:
@@ -394,7 +409,7 @@ class MemoryRouteRefreshBrokerStore:
             stored.refresh_lock_owner = str(lock_owner or "")
             stored.refresh_lock_expires_at = self._now() + timedelta(seconds=self._lock_ttl_seconds)
             stored.version += 1
-            return replace(stored)
+            return _copy_record(stored)
 
     def compare_and_swap(self, record: RouteRefreshBrokerRecord, expected_version: int) -> RouteRefreshBrokerRecord:
         with self._lock:
@@ -406,10 +421,10 @@ class MemoryRouteRefreshBrokerStore:
             if stored.version != expected_version:
                 raise BrokerVersionConflictError(f"broker version conflict for {record.handle_hash!r}")
             stored_at = self._records[record.handle_hash][1]
-            updated = replace(record)
+            updated = _copy_record(record)
             updated.version = expected_version + 1
             self._records[updated.handle_hash] = (updated, stored_at)
-            return replace(updated)
+            return _copy_record(updated)
 
     def revoke(self, handle_hash: str) -> RouteRefreshBrokerRecord | None:
         with self._lock:
@@ -421,7 +436,7 @@ class MemoryRouteRefreshBrokerStore:
                 stored.version += 1
                 stored.refresh_lock_owner = ""
                 stored.refresh_lock_expires_at = None
-            return replace(stored)
+            return _copy_record(stored)
 
 
 class MemoryRateLimitStore:
@@ -814,10 +829,10 @@ def _scenario_broker_compare_and_swap_versioned(
     record = store.get("handle-hash")
     if record is None:
         raise AssertionError("broker record must exist after put")
-    swapped = store.compare_and_swap(replace(record, scopes=["mcp:tools"]), record.version)
+    swapped = store.compare_and_swap(_copy_record(record, scopes=["mcp:tools"]), record.version)
     stale_outcome = "ok"
     try:
-        store.compare_and_swap(replace(record, scopes=["mcp:other"]), record.version)
+        store.compare_and_swap(_copy_record(record, scopes=["mcp:other"]), record.version)
     except BrokerVersionConflictError:
         stale_outcome = "version_conflict"
     swapped_ok = "ok" if swapped.version == record.version + 1 else "unexpected_version"

@@ -35,15 +35,44 @@ func storeTTL(ttl, fallback time.Duration) time.Duration {
 	return fallback
 }
 
-// recordCopy returns a shallow copy, so a caller cannot mutate stored state
-// through a pointer the store handed out. Slice fields are shared by design:
-// the reference stores protect scalars and the record itself.
+// recordCopy returns a deep copy, so a caller can mutate neither the record nor
+// a slice field through a value the store handed out: the struct is copied and
+// every slice field is replaced with an independent slice.
 func recordCopy[T any](record *T) *T {
 	if record == nil {
 		return nil
 	}
 	clone := *record
+	cloneSlices(&clone)
 	return &clone
+}
+
+// cloneStrings returns an independent copy of a string slice, preserving nil.
+func cloneStrings(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	clone := make([]string, len(values))
+	copy(clone, values)
+	return clone
+}
+
+// cloneSlices deep-copies the slice fields of a store record in place. The
+// record set is closed and small, so the type switch is explicit rather than
+// reflective.
+func cloneSlices[T any](record *T) {
+	switch value := any(record).(type) {
+	case *TransactionRecord:
+		value.Scopes = cloneStrings(value.Scopes)
+	case *AuthorizationCodeRecord:
+		value.Scopes = cloneStrings(value.Scopes)
+	case *ClientRecord:
+		value.RedirectURIs = cloneStrings(value.RedirectURIs)
+		value.GrantTypes = cloneStrings(value.GrantTypes)
+		value.ResponseTypes = cloneStrings(value.ResponseTypes)
+	case *RouteRefreshBrokerRecord:
+		value.Scopes = cloneStrings(value.Scopes)
+	}
 }
 
 // isExpired reports whether expiresAt has been reached at now. A record is
