@@ -47,6 +47,29 @@ func AppTheoryMcpRouteAlgebra_AuthorizationAuthorizePathForResourcePath(resource
 	return returns
 }
 
+// Derive the RFC 7591 dynamic-client registration facade path from a resource path.
+//
+// The routed discovery document advertises exactly this path as
+// `registration_endpoint`, so the advertised URL and the mounted route
+// cannot drift.
+func AppTheoryMcpRouteAlgebra_AuthorizationRegisterPathForResourcePath(resourcePath *string) *string {
+	_init_.Initialize()
+
+	if err := validateAppTheoryMcpRouteAlgebra_AuthorizationRegisterPathForResourcePathParameters(resourcePath); err != nil {
+		panic(err)
+	}
+	var returns *string
+
+	_jsii_.StaticInvoke(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra",
+		"authorizationRegisterPathForResourcePath",
+		[]interface{}{resourcePath},
+		&returns,
+	)
+
+	return returns
+}
+
 // Derive the canonical RFC 8414 discovery path from a resource path.
 func AppTheoryMcpRouteAlgebra_AuthorizationServerPathForResourcePath(resourcePath *string) *string {
 	_init_.Initialize()
@@ -173,6 +196,25 @@ func AppTheoryMcpRouteAlgebra_OauthAuthorizePath(endpoint *AppTheoryMcpEndpointP
 	_jsii_.StaticInvoke(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra",
 		"oauthAuthorizePath",
+		[]interface{}{endpoint},
+		&returns,
+	)
+
+	return returns
+}
+
+// Build the endpoint's dynamic-client registration path.
+func AppTheoryMcpRouteAlgebra_OauthRegisterPath(endpoint *AppTheoryMcpEndpointPath) *string {
+	_init_.Initialize()
+
+	if err := validateAppTheoryMcpRouteAlgebra_OauthRegisterPathParameters(endpoint); err != nil {
+		panic(err)
+	}
+	var returns *string
+
+	_jsii_.StaticInvoke(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra",
+		"oauthRegisterPath",
 		[]interface{}{endpoint},
 		&returns,
 	)
@@ -310,6 +352,22 @@ func AppTheoryMcpRouteAlgebra_SupportedEndpointTemplates() *[]*AppTheoryMcpEndpo
 	return returns
 }
 
+// Return the closed issuer-mode vocabulary in contract order.
+func AppTheoryMcpRouteAlgebra_SupportedIssuerModes() *[]*string {
+	_init_.Initialize()
+
+	var returns *[]*string
+
+	_jsii_.StaticInvoke(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra",
+		"supportedIssuerModes",
+		nil, // no parameters
+		&returns,
+	)
+
+	return returns
+}
+
 // Return every canonical OAuth discovery template in contract order.
 func AppTheoryMcpRouteAlgebra_SupportedOAuthDiscoveryTemplates() *[]*AppTheoryMcpOAuthDiscoveryTemplate {
 	_init_.Initialize()
@@ -335,6 +393,26 @@ func AppTheoryMcpRouteAlgebra_SupportedOAuthFacadeTemplates() *[]*AppTheoryMcpOA
 	_jsii_.StaticInvoke(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra",
 		"supportedOAuthFacadeTemplates",
+		nil, // no parameters
+		&returns,
+	)
+
+	return returns
+}
+
+// Return every stage-global route in contract order.
+//
+// v2 adds exactly one stage-global route: the upstream OAuth callback. The
+// callback path is overridable at runtime (`FacadeConfig.UpstreamCallbackPath`);
+// this returns the contract default.
+func AppTheoryMcpRouteAlgebra_SupportedStageGlobalRoutes() *[]*AppTheoryMcpStageGlobalRoute {
+	_init_.Initialize()
+
+	var returns *[]*AppTheoryMcpStageGlobalRoute
+
+	_jsii_.StaticInvoke(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra",
+		"supportedStageGlobalRoutes",
 		nil, // no parameters
 		&returns,
 	)
@@ -389,6 +467,28 @@ func AppTheoryMcpRouteAlgebra_CONTRACT_VERSION() *string {
 	return returns
 }
 
+func AppTheoryMcpRouteAlgebra_CONTRACT_VERSION_V1() *string {
+	_init_.Initialize()
+	var returns *string
+	_jsii_.StaticGet(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra",
+		"CONTRACT_VERSION_V1",
+		&returns,
+	)
+	return returns
+}
+
+func AppTheoryMcpRouteAlgebra_DEFAULT_CALLBACK_PATH() *string {
+	_init_.Initialize()
+	var returns *string
+	_jsii_.StaticGet(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra",
+		"DEFAULT_CALLBACK_PATH",
+		&returns,
+	)
+	return returns
+}
+
 func AppTheoryMcpRouteAlgebra_ENDPOINT_KIND_AGENT() *string {
 	_init_.Initialize()
 	var returns *string
@@ -428,6 +528,28 @@ func AppTheoryMcpRouteAlgebra_ENDPOINT_KIND_PARTNER_NAMESPACE() *string {
 	_jsii_.StaticGet(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra",
 		"ENDPOINT_KIND_PARTNER_NAMESPACE",
+		&returns,
+	)
+	return returns
+}
+
+func AppTheoryMcpRouteAlgebra_ISSUER_MODE_FAMILY() *string {
+	_init_.Initialize()
+	var returns *string
+	_jsii_.StaticGet(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra",
+		"ISSUER_MODE_FAMILY",
+		&returns,
+	)
+	return returns
+}
+
+func AppTheoryMcpRouteAlgebra_ISSUER_MODE_ROUTE() *string {
+	_init_.Initialize()
+	var returns *string
+	_jsii_.StaticGet(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteAlgebra",
+		"ISSUER_MODE_ROUTE",
 		&returns,
 	)
 	return returns

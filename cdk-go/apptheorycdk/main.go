@@ -738,6 +738,10 @@ func init() {
 		reflect.TypeOf((*AppTheoryMcpSessionStateOptions)(nil)).Elem(),
 	)
 	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpStageGlobalRoute",
+		reflect.TypeOf((*AppTheoryMcpStageGlobalRoute)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpTransportAuthorizerOptions",
 		reflect.TypeOf((*AppTheoryMcpTransportAuthorizerOptions)(nil)).Elem(),
 	)
