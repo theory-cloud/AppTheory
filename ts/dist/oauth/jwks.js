@@ -316,8 +316,13 @@ export async function newJwksValidator(options) {
         if (missingScopes(claims.scopes, requiredScopes).length > 0) {
             throw new OAuthBearerError(ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE);
         }
-        const azp = claims.azp || claims.clientId;
-        if (azpAllowList.size > 0 && !azpAllowList.has(azp)) {
+        // Only an absent (empty) `azp` falls back to `client_id`. A present but blank
+        // `azp` is compared as it stands and refused, so a token cannot use
+        // whitespace to steer the check onto the `client_id` claim; the stricter
+        // reading is identical in the Go and Python validators. The allow-list is
+        // built from trimmed values, so the comparison trims too.
+        const azp = claims.azp === "" ? claims.clientId : claims.azp;
+        if (azpAllowList.size > 0 && !azpAllowList.has(azp.trim())) {
             throw invalidToken("azp_not_allowed");
         }
         const result = {

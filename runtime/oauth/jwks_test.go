@@ -704,6 +704,23 @@ func TestJWKSValidatorEnforcesTheAZPAllowList(t *testing.T) {
 	require.NoError(t, err)
 	_, err = validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(map[string]any{"azp": "client-1", "client_id": "attacker"})))
 	require.NoError(t, err, "azp takes precedence over client_id when present")
+
+	// A present but blank azp is refused rather than falling back to an
+	// allow-listed client_id: only an absent azp falls back.
+	_, err = validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(map[string]any{"azp": " ", "client_id": "client-1"})))
+	require.ErrorIs(t, err, ErrInvalidBearerToken)
+	require.Equal(t, "azp_not_allowed", jwksFailureReason(err))
+
+	// Surrounding whitespace is not an allow-list value either, but a padded
+	// allow-listed azp still normalizes to its allow-list entry.
+	_, err = validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(map[string]any{"azp": " client-1 "})))
+	require.NoError(t, err, "an azp is compared after trimming, as the allow-list is built")
+
+	// A token that carries neither azp nor client_id is refused under a configured
+	// allow-list.
+	_, err = validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(nil)))
+	require.ErrorIs(t, err, ErrInvalidBearerToken)
+	require.Equal(t, "azp_not_allowed", jwksFailureReason(err))
 }
 
 func TestJWKSValidatorFailsClosedOnSignatureAndKeyDoubts(t *testing.T) {

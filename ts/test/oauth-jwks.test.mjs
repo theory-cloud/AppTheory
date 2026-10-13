@@ -732,6 +732,10 @@ test("the JWKS validator enforces the azp/client_id allow-list", async () => {
     // configured allow-list: absent must never read as "no check".
     await reject(rs256Token(env, KEY_A));
 
+    // A present but blank azp does not fall back to an allow-listed client_id:
+    // only an absent azp falls back.
+    await reject(rs256Token(env, KEY_A, { azp: " ", client_id: "client-1" }));
+
     // An allow-listed client_id passes, and azp takes precedence over client_id.
     assert.equal(
       (await validate(ctx(), rs256Token(env, KEY_A, { client_id: "client-1" })))
@@ -745,6 +749,12 @@ test("the JWKS validator enforces the azp/client_id allow-list", async () => {
           rs256Token(env, KEY_A, { azp: "client-1", client_id: "attacker" }),
         )
       ).subject,
+      "acme",
+    );
+    // A padded azp still normalizes to its allow-list entry.
+    assert.equal(
+      (await validate(ctx(), rs256Token(env, KEY_A, { azp: " client-1 " })))
+        .subject,
       "acme",
     );
   });

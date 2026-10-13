@@ -495,8 +495,13 @@ def _require_time_claims(claims: dict[str, Any], now: datetime, skew: int) -> da
 def _require_authorized_party(claims: dict[str, Any], allowed_azp: set[str]) -> None:
     if not allowed_azp:
         return
+    # Only an absent (empty) azp falls back to client_id. A present but blank azp
+    # is compared as it stands and refused, so a token cannot use whitespace to
+    # steer the check onto the client_id claim. The stricter reading is identical
+    # in the Go and TypeScript validators, and the allow-list holds trimmed
+    # values, so the comparison trims too.
     value = claims.get("azp")
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str) or value == "":
         value = claims.get("client_id")
     trimmed = value.strip() if isinstance(value, str) else ""
     if not trimmed or trimmed not in allowed_azp:

@@ -710,10 +710,25 @@ class JwksValidatorBehaviourTests(unittest.TestCase):
         key = _test_key("azp")
         validator, _transport, _clock = self._env_with_key(key, allowed_azp=["client-1"])
         accepted, _code = _validate(validator, _jwt(key, "k1", _claims()))
-        self.assertTrue(accepted)
+        self.assertTrue(accepted, "an allow-listed client_id is the azp fallback")
         rejected, code = _validate(validator, _jwt(key, "k1", _claims(azp="client-9")))
         self.assertFalse(rejected)
         self.assertEqual(code, ERR_INVALID_BEARER_TOKEN)
+
+        # A present but blank azp never falls back to an allow-listed client_id.
+        blank, blank_code = _validate(validator, _jwt(key, "k1", _claims(azp=" ")))
+        self.assertFalse(blank, "a blank azp must not fall back to client_id")
+        self.assertEqual(blank_code, ERR_INVALID_BEARER_TOKEN)
+
+        # A padded azp still normalizes to its allow-list entry.
+        padded, _code = _validate(validator, _jwt(key, "k1", _claims(azp=" client-1 ")))
+        self.assertTrue(padded, "a padded azp normalizes to its allow-list entry")
+
+        # A token that carries neither azp nor client_id is refused under a
+        # configured allow-list: absent must never read as "no check".
+        neither, neither_code = _validate(validator, _jwt(key, "k1", _claims(azp=None, client_id=None)))
+        self.assertFalse(neither, "a token with neither azp nor client_id is refused")
+        self.assertEqual(neither_code, ERR_INVALID_BEARER_TOKEN)
 
         wildcard, _transport, _clock = self._env_with_key(key, allowed_azp=["*"])
         accepted, _code = _validate(wildcard, _jwt(key, "k1", _claims(azp="client-1")))

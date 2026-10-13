@@ -514,11 +514,15 @@ func (v *jwksValidator) checkAZP(claims jwksClaims) error {
 	if len(v.allowedAZP) == 0 {
 		return nil
 	}
-	value := strings.TrimSpace(claims.AZP)
+	// Only an absent (empty) azp falls back to client_id. A present but blank azp
+	// is compared as it stands and refused, so a token cannot use whitespace to
+	// steer the check onto the client_id claim. The stricter reading is identical
+	// in the TypeScript and Python validators.
+	value := claims.AZP
 	if value == "" {
-		value = strings.TrimSpace(claims.ClientID)
+		value = claims.ClientID
 	}
-	if _, ok := v.allowedAZP[value]; !ok {
+	if _, ok := v.allowedAZP[strings.TrimSpace(value)]; !ok {
 		return fmt.Errorf("%w: %w", ErrInvalidBearerToken, errAZPNotAllowed)
 	}
 	return nil
