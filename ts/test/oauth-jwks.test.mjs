@@ -27,6 +27,16 @@ import {
   resourceIndicatorMatches,
   resourceMetadataURLFromMcpEndpoint,
 } from "../dist/index.js";
+import {
+  DEFAULT_FETCH_TIMEOUT_SECONDS,
+  DEFAULT_MAX_KEY_ENTRIES,
+  DEFAULT_MAX_KID_LENGTH,
+  DEFAULT_MAX_UNKNOWN_KID_FETCHES,
+  DEFAULT_MAX_WINDOW_ENTRIES,
+  DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS,
+  classifyHostAddress,
+  isPublicHostAddress,
+} from "../dist/oauth/jwks.js";
 
 const FIXTURE_DIR = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -431,6 +441,79 @@ const JWKS_CASE_EXECUTORS = {
       assert.equal(env.state.fetches, 1, `${row.name}: jwks fetches`);
     });
   },
+
+  "oversized-kid-refused-without-a-fetch": async (row) => {
+    const fixture = loadFixture("jwks-validator.v1.json");
+    await withEnv({ jwks: () => ({ body: { keys: [KEY_A.jwk] } }) }, async (env) => {
+      const validate = await newJwksValidator(validatorOptions(env));
+      const oversizedKid = "k".repeat(fixture.defaults.max_kid_length + 1);
+      const token = signToken({
+        header: { alg: "RS256", kid: oversizedKid, typ: "JWT" },
+        payload: claims(env),
+        material: KEY_B,
+      });
+      await assertRejectedWithReason(validate, token, row.reason, row.name);
+      assert.equal(
+        env.state.fetches,
+        row.jwks_fetches,
+        `${row.name}: an oversized kid must be refused without a fetch`,
+      );
+    });
+  },
+
+  "distinct-attacker-kids-are-globally-bounded": async (row) => {
+    const fixture = loadFixture("jwks-validator.v1.json");
+    await withEnv({ jwks: () => ({ body: { keys: [KEY_A.jwk] } }) }, async (env) => {
+      const validate = await newJwksValidator(validatorOptions(env));
+      for (let index = 0; index < row.distinct_kids; index += 1) {
+        const token = signToken({
+          header: { alg: "RS256", kid: `attacker-kid-${index}`, typ: "JWT" },
+          payload: claims(env),
+          material: KEY_B,
+        });
+        await assertRejectedWithReason(
+          validate,
+          token,
+          row.reason,
+          `${row.name}#${index}`,
+        );
+      }
+      assert.equal(
+        env.state.fetches,
+        fixture.defaults.max_unknown_kid_fetches,
+        `${row.name}: the global budget must cap distinct-kid key-set fetches`,
+      );
+    });
+  },
+
+  "evicted-kid-window-allows-one-refetch": async (row) => {
+    await withEnv({ jwks: () => ({ body: { keys: [jwkWithKid(KEY_A, "published")] } }) }, async (env) => {
+      const validate = await newJwksValidator(
+        validatorOptions(env, { maxWindowEntries: row.max_window_entries }),
+      );
+      const tokenFor = (kid) =>
+        signToken({
+          header: { alg: "RS256", kid, typ: "JWT" },
+          payload: claims(env),
+          material: KEY_B,
+        });
+      // Resolving kid-b evicts kid-a's window, so kid-a is fetched again
+      // instead of being refused by its own cooldown.
+      for (const kid of ["kid-a", "kid-b", "kid-a"]) {
+        await assertRejectedWithReason(
+          validate,
+          tokenFor(kid),
+          row.reason,
+          `${row.name}:${kid}`,
+        );
+      }
+      assert.equal(
+        env.state.fetches,
+        row.jwks_fetches,
+        `${row.name}: evicting kid-a's window must allow one refetch round`,
+      );
+    });
+  },
 };
 
 const DISCOVERY_CASE_EXECUTORS = {
@@ -645,6 +728,14 @@ test("the JWKS validator enforces the azp/client_id allow-list", async () => {
     await reject(rs256Token(env, KEY_A, { azp: "attacker" }));
     await reject(rs256Token(env, KEY_A, { client_id: "attacker" }));
 
+    // A token that carries neither azp nor client_id is refused under a
+    // configured allow-list: absent must never read as "no check".
+    await reject(rs256Token(env, KEY_A));
+
+    // A present but blank azp does not fall back to an allow-listed client_id:
+    // only an absent azp falls back.
+    await reject(rs256Token(env, KEY_A, { azp: " ", client_id: "client-1" }));
+
     // An allow-listed client_id passes, and azp takes precedence over client_id.
     assert.equal(
       (await validate(ctx(), rs256Token(env, KEY_A, { client_id: "client-1" })))
@@ -658,6 +749,12 @@ test("the JWKS validator enforces the azp/client_id allow-list", async () => {
           rs256Token(env, KEY_A, { azp: "client-1", client_id: "attacker" }),
         )
       ).subject,
+      "acme",
+    );
+    // A padded azp still normalizes to its allow-list entry.
+    assert.equal(
+      (await validate(ctx(), rs256Token(env, KEY_A, { azp: " client-1 " })))
+        .subject,
       "acme",
     );
   });
@@ -768,3 +865,510 @@ function firstHeader(headers, name) {
   }
   return "";
 }
+
+test("jwks-validator.v1 pins the shared fetch timeout default", () => {
+  const fixture = loadFixture("jwks-validator.v1.json");
+  assert.equal(
+    fixture.defaults.fetch_timeout_seconds,
+    DEFAULT_FETCH_TIMEOUT_SECONDS,
+    "the fixture default must equal the exported framework default",
+  );
+  assert.equal(DEFAULT_FETCH_TIMEOUT_SECONDS, 10);
+});
+
+test("jwks-validator.v1 pins the bounded per-validator state defaults", () => {
+  const fixture = loadFixture("jwks-validator.v1.json");
+  const defaults = fixture.defaults;
+  assert.equal(defaults.max_kid_length, DEFAULT_MAX_KID_LENGTH);
+  assert.equal(defaults.max_window_entries, DEFAULT_MAX_WINDOW_ENTRIES);
+  assert.equal(defaults.max_key_entries, DEFAULT_MAX_KEY_ENTRIES);
+  assert.equal(defaults.max_unknown_kid_fetches, DEFAULT_MAX_UNKNOWN_KID_FETCHES);
+  assert.equal(
+    defaults.unknown_kid_fetch_window_seconds,
+    DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS,
+  );
+  assert.equal(DEFAULT_MAX_KID_LENGTH, 256);
+  assert.equal(DEFAULT_MAX_WINDOW_ENTRIES, 1024);
+  assert.equal(DEFAULT_MAX_KEY_ENTRIES, 128);
+  assert.equal(DEFAULT_MAX_UNKNOWN_KID_FETCHES, 32);
+  assert.equal(DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS, 60);
+});
+
+test("the key cache is bounded and evicts the earliest-expiring entries", async () => {
+  const published = Array.from({ length: 16 }, (_, index) =>
+    jwkWithKid(KEY_A, `doc-key-${index}`),
+  );
+  await withEnv({ jwks: () => ({ body: { keys: published } }) }, async (env) => {
+    const validate = await newJwksValidator(
+      validatorOptions(env, { maxKeyEntries: 4 }),
+    );
+    const tokenFor = (kid) =>
+      signToken({
+        header: { alg: "RS256", kid, typ: "JWT" },
+        payload: claims(env),
+        material: KEY_A,
+      });
+
+    // The first document key was evicted by the bound, so its token stays
+    // unknown even after the refresh round that republished it.
+    await assertRejectedWithReason(
+      validate,
+      tokenFor("doc-key-0"),
+      "unknown_kid",
+      "evicted key",
+    );
+    assert.equal(
+      env.state.fetches,
+      2,
+      "an evicted key must be refetched rather than served from the cache",
+    );
+
+    // The last document key survived the bound and is served from the cache.
+    const cached = await validate(
+      routeContext("/acme/mcp"),
+      tokenFor("doc-key-15"),
+    );
+    assert.equal(cached.subject, "acme", "the retained key must validate");
+    assert.equal(
+      env.state.fetches,
+      2,
+      "a retained key must be served from the cache without a fetch",
+    );
+  });
+});
+
+test("the JWKS document cap is enforced while reading the body", async () => {
+  const oversizedJwks = () => ({
+    body: { keys: [{ ...KEY_A.jwk, kid: "k".repeat(1.5 * 1024 * 1024) }] },
+  });
+  await withEnv({ jwks: oversizedJwks }, async (env) => {
+    const validate = await newJwksValidator(validatorOptions(env));
+    await assert.rejects(
+      async () => await validate(routeContext("/acme/mcp"), rs256Token(env, KEY_A)),
+      (error) => {
+        assert.match(
+          error.message,
+          /response_too_large/u,
+          "an oversized document must be refused while it is read",
+        );
+        return true;
+      },
+    );
+  });
+});
+
+test("a hung upstream fails closed inside the fetch timeout bound", async () => {
+  await withEnv({ jwks: () => ({ body: { keys: [KEY_A.jwk] } }) }, async (env) => {
+    const validate = await newJwksValidator(
+      validatorOptions(env, {
+        fetchTimeoutSeconds: 0.2,
+        fetchImpl: () => new Promise(() => {}),
+      }),
+    );
+    const token = rs256Token(env, KEY_A);
+    const started = Date.now();
+    // The race keeps the test itself from hanging; the elapsed assertion then
+    // proves the validator settled inside its own bound.
+    const outcome = await Promise.race([
+      validate(routeContext("/acme/mcp"), token).then(
+        () => "resolved",
+        () => "rejected",
+      ),
+      new Promise((resolve) => {
+        const timer = setTimeout(() => resolve("timed_out"), 2000);
+        if (typeof timer.unref === "function") timer.unref();
+      }),
+    ]);
+    const elapsed = Date.now() - started;
+    assert.equal(outcome, "rejected", "the hung fetch must fail closed");
+    assert.ok(
+      elapsed < 2000,
+      `the fetch timeout must settle inside the bound, took ${elapsed}ms`,
+    );
+  });
+});
+
+test("the shared fetch timeout default leaves the happy path intact", async () => {
+  await withEnv({ jwks: () => ({ body: { keys: [KEY_A.jwk] } }) }, async (env) => {
+    const explicit = await newJwksValidator(
+      validatorOptions(env, { fetchTimeoutSeconds: 5 }),
+    );
+    assert.equal(
+      (await explicit(routeContext("/acme/mcp"), rs256Token(env, KEY_A))).subject,
+      "acme",
+      "an explicit fetch timeout must not disturb validation",
+    );
+
+    const defaulted = await newJwksValidator(validatorOptions(env));
+    assert.equal(
+      (await defaulted(routeContext("/acme/mcp"), rs256Token(env, KEY_A)))
+        .subject,
+      "acme",
+      "the framework default timeout must not disturb validation",
+    );
+  });
+});
+
+const GUARD_ISSUER = "https://issuer.example.com";
+
+function guardToken() {
+  const nowSeconds = Math.floor(BASE_MS / 1000);
+  return signToken({
+    header: { alg: "RS256", kid: KEY_A.kid, typ: "JWT" },
+    payload: {
+      iss: GUARD_ISSUER,
+      aud: AUDIENCE,
+      sub: "acme",
+      scope: "mcp:read",
+      iat: nowSeconds,
+      exp: nowSeconds + 300,
+    },
+    material: KEY_A,
+  });
+}
+
+/**
+ * Builds a validator over the framework's own transport (no injected fetch)
+ * and validates one token, reporting the failure and how long it took. Port 1
+ * is closed, so nothing is ever served however far a call gets.
+ */
+async function guardRefusal(jwksUri, extra) {
+  const validate = await newJwksValidator({
+    issuer: GUARD_ISSUER,
+    jwksUri,
+    now: () => new Date(BASE_MS),
+    ...extra,
+  });
+  const started = Date.now();
+  try {
+    await validate(routeContext("/acme/mcp"), guardToken());
+  } catch (err) {
+    return { error: err, elapsed: Date.now() - started };
+  }
+  return { error: null, elapsed: Date.now() - started };
+}
+
+test("discovery-bootstrap.v1 host_guard classifies every shared address row", () => {
+  const fixture = loadFixture("discovery-bootstrap.v1.json");
+  const guard = fixture.host_guard;
+  assert.equal(guard.default, "reject any endpoint host that is not a public address");
+  const rows = guard.addresses;
+  assert.ok(rows.length > 0, "the shared host-guard table must not be empty");
+  assert.equal(
+    rows.length,
+    guard.address_count,
+    "every shared host-guard address row must still be present",
+  );
+
+  for (const row of rows) {
+    assert.equal(
+      classifyHostAddress(row.address),
+      row.class,
+      `${row.address}: class`,
+    );
+    assert.equal(
+      isPublicHostAddress(row.address),
+      row.public,
+      `${row.address}: public`,
+    );
+  }
+  // The classifier refuses anything that is not an address literal rather than
+  // treating an unparsed name as public.
+  assert.equal(classifyHostAddress("localhost"), "invalid");
+  assert.equal(isPublicHostAddress("localhost"), false);
+  assert.equal(isPublicHostAddress("mcp.example.com"), false);
+
+  // Every shared class must stay exercised, so dropping a class's last row
+  // fails here rather than silently shrinking the table.
+  const exercised = new Set(rows.map((row) => row.class));
+  for (const hostClass of guard.classes) {
+    assert.ok(exercised.has(hostClass), `the shared table must exercise ${hostClass}`);
+  }
+});
+
+test("the default transport refuses an endpoint that is not a public address", async () => {
+  for (const jwksUri of [
+    "https://127.0.0.1:1/jwks.json",
+    "https://[::1]:1/jwks.json",
+    "https://localhost:1/jwks.json",
+  ]) {
+    const { error, elapsed } = await guardRefusal(jwksUri);
+    assert.ok(
+      error instanceof OAuthBearerError,
+      `${jwksUri}: want OAuthBearerError, got ${error}`,
+    );
+    assert.equal(error.oauthCode, ERR_INVALID_BEARER_TOKEN, `${jwksUri}: code`);
+    assert.match(
+      error.message,
+      /not a public address/u,
+      `${jwksUri}: the refusal must name the guard`,
+    );
+    assert.ok(
+      elapsed < 3000,
+      `${jwksUri}: the guard must refuse without connecting, took ${elapsed}ms`,
+    );
+  }
+});
+
+test("allowPrivateHosts drops the guard and surfaces the connection error instead", async () => {
+  for (const jwksUri of ["https://127.0.0.1:1/jwks.json", "https://localhost:1/jwks.json"]) {
+    const { error, elapsed } = await guardRefusal(jwksUri, {
+      allowPrivateHosts: true,
+    });
+    assert.ok(
+      error instanceof OAuthBearerError,
+      `${jwksUri}: want OAuthBearerError, got ${error}`,
+    );
+    assert.doesNotMatch(
+      error.message,
+      /not a public address/u,
+      `${jwksUri}: the override must not apply the guard: ${error.message}`,
+    );
+    assert.ok(elapsed < 3000, `${jwksUri}: took ${elapsed}ms`);
+  }
+
+  // A non-boolean override value does not enable the check bypass.
+  const { error } = await guardRefusal("https://127.0.0.1:1/jwks.json", {
+    allowPrivateHosts: "yes",
+  });
+  assert.match(error.message, /not a public address/u, "only `true` disables");
+});
+
+test("allowPrivateHosts leaves an injected loopback transport validating", async () => {
+  await withEnv({ jwks: () => ({ body: { keys: [KEY_A.jwk] } }) }, async (env) => {
+    const validate = await newJwksValidator(
+      validatorOptions(env, { allowPrivateHosts: true }),
+    );
+    const result = await validate(routeContext("/acme/mcp"), rs256Token(env, KEY_A));
+    assert.equal(result.subject, "acme", "an opt-in loopback transport still validates");
+    assert.equal(env.state.fetches, 1, `${JSON.stringify(env.state.urls)}`);
+  });
+});
+
+/**
+ * Starts a loopback server whose JWKS response is written by `handler` — so a
+ * test can flush the response headers and then stall or trickle — together with
+ * the HTTPS-bound fetch bridge the validator requires: the validator only ever
+ * sees `https://127.0.0.1:<port>` and the bridge downgrades exactly that
+ * loopback origin, so no request leaves the machine. Every request is counted
+ * and the number of responses open at once is tracked, so a test can prove a
+ * refresh is shared rather than multiplied.
+ */
+async function withRawEnv(handler, body) {
+  let markStarted;
+  const started = new Promise((resolve) => {
+    markStarted = resolve;
+  });
+  const state = { fetches: 0, concurrent: 0, maxConcurrent: 0, started };
+  const sockets = new Set();
+  const server = createServer((_request, response) => {
+    state.fetches += 1;
+    state.concurrent += 1;
+    state.maxConcurrent = Math.max(state.maxConcurrent, state.concurrent);
+    response.on("close", () => {
+      state.concurrent -= 1;
+    });
+    markStarted();
+    handler(response);
+  });
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const origin = `https://127.0.0.1:${server.address().port}`;
+  const env = {
+    origin,
+    issuer: origin,
+    jwksUri: `${origin}${JWKS_PATH}`,
+    clock: { t: BASE_MS },
+    state,
+    now: () => new Date(BASE_MS),
+    fetchImpl: async (input, init) => {
+      const bridged = new URL(String(input));
+      bridged.protocol = "http:";
+      return await fetch(bridged, init);
+    },
+  };
+  try {
+    return await body(env);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+function tokenForKid(env, kid, material, overrides = {}) {
+  return signToken({
+    header: { alg: "RS256", kid, typ: "JWT" },
+    payload: claims(env, overrides),
+    material,
+  });
+}
+
+function delay(ms, value) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(value), ms);
+    if (typeof timer.unref === "function") timer.unref();
+  });
+}
+
+/** Writes a response head with no body, modelling an upstream that never streams. */
+function writeStalledHead(response) {
+  response.writeHead(200, { "content-type": "application/json" });
+  response.flushHeaders();
+}
+
+test("a response that stalls after its headers is bounded and cannot stall other validations", async () => {
+  await withRawEnv(writeStalledHead, async (env) => {
+    const validate = await newJwksValidator(
+      validatorOptions(env, { fetchTimeoutSeconds: 0.3 }),
+    );
+    // The first unknown kid starts the refresh; the upstream answers with
+    // headers and then never streams a byte.
+    const hung = validate(
+      routeContext("/acme/mcp"),
+      tokenForKid(env, "kid-hung", KEY_B),
+    ).then(
+      () => "resolved",
+      () => "rejected",
+    );
+    await env.state.started;
+
+    // A second, still-unknown kid joins that stalled refresh and must fail
+    // closed at the bound instead of waiting on the stalled body.
+    const otherStarted = Date.now();
+    const other = await Promise.race([
+      validate(
+        routeContext("/acme/mcp"),
+        tokenForKid(env, "kid-other", KEY_B),
+      ).then(
+        () => "resolved",
+        () => "rejected",
+      ),
+      delay(2500, "timed_out"),
+    ]);
+    const otherElapsed = Date.now() - otherStarted;
+
+    assert.equal(
+      other,
+      "rejected",
+      "a validation waiting on the stalled body must fail closed",
+    );
+    assert.ok(
+      otherElapsed < 2000,
+      `the other validation must stay inside the bound, took ${otherElapsed}ms`,
+    );
+    assert.equal(
+      await Promise.race([hung, delay(2500, "timed_out")]),
+      "rejected",
+      "the hung call must fail closed",
+    );
+  });
+});
+
+test("a response that trickles after its headers cannot outlive the fetch bound", async () => {
+  await withRawEnv((response) => {
+    writeStalledHead(response);
+    // One byte every 250ms: with a bound that covered only the headers the read
+    // would keep draining this trickle for as long as the upstream cared to
+    // send it, past the 1s fetch timeout and on to the test's own deadline.
+    const trickle = setInterval(() => {
+      try {
+        response.write(" ");
+      } catch {
+        clearInterval(trickle);
+      }
+    }, 250);
+    response.on("close", () => clearInterval(trickle));
+    response.on("error", () => clearInterval(trickle));
+  }, async (env) => {
+    const validate = await newJwksValidator(
+      validatorOptions(env, { fetchTimeoutSeconds: 1 }),
+    );
+    const hungStarted = Date.now();
+    const hung = await Promise.race([
+      validate(
+        routeContext("/acme/mcp"),
+        tokenForKid(env, "kid-trickle", KEY_B),
+      ).then(
+        () => "resolved",
+        () => "rejected",
+      ),
+      delay(5000, "timed_out"),
+    ]);
+    const hungElapsed = Date.now() - hungStarted;
+    assert.equal(hung, "rejected", "a trickling body must fail closed");
+    assert.ok(
+      hungElapsed < 3000,
+      `the trickle must not outlive the fetch bound, took ${hungElapsed}ms`,
+    );
+
+    // Later validations keep their own bound and are not stalled by the trickle.
+    const otherStarted = Date.now();
+    const other = await Promise.race([
+      validate(
+        routeContext("/acme/mcp"),
+        tokenForKid(env, "kid-after", KEY_B),
+      ).then(
+        () => "resolved",
+        () => "rejected",
+      ),
+      delay(5000, "timed_out"),
+    ]);
+    assert.equal(other, "rejected", "a later validation must still fail closed");
+    assert.ok(
+      Date.now() - otherStarted < 3000,
+      "a later validation must stay inside the bound",
+    );
+  });
+});
+
+test("a stalled refresh is shared by every unknown-kid validation, not multiplied", async () => {
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  await withRawEnv((response) => {
+    writeStalledHead(response);
+    void gate.then(() => {
+      response.end(JSON.stringify({ keys: [KEY_A.jwk] }));
+    });
+  }, async (env) => {
+    const validate = await newJwksValidator(
+      validatorOptions(env, { fetchTimeoutSeconds: 5 }),
+    );
+    const first = validate(
+      routeContext("/acme/mcp"),
+      tokenForKid(env, "kid-shared-1", KEY_B),
+    ).then(
+      () => "resolved",
+      () => "rejected",
+    );
+    await env.state.started;
+    const second = validate(
+      routeContext("/acme/mcp"),
+      tokenForKid(env, "kid-shared-2", KEY_B),
+    ).then(
+      () => "resolved",
+      () => "rejected",
+    );
+    // Give the second validation every chance to start a fetch of its own.
+    await delay(200);
+
+    assert.equal(
+      env.state.fetches,
+      1,
+      "only one key-set fetch may be in flight at a time",
+    );
+    assert.equal(
+      env.state.maxConcurrent,
+      1,
+      "the in-flight refresh must be shared, not multiplied",
+    );
+
+    release();
+    assert.equal(await first, "rejected", "the first validation fails closed");
+    assert.equal(await second, "rejected", "the joined validation fails closed");
+  });
+});

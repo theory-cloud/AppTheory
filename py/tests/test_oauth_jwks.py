@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import datetime as dt
 import hashlib
 import hmac
+import http.server
+import inspect
 import json
 import secrets
+import socket
+import threading
+import time
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +33,7 @@ from apptheory import (
     resource_metadata_url_from_mcp_endpoint,
 )
 from apptheory.context import Context
+from apptheory.oauth import jwks
 from apptheory.oauth.jwks import _rsa_pkcs1_v15_sha256_verify
 from apptheory.request import Request
 
@@ -66,6 +73,7 @@ _JWKS_REASON_CODES = {
     "issuer_mismatch": ERR_INVALID_BEARER_TOKEN,
     "audience_mismatch": ERR_BEARER_TOKEN_INVALID_AUDIENCE,
     "expired": ERR_BEARER_TOKEN_EXPIRED,
+    "unknown_kid": ERR_INVALID_BEARER_TOKEN,
 }
 
 _DISCOVERY_REASON_CODES = {
@@ -340,6 +348,31 @@ class JwksValidatorFixtureTests(unittest.TestCase):
                 self.assertFalse(accepted)
                 self.assertEqual(code, ERR_INVALID_BEARER_TOKEN)
 
+    def test_shared_fetch_timeout_default_is_pinned(self) -> None:
+        self.assertEqual(self.fixture["defaults"]["fetch_timeout_seconds"], jwks.HTTP_TIMEOUT_SECONDS)
+        self.assertEqual(jwks.HTTP_TIMEOUT_SECONDS, 10)
+        self.assertEqual(
+            inspect.signature(jwks.bootstrap_oidc_discovery).parameters["timeout_seconds"].default,
+            jwks.HTTP_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            inspect.signature(jwks._default_http_get).parameters["timeout"].default,
+            jwks.HTTP_TIMEOUT_SECONDS,
+        )
+
+    def test_bounded_state_defaults_are_pinned(self) -> None:
+        defaults = self.fixture["defaults"]
+        self.assertEqual(defaults["max_kid_length"], jwks.DEFAULT_MAX_KID_LENGTH)
+        self.assertEqual(defaults["max_window_entries"], jwks.DEFAULT_MAX_WINDOW_ENTRIES)
+        self.assertEqual(defaults["max_key_entries"], jwks.DEFAULT_MAX_KEY_ENTRIES)
+        self.assertEqual(defaults["max_unknown_kid_fetches"], jwks.DEFAULT_MAX_UNKNOWN_KID_FETCHES)
+        self.assertEqual(defaults["unknown_kid_fetch_window_seconds"], jwks.DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS)
+        self.assertEqual(jwks.DEFAULT_MAX_KID_LENGTH, 256)
+        self.assertEqual(jwks.DEFAULT_MAX_WINDOW_ENTRIES, 1024)
+        self.assertEqual(jwks.DEFAULT_MAX_KEY_ENTRIES, 128)
+        self.assertEqual(jwks.DEFAULT_MAX_UNKNOWN_KID_FETCHES, 32)
+        self.assertEqual(jwks.DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS, 60)
+
     def test_fixture_cases(self) -> None:
         scenarios = {
             "alg-none-rejected": self._case_alg_none_rejected,
@@ -350,9 +383,20 @@ class JwksValidatorFixtureTests(unittest.TestCase):
             "issuer-mismatch-rejected": self._case_issuer_mismatch_rejected,
             "audience-mismatch-rejected": self._case_audience_mismatch_rejected,
             "expired-token-rejected": self._case_expired_token_rejected,
+            "oversized-kid-refused-without-a-fetch": self._case_oversized_kid_refused,
+            "distinct-attacker-kids-are-globally-bounded": self._case_distinct_attacker_kids_are_bounded,
+            "evicted-kid-window-allows-one-refetch": self._case_evicted_kid_window_allows_refetch,
         }
         cases = self.fixture["cases"]
         self.assertTrue(cases)
+        # Bidirectional, like the Go and TypeScript loaders: dropping a fixture
+        # row would otherwise shrink coverage silently. This is what makes a
+        # dropped shared row fail Python alone.
+        self.assertEqual(
+            set(scenarios),
+            {case["name"] for case in cases},
+            "every fixture case needs exactly one scenario and no scenario may be unused",
+        )
         executed = 0
         for case in cases:
             name = case["name"]
@@ -366,6 +410,8 @@ class JwksValidatorFixtureTests(unittest.TestCase):
                     self.assertEqual(outcome.fetch_count, case["jwks_fetches"])
                 if case.get("bounded_refresh"):
                     self.assertLessEqual(outcome.fetch_count, case["jwks_fetches"])
+                if case.get("bounded_global_fetch_budget"):
+                    self.assertEqual(outcome.fetch_count, self.fixture["defaults"]["max_unknown_kid_fetches"])
                 if "reason" in case:
                     expected_code = _JWKS_REASON_CODES.get(case["reason"])
                     self.assertIsNotNone(expected_code, f"unmapped fixture reason {case['reason']}")
@@ -448,6 +494,39 @@ class JwksValidatorFixtureTests(unittest.TestCase):
         accepted, code = _validate(validator, token)
         return _Outcome(accepted=accepted, fetch_count=transport.fetch_count, error_code=code)
 
+    def _case_oversized_kid_refused(self) -> _Outcome:
+        key = _test_key("oversized-kid")
+        validator, transport, _clock = self._env()
+        transport.push_json(JWKS_URI, _jwks(_jwk("k1", key)))
+        oversized = "k" * (self.fixture["defaults"]["max_kid_length"] + 1)
+        token = _jwt(key, oversized, _claims())
+        accepted, code = _validate(validator, token)
+        return _Outcome(accepted=accepted, fetch_count=transport.fetch_count, error_code=code)
+
+    def _case_distinct_attacker_kids_are_bounded(self) -> _Outcome:
+        key = _test_key("attack-budget")
+        validator, transport, _clock = self._env()
+        transport.push_json(JWKS_URI, _jwks(_jwk("published", key)))
+        code = ""
+        accepted = False
+        for index in range(200):
+            accepted, code = _validate(validator, _jwt(key, f"attacker-kid-{index}", _claims()))
+            if accepted:
+                break
+        return _Outcome(accepted=accepted, fetch_count=transport.fetch_count, error_code=code)
+
+    def _case_evicted_kid_window_allows_refetch(self) -> _Outcome:
+        key = _test_key("evicted-window")
+        validator, transport, _clock = self._env(max_window_entries=1)
+        transport.push_json(JWKS_URI, _jwks(_jwk("published", key)))
+        code = ""
+        accepted = False
+        for kid in ("kid-a", "kid-b", "kid-a"):
+            accepted, code = _validate(validator, _jwt(key, kid, _claims()))
+            if accepted:
+                break
+        return _Outcome(accepted=accepted, fetch_count=transport.fetch_count, error_code=code)
+
 
 class DiscoveryBootstrapFixtureTests(unittest.TestCase):
     @classmethod
@@ -461,6 +540,31 @@ class DiscoveryBootstrapFixtureTests(unittest.TestCase):
         self.assertEqual(security["cross_origin_redirect"], "rejected")
         self.assertTrue(security["endpoints_pinned_to_verified_issuer"])
 
+    def test_host_guard_table_classifies_every_shared_address(self) -> None:
+        guard = self.fixture["host_guard"]
+        self.assertEqual(guard["default"], "reject any endpoint host that is not a public address")
+        rows = guard["addresses"]
+        self.assertTrue(rows, "the shared host-guard table must not be empty")
+        self.assertEqual(
+            len(rows),
+            guard["address_count"],
+            "every shared host-guard address row must still be present",
+        )
+        for row in rows:
+            with self.subTest(address=row["address"]):
+                self.assertEqual(jwks.classify_host_address(row["address"]), row["class"])
+                self.assertEqual(jwks.is_public_host_address(row["address"]), row["public"])
+        # Every shared class must stay exercised, so dropping a class's last row
+        # fails here rather than silently shrinking the table.
+        exercised = {row["class"] for row in rows}
+        for host_class in guard["classes"]:
+            self.assertIn(host_class, exercised, f"the shared table must exercise {host_class}")
+        # A name is never an address literal, and an unparsed address is never
+        # treated as public.
+        self.assertEqual(jwks.classify_host_address("localhost"), "invalid")
+        self.assertFalse(jwks.is_public_host_address("localhost"))
+        self.assertFalse(jwks.is_public_host_address("mcp.example.test"))
+
     def test_fixture_cases(self) -> None:
         scenarios = {
             "same-origin-https-accepted": self._case_same_origin_accepted,
@@ -471,6 +575,13 @@ class DiscoveryBootstrapFixtureTests(unittest.TestCase):
         }
         cases = self.fixture["cases"]
         self.assertTrue(cases)
+        # Bidirectional, like the Go and TypeScript loaders: a dropped shared row
+        # must fail Python alone rather than silently shrinking coverage.
+        self.assertEqual(
+            set(scenarios),
+            {case["name"] for case in cases},
+            "every fixture case needs exactly one scenario and no scenario may be unused",
+        )
         executed = 0
         for case in cases:
             name = case["name"]
@@ -610,10 +721,25 @@ class JwksValidatorBehaviourTests(unittest.TestCase):
         key = _test_key("azp")
         validator, _transport, _clock = self._env_with_key(key, allowed_azp=["client-1"])
         accepted, _code = _validate(validator, _jwt(key, "k1", _claims()))
-        self.assertTrue(accepted)
+        self.assertTrue(accepted, "an allow-listed client_id is the azp fallback")
         rejected, code = _validate(validator, _jwt(key, "k1", _claims(azp="client-9")))
         self.assertFalse(rejected)
         self.assertEqual(code, ERR_INVALID_BEARER_TOKEN)
+
+        # A present but blank azp never falls back to an allow-listed client_id.
+        blank, blank_code = _validate(validator, _jwt(key, "k1", _claims(azp=" ")))
+        self.assertFalse(blank, "a blank azp must not fall back to client_id")
+        self.assertEqual(blank_code, ERR_INVALID_BEARER_TOKEN)
+
+        # A padded azp still normalizes to its allow-list entry.
+        padded, _code = _validate(validator, _jwt(key, "k1", _claims(azp=" client-1 ")))
+        self.assertTrue(padded, "a padded azp normalizes to its allow-list entry")
+
+        # A token that carries neither azp nor client_id is refused under a
+        # configured allow-list: absent must never read as "no check".
+        neither, neither_code = _validate(validator, _jwt(key, "k1", _claims(azp=None, client_id=None)))
+        self.assertFalse(neither, "a token with neither azp nor client_id is refused")
+        self.assertEqual(neither_code, ERR_INVALID_BEARER_TOKEN)
 
         wildcard, _transport, _clock = self._env_with_key(key, allowed_azp=["*"])
         accepted, _code = _validate(wildcard, _jwt(key, "k1", _claims(azp="client-1")))
@@ -726,6 +852,285 @@ class JwksValidatorBehaviourTests(unittest.TestCase):
         transport.push_json(JWKS_URI, _jwks(_jwk("k1", key)))
         validator = _new_env(transport, clock, **options)
         return validator, transport, clock
+
+    def _raw_validator(self, transport: _CountingTransport, clock: _Clock, **options: Any) -> Any:
+        """Builds the module-level validator directly so its bounded state is
+        observable; the public factory only returns the bound ``validate``."""
+        options.setdefault("max_refresh_per_kid", 1)
+        return jwks._JWKSValidator(
+            JWKSValidatorOptions(
+                issuer=ISSUER,
+                jwks_uri=JWKS_URI,
+                http_get=transport,
+                now=clock,
+                cache_ttl_seconds=CACHE_TTL_SECONDS,
+                refresh_cooldown_seconds=REFRESH_COOLDOWN_SECONDS,
+                **options,
+            ),
+            ISSUER,
+            JWKS_URI,
+            "",
+            set(),
+        )
+
+    def test_key_cache_is_bounded_and_evicts_the_earliest_expiring_entries(self) -> None:
+        key = _test_key("cache-bound")
+        transport = _CountingTransport()
+        clock = _Clock(NOW)
+        transport.push_json(JWKS_URI, _jwks(*[_jwk(f"doc-key-{index}", key) for index in range(16)]))
+        validator = self._raw_validator(transport, clock, max_key_entries=4)
+
+        accepted, _code = _validate(validator.validate, _jwt(key, "doc-key-0", _claims()))
+        self.assertFalse(accepted, "the first document key must be evicted by the cache bound")
+        self.assertLessEqual(len(validator._keys), 4)
+        self.assertEqual(transport.fetch_count, 2)
+
+        accepted, _code = _validate(validator.validate, _jwt(key, "doc-key-15", _claims()))
+        self.assertTrue(accepted, "the last document key must survive the cache bound")
+        self.assertLessEqual(len(validator._keys), 4)
+        self.assertEqual(transport.fetch_count, 2, "the retained key must be served from the cache")
+
+    def test_kid_window_map_is_bounded(self) -> None:
+        key = _test_key("window-bound")
+        transport = _CountingTransport()
+        clock = _Clock(NOW)
+        transport.push_json(JWKS_URI, _jwks(_jwk("published", key)))
+        validator = self._raw_validator(transport, clock, max_window_entries=4)
+
+        for index in range(20):
+            _validate(validator.validate, _jwt(key, f"missing-kid-{index}", _claims()))
+        self.assertEqual(len(validator._windows), 4)
+
+
+class FetchTimeoutTests(unittest.TestCase):
+    """The framework default transport must fail closed when an upstream hangs."""
+
+    def setUp(self) -> None:
+        self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._listener.bind(("127.0.0.1", 0))
+        self._listener.listen(1)
+        self._listener.settimeout(0.5)
+        self._port = self._listener.getsockname()[1]
+        self._connections: list[socket.socket] = []
+        self._stop = threading.Event()
+        self.addCleanup(self._shutdown)
+        self._thread = threading.Thread(target=self._accept_until_stopped, daemon=True)
+        self._thread.start()
+
+    def _accept_until_stopped(self) -> None:
+        while not self._stop.is_set():
+            try:
+                connection, _address = self._listener.accept()
+            except (TimeoutError, OSError):
+                continue
+            # Accept, then never respond: the peer's TLS handshake must time out.
+            self._connections.append(connection)
+
+    def _shutdown(self) -> None:
+        self._stop.set()
+        with contextlib.suppress(OSError):
+            for connection in self._connections:
+                connection.close()
+        with contextlib.suppress(OSError):
+            self._listener.close()
+        self._thread.join(timeout=2.0)
+
+    def test_hung_upstream_fails_closed_inside_the_bound(self) -> None:
+        key = _test_key("hung-upstream")
+        # The listener is on loopback, which the framework transport refuses by
+        # default, so the loopback suite opts in to the documented override and
+        # this test keeps exercising the fetch timeout rather than the guard.
+        validator = new_jwks_validator(
+            JWKSValidatorOptions(
+                issuer=ISSUER,
+                jwks_uri=f"https://127.0.0.1:{self._port}/jwks.json",
+                http_timeout_seconds=0.2,
+                allow_private_hosts=True,
+            )
+        )
+        started = time.monotonic()
+        with self.assertRaises(OAuthBearerError):
+            validator(_ctx(), _jwt(key, "k1", _claims()))
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 3.0, f"the transport timeout must fire, took {elapsed:.2f}s")
+
+        accepted, code = _validate(validator, _jwt(key, "k1", _claims()))
+        self.assertFalse(accepted)
+        self.assertEqual(code, ERR_INVALID_BEARER_TOKEN)
+
+    def test_default_fetch_timeout_leaves_the_happy_path_intact(self) -> None:
+        key = _test_key("default-timeout")
+        transport = _CountingTransport()
+        transport.push_json(JWKS_URI, _jwks(_jwk("k1", key)))
+        validator = _new_env(transport, _Clock(NOW))
+        accepted, code = _validate(validator, _jwt(key, "k1", _claims()))
+        self.assertTrue(accepted, code)
+
+
+GUARD_ISSUER = "https://issuer.example.test"
+
+
+class HostGuardTransportTests(unittest.TestCase):
+    """The framework's own transport must refuse non-public endpoints.
+
+    Port 1 is closed, so nothing is ever served however far a call gets; each
+    assertion therefore measures the guard, not a response.
+    """
+
+    def _guard_failure(self, jwks_uri: str, **options: Any) -> tuple[str, float]:
+        key = _test_key("host-guard")
+        validator = new_jwks_validator(
+            JWKSValidatorOptions(
+                issuer=GUARD_ISSUER,
+                jwks_uri=jwks_uri,
+                http_timeout_seconds=5.0,
+                **options,
+            )
+        )
+        started = time.monotonic()
+        with self.assertRaises(OAuthBearerError) as caught:
+            validator(_ctx(), _jwt(key, "k1", _claims(issuer=GUARD_ISSUER)))
+        return str(caught.exception), time.monotonic() - started
+
+    def test_default_transport_refuses_a_non_public_endpoint(self) -> None:
+        for jwks_uri in (
+            "https://127.0.0.1:1/jwks.json",
+            "https://[::1]:1/jwks.json",
+            "https://[::ffff:127.0.0.1]:1/jwks.json",
+            "https://localhost:1/jwks.json",
+        ):
+            with self.subTest(jwks_uri=jwks_uri):
+                message, elapsed = self._guard_failure(jwks_uri)
+                self.assertIn("not a public address", message)
+                self.assertLess(elapsed, 3.0, f"{jwks_uri} took {elapsed:.2f}s")
+
+    def test_allow_private_hosts_drops_the_guard(self) -> None:
+        for jwks_uri in ("https://127.0.0.1:1/jwks.json", "https://localhost:1/jwks.json"):
+            with self.subTest(jwks_uri=jwks_uri):
+                message, elapsed = self._guard_failure(jwks_uri, allow_private_hosts=True)
+                self.assertNotIn("not a public address", message)
+                self.assertLess(elapsed, 3.0, f"{jwks_uri} took {elapsed:.2f}s")
+
+    def test_only_an_explicit_true_enables_the_override(self) -> None:
+        message, _elapsed = self._guard_failure("https://127.0.0.1:1/jwks.json", allow_private_hosts="yes")
+        self.assertIn("not a public address", message)
+
+    def test_allow_private_hosts_leaves_the_injected_loopback_transport_validating(self) -> None:
+        key = _test_key("guard-override")
+        transport = _CountingTransport()
+        transport.push_json(JWKS_URI, _jwks(_jwk("k1", key)))
+        validator = _new_env(transport, _Clock(NOW), allow_private_hosts=True)
+        accepted, code = _validate(validator, _jwt(key, "k1", _claims()))
+        self.assertTrue(accepted, code)
+        self.assertEqual(transport.fetch_count, 1)
+
+
+class _BodyDeadlineServer:
+    """A real loopback HTTP server that flushes its response headers and then
+    stalls or trickles the body: the shape that used to outlive the fetch bound.
+    """
+
+    _TRICKLE_ITERATIONS = 32
+    _TRICKLE_INTERVAL = 0.25
+
+    def __init__(self, mode: str) -> None:
+        self.mode = mode
+        self.started = threading.Event()
+        self.stop = threading.Event()
+        server = self
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_GET(self) -> None:  # noqa: N802
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.end_headers()
+                self.wfile.flush()
+                server.started.set()
+                if server.mode == "stall":
+                    server.stop.wait(10.0)
+                    return
+                for _ in range(server._TRICKLE_ITERATIONS):
+                    if server.stop.is_set():
+                        return
+                    try:
+                        self.wfile.write(b" ")
+                        self.wfile.flush()
+                    except OSError:
+                        return
+                    server.stop.wait(server._TRICKLE_INTERVAL)
+
+            def log_message(self, *args: Any) -> None:
+                return
+
+        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+
+    @property
+    def port(self) -> int:
+        return int(self._server.server_address[1])
+
+    def shutdown(self) -> None:
+        self.stop.set()
+        with contextlib.suppress(OSError):
+            self._server.shutdown()
+        with contextlib.suppress(OSError):
+            self._server.server_close()
+        self._thread.join(timeout=2.0)
+
+
+class BodyDeadlineTests(unittest.TestCase):
+    """A response that delivers headers and then stalls or trickles must stay
+    inside the framework fetch timeout, both for the hung call and for every
+    other validation that has to wait on it.
+    """
+
+    def _start(self, mode: str) -> _BodyDeadlineServer:
+        server = _BodyDeadlineServer(mode)
+        self.addCleanup(server.shutdown)
+        return server
+
+    def _validator(self, server: _BodyDeadlineServer, timeout: float):
+        def http_get(url: str) -> tuple[int, dict[str, str], bytes]:
+            # The framework transport is the code under test; the validator only
+            # ever sees the https URL it was configured with, so this documented
+            # injected-transport seam downgrades that loopback origin to the
+            # plain-HTTP test server. The deadline the response is bounded by is
+            # therefore the framework transport's own.
+            return jwks._default_http_get(url.replace("https://", "http://", 1), timeout=timeout)
+
+        return new_jwks_validator(
+            JWKSValidatorOptions(
+                issuer=ISSUER,
+                jwks_uri=f"https://127.0.0.1:{server.port}/jwks.json",
+                http_get=http_get,
+                http_timeout_seconds=timeout,
+            )
+        )
+
+    def _assert_bounded(self, validator: Any, key: tuple[int, int, int], kid: str, label: str) -> None:
+        started = time.monotonic()
+        with self.assertRaises(OAuthBearerError):
+            validator(_ctx(), _jwt(key, kid, _claims()))
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 3.0, f"{label}: bounded by the fetch timeout, took {elapsed:.2f}s")
+
+    def test_stalled_body_is_bounded_and_other_validations_still_complete(self) -> None:
+        server = self._start("stall")
+        key = _test_key("stalled-body")
+        validator = self._validator(server, 0.3)
+        self._assert_bounded(validator, key, "kid-stall", "stalled body")
+        self._assert_bounded(validator, key, "kid-after", "a later validation")
+
+    def test_trickling_body_cannot_outlive_the_fetch_timeout(self) -> None:
+        server = self._start("trickle")
+        key = _test_key("trickling-body")
+        validator = self._validator(server, 1.0)
+        self._assert_bounded(validator, key, "kid-trickle", "trickling body")
+        self._assert_bounded(validator, key, "kid-after", "a later validation")
 
 
 if __name__ == "__main__":

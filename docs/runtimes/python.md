@@ -5,7 +5,7 @@ description: The Python implementation of the AppTheory contract — typed, asyn
 
 # Python Runtime
 
-The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the 274 generic runner fixtures in the [281-vector corpus](../reference/contract-fixtures.md), including the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the seven Go/CDK-TS MCP route/facade tables are explicitly outside Python's scope. <!-- apptheory-fixture-count: 281 -->
+The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the 274 generic runner fixtures in the [281-vector corpus](../reference/contract-fixtures.md), including the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the Python suite also loads the shared MCP route-algebra expectations table and the three M2 auth-facade acceptance tables (JWKS validator, OIDC discovery bootstrap, and route challenge). The remaining three CDK-facing facade tables (facade route-inventory, route-model, and transport-posture) are outside Python's scope. <!-- apptheory-fixture-count: 281 -->
 
 ## Install
 
@@ -124,7 +124,7 @@ Applies to HTTP error serialization only.
 
 ## What's verified
 
-The Python runner passes all 274 generic fixtures in the 281-vector corpus on every commit. <!-- apptheory-fixture-count: 281 --> It includes the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the seven nested route-algebra, facade-inventory, and auth-facade tables are consumed only by Go and CDK-TS. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
+The Python runner passes all 274 generic fixtures in the 281-vector corpus on every commit. <!-- apptheory-fixture-count: 281 --> It includes the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier; the Python suite also loads the shared MCP route-algebra expectations table and the three M2 auth-facade acceptance tables (JWKS validator, OIDC discovery bootstrap, and route challenge), while the facade route-inventory, route-model, and transport-posture tables are consumed by Go and CDK-TS. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
 
 ## Next reads
 

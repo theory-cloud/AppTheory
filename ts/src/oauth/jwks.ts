@@ -1,5 +1,10 @@
 import { Buffer } from "node:buffer";
 import { createPublicKey, verify, type KeyObject } from "node:crypto";
+import { lookup as dnsLookup } from "node:dns";
+import type { IncomingMessage } from "node:http";
+import { request as httpsRequest, type RequestOptions } from "node:https";
+import { isIP, type LookupFunction } from "node:net";
+import type { ReadableStreamDefaultReader } from "node:stream/web";
 
 import type { Context } from "../context.js";
 
@@ -32,6 +37,18 @@ const MAX_KEYS = 64;
 const DEFAULT_CACHE_TTL_SECONDS = 900;
 const DEFAULT_REFRESH_COOLDOWN_SECONDS = 30;
 const DEFAULT_MAX_REFRESH_PER_KID = 1;
+/** Framework default bound on one discovery or JWKS fetch, shared with Go and Python. */
+export const DEFAULT_FETCH_TIMEOUT_SECONDS = 10;
+/** Framework default bound on a token `kid`'s length, shared with Go and Python. */
+export const DEFAULT_MAX_KID_LENGTH = 256;
+/** Framework default bound on a validator's distinct `kid` resolution windows. */
+export const DEFAULT_MAX_WINDOW_ENTRIES = 1024;
+/** Framework default bound on a validator's cached signing keys. */
+export const DEFAULT_MAX_KEY_ENTRIES = 128;
+/** Framework default bound on key-set fetches inside one unknown-kid fetch window. */
+export const DEFAULT_MAX_UNKNOWN_KID_FETCHES = 32;
+/** Framework default length, in seconds, of the unknown-kid fetch budget window. */
+export const DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS = 60;
 
 export interface JWKSValidatorOptions {
   /**
@@ -52,10 +69,21 @@ export interface JWKSValidatorOptions {
   discoveryUrl?: string;
   /** Injectable fetch, used by tests to serve keys without network egress. */
   fetchImpl?: typeof fetch;
+  /**
+   * Disables the non-public-host check. Off by default; the framework never
+   * enables it. Local development and the loopback test suites opt in.
+   */
+  allowPrivateHosts?: boolean;
   /** Overrides the clock used for `exp`/`nbf`, cache expiry, and cooldown. */
   now?: () => Date;
   /** Tolerance applied to `exp` and `nbf`. */
   clockSkewSeconds?: number;
+  /**
+   * Bounds one discovery or JWKS fetch. Zero or absent means the framework
+   * default of 10 seconds (`DEFAULT_FETCH_TIMEOUT_SECONDS`), shared with the Go
+   * and Python validators.
+   */
+  fetchTimeoutSeconds?: number;
   /** How long a fetched key stays usable before a refresh. Zero means default. */
   cacheTtlSeconds?: number;
   /**
@@ -67,6 +95,35 @@ export interface JWKSValidatorOptions {
    * fetch that populates the cache. Zero means the default of 1.
    */
   maxRefreshPerKid?: number;
+  /**
+   * Bounds the length of a token `kid` this validator resolves. A longer `kid`
+   * is refused as unknown without a fetch or any state change, and document
+   * entries with a longer `kid` are not cached. Zero or absent means the
+   * framework default of 256.
+   */
+  maxKidLength?: number;
+  /**
+   * Bounds the distinct `kid` resolution windows held by one validator; a full
+   * map evicts its oldest window first. Zero or absent means the framework
+   * default of 1024.
+   */
+  maxWindowEntries?: number;
+  /**
+   * Bounds the signing keys cached by one validator; the cache evicts the
+   * earliest-expiring entry first. Zero or absent means the framework default
+   * of 128.
+   */
+  maxKeyEntries?: number;
+  /**
+   * Bounds the key-set fetches triggered by unknown-`kid` resolution inside one
+   * unknown-kid fetch window. Zero or absent means the framework default of 32.
+   */
+  maxUnknownKidFetches?: number;
+  /**
+   * Length in seconds of the global unknown-`kid` fetch budget window. Zero or
+   * absent means the framework default of 60.
+   */
+  unknownKidFetchWindowSeconds?: number;
   /** Exact-match `azp`/`client_id` allow-list; empty disables the check. */
   allowedAzp?: string[];
   /**
@@ -112,12 +169,14 @@ interface JWKSClaims {
  * `issuer` equals `issuer`, and returns the document's `jwks_uri`. The
  * discovery URL and the returned key-set URL must both be absolute HTTPS URLs;
  * a document that omits `jwks_uri`, an issuer mismatch, and any redirect all
- * fail closed.
+ * fail closed. The fetch is bounded by `timeoutSeconds`, which defaults to the
+ * shared framework default.
  */
 export async function bootstrapOidcDiscovery(
   discoveryUrl: string,
   issuer: string,
   fetchImpl?: typeof fetch,
+  timeoutSeconds: number = DEFAULT_FETCH_TIMEOUT_SECONDS,
 ): Promise<string> {
   const configuredIssuer = canonicalIssuer(issuer);
   if (!configuredIssuer) {
@@ -128,8 +187,9 @@ export async function bootstrapOidcDiscovery(
   const requestUrl = secureURL(discoveryUrl, "discovery url");
   const document = await fetchDocument(
     requestUrl,
-    fetchImpl ?? fetch,
+    fetchImpl ?? frameworkFetch(),
     "discovery",
+    positiveSeconds(timeoutSeconds, DEFAULT_FETCH_TIMEOUT_SECONDS) * 1000,
   );
   const documentIssuer = canonicalIssuer(stringClaim(document, "issuer"));
   if (!documentIssuer || documentIssuer !== configuredIssuer) {
@@ -150,7 +210,8 @@ export async function bootstrapOidcDiscovery(
  * Builds a fail-closed RS256/JWKS claims validator.
  *
  * The returned validator resolves signing keys from a bounded `kid` cache that
- * `refreshCooldownSeconds` rate-limits, verifies RSASSA-PKCS1-v1_5/SHA-256
+ * `refreshCooldownSeconds` rate-limits and a global unknown-`kid` fetch budget
+ * caps, verifies RSASSA-PKCS1-v1_5/SHA-256
  * signatures, and refuses the request on every doubt: a malformed token, a
  * non-RS256 algorithm, a missing `kid`, an unknown or inconsistent key, a
  * signature mismatch, an issuer mismatch, a missing or expired `exp`, a `nbf`
@@ -170,9 +231,19 @@ export async function newJwksValidator(
       `${ERROR_PREFIX} invalid_url: jwks validator issuer must be an absolute URL`,
     );
   }
-  const fetchImpl = options.fetchImpl ?? fetch;
+  // Only the framework's own transport carries the non-public-host guard; an
+  // injected `fetchImpl` is caller-owned and is never re-plumbed. The
+  // `allowPrivateHosts` override drops the guard by not installing it at all.
+  const fetchImpl =
+    options.fetchImpl ??
+    (options.allowPrivateHosts === true ? fetch : frameworkFetch());
   const now = options.now ?? (() => new Date());
   const clockSkewMs = nonNegativeSeconds(options.clockSkewSeconds, 0) * 1000;
+  const fetchTimeoutSeconds = positiveSeconds(
+    options.fetchTimeoutSeconds,
+    DEFAULT_FETCH_TIMEOUT_SECONDS,
+  );
+  const fetchTimeoutMs = fetchTimeoutSeconds * 1000;
   const cacheTtlSeconds = positiveSeconds(
     options.cacheTtlSeconds,
     DEFAULT_CACHE_TTL_SECONDS,
@@ -185,6 +256,27 @@ export async function newJwksValidator(
     options.maxRefreshPerKid,
     DEFAULT_MAX_REFRESH_PER_KID,
   );
+  const maxKidLength = positiveInteger(
+    options.maxKidLength,
+    DEFAULT_MAX_KID_LENGTH,
+  );
+  const maxWindowEntries = positiveInteger(
+    options.maxWindowEntries,
+    DEFAULT_MAX_WINDOW_ENTRIES,
+  );
+  const maxKeyEntries = positiveInteger(
+    options.maxKeyEntries,
+    DEFAULT_MAX_KEY_ENTRIES,
+  );
+  const maxUnknownKidFetches = positiveInteger(
+    options.maxUnknownKidFetches,
+    DEFAULT_MAX_UNKNOWN_KID_FETCHES,
+  );
+  const unknownKidFetchWindowMs =
+    positiveSeconds(
+      options.unknownKidFetchWindowSeconds,
+      DEFAULT_UNKNOWN_KID_FETCH_WINDOW_SECONDS,
+    ) * 1000;
   const cacheTtlMs = cacheTtlSeconds * 1000;
   const refreshCooldownMs = refreshCooldownSeconds * 1000;
   const azpAllowList = new Set(normalizeClaimValues(options.allowedAzp ?? []));
@@ -198,7 +290,12 @@ export async function newJwksValidator(
     jwksUri = secureURL(explicitJwksUri, "jwks uri");
   } else if (discoveryUrl) {
     jwksUri = new URL(
-      await bootstrapOidcDiscovery(discoveryUrl, configuredIssuer, fetchImpl),
+      await bootstrapOidcDiscovery(
+        discoveryUrl,
+        configuredIssuer,
+        fetchImpl,
+        fetchTimeoutSeconds,
+      ),
     );
   } else {
     throw new Error(
@@ -208,28 +305,135 @@ export async function newJwksValidator(
 
   const keys = new Map<string, CachedKey>();
   const windows = new Map<string, number>();
+  let fetchBudgetWindowStart = Number.NEGATIVE_INFINITY;
+  let fetchBudgetUsed = 0;
+  let inFlightRefresh: Promise<void> | null = null;
 
-  const refresh = async (at: number): Promise<void> => {
-    const document = await fetchDocument(jwksUri, fetchImpl, "jwks");
-    const published = document["keys"];
-    if (!Array.isArray(published) || published.length === 0) {
-      throw new Error(
-        `${ERROR_PREFIX} document_invalid: jwks document must carry a non-empty keys array`,
+  /**
+   * Consumes one unit of the global unknown-`kid` fetch budget. The window
+   * resets once `unknownKidFetchWindowMs` has elapsed since it opened; when the
+   * budget is exhausted the caller must fail closed without fetching, so a
+   * stream of distinct attacker-chosen kids cannot amplify token traffic into
+   * unbounded key-set traffic.
+   */
+  const takeFetchBudget = (at: number): boolean => {
+    if (at - fetchBudgetWindowStart >= unknownKidFetchWindowMs) {
+      fetchBudgetWindowStart = at;
+      fetchBudgetUsed = 0;
+    }
+    if (fetchBudgetUsed >= maxUnknownKidFetches) return false;
+    fetchBudgetUsed += 1;
+    return true;
+  };
+
+  /**
+   * Drops cache entries whose expiry has passed, then evicts the
+   * earliest-expiring entry until the cache holds at most `maxKeyEntries`
+   * entries, so the cache stays bounded however many keys are published.
+   */
+  const pruneKeys = (at: number): void => {
+    for (const [kid, entry] of keys) {
+      if (at >= entry.expiresAt) keys.delete(kid);
+    }
+    while (keys.size > maxKeyEntries) {
+      let victim: string | undefined;
+      let earliest = Number.POSITIVE_INFINITY;
+      for (const [kid, entry] of keys) {
+        if (entry.expiresAt < earliest) {
+          earliest = entry.expiresAt;
+          victim = kid;
+        }
+      }
+      if (victim === undefined) break;
+      keys.delete(victim);
+    }
+  };
+
+  /**
+   * Fetches and stores the key set once, returning false when the global
+   * unknown-`kid` fetch budget refuses the fetch. A caller that joins an
+   * already-started refresh consumes no additional budget unit. Document entries
+   * with an oversized `kid` are never cached.
+   */
+  const refresh = async (at: number): Promise<boolean> => {
+    const shared = inFlightRefresh;
+    if (shared) {
+      // Joining an in-flight refresh never consumes a budget unit, and the wait
+      // itself is bounded so a validation waiting on another validation's fetch
+      // fails closed at the bound rather than waiting on a promise it does not
+      // control.
+      await boundRefreshWait(shared, fetchTimeoutMs);
+      return true;
+    }
+    if (!takeFetchBudget(at)) return false;
+    const pending = (async (): Promise<void> => {
+      const document = await fetchDocument(
+        jwksUri,
+        fetchImpl,
+        "jwks",
+        fetchTimeoutMs,
       );
+      const published = document["keys"];
+      if (!Array.isArray(published) || published.length === 0) {
+        throw new Error(
+          `${ERROR_PREFIX} document_invalid: jwks document must carry a non-empty keys array`,
+        );
+      }
+      if (published.length > MAX_KEYS) {
+        throw new Error(
+          `${ERROR_PREFIX} too_many_keys: jwks document exceeds the maximum key count`,
+        );
+      }
+      const imported = new Map<string, KeyObject>();
+      for (const raw of published) {
+        const entry = importSigningKey(raw);
+        if (
+          entry &&
+          entry.kid.length <= maxKidLength &&
+          !imported.has(entry.kid)
+        ) {
+          imported.set(entry.kid, entry.key);
+        }
+      }
+      for (const [kid, key] of imported) {
+        // Re-store at the tail so every refresh orders the cache by the
+        // document's key order, which keeps eviction deterministic.
+        keys.delete(kid);
+        keys.set(kid, { key, expiresAt: at + cacheTtlMs });
+      }
+      pruneKeys(at);
+    })();
+    inFlightRefresh = pending;
+    try {
+      await pending;
+    } finally {
+      inFlightRefresh = null;
     }
-    if (published.length > MAX_KEYS) {
-      throw new Error(
-        `${ERROR_PREFIX} too_many_keys: jwks document exceeds the maximum key count`,
-      );
+    return true;
+  };
+
+  /**
+   * Records the resolution window for `kid`. Entries older than the refresh
+   * cooldown are dropped, and a full map evicts its oldest entry first, so the
+   * map never holds more than `maxWindowEntries` entries however many distinct
+   * attacker-chosen kids arrive.
+   */
+  const recordWindow = (kid: string, at: number): void => {
+    for (const [existing, startedAt] of windows) {
+      if (at - startedAt >= refreshCooldownMs) windows.delete(existing);
     }
-    const imported = new Map<string, KeyObject>();
-    for (const raw of published) {
-      const entry = importSigningKey(raw);
-      if (entry && !imported.has(entry.kid)) imported.set(entry.kid, entry.key);
+    if (windows.size >= maxWindowEntries) {
+      let victim: string | undefined;
+      let oldest = Number.POSITIVE_INFINITY;
+      for (const [existing, startedAt] of windows) {
+        if (startedAt < oldest) {
+          oldest = startedAt;
+          victim = existing;
+        }
+      }
+      if (victim !== undefined) windows.delete(victim);
     }
-    for (const [kid, key] of imported) {
-      keys.set(kid, { key, expiresAt: at + cacheTtlMs });
-    }
+    windows.set(kid, at);
   };
 
   const cachedKey = (kid: string, at: number): KeyObject | null => {
@@ -239,14 +443,17 @@ export async function newJwksValidator(
   };
 
   /**
-   * Resolves a signing key for `kid` from the bounded cache. An unknown `kid`
-   * opens one resolution window per `refreshCooldownSeconds`: the first fetch
-   * populates the cache and up to `maxRefreshPerKid` further fetches absorb key
-   * publication lag. Every further unknown-`kid` token inside the cooldown is
-   * rejected without another fetch, so an attacker cannot amplify token traffic
-   * into key-set traffic.
+   * Resolves a signing key for `kid` from the bounded cache. A `kid` longer than
+   * `maxKidLength` is refused as unknown without touching any map and without a
+   * fetch. An unknown `kid` opens one resolution window per
+   * `refreshCooldownSeconds`: the first fetch populates the cache and up to
+   * `maxRefreshPerKid` further fetches absorb key publication lag. Every further
+   * unknown-`kid` token inside the cooldown is rejected without another fetch,
+   * and the global unknown-`kid` fetch budget caps the fetches distinct kids can
+   * trigger, so an attacker cannot amplify token traffic into key-set traffic.
    */
   const keyForKid = async (kid: string): Promise<KeyObject | null> => {
+    if (kid.length > maxKidLength) return null;
     const at = now().getTime();
     const cached = cachedKey(kid, at);
     if (cached) return cached;
@@ -254,9 +461,9 @@ export async function newJwksValidator(
     if (startedAt !== undefined && at - startedAt < refreshCooldownMs) {
       return null;
     }
-    windows.set(kid, at);
+    recordWindow(kid, at);
     for (let attempt = 0; attempt <= maxRefreshPerKid; attempt += 1) {
-      await refresh(at);
+      if (!(await refresh(at))) return null;
       const found = cachedKey(kid, at);
       if (found) return found;
     }
@@ -319,8 +526,13 @@ export async function newJwksValidator(
     if (missingScopes(claims.scopes, requiredScopes).length > 0) {
       throw new OAuthBearerError(ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE);
     }
-    const azp = claims.azp || claims.clientId;
-    if (azpAllowList.size > 0 && !azpAllowList.has(azp)) {
+    // Only an absent (empty) `azp` falls back to `client_id`. A present but blank
+    // `azp` is compared as it stands and refused, so a token cannot use
+    // whitespace to steer the check onto the `client_id` claim; the stricter
+    // reading is identical in the Go and Python validators. The allow-list is
+    // built from trimmed values, so the comparison trims too.
+    const azp = claims.azp === "" ? claims.clientId : claims.azp;
+    if (azpAllowList.size > 0 && !azpAllowList.has(azp.trim())) {
       throw invalidToken("azp_not_allowed");
     }
 
@@ -517,51 +729,188 @@ function keyStringField(record: Record<string, unknown>, name: string): string {
   return value;
 }
 
+/**
+ * Races one awaitable step of a document fetch against the fetch deadline. It
+ * settles as soon as the deadline expires, so the step is bounded even when an
+ * injected `fetchImpl` ignores the abort signal.
+ */
+type DeadlineRace = <T>(work: Promise<T>) => Promise<T>;
+
 async function fetchDocument(
   url: URL,
   fetchImpl: typeof fetch,
   label: string,
+  timeoutMs: number,
 ): Promise<Record<string, unknown>> {
-  let response: Response;
+  const controller = new AbortController();
+  let failOnTimeout: (error: Error) => void = () => {};
+  const expired = new Promise<never>((_resolve, reject) => {
+    failOnTimeout = reject;
+  });
+  // One deadline covers the whole exchange — the response head _and_ its body —
+  // so a response that delivers headers and then stalls or trickles cannot
+  // outlive the fetch bound, and the single-flight refresh (with every
+  // validation waiting on it) is bounded too. The handle lives in this scope
+  // and every exit clears it, so the timer cannot outlive the invocation.
+  const timer = setTimeout(() => {
+    controller.abort();
+    failOnTimeout(
+      new Error(
+        `${ERROR_PREFIX} fetch_timeout: document fetch exceeded the timeout`,
+      ),
+    );
+  }, timeoutMs);
+  // Never keep the Node process (or a test run) alive for a pending timeout.
+  if (typeof timer.unref === "function") timer.unref();
+  // The race bounds the step even when an injected `fetchImpl` ignores the
+  // abort signal; the signal is still handed to it so a real `fetch` stops
+  // early.
+  const race: DeadlineRace = (work) => Promise.race([work, expired]);
   try {
-    response = await fetchImpl(url.toString(), {
-      method: "GET",
-      headers: { accept: "application/json" },
-      redirect: "manual",
-    });
-  } catch {
-    throw new Error(
-      `${ERROR_PREFIX} discovery_unavailable: ${label} document cannot be fetched`,
+    let response: Response;
+    try {
+      response = await race(
+        fetchImpl(url.toString(), {
+          method: "GET",
+          headers: { accept: "application/json" },
+          redirect: "manual",
+          signal: controller.signal,
+        }),
+      );
+    } catch (err) {
+      // A framed refusal from the framework transport (the non-public-host
+      // guard) is a first-class rejection, not a fetch failure, so its reason
+      // survives to the caller instead of being flattened.
+      if (err instanceof OAuthBearerError) throw err;
+      throw new Error(
+        `${ERROR_PREFIX} discovery_unavailable: ${label} document cannot be fetched`,
+        { cause: err },
+      );
+    }
+    if (response.status >= 300 && response.status < 400) {
+      throw redirectFailure(url, response.headers.get("location") ?? "");
+    }
+    if (response.status !== 200) {
+      throw new Error(
+        `${ERROR_PREFIX} discovery_unavailable: ${label} document returned status ${response.status}`,
+      );
+    }
+    const body = await readBoundedBody(
+      response,
+      label,
+      controller.signal,
+      race,
     );
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      throw new Error(
+        `${ERROR_PREFIX} document_invalid: ${label} document is not JSON`,
+      );
+    }
+    if (!isRecord(parsed)) {
+      throw new Error(
+        `${ERROR_PREFIX} document_invalid: ${label} document must be a JSON object`,
+      );
+    }
+    return parsed;
+  } finally {
+    clearTimeout(timer);
   }
-  if (response.status >= 300 && response.status < 400) {
-    throw redirectFailure(url, response.headers.get("location") ?? "");
-  }
-  if (response.status !== 200) {
-    throw new Error(
-      `${ERROR_PREFIX} discovery_unavailable: ${label} document returned status ${response.status}`,
+}
+
+/**
+ * Bounds a join on an already-running refresh. The leader's own fetch carries
+ * the same fetch-timeout deadline, so this is a backstop: a validation waiting
+ * on another validation's fetch fails closed at the bound instead of waiting on
+ * a promise it does not control. It never aborts the shared fetch. The timeout
+ * is unref'd and cleared on every exit, like the fetch deadline itself.
+ */
+async function boundRefreshWait(
+  pending: Promise<void>,
+  timeoutMs: number,
+): Promise<void> {
+  let failOnTimeout: (error: Error) => void = () => {};
+  const expired = new Promise<never>((_resolve, reject) => {
+    failOnTimeout = reject;
+  });
+  const timer = setTimeout(() => {
+    failOnTimeout(
+      new Error(
+        `${ERROR_PREFIX} fetch_timeout: document fetch exceeded the timeout`,
+      ),
     );
+  }, timeoutMs);
+  if (typeof timer.unref === "function") timer.unref();
+  try {
+    await Promise.race([pending, expired]);
+  } finally {
+    clearTimeout(timer);
   }
-  const body = await response.text();
-  if (body.length > MAX_DOCUMENT_BYTES) {
-    throw new Error(
+}
+
+/**
+ * Reads a document body while enforcing `MAX_DOCUMENT_BYTES`: a streamed body is
+ * cancelled as soon as the running total crosses the cap, so oversized content
+ * is never buffered whole. Every read races `race` (the fetch deadline), so a
+ * stalled or trickling body is bounded by the same deadline as the response
+ * head; `signal` is that deadline's controller, and when it aborts the body
+ * stream is cancelled too, so the stalled response stops occupying its
+ * connection instead of being abandoned mid-read.
+ */
+async function readBoundedBody(
+  response: Response,
+  label: string,
+  signal: AbortSignal,
+  race: DeadlineRace,
+): Promise<string> {
+  const tooLarge = (): Error =>
+    new Error(
       `${ERROR_PREFIX} response_too_large: ${label} document exceeds the maximum size`,
     );
+  const body = response.body;
+  if (!body) {
+    const text = await response.text();
+    if (Buffer.byteLength(text, "utf8") > MAX_DOCUMENT_BYTES) {
+      throw tooLarge();
+    }
+    return text;
   }
-  let parsed: unknown;
+  const reader = body.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+  // Every cancellation is collected and joined before this function returns, so
+  // the stream is never left being torn down behind the caller's back.
+  const cancellations: Promise<void>[] = [];
+  const cancelOnAbort = (): void => {
+    cancellations.push(reader.cancel());
+  };
+  if (signal.aborted) {
+    cancellations.push(reader.cancel());
+    throw new Error(
+      `${ERROR_PREFIX} fetch_timeout: document fetch exceeded the timeout`,
+    );
+  }
+  signal.addEventListener("abort", cancelOnAbort, { once: true });
+  const chunks: Uint8Array[] = [];
+  let total = 0;
   try {
-    parsed = JSON.parse(body);
-  } catch {
-    throw new Error(
-      `${ERROR_PREFIX} document_invalid: ${label} document is not JSON`,
-    );
+    for (;;) {
+      const { done, value } = await race(reader.read());
+      if (done) break;
+      if (value) {
+        total += value.byteLength;
+        if (total > MAX_DOCUMENT_BYTES) {
+          await reader.cancel();
+          throw tooLarge();
+        }
+        chunks.push(value);
+      }
+    }
+    return Buffer.concat(chunks).toString("utf8");
+  } finally {
+    signal.removeEventListener("abort", cancelOnAbort);
+    await Promise.all(cancellations);
   }
-  if (!isRecord(parsed)) {
-    throw new Error(
-      `${ERROR_PREFIX} document_invalid: ${label} document must be a JSON object`,
-    );
-  }
-  return parsed;
 }
 
 /**
@@ -714,4 +1063,278 @@ function positiveInteger(value: number | undefined, fallback: number): number {
   return typeof value === "number" && Number.isInteger(value) && value > 0
     ? value
     : fallback;
+}
+
+/**
+ * The connectivity class of one host address literal. `invalid` is not an
+ * address literal at all and is never connectable, so the classifier fails
+ * closed. The classes are shared with the Go and Python validators through the
+ * discovery-bootstrap contract fixture's `host_guard` table.
+ */
+export type HostAddressClass =
+  | "loopback"
+  | "link_local"
+  | "private"
+  | "unspecified"
+  | "multicast"
+  | "public"
+  | "invalid";
+
+/**
+ * Classifies one IP address literal. An IPv4-mapped IPv6 address is classified
+ * by the IPv4 address it maps to, so `::ffff:127.0.0.1` is loopback. Refused
+ * classes are loopback (`127.0.0.0/8`, `::1`), link-local (`169.254.0.0/16`,
+ * `fe80::/10`), private (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+ * `fc00::/7`), unspecified (`0.0.0.0`, `::`), and multicast (`224.0.0.0/4`,
+ * `ff00::/8`); everything else is public.
+ */
+export function classifyHostAddress(address: string): HostAddressClass {
+  const text = String(address ?? "").trim();
+  const family = isIP(text);
+  if (family === 4) {
+    const octets = ipv4Octets(text);
+    return octets ? classifyIpv4Octets(octets) : "invalid";
+  }
+  if (family === 6) {
+    const bytes = ipv6Bytes(text);
+    return bytes ? classifyIpv6Bytes(bytes) : "invalid";
+  }
+  return "invalid";
+}
+
+/** Reports whether one host address literal may be connected to. */
+export function isPublicHostAddress(address: string): boolean {
+  return classifyHostAddress(address) === "public";
+}
+
+/** The refusal phrase every runtime's non-public-host failure carries. */
+const NON_PUBLIC_HOST_PHRASE = "not a public address";
+
+function nonPublicHostError(subject: string): OAuthBearerError {
+  return new OAuthBearerError(
+    ERR_INVALID_BEARER_TOKEN,
+    `${ERROR_PREFIX} non_public_host: ${subject} is ${NON_PUBLIC_HOST_PHRASE}`,
+  );
+}
+
+/**
+ * The framework's own document transport, and the only place the
+ * non-public-host guard is installed.
+ *
+ * The guard runs inside `lookup`, on the addresses the name actually resolved
+ * to, and Node connects to the address `lookup` hands back. Resolving,
+ * checking, and connecting are therefore one step, so there is no window in
+ * which a name could resolve to a public address for the check and to a
+ * non-public one for the connection. TLS keeps its defaults: the request
+ * carries the original URL, so the certificate is still verified against the
+ * URL's host name even though the socket connects to an address of that name.
+ */
+function frameworkFetch(): typeof fetch {
+  return async (input, init) => {
+    const url = new URL(String(input));
+    const literal = urlIpLiteral(url);
+    if (literal && !isPublicHostAddress(literal)) {
+      throw nonPublicHostError(literal);
+    }
+    const options: RequestOptions = {
+      method: "GET",
+      headers: { accept: "application/json" },
+      lookup: guardedLookup,
+    };
+    const signal = init?.signal;
+    if (signal) options.signal = signal;
+    return await new Promise<Response>((resolve, reject) => {
+      const request = httpsRequest(url, options, (response) => {
+        try {
+          resolve(buildFetchResponse(response));
+        } catch (err) {
+          response.resume();
+          reject(err instanceof Error ? err : new Error(String(err)));
+        }
+      });
+      request.on("error", (err: Error) => {
+        reject(err);
+      });
+      request.end();
+    });
+  };
+}
+
+/**
+ * Resolves a name and hands back only public addresses. When none survives,
+ * the request is refused with the guard's message before any socket is
+ * opened, so a name that resolves to a non-public address is never connected
+ * to.
+ */
+const guardedLookup: LookupFunction = (hostname, options, callback) => {
+  dnsLookup(hostname, { all: true, verbatim: true }, (err, addresses) => {
+    if (err) {
+      callback(err, []);
+      return;
+    }
+    const allowed = addresses.filter((entry) =>
+      isPublicHostAddress(entry.address),
+    );
+    if (allowed.length === 0) {
+      callback(nonPublicHostError(hostname), []);
+      return;
+    }
+    if (options.all === true) {
+      callback(null, allowed);
+      return;
+    }
+    const first = allowed[0];
+    if (!first) {
+      callback(nonPublicHostError(hostname), []);
+      return;
+    }
+    callback(null, first.address, first.family);
+  });
+};
+
+/**
+ * Returns the URL's host when it is already an IP address literal, and an
+ * empty string when it is a name. Node skips `lookup` for a literal, so a
+ * literal host has to be classified here as well.
+ */
+function urlIpLiteral(url: URL): string {
+  let host = url.hostname;
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  return isIP(host) === 0 ? "" : host;
+}
+
+/**
+ * Adapts a Node response to the web `Response` shape the document reader
+ * expects: `status`, `headers.get`, and a `body` web `ReadableStream`.
+ */
+function buildFetchResponse(response: IncomingMessage): Response {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(response.headers)) {
+    if (value === undefined) continue;
+    headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+  }
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      response.on("data", (chunk: Buffer) => {
+        controller.enqueue(chunk);
+      });
+      response.on("end", () => {
+        controller.close();
+      });
+      response.on("error", (err: Error) => {
+        controller.error(err);
+      });
+    },
+    cancel(reason: unknown) {
+      response.destroy(reason instanceof Error ? reason : undefined);
+    },
+  });
+  return new Response(body, { status: response.statusCode ?? 502, headers });
+}
+
+function classifyIpv4Octets(octets: readonly number[]): HostAddressClass {
+  const [a = 0, b = 0, c = 0, d = 0] = octets;
+  if (a === 127) return "loopback";
+  if (a === 169 && b === 254) return "link_local";
+  if (
+    a === 10 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  ) {
+    return "private";
+  }
+  if (a === 0 && b === 0 && c === 0 && d === 0) return "unspecified";
+  if (a >= 224 && a <= 239) return "multicast";
+  return "public";
+}
+
+function classifyIpv6Bytes(raw: Uint8Array): HostAddressClass {
+  const bytes = [...raw];
+  const at = (index: number): number => bytes[index] ?? 0;
+  if (
+    at(10) === 0xff &&
+    at(11) === 0xff &&
+    bytes.slice(0, 10).every((value) => value === 0)
+  ) {
+    return classifyIpv4Octets([at(12), at(13), at(14), at(15)]);
+  }
+  if (bytes.every((value) => value === 0)) return "unspecified";
+  if (at(15) === 1 && bytes.slice(0, 15).every((value) => value === 0)) {
+    return "loopback";
+  }
+  const first = at(0);
+  const second = at(1);
+  if (first === 0xfe && (second & 0xc0) === 0x80) return "link_local";
+  if ((first & 0xfe) === 0xfc) return "private";
+  if (first === 0xff) return "multicast";
+  return "public";
+}
+
+function ipv4Octets(text: string): number[] | null {
+  const pieces = text.split(".");
+  if (pieces.length !== 4) return null;
+  const octets: number[] = [];
+  for (const piece of pieces) {
+    if (!/^\d{1,3}$/u.test(piece)) return null;
+    const value = Number.parseInt(piece, 10);
+    if (value > 255) return null;
+    octets.push(value);
+  }
+  return octets;
+}
+
+function ipv6Bytes(address: string): Uint8Array | null {
+  const groups = ipv6Groups(address);
+  if (!groups) return null;
+  const bytes = new Uint8Array(16);
+  for (let index = 0; index < 8; index += 1) {
+    const group = groups[index] ?? 0;
+    bytes[index * 2] = group >> 8;
+    bytes[index * 2 + 1] = group & 0xff;
+  }
+  return bytes;
+}
+
+/**
+ * Expands an IPv6 literal into its eight 16-bit groups, handling `::`
+ * compression and an embedded IPv4 tail such as `::ffff:127.0.0.1`. A zone
+ * index is stripped; the caller has already validated the literal with
+ * `isIP`.
+ */
+function ipv6Groups(address: string): number[] | null {
+  const zone = address.indexOf("%");
+  const text = zone === -1 ? address : address.slice(0, zone);
+  const marker = text.indexOf("::");
+  if (marker !== -1 && text.slice(marker + 2).includes("::")) return null;
+  const headText = marker === -1 ? text : text.slice(0, marker);
+  const tailText = marker === -1 ? "" : text.slice(marker + 2);
+  const head = ipv6GroupList(headText);
+  const tail = ipv6GroupList(tailText);
+  if (!head || !tail) return null;
+  if (marker === -1) return head.length === 8 ? head : null;
+  const fill = 8 - head.length - tail.length;
+  if (fill < 1) return null;
+  const groups = [...head];
+  for (let index = 0; index < fill; index += 1) groups.push(0);
+  groups.push(...tail);
+  return groups;
+}
+
+function ipv6GroupList(part: string): number[] | null {
+  if (part === "") return [];
+  const pieces = part.split(":");
+  const groups: number[] = [];
+  for (let index = 0; index < pieces.length; index += 1) {
+    const piece = pieces[index] ?? "";
+    if (index === pieces.length - 1 && piece.includes(".")) {
+      const octets = ipv4Octets(piece);
+      if (!octets) return null;
+      const [a = 0, b = 0, c = 0, d = 0] = octets;
+      groups.push((a << 8) | b, (c << 8) | d);
+      continue;
+    }
+    if (!/^[0-9A-Fa-f]{1,4}$/u.test(piece)) return null;
+    groups.push(Number.parseInt(piece, 16));
+  }
+  return groups;
 }

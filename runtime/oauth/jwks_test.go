@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"hash"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -65,6 +66,8 @@ func jwksFailureReason(err error) string {
 		return "audience_mismatch"
 	case errors.Is(err, errAZPNotAllowed):
 		return "azp_not_allowed"
+	case errors.Is(err, errUnknownKey):
+		return "unknown_kid"
 	case errors.Is(err, ErrBearerTokenExpired):
 		return "expired"
 	case errors.Is(err, errInsecureURL):
@@ -92,23 +95,33 @@ type jwksValidatorFixture struct {
 		Rejected []string `json:"rejected"`
 	} `json:"algorithm"`
 	Defaults struct {
-		UnknownKidRefresh string `json:"unknown_kid_refresh"`
-		MaxRefreshPerKid  int    `json:"max_refresh_per_kid"`
-		Cache             string `json:"cache"`
-		IssuerCheck       string `json:"issuer_check"`
-		AudienceCheck     string `json:"audience_check"`
-		AZPCheck          string `json:"azp_check"`
+		UnknownKidRefresh            string `json:"unknown_kid_refresh"`
+		MaxRefreshPerKid             int    `json:"max_refresh_per_kid"`
+		FetchTimeoutSeconds          int    `json:"fetch_timeout_seconds"`
+		MaxKidLength                 int    `json:"max_kid_length"`
+		MaxWindowEntries             int    `json:"max_window_entries"`
+		MaxKeyEntries                int    `json:"max_key_entries"`
+		MaxUnknownKidFetches         int    `json:"max_unknown_kid_fetches"`
+		UnknownKidFetchWindowSeconds int    `json:"unknown_kid_fetch_window_seconds"`
+		Cache                        string `json:"cache"`
+		IssuerCheck                  string `json:"issuer_check"`
+		AudienceCheck                string `json:"audience_check"`
+		AZPCheck                     string `json:"azp_check"`
 	} `json:"defaults"`
 	Cases []jwksValidatorFixtureCase `json:"cases"`
 }
 
 type jwksValidatorFixtureCase struct {
-	Name           string `json:"name"`
-	Scenario       string `json:"scenario"`
-	Expect         string `json:"expect"`
-	Reason         string `json:"reason"`
-	JWKSFetches    int    `json:"jwks_fetches"`
-	BoundedRefresh bool   `json:"bounded_refresh"`
+	Name                     string `json:"name"`
+	Scenario                 string `json:"scenario"`
+	Expect                   string `json:"expect"`
+	Reason                   string `json:"reason"`
+	JWKSFetches              int    `json:"jwks_fetches"`
+	BoundedRefresh           bool   `json:"bounded_refresh"`
+	DistinctKids             int    `json:"distinct_kids"`
+	MaxWindowEntries         int    `json:"max_window_entries"`
+	BoundedGlobalFetchBudget bool   `json:"bounded_global_fetch_budget"`
+	BoundedWindowMap         bool   `json:"bounded_window_map"`
 }
 
 // jwksValidatorCaseRunners maps every fixture case name to its scenario. The
@@ -116,14 +129,17 @@ type jwksValidatorFixtureCase struct {
 // fails the test instead of silently shrinking coverage.
 func jwksValidatorCaseRunners() map[string]func(*testing.T, jwksValidatorFixtureCase) (*BearerTokenClaims, error) {
 	return map[string]func(*testing.T, jwksValidatorFixtureCase) (*BearerTokenClaims, error){
-		"alg-none-rejected":                runFixtureAlgNoneRejected,
-		"hs256-rejected":                   runFixtureHS256Rejected,
-		"unknown-kid-triggers-one-refresh": runFixtureUnknownKidTriggersOneRefresh,
-		"unknown-kid-refresh-is-bounded":   runFixtureUnknownKidRefreshIsBounded,
-		"expired-key-refresh":              runFixtureExpiredKeyRefresh,
-		"issuer-mismatch-rejected":         runFixtureIssuerMismatchRejected,
-		"audience-mismatch-rejected":       runFixtureAudienceMismatchRejected,
-		"expired-token-rejected":           runFixtureExpiredTokenRejected,
+		"alg-none-rejected":                           runFixtureAlgNoneRejected,
+		"hs256-rejected":                              runFixtureHS256Rejected,
+		"unknown-kid-triggers-one-refresh":            runFixtureUnknownKidTriggersOneRefresh,
+		"unknown-kid-refresh-is-bounded":              runFixtureUnknownKidRefreshIsBounded,
+		"expired-key-refresh":                         runFixtureExpiredKeyRefresh,
+		"issuer-mismatch-rejected":                    runFixtureIssuerMismatchRejected,
+		"audience-mismatch-rejected":                  runFixtureAudienceMismatchRejected,
+		"expired-token-rejected":                      runFixtureExpiredTokenRejected,
+		"oversized-kid-refused-without-a-fetch":       runFixtureOversizedKidRefusedWithoutAFetch,
+		"distinct-attacker-kids-are-globally-bounded": runFixtureDistinctAttackerKidsAreGloballyBounded,
+		"evicted-kid-window-allows-one-refetch":       runFixtureEvictedKidWindowAllowsOneRefetch,
 	}
 }
 
@@ -136,6 +152,18 @@ func TestJWKSValidatorFixture(t *testing.T) {
 		"the shared fixture pins exactly one allowed algorithm")
 	require.Equal(t, defaultMaxRefreshPerKid, fixture.Defaults.MaxRefreshPerKid,
 		"the validator default must equal the fixture's defaults.max_refresh_per_kid")
+	require.Equal(t, int(defaultJWKSFetchTimeout/time.Second), fixture.Defaults.FetchTimeoutSeconds,
+		"the validator fetch bound must equal the fixture's defaults.fetch_timeout_seconds")
+	require.Equal(t, defaultJWKSMaxKidLength, fixture.Defaults.MaxKidLength,
+		"the kid-length cap must equal the fixture's defaults.max_kid_length")
+	require.Equal(t, defaultJWKSMaxWindowEntries, fixture.Defaults.MaxWindowEntries,
+		"the kid-window bound must equal the fixture's defaults.max_window_entries")
+	require.Equal(t, defaultJWKSMaxKeyEntries, fixture.Defaults.MaxKeyEntries,
+		"the key-cache bound must equal the fixture's defaults.max_key_entries")
+	require.Equal(t, defaultJWKSMaxUnknownKidFetches, fixture.Defaults.MaxUnknownKidFetches,
+		"the global fetch budget must equal the fixture's defaults.max_unknown_kid_fetches")
+	require.Equal(t, int(defaultJWKSUnknownKidFetchWindow/time.Second), fixture.Defaults.UnknownKidFetchWindowSeconds,
+		"the budget window must equal the fixture's defaults.unknown_kid_fetch_window_seconds")
 
 	runners := jwksValidatorCaseRunners()
 	require.Len(t, runners, len(fixture.Cases),
@@ -354,6 +382,89 @@ func runFixtureExpiredTokenRejected(t *testing.T, _ jwksValidatorFixtureCase) (*
 	return nil, expiredErr
 }
 
+// runFixtureOversizedKidRefusedWithoutAFetch pins the kid-length cap: an
+// oversized kid is refused without entering any map and without a fetch.
+func runFixtureOversizedKidRefusedWithoutAFetch(t *testing.T, fixtureCase jwksValidatorFixtureCase) (*BearerTokenClaims, error) {
+	t.Helper()
+	require.Equal(t, 0, fixtureCase.JWKSFetches, "the fixture pins this case as fetch-free")
+	key := newTestRSAKey(t)
+	server := newJWKSTestServer(t, testJWK(t, "key-1", key))
+	validator := newTestJWKSValidator(t, JWKSValidatorOptions{
+		Issuer:     jwksFixtureIssuer,
+		JWKSURI:    server.jwksURL(),
+		HTTPClient: server.client(),
+		Now:        frozenJWKSClock(jwksFixtureNow),
+	})
+
+	oversized := strings.Repeat("k", defaultJWKSMaxKidLength+1)
+	claims, err := validateTestToken(validator, signTestRS256Token(t, oversized, key, testJWKSClaims(nil)))
+	require.Equal(t, 0, server.fetchCount(), "an oversized kid must not trigger a key-set fetch")
+	return claims, err
+}
+
+// runFixtureDistinctAttackerKidsAreGloballyBounded pins the global unknown-kid
+// fetch budget: many distinct attacker kids cannot multiply key-set fetches.
+func runFixtureDistinctAttackerKidsAreGloballyBounded(t *testing.T, fixtureCase jwksValidatorFixtureCase) (*BearerTokenClaims, error) {
+	t.Helper()
+	require.True(t, fixtureCase.BoundedGlobalFetchBudget, "the fixture pins this case as globally bounded")
+	require.Greater(t, fixtureCase.DistinctKids, defaultJWKSMaxUnknownKidFetches,
+		"the case must present more kids than the budget allows")
+
+	key := newTestRSAKey(t)
+	server := newJWKSTestServer(t, testJWK(t, "key-1", key))
+	validator := newTestJWKSValidator(t, JWKSValidatorOptions{
+		Issuer:     jwksFixtureIssuer,
+		JWKSURI:    server.jwksURL(),
+		HTTPClient: server.client(),
+		Now:        frozenJWKSClock(jwksFixtureNow),
+	})
+
+	var lastErr error
+	for index := 0; index < fixtureCase.DistinctKids; index++ {
+		kid := fmt.Sprintf("attacker-%d", index)
+		_, lastErr = validateTestToken(validator, signTestRS256Token(t, kid, key, testJWKSClaims(nil)))
+		require.Error(t, lastErr, "an unpublished kid must be refused")
+	}
+	require.Equal(t, defaultJWKSMaxUnknownKidFetches, server.fetchCount(),
+		"the global budget caps the key-set fetches no matter how many kids arrive")
+	return nil, lastErr
+}
+
+// runFixtureEvictedKidWindowAllowsOneRefetch pins the kid-window map bound: at
+// capacity the oldest window is evicted, so a kid whose window was evicted is
+// fetched once more instead of being refused by its cooldown.
+func runFixtureEvictedKidWindowAllowsOneRefetch(t *testing.T, fixtureCase jwksValidatorFixtureCase) (*BearerTokenClaims, error) {
+	t.Helper()
+	require.True(t, fixtureCase.BoundedWindowMap, "the fixture pins this case as a bounded window map")
+	require.Positive(t, fixtureCase.MaxWindowEntries, "the case pins the window-map capacity")
+
+	keyA, keyB := newTestRSAKey(t), newTestRSAKey(t)
+	server := newJWKSTestServer(t, testJWK(t, "key-1", keyA))
+	validator := newTestJWKSValidator(t, JWKSValidatorOptions{
+		Issuer:           jwksFixtureIssuer,
+		JWKSURI:          server.jwksURL(),
+		HTTPClient:       server.client(),
+		Now:              frozenJWKSClock(jwksFixtureNow),
+		MaxWindowEntries: fixtureCase.MaxWindowEntries,
+	})
+
+	resolve := func(kid string, key *rsa.PrivateKey) error {
+		t.Helper()
+		_, err := validateTestToken(validator, signTestRS256Token(t, kid, key, testJWKSClaims(nil)))
+		require.Error(t, err, "an unpublished kid is refused")
+		return err
+	}
+
+	require.Error(t, resolve("kid-a", keyA))
+	require.Equal(t, 2, server.fetchCount(), "the first kid spends its own bounded refresh")
+	require.Error(t, resolve("kid-b", keyB))
+	require.Equal(t, 4, server.fetchCount(), "the second kid is resolved independently")
+	lastErr := resolve("kid-a", keyA)
+	require.Equal(t, fixtureCase.JWKSFetches, server.fetchCount(),
+		"the evicted kid window allows exactly one more bounded refresh")
+	return nil, lastErr
+}
+
 // ---------------------------------------------------------------------------
 // Shared fixture: discovery-bootstrap.v1.json
 // ---------------------------------------------------------------------------
@@ -373,6 +484,17 @@ type discoveryFixture struct {
 		Expect   string `json:"expect"`
 		Reason   string `json:"reason"`
 	} `json:"cases"`
+	HostGuard struct {
+		Default      string   `json:"default"`
+		Override     string   `json:"override"`
+		Classes      []string `json:"classes"`
+		AddressCount int      `json:"address_count"`
+		Addresses    []struct {
+			Address string `json:"address"`
+			Class   string `json:"class"`
+			Public  bool   `json:"public"`
+		} `json:"addresses"`
+	} `json:"host_guard"`
 }
 
 func TestOIDCDiscoveryBootstrapFixture(t *testing.T) {
@@ -583,6 +705,23 @@ func TestJWKSValidatorEnforcesTheAZPAllowList(t *testing.T) {
 	require.NoError(t, err)
 	_, err = validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(map[string]any{"azp": "client-1", "client_id": "attacker"})))
 	require.NoError(t, err, "azp takes precedence over client_id when present")
+
+	// A present but blank azp is refused rather than falling back to an
+	// allow-listed client_id: only an absent azp falls back.
+	_, err = validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(map[string]any{"azp": " ", "client_id": "client-1"})))
+	require.ErrorIs(t, err, ErrInvalidBearerToken)
+	require.Equal(t, "azp_not_allowed", jwksFailureReason(err))
+
+	// Surrounding whitespace is not an allow-list value either, but a padded
+	// allow-listed azp still normalizes to its allow-list entry.
+	_, err = validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(map[string]any{"azp": " client-1 "})))
+	require.NoError(t, err, "an azp is compared after trimming, as the allow-list is built")
+
+	// A token that carries neither azp nor client_id is refused under a configured
+	// allow-list.
+	_, err = validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(nil)))
+	require.ErrorIs(t, err, ErrInvalidBearerToken)
+	require.Equal(t, "azp_not_allowed", jwksFailureReason(err))
 }
 
 func TestJWKSValidatorFailsClosedOnSignatureAndKeyDoubts(t *testing.T) {
@@ -976,6 +1115,474 @@ func TestRequireBearerTokenMiddlewareMapsJWKSValidatorFailures(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Test doubles: real RSA keys, real signatures, loopback HTTP(S) servers
 // ---------------------------------------------------------------------------
+
+// TestJWKSValidatorFetchBound pins the framework fetch bound shared with the
+// TypeScript and Python validators, and that an explicit override wins.
+func TestJWKSValidatorFetchBound(t *testing.T) {
+	require.Equal(t, 10*time.Second, defaultJWKSFetchTimeout,
+		"the shared framework fetch bound is 10 seconds")
+	require.Equal(t, defaultJWKSFetchTimeout, jwksHTTPClient(nil, 0, false).Timeout,
+		"the framework client carries the default fetch bound")
+	require.Equal(t, 3*time.Second, resolvedFetchTimeout(nil, 3*time.Second),
+		"an explicit override wins")
+	require.Equal(t, 2*time.Second, resolvedFetchTimeout(&http.Client{Timeout: 2 * time.Second}, 0),
+		"a caller-supplied client timeout is respected")
+}
+
+// TestJWKSValidatorFailsClosedWhenTheUpstreamHangs proves the fetch bound: a
+// JWKS endpoint that accepts the connection and never answers must not stall a
+// validation, and must not be fetched again.
+func TestJWKSValidatorFailsClosedWhenTheUpstreamHangs(t *testing.T) {
+	key := newTestRSAKey(t)
+	server := newHungJWKSTestServer(t, 0, testJWK(t, "key-hung", key))
+	validator := newTestJWKSValidator(t, JWKSValidatorOptions{
+		Issuer:       jwksFixtureIssuer,
+		JWKSURI:      server.jwksURL(),
+		HTTPClient:   server.client(),
+		Now:          frozenJWKSClock(jwksFixtureNow),
+		FetchTimeout: 250 * time.Millisecond,
+	})
+
+	started := time.Now()
+	_, err := validateTestToken(validator, signTestRS256Token(t, "key-hung", key, testJWKSClaims(nil)))
+	elapsed := time.Since(started)
+
+	require.ErrorIs(t, err, ErrInvalidBearerToken, "a hung fetch fails closed")
+	require.Less(t, elapsed, 3*time.Second, "the validation is bounded by the fetch timeout")
+	require.EqualValues(t, 1, server.fetchCount(), "a hung fetch is not retried for the same token")
+
+	select {
+	case <-server.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the hung upstream was never reached")
+	}
+}
+
+// TestJWKSValidatorHungFetchDoesNotStallOtherValidations proves that one hung
+// key-set fetch neither holds the validator's lock nor multiplies fetches: a
+// cached key keeps validating, and a validation that has to wait on the hung
+// fetch is bounded and fails closed.
+func TestJWKSValidatorHungFetchDoesNotStallOtherValidations(t *testing.T) {
+	keyA, keyB, keyC := newTestRSAKey(t), newTestRSAKey(t), newTestRSAKey(t)
+	server := newHungJWKSTestServer(t, 1, testJWK(t, "key-a", keyA))
+	validator := newTestJWKSValidator(t, JWKSValidatorOptions{
+		Issuer:       jwksFixtureIssuer,
+		JWKSURI:      server.jwksURL(),
+		HTTPClient:   server.client(),
+		Now:          frozenJWKSClock(jwksFixtureNow),
+		FetchTimeout: 250 * time.Millisecond,
+	})
+
+	// The first validation populates the cache from a healthy response.
+	require.NoError(t, validateTestTokenKey(t, validator, "key-a", keyA))
+	require.EqualValues(t, 1, server.fetchCount())
+
+	hung := make(chan error, 1)
+	go func() {
+		_, err := validateTestToken(validator, signTestRS256Token(t, "key-b", keyB, testJWKSClaims(nil)))
+		hung <- err
+	}()
+	select {
+	case <-server.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the hung upstream was never reached")
+	}
+
+	cachedStart := time.Now()
+	require.NoError(t, validateTestTokenKey(t, validator, "key-a", keyA),
+		"a cached key still validates while the upstream hangs")
+	require.Less(t, time.Since(cachedStart), 500*time.Millisecond,
+		"the hung fetch holds no lock that blocks other validations")
+
+	unknownStart := time.Now()
+	_, unknownErr := validateTestToken(validator, signTestRS256Token(t, "key-c", keyC, testJWKSClaims(nil)))
+	require.Error(t, unknownErr, "an unknown kid fails closed while the upstream hangs")
+	require.Less(t, time.Since(unknownStart), 3*time.Second,
+		"a validation that waits on a hung fetch is bounded")
+
+	select {
+	case err := <-hung:
+		require.Error(t, err, "the validation that started the hung fetch fails closed")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the validation that started the hung fetch never returned")
+	}
+	require.EqualValues(t, 2, server.fetchCount(),
+		"a hung fetch is shared, not multiplied, by other validations")
+}
+
+// TestJWKSValidatorBoundsAStalledOrTricklingResponseBody proves the fetch bound
+// covers the whole response, not only its headers: an upstream that delivers
+// headers and then goes quiet — or dribbles one byte at a time — must fail
+// closed within the bound, must not stall a validation of a different token,
+// and must not be fetched again for the tokens that joined it.
+func TestJWKSValidatorBoundsAStalledOrTricklingResponseBody(t *testing.T) {
+	for _, mode := range []string{jwksSlowBodyStalled, jwksSlowBodyTrickled} {
+		t.Run(mode, func(t *testing.T) {
+			keyA, keyB, keyC := newTestRSAKey(t), newTestRSAKey(t), newTestRSAKey(t)
+			server := newSlowBodyJWKSTestServer(t, mode, 1, testJWK(t, "key-a", keyA))
+			validator := newTestJWKSValidator(t, JWKSValidatorOptions{
+				Issuer:       jwksFixtureIssuer,
+				JWKSURI:      server.jwksURL(),
+				HTTPClient:   server.client(),
+				Now:          frozenJWKSClock(jwksFixtureNow),
+				FetchTimeout: 500 * time.Millisecond,
+			})
+
+			// The first validation populates the cache from a healthy response, so a
+			// cached key stays available once the upstream stops making progress.
+			require.NoError(t, validateTestTokenKey(t, validator, "key-a", keyA))
+			require.EqualValues(t, 1, server.fetchCount())
+
+			hung := make(chan error, 1)
+			go func() {
+				_, err := validateTestToken(validator, signTestRS256Token(t, "key-b", keyB, testJWKSClaims(nil)))
+				hung <- err
+			}()
+			select {
+			case <-server.started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the slow upstream was never reached")
+			}
+
+			cachedStart := time.Now()
+			require.NoError(t, validateTestTokenKey(t, validator, "key-a", keyA),
+				"a cached key still validates while the upstream delivers no further body")
+			require.Less(t, time.Since(cachedStart), 500*time.Millisecond,
+				"the slow body holds no lock that blocks other validations")
+
+			unknownStart := time.Now()
+			_, unknownErr := validateTestToken(validator, signTestRS256Token(t, "key-c", keyC, testJWKSClaims(nil)))
+			require.Error(t, unknownErr, "an unknown kid fails closed while the body is stalled")
+			require.Less(t, time.Since(unknownStart), 3*time.Second,
+				"a validation that waits on the slow fetch is bounded")
+
+			select {
+			case err := <-hung:
+				require.Error(t, err, "the validation that started the slow fetch fails closed")
+			case <-time.After(5 * time.Second):
+				t.Fatal("the validation that started the slow fetch never returned")
+			}
+			require.EqualValues(t, 2, server.fetchCount(),
+				"a slow fetch is shared, not multiplied, by other validations")
+		})
+	}
+}
+
+// TestJWKSValidatorStateIsBounded proves the per-validator state stays inside
+// its bounds however many distinct attacker kids arrive.
+func TestJWKSValidatorStateIsBounded(t *testing.T) {
+	key := newTestRSAKey(t)
+	server := newJWKSTestServer(t, testJWK(t, "key-1", key))
+	state := newTestJWKSValidatorState(t, JWKSValidatorOptions{
+		Issuer:               jwksFixtureIssuer,
+		JWKSURI:              server.jwksURL(),
+		HTTPClient:           server.client(),
+		Now:                  frozenJWKSClock(jwksFixtureNow),
+		MaxWindowEntries:     8,
+		MaxUnknownKidFetches: 4,
+	})
+
+	for index := 0; index < 200; index++ {
+		kid := fmt.Sprintf("attacker-%d", index)
+		_, err := state.validate(nil, signTestRS256Token(t, kid, key, testJWKSClaims(nil)))
+		require.Error(t, err, "an unpublished kid is refused")
+	}
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	require.LessOrEqual(t, len(state.windows), 8, "the kid-window map stays inside its bound")
+	require.LessOrEqual(t, len(state.keys), defaultJWKSMaxKeyEntries, "the key cache stays inside its bound")
+}
+
+// TestJWKSValidatorKeyCacheEvictsTheEarliestInsertedKey proves the key cache is
+// bounded and evicts in document order, so its behavior is identical in every
+// runtime.
+func TestJWKSValidatorKeyCacheEvictsTheEarliestInsertedKey(t *testing.T) {
+	keyA, keyB, keyC := newTestRSAKey(t), newTestRSAKey(t), newTestRSAKey(t)
+	server := newJWKSTestServer(t,
+		testJWK(t, "key-a", keyA), testJWK(t, "key-b", keyB), testJWK(t, "key-c", keyC))
+	state := newTestJWKSValidatorState(t, JWKSValidatorOptions{
+		Issuer:        jwksFixtureIssuer,
+		JWKSURI:       server.jwksURL(),
+		HTTPClient:    server.client(),
+		Now:           frozenJWKSClock(jwksFixtureNow),
+		MaxKeyEntries: 2,
+	})
+
+	// Only MaxKeyEntries keys survive one fetch, so the validator is exercised
+	// through a key that is still cached; evicting a key fails closed rather
+	// than serving a stale one.
+	require.NoError(t, validateTestTokenKey(t, state.validate, "key-c", keyC))
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	require.Len(t, state.keys, 2, "the key cache never exceeds MaxKeyEntries")
+	_, keptB := state.keys["key-b"]
+	_, keptC := state.keys["key-c"]
+	require.True(t, keptB && keptC, "the last two document keys survive")
+	_, keptA := state.keys["key-a"]
+	require.False(t, keptA, "the earliest-inserted key is evicted first")
+}
+
+func newTestJWKSValidatorState(t *testing.T, options JWKSValidatorOptions) *jwksValidator {
+	t.Helper()
+	state, err := newJWKSValidatorState(options)
+	require.NoError(t, err)
+	return state
+}
+
+// TestHostGuardMatchesTheSharedClassificationTable pins the SSRF guard against
+// the address table all three runtimes execute.
+func TestHostGuardMatchesTheSharedClassificationTable(t *testing.T) {
+	var fixture discoveryFixture
+	loadMCPAuthFacadeFixture(t, "discovery-bootstrap.v1.json", &fixture)
+
+	guard := fixture.HostGuard
+	require.Contains(t, guard.Default, "not a public address", "the guard is on by default")
+	require.Contains(t, guard.Override, "off by default", "the override is documented")
+	require.ElementsMatch(t,
+		[]string{"loopback", "link_local", "private", "unspecified", "multicast", "public"},
+		guard.Classes)
+	require.NotEmpty(t, guard.Addresses, "the shared table must pin addresses")
+	require.Equal(t, guard.AddressCount, len(guard.Addresses),
+		"every shared host-guard address row must still be present")
+
+	exercised := make(map[string]bool, len(guard.Classes))
+	for _, row := range guard.Addresses {
+		t.Run(row.Address, func(t *testing.T) {
+			ip := net.ParseIP(row.Address)
+			require.NotNilf(t, ip, "the shared table must carry a parsable address: %s", row.Address)
+			require.Equalf(t, row.Public, isPublicHostAddress(ip), "row %s (%s)", row.Address, row.Class)
+		})
+		exercised[row.Class] = true
+	}
+	for _, class := range guard.Classes {
+		require.Truef(t, exercised[class], "the shared table must exercise the %s class", class)
+	}
+}
+
+// TestJWKSHostGuardIsInstalledAtConnectTime proves the framework transport hooks
+// the guard, and that the hook judges the address the dialer is about to use.
+func TestJWKSHostGuardIsInstalledAtConnectTime(t *testing.T) {
+	transport, ok := jwksHTTPClient(nil, 0, false).Transport.(*http.Transport)
+	require.True(t, ok, "the framework client must install its own guarded transport")
+	require.NotNil(t, transport.DialContext, "the guarded transport must dial through the guard")
+
+	require.ErrorIs(t, guardJWKSConnection("tcp", "127.0.0.1:443", nil), errHostNotPublic)
+	require.ErrorIs(t, guardJWKSConnection("tcp", "[::1]:443", nil), errHostNotPublic)
+	require.ErrorIs(t, guardJWKSConnection("tcp", "169.254.169.254:80", nil), errHostNotPublic)
+	require.ErrorIs(t, guardJWKSConnection("tcp", "10.0.0.1:443", nil), errHostNotPublic)
+	require.NoError(t, guardJWKSConnection("tcp", "8.8.8.8:443", nil))
+	require.NoError(t, guardJWKSConnection("tcp", "[2606:4700:4700::1111]:443", nil))
+
+	// The override pins the caller-facing transport instead of the guard.
+	overridden := jwksHTTPClient(nil, 0, true)
+	require.NotNil(t, overridden.Transport)
+	require.Same(t, http.DefaultTransport, overridden.Transport,
+		"allow-private must leave the default transport in place")
+}
+
+// TestJWKSValidatorRefusesNonPublicEndpoints proves the guard is active by
+// default for literal addresses and for names that resolve to a non-public
+// address, and that the documented override lifts it. Neither case reaches a
+// server.
+func TestJWKSValidatorRefusesNonPublicEndpoints(t *testing.T) {
+	endpoints := []string{
+		"https://127.0.0.1:1/jwks.json",
+		"https://localhost:1/jwks.json",
+		"https://169.254.169.254/jwks.json",
+	}
+	key := newTestRSAKey(t)
+	for _, endpoint := range endpoints {
+		t.Run(endpoint, func(t *testing.T) {
+			_, guardedErr := validateTestToken(newTestJWKSValidator(t, JWKSValidatorOptions{
+				Issuer:       jwksFixtureIssuer,
+				JWKSURI:      endpoint,
+				Now:          frozenJWKSClock(jwksFixtureNow),
+				FetchTimeout: 500 * time.Millisecond,
+			}), signTestRS256Token(t, "key-1", key, testJWKSClaims(nil)))
+			require.Error(t, guardedErr)
+			require.ErrorIs(t, guardedErr, errHostNotPublic,
+				"a non-public endpoint must be refused by the host guard")
+			require.Contains(t, guardedErr.Error(), "not a public address")
+
+			_, openErr := validateTestToken(newTestJWKSValidator(t, JWKSValidatorOptions{
+				Issuer:            jwksFixtureIssuer,
+				JWKSURI:           endpoint,
+				Now:               frozenJWKSClock(jwksFixtureNow),
+				FetchTimeout:      500 * time.Millisecond,
+				AllowPrivateHosts: true,
+			}), signTestRS256Token(t, "key-1", key, testJWKSClaims(nil)))
+			require.Error(t, openErr, "the endpoint stays unreachable")
+			require.NotErrorIs(t, openErr, errHostNotPublic,
+				"the documented allow-private override lifts the guard")
+		})
+	}
+}
+
+// TestBootstrapOIDCDiscoveryRefusesNonPublicEndpoints proves the guard covers
+// the discovery bootstrap, not only JWKS fetches.
+func TestBootstrapOIDCDiscoveryRefusesNonPublicEndpoints(t *testing.T) {
+	for _, discoveryURL := range []string{
+		"https://127.0.0.1:1/.well-known/openid-configuration",
+		"https://169.254.169.254/latest/meta-data/iam/security-credentials/",
+		"https://localhost:1/.well-known/openid-configuration",
+	} {
+		t.Run(discoveryURL, func(t *testing.T) {
+			_, err := BootstrapOIDCDiscovery(context.Background(), discoveryURL, "https://127.0.0.1:1", nil)
+			require.Error(t, err)
+			require.ErrorIs(t, err, errHostNotPublic)
+		})
+	}
+}
+
+// TestBootstrapOIDCDiscoveryHonorsACallerSuppliedTransport pins the transport
+// boundary the loopback opt-in rides on: a caller-supplied client is
+// caller-owned, so the framework never re-installs its host guard over it —
+// which is exactly what lets NewJWKSValidator's AllowPrivateHosts reach the
+// bootstrap, and what the TypeScript and Python bootstraps do with an injected
+// transport. Port 1 is closed, so the failure is a connection error rather than
+// a guard refusal.
+func TestBootstrapOIDCDiscoveryHonorsACallerSuppliedTransport(t *testing.T) {
+	loopback := "https://127.0.0.1:1/.well-known/openid-configuration"
+
+	_, err := BootstrapOIDCDiscovery(context.Background(), loopback, "https://127.0.0.1:1", &http.Client{})
+	require.Error(t, err)
+	require.NotErrorIs(t, err, errHostNotPublic,
+		"a caller-supplied transport keeps its own connection policy")
+	require.NotContains(t, err.Error(), "not a public address")
+
+	// With no caller transport the framework still installs its guarded default.
+	_, guardedErr := BootstrapOIDCDiscovery(context.Background(), loopback, "https://127.0.0.1:1", nil)
+	require.ErrorIs(t, guardedErr, errHostNotPublic)
+}
+
+// hungJWKSTestServer serves healthy key sets for the first healthyFetches
+// requests and then hangs every later request until the test releases it,
+// modeling a dead or hostile upstream.
+type hungJWKSTestServer struct {
+	server  *httptest.Server
+	key     map[string]string
+	fetches atomic.Int64
+	started chan struct{}
+	once    sync.Once
+	release func()
+}
+
+func newHungJWKSTestServer(t *testing.T, healthyFetches int, key map[string]string) *hungJWKSTestServer {
+	t.Helper()
+	hung := &hungJWKSTestServer{
+		key:     key,
+		started: make(chan struct{}),
+	}
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	hung.release = func() { releaseOnce.Do(func() { close(release) }) }
+
+	hung.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if int(hung.fetches.Add(1)) <= healthyFetches {
+			writeJWKSJSON(w, map[string]any{"keys": []map[string]string{hung.key}})
+			return
+		}
+		hung.once.Do(func() { close(hung.started) })
+		<-release
+		w.WriteHeader(http.StatusGatewayTimeout)
+	}))
+	// Cleanups run last-registered-first, so the blocked handler must be
+	// released BEFORE httptest.Server.Close waits for it.
+	t.Cleanup(hung.server.Close)
+	t.Cleanup(hung.release)
+	return hung
+}
+
+func (s *hungJWKSTestServer) jwksURL() string { return s.server.URL + "/jwks.json" }
+
+func (s *hungJWKSTestServer) client() *http.Client { return s.server.Client() }
+
+func (s *hungJWKSTestServer) fetchCount() int { return int(s.fetches.Load()) }
+
+// The two non-progressing response bodies the fetch bound is pinned against.
+const (
+	// jwksSlowBodyStalled sends the response headers and then no body at all.
+	jwksSlowBodyStalled = "stalled"
+	// jwksSlowBodyTrickled sends the response headers and then one byte at a
+	// time: a per-read timeout alone lets this run for as long as the upstream
+	// keeps dribbling.
+	jwksSlowBodyTrickled = "trickled"
+)
+
+// slowBodyJWKSTestServer serves a healthy key set for the first healthyFetches
+// requests and then answers every later request with headers that arrive
+// normally and a body that never makes progress (it stalls or trickles), so the
+// test suite pins the framework's end-to-end fetch bound against the shape a
+// headers-only timer cannot bound.
+type slowBodyJWKSTestServer struct {
+	server  *httptest.Server
+	key     map[string]string
+	mode    string
+	fetches atomic.Int64
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newSlowBodyJWKSTestServer(t *testing.T, mode string, healthyFetches int, key map[string]string) *slowBodyJWKSTestServer {
+	t.Helper()
+	slow := &slowBodyJWKSTestServer{
+		key:     key,
+		mode:    mode,
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	slow.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if int(slow.fetches.Add(1)) <= healthyFetches {
+			writeJWKSJSON(w, map[string]any{"keys": []map[string]string{slow.key}})
+			return
+		}
+		slow.once.Do(func() { close(slow.started) })
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			return
+		}
+		flusher.Flush()
+		if slow.mode == jwksSlowBodyStalled {
+			<-slow.release
+			return
+		}
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-slow.release:
+				return
+			case <-ticker.C:
+				if _, err := w.Write([]byte(" ")); err != nil {
+					return
+				}
+				flusher.Flush()
+			}
+		}
+	}))
+	// Cleanups run last-registered-first, so the blocked handler must be
+	// released BEFORE httptest.Server.Close waits for it.
+	t.Cleanup(slow.server.Close)
+	t.Cleanup(func() { close(slow.release) })
+	return slow
+}
+
+func (s *slowBodyJWKSTestServer) jwksURL() string { return s.server.URL + "/jwks.json" }
+
+func (s *slowBodyJWKSTestServer) client() *http.Client { return s.server.Client() }
+
+func (s *slowBodyJWKSTestServer) fetchCount() int { return int(s.fetches.Load()) }
+
+func validateTestTokenKey(t *testing.T, validator BearerTokenClaimsValidator, kid string, key *rsa.PrivateKey) error {
+	t.Helper()
+	_, err := validateTestToken(validator, signTestRS256Token(t, kid, key, testJWKSClaims(nil)))
+	return err
+}
 
 func frozenJWKSClock(instant time.Time) func() time.Time {
 	return func() time.Time { return instant }
