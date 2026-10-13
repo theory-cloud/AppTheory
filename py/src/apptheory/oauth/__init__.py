@@ -584,6 +584,12 @@ def _normalize_dcr_request(
     )
 
 
+from apptheory.oauth.jwks import (  # noqa: E402
+    JWKSValidatorOptions,
+    bootstrap_oidc_discovery,
+    new_jwks_validator,
+)
+
 __all__ = [
     "CONTEXT_KEY_BEARER_CLAIMS",
     "CONTEXT_KEY_BEARER_TOKEN",
@@ -603,17 +609,20 @@ __all__ = [
     "DynamicClientRegistrationPolicy",
     "DynamicClientRegistrationRequest",
     "DynamicClientRegistrationResponse",
+    "JWKSValidatorOptions",
     "OAuthBearerError",
     "ProtectedResourceMetadata",
     "RequireBearerTokenOptions",
     "authorization_server_metadata_handler",
     "bearer_token_claims_from_context",
     "bearer_token_from_headers",
+    "bootstrap_oidc_discovery",
     "canonical_resource_url",
     "canonicalize_issuer_url",
     "claude_dynamic_client_registration_policy",
     "insufficient_scope_www_authenticate",
     "new_authorization_server_metadata",
+    "new_jwks_validator",
     "new_memory_bearer_token_validator",
     "new_pkce_code_verifier",
     "new_protected_resource_metadata",

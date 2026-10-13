@@ -14,7 +14,7 @@ from apptheory.clock import ManualClock
 from apptheory.context import Context, WebSocketClientFactory
 from apptheory.errors import AppError, AppTheoryError
 from apptheory.ids import IdGenerator, ManualIdGenerator
-from apptheory.oauth import protected_resource_www_authenticate
+from apptheory.oauth import insufficient_scope_www_authenticate, protected_resource_www_authenticate
 from apptheory.request import Request
 from apptheory.response import Response
 
@@ -647,6 +647,41 @@ def assert_bearer_token_reaches_transport_handler(
         )
 
 
+def assert_insufficient_scope_transport_denied(
+    app: App,
+    method: str,
+    path: str,
+    token: str,
+    resource_metadata_url: str,
+    scopes: list[str],
+    handler: CountingTransportHandler,
+) -> None:
+    """Asserts the RFC 6750 insufficient_scope denial for a scope-starved token.
+
+    The request must return 403 carrying the exact WWW-Authenticate challenge
+    for scopes and resource_metadata_url plus the ``app.insufficient_scope``
+    body error code, and the application handler must never run.
+    """
+    response = app.serve(_transport_request(method, path, {"authorization": [f"Bearer {token}"]}))
+    if response.status != 403:
+        raise AssertionError(f"mcpfacade: insufficient-scope {method} {path}: status = {response.status}, want 403")
+    expected = insufficient_scope_www_authenticate(scopes, resource_metadata_url)
+    actual = _transport_header(response.headers, "www-authenticate")
+    if actual != expected:
+        raise AssertionError(
+            f"mcpfacade: insufficient-scope {method} {path}: www-authenticate = {actual!r}, want {expected!r}"
+        )
+    code = _transport_body_error_code(response)
+    if code != "app.insufficient_scope":
+        raise AssertionError(
+            f'mcpfacade: insufficient-scope {method} {path}: body error code = {code!r}, want "app.insufficient_scope"'
+        )
+    if handler.invocations != 0:
+        raise AssertionError(
+            f"mcpfacade: insufficient-scope {method} {path}: MCP handler invoked {handler.invocations} times, want 0"
+        )
+
+
 def _transport_request(method: str, path: str, headers: dict[str, list[str]] | None = None) -> Request:
     return Request(
         method=str(method).strip().upper(),
@@ -664,3 +699,13 @@ def _transport_header(headers: dict[str, Any], name: str) -> str:
             continue
         return str((values or [""])[0])
     return ""
+
+
+def _transport_body_error_code(response: Response) -> str:
+    try:
+        parsed = jsonlib.loads(bytes(response.body or b"").decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return ""
+    error = parsed.get("error") if isinstance(parsed, dict) else None
+    code = error.get("code") if isinstance(error, dict) else None
+    return code if isinstance(code, str) else ""
