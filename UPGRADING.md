@@ -267,22 +267,26 @@ AppTheory ships its first JWT/JWKS access-token validator in all three runtimes.
 `HS*` algorithm-confusion families are refused), requires a bounded `kid` cache with one cooldown-limited refresh per
 unknown kid **under a global unknown-kid fetch budget** (32 key-set fetches per 60-second window by default) and an
 expiry-driven rotation refresh, caps `kid` strings at 256 characters, and keeps the `kid`-window map and the key cache
-bounded and evicting (1024 windows / 128 keys). Every discovery and JWKS fetch is bounded by a 10-second framework
-timeout, so a hung or hostile upstream cannot stall validation, and a refresh never holds the key lock across the
-network. It checks the issuer before and after signature verification, enforces the route-derived audience/scope and an
-`azp`/`client_id` allow-list, and bootstraps OIDC discovery over HTTPS only, verifying the discovery issuer before
-trusting `jwks_uri` and refusing cross-origin redirects. Every failure path fails closed. The timeout and the budgets
-are framework defaults with a documented per-validator override (Go `FetchTimeout` / `MaxUnknownKidFetches` /
-`UnknownKidFetchWindow`, TypeScript `fetchTimeoutSeconds` / `maxUnknownKidFetches` /
-`unknownKidFetchWindowSeconds`, Python `http_timeout_seconds` / `max_unknown_kid_fetches` /
-`unknown_kid_fetch_window_seconds`).
+bounded and evicting (1024 windows / 128 keys). Every discovery and JWKS fetch is bounded end to end — the response
+headers and its body alike — by a 10-second framework timeout, so a hung, stalled, or trickling upstream cannot stall
+validation, and a refresh never holds the key lock across the network. It checks the issuer before and after signature
+verification, enforces the route-derived audience/scope and an `azp`/`client_id` allow-list — an absent `azp` falls back
+to `client_id`, while a present but blank `azp` is refused rather than falling back, identically in all three runtimes —
+and bootstraps OIDC discovery over HTTPS only, verifying the discovery issuer before trusting `jwks_uri` and refusing
+cross-origin redirects. Every failure path fails closed. The timeout and the budgets are framework defaults with a
+documented per-validator override (Go `FetchTimeout` / `MaxUnknownKidFetches` / `UnknownKidFetchWindow`, TypeScript
+`fetchTimeoutSeconds` / `maxUnknownKidFetches` / `unknownKidFetchWindowSeconds`, Python `http_timeout_seconds` /
+`max_unknown_kid_fetches` / `unknown_kid_fetch_window_seconds`).
 
 The framework's own JWKS/discovery transport refuses to connect to an endpoint host that is not a public address —
 loopback, link-local (including the cloud metadata address `169.254.169.254`), private, unspecified, or multicast —
 both for literal IPs and for the addresses a name resolves to at connect time, so there is no DNS-rebinding window
 between the check and the connection. Local development and the repository's loopback test suites opt in through the
-documented `allowPrivateHosts` (Go, TypeScript) / `allow_private_hosts` (Python) override; it is off by default and is
-never enabled by the framework itself.
+documented `AllowPrivateHosts` (Go) / `allowPrivateHosts` (TypeScript) / `allow_private_hosts` (Python) override; it is
+off by default and is never enabled by the framework itself. The standalone discovery bootstrap helpers
+(`BootstrapOIDCDiscovery`, `bootstrapOidcDiscovery`, `bootstrap_oidc_discovery`) take the transport as an injected
+client/fetch/`http_get`, so the same override reaches them: a caller-supplied transport keeps its own connection policy,
+and each helper installs the guard only when the framework chooses the transport itself.
 
 Denials now carry the route-derived challenge. A missing, malformed, invalid, or expired token returns `401` with
 `WWW-Authenticate: Bearer resource_metadata="<matched route's protected-resource metadata URL>"`. A scope failure
