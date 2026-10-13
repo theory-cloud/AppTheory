@@ -1259,7 +1259,11 @@ test("a response that stalls after its headers is bounded and cannot stall other
       otherElapsed < 2000,
       `the other validation must stay inside the bound, took ${otherElapsed}ms`,
     );
-    assert.equal(await hung, "rejected", "the hung call must fail closed");
+    assert.equal(
+      await Promise.race([hung, delay(2500, "timed_out")]),
+      "rejected",
+      "the hung call must fail closed",
+    );
   });
 });
 
