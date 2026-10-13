@@ -17,6 +17,16 @@ const expectations = JSON.parse(
   ),
 );
 
+const routeModel = JSON.parse(
+  fs.readFileSync(
+    path.resolve(
+      __dirname,
+      "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-route-model.v1.json",
+    ),
+    "utf8",
+  ),
+);
+
 function endpointFromFixture(endpoint) {
   return {
     kind: endpoint.kind,
@@ -67,6 +77,12 @@ test("shared expectations pin every section row count", () => {
 test("shared expectations pin constants and every template derivation", () => {
   const contract = expectations.contract;
   assert.equal(Algebra.CONTRACT_VERSION, contract.version);
+  assert.equal(Algebra.CONTRACT_VERSION, "m17.mcp-route-algebra/v2");
+  assert.equal(Algebra.CONTRACT_VERSION_V1, "m17.mcp-route-algebra/v1");
+  assert.equal(
+    Algebra.DEFAULT_CALLBACK_PATH,
+    routeModel.contract.default_callback_path,
+  );
   assert.equal(
     Algebra.PROTECTED_RESOURCE_PREFIX,
     contract.protected_resource_prefix,
@@ -107,6 +123,7 @@ test("shared expectations pin constants and every template derivation", () => {
       kind: row.kind,
       authorizePattern: row.authorize_path,
       tokenPattern: row.token_path,
+      registerPattern: row.register_path,
     })),
   );
   assert.deepEqual(
@@ -154,6 +171,11 @@ test("shared expectations pin every route derivation", () => {
     assert.equal(
       Algebra.authorizationTokenPathForResourcePath(row.input),
       row.token_path,
+      row.name,
+    );
+    assert.equal(
+      Algebra.authorizationRegisterPathForResourcePath(row.input),
+      row.register_path,
       row.name,
     );
     assert.equal(
@@ -248,6 +270,7 @@ test("shared expectations pin every concrete builder", () => {
     );
     assert.equal(Algebra.oauthAuthorizePath(endpoint), row.authorize_path);
     assert.equal(Algebra.oauthTokenPath(endpoint), row.token_path);
+    assert.equal(Algebra.oauthRegisterPath(endpoint), row.register_path);
     assert.equal(
       Algebra.oauthAuthorizationServerSuffixPath(endpoint),
       row.authorization_server_suffix_path,
@@ -279,8 +302,29 @@ test("all builders reject an invalid endpoint", () => {
     Algebra.oauthAuthorizationServerPath,
     Algebra.oauthAuthorizePath,
     Algebra.oauthTokenPath,
+    Algebra.oauthRegisterPath,
     Algebra.oauthAuthorizationServerSuffixPath,
   ]) {
     assert.throws(() => builder.call(Algebra, endpoint));
   }
+});
+
+test("v2 vocabulary pins the issuer modes and stage-global routes", () => {
+  assert.deepEqual(
+    Algebra.supportedIssuerModes(),
+    Object.keys(routeModel.issuer_modes),
+  );
+  assert.equal(Algebra.ISSUER_MODE_FAMILY, "family");
+  assert.equal(Algebra.ISSUER_MODE_ROUTE, "route");
+  assert.deepEqual(
+    Algebra.supportedStageGlobalRoutes(),
+    routeModel.stage_global.map((row) => ({
+      name: row.name,
+      pattern: row.pattern,
+      methods: row.methods,
+    })),
+  );
+  assert.deepEqual(Algebra.supportedStageGlobalRoutes(), [
+    { name: "upstream_callback", pattern: "/_oauth/mcp/callback", methods: ["GET"] },
+  ]);
 });

@@ -38,16 +38,41 @@ const routeModelFixture = JSON.parse(
 const posture = apptheory.AppTheoryMcpTransportPosture;
 const reachability = apptheory.AppTheoryMcpOriginReachability;
 
-// Fixture OAuth-surface route name -> the matching derived route-inventory field.
-// `register` and `upstream_callback` are v2 route-model rows the v1 construct
-// inventory does not derive yet, so any actual route for them would surface as
-// an uncovered synthesized key below.
+// Fixture OAuth-surface route name -> the matching derived route-inventory field,
+// the method the construct wires for it, and the v2 route-model key it must equal.
+// `upstream_callback` is not derived per kind, so it is driven from the route-model
+// table's stage-global row instead of this per-route map.
 const OAUTH_SURFACE_FIELDS = {
-  protected_resource: "protectedResourcePattern",
-  discovery_canonical: "discoveryCanonicalPattern",
-  discovery_suffix: "discoverySuffixPattern",
-  authorize: "authorizePattern",
-  token: "tokenPattern",
+  protected_resource: {
+    field: "protectedResourcePattern",
+    routeModelKey: "protected_resource_pattern",
+    method: "GET",
+  },
+  discovery_canonical: {
+    field: "discoveryCanonicalPattern",
+    routeModelKey: "discovery_canonical_pattern",
+    method: "GET",
+  },
+  discovery_suffix: {
+    field: "discoverySuffixPattern",
+    routeModelKey: "discovery_suffix_pattern",
+    method: "GET",
+  },
+  authorize: {
+    field: "authorizePattern",
+    routeModelKey: "authorize_pattern",
+    method: "GET",
+  },
+  token: {
+    field: "tokenPattern",
+    routeModelKey: "token_pattern",
+    method: "POST",
+  },
+  register: {
+    field: "registerPattern",
+    routeModelKey: "register_pattern",
+    method: "POST",
+  },
 };
 
 function handler(stack, id = "Fn") {
@@ -84,19 +109,46 @@ function expectedRouteAuthorizations(postureName, server) {
   const table = postureFixture.postures[postureName];
   assert.ok(table, `the posture table must define ${postureName}`);
   const expected = new Map();
+  let oauthSurfaceAttached = false;
   for (const route of server.routeInventory.routes) {
     for (const method of route.mcpMethods) {
       expected.set(`${method} ${route.mcpPattern}`, table.transport_authorization_type);
     }
     if (!route.authorizationRoutesAttached) continue;
-    for (const [name, field] of Object.entries(OAUTH_SURFACE_FIELDS)) {
+    oauthSurfaceAttached = true;
+    const routeModelRow = routeModelFixture.patterns.find(
+      (row) => row.mcp_pattern === route.mcpPattern,
+    );
+    assert.ok(routeModelRow, `${route.mcpPattern} must exist in the v2 route-model table`);
+    for (const [name, { field, routeModelKey, method }] of Object.entries(OAUTH_SURFACE_FIELDS)) {
       assert.ok(
         postureFixture.oauth_surface_routes.includes(name),
         `the posture table must export the ${name} OAuth surface route`,
       );
-      const pattern = route[field];
-      const method = name === "token" ? "POST" : "GET";
-      expected.set(`${method} ${pattern}`, table.oauth_surface_authorization_type);
+      assert.equal(
+        route[field],
+        routeModelRow[routeModelKey],
+        `${route.mcpPattern} ${name} must match the v2 route-model table`,
+      );
+      expected.set(`${method} ${route[field]}`, table.oauth_surface_authorization_type);
+    }
+  }
+  if (oauthSurfaceAttached) {
+    for (const route of routeModelFixture.stage_global) {
+      assert.ok(
+        postureFixture.oauth_surface_routes.includes(route.name),
+        `the posture table must export the ${route.name} stage-global route`,
+      );
+      assert.deepEqual(
+        server.routeInventory.callbackPattern,
+        route.pattern,
+        "the derived stage-global callback must match the v2 route-model table",
+      );
+      assert.equal(route.methods.length, 1, "the stage-global callback is one method");
+      expected.set(
+        `${route.methods[0]} ${route.pattern}`,
+        table.oauth_surface_authorization_type,
+      );
     }
   }
   return expected;
@@ -156,7 +208,7 @@ for (const postureName of Object.keys(postureFixture.postures)) {
 
     assert.deepEqual(
       [...actual.map((route) => route.key)],
-      [...expected.keys()].sort(),
+      [...expected.keys()].sort((left, right) => left.localeCompare(right)),
       `every synthesized ${postureName} route must carry an authorization expectation`,
     );
     for (const route of actual) {
@@ -200,11 +252,22 @@ test("AppTheoryMcpServer route inventory matches the v2 route-model table", () =
     assert.equal(route.discoverySuffixPattern, row.discovery_suffix_pattern);
     assert.equal(route.authorizePattern, row.authorize_pattern);
     assert.equal(route.tokenPattern, row.token_pattern);
+    assert.equal(route.registerPattern, row.register_pattern);
   }
   assert.equal(
     server.routeInventory.rootAuthorizationServerPattern,
     routeModelFixture.contract.authorization_server_prefix,
     "the root discovery route must be the unscoped canonical discovery path",
+  );
+  assert.equal(
+    server.routeInventory.contractVersion,
+    routeModelFixture.contract.id,
+    "the inventory contract version must be the v2 route-algebra contract",
+  );
+  assert.equal(
+    server.routeInventory.callbackPattern,
+    routeModelFixture.contract.default_callback_path,
+    "the stage-global callback must be the v2 route-model default",
   );
 });
 

@@ -164,6 +164,7 @@ export interface AppTheoryMcpServerFacadeRoute {
     readonly discoverySuffixPattern: string;
     readonly authorizePattern: string;
     readonly tokenPattern: string;
+    readonly registerPattern: string;
     readonly authorizationRoutesAttached: boolean;
 }
 /** Defensive snapshot of the construct's derived facade inventory. */
@@ -172,6 +173,7 @@ export interface AppTheoryMcpServerRouteInventory {
     readonly routes: AppTheoryMcpServerFacadeRoute[];
     readonly rootAuthorizationServerPattern: string;
     readonly rootAuthorizationServerAttached: boolean;
+    readonly callbackPattern: string;
 }
 /** Props for the AppTheoryMcpServer construct. */
 export interface AppTheoryMcpServerProps {

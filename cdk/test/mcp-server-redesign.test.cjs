@@ -63,7 +63,8 @@ function publicRouteKeys() {
     `GET ${route.discovery_suffix_pattern}`,
     `GET ${route.authorize_pattern}`,
     `POST ${route.token_pattern}`,
-  ]);
+    `POST ${route.register_pattern}`,
+  ]).concat([`GET ${fixture.callback_pattern}`]);
 }
 
 function fixtureRouteKeys() {
@@ -74,7 +75,8 @@ function fixtureRouteKeys() {
     `GET ${route.discovery_suffix_pattern}`,
     `GET ${route.authorize_pattern}`,
     `POST ${route.token_pattern}`,
-  ]).sort();
+    `POST ${route.register_pattern}`,
+  ]).concat([`GET ${fixture.callback_pattern}`]).sort();
 }
 
 function inventoryFromFixture() {
@@ -88,10 +90,12 @@ function inventoryFromFixture() {
       discoverySuffixPattern: route.discovery_suffix_pattern,
       authorizePattern: route.authorize_pattern,
       tokenPattern: route.token_pattern,
+      registerPattern: route.register_pattern,
       authorizationRoutesAttached: route.authorization_routes_attached,
     })),
     rootAuthorizationServerPattern: fixture.root_authorization_server_pattern,
     rootAuthorizationServerAttached: fixture.root_authorization_server_attached,
+    callbackPattern: fixture.callback_pattern,
   };
 }
 
@@ -274,6 +278,8 @@ test("AppTheoryMcpServer attach mode wires the runtime inventory without owning 
   assert.ok(keys.has("GET /{client_namespace}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server"));
   assert.ok(keys.has("GET /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/authorize"));
   assert.ok(keys.has("POST /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/token"));
+  assert.ok(keys.has("POST /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/register"));
+  assert.ok(keys.has("GET /_oauth/mcp/callback"));
 });
 
 test("AppTheoryMcpServer attach mode synthesizes an API imported by id only", () => {
@@ -366,7 +372,7 @@ test("AppTheoryMcpServer derives every facade route for parameterized family mem
   const keys = new Set(routeKeys(assertions.Template.fromStack(stack).toJSON()));
 
   assert.deepEqual(server.mcpPaths, patterns);
-  assert.equal(keys.size, 16);
+  assert.equal(keys.size, 19);
   for (const route of server.routeInventory.routes) {
     assert.equal(
       route.protectedResourcePattern,
@@ -388,12 +394,21 @@ test("AppTheoryMcpServer derives every facade route for parameterized family mem
       route.tokenPattern,
       apptheory.AppTheoryMcpRouteAlgebra.authorizationTokenPathForResourcePath(route.mcpPattern),
     );
+    assert.equal(
+      route.registerPattern,
+      apptheory.AppTheoryMcpRouteAlgebra.authorizationRegisterPathForResourcePath(route.mcpPattern),
+    );
   }
   assert.ok(keys.has("POST /{tenant}/agents/{agent_id}/mcp"));
   assert.ok(keys.has("GET /.well-known/oauth-protected-resource/{tenant}/agents/{agent_id}/mcp"));
   assert.ok(keys.has("GET /{tenant}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server"));
   assert.ok(keys.has("GET /.well-known/oauth-authorization-server/{tenant}/agents/{agent_id}/mcp/authorize"));
   assert.ok(keys.has("POST /.well-known/oauth-authorization-server/{tenant}/agents/{agent_id}/mcp/token"));
+  assert.ok(keys.has("POST /.well-known/oauth-authorization-server/{tenant}/agents/{agent_id}/mcp/register"));
+  assert.ok(
+    keys.has(`GET ${server.routeInventory.callbackPattern}`),
+    "the stage-global callback must be wired once for the whole family",
+  );
 });
 
 test("AppTheoryMcpServer owned mode turns production defaults on", () => {
