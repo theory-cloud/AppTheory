@@ -55,8 +55,9 @@ Consequences, stated so M1 needs no interpretation:
 
 `transportPosture` is a single selection: `iam` | `jwt` | `runtime-bearer` | `none-public`. `unauthenticatedMcp`
 is removed. Selecting `runtime-bearer` is paired with the runtime posture at registration and synth (§Failure
-behavior). Selecting `none-public` is explicit, requires `rootAuthorizationServerDiscovery` to be either off
-or explicitly declared public, and is pinned by the conformance kit.
+behavior). Selecting `none-public` is explicit and is pinned by the conformance kit; **operator decision
+(2026-10-12), security-lean:** `none-public` combined with `rootAuthorizationServerDiscovery` remains a **hard
+synthesis error** (the recommendation below to relax it was NOT taken).
 
 - **Keeps the M2 goal:** credential-free requests still never reach an application handler on transport
   routes; the posture is explicit, fail-closed, and test-pinned.
@@ -119,8 +120,11 @@ in M3, each for Go/TS/Py/CDK together. There is no milestone in which the pairin
 
 ## Operator decisions requested
 
-1. Accept Option A (facade-scoped default flip) — **recommended**, or choose B/C with reasons.
-2. Accept removing `unauthenticatedMcp` in favor of `transportPosture` (no alias, no shim).
-3. Accept that `none-public` composes with `rootAuthorizationServerDiscovery` when both are explicitly
-   declared public (today the construct throws); confirm the defense-in-depth floor in `DEFENSE_IN_DEPTH.md`
-   is the intended safeguard instead of a hard throw.
+1. ~~Accept Option A (facade-scoped default flip)~~ — **accepted (operator, 2026-10-12)**; implemented in M1.
+2. ~~Accept removing `unauthenticatedMcp` in favor of `transportPosture` (no alias, no shim)~~ — **accepted
+   (operator, 2026-10-12)**; implemented in M1.
+3. ~~Accept that `none-public` composes with `rootAuthorizationServerDiscovery` when both are explicitly
+   declared public~~ — **overruled (operator, 2026-10-12, security-lean): the hard synthesis error is kept**;
+   `none-public` + `rootAuthorizationServerDiscovery` does not synthesize. The defense-in-depth floor in
+   `DEFENSE_IN_DEPTH.md` is the safeguard for the public posture, and `none-public` registers no OAuth surface
+   at all (M2).

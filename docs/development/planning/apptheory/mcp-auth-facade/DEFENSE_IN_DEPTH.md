@@ -40,8 +40,10 @@ produces no auth denials and has nothing to signal — its only signal is the AP
 - **Why:** runtime bearer is fail-closed per request, but direct reachability changes who can reach that gate
   and whether the edge restoration/throttle path applies. It must be a decided, recorded posture — not an
   accident of deployment shape.
-- **How:** a required `originReachability` decision on the construct (`disabled` | `locked` | `direct`), where
-  `direct` is allowed only with DD-1 satisfied and is called out in the deploy receipt.
+- **How:** a required `originReachability` decision on the construct (`disabled` | `locked`). **Operator decision
+  (2026-10-12), security-lean:** a directly reachable origin (`direct`) is **not** allowed under `runtime-bearer` or
+  `none-public`; the construct refuses `direct` at synthesis. This overrules the earlier recommendation in this
+  document's open decisions.
 - **Enforceable at synth:** yes (presence + mutual-exclusion checks).
 
 ### DD-3 — Denial telemetry replacement
@@ -101,9 +103,10 @@ and DD-5 — those are runtime/optional concerns pinned by fixtures and lab rece
 
 ## Open decisions
 
-1. Whether `originReachability: direct` should be allowed at all under `runtime-bearer`, or whether the
-   construct should require `disabled`/`locked` (recommend: allow `direct` with DD-1 + a receipt flag, because
-   a locked origin is a CloudFront dependency an app may not want).
-2. The exact bounded dimension set for `apptheory.mcp.auth_denied` (recommend: outcome + route family only).
+1. ~~Whether `originReachability: direct` should be allowed at all under `runtime-bearer`~~ — **decided (operator,
+   2026-10-12, security-lean): `direct` is NOT allowed; only `disabled` or `locked` synthesize.** Recorded in DD-2
+   above and implemented in `cdk/lib/mcp-server.ts`.
+2. The exact bounded dimension set for `apptheory.mcp.auth_denied` — **decided (operator, 2026-10-12): outcome +
+   route family only**; the construct pins exactly `["outcome","route_family"]`.
 3. Whether the access-log requirement is mandatory for `runtime-bearer` even when the runtime denial signal is
-   declared (recommend: mandatory; it is the coarse availability signal).
+   declared — **decided (operator, 2026-10-12): mandatory**; it is the coarse availability signal.
