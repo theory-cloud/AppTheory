@@ -66,8 +66,8 @@ class NonTerminalCodeStore extends MemoryAuthorizationCodeStore {
   async consume(codeHash) {
     const result = await super.consume(codeHash);
     if (!result) return result;
-    if (result.replayed || result.record?.status === "expired") {
-      return { record: result.record, replayed: false };
+    if (result.replayed || result.expired) {
+      return { record: result.record, replayed: false, expired: false };
     }
     return result;
   }
@@ -125,6 +125,8 @@ const BROKEN_BUNDLES = [
       "store.authorization_code.expired_consume_then_replay",
       "store.authorization_code.clock_back_after_consume_is_replayed",
       "store.authorization_code.clock_back_after_expired_burn_is_replayed",
+      "store.authorization_code.consume_record_payload_live",
+      "store.authorization_code.consume_record_payload_expired_burn",
     ],
   },
   {
@@ -160,15 +162,15 @@ async function failingCaseIds(build, cases) {
   return failed;
 }
 
-test("store conformance fixture carries 35 cases", () => {
-  assert.equal(CASES.length, 35);
-  assert.equal(new Set(CASES.map((c) => c.id)).size, 35);
+test("store conformance fixture carries 37 cases", () => {
+  assert.equal(CASES.length, 37);
+  assert.equal(new Set(CASES.map((c) => c.id)).size, 37);
 });
 
 test("the in-memory reference stores satisfy the store conformance table", async () => {
   const clock = new ManualClock(EPOCH);
   const result = await runStoreConformance(newStores(clock), CASES, clock);
-  assert.equal(result.ran, 35);
+  assert.equal(result.ran, 37);
   console.log(
     `store conformance: ${result.ran}/${CASES.length} cases passed (in-memory reference stores)`,
   );

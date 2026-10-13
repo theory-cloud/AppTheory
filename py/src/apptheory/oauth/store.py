@@ -171,10 +171,17 @@ class RateLimitResult:
 
 @dataclass(slots=True)
 class ConsumeResult:
-    """A consumed code record plus whether it was already consumed."""
+    """A consumed code record plus the terminal signal of the consume.
 
-    record: AuthorizationCodeRecord = field(default_factory=AuthorizationCodeRecord)
+    The stored record is returned unmutated (its ``status`` and ``version`` are
+    the caller's, as in Go's in-memory reference store); ``replayed`` marks a
+    later consume of an already-burned code and ``expired`` marks a first
+    consume of a code past its TTL.
+    """
+
+    record: AuthorizationCodeRecord | None = None
     replayed: bool = False
+    expired: bool = False
 
 
 class TransactionStore(Protocol):
@@ -284,6 +291,7 @@ class MemoryAuthorizationCodeStore:
         self._now = now or _utc_now
         self._ttl = ttl
         self._records: dict[str, AuthorizationCodeRecord] = {}
+        self._consumed: set[str] = set()
         self._lock = threading.Lock()
 
     def put(self, record: AuthorizationCodeRecord) -> None:
@@ -294,28 +302,31 @@ class MemoryAuthorizationCodeStore:
             stored.expires_at = self._now() + timedelta(seconds=self._ttl)
         with self._lock:
             self._records[stored.code_hash] = stored
+            self._consumed.discard(stored.code_hash)
 
     def consume(self, code_hash: str) -> ConsumeResult | None:
         """Consume-once, retaining the record so replay is distinguishable.
 
-        A replay returns the *stored* record's terminal status with
-        ``replayed=True``; it is never re-derived from the current clock, so a
-        clock that has moved past the TTL cannot restamp a replay. First-consume
-        behaviour is unchanged: a live code becomes ``consumed``, and an expired
-        code is burned as ``expired`` on the first consume.
+        The stored record is returned unmutated -- its status and version are
+        the caller's, exactly as Go's in-memory reference store does -- and the
+        terminal signal travels on the result instead: a replay sets
+        ``replayed``, and a first consume of an expired code sets ``expired``.
+        Both are terminal no matter which way the clock moves, so a clock that
+        has moved past the TTL cannot restamp a replay.
         """
         with self._lock:
             stored = self._records.get(code_hash)
             if stored is None:
                 return None
-            if stored.status in (STATUS_CONSUMED, STATUS_EXPIRED):
-                return ConsumeResult(record=_copy_record(stored), replayed=True)
-            if _is_expired(stored.expires_at, self._now()):
-                stored.status = STATUS_EXPIRED
-            else:
-                stored.status = STATUS_CONSUMED
-            stored.version += 1
-            return ConsumeResult(record=_copy_record(stored), replayed=False)
+            if code_hash in self._consumed:
+                return ConsumeResult(record=_copy_record(stored), replayed=True, expired=False)
+            self._consumed.add(code_hash)
+            expired = _is_expired(stored.expires_at, self._now())
+            return ConsumeResult(
+                record=None if expired else _copy_record(stored),
+                replayed=False,
+                expired=expired,
+            )
 
 
 class MemoryClientStore:
@@ -590,7 +601,7 @@ def _authorization_code_outcome(result: ConsumeResult | None) -> str:
     # must report the replay rather than resurrect or re-expire the record.
     if result.replayed:
         return "replayed"
-    if result.record.status == STATUS_EXPIRED:
+    if result.expired:
         return "expired"
     return "ok"
 
@@ -731,6 +742,35 @@ def _scenario_authorization_code_clock_back_after_expired_consume(
     clock.advance(timedelta(seconds=-int(params["clock_back_seconds"])))
     after = _authorization_code_outcome(store.consume("code-hash"))
     _assert_expected(expect, {"first": first, "after_clock_back": after})
+
+
+def _scenario_authorization_code_consume_record_payload(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    store = _authorization_code_store(stores, clock, _ttl_param(params))
+    store.put(AuthorizationCodeRecord(code_hash="code-hash"))
+    clock.advance(timedelta(seconds=int(params.get("advance_seconds", 0))))
+    first = store.consume("code-hash")
+    replay = store.consume("code-hash")
+
+    def fields(result: Any) -> dict[str, Any]:
+        if result is None or result.record is None:
+            return {"status": "none", "version": -1}
+        return {"status": result.record.status, "version": result.record.version}
+
+    first_fields = fields(first)
+    replay_fields = fields(replay)
+    _assert_expected(
+        expect,
+        {
+            "first": _authorization_code_outcome(first),
+            "first_status": first_fields["status"],
+            "first_version": first_fields["version"],
+            "replay": _authorization_code_outcome(replay),
+            "replay_status": replay_fields["status"],
+            "replay_version": replay_fields["version"],
+        },
+    )
 
 
 def _scenario_authorization_code_concurrent_consume(
@@ -1041,6 +1081,7 @@ _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
     ),
     ("authorization_code", "consume_unknown"): _scenario_authorization_code_consume_unknown,
     ("authorization_code", "consume_after_ttl"): _scenario_authorization_code_consume_after_ttl,
+    ("authorization_code", "consume_record_payload"): _scenario_authorization_code_consume_record_payload,
     ("authorization_code", "consume_after_ttl_then_replay"): (
         _scenario_authorization_code_consume_after_ttl_then_replay
     ),

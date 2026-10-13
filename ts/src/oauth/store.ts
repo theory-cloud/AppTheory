@@ -123,8 +123,14 @@ export interface AuthorizationCodeStore {
 }
 
 export interface AuthorizationCodeConsumeResult {
-  record: AuthorizationCodeRecord;
+  /**
+   * The stored record, returned unmutated. Null on the first consume of an
+   * expired code, which Go's reference store reports as no record.
+   */
+  record: AuthorizationCodeRecord | null;
   replayed: boolean;
+  /** True when the first consume found the code past its TTL. */
+  expired: boolean;
 }
 
 /** Registered clients. Update is compare-and-swap on version. */
@@ -287,6 +293,7 @@ export interface MemoryAuthorizationCodeStoreOptions {
 /** In-memory reference AuthorizationCodeStore. */
 export class MemoryAuthorizationCodeStore implements AuthorizationCodeStore {
   private readonly records = new Map<string, AuthorizationCodeRecord>();
+  private readonly consumed = new Set<string>();
   private readonly now: () => Date;
   private readonly ttlSeconds: number;
 
@@ -300,36 +307,37 @@ export class MemoryAuthorizationCodeStore implements AuthorizationCodeStore {
     if (expiryMs(stored.expiresAt) === null) {
       stored.expiresAt = this.defaultExpiry();
     }
+    stored.version = positiveInteger(stored.version, 1);
     this.records.set(stored.codeHash, stored);
+    this.consumed.delete(stored.codeHash);
     return Promise.resolve();
   }
 
   /**
    * Consume-once, but the record is retained so a replay is distinguishable
-   * from an unknown code. `consumed` and `expired` are both terminal: a
-   * terminal code stays terminal no matter which way the clock moves, so a
-   * backwards clock can never make a burned code fresh again.
+   * from an unknown code. The stored record is returned unmutated — its status
+   * and version are the caller's, exactly as Go's in-memory reference store
+   * does — and the terminal signal travels on the result instead: a replayed
+   * code sets `replayed`, and a first consume of an expired code sets `expired`.
+   * Both are terminal no matter which way the clock moves, so a backwards clock
+   * can never make a burned code fresh again.
    */
   consume(codeHash: string): Promise<AuthorizationCodeConsumeResult | null> {
     const record = this.records.get(codeHash);
     if (!record) return Promise.resolve(null);
-    if (record.status === "consumed" || record.status === "expired") {
+    if (this.consumed.has(codeHash)) {
       return Promise.resolve({
         record: structuredClone(record),
         replayed: true,
+        expired: false,
       });
     }
-    if (this.expired(record.expiresAt)) {
-      record.status = "expired";
-      return Promise.resolve({
-        record: structuredClone(record),
-        replayed: false,
-      });
-    }
-    record.status = "consumed";
+    this.consumed.add(codeHash);
+    const expired = this.expired(record.expiresAt);
     return Promise.resolve({
-      record: structuredClone(record),
+      record: expired ? null : structuredClone(record),
       replayed: false,
+      expired,
     });
   }
 
@@ -703,6 +711,31 @@ async function runStoreCase(
       return {
         first: authorizationCodeOutcome(first),
         second: authorizationCodeOutcome(second),
+      };
+    }
+    case "consume_record_payload": {
+      const ttlSeconds = numberParam(params, "ttl_seconds", 60);
+      await stores.authorizationCode.put(
+        authorizationCodeRecord(key, addSeconds(clock.now(), ttlSeconds)),
+      );
+      clock.advance(numberParam(params, "advance_seconds", 0) * 1000);
+      const first = await stores.authorizationCode.consume(key);
+      const replay = await stores.authorizationCode.consume(key);
+      const fields = (
+        result: AuthorizationCodeConsumeResult | null,
+      ): { status: string; version: number } =>
+        result === null || result.record === null
+          ? { status: "none", version: -1 }
+          : { status: result.record.status, version: result.record.version };
+      const firstFields = fields(first);
+      const replayFields = fields(replay);
+      return {
+        first: authorizationCodeOutcome(first),
+        first_status: firstFields.status,
+        first_version: firstFields.version,
+        replay: authorizationCodeOutcome(replay),
+        replay_status: replayFields.status,
+        replay_version: replayFields.version,
       };
     }
     case "concurrent_consume": {
@@ -1126,7 +1159,7 @@ function authorizationCodeOutcome(
 ): string {
   if (!result) return "not_found";
   if (result.replayed) return "replayed";
-  if (result.record.status === "expired") return "expired";
+  if (result.expired) return "expired";
   return "ok";
 }
 

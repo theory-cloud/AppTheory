@@ -47,8 +47,8 @@ class NonTerminalCodeStore(MemoryAuthorizationCodeStore):
 
     def consume(self, code_hash: str) -> ConsumeResult | None:
         result = super().consume(code_hash)
-        if result is not None and (result.replayed or result.record.status == STATUS_EXPIRED):
-            return ConsumeResult(record=result.record, replayed=False)
+        if result is not None and (result.replayed or result.expired):
+            return ConsumeResult(record=result.record, replayed=False, expired=False)
         return result
 
 
@@ -106,7 +106,7 @@ class StoreConformanceTests(unittest.TestCase):
 
     def test_fixture_table_is_complete(self) -> None:
         cases = self.fixture["cases"]
-        self.assertEqual(len(cases), 35)
+        self.assertEqual(len(cases), 37)
         self.assertEqual(
             {case["store"] for case in cases},
             {"transaction", "authorization_code", "client", "route_refresh_broker", "rate_limit"},
@@ -117,16 +117,17 @@ class StoreConformanceTests(unittest.TestCase):
         cases = self.fixture["cases"]
         ran = run_store_conformance(STORE_CLASSES, cases, self.clock)
         print(f"store conformance: {ran} cases run")
-        self.assertEqual(ran, 35)
-        self.assertEqual(len(cases), 35)
+        self.assertEqual(ran, 37)
+        self.assertEqual(len(cases), 37)
 
     def test_every_scenario_is_exercised(self) -> None:
         # Bidirectional: dropping or duplicating a shared row must fail here
         # rather than silently shrinking coverage. Distinct (store, scenario)
-        # pairs are one fewer than the 35 rows: the broker TTL boundary is
-        # probed by two rows that share one scenario.
+        # pairs are two fewer than the 37 rows: the broker TTL boundary is
+        # probed by two rows that share one scenario, and the code payload rows
+        # share the consume_record_payload scenario.
         pairs = {(case["store"], case["scenario"]) for case in self.fixture["cases"]}
-        self.assertEqual(len(pairs), 34)
+        self.assertEqual(len(pairs), 35)
 
 
 class TransactionStoreTests(unittest.TestCase):
@@ -166,16 +167,19 @@ class AuthorizationCodeStoreTests(unittest.TestCase):
         self.assertTrue(second.replayed)
         self.assertIsNone(self.store.consume("unknown"))
 
-    def test_replay_returns_the_stored_terminal_status(self) -> None:
+    def test_replay_returns_the_retained_record_unmutated(self) -> None:
         self.store.put(AuthorizationCodeRecord(code_hash="c"))
         self.store.consume("c")
         self.clock.advance(dt.timedelta(seconds=61))
         replayed = self.store.consume("c")
         self.assertIsNotNone(replayed)
         self.assertTrue(replayed.replayed)
-        # The returned status is the stored terminal status, not re-derived from
-        # the current clock: a replay never re-stamps the record it returns.
-        self.assertEqual(replayed.record.status, "consumed")
+        self.assertFalse(replayed.expired)
+        # The store returns the retained record unmutated -- its status and
+        # version are the caller's, as in Go's reference store -- so a replay
+        # never re-stamps the record it returns.
+        self.assertEqual(replayed.record.status, "issued")
+        self.assertEqual(replayed.record.version, 1)
 
     def test_expired_code_is_burned_expired_on_first_consume_then_replayed(self) -> None:
         self.store.put(AuthorizationCodeRecord(code_hash="e"))
@@ -183,11 +187,13 @@ class AuthorizationCodeStoreTests(unittest.TestCase):
         first = self.store.consume("e")
         self.assertIsNotNone(first)
         self.assertFalse(first.replayed)
-        self.assertEqual(first.record.status, "expired")
+        self.assertTrue(first.expired)
+        # A first consume of an expired code returns no record, matching Go.
+        self.assertIsNone(first.record)
         second = self.store.consume("e")
         self.assertIsNotNone(second)
         self.assertTrue(second.replayed)
-        self.assertEqual(second.record.status, "expired")
+        self.assertEqual(second.record.status, "issued")
 
 
 class ClientStoreTests(unittest.TestCase):
@@ -400,6 +406,8 @@ class StoreConformanceNonVacuityTests(unittest.TestCase):
                 "store.authorization_code.expired_consume_then_replay",
                 "store.authorization_code.clock_back_after_consume_is_replayed",
                 "store.authorization_code.clock_back_after_expired_burn_is_replayed",
+                "store.authorization_code.consume_record_payload_live",
+                "store.authorization_code.consume_record_payload_expired_burn",
             ],
         )
 

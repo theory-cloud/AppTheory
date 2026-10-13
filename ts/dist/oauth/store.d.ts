@@ -106,8 +106,14 @@ export interface AuthorizationCodeStore {
     consume(codeHash: string): Promise<AuthorizationCodeConsumeResult | null>;
 }
 export interface AuthorizationCodeConsumeResult {
-    record: AuthorizationCodeRecord;
+    /**
+     * The stored record, returned unmutated. Null on the first consume of an
+     * expired code, which Go's reference store reports as no record.
+     */
+    record: AuthorizationCodeRecord | null;
     replayed: boolean;
+    /** True when the first consume found the code past its TTL. */
+    expired: boolean;
 }
 /** Registered clients. Update is compare-and-swap on version. */
 export interface ClientStore {
@@ -207,15 +213,19 @@ export interface MemoryAuthorizationCodeStoreOptions {
 /** In-memory reference AuthorizationCodeStore. */
 export declare class MemoryAuthorizationCodeStore implements AuthorizationCodeStore {
     private readonly records;
+    private readonly consumed;
     private readonly now;
     private readonly ttlSeconds;
     constructor(options?: MemoryAuthorizationCodeStoreOptions);
     put(record: AuthorizationCodeRecord): Promise<void>;
     /**
      * Consume-once, but the record is retained so a replay is distinguishable
-     * from an unknown code. `consumed` and `expired` are both terminal: a
-     * terminal code stays terminal no matter which way the clock moves, so a
-     * backwards clock can never make a burned code fresh again.
+     * from an unknown code. The stored record is returned unmutated — its status
+     * and version are the caller's, exactly as Go's in-memory reference store
+     * does — and the terminal signal travels on the result instead: a replayed
+     * code sets `replayed`, and a first consume of an expired code sets `expired`.
+     * Both are terminal no matter which way the clock moves, so a backwards clock
+     * can never make a burned code fresh again.
      */
     consume(codeHash: string): Promise<AuthorizationCodeConsumeResult | null>;
     private expired;
