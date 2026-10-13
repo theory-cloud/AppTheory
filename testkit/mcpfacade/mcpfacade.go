@@ -4,8 +4,9 @@
 // The helpers implement Layer B of the MCP auth facade conformance kit
 // (docs/development/planning/apptheory/mcp-auth-facade/CONFORMANCE_KIT.md): a
 // credential-free request to a transport route is denied with the RFC 9728
-// challenge and never reaches the application handler, while an accepted bearer
-// token does reach it.
+// challenge and never reaches the application handler, a token that is missing a
+// route-required scope is denied with the RFC 6750 insufficient_scope challenge
+// and likewise never reaches it, while an accepted bearer token does reach it.
 package mcpfacade
 
 import (
@@ -84,6 +85,29 @@ func AssertBearerTokenReachesHandler(tb testing.TB, env *testkit.Env, app *appth
 	}
 	if got := handler.Invocations(); got != before+1 {
 		tb.Fatalf("bearer %s %s: MCP handler invocations = %d, want %d", method, path, got, before+1)
+	}
+}
+
+// AssertInsufficientScopeRemediation drives a bearer request to method path
+// through env and asserts the RFC 6750 insufficient_scope denial for a token
+// that is otherwise valid: HTTP 403 with the exact WWW-Authenticate challenge
+// expectedChallenge, and no invocation of the application handler.
+//
+// expectedChallenge is compared verbatim, so a caller passes the challenge the
+// matched route's scope map produces, for example
+// `Bearer error="insufficient_scope", scope="namespace:use", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp"`.
+func AssertInsufficientScopeRemediation(tb testing.TB, env *testkit.Env, app *apptheory.App, method, path, token, expectedChallenge string, handler *Handler) {
+	tb.Helper()
+	before := handler.Invocations()
+	response := invokeTransport(tb, env, app, method, path, map[string]string{"authorization": "Bearer " + token})
+	if response.StatusCode != http.StatusForbidden {
+		tb.Fatalf("insufficient-scope %s %s: status = %d, want 403", method, path, response.StatusCode)
+	}
+	if got := response.Headers["www-authenticate"]; got != expectedChallenge {
+		tb.Fatalf("insufficient-scope %s %s: www-authenticate = %q, want %q", method, path, got, expectedChallenge)
+	}
+	if got := handler.Invocations(); got != before {
+		tb.Fatalf("insufficient-scope %s %s: MCP handler invoked %d times, want 0 additional invocations", method, path, got-before)
 	}
 }
 
