@@ -56,6 +56,11 @@ operator-facing API guidance. Keep these human-authored groups current when the 
   `buildSQSEvent`, `buildKinesisEvent`, and the corresponding `serve*` entrypoints.
 - MCP/OAuth surfaces: `McpServer`, registries, in-memory/Dynamo stores, bearer-token middleware, metadata handlers,
   DCR, PKCE, and protected-resource helpers.
+- MCP transport posture: `registerMcpFacade` registers the facade routes with one explicit `McpTransportPosture`
+  (`iam` | `jwt` | `runtime-bearer` | `none-public`) and fails closed when the posture and the runtime bearer
+  assertion disagree. The testkit helpers `countingTransportHandler`, `assertCredentialFreeTransportDenied`, and
+  `assertBearerTokenReachesTransportHandler` pin that a credential-free transport request is denied before it reaches
+  the handler, and that a valid bearer token does reach it.
 - Storage and data helpers: `ObjectStore`, `ObjectRef`, `createS3ObjectStore`, `ObjectStoreUploadGranter`, `DynamoJobLedger`, and rate-limit
   primitives.
 - Semantic vector helpers: `VectorStore`, `VectorRecord`, `QueryHit`, `SemanticIndex`, `SemanticRecord`,
@@ -78,13 +83,13 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>720 exported top-level symbols</summary>
+<summary>728 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest
 APIGatewayProxyResponse, APIGatewayV2HTTPRequest, APIGatewayV2HTTPResponse, APIGatewayWebSocketProxyRequest, App
 AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError
-AppTheoryErrorDetails, appTheoryErrorFromAppError, AppTheoryErrorOptions, AtomicRateLimiter, Authenticated, AuthenticatedAnyOf, AuthHook
+AppTheoryErrorDetails, appTheoryErrorFromAppError, AppTheoryErrorOptions, assertBearerTokenReachesTransportHandler, assertCredentialFreeTransportDenied, AtomicRateLimiter, Authenticated, AuthenticatedAnyOf, AuthHook
 AuthorizationServerMetadata, AuthorizationServerMetadataOptions, authorizationServerMetadataHandler, AuthPosture, AuthPostureKind, AuthPrincipal
 AWSLambdaMicroVMClientOptions, AWSLambdaMicroVMProvider, AWSLambdaMicroVMProviderOptions, baseName, BearerTokenClaims
 bearerTokenClaimsFromContext, BearerTokenClaimsValidator, bearerTokenFromHeaders, BearerTokenRecord
@@ -96,7 +101,7 @@ builtInLoggingProfileNames, cacheControlISR, cacheControlSSG, cacheControlSSR, c
 canonicalResourceURL, claudeDynamicClientRegistrationPolicy, clientIP, Clock, cloneMetadata, cloneVector
 CloudWatchLogsSubscription, cloudWatchLogsSubscriptionData, CloudWatchLogsSubscriptionLogEvent
 CloudWatchLogsSubscriptionOptions, CloudWatchLogsSubscriptionSummary, CompleteIdempotencyRecordInput, Config, Context
-CONTEXT_KEY_BEARER_CLAIMS, CONTEXT_KEY_BEARER_TOKEN, CORSConfig, createApp, createAWSLambdaMicroVMClient
+CONTEXT_KEY_BEARER_CLAIMS, CONTEXT_KEY_BEARER_TOKEN, CORSConfig, CountingTransportHandler, countingTransportHandler, createApp, createAWSLambdaMicroVMClient
 createAWSLambdaMicroVMProvider, createEMFMetricSink, createFakeMicroVMClient, createFakeMicroVMProvider
 createFakeObjectStore, createFakeVectorStore, CreateIdempotencyRecordInput, CreateJobInput, createKinesisJsonRecord
 createLambdaFunctionURLStreamingHandler, createMcpServer, createMcpTestHarness, createMemoryMicroVMSessionRegistry
@@ -142,7 +147,7 @@ MCP_CODE_UNSUPPORTED_PROTOCOL_VERSION, MCP_HEADER_LAST_EVENT_ID, MCP_HEADER_METH
 MCP_HEADER_PROTOCOL_VERSION, MCP_HEADER_SESSION_ID, MCP_PROTOCOL_SHAPE_2025_11_25, MCP_PROTOCOL_SHAPE_2026_07_28
 MCP_PROTOCOL_SHAPE_UNKNOWN, MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_2026_07_28, MCP_PROTOCOL_VERSION_LEGACY
 MCP_PROTOCOL_VERSION_PRIOR, MCP_RESULT_TYPE_COMPLETE, MCP_RESULT_TYPE_INPUT_REQUIRED, McpCacheableResultConfig
-McpCacheHint, McpCacheScope, McpContentBlock, McpDiscoverResult, McpEventNotFoundError, McpExtensionCapabilities
+McpCacheHint, McpCacheScope, McpContentBlock, McpDiscoverResult, McpEventNotFoundError, McpExtensionCapabilities, McpFacadeRegistration
 McpInputRequest, McpInputRequiredResult, McpJSONRecord, McpJSONValue, McpPromptArgument, McpPromptDef
 McpPromptHandler, McpPromptMessage, McpPromptRegistry, McpPromptResult, McpProtocolShape, McpRequestID
 McpResourceContent, McpResourceContext, McpResourceDef, McpResourceHandler, McpResourceRegistry
@@ -152,7 +157,7 @@ McpStreamingToolHandler, McpStreamNotFoundError, McpStreamStore, McpTask, McpTas
 McpTaskListRequest, McpTaskListResult, McpTaskLookup, McpTaskMetadata, McpTaskNotFoundError, McpTaskRecord
 McpTaskRuntimeOptions, McpTaskStatus, McpTaskStore, McpTaskSupport, McpTaskTerminalError, McpTestHarness
 McpTestHarnessOptions, McpTestInvokeOptions, McpTestResult, McpTestSSEFrame, McpToolContext, McpToolDef
-McpToolExecution, McpToolHandler, McpToolRegistry, McpToolResult, MemoryMcpSessionStore, MemoryMcpStreamStore
+McpToolExecution, McpToolHandler, McpToolRegistry, McpToolResult, McpTransportPosture, MemoryMcpSessionStore, MemoryMcpStreamStore
 MemoryMcpTaskStore, MemoryMicroVMSessionRegistry, MetricRecord, MICROVM_AWS_LAMBDA_PROVIDER_ID, MICROVM_CONTRACT_NAME
 MICROVM_CONTRACT_VERSION, MICROVM_CONTRACT_VERSION_M16, MICROVM_CONTROLLER_AUTH_DEFAULT_DENY
 MICROVM_DEFAULT_SESSION_PROVIDER_ID, MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS, MICROVM_ENV_EXECUTION_ROLE_ARN
@@ -204,7 +209,7 @@ protectedResourceMetadataHandler, protectedResourceWWWAuthenticate, Public, PutV
 QueryVectorsInput, RandomIdGenerator, rapidConnectXMLPatterns, RateLimitEntry, RateLimiter, RateLimiterError
 RateLimitKey, RateLimitStrategy, rateLimitTableName, RateLimitWindow, RealClock, ReconstructingMicroVMSessionRegistry
 ReconstructingMicroVMSessionRegistryOptions, reconstructMicroVMSessionRecord, RecordStatus, RefreshLeaseInput
-RefreshSemaphoreSlotInput, registerControllerRoutes, registerMicroVMControllerRoutes, ReleaseLeaseInput
+RefreshSemaphoreSlotInput, registerControllerRoutes, registerMcpFacade, RegisterMcpFacadeOptions, registerMicroVMControllerRoutes, ReleaseLeaseInput
 ReleaseSemaphoreSlotInput, reportKinesisPutRecordsFailures, Request, requireBearerTokenMiddleware
 RequireBearerTokenOptions, required, requiredForbiddenMicroVMOperationFields, requireEventBridgeWorkloadEnvelope
 resourceMetadataURLFromMcpEndpoint, resourceName, Response, rfc9728ResourceMetadataURL, RouteOptions, S3Encryption
