@@ -5,6 +5,7 @@ import { Buffer } from "node:buffer";
 import {
   assertBearerTokenReachesTransportHandler,
   assertCredentialFreeTransportDenied,
+  assertInsufficientScopeTransportDenied,
   countingTransportHandler,
   createApp,
   newMemoryBearerTokenValidator,
@@ -37,6 +38,89 @@ function bearerOptions() {
     ]),
   };
 }
+
+test("runtime-bearer scope failure returns the route-derived 403 challenge without invoking the handler", async () => {
+  const ROUTE_SCOPES = ["mcp:read", "mcp:write"];
+
+  const app = createApp();
+  const handler = countingTransportHandler();
+  registerMcpFacade(app, {
+    mcpPaths: ["/acme/mcp"],
+    mcpHandler: handler.handler,
+    transportPosture: "runtime-bearer",
+    requireBearerToken: {
+      resourceMetadataURL: RESOURCE_METADATA_URL,
+      requiredScopes: ROUTE_SCOPES,
+      claimsValidator: newMemoryBearerTokenValidator(
+        [
+          {
+            token: "scope-token",
+            subject: "acme",
+            audience: "https://mcp.example.com",
+            scopes: ["mcp:read"],
+          },
+        ],
+        {
+          requiredAudience: "https://mcp.example.com",
+          requiredScopes: ROUTE_SCOPES,
+        },
+      ),
+    },
+  });
+
+  await assertCredentialFreeTransportDenied(
+    app,
+    "POST",
+    "/acme/mcp",
+    RESOURCE_METADATA_URL,
+    handler,
+  );
+  await assertInsufficientScopeTransportDenied(
+    app,
+    "POST",
+    "/acme/mcp",
+    "scope-token",
+    RESOURCE_METADATA_URL,
+    ROUTE_SCOPES,
+    handler,
+  );
+  assert.equal(handler.invocations(), 0);
+
+  const allowed = createApp();
+  const allowedHandler = countingTransportHandler();
+  registerMcpFacade(allowed, {
+    mcpPaths: ["/acme/mcp"],
+    mcpHandler: allowedHandler.handler,
+    transportPosture: "runtime-bearer",
+    requireBearerToken: {
+      resourceMetadataURL: RESOURCE_METADATA_URL,
+      requiredScopes: ["mcp:read"],
+      claimsValidator: newMemoryBearerTokenValidator(
+        [
+          {
+            token: "scope-token",
+            subject: "acme",
+            audience: "https://mcp.example.com",
+            scopes: ["mcp:read"],
+          },
+        ],
+        {
+          requiredAudience: "https://mcp.example.com",
+          requiredScopes: ["mcp:read"],
+        },
+      ),
+    },
+  });
+
+  await assertBearerTokenReachesTransportHandler(
+    allowed,
+    "POST",
+    "/acme/mcp",
+    "scope-token",
+    allowedHandler,
+  );
+  assert.equal(allowedHandler.invocations(), 1);
+});
 
 test("runtime-bearer posture denies credential-free transport and admits a valid token", async () => {
   const app = createApp();

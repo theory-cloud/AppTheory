@@ -688,3 +688,9 @@ function trimLeadingAndTrailingSlashes(value: string): string {
   }
   return value.slice(start, end);
 }
+
+export {
+  bootstrapOidcDiscovery,
+  newJwksValidator,
+  type JWKSValidatorOptions,
+} from "./jwks.js";
