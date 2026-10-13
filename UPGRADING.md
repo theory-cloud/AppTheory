@@ -144,9 +144,14 @@ with it. `transportAuthorizer` is now only the static JWT configuration for
 `transportPosture: AppTheoryMcpTransportPosture.JWT`, which requires an issuer and a non-empty audience; supplying it
 under any other posture fails synthesis.
 
-The OAuth surface is unchanged: RFC 9728 protected-resource metadata, canonical and suffix RFC 8414 discovery, the
-authorize route, the token route, and the derived `/register` and callback routes remain explicitly public (`NONE`)
-because OAuth clients must fetch those documents before they hold a token.
+The OAuth surface is derived by route algebra `m17.mcp-route-algebra/v2`: RFC 9728 protected-resource metadata,
+canonical and suffix RFC 8414 discovery, and the authorize/token routes per MCP pattern, plus the derived `/register`
+path (canonical discovery path + `/register`) per pattern and one **stage-global** upstream callback route
+(`/_oauth/mcp/callback` by default, overridable through `FacadeConfig.UpstreamCallbackPath` /
+`routeFamily`-agnostic CDK derivation). Every OAuth-surface route is explicitly public (`NONE`) — OAuth clients must
+fetch those documents before they hold a token — and the whole surface registers only when the posture is not
+`none-public`: a `none-public` server registers no OAuth surface at all, so the runtime surface and the construct's
+`authorizationRoutesAttached` inventory cannot disagree.
 
 `none-public` is the explicit replacement for the removed `unauthenticatedMcp: true` opt-out. It is never a default,
 and because the transport authorizer is `NONE` it now carries the defense-in-depth floor: `originReachability` must be
@@ -237,6 +242,42 @@ MCP handler themselves. Applications that already wrap the handler or configure
 `apptheory.WithAuthPrincipalHook` are unaffected: the default posture delegates to that principal hook. Wrapping the
 MCP handler without also configuring a principal hook does not exempt an application — route authorization runs before
 middleware and the handler, so every MCP transport request is still rejected with HTTP `401`.
+
+### MCP route algebra v2, route-aware bearer validation, and the RFC 9728/8707 challenge
+
+Route algebra `m17.mcp-route-algebra/v2` is now implemented in Go (`runtime/mcproutes`), TypeScript
+(`ts/src/mcproutes.ts`), Python (`apptheory.mcproutes`), and the jsii CDK construct, all driven by one shared
+expectation table. Beyond the v1 derivations it adds the derived `/register` path per MCP pattern, one stage-global
+upstream callback route, and the `IssuerMode` vocabulary (`family` | `route`).
+
+`FacadeConfig.IssuerMode = mcpfacade.IssuerModeRoute` (and the equivalent per-language option) makes each route its own
+authorization server: the routed RFC 9728 and RFC 8414 documents advertise the **route URL** as `resource`,
+`authorization_servers`, and `issuer`, and the discovered `registration_endpoint` is the route's own derived
+`/register` path. `jwks_uri` stays the upstream JWKS, because the upstream signs the access tokens the route hands to
+clients. `family` mode keeps the previous single-issuer behavior.
+
+The bearer validator is now **route-aware**: the Go validator types receive the AppTheory request context, and all three
+runtimes accept route-derived audience, scope, and challenge metadata resolvers, so the audience can be the exact
+matched route URL and the challenge is never built from a process-global value.
+
+AppTheory ships its first JWT/JWKS access-token validator in all three runtimes. It pins `RS256` (the `alg: none` and
+`HS*` algorithm-confusion families are refused), requires a bounded `kid` cache with one cooldown-limited refresh per
+unknown kid and an expiry-driven rotation refresh, checks the issuer before and after signature verification, enforces
+the route-derived audience/scope and an `azp`/`client_id` allow-list, and bootstraps OIDC discovery over HTTPS only,
+verifying the discovery issuer before trusting `jwks_uri` and refusing cross-origin redirects. Every failure path fails
+closed.
+
+Denials now carry the route-derived challenge. A missing, malformed, invalid, or expired token returns `401` with
+`WWW-Authenticate: Bearer resource_metadata="<matched route's protected-resource metadata URL>"`. A scope failure
+returns `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="<remediation scopes>",
+resource_metadata="<…>"` and body `{"error":{"code":"app.insufficient_scope"}}`; an audience failure and every other
+forbidden denial still return the plain `403` with no error code or scope set. RFC 8707 `resource` is canonicalized and
+must exactly equal the route resource (the resulting `aud` must equal the route URL).
+
+Not yet in this line: the facade mechanics themselves — front-channel termination, the upstream callback handler, the
+DCR handler, code/refresh stores, the provider/store SPIs, and the brokered refresh (M3) — and the edge
+`WWW-Authenticate` restoration construct plus the challenge alias bridge (M4). The derived `/register` and callback
+**routes** exist and are mountable; their handlers remain application-owned until M3.
 
 ## v4.x line
 
