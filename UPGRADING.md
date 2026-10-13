@@ -123,16 +123,39 @@ base-table key conditions, so the GSI change does not apply and no persisted-sha
 ### MCP transport routes require credentials by default
 
 This is a deliberate, declared security contract change. `AppTheoryMcpServer` MCP transport routes (`POST`, `GET`, and
-`DELETE` on every MCP pattern) now attach an authorizer instead of API Gateway `NONE`. The default authorizer is AWS
-IAM, or a JWT authorizer when `transportAuthorizer` supplies an issuer and audience. A credential-free request to a
-transport route is now rejected by API Gateway (HTTP `403` for IAM, `401` for JWT) before the runtime handler runs.
+`DELETE` on every MCP pattern) never default to a credential-free route; the construct resolves one `transportPosture`
+selection and attaches the matching authorizer, so a credential-free request is rejected before the runtime handler
+runs.
+
+| `transportPosture` | Transport-route authorizer | Validator |
+| --- | --- | --- |
+| `iam` (the default for a plain transport server) | AWS IAM | application |
+| `jwt` | static JWT authorizer (`transportAuthorizer` issuer + audience) | application |
+| `runtime-bearer` (the default once the server attaches `facade`) | `NONE` | mandatory RFC 9728 bearer validation |
+| `none-public` | `NONE` | none (deliberately public) |
+
+The default is resolved from the construct's shape, not asked of the caller. An `AppTheoryMcpServer` that attaches the
+`facade` property — declaring that it fronts an auth provider on one domain — resolves to `runtime-bearer`; a plain
+transport server with no `facade` attachment keeps the `iam` default. Setting `transportPosture` explicitly overrides
+the default.
+
+`unauthenticatedMcp` is **removed** with no alias and no shim, and `AppTheoryMcpTransportAuthorizerKind` is removed
+with it. `transportAuthorizer` is now only the static JWT configuration for
+`transportPosture: AppTheoryMcpTransportPosture.JWT`, which requires an issuer and a non-empty audience; supplying it
+under any other posture fails synthesis.
 
 The OAuth surface is unchanged: RFC 9728 protected-resource metadata, canonical and suffix RFC 8414 discovery, the
-authorize route, and the token route remain explicitly public (`NONE`) because OAuth clients must fetch those documents
-before they hold a token.
+authorize route, the token route, and the derived `/register` and callback routes remain explicitly public (`NONE`)
+because OAuth clients must fetch those documents before they hold a token.
 
-Existing deployments that let the runtime validate OAuth bearer tokens must either configure the transport authorizer
-to match their issuer and audience, or set the explicit opt-out to keep the previous behavior.
+`none-public` is the explicit replacement for the removed `unauthenticatedMcp: true` opt-out. It is never a default,
+and because the transport authorizer is `NONE` it now carries the defense-in-depth floor: `originReachability` must be
+`disabled` or `locked` (a directly reachable origin is refused), and the throttling and access-logging decisions must be
+explicit. In owned-API mode the explicit throttling decision is `ownedApi.stage.throttlingEnabled: true`; in attach mode
+it is an `owningApiDefense` record of the owning API's access logging and throttle settings. Selecting `runtime-bearer`
+additionally requires an explicit `runtimePosture: { requireBearerToken: true }` declaration and a `denialSignal` (the
+denial metric is `apptheory.mcp.auth_denied`, dimensioned on the bounded outcome and route family only). Each missing
+requirement fails synthesis rather than degrading to a credential-free route.
 
 CDK before / after:
 
@@ -140,26 +163,42 @@ CDK before / after:
 // Before: every route was public and the runtime owned bearer validation.
 new AppTheoryMcpServer(this, "McpServer", { handler });
 
-// After (recommended): API Gateway validates JWTs before the runtime runs.
+// After (recommended): attach the facade; it selects the runtime-bearer default.
 new AppTheoryMcpServer(this, "McpServer", {
   handler,
+  facade: { providerId: "autheory" },
+  runtimePosture: { requireBearerToken: true },
+  originReachability: AppTheoryMcpOriginReachability.LOCKED,
+  denialSignal: { metricName: "apptheory.mcp.auth_denied" },
+  ownedApi: { stage: { throttlingEnabled: true } },
+});
+
+// After (explicit JWT): a static issuer and audience at the gateway.
+new AppTheoryMcpServer(this, "McpServer", {
+  handler,
+  transportPosture: AppTheoryMcpTransportPosture.JWT,
   transportAuthorizer: {
-    kind: AppTheoryMcpTransportAuthorizerKind.JWT,
     issuer: "https://accounts.example.com",
     audience: ["https://mcp.example.com"],
   },
 });
 
-// After (opt-out): keep the previous all-public behavior explicitly.
-new AppTheoryMcpServer(this, "McpServer", { handler, unauthenticatedMcp: true });
+// After (explicit public): the deliberate, never-default opt-out.
+new AppTheoryMcpServer(this, "McpServer", {
+  handler,
+  transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC,
+  originReachability: AppTheoryMcpOriginReachability.DISABLED,
+  ownedApi: { stage: { throttlingEnabled: true } },
+});
 ```
 
-On the Go side, `mcpfacade.RegisterMCPFacade` now registers the MCP transport routes with an authenticated posture by
-default: a request without a verified principal is rejected with HTTP `401` and the MCP handler never runs. The new
-`FacadeConfig.UnauthenticatedMcp` field is the runtime counterpart of the CDK opt-out, and the new
-`FacadeConfig.RequireBearerToken` field validates an RFC 9728 bearer token on those routes with the correct
-`WWW-Authenticate` challenge. Applications that own transport authentication must set one of them. `UnauthenticatedMcp`
-and `RequireBearerToken` are mutually exclusive.
+On the Go side, `mcpfacade.RegisterMCPFacade` registers the MCP transport routes with an authenticated posture by
+default, and a request without a verified principal is rejected with HTTP `401` before the MCP handler runs. The
+removed `FacadeConfig.UnauthenticatedMcp` field is replaced by `FacadeConfig.TransportPosture`
+(`mcpfacade.TransportPostureIAM` | `...JWT` | `...RuntimeBearer` | `...NonePublic`). `FacadeConfig.RequireBearerToken`
+is now valid **only** with `TransportPostureRuntimeBearer`: registration fails closed when the bearer validator is
+missing under `runtime-bearer`, and when it is supplied under `iam`, `jwt`, or `none-public`. TypeScript and Python gain
+the matching `registerMcpFacade` / `register_mcp_facade` registrars, which enforce the same posture/validator pairing.
 
 Go before / after:
 
@@ -174,20 +213,21 @@ _, err := mcpfacade.RegisterMCPFacade(app, mcpfacade.FacadeConfig{
     MCPHandler:   mcpHandler,
 })
 
-// After (recommended): validate bearer tokens on the transport routes.
+// After (recommended): validate RFC 9728 bearer tokens on the transport routes.
 _, err = mcpfacade.RegisterMCPFacade(app, mcpfacade.FacadeConfig{
-    IssuerURL:    issuer,
-    JWKSURI:      jwksURI,
-    URLMode:      mcpfacade.URLModePublicBaseURL,
-    PublicBaseURL: baseURL,
-    Scopes:       scopes,
-    MCPHandler:   mcpHandler,
+    IssuerURL:          issuer,
+    JWKSURI:            jwksURI,
+    URLMode:            mcpfacade.URLModePublicBaseURL,
+    PublicBaseURL:      baseURL,
+    Scopes:             scopes,
+    MCPHandler:         mcpHandler,
+    TransportPosture:   mcpfacade.TransportPostureRuntimeBearer,
     RequireBearerToken: &oauth.RequireBearerTokenOptions{Validator: myValidator},
 })
 
-// After (opt-out): the application owns transport authentication.
+// After (explicit public): register the transport routes without authentication.
 config := mcpfacade.FacadeConfig{ /* as before */ }
-config.UnauthenticatedMcp = true
+config.TransportPosture = mcpfacade.TransportPostureNonePublic
 _, err = mcpfacade.RegisterMCPFacade(app, config)
 ```
 
@@ -450,8 +490,10 @@ The next v3 minor redesigns `AppTheoryMcpServer` around the route-algebra facade
 - `POST`, `GET`, and `DELETE` MCP transport plus protected-resource, canonical/suffix discovery, authorize, and token
   routes are wired by default;
 - the session table defaults on with retain semantics, and owned APIs default access logging and throttling on;
-- omitting issuer/JWKS no longer means unauthenticated MCP; use `unauthenticatedMcp: true` for the validated no-facade
-  opt-out;
+- omitting issuer/JWKS no longer means unauthenticated MCP; the deliberate no-facade opt-out is the explicit public
+  transport posture (`transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC`) with the defense-in-depth floor. The
+  intermediate `unauthenticatedMcp` opt-out is removed with no alias —
+  see [MCP transport routes require credentials by default](#mcp-transport-routes-require-credentials-by-default);
 - issuer/JWKS are no longer injected into `APPTHEORY_MCP_*` environment variables. Configure the explicit Go
   `mcpfacade.FacadeConfig`, including per-kind scopes and application-owned authorize/token handlers.
 
