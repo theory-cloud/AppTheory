@@ -1,0 +1,29 @@
+{
+  "id": "p0.routing.double_leading_slash",
+  "tier": "p0",
+  "name": "A doubled leading slash does not match a parameterized route",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/{client_namespace}/mcp", "handler": "echo_path_params" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "//acme/mcp",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 404,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": { "error": { "code": "app.not_found", "message": "not found" } },
+      "is_base64": false
+    }
+  }
+}
