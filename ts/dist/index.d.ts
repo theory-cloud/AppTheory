@@ -30,6 +30,7 @@ export * from "./app.js";
 export * from "./testkit.js";
 export * from "./testkit/mcp.js";
 export * from "./testkit/mcpfacade.js";
+export * from "./testkit/oauthprovider.js";
 export * from "./websocket-management.js";
 export * from "./limited/index.js";
 //# sourceMappingURL=index.d.ts.map

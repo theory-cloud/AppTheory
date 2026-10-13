@@ -145,4 +145,6 @@ export declare function validatePKCECodeVerifier(verifier: string): void;
 export declare function pkceChallengeS256(verifier: string): string;
 export declare function pkceVerifyS256(verifier: string, expectedChallenge: string): boolean;
 export { bootstrapOidcDiscovery, newJwksValidator, type JWKSValidatorOptions, } from "./jwks.js";
+export * from "./provider.js";
+export * from "./store.js";
 //# sourceMappingURL=index.d.ts.map
