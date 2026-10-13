@@ -27,6 +27,9 @@ const (
 	// algorithm is pinned rather than negotiated so an RSA public key can never
 	// be reinterpreted as an HMAC secret (algorithm confusion).
 	jwksAlgorithmRS256 = "RS256"
+	// jsonNullLiteral is the JSON null spelling, compared against raw message
+	// bytes that have already been whitespace-trimmed.
+	jsonNullLiteral = "null"
 
 	// jwksMaxDocumentBytes bounds every discovery and JWKS response body.
 	jwksMaxDocumentBytes = 1 << 20 // 1 MiB
@@ -288,7 +291,7 @@ func (v *jwksValidator) validate(ctx *apptheory.Context, token string) (*BearerT
 	// The issuer is checked before the key lookup so a token for another issuer
 	// can never steer a fetch, and again after verification so nothing observed
 	// before the signature is what authorizes the request.
-	if err := v.checkIssuer(claims.Issuer); err != nil {
+	if err = v.checkIssuer(claims.Issuer); err != nil {
 		return nil, err
 	}
 
@@ -300,10 +303,10 @@ func (v *jwksValidator) validate(ctx *apptheory.Context, token string) (*BearerT
 		return nil, fmt.Errorf("%w: %w", ErrInvalidBearerToken, errSignatureInvalid)
 	}
 
-	if err := v.checkIssuer(claims.Issuer); err != nil {
+	if err = v.checkIssuer(claims.Issuer); err != nil {
 		return nil, err
 	}
-	if err := v.checkTimes(claims); err != nil {
+	if err = v.checkTimes(claims); err != nil {
 		return nil, err
 	}
 	audience, err := v.checkAudience(ctx, claims)
@@ -314,7 +317,7 @@ func (v *jwksValidator) validate(ctx *apptheory.Context, token string) (*BearerT
 	if err != nil {
 		return nil, err
 	}
-	if err := v.checkAZP(claims); err != nil {
+	if err = v.checkAZP(claims); err != nil {
 		return nil, err
 	}
 
@@ -480,7 +483,7 @@ func parseCompactJWS(token string) (parsedCompactJWS, error) {
 		return parsedCompactJWS{}, errMalformedToken
 	}
 	// An unrecognized critical header must fail closed rather than be ignored.
-	if len(header.Crit) > 0 && string(header.Crit) != "null" {
+	if len(header.Crit) > 0 && string(header.Crit) != jsonNullLiteral {
 		return parsedCompactJWS{}, errMalformedToken
 	}
 
@@ -531,7 +534,7 @@ func parseJWKSClaims(payload []byte) (jwksClaims, error) {
 		AZP:      raw.AZP,
 		ClientID: raw.ClientID,
 	}
-	audience, err := parseAudience(raw.Audience)
+	audience, err := parseStringOrStringList(raw.Audience)
 	if err != nil {
 		return jwksClaims{}, err
 	}
@@ -561,28 +564,9 @@ func parseJWKSClaims(payload []byte) (jwksClaims, error) {
 	return claims, nil
 }
 
-func parseAudience(raw json.RawMessage) ([]string, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || string(trimmed) == "null" {
-		return nil, nil
-	}
-	if trimmed[0] == '[' {
-		var values []string
-		if err := json.Unmarshal(trimmed, &values); err != nil {
-			return nil, errClaimInvalid
-		}
-		return normalizeClaimValues(values), nil
-	}
-	var value string
-	if err := json.Unmarshal(trimmed, &value); err != nil {
-		return nil, errClaimInvalid
-	}
-	return normalizeClaimValues([]string{value}), nil
-}
-
 func parseStringOrStringList(raw json.RawMessage) ([]string, error) {
 	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || string(trimmed) == "null" {
+	if len(trimmed) == 0 || string(trimmed) == jsonNullLiteral {
 		return nil, nil
 	}
 	if trimmed[0] == '[' {

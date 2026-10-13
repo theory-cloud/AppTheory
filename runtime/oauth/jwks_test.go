@@ -46,7 +46,7 @@ var jwksFixtureNow = time.Unix(1_700_000_000, 0).UTC()
 func loadMCPAuthFacadeFixture(t *testing.T, name string, target any) {
 	t.Helper()
 	path := filepath.Join(mcpAuthFacadeFixtureDir, name)
-	body, err := os.ReadFile(path)
+	body, err := os.ReadFile(path) // #nosec G304 -- path is a fixed test fixture path built from a constant directory.
 	require.NoErrorf(t, err, "read shared fixture %s", path)
 	require.NoErrorf(t, json.Unmarshal(body, target), "decode shared fixture %s", path)
 }
@@ -569,7 +569,7 @@ func TestJWKSValidatorEnforcesTheAZPAllowList(t *testing.T) {
 		AllowedAZP: []string{"client-1"},
 	})
 
-	// An azp outside the allow-list is refused (no wildcard behaviour).
+	// An azp outside the allow-list is refused (no wildcard behavior).
 	_, err := validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(map[string]any{"azp": "attacker"})))
 	require.ErrorIs(t, err, ErrInvalidBearerToken)
 	require.Equal(t, "azp_not_allowed", jwksFailureReason(err))
@@ -1138,7 +1138,7 @@ func (s *jwksTestServer) handle(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	w.Header().Set("content-type", "application/json")
-	_, _ = w.Write([]byte(body))
+	writeIgnoringErr(w, []byte(body))
 }
 
 func (s *jwksTestServer) configure(apply func(*jwksTestServer)) {
@@ -1189,5 +1189,11 @@ func writeJWKSJSON(w http.ResponseWriter, value any) {
 		return
 	}
 	w.Header().Set("content-type", "application/json")
-	_, _ = w.Write(body)
+	writeIgnoringErr(w, body)
+}
+
+func writeIgnoringErr(w http.ResponseWriter, body []byte) {
+	// A write error here surfaces as a client-side failure in the assertion that
+	// follows, so it needs no separate handling in the test key/document server.
+	_, _ = w.Write(body) //nolint:errcheck
 }

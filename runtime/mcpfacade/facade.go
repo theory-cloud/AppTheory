@@ -259,6 +259,24 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 		return normalizedConfig{}, err
 	}
 
+	normalized, err := normalizeDerivedConfig(config)
+	if err != nil {
+		return normalizedConfig{}, err
+	}
+	normalized.transportPosture = transportPosture
+	normalized.requireBearerToken = config.RequireBearerToken
+	normalized.mcpHandler = config.MCPHandler
+	normalized.callbackHandler = config.CallbackHandler
+
+	if err := validatePostureSurfaceConfig(transportPosture, normalized.authorizeHandlers, normalized.registerHandlers, config.CallbackHandler, normalized.rootAuthorizationServer); err != nil {
+		return normalizedConfig{}, err
+	}
+	return normalized, nil
+}
+
+// normalizeDerivedConfig resolves the URL, issuer, scope, capability, and
+// handler-derived parts of a FacadeConfig.
+func normalizeDerivedConfig(config FacadeConfig) (normalizedConfig, error) {
 	issuerURL, ok := normalizeHTTPSURL(config.IssuerURL, true)
 	if !ok {
 		return normalizedConfig{}, fmt.Errorf("mcpfacade: issuer URL must be an absolute HTTPS URL without query or fragment")
@@ -311,10 +329,6 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 		return normalizedConfig{}, err
 	}
 
-	if err := validatePostureSurfaceConfig(transportPosture, authorizeHandlers, registerHandlers, config.CallbackHandler, rootAuthorizationServer); err != nil {
-		return normalizedConfig{}, err
-	}
-
 	return normalizedConfig{
 		issuerURL:               issuerURL,
 		jwksURI:                 jwksURI,
@@ -326,15 +340,11 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 		allowedHostnames:        allowedHostnames,
 		scopes:                  scopes,
 		capabilities:            capabilities,
-		mcpHandler:              config.MCPHandler,
 		authorizeHandlers:       authorizeHandlers,
 		tokenHandlers:           tokenHandlers,
 		registerHandlers:        registerHandlers,
-		callbackHandler:         config.CallbackHandler,
 		rootAuthorizationServer: rootAuthorizationServer,
 		rootDiscoveryPath:       rootDiscoveryPath,
-		transportPosture:        transportPosture,
-		requireBearerToken:      config.RequireBearerToken,
 	}, nil
 }
 
@@ -852,56 +862,17 @@ func authorizationServerHandler(config normalizedConfig, kind mcproutes.Endpoint
 		if err != nil {
 			return nil, err
 		}
-		authorizePath, err := endpoint.OAuthAuthorizePath()
-		if err != nil {
-			return nil, err
+		authorizeURL, response, err := config.derivedMetadataRouteURL(ctx, endpoint, mcproutes.EndpointPath.OAuthAuthorizePath)
+		if response != nil || err != nil {
+			return response, err
 		}
-		tokenPath, err := endpoint.OAuthTokenPath()
-		if err != nil {
-			return nil, err
+		tokenURL, response, err := config.derivedMetadataRouteURL(ctx, endpoint, mcproutes.EndpointPath.OAuthTokenPath)
+		if response != nil || err != nil {
+			return response, err
 		}
-		authorizeURL, err := config.absoluteURL(ctx, authorizePath)
-		if err != nil {
-			if response, ok := metadataRequestFailure(err); ok {
-				return response, nil
-			}
-			return nil, err
-		}
-		tokenURL, err := config.absoluteURL(ctx, tokenPath)
-		if err != nil {
-			if response, ok := metadataRequestFailure(err); ok {
-				return response, nil
-			}
-			return nil, err
-		}
-		issuer := config.issuerURL
-		registrationEndpoint := config.registrationEndpointURL
-		if config.issuerMode == mcproutes.IssuerModeRoute {
-			// Route issuer mode: the route URL is the issuer; the advertised
-			// registration endpoint is the route's own derived /register path so
-			// the advertised URL and the mounted route cannot drift.
-			registerPath, registerErr := endpoint.OAuthRegisterPath()
-			if registerErr != nil {
-				return nil, registerErr
-			}
-			resourcePath, mcpErr := endpoint.MCPPath()
-			if mcpErr != nil {
-				return nil, mcpErr
-			}
-			issuer, err = config.absoluteURL(ctx, resourcePath)
-			if err != nil {
-				if response, ok := metadataRequestFailure(err); ok {
-					return response, nil
-				}
-				return nil, err
-			}
-			registrationEndpoint, err = config.absoluteURL(ctx, registerPath)
-			if err != nil {
-				if response, ok := metadataRequestFailure(err); ok {
-					return response, nil
-				}
-				return nil, err
-			}
+		issuer, registrationEndpoint, response, err := config.routedIssuerAndRegistration(ctx, endpoint)
+		if response != nil || err != nil {
+			return response, err
 		}
 		metadata := &oauth.AuthorizationServerMetadata{
 			Issuer:                            issuer,
@@ -917,6 +888,50 @@ func authorizationServerHandler(config normalizedConfig, kind mcproutes.Endpoint
 		}
 		return withMetadataHeaders(oauth.AuthorizationServerMetadataHandler(metadata))(ctx)
 	}
+}
+
+// derivedMetadataRouteURL builds the absolute URL for one derived route path. A
+// metadata request-origin failure is rendered as its own response so callers can
+// return it verbatim.
+func (config normalizedConfig) derivedMetadataRouteURL(
+	ctx *apptheory.Context,
+	endpoint mcproutes.EndpointPath,
+	build func(mcproutes.EndpointPath) (string, error),
+) (string, *apptheory.Response, error) {
+	routePath, err := build(endpoint)
+	if err != nil {
+		return "", nil, err
+	}
+	absolute, err := config.absoluteURL(ctx, routePath)
+	if err != nil {
+		if response, ok := metadataRequestFailure(err); ok {
+			return "", response, nil
+		}
+		return "", nil, err
+	}
+	return absolute, nil, nil
+}
+
+// routedIssuerAndRegistration returns the issuer and registration endpoint the
+// routed RFC 8414 document advertises. In route issuer mode the route URL is the
+// issuer and the registration endpoint is the route's own derived /register path,
+// so the advertised URL and the mounted route cannot drift.
+func (config normalizedConfig) routedIssuerAndRegistration(
+	ctx *apptheory.Context,
+	endpoint mcproutes.EndpointPath,
+) (string, string, *apptheory.Response, error) {
+	if config.issuerMode != mcproutes.IssuerModeRoute {
+		return config.issuerURL, config.registrationEndpointURL, nil, nil
+	}
+	issuer, response, err := config.derivedMetadataRouteURL(ctx, endpoint, mcproutes.EndpointPath.MCPPath)
+	if response != nil || err != nil {
+		return "", "", response, err
+	}
+	registration, response, err := config.derivedMetadataRouteURL(ctx, endpoint, mcproutes.EndpointPath.OAuthRegisterPath)
+	if response != nil || err != nil {
+		return "", "", response, err
+	}
+	return issuer, registration, nil, nil
 }
 
 func endpointFromMCPRequest(ctx *apptheory.Context) (mcproutes.EndpointPath, error) {

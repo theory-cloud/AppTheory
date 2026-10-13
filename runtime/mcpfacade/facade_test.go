@@ -1256,8 +1256,8 @@ func TestTransportPostureFixture(t *testing.T) {
 		if key == string(TransportPostureRuntimeBearer) {
 			config.RequireBearerToken = &oauth.RequireBearerTokenOptions{Validator: func(*apptheory.Context, string) error { return nil }}
 		}
-		inventory, err := RegisterMCPFacade(apptheory.New(apptheory.WithTier(apptheory.TierP0)), config)
-		require.NoErrorf(t, err, "%s registration", key)
+		inventory, registerErr := RegisterMCPFacade(apptheory.New(apptheory.WithTier(apptheory.TierP0)), config)
+		require.NoErrorf(t, registerErr, "%s registration", key)
 		for _, route := range inventory.Routes {
 			require.Equalf(t, row.OAuthSurfaceAttached, route.AuthorizationRoutesAttached, "%s runtime inventory must agree with the fixture", key)
 		}
