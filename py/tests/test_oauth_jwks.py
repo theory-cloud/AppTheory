@@ -5,6 +5,7 @@ import contextlib
 import datetime as dt
 import hashlib
 import hmac
+import http.server
 import inspect
 import json
 import secrets
@@ -1013,6 +1014,113 @@ class HostGuardTransportTests(unittest.TestCase):
         accepted, code = _validate(validator, _jwt(key, "k1", _claims()))
         self.assertTrue(accepted, code)
         self.assertEqual(transport.fetch_count, 1)
+
+
+class _BodyDeadlineServer:
+    """A real loopback HTTP server that flushes its response headers and then
+    stalls or trickles the body: the shape that used to outlive the fetch bound.
+    """
+
+    _TRICKLE_ITERATIONS = 32
+    _TRICKLE_INTERVAL = 0.25
+
+    def __init__(self, mode: str) -> None:
+        self.mode = mode
+        self.started = threading.Event()
+        self.stop = threading.Event()
+        server = self
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_GET(self) -> None:  # noqa: N802
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.end_headers()
+                self.wfile.flush()
+                server.started.set()
+                if server.mode == "stall":
+                    server.stop.wait(10.0)
+                    return
+                for _ in range(server._TRICKLE_ITERATIONS):
+                    if server.stop.is_set():
+                        return
+                    try:
+                        self.wfile.write(b" ")
+                        self.wfile.flush()
+                    except OSError:
+                        return
+                    server.stop.wait(server._TRICKLE_INTERVAL)
+
+            def log_message(self, *args: Any) -> None:
+                return
+
+        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+
+    @property
+    def port(self) -> int:
+        return int(self._server.server_address[1])
+
+    def shutdown(self) -> None:
+        self.stop.set()
+        with contextlib.suppress(OSError):
+            self._server.shutdown()
+        with contextlib.suppress(OSError):
+            self._server.server_close()
+        self._thread.join(timeout=2.0)
+
+
+class BodyDeadlineTests(unittest.TestCase):
+    """A response that delivers headers and then stalls or trickles must stay
+    inside the framework fetch timeout, both for the hung call and for every
+    other validation that has to wait on it.
+    """
+
+    def _start(self, mode: str) -> _BodyDeadlineServer:
+        server = _BodyDeadlineServer(mode)
+        self.addCleanup(server.shutdown)
+        return server
+
+    def _validator(self, server: _BodyDeadlineServer, timeout: float):
+        def http_get(url: str) -> tuple[int, dict[str, str], bytes]:
+            # The framework transport is the code under test; the validator only
+            # ever sees the https URL it was configured with, so this documented
+            # injected-transport seam downgrades that loopback origin to the
+            # plain-HTTP test server. The deadline the response is bounded by is
+            # therefore the framework transport's own.
+            return jwks._default_http_get(url.replace("https://", "http://", 1), timeout=timeout)
+
+        return new_jwks_validator(
+            JWKSValidatorOptions(
+                issuer=ISSUER,
+                jwks_uri=f"https://127.0.0.1:{server.port}/jwks.json",
+                http_get=http_get,
+                http_timeout_seconds=timeout,
+            )
+        )
+
+    def _assert_bounded(self, validator: Any, key: tuple[int, int, int], kid: str, label: str) -> None:
+        started = time.monotonic()
+        with self.assertRaises(OAuthBearerError):
+            validator(_ctx(), _jwt(key, kid, _claims()))
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 3.0, f"{label}: bounded by the fetch timeout, took {elapsed:.2f}s")
+
+    def test_stalled_body_is_bounded_and_other_validations_still_complete(self) -> None:
+        server = self._start("stall")
+        key = _test_key("stalled-body")
+        validator = self._validator(server, 0.3)
+        self._assert_bounded(validator, key, "kid-stall", "stalled body")
+        self._assert_bounded(validator, key, "kid-after", "a later validation")
+
+    def test_trickling_body_cannot_outlive_the_fetch_timeout(self) -> None:
+        server = self._start("trickle")
+        key = _test_key("trickling-body")
+        validator = self._validator(server, 1.0)
+        self._assert_bounded(validator, key, "kid-trickle", "trickling body")
+        self._assert_bounded(validator, key, "kid-after", "a later validation")
 
 
 if __name__ == "__main__":

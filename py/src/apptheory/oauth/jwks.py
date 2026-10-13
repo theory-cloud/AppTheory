@@ -17,6 +17,7 @@ import ipaddress
 import json as jsonlib
 import re
 import socket
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -43,6 +44,9 @@ HTTPGet = Callable[[str], tuple[int, dict[str, str], bytes]]
 MAX_HTTP_RESPONSE_BYTES = 1 << 20
 MAX_JWKS_KEYS = 64
 HTTP_TIMEOUT_SECONDS = 10
+# Bytes read from one response in a single step. The fetch deadline is re-armed
+# before every step, so a trickling body cannot extend the total fetch.
+_READ_CHUNK_BYTES = 64 * 1024
 RS256 = "RS256"
 
 # DER DigestInfo prefix for id-sha256: the AlgorithmIdentifier the PKCS#1 v1.5
@@ -638,22 +642,81 @@ def _default_http_get(
     url: str, timeout: float = HTTP_TIMEOUT_SECONDS, *, allow_private_hosts: bool = False
 ) -> tuple[int, dict[str, str], bytes]:
     # The caller validates that the URL is https before reaching this transport.
+    budget = _positive_float_or_default(timeout, HTTP_TIMEOUT_SECONDS)
+    # One deadline covers the whole exchange — the response head *and* its body.
+    # The socket timeout bounds every single read, and the loop below stops
+    # reading once the deadline has passed, so a response that delivers headers
+    # and then stalls or trickles cannot stretch the total fetch past the fetch
+    # timeout the way the per-read socket timeout alone allowed.
+    deadline = time.monotonic() + budget
     request = urllib.request.Request(url, method="GET", headers={"accept": "application/json"})  # noqa: S310
     opener = urllib.request.build_opener(
         _RefuseRedirectHandler(),
         _GuardedHTTPSHandler(allow_private_hosts=allow_private_hosts),
     )
     try:
-        with opener.open(request, timeout=timeout) as response:
-            body = response.read(MAX_HTTP_RESPONSE_BYTES + 1)
+        with opener.open(request, timeout=budget) as response:
+            body = _read_body_before(response, deadline)
             headers = {str(key).lower(): str(value) for key, value in response.headers.items()}
             return int(response.status), headers, body
     except urllib.error.HTTPError as exc:
         try:
-            body = exc.read(MAX_HTTP_RESPONSE_BYTES + 1)
+            body = _read_body_before(exc, deadline)
         except Exception:  # noqa: BLE001
             body = b""
         return int(exc.code or 0), {}, body
+
+
+def _read_body_before(response: Any, deadline: float) -> bytes:
+    """Reads one response body, never past ``deadline``.
+
+    ``HTTPResponse.read`` refills until it holds the requested amount, so a
+    per-read socket timeout alone lets a slow trickle extend the total fetch
+    without bound. This reads in bounded chunks instead, re-arming the socket
+    timeout with the remaining budget before each chunk and stopping once the
+    deadline has passed.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    limit = MAX_HTTP_RESPONSE_BYTES + 1
+    while total < limit:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("endpoint fetch timed out while reading the response")
+        _arm_read_deadline(response, remaining)
+        chunk = response.read1(min(_READ_CHUNK_BYTES, limit - total))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    return b"".join(chunks)
+
+
+def _arm_read_deadline(response: Any, remaining: float) -> None:
+    """Arms the response's socket with the remaining fetch budget.
+
+    ``HTTPResponse`` reads through a buffered reader over a ``SocketIO`` and
+    exposes no public accessor for that socket, so the socket is reached through
+    the reader; an ``HTTPError`` wraps the response one level deeper. The chain
+    is walked defensively: if the internals change shape the arm is skipped and
+    each read falls back to the socket timeout the response was opened with.
+
+    Certificate and host verification are untouched: the socket's timeout is the
+    only attribute set here.
+    """
+    candidate: Any = response
+    for _ in range(4):
+        if isinstance(candidate, socket.socket):
+            candidate.settimeout(remaining)
+            return
+        raw = getattr(candidate, "raw", None)
+        inner = getattr(raw, "_sock", None)
+        if isinstance(inner, socket.socket):
+            inner.settimeout(remaining)
+            return
+        candidate = getattr(candidate, "fp", None)
+        if candidate is None:
+            return
 
 
 class _RefuseRedirectHandler(urllib.request.HTTPRedirectHandler):

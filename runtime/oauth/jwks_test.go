@@ -1209,6 +1209,64 @@ func TestJWKSValidatorHungFetchDoesNotStallOtherValidations(t *testing.T) {
 		"a hung fetch is shared, not multiplied, by other validations")
 }
 
+// TestJWKSValidatorBoundsAStalledOrTricklingResponseBody proves the fetch bound
+// covers the whole response, not only its headers: an upstream that delivers
+// headers and then goes quiet — or dribbles one byte at a time — must fail
+// closed within the bound, must not stall a validation of a different token,
+// and must not be fetched again for the tokens that joined it.
+func TestJWKSValidatorBoundsAStalledOrTricklingResponseBody(t *testing.T) {
+	for _, mode := range []string{jwksSlowBodyStalled, jwksSlowBodyTrickled} {
+		t.Run(mode, func(t *testing.T) {
+			keyA, keyB, keyC := newTestRSAKey(t), newTestRSAKey(t), newTestRSAKey(t)
+			server := newSlowBodyJWKSTestServer(t, mode, 1, testJWK(t, "key-a", keyA))
+			validator := newTestJWKSValidator(t, JWKSValidatorOptions{
+				Issuer:       jwksFixtureIssuer,
+				JWKSURI:      server.jwksURL(),
+				HTTPClient:   server.client(),
+				Now:          frozenJWKSClock(jwksFixtureNow),
+				FetchTimeout: 500 * time.Millisecond,
+			})
+
+			// The first validation populates the cache from a healthy response, so a
+			// cached key stays available once the upstream stops making progress.
+			require.NoError(t, validateTestTokenKey(t, validator, "key-a", keyA))
+			require.EqualValues(t, 1, server.fetchCount())
+
+			hung := make(chan error, 1)
+			go func() {
+				_, err := validateTestToken(validator, signTestRS256Token(t, "key-b", keyB, testJWKSClaims(nil)))
+				hung <- err
+			}()
+			select {
+			case <-server.started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the slow upstream was never reached")
+			}
+
+			cachedStart := time.Now()
+			require.NoError(t, validateTestTokenKey(t, validator, "key-a", keyA),
+				"a cached key still validates while the upstream delivers no further body")
+			require.Less(t, time.Since(cachedStart), 500*time.Millisecond,
+				"the slow body holds no lock that blocks other validations")
+
+			unknownStart := time.Now()
+			_, unknownErr := validateTestToken(validator, signTestRS256Token(t, "key-c", keyC, testJWKSClaims(nil)))
+			require.Error(t, unknownErr, "an unknown kid fails closed while the body is stalled")
+			require.Less(t, time.Since(unknownStart), 3*time.Second,
+				"a validation that waits on the slow fetch is bounded")
+
+			select {
+			case err := <-hung:
+				require.Error(t, err, "the validation that started the slow fetch fails closed")
+			case <-time.After(5 * time.Second):
+				t.Fatal("the validation that started the slow fetch never returned")
+			}
+			require.EqualValues(t, 2, server.fetchCount(),
+				"a slow fetch is shared, not multiplied, by other validations")
+		})
+	}
+}
+
 // TestJWKSValidatorStateIsBounded proves the per-validator state stays inside
 // its bounds however many distinct attacker kids arrive.
 func TestJWKSValidatorStateIsBounded(t *testing.T) {
@@ -1418,6 +1476,83 @@ func (s *hungJWKSTestServer) jwksURL() string { return s.server.URL + "/jwks.jso
 func (s *hungJWKSTestServer) client() *http.Client { return s.server.Client() }
 
 func (s *hungJWKSTestServer) fetchCount() int { return int(s.fetches.Load()) }
+
+// The two non-progressing response bodies the fetch bound is pinned against.
+const (
+	// jwksSlowBodyStalled sends the response headers and then no body at all.
+	jwksSlowBodyStalled = "stalled"
+	// jwksSlowBodyTrickled sends the response headers and then one byte at a
+	// time: a per-read timeout alone lets this run for as long as the upstream
+	// keeps dribbling.
+	jwksSlowBodyTrickled = "trickled"
+)
+
+// slowBodyJWKSTestServer serves a healthy key set for the first healthyFetches
+// requests and then answers every later request with headers that arrive
+// normally and a body that never makes progress (it stalls or trickles), so the
+// test suite pins the framework's end-to-end fetch bound against the shape a
+// headers-only timer cannot bound.
+type slowBodyJWKSTestServer struct {
+	server  *httptest.Server
+	key     map[string]string
+	mode    string
+	fetches atomic.Int64
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newSlowBodyJWKSTestServer(t *testing.T, mode string, healthyFetches int, key map[string]string) *slowBodyJWKSTestServer {
+	t.Helper()
+	slow := &slowBodyJWKSTestServer{
+		key:     key,
+		mode:    mode,
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	slow.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if int(slow.fetches.Add(1)) <= healthyFetches {
+			writeJWKSJSON(w, map[string]any{"keys": []map[string]string{slow.key}})
+			return
+		}
+		slow.once.Do(func() { close(slow.started) })
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			return
+		}
+		flusher.Flush()
+		if slow.mode == jwksSlowBodyStalled {
+			<-slow.release
+			return
+		}
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-slow.release:
+				return
+			case <-ticker.C:
+				if _, err := w.Write([]byte(" ")); err != nil {
+					return
+				}
+				flusher.Flush()
+			}
+		}
+	}))
+	// Cleanups run last-registered-first, so the blocked handler must be
+	// released BEFORE httptest.Server.Close waits for it.
+	t.Cleanup(slow.server.Close)
+	t.Cleanup(func() { close(slow.release) })
+	return slow
+}
+
+func (s *slowBodyJWKSTestServer) jwksURL() string { return s.server.URL + "/jwks.json" }
+
+func (s *slowBodyJWKSTestServer) client() *http.Client { return s.server.Client() }
+
+func (s *slowBodyJWKSTestServer) fetchCount() int { return int(s.fetches.Load()) }
 
 func validateTestTokenKey(t *testing.T, validator BearerTokenClaimsValidator, kid string, key *rsa.PrivateKey) error {
 	t.Helper()

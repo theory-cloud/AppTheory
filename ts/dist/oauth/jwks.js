@@ -165,8 +165,13 @@ export async function newJwksValidator(options) {
      * with an oversized `kid` are never cached.
      */
     const refresh = async (at) => {
-        if (inFlightRefresh) {
-            await inFlightRefresh;
+        const shared = inFlightRefresh;
+        if (shared) {
+            // Joining an in-flight refresh never consumes a budget unit, and the wait
+            // itself is bounded so a validation waiting on another validation's fetch
+            // fails closed at the bound rather than waiting on a promise it does not
+            // control.
+            await boundRefreshWait(shared, fetchTimeoutMs);
             return true;
         }
         if (!takeFetchBudget(at))
@@ -506,56 +511,16 @@ function keyStringField(record, name) {
     return value;
 }
 async function fetchDocument(url, fetchImpl, label, timeoutMs) {
-    let response;
-    try {
-        response = await withFetchTimeout(async (signal) => await fetchImpl(url.toString(), {
-            method: "GET",
-            headers: { accept: "application/json" },
-            redirect: "manual",
-            signal,
-        }), timeoutMs);
-    }
-    catch (err) {
-        // A framed refusal from the framework transport (the non-public-host
-        // guard) is a first-class rejection, not a fetch failure, so its reason
-        // survives to the caller instead of being flattened.
-        if (err instanceof OAuthBearerError)
-            throw err;
-        throw new Error(`${ERROR_PREFIX} discovery_unavailable: ${label} document cannot be fetched`, { cause: err });
-    }
-    if (response.status >= 300 && response.status < 400) {
-        throw redirectFailure(url, response.headers.get("location") ?? "");
-    }
-    if (response.status !== 200) {
-        throw new Error(`${ERROR_PREFIX} discovery_unavailable: ${label} document returned status ${response.status}`);
-    }
-    const body = await readBoundedBody(response, label);
-    let parsed;
-    try {
-        parsed = JSON.parse(body);
-    }
-    catch {
-        throw new Error(`${ERROR_PREFIX} document_invalid: ${label} document is not JSON`);
-    }
-    if (!isRecord(parsed)) {
-        throw new Error(`${ERROR_PREFIX} document_invalid: ${label} document must be a JSON object`);
-    }
-    return parsed;
-}
-/**
- * Races `run` against a timeout so the caller is bounded even when an injected
- * `fetchImpl` ignores the abort signal. The signal is still handed to `run` so a
- * real `fetch` stops early. The timeout is unref'd so a pending timer never
- * keeps the process (or a test run) alive.
- */
-async function withFetchTimeout(run, timeoutMs) {
     const controller = new AbortController();
     let failOnTimeout = () => { };
     const expired = new Promise((_resolve, reject) => {
         failOnTimeout = reject;
     });
-    // The handle lives in this scope and every exit clears it, so the timer
-    // cannot outlive the invocation that started it.
+    // One deadline covers the whole exchange — the response head _and_ its body —
+    // so a response that delivers headers and then stalls or trickles cannot
+    // outlive the fetch bound, and the single-flight refresh (with every
+    // validation waiting on it) is bounded too. The handle lives in this scope
+    // and every exit clears it, so the timer cannot outlive the invocation.
     const timer = setTimeout(() => {
         controller.abort();
         failOnTimeout(new Error(`${ERROR_PREFIX} fetch_timeout: document fetch exceeded the timeout`));
@@ -563,8 +528,70 @@ async function withFetchTimeout(run, timeoutMs) {
     // Never keep the Node process (or a test run) alive for a pending timeout.
     if (typeof timer.unref === "function")
         timer.unref();
+    // The race bounds the step even when an injected `fetchImpl` ignores the
+    // abort signal; the signal is still handed to it so a real `fetch` stops
+    // early.
+    const race = (work) => Promise.race([work, expired]);
     try {
-        return await Promise.race([run(controller.signal), expired]);
+        let response;
+        try {
+            response = await race(fetchImpl(url.toString(), {
+                method: "GET",
+                headers: { accept: "application/json" },
+                redirect: "manual",
+                signal: controller.signal,
+            }));
+        }
+        catch (err) {
+            // A framed refusal from the framework transport (the non-public-host
+            // guard) is a first-class rejection, not a fetch failure, so its reason
+            // survives to the caller instead of being flattened.
+            if (err instanceof OAuthBearerError)
+                throw err;
+            throw new Error(`${ERROR_PREFIX} discovery_unavailable: ${label} document cannot be fetched`, { cause: err });
+        }
+        if (response.status >= 300 && response.status < 400) {
+            throw redirectFailure(url, response.headers.get("location") ?? "");
+        }
+        if (response.status !== 200) {
+            throw new Error(`${ERROR_PREFIX} discovery_unavailable: ${label} document returned status ${response.status}`);
+        }
+        const body = await readBoundedBody(response, label, controller.signal, race);
+        let parsed;
+        try {
+            parsed = JSON.parse(body);
+        }
+        catch {
+            throw new Error(`${ERROR_PREFIX} document_invalid: ${label} document is not JSON`);
+        }
+        if (!isRecord(parsed)) {
+            throw new Error(`${ERROR_PREFIX} document_invalid: ${label} document must be a JSON object`);
+        }
+        return parsed;
+    }
+    finally {
+        clearTimeout(timer);
+    }
+}
+/**
+ * Bounds a join on an already-running refresh. The leader's own fetch carries
+ * the same fetch-timeout deadline, so this is a backstop: a validation waiting
+ * on another validation's fetch fails closed at the bound instead of waiting on
+ * a promise it does not control. It never aborts the shared fetch. The timeout
+ * is unref'd and cleared on every exit, like the fetch deadline itself.
+ */
+async function boundRefreshWait(pending, timeoutMs) {
+    let failOnTimeout = () => { };
+    const expired = new Promise((_resolve, reject) => {
+        failOnTimeout = reject;
+    });
+    const timer = setTimeout(() => {
+        failOnTimeout(new Error(`${ERROR_PREFIX} fetch_timeout: document fetch exceeded the timeout`));
+    }, timeoutMs);
+    if (typeof timer.unref === "function")
+        timer.unref();
+    try {
+        await Promise.race([pending, expired]);
     }
     finally {
         clearTimeout(timer);
@@ -573,9 +600,13 @@ async function withFetchTimeout(run, timeoutMs) {
 /**
  * Reads a document body while enforcing `MAX_DOCUMENT_BYTES`: a streamed body is
  * cancelled as soon as the running total crosses the cap, so oversized content
- * is never buffered whole.
+ * is never buffered whole. Every read races `race` (the fetch deadline), so a
+ * stalled or trickling body is bounded by the same deadline as the response
+ * head; `signal` is that deadline's controller, and when it aborts the body
+ * stream is cancelled too, so the stalled response stops occupying its
+ * connection instead of being abandoned mid-read.
  */
-async function readBoundedBody(response, label) {
+async function readBoundedBody(response, label, signal, race) {
     const tooLarge = () => new Error(`${ERROR_PREFIX} response_too_large: ${label} document exceeds the maximum size`);
     const body = response.body;
     if (!body) {
@@ -586,22 +617,39 @@ async function readBoundedBody(response, label) {
         return text;
     }
     const reader = body.getReader();
+    // Every cancellation is collected and joined before this function returns, so
+    // the stream is never left being torn down behind the caller's back.
+    const cancellations = [];
+    const cancelOnAbort = () => {
+        cancellations.push(reader.cancel());
+    };
+    if (signal.aborted) {
+        cancellations.push(reader.cancel());
+        throw new Error(`${ERROR_PREFIX} fetch_timeout: document fetch exceeded the timeout`);
+    }
+    signal.addEventListener("abort", cancelOnAbort, { once: true });
     const chunks = [];
     let total = 0;
-    for (;;) {
-        const { done, value } = await reader.read();
-        if (done)
-            break;
-        if (value) {
-            total += value.byteLength;
-            if (total > MAX_DOCUMENT_BYTES) {
-                await reader.cancel();
-                throw tooLarge();
+    try {
+        for (;;) {
+            const { done, value } = await race(reader.read());
+            if (done)
+                break;
+            if (value) {
+                total += value.byteLength;
+                if (total > MAX_DOCUMENT_BYTES) {
+                    await reader.cancel();
+                    throw tooLarge();
+                }
+                chunks.push(value);
             }
-            chunks.push(value);
         }
+        return Buffer.concat(chunks).toString("utf8");
     }
-    return Buffer.concat(chunks).toString("utf8");
+    finally {
+        signal.removeEventListener("abort", cancelOnAbort);
+        await Promise.all(cancellations);
+    }
 }
 /**
  * Reports why a 3xx response was refused: a redirect that would leave the

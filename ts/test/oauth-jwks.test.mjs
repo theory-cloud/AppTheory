@@ -1132,3 +1132,227 @@ test("allowPrivateHosts leaves an injected loopback transport validating", async
     assert.equal(env.state.fetches, 1, `${JSON.stringify(env.state.urls)}`);
   });
 });
+
+/**
+ * Starts a loopback server whose JWKS response is written by `handler` — so a
+ * test can flush the response headers and then stall or trickle — together with
+ * the HTTPS-bound fetch bridge the validator requires: the validator only ever
+ * sees `https://127.0.0.1:<port>` and the bridge downgrades exactly that
+ * loopback origin, so no request leaves the machine. Every request is counted
+ * and the number of responses open at once is tracked, so a test can prove a
+ * refresh is shared rather than multiplied.
+ */
+async function withRawEnv(handler, body) {
+  let markStarted;
+  const started = new Promise((resolve) => {
+    markStarted = resolve;
+  });
+  const state = { fetches: 0, concurrent: 0, maxConcurrent: 0, started };
+  const sockets = new Set();
+  const server = createServer((_request, response) => {
+    state.fetches += 1;
+    state.concurrent += 1;
+    state.maxConcurrent = Math.max(state.maxConcurrent, state.concurrent);
+    response.on("close", () => {
+      state.concurrent -= 1;
+    });
+    markStarted();
+    handler(response);
+  });
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const origin = `https://127.0.0.1:${server.address().port}`;
+  const env = {
+    origin,
+    issuer: origin,
+    jwksUri: `${origin}${JWKS_PATH}`,
+    clock: { t: BASE_MS },
+    state,
+    now: () => new Date(BASE_MS),
+    fetchImpl: async (input, init) => {
+      const bridged = new URL(String(input));
+      bridged.protocol = "http:";
+      return await fetch(bridged, init);
+    },
+  };
+  try {
+    return await body(env);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+function tokenForKid(env, kid, material, overrides = {}) {
+  return signToken({
+    header: { alg: "RS256", kid, typ: "JWT" },
+    payload: claims(env, overrides),
+    material,
+  });
+}
+
+function delay(ms, value) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(value), ms);
+    if (typeof timer.unref === "function") timer.unref();
+  });
+}
+
+/** Writes a response head with no body, modelling an upstream that never streams. */
+function writeStalledHead(response) {
+  response.writeHead(200, { "content-type": "application/json" });
+  response.flushHeaders();
+}
+
+test("a response that stalls after its headers is bounded and cannot stall other validations", async () => {
+  await withRawEnv(writeStalledHead, async (env) => {
+    const validate = await newJwksValidator(
+      validatorOptions(env, { fetchTimeoutSeconds: 0.3 }),
+    );
+    // The first unknown kid starts the refresh; the upstream answers with
+    // headers and then never streams a byte.
+    const hung = validate(
+      routeContext("/acme/mcp"),
+      tokenForKid(env, "kid-hung", KEY_B),
+    ).then(
+      () => "resolved",
+      () => "rejected",
+    );
+    await env.state.started;
+
+    // A second, still-unknown kid joins that stalled refresh and must fail
+    // closed at the bound instead of waiting on the stalled body.
+    const otherStarted = Date.now();
+    const other = await Promise.race([
+      validate(
+        routeContext("/acme/mcp"),
+        tokenForKid(env, "kid-other", KEY_B),
+      ).then(
+        () => "resolved",
+        () => "rejected",
+      ),
+      delay(2500, "timed_out"),
+    ]);
+    const otherElapsed = Date.now() - otherStarted;
+
+    assert.equal(
+      other,
+      "rejected",
+      "a validation waiting on the stalled body must fail closed",
+    );
+    assert.ok(
+      otherElapsed < 2000,
+      `the other validation must stay inside the bound, took ${otherElapsed}ms`,
+    );
+    assert.equal(await hung, "rejected", "the hung call must fail closed");
+  });
+});
+
+test("a response that trickles after its headers cannot outlive the fetch bound", async () => {
+  await withRawEnv((response) => {
+    writeStalledHead(response);
+    // One byte every 250ms: with a bound that covered only the headers the read
+    // would keep draining this trickle for as long as the upstream cared to
+    // send it, past the 1s fetch timeout and on to the test's own deadline.
+    const trickle = setInterval(() => {
+      try {
+        response.write(" ");
+      } catch {
+        clearInterval(trickle);
+      }
+    }, 250);
+    response.on("close", () => clearInterval(trickle));
+    response.on("error", () => clearInterval(trickle));
+  }, async (env) => {
+    const validate = await newJwksValidator(
+      validatorOptions(env, { fetchTimeoutSeconds: 1 }),
+    );
+    const hungStarted = Date.now();
+    const hung = await Promise.race([
+      validate(
+        routeContext("/acme/mcp"),
+        tokenForKid(env, "kid-trickle", KEY_B),
+      ).then(
+        () => "resolved",
+        () => "rejected",
+      ),
+      delay(5000, "timed_out"),
+    ]);
+    const hungElapsed = Date.now() - hungStarted;
+    assert.equal(hung, "rejected", "a trickling body must fail closed");
+    assert.ok(
+      hungElapsed < 3000,
+      `the trickle must not outlive the fetch bound, took ${hungElapsed}ms`,
+    );
+
+    // Later validations keep their own bound and are not stalled by the trickle.
+    const otherStarted = Date.now();
+    const other = await Promise.race([
+      validate(
+        routeContext("/acme/mcp"),
+        tokenForKid(env, "kid-after", KEY_B),
+      ).then(
+        () => "resolved",
+        () => "rejected",
+      ),
+      delay(5000, "timed_out"),
+    ]);
+    assert.equal(other, "rejected", "a later validation must still fail closed");
+    assert.ok(
+      Date.now() - otherStarted < 3000,
+      "a later validation must stay inside the bound",
+    );
+  });
+});
+
+test("a stalled refresh is shared by every unknown-kid validation, not multiplied", async () => {
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  await withRawEnv((response) => {
+    writeStalledHead(response);
+    void gate.then(() => {
+      response.end(JSON.stringify({ keys: [KEY_A.jwk] }));
+    });
+  }, async (env) => {
+    const validate = await newJwksValidator(
+      validatorOptions(env, { fetchTimeoutSeconds: 5 }),
+    );
+    const first = validate(
+      routeContext("/acme/mcp"),
+      tokenForKid(env, "kid-shared-1", KEY_B),
+    ).then(
+      () => "resolved",
+      () => "rejected",
+    );
+    await env.state.started;
+    const second = validate(
+      routeContext("/acme/mcp"),
+      tokenForKid(env, "kid-shared-2", KEY_B),
+    ).then(
+      () => "resolved",
+      () => "rejected",
+    );
+    // Give the second validation every chance to start a fetch of its own.
+    await delay(200);
+
+    assert.equal(
+      env.state.fetches,
+      1,
+      "only one key-set fetch may be in flight at a time",
+    );
+    assert.equal(
+      env.state.maxConcurrent,
+      1,
+      "the in-flight refresh must be shared, not multiplied",
+    );
+
+    release();
+    assert.equal(await first, "rejected", "the first validation fails closed");
+    assert.equal(await second, "rejected", "the joined validation fails closed");
+  });
+});
