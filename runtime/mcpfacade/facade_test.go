@@ -1078,7 +1078,7 @@ func TestNonePublicPostureRejectsBearerTokenConfiguration(t *testing.T) {
 	config := validConfig(URLModePublicBaseURL)
 	config.TransportPosture = TransportPostureNonePublic
 	config.RequireBearerToken = &oauth.RequireBearerTokenOptions{
-		Validator: func(context.Context, string) error { return nil },
+		Validator: func(*apptheory.Context, string) error { return nil },
 	}
 	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
 	inventory, err := RegisterMCPFacade(app, config)
@@ -1090,7 +1090,7 @@ func TestNonePublicPostureRejectsBearerTokenConfiguration(t *testing.T) {
 func TestTransportPostureFailsClosedBeforeAnyRouteIsRegistered(t *testing.T) {
 	t.Parallel()
 	validator := &oauth.RequireBearerTokenOptions{
-		Validator: func(context.Context, string) error { return nil },
+		Validator: func(*apptheory.Context, string) error { return nil },
 	}
 	tests := []struct {
 		name         string
@@ -1191,7 +1191,7 @@ func TestTransportPostureFixture(t *testing.T) {
 		config := validConfig(URLModePublicBaseURL)
 		config.TransportPosture = TransportPosture(key)
 		if key == string(TransportPostureRuntimeBearer) {
-			config.RequireBearerToken = &oauth.RequireBearerTokenOptions{Validator: func(context.Context, string) error { return nil }}
+			config.RequireBearerToken = &oauth.RequireBearerTokenOptions{Validator: func(*apptheory.Context, string) error { return nil }}
 		}
 		inventory, err := RegisterMCPFacade(apptheory.New(apptheory.WithTier(apptheory.TierP0)), config)
 		require.NoErrorf(t, err, "%s registration", key)

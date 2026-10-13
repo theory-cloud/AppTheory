@@ -36,7 +36,7 @@ func TestClaudeRemoteMcp_UnauthorizedChallenge_AndProtectedResourceMetadata(t *t
 	// Protect all MCP routes.
 	auth := oauthruntime.RequireBearerTokenMiddleware(oauthruntime.RequireBearerTokenOptions{
 		ResourceMetadataURL: "https://mcp.example.com/.well-known/oauth-protected-resource",
-		Validator: func(ctx context.Context, token string) error {
+		Validator: func(ctx *apptheory.Context, token string) error {
 			if strings.TrimSpace(token) == "token-123" {
 				return nil
 			}
@@ -166,7 +166,7 @@ func TestClaudeRemoteMcp_Lifecycle_AndStreamingResume_WithBearerAuth(t *testing.
 
 	auth := oauthruntime.RequireBearerTokenMiddleware(oauthruntime.RequireBearerTokenOptions{
 		ResourceMetadataURL: "https://mcp.example.com/.well-known/oauth-protected-resource",
-		Validator: func(ctx context.Context, token string) error {
+		Validator: func(ctx *apptheory.Context, token string) error {
 			if strings.TrimSpace(token) == "token-123" {
 				return nil
 			}
