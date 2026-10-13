@@ -254,10 +254,15 @@ test("inventory matches the shared construct fixture", () => {
 // ---------------------------------------------------------------------------
 
 test("metadata documents byte-match the shared golden for every kind and URL mode", async () => {
-  assert.equal(EXPECTATIONS.documents.length, 8);
+  assert.equal(EXPECTATIONS.documents.length, 10);
   for (const row of EXPECTATIONS.documents) {
     const app = createApp({ tier: "p0" });
-    registerMcpFacade(app, validConfig(row.mode));
+    const config = validConfig(row.mode);
+    if (row.jwks_uri !== undefined) config.jwksURI = row.jwks_uri;
+    if (row.scopes !== undefined) {
+      config.scopes = { ...config.scopes, [row.kind]: row.scopes };
+    }
+    registerMcpFacade(app, config);
     const headers =
       row.mode === "request_host"
         ? { host: ["direct.example.com"], "x-forwarded-proto": ["https"] }

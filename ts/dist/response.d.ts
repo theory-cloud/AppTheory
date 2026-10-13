@@ -3,6 +3,13 @@ import type { Headers, Response } from "./types.js";
 export declare function text(status: number, body: string): Response;
 /** Creates a JSON response. */
 export declare function json(status: number, value: unknown): Response;
+/**
+ * Creates a JSON response for OAuth metadata documents. Go serializes these
+ * documents with `encoding/json`, which HTML-escapes `&`, `<`, `>`, U+2028,
+ * and U+2029; the same replacement set is applied here (without the key
+ * sorting `safeJSONForHTML` performs) so every runtime emits identical bytes.
+ */
+export declare function metadataJSON(status: number, value: unknown): Response;
 /** Creates a binary response with an optional content type. */
 export declare function binary(status: number, body: Uint8Array, contentType?: string): Response;
 /** Creates a UTF-8 HTML response. */

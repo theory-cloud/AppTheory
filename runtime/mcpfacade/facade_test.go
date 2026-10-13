@@ -76,6 +76,8 @@ type documentFixture struct {
 	ProtectedResourcePath         string                 `json:"protected_resource_path"`
 	AuthorizationServerPath       string                 `json:"authorization_server_path"`
 	AuthorizationServerSuffixPath string                 `json:"authorization_server_suffix_path"`
+	JWKSURI                       string                 `json:"jwks_uri"`
+	Scopes                        []string               `json:"scopes"`
 	ProtectedResourceDocument     string                 `json:"protected_resource_document"`
 	AuthorizationServerDocument   string                 `json:"authorization_server_document"`
 }
@@ -249,13 +251,20 @@ func TestSharedFixturePinsRoutedDocumentBytesPerKindAndMode(t *testing.T) {
 	require.NoError(t, err)
 	var fixtures documentFixtureFile
 	require.NoError(t, json.Unmarshal(contents, &fixtures))
-	require.Len(t, fixtures.Documents, 8)
+	require.Len(t, fixtures.Documents, 10)
 
 	for _, fixture := range fixtures.Documents {
 		t.Run(fixture.Name, func(t *testing.T) {
 			t.Parallel()
+			config := validConfig(fixture.Mode)
+			if fixture.JWKSURI != "" {
+				config.JWKSURI = fixture.JWKSURI
+			}
+			if len(fixture.Scopes) > 0 {
+				config.Scopes[fixture.Kind] = fixture.Scopes
+			}
 			app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
-			_, registerErr := RegisterMCPFacade(app, validConfig(fixture.Mode))
+			_, registerErr := RegisterMCPFacade(app, config)
 			require.NoError(t, registerErr)
 			headers := map[string][]string(nil)
 			if fixture.Mode == URLModeRequestHost {

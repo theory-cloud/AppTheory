@@ -236,13 +236,18 @@ class McpFacadeContractSurfaceTests(unittest.TestCase):
 class McpFacadeMetadataDocumentTests(unittest.TestCase):
     def test_shared_fixture_pins_routed_document_bytes_per_kind_and_mode(self) -> None:
         documents = json.loads(_EXPECTATIONS_PATH.read_text(encoding="utf-8"))["documents"]
-        self.assertEqual(8, len(documents))
+        self.assertEqual(10, len(documents))
 
         request_host_headers = {"host": ["direct.example.com"], "x-forwarded-proto": ["https"]}
         for row in documents:
             with self.subTest(name=row["name"]):
                 app = create_app(tier="p0")
-                register_mcp_facade(app, _valid_config(row["mode"]))
+                config = _valid_config(row["mode"])
+                if row.get("jwks_uri") is not None:
+                    config.jwks_uri = row["jwks_uri"]
+                if row.get("scopes") is not None:
+                    config.scopes = {**config.scopes, row["kind"]: row["scopes"]}
+                register_mcp_facade(app, config)
                 headers = request_host_headers if row["mode"] == URL_MODE_REQUEST_HOST else None
 
                 protected = _serve(app, "GET", row["protected_resource_path"], headers)

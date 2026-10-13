@@ -897,7 +897,17 @@ def _metadata_response(document: dict[str, Any]) -> Response:
     # Go marshals the document with json.Marshal, which emits compact JSON in
     # struct-field order. The framework ``json()`` helper sorts keys and would
     # not match, so the ordered document is serialized here verbatim.
-    body = jsonlib.dumps(document, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    serialized = jsonlib.dumps(document, ensure_ascii=False, separators=(",", ":"))
+    # Go's encoding/json HTML-escapes these characters, so replace them here to
+    # keep the metadata document bytes identical across the Go/TS/Py runtimes.
+    serialized = (
+        serialized.replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+    body = serialized.encode("utf-8")
     return normalize_response(
         Response(
             status=200,

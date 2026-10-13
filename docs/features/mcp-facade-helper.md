@@ -129,7 +129,8 @@ registration endpoint and JWKS URI plus public-origin authorize/token URLs deriv
 Every protected-resource, routed canonical/suffix, and opt-in root metadata response sets `Cache-Control: no-store`.
 It also sets `Vary` over every header consulted by request-origin reconstruction: `Host`, `X-Forwarded-Host`,
 `X-AppTheory-Original-Host`, `X-FaceTheory-Original-Host`, `Forwarded`, `CloudFront-Forwarded-Proto`, and
-`X-Forwarded-Proto`. The shared routing fixture pins routed document bytes per endpoint kind and URL mode.
+`X-Forwarded-Proto`. The shared routing fixture pins routed document bytes per endpoint kind and URL mode, including
+golden rows that exercise HTML-escaping of `&`, `<`, and `>`.
 
 ## Authorization plug-point contract
 
@@ -180,7 +181,9 @@ violation raises, and the `none-public` posture registers no OAuth surface and r
 Authorize, token, register, and callback behavior is still entirely app-owned: the registrars own the routes; the
 application owns the bodies. The metadata documents (protected resource, routed discovery, root discovery) carry the
 same field order and the same `Cache-Control: no-store` and `Vary` headers as Go. The shared contract fixtures pin the
-routed document bytes per endpoint kind and URL mode for all three runtimes, and `facade-route-model.v1.json`,
+routed document bytes per endpoint kind and URL mode for all three runtimes, so those metadata documents are
+byte-identical across Go, TypeScript, and Python, including HTML-escaping of `&`, `<`, and `>` matching Go's
+`encoding/json`; golden rows that exercise those characters back the claim. `facade-route-model.v1.json`,
 `facade-transport-posture.v1.json`, and the route-inventory fixture are consumed by the Go, TypeScript, and Python
 suites alike. Front-channel behavior (authorize/callback/token mechanics, code-store single-use and replay→revoke,
 wiring the provider and store SPIs into the facade config) is scheduled for a follow-up milestone, as are dynamic

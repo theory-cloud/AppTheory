@@ -996,6 +996,30 @@
       "authorization_server_suffix_path": "/acme/partners/reseller/agents/helper/mcp/.well-known/oauth-authorization-server",
       "protected_resource_document": "{\"resource\":\"https://direct.example.com/acme/partners/reseller/agents/helper/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"partner_agent:use\"]}",
       "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp/authorize\",\"token_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"partner_agent:use\"]}"
+    },
+    {
+      "name": "public_base_url namespace with html-escaping bytes",
+      "mode": "public_base_url",
+      "kind": "namespace",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/mcp",
+      "authorization_server_suffix_path": "/acme/mcp/.well-known/oauth-authorization-server",
+      "jwks_uri": "https://issuer.example.com/jwks.json?a=1&b=2",
+      "scopes": ["mcp:tools", "scope<x&y>"],
+      "protected_resource_document": "{\"resource\":\"https://front.example.com/acme/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?a=1\\u0026b=2\",\"scopes_supported\":[\"mcp:tools\",\"scope\\u003cx\\u0026y\\u003e\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/authorize\",\"token_endpoint\":\"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?a=1\\u0026b=2\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"mcp:tools\",\"scope\\u003cx\\u0026y\\u003e\"]}"
+    },
+    {
+      "name": "request_host namespace with html-escaping bytes",
+      "mode": "request_host",
+      "kind": "namespace",
+      "protected_resource_path": "/.well-known/oauth-protected-resource/acme/mcp",
+      "authorization_server_path": "/.well-known/oauth-authorization-server/acme/mcp",
+      "authorization_server_suffix_path": "/acme/mcp/.well-known/oauth-authorization-server",
+      "jwks_uri": "https://issuer.example.com/jwks.json?a=1&b=2",
+      "scopes": ["mcp:tools", "scope<x&y>"],
+      "protected_resource_document": "{\"resource\":\"https://direct.example.com/acme/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?a=1\\u0026b=2\",\"scopes_supported\":[\"mcp:tools\",\"scope\\u003cx\\u0026y\\u003e\"]}",
+      "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/mcp/authorize\",\"token_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?a=1\\u0026b=2\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"mcp:tools\",\"scope\\u003cx\\u0026y\\u003e\"]}"
     }
     ],
   "stage_global": [
