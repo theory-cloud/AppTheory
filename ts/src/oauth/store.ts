@@ -153,6 +153,17 @@ export interface RouteRefreshBrokerStore {
 }
 
 /**
+ * The optional create path a broker store needs to place the record a
+ * conformance row starts from. The broker SPI itself is
+ * get/acquireLock/compareAndSwap/revoke and a compare-and-swap never creates, so
+ * creating a handle is a separate operation the facade's own write path owns; a
+ * durable store implements this with whatever create path it already has.
+ */
+export interface RouteRefreshBrokerSeeder {
+  put(record: RouteRefreshBrokerRecord): Promise<void>;
+}
+
+/**
  * The rate-limit bucket a caller checks. `limit` and `windowSeconds` are the
  * caller's window budget for the (identifier, resource, operation) tuple, so
  * one store serves buckets with different budgets.
@@ -378,9 +389,11 @@ export interface MemoryRouteRefreshBrokerStoreOptions {
  * In-memory reference RouteRefreshBrokerStore. Each handle carries its own
  * lifetime: a handle older than the store's TTL is treated as absent by every
  * operation, so an expired handle can be neither read, locked, swapped nor
- * revoked, and the version-`0` create sentinel never resurrects it.
+ * revoked, and a swap on an absent handle is `not_found` rather than a create.
  */
-export class MemoryRouteRefreshBrokerStore implements RouteRefreshBrokerStore {
+export class MemoryRouteRefreshBrokerStore
+  implements RouteRefreshBrokerStore, RouteRefreshBrokerSeeder
+{
   private readonly records = new Map<string, RouteRefreshBrokerRecord>();
   private readonly storedAt = new Map<string, number>();
   private readonly now: () => Date;
@@ -391,6 +404,23 @@ export class MemoryRouteRefreshBrokerStore implements RouteRefreshBrokerStore {
     this.now = options.now ?? (() => new Date());
     this.lockTtlMs = positiveSeconds(options.lockTtlSeconds, 30) * 1000;
     this.ttlMs = positiveSeconds(options.ttlSeconds, 900) * 1000;
+  }
+
+  /**
+   * Seeds a handle: the store's own create path, and the only way a handle is
+   * created. Creation is deliberately not a compare-and-swap, so a swap can
+   * never resurrect a handle. A copy is stored at version 1, and a record that
+   * carries no status defaults to `active`.
+   */
+  put(record: RouteRefreshBrokerRecord): Promise<void> {
+    const stored: RouteRefreshBrokerRecord = {
+      ...structuredClone(record),
+      status: record.status || "active",
+      version: 1,
+    };
+    this.records.set(stored.handleHash, stored);
+    this.storedAt.set(stored.handleHash, this.now().getTime());
+    return Promise.resolve();
   }
 
   get(handleHash: string): Promise<RouteRefreshBrokerRecord | null> {
@@ -442,33 +472,24 @@ export class MemoryRouteRefreshBrokerStore implements RouteRefreshBrokerStore {
   }
 
   /**
-   * Versioned compare-and-swap. A version of `0` is the optimistic-create
-   * sentinel: it stores the record only when no live record exists, which is
-   * how a reference or application store seeds a handle. Any other version
-   * must equal the stored record's version, and a revoked record refuses every
-   * swap. A rotation keeps the handle's original stored-at instant, so
-   * refreshing a handle upstream does not extend its local lifetime.
+   * Versioned compare-and-swap. A swap never creates: a handle that does not
+   * exist — never seeded, or aged out past its TTL — is `not_found`, and
+   * creation is the seeder's separate `put`. The presented version must equal
+   * the stored record's version, and a revoked record refuses every swap. A
+   * rotation keeps the handle's original stored-at instant, so refreshing a
+   * handle upstream does not extend its local lifetime.
    */
   compareAndSwap(
     record: RouteRefreshBrokerRecord,
     expectedVersion: number,
   ): Promise<RouteRefreshBrokerRecord> {
     const current = this.records.get(record.handleHash);
-    if (current && this.expired(record.handleHash)) {
-      this.discard(record.handleHash);
+    if (!current) {
       return Promise.reject(new BrokerNotFoundError());
     }
-    if (!current) {
-      if (expectedVersion !== 0) {
-        return Promise.reject(new BrokerVersionConflictError());
-      }
-      const created: RouteRefreshBrokerRecord = {
-        ...structuredClone(record),
-        version: 1,
-      };
-      this.records.set(created.handleHash, created);
-      this.storedAt.set(created.handleHash, this.now().getTime());
-      return Promise.resolve(structuredClone(created));
+    if (this.expired(record.handleHash)) {
+      this.discard(record.handleHash);
+      return Promise.reject(new BrokerNotFoundError());
     }
     if (current.status === "revoked") {
       return Promise.reject(new BrokerRevokedError());
@@ -516,7 +537,7 @@ export class MemoryRouteRefreshBrokerStore implements RouteRefreshBrokerStore {
   /**
    * Drops an expired handle. Every access — read or mutation — clears an
    * aged-out handle here, so it can be neither read, locked, swapped nor
-   * revoked, and the version-`0` create sentinel never resurrects it.
+   * revoked, and no operation ever recreates it.
    */
   private discard(handleHash: string): void {
     this.records.delete(handleHash);
@@ -779,6 +800,11 @@ async function runStoreCase(
       const stale = await brokerSwapOutcome(stores, brokerRecord(key), version);
       return { acquire_lock: acquired, swap: swapped, stale_swap: stale };
     }
+    case "compare_and_swap_unknown": {
+      // A swap never creates: this handle was never seeded, so the swap is
+      // not-found in every runtime and creation stays the seeder's own path.
+      return { swap: await brokerSwapOutcome(stores, brokerRecord(key), 0) };
+    }
     case "revoke_idempotent": {
       await seedBrokerRecord(stores, brokerRecord(key));
       const first = await revokeOutcome(stores, key);
@@ -1000,12 +1026,18 @@ async function runStoreCase(
   }
 }
 
-/** Seeds one broker handle through the versioned CAS create sentinel. */
+/** Places one broker handle through the store's own create path (the seeder). */
 async function seedBrokerRecord(
   stores: Stores,
   record: RouteRefreshBrokerRecord,
 ): Promise<void> {
-  await stores.routeRefreshBroker.compareAndSwap(record, 0);
+  const seeder = stores.routeRefreshBroker as Partial<RouteRefreshBrokerSeeder>;
+  if (typeof seeder.put !== "function") {
+    throw new Error(
+      "store conformance: route refresh broker store is not seedable (no put)",
+    );
+  }
+  await seeder.put(record);
 }
 
 async function clientUpdateOutcome(

@@ -122,6 +122,7 @@ var conformanceScenarios = map[string]func(*conformanceHarness, ConformanceCase)
 	"get_unknown":                        (*conformanceHarness).getUnknown,
 	"acquire_lock_exclusive_with_expiry": (*conformanceHarness).brokerAcquireLockExclusive,
 	"compare_and_swap_versioned":         (*conformanceHarness).brokerCompareAndSwapVersioned,
+	"compare_and_swap_unknown":           (*conformanceHarness).brokerCompareAndSwapUnknown,
 	"revoke_idempotent":                  (*conformanceHarness).brokerRevokeIdempotent,
 	"revoke_then_lock":                   (*conformanceHarness).brokerRevokeThenLock,
 	"revoke_then_swap":                   (*conformanceHarness).brokerRevokeThenSwap,
@@ -508,6 +509,15 @@ func (h *conformanceHarness) brokerCompareAndSwapVersioned(testCase ConformanceC
 		"swap":         outcomeFor(swapErr),
 		"stale_swap":   outcomeFor(staleErr),
 	}, nil
+}
+
+// brokerCompareAndSwapUnknown swaps a handle that was never created. Creation
+// is a separate seeder operation, so a compare-and-swap on an absent handle is
+// not-found rather than an optimistic create.
+func (h *conformanceHarness) brokerCompareAndSwapUnknown(testCase ConformanceCase) (map[string]any, error) {
+	key := h.key(testCase, "handle")
+	_, err := h.stores.RouteRefreshBroker.CompareAndSwap(h.ctx(), &RouteRefreshBrokerRecord{HandleHash: key}, 0)
+	return map[string]any{"swap": outcomeFor(err)}, nil
 }
 
 func (h *conformanceHarness) brokerRevokeIdempotent(testCase ConformanceCase) (map[string]any, error) {

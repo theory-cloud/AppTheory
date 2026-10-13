@@ -296,18 +296,26 @@ class MemoryAuthorizationCodeStore:
             self._records[stored.code_hash] = stored
 
     def consume(self, code_hash: str) -> ConsumeResult | None:
+        """Consume-once, retaining the record so replay is distinguishable.
+
+        A replay returns the *stored* record's terminal status with
+        ``replayed=True``; it is never re-derived from the current clock, so a
+        clock that has moved past the TTL cannot restamp a replay. First-consume
+        behaviour is unchanged: a live code becomes ``consumed``, and an expired
+        code is burned as ``expired`` on the first consume.
+        """
         with self._lock:
             stored = self._records.get(code_hash)
             if stored is None:
                 return None
-            replayed = stored.status == STATUS_CONSUMED
-            if not replayed:
+            if stored.status in (STATUS_CONSUMED, STATUS_EXPIRED):
+                return ConsumeResult(record=_copy_record(stored), replayed=True)
+            if _is_expired(stored.expires_at, self._now()):
+                stored.status = STATUS_EXPIRED
+            else:
                 stored.status = STATUS_CONSUMED
-                stored.version += 1
-            snapshot = _copy_record(stored)
-        if _is_expired(snapshot.expires_at, self._now()):
-            return ConsumeResult(record=_copy_record(snapshot, status=STATUS_EXPIRED), replayed=replayed)
-        return ConsumeResult(record=snapshot, replayed=replayed)
+            stored.version += 1
+            return ConsumeResult(record=_copy_record(stored), replayed=False)
 
 
 class MemoryClientStore:
@@ -841,6 +849,15 @@ def _scenario_broker_compare_and_swap_versioned(
     _assert_expected(expect, actual)
 
 
+def _scenario_broker_compare_and_swap_unknown(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    """A swap never creates: an absent handle is not-found, not a create."""
+    store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
+    record = RouteRefreshBrokerRecord(handle_hash="handle-hash", version=0)
+    _assert_expected(expect, {"swap": _broker_swap_outcome(store, record)})
+
+
 def _scenario_broker_revoke_idempotent(
     stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
 ) -> None:
@@ -1038,6 +1055,7 @@ _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
     ("route_refresh_broker", "get_unknown"): _scenario_broker_get_unknown,
     ("route_refresh_broker", "acquire_lock_exclusive_with_expiry"): _scenario_broker_acquire_lock_exclusive_with_expiry,
     ("route_refresh_broker", "compare_and_swap_versioned"): _scenario_broker_compare_and_swap_versioned,
+    ("route_refresh_broker", "compare_and_swap_unknown"): _scenario_broker_compare_and_swap_unknown,
     ("route_refresh_broker", "revoke_idempotent"): _scenario_broker_revoke_idempotent,
     ("route_refresh_broker", "revoke_then_lock"): _scenario_broker_revoke_then_lock,
     ("route_refresh_broker", "broker_ttl_boundary"): _scenario_broker_ttl_boundary,
