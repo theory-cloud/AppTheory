@@ -626,6 +626,43 @@ test("discovery-bootstrap.v1 executes every fixture case over a loopback server"
   assert.equal(executed, fixture.cases.length);
 });
 
+test("the JWKS validator enforces the azp/client_id allow-list", async () => {
+  await withEnv({ jwks: () => ({ body: { keys: [KEY_A.jwk] } }) }, async (env) => {
+    const validate = await newJwksValidator(
+      validatorOptions(env, { allowedAzp: ["client-1"] }),
+    );
+    const ctx = () => routeContext("/acme/mcp");
+    const reject = (token) =>
+      assert.rejects(
+        () => validate(ctx(), token),
+        (error) =>
+          error instanceof OAuthBearerError &&
+          error.oauthCode === ERR_INVALID_BEARER_TOKEN,
+      );
+
+    // No wildcard behaviour: an azp outside the allow-list is refused, and a
+    // missing azp falls back to client_id.
+    await reject(rs256Token(env, KEY_A, { azp: "attacker" }));
+    await reject(rs256Token(env, KEY_A, { client_id: "attacker" }));
+
+    // An allow-listed client_id passes, and azp takes precedence over client_id.
+    assert.equal(
+      (await validate(ctx(), rs256Token(env, KEY_A, { client_id: "client-1" })))
+        .subject,
+      "acme",
+    );
+    assert.equal(
+      (
+        await validate(
+          ctx(),
+          rs256Token(env, KEY_A, { azp: "client-1", client_id: "attacker" }),
+        )
+      ).subject,
+      "acme",
+    );
+  });
+});
+
 test("route-challenge.v1 pins the route-derived resource indicator surface", () => {
   const fixture = loadFixture("route-challenge.v1.json");
   const rows = fixture.resource_indicator;

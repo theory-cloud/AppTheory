@@ -63,6 +63,8 @@ func jwksFailureReason(err error) string {
 		return "issuer_mismatch"
 	case errors.Is(err, errAudienceMismatch):
 		return "audience_mismatch"
+	case errors.Is(err, errAZPNotAllowed):
+		return "azp_not_allowed"
 	case errors.Is(err, ErrBearerTokenExpired):
 		return "expired"
 	case errors.Is(err, errInsecureURL):
@@ -554,6 +556,33 @@ func TestJWKSValidatorAcceptsAWellFormedRS256Token(t *testing.T) {
 	require.Equal(t, []string{"namespace:use", "agent:use"}, claims.Scopes)
 	require.Equal(t, jwksFixtureNow.Add(time.Hour), claims.ExpiresAt)
 	require.Equal(t, 1, server.fetchCount(), "one well-formed token needs exactly one key-set fetch")
+}
+
+func TestJWKSValidatorEnforcesTheAZPAllowList(t *testing.T) {
+	key := newTestRSAKey(t)
+	server := newJWKSTestServer(t, testJWK(t, "key-1", key))
+	validator := newTestJWKSValidator(t, JWKSValidatorOptions{
+		Issuer:     jwksFixtureIssuer,
+		JWKSURI:    server.jwksURL(),
+		HTTPClient: server.client(),
+		Now:        frozenJWKSClock(jwksFixtureNow),
+		AllowedAZP: []string{"client-1"},
+	})
+
+	// An azp outside the allow-list is refused (no wildcard behaviour).
+	_, err := validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(map[string]any{"azp": "attacker"})))
+	require.ErrorIs(t, err, ErrInvalidBearerToken)
+	require.Equal(t, "azp_not_allowed", jwksFailureReason(err))
+
+	// A missing azp falls back to client_id.
+	_, err = validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(map[string]any{"client_id": "attacker"})))
+	require.ErrorIs(t, err, ErrInvalidBearerToken)
+
+	// Both an allow-listed azp and a missing-azp-but-allow-listed client_id pass.
+	_, err = validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(map[string]any{"client_id": "client-1"})))
+	require.NoError(t, err)
+	_, err = validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(map[string]any{"azp": "client-1", "client_id": "attacker"})))
+	require.NoError(t, err, "azp takes precedence over client_id when present")
 }
 
 func TestJWKSValidatorFailsClosedOnSignatureAndKeyDoubts(t *testing.T) {
