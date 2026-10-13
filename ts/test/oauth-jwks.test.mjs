@@ -640,7 +640,7 @@ test("the JWKS validator enforces the azp/client_id allow-list", async () => {
           error.oauthCode === ERR_INVALID_BEARER_TOKEN,
       );
 
-    // No wildcard behaviour: an azp outside the allow-list is refused, and a
+    // No wildcard behavior: an azp outside the allow-list is refused, and a
     // missing azp falls back to client_id.
     await reject(rs256Token(env, KEY_A, { azp: "attacker" }));
     await reject(rs256Token(env, KEY_A, { client_id: "attacker" }));
