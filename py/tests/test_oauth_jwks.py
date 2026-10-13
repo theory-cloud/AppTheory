@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import datetime as dt
 import hashlib
 import hmac
+import inspect
 import json
 import secrets
+import socket
+import threading
+import time
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +32,7 @@ from apptheory import (
     resource_metadata_url_from_mcp_endpoint,
 )
 from apptheory.context import Context
+from apptheory.oauth import jwks
 from apptheory.oauth.jwks import _rsa_pkcs1_v15_sha256_verify
 from apptheory.request import Request
 
@@ -339,6 +345,18 @@ class JwksValidatorFixtureTests(unittest.TestCase):
                 accepted, code = _validate(validator, token)
                 self.assertFalse(accepted)
                 self.assertEqual(code, ERR_INVALID_BEARER_TOKEN)
+
+    def test_shared_fetch_timeout_default_is_pinned(self) -> None:
+        self.assertEqual(self.fixture["defaults"]["fetch_timeout_seconds"], jwks.HTTP_TIMEOUT_SECONDS)
+        self.assertEqual(jwks.HTTP_TIMEOUT_SECONDS, 10)
+        self.assertEqual(
+            inspect.signature(jwks.bootstrap_oidc_discovery).parameters["timeout_seconds"].default,
+            jwks.HTTP_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            inspect.signature(jwks._default_http_get).parameters["timeout"].default,
+            jwks.HTTP_TIMEOUT_SECONDS,
+        )
 
     def test_fixture_cases(self) -> None:
         scenarios = {
@@ -726,6 +744,68 @@ class JwksValidatorBehaviourTests(unittest.TestCase):
         transport.push_json(JWKS_URI, _jwks(_jwk("k1", key)))
         validator = _new_env(transport, clock, **options)
         return validator, transport, clock
+
+
+class FetchTimeoutTests(unittest.TestCase):
+    """The framework default transport must fail closed when an upstream hangs."""
+
+    def setUp(self) -> None:
+        self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._listener.bind(("127.0.0.1", 0))
+        self._listener.listen(1)
+        self._listener.settimeout(0.5)
+        self._port = self._listener.getsockname()[1]
+        self._connections: list[socket.socket] = []
+        self._stop = threading.Event()
+        self.addCleanup(self._shutdown)
+        self._thread = threading.Thread(target=self._accept_until_stopped, daemon=True)
+        self._thread.start()
+
+    def _accept_until_stopped(self) -> None:
+        while not self._stop.is_set():
+            try:
+                connection, _address = self._listener.accept()
+            except (TimeoutError, OSError):
+                continue
+            # Accept, then never respond: the peer's TLS handshake must time out.
+            self._connections.append(connection)
+
+    def _shutdown(self) -> None:
+        self._stop.set()
+        with contextlib.suppress(OSError):
+            for connection in self._connections:
+                connection.close()
+        with contextlib.suppress(OSError):
+            self._listener.close()
+        self._thread.join(timeout=2.0)
+
+    def test_hung_upstream_fails_closed_inside_the_bound(self) -> None:
+        key = _test_key("hung-upstream")
+        validator = new_jwks_validator(
+            JWKSValidatorOptions(
+                issuer=ISSUER,
+                jwks_uri=f"https://127.0.0.1:{self._port}/jwks.json",
+                http_timeout_seconds=0.2,
+            )
+        )
+        started = time.monotonic()
+        with self.assertRaises(OAuthBearerError):
+            validator(_ctx(), _jwt(key, "k1", _claims()))
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 3.0, f"the transport timeout must fire, took {elapsed:.2f}s")
+
+        accepted, code = _validate(validator, _jwt(key, "k1", _claims()))
+        self.assertFalse(accepted)
+        self.assertEqual(code, ERR_INVALID_BEARER_TOKEN)
+
+    def test_default_fetch_timeout_leaves_the_happy_path_intact(self) -> None:
+        key = _test_key("default-timeout")
+        transport = _CountingTransport()
+        transport.push_json(JWKS_URI, _jwks(_jwk("k1", key)))
+        validator = _new_env(transport, _Clock(NOW))
+        accepted, code = _validate(validator, _jwt(key, "k1", _claims()))
+        self.assertTrue(accepted, code)
 
 
 if __name__ == "__main__":

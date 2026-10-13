@@ -1,5 +1,7 @@
 import type { Context } from "../context.js";
 import { type BearerTokenClaimsValidator } from "./index.js";
+/** Framework default bound on one discovery or JWKS fetch, shared with Go and Python. */
+export declare const DEFAULT_FETCH_TIMEOUT_SECONDS = 10;
 export interface JWKSValidatorOptions {
     /**
      * Required. The expected token issuer; every accepted token's `iss` must
@@ -23,6 +25,12 @@ export interface JWKSValidatorOptions {
     now?: () => Date;
     /** Tolerance applied to `exp` and `nbf`. */
     clockSkewSeconds?: number;
+    /**
+     * Bounds one discovery or JWKS fetch. Zero or absent means the framework
+     * default of 10 seconds (`DEFAULT_FETCH_TIMEOUT_SECONDS`), shared with the Go
+     * and Python validators.
+     */
+    fetchTimeoutSeconds?: number;
     /** How long a fetched key stays usable before a refresh. Zero means default. */
     cacheTtlSeconds?: number;
     /**
@@ -52,9 +60,10 @@ export interface JWKSValidatorOptions {
  * `issuer` equals `issuer`, and returns the document's `jwks_uri`. The
  * discovery URL and the returned key-set URL must both be absolute HTTPS URLs;
  * a document that omits `jwks_uri`, an issuer mismatch, and any redirect all
- * fail closed.
+ * fail closed. The fetch is bounded by `timeoutSeconds`, which defaults to the
+ * shared framework default.
  */
-export declare function bootstrapOidcDiscovery(discoveryUrl: string, issuer: string, fetchImpl?: typeof fetch): Promise<string>;
+export declare function bootstrapOidcDiscovery(discoveryUrl: string, issuer: string, fetchImpl?: typeof fetch, timeoutSeconds?: number): Promise<string>;
 /**
  * Builds a fail-closed RS256/JWKS claims validator.
  *

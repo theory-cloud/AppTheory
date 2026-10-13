@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createPublicKey, verify, type KeyObject } from "node:crypto";
+import type { ReadableStreamDefaultReader } from "node:stream/web";
 
 import type { Context } from "../context.js";
 
@@ -32,6 +33,8 @@ const MAX_KEYS = 64;
 const DEFAULT_CACHE_TTL_SECONDS = 900;
 const DEFAULT_REFRESH_COOLDOWN_SECONDS = 30;
 const DEFAULT_MAX_REFRESH_PER_KID = 1;
+/** Framework default bound on one discovery or JWKS fetch, shared with Go and Python. */
+export const DEFAULT_FETCH_TIMEOUT_SECONDS = 10;
 
 export interface JWKSValidatorOptions {
   /**
@@ -56,6 +59,12 @@ export interface JWKSValidatorOptions {
   now?: () => Date;
   /** Tolerance applied to `exp` and `nbf`. */
   clockSkewSeconds?: number;
+  /**
+   * Bounds one discovery or JWKS fetch. Zero or absent means the framework
+   * default of 10 seconds (`DEFAULT_FETCH_TIMEOUT_SECONDS`), shared with the Go
+   * and Python validators.
+   */
+  fetchTimeoutSeconds?: number;
   /** How long a fetched key stays usable before a refresh. Zero means default. */
   cacheTtlSeconds?: number;
   /**
@@ -112,12 +121,14 @@ interface JWKSClaims {
  * `issuer` equals `issuer`, and returns the document's `jwks_uri`. The
  * discovery URL and the returned key-set URL must both be absolute HTTPS URLs;
  * a document that omits `jwks_uri`, an issuer mismatch, and any redirect all
- * fail closed.
+ * fail closed. The fetch is bounded by `timeoutSeconds`, which defaults to the
+ * shared framework default.
  */
 export async function bootstrapOidcDiscovery(
   discoveryUrl: string,
   issuer: string,
   fetchImpl?: typeof fetch,
+  timeoutSeconds: number = DEFAULT_FETCH_TIMEOUT_SECONDS,
 ): Promise<string> {
   const configuredIssuer = canonicalIssuer(issuer);
   if (!configuredIssuer) {
@@ -130,6 +141,7 @@ export async function bootstrapOidcDiscovery(
     requestUrl,
     fetchImpl ?? fetch,
     "discovery",
+    positiveSeconds(timeoutSeconds, DEFAULT_FETCH_TIMEOUT_SECONDS) * 1000,
   );
   const documentIssuer = canonicalIssuer(stringClaim(document, "issuer"));
   if (!documentIssuer || documentIssuer !== configuredIssuer) {
@@ -173,6 +185,11 @@ export async function newJwksValidator(
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? (() => new Date());
   const clockSkewMs = nonNegativeSeconds(options.clockSkewSeconds, 0) * 1000;
+  const fetchTimeoutSeconds = positiveSeconds(
+    options.fetchTimeoutSeconds,
+    DEFAULT_FETCH_TIMEOUT_SECONDS,
+  );
+  const fetchTimeoutMs = fetchTimeoutSeconds * 1000;
   const cacheTtlSeconds = positiveSeconds(
     options.cacheTtlSeconds,
     DEFAULT_CACHE_TTL_SECONDS,
@@ -198,7 +215,12 @@ export async function newJwksValidator(
     jwksUri = secureURL(explicitJwksUri, "jwks uri");
   } else if (discoveryUrl) {
     jwksUri = new URL(
-      await bootstrapOidcDiscovery(discoveryUrl, configuredIssuer, fetchImpl),
+      await bootstrapOidcDiscovery(
+        discoveryUrl,
+        configuredIssuer,
+        fetchImpl,
+        fetchTimeoutSeconds,
+      ),
     );
   } else {
     throw new Error(
@@ -210,7 +232,12 @@ export async function newJwksValidator(
   const windows = new Map<string, number>();
 
   const refresh = async (at: number): Promise<void> => {
-    const document = await fetchDocument(jwksUri, fetchImpl, "jwks");
+    const document = await fetchDocument(
+      jwksUri,
+      fetchImpl,
+      "jwks",
+      fetchTimeoutMs,
+    );
     const published = document["keys"];
     if (!Array.isArray(published) || published.length === 0) {
       throw new Error(
@@ -521,14 +548,20 @@ async function fetchDocument(
   url: URL,
   fetchImpl: typeof fetch,
   label: string,
+  timeoutMs: number,
 ): Promise<Record<string, unknown>> {
   let response: Response;
   try {
-    response = await fetchImpl(url.toString(), {
-      method: "GET",
-      headers: { accept: "application/json" },
-      redirect: "manual",
-    });
+    response = await withFetchTimeout(
+      async (signal) =>
+        await fetchImpl(url.toString(), {
+          method: "GET",
+          headers: { accept: "application/json" },
+          redirect: "manual",
+          signal,
+        }),
+      timeoutMs,
+    );
   } catch {
     throw new Error(
       `${ERROR_PREFIX} discovery_unavailable: ${label} document cannot be fetched`,
@@ -542,12 +575,7 @@ async function fetchDocument(
       `${ERROR_PREFIX} discovery_unavailable: ${label} document returned status ${response.status}`,
     );
   }
-  const body = await response.text();
-  if (body.length > MAX_DOCUMENT_BYTES) {
-    throw new Error(
-      `${ERROR_PREFIX} response_too_large: ${label} document exceeds the maximum size`,
-    );
-  }
+  const body = await readBoundedBody(response, label);
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
@@ -562,6 +590,76 @@ async function fetchDocument(
     );
   }
   return parsed;
+}
+
+/**
+ * Races `run` against a timeout so the caller is bounded even when an injected
+ * `fetchImpl` ignores the abort signal. The signal is still handed to `run` so a
+ * real `fetch` stops early. The timeout is unref'd so a pending timer never
+ * keeps the process (or a test run) alive.
+ */
+async function withFetchTimeout<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(
+        new Error(
+          `${ERROR_PREFIX} fetch_timeout: document fetch exceeded the timeout`,
+        ),
+      );
+    }, timeoutMs);
+    // Never keep the Node process (or a test run) alive for a pending timeout.
+    if (typeof timer.unref === "function") timer.unref();
+  });
+  try {
+    return await Promise.race([run(controller.signal), expired]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * Reads a document body while enforcing `MAX_DOCUMENT_BYTES`: a streamed body is
+ * cancelled as soon as the running total crosses the cap, so oversized content
+ * is never buffered whole.
+ */
+async function readBoundedBody(
+  response: Response,
+  label: string,
+): Promise<string> {
+  const tooLarge = (): Error =>
+    new Error(
+      `${ERROR_PREFIX} response_too_large: ${label} document exceeds the maximum size`,
+    );
+  const body = response.body;
+  if (!body) {
+    const text = await response.text();
+    if (Buffer.byteLength(text, "utf8") > MAX_DOCUMENT_BYTES) {
+      throw tooLarge();
+    }
+    return text;
+  }
+  const reader = body.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      total += value.byteLength;
+      if (total > MAX_DOCUMENT_BYTES) {
+        await reader.cancel();
+        throw tooLarge();
+      }
+      chunks.push(value);
+    }
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 /**

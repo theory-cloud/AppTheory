@@ -39,6 +39,12 @@ const (
 	defaultJWKSCacheTTL        = 15 * time.Minute
 	defaultJWKSRefreshCooldown = 30 * time.Second
 	defaultMaxRefreshPerKid    = 1
+	// defaultJWKSFetchTimeout bounds one discovery or JWKS fetch. It matches the
+	// Python validator's default so all three runtimes share one fetch bound.
+	defaultJWKSFetchTimeout = 10 * time.Second
+	// jwksRefreshWaitSlack is added to the fetch timeout to bound how long a
+	// validation waits on a refresh another validation already started.
+	jwksRefreshWaitSlack = 250 * time.Millisecond
 )
 
 // Validator failure markers. Every one of them is wrapped together with an
@@ -90,6 +96,12 @@ type JWKSValidatorOptions struct {
 	// ClockSkew is the tolerance applied to exp and nbf.
 	ClockSkew time.Duration
 
+	// FetchTimeout bounds one discovery or JWKS fetch. Zero means the default of
+	// 10s, shared with the TypeScript and Python validators; an HTTPClient that
+	// already carries its own Timeout keeps that Timeout unless FetchTimeout is
+	// set explicitly.
+	FetchTimeout time.Duration
+
 	// CacheTTL is how long a fetched key stays usable before a refresh. Zero
 	// means the default.
 	CacheTTL time.Duration
@@ -131,7 +143,8 @@ func NewJWKSValidator(opts JWKSValidatorOptions) (BearerTokenClaimsValidator, er
 		return nil, fmt.Errorf("%w: jwks validator issuer must be an absolute URL", ErrInvalidURL)
 	}
 
-	client := jwksHTTPClient(opts.HTTPClient)
+	client := jwksHTTPClient(opts.HTTPClient, opts.FetchTimeout)
+	fetchTimeout := resolvedFetchTimeout(opts.HTTPClient, opts.FetchTimeout)
 
 	discoveryURL := strings.TrimSpace(opts.DiscoveryURL)
 	if discoveryURL != "" {
@@ -180,6 +193,7 @@ func NewJWKSValidator(opts JWKSValidatorOptions) (BearerTokenClaimsValidator, er
 		issuer:           issuer,
 		jwksURI:          jwksURI,
 		client:           client,
+		fetchTimeout:     fetchTimeout,
 		now:              now,
 		clockSkew:        opts.ClockSkew,
 		cacheTTL:         cacheTTL,
@@ -209,7 +223,7 @@ func BootstrapOIDCDiscovery(ctx context.Context, discoveryURL string, issuer str
 		return "", fmt.Errorf("%w: %w", ErrInvalidURL, errInsecureURL)
 	}
 
-	body, err := fetchBoundedDocument(ctx, jwksHTTPClient(client), requestURL)
+	body, err := fetchBoundedDocument(ctx, jwksHTTPClient(client, 0), requestURL)
 	if err != nil {
 		return "", err
 	}
@@ -250,6 +264,7 @@ type jwksValidator struct {
 	issuer           string
 	jwksURI          string
 	client           *http.Client
+	fetchTimeout     time.Duration
 	now              func() time.Time
 	clockSkew        time.Duration
 	cacheTTL         time.Duration
@@ -262,6 +277,17 @@ type jwksValidator struct {
 	mu      sync.Mutex
 	keys    map[string]jwksCachedKey
 	windows map[string]time.Time
+	// flight is the one refresh fetch currently in progress, if any. Validations
+	// that need a fetch join it instead of starting their own, so a hung upstream
+	// costs one connection and no goroutine holds mu while waiting on the network.
+	flight *jwksRefreshFlight
+}
+
+// jwksRefreshFlight is a single in-flight key-set fetch shared by every
+// validation that needs it.
+type jwksRefreshFlight struct {
+	done chan struct{}
+	err  error
 }
 
 type parsedCompactJWS struct {
@@ -295,7 +321,7 @@ func (v *jwksValidator) validate(ctx *apptheory.Context, token string) (*BearerT
 		return nil, err
 	}
 
-	key, err := v.keyForKid(parsed.kid)
+	key, err := v.keyForKid(requestContext(ctx), parsed.kid)
 	if err != nil {
 		return nil, err
 	}
@@ -408,25 +434,32 @@ func (v *jwksValidator) checkAZP(claims jwksClaims) error {
 // populates the cache and up to MaxRefreshPerKid further fetches absorb key
 // publication lag. Every further unknown-kid token inside the cooldown is
 // rejected without another fetch, so an attacker cannot amplify token traffic
-// into key-set traffic.
-func (v *jwksValidator) keyForKid(kid string) (*rsa.PublicKey, error) {
+// into key-set traffic. No lock is held across the network: a hung upstream
+// costs one connection and one bounded wait.
+func (v *jwksValidator) keyForKid(ctx context.Context, kid string) (*rsa.PublicKey, error) {
 	v.mu.Lock()
-	defer v.mu.Unlock()
-
 	now := v.now()
 	if key, ok := v.cachedKey(kid, now); ok {
+		v.mu.Unlock()
 		return key, nil
 	}
 	if startedAt, ok := v.windows[kid]; ok && now.Sub(startedAt) < v.refreshCooldown {
+		v.mu.Unlock()
 		return nil, fmt.Errorf("%w: %w", ErrInvalidBearerToken, errUnknownKey)
 	}
+	// The window is recorded before the fetch, so a failed or hung fetch cannot
+	// be re-triggered by the same kid inside the cooldown.
 	v.windows[kid] = now
+	v.mu.Unlock()
 
 	for attempt := 0; attempt <= v.maxRefreshPerKid; attempt++ {
-		if err := v.refresh(now); err != nil {
+		if err := v.refresh(ctx, now); err != nil {
 			return nil, err
 		}
-		if key, ok := v.cachedKey(kid, now); ok {
+		v.mu.Lock()
+		key, ok := v.cachedKey(kid, now)
+		v.mu.Unlock()
+		if ok {
 			return key, nil
 		}
 	}
@@ -441,8 +474,34 @@ func (v *jwksValidator) cachedKey(kid string, now time.Time) (*rsa.PublicKey, bo
 	return entry.key, true
 }
 
-func (v *jwksValidator) refresh(now time.Time) error {
-	body, err := fetchBoundedDocument(context.Background(), v.client, v.jwksURI)
+// refresh performs one key-set fetch. Concurrent validations share a single
+// in-flight fetch: the first caller performs it and the rest wait at most the
+// fetch timeout plus a small slack before failing closed. The state mutex is
+// never held across the network, so a hung or hostile upstream cannot stall
+// other validations beyond that bound.
+func (v *jwksValidator) refresh(ctx context.Context, now time.Time) error {
+	v.mu.Lock()
+	if flight := v.flight; flight != nil {
+		v.mu.Unlock()
+		return v.awaitFlight(ctx, flight)
+	}
+	flight := &jwksRefreshFlight{done: make(chan struct{})}
+	v.flight = flight
+	v.mu.Unlock()
+
+	err := v.fetchKeys(ctx, now)
+
+	v.mu.Lock()
+	flight.err = err
+	v.flight = nil
+	close(flight.done)
+	v.mu.Unlock()
+	return err
+}
+
+// fetchKeys fetches and parses one key set and stores its keys.
+func (v *jwksValidator) fetchKeys(ctx context.Context, now time.Time) error {
+	body, err := fetchBoundedDocument(ctx, v.client, v.jwksURI)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidBearerToken, err)
 	}
@@ -450,10 +509,40 @@ func (v *jwksValidator) refresh(now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidBearerToken, err)
 	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	for kid, key := range keys {
 		v.keys[kid] = jwksCachedKey{key: key, expiresAt: now.Add(v.cacheTTL)}
 	}
 	return nil
+}
+
+// awaitFlight waits for another validation's fetch without holding any lock.
+// The wait is bounded by the fetch timeout, so a hung upstream degrades to a
+// fail-closed rejection instead of an unbounded stall.
+func (v *jwksValidator) awaitFlight(ctx context.Context, flight *jwksRefreshFlight) error {
+	timer := time.NewTimer(v.fetchTimeout + jwksRefreshWaitSlack)
+	defer timer.Stop()
+	select {
+	case <-flight.done:
+		return flight.err
+	case <-timer.C:
+		return fmt.Errorf("%w: %w", ErrInvalidBearerToken, errFetchUnavailable)
+	case <-ctx.Done():
+		return fmt.Errorf("%w: %w", ErrInvalidBearerToken, errFetchUnavailable)
+	}
+}
+
+// requestContext returns the request's Go context so a fetch is bounded by the
+// caller's deadline as well as the fetch timeout.
+func requestContext(ctx *apptheory.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	if derived := ctx.Context(); derived != nil {
+		return derived
+	}
+	return context.Background()
 }
 
 func parseCompactJWS(token string) (parsedCompactJWS, error) {
@@ -789,12 +878,28 @@ func normalizeSecureURL(raw string) (string, bool) {
 	return u.String(), true
 }
 
-func jwksHTTPClient(client *http.Client) *http.Client {
+// resolvedFetchTimeout returns the fetch bound: the explicit override, else the
+// caller's client timeout, else the framework default shared with the other
+// runtimes.
+func resolvedFetchTimeout(base *http.Client, override time.Duration) time.Duration {
+	if override > 0 {
+		return override
+	}
+	if base != nil && base.Timeout > 0 {
+		return base.Timeout
+	}
+	return defaultJWKSFetchTimeout
+}
+
+func jwksHTTPClient(client *http.Client, fetchTimeout time.Duration) *http.Client {
 	base := client
 	if base == nil {
 		base = http.DefaultClient
 	}
 	clone := *base
+	// Every discovery and JWKS fetch is bounded, so a hung or hostile upstream
+	// cannot stall a validation indefinitely.
+	clone.Timeout = resolvedFetchTimeout(client, fetchTimeout)
 	// Never follow a redirect: the caller must not be steered to another
 	// origin, and a 3xx is reported as a failure by fetchBoundedDocument.
 	clone.CheckRedirect = func(*http.Request, []*http.Request) error {

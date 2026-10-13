@@ -27,6 +27,7 @@ import {
   resourceIndicatorMatches,
   resourceMetadataURLFromMcpEndpoint,
 } from "../dist/index.js";
+import { DEFAULT_FETCH_TIMEOUT_SECONDS } from "../dist/oauth/jwks.js";
 
 const FIXTURE_DIR = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -768,3 +769,85 @@ function firstHeader(headers, name) {
   }
   return "";
 }
+
+test("jwks-validator.v1 pins the shared fetch timeout default", () => {
+  const fixture = loadFixture("jwks-validator.v1.json");
+  assert.equal(
+    fixture.defaults.fetch_timeout_seconds,
+    DEFAULT_FETCH_TIMEOUT_SECONDS,
+    "the fixture default must equal the exported framework default",
+  );
+  assert.equal(DEFAULT_FETCH_TIMEOUT_SECONDS, 10);
+});
+
+test("the JWKS document cap is enforced while reading the body", async () => {
+  const oversizedJwks = () => ({
+    body: { keys: [{ ...KEY_A.jwk, kid: "k".repeat(1.5 * 1024 * 1024) }] },
+  });
+  await withEnv({ jwks: oversizedJwks }, async (env) => {
+    const validate = await newJwksValidator(validatorOptions(env));
+    await assert.rejects(
+      async () => await validate(routeContext("/acme/mcp"), rs256Token(env, KEY_A)),
+      (error) => {
+        assert.match(
+          error.message,
+          /response_too_large/u,
+          "an oversized document must be refused while it is read",
+        );
+        return true;
+      },
+    );
+  });
+});
+
+test("a hung upstream fails closed inside the fetch timeout bound", async () => {
+  await withEnv({ jwks: () => ({ body: { keys: [KEY_A.jwk] } }) }, async (env) => {
+    const validate = await newJwksValidator(
+      validatorOptions(env, {
+        fetchTimeoutSeconds: 0.2,
+        fetchImpl: () => new Promise(() => {}),
+      }),
+    );
+    const token = rs256Token(env, KEY_A);
+    const started = Date.now();
+    // The race keeps the test itself from hanging; the elapsed assertion then
+    // proves the validator settled inside its own bound.
+    const outcome = await Promise.race([
+      validate(routeContext("/acme/mcp"), token).then(
+        () => "resolved",
+        () => "rejected",
+      ),
+      new Promise((resolve) => {
+        const timer = setTimeout(() => resolve("timed_out"), 2000);
+        if (typeof timer.unref === "function") timer.unref();
+      }),
+    ]);
+    const elapsed = Date.now() - started;
+    assert.equal(outcome, "rejected", "the hung fetch must fail closed");
+    assert.ok(
+      elapsed < 2000,
+      `the fetch timeout must settle inside the bound, took ${elapsed}ms`,
+    );
+  });
+});
+
+test("the shared fetch timeout default leaves the happy path intact", async () => {
+  await withEnv({ jwks: () => ({ body: { keys: [KEY_A.jwk] } }) }, async (env) => {
+    const explicit = await newJwksValidator(
+      validatorOptions(env, { fetchTimeoutSeconds: 5 }),
+    );
+    assert.equal(
+      (await explicit(routeContext("/acme/mcp"), rs256Token(env, KEY_A))).subject,
+      "acme",
+      "an explicit fetch timeout must not disturb validation",
+    );
+
+    const defaulted = await newJwksValidator(validatorOptions(env));
+    assert.equal(
+      (await defaulted(routeContext("/acme/mcp"), rs256Token(env, KEY_A)))
+        .subject,
+      "acme",
+      "the framework default timeout must not disturb validation",
+    );
+  });
+});

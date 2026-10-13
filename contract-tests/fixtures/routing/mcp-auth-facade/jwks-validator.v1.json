@@ -11,6 +11,7 @@
   "defaults": {
     "unknown_kid_refresh": "one bounded refresh per kid, then cooldown",
     "max_refresh_per_kid": 1,
+    "fetch_timeout_seconds": 10,
     "cache": "bounded, expiry-driven rotation refresh",
     "issuer_check": "before and after signature verification",
     "audience_check": "exact match against the route-derived audience",

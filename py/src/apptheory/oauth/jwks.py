@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import functools
 import hashlib
 import hmac
 import json as jsonlib
@@ -59,12 +60,26 @@ def _positive_or_default(value: int | None, default: int) -> int:
     return resolved if resolved > 0 else default
 
 
+def _positive_float_or_default(value: float | None, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        resolved = float(value)
+    except (TypeError, ValueError):
+        return default
+    return resolved if resolved > 0 else default
+
+
 @dataclass(slots=True)
 class JWKSValidatorOptions:
     issuer: str
     jwks_uri: str = ""
     discovery_url: str = ""
     http_get: HTTPGet | None = None
+    # Bounds one discovery or JWKS fetch; the default matches the Go and
+    # TypeScript validators. A non-positive value means the framework default,
+    # so the three runtimes share one set of timing defaults.
+    http_timeout_seconds: float = HTTP_TIMEOUT_SECONDS
     now: Callable[[], datetime] | None = None
     clock_skew_seconds: int = 0
     cache_ttl_seconds: int = 900
@@ -82,12 +97,20 @@ class _CachedKey:
     expires_at: datetime
 
 
-def bootstrap_oidc_discovery(discovery_url: str, issuer: str, http_get: HTTPGet | None = None) -> str:
+def bootstrap_oidc_discovery(
+    discovery_url: str,
+    issuer: str,
+    http_get: HTTPGet | None = None,
+    *,
+    timeout_seconds: float = HTTP_TIMEOUT_SECONDS,
+) -> str:
     """Fetches an OIDC discovery document and returns its verified ``jwks_uri``.
 
     The fetch requires HTTPS, refuses any surfaced redirect, verifies the
     document's ``issuer`` equals the configured issuer (canonicalized), and
-    requires a non-empty HTTPS ``jwks_uri``. Every failure fails closed.
+    requires a non-empty HTTPS ``jwks_uri``. Every failure fails closed. When no
+    ``http_get`` is injected, the default transport is bounded by
+    ``timeout_seconds``.
     """
     expected_issuer = canonicalize_issuer_url(issuer)
     if expected_issuer is None:
@@ -95,7 +118,10 @@ def bootstrap_oidc_discovery(discovery_url: str, issuer: str, http_get: HTTPGet 
     url = _normalize_secure_url(discovery_url)
     if url is None:
         raise OAuthBearerError(ERR_INVALID_URL, "discovery url must be an https absolute url")
-    transport = http_get or _default_http_get
+    transport = http_get or functools.partial(
+        _default_http_get,
+        timeout=_positive_float_or_default(timeout_seconds, HTTP_TIMEOUT_SECONDS),
+    )
     document = _http_get_document(transport, url)
     document_issuer = canonicalize_issuer_url(str(document.get("issuer") or ""))
     if document_issuer is None or document_issuer != expected_issuer:
@@ -146,7 +172,13 @@ class _JWKSValidator:
         self._issuer = issuer
         self._discovery_url = discovery_url
         self._allowed_azp = allowed_azp
-        self._http_get = options.http_get or _default_http_get
+        # An explicitly injected transport is caller-owned and is not re-timed;
+        # only the framework default transport is bound to the configured
+        # timeout.
+        self._http_get = options.http_get or functools.partial(
+            _default_http_get,
+            timeout=_positive_float_or_default(options.http_timeout_seconds, HTTP_TIMEOUT_SECONDS),
+        )
         self._now = options.now or _utc_now
         self._skew = max(0, int(options.clock_skew_seconds or 0))
         # Non-positive values mean "use the framework default", matching Go and
@@ -448,12 +480,12 @@ def _http_get_bytes(http_get: HTTPGet, url: str) -> tuple[int, dict[str, str], b
     return code, dict(headers or {}), bytes(body)
 
 
-def _default_http_get(url: str) -> tuple[int, dict[str, str], bytes]:
+def _default_http_get(url: str, timeout: float = HTTP_TIMEOUT_SECONDS) -> tuple[int, dict[str, str], bytes]:
     # The caller validates that the URL is https before reaching this transport.
     request = urllib.request.Request(url, method="GET", headers={"accept": "application/json"})  # noqa: S310
     opener = urllib.request.build_opener(_RefuseRedirectHandler())
     try:
-        with opener.open(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+        with opener.open(request, timeout=timeout) as response:
             body = response.read(MAX_HTTP_RESPONSE_BYTES + 1)
             headers = {str(key).lower(): str(value) for key, value in response.headers.items()}
             return int(response.status), headers, body
