@@ -1109,11 +1109,29 @@ export function isPublicHostAddress(address: string): boolean {
 
 /** The refusal phrase every runtime's non-public-host failure carries. */
 const NON_PUBLIC_HOST_PHRASE = "not a public address";
+/** The `name` the connect-time refusal carries, so a caller can detect it. */
+const NON_PUBLIC_HOST_NAME = "NonPublicHostError";
 
+/**
+ * The refusal the framework's connect-time guard raises for a non-public
+ * address. It is an `OAuthBearerError` so the JWKS validator's callers keep the
+ * shape they already handle, tagged with a distinct `name`;
+ * `isNonPublicHostError` lets the provider adapter map it onto its own closed
+ * vocabulary without reading a message.
+ */
 function nonPublicHostError(subject: string): OAuthBearerError {
-  return new OAuthBearerError(
+  const error = new OAuthBearerError(
     ERR_INVALID_BEARER_TOKEN,
     `${ERROR_PREFIX} non_public_host: ${subject} is ${NON_PUBLIC_HOST_PHRASE}`,
+  );
+  error.name = NON_PUBLIC_HOST_NAME;
+  return error;
+}
+
+/** Reports whether an error is the connect-time non-public-host refusal. */
+export function isNonPublicHostError(error: unknown): boolean {
+  return (
+    error instanceof OAuthBearerError && error.name === NON_PUBLIC_HOST_NAME
   );
 }
 
@@ -1128,8 +1146,11 @@ function nonPublicHostError(subject: string): OAuthBearerError {
  * non-public one for the connection. TLS keeps its defaults: the request
  * carries the original URL, so the certificate is still verified against the
  * URL's host name even though the socket connects to an address of that name.
+ * It honors the request method, headers and body, so the OIDC/JWKS reads and
+ * the provider adapter's discovery and token POSTs all share one guarded
+ * transport instead of a second, unguarded fetch path.
  */
-function frameworkFetch(): typeof fetch {
+export function frameworkFetch(): typeof fetch {
   return async (input, init) => {
     const url = new URL(String(input));
     const literal = urlIpLiteral(url);
@@ -1137,8 +1158,8 @@ function frameworkFetch(): typeof fetch {
       throw nonPublicHostError(literal);
     }
     const options: RequestOptions = {
-      method: "GET",
-      headers: { accept: "application/json" },
+      method: (init?.method ?? "GET").toUpperCase(),
+      headers: requestHeaders(init?.headers),
       lookup: guardedLookup,
     };
     const signal = init?.signal;
@@ -1155,9 +1176,27 @@ function frameworkFetch(): typeof fetch {
       request.on("error", (err: Error) => {
         reject(err);
       });
+      const body = init?.body;
+      if (body !== undefined && body !== null) {
+        request.write(
+          typeof body === "string" ? body : Buffer.from(body as Uint8Array),
+        );
+      }
       request.end();
     });
   };
+}
+
+/** Flattens a fetch request's headers into the plain object https.request wants. */
+function requestHeaders(
+  headers: RequestInit["headers"],
+): Record<string, string> {
+  const flat: Record<string, string> = {};
+  if (headers === undefined) return flat;
+  new Headers(headers).forEach((value, name) => {
+    flat[name] = value;
+  });
+  return flat;
 }
 
 /**

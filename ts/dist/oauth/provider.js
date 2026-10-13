@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { isIP } from "node:net";
 import { Context } from "../context.js";
 import { unknownSourceProvenance } from "../internal/source-provenance.js";
-import { isPublicHostAddress, newJwksValidator, } from "./jwks.js";
+import { frameworkFetch, isNonPublicHostError, isPublicHostAddress, newJwksValidator, } from "./jwks.js";
 import { canonicalizeIssuerURL, } from "./index.js";
 const OP_DISCOVERY = "discovery";
 const OP_AUTHORIZATION_URL = "authorization_url";
@@ -145,10 +145,14 @@ export class AutheoryProvider {
                 : undefined;
         this.allowedAuthorizedParties = normalizeList(opts.allowedAuthorizedParties ?? []);
         // An injected fetch is caller-owned and carries the caller's transport
-        // policy; only the adapter's own transport installs the non-public-host
-        // guard, and `allowPrivateHosts` drops it by not installing it at all.
+        // policy. Otherwise the adapter reuses the framework's own guarded
+        // transport -- the same connect-time non-public-host guard the JWKS
+        // validator installs -- so a discovery or token host that resolves to a
+        // non-public address is refused; `allowPrivateHosts` drops the guard by
+        // not installing it at all.
         this.transport = {
-            fetchImpl: opts.fetchImpl ?? fetch,
+            fetchImpl: opts.fetchImpl ??
+                (opts.allowPrivateHosts === true ? fetch : frameworkFetch()),
             timeoutMs: (this.fetchTimeoutSeconds ?? DEFAULT_FETCH_TIMEOUT_SECONDS) * 1000,
             allowPrivateHosts: opts.allowPrivateHosts === true,
         };
@@ -426,11 +430,10 @@ export class AutheoryProvider {
 /**
  * One bounded provider HTTP exchange. The single deadline covers the response
  * head and its body; the body is capped while streaming; redirects are never
- * followed; and, unless the caller opted into private hosts, a non-public
- * host address literal is refused before a socket is opened. A name's
- * resolution is not re-checked here, so the token-endpoint host guard is
- * carried by the discovery-verified endpoint host and by the redirect
- * refusal.
+ * followed; and, unless the caller opted into private hosts, the framework
+ * transport refuses a non-public address at connect time -- both an address
+ * literal and a name, resolved inside the transport's own `lookup`, so there
+ * is no rebinding window between the check and the connection.
  */
 async function boundedRequest(transport, url, init) {
     const target = new URL(url);
@@ -466,6 +469,8 @@ async function boundedRequest(transport, url, init) {
         catch (err) {
             if (err instanceof ProviderTimeoutFailure)
                 throw err;
+            if (isNonPublicHostError(err))
+                throw new ProviderRequestRefused();
             throw new ProviderTransportFailure();
         }
         if (response.status >= 300 && response.status < 400) {

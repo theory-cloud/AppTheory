@@ -289,3 +289,28 @@ test("the Autheory adapter satisfies the provider conformance table", async () =
     `provider conformance: ${ran}/${CASES.length} cases passed (adapter + testkit fake upstream)`,
   );
 });
+
+test("the adapter's own transport applies the connect-time non-public-host guard", async () => {
+  // No injected fetch and no allowPrivateHosts, so the adapter installs the
+  // framework's guarded transport. `localhost` resolves to loopback, which the
+  // connect-time guard refuses inside `lookup`; the refusal surfaces as a
+  // request-class (`upstream_error`) rejection. A transport that skipped the
+  // guard would instead attempt a real connection (ECONNREFUSED) and report
+  // `temporarily_unavailable`, so this assertion is what a removed guard fails.
+  const provider = await newAutheoryProvider({ issuer: "https://localhost:1" });
+  await assert.rejects(
+    () => provider.discovery(),
+    (err) => {
+      assert.ok(
+        err instanceof ProviderError,
+        `expected a provider error, got ${String(err)}`,
+      );
+      assert.equal(
+        err.errorClass,
+        "upstream_error",
+        "the connect-time guard must refuse the loopback discovery host as a request-class error",
+      );
+      return true;
+    },
+  );
+});

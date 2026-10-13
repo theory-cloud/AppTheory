@@ -140,4 +140,22 @@ export type HostAddressClass = "loopback" | "link_local" | "private" | "unspecif
 export declare function classifyHostAddress(address: string): HostAddressClass;
 /** Reports whether one host address literal may be connected to. */
 export declare function isPublicHostAddress(address: string): boolean;
+/** Reports whether an error is the connect-time non-public-host refusal. */
+export declare function isNonPublicHostError(error: unknown): boolean;
+/**
+ * The framework's own document transport, and the only place the
+ * non-public-host guard is installed.
+ *
+ * The guard runs inside `lookup`, on the addresses the name actually resolved
+ * to, and Node connects to the address `lookup` hands back. Resolving,
+ * checking, and connecting are therefore one step, so there is no window in
+ * which a name could resolve to a public address for the check and to a
+ * non-public one for the connection. TLS keeps its defaults: the request
+ * carries the original URL, so the certificate is still verified against the
+ * URL's host name even though the socket connects to an address of that name.
+ * It honors the request method, headers and body, so the OIDC/JWKS reads and
+ * the provider adapter's discovery and token POSTs all share one guarded
+ * transport instead of a second, unguarded fetch path.
+ */
+export declare function frameworkFetch(): typeof fetch;
 //# sourceMappingURL=jwks.d.ts.map
