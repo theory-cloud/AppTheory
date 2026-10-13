@@ -32,6 +32,7 @@ const (
 const (
 	conformanceParamTTLSeconds  = "ttl_seconds"
 	conformanceParamAdvance     = "advance_seconds"
+	conformanceParamClockBack   = "clock_back_seconds"
 	conformanceParamConcurrency = "concurrency"
 	conformanceStoreTransaction = "transaction"
 	conformanceStoreAuthCode    = "authorization_code"
@@ -113,6 +114,9 @@ var conformanceScenarios = map[string]func(*conformanceHarness, ConformanceCase)
 	"consume_after_ttl":                  (*conformanceHarness).consumeAfterTTL,
 	"concurrent_consume":                 (*conformanceHarness).concurrentConsume,
 	"consume_single_use_then_replay":     (*conformanceHarness).authorizationCodeConsumeReplay,
+	"consume_after_ttl_then_replay":      (*conformanceHarness).consumeAfterTTLThenReplay,
+	"clock_back_after_consume":           (*conformanceHarness).clockBackAroundConsume,
+	"clock_back_after_expired_consume":   (*conformanceHarness).clockBackAroundConsume,
 	"put_get_update":                     (*conformanceHarness).clientPutGetUpdate,
 	"update_stale_version":               (*conformanceHarness).clientUpdateStaleVersion,
 	"get_unknown":                        (*conformanceHarness).getUnknown,
@@ -120,6 +124,12 @@ var conformanceScenarios = map[string]func(*conformanceHarness, ConformanceCase)
 	"compare_and_swap_versioned":         (*conformanceHarness).brokerCompareAndSwapVersioned,
 	"revoke_idempotent":                  (*conformanceHarness).brokerRevokeIdempotent,
 	"revoke_then_lock":                   (*conformanceHarness).brokerRevokeThenLock,
+	"revoke_then_swap":                   (*conformanceHarness).brokerRevokeThenSwap,
+	"broker_ttl_boundary":                (*conformanceHarness).brokerTTLBoundary,
+	"broker_expired_refuses_lock":        (*conformanceHarness).brokerExpiredRefusesLock,
+	"broker_expired_refuses_swap":        (*conformanceHarness).brokerExpiredRefusesSwap,
+	"acquire_lock_bumps_version":         (*conformanceHarness).brokerAcquireLockBumpsVersion,
+	"revoke_bumps_version":               (*conformanceHarness).brokerRevokeBumpsVersion,
 	"concurrent_acquire_lock":            (*conformanceHarness).brokerConcurrentAcquireLock,
 	"concurrent_revoke":                  (*conformanceHarness).brokerConcurrentRevoke,
 	"check_and_increment":                (*conformanceHarness).rateLimitCheckAndIncrement,
@@ -152,6 +162,16 @@ func (h *conformanceHarness) advance(seconds int) {
 		return
 	}
 	h.clock.Advance(time.Duration(seconds) * time.Second)
+}
+
+// recede moves the injected clock backward, so a row can observe whether
+// terminal state survives a rewind instead of being resurrected. advance
+// ignores non-positive seconds, so a rewind needs its own helper.
+func (h *conformanceHarness) recede(seconds int) {
+	if h.clock == nil || seconds <= 0 {
+		return
+	}
+	h.clock.Advance(-time.Duration(seconds) * time.Second)
 }
 
 // expiry returns the record expiry the fixture's ttl_seconds describes, or the
@@ -281,47 +301,79 @@ func (h *conformanceHarness) consumeUnknown(testCase ConformanceCase) (map[strin
 	}
 }
 
-func (h *conformanceHarness) consumeAfterTTL(testCase ConformanceCase) (map[string]any, error) {
-	var consume func() error
+// seedConsumeTarget stores the record a consume-based row starts from, keyed by
+// the case's store, and returns the consume the row observes. It keeps the
+// transaction and authorization-code rows of one scenario in step.
+func (h *conformanceHarness) seedConsumeTarget(testCase ConformanceCase) (func() error, error) {
 	switch testCase.Store {
 	case conformanceStoreTransaction:
 		key := h.key(testCase, "state")
 		if err := h.putTransaction(testCase, key); err != nil {
 			return nil, err
 		}
-		consume = func() error { return h.consumeTransaction(key) }
+		return func() error { return h.consumeTransaction(key) }, nil
 	case conformanceStoreAuthCode:
 		key := h.key(testCase, "code")
 		if err := h.putCode(testCase, key); err != nil {
 			return nil, err
 		}
-		consume = func() error { return h.consumeCode(key) }
+		return func() error { return h.consumeCode(key) }, nil
 	default:
-		return nil, fmt.Errorf("consume_after_ttl does not apply to store %q", testCase.Store)
+		return nil, fmt.Errorf("%s does not apply to store %q", testCase.Scenario, testCase.Store)
 	}
+}
 
+func (h *conformanceHarness) consumeAfterTTL(testCase ConformanceCase) (map[string]any, error) {
+	consume, err := h.seedConsumeTarget(testCase)
+	if err != nil {
+		return nil, err
+	}
 	advance, _ := conformanceNumber(testCase.Params[conformanceParamAdvance])
 	h.advance(int(advance))
 	return map[string]any{"consume": outcomeFor(consume())}, nil
 }
 
+// consumeAfterTTLThenReplay burns a record past its TTL and then consumes it
+// again, so a row observes what the store retains after an expired burn: a
+// transaction is gone (not_found) and a code is retained as consumed
+// (replayed).
+func (h *conformanceHarness) consumeAfterTTLThenReplay(testCase ConformanceCase) (map[string]any, error) {
+	consume, err := h.seedConsumeTarget(testCase)
+	if err != nil {
+		return nil, err
+	}
+	advance, _ := conformanceNumber(testCase.Params[conformanceParamAdvance])
+	h.advance(int(advance))
+	return map[string]any{
+		"first":  outcomeFor(consume()),
+		"second": outcomeFor(consume()),
+	}, nil
+}
+
+// clockBackAroundConsume consumes a record and then winds the clock backward, so
+// a row observes whether terminal state survives a rewind. advance_seconds is
+// absent for the live-consume row and present for the expired-burn row, so one
+// handler serves both clock_back rows.
+func (h *conformanceHarness) clockBackAroundConsume(testCase ConformanceCase) (map[string]any, error) {
+	consume, err := h.seedConsumeTarget(testCase)
+	if err != nil {
+		return nil, err
+	}
+	advance, _ := conformanceNumber(testCase.Params[conformanceParamAdvance])
+	h.advance(int(advance))
+	first := outcomeFor(consume())
+	recede, _ := conformanceNumber(testCase.Params[conformanceParamClockBack])
+	h.recede(int(recede))
+	return map[string]any{
+		"first":            first,
+		"after_clock_back": outcomeFor(consume()),
+	}, nil
+}
+
 func (h *conformanceHarness) concurrentConsume(testCase ConformanceCase) (map[string]any, error) {
-	var consume func() error
-	switch testCase.Store {
-	case conformanceStoreTransaction:
-		key := h.key(testCase, "state")
-		if err := h.putTransaction(testCase, key); err != nil {
-			return nil, err
-		}
-		consume = func() error { return h.consumeTransaction(key) }
-	case conformanceStoreAuthCode:
-		key := h.key(testCase, "code")
-		if err := h.putCode(testCase, key); err != nil {
-			return nil, err
-		}
-		consume = func() error { return h.consumeCode(key) }
-	default:
-		return nil, fmt.Errorf("concurrent_consume does not apply to store %q", testCase.Store)
+	consume, err := h.seedConsumeTarget(testCase)
+	if err != nil {
+		return nil, err
 	}
 	return outcomeCounts(h.runConcurrent(h.count(testCase, conformanceParamConcurrency), consume)), nil
 }
@@ -489,6 +541,130 @@ func (h *conformanceHarness) brokerRevokeThenLock(testCase ConformanceCase) (map
 	return map[string]any{
 		"revoke":       outcomeFor(revokeErr),
 		"acquire_lock": outcomeFor(lockErr),
+	}, nil
+}
+
+// brokerTTLBoundary reads a handle after advancing to a TTL boundary, so a row
+// observes whether the record is still present or has aged out.
+func (h *conformanceHarness) brokerTTLBoundary(testCase ConformanceCase) (map[string]any, error) {
+	key := h.key(testCase, "handle")
+	if err := h.putBroker(key); err != nil {
+		return nil, err
+	}
+	advance, _ := conformanceNumber(testCase.Params[conformanceParamAdvance])
+	h.advance(int(advance))
+	_, err := h.stores.RouteRefreshBroker.Get(h.ctx(), key)
+	return map[string]any{conformanceKeyGet: outcomeFor(err)}, nil
+}
+
+// brokerExpiredRefusesLock holds the live version, lets the handle age out, and
+// then asks for the lock: an aged-out handle is absent, so the lock is refused
+// as not_found before the version is considered. The version is read while the
+// record is still live, because the read itself reports absence once it expires.
+func (h *conformanceHarness) brokerExpiredRefusesLock(testCase ConformanceCase) (map[string]any, error) {
+	key := h.key(testCase, "handle")
+	if err := h.putBroker(key); err != nil {
+		return nil, err
+	}
+	version, err := h.brokerVersion(key)
+	if err != nil {
+		return nil, err
+	}
+	advance, _ := conformanceNumber(testCase.Params[conformanceParamAdvance])
+	h.advance(int(advance))
+	_, lockErr := h.stores.RouteRefreshBroker.AcquireLock(h.ctx(), key, "owner-ttl", version)
+	return map[string]any{"acquire_lock": outcomeFor(lockErr)}, nil
+}
+
+// brokerExpiredRefusesSwap holds the live record, lets the handle age out, and
+// then swaps it: an aged-out handle is absent, so the swap reports not_found.
+func (h *conformanceHarness) brokerExpiredRefusesSwap(testCase ConformanceCase) (map[string]any, error) {
+	key := h.key(testCase, "handle")
+	if err := h.putBroker(key); err != nil {
+		return nil, err
+	}
+	record, err := h.stores.RouteRefreshBroker.Get(h.ctx(), key)
+	if err != nil {
+		return nil, err
+	}
+	advance, _ := conformanceNumber(testCase.Params[conformanceParamAdvance])
+	h.advance(int(advance))
+	_, swapErr := h.stores.RouteRefreshBroker.CompareAndSwap(h.ctx(), record, record.Version)
+	return map[string]any{"swap": outcomeFor(swapErr)}, nil
+}
+
+// brokerRevokeThenSwap swaps a revoked record: revocation is terminal, so the
+// swap reports revoked rather than resurrecting the handle.
+func (h *conformanceHarness) brokerRevokeThenSwap(testCase ConformanceCase) (map[string]any, error) {
+	key := h.key(testCase, "handle")
+	if err := h.putBroker(key); err != nil {
+		return nil, err
+	}
+	revoked, revokeErr := h.stores.RouteRefreshBroker.Revoke(h.ctx(), key)
+	record := revoked
+	if record == nil {
+		fetched, err := h.stores.RouteRefreshBroker.Get(h.ctx(), key)
+		if err != nil {
+			return nil, err
+		}
+		record = fetched
+	}
+	_, swapErr := h.stores.RouteRefreshBroker.CompareAndSwap(h.ctx(), record, record.Version)
+	return map[string]any{
+		"revoke": outcomeFor(revokeErr),
+		"swap":   outcomeFor(swapErr),
+	}, nil
+}
+
+// brokerAcquireLockBumpsVersion reports the version delta one lock acquisition
+// leaves behind.
+func (h *conformanceHarness) brokerAcquireLockBumpsVersion(testCase ConformanceCase) (map[string]any, error) {
+	key := h.key(testCase, "handle")
+	if err := h.putBroker(key); err != nil {
+		return nil, err
+	}
+	before, err := h.brokerVersion(key)
+	if err != nil {
+		return nil, err
+	}
+	if _, lockErr := h.stores.RouteRefreshBroker.AcquireLock(h.ctx(), key, "owner-bump", before); lockErr != nil {
+		return nil, fmt.Errorf("acquire lock: %w", lockErr)
+	}
+	after, err := h.brokerVersion(key)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"version_delta": after - before}, nil
+}
+
+// brokerRevokeBumpsVersion reports the version delta the first revoke leaves
+// behind and the delta an idempotent second revoke leaves behind.
+func (h *conformanceHarness) brokerRevokeBumpsVersion(testCase ConformanceCase) (map[string]any, error) {
+	key := h.key(testCase, "handle")
+	if err := h.putBroker(key); err != nil {
+		return nil, err
+	}
+	before, err := h.brokerVersion(key)
+	if err != nil {
+		return nil, err
+	}
+	if _, revokeErr := h.stores.RouteRefreshBroker.Revoke(h.ctx(), key); revokeErr != nil {
+		return nil, fmt.Errorf("revoke: %w", revokeErr)
+	}
+	afterFirst, err := h.brokerVersion(key)
+	if err != nil {
+		return nil, err
+	}
+	if _, revokeAgainErr := h.stores.RouteRefreshBroker.Revoke(h.ctx(), key); revokeAgainErr != nil {
+		return nil, fmt.Errorf("revoke again: %w", revokeAgainErr)
+	}
+	afterSecond, err := h.brokerVersion(key)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"revoke_version_delta":       afterFirst - before,
+		"revoke_again_version_delta": afterSecond - afterFirst,
 	}, nil
 }
 

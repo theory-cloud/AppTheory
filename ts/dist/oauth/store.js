@@ -50,16 +50,18 @@ export class MemoryTransactionStore {
         this.records.set(stored.stateHash, stored);
         return Promise.resolve();
     }
+    /**
+     * Consume-once. The record leaves the store whichever way the consume ends,
+     * so an expired consume is terminal too: the caller sees `expired` once and
+     * every later consume of the same hash is `not_found`, even if the clock
+     * runs backwards past the record's expiry.
+     */
     consume(stateHash) {
         const record = this.records.get(stateHash);
         if (!record)
             return Promise.resolve(null);
-        if (this.expired(record.expiresAt)) {
-            record.status = "expired";
-            return Promise.resolve(structuredClone(record));
-        }
         this.records.delete(stateHash);
-        record.status = "consumed";
+        record.status = this.expired(record.expiresAt) ? "expired" : "consumed";
         return Promise.resolve(structuredClone(record));
     }
     expired(expiresAt) {
@@ -88,10 +90,22 @@ export class MemoryAuthorizationCodeStore {
         this.records.set(stored.codeHash, stored);
         return Promise.resolve();
     }
+    /**
+     * Consume-once, but the record is retained so a replay is distinguishable
+     * from an unknown code. `consumed` and `expired` are both terminal: a
+     * terminal code stays terminal no matter which way the clock moves, so a
+     * backwards clock can never make a burned code fresh again.
+     */
     consume(codeHash) {
         const record = this.records.get(codeHash);
         if (!record)
             return Promise.resolve(null);
+        if (record.status === "consumed" || record.status === "expired") {
+            return Promise.resolve({
+                record: structuredClone(record),
+                replayed: true,
+            });
+        }
         if (this.expired(record.expiresAt)) {
             record.status = "expired";
             return Promise.resolve({
@@ -99,10 +113,11 @@ export class MemoryAuthorizationCodeStore {
                 replayed: false,
             });
         }
-        const replayed = record.status === "consumed";
-        if (!replayed)
-            record.status = "consumed";
-        return Promise.resolve({ record: structuredClone(record), replayed });
+        record.status = "consumed";
+        return Promise.resolve({
+            record: structuredClone(record),
+            replayed: false,
+        });
     }
     expired(expiresAt) {
         const at = expiryMs(expiresAt);
@@ -140,30 +155,50 @@ export class MemoryClientStore {
         return Promise.resolve(structuredClone(updated));
     }
 }
-/** In-memory reference RouteRefreshBrokerStore. */
+/**
+ * In-memory reference RouteRefreshBrokerStore. Each handle carries its own
+ * lifetime: a handle older than the store's TTL is treated as absent by every
+ * operation, so an expired handle can be neither read, locked, swapped nor
+ * revoked, and the version-`0` create sentinel never resurrects it.
+ */
 export class MemoryRouteRefreshBrokerStore {
     records = new Map();
+    storedAt = new Map();
     now;
     lockTtlMs;
+    ttlMs;
     constructor(options = {}) {
         this.now = options.now ?? (() => new Date());
         this.lockTtlMs = positiveSeconds(options.lockTtlSeconds, 30) * 1000;
+        this.ttlMs = positiveSeconds(options.ttlSeconds, 900) * 1000;
     }
     get(handleHash) {
         const record = this.records.get(handleHash);
-        return Promise.resolve(record ? structuredClone(record) : null);
+        if (!record)
+            return Promise.resolve(null);
+        if (this.expired(handleHash)) {
+            this.discard(handleHash);
+            return Promise.resolve(null);
+        }
+        return Promise.resolve(structuredClone(record));
     }
     /**
      * Takes the exclusive refresh lock. The revoked check runs first, then lock
      * exclusivity, then the version guard, so concurrent contenders for one
      * handle observe `locked` rather than a version conflict and a revoked
-     * handle never becomes lockable again. The lock expires at its own bound;
-     * acquiring it does not advance the record's content version.
+     * handle never becomes lockable again. The lock expires at its own bound.
+     * Acquiring it rewrites the handle's mutable state, so it advances the
+     * record's content version; a caller that already held a lock must re-read
+     * the handle before taking another one.
      */
     acquireLock(handleHash, lockOwner, expectedVersion) {
         const record = this.records.get(handleHash);
         if (!record)
             return Promise.reject(new BrokerNotFoundError());
+        if (this.expired(handleHash)) {
+            this.discard(handleHash);
+            return Promise.reject(new BrokerNotFoundError());
+        }
         if (record.status === "revoked") {
             return Promise.reject(new BrokerRevokedError());
         }
@@ -178,17 +213,23 @@ export class MemoryRouteRefreshBrokerStore {
         record.refreshLockOwner = lockOwner;
         record.refreshLockExpiresAt = new Date(at + this.lockTtlMs);
         record.status = "refreshing";
+        record.version += 1;
         return Promise.resolve(structuredClone(record));
     }
     /**
      * Versioned compare-and-swap. A version of `0` is the optimistic-create
-     * sentinel: it stores the record only when no record exists, which is how a
-     * reference or application store seeds a handle. Any other version must
-     * equal the stored record's version, and a revoked record refuses every
-     * swap.
+     * sentinel: it stores the record only when no live record exists, which is
+     * how a reference or application store seeds a handle. Any other version
+     * must equal the stored record's version, and a revoked record refuses every
+     * swap. A rotation keeps the handle's original stored-at instant, so
+     * refreshing a handle upstream does not extend its local lifetime.
      */
     compareAndSwap(record, expectedVersion) {
         const current = this.records.get(record.handleHash);
+        if (current && this.expired(record.handleHash)) {
+            this.discard(record.handleHash);
+            return Promise.reject(new BrokerNotFoundError());
+        }
         if (!current) {
             if (expectedVersion !== 0) {
                 return Promise.reject(new BrokerVersionConflictError());
@@ -198,6 +239,7 @@ export class MemoryRouteRefreshBrokerStore {
                 version: 1,
             };
             this.records.set(created.handleHash, created);
+            this.storedAt.set(created.handleHash, this.now().getTime());
             return Promise.resolve(structuredClone(created));
         }
         if (current.status === "revoked") {
@@ -213,15 +255,40 @@ export class MemoryRouteRefreshBrokerStore {
         this.records.set(swapped.handleHash, swapped);
         return Promise.resolve(structuredClone(swapped));
     }
-    /** Revokes the handle. Revocation is idempotent and terminal. */
+    /**
+     * Revokes the handle. Revocation is idempotent and terminal: the transition
+     * into `revoked` advances the record's content version, and a repeat revoke
+     * leaves it alone.
+     */
     revoke(handleHash) {
         const record = this.records.get(handleHash);
         if (!record)
             return Promise.reject(new BrokerNotFoundError());
-        record.status = "revoked";
+        if (this.expired(handleHash)) {
+            this.discard(handleHash);
+            return Promise.reject(new BrokerNotFoundError());
+        }
+        if (record.status !== "revoked") {
+            record.status = "revoked";
+            record.version += 1;
+        }
         delete record.refreshLockOwner;
         delete record.refreshLockExpiresAt;
         return Promise.resolve(structuredClone(record));
+    }
+    /** Whether the handle's own lifetime, apart from any refresh lock, elapsed. */
+    expired(handleHash) {
+        const storedAt = this.storedAt.get(handleHash);
+        return (storedAt !== undefined && this.now().getTime() >= storedAt + this.ttlMs);
+    }
+    /**
+     * Drops an expired handle. Every access — read or mutation — clears an
+     * aged-out handle here, so it can be neither read, locked, swapped nor
+     * revoked, and the version-`0` create sentinel never resurrects it.
+     */
+    discard(handleHash) {
+        this.records.delete(handleHash);
+        this.storedAt.delete(handleHash);
     }
 }
 /** In-memory reference RateLimitStore. */
@@ -376,16 +443,22 @@ async function runStoreCase(stores, testCase, clock) {
         case "acquire_lock_exclusive_with_expiry": {
             await seedBrokerRecord(stores, brokerRecord(key));
             const first = await brokerLockOutcome(stores, key, "owner-a", 1);
-            const contended = await brokerLockOutcome(stores, key, "owner-b", 1);
+            // Acquiring the lock advances the record's version, so a contender
+            // presents the version it would have read after the first acquisition.
+            const held = await stores.routeRefreshBroker.get(key);
+            const contended = await brokerLockOutcome(stores, key, "owner-b", held?.version ?? 1);
             clock.advance(numberParam(params, "advance_seconds", 0) * 1000);
-            const afterExpiry = await brokerLockOutcome(stores, key, "owner-b", 1);
+            const current = await stores.routeRefreshBroker.get(key);
+            const afterExpiry = await brokerLockOutcome(stores, key, "owner-b", current?.version ?? 1);
             return { first, contended, after_expiry: afterExpiry };
         }
         case "compare_and_swap_versioned": {
             await seedBrokerRecord(stores, brokerRecord(key));
             const acquired = await brokerLockOutcome(stores, key, "owner-a", 1);
-            const swapped = await brokerSwapOutcome(stores, brokerRecord(key), 1);
-            const stale = await brokerSwapOutcome(stores, brokerRecord(key), 1);
+            const held = await stores.routeRefreshBroker.get(key);
+            const version = held?.version ?? 1;
+            const swapped = await brokerSwapOutcome(stores, brokerRecord(key), version);
+            const stale = await brokerSwapOutcome(stores, brokerRecord(key), version);
             return { acquire_lock: acquired, swap: swapped, stale_swap: stale };
         }
         case "revoke_idempotent": {
@@ -448,6 +521,127 @@ async function runStoreCase(stores, testCase, clock) {
             clock.advance(numberParam(params, "advance_seconds", 0) * 1000);
             const afterWindow = await rateLimitOutcome(stores, rateLimitKey);
             return { first, second, after_window: afterWindow };
+        }
+        case "consume_after_ttl_then_replay": {
+            const ttlSeconds = numberParam(params, "ttl_seconds", 600);
+            const advanceMs = numberParam(params, "advance_seconds", 0) * 1000;
+            if (testCase.store === "authorization_code") {
+                await stores.authorizationCode.put(authorizationCodeRecord(key, addSeconds(clock.now(), ttlSeconds)));
+                clock.advance(advanceMs);
+                const first = await stores.authorizationCode.consume(key);
+                const second = await stores.authorizationCode.consume(key);
+                return {
+                    first: authorizationCodeOutcome(first),
+                    second: authorizationCodeOutcome(second),
+                };
+            }
+            await stores.transaction.put(transactionRecord(key, addSeconds(clock.now(), ttlSeconds)));
+            clock.advance(advanceMs);
+            const first = await stores.transaction.consume(key);
+            const second = await stores.transaction.consume(key);
+            return {
+                first: transactionOutcome(first),
+                second: transactionOutcome(second),
+            };
+        }
+        case "clock_back_after_consume": {
+            const ttlSeconds = numberParam(params, "ttl_seconds", 600);
+            const backMs = numberParam(params, "clock_back_seconds", 0) * 1000;
+            if (testCase.store === "authorization_code") {
+                await stores.authorizationCode.put(authorizationCodeRecord(key, addSeconds(clock.now(), ttlSeconds)));
+                const first = await stores.authorizationCode.consume(key);
+                clock.advance(-backMs);
+                const afterClockBack = await stores.authorizationCode.consume(key);
+                return {
+                    first: authorizationCodeOutcome(first),
+                    after_clock_back: authorizationCodeOutcome(afterClockBack),
+                };
+            }
+            await stores.transaction.put(transactionRecord(key, addSeconds(clock.now(), ttlSeconds)));
+            const first = await stores.transaction.consume(key);
+            clock.advance(-backMs);
+            const afterClockBack = await stores.transaction.consume(key);
+            return {
+                first: transactionOutcome(first),
+                after_clock_back: transactionOutcome(afterClockBack),
+            };
+        }
+        case "clock_back_after_expired_consume": {
+            const ttlSeconds = numberParam(params, "ttl_seconds", 600);
+            const advanceMs = numberParam(params, "advance_seconds", 0) * 1000;
+            const backMs = numberParam(params, "clock_back_seconds", 0) * 1000;
+            if (testCase.store === "authorization_code") {
+                await stores.authorizationCode.put(authorizationCodeRecord(key, addSeconds(clock.now(), ttlSeconds)));
+                clock.advance(advanceMs);
+                const first = await stores.authorizationCode.consume(key);
+                clock.advance(-backMs);
+                const afterClockBack = await stores.authorizationCode.consume(key);
+                return {
+                    first: authorizationCodeOutcome(first),
+                    after_clock_back: authorizationCodeOutcome(afterClockBack),
+                };
+            }
+            await stores.transaction.put(transactionRecord(key, addSeconds(clock.now(), ttlSeconds)));
+            clock.advance(advanceMs);
+            const first = await stores.transaction.consume(key);
+            clock.advance(-backMs);
+            const afterClockBack = await stores.transaction.consume(key);
+            return {
+                first: transactionOutcome(first),
+                after_clock_back: transactionOutcome(afterClockBack),
+            };
+        }
+        case "broker_ttl_boundary": {
+            await seedBrokerRecord(stores, brokerRecord(key));
+            clock.advance(numberParam(params, "advance_seconds", 0) * 1000);
+            const record = await stores.routeRefreshBroker.get(key);
+            return { get: record === null ? "not_found" : "ok" };
+        }
+        case "broker_expired_refuses_lock": {
+            await seedBrokerRecord(stores, brokerRecord(key));
+            clock.advance(numberParam(params, "advance_seconds", 0) * 1000);
+            return {
+                acquire_lock: await brokerLockOutcome(stores, key, "owner-ttl", 1),
+            };
+        }
+        case "broker_expired_refuses_swap": {
+            await seedBrokerRecord(stores, brokerRecord(key));
+            // Capture the live handle first; once the clock passes the handle's TTL
+            // it reads as absent, and the swap must be refused, not recreated.
+            const record = (await stores.routeRefreshBroker.get(key)) ?? brokerRecord(key);
+            clock.advance(numberParam(params, "advance_seconds", 0) * 1000);
+            return { swap: await brokerSwapOutcome(stores, record, record.version) };
+        }
+        case "revoke_then_swap": {
+            await seedBrokerRecord(stores, brokerRecord(key));
+            const revoked = await stores.routeRefreshBroker.revoke(key);
+            return {
+                revoke: "ok",
+                swap: await brokerSwapOutcome(stores, revoked, revoked.version),
+            };
+        }
+        case "acquire_lock_bumps_version": {
+            await seedBrokerRecord(stores, brokerRecord(key));
+            const before = await stores.routeRefreshBroker.get(key);
+            const version = before?.version ?? 0;
+            await stores.routeRefreshBroker.acquireLock(key, "owner-bump", version);
+            const after = await stores.routeRefreshBroker.get(key);
+            return { version_delta: (after?.version ?? 0) - version };
+        }
+        case "revoke_bumps_version": {
+            await seedBrokerRecord(stores, brokerRecord(key));
+            const stored = await stores.routeRefreshBroker.get(key);
+            const v0 = stored?.version ?? 0;
+            await stores.routeRefreshBroker.revoke(key);
+            const revoked = await stores.routeRefreshBroker.get(key);
+            const v1 = revoked?.version ?? 0;
+            await stores.routeRefreshBroker.revoke(key);
+            const again = await stores.routeRefreshBroker.get(key);
+            const v2 = again?.version ?? 0;
+            return {
+                revoke_version_delta: v1 - v0,
+                revoke_again_version_delta: v2 - v1,
+            };
         }
         default:
             throw new Error(`store conformance case ${testCase.id} has an unknown scenario ${testCase.scenario}`);
@@ -521,10 +715,10 @@ function transactionOutcome(record) {
 function authorizationCodeOutcome(result) {
     if (!result)
         return "not_found";
-    if (result.record.status === "expired")
-        return "expired";
     if (result.replayed)
         return "replayed";
+    if (result.record.status === "expired")
+        return "expired";
     return "ok";
 }
 /** Counts outcomes, keyed by the `expect` shape so zero-count rows still compare. */

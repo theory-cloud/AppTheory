@@ -179,6 +179,12 @@ export declare class MemoryTransactionStore implements TransactionStore {
     private readonly ttlSeconds;
     constructor(options?: MemoryTransactionStoreOptions);
     put(record: TransactionRecord): Promise<void>;
+    /**
+     * Consume-once. The record leaves the store whichever way the consume ends,
+     * so an expired consume is terminal too: the caller sees `expired` once and
+     * every later consume of the same hash is `not_found`, even if the clock
+     * runs backwards past the record's expiry.
+     */
     consume(stateHash: string): Promise<TransactionRecord | null>;
     private expired;
     /** The record's expiry when the store applied its own TTL. */
@@ -195,6 +201,12 @@ export declare class MemoryAuthorizationCodeStore implements AuthorizationCodeSt
     private readonly ttlSeconds;
     constructor(options?: MemoryAuthorizationCodeStoreOptions);
     put(record: AuthorizationCodeRecord): Promise<void>;
+    /**
+     * Consume-once, but the record is retained so a replay is distinguishable
+     * from an unknown code. `consumed` and `expired` are both terminal: a
+     * terminal code stays terminal no matter which way the clock moves, so a
+     * backwards clock can never make a burned code fresh again.
+     */
     consume(codeHash: string): Promise<AuthorizationCodeConsumeResult | null>;
     private expired;
     /** The record's expiry when the store applied its own TTL. */
@@ -213,32 +225,55 @@ export declare class MemoryClientStore implements ClientStore {
 export interface MemoryRouteRefreshBrokerStoreOptions {
     now?: () => Date;
     lockTtlSeconds?: number;
+    ttlSeconds?: number;
 }
-/** In-memory reference RouteRefreshBrokerStore. */
+/**
+ * In-memory reference RouteRefreshBrokerStore. Each handle carries its own
+ * lifetime: a handle older than the store's TTL is treated as absent by every
+ * operation, so an expired handle can be neither read, locked, swapped nor
+ * revoked, and the version-`0` create sentinel never resurrects it.
+ */
 export declare class MemoryRouteRefreshBrokerStore implements RouteRefreshBrokerStore {
     private readonly records;
+    private readonly storedAt;
     private readonly now;
     private readonly lockTtlMs;
+    private readonly ttlMs;
     constructor(options?: MemoryRouteRefreshBrokerStoreOptions);
     get(handleHash: string): Promise<RouteRefreshBrokerRecord | null>;
     /**
      * Takes the exclusive refresh lock. The revoked check runs first, then lock
      * exclusivity, then the version guard, so concurrent contenders for one
      * handle observe `locked` rather than a version conflict and a revoked
-     * handle never becomes lockable again. The lock expires at its own bound;
-     * acquiring it does not advance the record's content version.
+     * handle never becomes lockable again. The lock expires at its own bound.
+     * Acquiring it rewrites the handle's mutable state, so it advances the
+     * record's content version; a caller that already held a lock must re-read
+     * the handle before taking another one.
      */
     acquireLock(handleHash: string, lockOwner: string, expectedVersion: number): Promise<RouteRefreshBrokerRecord>;
     /**
      * Versioned compare-and-swap. A version of `0` is the optimistic-create
-     * sentinel: it stores the record only when no record exists, which is how a
-     * reference or application store seeds a handle. Any other version must
-     * equal the stored record's version, and a revoked record refuses every
-     * swap.
+     * sentinel: it stores the record only when no live record exists, which is
+     * how a reference or application store seeds a handle. Any other version
+     * must equal the stored record's version, and a revoked record refuses every
+     * swap. A rotation keeps the handle's original stored-at instant, so
+     * refreshing a handle upstream does not extend its local lifetime.
      */
     compareAndSwap(record: RouteRefreshBrokerRecord, expectedVersion: number): Promise<RouteRefreshBrokerRecord>;
-    /** Revokes the handle. Revocation is idempotent and terminal. */
+    /**
+     * Revokes the handle. Revocation is idempotent and terminal: the transition
+     * into `revoked` advances the record's content version, and a repeat revoke
+     * leaves it alone.
+     */
     revoke(handleHash: string): Promise<RouteRefreshBrokerRecord>;
+    /** Whether the handle's own lifetime, apart from any refresh lock, elapsed. */
+    private expired;
+    /**
+     * Drops an expired handle. Every access — read or mutation — clears an
+     * aged-out handle here, so it can be neither read, locked, swapped nor
+     * revoked, and the version-`0` create sentinel never resurrects it.
+     */
+    private discard;
 }
 export interface MemoryRateLimitStoreOptions {
     now?: () => Date;

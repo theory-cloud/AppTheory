@@ -14,7 +14,7 @@ import (
 const storeConformanceFixture = "../../../contract-tests/fixtures/routing/mcp-auth-facade/facade-store-conformance.v1.json"
 
 // fixtureCaseCount is the case count the shared fixture must carry.
-const fixtureCaseCount = 20
+const fixtureCaseCount = 33
 
 func newStores(clock *store.ManualClock) store.Stores {
 	return store.Stores{
@@ -224,6 +224,40 @@ func TestRouteRefreshBrokerStoreLockAndRevocation(t *testing.T) {
 	}
 	if _, err := brokers.Get(ctx, "missing"); !errors.Is(err, store.ErrBrokerNotFound) {
 		t.Fatalf("unknown handle error = %v, want ErrBrokerNotFound", err)
+	}
+}
+
+// TestRouteRefreshBrokerTTLBoundary pins the broker's local lifetime policy at
+// nanosecond resolution on the injected clock: a record is live one nanosecond
+// before its TTL and absent at and after it.
+func TestRouteRefreshBrokerTTLBoundary(t *testing.T) {
+	ctx := context.Background()
+	clock := store.NewManualClock(store.ConformanceEpoch)
+	brokers := store.NewMemoryRouteRefreshBrokerStore(store.RouteRefreshBrokerStoreOptions{
+		Now: clock.Now,
+		TTL: time.Second,
+	})
+
+	for _, handle := range []string{"handle-boundary", "handle-past"} {
+		if err := brokers.Put(ctx, &store.RouteRefreshBrokerRecord{HandleHash: handle, Status: store.BrokerStatusActive}); err != nil {
+			t.Fatalf("put %s: %v", handle, err)
+		}
+	}
+	storedAt := clock.Now()
+
+	clock.Set(storedAt.Add(time.Second - time.Nanosecond))
+	if _, err := brokers.Get(ctx, "handle-boundary"); err != nil {
+		t.Fatalf("get one nanosecond before the TTL = %v, want success", err)
+	}
+
+	clock.Set(storedAt.Add(time.Second))
+	if _, err := brokers.Get(ctx, "handle-boundary"); !errors.Is(err, store.ErrBrokerNotFound) {
+		t.Fatalf("get at the TTL = %v, want ErrBrokerNotFound", err)
+	}
+
+	clock.Set(storedAt.Add(time.Second + time.Nanosecond))
+	if _, err := brokers.Get(ctx, "handle-past"); !errors.Is(err, store.ErrBrokerNotFound) {
+		t.Fatalf("get one nanosecond past the TTL = %v, want ErrBrokerNotFound", err)
 	}
 }
 

@@ -332,18 +332,26 @@ class MemoryClientStore:
 
 
 class MemoryRouteRefreshBrokerStore:
-    """Exclusive, expiring refresh lock plus a versioned compare-and-swap."""
+    """Exclusive, expiring refresh lock plus a versioned compare-and-swap.
+
+    A handle is TTL-bounded: each record is kept alongside the instant it was
+    first stored, and every operation treats a handle whose ``now`` has reached
+    ``stored_at + ttl`` as absent -- it purges the record and reports the
+    not-found outcome (``get``/``revoke`` return ``None``, ``acquire_lock`` and
+    ``compare_and_swap`` raise ``KeyError``). A compare-and-swap rotation keeps
+    the original ``stored_at``, so rotating cannot extend a handle's life.
+    """
 
     def __init__(
         self,
         now: Any = None,
-        ttl: int | None = UTC_NOW_TTL_ROUTE_REFRESH_BROKER_SECONDS,
+        ttl: int | None = None,
         lock_ttl_seconds: int = UTC_NOW_LOCK_TTL_SECONDS,
     ) -> None:
         self._now = now or _utc_now
-        self._ttl = ttl
+        self._ttl = UTC_NOW_TTL_ROUTE_REFRESH_BROKER_SECONDS if ttl is None else int(ttl)
         self._lock_ttl_seconds = lock_ttl_seconds
-        self._records: dict[str, RouteRefreshBrokerRecord] = {}
+        self._records: dict[str, tuple[RouteRefreshBrokerRecord, datetime]] = {}
         self._lock = threading.Lock()
 
     def put(self, record: RouteRefreshBrokerRecord) -> None:
@@ -351,16 +359,27 @@ class MemoryRouteRefreshBrokerStore:
         stored.status = stored.status or STATUS_ACTIVE
         stored.version = 1
         with self._lock:
-            self._records[stored.handle_hash] = stored
+            self._records[stored.handle_hash] = (stored, self._now())
+
+    def _live(self, handle_hash: str, now: datetime) -> RouteRefreshBrokerRecord | None:
+        """Returns the live record for a handle, purging it when its TTL elapsed."""
+        entry = self._records.get(handle_hash)
+        if entry is None:
+            return None
+        stored, stored_at = entry
+        if now >= stored_at + timedelta(seconds=self._ttl):
+            del self._records[handle_hash]
+            return None
+        return stored
 
     def get(self, handle_hash: str) -> RouteRefreshBrokerRecord | None:
         with self._lock:
-            stored = self._records.get(handle_hash)
+            stored = self._live(handle_hash, self._now())
         return replace(stored) if stored is not None else None
 
     def acquire_lock(self, handle_hash: str, lock_owner: str, expected_version: int) -> RouteRefreshBrokerRecord:
         with self._lock:
-            stored = self._records.get(handle_hash)
+            stored = self._live(handle_hash, self._now())
             if stored is None:
                 raise KeyError(handle_hash)
             if stored.status == STATUS_REVOKED:
@@ -379,21 +398,22 @@ class MemoryRouteRefreshBrokerStore:
 
     def compare_and_swap(self, record: RouteRefreshBrokerRecord, expected_version: int) -> RouteRefreshBrokerRecord:
         with self._lock:
-            stored = self._records.get(record.handle_hash)
+            stored = self._live(record.handle_hash, self._now())
             if stored is None:
                 raise KeyError(record.handle_hash)
             if stored.status == STATUS_REVOKED:
                 raise BrokerRevokedError(f"broker record {record.handle_hash!r} is revoked")
             if stored.version != expected_version:
                 raise BrokerVersionConflictError(f"broker version conflict for {record.handle_hash!r}")
+            stored_at = self._records[record.handle_hash][1]
             updated = replace(record)
             updated.version = expected_version + 1
-            self._records[updated.handle_hash] = updated
+            self._records[updated.handle_hash] = (updated, stored_at)
             return replace(updated)
 
     def revoke(self, handle_hash: str) -> RouteRefreshBrokerRecord | None:
         with self._lock:
-            stored = self._records.get(handle_hash)
+            stored = self._live(handle_hash, self._now())
             if stored is None:
                 return None
             if stored.status != STATUS_REVOKED:
@@ -541,9 +561,14 @@ def _transaction_outcome(record: TransactionRecord | None) -> str:
 def _authorization_code_outcome(result: ConsumeResult | None) -> str:
     if result is None:
         return "not_found"
+    # Replay outranks expiry: a code consumed once is terminal, so a later read
+    # (even one whose clock moved forward past the TTL, or backward behind it)
+    # must report the replay rather than resurrect or re-expire the record.
+    if result.replayed:
+        return "replayed"
     if result.record.status == STATUS_EXPIRED:
         return "expired"
-    return "replayed" if result.replayed else "ok"
+    return "ok"
 
 
 def _scenario_transaction_consume_single_use(
@@ -572,6 +597,42 @@ def _scenario_transaction_consume_after_ttl(
     store.put(TransactionRecord(state_hash="state-hash"))
     clock.advance(timedelta(seconds=int(params["advance_seconds"])))
     _assert_expected(expect, {"consume": _transaction_outcome(store.consume("state-hash"))})
+
+
+def _scenario_transaction_consume_after_ttl_then_replay(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    store = _transaction_store(stores, clock, _ttl_param(params))
+    store.put(TransactionRecord(state_hash="state-hash"))
+    clock.advance(timedelta(seconds=int(params["advance_seconds"])))
+    actual = {
+        "first": _transaction_outcome(store.consume("state-hash")),
+        "second": _transaction_outcome(store.consume("state-hash")),
+    }
+    _assert_expected(expect, actual)
+
+
+def _scenario_transaction_clock_back_after_consume(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    store = _transaction_store(stores, clock, _ttl_param(params))
+    store.put(TransactionRecord(state_hash="state-hash"))
+    first = _transaction_outcome(store.consume("state-hash"))
+    clock.advance(timedelta(seconds=-int(params["clock_back_seconds"])))
+    after = _transaction_outcome(store.consume("state-hash"))
+    _assert_expected(expect, {"first": first, "after_clock_back": after})
+
+
+def _scenario_transaction_clock_back_after_expired_consume(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    store = _transaction_store(stores, clock, _ttl_param(params))
+    store.put(TransactionRecord(state_hash="state-hash"))
+    clock.advance(timedelta(seconds=int(params["advance_seconds"])))
+    first = _transaction_outcome(store.consume("state-hash"))
+    clock.advance(timedelta(seconds=-int(params["clock_back_seconds"])))
+    after = _transaction_outcome(store.consume("state-hash"))
+    _assert_expected(expect, {"first": first, "after_clock_back": after})
 
 
 def _scenario_transaction_concurrent_consume(
@@ -610,6 +671,42 @@ def _scenario_authorization_code_consume_after_ttl(
     store.put(AuthorizationCodeRecord(code_hash="code-hash"))
     clock.advance(timedelta(seconds=int(params["advance_seconds"])))
     _assert_expected(expect, {"consume": _authorization_code_outcome(store.consume("code-hash"))})
+
+
+def _scenario_authorization_code_consume_after_ttl_then_replay(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    store = _authorization_code_store(stores, clock, _ttl_param(params))
+    store.put(AuthorizationCodeRecord(code_hash="code-hash"))
+    clock.advance(timedelta(seconds=int(params["advance_seconds"])))
+    actual = {
+        "first": _authorization_code_outcome(store.consume("code-hash")),
+        "second": _authorization_code_outcome(store.consume("code-hash")),
+    }
+    _assert_expected(expect, actual)
+
+
+def _scenario_authorization_code_clock_back_after_consume(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    store = _authorization_code_store(stores, clock, _ttl_param(params))
+    store.put(AuthorizationCodeRecord(code_hash="code-hash"))
+    first = _authorization_code_outcome(store.consume("code-hash"))
+    clock.advance(timedelta(seconds=-int(params["clock_back_seconds"])))
+    after = _authorization_code_outcome(store.consume("code-hash"))
+    _assert_expected(expect, {"first": first, "after_clock_back": after})
+
+
+def _scenario_authorization_code_clock_back_after_expired_consume(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    store = _authorization_code_store(stores, clock, _ttl_param(params))
+    store.put(AuthorizationCodeRecord(code_hash="code-hash"))
+    clock.advance(timedelta(seconds=int(params["advance_seconds"])))
+    first = _authorization_code_outcome(store.consume("code-hash"))
+    clock.advance(timedelta(seconds=-int(params["clock_back_seconds"])))
+    after = _authorization_code_outcome(store.consume("code-hash"))
+    _assert_expected(expect, {"first": first, "after_clock_back": after})
 
 
 def _scenario_authorization_code_concurrent_consume(
@@ -666,6 +763,18 @@ def _scenario_broker_get_unknown(
 ) -> None:
     store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
     _assert_expected(expect, {"get": "not_found" if store.get("unknown") is None else "ok"})
+
+
+def _broker_swap_outcome(store: Any, record: RouteRefreshBrokerRecord) -> str:
+    try:
+        store.compare_and_swap(record, record.version)
+    except BrokerRevokedError:
+        return "revoked"
+    except BrokerVersionConflictError:
+        return "version_conflict"
+    except KeyError:
+        return "not_found"
+    return "ok"
 
 
 def _acquire_lock_outcome(store: Any, handle_hash: str, owner: str, expected_version: int) -> str:
@@ -742,6 +851,81 @@ def _scenario_broker_revoke_then_lock(
     _assert_expected(expect, {"revoke": "ok" if revoked is not None else "not_found", "acquire_lock": locked})
 
 
+def _scenario_broker_ttl_boundary(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
+    store.put(RouteRefreshBrokerRecord(handle_hash="handle-hash"))
+    clock.advance(timedelta(seconds=int(params["advance_seconds"])))
+    _assert_expected(expect, {"get": "not_found" if store.get("handle-hash") is None else "ok"})
+
+
+def _scenario_broker_expired_refuses_lock(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
+    store.put(RouteRefreshBrokerRecord(handle_hash="handle-hash"))
+    clock.advance(timedelta(seconds=int(params["advance_seconds"])))
+    outcome = _acquire_lock_outcome(store, "handle-hash", "owner-ttl", 1)
+    _assert_expected(expect, {"acquire_lock": outcome})
+
+
+def _scenario_broker_expired_refuses_swap(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
+    store.put(RouteRefreshBrokerRecord(handle_hash="handle-hash"))
+    record = store.get("handle-hash")
+    if record is None:
+        raise AssertionError("broker record must exist after put")
+    clock.advance(timedelta(seconds=int(params["advance_seconds"])))
+    _assert_expected(expect, {"swap": _broker_swap_outcome(store, record)})
+
+
+def _scenario_broker_revoke_then_swap(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
+    store.put(RouteRefreshBrokerRecord(handle_hash="handle-hash"))
+    revoked = store.revoke("handle-hash")
+    actual = {
+        "revoke": "ok" if revoked is not None else "not_found",
+        "swap": _broker_swap_outcome(store, revoked) if revoked is not None else "not_found",
+    }
+    _assert_expected(expect, actual)
+
+
+def _scenario_broker_acquire_lock_bumps_version(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
+    store.put(RouteRefreshBrokerRecord(handle_hash="handle-hash"))
+    before = store.get("handle-hash")
+    version = before.version if before is not None else 0
+    store.acquire_lock("handle-hash", "owner-bump", version)
+    after = store.get("handle-hash")
+    _assert_expected(expect, {"version_delta": (after.version if after is not None else 0) - version})
+
+
+def _scenario_broker_revoke_bumps_version(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
+    store.put(RouteRefreshBrokerRecord(handle_hash="handle-hash"))
+    first = store.get("handle-hash")
+    version_0 = first.version if first is not None else 0
+    store.revoke("handle-hash")
+    second = store.get("handle-hash")
+    version_1 = second.version if second is not None else 0
+    store.revoke("handle-hash")
+    third = store.get("handle-hash")
+    version_2 = third.version if third is not None else 0
+    _assert_expected(
+        expect,
+        {"revoke_version_delta": version_1 - version_0, "revoke_again_version_delta": version_2 - version_1},
+    )
+
+
 def _scenario_broker_concurrent_acquire_lock(
     stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
 ) -> None:
@@ -804,12 +988,22 @@ _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
     ("transaction", "consume_single_use"): _scenario_transaction_consume_single_use,
     ("transaction", "consume_unknown"): _scenario_transaction_consume_unknown,
     ("transaction", "consume_after_ttl"): _scenario_transaction_consume_after_ttl,
+    ("transaction", "consume_after_ttl_then_replay"): _scenario_transaction_consume_after_ttl_then_replay,
+    ("transaction", "clock_back_after_consume"): _scenario_transaction_clock_back_after_consume,
+    ("transaction", "clock_back_after_expired_consume"): _scenario_transaction_clock_back_after_expired_consume,
     ("transaction", "concurrent_consume"): _scenario_transaction_concurrent_consume,
     ("authorization_code", "consume_single_use_then_replay"): (
         _scenario_authorization_code_consume_single_use_then_replay
     ),
     ("authorization_code", "consume_unknown"): _scenario_authorization_code_consume_unknown,
     ("authorization_code", "consume_after_ttl"): _scenario_authorization_code_consume_after_ttl,
+    ("authorization_code", "consume_after_ttl_then_replay"): (
+        _scenario_authorization_code_consume_after_ttl_then_replay
+    ),
+    ("authorization_code", "clock_back_after_consume"): _scenario_authorization_code_clock_back_after_consume,
+    ("authorization_code", "clock_back_after_expired_consume"): (
+        _scenario_authorization_code_clock_back_after_expired_consume
+    ),
     ("authorization_code", "concurrent_consume"): _scenario_authorization_code_concurrent_consume,
     ("client", "put_get_update"): _scenario_client_put_get_update,
     ("client", "update_stale_version"): _scenario_client_update_stale_version,
@@ -819,6 +1013,12 @@ _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
     ("route_refresh_broker", "compare_and_swap_versioned"): _scenario_broker_compare_and_swap_versioned,
     ("route_refresh_broker", "revoke_idempotent"): _scenario_broker_revoke_idempotent,
     ("route_refresh_broker", "revoke_then_lock"): _scenario_broker_revoke_then_lock,
+    ("route_refresh_broker", "broker_ttl_boundary"): _scenario_broker_ttl_boundary,
+    ("route_refresh_broker", "broker_expired_refuses_lock"): _scenario_broker_expired_refuses_lock,
+    ("route_refresh_broker", "broker_expired_refuses_swap"): _scenario_broker_expired_refuses_swap,
+    ("route_refresh_broker", "revoke_then_swap"): _scenario_broker_revoke_then_swap,
+    ("route_refresh_broker", "acquire_lock_bumps_version"): _scenario_broker_acquire_lock_bumps_version,
+    ("route_refresh_broker", "revoke_bumps_version"): _scenario_broker_revoke_bumps_version,
     ("route_refresh_broker", "concurrent_acquire_lock"): _scenario_broker_concurrent_acquire_lock,
     ("route_refresh_broker", "concurrent_revoke"): _scenario_broker_concurrent_revoke,
     ("rate_limit", "check_and_increment"): _scenario_rate_limit_check_and_increment,

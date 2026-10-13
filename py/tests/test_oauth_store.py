@@ -55,7 +55,7 @@ class StoreConformanceTests(unittest.TestCase):
 
     def test_fixture_table_is_complete(self) -> None:
         cases = self.fixture["cases"]
-        self.assertEqual(len(cases), 20)
+        self.assertEqual(len(cases), 33)
         self.assertEqual(
             {case["store"] for case in cases},
             {"transaction", "authorization_code", "client", "route_refresh_broker", "rate_limit"},
@@ -66,14 +66,16 @@ class StoreConformanceTests(unittest.TestCase):
         cases = self.fixture["cases"]
         ran = run_store_conformance(STORE_CLASSES, cases, self.clock)
         print(f"store conformance: {ran} cases run")
-        self.assertEqual(ran, 20)
-        self.assertEqual(len(cases), 20)
+        self.assertEqual(ran, 33)
+        self.assertEqual(len(cases), 33)
 
     def test_every_scenario_is_exercised(self) -> None:
         # Bidirectional: dropping or duplicating a shared row must fail here
-        # rather than silently shrinking coverage.
+        # rather than silently shrinking coverage. Distinct (store, scenario)
+        # pairs are one fewer than the 33 rows: the broker TTL boundary is
+        # probed by two rows that share one scenario.
         pairs = {(case["store"], case["scenario"]) for case in self.fixture["cases"]}
-        self.assertEqual(len(pairs), 20)
+        self.assertEqual(len(pairs), 32)
 
 
 class TransactionStoreTests(unittest.TestCase):
@@ -172,6 +174,25 @@ class RouteRefreshBrokerStoreTests(unittest.TestCase):
         with self.assertRaises(BrokerRevokedError):
             self.store.acquire_lock("h", "owner-1", second.version)
         self.assertIsNone(self.store.revoke("missing"))
+
+    def test_record_is_absent_at_the_ttl_boundary(self) -> None:
+        store = MemoryRouteRefreshBrokerStore(now=self.clock.now, ttl=1)
+        store.put(RouteRefreshBrokerRecord(handle_hash="h"))
+        stored_at = self.clock.now()
+        self.clock.set(stored_at + dt.timedelta(seconds=1) - dt.timedelta(microseconds=1))
+        self.assertIsNotNone(store.get("h"))
+        self.clock.set(stored_at + dt.timedelta(seconds=1))
+        self.assertIsNone(store.get("h"))
+        self.clock.set(stored_at + dt.timedelta(seconds=1) + dt.timedelta(microseconds=1))
+        self.assertIsNone(store.get("h"))
+
+    def test_swap_keeps_the_original_store_instant(self) -> None:
+        store = MemoryRouteRefreshBrokerStore(now=self.clock.now, ttl=900)
+        store.put(RouteRefreshBrokerRecord(handle_hash="h"))
+        record = store.get("h")
+        store.compare_and_swap(record, record.version)
+        self.clock.advance(dt.timedelta(seconds=900))
+        self.assertIsNone(store.get("h"))
 
 
 class RateLimitStoreTests(unittest.TestCase):

@@ -172,6 +172,97 @@
       "scenario": "window_reset",
       "params": { "limit": 1, "window_seconds": 60, "advance_seconds": 61 },
       "expect": { "first": "allowed", "second": "limited", "after_window": "allowed" }
+    },
+    {
+      "id": "store.transaction.expired_consume_then_replay_is_not_found",
+      "store": "transaction",
+      "scenario": "consume_after_ttl_then_replay",
+      "params": { "put": 1, "ttl_seconds": 600, "advance_seconds": 601 },
+      "expect": { "first": "expired", "second": "not_found" }
+    },
+    {
+      "id": "store.transaction.clock_back_after_consume_is_not_found",
+      "store": "transaction",
+      "scenario": "clock_back_after_consume",
+      "params": { "put": 1, "ttl_seconds": 600, "clock_back_seconds": 120 },
+      "expect": { "first": "ok", "after_clock_back": "not_found" }
+    },
+    {
+      "id": "store.transaction.clock_back_after_expired_burn_is_not_found",
+      "store": "transaction",
+      "scenario": "clock_back_after_expired_consume",
+      "params": { "put": 1, "ttl_seconds": 600, "advance_seconds": 601, "clock_back_seconds": 121 },
+      "expect": { "first": "expired", "after_clock_back": "not_found" }
+    },
+    {
+      "id": "store.authorization_code.expired_consume_then_replay",
+      "store": "authorization_code",
+      "scenario": "consume_after_ttl_then_replay",
+      "params": { "put": 1, "ttl_seconds": 60, "advance_seconds": 61 },
+      "expect": { "first": "expired", "second": "replayed" }
+    },
+    {
+      "id": "store.authorization_code.clock_back_after_consume_is_replayed",
+      "store": "authorization_code",
+      "scenario": "clock_back_after_consume",
+      "params": { "put": 1, "ttl_seconds": 60, "clock_back_seconds": 120 },
+      "expect": { "first": "ok", "after_clock_back": "replayed" }
+    },
+    {
+      "id": "store.authorization_code.clock_back_after_expired_burn_is_replayed",
+      "store": "authorization_code",
+      "scenario": "clock_back_after_expired_consume",
+      "params": { "put": 1, "ttl_seconds": 60, "advance_seconds": 61, "clock_back_seconds": 121 },
+      "expect": { "first": "expired", "after_clock_back": "replayed" }
+    },
+    {
+      "id": "store.route_refresh_broker.record_present_before_ttl_boundary",
+      "store": "route_refresh_broker",
+      "scenario": "broker_ttl_boundary",
+      "params": { "put": 1, "advance_seconds": 899 },
+      "expect": { "get": "ok" }
+    },
+    {
+      "id": "store.route_refresh_broker.record_expired_at_ttl_boundary",
+      "store": "route_refresh_broker",
+      "scenario": "broker_ttl_boundary",
+      "params": { "put": 1, "advance_seconds": 900 },
+      "expect": { "get": "not_found" }
+    },
+    {
+      "id": "store.route_refresh_broker.expired_record_refuses_lock",
+      "store": "route_refresh_broker",
+      "scenario": "broker_expired_refuses_lock",
+      "params": { "put": 1, "advance_seconds": 900 },
+      "expect": { "acquire_lock": "not_found" }
+    },
+    {
+      "id": "store.route_refresh_broker.expired_record_refuses_swap",
+      "store": "route_refresh_broker",
+      "scenario": "broker_expired_refuses_swap",
+      "params": { "put": 1, "advance_seconds": 900 },
+      "expect": { "swap": "not_found" }
+    },
+    {
+      "id": "store.route_refresh_broker.revoked_record_refuses_swap",
+      "store": "route_refresh_broker",
+      "scenario": "revoke_then_swap",
+      "params": { "put": 1 },
+      "expect": { "revoke": "ok", "swap": "revoked" }
+    },
+    {
+      "id": "store.route_refresh_broker.acquire_lock_bumps_version",
+      "store": "route_refresh_broker",
+      "scenario": "acquire_lock_bumps_version",
+      "params": { "put": 1 },
+      "expect": { "version_delta": 1 }
+    },
+    {
+      "id": "store.route_refresh_broker.revoke_bumps_version",
+      "store": "route_refresh_broker",
+      "scenario": "revoke_bumps_version",
+      "params": { "put": 1 },
+      "expect": { "revoke_version_delta": 1, "revoke_again_version_delta": 0 }
     }
   ]
 }

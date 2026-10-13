@@ -35,6 +35,11 @@ const LOCK_TTL_SECONDS = Math.max(
   1,
   ...CASES.map((c) => Number(c.params?.lock_ttl_seconds ?? 0)),
 );
+// Likewise the handle lifetime: every broker row starts at the fixture epoch,
+// so the store's own TTL is what the boundary rows measure.
+const ROUTE_REFRESH_TTL_SECONDS = Number(
+  fixture.ttl_seconds?.route_refresh_broker ?? 900,
+);
 
 function newStores(clock) {
   const now = () => clock.now();
@@ -45,20 +50,21 @@ function newStores(clock) {
     routeRefreshBroker: new MemoryRouteRefreshBrokerStore({
       now,
       lockTtlSeconds: LOCK_TTL_SECONDS,
+      ttlSeconds: ROUTE_REFRESH_TTL_SECONDS,
     }),
     rateLimit: new MemoryRateLimitStore({ now }),
   };
 }
 
-test("store conformance fixture carries 20 cases", () => {
-  assert.equal(CASES.length, 20);
-  assert.equal(new Set(CASES.map((c) => c.id)).size, 20);
+test("store conformance fixture carries 33 cases", () => {
+  assert.equal(CASES.length, 33);
+  assert.equal(new Set(CASES.map((c) => c.id)).size, 33);
 });
 
 test("the in-memory reference stores satisfy the store conformance table", async () => {
   const clock = new ManualClock(EPOCH);
   const result = await runStoreConformance(newStores(clock), CASES, clock);
-  assert.equal(result.ran, 20);
+  assert.equal(result.ran, 33);
   console.log(
     `store conformance: ${result.ran}/${CASES.length} cases passed (in-memory reference stores)`,
   );
