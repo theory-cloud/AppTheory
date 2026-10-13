@@ -5,7 +5,7 @@ description: The Go implementation of the AppTheory contract — routing, middle
 
 # Go Runtime
 
-The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — 274 single-envelope [contract fixtures](../reference/contract-fixtures.md) run in Go, TypeScript, and Python, while the remaining nine nested tables cover the MCP route algebra and the auth-facade surface (the M2 acceptance and M3a provider/store conformance tables load in every runtime; the route-algebra and facade-inventory tables are Go/CDK-TS). <!-- apptheory-fixture-count: 283 -->
+The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — 274 single-envelope [contract fixtures](../reference/contract-fixtures.md) run in Go, TypeScript, and Python, while the remaining nine nested tables cover the MCP route algebra and the auth-facade surface (the M2 acceptance, M3a provider/store conformance, and M3b-i route-model and transport-posture tables load in every runtime; the route-algebra expectations and facade-inventory tables are Go/CDK-TS). <!-- apptheory-fixture-count: 283 -->
 
 ## Install
 

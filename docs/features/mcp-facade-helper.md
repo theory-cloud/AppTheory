@@ -1,13 +1,16 @@
 ---
-title: Go MCP Facade Helper
-description: Golden-path Go runtime composition for parameterized MCP endpoints and their OAuth metadata facade.
+title: MCP Facade Helper
+description: Golden-path runtime composition for parameterized MCP endpoints and their OAuth metadata facade (Go, TypeScript, Python).
 ---
 
-# Go MCP facade helper
+# MCP facade helper
 
-`runtime/mcpfacade` is the Go runtime composition half of `m17.mcp-route-algebra/v1`. One
-`RegisterMCPFacade` call installs the complete per-pattern MCP OAuth facade for the `namespace`, `partner_namespace`,
-`agent`, and `partner_agent` endpoint kinds without copying route strings into the application.
+`runtime/mcpfacade` (Go, `RegisterMCPFacade`), `ts/src/mcpfacade.ts` (TypeScript, `registerMcpFacade`), and
+`py/src/apptheory/mcpfacade.py` (Python, `register_mcp_facade`) are the runtime composition half of
+`m17.mcp-route-algebra/v2`. One call installs the complete per-pattern MCP OAuth facade for the `namespace`,
+`partner_namespace`, `agent`, and `partner_agent` endpoint kinds without copying route strings into the application.
+All three registrars mount the same routes from the shared route algebra, resolve the same issuer/URL modes and
+capabilities, pair the same transport postures, and emit byte-identical metadata documents from the same config.
 
 For every `mcproutes.SupportedEndpointTemplates()` entry, the helper installs:
 
@@ -158,11 +161,35 @@ supplied handler.
 | Fixed RFC 8414 capability slices | `DefaultCapabilities`, with validated per-field overrides |
 | `oauth_facade_routes.go` creates kind-specific authorize/token proxy handlers | `AuthorizeHandler` and `TokenHandler` factories attach application-owned handlers to algebra-derived paths |
 
+## TypeScript and Python registrars
+
+`registerMcpFacade(app, config)` and `register_mcp_facade(app, config)` take the same configuration shape as the Go
+`FacadeConfig` (issuer, JWKS URI, optional registration-endpoint override, `issuerMode`, URL mode + public base URL or
+allowed hostnames, per-kind scopes, capability overrides, the MCP handler, the all-or-none authorize/token handler
+factories, the optional register factory, the optional callback handler, the optional root discovery config, the
+transport posture, and the runtime bearer assertion). The derived route tables come from the shared route algebra
+(`mcproutes`), so there is no per-language route list to drift.
+
+They mount the MCP transport routes; the RFC 9728 protected-resource metadata route; both canonical and
+suffix-compatible RFC 8414 authorization-server metadata routes; the derived authorize/token route shapes (only when
+both handler factories are supplied); the derived registration route shape (only when a register factory is supplied);
+the opt-in static root discovery route; and the single stage-global callback route. Nothing beyond what Go mounts
+becomes reachable. Registration fails closed before any route is added: a malformed config or a posture/handler pairing
+violation raises, and the `none-public` posture registers no OAuth surface and rejects any OAuth-surface configuration.
+
+Authorize, token, register, and callback behavior is still entirely app-owned: the registrars own the routes; the
+application owns the bodies. The metadata documents (protected resource, routed discovery, root discovery) carry the
+same field order and the same `Cache-Control: no-store` and `Vary` headers as Go. The shared contract fixtures pin the
+routed document bytes per endpoint kind and URL mode for all three runtimes, and `facade-route-model.v1.json`,
+`facade-transport-posture.v1.json`, and the route-inventory fixture are consumed by the Go, TypeScript, and Python
+suites alike. Front-channel behavior (authorize/callback/token mechanics, code-store single-use and replay→revoke,
+wiring the provider and store SPIs into the facade config) is scheduled for a follow-up milestone, as are dynamic
+client registration, brokered refresh, and CDK facade wiring.
+
 ## Non-goals
 
 - no authorize/token behavior, grant issuance, upstream proxying, admission, or scope-selection logic beyond the
-  transport authentication posture described above;
+  transport authentication posture described above (the registrars mount the routes; applications own the bodies);
 - no fifth/root endpoint kind or routed root authorization facade;
 - no CDK wiring or jsii/CDK-Go regeneration in this change;
-- no TypeScript or Python runtime helper in docs/061 change 4;
 - no alternative route registration or private route strings outside `runtime/mcproutes`.

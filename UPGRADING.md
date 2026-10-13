@@ -44,6 +44,24 @@ Within the `/v5` to `/v6` module migration itself the Go API surface is unchange
 diff between the two lines is header-path-only, so Go code that compiles on v5 compiles on v6. The TypeScript and Python
 runtimes carry no module-path change.
 
+### MCP auth facade mounting in TypeScript and Python
+
+`registerMcpFacade` (TypeScript) and `register_mcp_facade` (Python) previously mounted only the MCP transport routes
+from an explicit `mcpPaths` / `mcp_paths` list. They now take the full facade configuration object that Go's
+`RegisterMCPFacade` accepts and mount the same route surface as Go from the shared route algebra: the MCP transport
+routes, the RFC 9728 protected-resource metadata route, both canonical and suffix-compatible RFC 8414
+authorization-server metadata routes, the derived authorize/token route shapes (only when both handler factories are
+supplied), the derived registration route shape (only when a register factory is supplied), the opt-in static root
+discovery route, and the single stage-global callback route. There is no `mcpPaths` argument any more: the routes are
+derived from the contract, not supplied.
+
+Migration for a transport-only caller: replace the `mcpPaths` argument with the facade configuration fields
+(`issuerURL`, `jwksURI`, `urlMode`, and per-kind `scopes` at minimum) and keep `mcpHandler` and `transportPosture` as
+they were. The registrars still mount routes only; authorize, token, register, and callback bodies remain app-owned,
+and nothing beyond what Go already mounts becomes reachable. `McpFacadeRegistration` is replaced by the `RouteInventory`
+returned from the call. TypeScript and Python gain `FacadeConfig`, `FacadeRoute`, `RouteInventory`, `FacadeCapabilities`
+/ `defaultCapabilities`, `RootDiscoveryConfig`, the URL-mode constants, and the `HandlerFactory` type.
+
 ## v5.x line
 
 AppTheory v5 is a major release on two axes: the Go module path moves to the next semantic import version, and the Go
