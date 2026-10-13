@@ -388,6 +388,14 @@ class JwksValidatorFixtureTests(unittest.TestCase):
         }
         cases = self.fixture["cases"]
         self.assertTrue(cases)
+        # Bidirectional, like the Go and TypeScript loaders: dropping a fixture
+        # row would otherwise shrink coverage silently. This is what makes a
+        # dropped shared row fail Python alone.
+        self.assertEqual(
+            set(scenarios),
+            {case["name"] for case in cases},
+            "every fixture case needs exactly one scenario and no scenario may be unused",
+        )
         executed = 0
         for case in cases:
             name = case["name"]
@@ -541,6 +549,13 @@ class DiscoveryBootstrapFixtureTests(unittest.TestCase):
         }
         cases = self.fixture["cases"]
         self.assertTrue(cases)
+        # Bidirectional, like the Go and TypeScript loaders: a dropped shared row
+        # must fail Python alone rather than silently shrinking coverage.
+        self.assertEqual(
+            set(scenarios),
+            {case["name"] for case in cases},
+            "every fixture case needs exactly one scenario and no scenario may be unused",
+        )
         executed = 0
         for case in cases:
             name = case["name"]

@@ -726,6 +726,10 @@ test("the JWKS validator enforces the azp/client_id allow-list", async () => {
     await reject(rs256Token(env, KEY_A, { azp: "attacker" }));
     await reject(rs256Token(env, KEY_A, { client_id: "attacker" }));
 
+    // A token that carries neither azp nor client_id is refused under a
+    // configured allow-list: absent must never read as "no check".
+    await reject(rs256Token(env, KEY_A));
+
     // An allow-listed client_id passes, and azp takes precedence over client_id.
     assert.equal(
       (await validate(ctx(), rs256Token(env, KEY_A, { client_id: "client-1" })))
