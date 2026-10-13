@@ -4985,6 +4985,16 @@ const OAuthProtectedResourceMCPPath = "/.well-known/oauth-protected-resource/mcp
 
 const OAuthProtectedResourcePath = "/.well-known/oauth-protected-resource"
 
+const ProviderInvalidGrant ProviderErrorClass = "invalid_grant"
+
+const ProviderInvalidRequest ProviderErrorClass = "invalid_request"
+
+const ProviderReauthRequired ProviderErrorClass = "reauth_required"
+
+const ProviderTemporarilyUnavailable ProviderErrorClass = "temporarily_unavailable"
+
+const ProviderUpstreamError ProviderErrorClass = "upstream_error"
+
 var ErrAuthorizationCodeExpired = errors.New("authorization code expired")
 
 var ErrAuthorizationCodeNotFound = errors.New("authorization code not found")
@@ -5007,6 +5017,46 @@ var ErrRefreshTokenExpired = errors.New("refresh token expired")
 
 var ErrRefreshTokenNotFound = errors.New("refresh token not found")
 
+type AutheoryProvider struct {
+	issuer        string
+	discoveryURL  string
+	client        *http.Client
+	fetchTimeout  time.Duration
+	allowPrivate  bool
+	now           func() time.Time
+	defaultAZP    []string
+	tokenOverride string
+	jwksOverride  string
+	authzOverride string
+
+	mu             sync.Mutex
+	metadata       *ProviderMetadata
+	validators     map[tokenExpectationKey]BearerTokenClaimsValidator
+	validatorOrder []tokenExpectationKey
+}
+
+type AutheoryProviderOptions struct {
+	Issuer string
+
+	ClientID string
+
+	DiscoveryURL string
+
+	TokenEndpoint         string
+	JWKSURI               string
+	AuthorizationEndpoint string
+
+	HTTPClient *http.Client
+
+	AllowPrivateHosts bool
+
+	FetchTimeout time.Duration
+
+	Now func() time.Time
+
+	AllowedAuthorizedParties []string
+}
+
 type AuthorizationCodeRecord struct {
 	Code                string
 	ClientID            string
@@ -5020,6 +5070,17 @@ type AuthorizationCodeRecord struct {
 type AuthorizationCodeStore interface {
 	Put(context.Context, *AuthorizationCodeRecord) error
 	Consume(context.Context, string) (*AuthorizationCodeRecord, error)
+}
+
+type AuthorizationRequest struct {
+	UpstreamClientID    string
+	CallbackURL         string
+	CodeChallenge       string
+	CodeChallengeMethod string
+	State               string
+	Resource            string
+	Scopes              []string
+	Hints               map[string]string
 }
 
 type AuthorizationServerMetadata struct {
@@ -5070,6 +5131,13 @@ type BearerTokenValidationOptions struct {
 }
 
 type BearerTokenValidator func(*apptheory.Context, string) error
+
+type CodeExchangeRequest struct {
+	Code             string
+	UpstreamClientID string
+	CallbackURL      string
+	CodeVerifier     string
+}
 
 type DynamicClientRegistrationPolicy struct {
 	AllowedRedirectURIs []string
@@ -5162,6 +5230,43 @@ type ProtectedResourceMetadata struct {
 	BearerMethodsSupported []string `json:"bearer_methods_supported,omitempty"`
 }
 
+type Provider interface {
+	Discovery(context.Context) (*ProviderMetadata, error)
+
+	AuthorizationURL(AuthorizationRequest) (string, error)
+
+	ExchangeCode(context.Context, CodeExchangeRequest) (*TokenSet, error)
+
+	Refresh(context.Context, RefreshRequest) (*TokenSet, error)
+
+	ValidateAccessToken(context.Context, string, TokenExpectations) (*TokenClaims, error)
+}
+
+type ProviderError struct {
+	Class   ProviderErrorClass
+	Op      string
+	Message string
+
+	cause error
+}
+
+type ProviderErrorClass string
+
+type ProviderMetadata struct {
+	Issuer                                     string   `json:"issuer"`
+	AuthorizationEndpoint                      string   `json:"authorization_endpoint"`
+	TokenEndpoint                              string   `json:"token_endpoint"`
+	JWKSURI                                    string   `json:"jwks_uri"`
+	CodeChallengeMethodsSupported              []string `json:"code_challenge_methods_supported"`
+	AuthorizationResponseIssParameterSupported bool     `json:"authorization_response_iss_parameter_supported"`
+	ResourceParameterSupported                 bool     `json:"resource_parameter_supported"`
+}
+
+type RefreshRequest struct {
+	RefreshMaterial  string
+	UpstreamClientID string
+}
+
 type RefreshTokenRecord struct {
 	Token     string
 	ClientID  string
@@ -5189,6 +5294,32 @@ type RequireBearerTokenOptions struct {
 	RequiredScopesFunc func(*apptheory.Context) ([]string, error)
 }
 
+type TokenClaims struct {
+	Subject         string    `json:"subject"`
+	Audience        string    `json:"audience"`
+	Scopes          []string  `json:"scopes"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	AuthorizedParty string    `json:"authorized_party"`
+}
+
+type TokenExpectations struct {
+	ExpectedIssuer           string
+	ExpectedAudience         string
+	RequiredScopes           []string
+	AllowedAuthorizedParties []string
+}
+
+type TokenSet struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	Scope        string `json:"scope"`
+	IDToken      string `json:"id_token"`
+}
+
+func AsProviderError(error) (*ProviderError, bool)
+
 func AuthorizationServerMetadataHandler(*AuthorizationServerMetadata) apptheory.Handler
 
 func BearerTokenClaimsFromContext(*apptheory.Context) (BearerTokenClaims, bool)
@@ -5204,6 +5335,8 @@ func CanonicalizeIssuerURL(string) (string, bool)
 func ClaudeDynamicClientRegistrationPolicy() DynamicClientRegistrationPolicy
 
 func InsufficientScopeWWWAuthenticate([]string, string) string
+
+func NewAutheoryProvider(AutheoryProviderOptions) (*AutheoryProvider, error)
 
 func NewAuthorizationServerMetadata(string, ...AuthorizationServerMetadataOption) (*AuthorizationServerMetadata, error)
 
@@ -5222,6 +5355,8 @@ func NewOpaqueToken() (string, error)
 func NewPKCECodeVerifier() (string, error)
 
 func NewProtectedResourceMetadata(string, []string) (*ProtectedResourceMetadata, error)
+
+func NewProviderError(ProviderErrorClass, string, string) *ProviderError
 
 func NormalizeRequestOrigin(string) (string, bool)
 
@@ -5251,6 +5386,20 @@ func WithDeviceAuthorizationEndpoint(...string) AuthorizationServerMetadataOptio
 
 func WithRevocationEndpoint(...string) AuthorizationServerMetadataOption
 
+func (*AutheoryProvider) AuthorizationURL(AuthorizationRequest) (string, error)
+
+func (*AutheoryProvider) Discovery(context.Context) (*ProviderMetadata, error)
+
+func (*AutheoryProvider) ExchangeCode(context.Context, CodeExchangeRequest) (*TokenSet, error)
+
+func (*AutheoryProvider) Refresh(context.Context, RefreshRequest) (*TokenSet, error)
+
+func (*AutheoryProvider) ValidateAccessToken(
+	context.Context,
+	string,
+	TokenExpectations,
+) (*TokenClaims, error)
+
 func (*AuthorizationServerMetadata) MarshalJSONBytes() ([]byte, error)
 
 func (*MemoryAuthorizationCodeStore) Consume(context.Context, string) (*AuthorizationCodeRecord, error)
@@ -5266,6 +5415,350 @@ func (*MemoryRefreshTokenStore) Get(context.Context, string) (*RefreshTokenRecor
 func (*MemoryRefreshTokenStore) Put(context.Context, *RefreshTokenRecord) error
 
 func (*ProtectedResourceMetadata) MarshalJSONBytes() ([]byte, error)
+
+func (*ProviderError) Error() string
+
+func (*ProviderError) HTTPStatus() int
+
+func (*ProviderError) Unwrap() error
+
+## github.com/theory-cloud/apptheory/v6/runtime/oauth/store
+
+const BrokerStatusActive = "active"
+
+const BrokerStatusExpired = "expired"
+
+const BrokerStatusIssued = "issued"
+
+const BrokerStatusReauthRequired = "reauth_required"
+
+const BrokerStatusRefreshing = "refreshing"
+
+const BrokerStatusRevoked = "revoked"
+
+const DefaultAuthorizationCodeTTL = time.Minute
+
+const DefaultRateLimitWindow = time.Minute
+
+const DefaultRouteRefreshBrokerTTL = 15 * time.Minute
+
+const DefaultRouteRefreshLockTTL = 30 * time.Second
+
+const DefaultTransactionTTL = 10 * time.Minute
+
+const RateLimitAllowed = "allowed"
+
+const RateLimitLimited = "limited"
+
+var ConformanceEpoch = time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+var ErrAuthorizationCodeExpired = errors.New("store: authorization code expired")
+
+var ErrAuthorizationCodeNotFound = errors.New("store: authorization code not found")
+
+var ErrAuthorizationCodeReplayed = errors.New("store: authorization code replayed")
+
+var ErrBrokerLocked = errors.New("store: route refresh broker record is locked")
+
+var ErrBrokerNotFound = errors.New("store: route refresh broker record not found")
+
+var ErrBrokerNotSeedable = errors.New("store: route refresh broker store cannot be seeded")
+
+var ErrBrokerRevoked = errors.New("store: route refresh broker record is revoked")
+
+var ErrBrokerVersionConflict = errors.New("store: route refresh broker version conflict")
+
+var ErrClientNotFound = errors.New("store: client not found")
+
+var ErrClientVersionConflict = errors.New("store: client version conflict")
+
+var ErrRecordKeyRequired = errors.New("store: record key is required")
+
+var ErrTransactionExpired = errors.New("store: transaction expired")
+
+var ErrTransactionNotFound = errors.New("store: transaction not found")
+
+type AuthorizationCodeRecord struct {
+	CodeHash                    string
+	ClientIDHash                string
+	ClientID                    string
+	RedirectURI                 string
+	CodeChallenge               string
+	CodeChallengeMethod         string
+	Scopes                      []string
+	CanonicalResource           string
+	EndpointKind                string
+	ClientNamespace             string
+	PartnerID                   string
+	AgentID                     string
+	RouteRefreshHandleHash      string
+	EncryptedRouteRefreshHandle string
+	EncryptedTokenResponse      string
+	Status                      string
+	ExpiresAt                   time.Time
+	Version                     int
+}
+
+type AuthorizationCodeStore interface {
+	Put(context.Context, *AuthorizationCodeRecord) error
+	Consume(context.Context, string) (*AuthorizationCodeRecord, error)
+}
+
+type AuthorizationCodeStoreOptions struct {
+	Now func() time.Time
+
+	TTL time.Duration
+}
+
+type ClientRecord struct {
+	ClientIDHash            string
+	ClientID                string
+	RedirectURIs            []string
+	TokenEndpointAuthMethod string
+	GrantTypes              []string
+	ResponseTypes           []string
+	BoundRoute              string
+	CreatedAt               time.Time
+	Version                 int
+}
+
+type ClientStore interface {
+	Put(context.Context, *ClientRecord) error
+	Get(context.Context, string) (*ClientRecord, error)
+	Update(context.Context, *ClientRecord, int) (*ClientRecord, error)
+}
+
+type ClientStoreOptions struct {
+	Now func() time.Time
+}
+
+type ConformanceCase struct {
+	ID       string         `json:"id"`
+	Store    string         `json:"store"`
+	Scenario string         `json:"scenario"`
+	Params   map[string]any `json:"params"`
+	Expect   map[string]any `json:"expect"`
+}
+
+type ManualClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+type MemoryAuthorizationCodeStore struct {
+	mu      sync.Mutex
+	now     func() time.Time
+	ttl     time.Duration
+	records map[string]*authorizationCodeEntry
+}
+
+type MemoryClientStore struct {
+	mu      sync.Mutex
+	now     func() time.Time
+	records map[string]*ClientRecord
+}
+
+type MemoryRateLimitStore struct {
+	mu      sync.Mutex
+	now     func() time.Time
+	window  time.Duration
+	buckets map[string]*rateLimitBucket
+}
+
+type MemoryRouteRefreshBrokerStore struct {
+	mu      sync.Mutex
+	now     func() time.Time
+	ttl     time.Duration
+	lockTTL time.Duration
+	records map[string]*brokerEntry
+}
+
+type MemoryTransactionStore struct {
+	mu      sync.Mutex
+	now     func() time.Time
+	ttl     time.Duration
+	records map[string]*TransactionRecord
+}
+
+type RateLimitBucketKey struct {
+	Identifier string
+	Resource   string
+	Operation  string
+	Limit      int
+	Window     time.Duration
+}
+
+type RateLimitResult struct {
+	Allowed   bool
+	Limit     int
+	Remaining int
+	ResetAt   time.Time
+}
+
+type RateLimitStore interface {
+	CheckAndIncrement(context.Context, RateLimitBucketKey) (RateLimitResult, error)
+}
+
+type RateLimitStoreOptions struct {
+	Now func() time.Time
+
+	Window time.Duration
+}
+
+type RouteRefreshBrokerRecord struct {
+	HandleHash                    string
+	Issuer                        string
+	Stage                         string
+	CanonicalResource             string
+	ClientNamespace               string
+	EndpointKind                  string
+	PartnerID                     string
+	AgentID                       string
+	ClientIDHash                  string
+	SubjectIDHash                 string
+	Scopes                        []string
+	ScopeFingerprint              string
+	EncryptedUpstreamRefreshToken string
+	UpstreamRefreshTokenHash      string
+	UpstreamClientID              string
+	EncryptedGraceRefreshResponse string
+	GraceExpiresAt                time.Time
+	Status                        string
+	RefreshLockOwner              string
+	RefreshLockExpiresAt          time.Time
+	Version                       int
+}
+
+type RouteRefreshBrokerSeeder interface {
+	Put(context.Context, *RouteRefreshBrokerRecord) error
+}
+
+type RouteRefreshBrokerStore interface {
+	Get(context.Context, string) (*RouteRefreshBrokerRecord, error)
+	AcquireLock(
+		context.Context,
+		string,
+		string,
+		int,
+	) (*RouteRefreshBrokerRecord, error)
+	CompareAndSwap(
+		context.Context,
+		*RouteRefreshBrokerRecord,
+		int,
+	) (*RouteRefreshBrokerRecord, error)
+	Revoke(context.Context, string) (*RouteRefreshBrokerRecord, error)
+}
+
+type RouteRefreshBrokerStoreOptions struct {
+	Now func() time.Time
+
+	TTL time.Duration
+
+	LockTTL time.Duration
+}
+
+type Stores struct {
+	Transaction        TransactionStore
+	AuthorizationCode  AuthorizationCodeStore
+	Client             ClientStore
+	RouteRefreshBroker RouteRefreshBrokerStore
+	RateLimit          RateLimitStore
+}
+
+type TransactionRecord struct {
+	StateHash                     string
+	ClientIDHash                  string
+	ClientID                      string
+	RedirectURI                   string
+	CodeChallenge                 string
+	CodeChallengeMethod           string
+	ClientState                   string
+	EncryptedUpstreamCodeVerifier string
+	Scopes                        []string
+	CanonicalResource             string
+	EndpointKind                  string
+	ClientNamespace               string
+	PartnerID                     string
+	AgentID                       string
+	Status                        string
+	ExpiresAt                     time.Time
+	Version                       int
+}
+
+type TransactionStore interface {
+	Put(context.Context, *TransactionRecord) error
+	Consume(context.Context, string) (*TransactionRecord, error)
+}
+
+type TransactionStoreOptions struct {
+	Now func() time.Time
+
+	TTL time.Duration
+}
+
+func LoadConformanceCases(string) ([]ConformanceCase, error)
+
+func NewManualClock(time.Time) *ManualClock
+
+func NewMemoryAuthorizationCodeStore(AuthorizationCodeStoreOptions) *MemoryAuthorizationCodeStore
+
+func NewMemoryClientStore(ClientStoreOptions) *MemoryClientStore
+
+func NewMemoryRateLimitStore(RateLimitStoreOptions) *MemoryRateLimitStore
+
+func NewMemoryRouteRefreshBrokerStore(RouteRefreshBrokerStoreOptions) *MemoryRouteRefreshBrokerStore
+
+func NewMemoryTransactionStore(TransactionStoreOptions) *MemoryTransactionStore
+
+func RunConformance(testing.TB, Stores, []ConformanceCase, *ManualClock) int
+
+func (*ManualClock) Advance(time.Duration)
+
+func (*ManualClock) Now() time.Time
+
+func (*ManualClock) Set(time.Time)
+
+func (*MemoryAuthorizationCodeStore) Consume(context.Context, string) (*AuthorizationCodeRecord, error)
+
+func (*MemoryAuthorizationCodeStore) Put(context.Context, *AuthorizationCodeRecord) error
+
+func (*MemoryClientStore) Get(context.Context, string) (*ClientRecord, error)
+
+func (*MemoryClientStore) Put(context.Context, *ClientRecord) error
+
+func (*MemoryClientStore) Update(
+	context.Context,
+	*ClientRecord,
+	int,
+) (*ClientRecord, error)
+
+func (*MemoryRateLimitStore) CheckAndIncrement(
+	context.Context,
+	RateLimitBucketKey,
+) (RateLimitResult, error)
+
+func (*MemoryRouteRefreshBrokerStore) AcquireLock(
+	context.Context,
+	string,
+	string,
+	int,
+) (*RouteRefreshBrokerRecord, error)
+
+func (*MemoryRouteRefreshBrokerStore) CompareAndSwap(
+	context.Context,
+	*RouteRefreshBrokerRecord,
+	int,
+) (*RouteRefreshBrokerRecord, error)
+
+func (*MemoryRouteRefreshBrokerStore) Get(context.Context, string) (*RouteRefreshBrokerRecord, error)
+
+func (*MemoryRouteRefreshBrokerStore) Put(context.Context, *RouteRefreshBrokerRecord) error
+
+func (*MemoryRouteRefreshBrokerStore) Revoke(context.Context, string) (*RouteRefreshBrokerRecord, error)
+
+func (*MemoryTransactionStore) Consume(context.Context, string) (*TransactionRecord, error)
+
+func (*MemoryTransactionStore) Put(context.Context, *TransactionRecord) error
 
 ## github.com/theory-cloud/apptheory/v6/testkit
 
@@ -5772,6 +6265,89 @@ type TokenResponse struct {
 func NewClaudePublicClient(*http.Client) *ClaudePublicClient
 
 func (*ClaudePublicClient) Authorize(context.Context, AuthorizeOptions) (*Discovery, *DCRResult, *TokenResponse, *TokenResponse, error)
+
+## github.com/theory-cloud/apptheory/v6/testkit/oauthprovider
+
+type Claims struct {
+	Issuer          string `json:"iss"`
+	Audience        string `json:"aud"`
+	AuthorizedParty string `json:"azp"`
+	Subject         string `json:"sub"`
+	Scope           string `json:"scope"`
+	ExpiresIn       int    `json:"expires_in"`
+	TamperSignature bool   `json:"tamper_signature"`
+}
+
+type Options struct {
+	Issuer string
+
+	DiscoveryIssuer string
+
+	OmitDiscoveryIssuer bool
+
+	RedirectTo string
+
+	TokenStatus int
+
+	TokenBody map[string]any
+
+	TokenBodyBytes int
+
+	TokenBodyPaddingBytes int
+
+	TokenDelay time.Duration
+
+	Now func() time.Time
+}
+
+type Server struct {
+	tb     testing.TB
+	server *httptest.Server
+	key    *rsa.PrivateKey
+
+	origin              string
+	issuer              string
+	discoveryPath       string
+	discoveryIssuer     string
+	omitDiscoveryIssuer bool
+	redirectTo          string
+	tokenStatus         int
+	tokenBody           []byte
+	tokenBodyBytes      int
+	tokenBodyPadding    []byte
+	tokenDelay          time.Duration
+	now                 func() time.Time
+
+	closeOnce sync.Once
+
+	mu               sync.Mutex
+	lastTokenRequest url.Values
+	tokenCalls       int
+}
+
+func NewServer(testing.TB, Options) *Server
+
+func (*Server) BaseURL() string
+
+func (*Server) Close()
+
+func (*Server) DiscoveryURL() string
+
+func (*Server) HTTPClient() *http.Client
+
+func (*Server) Issuer() string
+
+func (*Server) JWKSURL() string
+
+func (*Server) LastTokenRequest() url.Values
+
+func (*Server) MintAccessToken(Claims) string
+
+func (*Server) TokenCallCount() int
+
+func (*Server) TokenEndpoint() string
+
+func (*issuerRewriteTransport) RoundTrip(*http.Request) (*http.Response, error)
 
 ## github.com/theory-cloud/apptheory/v6/testkit/objectstore
 

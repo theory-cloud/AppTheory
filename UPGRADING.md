@@ -295,10 +295,29 @@ resource_metadata="<…>"` and body `{"error":{"code":"app.insufficient_scope"}}
 forbidden denial still return the plain `403` with no error code or scope set. RFC 8707 `resource` is canonicalized and
 must exactly equal the route resource (the resulting `aud` must equal the route URL).
 
+### MCP auth facade provider and store SPIs
+
+The facade's provider SPI and store SPIs now exist in all three runtimes, together with their normal parts. **Nothing
+is mounted and no action is required yet:** the packages are inert, no facade route is registered, and `FacadeConfig`
+does not consume them until the facade mechanics land.
+
+- The **provider SPI** (discovery, authorization-URL construction, code exchange, refresh, token validation through the
+  shipped JWKS/RS256 validator) ships with the **Autheory adapter** as the first implementation, a second tiny test
+  adapter proving provider-neutrality, and typed errors mapped to a closed client-facing vocabulary. Every upstream call
+  goes through the same bounded, SSRF-guarded, size-capped HTTP path the discovery and JWKS bootstraps use.
+- The **store SPIs** — `TransactionStore`, `AuthorizationCodeStore`, `ClientStore`, `RouteRefreshBrokerStore`,
+  `RateLimitStore` — ship with in-memory reference implementations and an injectable clock. Consume-once and
+  compare-and-swap are required atomic operations. **Production needs a durable store; the framework does not ship
+  one** — durable implementations are application-owned, and **no upstream material may be persisted unencrypted**.
+- Two shared conformance tables (`facade-provider-conformance.v1.json`, `facade-store-conformance.v1.json`) drive the
+  provider adapter and any store, and a fake upstream provider (real RSA keys, real local HTTP) ships in test support.
+
+See `docs/features/mcp-auth-facade-spi.md` for the interface reference and the framework-versus-application split.
+
 Not yet in this line: the facade mechanics themselves — front-channel termination, the upstream callback handler, the
-DCR handler, code/refresh stores, the provider/store SPIs, and the brokered refresh (M3) — and the edge
-`WWW-Authenticate` restoration construct plus the challenge alias bridge (M4). The derived `/register` and callback
-**routes** exist and are mountable; their handlers remain application-owned until M3.
+DCR handler, the code/refresh wiring, and the brokered refresh — and the edge `WWW-Authenticate` restoration construct
+plus the challenge alias bridge. The derived `/register` and callback **routes** exist and are mountable; their
+handlers remain application-owned until the mechanics land.
 
 ## v4.x line
 

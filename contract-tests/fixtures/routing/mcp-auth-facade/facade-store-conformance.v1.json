@@ -1,0 +1,275 @@
+{
+  "contract": {
+    "id": "m17.mcp-auth-facade/v1",
+    "section": "store-spi",
+    "kind": "conformance",
+    "status": "M3a",
+    "notes": "One conformance table for the five store SPIs of DESIGN §7. Every store (the framework's in-memory reference stores now, an application's durable store later) must pass every row. The rows are executed by the runtime loader tests in Go, TypeScript and Python against the in-memory reference stores; the same rows and outcomes must hold in all three. Scenario names dispatch to each runtime's store methods; `expect` carries the observable outcome. Consume-once and compare-and-swap are required atomic operations, not conventions."
+  },
+  "clock": {
+    "epoch": "2026-01-01T00:00:00Z",
+    "notes": "Stores take an injectable clock; every row starts at this instant."
+  },
+  "ttl_seconds": {
+    "transaction_max": 600,
+    "authorization_code_max": 600,
+    "authorization_code_recommended": 60,
+    "route_refresh_broker": 900,
+    "rate_limit_window": 60
+  },
+  "outcomes": {
+    "ok": "the operation succeeded",
+    "not_found": "no record for the key (unknown key)",
+    "replayed": "the record was already consumed (distinguishable from not_found)",
+    "expired": "the record existed but its TTL elapsed",
+    "locked": "the broker record already holds an unexpired refresh lock",
+    "revoked": "the broker record is revoked; it cannot be refreshed or locked",
+    "version_conflict": "compare-and-swap failed: the caller's version is stale",
+    "allowed": "the rate-limit check is within the window budget",
+    "limited": "the rate-limit check exceeded the window budget"
+  },
+  "cases": [
+    {
+      "id": "store.transaction.consume_is_single_use",
+      "store": "transaction",
+      "scenario": "consume_single_use",
+      "params": { "put": 1, "ttl_seconds": 600 },
+      "expect": { "first": "ok", "second": "not_found" }
+    },
+    {
+      "id": "store.transaction.consume_unknown_is_not_found",
+      "store": "transaction",
+      "scenario": "consume_unknown",
+      "params": {},
+      "expect": { "consume": "not_found" }
+    },
+    {
+      "id": "store.transaction.consume_after_ttl_is_expired",
+      "store": "transaction",
+      "scenario": "consume_after_ttl",
+      "params": { "put": 1, "ttl_seconds": 600, "advance_seconds": 601 },
+      "expect": { "consume": "expired" }
+    },
+    {
+      "id": "store.transaction.concurrent_consume_exactly_one_winner",
+      "store": "transaction",
+      "scenario": "concurrent_consume",
+      "params": { "put": 1, "ttl_seconds": 600, "concurrency": 16 },
+      "expect": { "ok": 1, "not_found": 15 }
+    },
+    {
+      "id": "store.authorization_code.consume_is_single_use_then_replayed",
+      "store": "authorization_code",
+      "scenario": "consume_single_use_then_replay",
+      "params": { "put": 1, "ttl_seconds": 60 },
+      "expect": { "first": "ok", "second": "replayed" }
+    },
+    {
+      "id": "store.authorization_code.consume_unknown_is_not_found_not_replayed",
+      "store": "authorization_code",
+      "scenario": "consume_unknown",
+      "params": {},
+      "expect": { "consume": "not_found" }
+    },
+    {
+      "id": "store.authorization_code.consume_after_ttl_is_expired",
+      "store": "authorization_code",
+      "scenario": "consume_after_ttl",
+      "params": { "put": 1, "ttl_seconds": 60, "advance_seconds": 61 },
+      "expect": { "consume": "expired" }
+    },
+    {
+      "id": "store.authorization_code.concurrent_consume_exactly_one_winner",
+      "store": "authorization_code",
+      "scenario": "concurrent_consume",
+      "params": { "put": 1, "ttl_seconds": 60, "concurrency": 16 },
+      "expect": { "ok": 1, "replayed": 15 }
+    },
+    {
+      "id": "store.client.put_get_update_advances_version",
+      "store": "client",
+      "scenario": "put_get_update",
+      "params": {},
+      "expect": { "get_version": 1, "update": "ok", "updated_version": 2 }
+    },
+    {
+      "id": "store.client.update_with_stale_version_conflicts",
+      "store": "client",
+      "scenario": "update_stale_version",
+      "params": {},
+      "expect": { "update": "version_conflict", "get_version": 2 }
+    },
+    {
+      "id": "store.client.get_unknown_is_not_found",
+      "store": "client",
+      "scenario": "get_unknown",
+      "params": {},
+      "expect": { "get": "not_found" }
+    },
+    {
+      "id": "store.route_refresh_broker.get_unknown_is_not_found",
+      "store": "route_refresh_broker",
+      "scenario": "get_unknown",
+      "params": {},
+      "expect": { "get": "not_found" }
+    },
+    {
+      "id": "store.route_refresh_broker.acquire_lock_is_exclusive_and_expires",
+      "store": "route_refresh_broker",
+      "scenario": "acquire_lock_exclusive_with_expiry",
+      "params": {
+        "put": 1,
+        "lock_ttl_seconds": 30,
+        "advance_seconds": 31
+      },
+      "expect": { "first": "ok", "contended": "locked", "after_expiry": "ok" }
+    },
+    {
+      "id": "store.route_refresh_broker.compare_and_swap_is_versioned",
+      "store": "route_refresh_broker",
+      "scenario": "compare_and_swap_versioned",
+      "params": { "put": 1 },
+      "expect": { "acquire_lock": "ok", "swap": "ok", "stale_swap": "version_conflict" }
+    },
+    {
+      "id": "store.route_refresh_broker.revoke_is_idempotent_and_terminal",
+      "store": "route_refresh_broker",
+      "scenario": "revoke_idempotent",
+      "params": { "put": 1 },
+      "expect": { "revoke": "ok", "revoke_again": "ok", "status": "revoked" }
+    },
+    {
+      "id": "store.route_refresh_broker.revoked_record_refuses_lock",
+      "store": "route_refresh_broker",
+      "scenario": "revoke_then_lock",
+      "params": { "put": 1 },
+      "expect": { "revoke": "ok", "acquire_lock": "revoked" }
+    },
+    {
+      "id": "store.route_refresh_broker.concurrent_acquire_lock_exactly_one_winner",
+      "store": "route_refresh_broker",
+      "scenario": "concurrent_acquire_lock",
+      "params": { "put": 1, "lock_ttl_seconds": 30, "concurrency": 16 },
+      "expect": { "ok": 1, "locked": 15 }
+    },
+    {
+      "id": "store.route_refresh_broker.concurrent_revoke_is_idempotent",
+      "store": "route_refresh_broker",
+      "scenario": "concurrent_revoke",
+      "params": { "put": 1, "concurrency": 16 },
+      "expect": { "ok": 16 }
+    },
+    {
+      "id": "store.rate_limit.check_and_increment_is_atomic",
+      "store": "rate_limit",
+      "scenario": "check_and_increment",
+      "params": { "limit": 3, "window_seconds": 60, "checks": 4 },
+      "expect": { "outcomes": ["allowed", "allowed", "allowed", "limited"] }
+    },
+    {
+      "id": "store.rate_limit.window_resets_after_ttl",
+      "store": "rate_limit",
+      "scenario": "window_reset",
+      "params": { "limit": 1, "window_seconds": 60, "advance_seconds": 61 },
+      "expect": { "first": "allowed", "second": "limited", "after_window": "allowed" }
+    },
+    {
+      "id": "store.transaction.expired_consume_then_replay_is_not_found",
+      "store": "transaction",
+      "scenario": "consume_after_ttl_then_replay",
+      "params": { "put": 1, "ttl_seconds": 600, "advance_seconds": 601 },
+      "expect": { "first": "expired", "second": "not_found" }
+    },
+    {
+      "id": "store.transaction.clock_back_after_consume_is_not_found",
+      "store": "transaction",
+      "scenario": "clock_back_after_consume",
+      "params": { "put": 1, "ttl_seconds": 600, "clock_back_seconds": 120 },
+      "expect": { "first": "ok", "after_clock_back": "not_found" }
+    },
+    {
+      "id": "store.transaction.clock_back_after_expired_burn_is_not_found",
+      "store": "transaction",
+      "scenario": "clock_back_after_expired_consume",
+      "params": { "put": 1, "ttl_seconds": 600, "advance_seconds": 601, "clock_back_seconds": 121 },
+      "expect": { "first": "expired", "after_clock_back": "not_found" }
+    },
+    {
+      "id": "store.authorization_code.expired_consume_then_replay",
+      "store": "authorization_code",
+      "scenario": "consume_after_ttl_then_replay",
+      "params": { "put": 1, "ttl_seconds": 60, "advance_seconds": 61 },
+      "expect": { "first": "expired", "second": "replayed" }
+    },
+    {
+      "id": "store.authorization_code.clock_back_after_consume_is_replayed",
+      "store": "authorization_code",
+      "scenario": "clock_back_after_consume",
+      "params": { "put": 1, "ttl_seconds": 60, "clock_back_seconds": 120 },
+      "expect": { "first": "ok", "after_clock_back": "replayed" }
+    },
+    {
+      "id": "store.authorization_code.clock_back_after_expired_burn_is_replayed",
+      "store": "authorization_code",
+      "scenario": "clock_back_after_expired_consume",
+      "params": { "put": 1, "ttl_seconds": 60, "advance_seconds": 61, "clock_back_seconds": 121 },
+      "expect": { "first": "expired", "after_clock_back": "replayed" }
+    },
+    {
+      "id": "store.route_refresh_broker.record_present_before_ttl_boundary",
+      "store": "route_refresh_broker",
+      "scenario": "broker_ttl_boundary",
+      "params": { "put": 1, "advance_seconds": 899 },
+      "expect": { "get": "ok" }
+    },
+    {
+      "id": "store.route_refresh_broker.record_expired_at_ttl_boundary",
+      "store": "route_refresh_broker",
+      "scenario": "broker_ttl_boundary",
+      "params": { "put": 1, "advance_seconds": 900 },
+      "expect": { "get": "not_found" }
+    },
+    {
+      "id": "store.route_refresh_broker.expired_record_refuses_lock",
+      "store": "route_refresh_broker",
+      "scenario": "broker_expired_refuses_lock",
+      "params": { "put": 1, "advance_seconds": 900 },
+      "expect": { "acquire_lock": "not_found" }
+    },
+    {
+      "id": "store.route_refresh_broker.expired_record_refuses_swap",
+      "store": "route_refresh_broker",
+      "scenario": "broker_expired_refuses_swap",
+      "params": { "put": 1, "advance_seconds": 900 },
+      "expect": { "swap": "not_found" }
+    },
+    {
+      "id": "store.route_refresh_broker.revoked_record_refuses_swap",
+      "store": "route_refresh_broker",
+      "scenario": "revoke_then_swap",
+      "params": { "put": 1 },
+      "expect": { "revoke": "ok", "swap": "revoked" }
+    },
+    {
+      "id": "store.route_refresh_broker.acquire_lock_bumps_version",
+      "store": "route_refresh_broker",
+      "scenario": "acquire_lock_bumps_version",
+      "params": { "put": 1 },
+      "expect": { "version_delta": 1 }
+    },
+    {
+      "id": "store.route_refresh_broker.revoke_bumps_version",
+      "store": "route_refresh_broker",
+      "scenario": "revoke_bumps_version",
+      "params": { "put": 1 },
+      "expect": { "revoke_version_delta": 1, "revoke_again_version_delta": 0 }
+    },
+    {
+      "id": "store.route_refresh_broker.acquire_lock_sets_refreshing_status",
+      "store": "route_refresh_broker",
+      "scenario": "acquire_lock_sets_refreshing",
+      "params": { "put": 1 },
+      "expect": { "status": "refreshing" }
+    }
+  ]
+}
