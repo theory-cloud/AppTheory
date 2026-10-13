@@ -521,6 +521,7 @@ RootDiscoveryConfig	interface
 RouteInventory	interface
 RouteOptions	interface
 RouteRefreshBrokerRecord	interface
+RouteRefreshBrokerSeeder	interface
 RouteRefreshBrokerStatus	type
 RouteRefreshBrokerStore	interface
 S3Encryption	const
@@ -729,6 +730,7 @@ matchesIfNoneMatch	function
 max	const
 maxLength	const
 mcpPath	function
+metadataJSON	function
 microVMSessionFromRegistryRecord	function
 microVMSessionKey	function
 microVMSessionRecordToRegistryRecord	function
