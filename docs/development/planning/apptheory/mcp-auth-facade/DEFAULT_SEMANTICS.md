@@ -94,7 +94,7 @@ Repurpose the existing all-public opt-out to mean runtime-bearer.
 | **CDK synth** | `jwt` selected without a static issuer + non-empty audience | Construct throws at synth (existing behavior, `cdk/lib/mcp-server.ts:869-900`). |
 | **CDK synth** | `runtime-bearer` in attach mode where the owning API's throttling/lock decision is unrecorded | Construct throws at synth (see `DEFENSE_IN_DEPTH.md`). |
 | **Runtime registration** | `FacadeConfig.TransportPosture == RuntimeBearer` without `RequireBearerToken` (or an equivalent explicit posture assertion) | `RegisterMCPFacade` returns an error **before any route is registered**. |
-| **Runtime registration** | `TransportPosture == RuntimeBearer` combined with `UnauthenticatedMcp` / a public transport handler | Registration error. |
+| **Runtime registration** (M1 as-built) | the runtime posture is `FacadeConfig.TransportPosture`: `runtime-bearer` without the bearer assertion fails, and a bearer assertion under `none-public` / `iam` / `jwt` fails | Registration error. |
 | **Runtime registration** | authorize/token factories not all-or-none | Registration error (existing, `runtime/mcpfacade/facade.go:448-466`). |
 | **Registration/synth** | posture and runtime disagree (CDK says runtime-bearer, runtime does not validate) | The conformance kit fails: the synthesized posture marker and the runtime registration output must agree. |
 

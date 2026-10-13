@@ -2,7 +2,7 @@
   "contract": {
     "id": "m17.mcp-route-algebra/v2",
     "extends": "m17.mcp-route-algebra/v1",
-    "status": "design (M0)",
+    "status": "registered (M1)",
     "notes": "v2 is a superset of v1: the four canonical MCP patterns and the v1 derivations (protected resource, canonical/suffix RFC 8414 discovery, authorize, token) are unchanged. v2 adds the derived register path per kind, one stage-global callback path, and per-route issuer/resource derivation.",
     "protected_resource_prefix": "/.well-known/oauth-protected-resource",
     "authorization_server_prefix": "/.well-known/oauth-authorization-server",

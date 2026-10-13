@@ -50,7 +50,7 @@ operator reviews this at the M0 PR.
 | `RELEASE_NOTE_CORRECTION.md` | Item 8 — correcting the 6.0.0 release notes under Release Please ownership. |
 | `CANDIDATE_BUILD_INTERFACE.md` | Item 9 — lab candidate build interface (one commit, per-surface hashes, refuse-live). |
 | `UNVERIFIED.md` | Item 10 — honest unknown/unverified list. |
-| `fixtures/` | Contract tables (`m17.mcp-route-algebra/v2`, `m17.mcp-transport-posture/v1`, `m17.mcp-auth-facade/v1`). |
+| `fixtures/` | Planning-tree contract tables (`m17.mcp-auth-facade/v1`); the `m17.mcp-route-algebra/v2` and `m17.mcp-transport-posture/v1` tables now live in the corpus at `contract-tests/fixtures/routing/mcp-auth-facade/` (moved in M1). |
 
 ## Contracts
 

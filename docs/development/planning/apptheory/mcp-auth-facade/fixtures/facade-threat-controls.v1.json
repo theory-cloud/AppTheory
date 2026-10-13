@@ -28,8 +28,8 @@
       "id": "T4",
       "threat": "mix_up_confused_deputy",
       "control": "facade's own upstream client + fresh distinct upstream state + own PKCE verifier; verify upstream RFC 9207 iss on the callback; per-route issuer; single-use state",
-      "pin": ["facade-journey:callback-iss-mismatch", "facade-journey:callback-replayed-state", "facade-route-model:issuer_modes.route"],
-      "notes": "callback-iss-mismatch mints a fresh upstream state AND a valid upstream authorization code through a precondition authorize, then calls back with that minted code and minted state plus a mismatched upstream iss (evil.example); because the state is facade-minted and valid and the exchange would succeed, the iss verification (which happens before the transaction is consumed or the code exchanged, DESIGN §8.2) is the only way to yield the expected 400 with no client redirect, so the pin fails if iss verification is removed"
+      "pin": ["facade-journey:callback-iss-mismatch", "facade-journey:callback-absent-iss", "facade-journey:callback-replayed-state", "facade-route-model:issuer_modes.route"],
+      "notes": "callback-iss-mismatch mints a fresh upstream state AND a valid upstream authorization code through a precondition authorize, then calls back with that minted code and minted state plus a mismatched upstream iss (evil.example); because the state is facade-minted and valid and the exchange would succeed, the iss verification (which happens before the transaction is consumed or the code exchanged, DESIGN §8.2) is the only way to yield the expected 400 with no client redirect, so the pin fails if iss verification is removed. callback-absent-iss reuses that shape but omits the iss parameter entirely: an absent iss is rejected in the same (400, no Location) class as a mismatch, before the transaction is consumed or the code exchanged, so an implementation that treats an absent iss as unpinned reaches the exchange and changes the pinned result"
     },
     {
       "id": "T5",
@@ -65,8 +65,8 @@
       "id": "T10",
       "threat": "callback_csrf_session_swap",
       "control": "facade-minted single-use upstream state keyed by hash(upstream state); an unminted state is rejected (400, no client redirect); the callback correlates client + client state + redirect_uri + S256 challenge and exchanges the upstream code server-side only; upstream iss verified; the facade code is bound to the client's PKCE verifier at /token",
-      "pin": ["facade-journey:callback-iss-mismatch", "facade-journey:callback-replayed-state", "facade-journey:callback-forged-state", "facade-journey:token-wrong-verifier"],
-      "notes": "the callback's own rejections (iss mismatch, unminted or replayed state, missing/replayed code) are all 400 with no Location, while a provider code-exchange failure is a distinct 502 upstream_error (DESIGN §8.2); because the two are distinguishable, callback-forged-state (an unminted state, 400) cannot coincide with a natural exchange-failure mapping, so the pin fails if the state check is removed",
+      "pin": ["facade-journey:callback-iss-mismatch", "facade-journey:callback-absent-iss", "facade-journey:callback-replayed-state", "facade-journey:callback-forged-state", "facade-journey:token-wrong-verifier"],
+      "notes": "the callback's own rejections (iss mismatch, an absent iss, unminted or replayed state, an absent code) are all 400 with no Location, while a provider code-exchange failure is a distinct 502 upstream_error (DESIGN §8.2); a replayed upstream code arrives with its already-consumed state and therefore takes the replayed-state terminal path rather than a 400; because the two failure classes are distinguishable, callback-forged-state (an unminted state, 400) cannot coincide with a natural exchange-failure mapping, so the pin fails if the state check is removed",
       "residual": "client-side state + PKCE-verifier binding: an attacker code cannot be redeemed without the client's verifier, but a client that ignores its own state cannot detect the swap"
     },
     {

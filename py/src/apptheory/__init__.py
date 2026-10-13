@@ -337,6 +337,11 @@ from apptheory.mcp import (
     detect_mcp_protocol_version,
     detect_mcp_protocol_version_for_message,
 )
+from apptheory.mcpfacade import (
+    TRANSPORT_POSTURES,
+    McpFacadeRegistration,
+    register_mcp_facade,
+)
 from apptheory.microvm import (
     COMMAND_AUTH_TOKEN,
     COMMAND_CREATE,
@@ -659,6 +664,7 @@ from apptheory.secure_types import (
 from apptheory.source_provenance import SourceProvenance
 from apptheory.sse import SSEEvent, sse, sse_event_stream
 from apptheory.testkit import (
+    CountingTransportHandler,
     FakeWebSocketClientFactory,
     FakeWebSocketManagementClient,
     McpTestHarness,
@@ -667,9 +673,12 @@ from apptheory.testkit import (
     StreamResult,
     TestEnv,
     WebSocketCall,
+    assert_bearer_token_reaches_transport_handler,
+    assert_credential_free_transport_denied,
     build_appsync_event,
     build_websocket_event,
     cloudwatch_logs_subscription_data,
+    counting_transport_handler,
     create_fake_websocket_client_factory,
     create_mcp_test_harness,
     create_test_env,
@@ -893,6 +902,7 @@ __all__ = [
     "STATE_TERMINATING",
     "STATE_VALIDATED",
     "STATE_VALIDATING",
+    "TRANSPORT_POSTURES",
     "VALIDATION_RULE_ENUM",
     "VALIDATION_RULE_MAX",
     "VALIDATION_RULE_MAX_LENGTH",
@@ -933,6 +943,7 @@ __all__ = [
     "CloudWatchLogsSubscriptionLogEvent",
     "CloudWatchLogsSubscriptionSummary",
     "Context",
+    "CountingTransportHandler",
     "DefaultEmbeddingDimensions",
     "DefaultQueryTopK",
     "DefaultTitanEmbedTextModelId",
@@ -1001,6 +1012,7 @@ __all__ = [
     "McpDiscoverResult",
     "McpEventNotFoundError",
     "McpExtensionCapabilities",
+    "McpFacadeRegistration",
     "McpInputRequest",
     "McpInputRequiredResult",
     "McpJSONRecord",
@@ -1178,6 +1190,8 @@ __all__ = [
     "VectorStoreError",
     "WebSocketCall",
     "WebSocketContext",
+    "assert_bearer_token_reaches_transport_handler",
+    "assert_credential_free_transport_denied",
     "authenticated",
     "authenticated_any_of",
     "authorization_server_metadata_handler",
@@ -1208,6 +1222,7 @@ __all__ = [
     "claude_dynamic_client_registration_policy",
     "client_ip",
     "cloudwatch_logs_subscription_data",
+    "counting_transport_handler",
     "create_app",
     "create_aws_lambda_microvm_client",
     "create_aws_lambda_microvm_provider",
@@ -1319,6 +1334,7 @@ __all__ = [
     "rapid_connect_xml_patterns",
     "reconstruct_microvm_session_record",
     "register_controller_routes",
+    "register_mcp_facade",
     "register_microvm_controller_routes",
     "report_kinesis_put_records_failures",
     "require_bearer_token_middleware",

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -25,6 +26,25 @@ var testEndpoints = []mcproutes.EndpointPath{
 
 const documentExpectationsPath = "../../contract-tests/fixtures/routing/mcp-route-algebra/expectations.json"
 const routeInventoryExpectationsPath = "../../contract-tests/fixtures/routing/mcp-route-algebra/facade-route-inventory.json"
+const facadeTransportPosturePath = "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-transport-posture.v1.json"
+
+type transportPostureFixtureRow struct {
+	TransportAuthorizationType    string   `json:"transport_authorization_type"`
+	OAuthSurfaceAuthorizationType string   `json:"oauth_surface_authorization_type"`
+	RuntimeValidationRequired     bool     `json:"runtime_validation_required"`
+	Requires                      []string `json:"requires"`
+}
+
+type transportPostureCredentialFreeFixture struct {
+	Status             int               `json:"status"`
+	Headers            map[string]string `json:"headers"`
+	HandlerInvocations int               `json:"handler_invocations"`
+}
+
+type facadeTransportPostureFixture struct {
+	Postures               map[string]transportPostureFixtureRow `json:"postures"`
+	CredentialFreeBehavior transportPostureCredentialFreeFixture `json:"credential_free_behavior"`
+}
 
 type routeInventoryFixture struct {
 	ContractVersion                 string         `json:"contract_version"`
@@ -66,9 +86,9 @@ func TestRegisterMCPFacadeRegistersCompleteContractSurface(t *testing.T) {
 	config := validConfig(URLModePublicBaseURL)
 	config.AuthorizeHandler = kindHandlerFactory("authorize")
 	config.TokenHandler = kindHandlerFactory("token")
-	// This test pins facade composition, so it opts the transport routes out of
-	// the authenticated default and keeps exercising them credential-free.
-	config.UnauthenticatedMcp = true
+	// This test pins facade composition, so it selects the explicit public
+	// posture and keeps exercising the transport routes credential-free.
+	config.TransportPosture = TransportPostureNonePublic
 
 	inventory, err := RegisterMCPFacade(app, config)
 	require.NoError(t, err)
@@ -87,7 +107,9 @@ func TestRegisterMCPFacadeRegistersCompleteContractSurface(t *testing.T) {
 		require.Equal(t, discovery[index].SuffixPattern, route.DiscoverySuffixPattern)
 		require.Equal(t, facades[index].AuthorizePattern, route.AuthorizePattern)
 		require.Equal(t, facades[index].TokenPattern, route.TokenPattern)
-		require.True(t, route.AuthorizationRoutesAttached)
+		// The inventory field reports whether transport authorization is attached,
+		// so the explicit public posture clears it.
+		require.False(t, route.AuthorizationRoutesAttached)
 	}
 
 	// Literal spots keep this test independent of an accidentally reduced algebra enumeration.
@@ -639,7 +661,9 @@ func TestMissingPlugPointsLeaveAuthorizationRoutesUnregistered(t *testing.T) {
 	inventory, err := RegisterMCPFacade(app, validConfig(URLModePublicBaseURL))
 	require.NoError(t, err)
 	for _, route := range inventory.Routes {
-		require.False(t, route.AuthorizationRoutesAttached)
+		// The default iam posture attaches transport authorization; the OAuth
+		// authorize/token routes stay unregistered without both handler factories.
+		require.True(t, route.AuthorizationRoutesAttached)
 	}
 	require.Equal(t, 404, serve(app, "GET", "/.well-known/oauth-authorization-server/acme/mcp/authorize", nil).Status)
 	require.Equal(t, 404, serve(app, "POST", "/.well-known/oauth-authorization-server/acme/mcp/token", nil).Status)
@@ -650,8 +674,9 @@ func TestMalformedAndUnknownPathsFailClosed(t *testing.T) {
 	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
 	config := validConfig(URLModePublicBaseURL)
 	// Transport hardening would reject the malformed params before the handler
-	// runs, so opt out to keep asserting the handler-level fail-closed behavior.
-	config.UnauthenticatedMcp = true
+	// runs, so select the public posture to keep asserting the handler-level
+	// fail-closed behavior.
+	config.TransportPosture = TransportPostureNonePublic
 	_, err := RegisterMCPFacade(app, config)
 	require.NoError(t, err)
 
@@ -894,6 +919,7 @@ func TestTransportRoutesRequireValidBearerTokenWhenConfigured(t *testing.T) {
 	app := apptheory.New()
 	reached := 0
 	config := validConfig(URLModePublicBaseURL)
+	config.TransportPosture = TransportPostureRuntimeBearer
 	config.MCPHandler = func(*apptheory.Context) (*apptheory.Response, error) {
 		reached++
 		return apptheory.Text(200, "mcp-ok"), nil
@@ -942,18 +968,21 @@ func TestTransportRoutesDelegateToApplicationPrincipalHook(t *testing.T) {
 	}
 }
 
-func TestUnauthenticatedMcpPreservesTheExplicitOptOut(t *testing.T) {
+func TestNonePublicPosturePreservesTheExplicitPublicOptOut(t *testing.T) {
 	t.Parallel()
 	app := apptheory.New()
 	reached := 0
 	config := validConfig(URLModePublicBaseURL)
-	config.UnauthenticatedMcp = true
+	config.TransportPosture = TransportPostureNonePublic
 	config.MCPHandler = func(*apptheory.Context) (*apptheory.Response, error) {
 		reached++
 		return apptheory.Text(200, "mcp-ok"), nil
 	}
-	_, err := RegisterMCPFacade(app, config)
+	inventory, err := RegisterMCPFacade(app, config)
 	require.NoError(t, err)
+	for _, route := range inventory.Routes {
+		require.False(t, route.AuthorizationRoutesAttached)
+	}
 
 	mcpPath := mustPath(t, testEndpoints[0].MCPPath)
 	response := serve(app, "POST", mcpPath, nil)
@@ -961,23 +990,149 @@ func TestUnauthenticatedMcpPreservesTheExplicitOptOut(t *testing.T) {
 	require.Equal(t, "mcp-ok", string(response.Body))
 	require.Equal(t, 1, reached)
 
-	// The opt-out only hardens transport; metadata and discovery stay public.
+	// The public posture only relaxes transport; metadata and discovery stay public.
 	require.Equal(t, 200, serve(app, "GET", mustPath(t, testEndpoints[0].ProtectedResourcePath), nil).Status)
 	require.Equal(t, 200, serve(app, "GET", mustPath(t, testEndpoints[0].OAuthAuthorizationServerPath), nil).Status)
 }
 
-func TestUnauthenticatedMcpRejectsBearerTokenConfiguration(t *testing.T) {
+func TestNonePublicPostureRejectsBearerTokenConfiguration(t *testing.T) {
 	t.Parallel()
 	config := validConfig(URLModePublicBaseURL)
-	config.UnauthenticatedMcp = true
+	config.TransportPosture = TransportPostureNonePublic
 	config.RequireBearerToken = &oauth.RequireBearerTokenOptions{
 		Validator: func(context.Context, string) error { return nil },
 	}
 	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
 	inventory, err := RegisterMCPFacade(app, config)
 	require.Nil(t, inventory)
-	require.ErrorContains(t, err, "UnauthenticatedMcp cannot be combined with RequireBearerToken")
+	require.ErrorContains(t, err, "TransportPosture none-public cannot be combined with RequireBearerToken")
 	require.Equal(t, 404, serve(app, "POST", "/acme/mcp", nil).Status)
+}
+
+func TestTransportPostureFailsClosedBeforeAnyRouteIsRegistered(t *testing.T) {
+	t.Parallel()
+	validator := &oauth.RequireBearerTokenOptions{
+		Validator: func(context.Context, string) error { return nil },
+	}
+	tests := []struct {
+		name         string
+		posture      TransportPosture
+		bearer       *oauth.RequireBearerTokenOptions
+		errorMessage string
+	}{
+		{
+			name:         "runtime bearer without require bearer token",
+			posture:      TransportPostureRuntimeBearer,
+			errorMessage: "TransportPosture runtime-bearer requires RequireBearerToken",
+		},
+		{
+			name:         "iam with require bearer token",
+			posture:      TransportPostureIAM,
+			bearer:       validator,
+			errorMessage: "RequireBearerToken is only valid with TransportPosture runtime-bearer",
+		},
+		{
+			name:         "jwt with require bearer token",
+			posture:      TransportPostureJWT,
+			bearer:       validator,
+			errorMessage: "RequireBearerToken is only valid with TransportPosture runtime-bearer",
+		},
+		{
+			name:         "none public with require bearer token",
+			posture:      TransportPostureNonePublic,
+			bearer:       validator,
+			errorMessage: "TransportPosture none-public cannot be combined with RequireBearerToken",
+		},
+		{
+			name:         "unknown posture",
+			posture:      TransportPosture("unauthenticated"),
+			errorMessage: `TransportPosture "unauthenticated" must be one of iam, jwt, runtime-bearer, none-public`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+			config := validConfig(URLModePublicBaseURL)
+			config.TransportPosture = test.posture
+			config.RequireBearerToken = test.bearer
+
+			inventory, err := RegisterMCPFacade(app, config)
+			require.Nil(t, inventory)
+			require.ErrorContains(t, err, test.errorMessage)
+
+			// Fail closed: no transport, metadata, discovery, or root route is registered.
+			for _, method := range []string{"POST", "GET", "DELETE"} {
+				require.Equal(t, 404, serve(app, method, "/acme/mcp", nil).Status)
+			}
+			require.Equal(t, 404, serve(app, "GET", "/.well-known/oauth-protected-resource/acme/mcp", nil).Status)
+			require.Equal(t, 404, serve(app, "GET", "/.well-known/oauth-authorization-server/acme/mcp", nil).Status)
+			require.Equal(t, 404, serve(app, "GET", mcproutes.AuthorizationServerPathForResourcePath("/"), nil).Status)
+		})
+	}
+}
+
+func TestTransportPostureDefaultsToIAM(t *testing.T) {
+	t.Parallel()
+	normalized, err := normalizeConfig(validConfig(URLModePublicBaseURL))
+	require.NoError(t, err)
+	require.Equal(t, TransportPostureIAM, normalized.transportPosture)
+	// The default posture attaches the authenticated route option.
+	require.Len(t, transportRouteOptions(normalized), 1)
+}
+
+func TestTransportPostureFixture(t *testing.T) {
+	t.Parallel()
+	contents, err := os.ReadFile(facadeTransportPosturePath)
+	require.NoError(t, err)
+	var fixture facadeTransportPostureFixture
+	require.NoError(t, json.Unmarshal(contents, &fixture))
+
+	expectedRuntimeValidation := map[string]bool{
+		string(TransportPostureIAM):           false,
+		string(TransportPostureJWT):           false,
+		string(TransportPostureRuntimeBearer): true,
+		string(TransportPostureNonePublic):    false,
+	}
+	require.Len(t, fixture.Postures, len(expectedRuntimeValidation))
+	for key, runtimeValidationRequired := range expectedRuntimeValidation {
+		row, ok := fixture.Postures[key]
+		require.Truef(t, ok, "transport posture fixture is missing the %q row", key)
+		require.Equalf(t, runtimeValidationRequired, row.RuntimeValidationRequired, "%s runtime_validation_required", key)
+	}
+	for key := range fixture.Postures {
+		_, ok := expectedRuntimeValidation[key]
+		require.Truef(t, ok, "transport posture fixture has an unknown %q row", key)
+	}
+
+	// The fixture's credential-free behavior matches what the runtime does for a
+	// credential-free transport request under the runtime-bearer posture.
+	app := apptheory.New()
+	invocations := 0
+	const resourceMetadataURL = "https://front.example.com/.well-known/oauth-protected-resource/acme/mcp"
+	config := validConfig(URLModePublicBaseURL)
+	config.TransportPosture = TransportPostureRuntimeBearer
+	config.MCPHandler = func(*apptheory.Context) (*apptheory.Response, error) {
+		invocations++
+		return apptheory.NoContent(), nil
+	}
+	config.RequireBearerToken = &oauth.RequireBearerTokenOptions{
+		ResourceMetadataURL: resourceMetadataURL,
+		ClaimsValidator: oauth.NewMemoryBearerTokenValidator(
+			[]oauth.BearerTokenRecord{{Token: "valid-token", Subject: "acme"}},
+			oauth.BearerTokenValidationOptions{},
+		),
+	}
+	_, err = RegisterMCPFacade(app, config)
+	require.NoError(t, err)
+
+	response := serve(app, "POST", "/acme/mcp", nil)
+	require.Equal(t, fixture.CredentialFreeBehavior.Status, response.Status)
+	challengeTemplate, ok := fixture.CredentialFreeBehavior.Headers["www-authenticate"]
+	require.True(t, ok, "the fixture must pin the www-authenticate header")
+	expectedChallenge := strings.ReplaceAll(challengeTemplate, "<route protected-resource metadata URL>", resourceMetadataURL)
+	require.Equal(t, []string{expectedChallenge}, response.Headers["www-authenticate"])
+	require.Equal(t, fixture.CredentialFreeBehavior.HandlerInvocations, invocations)
 }
 
 func validConfig(mode URLMode) FacadeConfig {
@@ -995,6 +1150,7 @@ func validConfig(mode URLMode) FacadeConfig {
 		MCPHandler: func(*apptheory.Context) (*apptheory.Response, error) {
 			return apptheory.NoContent(), nil
 		},
+		TransportPosture: TransportPostureIAM,
 	}
 	if mode == URLModeRequestHost {
 		config.PublicBaseURL = ""

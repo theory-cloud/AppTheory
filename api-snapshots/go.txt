@@ -3755,6 +3755,14 @@ func (sessionRecord) TableName() string
 
 ## github.com/theory-cloud/apptheory/v6/runtime/mcpfacade
 
+const TransportPostureIAM TransportPosture = "iam"
+
+const TransportPostureJWT TransportPosture = "jwt"
+
+const TransportPostureNonePublic TransportPosture = "none-public"
+
+const TransportPostureRuntimeBearer TransportPosture = "runtime-bearer"
+
 const URLModePublicBaseURL URLMode = "public_base_url"
 
 const URLModeRequestHost URLMode = "request_host"
@@ -3789,7 +3797,7 @@ type FacadeConfig struct {
 
 	RootAuthorizationServer *RootDiscoveryConfig
 
-	UnauthenticatedMcp bool
+	TransportPosture TransportPosture
 
 	RequireBearerToken *oauth.RequireBearerTokenOptions
 }
@@ -3806,14 +3814,15 @@ type RootDiscoveryConfig struct {
 }
 
 type Route struct {
-	Kind                        mcproutes.EndpointKind
-	MCPPattern                  string
-	MCPMethods                  []string
-	ProtectedResourcePattern    string
-	DiscoveryCanonicalPattern   string
-	DiscoverySuffixPattern      string
-	AuthorizePattern            string
-	TokenPattern                string
+	Kind                      mcproutes.EndpointKind
+	MCPPattern                string
+	MCPMethods                []string
+	ProtectedResourcePattern  string
+	DiscoveryCanonicalPattern string
+	DiscoverySuffixPattern    string
+	AuthorizePattern          string
+	TokenPattern              string
+
 	AuthorizationRoutesAttached bool
 }
 
@@ -3823,6 +3832,8 @@ type RouteInventory struct {
 	RootAuthorizationServerPattern  string
 	RootAuthorizationServerAttached bool
 }
+
+type TransportPosture string
 
 type URLMode string
 
@@ -5528,6 +5539,23 @@ func (*Stream) Next() (*SSEMessage, error)
 func (*Stream) ReadAll() ([]SSEMessage, error)
 
 func (*Stream) Response() apptheory.Response
+
+## github.com/theory-cloud/apptheory/v6/testkit/mcpfacade
+
+type Handler struct {
+	mu          sync.Mutex
+	invocations int
+}
+
+func AssertBearerTokenReachesHandler(testing.TB, *testkit.Env, *apptheory.App, string, string, string, *Handler)
+
+func AssertCredentialFreeDenied(testing.TB, *testkit.Env, *apptheory.App, string, string, string, *Handler)
+
+func NewHandler() *Handler
+
+func (*Handler) Handle(*apptheory.Context) (*apptheory.Response, error)
+
+func (*Handler) Invocations() int
 
 ## github.com/theory-cloud/apptheory/v6/testkit/microvm
 

@@ -105,12 +105,28 @@ attach-mode stage for endpoint-template derivation; it does not create, import, 
 returns one execute-api or owned-domain template per family member; parameterized values remain templates until
 request time.
 
-## Authenticated by default
+## Transport posture
 
 The full facade is wired by default, and the three MCP transport routes (`POST`, `GET`, and `DELETE` on every MCP
-pattern) now require credentials. They default to an IAM authorizer, or a JWT authorizer when `transportAuthorizer`
-supplies an issuer and audience, so a credential-free request to a transport route is rejected by API Gateway before
-the runtime handler runs.
+pattern) require credentials. A plain transport server defaults to an IAM authorizer; attaching `facade` marks the
+server facade-configured and flips the default to `runtime-bearer`, where the gateway authorizer is `NONE` and the
+runtime validates RFC 9728 bearer tokens. A credential-free request is then rejected by API Gateway (IAM/JWT) or by the
+runtime before the application handler runs.
+
+`transportPosture` selects the posture explicitly and overrides that default. The four values are `iam`, `jwt` (a static
+issuer and audience through `transportAuthorizer`), `runtime-bearer` (runtime-validated RFC 9728 bearer tokens), and
+`none-public` (deliberately public, never a default). `jwt` is the only posture that accepts `transportAuthorizer`;
+supplying it with `iam`, `runtime-bearer`, or `none-public` fails synthesis.
+
+`runtime-bearer` and `none-public` carry a mandatory defense-in-depth floor and fail synthesis without it:
+
+- `originReachability` must be `disabled` or `locked`; a directly reachable origin is refused;
+- `runtime-bearer` requires `runtimePosture: { requireBearerToken: true }`, which asserts the runtime registers the
+  transport routes with the runtime-validated bearer posture;
+- in owned mode the throttling decision must be explicit (`ownedApi.stage.throttlingEnabled: true`) and access logging
+  must stay on; in attach mode `owningApiDefense` records the owning API's access-logging and throttling decisions;
+- `runtime-bearer` also requires a `denialSignal` declaration naming the `apptheory.mcp.auth_denied` metric with the
+  bounded `outcome` and `route_family` dimensions.
 
 Discovery, protected-resource metadata, authorize, and token routes stay explicitly `NONE` so a supplied API's default
 authorizer cannot intercept OAuth traffic: OAuth clients must fetch those documents before they hold a token. Scope
@@ -118,12 +134,16 @@ policy and authorize/token behavior belong to the AppTheory runtime composition 
 `RegisterMCPFacade` with non-empty per-kind scopes and an application-owned authorize/token handler pair. The helper
 fails closed if that pair is partial and does not install authorize/token runtime routes when both are absent.
 
-For a genuinely public MCP application, `unauthenticatedMcp: true` is the explicit CDK opt-out. It wires only the three
-MCP transport methods and no OAuth facade, and it cannot be combined with `transportAuthorizer`, root discovery, or the
-deprecated issuer/JWKS props. `RegisterMCPFacade` now registers the MCP transport routes with an authenticated posture
-by default and exposes `FacadeConfig.UnauthenticatedMcp` for the same opt-out, or `FacadeConfig.RequireBearerToken` to
-validate RFC 9728 bearer tokens on those routes. Omitting runtime auth config is not an opt-out: the default CDK facade
-remains present and the runtime must initialize its explicit `FacadeConfig` successfully.
+`none-public` wires only the three MCP transport methods and no OAuth facade, and it cannot be combined with
+`transportAuthorizer`, root discovery, the deprecated issuer/JWKS props, or `runtimePosture`.
+`RegisterMCPFacade` now registers the MCP transport routes with an authenticated posture by default and pairs its
+`FacadeConfig.TransportPosture` with `FacadeConfig.RequireBearerToken`, which validates RFC 9728 bearer tokens on those
+routes. Omitting runtime auth config is not an opt-out: the default CDK facade remains present and the runtime must
+initialize its explicit `FacadeConfig` successfully.
+
+The synthesized template records the resolved posture as CloudFormation `Metadata` under
+`apptheory:mcp-transport-posture` (`posture`, `contract_id`, `route_count`, `runtime_posture_declared`) so a
+conformance kit can compare a deployed posture with the runtime registration output.
 
 The v3.1.x `authorizationServerIssuer` and `jwksUri` props are deprecated together. They remain pair-validated for
 migration safety but no longer control facade wiring and no longer become environment variables. Move them into
@@ -140,16 +160,18 @@ Owned mode enables these defaults:
 | Stage throttling | on; 100 requests/second, burst 200 | `ownedApi.stage.throttlingEnabled: false` |
 
 Disabled surfaces reject their dependent options. For example, a disabled session table cannot also specify
-`tableName`, `ttlMinutes`, or `removalPolicy`; disabled throttling cannot specify rate or burst limits. Attach mode still
-creates the session table by default, but logging and throttling belong to the supplied API's owner. A shared front door
-must configure those controls on its own stage rather than asking an attached child construct to mutate them.
+`tableName`, `ttlMinutes`, or `removalPolicy`; disabled throttling cannot specify rate or burst limits. Under
+`runtime-bearer` and `none-public` the access-logging and throttling opt-outs are refused outright: the owned stage must
+keep access logging and an explicit throttling decision. Attach mode still creates the session table by default, but
+logging and throttling belong to the supplied API's owner. A shared front door must configure those controls on its own
+stage rather than asking an attached child construct to mutate them.
 
 ## Runtime helper and environment contract
 
 The construct and `runtime/mcpfacade` share routes, not configuration environment variables. `FacadeConfig` has no env
 reads. Issuer, JWKS, optional registration endpoint, URL mode, public base URL or hostname allowlist, per-kind scopes,
-capabilities, MCP handler, authorize/token factories, optional root discovery, and the transport authentication posture
-(`UnauthenticatedMcp` or `RequireBearerToken`) are app-owned values.
+capabilities, MCP handler, authorize/token factories, optional root discovery, and the transport posture
+(`FacadeConfig.TransportPosture` paired with `FacadeConfig.RequireBearerToken`) are app-owned values.
 
 The construct writes only environment variables consumed by existing runtime code:
 

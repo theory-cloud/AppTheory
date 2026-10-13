@@ -29,6 +29,20 @@ const (
 	URLModeRequestHost URLMode = "request_host"
 )
 
+// TransportPosture selects how the MCP transport routes are authorized.
+type TransportPosture string
+
+const (
+	// TransportPostureIAM keeps the authenticated transport posture (the default).
+	TransportPostureIAM TransportPosture = "iam"
+	// TransportPostureJWT assumes a gateway JWT authorizer already rejected the request.
+	TransportPostureJWT TransportPosture = "jwt"
+	// TransportPostureRuntimeBearer validates an RFC 9728 bearer token in the runtime.
+	TransportPostureRuntimeBearer TransportPosture = "runtime-bearer"
+	// TransportPostureNonePublic registers the transport routes without authentication.
+	TransportPostureNonePublic TransportPosture = "none-public"
+)
+
 // HandlerFactory returns an application-owned handler for one endpoint kind.
 // Factories run during facade registration, never during request handling.
 type HandlerFactory func(mcproutes.EndpointKind) apptheory.Handler
@@ -105,40 +119,45 @@ type FacadeConfig struct {
 	// algebra-derived root authorization-server discovery path.
 	RootAuthorizationServer *RootDiscoveryConfig
 
-	// UnauthenticatedMcp opts the MCP transport routes (POST, GET, and DELETE on
-	// every MCP pattern) out of the authenticated default.
+	// TransportPosture selects how the MCP transport routes (POST, GET, and
+	// DELETE on every MCP pattern) are authorized. An empty value means
+	// TransportPostureIAM.
 	//
-	// When false (the default) transport routes are registered with an
-	// authenticated posture: requests without a verified principal are rejected
-	// with HTTP 401 and the MCP handler never runs. Set it to true only when the
-	// application owns authentication for those routes, for example by wrapping
-	// MCPHandler.
+	// TransportPostureRuntimeBearer validates an RFC 9728 bearer token in the
+	// runtime and requires RequireBearerToken; registration fails closed without
+	// it. TransportPostureNonePublic registers the transport routes without
+	// authentication and is never a default. The posture must agree with the CDK
+	// construct's synthesized posture marker.
 	//
 	// The posture is evaluated by the portable tier pipeline and by SecureApp.
 	// TierP0 is the frozen legacy pipeline and does not evaluate route-level
 	// postures, so an application that explicitly selects TierP0 must supply
 	// RequireBearerToken or own transport authentication itself.
-	UnauthenticatedMcp bool
+	TransportPosture TransportPosture
 
-	// RequireBearerToken, when supplied, validates an RFC 9728 bearer token on
-	// every MCP transport route instead of relying on the application's
-	// principal posture. Credential-free or invalid requests are rejected with
+	// RequireBearerToken validates an RFC 9728 bearer token on every MCP
+	// transport route. Credential-free or invalid requests are rejected with
 	// HTTP 401 and the RFC 9728 WWW-Authenticate challenge that points at the
 	// protected-resource metadata. This holds for every tier, including TierP0.
-	// Ignored (and rejected together with) UnauthenticatedMcp.
+	// It is valid only with TransportPostureRuntimeBearer and is rejected under
+	// every other posture.
 	RequireBearerToken *oauth.RequireBearerTokenOptions
 }
 
 // Route describes one endpoint-kind route family installed by the helper.
 type Route struct {
-	Kind                        mcproutes.EndpointKind
-	MCPPattern                  string
-	MCPMethods                  []string
-	ProtectedResourcePattern    string
-	DiscoveryCanonicalPattern   string
-	DiscoverySuffixPattern      string
-	AuthorizePattern            string
-	TokenPattern                string
+	Kind                      mcproutes.EndpointKind
+	MCPPattern                string
+	MCPMethods                []string
+	ProtectedResourcePattern  string
+	DiscoveryCanonicalPattern string
+	DiscoverySuffixPattern    string
+	AuthorizePattern          string
+	TokenPattern              string
+	// AuthorizationRoutesAttached reports whether transport authorization is
+	// attached to this route family (false under the none-public posture). It
+	// mirrors the CDK construct's authorizationRoutesAttached inventory field,
+	// which is pinned by the shared facade-route-inventory fixture.
 	AuthorizationRoutesAttached bool
 }
 
@@ -164,7 +183,7 @@ type normalizedConfig struct {
 	tokenHandlers           map[mcproutes.EndpointKind]apptheory.Handler
 	rootAuthorizationServer *oauth.AuthorizationServerMetadata
 	rootDiscoveryPath       string
-	unauthenticatedMcp      bool
+	transportPosture        TransportPosture
 	requireBearerToken      *oauth.RequireBearerTokenOptions
 }
 
@@ -187,7 +206,7 @@ func RegisterMCPFacade(app *apptheory.App, config FacadeConfig) (*RouteInventory
 	if err != nil {
 		return nil, err
 	}
-	inventory, err := buildInventory(normalized.authorizeHandlers != nil, normalized.rootAuthorizationServer != nil)
+	inventory, err := buildInventory(normalized.transportPosture != TransportPostureNonePublic, normalized.rootAuthorizationServer != nil)
 	if err != nil {
 		return nil, err
 	}
@@ -206,8 +225,9 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 	if config.MCPHandler == nil {
 		return normalizedConfig{}, fmt.Errorf("mcpfacade: MCP handler is required")
 	}
-	if config.UnauthenticatedMcp && config.RequireBearerToken != nil {
-		return normalizedConfig{}, fmt.Errorf("mcpfacade: UnauthenticatedMcp cannot be combined with RequireBearerToken")
+	transportPosture, err := normalizeTransportPosture(config.TransportPosture, config.RequireBearerToken)
+	if err != nil {
+		return normalizedConfig{}, err
 	}
 
 	issuerURL, ok := normalizeHTTPSURL(config.IssuerURL, true)
@@ -263,12 +283,34 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 		tokenHandlers:           tokenHandlers,
 		rootAuthorizationServer: rootAuthorizationServer,
 		rootDiscoveryPath:       rootDiscoveryPath,
-		unauthenticatedMcp:      config.UnauthenticatedMcp,
+		transportPosture:        transportPosture,
 		requireBearerToken:      config.RequireBearerToken,
 	}, nil
 }
 
-func buildInventory(attachAuthorization, attachRootDiscovery bool) (*RouteInventory, error) {
+func normalizeTransportPosture(posture TransportPosture, requireBearerToken *oauth.RequireBearerTokenOptions) (TransportPosture, error) {
+	if posture == "" {
+		posture = TransportPostureIAM
+	}
+	switch posture {
+	case TransportPostureIAM, TransportPostureJWT, TransportPostureNonePublic:
+		if requireBearerToken != nil {
+			if posture == TransportPostureNonePublic {
+				return "", fmt.Errorf("mcpfacade: TransportPosture none-public cannot be combined with RequireBearerToken")
+			}
+			return "", fmt.Errorf("mcpfacade: RequireBearerToken is only valid with TransportPosture runtime-bearer")
+		}
+	case TransportPostureRuntimeBearer:
+		if requireBearerToken == nil {
+			return "", fmt.Errorf("mcpfacade: TransportPosture runtime-bearer requires RequireBearerToken")
+		}
+	default:
+		return "", fmt.Errorf("mcpfacade: TransportPosture %q must be one of iam, jwt, runtime-bearer, none-public", posture)
+	}
+	return posture, nil
+}
+
+func buildInventory(authorizationRoutesAttached, attachRootDiscovery bool) (*RouteInventory, error) {
 	endpoints := mcproutes.SupportedEndpointTemplates()
 	facades := indexFacadeTemplates(mcproutes.SupportedOAuthFacadeTemplates())
 	discovery := indexDiscoveryTemplates(mcproutes.SupportedOAuthDiscoveryTemplates())
@@ -298,7 +340,7 @@ func buildInventory(attachAuthorization, attachRootDiscovery bool) (*RouteInvent
 			DiscoverySuffixPattern:      discoveryTemplate.SuffixPattern,
 			AuthorizePattern:            facade.AuthorizePattern,
 			TokenPattern:                facade.TokenPattern,
-			AuthorizationRoutesAttached: attachAuthorization,
+			AuthorizationRoutesAttached: authorizationRoutesAttached,
 		})
 	}
 	return inventory, nil
@@ -347,7 +389,7 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 			routeRegistration{method: "GET", pattern: route.DiscoverySuffixPattern, handler: discoveryHandler},
 		)
 
-		if route.AuthorizationRoutesAttached {
+		if config.authorizeHandlers != nil {
 			registrations = append(registrations,
 				routeRegistration{method: "GET", pattern: route.AuthorizePattern, handler: checkedOAuthFacadeHandler(route.Kind, true, config.authorizeHandlers[route.Kind])},
 				routeRegistration{method: "POST", pattern: route.TokenPattern, handler: checkedOAuthFacadeHandler(route.Kind, false, config.tokenHandlers[route.Kind])},
@@ -414,19 +456,18 @@ func handleRoute(app *apptheory.App, method, pattern string, handler apptheory.H
 	return nil
 }
 
-// transportRouteOptions returns the route-level authenticated posture for the
-// three MCP transport routes (POST, GET, and DELETE on every MCP pattern).
+// transportRouteOptions returns the route-level posture for the three MCP
+// transport routes (POST, GET, and DELETE on every MCP pattern).
 //
-// The either/or is deliberate: RequireAuth delegates to the application's
-// principal hook when one exists (so apps using WithAuthPrincipalHook keep
-// working unchanged), while a supplied bearer validator performs full RFC 9728
-// bearer validation with the correct WWW-Authenticate challenge and must not
-// additionally demand an app-level principal.
+// IAM and JWT carry the existing RequireAuth route option; the gateway rejects
+// the request before the runtime under those postures. RuntimeBearer and
+// NonePublic register no route option: RuntimeBearer enforces the RFC 9728
+// bearer middleware (which fails closed), and NonePublic is deliberately public.
 func transportRouteOptions(config normalizedConfig) []apptheory.RouteOption {
-	if config.unauthenticatedMcp || config.requireBearerToken != nil {
-		return nil
+	if config.transportPosture == TransportPostureIAM || config.transportPosture == TransportPostureJWT {
+		return []apptheory.RouteOption{apptheory.RequireAuth()}
 	}
-	return []apptheory.RouteOption{apptheory.RequireAuth()}
+	return nil
 }
 
 func indexFacadeTemplates(templates []mcproutes.OAuthFacadeTemplate) map[mcproutes.EndpointKind]mcproutes.OAuthFacadeTemplate {

@@ -180,7 +180,7 @@
     {
       "n": 6.2,
       "name": "callback-replayed-state",
-      "request": { "method": "GET", "path": "/_oauth/mcp/callback", "query": { "code": "c", "state": "<consumed state>" } },
+      "request": { "method": "GET", "path": "/_oauth/mcp/callback", "query": { "code": "c", "state": "<consumed state>", "iss": "https://id.example.com" } },
       "expect": { "terminal": "already completed, restart sign-in", "re_exchange": false }
     },
     {
@@ -188,6 +188,17 @@
       "name": "callback-forged-state",
       "request": { "method": "GET", "path": "/_oauth/mcp/callback", "query": { "code": "attacker-code", "state": "attacker-state", "iss": "https://id.example.com" } },
       "expect": { "status": 400, "no_location": true, "reason": "upstream state was never minted by the facade, so it keys no transaction (callback CSRF / session-swap defense, T10); an implementation that skipped the state check would accept the forged state and reach the upstream exchange, whose failure maps to 502 upstream_error (DESIGN §8.2) rather than the pinned 400, so removing the control changes the expected result" }
+    },
+    {
+      "n": 6.4,
+      "name": "callback-absent-iss",
+      "precondition": {
+        "name": "authorize-mint-fresh-state-and-code-for-absent-iss-check",
+        "request": { "method": "GET", "path": "/.well-known/oauth-authorization-server/acme/mcp/authorize", "query": { "client_id": "<registered client>", "redirect_uri": "https://client.example/callback", "response_type": "code", "code_challenge": "<S256>", "code_challenge_method": "S256", "state": "absent-iss-client-state", "resource": "https://mcp.example.com/acme/mcp" } },
+        "expect": { "status": 302, "mints_upstream_state": true, "mints_upstream_code": true }
+      },
+      "request": { "method": "GET", "path": "/_oauth/mcp/callback", "query": { "code": "<upstream code minted by the precondition authorize>", "state": "<upstream state minted by the precondition authorize>" } },
+      "expect": { "status": 400, "no_location": true, "transaction_consumed": false, "upstream_exchange_attempted": 0, "reason": "the callback presents a facade-minted (hence valid) upstream state and a facade-minted (hence exchangeable) upstream code but omits the upstream RFC 9207 iss parameter; a compliant implementation rejects an absent iss before consuming the transaction or exchanging the code (DESIGN §8.2), so the callback lands in the same (400, no Location) class as an iss mismatch, nothing is consumed, and no upstream exchange is attempted; an implementation that treated an absent iss as unpinned would reach the exchange (or mint a broker record) and change the pinned result" }
     },
     {
       "n": 7,

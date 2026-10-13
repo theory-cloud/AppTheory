@@ -6,24 +6,64 @@ import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
-/** Authorizer applied to the AppTheoryMcpServer MCP transport routes. */
-export declare enum AppTheoryMcpTransportAuthorizerKind {
-    /** AWS IAM (SigV4) authorization. The zero-configuration default. */
+/** Transport-route authorization posture for AppTheoryMcpServer. */
+export declare enum AppTheoryMcpTransportPosture {
+    /** AWS IAM (SigV4) on the transport routes. The default for a server with no facade attachment. */
     IAM = "iam",
-    /** JSON Web Token authorization against an OIDC/Cognito issuer. */
-    JWT = "jwt"
+    /** A static JWT authorizer (issuer + audience) on the transport routes. */
+    JWT = "jwt",
+    /** The gateway authorizer is NONE and the runtime validates RFC 9728 bearer tokens. The default for a facade-configured server. */
+    RUNTIME_BEARER = "runtime-bearer",
+    /** Deliberately public MCP server: every transport route is public. Never a default. */
+    NONE_PUBLIC = "none-public"
 }
-/** Authenticated authorizer configuration for the MCP transport routes. */
+/** Presence-only skeleton of the upstream-provider attachment that selects the facade-scoped default. */
+export interface AppTheoryMcpFacadeAttachment {
+    /** Identifies the upstream authorization provider this server fronts (for example `autheory`). Provider wiring lands in M3; this milestone validates the attachment shape and uses its presence to select the `runtime-bearer` default. */
+    readonly providerId: string;
+}
+/** Runtime-side declaration that the transport routes validate RFC 9728 bearer tokens at runtime. */
+export interface AppTheoryMcpRuntimePostureOptions {
+    /** Assert the runtime registers the transport routes with the runtime-validated bearer posture (Go `FacadeConfig.RequireBearerToken`, TS `requireBearerTokenMiddleware`, Python `require_bearer_token_middleware`). Must be `true`. */
+    readonly requireBearerToken: boolean;
+}
+/** Direct-origin reachability decision required under `runtime-bearer` and `none-public`. */
+export declare enum AppTheoryMcpOriginReachability {
+    /** The execute-api default endpoint is disabled. */
+    DISABLED = "disabled",
+    /** The origin is reachable only through a locked front door (CloudFront / VPC origin). */
+    LOCKED = "locked"
+}
+/** Denial-telemetry declaration required under `runtime-bearer`. */
+export interface AppTheoryMcpDenialSignalOptions {
+    /** Denial metric name. Must be `apptheory.mcp.auth_denied`. @default apptheory.mcp.auth_denied */
+    readonly metricName?: string;
+    /** Bounded metric dimensions. Must be exactly `outcome` and `route_family`. @default ["outcome", "route_family"] */
+    readonly dimensions?: string[];
+}
+/** Owning-API stage throttling decision. */
+export interface AppTheoryMcpOwningApiThrottlingOptions {
+    /** Stage rate limit in requests per second. */
+    readonly rateLimit: number;
+    /** Stage burst limit. */
+    readonly burstLimit: number;
+}
+/** Attach-mode record of the owning API's defense-in-depth decisions (required under `runtime-bearer` and `none-public`). */
+export interface AppTheoryMcpOwningApiDefenseOptions {
+    /** Whether the owning API's stage has access logging enabled. Must be true. */
+    readonly accessLogging: boolean;
+    /** The owning API's stage throttling decision. */
+    readonly throttling: AppTheoryMcpOwningApiThrottlingOptions;
+}
+/** Static JWT configuration for `transportPosture: JWT`. */
 export interface AppTheoryMcpTransportAuthorizerOptions {
-    /** @default AppTheoryMcpTransportAuthorizerKind.IAM */
-    readonly kind?: AppTheoryMcpTransportAuthorizerKind;
-    /** Absolute HTTPS JWT issuer URL. Required when kind is JWT. @default undefined */
+    /** Absolute HTTPS JWT issuer URL. Required under `transportPosture: JWT`. @default undefined */
     readonly issuer?: string;
-    /** Accepted JWT audiences. Required when kind is JWT. @default undefined */
+    /** Accepted JWT audiences. Required under `transportPosture: JWT`. @default undefined */
     readonly audience?: string[];
-    /** Identity sources for the JWT authorizer. JWT only. @default ["$request.header.Authorization"] */
+    /** Identity sources for the JWT authorizer. @default ["$request.header.Authorization"] */
     readonly identitySource?: string[];
-    /** JWT authorizer resource name. JWT only. @default the authorizer construct id */
+    /** JWT authorizer resource name. @default the authorizer construct id */
     readonly authorizerName?: string;
 }
 /** Custom domain configuration for an AppTheory-owned MCP HTTP API. */
@@ -175,29 +215,57 @@ export interface AppTheoryMcpServerProps {
      */
     readonly routeFamily?: AppTheoryMcpRouteFamily;
     /**
-     * Explicitly opt out of the OAuth facade and wire only MCP transport routes.
+     * Transport-route authorization posture.
      *
-     * This cannot be combined with legacy authorization props, root discovery, or
-     * `transportAuthorizer`. The Go helper `runtime/mcpfacade.RegisterMCPFacade`
-     * installs the authenticated canonical facade by default and exposes
-     * `FacadeConfig.UnauthenticatedMcp` for the same transport opt-out, so
-     * applications using this opt-out must own runtime registration for the
-     * transport routes.
-     * @default false
+     * An explicit selection overrides the facade-scoped default. When it is
+     * omitted, a server that attaches `facade` resolves to `runtime-bearer` and a
+     * plain transport server resolves to `iam`. `none-public` is never a default
+     * and carries the defense-in-depth floor.
+     * @default AppTheoryMcpTransportPosture.RUNTIME_BEARER when `facade` is attached, otherwise AppTheoryMcpTransportPosture.IAM
      */
-    readonly unauthenticatedMcp?: boolean;
+    readonly transportPosture?: AppTheoryMcpTransportPosture;
     /**
-     * Authorizer applied to the MCP transport routes only.
+     * Upstream-provider attachment that marks this server as facade-configured.
+     *
+     * The attachment's presence selects the `runtime-bearer` posture default.
+     * Provider wiring lands in M3; this milestone validates the attachment shape.
+     * @default undefined
+     */
+    readonly facade?: AppTheoryMcpFacadeAttachment;
+    /**
+     * Runtime-side RFC 9728 bearer validation declaration.
+     *
+     * Required by `transportPosture: RUNTIME_BEARER` and refused under every
+     * other posture.
+     * @default undefined
+     */
+    readonly runtimePosture?: AppTheoryMcpRuntimePostureOptions;
+    /**
+     * Direct-origin reachability decision required under RUNTIME_BEARER and
+     * NONE_PUBLIC. A directly reachable origin is refused.
+     * @default undefined
+     */
+    readonly originReachability?: AppTheoryMcpOriginReachability;
+    /**
+     * Denial-telemetry declaration required under RUNTIME_BEARER only.
+     * @default undefined
+     */
+    readonly denialSignal?: AppTheoryMcpDenialSignalOptions;
+    /**
+     * Attach-mode record of the owning API's throttling and access-logging
+     * decisions, required under RUNTIME_BEARER and NONE_PUBLIC.
+     * @default undefined
+     */
+    readonly owningApiDefense?: AppTheoryMcpOwningApiDefenseOptions;
+    /**
+     * Static JWT configuration for the MCP transport routes.
      *
      * Transport routes are the POST, GET, and DELETE routes on every MCP pattern.
-     * When `unauthenticatedMcp` is false (the default) those routes require
-     * credentials and default to IAM, so credential-free requests are rejected by
-     * API Gateway with 403. Discovery, protected-resource metadata, authorize,
-     * and token routes remain explicitly public (`NONE`) because OAuth clients
-     * must fetch them before they hold a token.
-     *
-     * Cannot be combined with `unauthenticatedMcp: true`.
-     * @default AppTheoryMcpTransportAuthorizerKind.IAM
+     * This prop is only valid with `transportPosture: JWT`, which requires an
+     * issuer and a non-empty audience. Discovery, protected-resource metadata,
+     * authorize, and token routes remain explicitly public (`NONE`) because OAuth
+     * clients must fetch them before they hold a token.
+     * @default undefined
      */
     readonly transportAuthorizer?: AppTheoryMcpTransportAuthorizerOptions;
     /**
@@ -261,6 +329,14 @@ export declare class AppTheoryMcpServer extends Construct {
     readonly api: apigwv2.IHttpApi;
     readonly ownedApi?: apigwv2.HttpApi;
     readonly sessionTable?: dynamodb.ITable;
+    /**
+     * Resolved transport-route authorization posture.
+     *
+     * Facade-configured servers resolve to `runtime-bearer` unless
+     * `transportPosture` overrides the default; plain transport servers resolve
+     * to `iam`. Deliberately public servers must select `none-public` explicitly.
+     */
+    readonly transportPosture: AppTheoryMcpTransportPosture;
     /**
      * Derived endpoint templates for the ordered MCP route family.
      *

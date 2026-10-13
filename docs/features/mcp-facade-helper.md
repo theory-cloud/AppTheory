@@ -136,9 +136,12 @@ refresh coordination, telemetry, and other policy. The helper never issues grant
 chooses scopes.
 
 The helper mounts the MCP transport routes with an authenticated posture by default: a request without a verified
-principal is rejected with HTTP 401 and the MCP handler never runs. Applications that authenticate MCP themselves
-either configure `FacadeConfig.RequireBearerToken`, which performs RFC 9728 bearer validation with the correct
-`WWW-Authenticate` challenge, or set `FacadeConfig.UnauthenticatedMcp` and keep their own middleware around the
+principal is rejected with HTTP 401 and the MCP handler never runs. `FacadeConfig.TransportPosture` selects that posture
+explicitly (`TransportPostureIAM`, `TransportPostureJWT`, `TransportPostureRuntimeBearer`, or
+`TransportPostureNonePublic`), and registration fails closed when the posture and its required runtime assertion
+disagree. Applications that authenticate MCP themselves either configure `FacadeConfig.RequireBearerToken`, which
+performs RFC 9728 bearer validation with the correct `WWW-Authenticate` challenge and is valid only with
+`TransportPostureRuntimeBearer`, or select `TransportPostureNonePublic` and keep their own middleware around the
 supplied handler.
 
 ## `theory-mcp-server` migration fitness

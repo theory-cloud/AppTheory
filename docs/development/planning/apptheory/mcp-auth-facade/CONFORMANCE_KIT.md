@@ -53,10 +53,9 @@ directly by the Go and CDK-TS suites rather than by the generic three-language f
 - `facade-transport-posture.v1.json` — `posture → { transport_authorization_type, oauth_surface_authorization_type, requires: [...] }` plus the per-posture expectation rows. The `requires` set is per posture: `runtime-bearer` requires `[throttling, origin_reachability, denial_signal]`; `none-public` requires `[throttling, origin_reachability]` (no validation, so no denial signal).
 - `facade-route-model.v1.json` — the v2 route inventory (patterns + derived `register`/`callback` + issuer/resource derivation) that Layer A iterates.
 
-M0 authors both tables under this planning directory in the repo's contract-table shape. **M1 moves them into
-`contract-tests/fixtures/routing/mcp-auth-facade/`** (a nested table directory under the known `routing`
-domain) and adds the Go + CDK-TS loaders that consume them, so route and posture literals exist exactly once,
-matching how `facade-route-inventory.json` is consumed today by `runtime/mcpfacade/facade_test.go` and
+M1 moved both tables into `contract-tests/fixtures/routing/mcp-auth-facade/` (a nested table directory under the
+known `routing` domain) and added the Go + CDK-TS loader tests that consume them, so route and posture literals exist
+exactly once, matching how `facade-route-inventory.json` is consumed today by `runtime/mcpfacade/facade_test.go` and
 `runtime/mcproutes/mcp_route_algebra_test.go`.
 
 ## 3. Fail-closed assertions
@@ -68,26 +67,25 @@ matching how `facade-route-inventory.json` is consumed today by `runtime/mcpfaca
 | CDK `runtime-bearer` without an origin-reachability decision | synth throws (DD-2) |
 | CDK `none-public` without the floor | synth throws |
 | Runtime `TransportPosture == RuntimeBearer` without `RequireBearerToken` | `RegisterMCPFacade` returns an error; no route registered |
-| Runtime `TransportPosture == RuntimeBearer` with `UnauthenticatedMcp` | registration error |
+| Runtime `TransportPosture == RuntimeBearer` without the bearer assertion (M1 as-built), or a bearer assertion supplied under `none-public` / `iam` / `jwt` | registration error (`RegisterMCPFacade`; no route registered) |
 | Synthesized posture marker ≠ runtime registration output | kit fails (posture disagreement) |
 
 ## 4. Registration in the contract-test corpus (M1)
 
-To register the tables as first-class contract fixtures in M1 (not M0), the change set is:
+**M1 performed the registration** (M0 did not); the tables are first-class contract fixtures now. The change set was:
 
 1. add the nested directory `contract-tests/fixtures/routing/mcp-auth-facade/` (nested tables are the documented
    exception to one-level discovery; they are loaded by tests, not the generic runner);
 2. add the Go loader test (under `runtime/mcpfacade` and/or `runtime/mcproutes`) and the CDK-TS loader test
    (`cdk/test/`);
 3. bump the public fixture-count markers (the corpus count is recursively counted by
-   `scripts/verify-fixture-count.sh`, and the nested route/facade tables are already included and described as
-   the "Go/CDK-TS MCP route/facade tables");
+   `scripts/verify-fixture-count.sh`, and the nested route/facade tables are included and described as the
+   "Go/CDK-TS MCP route/facade tables");
 4. update `contract-tests/fixtures/README.md` (the `routing/` entry names the nested tables).
 
-M0 does **not** do (1)–(4): with no runtime facade to load against and no loader permitted under `runtime/**`
-in this milestone's write scope, adding the tables to the live corpus would create inert vectors and inflate
-the public count without an executable pin. The M0 tables live in this planning directory and are the contract
-of record.
+The two tables now live at `contract-tests/fixtures/routing/mcp-auth-facade/facade-transport-posture.v1.json` and
+`facade-route-model.v1.json`, consumed directly by the Go and CDK-TS loader tests. The remaining M0 tables stay in this
+planning directory until their runtime consumers land (`fixtures/README.md`).
 
 ## 5. Where the kit runs (docs/110 validation plan)
 
