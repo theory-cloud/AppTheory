@@ -1,0 +1,380 @@
+{
+  "contract": {
+    "id": "m17.mcp-auth-facade/v1",
+    "section": "provider-spi",
+    "kind": "conformance",
+    "status": "M3a",
+    "notes": "One conformance table for the provider SPI of DESIGN §6. Every provider adapter (the Autheory adapter and the tiny second test adapter that proves provider-neutrality) must pass every row. Each runtime's loader spins up a real local HTTP fake upstream with real RSA keys and runs the rows against the adapter; the same rows and outcomes must hold in Go, TypeScript and Python. The adapter never forwards an upstream error body to the client and never relaxes a fail-closed check."
+  },
+  "error_classes": {
+    "upstream_error": "an upstream provider failure (HTTP 502 in the facade vocabulary); includes a replayed/invalid upstream response, a signature or issuer mismatch, an expired token, an oversized document, and a non-2xx non-terminal call",
+    "temporarily_unavailable": "a transient provider failure, retryable (HTTP 503 + Retry-After); includes a fetch timeout and a connect failure",
+    "invalid_grant": "the provider definitively rejected the grant (terminal; HTTP 400)",
+    "invalid_request": "the adapter was called with a request it cannot send (HTTP 400); never reaches the upstream",
+    "reauth_required": "the provider reported the recorded material stale/replaced (terminal; HTTP 400); only an explicit upstream signal produces it"
+  },
+  "autheory": {
+    "issuer_by_stage": {
+      "live": "https://auth.autheory.app",
+      "lab": "https://auth.lab.autheory.app"
+    },
+    "resource_parameter_required_at_authorize": true,
+    "code_challenge_methods_supported": ["S256"],
+    "id_token_issued_for_relying_party": false,
+    "refresh_bound_to_issuing_client": true
+  },
+  "cases": [
+    {
+      "id": "provider.discovery.success",
+      "operation": "discovery",
+      "upstream": { "issuer": "https://auth.example.test", "discovery_issuer": "https://auth.example.test" },
+      "expect": {
+        "outcome": "ok",
+        "issuer": "https://auth.example.test",
+        "code_challenge_methods_supported": ["S256"],
+        "authorization_response_iss_parameter_supported": true,
+        "resource_parameter_supported": true
+      }
+    },
+    {
+      "id": "provider.discovery.issuer_mismatch_fails_closed",
+      "operation": "discovery",
+      "upstream": { "issuer": "https://auth.example.test", "discovery_issuer": "https://evil.example.test" },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
+    },
+    {
+      "id": "provider.discovery.non_https_fails_closed",
+      "operation": "discovery",
+      "upstream": { "issuer": "http://auth.example.test", "discovery_issuer": "http://auth.example.test" },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
+    },
+    {
+      "id": "provider.discovery.cross_origin_redirect_fails_closed",
+      "operation": "discovery",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "redirect_to": "https://evil.example.test/.well-known/oauth-authorization-server"
+      },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
+    },
+    {
+      "id": "provider.authorization_url.carries_required_upstream_parameters",
+      "operation": "authorization_url",
+      "upstream": { "issuer": "https://auth.example.test", "discovery_issuer": "https://auth.example.test" },
+      "request": {
+        "upstream_client_id": "facade-client",
+        "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "code_challenge_method": "S256",
+        "state": "facade-upstream-state",
+        "resource": "https://mcp.example.test/mcp",
+        "scopes": ["mcp:tools"],
+        "hints": { "account_id": "acct_hint" }
+      },
+      "expect": {
+        "outcome": "ok",
+        "query": {
+          "response_type": "code",
+          "client_id": "facade-client",
+          "redirect_uri": "https://mcp.example.test/_oauth/mcp/callback",
+          "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+          "code_challenge_method": "S256",
+          "state": "facade-upstream-state",
+          "resource": "https://mcp.example.test/mcp",
+          "scope": "mcp:tools"
+        }
+      }
+    },
+    {
+      "id": "provider.authorization_url.missing_challenge_fails_closed",
+      "operation": "authorization_url",
+      "upstream": { "issuer": "https://auth.example.test", "discovery_issuer": "https://auth.example.test" },
+      "request": {
+        "upstream_client_id": "facade-client",
+        "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+        "code_challenge": "",
+        "code_challenge_method": "S256",
+        "state": "facade-upstream-state",
+        "resource": "https://mcp.example.test/mcp",
+        "scopes": ["mcp:tools"]
+      },
+      "expect": { "outcome": "error", "error_class": "invalid_request" }
+    },
+    {
+      "id": "provider.exchange_code.success_returns_token_set",
+      "operation": "exchange_code",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_status": 200,
+        "token_body": {
+          "access_token": "upstream-access-token",
+          "token_type": "Bearer",
+          "expires_in": 900,
+          "scope": "mcp:tools",
+          "refresh_token": "upstream-refresh-token",
+          "id_token": "upstream-id-token"
+        }
+      },
+      "request": {
+        "code": "upstream-code",
+        "upstream_client_id": "facade-client",
+        "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+        "code_verifier": "facade-verifier"
+      },
+      "expect": {
+        "outcome": "ok",
+        "access_token": "upstream-access-token",
+        "refresh_token": "upstream-refresh-token",
+        "id_token": "upstream-id-token",
+        "token_type": "Bearer",
+        "expires_in": 900
+      }
+    },
+    {
+      "id": "provider.exchange_code.rejection_body_is_never_forwarded",
+      "operation": "exchange_code",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_status": 400,
+        "token_body": { "error": "invalid_grant", "error_description": "UPSTREAM-SECRET-MARKER" }
+      },
+      "request": {
+        "code": "upstream-code",
+        "upstream_client_id": "facade-client",
+        "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+        "code_verifier": "facade-verifier"
+      },
+      "expect": { "outcome": "error", "error_class": "invalid_grant", "message_excludes": ["UPSTREAM-SECRET-MARKER"] }
+    },
+    {
+      "id": "provider.exchange_code.upstream_5xx_is_upstream_error",
+      "operation": "exchange_code",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_status": 500,
+        "token_body": { "error": "server_error" }
+      },
+      "request": {
+        "code": "upstream-code",
+        "upstream_client_id": "facade-client",
+        "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+        "code_verifier": "facade-verifier"
+      },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
+    },
+    {
+      "id": "provider.exchange_code.unknown_4xx_code_is_upstream_error",
+      "operation": "exchange_code",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_status": 400,
+        "token_body": { "error": "not_a_terminal_code" }
+      },
+      "request": {
+        "code": "upstream-code",
+        "upstream_client_id": "facade-client",
+        "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+        "code_verifier": "facade-verifier"
+      },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
+    },
+    {
+      "id": "provider.exchange_code.slow_upstream_is_bounded_and_retryable",
+      "operation": "exchange_code",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_delay_seconds": 5
+      },
+      "fetch_timeout_seconds": 1,
+      "request": {
+        "code": "upstream-code",
+        "upstream_client_id": "facade-client",
+        "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+        "code_verifier": "facade-verifier"
+      },
+      "expect": { "outcome": "error", "error_class": "temporarily_unavailable" }
+    },
+    {
+      "id": "provider.exchange_code.oversized_body_is_bounded",
+      "operation": "exchange_code",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_status": 200,
+        "token_body_padding_bytes": 2000000
+      },
+      "request": {
+        "code": "upstream-code",
+        "upstream_client_id": "facade-client",
+        "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+        "code_verifier": "facade-verifier"
+      },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
+    },
+    {
+      "id": "provider.exchange_code.missing_access_token_fails_closed",
+      "operation": "exchange_code",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_status": 200,
+        "token_body": { "token_type": "Bearer", "expires_in": 900 }
+      },
+      "request": {
+        "code": "upstream-code",
+        "upstream_client_id": "facade-client",
+        "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+        "code_verifier": "facade-verifier"
+      },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
+    },
+    {
+      "id": "provider.refresh.success_rotates_and_presents_owning_client",
+      "operation": "refresh",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_status": 200,
+        "token_body": {
+          "access_token": "rotated-access-token",
+          "token_type": "Bearer",
+          "expires_in": 900,
+          "scope": "mcp:tools",
+          "refresh_token": "rotated-refresh-token"
+        }
+      },
+      "request": { "refresh_material": "upstream-refresh-token", "upstream_client_id": "facade-client" },
+      "expect": {
+        "outcome": "ok",
+        "access_token": "rotated-access-token",
+        "refresh_token": "rotated-refresh-token",
+        "upstream_client_id": "facade-client"
+      }
+    },
+    {
+      "id": "provider.refresh.invalid_grant_is_terminal",
+      "operation": "refresh",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_status": 400,
+        "token_body": { "error": "invalid_grant" }
+      },
+      "request": { "refresh_material": "upstream-refresh-token", "upstream_client_id": "facade-client" },
+      "expect": { "outcome": "error", "error_class": "invalid_grant" }
+    },
+    {
+      "id": "provider.refresh.reauth_required_is_terminal",
+      "operation": "refresh",
+      "upstream": {
+        "issuer": "https://auth.example.test",
+        "discovery_issuer": "https://auth.example.test",
+        "token_status": 400,
+        "token_body": { "error": "reauth_required" }
+      },
+      "request": { "refresh_material": "upstream-refresh-token", "upstream_client_id": "facade-client" },
+      "expect": { "outcome": "error", "error_class": "reauth_required" }
+    },
+    {
+      "id": "provider.refresh.missing_material_fails_closed",
+      "operation": "refresh",
+      "upstream": { "issuer": "https://auth.example.test", "discovery_issuer": "https://auth.example.test" },
+      "request": { "refresh_material": "", "upstream_client_id": "facade-client" },
+      "expect": { "outcome": "error", "error_class": "invalid_request" }
+    },
+    {
+      "id": "provider.validate_access_token.success",
+      "operation": "validate_access_token",
+      "upstream": { "issuer": "https://auth.example.test", "discovery_issuer": "https://auth.example.test" },
+      "token": {
+        "iss": "https://auth.example.test",
+        "aud": "https://mcp.example.test/mcp",
+        "azp": "facade-client",
+        "sub": "user-1",
+        "scope": "mcp:tools",
+        "expires_in": 900
+      },
+      "expectations": {
+        "expected_issuer": "https://auth.example.test",
+        "expected_audience": "https://mcp.example.test/mcp",
+        "required_scopes": ["mcp:tools"]
+      },
+      "expect": {
+        "outcome": "ok",
+        "subject": "user-1",
+        "audience": "https://mcp.example.test/mcp",
+        "scopes": ["mcp:tools"],
+        "authorized_party": "facade-client"
+      }
+    },
+    {
+      "id": "provider.validate_access_token.bad_signature_fails_closed",
+      "operation": "validate_access_token",
+      "upstream": { "issuer": "https://auth.example.test", "discovery_issuer": "https://auth.example.test" },
+      "token": {
+        "iss": "https://auth.example.test",
+        "aud": "https://mcp.example.test/mcp",
+        "azp": "facade-client",
+        "sub": "user-1",
+        "scope": "mcp:tools",
+        "expires_in": 900,
+        "tamper_signature": true
+      },
+      "expectations": {
+        "expected_issuer": "https://auth.example.test",
+        "expected_audience": "https://mcp.example.test/mcp",
+        "required_scopes": ["mcp:tools"]
+      },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
+    },
+    {
+      "id": "provider.validate_access_token.expired_fails_closed",
+      "operation": "validate_access_token",
+      "upstream": { "issuer": "https://auth.example.test", "discovery_issuer": "https://auth.example.test" },
+      "token": {
+        "iss": "https://auth.example.test",
+        "aud": "https://mcp.example.test/mcp",
+        "azp": "facade-client",
+        "sub": "user-1",
+        "scope": "mcp:tools",
+        "expires_in": -60
+      },
+      "expectations": {
+        "expected_issuer": "https://auth.example.test",
+        "expected_audience": "https://mcp.example.test/mcp",
+        "required_scopes": ["mcp:tools"]
+      },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
+    },
+    {
+      "id": "provider.validate_access_token.wrong_audience_fails_closed",
+      "operation": "validate_access_token",
+      "upstream": { "issuer": "https://auth.example.test", "discovery_issuer": "https://auth.example.test" },
+      "token": {
+        "iss": "https://auth.example.test",
+        "aud": "https://other.example.test/mcp",
+        "azp": "facade-client",
+        "sub": "user-1",
+        "scope": "mcp:tools",
+        "expires_in": 900
+      },
+      "expectations": {
+        "expected_issuer": "https://auth.example.test",
+        "expected_audience": "https://mcp.example.test/mcp",
+        "required_scopes": ["mcp:tools"]
+      },
+      "expect": { "outcome": "error", "error_class": "upstream_error" }
+    },
+    {
+      "id": "provider.neutrality.second_adapter_implements_the_same_spi",
+      "operation": "second_adapter",
+      "expect": { "outcome": "ok", "issuer": "https://second-provider.example.test" }
+    }
+  ]
+}
