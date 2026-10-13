@@ -441,7 +441,7 @@ def pkce_verify_s256(verifier: str, expected_challenge: str) -> bool:
 
 
 def _resolved_resource_metadata_url(opts: RequireBearerTokenOptions, ctx: Context | None) -> str:
-    if opts.resource_metadata_url_func is not None:
+    if opts.resource_metadata_url_func is not None and ctx is not None:
         try:
             return str(opts.resource_metadata_url_func(ctx) or "").strip()
         except Exception:  # noqa: BLE001
@@ -482,7 +482,7 @@ def _forbidden_response() -> Response:
 
 def _insufficient_scope_response(opts: RequireBearerTokenOptions, ctx: Context | None) -> Response:
     scopes: list[str] = []
-    if opts.required_scopes_func is not None:
+    if opts.required_scopes_func is not None and ctx is not None:
         try:
             scopes = [str(scope) for scope in opts.required_scopes_func(ctx) or []]
         except Exception:  # noqa: BLE001

@@ -119,8 +119,10 @@ def new_jwks_validator(options: JWKSValidatorOptions) -> BearerTokenClaimsValida
     issuer = canonicalize_issuer_url(options.issuer)
     if issuer is None:
         raise ValueError(f"{ERR_INVALID_URL}: issuer must be an absolute URL")
-    jwks_uri = _normalize_secure_url(options.jwks_uri) if str(options.jwks_uri or "").strip() else ""
-    discovery_url = _normalize_secure_url(options.discovery_url) if str(options.discovery_url or "").strip() else ""
+    jwks_uri = str(_normalize_secure_url(options.jwks_uri) or "") if str(options.jwks_uri or "").strip() else ""
+    discovery_url = (
+        str(_normalize_secure_url(options.discovery_url) or "") if str(options.discovery_url or "").strip() else ""
+    )
     if not jwks_uri and not discovery_url:
         raise ValueError(f"{ERR_INVALID_URL}: jwks_uri or discovery_url is required")
     if str(options.jwks_uri or "").strip() and not jwks_uri:
@@ -371,7 +373,7 @@ def _resolve_required_scopes(options: JWKSValidatorOptions, ctx: Context) -> lis
     configured = options.required_scopes
     if configured is None:
         return []
-    values = [configured] if isinstance(configured, str) else configured(ctx)
+    values = configured if isinstance(configured, list) else configured(ctx)
     return [str(scope).strip() for scope in values or [] if str(scope).strip()]
 
 
