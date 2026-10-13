@@ -198,9 +198,14 @@ for (const postureName of Object.keys(postureFixture.postures)) {
     assert.equal(server.transportPosture, postureName);
     const table = postureFixture.postures[postureName];
     assert.equal(
-      server.routeInventory.routes[0].authorizationRoutesAttached,
+      table.oauth_surface_attached,
       postureName !== "none-public",
-      `${postureName} OAuth surface attachment`,
+      `${postureName} posture table must agree that only none-public detaches the OAuth surface`,
+    );
+    assert.equal(
+      server.routeInventory.routes[0].authorizationRoutesAttached,
+      table.oauth_surface_attached,
+      `${postureName} OAuth surface attachment must match the posture table`,
     );
 
     const expected = expectedRouteAuthorizations(postureName, server);

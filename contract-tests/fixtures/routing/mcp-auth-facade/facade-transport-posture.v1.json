@@ -8,6 +8,7 @@
     "iam": {
       "transport_authorization_type": "AWS_IAM",
       "oauth_surface_authorization_type": "NONE",
+      "oauth_surface_attached": true,
       "runtime_validation_required": false,
       "requires": []
     },
@@ -18,12 +19,14 @@
         "audience": "non-empty static list"
       },
       "oauth_surface_authorization_type": "NONE",
+      "oauth_surface_attached": true,
       "runtime_validation_required": false,
       "requires": []
     },
     "runtime-bearer": {
       "transport_authorization_type": "NONE",
       "oauth_surface_authorization_type": "NONE",
+      "oauth_surface_attached": true,
       "runtime_validation_required": true,
       "requires": ["throttling", "origin_reachability", "denial_signal"],
       "notes": "Gateway authorizer is NONE, so every request reaches the runtime; the runtime must fail closed with 401 + RFC 9728 challenge. DD-1/DD-2/DD-3 in DEFENSE_IN_DEPTH.md are mandatory."
@@ -31,6 +34,7 @@
     "none-public": {
       "transport_authorization_type": "NONE",
       "oauth_surface_authorization_type": "NONE",
+      "oauth_surface_attached": false,
       "runtime_validation_required": false,
       "requires": ["throttling", "origin_reachability"],
       "explicit_only": true,

@@ -31,6 +31,7 @@ const facadeTransportPosturePath = "../../contract-tests/fixtures/routing/mcp-au
 type transportPostureFixtureRow struct {
 	TransportAuthorizationType    string   `json:"transport_authorization_type"`
 	OAuthSurfaceAuthorizationType string   `json:"oauth_surface_authorization_type"`
+	OAuthSurfaceAttached          bool     `json:"oauth_surface_attached"`
 	RuntimeValidationRequired     bool     `json:"runtime_validation_required"`
 	Requires                      []string `json:"requires"`
 }
@@ -1171,11 +1172,32 @@ func TestTransportPostureFixture(t *testing.T) {
 		string(TransportPostureRuntimeBearer): true,
 		string(TransportPostureNonePublic):    false,
 	}
+	// The OAuth surface attaches only when the posture is not none-public: the
+	// runtime registration follows this posture-derived inventory, so the
+	// fixture row is reachable and asserted, not cosmetic (ADV-1137-3).
+	expectedSurfaceAttached := map[string]bool{
+		string(TransportPostureIAM):           true,
+		string(TransportPostureJWT):           true,
+		string(TransportPostureRuntimeBearer): true,
+		string(TransportPostureNonePublic):    false,
+	}
 	require.Len(t, fixture.Postures, len(expectedRuntimeValidation))
 	for key, runtimeValidationRequired := range expectedRuntimeValidation {
 		row, ok := fixture.Postures[key]
 		require.Truef(t, ok, "transport posture fixture is missing the %q row", key)
 		require.Equalf(t, runtimeValidationRequired, row.RuntimeValidationRequired, "%s runtime_validation_required", key)
+		require.Equalf(t, expectedSurfaceAttached[key], row.OAuthSurfaceAttached, "%s oauth_surface_attached", key)
+
+		config := validConfig(URLModePublicBaseURL)
+		config.TransportPosture = TransportPosture(key)
+		if key == string(TransportPostureRuntimeBearer) {
+			config.RequireBearerToken = &oauth.RequireBearerTokenOptions{Validator: func(context.Context, string) error { return nil }}
+		}
+		inventory, err := RegisterMCPFacade(apptheory.New(apptheory.WithTier(apptheory.TierP0)), config)
+		require.NoErrorf(t, err, "%s registration", key)
+		for _, route := range inventory.Routes {
+			require.Equalf(t, row.OAuthSurfaceAttached, route.AuthorizationRoutesAttached, "%s runtime inventory must agree with the fixture", key)
+		}
 	}
 	for key := range fixture.Postures {
 		_, ok := expectedRuntimeValidation[key]
