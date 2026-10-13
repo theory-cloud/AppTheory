@@ -1026,7 +1026,7 @@ const PROTECTED_RESOURCE_PATH = "/.well-known/oauth-protected-resource/acme/mcp"
 
 test("registration rejections match the shared rejection rows", async () => {
   const rows = EXPECTATIONS.rejection_rows;
-  assert.equal(rows.length, 50);
+  assert.equal(rows.length, 51);
 
   for (const row of rows) {
     const mode = row.kind === "allowed_hostname" ? "request_host" : "public_base_url";
@@ -1040,6 +1040,14 @@ test("registration rejections match the shared rejection rows", async () => {
       // The registration endpoint option normalizes through the same
       // non-issuer rule, so a row pins the endpoint position itself.
       config.registrationEndpointURL = row.input;
+    } else if (row.kind === "scope") {
+      // A lone surrogate cannot be JSON text, so the row names the malformed
+      // code point and the runner builds the runtime's ill-formed value.
+      assert.equal(row.input_malformed, "lone_surrogate");
+      config.scopes = {
+        ...config.scopes,
+        namespace: [row.input_prefix + "\ud800" + row.input_suffix],
+      };
     } else {
       config.jwksURI = row.input;
       config.registrationEndpointURL = row.input;

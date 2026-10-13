@@ -927,6 +927,26 @@ function normalizeCapabilities(
 }
 
 /**
+ * True when the value holds an unpaired UTF-16 surrogate, i.e. a value that is
+ * not well-formed Unicode and cannot be encoded as well-formed UTF-8.
+ */
+function hasUnpairedSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) {
+        return true;
+      }
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Trims each value, rejects an empty value, de-duplicates preserving order, and
  * requires at least one value.
  */
@@ -937,6 +957,9 @@ function normalizeNonEmptyList(label: string, values: string[]): string[] {
     const value = String(raw ?? "").trim();
     if (value === "") {
       throw new Error(`${label} values cannot be empty`);
+    }
+    if (hasUnpairedSurrogate(value)) {
+      throw new Error(`${label} values must be well-formed Unicode`);
     }
     if (seen.has(value)) {
       continue;

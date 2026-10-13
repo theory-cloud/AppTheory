@@ -687,6 +687,10 @@ def _normalize_non_empty_list(label: str, values: list[str] | None) -> list[str]
         value = str(raw or "").strip()
         if value == "":
             raise ValueError(f"{label} values cannot be empty")
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as err:
+            raise ValueError(f"{label} values must be well-formed Unicode") from err
         if value in seen:
             continue
         seen.add(value)

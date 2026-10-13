@@ -105,7 +105,10 @@ type rejectionFixtureRow struct {
 	Accept *struct {
 		Value string `json:"value"`
 	} `json:"accept"`
-	Reject bool `json:"reject"`
+	Reject         bool   `json:"reject"`
+	InputPrefix    string `json:"input_prefix"`
+	InputSuffix    string `json:"input_suffix"`
+	InputMalformed string `json:"input_malformed"`
 }
 
 type rejectionFixtureFile struct {
@@ -365,7 +368,7 @@ func TestSharedFixturePinsRegistrationRejections(t *testing.T) {
 	require.NoError(t, err)
 	var fixtures rejectionFixtureFile
 	require.NoError(t, json.Unmarshal(contents, &fixtures))
-	require.Len(t, fixtures.RejectionRows, 50)
+	require.Len(t, fixtures.RejectionRows, 51)
 
 	for _, fixture := range fixtures.RejectionRows {
 		t.Run(fixture.Name, func(t *testing.T) {
@@ -385,6 +388,18 @@ func TestSharedFixturePinsRegistrationRejections(t *testing.T) {
 				app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
 				config := validConfig(URLModePublicBaseURL)
 				config.RegistrationEndpointURL = fixture.Input
+				_, registerErr := RegisterMCPFacade(app, config)
+				got, ok = "", registerErr == nil
+			case "scope":
+				// A lone surrogate cannot travel through JSON: Go's decoder
+				// replaces it with U+FFFD. The row names the malformed code
+				// point and the runner builds the runtime's ill-formed value —
+				// here the WTF-8 bytes of U+D800, which is not valid UTF-8.
+				require.Equal(t, "lone_surrogate", fixture.InputMalformed)
+				value := fixture.InputPrefix + string([]byte{0xED, 0xA0, 0x80}) + fixture.InputSuffix
+				app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+				config := validConfig(URLModePublicBaseURL)
+				config.Scopes[mcproutes.EndpointKindNamespace] = []string{value}
 				_, registerErr := RegisterMCPFacade(app, config)
 				got, ok = "", registerErr == nil
 			default:

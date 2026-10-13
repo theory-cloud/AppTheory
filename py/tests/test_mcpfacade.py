@@ -295,7 +295,7 @@ class McpFacadeMetadataDocumentTests(unittest.TestCase):
 
     def test_registration_rejections_match_the_shared_rejection_rows(self) -> None:
         rows = json.loads(_EXPECTATIONS_PATH.read_text(encoding="utf-8"))["rejection_rows"]
-        self.assertEqual(50, len(rows))
+        self.assertEqual(51, len(rows))
 
         for row in rows:
             with self.subTest(name=row["name"]):
@@ -309,6 +309,12 @@ class McpFacadeMetadataDocumentTests(unittest.TestCase):
                     # The registration endpoint option normalizes through the
                     # same non-issuer rule, so a row pins the endpoint itself.
                     config.registration_endpoint_url = row["input"]
+                elif row["kind"] == "scope":
+                    # A lone surrogate cannot be JSON text, so the row names the
+                    # malformed code point and the runner builds the ill-formed value.
+                    self.assertEqual("lone_surrogate", row["input_malformed"])
+                    config.scopes = dict(config.scopes)
+                    config.scopes["namespace"] = [row["input_prefix"] + "\ud800" + row["input_suffix"]]
                 else:
                     config.jwks_uri = row["input"]
                     config.registration_endpoint_url = row["input"]

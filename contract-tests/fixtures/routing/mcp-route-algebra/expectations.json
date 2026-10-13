@@ -1180,7 +1180,8 @@
     {"name": "jwks keeps a malformed query key escape", "kind": "jwks", "input": "https://example.com/jwks.json?%zz=1", "accept": {"value": "https://example.com/jwks.json?%zz=1"}},
     {"name": "issuer rejects an empty-userinfo authority", "kind": "issuer", "input": "https://@example.com/x", "reject": true},
     {"name": "jwks rejects an empty-userinfo authority", "kind": "jwks", "input": "https://@example.com/jwks.json", "reject": true},
-    {"name": "registration endpoint rejects an empty-userinfo authority", "kind": "registration", "input": "https://@example.com/register", "reject": true}
+    {"name": "registration endpoint rejects an empty-userinfo authority", "kind": "registration", "input": "https://@example.com/register", "reject": true},
+    {"name": "scope rejects a lone surrogate", "kind": "scope", "input_prefix": "scope", "input_suffix": "end", "input_malformed": "lone_surrogate", "reject": true}
   ],
   "request_host_allowlist": [
     {"name": "request host accepts a literal non-ascii allowed hostname", "allowed_hostnames": ["caf\u00e9.example"], "request_host": "caf\u00e9.example", "expect_status": 200, "expect_resource": "https://caf%C3%A9.example/acme/mcp"},
