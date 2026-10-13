@@ -132,3 +132,6 @@ py/src/apptheory/middleware.py|timeout_middleware.mw[#1]|joined: the deadline pa
 # shuts the server down and joins that thread before returning, so the loop
 # cannot outlive the server a test owns.
 py/src/apptheory/oauth/fake_provider.py|FakeUpstreamProvider.start[#1]|joined: stop() shuts the server down and joins the serve thread before it returns
+# The store conformance runner builds its worker threads in a comprehension and
+# then starts and joins every one of them before it returns the results.
+py/src/apptheory/oauth/store.py|_run_concurrently[#1]|joined: every thread the comprehension builds is started and joined before the function returns

@@ -515,9 +515,7 @@ def _run_concurrently(worker: Any, concurrency: int) -> list[Any]:
         start.wait()
         results[index] = worker(index)
 
-    threads: list[threading.Thread] = []
-    for index in range(concurrency):
-        threads.append(threading.Thread(target=run, args=(index,)))
+    threads = [threading.Thread(target=run, args=(index,)) for index in range(concurrency)]
     for thread in threads:
         thread.start()
     for thread in threads:
