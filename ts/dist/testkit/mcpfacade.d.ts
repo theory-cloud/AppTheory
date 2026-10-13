@@ -21,6 +21,14 @@ export declare function countingTransportHandler(): CountingTransportHandler;
  */
 export declare function assertCredentialFreeTransportDenied(app: App, method: string, path: string, resourceMetadataURL: string, handler: CountingTransportHandler): Promise<void>;
 /**
+ * Drives a request carrying a token the route scope map rejects to method path
+ * and asserts the RFC 6750 insufficient_scope denial: HTTP 403, the exact
+ * WWW-Authenticate challenge for the remediation scopes and
+ * resourceMetadataURL, the `app.insufficient_scope` body error code, and no
+ * invocation of the application handler.
+ */
+export declare function assertInsufficientScopeTransportDenied(app: App, method: string, path: string, token: string, resourceMetadataURL: string, scopes: string[], handler: CountingTransportHandler): Promise<void>;
+/**
  * The positive control for {@link assertCredentialFreeTransportDenied}: a
  * request carrying token reaches the handler exactly once, proving the denial
  * is not "always deny".

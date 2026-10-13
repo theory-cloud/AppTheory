@@ -205,6 +205,7 @@ export interface AppTheoryMcpServerFacadeRoute {
   readonly discoverySuffixPattern: string;
   readonly authorizePattern: string;
   readonly tokenPattern: string;
+  readonly registerPattern: string;
   readonly authorizationRoutesAttached: boolean;
 }
 
@@ -214,6 +215,7 @@ export interface AppTheoryMcpServerRouteInventory {
   readonly routes: AppTheoryMcpServerFacadeRoute[];
   readonly rootAuthorizationServerPattern: string;
   readonly rootAuthorizationServerAttached: boolean;
+  readonly callbackPattern: string;
 }
 
 /** Props for the AppTheoryMcpServer construct. */
@@ -539,7 +541,17 @@ export class AppTheoryMcpServer extends Construct {
         this.addRuntimeRoute(route.discoverySuffixPattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
         this.addRuntimeRoute(route.authorizePattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
         this.addRuntimeRoute(route.tokenPattern, apigwv2.HttpMethod.POST, integration, runtimeOwnedAuth);
+        this.addRuntimeRoute(route.registerPattern, apigwv2.HttpMethod.POST, integration, runtimeOwnedAuth);
       }
+    }
+    // The upstream callback is stage-global, not per kind: wire it exactly once.
+    if (authorizationRoutesAttached) {
+      this.addRuntimeRoute(
+        this.routeInventory.callbackPattern,
+        apigwv2.HttpMethod.GET,
+        integration,
+        runtimeOwnedAuth,
+      );
     }
     if (this.routeInventory.rootAuthorizationServerAttached) {
       this.addRuntimeRoute(
@@ -770,11 +782,14 @@ function buildRouteInventory(
         AppTheoryMcpRouteAlgebra.authorizationAuthorizePathForResourcePath(mcpPattern),
       tokenPattern:
         AppTheoryMcpRouteAlgebra.authorizationTokenPathForResourcePath(mcpPattern),
+      registerPattern:
+        AppTheoryMcpRouteAlgebra.authorizationRegisterPathForResourcePath(mcpPattern),
       authorizationRoutesAttached,
     })),
     rootAuthorizationServerPattern:
       AppTheoryMcpRouteAlgebra.authorizationServerPathForResourcePath("/"),
     rootAuthorizationServerAttached,
+    callbackPattern: AppTheoryMcpRouteAlgebra.DEFAULT_CALLBACK_PATH,
   };
 }
 
@@ -798,7 +813,11 @@ function validateRouteInventory(
       add("GET", route.discoverySuffixPattern);
       add("GET", route.authorizePattern);
       add("POST", route.tokenPattern);
+      add("POST", route.registerPattern);
     }
+  }
+  if (authorizationRoutesAttached) {
+    add("GET", inventory.callbackPattern);
   }
   if (inventory.rootAuthorizationServerAttached) {
     add("GET", inventory.rootAuthorizationServerPattern);

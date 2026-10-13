@@ -1,6 +1,6 @@
 {
   "contract": {
-    "version": "m17.mcp-route-algebra/v1",
+    "version": "m17.mcp-route-algebra/v2",
     "ascii_trim_code_points": [
       "U+0009",
       "U+000A",
@@ -47,6 +47,7 @@
         "authorization_server_path": "/.well-known/oauth-authorization-server/{client_namespace}/mcp",
         "authorize_path": "/.well-known/oauth-authorization-server/{client_namespace}/mcp/authorize",
         "token_path": "/.well-known/oauth-authorization-server/{client_namespace}/mcp/token",
+        "register_path": "/.well-known/oauth-authorization-server/{client_namespace}/mcp/register",
         "authorization_server_suffix_path": "/{client_namespace}/mcp/.well-known/oauth-authorization-server"
       },
       {
@@ -56,6 +57,7 @@
         "authorization_server_path": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp",
         "authorize_path": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/authorize",
         "token_path": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/token",
+        "register_path": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/register",
         "authorization_server_suffix_path": "/{client_namespace}/partners/{partner_id}/mcp/.well-known/oauth-authorization-server"
       },
       {
@@ -65,6 +67,7 @@
         "authorization_server_path": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp",
         "authorize_path": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/authorize",
         "token_path": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/token",
+        "register_path": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/register",
         "authorization_server_suffix_path": "/{client_namespace}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server"
       },
       {
@@ -74,6 +77,7 @@
         "authorization_server_path": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
         "authorize_path": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/authorize",
         "token_path": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/token",
+        "register_path": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/register",
         "authorization_server_suffix_path": "/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server"
       }
     ]
@@ -129,6 +133,7 @@
       "authorization_server_path": "/.well-known/oauth-authorization-server",
       "authorize_path": "/.well-known/oauth-authorization-server/authorize",
       "token_path": "/.well-known/oauth-authorization-server/token",
+      "register_path": "/.well-known/oauth-authorization-server/register",
       "authorization_server_suffix_path": "/.well-known/oauth-authorization-server"
     },
     {
@@ -139,6 +144,7 @@
       "authorization_server_path": "/.well-known/oauth-authorization-server/acme/mcp",
       "authorize_path": "/.well-known/oauth-authorization-server/acme/mcp/authorize",
       "token_path": "/.well-known/oauth-authorization-server/acme/mcp/token",
+      "register_path": "/.well-known/oauth-authorization-server/acme/mcp/register",
       "authorization_server_suffix_path": "/acme/mcp/.well-known/oauth-authorization-server"
     },
     {
@@ -149,6 +155,7 @@
       "authorization_server_path": "/.well-known/oauth-authorization-server/acme/partners/pay/agents/bot/mcp",
       "authorize_path": "/.well-known/oauth-authorization-server/acme/partners/pay/agents/bot/mcp/authorize",
       "token_path": "/.well-known/oauth-authorization-server/acme/partners/pay/agents/bot/mcp/token",
+      "register_path": "/.well-known/oauth-authorization-server/acme/partners/pay/agents/bot/mcp/register",
       "authorization_server_suffix_path": "/acme/partners/pay/agents/bot/mcp/.well-known/oauth-authorization-server"
     }
   ],
@@ -862,6 +869,7 @@
       "authorization_server_path": "/.well-known/oauth-authorization-server/acme/mcp",
       "authorize_path": "/.well-known/oauth-authorization-server/acme/mcp/authorize",
       "token_path": "/.well-known/oauth-authorization-server/acme/mcp/token",
+      "register_path": "/.well-known/oauth-authorization-server/acme/mcp/register",
       "authorization_server_suffix_path": "/acme/mcp/.well-known/oauth-authorization-server"
     },
     {
@@ -875,6 +883,7 @@
       "authorization_server_path": "/.well-known/oauth-authorization-server/acme/partners/pay/mcp",
       "authorize_path": "/.well-known/oauth-authorization-server/acme/partners/pay/mcp/authorize",
       "token_path": "/.well-known/oauth-authorization-server/acme/partners/pay/mcp/token",
+      "register_path": "/.well-known/oauth-authorization-server/acme/partners/pay/mcp/register",
       "authorization_server_suffix_path": "/acme/partners/pay/mcp/.well-known/oauth-authorization-server"
     },
     {
@@ -888,6 +897,7 @@
       "authorization_server_path": "/.well-known/oauth-authorization-server/acme/agents/bot/mcp",
       "authorize_path": "/.well-known/oauth-authorization-server/acme/agents/bot/mcp/authorize",
       "token_path": "/.well-known/oauth-authorization-server/acme/agents/bot/mcp/token",
+      "register_path": "/.well-known/oauth-authorization-server/acme/agents/bot/mcp/register",
       "authorization_server_suffix_path": "/acme/agents/bot/mcp/.well-known/oauth-authorization-server"
     },
     {
@@ -902,6 +912,7 @@
       "authorization_server_path": "/.well-known/oauth-authorization-server/acme/partners/pay/agents/bot/mcp",
       "authorize_path": "/.well-known/oauth-authorization-server/acme/partners/pay/agents/bot/mcp/authorize",
       "token_path": "/.well-known/oauth-authorization-server/acme/partners/pay/agents/bot/mcp/token",
+      "register_path": "/.well-known/oauth-authorization-server/acme/partners/pay/agents/bot/mcp/register",
       "authorization_server_suffix_path": "/acme/partners/pay/agents/bot/mcp/.well-known/oauth-authorization-server"
     }
   ],
@@ -986,5 +997,45 @@
       "protected_resource_document": "{\"resource\":\"https://direct.example.com/acme/partners/reseller/agents/helper/mcp\",\"authorization_servers\":[\"https://issuer.example.com\"],\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"scopes_supported\":[\"partner_agent:use\"]}",
       "authorization_server_document": "{\"issuer\":\"https://issuer.example.com\",\"authorization_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp/authorize\",\"token_endpoint\":\"https://direct.example.com/.well-known/oauth-authorization-server/acme/partners/reseller/agents/helper/mcp/token\",\"registration_endpoint\":\"https://issuer.example.com/register\",\"jwks_uri\":\"https://issuer.example.com/jwks.json?set=active\",\"response_types_supported\":[\"code\"],\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"scopes_supported\":[\"partner_agent:use\"]}"
     }
-  ]
+    ],
+  "stage_global": [
+    {
+      "name": "upstream_callback",
+      "pattern": "/_oauth/mcp/callback",
+      "methods": [
+        "GET"
+      ]
+    }
+  ],
+  "issuer_modes": [
+    "family",
+    "route"
+  ],
+  "callback_path": {
+    "default": "/_oauth/mcp/callback",
+    "accept": [
+      {
+        "configured": "",
+        "expected": "/_oauth/mcp/callback"
+      },
+      {
+        "configured": "  /_oauth/mcp/callback  ",
+        "expected": "/_oauth/mcp/callback"
+      },
+      {
+        "configured": "/custom/cb",
+        "expected": "/custom/cb"
+      },
+      {
+        "configured": "/custom/cb/",
+        "expected": "/custom/cb"
+      }
+    ],
+    "reject": [
+      "callback",
+      "?query",
+      "/cb#frag",
+      "/a/../b"
+    ]
+  }
 }

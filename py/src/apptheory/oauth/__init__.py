@@ -158,6 +158,8 @@ class BearerTokenValidationOptions:
     required_audience: str = ""
     required_scopes: list[str] = dataclasses.field(default_factory=list)
     now: Callable[[], datetime] | None = None
+    required_audience_func: Callable[[Context], str] | None = None
+    required_scopes_func: Callable[[Context], list[str]] | None = None
 
 
 BearerTokenValidator = Callable[[Context, str], None]
@@ -169,6 +171,8 @@ class RequireBearerTokenOptions:
     resource_metadata_url: str = ""
     validator: BearerTokenValidator | None = None
     claims_validator: BearerTokenClaimsValidator | None = None
+    resource_metadata_url_func: Callable[[Context], str] | None = None
+    required_scopes_func: Callable[[Context], list[str]] | None = None
 
 
 def new_protected_resource_metadata(resource: str, authorization_servers: list[str]) -> ProtectedResourceMetadata:
@@ -245,6 +249,17 @@ def protected_resource_www_authenticate(resource_metadata_url: str) -> str:
     return f'Bearer resource_metadata="{escaped}"'
 
 
+def insufficient_scope_www_authenticate(scopes: list[str], resource_metadata_url: str = "") -> str:
+    normalized = [str(scope or "").strip() for scope in scopes or [] if str(scope or "").strip()]
+    parts = ['Bearer error="insufficient_scope"']
+    if normalized:
+        parts.append(f"scope={_quote_challenge_value(' '.join(normalized))}")
+    url = str(resource_metadata_url or "").strip()
+    if url:
+        parts.append(f"resource_metadata={_quote_challenge_value(url)}")
+    return ", ".join(parts)
+
+
 def rfc9728_resource_metadata_url(resource_url: str) -> str | None:
     parsed = urlparse(str(resource_url or "").strip())
     if not parsed.scheme or not parsed.netloc:
@@ -258,6 +273,14 @@ def resource_metadata_url_from_mcp_endpoint(mcp_endpoint: str) -> str | None:
 
 def canonical_resource_url(raw: str) -> str:
     return str(raw or "").strip().rstrip("/")
+
+
+def resource_indicator_matches(expected: str, requested: str) -> bool:
+    expected_canonical = canonical_resource_url(expected)
+    requested_canonical = canonical_resource_url(requested)
+    if not expected_canonical or not requested_canonical:
+        return False
+    return expected_canonical == requested_canonical
 
 
 def canonicalize_issuer_url(raw: str) -> str | None:
@@ -289,12 +312,12 @@ def require_bearer_token_middleware(options: RequireBearerTokenOptions | None = 
                 ctx.set(CONTEXT_KEY_BEARER_CLAIMS, _clone_claims(claims))
                 return next_handler(ctx)
             if opts.validator is None:
-                return _unauthorized_response(opts)
+                return _unauthorized_response(opts, ctx)
             opts.validator(ctx, token)
             ctx.set(CONTEXT_KEY_BEARER_TOKEN, token)
             return next_handler(ctx)
         except Exception as exc:  # noqa: BLE001
-            return _bearer_error_response(opts, exc)
+            return _bearer_error_response(opts, exc, ctx)
 
     return middleware
 
@@ -317,10 +340,10 @@ def new_memory_bearer_token_validator(
             expires_at=record.expires_at,
         )
     required_audience = str(opts.required_audience or "").strip()
-    required_scopes = [str(scope or "").strip() for scope in opts.required_scopes or [] if str(scope or "").strip()]
+    required_scopes = _normalize_scopes(opts.required_scopes)
     now = opts.now or (lambda: datetime.now(UTC))
 
-    def validate(_ctx: Context, token: str) -> BearerTokenClaims:
+    def validate(ctx: Context, token: str) -> BearerTokenClaims:
         claims = by_token.get(str(token or "").strip())
         if claims is None:
             raise OAuthBearerError(ERR_INVALID_BEARER_TOKEN)
@@ -332,9 +355,15 @@ def new_memory_bearer_token_validator(
             exp = expires_at if expires_at.tzinfo is not None else expires_at.replace(tzinfo=UTC)
             if current >= exp:
                 raise OAuthBearerError(ERR_BEARER_TOKEN_EXPIRED)
-        if required_audience and claims.audience != required_audience:
+        audience = required_audience
+        if opts.required_audience_func is not None:
+            audience = str(opts.required_audience_func(ctx) or "").strip()
+        if audience and claims.audience != audience:
             raise OAuthBearerError(ERR_BEARER_TOKEN_INVALID_AUDIENCE)
-        if _missing_scopes(claims.scopes, required_scopes):
+        scopes = required_scopes
+        if opts.required_scopes_func is not None:
+            scopes = _normalize_scopes(opts.required_scopes_func(ctx))
+        if _missing_scopes(claims.scopes, scopes):
             raise OAuthBearerError(ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE)
         return _clone_claims(claims)
 
@@ -411,8 +440,17 @@ def pkce_verify_s256(verifier: str, expected_challenge: str) -> bool:
     return pkce_challenge_s256(verifier) == str(expected_challenge or "")
 
 
-def _unauthorized_response(opts: RequireBearerTokenOptions) -> Response:
-    metadata_url = str(opts.resource_metadata_url or "").strip()
+def _resolved_resource_metadata_url(opts: RequireBearerTokenOptions, ctx: Context | None) -> str:
+    if opts.resource_metadata_url_func is not None and ctx is not None:
+        try:
+            return str(opts.resource_metadata_url_func(ctx) or "").strip()
+        except Exception:  # noqa: BLE001
+            return ""
+    return str(opts.resource_metadata_url or "").strip()
+
+
+def _unauthorized_response(opts: RequireBearerTokenOptions, ctx: Context | None = None) -> Response:
+    metadata_url = _resolved_resource_metadata_url(opts, ctx)
     headers = {
         "content-type": ["application/json; charset=utf-8"],
         "www-authenticate": [protected_resource_www_authenticate(metadata_url) if metadata_url else "Bearer"],
@@ -442,13 +480,37 @@ def _forbidden_response() -> Response:
     )
 
 
-def _bearer_error_response(opts: RequireBearerTokenOptions, exc: Exception) -> Response:
-    if isinstance(exc, OAuthBearerError) and exc.oauth_code in {
-        ERR_BEARER_TOKEN_INVALID_AUDIENCE,
-        ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE,
-    }:
-        return _forbidden_response()
-    return _unauthorized_response(opts)
+def _insufficient_scope_response(opts: RequireBearerTokenOptions, ctx: Context | None) -> Response:
+    scopes: list[str] = []
+    if opts.required_scopes_func is not None and ctx is not None:
+        try:
+            scopes = [str(scope) for scope in opts.required_scopes_func(ctx) or []]
+        except Exception:  # noqa: BLE001
+            scopes = []
+    headers = {
+        "content-type": ["application/json; charset=utf-8"],
+        "www-authenticate": [insufficient_scope_www_authenticate(scopes, _resolved_resource_metadata_url(opts, ctx))],
+    }
+    body = jsonlib.dumps(
+        {"error": {"code": "app.insufficient_scope", "message": "insufficient scope"}},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return Response(
+        status=403,
+        headers=headers,
+        cookies=[],
+        body=body,
+        is_base64=False,
+    )
+
+
+def _bearer_error_response(opts: RequireBearerTokenOptions, exc: Exception, ctx: Context | None = None) -> Response:
+    if isinstance(exc, OAuthBearerError):
+        if exc.oauth_code == ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE:
+            return _insufficient_scope_response(opts, ctx)
+        if exc.oauth_code == ERR_BEARER_TOKEN_INVALID_AUDIENCE:
+            return _forbidden_response()
+    return _unauthorized_response(opts, ctx)
 
 
 def _first_header(headers: dict[str, Any] | None, name: str) -> str:
@@ -472,6 +534,15 @@ def _clone_claims(claims: BearerTokenClaims) -> BearerTokenClaims:
 
 def _scope_fields(scope: str) -> list[str]:
     return [part.strip() for part in str(scope or "").split() if part.strip()]
+
+
+def _normalize_scopes(scopes: list[str] | None) -> list[str]:
+    return [str(scope or "").strip() for scope in scopes or [] if str(scope or "").strip()]
+
+
+def _quote_challenge_value(value: str) -> str:
+    escaped = str(value or "").replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 def _missing_scopes(got: list[str], required: list[str]) -> list[str]:
@@ -513,6 +584,12 @@ def _normalize_dcr_request(
     )
 
 
+from apptheory.oauth.jwks import (  # noqa: E402
+    JWKSValidatorOptions,
+    bootstrap_oidc_discovery,
+    new_jwks_validator,
+)
+
 __all__ = [
     "CONTEXT_KEY_BEARER_CLAIMS",
     "CONTEXT_KEY_BEARER_TOKEN",
@@ -532,16 +609,20 @@ __all__ = [
     "DynamicClientRegistrationPolicy",
     "DynamicClientRegistrationRequest",
     "DynamicClientRegistrationResponse",
+    "JWKSValidatorOptions",
     "OAuthBearerError",
     "ProtectedResourceMetadata",
     "RequireBearerTokenOptions",
     "authorization_server_metadata_handler",
     "bearer_token_claims_from_context",
     "bearer_token_from_headers",
+    "bootstrap_oidc_discovery",
     "canonical_resource_url",
     "canonicalize_issuer_url",
     "claude_dynamic_client_registration_policy",
+    "insufficient_scope_www_authenticate",
     "new_authorization_server_metadata",
+    "new_jwks_validator",
     "new_memory_bearer_token_validator",
     "new_pkce_code_verifier",
     "new_protected_resource_metadata",
@@ -550,6 +631,7 @@ __all__ = [
     "protected_resource_metadata_handler",
     "protected_resource_www_authenticate",
     "require_bearer_token_middleware",
+    "resource_indicator_matches",
     "resource_metadata_url_from_mcp_endpoint",
     "rfc9728_resource_metadata_url",
     "validate_dynamic_client_registration_request",

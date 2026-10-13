@@ -237,7 +237,7 @@
           "Ref": "McpServerApi22C3CCFE"
         },
         "AuthorizationType": "AWS_IAM",
-        "RouteKey": "DELETE /{client_namespace}/partners/{partner_id}/mcp",
+        "RouteKey": "GET /{client_namespace}/partners/{partner_id}/mcp",
         "Target": {
           "Fn::Join": [
             "",
@@ -294,8 +294,8 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
-        "RouteKey": "GET /.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/mcp",
+        "AuthorizationType": "AWS_IAM",
+        "RouteKey": "DELETE /{client_namespace}/partners/{partner_id}/mcp",
         "Target": {
           "Fn::Join": [
             "",
@@ -340,7 +340,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/mcp"
+              "/*/*/{client_namespace}/partners/{partner_id}/mcp"
             ]
           ]
         }
@@ -353,7 +353,7 @@
           "Ref": "McpServerApi22C3CCFE"
         },
         "AuthorizationType": "NONE",
-        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp",
+        "RouteKey": "GET /.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/mcp",
         "Target": {
           "Fn::Join": [
             "",
@@ -398,7 +398,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp"
+              "/*/*/.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/mcp"
             ]
           ]
         }
@@ -411,7 +411,7 @@
           "Ref": "McpServerApi22C3CCFE"
         },
         "AuthorizationType": "NONE",
-        "RouteKey": "GET /{client_namespace}/partners/{partner_id}/mcp/.well-known/oauth-authorization-server",
+        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp",
         "Target": {
           "Fn::Join": [
             "",
@@ -456,7 +456,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/{client_namespace}/partners/{partner_id}/mcp/.well-known/oauth-authorization-server"
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp"
             ]
           ]
         }
@@ -469,7 +469,7 @@
           "Ref": "McpServerApi22C3CCFE"
         },
         "AuthorizationType": "NONE",
-        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/authorize",
+        "RouteKey": "GET /{client_namespace}/partners/{partner_id}/mcp/.well-known/oauth-authorization-server",
         "Target": {
           "Fn::Join": [
             "",
@@ -514,7 +514,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/authorize"
+              "/*/*/{client_namespace}/partners/{partner_id}/mcp/.well-known/oauth-authorization-server"
             ]
           ]
         }
@@ -527,7 +527,7 @@
           "Ref": "McpServerApi22C3CCFE"
         },
         "AuthorizationType": "NONE",
-        "RouteKey": "POST /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/token",
+        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/authorize",
         "Target": {
           "Fn::Join": [
             "",
@@ -572,7 +572,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/token"
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/authorize"
             ]
           ]
         }
@@ -584,8 +584,8 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "AWS_IAM",
-        "RouteKey": "POST /{client_namespace}/agents/{agent_id}/mcp",
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/token",
         "Target": {
           "Fn::Join": [
             "",
@@ -630,7 +630,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/{client_namespace}/agents/{agent_id}/mcp"
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/token"
             ]
           ]
         }
@@ -642,8 +642,8 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "AWS_IAM",
-        "RouteKey": "GET /{client_namespace}/agents/{agent_id}/mcp",
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/register",
         "Target": {
           "Fn::Join": [
             "",
@@ -688,7 +688,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/{client_namespace}/agents/{agent_id}/mcp"
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/register"
             ]
           ]
         }
@@ -701,7 +701,7 @@
           "Ref": "McpServerApi22C3CCFE"
         },
         "AuthorizationType": "AWS_IAM",
-        "RouteKey": "DELETE /{client_namespace}/agents/{agent_id}/mcp",
+        "RouteKey": "POST /{client_namespace}/agents/{agent_id}/mcp",
         "Target": {
           "Fn::Join": [
             "",
@@ -758,8 +758,8 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
-        "RouteKey": "GET /.well-known/oauth-protected-resource/{client_namespace}/agents/{agent_id}/mcp",
+        "AuthorizationType": "AWS_IAM",
+        "RouteKey": "GET /{client_namespace}/agents/{agent_id}/mcp",
         "Target": {
           "Fn::Join": [
             "",
@@ -804,7 +804,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/.well-known/oauth-protected-resource/{client_namespace}/agents/{agent_id}/mcp"
+              "/*/*/{client_namespace}/agents/{agent_id}/mcp"
             ]
           ]
         }
@@ -874,8 +874,8 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
-        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp",
+        "AuthorizationType": "AWS_IAM",
+        "RouteKey": "DELETE /{client_namespace}/agents/{agent_id}/mcp",
         "Target": {
           "Fn::Join": [
             "",
@@ -920,7 +920,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp"
+              "/*/*/{client_namespace}/agents/{agent_id}/mcp"
             ]
           ]
         }
@@ -933,7 +933,7 @@
           "Ref": "McpServerApi22C3CCFE"
         },
         "AuthorizationType": "NONE",
-        "RouteKey": "GET /{client_namespace}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server",
+        "RouteKey": "GET /.well-known/oauth-protected-resource/{client_namespace}/agents/{agent_id}/mcp",
         "Target": {
           "Fn::Join": [
             "",
@@ -978,7 +978,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/{client_namespace}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server"
+              "/*/*/.well-known/oauth-protected-resource/{client_namespace}/agents/{agent_id}/mcp"
             ]
           ]
         }
@@ -991,7 +991,7 @@
           "Ref": "McpServerApi22C3CCFE"
         },
         "AuthorizationType": "NONE",
-        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/authorize",
+        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp",
         "Target": {
           "Fn::Join": [
             "",
@@ -1036,7 +1036,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/authorize"
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp"
             ]
           ]
         }
@@ -1049,7 +1049,7 @@
           "Ref": "McpServerApi22C3CCFE"
         },
         "AuthorizationType": "NONE",
-        "RouteKey": "POST /.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/token",
+        "RouteKey": "GET /{client_namespace}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server",
         "Target": {
           "Fn::Join": [
             "",
@@ -1094,7 +1094,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/token"
+              "/*/*/{client_namespace}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server"
             ]
           ]
         }
@@ -1127,8 +1127,8 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "AWS_IAM",
-        "RouteKey": "POST /{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/authorize",
         "Target": {
           "Fn::Join": [
             "",
@@ -1173,7 +1173,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/authorize"
             ]
           ]
         }
@@ -1185,8 +1185,8 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "AWS_IAM",
-        "RouteKey": "GET /{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/token",
         "Target": {
           "Fn::Join": [
             "",
@@ -1231,7 +1231,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/token"
             ]
           ]
         }
@@ -1243,8 +1243,8 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "AWS_IAM",
-        "RouteKey": "DELETE /{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/register",
         "Target": {
           "Fn::Join": [
             "",
@@ -1289,7 +1289,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/register"
             ]
           ]
         }
@@ -1301,8 +1301,8 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
-        "RouteKey": "GET /.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+        "AuthorizationType": "AWS_IAM",
+        "RouteKey": "POST /{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
         "Target": {
           "Fn::Join": [
             "",
@@ -1347,7 +1347,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
+              "/*/*/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
             ]
           ]
         }
@@ -1359,8 +1359,8 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
-        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+        "AuthorizationType": "AWS_IAM",
+        "RouteKey": "GET /{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
         "Target": {
           "Fn::Join": [
             "",
@@ -1405,7 +1405,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
+              "/*/*/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
             ]
           ]
         }
@@ -1417,8 +1417,8 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "NONE",
-        "RouteKey": "GET /{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server",
+        "AuthorizationType": "AWS_IAM",
+        "RouteKey": "DELETE /{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
         "Target": {
           "Fn::Join": [
             "",
@@ -1463,7 +1463,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server"
+              "/*/*/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
             ]
           ]
         }
@@ -1513,7 +1513,7 @@
           "Ref": "McpServerApi22C3CCFE"
         },
         "AuthorizationType": "NONE",
-        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/authorize",
+        "RouteKey": "GET /.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
         "Target": {
           "Fn::Join": [
             "",
@@ -1558,7 +1558,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/authorize"
+              "/*/*/.well-known/oauth-protected-resource/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
             ]
           ]
         }
@@ -1571,7 +1571,7 @@
           "Ref": "McpServerApi22C3CCFE"
         },
         "AuthorizationType": "NONE",
-        "RouteKey": "POST /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/token",
+        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
         "Target": {
           "Fn::Join": [
             "",
@@ -1616,7 +1616,297 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute32F9157FF8": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute32McpHandlerPermission669661FF": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute33A79E9E33": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/authorize",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute33McpHandlerPermissionCF6264D1": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/authorize"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute347F1ED487": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/token",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute34McpHandlerPermission9FAA4C70": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
               "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/token"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute35FB2D5E07": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/register",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute35McpHandlerPermission19645585": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/register"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerRoute36CB48498B": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /_oauth/mcp/callback",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerRoute0McpHandler6B86F391"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerRoute36McpHandlerPermission6FFF1090": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/_oauth/mcp/callback"
             ]
           ]
         }
@@ -1918,8 +2208,8 @@
         "ApiId": {
           "Ref": "McpServerApi22C3CCFE"
         },
-        "AuthorizationType": "AWS_IAM",
-        "RouteKey": "POST /{client_namespace}/partners/{partner_id}/mcp",
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /.well-known/oauth-authorization-server/{client_namespace}/mcp/register",
         "Target": {
           "Fn::Join": [
             "",
@@ -1964,7 +2254,7 @@
               {
                 "Ref": "McpServerApi22C3CCFE"
               },
-              "/*/*/{client_namespace}/partners/{partner_id}/mcp"
+              "/*/*/.well-known/oauth-authorization-server/{client_namespace}/mcp/register"
             ]
           ]
         }
@@ -1977,7 +2267,7 @@
           "Ref": "McpServerApi22C3CCFE"
         },
         "AuthorizationType": "AWS_IAM",
-        "RouteKey": "GET /{client_namespace}/partners/{partner_id}/mcp",
+        "RouteKey": "POST /{client_namespace}/partners/{partner_id}/mcp",
         "Target": {
           "Fn::Join": [
             "",

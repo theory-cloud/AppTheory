@@ -84,6 +84,35 @@ export function protectedResourceWWWAuthenticate(resourceMetadataURL) {
     const escaped = value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
     return `Bearer resource_metadata="${escaped}"`;
 }
+/**
+ * Builds the RFC 6750 (RFC 9728-extended) insufficient_scope challenge
+ * carrying the route-derived remediation scope set. Order matches Go:
+ * `error`, then `scope` when non-empty, then `resource_metadata` when
+ * non-empty.
+ */
+export function insufficientScopeWWWAuthenticate(scopes, resourceMetadataURL) {
+    const normalized = (scopes ?? [])
+        .map((scope) => String(scope ?? "").trim())
+        .filter(Boolean);
+    const parts = ['Bearer error="insufficient_scope"'];
+    if (normalized.length > 0) {
+        parts.push(`scope=${quoteChallengeValue(normalized.join(" "))}`);
+    }
+    const url = String(resourceMetadataURL ?? "").trim();
+    if (url)
+        parts.push(`resource_metadata=${quoteChallengeValue(url)}`);
+    return parts.join(", ");
+}
+/**
+ * Reports whether two RFC 8707 resource indicators denote the same protected
+ * resource after canonicalization. An empty expected indicator never matches.
+ */
+export function resourceIndicatorMatches(expected, requested) {
+    const canonicalExpected = canonicalResourceURL(expected);
+    if (!canonicalExpected)
+        return false;
+    return canonicalExpected === canonicalResourceURL(requested);
+}
 export function rfc9728ResourceMetadataURL(resourceURL) {
     const url = absoluteURL(resourceURL);
     if (!url)
@@ -129,14 +158,14 @@ export function requireBearerTokenMiddleware(options = {}) {
                 return await next(ctx);
             }
             if (!options.validator) {
-                return unauthorizedResponse(ctx, options);
+                return await unauthorizedResponse(ctx, options);
             }
             await options.validator(ctx, token);
             ctx.set(CONTEXT_KEY_BEARER_TOKEN, token);
             return await next(ctx);
         }
         catch (err) {
-            return bearerErrorResponse(ctx, options, err);
+            return await bearerErrorResponse(ctx, options, err);
         }
     };
 }
@@ -159,21 +188,25 @@ export function newMemoryBearerTokenValidator(records, options = {}) {
             claims.expiresAt = new Date(record.expiresAt);
         byToken.set(token, claims);
     }
-    const requiredAudience = String(options.requiredAudience ?? "").trim();
-    const requiredScopes = (options.requiredScopes ?? [])
-        .map((scope) => String(scope ?? "").trim())
-        .filter(Boolean);
+    const audienceOption = options.requiredAudience;
+    const scopesOption = options.requiredScopes;
     const now = options.now ?? (() => new Date());
-    return (_ctx, token) => {
+    return async (ctx, token) => {
         const claims = byToken.get(String(token ?? "").trim());
         if (!claims)
             throw new OAuthBearerError(ERR_INVALID_BEARER_TOKEN);
         if (claims.expiresAt && now().getTime() >= claims.expiresAt.getTime()) {
             throw new OAuthBearerError(ERR_BEARER_TOKEN_EXPIRED);
         }
+        const requiredAudience = typeof audienceOption === "function"
+            ? String((await audienceOption(ctx)) ?? "").trim()
+            : String(audienceOption ?? "").trim();
         if (requiredAudience && claims.audience !== requiredAudience) {
             throw new OAuthBearerError(ERR_BEARER_TOKEN_INVALID_AUDIENCE);
         }
+        const requiredScopes = typeof scopesOption === "function"
+            ? normalizeScopeList(await scopesOption(ctx))
+            : normalizeScopeList(scopesOption ?? []);
         if (missingScopes(claims.scopes ?? [], requiredScopes).length > 0) {
             throw new OAuthBearerError(ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE);
         }
@@ -249,8 +282,8 @@ export function pkceChallengeS256(verifier) {
 export function pkceVerifyS256(verifier, expectedChallenge) {
     return pkceChallengeS256(verifier) === String(expectedChallenge ?? "");
 }
-function unauthorizedResponse(_ctx, options) {
-    const metadataURL = String(options.resourceMetadataURL ?? "").trim();
+async function unauthorizedResponse(ctx, options) {
+    const metadataURL = await resolveResourceMetadataURL(ctx, options);
     const headers = {
         "content-type": ["application/json; charset=utf-8"],
     };
@@ -267,6 +300,26 @@ function unauthorizedResponse(_ctx, options) {
         isBase64: false,
     };
 }
+async function insufficientScopeResponse(ctx, options) {
+    const scopes = await resolveRequiredScopes(ctx, options.requiredScopes);
+    const metadataURL = await resolveResourceMetadataURL(ctx, options);
+    const headers = {
+        "content-type": ["application/json; charset=utf-8"],
+        "www-authenticate": [insufficientScopeWWWAuthenticate(scopes, metadataURL)],
+    };
+    return {
+        status: 403,
+        headers,
+        cookies: [],
+        body: Buffer.from(JSON.stringify({
+            error: {
+                code: "app.insufficient_scope",
+                message: "insufficient scope",
+            },
+        }), "utf8"),
+        isBase64: false,
+    };
+}
 function forbiddenResponse() {
     return {
         status: 403,
@@ -278,13 +331,54 @@ function forbiddenResponse() {
         isBase64: false,
     };
 }
-function bearerErrorResponse(ctx, options, err) {
-    if (err instanceof OAuthBearerError &&
-        (err.oauthCode === ERR_BEARER_TOKEN_INVALID_AUDIENCE ||
-            err.oauthCode === ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE)) {
-        return forbiddenResponse();
+async function bearerErrorResponse(ctx, options, err) {
+    if (err instanceof OAuthBearerError) {
+        if (err.oauthCode === ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE) {
+            return await insufficientScopeResponse(ctx, options);
+        }
+        if (err.oauthCode === ERR_BEARER_TOKEN_INVALID_AUDIENCE) {
+            return forbiddenResponse();
+        }
     }
-    return unauthorizedResponse(ctx, options);
+    return await unauthorizedResponse(ctx, options);
+}
+/**
+ * Resolves the RFC 9728 protected-resource metadata URL for a challenge. A
+ * route-derived resolver takes precedence; a resolver failure degrades to no
+ * challenge URL, matching the Go middleware.
+ */
+async function resolveResourceMetadataURL(ctx, options) {
+    const option = options.resourceMetadataURL;
+    if (typeof option === "function") {
+        try {
+            return String((await option(ctx)) ?? "").trim();
+        }
+        catch {
+            return "";
+        }
+    }
+    return String(option ?? "").trim();
+}
+/**
+ * Resolves the route-derived remediation scope set for a 403 challenge. A
+ * resolver failure degrades to an empty (omitted) scope set.
+ */
+async function resolveRequiredScopes(ctx, option) {
+    try {
+        if (typeof option === "function") {
+            return normalizeScopeList(await option(ctx));
+        }
+        return normalizeScopeList(option ?? []);
+    }
+    catch {
+        return [];
+    }
+}
+function quoteChallengeValue(value) {
+    const escaped = String(value ?? "")
+        .replaceAll("\\", "\\\\")
+        .replaceAll('"', '\\"');
+    return `"${escaped}"`;
 }
 function firstHeader(headers, name) {
     const key = String(name).trim().toLowerCase();
@@ -311,6 +405,11 @@ function scopeFields(scope) {
     return String(scope ?? "")
         .split(/\s+/u)
         .map((part) => part.trim())
+        .filter(Boolean);
+}
+function normalizeScopeList(scopes) {
+    return (scopes ?? [])
+        .map((scope) => String(scope ?? "").trim())
         .filter(Boolean);
 }
 function missingScopes(got, required) {
@@ -373,4 +472,5 @@ function trimLeadingAndTrailingSlashes(value) {
     }
     return value.slice(start, end);
 }
+export { bootstrapOidcDiscovery, newJwksValidator, } from "./jwks.js";
 //# sourceMappingURL=index.js.map

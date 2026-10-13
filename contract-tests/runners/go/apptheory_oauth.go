@@ -110,14 +110,18 @@ func newOAuthFixtureApp(setup FixtureOAuthSetup) (*apptheory.App, error) {
 	md.BearerMethodsSupported = []string{"header"}
 	app.Get(metadataPath, oauth.ProtectedResourceMetadataHandler(md))
 
+	routeScopes := func(*apptheory.Context) ([]string, error) {
+		return append([]string(nil), setup.RequiredScopes...), nil
+	}
 	validator := oauth.NewMemoryBearerTokenValidator(oauthTokenRecords(setup.BearerTokens), oauth.BearerTokenValidationOptions{
-		RequiredAudience: strings.TrimSpace(firstNonEmpty(setup.RequiredAudience, resource)),
-		RequiredScopes:   append([]string(nil), setup.RequiredScopes...),
-		Now:              func() time.Time { return clock },
+		RequiredAudience:   strings.TrimSpace(firstNonEmpty(setup.RequiredAudience, resource)),
+		RequiredScopesFunc: routeScopes,
+		Now:                func() time.Time { return clock },
 	})
 	protected := oauth.RequireBearerTokenMiddleware(oauth.RequireBearerTokenOptions{
 		ResourceMetadataURL: metadataURL,
 		ClaimsValidator:     validator,
+		RequiredScopesFunc:  routeScopes,
 	})(func(c *apptheory.Context) (*apptheory.Response, error) {
 		claims, _ := oauth.BearerTokenClaimsFromContext(c)
 		return apptheory.JSON(200, map[string]any{

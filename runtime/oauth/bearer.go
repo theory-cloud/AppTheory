@@ -1,7 +1,6 @@
 package oauth
 
 import (
-	"context"
 	"errors"
 	"os"
 	"strings"
@@ -18,13 +17,14 @@ const ContextKeyBearerClaims = "oauth.bearer_claims" //nolint:gosec // context k
 
 // BearerTokenValidator validates a Bearer access token.
 //
-// Implementations can perform JWT verification using a JWKS, introspection,
-// or any other mechanism suitable for the deployment.
-type BearerTokenValidator func(ctx context.Context, token string) error
+// The validator receives the route-aware AppTheory context, so a validator can
+// derive the expected issuer, audience, and scope set from the matched route
+// instead of a process-global value.
+type BearerTokenValidator func(ctx *apptheory.Context, token string) error
 
 // BearerTokenClaimsValidator validates a Bearer access token and returns safe,
 // non-secret claims for downstream handlers.
-type BearerTokenClaimsValidator func(ctx context.Context, token string) (*BearerTokenClaims, error)
+type BearerTokenClaimsValidator func(ctx *apptheory.Context, token string) (*BearerTokenClaims, error)
 
 // BearerTokenClaims is the deterministic, local claim shape AppTheory uses for
 // contract-pinned bearer validation. Token is intentionally not included so the
@@ -50,7 +50,14 @@ type BearerTokenRecord struct {
 type BearerTokenValidationOptions struct {
 	RequiredAudience string
 	RequiredScopes   []string
-	Now              func() time.Time
+	// RequiredAudienceFunc returns the route-derived audience the token must be
+	// bound to. When set it takes precedence over RequiredAudience, so audience
+	// can be the exact matched route URL.
+	RequiredAudienceFunc func(*apptheory.Context) (string, error)
+	// RequiredScopesFunc returns the route-derived scope set the token must
+	// carry. When set it takes precedence over RequiredScopes.
+	RequiredScopesFunc func(*apptheory.Context) ([]string, error)
+	Now                func() time.Time
 }
 
 // RequireBearerTokenOptions configures RequireBearerTokenMiddleware.
@@ -60,6 +67,12 @@ type RequireBearerTokenOptions struct {
 	// If empty, the middleware attempts to derive it from MCP_ENDPOINT only.
 	ResourceMetadataURL string
 
+	// ResourceMetadataURLFunc returns the route-derived protected-resource
+	// metadata URL for the matched route. When set it takes precedence over
+	// ResourceMetadataURL, so the challenge is route-derived rather than
+	// family-wide.
+	ResourceMetadataURLFunc func(*apptheory.Context) (string, error)
+
 	// Validator is called for every request. If it is omitted, or if it returns
 	// an error, the request is rejected with 401.
 	Validator BearerTokenValidator
@@ -68,6 +81,11 @@ type RequireBearerTokenOptions struct {
 	// unauthorized token failures from forbidden audience/scope failures and
 	// expose safe claims to downstream handlers.
 	ClaimsValidator BearerTokenClaimsValidator
+
+	// RequiredScopesFunc returns the route-derived scope set used to build the
+	// 403 insufficient_scope remediation challenge. It is consulted only when a
+	// validator reports ErrBearerTokenInsufficientScope.
+	RequiredScopesFunc func(*apptheory.Context) ([]string, error)
 }
 
 // RequireBearerTokenMiddleware enforces `Authorization: Bearer <token>` and,
@@ -81,7 +99,7 @@ func RequireBearerTokenMiddleware(opts RequireBearerTokenOptions) apptheory.Midd
 				return unauthorizedResponse(c, opts), nil
 			}
 			if opts.ClaimsValidator != nil {
-				claims, err := opts.ClaimsValidator(c.Context(), token)
+				claims, err := opts.ClaimsValidator(c, token)
 				if err != nil {
 					return bearerErrorResponse(c, opts, err), nil
 				}
@@ -94,7 +112,7 @@ func RequireBearerTokenMiddleware(opts RequireBearerTokenOptions) apptheory.Midd
 			if opts.Validator == nil {
 				return unauthorizedResponse(c, opts), nil
 			}
-			if err := opts.Validator(c.Context(), token); err != nil {
+			if err := opts.Validator(c, token); err != nil {
 				return bearerErrorResponse(c, opts, err), nil
 			}
 
@@ -130,7 +148,7 @@ func NewMemoryBearerTokenValidator(records []BearerTokenRecord, opts BearerToken
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return func(_ context.Context, token string) (*BearerTokenClaims, error) {
+	return func(ctx *apptheory.Context, token string) (*BearerTokenClaims, error) {
 		claims, ok := byToken[strings.TrimSpace(token)]
 		if !ok {
 			return nil, ErrInvalidBearerToken
@@ -138,10 +156,26 @@ func NewMemoryBearerTokenValidator(records []BearerTokenRecord, opts BearerToken
 		if !claims.ExpiresAt.IsZero() && !now().Before(claims.ExpiresAt) {
 			return nil, ErrBearerTokenExpired
 		}
-		if requiredAudience != "" && claims.Audience != requiredAudience {
+		audience := requiredAudience
+		if opts.RequiredAudienceFunc != nil {
+			derived, err := opts.RequiredAudienceFunc(ctx)
+			if err != nil {
+				return nil, err
+			}
+			audience = strings.TrimSpace(derived)
+		}
+		if audience != "" && claims.Audience != audience {
 			return nil, ErrBearerTokenInvalidAudience
 		}
-		if missing := missingScopes(claims.Scopes, requiredScopes); len(missing) > 0 {
+		required := requiredScopes
+		if opts.RequiredScopesFunc != nil {
+			derived, err := opts.RequiredScopesFunc(ctx)
+			if err != nil {
+				return nil, err
+			}
+			required = derived
+		}
+		if missing := missingScopes(claims.Scopes, required); len(missing) > 0 {
 			return nil, ErrBearerTokenInsufficientScope
 		}
 		out := claims
@@ -191,24 +225,66 @@ func BearerTokenFromHeaders(headers map[string][]string) (string, error) {
 	return token, nil
 }
 
-func unauthorizedResponse(c *apptheory.Context, opts RequireBearerTokenOptions) *apptheory.Response {
-	metaURL := strings.TrimSpace(opts.ResourceMetadataURL)
-	if metaURL == "" {
-		mcpEndpoint := os.Getenv("MCP_ENDPOINT")
-		if resolved, ok := resolveAbsoluteURLPathTemplate(mcpEndpoint, c.Request.Path, c.Params); ok {
-			mcpEndpoint = resolved
-		}
-		if derived, ok := ResourceMetadataURLFromMcpEndpoint(mcpEndpoint); ok {
-			metaURL = derived
+// InsufficientScopeWWWAuthenticate builds the RFC 6750 (RFC 9728-extended)
+// insufficient_scope challenge carrying the route-derived remediation scope set.
+func InsufficientScopeWWWAuthenticate(scopes []string, resourceMetadataURL string) string {
+	normalized := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		if scope = strings.TrimSpace(scope); scope != "" {
+			normalized = append(normalized, scope)
 		}
 	}
+	parts := []string{`Bearer error="insufficient_scope"`}
+	if len(normalized) > 0 {
+		parts = append(parts, "scope="+quoteChallengeValue(strings.Join(normalized, " ")))
+	}
+	if url := strings.TrimSpace(resourceMetadataURL); url != "" {
+		parts = append(parts, "resource_metadata="+quoteChallengeValue(url))
+	}
+	return strings.Join(parts, ", ")
+}
 
+func quoteChallengeValue(value string) string {
+	escaped := strings.ReplaceAll(value, "\\", "\\\\")
+	escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
+	return "\"" + escaped + "\""
+}
+
+// resolvedResourceMetadataURL returns the protected-resource metadata URL for
+// the challenge. A route-derived resolver takes precedence; otherwise the
+// static option is used, falling back to a derivation from MCP_ENDPOINT.
+func resolvedResourceMetadataURL(c *apptheory.Context, opts RequireBearerTokenOptions) string {
+	if opts.ResourceMetadataURLFunc != nil {
+		derived, err := opts.ResourceMetadataURLFunc(c)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(derived)
+	}
+	metaURL := strings.TrimSpace(opts.ResourceMetadataURL)
+	if metaURL != "" {
+		return metaURL
+	}
+	if c == nil {
+		return ""
+	}
+	mcpEndpoint := os.Getenv("MCP_ENDPOINT")
+	if resolved, ok := resolveAbsoluteURLPathTemplate(mcpEndpoint, c.Request.Path, c.Params); ok {
+		mcpEndpoint = resolved
+	}
+	if derived, ok := ResourceMetadataURLFromMcpEndpoint(mcpEndpoint); ok {
+		return derived
+	}
+	return ""
+}
+
+func unauthorizedResponse(c *apptheory.Context, opts RequireBearerTokenOptions) *apptheory.Response {
 	headers := map[string][]string{
 		"content-type": {"application/json; charset=utf-8"},
 	}
 	// Only include resource_metadata when we have a URL; it is required for
 	// MCP auth (2025-06-18) discovery, but callers can also provide it via opts.
-	if metaURL != "" {
+	if metaURL := resolvedResourceMetadataURL(c, opts); metaURL != "" {
 		headers["www-authenticate"] = []string{ProtectedResourceWWWAuthenticate(metaURL)}
 	} else {
 		headers["www-authenticate"] = []string{"Bearer"}
@@ -231,8 +307,34 @@ func forbiddenResponse() *apptheory.Response {
 	}
 }
 
+// insufficientScopeResponse is the RFC 6750 403 for a scope failure the server
+// actually observed, carrying the remediation scope set. An audience failure and
+// every other forbidden denial advertise neither an error code nor a scope set.
+func insufficientScopeResponse(c *apptheory.Context, opts RequireBearerTokenOptions) *apptheory.Response {
+	var scopes []string
+	if opts.RequiredScopesFunc != nil {
+		if derived, err := opts.RequiredScopesFunc(c); err == nil {
+			scopes = derived
+		}
+	}
+	headers := map[string][]string{
+		"content-type": {"application/json; charset=utf-8"},
+		"www-authenticate": {
+			InsufficientScopeWWWAuthenticate(scopes, resolvedResourceMetadataURL(c, opts)),
+		},
+	}
+	return &apptheory.Response{
+		Status:  403,
+		Headers: headers,
+		Body:    []byte(`{"error":{"code":"app.insufficient_scope","message":"insufficient scope"}}`),
+	}
+}
+
 func bearerErrorResponse(c *apptheory.Context, opts RequireBearerTokenOptions, err error) *apptheory.Response {
-	if errors.Is(err, ErrBearerTokenInvalidAudience) || errors.Is(err, ErrBearerTokenInsufficientScope) {
+	if errors.Is(err, ErrBearerTokenInsufficientScope) {
+		return insufficientScopeResponse(c, opts)
+	}
+	if errors.Is(err, ErrBearerTokenInvalidAudience) {
 		return forbiddenResponse()
 	}
 	return unauthorizedResponse(c, opts)

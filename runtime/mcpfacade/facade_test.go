@@ -31,6 +31,7 @@ const facadeTransportPosturePath = "../../contract-tests/fixtures/routing/mcp-au
 type transportPostureFixtureRow struct {
 	TransportAuthorizationType    string   `json:"transport_authorization_type"`
 	OAuthSurfaceAuthorizationType string   `json:"oauth_surface_authorization_type"`
+	OAuthSurfaceAttached          bool     `json:"oauth_surface_attached"`
 	RuntimeValidationRequired     bool     `json:"runtime_validation_required"`
 	Requires                      []string `json:"requires"`
 }
@@ -47,10 +48,12 @@ type facadeTransportPostureFixture struct {
 }
 
 type routeInventoryFixture struct {
-	ContractVersion                 string         `json:"contract_version"`
-	Routes                          []routeFixture `json:"routes"`
-	RootAuthorizationServerPattern  string         `json:"root_authorization_server_pattern"`
-	RootAuthorizationServerAttached bool           `json:"root_authorization_server_attached"`
+	ContractVersion                 string               `json:"contract_version"`
+	Routes                          []routeFixture       `json:"routes"`
+	RootAuthorizationServerPattern  string               `json:"root_authorization_server_pattern"`
+	RootAuthorizationServerAttached bool                 `json:"root_authorization_server_attached"`
+	CallbackPattern                 string               `json:"callback_pattern"`
+	IssuerMode                      mcproutes.IssuerMode `json:"issuer_mode"`
 }
 
 type routeFixture struct {
@@ -62,6 +65,7 @@ type routeFixture struct {
 	DiscoverySuffixPattern      string                 `json:"discovery_suffix_pattern"`
 	AuthorizePattern            string                 `json:"authorize_pattern"`
 	TokenPattern                string                 `json:"token_pattern"`
+	RegisterPattern             string                 `json:"register_pattern"`
 	AuthorizationRoutesAttached bool                   `json:"authorization_routes_attached"`
 }
 
@@ -86,13 +90,16 @@ func TestRegisterMCPFacadeRegistersCompleteContractSurface(t *testing.T) {
 	config := validConfig(URLModePublicBaseURL)
 	config.AuthorizeHandler = kindHandlerFactory("authorize")
 	config.TokenHandler = kindHandlerFactory("token")
-	// This test pins facade composition, so it selects the explicit public
-	// posture and keeps exercising the transport routes credential-free.
-	config.TransportPosture = TransportPostureNonePublic
+	config.RegisterHandler = kindHandlerFactory("register")
+	config.CallbackHandler = func(*apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.Text(200, "callback"), nil
+	}
 
 	inventory, err := RegisterMCPFacade(app, config)
 	require.NoError(t, err)
 	require.Equal(t, mcproutes.ContractVersion, inventory.ContractVersion)
+	require.Equal(t, mcproutes.IssuerModeFamily, inventory.IssuerMode)
+	require.Equal(t, mcproutes.DefaultCallbackPath, inventory.CallbackPattern)
 	require.Len(t, inventory.Routes, 4)
 
 	endpoints := mcproutes.SupportedEndpointTemplates()
@@ -107,9 +114,9 @@ func TestRegisterMCPFacadeRegistersCompleteContractSurface(t *testing.T) {
 		require.Equal(t, discovery[index].SuffixPattern, route.DiscoverySuffixPattern)
 		require.Equal(t, facades[index].AuthorizePattern, route.AuthorizePattern)
 		require.Equal(t, facades[index].TokenPattern, route.TokenPattern)
-		// The inventory field reports whether transport authorization is attached,
-		// so the explicit public posture clears it.
-		require.False(t, route.AuthorizationRoutesAttached)
+		require.Equal(t, facades[index].RegisterPattern, route.RegisterPattern)
+		// The default iam posture attaches the OAuth surface.
+		require.True(t, route.AuthorizationRoutesAttached)
 	}
 
 	// Literal spots keep this test independent of an accidentally reduced algebra enumeration.
@@ -140,7 +147,17 @@ func TestRegisterMCPFacadeRegistersCompleteContractSurface(t *testing.T) {
 		tokenResponse := serve(app, "POST", tokenPath, nil)
 		require.Equal(t, 200, tokenResponse.Status)
 		require.Equal(t, "token:"+string(endpoint.Kind), string(tokenResponse.Body))
+
+		registerPath := mustPath(t, endpoint.OAuthRegisterPath)
+		registerResponse := serve(app, "POST", registerPath, nil)
+		require.Equal(t, 200, registerResponse.Status)
+		require.Equal(t, "register:"+string(endpoint.Kind), string(registerResponse.Body))
 	}
+
+	// The callback is one stage-global route, not per kind.
+	callbackResponse := serve(app, "GET", mcproutes.DefaultCallbackPath, nil)
+	require.Equal(t, 200, callbackResponse.Status)
+	require.Equal(t, "callback", string(callbackResponse.Body))
 }
 
 func TestRegisterMCPFacadeInventoryMatchesSharedConstructFixture(t *testing.T) {
@@ -160,6 +177,8 @@ func TestRegisterMCPFacadeInventoryMatchesSharedConstructFixture(t *testing.T) {
 	require.Equal(t, fixture.ContractVersion, inventory.ContractVersion)
 	require.Equal(t, fixture.RootAuthorizationServerPattern, inventory.RootAuthorizationServerPattern)
 	require.Equal(t, fixture.RootAuthorizationServerAttached, inventory.RootAuthorizationServerAttached)
+	require.Equal(t, fixture.CallbackPattern, inventory.CallbackPattern)
+	require.Equal(t, fixture.IssuerMode, inventory.IssuerMode)
 	require.Len(t, inventory.Routes, len(fixture.Routes))
 	for index, expected := range fixture.Routes {
 		require.Equal(t, expected, routeFixture{
@@ -171,6 +190,7 @@ func TestRegisterMCPFacadeInventoryMatchesSharedConstructFixture(t *testing.T) {
 			DiscoverySuffixPattern:      inventory.Routes[index].DiscoverySuffixPattern,
 			AuthorizePattern:            inventory.Routes[index].AuthorizePattern,
 			TokenPattern:                inventory.Routes[index].TokenPattern,
+			RegisterPattern:             inventory.Routes[index].RegisterPattern,
 			AuthorizationRoutesAttached: inventory.Routes[index].AuthorizationRoutesAttached,
 		})
 	}
@@ -591,7 +611,7 @@ func TestInvalidDerivedInventoryFailsBeforeTargetRegistration(t *testing.T) {
 	t.Parallel()
 	normalized, err := normalizeConfig(validConfig(URLModePublicBaseURL))
 	require.NoError(t, err)
-	inventory, err := buildInventory(false, false)
+	inventory, err := buildInventory(normalized)
 	require.NoError(t, err)
 	inventory.Routes[1].MCPPattern = inventory.Routes[0].MCPPattern
 
@@ -673,10 +693,6 @@ func TestMalformedAndUnknownPathsFailClosed(t *testing.T) {
 	t.Parallel()
 	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
 	config := validConfig(URLModePublicBaseURL)
-	// Transport hardening would reject the malformed params before the handler
-	// runs, so select the public posture to keep asserting the handler-level
-	// fail-closed behavior.
-	config.TransportPosture = TransportPostureNonePublic
 	_, err := RegisterMCPFacade(app, config)
 	require.NoError(t, err)
 
@@ -828,7 +844,7 @@ func TestHelpersCanonicalizeURLsAndDefensivelyCloneInventory(t *testing.T) {
 	_, ok = absoluteURLForPath("https://example.com", "relative")
 	require.False(t, ok)
 
-	inventory, err := buildInventory(true, false)
+	inventory, err := buildInventory(normalizedConfig{transportPosture: TransportPostureIAM})
 	require.NoError(t, err)
 	cloned := cloneInventory(inventory)
 	cloned.Routes[0].MCPMethods[0] = "PATCH"
@@ -968,7 +984,7 @@ func TestTransportRoutesDelegateToApplicationPrincipalHook(t *testing.T) {
 	}
 }
 
-func TestNonePublicPosturePreservesTheExplicitPublicOptOut(t *testing.T) {
+func TestNonePublicPostureRegistersNoOAuthSurface(t *testing.T) {
 	t.Parallel()
 	app := apptheory.New()
 	reached := 0
@@ -990,9 +1006,71 @@ func TestNonePublicPosturePreservesTheExplicitPublicOptOut(t *testing.T) {
 	require.Equal(t, "mcp-ok", string(response.Body))
 	require.Equal(t, 1, reached)
 
-	// The public posture only relaxes transport; metadata and discovery stay public.
-	require.Equal(t, 200, serve(app, "GET", mustPath(t, testEndpoints[0].ProtectedResourcePath), nil).Status)
-	require.Equal(t, 200, serve(app, "GET", mustPath(t, testEndpoints[0].OAuthAuthorizationServerPath), nil).Status)
+	// The posture-derived inventory is authoritative: none-public attaches no
+	// OAuth surface, so metadata and discovery are not registered either. This is
+	// the one rule shared with the CDK construct's authorizationRoutesAttached.
+	require.Equal(t, 404, serve(app, "GET", mustPath(t, testEndpoints[0].ProtectedResourcePath), nil).Status)
+	require.Equal(t, 404, serve(app, "GET", mustPath(t, testEndpoints[0].OAuthAuthorizationServerPath), nil).Status)
+	require.Equal(t, 404, serve(app, "GET", mustPath(t, testEndpoints[0].OAuthAuthorizationServerSuffixPath), nil).Status)
+	require.Equal(t, 404, serve(app, "GET", mustPath(t, testEndpoints[0].OAuthAuthorizePath), nil).Status)
+	require.Equal(t, 404, serve(app, "POST", mustPath(t, testEndpoints[0].OAuthTokenPath), nil).Status)
+	require.Equal(t, 404, serve(app, "POST", mustPath(t, testEndpoints[0].OAuthRegisterPath), nil).Status)
+	require.Equal(t, 404, serve(app, "GET", mcproutes.DefaultCallbackPath, nil).Status)
+}
+
+func TestNonePublicPostureRejectsOAuthSurfaceConfiguration(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		mutate       func(*FacadeConfig)
+		errorMessage string
+	}{
+		{
+			name: "authorize and token handlers",
+			mutate: func(config *FacadeConfig) {
+				config.AuthorizeHandler = kindHandlerFactory("authorize")
+				config.TokenHandler = kindHandlerFactory("token")
+			},
+			errorMessage: "none-public registers no OAuth surface; authorize/token handlers",
+		},
+		{
+			name: "register handler",
+			mutate: func(config *FacadeConfig) {
+				config.RegisterHandler = kindHandlerFactory("register")
+			},
+			errorMessage: "none-public registers no OAuth surface; RegisterHandler",
+		},
+		{
+			name: "callback handler",
+			mutate: func(config *FacadeConfig) {
+				config.CallbackHandler = func(*apptheory.Context) (*apptheory.Response, error) {
+					return apptheory.Text(200, "callback"), nil
+				}
+			},
+			errorMessage: "none-public registers no OAuth surface; CallbackHandler",
+		},
+		{
+			name: "root authorization server",
+			mutate: func(config *FacadeConfig) {
+				config.RootAuthorizationServer = validRootDiscoveryConfig()
+			},
+			errorMessage: "none-public cannot enable RootAuthorizationServer",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+			config := validConfig(URLModePublicBaseURL)
+			config.TransportPosture = TransportPostureNonePublic
+			test.mutate(&config)
+
+			inventory, err := RegisterMCPFacade(app, config)
+			require.Nil(t, inventory)
+			require.ErrorContains(t, err, test.errorMessage)
+			require.Equal(t, 404, serve(app, "POST", "/acme/mcp", nil).Status)
+		})
+	}
 }
 
 func TestNonePublicPostureRejectsBearerTokenConfiguration(t *testing.T) {
@@ -1000,7 +1078,7 @@ func TestNonePublicPostureRejectsBearerTokenConfiguration(t *testing.T) {
 	config := validConfig(URLModePublicBaseURL)
 	config.TransportPosture = TransportPostureNonePublic
 	config.RequireBearerToken = &oauth.RequireBearerTokenOptions{
-		Validator: func(context.Context, string) error { return nil },
+		Validator: func(*apptheory.Context, string) error { return nil },
 	}
 	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
 	inventory, err := RegisterMCPFacade(app, config)
@@ -1012,7 +1090,7 @@ func TestNonePublicPostureRejectsBearerTokenConfiguration(t *testing.T) {
 func TestTransportPostureFailsClosedBeforeAnyRouteIsRegistered(t *testing.T) {
 	t.Parallel()
 	validator := &oauth.RequireBearerTokenOptions{
-		Validator: func(context.Context, string) error { return nil },
+		Validator: func(*apptheory.Context, string) error { return nil },
 	}
 	tests := []struct {
 		name         string
@@ -1081,6 +1159,69 @@ func TestTransportPostureDefaultsToIAM(t *testing.T) {
 	require.Len(t, transportRouteOptions(normalized), 1)
 }
 
+func TestIssuerModeRouteDerivesPerRouteIssuerAndResource(t *testing.T) {
+	t.Parallel()
+	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	config := validConfig(URLModePublicBaseURL)
+	config.IssuerMode = mcproutes.IssuerModeRoute
+	inventory, err := RegisterMCPFacade(app, config)
+	require.NoError(t, err)
+	require.Equal(t, mcproutes.IssuerModeRoute, inventory.IssuerMode)
+
+	// Each route is its own authorization server: the route URL is the resource,
+	// the advertised authorization server, and the issuer.
+	routeURL := "https://front.example.com/acme/mcp"
+	protected := serve(app, "GET", "/.well-known/oauth-protected-resource/acme/mcp", nil)
+	require.Equal(t, 200, protected.Status)
+	require.JSONEq(t, `{"resource":"`+routeURL+`","authorization_servers":["`+routeURL+`"],"jwks_uri":"https://issuer.example.com/jwks.json?set=active","scopes_supported":["namespace:use"]}`, string(protected.Body))
+
+	discovery := serve(app, "GET", "/.well-known/oauth-authorization-server/acme/mcp", nil)
+	require.Equal(t, 200, discovery.Status)
+	require.JSONEq(t, `{"issuer":"`+routeURL+`","authorization_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/authorize","token_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/token","registration_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/register","jwks_uri":"https://issuer.example.com/jwks.json?set=active","response_types_supported":["code"],"grant_types_supported":["authorization_code","refresh_token"],"token_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":["namespace:use"]}`, string(discovery.Body))
+
+	// family mode keeps advertising one family-wide issuer.
+	familyApp := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	familyConfig := validConfig(URLModePublicBaseURL)
+	familyInventory, err := RegisterMCPFacade(familyApp, familyConfig)
+	require.NoError(t, err)
+	require.Equal(t, mcproutes.IssuerModeFamily, familyInventory.IssuerMode)
+	familyProtected := serve(familyApp, "GET", "/.well-known/oauth-protected-resource/acme/mcp", nil)
+	require.Contains(t, string(familyProtected.Body), `"authorization_servers":["https://issuer.example.com"]`)
+}
+
+func TestIssuerModeRejectsUnknownValue(t *testing.T) {
+	t.Parallel()
+	config := validConfig(URLModePublicBaseURL)
+	config.IssuerMode = mcproutes.IssuerMode("tenant")
+	_, err := RegisterMCPFacade(apptheory.New(apptheory.WithTier(apptheory.TierP0)), config)
+	require.ErrorContains(t, err, "IssuerMode \"tenant\" must be one of family, route")
+}
+
+func TestUpstreamCallbackPathIsOverridableAndDefaultsToTheContractDefault(t *testing.T) {
+	t.Parallel()
+	defaultApp := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	defaultConfig := validConfig(URLModePublicBaseURL)
+	defaultConfig.CallbackHandler = func(*apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.Text(200, "callback"), nil
+	}
+	defaultInventory, err := RegisterMCPFacade(defaultApp, defaultConfig)
+	require.NoError(t, err)
+	require.Equal(t, mcproutes.DefaultCallbackPath, defaultInventory.CallbackPattern)
+	require.Equal(t, 200, serve(defaultApp, "GET", mcproutes.DefaultCallbackPath, nil).Status)
+
+	customApp := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	customConfig := validConfig(URLModePublicBaseURL)
+	customConfig.UpstreamCallbackPath = "/_oauth/callback"
+	customConfig.CallbackHandler = func(*apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.Text(200, "callback"), nil
+	}
+	customInventory, err := RegisterMCPFacade(customApp, customConfig)
+	require.NoError(t, err)
+	require.Equal(t, "/_oauth/callback", customInventory.CallbackPattern)
+	require.Equal(t, 200, serve(customApp, "GET", "/_oauth/callback", nil).Status)
+	require.Equal(t, 404, serve(customApp, "GET", mcproutes.DefaultCallbackPath, nil).Status)
+}
+
 func TestTransportPostureFixture(t *testing.T) {
 	t.Parallel()
 	contents, err := os.ReadFile(facadeTransportPosturePath)
@@ -1094,11 +1235,32 @@ func TestTransportPostureFixture(t *testing.T) {
 		string(TransportPostureRuntimeBearer): true,
 		string(TransportPostureNonePublic):    false,
 	}
+	// The OAuth surface attaches only when the posture is not none-public: the
+	// runtime registration follows this posture-derived inventory, so the
+	// fixture row is reachable and asserted, not cosmetic (ADV-1137-3).
+	expectedSurfaceAttached := map[string]bool{
+		string(TransportPostureIAM):           true,
+		string(TransportPostureJWT):           true,
+		string(TransportPostureRuntimeBearer): true,
+		string(TransportPostureNonePublic):    false,
+	}
 	require.Len(t, fixture.Postures, len(expectedRuntimeValidation))
 	for key, runtimeValidationRequired := range expectedRuntimeValidation {
 		row, ok := fixture.Postures[key]
 		require.Truef(t, ok, "transport posture fixture is missing the %q row", key)
 		require.Equalf(t, runtimeValidationRequired, row.RuntimeValidationRequired, "%s runtime_validation_required", key)
+		require.Equalf(t, expectedSurfaceAttached[key], row.OAuthSurfaceAttached, "%s oauth_surface_attached", key)
+
+		config := validConfig(URLModePublicBaseURL)
+		config.TransportPosture = TransportPosture(key)
+		if key == string(TransportPostureRuntimeBearer) {
+			config.RequireBearerToken = &oauth.RequireBearerTokenOptions{Validator: func(*apptheory.Context, string) error { return nil }}
+		}
+		inventory, registerErr := RegisterMCPFacade(apptheory.New(apptheory.WithTier(apptheory.TierP0)), config)
+		require.NoErrorf(t, registerErr, "%s registration", key)
+		for _, route := range inventory.Routes {
+			require.Equalf(t, row.OAuthSurfaceAttached, route.AuthorizationRoutesAttached, "%s runtime inventory must agree with the fixture", key)
+		}
 	}
 	for key := range fixture.Postures {
 		_, ok := expectedRuntimeValidation[key]

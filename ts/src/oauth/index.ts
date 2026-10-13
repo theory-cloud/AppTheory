@@ -104,13 +104,33 @@ export type BearerTokenClaimsValidator = (
 ) => BearerTokenClaims | Promise<BearerTokenClaims>;
 
 export interface BearerTokenValidationOptions {
-  requiredAudience?: string;
-  requiredScopes?: string[];
+  /**
+   * Static audience the token must be bound to, or a route-derived resolver
+   * that returns the exact matched-route audience. A function takes
+   * precedence, so audience can be the matched route URL rather than a
+   * process-global value.
+   */
+  requiredAudience?: string | ((ctx: Context) => string | Promise<string>);
+  /**
+   * Static scope set the token must carry, or a route-derived resolver that
+   * returns the scope set for the matched route. A function takes precedence.
+   */
+  requiredScopes?: string[] | ((ctx: Context) => string[] | Promise<string[]>);
   now?: () => Date;
 }
 
 export interface RequireBearerTokenOptions {
-  resourceMetadataURL?: string;
+  /**
+   * Static protected-resource metadata URL for the RFC 9728 challenge, or a
+   * route-derived resolver for the matched route. A function takes precedence.
+   */
+  resourceMetadataURL?: string | ((ctx: Context) => string | Promise<string>);
+  /**
+   * Route-derived scope set used to build the 403 insufficient_scope
+   * remediation challenge. Consulted only when a validator reports a scope
+   * failure.
+   */
+  requiredScopes?: string[] | ((ctx: Context) => string[] | Promise<string[]>);
   validator?: BearerTokenValidator;
   claimsValidator?: BearerTokenClaimsValidator;
 }
@@ -213,6 +233,41 @@ export function protectedResourceWWWAuthenticate(
   return `Bearer resource_metadata="${escaped}"`;
 }
 
+/**
+ * Builds the RFC 6750 (RFC 9728-extended) insufficient_scope challenge
+ * carrying the route-derived remediation scope set. Order matches Go:
+ * `error`, then `scope` when non-empty, then `resource_metadata` when
+ * non-empty.
+ */
+export function insufficientScopeWWWAuthenticate(
+  scopes: string[],
+  resourceMetadataURL?: string,
+): string {
+  const normalized = (scopes ?? [])
+    .map((scope) => String(scope ?? "").trim())
+    .filter(Boolean);
+  const parts = ['Bearer error="insufficient_scope"'];
+  if (normalized.length > 0) {
+    parts.push(`scope=${quoteChallengeValue(normalized.join(" "))}`);
+  }
+  const url = String(resourceMetadataURL ?? "").trim();
+  if (url) parts.push(`resource_metadata=${quoteChallengeValue(url)}`);
+  return parts.join(", ");
+}
+
+/**
+ * Reports whether two RFC 8707 resource indicators denote the same protected
+ * resource after canonicalization. An empty expected indicator never matches.
+ */
+export function resourceIndicatorMatches(
+  expected: string,
+  requested: string,
+): boolean {
+  const canonicalExpected = canonicalResourceURL(expected);
+  if (!canonicalExpected) return false;
+  return canonicalExpected === canonicalResourceURL(requested);
+}
+
 export function rfc9728ResourceMetadataURL(resourceURL: string): string | null {
   const url = absoluteURL(resourceURL);
   if (!url) return null;
@@ -264,13 +319,13 @@ export function requireBearerTokenMiddleware(
         return await next(ctx);
       }
       if (!options.validator) {
-        return unauthorizedResponse(ctx, options);
+        return await unauthorizedResponse(ctx, options);
       }
       await options.validator(ctx, token);
       ctx.set(CONTEXT_KEY_BEARER_TOKEN, token);
       return await next(ctx);
     } catch (err) {
-      return bearerErrorResponse(ctx, options, err);
+      return await bearerErrorResponse(ctx, options, err);
     }
   };
 }
@@ -296,20 +351,26 @@ export function newMemoryBearerTokenValidator(
     if (record.expiresAt) claims.expiresAt = new Date(record.expiresAt);
     byToken.set(token, claims);
   }
-  const requiredAudience = String(options.requiredAudience ?? "").trim();
-  const requiredScopes = (options.requiredScopes ?? [])
-    .map((scope) => String(scope ?? "").trim())
-    .filter(Boolean);
+  const audienceOption = options.requiredAudience;
+  const scopesOption = options.requiredScopes;
   const now = options.now ?? (() => new Date());
-  return (_ctx, token) => {
+  return async (ctx, token) => {
     const claims = byToken.get(String(token ?? "").trim());
     if (!claims) throw new OAuthBearerError(ERR_INVALID_BEARER_TOKEN);
     if (claims.expiresAt && now().getTime() >= claims.expiresAt.getTime()) {
       throw new OAuthBearerError(ERR_BEARER_TOKEN_EXPIRED);
     }
+    const requiredAudience =
+      typeof audienceOption === "function"
+        ? String((await audienceOption(ctx)) ?? "").trim()
+        : String(audienceOption ?? "").trim();
     if (requiredAudience && claims.audience !== requiredAudience) {
       throw new OAuthBearerError(ERR_BEARER_TOKEN_INVALID_AUDIENCE);
     }
+    const requiredScopes =
+      typeof scopesOption === "function"
+        ? normalizeScopeList(await scopesOption(ctx))
+        : normalizeScopeList(scopesOption ?? []);
     if (missingScopes(claims.scopes ?? [], requiredScopes).length > 0) {
       throw new OAuthBearerError(ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE);
     }
@@ -402,11 +463,11 @@ export function pkceVerifyS256(
   return pkceChallengeS256(verifier) === String(expectedChallenge ?? "");
 }
 
-function unauthorizedResponse(
-  _ctx: Context,
+async function unauthorizedResponse(
+  ctx: Context,
   options: RequireBearerTokenOptions,
-): Response {
-  const metadataURL = String(options.resourceMetadataURL ?? "").trim();
+): Promise<Response> {
+  const metadataURL = await resolveResourceMetadataURL(ctx, options);
   const headers: Headers = {
     "content-type": ["application/json; charset=utf-8"],
   };
@@ -420,6 +481,33 @@ function unauthorizedResponse(
     body: Buffer.from(
       JSON.stringify({
         error: { code: "app.unauthorized", message: "unauthorized" },
+      }),
+      "utf8",
+    ),
+    isBase64: false,
+  };
+}
+
+async function insufficientScopeResponse(
+  ctx: Context,
+  options: RequireBearerTokenOptions,
+): Promise<Response> {
+  const scopes = await resolveRequiredScopes(ctx, options.requiredScopes);
+  const metadataURL = await resolveResourceMetadataURL(ctx, options);
+  const headers: Headers = {
+    "content-type": ["application/json; charset=utf-8"],
+    "www-authenticate": [insufficientScopeWWWAuthenticate(scopes, metadataURL)],
+  };
+  return {
+    status: 403,
+    headers,
+    cookies: [],
+    body: Buffer.from(
+      JSON.stringify({
+        error: {
+          code: "app.insufficient_scope",
+          message: "insufficient scope",
+        },
       }),
       "utf8",
     ),
@@ -442,19 +530,65 @@ function forbiddenResponse(): Response {
   };
 }
 
-function bearerErrorResponse(
+async function bearerErrorResponse(
   ctx: Context,
   options: RequireBearerTokenOptions,
   err: unknown,
-): Response {
-  if (
-    err instanceof OAuthBearerError &&
-    (err.oauthCode === ERR_BEARER_TOKEN_INVALID_AUDIENCE ||
-      err.oauthCode === ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE)
-  ) {
-    return forbiddenResponse();
+): Promise<Response> {
+  if (err instanceof OAuthBearerError) {
+    if (err.oauthCode === ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE) {
+      return await insufficientScopeResponse(ctx, options);
+    }
+    if (err.oauthCode === ERR_BEARER_TOKEN_INVALID_AUDIENCE) {
+      return forbiddenResponse();
+    }
   }
-  return unauthorizedResponse(ctx, options);
+  return await unauthorizedResponse(ctx, options);
+}
+
+/**
+ * Resolves the RFC 9728 protected-resource metadata URL for a challenge. A
+ * route-derived resolver takes precedence; a resolver failure degrades to no
+ * challenge URL, matching the Go middleware.
+ */
+async function resolveResourceMetadataURL(
+  ctx: Context,
+  options: RequireBearerTokenOptions,
+): Promise<string> {
+  const option = options.resourceMetadataURL;
+  if (typeof option === "function") {
+    try {
+      return String((await option(ctx)) ?? "").trim();
+    } catch {
+      return "";
+    }
+  }
+  return String(option ?? "").trim();
+}
+
+/**
+ * Resolves the route-derived remediation scope set for a 403 challenge. A
+ * resolver failure degrades to an empty (omitted) scope set.
+ */
+async function resolveRequiredScopes(
+  ctx: Context,
+  option: RequireBearerTokenOptions["requiredScopes"],
+): Promise<string[]> {
+  try {
+    if (typeof option === "function") {
+      return normalizeScopeList(await option(ctx));
+    }
+    return normalizeScopeList(option ?? []);
+  } catch {
+    return [];
+  }
+}
+
+function quoteChallengeValue(value: string): string {
+  const escaped = String(value ?? "")
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"');
+  return `"${escaped}"`;
 }
 
 function firstHeader(headers: Headers | undefined, name: string): string {
@@ -481,6 +615,12 @@ function scopeFields(scope: string): string[] {
   return String(scope ?? "")
     .split(/\s+/u)
     .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function normalizeScopeList(scopes: readonly string[]): string[] {
+  return (scopes ?? [])
+    .map((scope) => String(scope ?? "").trim())
     .filter(Boolean);
 }
 
@@ -548,3 +688,9 @@ function trimLeadingAndTrailingSlashes(value: string): string {
   }
   return value.slice(start, end);
 }
+
+export {
+  bootstrapOidcDiscovery,
+  newJwksValidator,
+  type JWKSValidatorOptions,
+} from "./jwks.js";

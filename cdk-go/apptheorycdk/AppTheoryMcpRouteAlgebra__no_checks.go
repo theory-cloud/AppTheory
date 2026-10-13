@@ -8,6 +8,10 @@ func validateAppTheoryMcpRouteAlgebra_AuthorizationAuthorizePathForResourcePathP
 	return nil
 }
 
+func validateAppTheoryMcpRouteAlgebra_AuthorizationRegisterPathForResourcePathParameters(resourcePath *string) error {
+	return nil
+}
+
 func validateAppTheoryMcpRouteAlgebra_AuthorizationServerPathForResourcePathParameters(resourcePath *string) error {
 	return nil
 }
@@ -33,6 +37,10 @@ func validateAppTheoryMcpRouteAlgebra_OauthAuthorizationServerSuffixPathParamete
 }
 
 func validateAppTheoryMcpRouteAlgebra_OauthAuthorizePathParameters(endpoint *AppTheoryMcpEndpointPath) error {
+	return nil
+}
+
+func validateAppTheoryMcpRouteAlgebra_OauthRegisterPathParameters(endpoint *AppTheoryMcpEndpointPath) error {
 	return nil
 }
 

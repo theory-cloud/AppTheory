@@ -1,11 +1,11 @@
 ---
 title: Contract Fixtures
-description: "The 278 contract vectors: 274 shared runtime fixtures plus four Go/CDK-TS MCP route/facade tables." # apptheory-fixture-count: 278
+description: "The 281 contract vectors: 274 shared runtime fixtures plus seven Go/CDK-TS MCP route/facade tables." # apptheory-fixture-count: 281
 ---
 
 # Contract Fixtures
 
-AppTheory ships **278 machine-readable contract vectors** in `contract-tests/fixtures/`. <!-- apptheory-fixture-count: 278 --> Go, TypeScript, and Python execute 274 shared runner fixtures on every commit, including the `tier: mcp` SP09 runtime contracts, the `tier: oauth` SP12 protected-resource, bearer, DCR, and PKCE contracts, and the `tier: objectstore` SP13 bounded object-store contract. The remaining four vectors are the shared MCP route-algebra expectation and facade route-inventory tables plus the MCP auth-facade transport-posture and route-model tables, consumed by Go and CDK-TS tests; Python is explicitly outside those versioned contracts' scope.
+AppTheory ships **281 machine-readable contract vectors** in `contract-tests/fixtures/`. <!-- apptheory-fixture-count: 281 --> Go, TypeScript, and Python execute 274 shared runner fixtures on every commit, including the `tier: mcp` SP09 runtime contracts, the `tier: oauth` SP12 protected-resource, bearer, DCR, and PKCE contracts, and the `tier: objectstore` SP13 bounded object-store contract. The remaining four vectors are the shared MCP route-algebra expectation and facade route-inventory tables plus the MCP auth-facade transport-posture and route-model tables, consumed by Go and CDK-TS tests; Python is explicitly outside those versioned contracts' scope.
 
 This page explains what the fixtures are, what they cover, and how to evolve them safely.
 
@@ -55,7 +55,7 @@ its `tier` field and stable `id`. Directory names are organizational metadata, n
 
 ## Categories
 
-The 278 contract vectors span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory). All three runtimes execute the 274 generic fixtures; Go and CDK-TS additionally consume the MCP route-algebra, facade-inventory, and auth-facade tables. <!-- apptheory-fixture-count: 278 -->
+The 281 contract vectors span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory). All three runtimes execute the 274 generic fixtures; Go and CDK-TS additionally consume the MCP route-algebra, facade-inventory, and auth-facade tables. <!-- apptheory-fixture-count: 281 -->
 
 | Category | Covers |
 | --- | --- |
@@ -103,7 +103,7 @@ coerced. Both apply identically in Go, TypeScript, and Python.
 ./scripts/verify-contract-tests.sh
 ```
 
-This validates the 274 generic fixture envelopes and runs the Go, TypeScript, and Python runners against that tree. The Go and CDK unit suites load the four nested route-algebra, facade-inventory, and auth-facade tables directly. `make rubric` runs all of these gates alongside lint, build, API snapshots, and example synthesis. <!-- apptheory-fixture-count: 278 -->
+This validates the 274 generic fixture envelopes and runs the Go, TypeScript, and Python runners against that tree. The Go and CDK unit suites load the seven nested route-algebra, facade-inventory, and auth-facade tables directly. `make rubric` runs all of these gates alongside lint, build, API snapshots, and example synthesis. <!-- apptheory-fixture-count: 281 -->
 
 For single-runtime debugging from the repository root:
 

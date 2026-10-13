@@ -9,5 +9,6 @@ type AppTheoryMcpServerFacadeRoute struct {
 	McpMethods                  *[]*string `field:"required" json:"mcpMethods" yaml:"mcpMethods"`
 	McpPattern                  *string    `field:"required" json:"mcpPattern" yaml:"mcpPattern"`
 	ProtectedResourcePattern    *string    `field:"required" json:"protectedResourcePattern" yaml:"protectedResourcePattern"`
+	RegisterPattern             *string    `field:"required" json:"registerPattern" yaml:"registerPattern"`
 	TokenPattern                *string    `field:"required" json:"tokenPattern" yaml:"tokenPattern"`
 }

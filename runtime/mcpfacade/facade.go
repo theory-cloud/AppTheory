@@ -83,17 +83,27 @@ func DefaultCapabilities() Capabilities {
 // FacadeConfig configures the complete route-algebra MCP OAuth facade.
 type FacadeConfig struct {
 	// IssuerURL is the absolute HTTPS authorization-server issuer advertised by
-	// both metadata document families.
+	// both metadata document families when IssuerMode is family.
 	IssuerURL string
 	// JWKSURI is the absolute HTTPS key-set URL advertised by both metadata
-	// document families.
+	// document families. In route issuer mode it remains the upstream JWKS,
+	// because the upstream signs the access tokens the route hands to clients.
 	JWKSURI string
 	// RegistrationEndpointURL optionally overrides the RFC 8414 registration
-	// endpoint. When empty, issuer + /register is advertised.
+	// endpoint. When empty, issuer + /register is advertised (family mode).
 	RegistrationEndpointURL string
+
+	// IssuerMode selects per-route issuer/resource derivation. An empty value
+	// means IssuerModeFamily: one FacadeConfig.IssuerURL for the whole facade.
+	// IssuerModeRoute makes each route its own authorization server: the route
+	// URL is the issuer, the resource, and the advertised authorization server.
+	IssuerMode mcproutes.IssuerMode
 
 	URLMode       URLMode
 	PublicBaseURL string
+	// UpstreamCallbackPath optionally overrides the stage-global upstream
+	// callback path. When empty, mcproutes.DefaultCallbackPath is used.
+	UpstreamCallbackPath string
 	// AllowedHostnames is required in request-host mode. Configuration entries
 	// normalize case, trailing dots, and default ports scheme-agnostically;
 	// request authorities normalize case and trailing dots too, but strip only
@@ -114,6 +124,16 @@ type FacadeConfig struct {
 	// mounts the derived paths; all authorization behavior remains app-owned.
 	AuthorizeHandler HandlerFactory
 	TokenHandler     HandlerFactory
+
+	// RegisterHandler mounts the derived RFC 7591 dynamic-client registration
+	// path per kind. AppTheory only mounts the derived path; registration
+	// behavior remains app-owned. Absent mounts no register route.
+	RegisterHandler HandlerFactory
+
+	// CallbackHandler mounts the single stage-global upstream OAuth callback
+	// path. AppTheory only mounts the route; the callback mechanics remain
+	// app-owned. Absent mounts no callback route.
+	CallbackHandler apptheory.Handler
 
 	// RootAuthorizationServer optionally installs one static GET at the
 	// algebra-derived root authorization-server discovery path.
@@ -154,6 +174,7 @@ type Route struct {
 	DiscoverySuffixPattern    string
 	AuthorizePattern          string
 	TokenPattern              string
+	RegisterPattern           string
 	// AuthorizationRoutesAttached reports whether transport authorization is
 	// attached to this route family (false under the none-public posture). It
 	// mirrors the CDK construct's authorizationRoutesAttached inventory field,
@@ -167,20 +188,28 @@ type RouteInventory struct {
 	Routes                          []Route
 	RootAuthorizationServerPattern  string
 	RootAuthorizationServerAttached bool
+	// CallbackPattern is the stage-global upstream callback path.
+	CallbackPattern string
+	// IssuerMode is the resolved per-route issuer derivation mode.
+	IssuerMode mcproutes.IssuerMode
 }
 
 type normalizedConfig struct {
 	issuerURL               string
 	jwksURI                 string
 	registrationEndpointURL string
+	issuerMode              mcproutes.IssuerMode
 	urlMode                 URLMode
 	publicBaseURL           string
+	upstreamCallbackPath    string
 	allowedHostnames        map[string]struct{}
 	scopes                  map[mcproutes.EndpointKind][]string
 	capabilities            Capabilities
 	mcpHandler              apptheory.Handler
 	authorizeHandlers       map[mcproutes.EndpointKind]apptheory.Handler
 	tokenHandlers           map[mcproutes.EndpointKind]apptheory.Handler
+	registerHandlers        map[mcproutes.EndpointKind]apptheory.Handler
+	callbackHandler         apptheory.Handler
 	rootAuthorizationServer *oauth.AuthorizationServerMetadata
 	rootDiscoveryPath       string
 	transportPosture        TransportPosture
@@ -206,7 +235,7 @@ func RegisterMCPFacade(app *apptheory.App, config FacadeConfig) (*RouteInventory
 	if err != nil {
 		return nil, err
 	}
-	inventory, err := buildInventory(normalized.transportPosture != TransportPostureNonePublic, normalized.rootAuthorizationServer != nil)
+	inventory, err := buildInventory(normalized)
 	if err != nil {
 		return nil, err
 	}
@@ -230,6 +259,24 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 		return normalizedConfig{}, err
 	}
 
+	normalized, err := normalizeDerivedConfig(config)
+	if err != nil {
+		return normalizedConfig{}, err
+	}
+	normalized.transportPosture = transportPosture
+	normalized.requireBearerToken = config.RequireBearerToken
+	normalized.mcpHandler = config.MCPHandler
+	normalized.callbackHandler = config.CallbackHandler
+
+	if err := validatePostureSurfaceConfig(transportPosture, normalized.authorizeHandlers, normalized.registerHandlers, config.CallbackHandler, normalized.rootAuthorizationServer); err != nil {
+		return normalizedConfig{}, err
+	}
+	return normalized, nil
+}
+
+// normalizeDerivedConfig resolves the URL, issuer, scope, capability, and
+// handler-derived parts of a FacadeConfig.
+func normalizeDerivedConfig(config FacadeConfig) (normalizedConfig, error) {
 	issuerURL, ok := normalizeHTTPSURL(config.IssuerURL, true)
 	if !ok {
 		return normalizedConfig{}, fmt.Errorf("mcpfacade: issuer URL must be an absolute HTTPS URL without query or fragment")
@@ -250,6 +297,15 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 		return normalizedConfig{}, err
 	}
 
+	issuerMode, err := normalizeIssuerMode(config.IssuerMode)
+	if err != nil {
+		return normalizedConfig{}, err
+	}
+	upstreamCallbackPath, ok := mcproutes.CallbackPathForConfiguredPath(config.UpstreamCallbackPath)
+	if !ok {
+		return normalizedConfig{}, fmt.Errorf("mcpfacade: upstream callback path must be an absolute path without query or fragment")
+	}
+
 	scopes, err := normalizeScopes(config.Scopes)
 	if err != nil {
 		return normalizedConfig{}, err
@@ -263,6 +319,10 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 	if err != nil {
 		return normalizedConfig{}, err
 	}
+	registerHandlers, err := buildRegisterHandlers(config.RegisterHandler)
+	if err != nil {
+		return normalizedConfig{}, err
+	}
 
 	rootAuthorizationServer, rootDiscoveryPath, err := normalizeRootDiscoveryConfig(config.RootAuthorizationServer)
 	if err != nil {
@@ -273,19 +333,58 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 		issuerURL:               issuerURL,
 		jwksURI:                 jwksURI,
 		registrationEndpointURL: registrationEndpointURL,
+		issuerMode:              issuerMode,
 		urlMode:                 config.URLMode,
 		publicBaseURL:           publicBaseURL,
+		upstreamCallbackPath:    upstreamCallbackPath,
 		allowedHostnames:        allowedHostnames,
 		scopes:                  scopes,
 		capabilities:            capabilities,
-		mcpHandler:              config.MCPHandler,
 		authorizeHandlers:       authorizeHandlers,
 		tokenHandlers:           tokenHandlers,
+		registerHandlers:        registerHandlers,
 		rootAuthorizationServer: rootAuthorizationServer,
 		rootDiscoveryPath:       rootDiscoveryPath,
-		transportPosture:        transportPosture,
-		requireBearerToken:      config.RequireBearerToken,
 	}, nil
+}
+
+func normalizeIssuerMode(mode mcproutes.IssuerMode) (mcproutes.IssuerMode, error) {
+	if mode == "" {
+		return mcproutes.IssuerModeFamily, nil
+	}
+	for _, supported := range mcproutes.SupportedIssuerModes() {
+		if mode == supported {
+			return mode, nil
+		}
+	}
+	return "", fmt.Errorf("mcpfacade: IssuerMode %q must be one of family, route", mode)
+}
+
+// validatePostureSurfaceConfig makes the posture-derived inventory authoritative:
+// the none-public posture attaches no OAuth surface, so configuring any of it is a
+// registration error rather than a silently dropped route.
+func validatePostureSurfaceConfig(
+	posture TransportPosture,
+	authorizeHandlers, registerHandlers map[mcproutes.EndpointKind]apptheory.Handler,
+	callbackHandler apptheory.Handler,
+	rootAuthorizationServer *oauth.AuthorizationServerMetadata,
+) error {
+	if posture != TransportPostureNonePublic {
+		return nil
+	}
+	if authorizeHandlers != nil {
+		return fmt.Errorf("mcpfacade: TransportPosture none-public registers no OAuth surface; authorize/token handlers must not be configured")
+	}
+	if registerHandlers != nil {
+		return fmt.Errorf("mcpfacade: TransportPosture none-public registers no OAuth surface; RegisterHandler must not be configured")
+	}
+	if callbackHandler != nil {
+		return fmt.Errorf("mcpfacade: TransportPosture none-public registers no OAuth surface; CallbackHandler must not be configured")
+	}
+	if rootAuthorizationServer != nil {
+		return fmt.Errorf("mcpfacade: TransportPosture none-public cannot enable RootAuthorizationServer")
+	}
+	return nil
 }
 
 func normalizeTransportPosture(posture TransportPosture, requireBearerToken *oauth.RequireBearerTokenOptions) (TransportPosture, error) {
@@ -310,7 +409,8 @@ func normalizeTransportPosture(posture TransportPosture, requireBearerToken *oau
 	return posture, nil
 }
 
-func buildInventory(authorizationRoutesAttached, attachRootDiscovery bool) (*RouteInventory, error) {
+func buildInventory(config normalizedConfig) (*RouteInventory, error) {
+	authorizationRoutesAttached := config.transportPosture != TransportPostureNonePublic
 	endpoints := mcproutes.SupportedEndpointTemplates()
 	facades := indexFacadeTemplates(mcproutes.SupportedOAuthFacadeTemplates())
 	discovery := indexDiscoveryTemplates(mcproutes.SupportedOAuthDiscoveryTemplates())
@@ -323,7 +423,9 @@ func buildInventory(authorizationRoutesAttached, attachRootDiscovery bool) (*Rou
 		ContractVersion:                 mcproutes.ContractVersion,
 		Routes:                          make([]Route, 0, len(endpoints)),
 		RootAuthorizationServerPattern:  rootPath,
-		RootAuthorizationServerAttached: attachRootDiscovery,
+		RootAuthorizationServerAttached: config.rootAuthorizationServer != nil && authorizationRoutesAttached,
+		CallbackPattern:                 config.upstreamCallbackPath,
+		IssuerMode:                      config.issuerMode,
 	}
 	for _, endpoint := range endpoints {
 		facade, facadeOK := facades[endpoint.Kind]
@@ -340,6 +442,7 @@ func buildInventory(authorizationRoutesAttached, attachRootDiscovery bool) (*Rou
 			DiscoverySuffixPattern:      discoveryTemplate.SuffixPattern,
 			AuthorizePattern:            facade.AuthorizePattern,
 			TokenPattern:                facade.TokenPattern,
+			RegisterPattern:             facade.RegisterPattern,
 			AuthorizationRoutesAttached: authorizationRoutesAttached,
 		})
 	}
@@ -369,7 +472,7 @@ func normalizeURLMode(config FacadeConfig) (string, map[string]struct{}, error) 
 }
 
 func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]routeRegistration, error) {
-	registrations := make([]routeRegistration, 0, len(inventory.Routes)*8+1)
+	registrations := make([]routeRegistration, 0, len(inventory.Routes)*9+2)
 	transportOptions := transportRouteOptions(config)
 	for _, route := range inventory.Routes {
 		mcpHandler := checkedMCPHandler(route.Kind, config.mcpHandler)
@@ -380,6 +483,16 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 			routeRegistration{method: "POST", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions},
 			routeRegistration{method: "GET", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions},
 			routeRegistration{method: "DELETE", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions},
+		)
+
+		// The OAuth surface follows the posture-derived inventory, not mere
+		// handler presence: under the none-public posture nothing OAuth-surface
+		// registers, so the runtime surface cannot disagree with the CDK
+		// construct's authorizationRoutesAttached inventory field.
+		if !route.AuthorizationRoutesAttached {
+			continue
+		}
+		registrations = append(registrations,
 			routeRegistration{method: "GET", pattern: route.ProtectedResourcePattern, handler: protectedResourceHandler(config, route.Kind)},
 		)
 
@@ -395,6 +508,11 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 				routeRegistration{method: "POST", pattern: route.TokenPattern, handler: checkedOAuthFacadeHandler(route.Kind, false, config.tokenHandlers[route.Kind])},
 			)
 		}
+		if config.registerHandlers != nil {
+			registrations = append(registrations,
+				routeRegistration{method: "POST", pattern: route.RegisterPattern, handler: checkedRegisterHandler(route.Kind, config.registerHandlers[route.Kind])},
+			)
+		}
 	}
 	if inventory.RootAuthorizationServerAttached {
 		if config.rootAuthorizationServer == nil || config.rootDiscoveryPath != inventory.RootAuthorizationServerPattern {
@@ -404,6 +522,13 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 			method:  "GET",
 			pattern: inventory.RootAuthorizationServerPattern,
 			handler: withMetadataHeaders(oauth.AuthorizationServerMetadataHandler(config.rootAuthorizationServer)),
+		})
+	}
+	if inventory.CallbackPattern != "" && config.callbackHandler != nil {
+		registrations = append(registrations, routeRegistration{
+			method:  "GET",
+			pattern: inventory.CallbackPattern,
+			handler: config.callbackHandler,
 		})
 	}
 	if err := validateRouteRegistrations(registrations); err != nil {
@@ -504,6 +629,20 @@ func buildApplicationHandlers(authorizeFactory, tokenFactory HandlerFactory) (ma
 		}
 	}
 	return authorizeHandlers, tokenHandlers, nil
+}
+
+func buildRegisterHandlers(factory HandlerFactory) (map[mcproutes.EndpointKind]apptheory.Handler, error) {
+	if factory == nil {
+		return nil, nil
+	}
+	handlers := make(map[mcproutes.EndpointKind]apptheory.Handler)
+	for _, template := range mcproutes.SupportedEndpointTemplates() {
+		handlers[template.Kind] = factory(template.Kind)
+		if handlers[template.Kind] == nil {
+			return nil, fmt.Errorf("mcpfacade: register handler factory returned nil for endpoint kind %q", template.Kind)
+		}
+	}
+	return handlers, nil
 }
 
 func normalizeAllowedHostnames(configured []string) (map[string]struct{}, error) {
@@ -667,6 +806,23 @@ func checkedOAuthFacadeHandler(kind mcproutes.EndpointKind, authorize bool, next
 	}
 }
 
+func checkedRegisterHandler(kind mcproutes.EndpointKind, next apptheory.Handler) apptheory.Handler {
+	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		endpoint, err := endpointFromRouteParams(ctx, kind)
+		if err != nil {
+			return nil, fmt.Errorf("mcpfacade: registration path does not identify endpoint kind %q", kind)
+		}
+		expectedPath, err := endpoint.OAuthRegisterPath()
+		if err != nil {
+			return nil, err
+		}
+		if ctx.Request.Path != expectedPath {
+			return nil, fmt.Errorf("mcpfacade: request path is not a registration path for endpoint kind %q", kind)
+		}
+		return next(ctx)
+	}
+}
+
 func protectedResourceHandler(config normalizedConfig, kind mcproutes.EndpointKind) apptheory.Handler {
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		endpoint, err := endpointFromProtectedResourceRequest(ctx)
@@ -684,9 +840,15 @@ func protectedResourceHandler(config normalizedConfig, kind mcproutes.EndpointKi
 			}
 			return nil, err
 		}
+		authorizationServers := []string{config.issuerURL}
+		if config.issuerMode == mcproutes.IssuerModeRoute {
+			// Route issuer mode: the route is its own authorization server, so it
+			// advertises exactly its own resource URL.
+			authorizationServers = []string{resourceURL}
+		}
 		metadata := &oauth.ProtectedResourceMetadata{
 			Resource:             resourceURL,
-			AuthorizationServers: []string{config.issuerURL},
+			AuthorizationServers: authorizationServers,
 			JWKSURI:              config.jwksURI,
 			ScopesSupported:      append([]string(nil), config.scopes[kind]...),
 		}
@@ -700,33 +862,23 @@ func authorizationServerHandler(config normalizedConfig, kind mcproutes.Endpoint
 		if err != nil {
 			return nil, err
 		}
-		authorizePath, err := endpoint.OAuthAuthorizePath()
-		if err != nil {
-			return nil, err
+		authorizeURL, response, err := config.derivedMetadataRouteURL(ctx, endpoint, mcproutes.EndpointPath.OAuthAuthorizePath)
+		if response != nil || err != nil {
+			return response, err
 		}
-		tokenPath, err := endpoint.OAuthTokenPath()
-		if err != nil {
-			return nil, err
+		tokenURL, response, err := config.derivedMetadataRouteURL(ctx, endpoint, mcproutes.EndpointPath.OAuthTokenPath)
+		if response != nil || err != nil {
+			return response, err
 		}
-		authorizeURL, err := config.absoluteURL(ctx, authorizePath)
-		if err != nil {
-			if response, ok := metadataRequestFailure(err); ok {
-				return response, nil
-			}
-			return nil, err
-		}
-		tokenURL, err := config.absoluteURL(ctx, tokenPath)
-		if err != nil {
-			if response, ok := metadataRequestFailure(err); ok {
-				return response, nil
-			}
-			return nil, err
+		issuer, registrationEndpoint, response, err := config.routedIssuerAndRegistration(ctx, endpoint)
+		if response != nil || err != nil {
+			return response, err
 		}
 		metadata := &oauth.AuthorizationServerMetadata{
-			Issuer:                            config.issuerURL,
+			Issuer:                            issuer,
 			AuthorizationEndpoint:             authorizeURL,
 			TokenEndpoint:                     tokenURL,
-			RegistrationEndpoint:              config.registrationEndpointURL,
+			RegistrationEndpoint:              registrationEndpoint,
 			JWKSURI:                           config.jwksURI,
 			ResponseTypesSupported:            append([]string(nil), config.capabilities.ResponseTypes...),
 			GrantTypesSupported:               append([]string(nil), config.capabilities.GrantTypes...),
@@ -736,6 +888,50 @@ func authorizationServerHandler(config normalizedConfig, kind mcproutes.Endpoint
 		}
 		return withMetadataHeaders(oauth.AuthorizationServerMetadataHandler(metadata))(ctx)
 	}
+}
+
+// derivedMetadataRouteURL builds the absolute URL for one derived route path. A
+// metadata request-origin failure is rendered as its own response so callers can
+// return it verbatim.
+func (config normalizedConfig) derivedMetadataRouteURL(
+	ctx *apptheory.Context,
+	endpoint mcproutes.EndpointPath,
+	build func(mcproutes.EndpointPath) (string, error),
+) (string, *apptheory.Response, error) {
+	routePath, err := build(endpoint)
+	if err != nil {
+		return "", nil, err
+	}
+	absolute, err := config.absoluteURL(ctx, routePath)
+	if err != nil {
+		if response, ok := metadataRequestFailure(err); ok {
+			return "", response, nil
+		}
+		return "", nil, err
+	}
+	return absolute, nil, nil
+}
+
+// routedIssuerAndRegistration returns the issuer and registration endpoint the
+// routed RFC 8414 document advertises. In route issuer mode the route URL is the
+// issuer and the registration endpoint is the route's own derived /register path,
+// so the advertised URL and the mounted route cannot drift.
+func (config normalizedConfig) routedIssuerAndRegistration(
+	ctx *apptheory.Context,
+	endpoint mcproutes.EndpointPath,
+) (string, string, *apptheory.Response, error) {
+	if config.issuerMode != mcproutes.IssuerModeRoute {
+		return config.issuerURL, config.registrationEndpointURL, nil, nil
+	}
+	issuer, response, err := config.derivedMetadataRouteURL(ctx, endpoint, mcproutes.EndpointPath.MCPPath)
+	if response != nil || err != nil {
+		return "", "", response, err
+	}
+	registration, response, err := config.derivedMetadataRouteURL(ctx, endpoint, mcproutes.EndpointPath.OAuthRegisterPath)
+	if response != nil || err != nil {
+		return "", "", response, err
+	}
+	return issuer, registration, nil, nil
 }
 
 func endpointFromMCPRequest(ctx *apptheory.Context) (mcproutes.EndpointPath, error) {
@@ -957,6 +1153,8 @@ func cloneInventory(inventory *RouteInventory) *RouteInventory {
 		Routes:                          make([]Route, len(inventory.Routes)),
 		RootAuthorizationServerPattern:  inventory.RootAuthorizationServerPattern,
 		RootAuthorizationServerAttached: inventory.RootAuthorizationServerAttached,
+		CallbackPattern:                 inventory.CallbackPattern,
+		IssuerMode:                      inventory.IssuerMode,
 	}
 	copy(clone.Routes, inventory.Routes)
 	for index := range clone.Routes {

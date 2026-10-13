@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+# ruff: noqa: S106
+import datetime as dt
 import unittest
 
 from apptheory import (
     App,
     BearerTokenRecord,
+    BearerTokenValidationOptions,
     RequireBearerTokenOptions,
     assert_bearer_token_reaches_transport_handler,
     assert_credential_free_transport_denied,
+    assert_insufficient_scope_transport_denied,
     counting_transport_handler,
     create_app,
     new_memory_bearer_token_validator,
@@ -17,14 +21,38 @@ from apptheory.request import Request
 from apptheory.response import Response
 
 RESOURCE_METADATA_URL = "https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp"
+REMEDIATION_SCOPES = ["namespace:use"]
+NOW = dt.datetime.fromtimestamp(1_700_000_000, tz=dt.UTC)
 
 
 def _bearer_options() -> RequireBearerTokenOptions:
     return RequireBearerTokenOptions(
         resource_metadata_url=RESOURCE_METADATA_URL,
         claims_validator=new_memory_bearer_token_validator(
-            [BearerTokenRecord(token="valid-token", subject="acme", audience="https://mcp.example.com")]  # noqa: S106
+            [BearerTokenRecord(token="valid-token", subject="acme", audience="https://mcp.example.com")]
         ),
+    )
+
+
+def _scope_starved_options() -> RequireBearerTokenOptions:
+    return RequireBearerTokenOptions(
+        resource_metadata_url=RESOURCE_METADATA_URL,
+        claims_validator=new_memory_bearer_token_validator(
+            [
+                BearerTokenRecord(
+                    token="scope-miss",
+                    subject="acme",
+                    audience="https://mcp.example.com",
+                    scopes=["mcp:read"],
+                    expires_at=NOW + dt.timedelta(hours=1),
+                )
+            ],
+            BearerTokenValidationOptions(
+                required_scopes_func=lambda _ctx: REMEDIATION_SCOPES,
+                now=lambda: NOW,
+            ),
+        ),
+        required_scopes_func=lambda _ctx: REMEDIATION_SCOPES,
     )
 
 
@@ -50,6 +78,22 @@ class McpFacadeTests(unittest.TestCase):
         self.assertEqual(handler.invocations, 0)
         assert_bearer_token_reaches_transport_handler(app, "POST", "/acme/mcp", "valid-token", handler)
         self.assertEqual(handler.invocations, 1)
+
+    def test_runtime_bearer_emits_the_insufficient_scope_challenge(self) -> None:
+        app = create_app()
+        handler = counting_transport_handler()
+        register_mcp_facade(
+            app,
+            ["/acme/mcp"],
+            handler,
+            transport_posture="runtime-bearer",
+            require_bearer_token=_scope_starved_options(),
+        )
+
+        assert_insufficient_scope_transport_denied(
+            app, "POST", "/acme/mcp", "scope-miss", RESOURCE_METADATA_URL, REMEDIATION_SCOPES, handler
+        )
+        self.assertEqual(handler.invocations, 0)
 
     def test_default_posture_is_iam(self) -> None:
         app = create_app()
