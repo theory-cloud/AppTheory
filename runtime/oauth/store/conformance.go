@@ -130,6 +130,7 @@ var conformanceScenarios = map[string]func(*conformanceHarness, ConformanceCase)
 	"broker_expired_refuses_swap":        (*conformanceHarness).brokerExpiredRefusesSwap,
 	"acquire_lock_bumps_version":         (*conformanceHarness).brokerAcquireLockBumpsVersion,
 	"revoke_bumps_version":               (*conformanceHarness).brokerRevokeBumpsVersion,
+	"acquire_lock_sets_refreshing":       (*conformanceHarness).brokerAcquireLockSetsRefreshing,
 	"concurrent_acquire_lock":            (*conformanceHarness).brokerConcurrentAcquireLock,
 	"concurrent_revoke":                  (*conformanceHarness).brokerConcurrentRevoke,
 	"check_and_increment":                (*conformanceHarness).rateLimitCheckAndIncrement,
@@ -635,6 +636,27 @@ func (h *conformanceHarness) brokerAcquireLockBumpsVersion(testCase ConformanceC
 		return nil, err
 	}
 	return map[string]any{"version_delta": after - before}, nil
+}
+
+// brokerAcquireLockSetsRefreshing reports the record status one lock acquisition
+// leaves behind: an acquired handle is refreshing, in every runtime.
+func (h *conformanceHarness) brokerAcquireLockSetsRefreshing(testCase ConformanceCase) (map[string]any, error) {
+	key := h.key(testCase, "handle")
+	if err := h.putBroker(key); err != nil {
+		return nil, err
+	}
+	version, err := h.brokerVersion(key)
+	if err != nil {
+		return nil, err
+	}
+	if _, lockErr := h.stores.RouteRefreshBroker.AcquireLock(h.ctx(), key, "owner-status", version); lockErr != nil {
+		return nil, fmt.Errorf("acquire lock: %w", lockErr)
+	}
+	record, err := h.stores.RouteRefreshBroker.Get(h.ctx(), key)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"status": record.Status}, nil
 }
 
 // brokerRevokeBumpsVersion reports the version delta the first revoke leaves

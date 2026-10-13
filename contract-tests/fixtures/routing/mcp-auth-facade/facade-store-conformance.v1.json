@@ -263,6 +263,13 @@
       "scenario": "revoke_bumps_version",
       "params": { "put": 1 },
       "expect": { "revoke_version_delta": 1, "revoke_again_version_delta": 0 }
+    },
+    {
+      "id": "store.route_refresh_broker.acquire_lock_sets_refreshing_status",
+      "store": "route_refresh_broker",
+      "scenario": "acquire_lock_sets_refreshing",
+      "params": { "put": 1 },
+      "expect": { "status": "refreshing" }
     }
   ]
 }

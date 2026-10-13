@@ -408,6 +408,7 @@ class MemoryRouteRefreshBrokerStore:
                 raise BrokerVersionConflictError(f"broker version conflict for {handle_hash!r}")
             stored.refresh_lock_owner = str(lock_owner or "")
             stored.refresh_lock_expires_at = self._now() + timedelta(seconds=self._lock_ttl_seconds)
+            stored.status = STATUS_REFRESHING
             stored.version += 1
             return _copy_record(stored)
 
@@ -922,6 +923,17 @@ def _scenario_broker_acquire_lock_bumps_version(
     _assert_expected(expect, {"version_delta": (after.version if after is not None else 0) - version})
 
 
+def _scenario_broker_acquire_lock_sets_refreshing(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
+    store.put(RouteRefreshBrokerRecord(handle_hash="handle-hash"))
+    before = store.get("handle-hash")
+    store.acquire_lock("handle-hash", "owner-status", before.version if before is not None else 0)
+    record = store.get("handle-hash")
+    _assert_expected(expect, {"status": record.status if record is not None else "not_found"})
+
+
 def _scenario_broker_revoke_bumps_version(
     stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
 ) -> None:
@@ -1034,6 +1046,7 @@ _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
     ("route_refresh_broker", "revoke_then_swap"): _scenario_broker_revoke_then_swap,
     ("route_refresh_broker", "acquire_lock_bumps_version"): _scenario_broker_acquire_lock_bumps_version,
     ("route_refresh_broker", "revoke_bumps_version"): _scenario_broker_revoke_bumps_version,
+    ("route_refresh_broker", "acquire_lock_sets_refreshing"): _scenario_broker_acquire_lock_sets_refreshing,
     ("route_refresh_broker", "concurrent_acquire_lock"): _scenario_broker_concurrent_acquire_lock,
     ("route_refresh_broker", "concurrent_revoke"): _scenario_broker_concurrent_revoke,
     ("rate_limit", "check_and_increment"): _scenario_rate_limit_check_and_increment,

@@ -159,15 +159,15 @@ async function failingCaseIds(build, cases) {
   return failed;
 }
 
-test("store conformance fixture carries 33 cases", () => {
-  assert.equal(CASES.length, 33);
-  assert.equal(new Set(CASES.map((c) => c.id)).size, 33);
+test("store conformance fixture carries 34 cases", () => {
+  assert.equal(CASES.length, 34);
+  assert.equal(new Set(CASES.map((c) => c.id)).size, 34);
 });
 
 test("the in-memory reference stores satisfy the store conformance table", async () => {
   const clock = new ManualClock(EPOCH);
   const result = await runStoreConformance(newStores(clock), CASES, clock);
-  assert.equal(result.ran, 33);
+  assert.equal(result.ran, 34);
   console.log(
     `store conformance: ${result.ran}/${CASES.length} cases passed (in-memory reference stores)`,
   );

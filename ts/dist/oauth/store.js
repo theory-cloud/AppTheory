@@ -628,6 +628,13 @@ async function runStoreCase(stores, testCase, clock) {
             const after = await stores.routeRefreshBroker.get(key);
             return { version_delta: (after?.version ?? 0) - version };
         }
+        case "acquire_lock_sets_refreshing": {
+            await seedBrokerRecord(stores, brokerRecord(key));
+            const before = await stores.routeRefreshBroker.get(key);
+            await stores.routeRefreshBroker.acquireLock(key, "owner-status", before?.version ?? 0);
+            const record = await stores.routeRefreshBroker.get(key);
+            return { status: record?.status ?? "not_found" };
+        }
         case "revoke_bumps_version": {
             await seedBrokerRecord(stores, brokerRecord(key));
             const stored = await stores.routeRefreshBroker.get(key);
