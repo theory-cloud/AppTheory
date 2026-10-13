@@ -485,10 +485,11 @@ type discoveryFixture struct {
 		Reason   string `json:"reason"`
 	} `json:"cases"`
 	HostGuard struct {
-		Default   string   `json:"default"`
-		Override  string   `json:"override"`
-		Classes   []string `json:"classes"`
-		Addresses []struct {
+		Default      string   `json:"default"`
+		Override     string   `json:"override"`
+		Classes      []string `json:"classes"`
+		AddressCount int      `json:"address_count"`
+		Addresses    []struct {
 			Address string `json:"address"`
 			Class   string `json:"class"`
 			Public  bool   `json:"public"`
@@ -1343,6 +1344,8 @@ func TestHostGuardMatchesTheSharedClassificationTable(t *testing.T) {
 		[]string{"loopback", "link_local", "private", "unspecified", "multicast", "public"},
 		guard.Classes)
 	require.NotEmpty(t, guard.Addresses, "the shared table must pin addresses")
+	require.Equal(t, guard.AddressCount, len(guard.Addresses),
+		"every shared host-guard address row must still be present")
 
 	exercised := make(map[string]bool, len(guard.Classes))
 	for _, row := range guard.Addresses {

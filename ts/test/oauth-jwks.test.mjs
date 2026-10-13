@@ -1054,6 +1054,11 @@ test("discovery-bootstrap.v1 host_guard classifies every shared address row", ()
   assert.equal(guard.default, "reject any endpoint host that is not a public address");
   const rows = guard.addresses;
   assert.ok(rows.length > 0, "the shared host-guard table must not be empty");
+  assert.equal(
+    rows.length,
+    guard.address_count,
+    "every shared host-guard address row must still be present",
+  );
 
   for (const row of rows) {
     assert.equal(
@@ -1072,6 +1077,13 @@ test("discovery-bootstrap.v1 host_guard classifies every shared address row", ()
   assert.equal(classifyHostAddress("localhost"), "invalid");
   assert.equal(isPublicHostAddress("localhost"), false);
   assert.equal(isPublicHostAddress("mcp.example.com"), false);
+
+  // Every shared class must stay exercised, so dropping a class's last row
+  // fails here rather than silently shrinking the table.
+  const exercised = new Set(rows.map((row) => row.class));
+  for (const hostClass of guard.classes) {
+    assert.ok(exercised.has(hostClass), `the shared table must exercise ${hostClass}`);
+  }
 });
 
 test("the default transport refuses an endpoint that is not a public address", async () => {

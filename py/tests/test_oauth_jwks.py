@@ -545,10 +545,20 @@ class DiscoveryBootstrapFixtureTests(unittest.TestCase):
         self.assertEqual(guard["default"], "reject any endpoint host that is not a public address")
         rows = guard["addresses"]
         self.assertTrue(rows, "the shared host-guard table must not be empty")
+        self.assertEqual(
+            len(rows),
+            guard["address_count"],
+            "every shared host-guard address row must still be present",
+        )
         for row in rows:
             with self.subTest(address=row["address"]):
                 self.assertEqual(jwks.classify_host_address(row["address"]), row["class"])
                 self.assertEqual(jwks.is_public_host_address(row["address"]), row["public"])
+        # Every shared class must stay exercised, so dropping a class's last row
+        # fails here rather than silently shrinking the table.
+        exercised = {row["class"] for row in rows}
+        for host_class in guard["classes"]:
+            self.assertIn(host_class, exercised, f"the shared table must exercise {host_class}")
         # A name is never an address literal, and an unparsed address is never
         # treated as public.
         self.assertEqual(jwks.classify_host_address("localhost"), "invalid")

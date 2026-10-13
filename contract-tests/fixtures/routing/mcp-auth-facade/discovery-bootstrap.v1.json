@@ -15,6 +15,7 @@
     "override": "allowPrivateHosts (Go, TypeScript) / allow_private_hosts (Python); off by default, never enabled by the framework",
     "enforced_at": "connect time, on the address the name actually resolved to, so there is no DNS-rebinding window between the check and the connection",
     "classes": ["loopback", "link_local", "private", "unspecified", "multicast", "public"],
+    "address_count": 22,
     "notes": "An IPv4-mapped IPv6 address is classified by the IPv4 address it maps to (for example ::ffff:127.0.0.1 is loopback). The guard applies to both the discovery fetch and every JWKS fetch. The public rows are genuinely globally reachable addresses: documentation/test ranges are deliberately absent because language runtimes disagree about whether they count as private.",
     "addresses": [
       { "address": "127.0.0.1", "class": "loopback", "public": false },
