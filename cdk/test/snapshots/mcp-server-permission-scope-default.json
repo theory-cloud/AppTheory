@@ -143,6 +143,14 @@
       "UpdateReplacePolicy": "Retain"
     },
     "McpServerApi22C3CCFE": {
+      "Metadata": {
+        "apptheory:mcp-transport-posture": {
+          "contract_id": "m17.mcp-transport-posture/v1",
+          "posture": "iam",
+          "route_count": 4,
+          "runtime_posture_declared": false
+        }
+      },
       "Properties": {
         "Name": "apptheory-mcp-permission-scope",
         "ProtocolType": "HTTP"
