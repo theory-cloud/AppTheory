@@ -38,6 +38,7 @@ type patternExpectation struct {
 	AuthorizationServerPath       string       `json:"authorization_server_path"`
 	AuthorizePath                 string       `json:"authorize_path"`
 	TokenPath                     string       `json:"token_path"`
+	RegisterPath                  string       `json:"register_path"`
 	AuthorizationServerSuffixPath string       `json:"authorization_server_suffix_path"`
 }
 
@@ -55,6 +56,7 @@ type derivationExpectation struct {
 	AuthorizationServerPath       string `json:"authorization_server_path"`
 	AuthorizePath                 string `json:"authorize_path"`
 	TokenPath                     string `json:"token_path"`
+	RegisterPath                  string `json:"register_path"`
 	AuthorizationServerSuffixPath string `json:"authorization_server_suffix_path"`
 }
 
@@ -119,6 +121,7 @@ type builderExpectation struct {
 	AuthorizationServerPath       string              `json:"authorization_server_path"`
 	AuthorizePath                 string              `json:"authorize_path"`
 	TokenPath                     string              `json:"token_path"`
+	RegisterPath                  string              `json:"register_path"`
 	AuthorizationServerSuffixPath string              `json:"authorization_server_suffix_path"`
 }
 
@@ -199,7 +202,7 @@ func TestSharedContractConstantsAndTemplates(t *testing.T) {
 			Kind: row.Kind, MCPPattern: row.MCPPattern, ProtectedResourcePath: row.ProtectedResourcePath,
 		})
 		wantFacades = append(wantFacades, OAuthFacadeTemplate{
-			Kind: row.Kind, AuthorizePattern: row.AuthorizePath, TokenPattern: row.TokenPath,
+			Kind: row.Kind, AuthorizePattern: row.AuthorizePath, TokenPattern: row.TokenPath, RegisterPattern: row.RegisterPath,
 		})
 		wantDiscovery = append(wantDiscovery, OAuthDiscoveryTemplate{
 			Kind: row.Kind, CanonicalPattern: row.AuthorizationServerPath, SuffixPattern: row.AuthorizationServerSuffixPath,
@@ -250,6 +253,9 @@ func TestSharedNormalizationAndDerivations(t *testing.T) {
 			}
 			if got := AuthorizationTokenPathForResourcePath(row.Input); got != row.TokenPath {
 				t.Errorf("AuthorizationTokenPathForResourcePath() = %q, want %q", got, row.TokenPath)
+			}
+			if got := AuthorizationRegisterPathForResourcePath(row.Input); got != row.RegisterPath {
+				t.Errorf("AuthorizationRegisterPathForResourcePath() = %q, want %q", got, row.RegisterPath)
 			}
 			if got := AuthorizationServerSuffixPathForResourcePath(row.Input); got != row.AuthorizationServerSuffixPath {
 				t.Errorf("AuthorizationServerSuffixPathForResourcePath() = %q, want %q", got, row.AuthorizationServerSuffixPath)
@@ -344,7 +350,46 @@ func TestSharedBuilderExpectations(t *testing.T) {
 		assertBuilder(t, "OAuthAuthorizationServerPath", endpoint.OAuthAuthorizationServerPath, row.AuthorizationServerPath)
 		assertBuilder(t, "OAuthAuthorizePath", endpoint.OAuthAuthorizePath, row.AuthorizePath)
 		assertBuilder(t, "OAuthTokenPath", endpoint.OAuthTokenPath, row.TokenPath)
+		assertBuilder(t, "OAuthRegisterPath", endpoint.OAuthRegisterPath, row.RegisterPath)
 		assertBuilder(t, "OAuthAuthorizationServerSuffixPath", endpoint.OAuthAuthorizationServerSuffixPath, row.AuthorizationServerSuffixPath)
+	}
+}
+
+func TestStageGlobalCallbackAndIssuerModes(t *testing.T) {
+	t.Parallel()
+	routes := SupportedStageGlobalRoutes()
+	if len(routes) != 1 {
+		t.Fatalf("SupportedStageGlobalRoutes() = %d routes, want 1", len(routes))
+	}
+	if routes[0].Name != CallbackPatternKey || routes[0].Pattern != DefaultCallbackPath {
+		t.Fatalf("stage-global route = %#v, want the default upstream callback", routes[0])
+	}
+	if !reflect.DeepEqual(routes[0].Methods, []string{"GET"}) {
+		t.Fatalf("callback methods = %#v, want [GET]", routes[0].Methods)
+	}
+	if got := SupportedIssuerModes(); !reflect.DeepEqual(got, []IssuerMode{IssuerModeFamily, IssuerModeRoute}) {
+		t.Fatalf("SupportedIssuerModes() = %#v", got)
+	}
+
+	good := []struct {
+		configured string
+		want       string
+	}{
+		{configured: "", want: DefaultCallbackPath},
+		{configured: "/_oauth/mcp/callback", want: DefaultCallbackPath},
+		{configured: "/custom/cb", want: "/custom/cb"},
+		{configured: "  /custom/cb/  ", want: "/custom/cb"},
+	}
+	for _, test := range good {
+		got, ok := CallbackPathForConfiguredPath(test.configured)
+		if !ok || got != test.want {
+			t.Fatalf("CallbackPathForConfiguredPath(%q) = %q, %v; want %q, true", test.configured, got, ok, test.want)
+		}
+	}
+	for _, bad := range []string{"callback", "?query", "/cb#frag", "/a/../b"} {
+		if got, ok := NormalizeCallbackPath(bad); ok {
+			t.Fatalf("NormalizeCallbackPath(%q) = %q, true; want failure", bad, got)
+		}
 	}
 }
 

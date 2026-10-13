@@ -14,7 +14,15 @@ const (
 
 const (
 	// ContractVersion is the MCP route-algebra contract implemented by this package.
-	ContractVersion = "m17.mcp-route-algebra/v1"
+	//
+	// v2 is a superset of v1: the four canonical MCP patterns and the v1
+	// derivations (protected resource, canonical/suffix discovery, authorize,
+	// token) are unchanged. v2 adds the derived register path per kind, one
+	// stage-global callback path, and the IssuerMode vocabulary for per-route
+	// issuer/resource derivation.
+	ContractVersion = "m17.mcp-route-algebra/v2"
+	// ContractVersionV1 is the superseded read contract retained for compatibility.
+	ContractVersionV1 = "m17.mcp-route-algebra/v1"
 	// ParamClientNamespace is the canonical client-namespace route parameter name.
 	ParamClientNamespace = "client_namespace"
 	// ParamPartnerID is the canonical partner route parameter name.
@@ -26,7 +34,35 @@ const (
 	ProtectedResourcePrefix = "/.well-known/oauth-protected-resource"
 	// AuthorizationServerPrefix is the RFC 8414 authorization-server metadata prefix.
 	AuthorizationServerPrefix = "/.well-known/oauth-authorization-server"
+
+	// DefaultCallbackPath is the stage-global upstream OAuth callback path.
+	//
+	// The callback is correlated by the single-use upstream state the facade
+	// minted, so one stage-global route is sufficient and no per-kind callback
+	// multiplies.
+	DefaultCallbackPath = "/_oauth/mcp/callback"
+	// CallbackPatternKey names the stage-global callback route in the route model.
+	CallbackPatternKey = "upstream_callback"
 )
+
+// IssuerMode selects how the facade derives each route's issuer and resource.
+type IssuerMode string
+
+const (
+	// IssuerModeFamily advertises one family-wide issuer for the whole facade.
+	// This is the current behavior and remains for single-tenant/root-only
+	// deployments.
+	IssuerModeFamily IssuerMode = "family"
+	// IssuerModeRoute makes each route its own authorization-server issuer: the
+	// route URL. Required for single-domain proxying of an upstream provider and
+	// for RFC 9207 iss-aware clients.
+	IssuerModeRoute IssuerMode = "route"
+)
+
+// SupportedIssuerModes returns the closed IssuerMode vocabulary in contract order.
+func SupportedIssuerModes() []IssuerMode {
+	return []IssuerMode{IssuerModeFamily, IssuerModeRoute}
+}
 
 // EndpointKind identifies a canonical MCP endpoint shape.
 type EndpointKind string
@@ -75,6 +111,7 @@ type OAuthFacadeTemplate struct {
 	Kind             EndpointKind
 	AuthorizePattern string
 	TokenPattern     string
+	RegisterPattern  string
 }
 
 // OAuthDiscoveryTemplate describes canonical and suffix-compatible discovery routes.
@@ -113,6 +150,7 @@ func SupportedOAuthFacadeTemplates() []OAuthFacadeTemplate {
 			Kind:             seed.kind,
 			AuthorizePattern: AuthorizationAuthorizePathForResourcePath(seed.pattern),
 			TokenPattern:     AuthorizationTokenPathForResourcePath(seed.pattern),
+			RegisterPattern:  AuthorizationRegisterPathForResourcePath(seed.pattern),
 		})
 	}
 	return templates
@@ -157,6 +195,16 @@ func AuthorizationAuthorizePathForResourcePath(resourcePath string) string {
 // AuthorizationTokenPathForResourcePath derives the token facade path.
 func AuthorizationTokenPathForResourcePath(resourcePath string) string {
 	return AuthorizationServerPathForResourcePath(resourcePath) + "/token"
+}
+
+// AuthorizationRegisterPathForResourcePath derives the RFC 7591 dynamic-client
+// registration facade path mounted beside the canonical RFC 8414 discovery path.
+//
+// The routed discovery document advertises exactly this path as
+// registration_endpoint, so the advertised URL and the mounted route cannot
+// drift.
+func AuthorizationRegisterPathForResourcePath(resourcePath string) string {
+	return AuthorizationServerPathForResourcePath(resourcePath) + "/register"
 }
 
 // AuthorizationServerSuffixPathForResourcePath derives the suffix-compatible RFC 8414 discovery path.
@@ -316,6 +364,11 @@ func (e EndpointPath) OAuthTokenPath() (string, error) {
 	return e.derive(AuthorizationTokenPathForResourcePath)
 }
 
+// OAuthRegisterPath builds the endpoint's dynamic-client registration path.
+func (e EndpointPath) OAuthRegisterPath() (string, error) {
+	return e.derive(AuthorizationRegisterPathForResourcePath)
+}
+
 // OAuthAuthorizationServerSuffixPath builds the endpoint's suffix-compatible RFC 8414 discovery path.
 func (e EndpointPath) OAuthAuthorizationServerSuffixPath() (string, error) {
 	return e.derive(AuthorizationServerSuffixPathForResourcePath)
@@ -327,6 +380,59 @@ func (e EndpointPath) derive(derivation func(string) string) (string, error) {
 		return "", err
 	}
 	return derivation(mcpPath), nil
+}
+
+// StageGlobalRoute describes one route that is not derived from an MCP endpoint
+// kind but is installed once per deployment.
+type StageGlobalRoute struct {
+	Name    string
+	Pattern string
+	Methods []string
+}
+
+// SupportedStageGlobalRoutes returns the stage-global route inventory in contract order.
+//
+// v2 adds exactly one stage-global route: the upstream OAuth callback. The
+// callback path is overridable (FacadeConfig.UpstreamCallbackPath); this returns
+// the contract default.
+func SupportedStageGlobalRoutes() []StageGlobalRoute {
+	return []StageGlobalRoute{
+		{
+			Name:    CallbackPatternKey,
+			Pattern: DefaultCallbackPath,
+			Methods: []string{"GET"},
+		},
+	}
+}
+
+// CallbackPathForConfiguredPath resolves the effective callback path for a
+// configuration value, falling back to the contract default when unset.
+func CallbackPathForConfiguredPath(configured string) (string, bool) {
+	configured = strings.TrimSpace(configured)
+	if configured == "" {
+		return DefaultCallbackPath, true
+	}
+	return NormalizeCallbackPath(configured)
+}
+
+// NormalizeCallbackPath validates and normalizes an absolute callback path.
+//
+// The path must be absolute, contain no query or fragment, and must not use a
+// dot segment. It is normalized with the same rules as every other route path.
+func NormalizeCallbackPath(rawPath string) (string, bool) {
+	rawPath = strings.Trim(rawPath, asciiWhitespaceTrimCutset)
+	if rawPath == "" || !strings.HasPrefix(rawPath, "/") {
+		return "", false
+	}
+	if strings.ContainsAny(rawPath, "?#") {
+		return "", false
+	}
+	for _, segment := range strings.Split(rawPath, "/") {
+		if segment == "." || segment == ".." {
+			return "", false
+		}
+	}
+	return normalizePath(rawPath), true
 }
 
 func normalizePath(rawPath string) string {
