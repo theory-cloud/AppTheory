@@ -452,7 +452,10 @@ func encodeSegment(tb testing.TB, value map[string]any) string {
 func writeBody(writer http.ResponseWriter, status int, contentType string, body []byte) {
 	writer.Header().Set("content-length", strconv.Itoa(len(body)))
 	writeBodyStart(writer, status, contentType)
-	_, _ = writer.Write(body)
+	if _, err := writer.Write(body); err != nil {
+		// The test server owns the connection; a failed write just ends the response.
+		return
+	}
 }
 
 func writeBodyStart(writer http.ResponseWriter, status int, contentType string) {

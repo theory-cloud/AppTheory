@@ -606,7 +606,10 @@ func outcomeFor(err error) string {
 func outcomeCounts(outcomes []string) map[string]any {
 	counts := make(map[string]any, len(outcomes))
 	for _, outcome := range outcomes {
-		current, _ := counts[outcome].(int)
+		current := 0
+		if existing, ok := counts[outcome].(int); ok {
+			current = existing
+		}
 		counts[outcome] = current + 1
 	}
 	return counts

@@ -147,7 +147,6 @@ func TestProviderConformance(t *testing.T) {
 
 	ran := 0
 	for _, testCase := range cases {
-		testCase := testCase
 		t.Run(testCase.ID, func(t *testing.T) {
 			ran++
 			runProviderCase(t, testCase)
@@ -793,8 +792,9 @@ func TestProviderErrorHTTPStatusAndUnwrap(t *testing.T) {
 	if !ok || found != providerErr {
 		t.Fatalf("AsProviderError(wrapped) = %v, %t; want the wrapped error", found, ok)
 	}
-	if _, ok := oauthruntime.AsProviderError(sentinel); ok {
-		t.Fatal("AsProviderError reported a plain error as a *ProviderError")
+	stray, ok := oauthruntime.AsProviderError(sentinel)
+	if ok {
+		t.Fatalf("AsProviderError reported a plain error as a *ProviderError: %v", stray)
 	}
 	if providerErr.Unwrap() != nil {
 		t.Error("a class error without a cause must not unwrap to anything")

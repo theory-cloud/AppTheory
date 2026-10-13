@@ -70,7 +70,7 @@ const (
 // unrecognized code stays an upstream_error so an unknown signal is never
 // upgraded into a client-facing decision.
 const (
-	tokenErrorReauthRequired      = "reauth_required"
+	tokenErrorReauthRequired      = "reauth_required" // #nosec G101 -- an OAuth error-code literal, not a credential.
 	tokenErrorTemporarilyUnavail  = "temporarily_unavailable"
 	tokenErrorInvalidGrant        = "invalid_grant"
 	tokenErrorInvalidClient       = "invalid_client"

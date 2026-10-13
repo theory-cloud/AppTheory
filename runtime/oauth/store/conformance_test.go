@@ -148,11 +148,11 @@ func TestClientStoreUpdateIsCompareAndSwap(t *testing.T) {
 		t.Fatalf("version after put = %d, want 1", stored.Version)
 	}
 
-	if _, err := clients.Update(ctx, stored, stored.Version); err != nil {
-		t.Fatalf("first update: %v", err)
+	if _, updateErr := clients.Update(ctx, stored, stored.Version); updateErr != nil {
+		t.Fatalf("first update: %v", updateErr)
 	}
-	if _, err := clients.Update(ctx, stored, stored.Version); !errors.Is(err, store.ErrClientVersionConflict) {
-		t.Fatalf("stale update error = %v, want ErrClientVersionConflict", err)
+	if _, staleErr := clients.Update(ctx, stored, stored.Version); !errors.Is(staleErr, store.ErrClientVersionConflict) {
+		t.Fatalf("stale update error = %v, want ErrClientVersionConflict", staleErr)
 	}
 
 	updated, err := clients.Get(ctx, "client-hash")
@@ -186,17 +186,17 @@ func TestRouteRefreshBrokerStoreLockAndRevocation(t *testing.T) {
 	if locked.Version != 2 || locked.RefreshLockOwner != "owner-1" {
 		t.Fatalf("locked record = %+v", locked)
 	}
-	if _, err := brokers.AcquireLock(ctx, "handle-1", "owner-2", 1); !errors.Is(err, store.ErrBrokerLocked) {
-		t.Fatalf("contended lock error = %v, want ErrBrokerLocked", err)
+	if _, lockErr := brokers.AcquireLock(ctx, "handle-1", "owner-2", 1); !errors.Is(lockErr, store.ErrBrokerLocked) {
+		t.Fatalf("contended lock error = %v, want ErrBrokerLocked", lockErr)
 	}
 
 	clock.Advance(31 * time.Second)
-	if _, err := brokers.AcquireLock(ctx, "handle-1", "owner-2", locked.Version); err != nil {
-		t.Fatalf("re-acquire after lock expiry: %v", err)
+	if _, reacquireErr := brokers.AcquireLock(ctx, "handle-1", "owner-2", locked.Version); reacquireErr != nil {
+		t.Fatalf("re-acquire after lock expiry: %v", reacquireErr)
 	}
 
-	if _, err := brokers.CompareAndSwap(ctx, locked, locked.Version); !errors.Is(err, store.ErrBrokerVersionConflict) {
-		t.Fatalf("stale swap error = %v, want ErrBrokerVersionConflict", err)
+	if _, swapErr := brokers.CompareAndSwap(ctx, locked, locked.Version); !errors.Is(swapErr, store.ErrBrokerVersionConflict) {
+		t.Fatalf("stale swap error = %v, want ErrBrokerVersionConflict", swapErr)
 	}
 
 	revoked, err := brokers.Revoke(ctx, "handle-1")
@@ -206,8 +206,8 @@ func TestRouteRefreshBrokerStoreLockAndRevocation(t *testing.T) {
 	if revoked.Status != store.BrokerStatusRevoked {
 		t.Fatalf("revoked status = %q, want %q", revoked.Status, store.BrokerStatusRevoked)
 	}
-	if _, err := brokers.Revoke(ctx, "handle-1"); err != nil {
-		t.Fatalf("idempotent revoke: %v", err)
+	if _, revokeErr := brokers.Revoke(ctx, "handle-1"); revokeErr != nil {
+		t.Fatalf("idempotent revoke: %v", revokeErr)
 	}
 	stored, err := brokers.Get(ctx, "handle-1")
 	if err != nil {
@@ -240,8 +240,8 @@ func TestRateLimitStoreWindowAndBudget(t *testing.T) {
 	if !first.Allowed || first.Remaining != 1 {
 		t.Fatalf("first check = %+v, want allowed with 1 remaining", first)
 	}
-	if _, err := limits.CheckAndIncrement(ctx, key); err != nil {
-		t.Fatalf("second check: %v", err)
+	if _, checkErr := limits.CheckAndIncrement(ctx, key); checkErr != nil {
+		t.Fatalf("second check: %v", checkErr)
 	}
 	third, err := limits.CheckAndIncrement(ctx, key)
 	if err != nil {
