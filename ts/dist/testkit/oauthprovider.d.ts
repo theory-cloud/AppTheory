@@ -23,6 +23,27 @@ export interface FakeOAuthProviderOptions {
     tokenStatus?: number;
     /** JSON body the token endpoint answers with. */
     tokenBody?: unknown;
+    /**
+     * Status a `grant_type=refresh_token` call is answered with. Unset means
+     * `tokenStatus`, so a caller that configures nothing keeps the
+     * single-response behavior it had before.
+     */
+    refreshTokenStatus?: number;
+    /**
+     * JSON body a `grant_type=refresh_token` call is answered with. Unset means
+     * `tokenBody`. It is how a test gives the refresh grant its own access token,
+     * its own upstream refresh token, and its own id_token, so a caller that must
+     * hide upstream material is observable.
+     */
+    refreshTokenBody?: unknown;
+    /**
+     * Stages the leading `grant_type=refresh_token` responses in call order: the
+     * nth refresh call takes the nth stage, and every later call takes the
+     * steady-state response above. A stage that omits `status` or `body` falls
+     * back to the steady-state value. It exists so a transient upstream failure
+     * that clears is observable.
+     */
+    refreshTokenStages?: FakeRefreshStage[];
     /** When positive, the token endpoint streams a body of this many bytes. */
     tokenBodyBytes?: number;
     /**
@@ -34,6 +55,13 @@ export interface FakeOAuthProviderOptions {
     tokenBodyPaddingBytes?: number;
     /** When positive, the token endpoint stalls this long before answering. */
     tokenDelaySeconds?: number;
+}
+/** One staged `grant_type=refresh_token` response. */
+export interface FakeRefreshStage {
+    /** The HTTP status. Unset means the steady-state refresh status. */
+    status?: number;
+    /** The JSON body. Unset means the steady-state refresh body. */
+    body?: unknown;
 }
 /** The claims one minted access token carries. */
 export interface FakeAccessTokenClaims {
@@ -68,6 +96,11 @@ export declare class FakeOAuthProvider {
     private server;
     private loopbackUrl;
     private lastToken;
+    private readonly refreshStatus;
+    private readonly refreshBody;
+    private readonly refreshStages;
+    private refreshCalls;
+    private lastRefreshForm;
     constructor(options?: FakeOAuthProviderOptions);
     get url(): string;
     get issuer(): string;
@@ -85,9 +118,33 @@ export declare class FakeOAuthProvider {
     jwksDocument(): Record<string, unknown>;
     /** The shape of the last token request, or null before the first one. */
     lastTokenRequest(): FakeTokenRequest | null;
+    /**
+     * Reports how many `grant_type=refresh_token` requests the fake served,
+     * counted separately from the total token request count, so a caller's
+     * single-flight rotation is observable.
+     */
+    refreshCallCount(): number;
+    /**
+     * A copy of the form the last `grant_type=refresh_token` request presented, so
+     * a test can observe the material and client that refresh leg carried. Unlike
+     * `lastTokenRequest`, it deliberately retains the presented values: a refresh
+     * leg's whole contract is which upstream refresh material it presented.
+     */
+    lastRefreshRequest(): URLSearchParams;
     private handleRequest;
     private handleDiscovery;
     private handleToken;
+    /**
+     * Counts one `grant_type=refresh_token` request and records its form,
+     * returning the one-based index of that refresh call, or zero for any other
+     * grant, so the caller can select a staged refresh response.
+     */
+    private recordRefreshRequest;
+    /**
+     * Returns the staged or steady-state response of the nth
+     * `grant_type=refresh_token` call (one-based).
+     */
+    private refreshResponseFor;
     private sendJSON;
     /**
      * Streams a body larger than the adapter's cap in chunks, so the adapter

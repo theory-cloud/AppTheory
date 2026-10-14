@@ -93,11 +93,30 @@ bound to the advertising route). A client the application already knows can stil
 through the `ClientStore`, keyed by the store hash helper (`oauthstore.HashKey` in Go, `hashKey` in TypeScript,
 `hash_key` in Python) so the facade derives the same key when it looks the client up.
 
-**Not yet available in this line** (the follow-on milestone, M3c, owns them): the **`refresh_token` grant** — the
-code-exchange response already returns a framework-minted opaque `refresh_token` handle, but the token endpoint
-answers `400 unsupported_grant_type` for it, so **a handle returned by the code exchange cannot be redeemed yet**; and
-the **CDK `facade` wiring** — still no `cdk/**` change, so the construct's attach prop does not wire the provider and
-stores or the callback-path override.
+The **`refresh_token` grant now works**: the opaque handle the code-exchange response returns as `refresh_token` is
+redeemable at the same per-endpoint-kind `POST …/token` route, as of M3c-1b in all three runtimes. A refresh rotates
+the handle to a fresh opaque one and returns the upstream access token **byte-for-byte** (never an `id_token` or any
+upstream refresh material); it is single-flighted under a broker-store lock so concurrent callers of one handle cause
+exactly one upstream call, a caller that loses that race waits a bounded time and then receives either the winner's
+successor tokens or `503 temporarily_unavailable` with `Retry-After`, and for 30 seconds after a rotation the previous
+handle replays the **same** successor tokens byte-for-byte (so a lost response does not cost the client its grant).
+Beyond that window the previous handle is reuse and revokes the whole grant. A refresh request may not widen or narrow
+its scope: a present `scope` must be exactly the granted set and a present `resource` must be the bound resource.
+Four framework constants govern it and none is configurable (no `FacadeConfig` field, no environment variable): a
+30-second grace window, a 3-second coalesce wait cap, a 512-byte handle bound, and a broker-store lock TTL of 15
+seconds — the last is the M2.1 hardened upstream HTTP deadline (10 s) plus a 5-second margin, so a store you supply
+must use the same 15 seconds. A **durable store you supply must encrypt the broker record's
+`EncryptedGraceRefreshResponse` field at rest** like every other `Encrypted*` field; the framework performs no sealing.
+
+The token and error bodies are JSON and decode identically in all three runtimes, but their **bytes are not
+guaranteed equal across runtimes**. The Go runtime encodes them with Go's `encoding/json`, which HTML-escapes `&`,
+`<`, and `>` as `\u0026`, `\u003c`, and `\u003e`; the TypeScript and Python runtimes emit those characters raw.
+Both forms decode to the same values, the grace replay is byte-identical **within** each runtime (as the 30-second
+replay requires), and no contract pins cross-runtime byte equality — so a cross-language golden-file comparison
+must normalize the bytes or compare decoded values rather than raw bodies.
+
+**Not yet available in this line:** the **CDK `facade` wiring** (the follow-on milestone, M3c-2, owns it) — still no
+`cdk/**` change, so the construct's attach prop does not wire the provider and stores or the callback-path override.
 
 The store `put` normalization was also aligned across Go, TypeScript, and Python: the reference stores now preserve a
 caller-supplied `status` verbatim and normalize a version below 1 to 1 in all three runtimes (Go was already the

@@ -28,6 +28,15 @@ const (
 	frontTestUpstreamCode = "upstream-authorization-code"
 	frontTestRefreshToken = "upstream-refresh-token-value"
 	frontTestClientState  = "client-state-1"
+
+	// The refresh grant's own upstream material. The fake serves these only for
+	// grant_type=refresh_token, so a refresh that returned upstream material
+	// instead of a framework handle is distinguishable from the code exchange,
+	// and a response that leaked either value is observable.
+	frontTestRotatedUpstreamRefreshToken = "upstream-refresh-token-rotated"
+	frontTestRefreshAccessToken          = "upstream-rotated-access-token"
+	frontTestRefreshIDToken              = "upstream-id-token-must-not-surface" // #nosec G101 -- a test fixture value asserted absent from every response, not a credential.
+	frontTestRotatedUpstreamScope        = "mcp:tools"
 )
 
 // mintingProvider wraps the real Autheory adapter. Every leg is the adapter
@@ -65,6 +74,24 @@ type frontChannelHarness struct {
 	kind   mcproutes.EndpointKind
 }
 
+// frontChannelHarnessOptions tunes the harness a test starts. The zero value is
+// the default harness every front-channel test uses.
+type frontChannelHarnessOptions struct {
+	// providerOptions mutates the fake upstream's options before it starts, so a
+	// test can serve a grant-specific or failing token response.
+	providerOptions func(*oauthprovider.Options)
+}
+
+// manualClockAdapter implements apptheory.Clock over the harness's ManualClock,
+// so ctx.Now() is the same deterministic instant the stores observe: grace
+// windows, record lifetimes, and rotation timestamps all move together when a
+// test advances the clock.
+type manualClockAdapter struct {
+	clock *oauthstore.ManualClock
+}
+
+func (a manualClockAdapter) Now() time.Time { return a.clock.Now() }
+
 // recordingBrokerStore decorates the reference broker store and records every
 // handle it is seeded with, so a test can observe the record a callback opened
 // without the front channel having to expose it.
@@ -74,6 +101,13 @@ type recordingBrokerStore struct {
 
 	mu      sync.Mutex
 	handles []string
+
+	// acquireLockFn, when set, replaces the reference store's AcquireLock so a
+	// test can stage the lock outcome (a version conflict, a held lock, a store
+	// error) the in-memory store would only produce under a real concurrent race.
+	// It is read through the store pointer the facade itself holds, so a test may
+	// set it after the harness is built and the facade still observes it.
+	acquireLockFn func(context.Context, string, string, int) (*oauthstore.RouteRefreshBrokerRecord, error)
 }
 
 func (s *recordingBrokerStore) Put(ctx context.Context, record *oauthstore.RouteRefreshBrokerRecord) error {
@@ -81,6 +115,18 @@ func (s *recordingBrokerStore) Put(ctx context.Context, record *oauthstore.Route
 	s.handles = append(s.handles, record.HandleHash)
 	s.mu.Unlock()
 	return s.RouteRefreshBrokerSeeder.Put(ctx, record)
+}
+
+func (s *recordingBrokerStore) AcquireLock(
+	ctx context.Context,
+	handleHash string,
+	lockOwner string,
+	expectedVersion int,
+) (*oauthstore.RouteRefreshBrokerRecord, error) {
+	if s.acquireLockFn != nil {
+		return s.acquireLockFn(ctx, handleHash, lockOwner, expectedVersion)
+	}
+	return s.RouteRefreshBrokerStore.AcquireLock(ctx, handleHash, lockOwner, expectedVersion)
 }
 
 func (s *recordingBrokerStore) handleHashes() []string {
@@ -91,6 +137,14 @@ func (s *recordingBrokerStore) handleHashes() []string {
 
 func newFrontChannelHarness(t *testing.T) *frontChannelHarness {
 	t.Helper()
+	return newFrontChannelHarnessWith(t, frontChannelHarnessOptions{})
+}
+
+func newFrontChannelHarnessWith(t *testing.T, options frontChannelHarnessOptions) *frontChannelHarness {
+	t.Helper()
+	if options.providerOptions == nil {
+		options.providerOptions = func(*oauthprovider.Options) {}
+	}
 	clock := oauthstore.NewManualClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	var reference oauthstore.RouteRefreshBrokerStore = oauthstore.NewMemoryRouteRefreshBrokerStore(oauthstore.RouteRefreshBrokerStoreOptions{Now: clock.Now})
 	seeder, ok := reference.(oauthstore.RouteRefreshBrokerSeeder)
@@ -107,7 +161,7 @@ func newFrontChannelHarness(t *testing.T) *frontChannelHarness {
 		RateLimit:          oauthstore.NewMemoryRateLimitStore(oauthstore.RateLimitStoreOptions{Now: clock.Now}),
 	}
 
-	fake := oauthprovider.NewServer(t, oauthprovider.Options{
+	fakeOptions := oauthprovider.Options{
 		Issuer: frontTestUpstreamIss,
 		TokenBody: map[string]any{
 			"access_token":  "placeholder-upstream-access-token",
@@ -116,7 +170,20 @@ func newFrontChannelHarness(t *testing.T) *frontChannelHarness {
 			"refresh_token": frontTestRefreshToken,
 			"scope":         "mcp:tools",
 		},
-	})
+		// The refresh grant gets its own response, so a facade that returned
+		// upstream refresh material or an id_token instead of a framework handle
+		// is observable in the body as well as in the call counts.
+		RefreshTokenBody: map[string]any{
+			"access_token":  frontTestRefreshAccessToken,
+			"token_type":    "Bearer",
+			"expires_in":    900,
+			"refresh_token": frontTestRotatedUpstreamRefreshToken,
+			"scope":         frontTestRotatedUpstreamScope,
+			"id_token":      frontTestRefreshIDToken,
+		},
+	}
+	options.providerOptions(&fakeOptions)
+	fake := oauthprovider.NewServer(t, fakeOptions)
 	adapter, err := oauth.NewAutheoryProvider(oauth.AutheoryProviderOptions{
 		Issuer:            fake.Issuer(),
 		ClientID:          frontTestClientID,
@@ -163,7 +230,7 @@ func newFrontChannelHarness(t *testing.T) *frontChannelHarness {
 		TokenEndpointAuthMethod: "none",
 	}))
 
-	app := apptheory.New()
+	app := apptheory.New(apptheory.WithClock(manualClockAdapter{clock: clock}))
 	_, err = RegisterMCPFacade(app, config)
 	require.NoError(t, err)
 	return &frontChannelHarness{t: t, app: app, fake: fake, clock: clock, stores: stores, broker: broker, kind: kind}
@@ -593,6 +660,242 @@ func TestFrontChannelMethodStatusEnforcesTheSharedTable(t *testing.T) {
 	require.Equalf(t, methodStatusCaseCount, executed, "executed %d %q cases", executed, methodStatusGroup)
 }
 
+// boundRouteGroup names the route-binding group the shared table carries,
+// executed below through the real mounted /register, /authorize, and /token
+// handlers.
+const boundRouteGroup = "bound_route"
+
+// boundRouteCaseCount is the number of bound_route rows the shared fixture must
+// carry; a change to the table must also be a deliberate edit in the Go,
+// TypeScript, and Python loaders, so no runtime can silently execute a smaller
+// table.
+const boundRouteCaseCount = 5
+
+// boundRouteUnknownClientID is a client id no bound_route row ever registers, so
+// a refusal row can present the very same request for an unknown client and
+// prove the two refusals are byte-identical (THREAT_MODEL cross-cutting: no
+// oracle).
+const boundRouteUnknownClientID = "bound-route-unknown-client"
+
+// boundRouteRedirectURI is the redirect URI every bound_route client registers
+// and presents.
+const boundRouteRedirectURI = "https://client.example/callback"
+
+// boundRouteDefaultRouteKey and boundRouteSecondRouteKey are the route keys the
+// shared table names. The default key is the harness's own namespace route; the
+// second key is a different mounted route whose advertising resource genuinely
+// differs, so a bound-route comparison cannot pass by coinciding on one path.
+const (
+	boundRouteDefaultRouteKey = "namespace"
+	boundRouteSecondRouteKey  = "agent"
+)
+
+// boundRouteConformanceDocument and boundRouteConformanceCase are the bound_route
+// rows: which client is presented, the route key it was registered at, the route
+// key it is presented at, the stage, and the status the real handler must answer
+// with. A "dcr" row registers its client through the real POST .../register
+// handler at registered_at; a "pre_registered" row presents the record the
+// harness seeded directly in the client store, which carries no bound route.
+type boundRouteConformanceDocument struct {
+	Cases []boundRouteConformanceCase `json:"cases"`
+}
+
+type boundRouteConformanceCase struct {
+	ID           string `json:"id"`
+	Group        string `json:"group"`
+	Client       string `json:"client"`
+	RegisteredAt string `json:"registered_at"`
+	PresentedAt  string `json:"presented_at"`
+	Stage        string `json:"stage"`
+	ExpectStatus int    `json:"expect_status"`
+}
+
+// boundRouteEndpoint resolves a row's route key to the concrete endpoint the
+// loader serves it at, so every mounted path is derived from the framework's
+// route algebra rather than a hard-coded string.
+func boundRouteEndpoint(t *testing.T, key string) mcproutes.EndpointPath {
+	t.Helper()
+	switch key {
+	case boundRouteDefaultRouteKey:
+		return mcproutes.EndpointPath{Kind: mcproutes.EndpointKindNamespace, ClientNamespace: "acme"}
+	case boundRouteSecondRouteKey:
+		return mcproutes.EndpointPath{Kind: mcproutes.EndpointKindAgent, ClientNamespace: "acme", AgentID: "agent-1"}
+	default:
+		t.Fatalf("unknown bound_route route key %q", key)
+		return mcproutes.EndpointPath{}
+	}
+}
+
+// boundRoutePath derives one mounted path of an endpoint with a route-algebra
+// helper.
+func boundRoutePath(t *testing.T, endpoint mcproutes.EndpointPath, build func(mcproutes.EndpointPath) (string, error)) string {
+	t.Helper()
+	path, err := build(endpoint)
+	require.NoError(t, err)
+	return path
+}
+
+// boundRouteResource is the advertising route resource of an endpoint, derived
+// exactly as the facade derives it: the route MCP path under the public base URL.
+func boundRouteResource(t *testing.T, endpoint mcproutes.EndpointPath) string {
+	t.Helper()
+	mcpPath, err := endpoint.MCPPath()
+	require.NoError(t, err)
+	return frontTestBaseURL + mcpPath
+}
+
+// boundRouteAuthorizeQuery is the valid authorize request the rows present,
+// carrying the presented route's own advertising resource.
+func boundRouteAuthorizeQuery(t *testing.T, endpoint mcproutes.EndpointPath, clientID string) url.Values {
+	t.Helper()
+	verifier := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTU"
+	challenge, err := oauth.PKCEChallengeS256(verifier)
+	require.NoError(t, err)
+	return url.Values{
+		"client_id":             {clientID},
+		"redirect_uri":          {boundRouteRedirectURI},
+		"response_type":         {"code"},
+		"code_challenge":        {challenge},
+		"code_challenge_method": {"S256"},
+		"state":                 {frontTestClientState},
+		"resource":              {boundRouteResource(t, endpoint)},
+	}
+}
+
+// boundRouteTokenForm is the code-exchange form the rows present, carrying the
+// verifier and the redirect URI the authorize leg used.
+func boundRouteTokenForm(clientID, code string) url.Values {
+	return url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"code_verifier": {"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTU"},
+		"redirect_uri":  {boundRouteRedirectURI},
+		"client_id":     {clientID},
+	}
+}
+
+// boundRouteRegister registers one client through the real POST .../register
+// handler at the row's registered route and returns the server-assigned id.
+func boundRouteRegister(t *testing.T, harness *frontChannelHarness, endpoint mcproutes.EndpointPath) string {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"redirect_uris": []string{boundRouteRedirectURI}})
+	require.NoError(t, err)
+	response := harness.serve("POST", boundRoutePath(t, endpoint, mcproutes.EndpointPath.OAuthRegisterPath), nil, body)
+	require.Equal(t, 201, response.Status)
+	var payload struct {
+		ClientID string `json:"client_id"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body, &payload))
+	require.NotEmpty(t, payload.ClientID)
+	return payload.ClientID
+}
+
+// boundRouteMintCode completes authorize plus callback at the registered route
+// and returns the facade code, so a token row has a genuinely redeemable code
+// minted for the client it presents.
+func boundRouteMintCode(t *testing.T, harness *frontChannelHarness, endpoint mcproutes.EndpointPath, clientID string) string {
+	t.Helper()
+	authorizeResponse := harness.serve(
+		"GET",
+		boundRoutePath(t, endpoint, mcproutes.EndpointPath.OAuthAuthorizePath),
+		boundRouteAuthorizeQuery(t, endpoint, clientID),
+		nil,
+	)
+	require.Equal(t, 302, authorizeResponse.Status)
+	callback := harness.serve("GET", mcproutes.DefaultCallbackPath, url.Values{
+		"code":  {frontTestUpstreamCode},
+		"state": {locationQuery(t, authorizeResponse).Get("state")},
+		"iss":   {frontTestUpstreamIss},
+	}, nil)
+	require.Equal(t, 302, callback.Status)
+	code := locationQuery(t, callback).Get("code")
+	require.NotEmpty(t, code)
+	return code
+}
+
+// TestFrontChannelEnforcesTheSharedBoundRouteTable pins THREAT_MODEL T5 and
+// DESIGN §8.3 to the shared cross-runtime table through the real mounted
+// handlers: a client registered through POST .../register is accepted only at the
+// advertising route it registered at and is refused at any other mounted route
+// with the same non-oracle invalid_client response an unknown client gets, while
+// a pre-registered client whose record carries no bound route stays valid at
+// every route.
+func TestFrontChannelEnforcesTheSharedBoundRouteTable(t *testing.T) {
+	var document boundRouteConformanceDocument
+	loadFacadeConformanceFixture(t, &document)
+
+	rows := make([]boundRouteConformanceCase, 0, len(document.Cases))
+	for _, row := range document.Cases {
+		require.NotEmptyf(t, row.Group, "case %q must carry a group", row.ID)
+		if row.Group == boundRouteGroup {
+			rows = append(rows, row)
+		}
+	}
+	require.Equalf(t, boundRouteCaseCount, len(rows), "loaded %d %q cases", len(rows), boundRouteGroup)
+
+	executed := 0
+	for _, row := range rows {
+		executed++
+		t.Run(row.ID, func(t *testing.T) {
+			harness := newFrontChannelHarness(t)
+			registered := boundRouteEndpoint(t, row.RegisteredAt)
+			presented := boundRouteEndpoint(t, row.PresentedAt)
+
+			clientID := frontTestClientID
+			switch row.Client {
+			case "dcr":
+				clientID = boundRouteRegister(t, harness, registered)
+			case "pre_registered":
+				// The harness already seeded this record with no bound route.
+			default:
+				t.Fatalf("unknown bound_route client %q", row.Client)
+			}
+
+			var response, unknown apptheory.Response
+			switch row.Stage {
+			case "authorize":
+				path := boundRoutePath(t, presented, mcproutes.EndpointPath.OAuthAuthorizePath)
+				response = harness.serve("GET", path, boundRouteAuthorizeQuery(t, presented, clientID), nil)
+				unknown = harness.serve("GET", path, boundRouteAuthorizeQuery(t, presented, boundRouteUnknownClientID), nil)
+			case "token":
+				path := boundRoutePath(t, presented, mcproutes.EndpointPath.OAuthTokenPath)
+				code := boundRouteMintCode(t, harness, registered, clientID)
+				response = harness.serve("POST", path, nil, []byte(boundRouteTokenForm(clientID, code).Encode()))
+				unknown = harness.serve("POST", path, nil, []byte(boundRouteTokenForm(boundRouteUnknownClientID, code).Encode()))
+			default:
+				t.Fatalf("unknown bound_route stage %q", row.Stage)
+			}
+
+			require.Equalf(t, row.ExpectStatus, response.Status, "row %q", row.ID)
+			if row.ExpectStatus == 200 {
+				require.Containsf(t, string(response.Body), `"access_token"`, "row %q must return a token", row.ID)
+			}
+			if row.ExpectStatus == 302 {
+				require.NotEmptyf(t, locationOf(response), "row %q must redirect", row.ID)
+			}
+			if row.ExpectStatus != 400 {
+				return
+			}
+			// A refusal is the same non-oracle invalid_client response an unknown
+			// client gets at this very route: byte-identical body, no redirect, and
+			// no mention of any route the client might have registered at.
+			require.Equalf(t, 400, unknown.Status, "row %q unknown-client control", row.ID)
+			require.Equalf(
+				t,
+				string(unknown.Body),
+				string(response.Body),
+				"row %q must be byte-identical to the unknown-client refusal",
+				row.ID,
+			)
+			require.Emptyf(t, locationOf(response), "row %q must not redirect", row.ID)
+			require.Containsf(t, string(response.Body), `"error":"invalid_client"`, "row %q", row.ID)
+			require.NotContainsf(t, string(response.Body), "route", "row %q must not name a route", row.ID)
+		})
+	}
+
+	require.Equalf(t, boundRouteCaseCount, executed, "executed %d %q cases", executed, boundRouteGroup)
+}
+
 // TestFrontChannelAuthorizeRequiresFreshS256PKCE pins T3: an absent challenge
 // and a plain challenge are both refused, and the refusal is a redirect because
 // the redirect URI has already been validated.
@@ -829,15 +1132,15 @@ func TestFrontChannelTokenRejectsCodeIssuedToAnotherClient(t *testing.T) {
 	require.Contains(t, string(response.Body), `"error":"invalid_grant"`)
 }
 
-// TestFrontChannelTokenRefusesRefreshGrantUntilM3c pins the refresh ruling: the
-// token response issues the refresh handle but the refresh_token grant answers
-// unsupported_grant_type until the brokered refresh milestone lands.
-func TestFrontChannelTokenRefusesRefreshGrantUntilM3c(t *testing.T) {
+// TestFrontChannelTokenRefusesAnUnsupportedGrant pins the dispatch boundary the
+// refresh grant did not move: a grant type the facade does not serve is still
+// refused with unsupported_grant_type. The refresh grant itself is covered by
+// refresh_test.go.
+func TestFrontChannelTokenRefusesAnUnsupportedGrant(t *testing.T) {
 	harness := newFrontChannelHarness(t)
 	response := harness.token(url.Values{
-		"grant_type":    {"refresh_token"},
-		"refresh_token": {"whatever-handle"},
-		"client_id":     {frontTestClientID},
+		"grant_type": {"client_credentials"},
+		"client_id":  {frontTestClientID},
 	})
 	require.Equal(t, 400, response.Status)
 	require.Contains(t, string(response.Body), `"error":"unsupported_grant_type"`)

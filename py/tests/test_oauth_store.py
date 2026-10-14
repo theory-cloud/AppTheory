@@ -10,6 +10,7 @@ from apptheory.clock import ManualClock
 from apptheory.oauth.store import (
     STATUS_REFRESHING,
     STATUS_REVOKED,
+    UTC_NOW_LOCK_TTL_SECONDS,
     AuthorizationCodeRecord,
     BrokerLockedError,
     BrokerRevokedError,
@@ -273,6 +274,24 @@ class RouteRefreshBrokerStoreTests(unittest.TestCase):
         store.compare_and_swap(record, record.version)
         self.clock.advance(dt.timedelta(seconds=900))
         self.assertIsNone(store.get("h"))
+
+    def test_reference_broker_lock_ttl_pins_the_upstream_fetch_deadline(self) -> None:
+        # The reference broker store's default lock TTL is the number the
+        # brokered refresh grant is built around: 15 seconds is the M2.1 hardened
+        # upstream HTTP deadline (10 s, shared by the discovery, token, and JWKS
+        # fetches) plus a five-second margin, and it is well above the facade's
+        # three-second coalesce wait cap, so a waiter for an in-flight rotation can
+        # never outlive and steal the lock. Changing the default without the
+        # matching facade change is a silent regression, so the number and the
+        # expiry a lock actually writes are both pinned.
+        self.assertEqual(15, UTC_NOW_LOCK_TTL_SECONDS)
+        store = MemoryRouteRefreshBrokerStore(now=self.clock.now)
+        store.put(RouteRefreshBrokerRecord(handle_hash="handle"))
+        locked = store.acquire_lock("handle", "owner", 1)
+        held = locked.refresh_lock_expires_at - self.clock.now()
+        self.assertEqual(dt.timedelta(seconds=UTC_NOW_LOCK_TTL_SECONDS), held)
+        with self.assertRaises(BrokerLockedError):
+            store.acquire_lock("handle", "thief", locked.version)
 
 
 class RateLimitStoreTests(unittest.TestCase):

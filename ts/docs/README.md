@@ -87,7 +87,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>849 exported top-level symbols</summary>
+<summary>850 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, AGENT_MCP_PATTERN, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest, APIGatewayProxyResponse,
@@ -123,7 +123,7 @@ EnvJobsTableName, EnvVectorBucketName, EnvVectorDimension, EnvVectorIndexArn, En
 ERR_BEARER_TOKEN_INVALID_AUDIENCE, ERR_INVALID_AUTHORIZATION_HEADER, ERR_INVALID_BEARER_TOKEN, ERR_INVALID_URL, ERR_MISSING_BEARER_TOKEN, ErrorEnvelope, ErrorType, etag,
 EventBridgeEvent, EventBridgeHandler, EventBridgeScheduledWorkloadResultSummary, EventBridgeScheduledWorkloadSummary, EventBridgeSelector, EventBridgeWorkloadEnvelope,
 EventContext, EventHandler, EventMiddleware, FacadeCapabilities, FacadeConfig, FacadeRoute, FakeAccessTokenClaims, FakeEmbedder, FakeMicroVMClient, FakeMicroVMProvider,
-FakeOAuthProvider, FakeOAuthProviderOptions, FakeObjectStore, FakeTokenRequest, FakeVectorStore, FakeWebSocketManagementClient, fixedIdGenerator, FixedWindowStrategy,
+FakeOAuthProvider, FakeOAuthProviderOptions, FakeObjectStore, FakeRefreshStage, FakeTokenRequest, FakeVectorStore, FakeWebSocketManagementClient, fixedIdGenerator, FixedWindowStrategy,
 formatRfc3339Nano, formatWindowId, generateOpenAPI, generateOpenAPIJSON, getDayWindow, getFixedWindow, getHourWindow, getLogger, getMinuteWindow, GetVectorsInput, Handler,
 HandlerFactory, hashKey, Headers, hooksFromEMFMetricSink, hooksFromLogger, hooksFromProfileLogger, html, htmlStream, HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED,
 HTTPErrorFormat, IdempotencyCreateOutcome, IdempotencyStatus, IDGenerator, IdGenerator, InspectSemaphoreInput, insufficientScopeWWWAuthenticate, InternalOnly,

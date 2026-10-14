@@ -8,6 +8,15 @@ import { createServer, } from "node:http";
  * a real RSA key pair, and can be configured to fail, stall, or overshoot the
  * response size cap.
  *
+ * A `grant_type=refresh_token` call is answered by `refreshTokenStatus` and
+ * `refreshTokenBody` when configured and by the ordinary token response
+ * otherwise, so the refresh grant can carry its own access token, its own
+ * upstream refresh token, and its own id_token and a facade that hides upstream
+ * material is observable; `refreshTokenStages` stages the leading refresh
+ * responses in call order, so a transient upstream failure that clears is
+ * observable too. `refreshCallCount` and `lastRefreshRequest` report the refresh
+ * calls separately from the total token requests.
+ *
  * This is test support only: it is not part of the runtime surface, it binds
  * loopback, and it holds nothing but throwaway keys.
  */
@@ -18,6 +27,11 @@ const AUTHORIZATION_PATH = "/oauth/authorize";
 const DEFAULT_KID = "fake-provider-key-1";
 const OVERSIZED_CHUNK_BYTES = 64 * 1024;
 const OVERSIZED_FILL = 0x78;
+/**
+ * The form value that selects the refresh grant, so the fake can serve that
+ * grant a response distinct from the code exchange.
+ */
+const GRANT_TYPE_REFRESH_TOKEN = "refresh_token";
 /** A running fake upstream OAuth provider. */
 export class FakeOAuthProvider {
     options;
@@ -26,6 +40,11 @@ export class FakeOAuthProvider {
     server = null;
     loopbackUrl = "";
     lastToken = null;
+    refreshStatus;
+    refreshBody;
+    refreshStages;
+    refreshCalls = 0;
+    lastRefreshForm = null;
     constructor(options = {}) {
         const issuer = String(options.issuer ?? "https://auth.example.test");
         this.options = {
@@ -34,6 +53,17 @@ export class FakeOAuthProvider {
             publicBaseUrl: String(options.publicBaseUrl ?? issuer),
             kid: String(options.kid ?? DEFAULT_KID),
         };
+        // The refresh grant falls back to the ordinary token response, so a caller
+        // that configures nothing keeps the single-response behavior it had before.
+        const tokenStatus = Number(this.options.tokenStatus ?? 200);
+        const refreshStatus = Number(this.options.refreshTokenStatus ?? tokenStatus);
+        const refreshBody = this.options.refreshTokenBody ?? this.options.tokenBody ?? {};
+        this.refreshStatus = refreshStatus;
+        this.refreshBody = refreshBody;
+        this.refreshStages = (this.options.refreshTokenStages ?? []).map((stage) => ({
+            status: Number(stage.status ?? refreshStatus),
+            body: stage.body ?? refreshBody,
+        }));
         const { privateKey, publicKey } = generateKeyPairSync("rsa", {
             modulusLength: 2048,
         });
@@ -131,6 +161,23 @@ export class FakeOAuthProvider {
     lastTokenRequest() {
         return this.lastToken;
     }
+    /**
+     * Reports how many `grant_type=refresh_token` requests the fake served,
+     * counted separately from the total token request count, so a caller's
+     * single-flight rotation is observable.
+     */
+    refreshCallCount() {
+        return this.refreshCalls;
+    }
+    /**
+     * A copy of the form the last `grant_type=refresh_token` request presented, so
+     * a test can observe the material and client that refresh leg carried. Unlike
+     * `lastTokenRequest`, it deliberately retains the presented values: a refresh
+     * leg's whole contract is which upstream refresh material it presented.
+     */
+    lastRefreshRequest() {
+        return new URLSearchParams(this.lastRefreshForm ?? "");
+    }
     handleRequest(request, response) {
         const url = new URL(request.url ?? "/", "http://127.0.0.1");
         if (url.pathname === this.discoveryPath) {
@@ -181,9 +228,15 @@ export class FakeOAuthProvider {
             hasCodeVerifier: form.has("code_verifier"),
             hasRefreshToken: form.has("refresh_token"),
         };
+        const refreshCall = this.recordRefreshRequest(form);
         const delaySeconds = Number(this.options.tokenDelaySeconds ?? 0);
         if (delaySeconds > 0) {
             await delay(delaySeconds * 1000);
+        }
+        if (refreshCall > 0) {
+            const staged = this.refreshResponseFor(refreshCall);
+            this.sendJSON(response, staged.status, staged.body);
+            return;
         }
         const oversizedBytes = Number(this.options.tokenBodyBytes ?? 0);
         if (oversizedBytes > 0) {
@@ -200,6 +253,33 @@ export class FakeOAuthProvider {
             return;
         }
         this.sendJSON(response, Number(this.options.tokenStatus ?? 200), this.options.tokenBody ?? {});
+    }
+    /**
+     * Counts one `grant_type=refresh_token` request and records its form,
+     * returning the one-based index of that refresh call, or zero for any other
+     * grant, so the caller can select a staged refresh response.
+     */
+    recordRefreshRequest(form) {
+        if (form.get("grant_type") !== GRANT_TYPE_REFRESH_TOKEN) {
+            return 0;
+        }
+        this.refreshCalls += 1;
+        this.lastRefreshForm = new URLSearchParams(form);
+        return this.refreshCalls;
+    }
+    /**
+     * Returns the staged or steady-state response of the nth
+     * `grant_type=refresh_token` call (one-based).
+     */
+    refreshResponseFor(call) {
+        const index = call - 1;
+        if (index >= 0 && index < this.refreshStages.length) {
+            const staged = this.refreshStages[index];
+            if (staged !== undefined) {
+                return staged;
+            }
+        }
+        return { status: this.refreshStatus, body: this.refreshBody };
     }
     sendJSON(response, status, body) {
         const payload = JSON.stringify(body ?? {});

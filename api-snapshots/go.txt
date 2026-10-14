@@ -5454,7 +5454,7 @@ const DefaultRateLimitWindow = time.Minute
 
 const DefaultRouteRefreshBrokerTTL = 15 * time.Minute
 
-const DefaultRouteRefreshLockTTL = 30 * time.Second
+const DefaultRouteRefreshLockTTL = 15 * time.Second
 
 const DefaultTransactionTTL = 10 * time.Minute
 
@@ -6311,7 +6311,19 @@ type Options struct {
 
 	TokenDelay time.Duration
 
+	RefreshTokenStatus int
+
+	RefreshTokenBody map[string]any
+
+	RefreshTokenStages []RefreshStage
+
 	Now func() time.Time
+}
+
+type RefreshStage struct {
+	Status int
+
+	Body map[string]any
 }
 
 type Server struct {
@@ -6330,13 +6342,18 @@ type Server struct {
 	tokenBodyBytes      int
 	tokenBodyPadding    []byte
 	tokenDelay          time.Duration
+	refreshStatus       int
+	refreshBody         []byte
+	refreshStages       []stagedRefreshResponse
 	now                 func() time.Time
 
 	closeOnce sync.Once
 
-	mu               sync.Mutex
-	lastTokenRequest url.Values
-	tokenCalls       int
+	mu                 sync.Mutex
+	lastTokenRequest   url.Values
+	lastRefreshRequest url.Values
+	tokenCalls         int
+	refreshCalls       int
 }
 
 func NewServer(testing.TB, Options) *Server
@@ -6353,9 +6370,13 @@ func (*Server) Issuer() string
 
 func (*Server) JWKSURL() string
 
+func (*Server) LastRefreshRequest() url.Values
+
 func (*Server) LastTokenRequest() url.Values
 
 func (*Server) MintAccessToken(Claims) string
+
+func (*Server) RefreshCallCount() int
 
 func (*Server) TokenCallCount() int
 

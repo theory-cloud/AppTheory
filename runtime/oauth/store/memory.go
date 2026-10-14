@@ -11,11 +11,20 @@ import (
 // Default TTLs and windows, matching the facade-store-spi.v1.json ttl_seconds
 // block. They are the fallback a store applies to a record that arrives without
 // its own expiry, and an application overrides them per store.
+//
+// DefaultRouteRefreshLockTTL is 15 seconds because the lock has to outlast the
+// single upstream refresh call it protects while staying as short as possible
+// when that call dies: the M2.1 hardened upstream HTTP deadline is 10 seconds
+// (oauth's defaultJWKSFetchTimeout, shared by the discovery, token, and JWKS
+// fetches), so 15 seconds is that deadline plus a five-second margin. It is also
+// well above the facade's three-second coalesce wait cap, so a waiter that is
+// waiting for a rotation can never outlive the lock it is waiting on and steal
+// it.
 const (
 	DefaultTransactionTTL        = 10 * time.Minute
 	DefaultAuthorizationCodeTTL  = time.Minute
 	DefaultRouteRefreshBrokerTTL = 15 * time.Minute
-	DefaultRouteRefreshLockTTL   = 30 * time.Second
+	DefaultRouteRefreshLockTTL   = 15 * time.Second
 	DefaultRateLimitWindow       = time.Minute
 )
 

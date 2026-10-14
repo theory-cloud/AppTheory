@@ -32,12 +32,14 @@ const (
 // rejection uses one of these and the fixed description facadeErrorDescriptions
 // maps it to, so no response can widen the vocabulary.
 const (
-	facadeErrorInvalidClient        = "invalid_client"
-	facadeErrorInvalidRequest       = "invalid_request"
-	facadeErrorInvalidTarget        = "invalid_target"
-	facadeErrorInvalidGrant         = "invalid_grant"
-	facadeErrorUnsupportedGrantType = "unsupported_grant_type"
-	facadeErrorUpstream             = "upstream_error"
+	facadeErrorInvalidClient          = "invalid_client"
+	facadeErrorInvalidRequest         = "invalid_request"
+	facadeErrorInvalidTarget          = "invalid_target"
+	facadeErrorInvalidGrant           = "invalid_grant"
+	facadeErrorInvalidScope           = "invalid_scope"
+	facadeErrorUnsupportedGrantType   = "unsupported_grant_type"
+	facadeErrorUpstream               = "upstream_error"
+	facadeErrorTemporarilyUnavailable = "temporarily_unavailable"
 )
 
 // errFrontChannelMissing reports a front-channel handler invoked while the
@@ -50,12 +52,14 @@ var errFrontChannelMissing = errors.New("mcpfacade: front channel is not configu
 // the same description, so the response never distinguishes an unknown key from
 // a used one (THREAT_MODEL cross-cutting: no oracle).
 var facadeErrorDescriptions = map[string]string{
-	facadeErrorInvalidClient:        "the client is not registered",
-	facadeErrorInvalidRequest:       "the request is missing or has an invalid parameter",
-	facadeErrorInvalidTarget:        "the resource is not the resource this route authorizes",
-	facadeErrorInvalidGrant:         "the grant is invalid, expired, or already used",
-	facadeErrorUnsupportedGrantType: "the grant type is not supported",
-	facadeErrorUpstream:             "the upstream authorization server could not complete the request",
+	facadeErrorInvalidClient:          "the client is not registered",
+	facadeErrorInvalidRequest:         "the request is missing or has an invalid parameter",
+	facadeErrorInvalidTarget:          "the resource is not the resource this route authorizes",
+	facadeErrorInvalidGrant:           "the grant is invalid, expired, or already used",
+	facadeErrorInvalidScope:           "the requested scope is not exactly the granted scope set",
+	facadeErrorUnsupportedGrantType:   "the grant type is not supported",
+	facadeErrorUpstream:               "the upstream authorization server could not complete the request",
+	facadeErrorTemporarilyUnavailable: "the token endpoint is temporarily unavailable",
 }
 
 // frontChannelConfig is the validated front-channel field set of FacadeConfig
@@ -136,7 +140,10 @@ func (config normalizedConfig) handleAuthorize(kind mcproutes.EndpointKind, ctx 
 	if err != nil || failure != nil {
 		return failure, err
 	}
-	client, failure, err := front.authorizeClient(ctx, firstQueryValue(ctx.Request.Query, "client_id"))
+	// The advertising route resource is the comparison value of the bound-route
+	// check: authorizeTarget resolved it with frontChannelRouteResource, the same
+	// helper the registration handler bound the client record with.
+	client, failure, err := front.authorizeClient(ctx, resource, firstQueryValue(ctx.Request.Query, "client_id"))
 	if err != nil || failure != nil {
 		return failure, err
 	}
@@ -190,10 +197,14 @@ func (config normalizedConfig) authorizeTarget(
 }
 
 // authorizeClient resolves the registered client or the pre-redirect failure:
-// a missing client id is invalid_request and an unknown one is invalid_client,
-// both rendered as an error page that never redirects.
+// a missing client id is invalid_request, and an unknown or route-mismatched one
+// is invalid_client, both rendered as an error page that never redirects. A
+// record that carries no bound route was pre-registered by the application and
+// is accepted at every route; only a record the registration handler bound to a
+// different advertising route is refused (DESIGN §8.3, THREAT_MODEL T5).
 func (front *frontChannelConfig) authorizeClient(
 	ctx *apptheory.Context,
+	routeResource string,
 	rawClientID string,
 ) (*oauthstore.ClientRecord, *apptheory.Response, error) {
 	if strings.TrimSpace(rawClientID) == "" {
@@ -206,7 +217,24 @@ func (front *frontChannelConfig) authorizeClient(
 		}
 		return nil, nil, err
 	}
+	if clientBoundRouteRefused(client, routeResource) {
+		return nil, facadeErrorPage(400, facadeErrorInvalidClient), nil
+	}
 	return client, nil, nil
+}
+
+// clientBoundRouteRefused reports whether a client the registration handler
+// bound to one advertising route is being presented at another (DESIGN §8.3,
+// THREAT_MODEL T5). The bound route is the route resource frontChannelRouteResource
+// derives, so the comparison is exact and no route can be reached by a
+// generalized or prefix match. A record that carries no bound route was
+// pre-registered by the application and is never refused. Both callers render a
+// refused record with the same invalid_client response an unknown client gets,
+// so the response is never an oracle for which route a client registered at and
+// never names a route.
+func clientBoundRouteRefused(client *oauthstore.ClientRecord, routeResource string) bool {
+	boundRoute := strings.TrimSpace(client.BoundRoute)
+	return boundRoute != "" && boundRoute != routeResource
 }
 
 // authorizeParameters validates the parameters that follow redirect-URI
@@ -526,9 +554,9 @@ func (config normalizedConfig) callbackClientRedirect(
 	return facadeClientRedirect(transaction.RedirectURI, values), nil
 }
 
-// handleToken serves the token endpoint (DESIGN §8.4). M3b owns the
-// authorization_code grant; the brokered refresh grant is M3c and answers
-// unsupported_grant_type until it lands, so no adopter assumes it works.
+// handleToken serves the token endpoint (DESIGN §8.4). It owns the
+// authorization_code grant and the brokered refresh grant; the refresh grant's
+// mechanics live in refresh.go.
 func (config normalizedConfig) handleToken(kind mcproutes.EndpointKind, ctx *apptheory.Context) (*apptheory.Response, error) {
 	if config.frontChannel == nil {
 		return nil, errFrontChannelMissing
@@ -547,9 +575,7 @@ func (config normalizedConfig) handleToken(kind mcproutes.EndpointKind, ctx *app
 	case "authorization_code":
 		return config.handleAuthorizationCodeGrant(ctx, kind, form)
 	case "refresh_token":
-		// Ruled: the token response issues the refresh handle, but the
-		// refresh_token grant is M3c and is refused until then.
-		return facadeErrorPage(400, facadeErrorUnsupportedGrantType), nil
+		return config.handleRefreshTokenGrant(ctx, kind, form)
 	default:
 		return facadeErrorPage(400, facadeErrorUnsupportedGrantType), nil
 	}
@@ -567,7 +593,7 @@ func (config normalizedConfig) handleAuthorizationCodeGrant(
 	if code == "" || strings.TrimSpace(redirectURI) == "" || strings.TrimSpace(verifier) == "" {
 		return facadeErrorPage(400, facadeErrorInvalidRequest), nil
 	}
-	clientID, failure, err := config.tokenClient(ctx, form)
+	clientID, failure, err := config.tokenClient(ctx, kind, form)
 	if err != nil || failure != nil {
 		return failure, err
 	}
@@ -582,15 +608,29 @@ func (config normalizedConfig) handleAuthorizationCodeGrant(
 }
 
 // tokenClient authenticates the public client at the token endpoint: the client
-// id must be registered and its record must claim the public auth method. A
-// missing and an unknown client are the same invalid_client response.
+// id must be registered, its record must claim the public auth method, and a
+// record the registration handler bound to an advertising route must be
+// presented at that same route (DESIGN §8.3, THREAT_MODEL T5). A missing client
+// id, an unknown client, and a route-mismatched client are the same
+// invalid_client response, so the response is not an oracle. The route resource
+// is resolved before the store read, so an unresolvable request host fails
+// closed for every client rather than only for a registered one.
 func (config normalizedConfig) tokenClient(
 	ctx *apptheory.Context,
+	kind mcproutes.EndpointKind,
 	form url.Values,
 ) (string, *apptheory.Response, error) {
 	clientID := strings.TrimSpace(form.Get("client_id"))
 	if clientID == "" {
 		return "", facadeErrorPage(400, facadeErrorInvalidClient), nil
+	}
+	endpoint, err := endpointFromRouteParams(ctx, kind)
+	if err != nil {
+		return "", nil, err
+	}
+	resource, failure, err := config.frontChannelRouteResource(ctx, endpoint)
+	if err != nil || failure != nil {
+		return "", failure, err
 	}
 	client, err := config.frontChannel.stores.Client.Get(ctx.Context(), oauthstore.HashKey(clientID))
 	if err != nil {
@@ -600,6 +640,9 @@ func (config normalizedConfig) tokenClient(
 		return "", nil, err
 	}
 	if method := strings.TrimSpace(client.TokenEndpointAuthMethod); method != "" && method != "none" {
+		return "", facadeErrorPage(400, facadeErrorInvalidClient), nil
+	}
+	if clientBoundRouteRefused(client, resource) {
 		return "", facadeErrorPage(400, facadeErrorInvalidClient), nil
 	}
 	return clientID, nil, nil

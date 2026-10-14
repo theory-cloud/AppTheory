@@ -55,6 +55,16 @@ Every upstream call goes through the same hardened HTTP stack the OIDC discovery
 deadline (10 s default), a 1 MiB response cap, a connect-time SSRF guard that refuses non-public addresses, and a
 redirect refusal. There is no separate, unbounded fetch path.
 
+**`Refresh` must honor the deadline.** The framework's own adapter calls `Refresh` through that hardened stack, so
+the 10-second deadline bounds the upstream call it makes. An implementer's `Refresh` (or a durable store that backs
+the lock) must not ignore it: the broker refresh lock's TTL is 15 seconds — the 10-second deadline plus a 5-second
+margin, a relationship a pin test enforces — so an upstream call that runs past the deadline lets the lock expire and
+a second caller acquire it, admitting a second concurrent upstream refresh. The rotation stays safe even then: it
+completes with a versioned compare-and-swap on the broker record, so exactly one winner lands and the loser discards
+the successor it minted (or answers `503`), and no success is ever returned for state that was not persisted. The
+obligation is nonetheless real — honor the deadline so the single-flight guarantee holds at the store and not only at
+the compare-and-swap.
+
 Typed errors map to a closed client-facing vocabulary, so a caller never has to string-match an upstream body:
 
 | `ProviderError` class | Facade HTTP class |
@@ -124,6 +134,17 @@ persistence-layer `theorydb:"encrypted"` tags on a TableTheory-backed store), so
 the clear. The code record keeping the (encrypted) upstream token response is deliberate: it is what lets the code
 exchange return the upstream access token byte-for-byte unmodified. The in-memory reference stores above neither
 persist nor encrypt and must not be used as a durable store.
+
+**The grace body is retained for the record's lifetime, not for the grace window.** The broker record's
+`EncryptedGraceRefreshResponse` field holds the successor token response a rotation produced — the successor
+handle plus the upstream access token that was already returned to that client — and it is the only link the
+reuse walk can follow to revoke that successor, because the record carries no separate successor-handle field.
+A store must therefore **not** clear the field when the 30-second grace window closes: doing so would truncate
+a post-expiry whole-grant revoke to the single presented record and leave the successor live. The field expires
+with the record, under the record's own TTL (the broker TTL in the table above), never at the grace deadline,
+and a durable store **must** encrypt it at rest for that whole lifetime like every other `Encrypted*` field.
+Nothing extra is exposed by keeping it: it adds no material that is not already covered by the encryption
+obligation (the successor handle and an access token the client already received).
 
 ## Front-channel configuration
 
@@ -212,9 +233,26 @@ belong to the framework rather than the application.
   (`400 invalid_grant`) and the following attempt is then a replay that revokes the broker record. A `resource` that is
   not the code's resource is `400 invalid_target`. On success the response is `200` carrying the upstream access token
   **byte-for-byte unmodified**, the upstream `token_type`/`expires_in`/`scope`, and the framework-minted **opaque
-  refresh handle** as `refresh_token`; it never carries an `id_token` or upstream refresh material. The endpoint
-  answers `400 unsupported_grant_type` for `grant_type=refresh_token` and for every other grant, and `400
-  invalid_request` for an absent grant type.
+  refresh handle** as `refresh_token`; it never carries an `id_token` or upstream refresh material.
+- **`POST …/token` — the `refresh_token` grant.** The client presents the opaque handle the code exchange returned and
+  the same `client_id`. A handle that is unknown, locally expired, revoked, bound to another client, or presented at
+  another route's token endpoint is one and the same `400 invalid_grant` (no oracle). A successful refresh rotates the
+  handle to a **fresh opaque handle** and answers `200` with the upstream access token **byte-for-byte** plus the
+  successor handle; an `id_token` and upstream refresh material never appear in the response, a header, a redirect, or
+  an error body. A **present** `resource` must equal the bound resource (`400 invalid_target` otherwise) and a
+  **present** `scope` must be *exactly* the granted scope set — a wider set and a subset, including a present-but-empty
+  `scope`, are `400 invalid_scope`, because the upstream access token is returned unmodified and cannot be narrowed. A
+  missing or over-512-byte handle is `400 invalid_request`. Refresh is **single-flighted** under the broker store's
+  lock, so concurrent callers of one handle cause exactly **one** upstream refresh call: a caller that loses that race
+  waits up to 3 seconds, then receives the winner's successor tokens or `503 temporarily_unavailable` with
+  `Retry-After`. For **30 seconds** after a rotation the **previous** handle replays the same successor tokens
+  byte-for-byte (an idempotent lost-response path); after that window the previous handle is **reuse**, which revokes
+  the whole grant and answers the same `invalid_grant`. A terminal upstream rejection is `400 invalid_grant` (the
+  record is revoked), an upstream gateway failure is `502 upstream_error`, and a transient upstream, store, lock, or
+  contention failure is `503 temporarily_unavailable` with `Retry-After`. The grace window, the 3-second coalesce wait
+  cap, the 512-byte handle bound, and the broker store's 15-second lock TTL are framework constants — no
+  `FacadeConfig` field and no environment variable. The endpoint still answers `400 unsupported_grant_type` for every
+  other grant and `400 invalid_request` for an absent grant type.
 - **`POST …/register` — RFC 7591 dynamic client registration.** The framework-owned handler bounds and validates the
   client metadata, mints a server-assigned opaque `client_id` (≥128 bits), and stores the record through the
   `ClientStore`, hash-keyed and bound to the advertising route. Only **public clients** are accepted
@@ -239,6 +277,13 @@ error code carries the same `error_description` — so the response never distin
 and relies on the store to seal it: a durable store **must** encrypt every `Encrypted*` field at rest, and the
 framework never writes upstream material to a log, a redirect, a response, or an error body.
 
+**The JSON bodies are semantically identical across runtimes, not byte-identical.** The token and error bodies are
+JSON encoded by each runtime's own encoder: Go's `encoding/json` HTML-escapes `&`, `<`, and `>` as `\u0026`,
+`\u003c`, and `\u003e`, while the TypeScript (`JSON.stringify`) and Python (`json.dumps(..., ensure_ascii=False)`)
+runtimes emit those characters raw. Every form decodes to the same values, and the grace replay is byte-identical
+**within** one runtime (which is what the 30-second replay requires); no cross-runtime byte equality is promised, so
+a cross-language golden comparison must normalize or compare decoded values, never raw bodies.
+
 ## Conformance suites and the fake provider
 
 Three shared conformance tables drive all three runtimes from one source (`contract-tests/fixtures/routing/mcp-auth-facade/`):
@@ -250,8 +295,10 @@ Three shared conformance tables drive all three runtimes from one source (`contr
   with expiry, idempotent revoke, rate-limit window) including concurrent-consume/rotate/revoke rows, run against the
   in-memory reference stores.
 - `facade-conformance.v1.json` — the front-channel behavior rows executed through the real mounted handlers: the RFC
-  9207 `iss` pin, the loopback redirect match, the bounded strict `/token` form parse, the method-mismatch rule, and
-  the RFC 7591 DCR (`dcr`) rows.
+  9207 `iss` pin, the loopback redirect match, the bounded strict `/token` form parse, the method-mismatch rule, the
+  RFC 7591 DCR (`dcr`) rows, the DCR route binding (`bound_route`) rows, and the brokered refresh (`refresh`) rows
+  (rotation, the grace replay, reuse-after-grace revocation, the byte-identical refusal set, the scope/resource rule,
+  the handle bound, replayed-code revocation, and the upstream terminal/transient failures).
 
 Any store — the in-memory ones now, an application's durable store later — must pass the store conformance suite. A
 fake provider (real RSA keys, real local HTTP, configurable success/error/slow/oversized-filler/oversized-valid-json/
@@ -284,11 +331,10 @@ facade itself derives when it looks a record up, and it grants no access of its 
 
 Still absent, by milestone:
 
-- **Brokered refresh:** the token endpoint answers `400 unsupported_grant_type` for `grant_type=refresh_token`. The
-  code-exchange response already carries the framework-minted opaque refresh handle, but that handle cannot be redeemed
-  yet; brokered refresh is the follow-on milestone (M3c-1b).
 - **CDK wiring:** no `cdk/**` change; the construct's `facade` attach prop does not yet wire the provider and stores or
-  the callback-path override.
+  the callback-path override (Wired by the follow-on milestone M3c-2).
+- **A subset-accepting refresh scope:** not built and not planned. A present `scope` on a refresh must be exactly the
+  granted set (ruling R4); the facade cannot narrow an upstream access token it returns byte-for-byte.
 - **A durable store:** the framework still ships none. The in-memory reference stores are non-durable and do not
   encrypt; a deployment supplies a durable store that discharges the encryption obligation above.
 - **Transport-route bearer enforcement** is unchanged (M1/M2).

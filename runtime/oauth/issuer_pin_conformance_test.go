@@ -41,6 +41,22 @@ const methodStatusGroup = "method_status"
 // a new group cannot appear without a loader.
 const dcrGroup = "dcr"
 
+// boundRouteGroup is the sibling group holding the registration route-binding
+// rule: a client registered through DCR is accepted only at the advertising
+// route it registered at. It is executed by runtime/mcpfacade's front-channel
+// tests through the real mounted /register, /authorize, and /token handlers, not
+// here; the ledger below still lists it so a new group cannot appear without a
+// loader.
+const boundRouteGroup = "bound_route"
+
+// refreshGroup is the sibling group holding the brokered refresh grant's
+// contract: single-flight rotation, the bounded grace replay, reuse revocation,
+// the scope and resource bindings of a refresh request, and the typed refusals.
+// It is executed by runtime/mcpfacade's refresh tests through the real token
+// handler, not here; the ledger below still lists it so a new group cannot
+// appear without a loader.
+const refreshGroup = "refresh"
+
 // fixtureGroups is every group the shared table is allowed to carry.
 var fixtureGroups = map[string]struct{}{
 	issuerPinGroup:     {},
@@ -48,6 +64,8 @@ var fixtureGroups = map[string]struct{}{
 	formParseGroup:     {},
 	methodStatusGroup:  {},
 	dcrGroup:           {},
+	boundRouteGroup:    {},
+	refreshGroup:       {},
 }
 
 // issuerPinCaseCount is the number of issuer_pin rows the shared fixture must

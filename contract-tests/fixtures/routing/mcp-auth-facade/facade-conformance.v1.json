@@ -1,8 +1,8 @@
 {
   "id": "mcp.auth.facade.conformance",
   "kind": "conformance",
-  "status": "M3c-1a",
-  "description": "One issuer-pin table for the RFC 9207 `iss` check of the MCP auth facade. Go's oauth.CanonicalizeIssuerURL is the reference: the scheme is lowercased, the authority is preserved byte-for-byte (host case and any explicit port survive), trailing slashes are trimmed from the decoded path, the path keeps its `;`-separated parameters, the query is kept (including a bare trailing `?`) and the fragment is kept. A row matches when both sides canonicalize and the canonical forms are byte-equal. Every runtime's loader runs the same rows and asserts the same outcomes; the uppercase-host and fragment rows exist because a host-lowercasing (WHATWG URL) or fragment-dropping (urllib) canonicalizer would wrongly answer `match`, and the dangling-`?`, `;params` and non-numeric-port rows exist because a `urllib`-based canonicalizer would likewise answer `match` or accept a URL Go refuses. The `redirect_match` group pins the RFC 8252 section 7.3 loopback rule as the real `/authorize` handler applies it: an exact registered==requested pairing always accepts, a loopback pair accepts when scheme, host, path, query, and fragment match exactly and the port alone is free to differ or be absent on either side (the ADV-1144-2 case), while a non-loopback pair accepts only byte-for-byte, so a differing path, a scheme downgrade, a query or fragment mismatch, a `localhost` to `127.0.0.1` host substitution, a differing non-loopback URI, or a requested URI absent from the registered list all fail closed with a 400 and no redirect. The `form_parse` group pins the `/token` request-body rule as the real handler applies it: Go's url.ParseQuery is the reference, so a literal `;` separator or a malformed percent escape fails the whole parse with `invalid_request` and a repeat key keeps its first occurrence, and a raw body strictly larger than the 16384-byte framework bound is refused with `invalid_request` before any parsing. The `method_status` group pins the route-model method-mismatch contract against the real mounted app: a request to a mounted path with an unsupported method answers 405 with `allow` listing the permitted methods (sorted, comma-space separated), while a request to a path that is not mounted at all answers 404 with no `allow`. A row's `route` names a route the loader derives with the framework's route-algebra helpers for the `namespace` kind at MCP path `/acme/mcp`; `mcp`, `token`, `authorize`, `callback`, `discovery_canonical`, `discovery_suffix`, and `protected_resource` are mounted routes, whereas `unmounted_token` (the literal `/acme/mcp/token`) and `unknown` (the literal `/unknown/mcp/path`) are not mounted. The `dcr` group pins the RFC 7591 dynamic-client registration rule as the real `POST .../register` handler applies it: a public client (`token_endpoint_auth_method` absent, empty, or `none`) presenting at least one and at most ten redirect URIs that are each an absolute URL with no fragment and either `https` on any host or `http` on a loopback host registers with `201`, a server-assigned `client_id`, no `client_secret`, `cache-control: no-store`, and a `ClientRecord.BoundRoute` equal to the advertising route; an `http` non-loopback redirect and a fragment redirect are `400 invalid_redirect_uri`, a missing `redirect_uris`, a confidential `token_endpoint_auth_method`, and a present `grant_types` list that omits `authorization_code` are `400 invalid_client_metadata`, a raw body strictly larger than the 16384-byte framework bound is `400 invalid_client_metadata` before any parse, and unknown JSON members are ignored (RFC 7591); the eleventh registration attempt inside one rate-limit window is `429 temporarily_unavailable` with a `Retry-After` header. Each row is executed against a fresh mounted app, so the per-route registration bucket is deterministic.",
+  "status": "M3c-1b",
+  "description": "One issuer-pin table for the RFC 9207 `iss` check of the MCP auth facade. Go's oauth.CanonicalizeIssuerURL is the reference: the scheme is lowercased, the authority is preserved byte-for-byte (host case and any explicit port survive), trailing slashes are trimmed from the decoded path, the path keeps its `;`-separated parameters, the query is kept (including a bare trailing `?`) and the fragment is kept. A row matches when both sides canonicalize and the canonical forms are byte-equal. Every runtime's loader runs the same rows and asserts the same outcomes; the uppercase-host and fragment rows exist because a host-lowercasing (WHATWG URL) or fragment-dropping (urllib) canonicalizer would wrongly answer `match`, and the dangling-`?`, `;params` and non-numeric-port rows exist because a `urllib`-based canonicalizer would likewise answer `match` or accept a URL Go refuses. The `redirect_match` group pins the RFC 8252 section 7.3 loopback rule as the real `/authorize` handler applies it: an exact registered==requested pairing always accepts, a loopback pair accepts when scheme, host, path, query, and fragment match exactly and the port alone is free to differ or be absent on either side (the ADV-1144-2 case), while a non-loopback pair accepts only byte-for-byte, so a differing path, a scheme downgrade, a query or fragment mismatch, a `localhost` to `127.0.0.1` host substitution, a differing non-loopback URI, or a requested URI absent from the registered list all fail closed with a 400 and no redirect. The `form_parse` group pins the `/token` request-body rule as the real handler applies it: Go's url.ParseQuery is the reference, so a literal `;` separator or a malformed percent escape fails the whole parse with `invalid_request` and a repeat key keeps its first occurrence, and a raw body strictly larger than the 16384-byte framework bound is refused with `invalid_request` before any parsing. The `method_status` group pins the route-model method-mismatch contract against the real mounted app: a request to a mounted path with an unsupported method answers 405 with `allow` listing the permitted methods (sorted, comma-space separated), while a request to a path that is not mounted at all answers 404 with no `allow`. A row's `route` names a route the loader derives with the framework's route-algebra helpers for the `namespace` kind at MCP path `/acme/mcp`; `mcp`, `token`, `authorize`, `callback`, `discovery_canonical`, `discovery_suffix`, and `protected_resource` are mounted routes, whereas `unmounted_token` (the literal `/acme/mcp/token`) and `unknown` (the literal `/unknown/mcp/path`) are not mounted. The `dcr` group pins the RFC 7591 dynamic-client registration rule as the real `POST .../register` handler applies it: a public client (`token_endpoint_auth_method` absent, empty, or `none`) presenting at least one and at most ten redirect URIs that are each an absolute URL with no fragment and either `https` on any host or `http` on a loopback host registers with `201`, a server-assigned `client_id`, no `client_secret`, `cache-control: no-store`, and a `ClientRecord.BoundRoute` equal to the advertising route; an `http` non-loopback redirect and a fragment redirect are `400 invalid_redirect_uri`, a missing `redirect_uris`, a confidential `token_endpoint_auth_method`, and a present `grant_types` list that omits `authorization_code` are `400 invalid_client_metadata`, a raw body strictly larger than the 16384-byte framework bound is `400 invalid_client_metadata` before any parse, and unknown JSON members are ignored (RFC 7591); the eleventh registration attempt inside one rate-limit window is `429 temporarily_unavailable` with a `Retry-After` header. Each row is executed against a fresh mounted app, so the per-route registration bucket is deterministic. The `bound_route` group pins the registration route binding as the real `/authorize` and `/token` handlers apply it: a client registered through `POST .../register` is accepted only at the advertising route it registered at (its own route answers `302` at authorize and `200` at token), and is refused at any other mounted route with the same non-oracle `400 invalid_client` an unknown client gets (no `Location`, and no route named in the response), while a pre-registered client whose record carries no bound route stays valid at every route. A row's `registered_at` and `presented_at` name route keys the loader derives with the framework's route-algebra helpers rather than a hard-coded path: `namespace` is the route at MCP path `/acme/mcp` and `agent` is the second mounted route at MCP path `/acme/agents/agent-1/mcp`, whose advertising resource genuinely differs; a `refused` row also compares its response body byte-for-byte with the same request presented for a client the loader never registers at all, so the route-mismatch refusal is proven to be the unknown-client refusal. The `refresh` group pins the brokered refresh grant as the real `/token` handler applies it, with every row naming a `scenario` the loader implements after a common setup (a fresh mounted app, authorize plus callback, and the code exchange), so each row starts from a genuinely minted route handle: a refresh rotates the handle and answers `200` with the upstream access token byte-for-byte and a new framework handle; re-presenting the rotated (previous) handle from the same client inside the thirty-second grace window replays byte-identical successor tokens with no second upstream call, while re-presenting it after the window has passed is reuse and answers the same `400 invalid_grant` an unknown handle gets after revoking the whole grant, so the successor handle is refused afterwards; an unknown handle, a handle presented by another registered client, a handle presented at another route's token endpoint than the one it was minted for, a handle whose authorization code was replayed, and a terminal upstream refresh rejection are all the same non-oracle `400 invalid_grant`; a present `scope` that is not exactly the granted scope set is `400 invalid_scope` and a present `resource` that is not the bound resource is `400 invalid_target`, while an absent `scope`/`resource` takes the granted/bound value and an exactly equal one is accepted; a missing or oversized (over 512 bytes) handle is `400 invalid_request`; a transient upstream refresh failure is `503 temporarily_unavailable` with a `Retry-After` header; and no row's response carries upstream refresh material or an `id_token`.",
   "cases": [
     {
       "id": "issuer_pin.exact_equal_match",
@@ -307,34 +307,34 @@
       "expect_error": "unsupported_grant_type"
     },
     {
-      "id": "form_parse.refresh_token_unsupported",
+      "id": "form_parse.refresh_token_missing_handle",
       "group": "form_parse",
       "body": "grant_type=refresh_token",
-      "expect_error": "unsupported_grant_type"
+      "expect_error": "invalid_request"
     },
     {
       "id": "form_parse.repeated_grant_type_first_occurrence_wins",
       "group": "form_parse",
-      "body": "grant_type=refresh_token&grant_type=authorization_code",
+      "body": "grant_type=client_credentials&grant_type=authorization_code",
       "expect_error": "unsupported_grant_type"
     },
     {
-      "id": "form_parse.repeated_grant_type_code_then_refresh",
+      "id": "form_parse.repeated_grant_type_code_then_unsupported",
       "group": "form_parse",
-      "body": "grant_type=authorization_code&grant_type=refresh_token",
+      "body": "grant_type=authorization_code&grant_type=client_credentials",
       "expect_error": "invalid_request"
     },
     {
       "id": "form_parse.body_exactly_at_the_bound",
       "group": "form_parse",
-      "body_prefix": "grant_type=refresh_token&pad=",
+      "body_prefix": "grant_type=client_credentials&pad=",
       "total_bytes": 16384,
       "expect_error": "unsupported_grant_type"
     },
     {
       "id": "form_parse.body_one_byte_over_the_bound",
       "group": "form_parse",
-      "body_prefix": "grant_type=refresh_token&pad=",
+      "body_prefix": "grant_type=client_credentials&pad=",
       "total_bytes": 16385,
       "expect_error": "invalid_request"
     },
@@ -519,6 +519,168 @@
       "expect_body_absent": ["client_secret"],
       "expect_no_store": true,
       "expect_header": "retry-after"
+    },
+    {
+      "id": "bound_route.dcr_client_at_its_own_route_is_accepted",
+      "group": "bound_route",
+      "client": "dcr",
+      "registered_at": "namespace",
+      "presented_at": "namespace",
+      "stage": "authorize",
+      "expect_status": 302
+    },
+    {
+      "id": "bound_route.dcr_client_at_another_route_is_refused",
+      "group": "bound_route",
+      "client": "dcr",
+      "registered_at": "namespace",
+      "presented_at": "agent",
+      "stage": "authorize",
+      "expect_status": 400
+    },
+    {
+      "id": "bound_route.pre_registered_client_at_any_route_is_accepted",
+      "group": "bound_route",
+      "client": "pre_registered",
+      "registered_at": "namespace",
+      "presented_at": "agent",
+      "stage": "authorize",
+      "expect_status": 302
+    },
+    {
+      "id": "bound_route.dcr_client_at_another_token_route_is_refused",
+      "group": "bound_route",
+      "client": "dcr",
+      "registered_at": "namespace",
+      "presented_at": "agent",
+      "stage": "token",
+      "expect_status": 400
+    },
+    {
+      "id": "bound_route.dcr_client_at_its_own_token_route_is_accepted",
+      "group": "bound_route",
+      "client": "dcr",
+      "registered_at": "namespace",
+      "presented_at": "namespace",
+      "stage": "token",
+      "expect_status": 200
+    },
+    {
+      "id": "refresh.happy_rotation",
+      "group": "refresh",
+      "scenario": "happy_rotation",
+      "expect_status": 200,
+      "expect_absent": ["upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.reuse_within_grace_returns_same_tokens",
+      "group": "refresh",
+      "scenario": "reuse_within_grace_returns_same_tokens",
+      "expect_status": 200,
+      "expect_absent": ["upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.reuse_after_grace_revokes",
+      "group": "refresh",
+      "scenario": "reuse_after_grace_revokes",
+      "expect_status": 400,
+      "expect_error": "invalid_grant",
+      "expect_absent": ["upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.unknown_handle",
+      "group": "refresh",
+      "scenario": "unknown_handle",
+      "expect_status": 400,
+      "expect_error": "invalid_grant",
+      "expect_absent": ["upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.other_client_handle",
+      "group": "refresh",
+      "scenario": "other_client_handle",
+      "expect_status": 400,
+      "expect_error": "invalid_grant",
+      "expect_absent": ["upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.handle_at_another_route_refused",
+      "group": "refresh",
+      "scenario": "handle_at_another_route_refused",
+      "expect_status": 400,
+      "expect_error": "invalid_grant",
+      "expect_absent": ["upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.scope_subset_refused",
+      "group": "refresh",
+      "scenario": "scope_subset_refused",
+      "expect_status": 400,
+      "expect_error": "invalid_scope",
+      "expect_absent": ["upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.scope_exact_accepted",
+      "group": "refresh",
+      "scenario": "scope_exact_accepted",
+      "expect_status": 200,
+      "expect_absent": ["upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.resource_mismatch_refused",
+      "group": "refresh",
+      "scenario": "resource_mismatch_refused",
+      "expect_status": 400,
+      "expect_error": "invalid_target",
+      "expect_absent": ["upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.resource_exact_accepted",
+      "group": "refresh",
+      "scenario": "resource_exact_accepted",
+      "expect_status": 200,
+      "expect_absent": ["upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.oversized_handle_refused",
+      "group": "refresh",
+      "scenario": "oversized_handle_refused",
+      "expect_status": 400,
+      "expect_error": "invalid_request",
+      "expect_absent": ["upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.missing_handle_refused",
+      "group": "refresh",
+      "scenario": "missing_handle_refused",
+      "expect_status": 400,
+      "expect_error": "invalid_request",
+      "expect_absent": ["upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.replayed_code_revokes_handle",
+      "group": "refresh",
+      "scenario": "replayed_code_revokes_handle",
+      "expect_status": 400,
+      "expect_error": "invalid_grant",
+      "expect_absent": ["upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.upstream_terminal_failure",
+      "group": "refresh",
+      "scenario": "upstream_terminal_failure",
+      "expect_status": 400,
+      "expect_error": "invalid_grant",
+      "expect_absent": ["upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "refresh.upstream_transient_failure",
+      "group": "refresh",
+      "scenario": "upstream_transient_failure",
+      "expect_status": 503,
+      "expect_error": "temporarily_unavailable",
+      "expect_retry_after": true,
+      "expect_absent": ["upstream-refresh-token", "id_token"]
     }
   ]
 }
