@@ -609,13 +609,15 @@ async function boundRefreshWait(pending, timeoutMs) {
  * with the same reasoning: the read's own outcome is what the caller must see.
  */
 async function joinCancellations(cancellations, race) {
-    if (cancellations.length === 0)
-        return;
-    try {
-        await race(Promise.allSettled(cancellations));
-    }
-    catch {
-        // The fetch deadline expired first: the stuck cancellation is dropped.
+    for (const cancellation of cancellations) {
+        try {
+            await race(cancellation);
+        }
+        catch {
+            // The fetch deadline expired first: the cancellation that never settled is
+            // dropped rather than awaited past the bound. The read's own outcome is
+            // what the caller must see.
+        }
     }
 }
 /**
