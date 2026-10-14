@@ -82,7 +82,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>763 exported top-level symbols</summary>
+<summary>765 exported top-level symbols</summary>
 
 ```text
 AGENT_MCP_PATTERN, App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError,
@@ -118,7 +118,7 @@ ERROR_UPSTREAM, ErrorType, etag, event_bridge_pattern, event_bridge_rule, EventB
 EventBridgeSelector, EventBridgeWorkloadEnvelope, EventContext, FacadeCapabilities, FacadeConfig, FacadeRoute, FakeEmbedder, FakeMicroVMClient, FakeMicroVMProvider,
 FakeObjectStore, FakeUpstreamProvider, FakeVectorStore, FakeWebSocketClientFactory, FakeWebSocketManagementClient, fixed_mcp_id_generator, FixedWindowStrategy,
 format_duration, format_rfc3339_nano, format_window_id, generate_openapi, generate_openapi_json, get_day_window, get_fixed_window, get_hour_window, get_logger,
-get_minute_window, GetVectorsInput, HandlerFactory, header, HOOK_FAILURE, HOOK_PREPARE_IMAGE, HOOK_READINESS, HOOK_READY, HOOK_RESUME, HOOK_RUN, HOOK_START, HOOK_STOP,
+get_minute_window, GetVectorsInput, HandlerFactory, hash_key, header, HOOK_FAILURE, HOOK_PREPARE_IMAGE, HOOK_READINESS, HOOK_READY, HOOK_RESUME, HOOK_RUN, HOOK_START, HOOK_STOP,
 HOOK_SUSPEND, HOOK_TEARDOWN, HOOK_TERMINATE, HOOK_VALIDATE, hooks_from_emf_metric_sink, hooks_from_logger, hooks_from_profile_logger, html, html_stream,
 HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED, IDGenerator, IdGenerator, insufficient_scope_www_authenticate, internal_only, is_microvm_terminal_state,
 is_supported_profile_output_field, ISSUER_MODE_FAMILY, ISSUER_MODE_ROUTE, job_lock_sort_key, job_meta_sort_key, job_partition_key, job_record_sort_key,
@@ -184,7 +184,7 @@ sanitize_field_value, sanitize_fields, sanitize_json, sanitize_json_value, sanit
 SecurePrincipalResolver, SecureRoute, SemanticIndex, SemanticIndexConfig, SemanticRecord, sequence_mcp_id_generator, set_keys, set_logger, SlidingWindowStrategy,
 SourceProvenance, sse, sse_event_stream, SSEEvent, StageGlobalRoute, STATE_FAILED, STATE_IMAGE_PREPARED, STATE_IMAGE_PREPARING, STATE_READINESS_PROBING, STATE_READY,
 STATE_REQUESTED, STATE_RESUMING, STATE_RUNNING, STATE_STARTED, STATE_STARTING, STATE_STOPPED, STATE_STOPPING, STATE_SUSPENDED, STATE_SUSPENDING, STATE_TEARING_DOWN,
-STATE_TERMINATED, STATE_TERMINATING, STATE_VALIDATED, STATE_VALIDATING, StaticTestProvider, StaticTestProviderOptions, stepfunctions_task_token, StoreError, StreamResult,
+STATE_TERMINATED, STATE_TERMINATING, STATE_VALIDATED, STATE_VALIDATING, StaticTestProvider, StaticTestProviderOptions, stepfunctions_task_token, StoreError, Stores, StreamResult,
 StructuredLogger, supported_endpoint_templates, supported_issuer_modes, supported_oauth_discovery_templates, supported_oauth_facade_templates,
 supported_stage_global_routes, TableTheoryMicroVMSessionRegistry, TestEnv, text, timeout_middleware, TimeoutConfig, TimeWindow, TitanEmbedder, TitanEmbedderConfig,
 TokenClaims, TokenExpectations, TokenSet, TransactionRecord, TransactionStore, TRANSPORT_POSTURES, unix_seconds, unsupported_object_store_operation,

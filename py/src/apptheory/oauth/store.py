@@ -3,8 +3,14 @@
 Five stores, each with a reference in-memory implementation for tests and local
 development. Consume-once and compare-and-swap are *required* operations, not
 conventions: replay handling and single-flight refresh depend on them. Durable
-implementations are application-owned; nothing upstream is ever persisted
-unencrypted.
+implementations are application-owned.
+
+An ``Encrypted*`` record field carries upstream material exactly as the provider
+handed it to the facade: the framework performs no sealing and adds no
+encryption surface or key management, so a durable store implementation MUST
+encrypt those fields at rest (for example with a persistence-layer encryption
+tag). The in-memory reference stores here are NON-DURABLE and do not encrypt:
+they are for deterministic tests and local development only.
 
 The methods are synchronous. A durable implementation is free to keep them
 synchronous while performing I/O, and the facade's async surfaces await the
@@ -13,6 +19,8 @@ result of the call.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import threading
 from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, datetime, timedelta
@@ -229,6 +237,36 @@ class RateLimitStore(Protocol):
     def check_and_increment(self, key: RateLimitBucketKey) -> RateLimitResult: ...
 
 
+@dataclass(slots=True)
+class Stores:
+    """The five store SPIs of one deployment, so one value bundles a facade's
+    persistence surface.
+
+    The framework's in-memory implementations are for deterministic tests and
+    local development: a durable implementation is application-owned and MUST
+    encrypt the encrypted record fields at rest.
+    """
+
+    transaction: TransactionStore | None = None
+    authorization_code: AuthorizationCodeStore | None = None
+    client: ClientStore | None = None
+    route_refresh_broker: RouteRefreshBrokerStore | None = None
+    rate_limit: RateLimitStore | None = None
+
+
+def hash_key(value: str) -> str:
+    """Return the store key for a protected value: the unpadded base64url
+    SHA-256 digest of the value.
+
+    Every store SPI is keyed by the hash of the value it protects and never by
+    the value itself, so a caller that seeds a record directly -- a
+    pre-registered client, for example -- derives the key with this helper and
+    the facade derives the same key when it looks the record up.
+    """
+    digest = hashlib.sha256(str(value).encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -262,9 +300,11 @@ class MemoryTransactionStore:
         self._lock = threading.Lock()
 
     def put(self, record: TransactionRecord) -> None:
+        """Stores a copy, preserving the caller's status and normalizing a
+        version below 1 to 1, as Go's in-memory reference store does."""
         stored = _copy_record(record)
-        stored.status = STATUS_ISSUED
-        stored.version = 1
+        if stored.version < 1:
+            stored.version = 1
         if stored.expires_at is None and self._ttl is not None:
             stored.expires_at = self._now() + timedelta(seconds=self._ttl)
         with self._lock:
@@ -295,9 +335,12 @@ class MemoryAuthorizationCodeStore:
         self._lock = threading.Lock()
 
     def put(self, record: AuthorizationCodeRecord) -> None:
+        """Stores a copy, preserving the caller's status and normalizing a
+        version below 1 to 1, as Go's in-memory reference store does. A re-put
+        clears the code's consumed flag."""
         stored = _copy_record(record)
-        stored.status = STATUS_ISSUED
-        stored.version = 1
+        if stored.version < 1:
+            stored.version = 1
         if stored.expires_at is None and self._ttl is not None:
             stored.expires_at = self._now() + timedelta(seconds=self._ttl)
         with self._lock:
@@ -389,9 +432,12 @@ class MemoryRouteRefreshBrokerStore:
         self._lock = threading.Lock()
 
     def put(self, record: RouteRefreshBrokerRecord) -> None:
+        """Stores a copy, preserving the caller's status and normalizing a
+        version below 1 to 1, as Go's in-memory reference store does. The
+        handle's stored-at instant is recorded for the local lifetime policy."""
         stored = _copy_record(record)
-        stored.status = stored.status or STATUS_ACTIVE
-        stored.version = 1
+        if stored.version < 1:
+            stored.version = 1
         with self._lock:
             self._records[stored.handle_hash] = (stored, self._now())
 
@@ -606,6 +652,14 @@ def _authorization_code_outcome(result: ConsumeResult | None) -> str:
     return "ok"
 
 
+def _authorization_code_record_fields(result: ConsumeResult | None) -> dict[str, Any]:
+    """Reports a consume's status and version, or the "none"/-1 sentinels when
+    the consume returned no record."""
+    if result is None or result.record is None:
+        return {"status": "none", "version": -1}
+    return {"status": result.record.status, "version": result.record.version}
+
+
 def _scenario_transaction_consume_single_use(
     stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
 ) -> None:
@@ -753,13 +807,8 @@ def _scenario_authorization_code_consume_record_payload(
     first = store.consume("code-hash")
     replay = store.consume("code-hash")
 
-    def fields(result: Any) -> dict[str, Any]:
-        if result is None or result.record is None:
-            return {"status": "none", "version": -1}
-        return {"status": result.record.status, "version": result.record.version}
-
-    first_fields = fields(first)
-    replay_fields = fields(replay)
+    first_fields = _authorization_code_record_fields(first)
+    replay_fields = _authorization_code_record_fields(replay)
     _assert_expected(
         expect,
         {
@@ -769,6 +818,59 @@ def _scenario_authorization_code_consume_record_payload(
             "replay": _authorization_code_outcome(replay),
             "replay_status": replay_fields["status"],
             "replay_version": replay_fields["version"],
+        },
+    )
+
+
+def _scenario_authorization_code_put_payload(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    """Seeds one code with the caller's status and version and reports what the
+    consume hands back, so a row pins the put-path payload contract rather than
+    only the outcome. An absent put_status is the empty string and an absent
+    put_version is 0."""
+    store = _authorization_code_store(stores, clock, _ttl_param(params))
+    store.put(
+        AuthorizationCodeRecord(
+            code_hash="code-hash",
+            status=params.get("put_status", ""),
+            version=int(params.get("put_version", 0)),
+        )
+    )
+    result = store.consume("code-hash")
+    fields = _authorization_code_record_fields(result)
+    _assert_expected(
+        expect,
+        {
+            "consume": _authorization_code_outcome(result),
+            "status": fields["status"],
+            "version": fields["version"],
+        },
+    )
+
+
+def _scenario_broker_put_payload(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    """Seeds one handle with the caller's status and version and reports what the
+    get hands back, so a row pins the put-path payload contract rather than only
+    the outcome. An absent put_status is the empty string and an absent
+    put_version is 0."""
+    store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
+    store.put(
+        RouteRefreshBrokerRecord(
+            handle_hash="handle-hash",
+            status=params.get("put_status", ""),
+            version=int(params.get("put_version", 0)),
+        )
+    )
+    record = store.get("handle-hash")
+    _assert_expected(
+        expect,
+        {
+            "get": "ok" if record is not None else "not_found",
+            "status": record.status if record is not None else "none",
+            "version": record.version if record is not None else -1,
         },
     )
 
@@ -1094,6 +1196,7 @@ _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
     ("authorization_code", "consume_unknown"): _scenario_authorization_code_consume_unknown,
     ("authorization_code", "consume_after_ttl"): _scenario_authorization_code_consume_after_ttl,
     ("authorization_code", "consume_record_payload"): _scenario_authorization_code_consume_record_payload,
+    ("authorization_code", "put_payload"): _scenario_authorization_code_put_payload,
     ("authorization_code", "consume_after_ttl_then_replay"): (
         _scenario_authorization_code_consume_after_ttl_then_replay
     ),
@@ -1106,6 +1209,7 @@ _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
     ("client", "update_stale_version"): _scenario_client_update_stale_version,
     ("client", "get_unknown"): _scenario_client_get_unknown,
     ("route_refresh_broker", "get_unknown"): _scenario_broker_get_unknown,
+    ("route_refresh_broker", "put_payload"): _scenario_broker_put_payload,
     ("route_refresh_broker", "acquire_lock_exclusive_with_expiry"): _scenario_broker_acquire_lock_exclusive_with_expiry,
     ("route_refresh_broker", "compare_and_swap_versioned"): _scenario_broker_compare_and_swap_versioned,
     ("route_refresh_broker", "compare_and_swap_unknown"): _scenario_broker_compare_and_swap_unknown,
@@ -1148,7 +1252,9 @@ __all__ = [
     "RouteRefreshBrokerSeeder",
     "RouteRefreshBrokerStore",
     "StoreError",
+    "Stores",
     "TransactionRecord",
     "TransactionStore",
+    "hash_key",
     "run_store_conformance",
 ]

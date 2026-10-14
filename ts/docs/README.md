@@ -87,7 +87,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>848 exported top-level symbols</summary>
+<summary>849 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, AGENT_MCP_PATTERN, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest, APIGatewayProxyResponse,
@@ -125,7 +125,7 @@ EventBridgeEvent, EventBridgeHandler, EventBridgeScheduledWorkloadResultSummary,
 EventContext, EventHandler, EventMiddleware, FacadeCapabilities, FacadeConfig, FacadeRoute, FakeAccessTokenClaims, FakeEmbedder, FakeMicroVMClient, FakeMicroVMProvider,
 FakeOAuthProvider, FakeOAuthProviderOptions, FakeObjectStore, FakeTokenRequest, FakeVectorStore, FakeWebSocketManagementClient, fixedIdGenerator, FixedWindowStrategy,
 formatRfc3339Nano, formatWindowId, generateOpenAPI, generateOpenAPIJSON, getDayWindow, getFixedWindow, getHourWindow, getLogger, getMinuteWindow, GetVectorsInput, Handler,
-HandlerFactory, Headers, hooksFromEMFMetricSink, hooksFromLogger, hooksFromProfileLogger, html, htmlStream, HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED,
+HandlerFactory, hashKey, Headers, hooksFromEMFMetricSink, hooksFromLogger, hooksFromProfileLogger, html, htmlStream, HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED,
 HTTPErrorFormat, IdempotencyCreateOutcome, IdempotencyStatus, IDGenerator, IdGenerator, InspectSemaphoreInput, insufficientScopeWWWAuthenticate, InternalOnly,
 isAppTheoryError, isMicroVMTerminalState, ISSUER_MODE_FAMILY, ISSUER_MODE_ROUTE, IssuerMode, isSupportedProfileOutputField, JobLedgerError, JobLedgerErrorType, JobLock,
 jobLockSortKey, JobMeta, jobMetaSortKey, jobPartitionKey, JobRecord, jobRecordSortKey, JobRequest, jobRequestSortKey, JobsConfig, jobsTableName, JobStatus, json,

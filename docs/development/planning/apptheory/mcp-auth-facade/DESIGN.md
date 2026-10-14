@@ -1,7 +1,8 @@
 # MCP auth facade — design (M0, item 1)
 
-Status: design for review (M0). Not implemented.
-Last updated: 2026-10-12
+Status: design for review (M0). §8 mechanics 1 (authorize), 2 (callback), and the `/token` `authorization_code`
+grant are as-built in M3b-ii across Go/TS/Py; `/register` DCR and brokered refresh are not implemented.
+Last updated: 2026-10-14
 Owner: AppTheory
 
 This is the component model for the **full MCP auth facade**: the AppTheory capability that lets any
@@ -235,13 +236,19 @@ in-memory implementation and a documented durability contract:
 Consume-once and compare-and-swap are **required** operations, not conventions: replay handling (a replayed
 facade code revokes the broker record) and single-flight refresh depend on them. A successful `AcquireLock` sets the
 broker record's status to **`refreshing`**, the status the shared store-conformance row
-`store.route_refresh_broker.acquire_lock_sets_refreshing_status` pins in all three runtimes. The reference in-memory
-stores are for tests only; durable implementations are application-owned (TMS/Autheory use TableTheory-backed
-stores). **No upstream material is persisted unencrypted.** The durable upstream refresh token lives in the
-broker record; the code record may hold the **encrypted** token response (`encrypted_token_response`), which
-embeds the upstream-minted access token (and any upstream refresh/`id_token` from the exchange) in encrypted
-form only — that is deliberate, so the code exchange can return the access token **byte-for-byte unmodified**.
-Nothing upstream is stored in the clear.
+`store.route_refresh_broker.acquire_lock_sets_refreshing_status` pins in all three runtimes.
+
+**Encryption of upstream material is a store obligation, not a framework seam.** The durable upstream refresh
+token lives in the broker record's `encrypted_upstream_refresh_token` field and the code record carries the
+upstream token response in its `encrypted_token_response` field, which embeds the upstream-minted access token (and
+any upstream refresh/`id_token` from the exchange) — deliberately, so the code exchange can return the access
+token **byte-for-byte unmodified**. The facade performs **no** sealing and the framework adds **no** encryption
+surface or key management: it hands the store the upstream material exactly as the provider returned it. A store
+implementation **MUST** encrypt every `Encrypted*` field at rest (for example TMS/Autheory persistence-layer
+TableTheory `theorydb:"encrypted"` tags on a TableTheory-backed store), so nothing upstream is persisted in the
+clear by a conforming implementation. The framework's in-memory reference stores are **NON-DURABLE and do not
+encrypt** — they exist for deterministic tests and local development only, and a deployment replaces them with the
+application-owned durable stores, which are where the encryption obligation is discharged.
 
 ## 8. Facade mechanics (`m17.mcp-auth-facade/v1`)
 
@@ -249,12 +256,20 @@ Nothing upstream is stored in the clear.
 **M1 lands these three signatures as skeleton registrars** — the posture field plus the fail-closed
 registration-time pairing of §4.2 — and **M3 fills them with the numbered mechanics below:**
 
-1. `/authorize` (GET) — **front-channel termination.** Validate registered client, exact redirect URI
-   (loopback port flexibility only), `response_type=code`, S256 PKCE (mandatory; `plain`/absent refused),
+**As built in M3b-ii:** the registrars mount the front channel when the front-channel `FacadeConfig` field set is
+declared, and mechanics **1**, **2**, and the `authorization_code` half of **4** are implemented in all three runtimes
+(tested over a loopback fake provider with real RSA keys and an injected clock). Not implemented: **3** (`/register`
+DCR — the derived pattern exists in the route model but no handler is registered unless the app supplies
+`RegisterHandler`) and the **brokered refresh** half of **4** (the token endpoint answers `400 unsupported_grant_type`
+for `grant_type=refresh_token`; the code-exchange response already carries the framework-minted opaque refresh handle,
+but that handle cannot be redeemed yet — deferred to M3c).
+
+1. `/authorize` (GET) — **front-channel termination.** *As built (M3b-ii).* Validate registered client, exact redirect
+   URI (loopback port flexibility only), `response_type=code`, S256 PKCE (mandatory; `plain`/absent refused),
    `state`, `resource`, and scope; record a single-use transaction; redirect the browser upstream with the
    facade's own client/callback/PKCE/fresh state/`resource`/hints/scopes. **Errors raised before the redirect
    URI is validated never redirect** (open-redirect defense).
-2. `/callback` (GET) — **upstream callback.** Verify upstream RFC 9207 `iss` **before consuming the state or
+2. `/callback` (GET) — **upstream callback.** *As built (M3b-ii).* Verify upstream RFC 9207 `iss` **before consuming the state or
    exchanging the code**, consume the upstream `state` single-use, exchange the upstream code server-side,
    validate the upstream token fail-closed, open the broker record, mint a facade code, and redirect the
    client with `code`, the client's own `state`, and `iss` = route URL. An **absent** upstream `iss` is rejected
@@ -270,15 +285,22 @@ registration-time pairing of §4.2 — and **M3 fills them with the numbered mec
    (`invalid_client`/`invalid_request`/`invalid_target` at authorize), and keeping the two distinguishable is what
    makes the callback `iss` and `state` pins hold — an implementation that skips either check reaches the exchange
    and changes the fixture's expected result instead of coincidentally reproducing `400`.
-3. `/register` (POST) — **RFC 7591 DCR.** Public clients (`token_endpoint_auth_method=none`), https or
+3. `/register` (POST) — **RFC 7591 DCR.** *Not implemented (M3c): the derived `/register` pattern exists in the route
+   model, but the front channel registers no handler for it — the application owns it through `RegisterHandler`.* Public
+   clients (`token_endpoint_auth_method=none`), https or
    loopback redirect URIs, server-assigned ids ≥128 bits, bound to the advertising route, per-route rate
    limited, hash-stored.
-4. `/token` (POST) — **code exchange + brokered refresh.** Facade codes are single-use and bound to
+4. `/token` (POST) — **code exchange + brokered refresh.** *The `authorization_code` grant is as built (M3b-ii); the
+   brokered refresh half is deferred to M3c.* Facade codes are single-use and bound to
    client/redirect/S256/route; a replay returns `invalid_grant` **and revokes the broker record the code
    minted**. Refresh presents an opaque route handle; the broker record binds issuer/client/subject/resource/
    scope fingerprint and holds the **encrypted** upstream refresh material. Concurrent refresh is
    single-flighted with a lock, coalescing, and a bounded grace response; rotation is atomic. The access token
    is returned byte-for-byte unmodified; `id_token` and upstream refresh material never reach the client.
+   *As built (M3b-ii):* the code-exchange response already returns the framework-minted opaque refresh handle as
+   `refresh_token` (with the upstream access token byte-for-byte unmodified and `id_token` dropped), but the
+   `refresh_token` grant itself answers `400 unsupported_grant_type` until M3c, so a returned handle cannot be
+   redeemed yet.
 
 See `THREAT_MODEL.md` for the control and the pinning test of each mechanic, and `MINIMAL_CONSUMER.md` for the
 end-to-end walkthrough that proves scenario (a) by construction.

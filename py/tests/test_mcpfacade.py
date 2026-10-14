@@ -15,6 +15,7 @@ from apptheory import (
     FacadeCapabilities,
     FacadeConfig,
     RootDiscoveryConfig,
+    Stores,
     create_app,
     default_capabilities,
     register_mcp_facade,
@@ -41,6 +42,22 @@ from apptheory.mcproutes import (
     supported_oauth_facade_templates,
 )
 from apptheory.oauth import RequireBearerTokenOptions, new_memory_bearer_token_validator
+from apptheory.oauth.provider import (
+    AuthorizationRequest,
+    CodeExchangeRequest,
+    ProviderMetadata,
+    RefreshRequest,
+    TokenClaims,
+    TokenExpectations,
+    TokenSet,
+)
+from apptheory.oauth.store import (
+    MemoryAuthorizationCodeStore,
+    MemoryClientStore,
+    MemoryRateLimitStore,
+    MemoryRouteRefreshBrokerStore,
+    MemoryTransactionStore,
+)
 from apptheory.request import Request
 from apptheory.response import Response, text
 
@@ -1201,6 +1218,169 @@ class McpFacadeHelperTests(unittest.TestCase):
 
     def test_transport_postures_vocabulary(self) -> None:
         self.assertEqual(("iam", "jwt", "runtime-bearer", "none-public"), TRANSPORT_POSTURES)
+
+
+class _StubProvider:
+    """A no-op ``Provider`` used only to declare a front channel in config tests."""
+
+    def discovery(self) -> ProviderMetadata:
+        return ProviderMetadata(issuer="https://id.example.com")
+
+    def authorization_url(self, req: AuthorizationRequest) -> str:
+        return "https://id.example.com/authorize"
+
+    def exchange_code(self, req: CodeExchangeRequest) -> TokenSet:
+        return TokenSet(access_token="upstream", token_type="Bearer")
+
+    def refresh(self, req: RefreshRequest) -> TokenSet:
+        return TokenSet(access_token="upstream", token_type="Bearer")
+
+    def validate_access_token(self, token: str, expected: TokenExpectations) -> TokenClaims:
+        return TokenClaims(subject="subject")
+
+
+def _reference_stores() -> Stores:
+    return Stores(
+        transaction=MemoryTransactionStore(),
+        authorization_code=MemoryAuthorizationCodeStore(),
+        client=MemoryClientStore(),
+        route_refresh_broker=MemoryRouteRefreshBrokerStore(),
+        rate_limit=MemoryRateLimitStore(),
+    )
+
+
+def _front_channel_config() -> FacadeConfig:
+    """A complete, valid front-channel field set built on the reference stores."""
+    config = _valid_config(URL_MODE_PUBLIC_BASE_URL)
+    config.provider = _StubProvider()
+    config.stores = _reference_stores()
+    config.upstream_client_id = "mcp_facade_client"
+    config.upstream_issuer = "https://id.example.com"
+    return config
+
+
+class McpFacadeFrontChannelConfigTests(unittest.TestCase):
+    def test_accepts_a_complete_set(self) -> None:
+        register_mcp_facade(create_app(tier="p0"), _front_channel_config())
+
+    def test_requires_every_field(self) -> None:
+        def empty_client_id(config: FacadeConfig) -> None:
+            config.upstream_client_id = ""
+
+        def whitespace_client_id(config: FacadeConfig) -> None:
+            config.upstream_client_id = "   "
+
+        def empty_issuer(config: FacadeConfig) -> None:
+            config.upstream_issuer = ""
+
+        def non_https_issuer(config: FacadeConfig) -> None:
+            config.upstream_issuer = "http://id.example.com"
+
+        def issuer_with_query(config: FacadeConfig) -> None:
+            config.upstream_issuer = "https://id.example.com?a=1"
+
+        def empty_lifecycle_scope(config: FacadeConfig) -> None:
+            config.lifecycle_scopes = ["offline_access", "  "]
+
+        cases = (
+            ("upstream client id", empty_client_id, "upstream client id"),
+            ("upstream client id whitespace", whitespace_client_id, "upstream client id"),
+            ("upstream issuer empty", empty_issuer, "upstream issuer"),
+            ("upstream issuer not https", non_https_issuer, "upstream issuer"),
+            ("upstream issuer with query", issuer_with_query, "upstream issuer"),
+            ("empty lifecycle scope", empty_lifecycle_scope, "lifecycle scope"),
+        )
+        for name, mutate, want in cases:
+            with self.subTest(name=name):
+                config = _front_channel_config()
+                mutate(config)
+                with self.assertRaises(ValueError) as raised:
+                    register_mcp_facade(create_app(tier="p0"), config)
+                self.assertIn(want, str(raised.exception))
+
+    def test_requires_every_store(self) -> None:
+        attributes = (
+            ("transaction", "Transaction"),
+            ("authorization_code", "AuthorizationCode"),
+            ("client", "Client"),
+            ("route_refresh_broker", "RouteRefreshBroker"),
+            ("rate_limit", "RateLimit"),
+        )
+        for attribute, want in attributes:
+            with self.subTest(store=attribute):
+                config = _front_channel_config()
+                setattr(config.stores, attribute, None)
+                with self.assertRaises(ValueError) as raised:
+                    register_mcp_facade(create_app(tier="p0"), config)
+                self.assertIn(want, str(raised.exception))
+                self.assertIn("all five stores", str(raised.exception))
+
+    def test_field_set_fails_closed_without_provider(self) -> None:
+        def stores_field(config: FacadeConfig) -> None:
+            config.stores = _reference_stores()
+
+        def client_id_field(config: FacadeConfig) -> None:
+            config.upstream_client_id = "mcp_x"
+
+        def issuer_field(config: FacadeConfig) -> None:
+            config.upstream_issuer = "https://id.example.com"
+
+        def scopes_field(config: FacadeConfig) -> None:
+            config.lifecycle_scopes = ["offline_access"]
+
+        def hints_field(config: FacadeConfig) -> None:
+            config.provider_hints = lambda _ctx: {"account_id": "acme"}
+
+        cases = (
+            ("stores", stores_field, "Stores"),
+            ("upstream client id", client_id_field, "UpstreamClientID"),
+            ("upstream issuer", issuer_field, "UpstreamIssuer"),
+            ("lifecycle scopes", scopes_field, "LifecycleScopes"),
+            ("provider hints", hints_field, "ProviderHints"),
+        )
+        for name, mutate, want in cases:
+            with self.subTest(field=name):
+                config = _valid_config(URL_MODE_PUBLIC_BASE_URL)
+                mutate(config)
+                with self.assertRaises(ValueError) as raised:
+                    register_mcp_facade(create_app(tier="p0"), config)
+                self.assertIn(want, str(raised.exception))
+                self.assertIn("without Provider", str(raised.exception))
+
+    def test_rejects_application_owned_handler_factories(self) -> None:
+        config = _front_channel_config()
+        config.authorize_handler = _kind_handler_factory("authorize")
+        config.token_handler = _kind_handler_factory("token")
+        with self.assertRaises(ValueError) as raised:
+            register_mcp_facade(create_app(tier="p0"), config)
+        self.assertIn(
+            "AuthorizeHandler and TokenHandler must not be configured with a front channel", str(raised.exception)
+        )
+
+        callback_config = _front_channel_config()
+        callback_config.callback_handler = _callback
+        with self.assertRaises(ValueError) as callback_raised:
+            register_mcp_facade(create_app(tier="p0"), callback_config)
+        self.assertIn("CallbackHandler must not be configured with a front channel", str(callback_raised.exception))
+
+    def test_lifecycle_scopes_are_validated_like_scopes(self) -> None:
+        config = _front_channel_config()
+        config.lifecycle_scopes = ["offline_access", "offline_access"]
+        register_mcp_facade(create_app(tier="p0"), config)
+
+        config = _front_channel_config()
+        config.lifecycle_scopes = ["aaa"]
+        register_mcp_facade(create_app(tier="p0"), config)
+
+    def test_config_is_validated_before_any_route_is_registered(self) -> None:
+        app = create_app(tier="p0")
+        config = _front_channel_config()
+        config.upstream_issuer = "http://id.example.com"
+        with self.assertRaises(ValueError):
+            register_mcp_facade(app, config)
+
+        endpoint = EndpointPath(kind="namespace", client_namespace="acme")
+        self.assertEqual(404, _serve(app, "GET", endpoint.protected_resource_path()).status)
 
 
 def _assert_metadata_headers(test: unittest.TestCase, response: Response) -> None:

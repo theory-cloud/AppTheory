@@ -4,6 +4,13 @@ import type { ManualClock } from "../clock.js";
  * operation is atomic, and the two operations the facade's correctness rests
  * on — consume-once and compare-and-swap — are part of the SPI rather than a
  * convention the caller is trusted to keep.
+ *
+ * An `Encrypted*` record field carries upstream material exactly as the
+ * provider handed it to the facade: the framework performs no sealing and adds
+ * no encryption surface or key management, so a durable store implementation
+ * MUST encrypt those fields at rest (for example with a persistence-layer
+ * encryption tag). The in-memory reference stores here are NON-DURABLE and do
+ * not encrypt: they are for deterministic tests and local development only.
  */
 /** A pending or consumed front-channel transaction, keyed by hash(upstream state). */
 export interface TransactionRecord {
@@ -23,14 +30,19 @@ export interface TransactionRecord {
     partnerId: string;
     agentId: string;
     status: TransactionStatus;
-    expiresAt: Date;
+    /**
+     * The record's expiry. Leave it unset to let the store apply its own
+     * transaction TTL; a set value is kept verbatim.
+     */
+    expiresAt?: Date;
     version: number;
 }
 export type TransactionStatus = "pending" | "consumed" | "expired";
 /**
  * A minted facade code, keyed by hash(facade code). The record is retained
- * after consume so a replay is distinguishable from an unknown code, and it
- * holds no unencrypted upstream material.
+ * after consume so a replay is distinguishable from an unknown code. Its
+ * `Encrypted*` fields carry upstream material as the provider handed it to the
+ * facade (the store encrypts them at rest, per the module note).
  */
 export interface AuthorizationCodeRecord {
     codeHash: string;
@@ -50,7 +62,11 @@ export interface AuthorizationCodeRecord {
     /** The upstream TokenSet, encrypted; it embeds the upstream access token. */
     encryptedTokenResponse: string;
     status: AuthorizationCodeStatus;
-    expiresAt: Date;
+    /**
+     * The record's expiry. Leave it unset to let the store apply its own code
+     * TTL; a set value is kept verbatim.
+     */
+    expiresAt?: Date;
     version: number;
 }
 export type AuthorizationCodeStatus = "issued" | "consumed" | "expired";
@@ -263,8 +279,8 @@ export declare class MemoryRouteRefreshBrokerStore implements RouteRefreshBroker
     /**
      * Seeds a handle: the store's own create path, and the only way a handle is
      * created. Creation is deliberately not a compare-and-swap, so a swap can
-     * never resurrect a handle. A copy is stored at version 1, and a record that
-     * carries no status defaults to `active`.
+     * never resurrect a handle. A copy is stored with the caller's status
+     * preserved verbatim, and a version below 1 is normalized to 1.
      */
     put(record: RouteRefreshBrokerRecord): Promise<void>;
     get(handleHash: string): Promise<RouteRefreshBrokerRecord | null>;
@@ -322,6 +338,14 @@ export declare class MemoryRateLimitStore implements RateLimitStore {
      */
     checkAndIncrement(key: RateLimitBucketKey): Promise<RateLimitResult>;
 }
+/**
+ * Returns the store key for a protected value: the unpadded base64url SHA-256
+ * digest of the value. Every store SPI is keyed by the hash of the value it
+ * protects and never by the value itself, so a caller that seeds a record
+ * directly — a pre-registered client, for example — derives the key with this
+ * helper and the facade derives the same key when it looks the record up.
+ */
+export declare function hashKey(value: string): string;
 /** Every reference store, as one conformance subject. */
 export interface Stores {
     transaction: TransactionStore;

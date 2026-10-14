@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 /** A consumed client update presented a stale version. */
 export class ClientVersionConflictError extends Error {
     constructor(message = "client record version conflict") {
@@ -177,14 +178,13 @@ export class MemoryRouteRefreshBrokerStore {
     /**
      * Seeds a handle: the store's own create path, and the only way a handle is
      * created. Creation is deliberately not a compare-and-swap, so a swap can
-     * never resurrect a handle. A copy is stored at version 1, and a record that
-     * carries no status defaults to `active`.
+     * never resurrect a handle. A copy is stored with the caller's status
+     * preserved verbatim, and a version below 1 is normalized to 1.
      */
     put(record) {
         const stored = {
             ...structuredClone(record),
-            status: record.status || "active",
-            version: 1,
+            version: positiveInteger(record.version, 1),
         };
         this.records.set(stored.handleHash, stored);
         this.storedAt.set(stored.handleHash, this.now().getTime());
@@ -339,6 +339,16 @@ export class MemoryRateLimitStore {
     }
 }
 /**
+ * Returns the store key for a protected value: the unpadded base64url SHA-256
+ * digest of the value. Every store SPI is keyed by the hash of the value it
+ * protects and never by the value itself, so a caller that seeds a record
+ * directly — a pre-registered client, for example — derives the key with this
+ * helper and the facade derives the same key when it looks the record up.
+ */
+export function hashKey(value) {
+    return createHash("sha256").update(value, "utf8").digest("base64url");
+}
+/**
  * Runs the shared store conformance table against `stores`, resetting the
  * clock to its starting instant before every row, and throws on the first row
  * whose observable outcome differs from its `expect`. The returned count is
@@ -425,6 +435,31 @@ async function runStoreCase(stores, testCase, clock) {
                 replay: authorizationCodeOutcome(replay),
                 replay_status: replayFields.status,
                 replay_version: replayFields.version,
+            };
+        }
+        case "put_payload": {
+            const putStatus = typeof params["put_status"] === "string" ? params["put_status"] : "";
+            const putVersion = numberParam(params, "put_version", 0);
+            if (testCase.store === "authorization_code") {
+                const ttlSeconds = numberParam(params, "ttl_seconds", 60);
+                await stores.authorizationCode.put(authorizationCodeRecord(key, addSeconds(clock.now(), ttlSeconds), {
+                    status: putStatus,
+                    version: putVersion,
+                }));
+                const result = await stores.authorizationCode.consume(key);
+                const record = result?.record ?? null;
+                return {
+                    consume: authorizationCodeOutcome(result),
+                    status: record?.status ?? "none",
+                    version: record?.version ?? -1,
+                };
+            }
+            await seedBrokerRecord(stores, brokerRecord(key, { status: putStatus, version: putVersion }));
+            const record = await stores.routeRefreshBroker.get(key);
+            return {
+                get: record === null ? "not_found" : "ok",
+                status: record?.status ?? "none",
+                version: record?.version ?? -1,
             };
         }
         case "concurrent_consume": {
@@ -816,7 +851,7 @@ function transactionRecord(key, expiresAt) {
         version: 1,
     };
 }
-function authorizationCodeRecord(key, expiresAt) {
+function authorizationCodeRecord(key, expiresAt, overrides = {}) {
     return {
         codeHash: key,
         clientIdHash: `client-hash:${key}`,
@@ -833,9 +868,9 @@ function authorizationCodeRecord(key, expiresAt) {
         routeRefreshHandleHash: `handle-hash:${key}`,
         encryptedRouteRefreshHandle: "encrypted-route-refresh-handle",
         encryptedTokenResponse: "encrypted-token-response",
-        status: "issued",
+        status: (overrides.status ?? "issued"),
         expiresAt,
-        version: 1,
+        version: overrides.version ?? 1,
     };
 }
 function clientRecord(key) {
@@ -851,7 +886,7 @@ function clientRecord(key) {
         version: 1,
     };
 }
-function brokerRecord(key) {
+function brokerRecord(key, overrides = {}) {
     return {
         handleHash: key,
         issuer: "https://auth.example.test",
@@ -868,8 +903,8 @@ function brokerRecord(key) {
         encryptedUpstreamRefreshToken: "encrypted-upstream-refresh-token",
         upstreamRefreshTokenHash: `refresh-token-hash:${key}`,
         upstreamClientId: "conformance-client",
-        status: "issued",
-        version: 1,
+        status: (overrides.status ?? "issued"),
+        version: overrides.version ?? 1,
     };
 }
 function numberParam(params, name, fallback) {

@@ -9,10 +9,18 @@ The MCP auth facade lets an application front an upstream auth provider (Autheor
 domain while the upstream stays the sole authorization server and token authority. This page documents the two
 service-provider interfaces the facade is built on and what ships today.
 
-**Status: the SPI layer exists; nothing is mounted.** The provider SPI, the store SPIs, the in-memory reference
-stores, the conformance suites, and the fake provider are **inert packages**. No facade route is registered and
-`FacadeConfig` does not consume them yet — the front channel, upstream callback, code exchange, DCR and brokered
-refresh handlers land in the follow-on milestones. No store or provider is reachable from a request today.
+**Status: the SPI layer exists and is consumed by the framework-owned front channel.** The provider SPI, the five
+store SPIs, the conformance suites, and the fake provider are implemented in Go, TypeScript, and Python. When the
+front-channel field set below is declared, the three registrars (`RegisterMCPFacade` / `registerMcpFacade` /
+`register_mcp_facade`) **mount the client-facing front channel** and drive the provider and the stores from a request:
+the per-endpoint-kind `GET …/authorize` terminator, the one stage-global `GET /_oauth/mcp/callback`, and the
+per-endpoint-kind `POST …/token` `authorization_code` grant. Nothing outside that field set becomes reachable, and with
+`Provider` absent the facade owns no OAuth surface — the application either supplies its own handler factories or
+registers none, exactly as before.
+
+Not mounted or answered yet: the `/register` DCR route, the `refresh_token` grant at `/token` (the code-exchange
+response already carries a framework-minted opaque refresh handle, but that handle cannot be redeemed yet), and the CDK
+`facade` wiring. See "What the front channel does" below.
 
 ## What the framework owns, and what the application owns
 
@@ -94,11 +102,116 @@ atomic operations, not conventions**: replay handling and single-flight refresh 
 | `RateLimitStore` | (identifier, resource, operation) | `CheckAndIncrement` (atomic) | window |
 
 Every store takes an injected clock, so TTL expiry and lock expiry are deterministic in tests. The in-memory
-reference stores are for **tests and local development only**.
+reference stores are **non-durable and do not encrypt**: they are for **tests and local development only**.
 
-Nothing upstream is persisted unencrypted: the durable upstream refresh token lives in the broker record, and the
-code record may hold only the **encrypted** token response, which is what lets the code exchange return the upstream
-access token byte-for-byte unmodified.
+**Encryption is a store obligation.** The facade performs no sealing and the framework adds no encryption surface
+or key management: it hands the store the upstream material exactly as the provider returned it, which is why one
+durable upstream refresh token lives in the broker record and one upstream token response lives in the code record.
+A durable store implementation **must** encrypt every `Encrypted*` field **at rest** (for example with
+persistence-layer `theorydb:"encrypted"` tags on a TableTheory-backed store), so nothing upstream is persisted in
+the clear. The code record keeping the (encrypted) upstream token response is deliberate: it is what lets the code
+exchange return the upstream access token byte-for-byte unmodified. The in-memory reference stores above neither
+persist nor encrypt and must not be used as a durable store.
+
+## Front-channel configuration
+
+The framework-owned front channel — the `/authorize` terminator, the stage-global upstream callback, and the
+`/token` authorization-code grant of DESIGN §8 — is declared by one `FacadeConfig` field set. **Declaring the set is
+what mounts the front channel:** with `Provider` set, registration validates the rest of the set, fails closed on an
+incomplete or contradictory set, and mounts the three route shapes driven by the provider and the five stores; with
+`Provider` absent the front channel stays unowned and no front-channel field may be set. The per-kind `/register` DCR
+route is separate and still application-owned until the DCR handler lands (see the Status note above).
+
+| Field (Go / TS / Python) | Purpose | Default | Validation | Fail-closed rule | Demanded by |
+| --- | --- | --- | --- | --- | --- |
+| `Provider` / `provider` / `provider` | Anchors the framework-owned front channel: with it set AppTheory owns `/authorize`, the stage-global callback, and the `/token` authorization-code grant | absent — the front channel stays unowned, and the app either supplies its own handler factories or registers no OAuth surface | none (an interface value) | **All-or-none set:** setting any other front-channel field while `Provider` is absent is a registration error naming that field | DESIGN §8; DESIGN §8.1 |
+| `Stores` / `stores` / `stores` | The five store SPIs the front channel persists through: transaction, authorization code, client, route-refresh broker, rate limit | absent | all five must be non-nil; a missing store fails closed rather than degrading | Registration error naming every missing store (`… requires all five stores; missing Transaction, RateLimit`) | DESIGN §7 |
+| `UpstreamClientID` / `upstreamClientID` / `upstream_client_id` | The facade's own upstream client registration: sent on the upstream authorize request and presented on the server-side code exchange, **and** the expected `azp`/`client_id` of a validated upstream access token | empty | non-blank, well-formed Unicode, no NUL | Registration error (`… upstream client id is required and must be well-formed`) | DESIGN §8.1; DESIGN §5.2, §6 |
+| `UpstreamIssuer` / `upstreamIssuer` / `upstream_issuer` | The expected upstream issuer: the RFC 9207 `iss` the callback pins before consuming the transaction or exchanging the code, and the issuer `Discovery` must verify before any published endpoint is trusted | empty | absolute HTTPS URL, no query, no fragment, normalized like `IssuerURL` | Registration error (`… upstream issuer must be an absolute HTTPS URL without query or fragment`) | DESIGN §8.2; DESIGN §5.2, §6 |
+| `LifecycleScopes` / `lifecycleScopes` / `lifecycle_scopes` | Scope values added to every upstream authorize request but never required from the MCP client (for example `offline_access`) | absent — adds none | each value trimmed, non-empty, and well-formed Unicode; duplicates collapse | Registration error (`lifecycle scope values cannot be empty` / `… must be well-formed Unicode`) | FRAMEWORK_VS_POLICY row 7 |
+| `ProviderHints` / `providerHints` / `provider_hints` | The opaque per-request hint seam for one authorize request (for example `account_id`); a hint carries **no authority** | absent — contributes no hints | none at registration (the function is opaque); a returned error is a request-class rejection, never a redirect | Registration error when set without `Provider` | DESIGN §6 |
+
+Every rejection uses the runtime's existing configuration-error prefix and the same message body (`mcpfacade: …`
+in Go, `AppTheoryMcpFacade: …` in TypeScript and Python).
+
+The reasoning behind the shape, because each of these was a reviewer question:
+
+- **`Provider` is the anchor.** The front-channel field set is all-or-none: a `Provider` without the rest is
+  incomplete (fail closed), and the rest without a `Provider` is dead configuration (fail closed). There is no
+  "partially owned" front channel that half-registers.
+- **The five stores carry no TTL here.** Each store owns its own TTL — ≤10 min for a transaction, ≤600 s for an
+  authorization code, age-out (not TTL) for a client, `min(upstream refresh lifetime, session lifetime, local
+  policy)` for the broker, and a window for the rate limiter — so the facade configures none (DESIGN §7 TTL
+  column). The injected clock that makes those TTLs deterministic is the store's own concern.
+- **`UpstreamClientID` is both identities on purpose.** It is the client the facade presents upstream *and* the
+  expected `azp`/`client_id` of an upstream access token the facade validates (DESIGN §5.2, §6), so there is no
+  separate audience/`azp` field: a token minted for another client is refused against the same value.
+- **`UpstreamIssuer` is the upstream issuer, not the client-facing one.** It is the RFC 9207 `iss` the callback
+  pins and the issuer `Discovery` verifies (DESIGN §5.2, §8.2). The client-facing issuer is a different value —
+  `IssuerURL` in family mode, the route URL in route mode — and the two are deliberately distinct.
+- **There is no upstream callback-URL field.** The callback URL is derived from `URLMode`/`PublicBaseURL` plus
+  `UpstreamCallbackPath` (DESIGN §3.2), so an absolute callback URL is never configured and the derived URL cannot
+  drift from the mounted stage-global callback route.
+- **`LifecycleScopes` is the injectable lifecycle scope** of FRAMEWORK_VS_POLICY row 7 (the `offline_access`
+  injection): the framework exposes it as configuration rather than hard-coding the literal, so the scope
+  vocabulary stays application policy.
+- **`ProviderHints` is the DESIGN §6 opaque hint seam** (the `account_id` hint). It carries no authority: the
+  provider derives authentication account context from its own validated binding, never from the hint.
+- **The application-owned factories are mutually exclusive with a `Provider`.** `Provider` owns the authorize,
+  token, and callback routes, so configuring `AuthorizeHandler`/`TokenHandler` or `CallbackHandler` alongside it is
+  a registration error rather than a silently dropped or double-mounted route. (A lone one of the
+  authorize/token pair is already rejected by the pre-existing all-or-none factory rule.)
+
+**The framework issues no facade token and needs no signing key.** The access token a client receives is the
+upstream token returned byte-for-byte unmodified, and the facade's own authorization code is an opaque value — not
+a signed or self-describing artifact (DESIGN §8.4, §10). So there is no signing-key configuration anywhere in this
+field set: there is nothing for the framework to mint or verify with a key of its own.
+
+## What the front channel does
+
+When the front-channel field set is declared, the registrars mount three route shapes, and the mechanics behind them
+belong to the framework rather than the application.
+
+- **`GET …/authorize` (per endpoint kind) — front-channel termination.** Validation order is client, redirect URI,
+  `response_type`, S256 PKCE, `state`, `resource`, scope. A failure before the redirect URI is validated — an unknown
+  `client_id` (`400 invalid_client`) or a `redirect_uri` that does not exactly match a registered value (`400
+  invalid_request`) — renders a JSON error page and **never** sends a `Location`. Once the redirect URI is validated, a
+  later failure (`response_type` other than `code`, absent/`plain`/non-S256 PKCE, a `resource` that is not the route
+  resource → `invalid_target`, or a scope request that clamps to nothing) redirects the browser **back to that
+  validated redirect
+  URI** as `302` carrying the fixed `error`, `error_description`, the client's own `state`, and the client-facing
+  RFC 9207 `iss`. On success it records a single-use transaction keyed by `hash(upstream state)` and sends the browser
+  upstream with the facade's own client, callback URL, S256 challenge, fresh upstream state, `resource`, hints, and
+  clamped scope set.
+- **`GET /_oauth/mcp/callback` (one stage-global route).** The callback pins the upstream RFC 9207 `iss` against the
+  configured `UpstreamIssuer` **before** consuming the transaction or exchanging the code; an absent or mismatched
+  `iss` is `400 invalid_request` with no `Location`. It then consumes the upstream `state` single-use, exchanges the
+  code server-side with the facade's own client and PKCE verifier, validates the upstream access token, seeds the
+  route-refresh broker with the framework-minted opaque handle and the encrypted upstream refresh material, mints a
+  single-use facade code (durable in the code record with the encrypted token response), and redirects the client to
+  its registered redirect URI with `code`, the client's own `state`, and `iss` (the route URL in route issuer mode,
+  else the configured family issuer). Upstream codes, refresh tokens, and `id_token` never reach the client.
+- **`POST …/token` — the `authorization_code` grant.** The grant requires `client_id`, `code`, `redirect_uri`, and
+  `code_verifier`; only a registered public client (`token_endpoint_auth_method` empty or `none`) may redeem. The code
+  is single-use and bound to that client, that redirect URI, the route kind, and the S256 challenge; a mismatch is
+  `400 invalid_grant`. A **replay** returns `400 invalid_grant` **and revokes the broker record the code minted**, so
+  the refresh handle from that authorization dies with the replay. An **expired** code burns on its first consume
+  (`400 invalid_grant`) and the following attempt is then a replay that revokes the broker record. A `resource` that is
+  not the code's resource is `400 invalid_target`. On success the response is `200` carrying the upstream access token
+  **byte-for-byte unmodified**, the upstream `token_type`/`expires_in`/`scope`, and the framework-minted **opaque
+  refresh handle** as `refresh_token`; it never carries an `id_token` or upstream refresh material. The endpoint
+  answers `400 unsupported_grant_type` for `grant_type=refresh_token` and for every other grant, and `400
+  invalid_request` for an absent grant type.
+
+**Provider failures are their own class.** A provider `AuthorizationURL` / `ExchangeCode` / `ValidateAccessToken`
+failure is never returned in the facade's `400` vocabulary: it is a distinct **`502`** carrying the fixed error code
+`upstream_error` (error page, no client redirect), so the facade's own request-class rejections and a gateway-class
+upstream failure stay distinguishable. The client-facing error vocabulary is closed and fixed — every rejection of one
+error code carries the same `error_description` — so the response never distinguishes an unknown key from a used one.
+
+**Encryption is still a store obligation.** The front channel hands each store the upstream material it must protect
+and relies on the store to seal it: a durable store **must** encrypt every `Encrypted*` field at rest, and the
+framework never writes upstream material to a log, a redirect, a response, or an error body.
 
 ## Conformance suites and the fake provider
 
@@ -123,6 +236,8 @@ response-size bound is observable rather than indistinguishable from a JSON pars
 | --- | --- | --- | --- |
 | Provider SPI + Autheory adapter | `runtime/oauth/provider.go`, `runtime/oauth/provider_autheory.go` | `ts/src/oauth/provider.ts` | `apptheory.oauth.provider`, `apptheory.oauth.autheory` |
 | Store SPI + reference stores | `runtime/oauth/store` | `ts/src/oauth/store.ts` | `apptheory.oauth.store` |
+| Framework-owned front channel | `runtime/mcpfacade/front_channel.go`, `runtime/mcpfacade/front_channel_config.go` | `ts/src/mcpfacade.ts` (front-channel section) | `apptheory.mcpfacade` (front-channel section) |
+| Store key derivation | `oauthstore.HashKey` | `hashKey` | `hash_key` |
 | Fake provider (test support) | `testkit/oauthprovider` | `ts/src/testkit/oauthprovider.ts` | `apptheory.oauth.fake_provider` |
 
 The Store SPI is a separate Go package because the package `oauth` already declares the older, narrower
@@ -131,5 +246,16 @@ The Store SPI is a separate Go package because the package `oauth` already decla
 
 ## Non-goals today
 
-No mounted route, no `FacadeConfig` wiring, no authorize/callback/token/DCR/refresh handlers, no CDK change, and no
-durable store. Those land in the follow-on facade milestones.
+Still absent, by milestone:
+
+- **DCR:** the `/register` route is not mounted — the derived `/register` pattern exists in the route model, but the
+  front channel registers no handler for it (the application owns it through `RegisterHandler` until the facade DCR
+  handler lands).
+- **Brokered refresh:** the token endpoint answers `400 unsupported_grant_type` for `grant_type=refresh_token`. The
+  code-exchange response already carries the framework-minted opaque refresh handle, but that handle cannot be redeemed
+  yet; brokered refresh is the follow-on milestone (M3c).
+- **CDK wiring:** no `cdk/**` change; the construct's `facade` attach prop does not yet wire the provider and stores or
+  the callback-path override.
+- **A durable store:** the framework still ships none. The in-memory reference stores are non-durable and do not
+  encrypt; a deployment supplies a durable store that discharges the encryption obligation above.
+- **Transport-route bearer enforcement** is unchanged (M1/M2).

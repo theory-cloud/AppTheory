@@ -3,9 +3,17 @@
 // in-memory reference implementations.
 //
 // Every store is keyed by the hash of the value it protects, never the value
-// itself, and no store persists upstream material unencrypted: an upstream
-// refresh token belongs to the broker record's encrypted field, and a code
-// record may carry only the encrypted token response.
+// itself. An Encrypted* record field carries upstream material exactly as the
+// provider handed it to the facade: the framework performs no sealing and adds
+// no encryption surface or key management, so a durable store implementation
+// MUST encrypt those fields at rest (for example with a persistence-layer
+// encryption tag). An upstream refresh token belongs to the broker record's
+// encrypted field, and a code record carries the upstream token response only
+// in its encrypted field.
+//
+// The in-memory reference implementations in this package are NON-DURABLE and
+// do not encrypt: they exist for deterministic tests and local development
+// only, and a deployment replaces them with application-owned durable stores.
 //
 // Consume-once and compare-and-swap are required operations of these SPIs, not
 // conventions: replay handling and single-flight refresh depend on them. The
@@ -15,6 +23,8 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"sync"
 	"time"
@@ -103,6 +113,16 @@ type RouteRefreshBrokerSeeder interface {
 	Put(ctx context.Context, record *RouteRefreshBrokerRecord) error
 }
 
+// HashKey returns the store key for a protected value: the unpadded base64url
+// SHA-256 digest of the value. Every store SPI is keyed by the hash of the
+// value it protects and never by the value itself, so a caller that seeds a
+// record directly — a pre-registered client, for example — derives the key with
+// this helper and the facade derives the same key when it looks the record up.
+func HashKey(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
 // Stores bundles the five store SPIs, so one value can drive the conformance
 // runner over every store of a deployment.
 type Stores struct {
@@ -136,11 +156,11 @@ type TransactionRecord struct {
 }
 
 // AuthorizationCodeRecord is one facade authorization code. Fields follow the
-// facade-store-spi.v1.json authorization-code field set. The record holds no
-// unencrypted upstream material: EncryptedRouteRefreshHandle and
-// EncryptedTokenResponse are ciphertext, and EncryptedTokenResponse embeds the
-// upstream-minted access token so the exchange can return it byte-for-byte
-// unmodified.
+// facade-store-spi.v1.json authorization-code field set. The Encrypted* fields
+// carry upstream material as the provider handed it to the facade —
+// EncryptedTokenResponse embeds the upstream-minted access token so the
+// exchange can return it byte-for-byte unmodified — and the store MUST encrypt
+// them at rest; the record holds no plaintext upstream material once stored.
 type AuthorizationCodeRecord struct {
 	CodeHash                    string
 	ClientIDHash                string

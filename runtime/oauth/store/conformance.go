@@ -115,6 +115,7 @@ var conformanceScenarios = map[string]func(*conformanceHarness, ConformanceCase)
 	"concurrent_consume":                 (*conformanceHarness).concurrentConsume,
 	"consume_single_use_then_replay":     (*conformanceHarness).authorizationCodeConsumeReplay,
 	"consume_record_payload":             (*conformanceHarness).authorizationCodeConsumeRecordPayload,
+	"put_payload":                        (*conformanceHarness).putPayload,
 	"consume_after_ttl_then_replay":      (*conformanceHarness).consumeAfterTTLThenReplay,
 	"clock_back_after_consume":           (*conformanceHarness).clockBackAroundConsume,
 	"clock_back_after_expired_consume":   (*conformanceHarness).clockBackAroundConsume,
@@ -329,6 +330,96 @@ func codeRecordStatusField(record *AuthorizationCodeRecord) string {
 // codeRecordVersionField reports a returned code record's version, or -1 when
 // the consume returned no record.
 func codeRecordVersionField(record *AuthorizationCodeRecord) int {
+	if record == nil {
+		return -1
+	}
+	return record.Version
+}
+
+// putPayload seeds exactly one record through the store's put with the caller's
+// status and version, then reports what the store hands back. A row pins the
+// put-path payload contract — the caller's status is preserved verbatim and a
+// version below 1 is normalized to 1 — rather than only the outcome. An absent
+// put_status is the empty string and an absent put_version is 0.
+func (h *conformanceHarness) putPayload(testCase ConformanceCase) (map[string]any, error) {
+	key := h.key(testCase, "record")
+	status := h.putStatusParam(testCase)
+	version := h.putVersionParam(testCase)
+	switch testCase.Store {
+	case conformanceStoreAuthCode:
+		if err := h.stores.AuthorizationCode.Put(h.ctx(), &AuthorizationCodeRecord{
+			CodeHash:  key,
+			ClientID:  "conformance-client",
+			Status:    status,
+			Version:   version,
+			ExpiresAt: h.expiry(testCase),
+		}); err != nil {
+			return nil, err
+		}
+		record, err := h.stores.AuthorizationCode.Consume(h.ctx(), key)
+		return map[string]any{
+			"consume": outcomeFor(err),
+			"status":  codeRecordStatusField(record),
+			"version": codeRecordVersionField(record),
+		}, nil
+	case conformanceStoreBroker:
+		seeder, ok := h.stores.RouteRefreshBroker.(RouteRefreshBrokerSeeder)
+		if !ok {
+			return nil, fmt.Errorf("%w: %T", ErrBrokerNotSeedable, h.stores.RouteRefreshBroker)
+		}
+		if err := seeder.Put(h.ctx(), &RouteRefreshBrokerRecord{
+			HandleHash:        key,
+			Issuer:            "https://auth.example.test",
+			Stage:             "lab",
+			CanonicalResource: "https://mcp.example.test/mcp",
+			Status:            status,
+			Version:           version,
+		}); err != nil {
+			return nil, err
+		}
+		record, err := h.stores.RouteRefreshBroker.Get(h.ctx(), key)
+		return map[string]any{
+			"get":     outcomeFor(err),
+			"status":  brokerRecordStatusField(record),
+			"version": brokerRecordVersionField(record),
+		}, nil
+	default:
+		return nil, fmt.Errorf("put_payload does not apply to store %q", testCase.Store)
+	}
+}
+
+// putStatusParam returns the row's caller-supplied put status, or the empty
+// string when the row states none.
+func (h *conformanceHarness) putStatusParam(testCase ConformanceCase) string {
+	value, ok := testCase.Params["put_status"].(string)
+	if !ok {
+		return ""
+	}
+	return value
+}
+
+// putVersionParam returns the row's caller-supplied put version, or 0 when the
+// row states none.
+func (h *conformanceHarness) putVersionParam(testCase ConformanceCase) int {
+	value, ok := conformanceNumber(testCase.Params["put_version"])
+	if !ok {
+		return 0
+	}
+	return int(value)
+}
+
+// brokerRecordStatusField reports a fetched broker record's status, or the
+// "none" sentinel when the fetch returned no record.
+func brokerRecordStatusField(record *RouteRefreshBrokerRecord) string {
+	if record == nil {
+		return "none"
+	}
+	return record.Status
+}
+
+// brokerRecordVersionField reports a fetched broker record's version, or -1 when
+// the fetch returned no record.
+func brokerRecordVersionField(record *RouteRefreshBrokerRecord) int {
 	if record == nil {
 		return -1
 	}

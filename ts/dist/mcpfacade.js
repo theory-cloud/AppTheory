@@ -1,7 +1,8 @@
 import { Buffer } from "node:buffer";
+import { randomBytes } from "node:crypto";
 import { createApp } from "./app.js";
 import { CONTRACT_VERSION, ISSUER_MODE_FAMILY, ISSUER_MODE_ROUTE, PARAM_AGENT_ID, PARAM_CLIENT_NAMESPACE, PARAM_PARTNER_ID, authorizationServerPathForResourcePath, callbackPathForConfiguredPath, mcpPath, oauthAuthorizationServerPath, oauthAuthorizationServerSuffixPath, oauthAuthorizePath, oauthRegisterPath, oauthTokenPath, parseMcpPath, resourcePathFromProtectedResourcePath, supportedEndpointTemplates, supportedIssuerModes, supportedOAuthDiscoveryTemplates, supportedOAuthFacadeTemplates, } from "./mcproutes.js";
-import { authorizationServerMetadataHandler, protectedResourceMetadataHandler, requireBearerTokenMiddleware, } from "./oauth/index.js";
+import { authorizationServerMetadataHandler, BrokerNotFoundError, canonicalizeIssuerURL, canonicalResourceURL, hashKey, newPKCECodeVerifier, pkceChallengeS256, pkceVerifyS256, protectedResourceMetadataHandler, requireBearerTokenMiddleware, } from "./oauth/index.js";
 import { originURL } from "./response.js";
 export const URL_MODE_PUBLIC_BASE_URL = "public_base_url";
 export const URL_MODE_REQUEST_HOST = "request_host";
@@ -62,7 +63,9 @@ function normalizeConfig(config) {
     normalized.requireBearerToken = config.requireBearerToken;
     normalized.mcpHandler = config.mcpHandler;
     normalized.callbackHandler = config.callbackHandler ?? null;
-    validatePostureSurfaceConfig(transportPosture, normalized.authorizeHandlers, normalized.registerHandlers, normalized.callbackHandler, normalized.rootAuthorizationServer);
+    const frontChannel = normalizeFrontChannel(config);
+    normalized.frontChannel = frontChannel;
+    validatePostureSurfaceConfig(transportPosture, normalized.authorizeHandlers, normalized.registerHandlers, normalized.callbackHandler, normalized.rootAuthorizationServer, frontChannel !== null);
     return normalized;
 }
 function normalizeDerivedConfig(config) {
@@ -117,6 +120,7 @@ function normalizeDerivedConfig(config) {
         rootDiscoveryPath,
         transportPosture: "iam",
         requireBearerToken: undefined,
+        frontChannel: null,
     };
 }
 function normalizeIssuerMode(mode) {
@@ -141,7 +145,7 @@ function resolveCallbackPath(configured) {
  * surface, so configuring any of it is a registration error rather than a
  * silently dropped route.
  */
-function validatePostureSurfaceConfig(posture, authorizeHandlers, registerHandlers, callbackHandler, rootAuthorizationServer) {
+function validatePostureSurfaceConfig(posture, authorizeHandlers, registerHandlers, callbackHandler, rootAuthorizationServer, frontChannel) {
     if (posture !== "none-public") {
         return;
     }
@@ -154,9 +158,124 @@ function validatePostureSurfaceConfig(posture, authorizeHandlers, registerHandle
     if (callbackHandler !== null) {
         throw new Error(`${ERROR_PREFIX} TransportPosture none-public registers no OAuth surface; CallbackHandler must not be configured`);
     }
+    if (frontChannel) {
+        throw new Error(`${ERROR_PREFIX} TransportPosture none-public registers no OAuth surface; the front-channel field set must not be configured`);
+    }
     if (rootAuthorizationServer !== null) {
         throw new Error(`${ERROR_PREFIX} TransportPosture none-public cannot enable RootAuthorizationServer`);
     }
+}
+/**
+ * Validates the framework-owned front-channel field set of `FacadeConfig`
+ * (DESIGN §8) and returns it. The set is declared by `provider`: when it is
+ * set, every other required front-channel field must be present and the
+ * application-owned handler factories that would otherwise claim the same
+ * routes must be absent. A null result means the front channel is not declared:
+ * the application either owns the OAuth surface through its handler factories
+ * or registers none. Nothing here mounts a route; it resolves the set that
+ * mounting will later use.
+ */
+function normalizeFrontChannel(config) {
+    if (config.provider === undefined || config.provider === null) {
+        const name = frontChannelFieldOutsideProvider(config);
+        if (name !== null) {
+            throw new Error(`${ERROR_PREFIX} ${name} is set without Provider; the front-channel field set is anchored by Provider`);
+        }
+        return null;
+    }
+    const upstreamIssuer = normalizeHTTPSURL(config.upstreamIssuer ?? "", true);
+    if (upstreamIssuer === null) {
+        throw new Error(`${ERROR_PREFIX} front channel upstream issuer must be an absolute HTTPS URL without query or fragment`);
+    }
+    if (!validUpstreamClientID(config.upstreamClientID ?? "")) {
+        throw new Error(`${ERROR_PREFIX} front channel upstream client id is required and must be well-formed`);
+    }
+    const lifecycleScopes = config.lifecycleScopes ?? [];
+    if (lifecycleScopes.length > 0) {
+        try {
+            normalizeNonEmptyList("lifecycle scope", lifecycleScopes);
+        }
+        catch (err) {
+            throw new Error(`${ERROR_PREFIX} ${errorMessage(err)}`, { cause: err });
+        }
+    }
+    validateFrontChannelStores(config.stores);
+    if (isPresent(config.authorizeHandler) || isPresent(config.tokenHandler)) {
+        throw new Error(`${ERROR_PREFIX} Provider owns the authorize and token routes; AuthorizeHandler and TokenHandler must not be configured with a front channel`);
+    }
+    if (isPresent(config.callbackHandler)) {
+        throw new Error(`${ERROR_PREFIX} Provider owns the stage-global callback; CallbackHandler must not be configured with a front channel`);
+    }
+    return {
+        provider: config.provider,
+        stores: config.stores,
+        upstreamClientID: String(config.upstreamClientID ?? "").trim(),
+        upstreamIssuer,
+        lifecycleScopes: [...lifecycleScopes],
+        providerHints: config.providerHints ?? null,
+    };
+}
+/**
+ * Reports the first front-channel field that is set while `provider` is
+ * absent, so a partially configured front channel fails closed instead of
+ * half-registering.
+ */
+function frontChannelFieldOutsideProvider(config) {
+    if (frontChannelStoreIsDeclared(config.stores)) {
+        return "Stores";
+    }
+    if (String(config.upstreamClientID ?? "").trim() !== "") {
+        return "UpstreamClientID";
+    }
+    if (String(config.upstreamIssuer ?? "").trim() !== "") {
+        return "UpstreamIssuer";
+    }
+    if ((config.lifecycleScopes ?? []).length > 0) {
+        return "LifecycleScopes";
+    }
+    if (isPresent(config.providerHints)) {
+        return "ProviderHints";
+    }
+    return null;
+}
+function frontChannelStoreIsDeclared(stores) {
+    const bundle = (stores ?? {});
+    return (isPresent(bundle.transaction) ||
+        isPresent(bundle.authorizationCode) ||
+        isPresent(bundle.client) ||
+        isPresent(bundle.routeRefreshBroker) ||
+        isPresent(bundle.rateLimit));
+}
+/**
+ * Requires every one of the five store SPIs DESIGN §7 defines: a facade missing
+ * a store cannot persist the state its mechanics depend on, so it fails closed
+ * rather than degrading.
+ */
+function validateFrontChannelStores(stores) {
+    const bundle = (stores ?? {});
+    const missing = [
+        ["Transaction", bundle.transaction],
+        ["AuthorizationCode", bundle.authorizationCode],
+        ["Client", bundle.client],
+        ["RouteRefreshBroker", bundle.routeRefreshBroker],
+        ["RateLimit", bundle.rateLimit],
+    ]
+        .filter(([, value]) => !isPresent(value))
+        .map(([name]) => name);
+    if (missing.length > 0) {
+        throw new Error(`${ERROR_PREFIX} front channel requires all five stores; missing ${missing.join(", ")}`);
+    }
+}
+/**
+ * Reports whether an upstream client id is usable: a non-empty, well-formed
+ * value. It is a registration identifier, not a secret.
+ */
+function validUpstreamClientID(clientID) {
+    const value = String(clientID ?? "").trim();
+    return (value !== "" && !hasUnpairedSurrogate(value) && !value.includes("\u0000"));
+}
+function isPresent(value) {
+    return value !== undefined && value !== null;
 }
 function normalizeTransportPosture(posture, requireBearerToken) {
     const resolved = posture ?? "iam";
@@ -299,6 +418,19 @@ function buildRegistrations(config, inventory) {
                 authRequired: false,
             });
         }
+        if (config.frontChannel !== null) {
+            registrations.push({
+                method: "GET",
+                pattern: route.authorizePattern,
+                handler: checkedOAuthFacadeHandler(route.kind, true, authorizeHandlerFor(config, route.kind)),
+                authRequired: false,
+            }, {
+                method: "POST",
+                pattern: route.tokenPattern,
+                handler: checkedOAuthFacadeHandler(route.kind, false, tokenHandlerFor(config, route.kind)),
+                authRequired: false,
+            });
+        }
         if (config.registerHandlers !== null) {
             registrations.push({
                 method: "POST",
@@ -325,6 +457,14 @@ function buildRegistrations(config, inventory) {
             method: "GET",
             pattern: inventory.callbackPattern,
             handler: config.callbackHandler,
+            authRequired: false,
+        });
+    }
+    if (inventory.callbackPattern !== "" && config.frontChannel !== null) {
+        registrations.push({
+            method: "GET",
+            pattern: inventory.callbackPattern,
+            handler: callbackHandlerFor(config),
             authRequired: false,
         });
     }
@@ -1395,5 +1535,724 @@ function cloneInventory(inventory) {
 }
 function errorMessage(err) {
     return err instanceof Error ? err.message : String(err);
+}
+// ---------------------------------------------------------------------------
+// Framework-owned OAuth front channel (DESIGN §8)
+// ---------------------------------------------------------------------------
+/** The store status values the front channel writes into its records. */
+const FRONT_CHANNEL_TRANSACTION_STATUS_PENDING = "pending";
+const FRONT_CHANNEL_CODE_STATUS_ISSUED = "issued";
+/**
+ * The closed, fixed client-facing error vocabulary of the front channel
+ * (DESIGN §8). Every rejection of one error code carries the same description,
+ * so the response never distinguishes an unknown key from a used one
+ * (THREAT_MODEL cross-cutting: no oracle).
+ */
+const FRONT_CHANNEL_ERROR_DESCRIPTIONS = {
+    invalid_client: "the client is not registered",
+    invalid_request: "the request is missing or has an invalid parameter",
+    invalid_target: "the resource is not the resource this route authorizes",
+    invalid_grant: "the grant is invalid, expired, or already used",
+    unsupported_grant_type: "the grant type is not supported",
+    upstream_error: "the upstream authorization server could not complete the request",
+};
+function newOpaqueToken() {
+    return randomBytes(32).toString("base64url");
+}
+/**
+ * Builds the framework-owned per-kind OAuth handlers and the one stage-global
+ * callback. They are only built when the front-channel field set is declared.
+ */
+function authorizeHandlerFor(config, kind) {
+    return (ctx) => handleAuthorize(config, kind, ctx);
+}
+function tokenHandlerFor(config, kind) {
+    return (ctx) => handleToken(config, kind, ctx);
+}
+function callbackHandlerFor(config) {
+    return (ctx) => handleCallback(config, ctx);
+}
+/**
+ * Terminates the client-facing front channel (DESIGN §8.1): it validates the
+ * registered client and its exact redirect URI before any redirect, requires
+ * S256 PKCE, records a single-use transaction, and sends the browser upstream
+ * with the facade's own client, callback, PKCE verifier, fresh state, resource,
+ * hints, and clamped scope set.
+ */
+async function handleAuthorize(config, kind, ctx) {
+    const front = config.frontChannel;
+    if (front === null) {
+        throw new Error(`${ERROR_PREFIX} front channel is not configured`);
+    }
+    const endpoint = endpointFromRouteParams(ctx, kind);
+    const resourceResolution = frontChannelRouteResource(config, ctx, endpoint);
+    if (resourceResolution.failure !== null) {
+        return resourceResolution.failure;
+    }
+    const resource = resourceResolution.value;
+    const issuerResolution = frontChannelRouteIssuer(config, ctx, endpoint);
+    if (issuerResolution.failure !== null) {
+        return issuerResolution.failure;
+    }
+    const issuer = issuerResolution.value;
+    // Validation order (DESIGN §8.1): client, redirect URI, response_type, S256
+    // PKCE, state, resource, scope. Errors raised before the redirect URI is
+    // validated render an error page and never redirect.
+    const clientID = firstQueryValue(ctx.request.query, "client_id");
+    if (clientID.trim() === "") {
+        return facadeErrorPage(400, "invalid_request");
+    }
+    const client = await front.stores.client.get(hashKey(clientID));
+    if (client === null) {
+        return facadeErrorPage(400, "invalid_client");
+    }
+    const redirectURI = firstQueryValue(ctx.request.query, "redirect_uri");
+    if (!registeredRedirectURI(client.redirectUris, redirectURI)) {
+        // Open-redirect defense: an unmatched redirect URI never redirects.
+        return facadeErrorPage(400, "invalid_request");
+    }
+    const clientState = firstQueryValue(ctx.request.query, "state");
+    if (firstQueryValue(ctx.request.query, "response_type") !== "code") {
+        return facadeClientErrorRedirect(redirectURI, issuer, clientState, "invalid_request");
+    }
+    const challenge = firstQueryValue(ctx.request.query, "code_challenge");
+    if (firstQueryValue(ctx.request.query, "code_challenge_method") !== "S256" ||
+        !validS256Challenge(challenge)) {
+        return facadeClientErrorRedirect(redirectURI, issuer, clientState, "invalid_request");
+    }
+    const requestedResource = firstQueryValue(ctx.request.query, "resource").trim();
+    if (requestedResource !== "" &&
+        canonicalResourceURL(requestedResource) !== resource) {
+        return facadeClientErrorRedirect(redirectURI, issuer, clientState, "invalid_target");
+    }
+    const clamped = clampRequestedScopes(ctx.request.query["scope"] ?? [], config.scopes[kind]);
+    if (!clamped.ok) {
+        return facadeClientErrorRedirect(redirectURI, issuer, clientState, "invalid_request");
+    }
+    const scopes = clamped.value;
+    const upstreamScopes = [...scopes, ...front.lifecycleScopes];
+    let hints = null;
+    if (front.providerHints !== null) {
+        try {
+            hints = await front.providerHints(ctx);
+        }
+        catch {
+            return facadeErrorPage(400, "invalid_request");
+        }
+    }
+    const upstreamState = newOpaqueToken();
+    const codeVerifier = newPKCECodeVerifier();
+    const upstreamChallenge = pkceChallengeS256(codeVerifier);
+    const callbackResolution = frontChannelCallbackURL(config, ctx);
+    if (callbackResolution.failure !== null) {
+        return callbackResolution.failure;
+    }
+    const transaction = {
+        stateHash: hashKey(upstreamState),
+        clientIdHash: hashKey(clientID),
+        clientId: clientID,
+        redirectUri: redirectURI,
+        codeChallenge: challenge,
+        codeChallengeMethod: "S256",
+        clientState,
+        encryptedUpstreamCodeVerifier: codeVerifier,
+        scopes: [...scopes],
+        canonicalResource: resource,
+        endpointKind: String(kind),
+        clientNamespace: endpoint.clientNamespace,
+        partnerId: endpoint.partnerId ?? "",
+        agentId: endpoint.agentId ?? "",
+        status: FRONT_CHANNEL_TRANSACTION_STATUS_PENDING,
+        version: 0,
+    };
+    await front.stores.transaction.put(transaction);
+    let upstreamURL;
+    try {
+        upstreamURL = await front.provider.authorizationUrl({
+            upstreamClientId: front.upstreamClientID,
+            callbackUrl: callbackResolution.value,
+            codeChallenge: upstreamChallenge,
+            codeChallengeMethod: "S256",
+            state: upstreamState,
+            resource,
+            scopes: upstreamScopes,
+            ...(hints !== null ? { hints } : {}),
+        });
+    }
+    catch {
+        return facadeUpstreamErrorPage();
+    }
+    return facadeUpstreamRedirect(upstreamURL);
+}
+/**
+ * Completes the upstream leg (DESIGN §8.2). It verifies the upstream RFC 9207
+ * `iss` before consuming the transaction or exchanging the code, so an absent
+ * or mismatched `iss` fails closed without touching state; any provider failure
+ * after that is the distinct 502 upstream_error class, never the facade's own
+ * 400.
+ */
+async function handleCallback(config, ctx) {
+    const front = config.frontChannel;
+    if (front === null) {
+        throw new Error(`${ERROR_PREFIX} front channel is not configured`);
+    }
+    const expectedIssuer = canonicalizeIssuerURL(front.upstreamIssuer);
+    if (expectedIssuer === null) {
+        throw new Error(`${ERROR_PREFIX} front channel upstream issuer is not canonicalizable`);
+    }
+    const claimedIssuer = canonicalizeIssuerURL(firstQueryValue(ctx.request.query, "iss"));
+    if (claimedIssuer === null || claimedIssuer !== expectedIssuer) {
+        return facadeErrorPage(400, "invalid_request");
+    }
+    const code = firstQueryValue(ctx.request.query, "code").trim();
+    const state = firstQueryValue(ctx.request.query, "state").trim();
+    if (code === "" || state === "") {
+        return facadeErrorPage(400, "invalid_request");
+    }
+    const transaction = await front.stores.transaction.consume(hashKey(state));
+    if (transaction === null || transaction.status === "expired") {
+        // An unminted, replayed, and expired state are one response class: the
+        // transaction store burns on first consume, so they are indistinguishable
+        // and stay indistinguishable on purpose (T10).
+        return facadeErrorPage(400, "invalid_request");
+    }
+    const callbackResolution = frontChannelCallbackURL(config, ctx);
+    if (callbackResolution.failure !== null) {
+        return callbackResolution.failure;
+    }
+    let tokenSet;
+    try {
+        tokenSet = await front.provider.exchangeCode({
+            code,
+            upstreamClientId: front.upstreamClientID,
+            callbackUrl: callbackResolution.value,
+            codeVerifier: transaction.encryptedUpstreamCodeVerifier,
+        });
+    }
+    catch {
+        return facadeUpstreamErrorPage();
+    }
+    let claims;
+    try {
+        claims = await front.provider.validateAccessToken(tokenSet.accessToken, {
+            expectedIssuer: front.upstreamIssuer,
+            expectedAudience: transaction.canonicalResource,
+            allowedAuthorizedParties: [front.upstreamClientID],
+        });
+    }
+    catch {
+        return facadeUpstreamErrorPage();
+    }
+    const handle = newOpaqueToken();
+    const seeder = front.stores
+        .routeRefreshBroker;
+    if (typeof seeder.put !== "function") {
+        throw new Error(`${ERROR_PREFIX} route refresh broker store cannot be seeded`);
+    }
+    const broker = {
+        handleHash: hashKey(handle),
+        issuer: front.upstreamIssuer,
+        stage: "",
+        canonicalResource: transaction.canonicalResource,
+        clientNamespace: transaction.clientNamespace,
+        endpointKind: transaction.endpointKind,
+        partnerId: transaction.partnerId,
+        agentId: transaction.agentId,
+        clientIdHash: transaction.clientIdHash,
+        subjectIdHash: hashKey(claims.subject),
+        scopes: [...transaction.scopes],
+        scopeFingerprint: facadeScopeFingerprint(transaction.scopes),
+        encryptedUpstreamRefreshToken: tokenSet.refreshToken ?? "",
+        upstreamRefreshTokenHash: hashKey(tokenSet.refreshToken ?? ""),
+        upstreamClientId: front.upstreamClientID,
+        status: "issued",
+        version: 0,
+    };
+    await seeder.put(broker);
+    const facadeCode = newOpaqueToken();
+    const codeRecord = {
+        codeHash: hashKey(facadeCode),
+        clientIdHash: transaction.clientIdHash,
+        clientId: transaction.clientId,
+        redirectUri: transaction.redirectUri,
+        codeChallenge: transaction.codeChallenge,
+        codeChallengeMethod: transaction.codeChallengeMethod,
+        scopes: [...transaction.scopes],
+        canonicalResource: transaction.canonicalResource,
+        endpointKind: transaction.endpointKind,
+        clientNamespace: transaction.clientNamespace,
+        partnerId: transaction.partnerId,
+        agentId: transaction.agentId,
+        routeRefreshHandleHash: broker.handleHash,
+        encryptedRouteRefreshHandle: handle,
+        encryptedTokenResponse: JSON.stringify(tokenSet),
+        status: FRONT_CHANNEL_CODE_STATUS_ISSUED,
+        version: 0,
+    };
+    await front.stores.authorizationCode.put(codeRecord);
+    const issuerResolution = frontChannelRouteIssuer(config, ctx, endpointPathFromRecord(transaction));
+    if (issuerResolution.failure !== null) {
+        return issuerResolution.failure;
+    }
+    const values = new Map();
+    values.set("code", facadeCode);
+    values.set("iss", issuerResolution.value);
+    if (transaction.clientState !== "") {
+        values.set("state", transaction.clientState);
+    }
+    return facadeClientRedirect(transaction.redirectUri, values);
+}
+/**
+ * Serves the token endpoint (DESIGN §8.4). M3b owns the authorization_code
+ * grant; the brokered refresh grant is M3c and answers unsupported_grant_type
+ * until it lands, so no adopter assumes it works.
+ */
+async function handleToken(config, kind, ctx) {
+    const front = config.frontChannel;
+    if (front === null) {
+        throw new Error(`${ERROR_PREFIX} front channel is not configured`);
+    }
+    const form = parseFormQuery(Buffer.from(ctx.request.body).toString("utf8"));
+    if (form === null) {
+        return facadeErrorPage(400, "invalid_request");
+    }
+    const grantType = formGet(form, "grant_type");
+    if (grantType === "") {
+        return facadeErrorPage(400, "invalid_request");
+    }
+    if (grantType === "authorization_code") {
+        return await handleAuthorizationCodeGrant(config, kind, form);
+    }
+    // Ruled: the token response issues the refresh handle, but the refresh_token
+    // grant is M3c and is refused until then.
+    return facadeErrorPage(400, "unsupported_grant_type");
+}
+async function handleAuthorizationCodeGrant(config, kind, form) {
+    const front = config.frontChannel;
+    if (front === null) {
+        throw new Error(`${ERROR_PREFIX} front channel is not configured`);
+    }
+    const code = formGet(form, "code").trim();
+    const redirectURI = formGet(form, "redirect_uri");
+    const verifier = formGet(form, "code_verifier");
+    if (code === "" || redirectURI.trim() === "" || verifier.trim() === "") {
+        return facadeErrorPage(400, "invalid_request");
+    }
+    const clientID = formGet(form, "client_id").trim();
+    if (clientID === "") {
+        return facadeErrorPage(400, "invalid_client");
+    }
+    const client = await front.stores.client.get(hashKey(clientID));
+    if (client === null) {
+        return facadeErrorPage(400, "invalid_client");
+    }
+    // Only public clients are registered through the facade; a client record
+    // that claims another authentication method fails closed.
+    const method = (client.tokenEndpointAuthMethod ?? "").trim();
+    if (method !== "" && method !== "none") {
+        return facadeErrorPage(400, "invalid_client");
+    }
+    const consumeResult = await front.stores.authorizationCode.consume(hashKey(code));
+    if (consumeResult === null) {
+        return facadeErrorPage(400, "invalid_grant");
+    }
+    if (consumeResult.replayed) {
+        // T2: a replayed code revokes the broker record it minted, so the refresh
+        // handle from that authorization dies with the replay.
+        const replayRecord = consumeResult.record;
+        if (replayRecord !== null && replayRecord.routeRefreshHandleHash !== "") {
+            try {
+                await front.stores.routeRefreshBroker.revoke(replayRecord.routeRefreshHandleHash);
+            }
+            catch (err) {
+                if (!(err instanceof BrokerNotFoundError)) {
+                    throw err;
+                }
+            }
+        }
+        return facadeErrorPage(400, "invalid_grant");
+    }
+    const record = consumeResult.record;
+    if (consumeResult.expired || record === null) {
+        return facadeErrorPage(400, "invalid_grant");
+    }
+    if (record.clientId !== clientID ||
+        record.redirectUri !== redirectURI ||
+        record.endpointKind !== String(kind) ||
+        record.codeChallengeMethod !== "S256") {
+        return facadeErrorPage(400, "invalid_grant");
+    }
+    let verified;
+    try {
+        verified = pkceVerifyS256(verifier, record.codeChallenge);
+    }
+    catch {
+        verified = false;
+    }
+    if (!verified) {
+        return facadeErrorPage(400, "invalid_grant");
+    }
+    const resource = formGet(form, "resource").trim();
+    if (resource !== "" &&
+        canonicalResourceURL(resource) !== record.canonicalResource) {
+        return facadeErrorPage(400, "invalid_target");
+    }
+    let tokenSet;
+    try {
+        tokenSet = JSON.parse(record.encryptedTokenResponse);
+    }
+    catch (err) {
+        throw new Error(`${ERROR_PREFIX} facade code record does not carry a token response: ${errorMessage(err)}`, { cause: err });
+    }
+    const payload = {
+        access_token: tokenSet.accessToken,
+        token_type: tokenSet.tokenType ?? "",
+    };
+    if (typeof tokenSet.expiresIn === "number" &&
+        Number.isFinite(tokenSet.expiresIn) &&
+        tokenSet.expiresIn !== 0) {
+        payload["expires_in"] = tokenSet.expiresIn;
+    }
+    if (tokenSet.scope !== undefined && tokenSet.scope !== "") {
+        payload["scope"] = tokenSet.scope;
+    }
+    if (record.encryptedRouteRefreshHandle !== "") {
+        payload["refresh_token"] = record.encryptedRouteRefreshHandle;
+    }
+    return {
+        status: 200,
+        headers: {
+            "content-type": ["application/json; charset=utf-8"],
+            "cache-control": ["no-store"],
+            pragma: ["no-cache"],
+        },
+        cookies: [],
+        body: Buffer.from(JSON.stringify(payload), "utf8"),
+        isBase64: false,
+    };
+}
+function frontChannelRouteResource(config, ctx, endpoint) {
+    try {
+        return {
+            value: buildAbsoluteURL(config, ctx, mcpPath(endpoint)),
+            failure: null,
+        };
+    }
+    catch (err) {
+        const failure = metadataRequestFailure(err);
+        if (failure !== null) {
+            return { value: "", failure };
+        }
+        throw err;
+    }
+}
+/**
+ * The client-facing issuer: the route URL in route issuer mode and the
+ * configured family issuer otherwise (DESIGN §3.3).
+ */
+function frontChannelRouteIssuer(config, ctx, endpoint) {
+    if (config.issuerMode !== ISSUER_MODE_ROUTE) {
+        return { value: config.issuerURL, failure: null };
+    }
+    return frontChannelRouteResource(config, ctx, endpoint);
+}
+function frontChannelCallbackURL(config, ctx) {
+    try {
+        return {
+            value: buildAbsoluteURL(config, ctx, config.upstreamCallbackPath),
+            failure: null,
+        };
+    }
+    catch (err) {
+        const failure = metadataRequestFailure(err);
+        if (failure !== null) {
+            return { value: "", failure };
+        }
+        throw err;
+    }
+}
+function endpointPathFromRecord(record) {
+    return {
+        kind: record.endpointKind,
+        clientNamespace: record.clientNamespace,
+        partnerId: record.partnerId,
+        agentId: record.agentId,
+    };
+}
+/**
+ * Reports whether the request redirect URI matches one of the client's
+ * registered URIs exactly, allowing RFC 8252 §7.3 loopback port flexibility
+ * only.
+ */
+function registeredRedirectURI(registered, requested) {
+    if (requested.trim() === "") {
+        return false;
+    }
+    for (const candidate of registered) {
+        if (candidate === requested) {
+            return true;
+        }
+        if (loopbackRedirectMatch(candidate, requested)) {
+            return true;
+        }
+    }
+    return false;
+}
+/**
+ * Allows the ephemeral-port form of RFC 8252 §7.3: a loopback IP-literal
+ * redirect may be presented with a different port.
+ */
+function loopbackRedirectMatch(registered, requested) {
+    const registeredURL = parseAbsoluteURL(registered);
+    if (registeredURL === null) {
+        return false;
+    }
+    const requestedURL = parseAbsoluteURL(requested);
+    if (requestedURL === null) {
+        return false;
+    }
+    if (!isLoopbackRedirectHost(registeredURL.decodedHostname) ||
+        !isLoopbackRedirectHost(requestedURL.decodedHostname)) {
+        return false;
+    }
+    if (registeredURL.scheme !== requestedURL.scheme ||
+        registeredURL.path !== requestedURL.path) {
+        return false;
+    }
+    if (registeredURL.search !== requestedURL.search ||
+        registeredURL.hash !== requestedURL.hash) {
+        return false;
+    }
+    if (registeredURL.port === "" || requestedURL.port === "") {
+        return false;
+    }
+    return registeredURL.port !== requestedURL.port;
+}
+function isLoopbackRedirectHost(hostname) {
+    const value = hostname.toLowerCase();
+    return value === "127.0.0.1" || value === "::1" || value === "localhost";
+}
+/**
+ * Reports whether a PKCE challenge is the RFC 7636 S256 shape: 43 base64url
+ * characters.
+ */
+function validS256Challenge(challenge) {
+    if (challenge.length !== 43) {
+        return false;
+    }
+    for (let index = 0; index < challenge.length; index += 1) {
+        const code = challenge.charCodeAt(index);
+        const base64url = (code >= 0x41 && code <= 0x5a) ||
+            (code >= 0x61 && code <= 0x7a) ||
+            (code >= 0x30 && code <= 0x39) ||
+            code === 0x2d ||
+            code === 0x5f;
+        if (!base64url) {
+            return false;
+        }
+    }
+    return true;
+}
+/**
+ * Clamps a client request to the route scope set: an absent request takes the
+ * route set, a present one is intersected with it in route order, and a request
+ * that survives to nothing fails closed instead of silently broadening to the
+ * route set.
+ */
+function clampRequestedScopes(requested, allowed) {
+    if (requested.length === 0) {
+        return { value: [...allowed], ok: true };
+    }
+    const wanted = new Set();
+    for (const raw of requested) {
+        for (const value of String(raw).split(/\s+/u)) {
+            if (value !== "") {
+                wanted.add(value);
+            }
+        }
+    }
+    const clamped = allowed.filter((value) => wanted.has(value));
+    if (clamped.length === 0) {
+        return { value: [], ok: false };
+    }
+    return { value: clamped, ok: true };
+}
+function facadeScopeFingerprint(scopes) {
+    return hashKey([...scopes].sort().join(" "));
+}
+/**
+ * Renders a facade rejection that never redirects (DESIGN §8.1/§8.2): the fixed
+ * error vocabulary, no upstream material, and no cacheable representation.
+ */
+function facadeErrorPage(status, code) {
+    const body = Buffer.from(JSON.stringify({
+        error: code,
+        error_description: FRONT_CHANNEL_ERROR_DESCRIPTIONS[code] ?? "",
+    }), "utf8");
+    return {
+        status,
+        headers: {
+            "content-type": ["application/json; charset=utf-8"],
+            "cache-control": ["no-store"],
+            pragma: ["no-cache"],
+        },
+        cookies: [],
+        body,
+        isBase64: false,
+    };
+}
+/**
+ * The gateway-class provider failure (DESIGN §8.2): a distinct 502 carrying
+ * upstream_error, never the facade's 400 vocabulary.
+ */
+function facadeUpstreamErrorPage() {
+    return facadeErrorPage(502, "upstream_error");
+}
+/**
+ * Sends an authorization error back to the client's validated redirect URI,
+ * carrying the fixed error code, the client's own state, and the client-facing
+ * RFC 9207 iss (FRAMEWORK_VS_POLICY row 1).
+ */
+function facadeClientErrorRedirect(redirectURI, issuer, clientState, code) {
+    const values = new Map();
+    values.set("error", code);
+    values.set("iss", issuer);
+    const description = FRONT_CHANNEL_ERROR_DESCRIPTIONS[code];
+    if (description !== undefined && description !== "") {
+        values.set("error_description", description);
+    }
+    if (clientState !== "") {
+        values.set("state", clientState);
+    }
+    return facadeClientRedirect(redirectURI, values);
+}
+/**
+ * Appends values to the client's redirect URI without rewriting the URI itself,
+ * so the redirect target stays byte-identical to the registered value.
+ */
+function facadeClientRedirect(target, values) {
+    let location = target;
+    const encoded = encodeValues(values);
+    if (encoded !== "") {
+        const separator = location.includes("?") ? "&" : "?";
+        location += `${separator}${encoded}`;
+    }
+    return {
+        status: 302,
+        headers: {
+            location: [location],
+            "cache-control": ["no-store"],
+            pragma: ["no-cache"],
+        },
+        cookies: [],
+        body: Buffer.alloc(0),
+        isBase64: false,
+    };
+}
+/** Sends the browser to the upstream authorize URL. */
+function facadeUpstreamRedirect(target) {
+    return {
+        status: 302,
+        headers: {
+            location: [target],
+            "cache-control": ["no-store"],
+            pragma: ["no-cache"],
+        },
+        cookies: [],
+        body: Buffer.alloc(0),
+        isBase64: false,
+    };
+}
+/** Encodes values the way Go's url.Values.Encode does: sorted by key. */
+function encodeValues(values) {
+    const params = new URLSearchParams();
+    for (const key of [...values.keys()].sort()) {
+        params.set(key, values.get(key) ?? "");
+    }
+    return params.toString();
+}
+function firstQueryValue(query, name) {
+    const values = query[name];
+    if (values === undefined || values.length === 0) {
+        return "";
+    }
+    return values[0] ?? "";
+}
+/**
+ * Parses a form-encoded body the way Go's url.ParseQuery does: an unescaped
+ * ";" or a malformed percent escape fails the whole parse, so the facade can
+ * answer invalid_request instead of reading a half-decoded form.
+ */
+function parseFormQuery(raw) {
+    const form = new Map();
+    if (raw === "") {
+        return form;
+    }
+    for (const segment of raw.split("&")) {
+        if (segment === "") {
+            continue;
+        }
+        if (segment.includes(";")) {
+            return null;
+        }
+        const separator = segment.indexOf("=");
+        const rawKey = separator >= 0 ? segment.slice(0, separator) : segment;
+        const rawValue = separator >= 0 ? segment.slice(separator + 1) : "";
+        const key = queryUnescapeGo(rawKey);
+        if (key === null) {
+            return null;
+        }
+        const value = queryUnescapeGo(rawValue);
+        if (value === null) {
+            return null;
+        }
+        const values = form.get(key);
+        if (values === undefined) {
+            form.set(key, [value]);
+        }
+        else {
+            values.push(value);
+        }
+    }
+    return form;
+}
+function formGet(form, name) {
+    const values = form.get(name);
+    if (values === undefined || values.length === 0) {
+        return "";
+    }
+    return values[0] ?? "";
+}
+/**
+ * Percent-decodes one form component the way Go's QueryUnescape does: "+" is a
+ * space and a malformed "%" escape is an error. The result is a byte string
+ * (one code unit per decoded byte), so it round-trips Go's raw-byte semantics.
+ */
+function queryUnescapeGo(value) {
+    let out = "";
+    let index = 0;
+    while (index < value.length) {
+        const ch = value.charAt(index);
+        if (ch === "%") {
+            if (index + 2 >= value.length) {
+                return null;
+            }
+            const hex = value.slice(index + 1, index + 3);
+            if (!HEX_PAIR.test(hex)) {
+                return null;
+            }
+            out += String.fromCharCode(Number.parseInt(hex, 16));
+            index += 3;
+            continue;
+        }
+        if (ch === "+") {
+            out += " ";
+            index += 1;
+            continue;
+        }
+        out += ch;
+        index += 1;
+    }
+    return out;
 }
 //# sourceMappingURL=mcpfacade.js.map

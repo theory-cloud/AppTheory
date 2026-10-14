@@ -312,6 +312,27 @@
       "scenario": "acquire_lock_sets_refreshing",
       "params": { "put": 1 },
       "expect": { "status": "refreshing" }
+    },
+    {
+      "id": "store.authorization_code.put_payload_preserves_caller_status_and_version",
+      "store": "authorization_code",
+      "scenario": "put_payload",
+      "params": { "put_status": "consumed", "put_version": 3, "ttl_seconds": 60 },
+      "expect": { "consume": "ok", "status": "consumed", "version": 3 }
+    },
+    {
+      "id": "store.route_refresh_broker.put_payload_preserves_caller_status_and_version",
+      "store": "route_refresh_broker",
+      "scenario": "put_payload",
+      "params": { "put_status": "issued", "put_version": 3 },
+      "expect": { "get": "ok", "status": "issued", "version": 3 }
+    },
+    {
+      "id": "store.route_refresh_broker.put_payload_empty_status_preserved",
+      "store": "route_refresh_broker",
+      "scenario": "put_payload",
+      "params": { "put_version": 2 },
+      "expect": { "get": "ok", "status": "", "version": 2 }
     }
   ]
 }

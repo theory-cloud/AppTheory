@@ -62,6 +62,45 @@ and nothing beyond what Go already mounts becomes reachable. `McpFacadeRegistrat
 returned from the call. TypeScript and Python gain `FacadeConfig`, `FacadeRoute`, `RouteInventory`, `FacadeCapabilities`
 / `defaultCapabilities`, `RootDiscoveryConfig`, the URL-mode constants, and the `HandlerFactory` type.
 
+### MCP auth facade front channel
+
+The framework-owned MCP auth facade front channel is now mounted when the front-channel `FacadeConfig` field set is
+declared. Setting `Provider` makes `RegisterMCPFacade` / `registerMcpFacade` / `register_mcp_facade` own and mount the
+per-endpoint-kind `GET …/authorize` terminator, the one stage-global `GET /_oauth/mcp/callback`, and the
+per-endpoint-kind `POST …/token` `authorization_code` grant, driven by the provider SPI and the five store SPIs. The
+accompanying fields are `Stores`, `UpstreamClientID`, `UpstreamIssuer`, and optionally `LifecycleScopes` and
+`ProviderHints`; the set is all-or-none, and setting any other front-channel field without a `Provider` is a
+registration error. `Provider` is mutually exclusive with the application-owned `AuthorizeHandler`/`TokenHandler` pair
+and `CallbackHandler`, because it claims the same routes.
+
+Adopters that opt in must supply:
+
+- a **provider adapter** (the Autheory adapter is the first implementation) and the **five stores**. A **durable store
+  MUST encrypt every `Encrypted*` field at rest** — the facade performs no sealing and hands the store upstream
+  material (including the upstream-minted access token in the code record and the upstream refresh token in the broker
+  record) exactly as the provider returned it. The framework's in-memory reference stores are non-durable and do not
+  encrypt, so they are for tests and local development only; a deployment supplies a durable store that discharges the
+  encryption obligation.
+- the facade's own **upstream client id** and the expected **upstream issuer** (the RFC 9207 `iss` the callback pins
+  before consuming the transaction or exchanging the code).
+
+Clients must be **pre-registered** through the `ClientStore`, keyed by the store hash helper (`oauthstore.HashKey` in
+Go, `hashKey` in TypeScript, `hash_key` in Python) so the facade derives the same key when it looks the client up,
+because dynamic client registration is not mounted.
+
+**Not yet available in this line** (the follow-on milestone, M3c, owns them): DCR — the `/register` route is not
+mounted, so no client is created by a request; the **`refresh_token` grant** — the code-exchange response already
+returns a framework-minted opaque `refresh_token` handle, but the token endpoint answers `400 unsupported_grant_type`
+for it, so **a handle returned by the code exchange cannot be redeemed yet**; and the **CDK `facade` wiring** — still no
+`cdk/**` change, so the construct's attach prop does not wire the provider and stores or the callback-path override.
+
+The store `put` normalization was also aligned across Go, TypeScript, and Python: the reference stores now preserve a
+caller-supplied `status` verbatim and normalize a version below 1 to 1 in all three runtimes (Go was already the
+reference), pinned by a new shared `put_payload` conformance scenario.
+
+See `docs/features/mcp-auth-facade-spi.md` for the front-channel configuration table and
+`docs/features/mcp-facade-helper.md` for what the three registrars mount.
+
 ## v5.x line
 
 AppTheory v5 is a major release on two axes: the Go module path moves to the next semantic import version, and the Go

@@ -162,15 +162,15 @@ async function failingCaseIds(build, cases) {
   return failed;
 }
 
-test("store conformance fixture carries 38 cases", () => {
-  assert.equal(CASES.length, 38);
-  assert.equal(new Set(CASES.map((c) => c.id)).size, 38);
+test("store conformance fixture carries 41 cases", () => {
+  assert.equal(CASES.length, 41);
+  assert.equal(new Set(CASES.map((c) => c.id)).size, 41);
 });
 
 test("the in-memory reference stores satisfy the store conformance table", async () => {
   const clock = new ManualClock(EPOCH);
   const result = await runStoreConformance(newStores(clock), CASES, clock);
-  assert.equal(result.ran, 38);
+  assert.equal(result.ran, 41);
   console.log(
     `store conformance: ${result.ran}/${CASES.length} cases passed (in-memory reference stores)`,
   );
@@ -236,7 +236,9 @@ test("the broker store seeds through put and never creates on swap", async () =>
   seed.scopes[0] = "mutated-caller";
   const seeded = await brokers.get("seeded-handle");
   assert.equal(seeded.version, 1);
-  assert.equal(seeded.status, "active");
+  // The seeder preserves the caller's status verbatim; it no longer defaults an
+  // empty status to "active".
+  assert.equal(seeded.status, "");
   assert.deepEqual(seeded.scopes, ["scope-a"]);
 });
 

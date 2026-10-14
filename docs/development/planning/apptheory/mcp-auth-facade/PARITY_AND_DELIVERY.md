@@ -1,7 +1,7 @@
 # Parity and delivery plan (M0, item 7)
 
-Status: plan for review (M0).
-Last updated: 2026-10-12
+Status: plan for review (M0); §1 rows 8 and 9 are as-built in all three runtimes as of M3b-ii (Go/TS/Py).
+Last updated: 2026-10-14
 Owner: AppTheory
 
 Atomic parity is the operator rule (Factory docs/110): every capability ships for Go, TypeScript, and Python
@@ -36,6 +36,14 @@ Legend: **Y** = exists today; **part** = partial; **–** = absent. "Work" is wh
 Cross-runtime asymmetries worth stating plainly (from the audits): the route algebra and the facade registrar
 are Go-only; Go's bearer validator cannot see the request; token stores are Go-only; RFC 8707 is absent
 everywhere; no runtime ships a JWT/JWKS validator.
+
+**As-built (M3b-ii):** row 8 (front-channel termination + upstream callback) and row 9 (facade code store + replay →
+broker revoke) are now implemented in **Go, TypeScript, and Python**, and mount when the front-channel
+`FacadeConfig` field set is declared (the callback and token mechanics are driven over the provider SPI and the five
+store SPIs). Row 2's "fill all three with facade mechanics" is partially done: the registrars mount the front channel,
+but the mechanics still await DCR and brokered refresh. Still open from this matrix: DCR (row 10), brokered refresh
+(row 11), and the CDK wiring (row 14) — the follow-on milestone (M3c) owns them. The matrix above is the M0 snapshot and
+is left as recorded.
 
 ## 2. Milestones (atomic parity per milestone)
 

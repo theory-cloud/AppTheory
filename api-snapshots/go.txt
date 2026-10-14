@@ -3808,6 +3808,18 @@ type FacadeConfig struct {
 	TransportPosture TransportPosture
 
 	RequireBearerToken *oauth.RequireBearerTokenOptions
+
+	Provider oauth.Provider
+
+	Stores oauthstore.Stores
+
+	UpstreamClientID string
+
+	UpstreamIssuer string
+
+	LifecycleScopes []string
+
+	ProviderHints func(*apptheory.Context) (map[string]string, error)
 }
 
 type HandlerFactory func(mcproutes.EndpointKind) apptheory.Handler
@@ -5695,6 +5707,8 @@ type TransactionStoreOptions struct {
 
 	TTL time.Duration
 }
+
+func HashKey(string) string
 
 func LoadConformanceCases(string) ([]ConformanceCase, error)
 
