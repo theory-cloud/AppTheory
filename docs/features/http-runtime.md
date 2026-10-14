@@ -30,7 +30,12 @@ The smallest viable AppTheory:
 - `SourceProvenance` (see [Source Provenance](source-provenance.md)) — available even at P0
 - Strict route helpers (`GetStrict`, `handleStrict`, `handle_strict`)
 
-P0 is appropriate for tightly scoped functions that do their own auth, observability, and shedding.
+P0 is **the minimal tier, not a protected tier.** It is the frozen legacy pipeline and does **not** evaluate
+route-level transport postures: nothing about P0 adds an iam/jwt route guard, so an application that explicitly
+selects P0 must supply its own authentication (for example `oauth.RequireBearerTokenMiddleware`) or own transport
+authentication itself. P0 is appropriate for tightly scoped functions that do their own auth, observability, and
+shedding. The default tier (P2) and [SecureApp](secure-app.md) are the paths that evaluate the transport posture and
+its defense-in-depth pairing; the [MCP facade helper](mcp-facade-helper.md) states the same caveat for the facade.
 
 ### P1 — production HTTP defaults
 

@@ -31,6 +31,16 @@ When `RootAuthorizationServer` is non-`nil`, the same call also installs exactly
 root canonical and suffix discovery collapse to the same path, and the document describes the upstream authorization
 server rather than a routed MCP identity.
 
+## P0 is a minimal tier, not a protected one
+
+`TierP0` is the frozen legacy pipeline: it does **not** evaluate route-level transport postures, so mounting the
+facade under P0 gets no posture enforcement from the tier. An application that explicitly selects P0 must supply
+`RequireBearerToken` or own its transport authentication itself — the facade has no iam/jwt route guard to lean on
+there. P0 is the documented minimal tier in all three runtimes (see [HTTP Runtime tiers](http-runtime.md)) and exists
+for tightly scoped functions that do their own auth, observability, and shedding. It is **never** a shortcut past the
+facade's route guard: the default tier (P2) and `SecureApp` are the paths that evaluate the transport posture and its
+defense-in-depth pairing.
+
 ## Registration
 
 ```go
