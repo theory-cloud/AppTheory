@@ -55,6 +55,16 @@ Every upstream call goes through the same hardened HTTP stack the OIDC discovery
 deadline (10 s default), a 1 MiB response cap, a connect-time SSRF guard that refuses non-public addresses, and a
 redirect refusal. There is no separate, unbounded fetch path.
 
+**`Refresh` must honor the deadline.** The framework's own adapter calls `Refresh` through that hardened stack, so
+the 10-second deadline bounds the upstream call it makes. An implementer's `Refresh` (or a durable store that backs
+the lock) must not ignore it: the broker refresh lock's TTL is 15 seconds — the 10-second deadline plus a 5-second
+margin, a relationship a pin test enforces — so an upstream call that runs past the deadline lets the lock expire and
+a second caller acquire it, admitting a second concurrent upstream refresh. The rotation stays safe even then: it
+completes with a versioned compare-and-swap on the broker record, so exactly one winner lands and the loser discards
+the successor it minted (or answers `503`), and no success is ever returned for state that was not persisted. The
+obligation is nonetheless real — honor the deadline so the single-flight guarantee holds at the store and not only at
+the compare-and-swap.
+
 Typed errors map to a closed client-facing vocabulary, so a caller never has to string-match an upstream body:
 
 | `ProviderError` class | Facade HTTP class |
