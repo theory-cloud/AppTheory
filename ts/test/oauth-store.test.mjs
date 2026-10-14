@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { ManualClock } from "../dist/clock.js";
 import {
+  BrokerNotFoundError,
   MemoryAuthorizationCodeStore,
   MemoryClientStore,
   MemoryRateLimitStore,
@@ -65,8 +66,8 @@ class NonTerminalCodeStore extends MemoryAuthorizationCodeStore {
   async consume(codeHash) {
     const result = await super.consume(codeHash);
     if (!result) return result;
-    if (result.replayed || result.record?.status === "expired") {
-      return { record: result.record, replayed: false };
+    if (result.replayed || result.expired) {
+      return { record: result.record, replayed: false, expired: false };
     }
     return result;
   }
@@ -124,6 +125,8 @@ const BROKEN_BUNDLES = [
       "store.authorization_code.expired_consume_then_replay",
       "store.authorization_code.clock_back_after_consume_is_replayed",
       "store.authorization_code.clock_back_after_expired_burn_is_replayed",
+      "store.authorization_code.consume_record_payload_live",
+      "store.authorization_code.consume_record_payload_expired_burn",
     ],
   },
   {
@@ -159,15 +162,15 @@ async function failingCaseIds(build, cases) {
   return failed;
 }
 
-test("store conformance fixture carries 34 cases", () => {
-  assert.equal(CASES.length, 34);
-  assert.equal(new Set(CASES.map((c) => c.id)).size, 34);
+test("store conformance fixture carries 38 cases", () => {
+  assert.equal(CASES.length, 38);
+  assert.equal(new Set(CASES.map((c) => c.id)).size, 38);
 });
 
 test("the in-memory reference stores satisfy the store conformance table", async () => {
   const clock = new ManualClock(EPOCH);
   const result = await runStoreConformance(newStores(clock), CASES, clock);
-  assert.equal(result.ran, 34);
+  assert.equal(result.ran, 38);
   console.log(
     `store conformance: ${result.ran}/${CASES.length} cases passed (in-memory reference stores)`,
   );
@@ -191,6 +194,50 @@ test("the reference stores expose every store SPI operation", () => {
       );
     }
   }
+});
+
+test("the broker store seeds through put and never creates on swap", async () => {
+  const clock = new ManualClock(EPOCH);
+  const brokers = new MemoryRouteRefreshBrokerStore({
+    now: () => clock.now(),
+    lockTtlSeconds: 30,
+  });
+  const record = (handleHash) => ({
+    handleHash,
+    issuer: "https://auth.example.test",
+    stage: "lab",
+    canonicalResource: "https://mcp.example.test/mcp",
+    clientNamespace: "conformance",
+    endpointKind: "mcp",
+    partnerId: "",
+    agentId: "",
+    clientIdHash: "client-hash",
+    subjectIdHash: "subject-hash",
+    scopes: ["scope-a"],
+    scopeFingerprint: "fingerprint",
+    encryptedUpstreamRefreshToken: "encrypted-refresh",
+    upstreamRefreshTokenHash: "refresh-hash",
+    upstreamClientId: "conformance-client",
+    status: "",
+    version: 0,
+  });
+
+  // A swap on a handle that was never seeded is not-found, even with the
+  // version a create-sentinel store would have accepted, and it leaves nothing
+  // behind. Creation is the seeder's separate `put`.
+  await assert.rejects(
+    brokers.compareAndSwap(record("unknown-handle"), 0),
+    BrokerNotFoundError,
+  );
+  assert.equal(await brokers.get("unknown-handle"), null);
+
+  const seed = record("seeded-handle");
+  await brokers.put(seed);
+  seed.scopes[0] = "mutated-caller";
+  const seeded = await brokers.get("seeded-handle");
+  assert.equal(seeded.version, 1);
+  assert.equal(seeded.status, "active");
+  assert.deepEqual(seeded.scopes, ["scope-a"]);
 });
 
 test("reference stores never hand out or retain their stored slices", async () => {
@@ -270,7 +317,7 @@ test("reference stores never hand out or retain their stored slices", async () =
     status: "active",
     version: 1,
   };
-  await brokers.compareAndSwap(handle, 0);
+  await brokers.put(handle);
   handle.scopes[0] = "mutated-caller";
   const storedHandle = await brokers.get("alias-broker");
   assert.deepEqual(storedHandle.scopes, ["scope-a"]);

@@ -106,8 +106,14 @@ export interface AuthorizationCodeStore {
     consume(codeHash: string): Promise<AuthorizationCodeConsumeResult | null>;
 }
 export interface AuthorizationCodeConsumeResult {
-    record: AuthorizationCodeRecord;
+    /**
+     * The stored record, returned unmutated. Null on the first consume of an
+     * expired code, which Go's reference store reports as no record.
+     */
+    record: AuthorizationCodeRecord | null;
     replayed: boolean;
+    /** True when the first consume found the code past its TTL. */
+    expired: boolean;
 }
 /** Registered clients. Update is compare-and-swap on version. */
 export interface ClientStore {
@@ -124,6 +130,16 @@ export interface RouteRefreshBrokerStore {
     acquireLock(handleHash: string, lockOwner: string, expectedVersion: number): Promise<RouteRefreshBrokerRecord>;
     compareAndSwap(record: RouteRefreshBrokerRecord, expectedVersion: number): Promise<RouteRefreshBrokerRecord>;
     revoke(handleHash: string): Promise<RouteRefreshBrokerRecord>;
+}
+/**
+ * The optional create path a broker store needs to place the record a
+ * conformance row starts from. The broker SPI itself is
+ * get/acquireLock/compareAndSwap/revoke and a compare-and-swap never creates, so
+ * creating a handle is a separate operation the facade's own write path owns; a
+ * durable store implements this with whatever create path it already has.
+ */
+export interface RouteRefreshBrokerSeeder {
+    put(record: RouteRefreshBrokerRecord): Promise<void>;
 }
 /**
  * The rate-limit bucket a caller checks. `limit` and `windowSeconds` are the
@@ -197,15 +213,19 @@ export interface MemoryAuthorizationCodeStoreOptions {
 /** In-memory reference AuthorizationCodeStore. */
 export declare class MemoryAuthorizationCodeStore implements AuthorizationCodeStore {
     private readonly records;
+    private readonly consumed;
     private readonly now;
     private readonly ttlSeconds;
     constructor(options?: MemoryAuthorizationCodeStoreOptions);
     put(record: AuthorizationCodeRecord): Promise<void>;
     /**
      * Consume-once, but the record is retained so a replay is distinguishable
-     * from an unknown code. `consumed` and `expired` are both terminal: a
-     * terminal code stays terminal no matter which way the clock moves, so a
-     * backwards clock can never make a burned code fresh again.
+     * from an unknown code. The stored record is returned unmutated — its status
+     * and version are the caller's, exactly as Go's in-memory reference store
+     * does — and the terminal signal travels on the result instead: a replayed
+     * code sets `replayed`, and a first consume of an expired code sets `expired`.
+     * Both are terminal no matter which way the clock moves, so a backwards clock
+     * can never make a burned code fresh again.
      */
     consume(codeHash: string): Promise<AuthorizationCodeConsumeResult | null>;
     private expired;
@@ -231,15 +251,22 @@ export interface MemoryRouteRefreshBrokerStoreOptions {
  * In-memory reference RouteRefreshBrokerStore. Each handle carries its own
  * lifetime: a handle older than the store's TTL is treated as absent by every
  * operation, so an expired handle can be neither read, locked, swapped nor
- * revoked, and the version-`0` create sentinel never resurrects it.
+ * revoked, and a swap on an absent handle is `not_found` rather than a create.
  */
-export declare class MemoryRouteRefreshBrokerStore implements RouteRefreshBrokerStore {
+export declare class MemoryRouteRefreshBrokerStore implements RouteRefreshBrokerStore, RouteRefreshBrokerSeeder {
     private readonly records;
     private readonly storedAt;
     private readonly now;
     private readonly lockTtlMs;
     private readonly ttlMs;
     constructor(options?: MemoryRouteRefreshBrokerStoreOptions);
+    /**
+     * Seeds a handle: the store's own create path, and the only way a handle is
+     * created. Creation is deliberately not a compare-and-swap, so a swap can
+     * never resurrect a handle. A copy is stored at version 1, and a record that
+     * carries no status defaults to `active`.
+     */
+    put(record: RouteRefreshBrokerRecord): Promise<void>;
     get(handleHash: string): Promise<RouteRefreshBrokerRecord | null>;
     /**
      * Takes the exclusive refresh lock. The revoked check runs first, then lock
@@ -252,12 +279,12 @@ export declare class MemoryRouteRefreshBrokerStore implements RouteRefreshBroker
      */
     acquireLock(handleHash: string, lockOwner: string, expectedVersion: number): Promise<RouteRefreshBrokerRecord>;
     /**
-     * Versioned compare-and-swap. A version of `0` is the optimistic-create
-     * sentinel: it stores the record only when no live record exists, which is
-     * how a reference or application store seeds a handle. Any other version
-     * must equal the stored record's version, and a revoked record refuses every
-     * swap. A rotation keeps the handle's original stored-at instant, so
-     * refreshing a handle upstream does not extend its local lifetime.
+     * Versioned compare-and-swap. A swap never creates: a handle that does not
+     * exist — never seeded, or aged out past its TTL — is `not_found`, and
+     * creation is the seeder's separate `put`. The presented version must equal
+     * the stored record's version, and a revoked record refuses every swap. A
+     * rotation keeps the handle's original stored-at instant, so refreshing a
+     * handle upstream does not extend its local lifetime.
      */
     compareAndSwap(record: RouteRefreshBrokerRecord, expectedVersion: number): Promise<RouteRefreshBrokerRecord>;
     /**
@@ -271,7 +298,7 @@ export declare class MemoryRouteRefreshBrokerStore implements RouteRefreshBroker
     /**
      * Drops an expired handle. Every access — read or mutation — clears an
      * aged-out handle here, so it can be neither read, locked, swapped nor
-     * revoked, and the version-`0` create sentinel never resurrects it.
+     * revoked, and no operation ever recreates it.
      */
     private discard;
 }

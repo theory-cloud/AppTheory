@@ -512,6 +512,26 @@ function normalizeCapabilities(configured) {
     };
 }
 /**
+ * True when the value holds an unpaired UTF-16 surrogate, i.e. a value that is
+ * not well-formed Unicode and cannot be encoded as well-formed UTF-8.
+ */
+function hasUnpairedSurrogate(value) {
+    for (let index = 0; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        if (code >= 0xd800 && code <= 0xdbff) {
+            const next = value.charCodeAt(index + 1);
+            if (!(next >= 0xdc00 && next <= 0xdfff)) {
+                return true;
+            }
+            index += 1;
+        }
+        else if (code >= 0xdc00 && code <= 0xdfff) {
+            return true;
+        }
+    }
+    return false;
+}
+/**
  * Trims each value, rejects an empty value, de-duplicates preserving order, and
  * requires at least one value.
  */
@@ -522,6 +542,9 @@ function normalizeNonEmptyList(label, values) {
         const value = String(raw ?? "").trim();
         if (value === "") {
             throw new Error(`${label} values cannot be empty`);
+        }
+        if (hasUnpairedSurrogate(value)) {
+            throw new Error(`${label} values must be well-formed Unicode`);
         }
         if (seen.has(value)) {
             continue;
@@ -704,7 +727,7 @@ function buildAbsoluteURL(config, ctx, routePath) {
         if (origin === null) {
             throw new Error(`${ERROR_PREFIX} normalized request origin is invalid`);
         }
-        if (!config.allowedHostnames.has(origin.host)) {
+        if (!config.allowedHostnames.has(requestHostAllowlistKey(origin))) {
             throw new MetadataRequestError("request host is not allowlisted");
         }
     }
@@ -744,6 +767,319 @@ function withMetadataHeaders(next) {
         };
     };
 }
+/** UTF-8 bytes that `encodePath` leaves unescaped, matching Go's `net/url`. */
+const PATH_LITERAL_BYTES = (() => {
+    const table = new Uint8Array(256);
+    const literals = "-._~$&+,/:;=@";
+    for (let code = 0; code < 256; code += 1) {
+        const isAlphanumeric = (code >= 0x30 && code <= 0x39) ||
+            (code >= 0x41 && code <= 0x5a) ||
+            (code >= 0x61 && code <= 0x7a);
+        table[code] = isAlphanumeric ? 1 : 0;
+    }
+    for (const ch of literals) {
+        table[ch.charCodeAt(0)] = 1;
+    }
+    return table;
+})();
+/** ASCII bytes `net/url` accepts unescaped in a reg-name host. */
+const HOST_LITERAL_BYTES = (() => {
+    const table = new Uint8Array(256);
+    const literals = "!$&'()*+,;=:[]<>\"-._~";
+    for (let code = 0; code < 256; code += 1) {
+        const isAlphanumeric = (code >= 0x30 && code <= 0x39) ||
+            (code >= 0x41 && code <= 0x5a) ||
+            (code >= 0x61 && code <= 0x7a);
+        table[code] = isAlphanumeric ? 1 : 0;
+    }
+    for (const ch of literals) {
+        table[ch.charCodeAt(0)] = 1;
+    }
+    return table;
+})();
+const HEX_PAIR = /^[0-9A-Fa-f]{2}$/;
+/** True when the text carries a C0 control byte or DEL, which `net/url` rejects. */
+function containsControlByte(value) {
+    for (let index = 0; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        if (code < 0x20 || code === 0x7f) {
+            return true;
+        }
+    }
+    return false;
+}
+/**
+ * Mirrors Go's `url.Parse` host validation (`unescape(host, encodeHost)`): a
+ * malformed percent escape, or an ASCII byte outside the reg-name set, fails
+ * the whole parse. Bytes above 0x7f and the redundant `%25` escape pass.
+ */
+function validHostBytes(host) {
+    let index = 0;
+    while (index < host.length) {
+        if (host[index] === "%") {
+            if (index + 2 >= host.length) {
+                return false;
+            }
+            const hex = host.slice(index + 1, index + 3);
+            if (!HEX_PAIR.test(hex)) {
+                return false;
+            }
+            if (Number.parseInt(hex, 16) < 0x80 &&
+                host.slice(index, index + 3) !== "%25") {
+                return false;
+            }
+            index += 3;
+            continue;
+        }
+        const code = host.charCodeAt(index);
+        if (code < 0x80 && HOST_LITERAL_BYTES[code] !== 1) {
+            return false;
+        }
+        index += 1;
+    }
+    return true;
+}
+/**
+ * Percent-decodes a raw path into a byte string (one code unit per byte),
+ * mirroring Go's `url.Parse`, which fails the whole parse on a malformed escape
+ * such as `%zz`. Returns null on a malformed escape.
+ */
+function decodePathBytes(rawPath) {
+    let decoded = "";
+    let segment = "";
+    let index = 0;
+    while (index < rawPath.length) {
+        const ch = rawPath[index] ?? "";
+        if (ch !== "%") {
+            segment += ch;
+            index += 1;
+            continue;
+        }
+        if (index + 2 >= rawPath.length) {
+            return null;
+        }
+        const hex = rawPath.slice(index + 1, index + 3);
+        if (!HEX_PAIR.test(hex)) {
+            return null;
+        }
+        if (segment !== "") {
+            decoded += utf8ByteString(segment);
+            segment = "";
+        }
+        decoded += String.fromCharCode(Number.parseInt(hex, 16));
+        index += 3;
+    }
+    if (segment !== "") {
+        decoded += utf8ByteString(segment);
+    }
+    return decoded;
+}
+/** Re-encodes UTF-8 text as a byte string (one code unit per byte). */
+function utf8ByteString(text) {
+    let out = "";
+    for (const byte of Buffer.from(text, "utf8")) {
+        out += String.fromCharCode(byte);
+    }
+    return out;
+}
+const STRICT_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+/** UTF-8 lead-byte widths; 0 marks a byte that can never start a sequence. */
+const UTF8_SEQUENCE_LENGTH = (() => {
+    const table = new Uint8Array(256);
+    for (let code = 0x00; code < 0x80; code += 1) {
+        table[code] = 1;
+    }
+    for (let code = 0xc2; code <= 0xdf; code += 1) {
+        table[code] = 2;
+    }
+    for (let code = 0xe0; code <= 0xef; code += 1) {
+        table[code] = 3;
+    }
+    for (let code = 0xf0; code <= 0xf4; code += 1) {
+        table[code] = 4;
+    }
+    return table;
+})();
+/**
+ * Decodes a byte string the way Go's `for range` does: a valid UTF-8 sequence
+ * becomes its rune, and every invalid byte becomes U+FFFD on its own.
+ */
+function decodeUtf8Lenient(value) {
+    let out = "";
+    let index = 0;
+    while (index < value.length) {
+        const byte = value.charCodeAt(index);
+        if (byte < 0x80) {
+            out += value[index];
+            index += 1;
+            continue;
+        }
+        const size = UTF8_SEQUENCE_LENGTH[byte] ?? 0;
+        if (size > 1 && index + size <= value.length) {
+            const chunk = value.slice(index, index + size);
+            try {
+                out += STRICT_UTF8_DECODER.decode(Buffer.from(chunk, "latin1"));
+                index += size;
+                continue;
+            }
+            catch {
+                // Fall through to the single replacement character.
+            }
+        }
+        out += "\ufffd";
+        index += 1;
+    }
+    return out;
+}
+/**
+ * Lowercases a decoded host byte string the way Go's `strings.ToLower` does,
+ * including its U+FFFD substitution for bytes that are not valid UTF-8.
+ */
+function lowercaseHostBytes(value) {
+    return utf8ByteString(decodeUtf8Lenient(value).toLowerCase());
+}
+/**
+ * Percent-decodes a raw host into a byte string, mirroring Go's
+ * `unescape(host, encodeHost)`. The caller has already checked the escapes with
+ * {@link validHostBytes}.
+ */
+function decodeHostBytes(host) {
+    return decodePathBytes(host) ?? "";
+}
+/**
+ * Escapes a byte-string host with Go's `encodeHost` rule: literal host bytes
+ * pass, and everything else (including a literal percent and UTF-8 bytes) is
+ * re-encoded with uppercase hex.
+ */
+function encodeHostBytes(host) {
+    let out = "";
+    for (let index = 0; index < host.length; index += 1) {
+        const code = host.charCodeAt(index);
+        if (code < 0x80 && HOST_LITERAL_BYTES[code] === 1) {
+            out += host[index];
+        }
+        else {
+            out += `%${code.toString(16).toUpperCase().padStart(2, "0")}`;
+        }
+    }
+    return out;
+}
+const HEX_DIGIT = /^[0-9A-Fa-f]$/;
+const DECIMAL_FIELD = /^[0-9]{1,3}$/;
+/** Mirrors Go's `parseIPv4Fields` for the dotted quad embedded in an IPv6 literal. */
+function validIPv4Quad(text) {
+    const parts = text.split(".");
+    if (parts.length !== 4) {
+        return false;
+    }
+    for (const part of parts) {
+        if (!DECIMAL_FIELD.test(part)) {
+            return false;
+        }
+        if (part.length > 1 && part[0] === "0") {
+            return false;
+        }
+        if (Number.parseInt(part, 10) > 255) {
+            return false;
+        }
+    }
+    return true;
+}
+/**
+ * True when `text` is a bare IPv6 literal, mirroring `netip.ParseAddr` for the
+ * addresses RFC 3986 allows between square brackets.
+ */
+function validIPv6Address(text) {
+    if (text === "") {
+        return false;
+    }
+    let remainder = text;
+    let ellipsis = -1;
+    if (remainder.length >= 2 && remainder[0] === ":" && remainder[1] === ":") {
+        ellipsis = 0;
+        remainder = remainder.slice(2);
+        if (remainder === "") {
+            return true;
+        }
+    }
+    let bits = 0;
+    while (bits < 16) {
+        let digits = 0;
+        while (digits < remainder.length &&
+            HEX_DIGIT.test(remainder[digits] ?? "")) {
+            digits += 1;
+        }
+        if (digits === 0 || digits > 4) {
+            return false;
+        }
+        if (digits < remainder.length && remainder[digits] === ".") {
+            // A dotted quad may only replace the final two 16-bit fields.
+            if (ellipsis < 0 && bits !== 12) {
+                return false;
+            }
+            if (bits + 4 > 16) {
+                return false;
+            }
+            if (!validIPv4Quad(remainder)) {
+                return false;
+            }
+            remainder = "";
+            bits += 4;
+            break;
+        }
+        bits += 2;
+        remainder = remainder.slice(digits);
+        if (remainder === "") {
+            break;
+        }
+        if (remainder[0] !== ":" || remainder.length === 1) {
+            return false;
+        }
+        remainder = remainder.slice(1);
+        if (remainder[0] === ":") {
+            if (ellipsis >= 0) {
+                return false;
+            }
+            ellipsis = bits;
+            remainder = remainder.slice(1);
+            if (remainder === "") {
+                break;
+            }
+        }
+    }
+    if (remainder !== "") {
+        return false;
+    }
+    if (bits < 16) {
+        return ellipsis >= 0;
+    }
+    return ellipsis < 0;
+}
+/**
+ * Mirrors `net/url`'s IP-literal rule: the text between brackets must be an
+ * IPv6 address, optionally with a `%25`-escaped zone identifier.
+ */
+function validBracketedHostname(raw) {
+    const zone = raw.indexOf("%25");
+    if (zone < 0) {
+        return validIPv6Address(raw);
+    }
+    return raw.slice(zone + 3) !== "" && validIPv6Address(raw.slice(0, zone));
+}
+/** Escapes a byte-string path with Go's `encodePath` rule (uppercase hex). */
+function encodePathBytes(path) {
+    let out = "";
+    for (let index = 0; index < path.length; index += 1) {
+        const code = path.charCodeAt(index);
+        if (code < 256 && PATH_LITERAL_BYTES[code] === 1) {
+            out += path[index];
+        }
+        else {
+            out += `%${code.toString(16).toUpperCase().padStart(2, "0")}`;
+        }
+    }
+    return out;
+}
 /**
  * A minimal absolute-URL parser mirroring the Go facade's `url.Parse` usage.
  * An empty authority (for example `https:///token`) yields an empty host and is
@@ -752,6 +1088,9 @@ function withMetadataHeaders(next) {
 function parseURL(raw) {
     const trimmed = String(raw ?? "").trim();
     if (trimmed === "") {
+        return null;
+    }
+    if (containsControlByte(trimmed)) {
         return null;
     }
     const schemeMatch = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(trimmed);
@@ -774,16 +1113,22 @@ function parseURL(raw) {
         authority = rest.slice(0, end);
         rest = rest.slice(end);
     }
-    let userinfo = "";
     let hostport = authority;
     const at = authority.lastIndexOf("@");
     if (at >= 0) {
-        userinfo = authority.slice(0, at);
         hostport = authority.slice(at + 1);
     }
     let hostname = hostport;
     let port = "";
-    if (hostport.startsWith("[")) {
+    // Go's parseHost rejects any host whose last "[" is not the leading byte, so a
+    // stray "[" outside a bracketed IP literal fails the whole parse. A stray "]"
+    // is an ordinary reg-name byte and still passes.
+    const openBracket = hostport.lastIndexOf("[");
+    if (openBracket > 0) {
+        return null;
+    }
+    const bracketed = openBracket === 0;
+    if (bracketed) {
         const close = hostport.indexOf("]");
         if (close < 0) {
             return null;
@@ -807,28 +1152,43 @@ function parseURL(raw) {
     if (port !== "" && !/^\d+$/.test(port)) {
         return null;
     }
-    let path = rest;
+    if (hostport !== "" && !validHostBytes(hostport)) {
+        return null;
+    }
+    if (bracketed && !validBracketedHostname(hostname)) {
+        return null;
+    }
+    let rawPath = rest;
     let hash = "";
-    const hashIndex = path.indexOf("#");
+    const hashIndex = rawPath.indexOf("#");
     if (hashIndex >= 0) {
-        hash = path.slice(hashIndex);
-        path = path.slice(0, hashIndex);
+        const fragment = rawPath.slice(hashIndex + 1);
+        hash = fragment === "" ? "" : rawPath.slice(hashIndex);
+        rawPath = rawPath.slice(0, hashIndex);
     }
     let search = "";
-    const queryIndex = path.indexOf("?");
+    const queryIndex = rawPath.indexOf("?");
     if (queryIndex >= 0) {
-        search = path.slice(queryIndex);
-        path = path.slice(0, queryIndex);
+        search = rawPath.slice(queryIndex);
+        rawPath = rawPath.slice(0, queryIndex);
+    }
+    const path = decodePathBytes(rawPath);
+    if (path === null) {
+        return null;
     }
     return {
         scheme,
         host: hostport,
         hostname,
+        decodedHost: decodeHostBytes(hostport),
+        decodedHostname: decodeHostBytes(hostname),
         port,
         path,
         search,
         hash,
-        hasUser: userinfo !== "",
+        // Go's parseAuthority treats the authority as carrying userinfo whenever it
+        // holds an "@", so an empty userinfo ("https://@host/") is userinfo too.
+        hasUser: at >= 0,
     };
 }
 /** Mirrors the Go helper: a scheme, an authority, and no userinfo. */
@@ -842,15 +1202,44 @@ function parseAbsoluteURL(raw) {
     }
     return u;
 }
-function canonicalHostname(hostname) {
-    const lower = hostname.toLowerCase().replace(/\.$/, "");
+/**
+ * Canonicalizes a decoded hostname: Go lowercases the decoded host and drops
+ * one trailing root dot, then re-brackets an IPv6 literal.
+ */
+function canonicalHostname(decodedHostname) {
+    let lower = lowercaseHostBytes(decodedHostname);
+    if (lower.endsWith(".")) {
+        lower = lower.slice(0, -1);
+    }
     if (lower.includes(":")) {
         return `[${lower}]`;
     }
     return lower;
 }
+/**
+ * The allowlist key for a normalized request origin.
+ *
+ * The allowlist is stored as decoded, canonicalized authorities (see
+ * {@link normalizeAllowedHostname}), so the request authority must be
+ * canonicalized the same way before the lookup: Go compares the decoded request
+ * host against the decoded allowlist set, while a raw comparison would reject
+ * every allowed hostname whose raw form differs from its canonical form
+ * (non-ASCII, percent-escaped, or an IPv6 zone). {@link normalizeRequestOrigin}
+ * has already lowercased the authority and stripped the request scheme's own
+ * default port, so only the decoded bytes need canonicalizing here.
+ */
+function requestHostAllowlistKey(u) {
+    const hostname = canonicalHostname(u.decodedHostname);
+    if (hostname === "") {
+        return "";
+    }
+    if (u.port === "") {
+        return hostname;
+    }
+    return joinHostPort(hostname.replace(/^\[/, "").replace(/\]$/, ""), u.port);
+}
 function canonicalAuthority(u) {
-    const hostname = canonicalHostname(u.hostname);
+    const hostname = canonicalHostname(u.decodedHostname);
     if (hostname === "") {
         return "";
     }
@@ -882,12 +1271,12 @@ function normalizeHTTPSURL(raw, issuer) {
     if (authority === "") {
         return null;
     }
-    let path = u.path;
-    if (issuer) {
-        path = trimTrailingSlashes(path);
-    }
+    // Go clears RawPath and re-serializes the decoded path, so `%41` becomes `A`.
+    const decodedPath = issuer ? trimTrailingSlashes(u.path) : u.path;
+    const path = encodePathBytes(decodedPath);
     const query = issuer ? "" : u.search;
-    return `${u.scheme}://${authority}${path}${query}`;
+    // Go re-escapes the decoded host, so `%c3%a9` becomes `%C3%A9`.
+    return `${u.scheme}://${encodeHostBytes(authority)}${path}${query}`;
 }
 function normalizePublicBaseURL(raw) {
     return normalizeRequestOrigin(raw);
@@ -907,7 +1296,7 @@ function normalizeAllowedHostname(raw) {
     }
     const port = u.port;
     if (port === "80" || port === "443") {
-        const hostname = canonicalHostname(u.hostname);
+        const hostname = canonicalHostname(u.decodedHostname);
         return hostname === "" ? null : hostname;
     }
     const authority = canonicalAuthority(u);
@@ -918,12 +1307,9 @@ function absoluteURLForPath(baseURL, routePath) {
     if (u === null || !routePath.startsWith("/")) {
         return null;
     }
-    const authority = canonicalAuthority(u);
-    if (authority === "") {
-        return null;
-    }
-    const path = trimTrailingSlashes(u.path) + routePath;
-    return `${u.scheme}://${authority}${path}`;
+    // Go keeps the parsed authority's text and re-encodes it from its decoded bytes.
+    const path = encodePathBytes(trimTrailingSlashes(u.path) + utf8ByteString(routePath));
+    return `${u.scheme}://${encodeHostBytes(u.decodedHost)}${path}`;
 }
 /** Removes every trailing "/" without a backtracking regex (ReDoS-safe). */
 function trimTrailingSlashes(value) {

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { json } from "../response.js";
+import { metadataJSON } from "../response.js";
 export const CONTEXT_KEY_BEARER_TOKEN = "oauth.bearer_token";
 export const CONTEXT_KEY_BEARER_CLAIMS = "oauth.bearer_claims";
 export const ERR_MISSING_BEARER_TOKEN = "missing bearer token";
@@ -72,10 +72,10 @@ export function newAuthorizationServerMetadata(issuer, options) {
     return metadata;
 }
 export function protectedResourceMetadataHandler(metadata) {
-    return () => json(200, metadata);
+    return () => metadataJSON(200, metadata);
 }
 export function authorizationServerMetadataHandler(metadata) {
-    return () => json(200, metadata);
+    return () => metadataJSON(200, metadata);
 }
 export function protectedResourceWWWAuthenticate(resourceMetadataURL) {
     const value = String(resourceMetadataURL ?? "").trim();

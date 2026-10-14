@@ -87,7 +87,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>846 exported top-level symbols</summary>
+<summary>848 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, AGENT_MCP_PATTERN, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest, APIGatewayProxyResponse,
@@ -150,7 +150,7 @@ McpTaskRuntimeOptions, McpTaskStatus, McpTaskStore, McpTaskSupport, McpTaskTermi
 McpTestSSEFrame, McpToolContext, McpToolDef, McpToolExecution, McpToolHandler, McpToolRegistry, McpToolResult, McpTransportPosture, MemoryAuthorizationCodeStore,
 MemoryAuthorizationCodeStoreOptions, MemoryClientStore, MemoryClientStoreOptions, MemoryMcpSessionStore, MemoryMcpStreamStore, MemoryMcpTaskStore,
 MemoryMicroVMSessionRegistry, MemoryRateLimitStore, MemoryRateLimitStoreOptions, MemoryRouteRefreshBrokerStore, MemoryRouteRefreshBrokerStoreOptions,
-MemoryTransactionStore, MemoryTransactionStoreOptions, MetricRecord, MICROVM_AWS_LAMBDA_PROVIDER_ID, MICROVM_CONTRACT_NAME, MICROVM_CONTRACT_VERSION,
+MemoryTransactionStore, MemoryTransactionStoreOptions, metadataJSON, MetricRecord, MICROVM_AWS_LAMBDA_PROVIDER_ID, MICROVM_CONTRACT_NAME, MICROVM_CONTRACT_VERSION,
 MICROVM_CONTRACT_VERSION_M16, MICROVM_CONTROLLER_AUTH_DEFAULT_DENY, MICROVM_DEFAULT_SESSION_PROVIDER_ID, MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS,
 MICROVM_ENV_EXECUTION_ROLE_ARN, MICROVM_ENV_IMAGE_REF, MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS, MICROVM_ENV_LOGGING, MICROVM_ENV_NETWORK_CONNECTOR_REFS,
 MICROVM_ERROR_CONTROLLER_COMMAND_FAILED, MICROVM_ERROR_CONTROLLER_INCOMPLETE, MICROVM_ERROR_FORBIDDEN_FIELD, MICROVM_ERROR_INVALID_CONTRACT,
@@ -192,7 +192,7 @@ ReconstructingMicroVMSessionRegistryOptions, reconstructMicroVMSessionRecord, Re
 registerControllerRoutes, registerMcpFacade, registerMicroVMControllerRoutes, ReleaseLeaseInput, ReleaseSemaphoreSlotInput, reportKinesisPutRecordsFailures, Request,
 requireBearerTokenMiddleware, RequireBearerTokenOptions, required, requiredForbiddenMicroVMOperationFields, requireEventBridgeWorkloadEnvelope, ResolvedCapabilities,
 resourceIndicatorMatches, resourceMetadataURLFromMcpEndpoint, resourceName, resourcePathFromProtectedResourcePath, Response, rfc9728ResourceMetadataURL,
-RootDiscoveryConfig, RouteInventory, RouteOptions, RouteRefreshBrokerRecord, RouteRefreshBrokerStatus, RouteRefreshBrokerStore, runStoreConformance, S3Encryption,
+RootDiscoveryConfig, RouteInventory, RouteOptions, RouteRefreshBrokerRecord, RouteRefreshBrokerSeeder, RouteRefreshBrokerStatus, RouteRefreshBrokerStore, runStoreConformance, S3Encryption,
 S3EncryptionConfig, S3EncryptionMode, S3ObjectStoreConfig, S3VectorStore, S3VectorStoreConfig, safeJSONForHTML, sanitizeErrorEnvelope, sanitizeFields, sanitizeFieldValue,
 sanitizeJSON, sanitizeJSONValue, sanitizeLogString, sanitizeXML, SecureApp, SecureOpenAPISpec, SecureOptions, SecurePrincipal, SecurePrincipalResolver, SecureRoute,
 SecureRouteSurface, SemanticIndex, SemanticIndexConfig, SemanticRecord, SemaphoreInspection, SemaphoreLease, semaphorePartitionKey, semaphoreSlotSortKey,

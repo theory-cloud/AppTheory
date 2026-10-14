@@ -254,10 +254,15 @@ test("inventory matches the shared construct fixture", () => {
 // ---------------------------------------------------------------------------
 
 test("metadata documents byte-match the shared golden for every kind and URL mode", async () => {
-  assert.equal(EXPECTATIONS.documents.length, 8);
+  assert.equal(EXPECTATIONS.documents.length, 10);
   for (const row of EXPECTATIONS.documents) {
     const app = createApp({ tier: "p0" });
-    registerMcpFacade(app, validConfig(row.mode));
+    const config = validConfig(row.mode);
+    if (row.jwks_uri !== undefined) config.jwksURI = row.jwks_uri;
+    if (row.scopes !== undefined) {
+      config.scopes = { ...config.scopes, [row.kind]: row.scopes };
+    }
+    registerMcpFacade(app, config);
     const headers =
       row.mode === "request_host"
         ? { host: ["direct.example.com"], "x-forwarded-proto": ["https"] }
@@ -453,6 +458,33 @@ test("request-host mode allows only normalized allowlist matches", async () => {
   );
   assert.equal(wrongPort.status, 400);
   assert.equal(bodyString(wrongPort), '{"error":"invalid_request_host"}');
+});
+
+// Pins the shared request_host_allowlist rows: a request whose raw authority
+// differs from its decoded canonical form (non-ASCII, percent-escaped, IPv6
+// zone, mixed case/trailing dot/default port) must match the allowlist exactly
+// as Go does.
+test("request-host allowlist canonicalizes the request authority like the shared rows", async () => {
+  const rows = EXPECTATIONS.request_host_allowlist;
+  assert.ok(rows.length > 0);
+  for (const row of rows) {
+    const app = createApp({ tier: "p0" });
+    const config = validConfig("request_host");
+    config.allowedHostnames = [...row.allowed_hostnames];
+    registerMcpFacade(app, config);
+    const response = await serve(
+      app,
+      "GET",
+      "/.well-known/oauth-protected-resource/acme/mcp",
+      { host: [row.request_host], "x-forwarded-proto": ["https"] },
+    );
+    assert.equal(response.status, row.expect_status, row.name);
+    if (row.expect_status !== 200) {
+      assert.equal(bodyString(response), '{"error":"invalid_request_host"}', row.name);
+      continue;
+    }
+    assert.equal(JSON.parse(bodyString(response)).resource, row.expect_resource, row.name);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -933,4 +965,124 @@ test("default capabilities and defensive inventory clone", () => {
   // The returned inventory is a defensive copy of the installed surface.
   const fresh = registerMcpFacade(createApp({ tier: "p0" }), validConfig());
   assert.equal(fresh.routes[0].mcpMethods[0], "POST");
+});
+
+// ---------------------------------------------------------------------------
+// Shared URL normalization rows (Go is the reference runtime)
+// ---------------------------------------------------------------------------
+
+const NAMESPACE_AUTHORIZATION_SERVER_PATH =
+  "/.well-known/oauth-authorization-server/acme/mcp";
+
+test("advertised URLs match the shared normalization rows", async () => {
+  const rows = EXPECTATIONS.url_normalization;
+  assert.equal(rows.length, 66);
+
+  for (const row of rows) {
+    const app = createApp({ tier: "p0" });
+    const config = validConfig();
+    if (row.issuer) {
+      config.issuerURL = row.input;
+    } else {
+      config.jwksURI = row.input;
+      config.registrationEndpointURL = row.input;
+    }
+
+    if (row.reject) {
+      assert.throws(
+        () => registerMcpFacade(app, config),
+        undefined,
+        `${row.name} must be rejected`,
+      );
+      continue;
+    }
+
+    registerMcpFacade(app, config);
+    const document = JSON.parse(
+      bodyString(
+        await serve(app, "GET", NAMESPACE_AUTHORIZATION_SERVER_PATH),
+      ),
+    );
+    if (row.issuer) {
+      assert.equal(document.issuer, row.expect, row.name);
+      // The registration endpoint derives from the normalized issuer.
+      assert.equal(
+        document.registration_endpoint,
+        `${row.expect}/register`,
+        row.name,
+      );
+    } else {
+      assert.equal(document.jwks_uri, row.expect, row.name);
+      assert.equal(document.registration_endpoint, row.expect, row.name);
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Shared registration rejection rows (Go is the reference runtime)
+// ---------------------------------------------------------------------------
+
+const PROTECTED_RESOURCE_PATH = "/.well-known/oauth-protected-resource/acme/mcp";
+
+test("registration rejections match the shared rejection rows", async () => {
+  const rows = EXPECTATIONS.rejection_rows;
+  assert.equal(rows.length, 51);
+
+  for (const row of rows) {
+    const mode = row.kind === "allowed_hostname" ? "request_host" : "public_base_url";
+    const app = createApp({ tier: "p0" });
+    const config = validConfig(mode);
+    if (row.kind === "allowed_hostname") {
+      config.allowedHostnames = [row.input];
+    } else if (row.kind === "issuer") {
+      config.issuerURL = row.input;
+    } else if (row.kind === "registration") {
+      // The registration endpoint option normalizes through the same
+      // non-issuer rule, so a row pins the endpoint position itself.
+      config.registrationEndpointURL = row.input;
+    } else if (row.kind === "scope") {
+      // A lone surrogate cannot be JSON text, so the row names the malformed
+      // code point and the runner builds the runtime's ill-formed value.
+      assert.equal(row.input_malformed, "lone_surrogate");
+      config.scopes = {
+        ...config.scopes,
+        namespace: [row.input_prefix + "\ud800" + row.input_suffix],
+      };
+    } else {
+      config.jwksURI = row.input;
+      config.registrationEndpointURL = row.input;
+    }
+
+    if (row.reject) {
+      assert.throws(
+        () => registerMcpFacade(app, config),
+        undefined,
+        `${row.name} must be rejected`,
+      );
+      continue;
+    }
+
+    registerMcpFacade(app, config);
+    if (row.kind === "allowed_hostname") {
+      const response = await serve(app, "GET", PROTECTED_RESOURCE_PATH, {
+        host: [row.input],
+        "x-forwarded-proto": ["https"],
+      });
+      assert.equal(response.status, 200, row.name);
+      assert.equal(
+        JSON.parse(bodyString(response)).resource,
+        `https://${row.accept.value}/acme/mcp`,
+        row.name,
+      );
+    } else {
+      const document = JSON.parse(
+        bodyString(await serve(app, "GET", NAMESPACE_AUTHORIZATION_SERVER_PATH)),
+      );
+      if (row.kind === "issuer") {
+        assert.equal(document.issuer, row.accept.value, row.name);
+      } else {
+        assert.equal(document.jwks_uri, row.accept.value, row.name);
+      }
+    }
+  }
 });

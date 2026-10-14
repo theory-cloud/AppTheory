@@ -8,7 +8,6 @@ from typing import Any
 
 from apptheory.clock import ManualClock
 from apptheory.oauth.store import (
-    STATUS_EXPIRED,
     STATUS_REFRESHING,
     STATUS_REVOKED,
     AuthorizationCodeRecord,
@@ -47,8 +46,8 @@ class NonTerminalCodeStore(MemoryAuthorizationCodeStore):
 
     def consume(self, code_hash: str) -> ConsumeResult | None:
         result = super().consume(code_hash)
-        if result is not None and (result.replayed or result.record.status == STATUS_EXPIRED):
-            return ConsumeResult(record=result.record, replayed=False)
+        if result is not None and (result.replayed or result.expired):
+            return ConsumeResult(record=result.record, replayed=False, expired=False)
         return result
 
 
@@ -106,7 +105,7 @@ class StoreConformanceTests(unittest.TestCase):
 
     def test_fixture_table_is_complete(self) -> None:
         cases = self.fixture["cases"]
-        self.assertEqual(len(cases), 34)
+        self.assertEqual(len(cases), 38)
         self.assertEqual(
             {case["store"] for case in cases},
             {"transaction", "authorization_code", "client", "route_refresh_broker", "rate_limit"},
@@ -117,16 +116,17 @@ class StoreConformanceTests(unittest.TestCase):
         cases = self.fixture["cases"]
         ran = run_store_conformance(STORE_CLASSES, cases, self.clock)
         print(f"store conformance: {ran} cases run")
-        self.assertEqual(ran, 34)
-        self.assertEqual(len(cases), 34)
+        self.assertEqual(ran, 38)
+        self.assertEqual(len(cases), 38)
 
     def test_every_scenario_is_exercised(self) -> None:
         # Bidirectional: dropping or duplicating a shared row must fail here
         # rather than silently shrinking coverage. Distinct (store, scenario)
-        # pairs are one fewer than the 34 rows: the broker TTL boundary is
-        # probed by two rows that share one scenario.
+        # pairs are two fewer than the 37 rows: the broker TTL boundary is
+        # probed by two rows that share one scenario, and the code payload rows
+        # share the consume_record_payload scenario.
         pairs = {(case["store"], case["scenario"]) for case in self.fixture["cases"]}
-        self.assertEqual(len(pairs), 33)
+        self.assertEqual(len(pairs), 36)
 
 
 class TransactionStoreTests(unittest.TestCase):
@@ -166,13 +166,33 @@ class AuthorizationCodeStoreTests(unittest.TestCase):
         self.assertTrue(second.replayed)
         self.assertIsNone(self.store.consume("unknown"))
 
-    def test_consumed_record_is_retained_until_ttl(self) -> None:
+    def test_replay_returns_the_retained_record_unmutated(self) -> None:
         self.store.put(AuthorizationCodeRecord(code_hash="c"))
         self.store.consume("c")
         self.clock.advance(dt.timedelta(seconds=61))
-        expired = self.store.consume("c")
-        self.assertIsNotNone(expired)
-        self.assertEqual(expired.record.status, "expired")
+        replayed = self.store.consume("c")
+        self.assertIsNotNone(replayed)
+        self.assertTrue(replayed.replayed)
+        self.assertFalse(replayed.expired)
+        # The store returns the retained record unmutated -- its status and
+        # version are the caller's, as in Go's reference store -- so a replay
+        # never re-stamps the record it returns.
+        self.assertEqual(replayed.record.status, "issued")
+        self.assertEqual(replayed.record.version, 1)
+
+    def test_expired_code_is_burned_expired_on_first_consume_then_replayed(self) -> None:
+        self.store.put(AuthorizationCodeRecord(code_hash="e"))
+        self.clock.advance(dt.timedelta(seconds=61))
+        first = self.store.consume("e")
+        self.assertIsNotNone(first)
+        self.assertFalse(first.replayed)
+        self.assertTrue(first.expired)
+        # A first consume of an expired code returns no record, matching Go.
+        self.assertIsNone(first.record)
+        second = self.store.consume("e")
+        self.assertIsNotNone(second)
+        self.assertTrue(second.replayed)
+        self.assertEqual(second.record.status, "issued")
 
 
 class ClientStoreTests(unittest.TestCase):
@@ -214,6 +234,13 @@ class RouteRefreshBrokerStoreTests(unittest.TestCase):
         self.assertEqual(swapped.version, record.version + 1)
         with self.assertRaises(BrokerVersionConflictError):
             self.store.compare_and_swap(record, record.version)
+
+    def test_compare_and_swap_unknown_handle_is_not_found(self) -> None:
+        # A swap never creates: an absent handle stays absent, even with the
+        # version a create-sentinel store would have accepted.
+        with self.assertRaises(KeyError):
+            self.store.compare_and_swap(RouteRefreshBrokerRecord(handle_hash="unknown", version=0), 0)
+        self.assertIsNone(self.store.get("unknown"))
 
     def test_revoke_is_idempotent_and_terminal(self) -> None:
         self.store.put(RouteRefreshBrokerRecord(handle_hash="h"))
@@ -378,6 +405,8 @@ class StoreConformanceNonVacuityTests(unittest.TestCase):
                 "store.authorization_code.expired_consume_then_replay",
                 "store.authorization_code.clock_back_after_consume_is_replayed",
                 "store.authorization_code.clock_back_after_expired_burn_is_replayed",
+                "store.authorization_code.consume_record_payload_live",
+                "store.authorization_code.consume_record_payload_expired_burn",
             ],
         )
 

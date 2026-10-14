@@ -236,13 +236,18 @@ class McpFacadeContractSurfaceTests(unittest.TestCase):
 class McpFacadeMetadataDocumentTests(unittest.TestCase):
     def test_shared_fixture_pins_routed_document_bytes_per_kind_and_mode(self) -> None:
         documents = json.loads(_EXPECTATIONS_PATH.read_text(encoding="utf-8"))["documents"]
-        self.assertEqual(8, len(documents))
+        self.assertEqual(10, len(documents))
 
         request_host_headers = {"host": ["direct.example.com"], "x-forwarded-proto": ["https"]}
         for row in documents:
             with self.subTest(name=row["name"]):
                 app = create_app(tier="p0")
-                register_mcp_facade(app, _valid_config(row["mode"]))
+                config = _valid_config(row["mode"])
+                if row.get("jwks_uri") is not None:
+                    config.jwks_uri = row["jwks_uri"]
+                if row.get("scopes") is not None:
+                    config.scopes = {**config.scopes, row["kind"]: row["scopes"]}
+                register_mcp_facade(app, config)
                 headers = request_host_headers if row["mode"] == URL_MODE_REQUEST_HOST else None
 
                 protected = _serve(app, "GET", row["protected_resource_path"], headers)
@@ -256,6 +261,117 @@ class McpFacadeMetadataDocumentTests(unittest.TestCase):
                 suffix = _serve(app, "GET", row["authorization_server_suffix_path"], headers)
                 self.assertEqual(200, suffix.status)
                 self.assertEqual(row["authorization_server_document"], suffix.body.decode())
+
+    def test_advertised_urls_match_the_shared_normalization_rows(self) -> None:
+        rows = json.loads(_EXPECTATIONS_PATH.read_text(encoding="utf-8"))["url_normalization"]
+        self.assertEqual(66, len(rows))
+
+        for row in rows:
+            with self.subTest(name=row["name"]):
+                config = _valid_config(URL_MODE_PUBLIC_BASE_URL)
+                if row["issuer"]:
+                    config.issuer_url = row["input"]
+                else:
+                    config.jwks_uri = row["input"]
+                    config.registration_endpoint_url = row["input"]
+
+                if row.get("reject"):
+                    with self.assertRaises(ValueError):
+                        register_mcp_facade(create_app(tier="p0"), config)
+                    continue
+
+                app = create_app(tier="p0")
+                register_mcp_facade(app, config)
+                document = json.loads(
+                    _serve(app, "GET", "/.well-known/oauth-authorization-server/acme/mcp").body.decode()
+                )
+                if row["issuer"]:
+                    self.assertEqual(row["expect"], document["issuer"])
+                    # The registration endpoint derives from the normalized issuer.
+                    self.assertEqual(f"{row['expect']}/register", document["registration_endpoint"])
+                else:
+                    self.assertEqual(row["expect"], document["jwks_uri"])
+                    self.assertEqual(row["expect"], document["registration_endpoint"])
+
+    def test_registration_rejections_match_the_shared_rejection_rows(self) -> None:
+        rows = json.loads(_EXPECTATIONS_PATH.read_text(encoding="utf-8"))["rejection_rows"]
+        self.assertEqual(51, len(rows))
+
+        for row in rows:
+            with self.subTest(name=row["name"]):
+                mode = URL_MODE_REQUEST_HOST if row["kind"] == "allowed_hostname" else URL_MODE_PUBLIC_BASE_URL
+                config = _valid_config(mode)
+                if row["kind"] == "allowed_hostname":
+                    config.allowed_hostnames = [row["input"]]
+                elif row["kind"] == "issuer":
+                    config.issuer_url = row["input"]
+                elif row["kind"] == "registration":
+                    # The registration endpoint option normalizes through the
+                    # same non-issuer rule, so a row pins the endpoint itself.
+                    config.registration_endpoint_url = row["input"]
+                elif row["kind"] == "scope":
+                    # A lone surrogate cannot be JSON text, so the row names the
+                    # malformed code point and the runner builds the ill-formed value.
+                    self.assertEqual("lone_surrogate", row["input_malformed"])
+                    config.scopes = dict(config.scopes)
+                    config.scopes["namespace"] = [row["input_prefix"] + "\ud800" + row["input_suffix"]]
+                else:
+                    config.jwks_uri = row["input"]
+                    config.registration_endpoint_url = row["input"]
+
+                if row.get("reject"):
+                    with self.assertRaises(ValueError):
+                        register_mcp_facade(create_app(tier="p0"), config)
+                    continue
+
+                app = create_app(tier="p0")
+                register_mcp_facade(app, config)
+                if row["kind"] == "allowed_hostname":
+                    response = _serve(
+                        app,
+                        "GET",
+                        "/.well-known/oauth-protected-resource/acme/mcp",
+                        {"host": [row["input"]], "x-forwarded-proto": ["https"]},
+                    )
+                    self.assertEqual(200, response.status)
+                    self.assertEqual(
+                        f"https://{row['accept']['value']}/acme/mcp",
+                        json.loads(response.body.decode())["resource"],
+                    )
+                else:
+                    document = json.loads(
+                        _serve(app, "GET", "/.well-known/oauth-authorization-server/acme/mcp").body.decode()
+                    )
+                    if row["kind"] == "issuer":
+                        self.assertEqual(row["accept"]["value"], document["issuer"])
+                    else:
+                        self.assertEqual(row["accept"]["value"], document["jwks_uri"])
+
+    def test_request_host_allowlist_canonicalizes_the_request_authority(self) -> None:
+        rows = json.loads(_EXPECTATIONS_PATH.read_text(encoding="utf-8"))["request_host_allowlist"]
+        self.assertEqual(6, len(rows))
+
+        for row in rows:
+            with self.subTest(name=row["name"]):
+                app = create_app(tier="p0")
+                config = _valid_config(URL_MODE_REQUEST_HOST)
+                config.allowed_hostnames = list(row["allowed_hostnames"])
+                register_mcp_facade(app, config)
+                response = _serve(
+                    app,
+                    "GET",
+                    "/.well-known/oauth-protected-resource/acme/mcp",
+                    {"host": [row["request_host"]], "x-forwarded-proto": ["https"]},
+                )
+                self.assertEqual(row["expect_status"], response.status, row["name"])
+                if row["expect_status"] != 200:
+                    self.assertEqual(b'{"error":"invalid_request_host"}', response.body, row["name"])
+                    continue
+                self.assertEqual(
+                    row["expect_resource"],
+                    json.loads(response.body.decode())["resource"],
+                    row["name"],
+                )
 
     def test_every_metadata_response_is_no_store_and_varies_on_origin_headers(self) -> None:
         for mode in (URL_MODE_PUBLIC_BASE_URL, URL_MODE_REQUEST_HOST):
@@ -1050,6 +1166,16 @@ class McpFacadeHelperTests(unittest.TestCase):
         )
         self.assertIsNone(_absolute_url_for_path("not-a-url", "/route"))
         self.assertIsNone(_absolute_url_for_path("https://example.com", "relative"))
+
+    def test_absolute_url_for_path_re_encodes_the_decoded_host(self) -> None:
+        # Go re-encodes the decoded host bytes and the decoded path.
+        self.assertEqual(
+            "https://Example.com:443/v1/x", _absolute_url_for_path("https://Example.com:443/v1/", "/x")
+        )
+        self.assertEqual("https://example.com/A/x", _absolute_url_for_path("https://example.com/%41", "/x"))
+        self.assertEqual("https://example.com/a%20b/x", _absolute_url_for_path("https://example.com/a b", "/x"))
+        self.assertEqual("https://example.com/a/x", _absolute_url_for_path("https://example.com/a?b=c", "/x"))
+        self.assertEqual("https://caf%C3%A9.example/x", _absolute_url_for_path("https://caf%c3%a9.example", "/x"))
 
     def test_metadata_request_failures_preserve_type_and_render_400(self) -> None:
         self.assertIsNone(_metadata_request_failure(ValueError("internal failure")))

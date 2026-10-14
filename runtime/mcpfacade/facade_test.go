@@ -76,12 +76,55 @@ type documentFixture struct {
 	ProtectedResourcePath         string                 `json:"protected_resource_path"`
 	AuthorizationServerPath       string                 `json:"authorization_server_path"`
 	AuthorizationServerSuffixPath string                 `json:"authorization_server_suffix_path"`
+	JWKSURI                       string                 `json:"jwks_uri"`
+	Scopes                        []string               `json:"scopes"`
 	ProtectedResourceDocument     string                 `json:"protected_resource_document"`
 	AuthorizationServerDocument   string                 `json:"authorization_server_document"`
 }
 
 type documentFixtureFile struct {
 	Documents []documentFixture `json:"documents"`
+}
+
+type urlNormalizationFixtureRow struct {
+	Name   string `json:"name"`
+	Issuer bool   `json:"issuer"`
+	Input  string `json:"input"`
+	Expect string `json:"expect"`
+	Reject bool   `json:"reject"`
+}
+
+type urlNormalizationFixtureFile struct {
+	URLNormalization []urlNormalizationFixtureRow `json:"url_normalization"`
+}
+
+type rejectionFixtureRow struct {
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`
+	Input  string `json:"input"`
+	Accept *struct {
+		Value string `json:"value"`
+	} `json:"accept"`
+	Reject         bool   `json:"reject"`
+	InputPrefix    string `json:"input_prefix"`
+	InputSuffix    string `json:"input_suffix"`
+	InputMalformed string `json:"input_malformed"`
+}
+
+type rejectionFixtureFile struct {
+	RejectionRows []rejectionFixtureRow `json:"rejection_rows"`
+}
+
+type requestHostAllowlistFixtureRow struct {
+	Name             string   `json:"name"`
+	AllowedHostnames []string `json:"allowed_hostnames"`
+	RequestHost      string   `json:"request_host"`
+	ExpectStatus     int      `json:"expect_status"`
+	ExpectResource   string   `json:"expect_resource"`
+}
+
+type requestHostAllowlistFixtureFile struct {
+	RequestHostAllowlist []requestHostAllowlistFixtureRow `json:"request_host_allowlist"`
 }
 
 func TestRegisterMCPFacadeRegistersCompleteContractSurface(t *testing.T) {
@@ -249,13 +292,20 @@ func TestSharedFixturePinsRoutedDocumentBytesPerKindAndMode(t *testing.T) {
 	require.NoError(t, err)
 	var fixtures documentFixtureFile
 	require.NoError(t, json.Unmarshal(contents, &fixtures))
-	require.Len(t, fixtures.Documents, 8)
+	require.Len(t, fixtures.Documents, 10)
 
 	for _, fixture := range fixtures.Documents {
 		t.Run(fixture.Name, func(t *testing.T) {
 			t.Parallel()
+			config := validConfig(fixture.Mode)
+			if fixture.JWKSURI != "" {
+				config.JWKSURI = fixture.JWKSURI
+			}
+			if len(fixture.Scopes) > 0 {
+				config.Scopes[fixture.Kind] = fixture.Scopes
+			}
 			app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
-			_, registerErr := RegisterMCPFacade(app, validConfig(fixture.Mode))
+			_, registerErr := RegisterMCPFacade(app, config)
 			require.NoError(t, registerErr)
 			headers := map[string][]string(nil)
 			if fixture.Mode == URLModeRequestHost {
@@ -271,6 +321,133 @@ func TestSharedFixturePinsRoutedDocumentBytesPerKindAndMode(t *testing.T) {
 			suffix := serve(app, "GET", fixture.AuthorizationServerSuffixPath, headers)
 			require.Equal(t, 200, suffix.Status)
 			require.Equal(t, fixture.AuthorizationServerDocument, string(suffix.Body))
+		})
+	}
+}
+
+// TestSharedFixturePinsURLNormalizationAcrossFlags pins the shared
+// url_normalization rows against Go's normalizer, which is the reference
+// behavior for the TypeScript and Python ports.
+func TestSharedFixturePinsURLNormalizationAcrossFlags(t *testing.T) {
+	t.Parallel()
+	contents, err := os.ReadFile(documentExpectationsPath)
+	require.NoError(t, err)
+	var fixtures urlNormalizationFixtureFile
+	require.NoError(t, json.Unmarshal(contents, &fixtures))
+	require.Len(t, fixtures.URLNormalization, 66)
+
+	for _, fixture := range fixtures.URLNormalization {
+		t.Run(fixture.Name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := normalizeHTTPSURL(fixture.Input, fixture.Issuer)
+			if fixture.Reject {
+				require.False(t, ok)
+				require.Empty(t, got)
+				return
+			}
+			require.NotEmpty(t, fixture.Expect)
+			require.True(t, ok)
+			require.Equal(t, fixture.Expect, got)
+			if fixture.Issuer {
+				// The facade derives the registration endpoint from the
+				// normalized issuer; the builder must be idempotent over it.
+				derived, derivedOK := absoluteURLForPath(fixture.Expect, "/register")
+				require.True(t, derivedOK)
+				require.Equal(t, fixture.Expect+"/register", derived)
+			}
+		})
+	}
+}
+
+// TestSharedFixturePinsRegistrationRejections pins the shared rejection_rows
+// against Go's normalizers, which are the reference behavior for the
+// TypeScript and Python ports.
+func TestSharedFixturePinsRegistrationRejections(t *testing.T) {
+	t.Parallel()
+	contents, err := os.ReadFile(documentExpectationsPath)
+	require.NoError(t, err)
+	var fixtures rejectionFixtureFile
+	require.NoError(t, json.Unmarshal(contents, &fixtures))
+	require.Len(t, fixtures.RejectionRows, 51)
+
+	for _, fixture := range fixtures.RejectionRows {
+		t.Run(fixture.Name, func(t *testing.T) {
+			t.Parallel()
+			var got string
+			var ok bool
+			switch fixture.Kind {
+			case "allowed_hostname":
+				got, ok = normalizeAllowedHostname(fixture.Input)
+			case "issuer":
+				got, ok = normalizeHTTPSURL(fixture.Input, true)
+			case "jwks":
+				got, ok = normalizeHTTPSURL(fixture.Input, false)
+			case "registration":
+				// The registration endpoint option normalizes through the same
+				// non-issuer rule, so a row pins the endpoint position itself.
+				app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+				config := validConfig(URLModePublicBaseURL)
+				config.RegistrationEndpointURL = fixture.Input
+				_, registerErr := RegisterMCPFacade(app, config)
+				got, ok = "", registerErr == nil
+			case "scope":
+				// A lone surrogate cannot travel through JSON: Go's decoder
+				// replaces it with U+FFFD. The row names the malformed code
+				// point and the runner builds the runtime's ill-formed value —
+				// here the WTF-8 bytes of U+D800, which is not valid UTF-8.
+				require.Equal(t, "lone_surrogate", fixture.InputMalformed)
+				value := fixture.InputPrefix + string([]byte{0xED, 0xA0, 0x80}) + fixture.InputSuffix
+				app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+				config := validConfig(URLModePublicBaseURL)
+				config.Scopes[mcproutes.EndpointKindNamespace] = []string{value}
+				_, registerErr := RegisterMCPFacade(app, config)
+				got, ok = "", registerErr == nil
+			default:
+				t.Fatalf("unknown rejection row kind %q", fixture.Kind)
+			}
+			if fixture.Reject {
+				require.False(t, ok)
+				require.Empty(t, got)
+				return
+			}
+			require.NotNil(t, fixture.Accept)
+			require.True(t, ok)
+			require.Equal(t, fixture.Accept.Value, got)
+		})
+	}
+}
+
+// TestSharedFixturePinsRequestHostAllowlistCanonicalization pins the shared
+// request_host_allowlist rows end to end: a request-host config registers, and a
+// served request whose raw authority differs from its decoded canonical form
+// (non-ASCII, percent-escaped, IPv6 zone, mixed case/trailing dot/default port)
+// must match the allowlist exactly as Go does.
+func TestSharedFixturePinsRequestHostAllowlistCanonicalization(t *testing.T) {
+	t.Parallel()
+	contents, err := os.ReadFile(documentExpectationsPath)
+	require.NoError(t, err)
+	var fixtures requestHostAllowlistFixtureFile
+	require.NoError(t, json.Unmarshal(contents, &fixtures))
+	require.Len(t, fixtures.RequestHostAllowlist, 6)
+
+	for _, fixture := range fixtures.RequestHostAllowlist {
+		t.Run(fixture.Name, func(t *testing.T) {
+			t.Parallel()
+			app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+			config := validConfig(URLModeRequestHost)
+			config.AllowedHostnames = fixture.AllowedHostnames
+			_, registerErr := RegisterMCPFacade(app, config)
+			require.NoError(t, registerErr)
+
+			response := serve(app, "GET", "/.well-known/oauth-protected-resource/acme/mcp", map[string][]string{
+				"host": {fixture.RequestHost}, "x-forwarded-proto": {"https"},
+			})
+			require.Equal(t, fixture.ExpectStatus, response.Status)
+			if fixture.ExpectStatus != 200 {
+				require.Equal(t, `{"error":"invalid_request_host"}`, string(response.Body))
+				return
+			}
+			require.Equal(t, expectedProtectedResourceJSON(fixture.ExpectResource, mcproutes.EndpointKindNamespace), string(response.Body))
 		})
 	}
 }

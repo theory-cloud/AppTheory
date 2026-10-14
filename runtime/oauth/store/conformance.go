@@ -114,6 +114,7 @@ var conformanceScenarios = map[string]func(*conformanceHarness, ConformanceCase)
 	"consume_after_ttl":                  (*conformanceHarness).consumeAfterTTL,
 	"concurrent_consume":                 (*conformanceHarness).concurrentConsume,
 	"consume_single_use_then_replay":     (*conformanceHarness).authorizationCodeConsumeReplay,
+	"consume_record_payload":             (*conformanceHarness).authorizationCodeConsumeRecordPayload,
 	"consume_after_ttl_then_replay":      (*conformanceHarness).consumeAfterTTLThenReplay,
 	"clock_back_after_consume":           (*conformanceHarness).clockBackAroundConsume,
 	"clock_back_after_expired_consume":   (*conformanceHarness).clockBackAroundConsume,
@@ -122,6 +123,8 @@ var conformanceScenarios = map[string]func(*conformanceHarness, ConformanceCase)
 	"get_unknown":                        (*conformanceHarness).getUnknown,
 	"acquire_lock_exclusive_with_expiry": (*conformanceHarness).brokerAcquireLockExclusive,
 	"compare_and_swap_versioned":         (*conformanceHarness).brokerCompareAndSwapVersioned,
+	"compare_and_swap_unknown":           (*conformanceHarness).brokerCompareAndSwapUnknown,
+	"negative_expected_version":          (*conformanceHarness).brokerNegativeExpectedVersion,
 	"revoke_idempotent":                  (*conformanceHarness).brokerRevokeIdempotent,
 	"revoke_then_lock":                   (*conformanceHarness).brokerRevokeThenLock,
 	"revoke_then_swap":                   (*conformanceHarness).brokerRevokeThenSwap,
@@ -289,6 +292,47 @@ func (h *conformanceHarness) authorizationCodeConsumeReplay(testCase Conformance
 	first := outcomeFor(h.consumeCode(key))
 	second := outcomeFor(h.consumeCode(key))
 	return map[string]any{"first": first, "second": second}, nil
+}
+
+// authorizationCodeConsumeRecordPayload reports the record a consume returns, so
+// a row pins the payload contract (status and version) and not only the
+// outcome. A consume that returns no record — the first consume of an expired
+// code — reports the "none" sentinel for its fields.
+func (h *conformanceHarness) authorizationCodeConsumeRecordPayload(testCase ConformanceCase) (map[string]any, error) {
+	key := h.key(testCase, "code")
+	if err := h.putCode(testCase, key); err != nil {
+		return nil, err
+	}
+	advance, _ := conformanceNumber(testCase.Params[conformanceParamAdvance])
+	h.advance(int(advance))
+	first, firstErr := h.stores.AuthorizationCode.Consume(h.ctx(), key)
+	replay, replayErr := h.stores.AuthorizationCode.Consume(h.ctx(), key)
+	return map[string]any{
+		"first":          outcomeFor(firstErr),
+		"first_status":   codeRecordStatusField(first),
+		"first_version":  codeRecordVersionField(first),
+		"replay":         outcomeFor(replayErr),
+		"replay_status":  codeRecordStatusField(replay),
+		"replay_version": codeRecordVersionField(replay),
+	}, nil
+}
+
+// codeRecordStatusField reports a returned code record's status, or the "none"
+// sentinel when the consume returned no record.
+func codeRecordStatusField(record *AuthorizationCodeRecord) string {
+	if record == nil {
+		return "none"
+	}
+	return record.Status
+}
+
+// codeRecordVersionField reports a returned code record's version, or -1 when
+// the consume returned no record.
+func codeRecordVersionField(record *AuthorizationCodeRecord) int {
+	if record == nil {
+		return -1
+	}
+	return record.Version
 }
 
 func (h *conformanceHarness) consumeUnknown(testCase ConformanceCase) (map[string]any, error) {
@@ -507,6 +551,35 @@ func (h *conformanceHarness) brokerCompareAndSwapVersioned(testCase ConformanceC
 		"acquire_lock": outcomeFor(lockErr),
 		"swap":         outcomeFor(swapErr),
 		"stale_swap":   outcomeFor(staleErr),
+	}, nil
+}
+
+// brokerCompareAndSwapUnknown swaps a handle that was never created. Creation
+// is a separate seeder operation, so a compare-and-swap on an absent handle is
+// not-found rather than an optimistic create.
+func (h *conformanceHarness) brokerCompareAndSwapUnknown(testCase ConformanceCase) (map[string]any, error) {
+	key := h.key(testCase, "handle")
+	_, err := h.stores.RouteRefreshBroker.CompareAndSwap(h.ctx(), &RouteRefreshBrokerRecord{HandleHash: key}, 0)
+	return map[string]any{"swap": outcomeFor(err)}, nil
+}
+
+// brokerNegativeExpectedVersion pins that a negative expected version is never a
+// skip-version-check wildcard: the store reports a version conflict for it, on
+// both the swap and the lock, in every runtime, so no caller can rely on one.
+func (h *conformanceHarness) brokerNegativeExpectedVersion(testCase ConformanceCase) (map[string]any, error) {
+	key := h.key(testCase, "handle")
+	if err := h.putBroker(key); err != nil {
+		return nil, err
+	}
+	record, err := h.stores.RouteRefreshBroker.Get(h.ctx(), key)
+	if err != nil {
+		return nil, err
+	}
+	_, swapErr := h.stores.RouteRefreshBroker.CompareAndSwap(h.ctx(), record, -1)
+	_, lockErr := h.stores.RouteRefreshBroker.AcquireLock(h.ctx(), key, "owner-negative", -1)
+	return map[string]any{
+		"swap":         outcomeFor(swapErr),
+		"acquire_lock": outcomeFor(lockErr),
 	}, nil
 }
 

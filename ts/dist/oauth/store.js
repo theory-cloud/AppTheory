@@ -76,6 +76,7 @@ export class MemoryTransactionStore {
 /** In-memory reference AuthorizationCodeStore. */
 export class MemoryAuthorizationCodeStore {
     records = new Map();
+    consumed = new Set();
     now;
     ttlSeconds;
     constructor(options = {}) {
@@ -87,36 +88,37 @@ export class MemoryAuthorizationCodeStore {
         if (expiryMs(stored.expiresAt) === null) {
             stored.expiresAt = this.defaultExpiry();
         }
+        stored.version = positiveInteger(stored.version, 1);
         this.records.set(stored.codeHash, stored);
+        this.consumed.delete(stored.codeHash);
         return Promise.resolve();
     }
     /**
      * Consume-once, but the record is retained so a replay is distinguishable
-     * from an unknown code. `consumed` and `expired` are both terminal: a
-     * terminal code stays terminal no matter which way the clock moves, so a
-     * backwards clock can never make a burned code fresh again.
+     * from an unknown code. The stored record is returned unmutated — its status
+     * and version are the caller's, exactly as Go's in-memory reference store
+     * does — and the terminal signal travels on the result instead: a replayed
+     * code sets `replayed`, and a first consume of an expired code sets `expired`.
+     * Both are terminal no matter which way the clock moves, so a backwards clock
+     * can never make a burned code fresh again.
      */
     consume(codeHash) {
         const record = this.records.get(codeHash);
         if (!record)
             return Promise.resolve(null);
-        if (record.status === "consumed" || record.status === "expired") {
+        if (this.consumed.has(codeHash)) {
             return Promise.resolve({
                 record: structuredClone(record),
                 replayed: true,
+                expired: false,
             });
         }
-        if (this.expired(record.expiresAt)) {
-            record.status = "expired";
-            return Promise.resolve({
-                record: structuredClone(record),
-                replayed: false,
-            });
-        }
-        record.status = "consumed";
+        this.consumed.add(codeHash);
+        const expired = this.expired(record.expiresAt);
         return Promise.resolve({
-            record: structuredClone(record),
+            record: expired ? null : structuredClone(record),
             replayed: false,
+            expired,
         });
     }
     expired(expiresAt) {
@@ -159,7 +161,7 @@ export class MemoryClientStore {
  * In-memory reference RouteRefreshBrokerStore. Each handle carries its own
  * lifetime: a handle older than the store's TTL is treated as absent by every
  * operation, so an expired handle can be neither read, locked, swapped nor
- * revoked, and the version-`0` create sentinel never resurrects it.
+ * revoked, and a swap on an absent handle is `not_found` rather than a create.
  */
 export class MemoryRouteRefreshBrokerStore {
     records = new Map();
@@ -171,6 +173,22 @@ export class MemoryRouteRefreshBrokerStore {
         this.now = options.now ?? (() => new Date());
         this.lockTtlMs = positiveSeconds(options.lockTtlSeconds, 30) * 1000;
         this.ttlMs = positiveSeconds(options.ttlSeconds, 900) * 1000;
+    }
+    /**
+     * Seeds a handle: the store's own create path, and the only way a handle is
+     * created. Creation is deliberately not a compare-and-swap, so a swap can
+     * never resurrect a handle. A copy is stored at version 1, and a record that
+     * carries no status defaults to `active`.
+     */
+    put(record) {
+        const stored = {
+            ...structuredClone(record),
+            status: record.status || "active",
+            version: 1,
+        };
+        this.records.set(stored.handleHash, stored);
+        this.storedAt.set(stored.handleHash, this.now().getTime());
+        return Promise.resolve();
     }
     get(handleHash) {
         const record = this.records.get(handleHash);
@@ -217,30 +235,21 @@ export class MemoryRouteRefreshBrokerStore {
         return Promise.resolve(structuredClone(record));
     }
     /**
-     * Versioned compare-and-swap. A version of `0` is the optimistic-create
-     * sentinel: it stores the record only when no live record exists, which is
-     * how a reference or application store seeds a handle. Any other version
-     * must equal the stored record's version, and a revoked record refuses every
-     * swap. A rotation keeps the handle's original stored-at instant, so
-     * refreshing a handle upstream does not extend its local lifetime.
+     * Versioned compare-and-swap. A swap never creates: a handle that does not
+     * exist — never seeded, or aged out past its TTL — is `not_found`, and
+     * creation is the seeder's separate `put`. The presented version must equal
+     * the stored record's version, and a revoked record refuses every swap. A
+     * rotation keeps the handle's original stored-at instant, so refreshing a
+     * handle upstream does not extend its local lifetime.
      */
     compareAndSwap(record, expectedVersion) {
         const current = this.records.get(record.handleHash);
-        if (current && this.expired(record.handleHash)) {
-            this.discard(record.handleHash);
+        if (!current) {
             return Promise.reject(new BrokerNotFoundError());
         }
-        if (!current) {
-            if (expectedVersion !== 0) {
-                return Promise.reject(new BrokerVersionConflictError());
-            }
-            const created = {
-                ...structuredClone(record),
-                version: 1,
-            };
-            this.records.set(created.handleHash, created);
-            this.storedAt.set(created.handleHash, this.now().getTime());
-            return Promise.resolve(structuredClone(created));
+        if (this.expired(record.handleHash)) {
+            this.discard(record.handleHash);
+            return Promise.reject(new BrokerNotFoundError());
         }
         if (current.status === "revoked") {
             return Promise.reject(new BrokerRevokedError());
@@ -284,7 +293,7 @@ export class MemoryRouteRefreshBrokerStore {
     /**
      * Drops an expired handle. Every access — read or mutation — clears an
      * aged-out handle here, so it can be neither read, locked, swapped nor
-     * revoked, and the version-`0` create sentinel never resurrects it.
+     * revoked, and no operation ever recreates it.
      */
     discard(handleHash) {
         this.records.delete(handleHash);
@@ -398,6 +407,26 @@ async function runStoreCase(stores, testCase, clock) {
                 second: authorizationCodeOutcome(second),
             };
         }
+        case "consume_record_payload": {
+            const ttlSeconds = numberParam(params, "ttl_seconds", 60);
+            await stores.authorizationCode.put(authorizationCodeRecord(key, addSeconds(clock.now(), ttlSeconds)));
+            clock.advance(numberParam(params, "advance_seconds", 0) * 1000);
+            const first = await stores.authorizationCode.consume(key);
+            const replay = await stores.authorizationCode.consume(key);
+            const fields = (result) => result === null || result.record === null
+                ? { status: "none", version: -1 }
+                : { status: result.record.status, version: result.record.version };
+            const firstFields = fields(first);
+            const replayFields = fields(replay);
+            return {
+                first: authorizationCodeOutcome(first),
+                first_status: firstFields.status,
+                first_version: firstFields.version,
+                replay: authorizationCodeOutcome(replay),
+                replay_status: replayFields.status,
+                replay_version: replayFields.version,
+            };
+        }
         case "concurrent_consume": {
             const ttlSeconds = numberParam(params, "ttl_seconds", 60);
             const concurrency = numberParam(params, "concurrency", 16);
@@ -460,6 +489,30 @@ async function runStoreCase(stores, testCase, clock) {
             const swapped = await brokerSwapOutcome(stores, brokerRecord(key), version);
             const stale = await brokerSwapOutcome(stores, brokerRecord(key), version);
             return { acquire_lock: acquired, swap: swapped, stale_swap: stale };
+        }
+        case "compare_and_swap_unknown": {
+            // A swap never creates: this handle was never seeded, so the swap is
+            // not-found in every runtime and creation stays the seeder's own path.
+            return { swap: await brokerSwapOutcome(stores, brokerRecord(key), 0) };
+        }
+        case "negative_expected_version": {
+            // A negative expected version is never a skip-version-check wildcard:
+            // the swap and the lock both report a version conflict, in every runtime.
+            await seedBrokerRecord(stores, brokerRecord(key));
+            const record = await stores.routeRefreshBroker.get(key);
+            if (record === null) {
+                throw new Error(`store conformance case ${testCase.id}: the seeded handle is missing`);
+            }
+            const swap = await brokerSwapOutcome(stores, record, -1);
+            let acquireLock;
+            try {
+                await stores.routeRefreshBroker.acquireLock(key, "owner-negative", -1);
+                acquireLock = "ok";
+            }
+            catch (err) {
+                acquireLock = brokerErrorOutcome(err);
+            }
+            return { swap, acquire_lock: acquireLock };
         }
         case "revoke_idempotent": {
             await seedBrokerRecord(stores, brokerRecord(key));
@@ -654,9 +707,13 @@ async function runStoreCase(stores, testCase, clock) {
             throw new Error(`store conformance case ${testCase.id} has an unknown scenario ${testCase.scenario}`);
     }
 }
-/** Seeds one broker handle through the versioned CAS create sentinel. */
+/** Places one broker handle through the store's own create path (the seeder). */
 async function seedBrokerRecord(stores, record) {
-    await stores.routeRefreshBroker.compareAndSwap(record, 0);
+    const seeder = stores.routeRefreshBroker;
+    if (typeof seeder.put !== "function") {
+        throw new Error("store conformance: route refresh broker store is not seedable (no put)");
+    }
+    await seeder.put(record);
 }
 async function clientUpdateOutcome(stores, record, expectedVersion) {
     try {
@@ -724,7 +781,7 @@ function authorizationCodeOutcome(result) {
         return "not_found";
     if (result.replayed)
         return "replayed";
-    if (result.record.status === "expired")
+    if (result.expired)
         return "expired";
     return "ok";
 }

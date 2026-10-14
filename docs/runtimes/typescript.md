@@ -5,7 +5,7 @@ description: The TypeScript implementation of the AppTheory contract — bundled
 
 # TypeScript Runtime
 
-The TypeScript runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the 274 generic runner fixtures in the [283-vector corpus](../reference/contract-fixtures.md), including the SP09 MCP fixture tier for JSON-RPC, registries, sessions, Streamable HTTP, resumable SSE, task stores, the SP12 OAuth tier, and the SP13 objectstore tier. The TypeScript suite also loads the shared MCP route-algebra expectations table and the M2 auth-facade acceptance tables and the two M3a provider/store conformance tables (JWKS validator, OIDC discovery bootstrap, route challenge, provider conformance, and store conformance); the CDK-TS package separately consumes the remaining facade route-inventory, route-model, and transport-posture vectors. <!-- apptheory-fixture-count: 283 -->
+The TypeScript runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the 275 generic runner fixtures in the [284-vector corpus](../reference/contract-fixtures.md), including the SP09 MCP fixture tier for JSON-RPC, registries, sessions, Streamable HTTP, resumable SSE, task stores, the SP12 OAuth tier, and the SP13 objectstore tier. The TypeScript suite also loads the shared MCP route-algebra expectations table and the M2 auth-facade acceptance tables and the two M3a provider/store conformance tables (JWKS validator, OIDC discovery bootstrap, route challenge, provider conformance, and store conformance); the CDK-TS package separately consumes the remaining facade route-inventory, route-model, and transport-posture vectors. <!-- apptheory-fixture-count: 284 -->
 
 ## Install
 
@@ -149,7 +149,7 @@ See [CDK Getting Started](../cdk/getting-started.md).
 
 ## What's verified
 
-The TypeScript runtime passes all 274 generic runner fixtures in the 283-vector corpus on every commit. <!-- apptheory-fixture-count: 283 --> The runner includes the SP09 MCP, SP12 OAuth, and SP13 objectstore tiers; the TypeScript suite also loads the shared MCP route-algebra expectations table and the M2 auth-facade acceptance tables and the two M3a provider/store conformance tables, while CDK-TS tests load the facade route-inventory, route-model, and transport-posture tables directly. The `ts/dist/` build output is checked in and gated by `make rubric`.
+The TypeScript runtime passes all 275 generic runner fixtures in the 284-vector corpus on every commit. <!-- apptheory-fixture-count: 284 --> The runner includes the SP09 MCP, SP12 OAuth, and SP13 objectstore tiers; the TypeScript suite also loads the shared MCP route-algebra expectations table and the M2 auth-facade acceptance tables and the two M3a provider/store conformance tables, while CDK-TS tests load the facade route-inventory, route-model, and transport-posture tables directly. The `ts/dist/` build output is checked in and gated by `make rubric`.
 
 ## Next reads
 

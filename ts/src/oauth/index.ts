@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
 import type { Context, Handler, Middleware } from "../context.js";
-import { json } from "../response.js";
+import { metadataJSON } from "../response.js";
 import type { Headers, Response } from "../types.js";
 
 export const CONTEXT_KEY_BEARER_TOKEN = "oauth.bearer_token";
@@ -215,13 +215,13 @@ export function newAuthorizationServerMetadata(
 export function protectedResourceMetadataHandler(
   metadata: ProtectedResourceMetadata,
 ): Handler {
-  return () => json(200, metadata);
+  return () => metadataJSON(200, metadata);
 }
 
 export function authorizationServerMetadataHandler(
   metadata: AuthorizationServerMetadata,
 ): Handler {
-  return () => json(200, metadata);
+  return () => metadataJSON(200, metadata);
 }
 
 export function protectedResourceWWWAuthenticate(

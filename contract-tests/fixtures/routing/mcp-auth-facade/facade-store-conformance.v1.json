@@ -86,6 +86,34 @@
       "expect": { "ok": 1, "replayed": 15 }
     },
     {
+      "id": "store.authorization_code.consume_record_payload_live",
+      "store": "authorization_code",
+      "scenario": "consume_record_payload",
+      "params": { "put": 1, "ttl_seconds": 60 },
+      "expect": {
+        "first": "ok",
+        "first_status": "issued",
+        "first_version": 1,
+        "replay": "replayed",
+        "replay_status": "issued",
+        "replay_version": 1
+      }
+    },
+    {
+      "id": "store.authorization_code.consume_record_payload_expired_burn",
+      "store": "authorization_code",
+      "scenario": "consume_record_payload",
+      "params": { "put": 1, "ttl_seconds": 60, "advance_seconds": 61 },
+      "expect": {
+        "first": "expired",
+        "first_status": "none",
+        "first_version": -1,
+        "replay": "replayed",
+        "replay_status": "issued",
+        "replay_version": 1
+      }
+    },
+    {
       "id": "store.client.put_get_update_advances_version",
       "store": "client",
       "scenario": "put_get_update",
@@ -130,6 +158,20 @@
       "scenario": "compare_and_swap_versioned",
       "params": { "put": 1 },
       "expect": { "acquire_lock": "ok", "swap": "ok", "stale_swap": "version_conflict" }
+    },
+    {
+      "id": "store.route_refresh_broker.compare_and_swap_unknown_is_not_found",
+      "store": "route_refresh_broker",
+      "scenario": "compare_and_swap_unknown",
+      "params": {},
+      "expect": { "swap": "not_found" }
+    },
+    {
+      "id": "store.route_refresh_broker.negative_expected_version_conflicts",
+      "store": "route_refresh_broker",
+      "scenario": "negative_expected_version",
+      "params": { "put": 1 },
+      "expect": { "swap": "version_conflict", "acquire_lock": "version_conflict" }
     },
     {
       "id": "store.route_refresh_broker.revoke_is_idempotent_and_terminal",

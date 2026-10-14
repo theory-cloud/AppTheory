@@ -74,12 +74,14 @@ For each of the four endpoint kinds, v2 derives two more paths, using the same p
   `/.well-known/oauth-authorization-server/{client_namespace}/mcp/register`.
   In `route` issuer mode this is what the routed RFC 8414 document advertises as `registration_endpoint`, so the
   advertised URL and the mounted route cannot drift. In `family` issuer mode the routed document advertises
-  `FacadeConfig.RegistrationEndpointURL` verbatim (or omits `registration_endpoint` when it is unset), because that
-  document is family-wide and not route-specific; the per-kind derived `/register` routes are still mounted, so in
-  `family` mode an advertised `registration_endpoint` can differ from the mounted derived route. That difference is
-  deliberate and inert today (registration handlers are application-owned until M3); an app that wants the advertised
-  URL to be the derived one selects `IssuerMode: route`, where both are derived from the same route algebra and cannot
-  drift. `family` mode's advertised-vs-mounted reconciliation is revisited when DCR lands (M3).
+  `FacadeConfig.RegistrationEndpointURL` re-serialized canonically — https scheme, lowercased authority, default
+  port dropped, no userinfo — not byte-for-byte as configured (or omits `registration_endpoint` when it is unset),
+  because that document is family-wide and not route-specific; the per-kind derived `/register` routes are still
+  mounted, so in `family` mode an advertised `registration_endpoint` can differ from the mounted derived route.
+  That difference is deliberate and inert today (registration handlers are application-owned until M3); an app that
+  wants the advertised URL to be the derived one selects `IssuerMode: route`, where both are derived from the same
+  route algebra and cannot drift. `family` mode's advertised-vs-mounted reconciliation is revisited when DCR lands
+  (M3).
 - `callback_path` = a **single stage-global** path (default `/_oauth/mcp/callback`), not per kind. The
   callback is correlated by the upstream `state` the facade minted, so one route is sufficient and it keeps the
   API's route/permission surface flat. It is a `FacadeConfig` value (`UpstreamCallbackPath`) so an app can
@@ -231,7 +233,9 @@ in-memory implementation and a documented durability contract:
 | `RateLimitStore` | (identifier, resource, operation) | CheckAndIncrement | window |
 
 Consume-once and compare-and-swap are **required** operations, not conventions: replay handling (a replayed
-facade code revokes the broker record) and single-flight refresh depend on them. The reference in-memory
+facade code revokes the broker record) and single-flight refresh depend on them. A successful `AcquireLock` sets the
+broker record's status to **`refreshing`**, the status the shared store-conformance row
+`store.route_refresh_broker.acquire_lock_sets_refreshing_status` pins in all three runtimes. The reference in-memory
 stores are for tests only; durable implementations are application-owned (TMS/Autheory use TableTheory-backed
 stores). **No upstream material is persisted unencrypted.** The durable upstream refresh token lives in the
 broker record; the code record may hold the **encrypted** token response (`encrypted_token_response`), which

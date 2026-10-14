@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
 	"github.com/theory-cloud/apptheory/v6/runtime/mcproutes"
@@ -763,6 +764,9 @@ func normalizeNonEmptyList(label string, values []string) ([]string, error) {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			return nil, fmt.Errorf("%s values cannot be empty", label)
+		}
+		if !utf8.ValidString(value) {
+			return nil, fmt.Errorf("%s values must be well-formed Unicode", label)
 		}
 		if _, ok := seen[value]; ok {
 			continue
