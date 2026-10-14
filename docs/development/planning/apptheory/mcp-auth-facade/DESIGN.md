@@ -235,13 +235,19 @@ in-memory implementation and a documented durability contract:
 Consume-once and compare-and-swap are **required** operations, not conventions: replay handling (a replayed
 facade code revokes the broker record) and single-flight refresh depend on them. A successful `AcquireLock` sets the
 broker record's status to **`refreshing`**, the status the shared store-conformance row
-`store.route_refresh_broker.acquire_lock_sets_refreshing_status` pins in all three runtimes. The reference in-memory
-stores are for tests only; durable implementations are application-owned (TMS/Autheory use TableTheory-backed
-stores). **No upstream material is persisted unencrypted.** The durable upstream refresh token lives in the
-broker record; the code record may hold the **encrypted** token response (`encrypted_token_response`), which
-embeds the upstream-minted access token (and any upstream refresh/`id_token` from the exchange) in encrypted
-form only — that is deliberate, so the code exchange can return the access token **byte-for-byte unmodified**.
-Nothing upstream is stored in the clear.
+`store.route_refresh_broker.acquire_lock_sets_refreshing_status` pins in all three runtimes.
+
+**Encryption of upstream material is a store obligation, not a framework seam.** The durable upstream refresh
+token lives in the broker record's `encrypted_upstream_refresh_token` field and the code record carries the
+upstream token response in its `encrypted_token_response` field, which embeds the upstream-minted access token (and
+any upstream refresh/`id_token` from the exchange) — deliberately, so the code exchange can return the access
+token **byte-for-byte unmodified**. The facade performs **no** sealing and the framework adds **no** encryption
+surface or key management: it hands the store the upstream material exactly as the provider returned it. A store
+implementation **MUST** encrypt every `Encrypted*` field at rest (for example TMS/Autheory persistence-layer
+TableTheory `theorydb:"encrypted"` tags on a TableTheory-backed store), so nothing upstream is persisted in the
+clear by a conforming implementation. The framework's in-memory reference stores are **NON-DURABLE and do not
+encrypt** — they exist for deterministic tests and local development only, and a deployment replaces them with the
+application-owned durable stores, which are where the encryption obligation is discharged.
 
 ## 8. Facade mechanics (`m17.mcp-auth-facade/v1`)
 

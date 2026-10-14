@@ -5,6 +5,13 @@ import type { ManualClock } from "../clock.js";
  * operation is atomic, and the two operations the facade's correctness rests
  * on — consume-once and compare-and-swap — are part of the SPI rather than a
  * convention the caller is trusted to keep.
+ *
+ * An `Encrypted*` record field carries upstream material exactly as the
+ * provider handed it to the facade: the framework performs no sealing and adds
+ * no encryption surface or key management, so a durable store implementation
+ * MUST encrypt those fields at rest (for example with a persistence-layer
+ * encryption tag). The in-memory reference stores here are NON-DURABLE and do
+ * not encrypt: they are for deterministic tests and local development only.
  */
 
 /** A pending or consumed front-channel transaction, keyed by hash(upstream state). */
@@ -33,8 +40,9 @@ export type TransactionStatus = "pending" | "consumed" | "expired";
 
 /**
  * A minted facade code, keyed by hash(facade code). The record is retained
- * after consume so a replay is distinguishable from an unknown code, and it
- * holds no unencrypted upstream material.
+ * after consume so a replay is distinguishable from an unknown code. Its
+ * `Encrypted*` fields carry upstream material as the provider handed it to the
+ * facade (the store encrypts them at rest, per the module note).
  */
 export interface AuthorizationCodeRecord {
   codeHash: string;

@@ -3,9 +3,17 @@
 // in-memory reference implementations.
 //
 // Every store is keyed by the hash of the value it protects, never the value
-// itself, and no store persists upstream material unencrypted: an upstream
-// refresh token belongs to the broker record's encrypted field, and a code
-// record may carry only the encrypted token response.
+// itself. An Encrypted* record field carries upstream material exactly as the
+// provider handed it to the facade: the framework performs no sealing and adds
+// no encryption surface or key management, so a durable store implementation
+// MUST encrypt those fields at rest (for example with a persistence-layer
+// encryption tag). An upstream refresh token belongs to the broker record's
+// encrypted field, and a code record carries the upstream token response only
+// in its encrypted field.
+//
+// The in-memory reference implementations in this package are NON-DURABLE and
+// do not encrypt: they exist for deterministic tests and local development
+// only, and a deployment replaces them with application-owned durable stores.
 //
 // Consume-once and compare-and-swap are required operations of these SPIs, not
 // conventions: replay handling and single-flight refresh depend on them. The
@@ -136,11 +144,11 @@ type TransactionRecord struct {
 }
 
 // AuthorizationCodeRecord is one facade authorization code. Fields follow the
-// facade-store-spi.v1.json authorization-code field set. The record holds no
-// unencrypted upstream material: EncryptedRouteRefreshHandle and
-// EncryptedTokenResponse are ciphertext, and EncryptedTokenResponse embeds the
-// upstream-minted access token so the exchange can return it byte-for-byte
-// unmodified.
+// facade-store-spi.v1.json authorization-code field set. The Encrypted* fields
+// carry upstream material as the provider handed it to the facade —
+// EncryptedTokenResponse embeds the upstream-minted access token so the
+// exchange can return it byte-for-byte unmodified — and the store MUST encrypt
+// them at rest; the record holds no plaintext upstream material once stored.
 type AuthorizationCodeRecord struct {
 	CodeHash                    string
 	ClientIDHash                string

@@ -96,11 +96,16 @@ atomic operations, not conventions**: replay handling and single-flight refresh 
 | `RateLimitStore` | (identifier, resource, operation) | `CheckAndIncrement` (atomic) | window |
 
 Every store takes an injected clock, so TTL expiry and lock expiry are deterministic in tests. The in-memory
-reference stores are for **tests and local development only**.
+reference stores are **non-durable and do not encrypt**: they are for **tests and local development only**.
 
-Nothing upstream is persisted unencrypted: the durable upstream refresh token lives in the broker record, and the
-code record may hold only the **encrypted** token response, which is what lets the code exchange return the upstream
-access token byte-for-byte unmodified.
+**Encryption is a store obligation.** The facade performs no sealing and the framework adds no encryption surface
+or key management: it hands the store the upstream material exactly as the provider returned it, which is why one
+durable upstream refresh token lives in the broker record and one upstream token response lives in the code record.
+A durable store implementation **must** encrypt every `Encrypted*` field **at rest** (for example with
+persistence-layer `theorydb:"encrypted"` tags on a TableTheory-backed store), so nothing upstream is persisted in
+the clear. The code record keeping the (encrypted) upstream token response is deliberate: it is what lets the code
+exchange return the upstream access token byte-for-byte unmodified. The in-memory reference stores above neither
+persist nor encrypt and must not be used as a durable store.
 
 ## Front-channel configuration
 

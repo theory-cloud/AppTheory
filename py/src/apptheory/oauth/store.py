@@ -3,8 +3,14 @@
 Five stores, each with a reference in-memory implementation for tests and local
 development. Consume-once and compare-and-swap are *required* operations, not
 conventions: replay handling and single-flight refresh depend on them. Durable
-implementations are application-owned; nothing upstream is ever persisted
-unencrypted.
+implementations are application-owned.
+
+An ``Encrypted*`` record field carries upstream material exactly as the provider
+handed it to the facade: the framework performs no sealing and adds no
+encryption surface or key management, so a durable store implementation MUST
+encrypt those fields at rest (for example with a persistence-layer encryption
+tag). The in-memory reference stores here are NON-DURABLE and do not encrypt:
+they are for deterministic tests and local development only.
 
 The methods are synchronous. A durable implementation is free to keep them
 synchronous while performing I/O, and the facade's async surfaces await the
