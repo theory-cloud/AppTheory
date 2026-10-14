@@ -133,7 +133,11 @@ derives and wires the per-kind `/register` (DCR) route and the single stage-glob
 takes the `upstreamCallbackPath` override, and enforces the transport posture and the defense-in-depth floor at
 synth; no construct injects `MCP_ENDPOINT` any more, and the legacy `AppTheoryRemoteMcpServer` exposes the
 route-derived per-actor challenge (`protectedResourceMetadataUrl`) instead, so **a challenge can no longer be
-pointed at a value an environment variable supplied**. Two behaviors were aligned or tightened in the same milestone
+pointed at a value an environment variable supplied**. The per-actor challenge is resolved by the runtime from a
+validated `{param}` `ResourceMetadataURLTemplate` (`resourceMetadataURLTemplate` / `resource_metadata_url_template`):
+placeholders must name matched route parameters, a substituted value must be 1..128 bytes of `[a-z0-9._~-]` and not
+`.`/`..`, an unresolvable placeholder fails closed to the bare `Bearer` challenge, and a malformed template fails at
+registration (panic / throw / raise). Two behaviors were aligned or tightened in the same milestone
 and are reflected in T1/T5 above:
 
 - **Authorize-leg provider failures are the gateway class (ADV-1145-2).** A failing provider `AuthorizationURL`

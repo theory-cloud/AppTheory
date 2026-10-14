@@ -181,11 +181,15 @@ No JWT/JWKS validator ships today (gap G4). The facade adds one, in all three ru
 
 - **401** for missing / malformed / invalid / expired bearer, with
   `WWW-Authenticate: Bearer resource_metadata="<route metadata URL>"` where the metadata URL is derived from
-  the **matched route** through a route-derived `ResourceMetadataURLFunc`, or taken from the explicit
-  `ResourceMetadataURL` option, and **never** from an environment variable — as-built in M3c-2, which removed
-  both the Go `MCP_ENDPOINT` fallback and the CDK `MCP_ENDPOINT` injection. A CDK deployment configures the
-  route-derived value the construct exposes (`AppTheoryRemoteMcpServer.protectedResourceMetadataUrl`); with no
-  resolver and no explicit URL the challenge is the bare `Bearer` form.
+  the **matched route** through a route-derived `ResourceMetadataURLFunc`, interpolated from a validated
+  `{param}` `ResourceMetadataURLTemplate`, or taken from the explicit `ResourceMetadataURL` option, and **never**
+  from an environment variable — as-built in M3c-2, which removed both the Go `MCP_ENDPOINT` fallback and the CDK
+  `MCP_ENDPOINT` injection. The template is the supported per-actor wiring: placeholders must name matched route
+  parameters, interpolation reads only that route's path parameters, and a substituted value must be 1..128 bytes of
+  `[a-z0-9._~-]` and not `.`/`..`; an unresolvable placeholder fails closed to the bare `Bearer` challenge, and a
+  malformed template fails at registration (panic / throw / raise). A CDK deployment configures the route-derived value
+  the construct exposes (`AppTheoryRemoteMcpServer.protectedResourceMetadataUrl`); with no resolver, no template, and
+  no explicit URL the challenge is the bare `Bearer` form.
 - **403** `insufficient_scope` for a scope failure the server actually observed, carrying the scope set that
   remediates it. Any other forbidden denial advertises neither an error code nor a scope set.
 - **RFC 8707 resources:** `resource` is accepted at authorize and token, canonicalized, and must equal the

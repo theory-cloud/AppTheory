@@ -205,12 +205,16 @@ The construct writes only environment variables consumed by existing runtime cod
 | `MCP_SESSION_TTL_MINUTES` | session state enabled | `runtime/mcp` session policy |
 
 `MCP_ENDPOINT` is retired in v6 in both directions: no construct writes it and no runtime reads it, so there is no shim.
-The bearer challenge is app-owned configuration — either an explicit `ResourceMetadataURL` or a route-derived
-`ResourceMetadataURLFunc` — and with neither configured the middleware advertises the bare `Bearer` challenge.
-`AppTheoryRemoteMcpServer` exposes the route-derived `protectedResourceMetadataUrl` (the RFC 9728 metadata URL template,
-with `{actor}` preserved when `actorPath` is enabled) as the value to configure; `AppTheoryMcpServer` exposes its
-route-derived protected-resource paths through `routeInventory` and `protectedResourceMetadataPaths`. The construct
-still does not accept an origin prop — adding one would reintroduce the THE-2861 failure class.
+The bearer challenge is app-owned configuration — a route-derived `ResourceMetadataURLFunc`, the per-actor
+`ResourceMetadataURLTemplate` (TypeScript `resourceMetadataURLTemplate`, Python `resource_metadata_url_template`), or an
+explicit `ResourceMetadataURL` (precedence: resolver > template > static) — and with none configured the middleware
+advertises the bare `Bearer` challenge. `AppTheoryRemoteMcpServer` exposes the route-derived
+`protectedResourceMetadataUrl` (the RFC 9728 metadata URL template, with `{actor}` preserved when `actorPath` is
+enabled); pass it into your own app config and configure it as the template option so the middleware resolves `{actor}`
+from the matched route. The construct emits a synth warning on the per-actor route and injects no environment variable
+for this. `AppTheoryMcpServer` exposes its route-derived protected-resource paths through `routeInventory` and
+`protectedResourceMetadataPaths`. The construct still does not accept an origin prop — adding one would reintroduce the
+THE-2861 failure class.
 
 The construct never writes the retired `APPTHEORY_MCP_PATH`, `APPTHEORY_MCP_PROTECTED_RESOURCE_PATH`,
 `APPTHEORY_MCP_AUTHORIZATION_SERVER_ISSUER`, or `APPTHEORY_MCP_JWKS_URI` variables.

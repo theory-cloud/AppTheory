@@ -341,9 +341,10 @@ clients. `family` mode keeps the previous single-issuer behavior.
 The bearer validator is now **route-aware**: the Go validator types receive the AppTheory request context, and all three
 runtimes accept route-derived audience, scope, and challenge metadata resolvers, so the audience can be the exact
 matched route URL. The challenge's `resource_metadata` is built from the matched route whenever a route-derived
-resolver (`ResourceMetadataURLFunc`) is configured; otherwise it comes from the explicit `ResourceMetadataURL` option.
-The middleware reads no environment variable, and with neither configured it advertises the bare `Bearer` challenge. It
-is never derived from the request's `Host` or forwarded headers.
+resolver (`ResourceMetadataURLFunc`) or a `{param}` `ResourceMetadataURLTemplate` / `resourceMetadataURLTemplate` /
+`resource_metadata_url_template` is configured; otherwise it comes from the explicit `ResourceMetadataURL` option
+(precedence: resolver > template > static URL). The middleware reads no environment variable, and with none configured
+it advertises the bare `Bearer` challenge. It is never derived from the request's `Host` or forwarded headers.
 
 AppTheory ships its first JWT/JWKS access-token validator in all three runtimes. It pins `RS256` (the `alg: none` and
 `HS*` algorithm-confusion families are refused), requires a bounded `kid` cache with one cooldown-limited refresh per
@@ -680,12 +681,20 @@ forms and `routeInventory`. The `api` accessor remains but is generalized to `IH
 
 `MCP_SESSION_TABLE` and `MCP_SESSION_TTL_MINUTES` remain construct-managed when session state is enabled.
 `MCP_ENDPOINT` is fully retired in v6: no construct writes it and no runtime reads it, so there is no shim. The bearer
-challenge is app-owned configuration — a route-derived `ResourceMetadataURLFunc` or an explicit `ResourceMetadataURL`,
-with the bare `Bearer` form when neither is configured. `AppTheoryRemoteMcpServer` now exposes the route-derived
-`protectedResourceMetadataUrl` (the RFC 9728 metadata URL template, with `{actor}` preserved when `actorPath` is
-enabled) as the value to configure; `AppTheoryMcpServer` exposes the same route model through `routeInventory`. The
-construct still does not accept a public-origin prop (THE-2861). Review the complete migration table in
-[the MCP server facade guide](docs/features/mcp-server-construct.md) before upgrading.
+challenge is app-owned configuration — a route-derived `ResourceMetadataURLFunc`, the per-actor
+`ResourceMetadataURLTemplate` (TypeScript `resourceMetadataURLTemplate`, Python `resource_metadata_url_template`), or an
+explicit `ResourceMetadataURL` (precedence: resolver > template > static) — with the bare `Bearer` form when none is
+configured. `AppTheoryRemoteMcpServer` exposes the route-derived `protectedResourceMetadataUrl` (the RFC 9728 metadata
+URL template, with `{actor}` preserved when `actorPath` is enabled); `AppTheoryMcpServer` exposes the same route model
+through `routeInventory`.
+
+If you run the legacy `AppTheoryRemoteMcpServer` with `actorPath: true` and change nothing, the per-actor route
+advertises only the bare `Bearer` challenge: the construct injects no environment variable, so it cannot wire the
+challenge for you. The construct now emits a synth warning on that route naming `protectedResourceMetadataUrl`, and the
+fix is to pass `protectedResourceMetadataUrl` into your own app config and set it as your runtime's template option
+(`ResourceMetadataURLTemplate` / `resourceMetadataURLTemplate` / `resource_metadata_url_template`) so the middleware
+resolves `{actor}` from the matched route. The construct still does not accept a public-origin prop (THE-2861). Review
+the complete migration table in [the MCP server facade guide](docs/features/mcp-server-construct.md) before upgrading.
 
 `AppTheoryMcpProtectedResource` remains supported only for existing synth-time-static REST API documents. Its
 URL-valued `resource` and `authorizationServers` props stay deprecated; it is not a parallel namespace deployment
