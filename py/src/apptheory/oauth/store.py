@@ -489,6 +489,10 @@ class MemoryRouteRefreshBrokerStore:
             stored_at = self._records[record.handle_hash][1]
             updated = _copy_record(record)
             updated.version = expected_version + 1
+            # A replacement that states no status adopts the stored one, as Go's
+            # reference store does, so a rotation cannot clear the handle's status.
+            if updated.status == "":
+                updated.status = stored.status
             self._records[updated.handle_hash] = (updated, stored_at)
             return _copy_record(updated)
 
@@ -822,6 +826,26 @@ def _scenario_authorization_code_consume_record_payload(
     )
 
 
+def _scenario_transaction_put_payload(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    """Seeds one transaction with the caller's version and reports the version
+    the consume hands back, so a row pins the put-path version normalization
+    rather than only the outcome. The status is deliberately not reported for
+    the transaction store: Go returns the caller's status while this store
+    stamps the consume outcome on the record."""
+    store = _transaction_store(stores, clock, _ttl_param(params))
+    store.put(TransactionRecord(state_hash="state-hash", version=int(params.get("put_version", 0))))
+    consumed = store.consume("state-hash")
+    _assert_expected(
+        expect,
+        {
+            "consume": _transaction_outcome(consumed),
+            "version": consumed.version if consumed is not None else -1,
+        },
+    )
+
+
 def _scenario_authorization_code_put_payload(
     stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
 ) -> None:
@@ -888,8 +912,17 @@ def _scenario_authorization_code_concurrent_consume(
 def _scenario_client_put_get_update(
     stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
 ) -> None:
+    """Seeds one client with the row's put version and walks the versioned
+    read/update path. The store's put owns the stored version, so a row with a
+    put_version above 1 pins that put forces version 1."""
     store = stores["client"](now=clock.now)
-    stored = store.put(ClientRecord(client_id_hash="client-hash", client_id="client"))
+    stored = store.put(
+        ClientRecord(
+            client_id_hash="client-hash",
+            client_id="client",
+            version=int(params.get("put_version", 0)),
+        )
+    )
     fetched = store.get("client-hash")
     updated = store.update(stored, stored.version)
     actual = {
@@ -989,6 +1022,24 @@ def _scenario_broker_compare_and_swap_versioned(
     swapped_ok = "ok" if swapped.version == record.version + 1 else "unexpected_version"
     actual = {"acquire_lock": acquire, "swap": swapped_ok, "stale_swap": stale_outcome}
     _assert_expected(expect, actual)
+
+
+def _scenario_broker_compare_and_swap_inherits_status(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    """A rotation that states no status adopts the stored one: the handle is
+    seeded, locked so its status is refreshing, and then swapped with a record
+    that carries no status, which must not clear it."""
+    store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
+    store.put(RouteRefreshBrokerRecord(handle_hash="handle-hash", status=STATUS_ISSUED))
+    seeded = store.get("handle-hash")
+    store.acquire_lock("handle-hash", "owner-inherit", seeded.version if seeded is not None else 1)
+    held = store.get("handle-hash")
+    swapped = store.compare_and_swap(
+        RouteRefreshBrokerRecord(handle_hash="handle-hash", status=""),
+        held.version if held is not None else 1,
+    )
+    _assert_expected(expect, {"status": swapped.status})
 
 
 def _scenario_broker_compare_and_swap_unknown(
@@ -1190,6 +1241,7 @@ _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
     ("transaction", "clock_back_after_consume"): _scenario_transaction_clock_back_after_consume,
     ("transaction", "clock_back_after_expired_consume"): _scenario_transaction_clock_back_after_expired_consume,
     ("transaction", "concurrent_consume"): _scenario_transaction_concurrent_consume,
+    ("transaction", "put_payload"): _scenario_transaction_put_payload,
     ("authorization_code", "consume_single_use_then_replay"): (
         _scenario_authorization_code_consume_single_use_then_replay
     ),
@@ -1212,6 +1264,9 @@ _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
     ("route_refresh_broker", "put_payload"): _scenario_broker_put_payload,
     ("route_refresh_broker", "acquire_lock_exclusive_with_expiry"): _scenario_broker_acquire_lock_exclusive_with_expiry,
     ("route_refresh_broker", "compare_and_swap_versioned"): _scenario_broker_compare_and_swap_versioned,
+    ("route_refresh_broker", "compare_and_swap_inherits_status"): (
+        _scenario_broker_compare_and_swap_inherits_status
+    ),
     ("route_refresh_broker", "compare_and_swap_unknown"): _scenario_broker_compare_and_swap_unknown,
     ("route_refresh_broker", "negative_expected_version"): _scenario_broker_negative_expected_version,
     ("route_refresh_broker", "revoke_idempotent"): _scenario_broker_revoke_idempotent,

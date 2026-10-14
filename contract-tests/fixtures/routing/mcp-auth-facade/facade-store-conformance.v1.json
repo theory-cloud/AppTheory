@@ -333,6 +333,27 @@
       "scenario": "put_payload",
       "params": { "put_version": 2 },
       "expect": { "get": "ok", "status": "", "version": 2 }
+    },
+    {
+      "id": "store.transaction.put_version_normalized",
+      "store": "transaction",
+      "scenario": "put_payload",
+      "params": { "put": 1, "put_version": 0, "ttl_seconds": 600 },
+      "expect": { "consume": "ok", "version": 1 }
+    },
+    {
+      "id": "store.client.put_forces_version_one",
+      "store": "client",
+      "scenario": "put_get_update",
+      "params": { "put_version": 5 },
+      "expect": { "get_version": 1, "update": "ok", "updated_version": 2 }
+    },
+    {
+      "id": "store.route_refresh_broker.compare_and_swap_inherits_status",
+      "store": "route_refresh_broker",
+      "scenario": "compare_and_swap_inherits_status",
+      "params": { "put": 1 },
+      "expect": { "status": "refreshing" }
     }
   ]
 }

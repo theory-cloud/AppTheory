@@ -254,6 +254,13 @@ export interface MemoryClientStoreOptions {
 /** In-memory reference ClientStore. */
 export declare class MemoryClientStore implements ClientStore {
     private readonly records;
+    private readonly now;
+    constructor(options?: MemoryClientStoreOptions);
+    /**
+     * Stores a copy at version 1, defaulting an unset or zero creation instant to
+     * the store clock. A client record has no TTL: the age-out policy is the
+     * application's, so put never applies one.
+     */
     put(record: ClientRecord): Promise<void>;
     get(clientIdHash: string): Promise<ClientRecord | null>;
     update(record: ClientRecord, expectedVersion: number): Promise<ClientRecord>;
@@ -299,8 +306,10 @@ export declare class MemoryRouteRefreshBrokerStore implements RouteRefreshBroker
      * exist — never seeded, or aged out past its TTL — is `not_found`, and
      * creation is the seeder's separate `put`. The presented version must equal
      * the stored record's version, and a revoked record refuses every swap. A
-     * rotation keeps the handle's original stored-at instant, so refreshing a
-     * handle upstream does not extend its local lifetime.
+     * replacement that states no status adopts the stored one, so a rotation
+     * cannot silently clear the handle's status. A rotation keeps the handle's
+     * original stored-at instant, so refreshing a handle upstream does not extend
+     * its local lifetime.
      */
     compareAndSwap(record: RouteRefreshBrokerRecord, expectedVersion: number): Promise<RouteRefreshBrokerRecord>;
     /**
