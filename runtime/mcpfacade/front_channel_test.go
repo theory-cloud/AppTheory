@@ -101,6 +101,13 @@ type recordingBrokerStore struct {
 
 	mu      sync.Mutex
 	handles []string
+
+	// acquireLockFn, when set, replaces the reference store's AcquireLock so a
+	// test can stage the lock outcome (a version conflict, a held lock, a store
+	// error) the in-memory store would only produce under a real concurrent race.
+	// It is read through the store pointer the facade itself holds, so a test may
+	// set it after the harness is built and the facade still observes it.
+	acquireLockFn func(context.Context, string, string, int) (*oauthstore.RouteRefreshBrokerRecord, error)
 }
 
 func (s *recordingBrokerStore) Put(ctx context.Context, record *oauthstore.RouteRefreshBrokerRecord) error {
@@ -108,6 +115,18 @@ func (s *recordingBrokerStore) Put(ctx context.Context, record *oauthstore.Route
 	s.handles = append(s.handles, record.HandleHash)
 	s.mu.Unlock()
 	return s.RouteRefreshBrokerSeeder.Put(ctx, record)
+}
+
+func (s *recordingBrokerStore) AcquireLock(
+	ctx context.Context,
+	handleHash string,
+	lockOwner string,
+	expectedVersion int,
+) (*oauthstore.RouteRefreshBrokerRecord, error) {
+	if s.acquireLockFn != nil {
+		return s.acquireLockFn(ctx, handleHash, lockOwner, expectedVersion)
+	}
+	return s.RouteRefreshBrokerStore.AcquireLock(ctx, handleHash, lockOwner, expectedVersion)
 }
 
 func (s *recordingBrokerStore) handleHashes() []string {

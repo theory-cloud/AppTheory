@@ -567,6 +567,66 @@ func TestRefreshGrantLockContentionAnswersRetryable(t *testing.T) {
 	require.Equal(t, "test-holder", held.RefreshLockOwner)
 }
 
+// TestRefreshGrantVersionConflictRetryYields pins ADV-1146-3: a lock acquisition
+// that fails with a version conflict is retried until the coalesce cap, and every
+// retry waits one poll interval first. A store that keeps returning a stale
+// version would otherwise re-poll in a tight spin for the whole cap; with the
+// 50 ms poll interval the loop takes about cap/interval ≈ 60 iterations over three
+// seconds, so a bounded iteration count and the measured minimum gap between
+// attempts are what prove the wait rather than a spin. Removing the poll sleep
+// fails this test (the count jumps by orders of magnitude) and drifting the
+// interval moves the count out of the band, so the constant cannot change
+// silently. It also doubles as the numeric pin of the poll interval, whose exact
+// value the defaults test already pins.
+func TestRefreshGrantVersionConflictRetryYields(t *testing.T) {
+	harness := newFrontChannelHarness(t)
+	handle := mintedRefreshHandle(t, harness)
+
+	var mu sync.Mutex
+	var attempts int
+	var gaps []time.Duration
+	var last time.Time
+	harness.broker.acquireLockFn = func(
+		context.Context, string, string, int,
+	) (*oauthstore.RouteRefreshBrokerRecord, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		now := time.Now()
+		if !last.IsZero() {
+			gaps = append(gaps, now.Sub(last))
+		}
+		last = now
+		attempts++
+		return nil, oauthstore.ErrBrokerVersionConflict
+	}
+
+	start := time.Now()
+	response := harness.token(refreshTestForm(handle))
+	elapsed := time.Since(start)
+
+	require.Equal(t, 503, response.Status)
+	require.Contains(t, string(response.Body), `"error":"temporarily_unavailable"`)
+	require.GreaterOrEqual(t, elapsed, refreshCoalesceWaitCap)
+	require.Equal(t, 0, harness.fake.RefreshCallCount())
+
+	mu.Lock()
+	got := attempts
+	observed := append([]time.Duration(nil), gaps...)
+	mu.Unlock()
+
+	// cap/interval = 3 s / 50 ms = 60. A spin (no poll sleep) reaches this count
+	// in microseconds and would be orders of magnitude larger, so the upper bound
+	// is what the mutation proof rests on; the lower bound catches a drifted-up
+	// interval.
+	require.GreaterOrEqual(t, got, 35)
+	require.LessOrEqual(t, got, 100)
+	require.NotEmpty(t, observed)
+	for _, gap := range observed {
+		require.GreaterOrEqual(t, gap, refreshCoalescePollInterval,
+			"every version-conflict re-poll must wait a poll interval")
+	}
+}
+
 // TestRefreshGrantTerminalUpstreamFailureRevokes pins the terminal provider
 // failure: the recorded upstream material is dead, so the facade answers
 // invalid_grant and revokes the presented record, and a later attempt never

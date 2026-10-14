@@ -25,6 +25,7 @@ from apptheory.oauth.fake_provider import FakeUpstreamProvider, RefreshStage
 from apptheory.oauth.provider import CodeExchangeRequest, TokenSet
 from apptheory.oauth.store import (
     UTC_NOW_LOCK_TTL_SECONDS,
+    BrokerVersionConflictError,
     ClientRecord,
     MemoryAuthorizationCodeStore,
     MemoryClientStore,
@@ -1676,6 +1677,46 @@ class RefreshGrantTests(unittest.TestCase):
 
         # The caller that holds the lock is untouched by the waiter.
         self.assertEqual("test-holder", _broker_record(harness, handle).refresh_lock_owner)
+
+    def test_refresh_version_conflict_retry_yields(self) -> None:
+        # ADV-1146-3: a lock acquisition that fails with a version conflict is
+        # retried until the coalesce cap, and every retry waits one poll interval
+        # first. A store that keeps returning a stale version would otherwise
+        # re-poll in a tight spin for the whole cap; with the 50 ms poll interval
+        # the loop takes about cap/interval ~= 60 iterations over three seconds, so
+        # a bounded iteration count and the measured minimum gap between attempts
+        # prove the wait rather than a spin. Removing the poll sleep makes the
+        # count jump by orders of magnitude and the gaps vanish, so the assertions
+        # are the mutation tripwire; drifting the interval moves the count out of
+        # the band. It also pins the interval numerically, whose exact value the
+        # defaults test asserts directly.
+        harness = _FrontChannelHarness(self)
+        handle = _minted_refresh_handle(harness)
+
+        attempts: list[float] = []
+
+        def conflict(*_args: Any) -> Any:
+            attempts.append(time.monotonic())
+            raise BrokerVersionConflictError()
+
+        harness.broker.acquire_lock = conflict
+
+        start = time.monotonic()
+        response = harness.token(_refresh_form(handle))
+        elapsed = time.monotonic() - start
+
+        self.assertEqual(503, response.status)
+        self.assertIn('"error":"temporarily_unavailable"', response.body.decode("utf-8"))
+        self.assertGreaterEqual(elapsed, facade_module._REFRESH_COALESCE_WAIT_CAP_SECONDS)
+        self.assertEqual(0, harness.fake.refresh_calls)
+
+        # cap/interval = 3.0 / 0.05 = 60.
+        self.assertGreaterEqual(len(attempts), 35)
+        self.assertLessEqual(len(attempts), 100)
+        gaps = [later - earlier for earlier, later in zip(attempts, attempts[1:])]
+        self.assertTrue(gaps)
+        for gap in gaps:
+            self.assertGreaterEqual(gap, facade_module._REFRESH_COALESCE_POLL_INTERVAL_SECONDS)
 
     def test_refresh_terminal_upstream_failure_revokes(self) -> None:
         # A terminal provider failure: the recorded upstream material is dead, so

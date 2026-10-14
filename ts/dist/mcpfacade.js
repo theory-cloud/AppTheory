@@ -2040,9 +2040,12 @@ const REFRESH_GRACE_WINDOW_MS = 30_000;
  */
 const REFRESH_COALESCE_WAIT_CAP_MS = 3_000;
 /**
- * How often a waiter re-reads the broker record while the lock is held. It is the
- * granularity of the wait, not a security decision, and it only has to be small
- * enough that a completed rotation is observed well inside the wait cap.
+ * How often a waiter re-reads the broker record while the lock is held, and how
+ * long a version-conflict retry waits before re-reading. It is the granularity of
+ * the wait, not a security decision, and it only has to be small enough that a
+ * completed rotation is observed well inside the wait cap; crucially it also
+ * separates every retry of the loop, so a store that keeps returning a stale
+ * version cannot turn the bounded wait into a tight spin.
  */
 const REFRESH_COALESCE_POLL_INTERVAL_MS = 50;
 /**
@@ -2145,13 +2148,14 @@ async function handleRefreshTokenGrant(config, kind, ctx, form) {
 }
 /**
  * Classifies a failed lock acquisition (ruling R2's lock section) and returns the
- * response that ends the request, or null to retry — waiting first when the
- * returned bool is true. A held lock and a stale version are both retried until
- * the coalesce cap, because the record may already carry the winner's completed
- * rotation by the next read; a revoked or missing record is the same invalid_grant
- * every unusable handle gets; and any other store failure is the retryable class,
- * because a store that cannot answer the lock must not become an unlimited
- * refresh path.
+ * response that ends the request, or null to retry — waiting one poll interval
+ * first when the returned bool is true. A held lock and a stale version are both
+ * retried until the coalesce cap, because the record may already carry the
+ * winner's completed rotation by the next read; both wait the poll interval
+ * before re-reading, so the retry is a bounded, yielding wait rather than a spin.
+ * A revoked or missing record is the same invalid_grant every unusable handle
+ * gets; and any other store failure is the retryable class, because a store that
+ * cannot answer the lock must not become an unlimited refresh path.
  */
 function refreshLockFailure(err, elapsedMs) {
     const capped = elapsedMs >= REFRESH_COALESCE_WAIT_CAP_MS;
@@ -2163,7 +2167,7 @@ function refreshLockFailure(err, elapsedMs) {
     if (err instanceof BrokerVersionConflictError) {
         return capped
             ? { response: facadeTemporarilyUnavailablePage(), wait: false }
-            : { response: null, wait: false };
+            : { response: null, wait: true };
     }
     if (err instanceof BrokerRevokedError || err instanceof BrokerNotFoundError) {
         return { response: facadeErrorPage(400, "invalid_grant"), wait: false };

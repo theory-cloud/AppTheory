@@ -21,6 +21,7 @@ import {
   registerMcpFacade,
 } from "../dist/index.js";
 import {
+  BrokerVersionConflictError,
   MemoryAuthorizationCodeStore,
   MemoryClientStore,
   MemoryRateLimitStore,
@@ -1891,6 +1892,53 @@ test("refresh lock contention answers retryable", async (t) => {
   // The caller that holds the lock is untouched by the waiter.
   const held = await brokerRecord(harness, handle);
   assert.equal(held.refreshLockOwner, "test-holder");
+});
+
+/**
+ * Pins ADV-1146-3: a lock acquisition that fails with a version conflict is
+ * retried until the coalesce cap, and every retry waits one poll interval first.
+ * A store that keeps returning a stale version would otherwise re-poll in a tight
+ * spin for the whole cap. With the 50 ms poll interval the loop takes about
+ * cap/interval ≈ 60 iterations over three seconds, so a bounded iteration count
+ * and the measured minimum gap between attempts are what prove the wait rather
+ * than a spin, and they pin the interval: removing the poll sleep makes the count
+ * jump by orders of magnitude (and the gaps vanish), while drifting the interval
+ * moves the count out of the band. The constant is module-private, so this
+ * behavioral numeric pin is TypeScript's counterpart of the exact-value pins Go
+ * and Python assert directly.
+ */
+test("refresh version conflict retry yields", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const handle = await mintedRefreshHandle(harness);
+
+  const attempts = [];
+  harness.stores.routeRefreshBroker.acquireLock = () => {
+    attempts.push(Date.now());
+    return Promise.reject(new BrokerVersionConflictError());
+  };
+
+  const start = Date.now();
+  const response = await harness.token(refreshForm(handle));
+  const elapsed = Date.now() - start;
+
+  assert.equal(response.status, 503, bodyString(response));
+  assert.match(bodyString(response), /"error":"temporarily_unavailable"/);
+  assert.ok(elapsed >= 3_000, `waited ${elapsed}ms, must wait the whole cap`);
+  assert.equal(harness.fake.refreshCallCount(), 0);
+
+  // cap/interval = 3 000 / 50 = 60. A spin reaches this count in microseconds and
+  // would be orders of magnitude larger, so the upper bound is the mutation
+  // tripwire; the lower bound catches a drifted-up interval.
+  assert.ok(attempts.length >= 35, `attempts ${attempts.length}`);
+  assert.ok(attempts.length <= 100, `attempts ${attempts.length}`);
+  const gaps = attempts.slice(1).map((at, index) => at - attempts[index]);
+  assert.ok(gaps.length > 0, "the loop must re-poll at least once");
+  for (const gap of gaps) {
+    assert.ok(
+      gap >= 50,
+      `every version-conflict re-poll must wait the 50 ms poll interval, saw ${gap}ms`,
+    );
+  }
 });
 
 /**

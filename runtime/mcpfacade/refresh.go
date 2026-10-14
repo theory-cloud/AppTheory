@@ -42,9 +42,12 @@ const (
 	refreshCoalesceWaitCap = 3 * time.Second
 
 	// refreshCoalescePollInterval is how often a waiter re-reads the broker
-	// record while the lock is held. It is the granularity of the wait, not a
-	// security decision, and it only has to be small enough that a completed
-	// rotation is observed well inside the wait cap.
+	// record while the lock is held, and how long a version-conflict retry waits
+	// before re-reading. It is the granularity of the wait, not a security
+	// decision, and it only has to be small enough that a completed rotation is
+	// observed well inside the wait cap; crucially it also separates every retry
+	// of the loop, so a store that keeps returning a stale version cannot turn
+	// the bounded wait into a tight spin.
 	refreshCoalescePollInterval = 50 * time.Millisecond
 
 	// refreshRevokeChainLimit bounds the reuse-detection revoke walk of ruling
@@ -148,12 +151,14 @@ func (config normalizedConfig) handleRefreshTokenGrant(
 
 // refreshLockFailure classifies a failed lock acquisition (ruling R2's lock
 // section) and returns the response that ends the request, or nil to retry —
-// waiting first when the returned bool is true. A held lock and a stale version
-// are both retried until the coalesce cap, because the record may already carry
-// the winner's completed rotation by the next read; a revoked or missing record
-// is the same invalid_grant every unusable handle gets; and any other store
-// failure is the retryable class, because a store that cannot answer the lock
-// must not become an unlimited refresh path.
+// waiting one poll interval first when the returned bool is true. A held lock and
+// a stale version are both retried until the coalesce cap, because the record may
+// already carry the winner's completed rotation by the next read; both wait the
+// poll interval before re-reading, so the retry is a bounded, yielding wait
+// rather than a spin. A revoked or missing record is the same invalid_grant every
+// unusable handle gets; and any other store failure is the retryable class,
+// because a store that cannot answer the lock must not become an unlimited
+// refresh path.
 func refreshLockFailure(err error, elapsed time.Duration) (*apptheory.Response, bool) {
 	capped := elapsed >= refreshCoalesceWaitCap
 	switch {
@@ -166,7 +171,7 @@ func refreshLockFailure(err error, elapsed time.Duration) (*apptheory.Response, 
 		if capped {
 			return facadeTemporarilyUnavailablePage(), false
 		}
-		return nil, false
+		return nil, true
 	case errors.Is(err, oauthstore.ErrBrokerRevoked), errors.Is(err, oauthstore.ErrBrokerNotFound):
 		return facadeErrorPage(400, facadeErrorInvalidGrant), false
 	default:
