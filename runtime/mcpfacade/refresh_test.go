@@ -572,12 +572,10 @@ func TestRefreshGrantLockContentionAnswersRetryable(t *testing.T) {
 // retry waits one poll interval first. A store that keeps returning a stale
 // version would otherwise re-poll in a tight spin for the whole cap; with the
 // 50 ms poll interval the loop takes about cap/interval ≈ 60 iterations over three
-// seconds, so a bounded iteration count and the measured minimum gap between
-// attempts are what prove the wait rather than a spin. Removing the poll sleep
-// fails this test (the count jumps by orders of magnitude) and drifting the
-// interval moves the count out of the band, so the constant cannot change
-// silently. It also doubles as the numeric pin of the poll interval, whose exact
-// value the defaults test already pins.
+// seconds, so a bounded iteration count and the measured gap between attempts are
+// what prove the wait rather than a spin. Removing the poll sleep fails this test
+// (the count jumps by orders of magnitude). The exact interval value is pinned by
+// TestRefreshGrantDefaultsArePinned.
 func TestRefreshGrantVersionConflictRetryYields(t *testing.T) {
 	harness := newFrontChannelHarness(t)
 	handle := mintedRefreshHandle(t, harness)
@@ -616,9 +614,9 @@ func TestRefreshGrantVersionConflictRetryYields(t *testing.T) {
 
 	// cap/interval = 3 s / 50 ms = 60. A spin (no poll sleep) reaches this count
 	// in microseconds and would be orders of magnitude larger, so the upper bound
-	// is what the mutation proof rests on; the lower bound catches a drifted-up
-	// interval.
-	require.GreaterOrEqual(t, got, 35)
+	// is what the mutation proof rests on; the lower bound is only a sanity check
+	// that the loop re-polled repeatedly.
+	require.GreaterOrEqual(t, got, 5)
 	require.LessOrEqual(t, got, 100)
 	require.NotEmpty(t, observed)
 	for _, gap := range observed {

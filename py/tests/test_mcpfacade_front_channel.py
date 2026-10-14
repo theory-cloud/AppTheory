@@ -1684,12 +1684,11 @@ class RefreshGrantTests(unittest.TestCase):
         # first. A store that keeps returning a stale version would otherwise
         # re-poll in a tight spin for the whole cap; with the 50 ms poll interval
         # the loop takes about cap/interval ~= 60 iterations over three seconds, so
-        # a bounded iteration count and the measured minimum gap between attempts
-        # prove the wait rather than a spin. Removing the poll sleep makes the
-        # count jump by orders of magnitude and the gaps vanish, so the assertions
-        # are the mutation tripwire; drifting the interval moves the count out of
-        # the band. It also pins the interval numerically, whose exact value the
-        # defaults test asserts directly.
+        # a bounded iteration count and the measured gap between attempts prove the
+        # wait rather than a spin. Removing the poll sleep makes the count jump by
+        # orders of magnitude and the gaps vanish, so the assertions are the
+        # mutation tripwire. The exact interval value is asserted directly by
+        # RefreshGrantDefaultsTests.
         harness = _FrontChannelHarness(self)
         handle = _minted_refresh_handle(harness)
 
@@ -1710,8 +1709,11 @@ class RefreshGrantTests(unittest.TestCase):
         self.assertGreaterEqual(elapsed, facade_module._REFRESH_COALESCE_WAIT_CAP_SECONDS)
         self.assertEqual(0, harness.fake.refresh_calls)
 
-        # cap/interval = 3.0 / 0.05 = 60.
-        self.assertGreaterEqual(len(attempts), 35)
+        # cap/interval = 3.0 / 0.05 = 60. A spin (no poll sleep) reaches this
+        # count in microseconds and would be orders of magnitude larger, so the
+        # upper bound is the mutation tripwire; the lower bound is only a sanity
+        # check that the loop re-polled repeatedly.
+        self.assertGreaterEqual(len(attempts), 5)
         self.assertLessEqual(len(attempts), 100)
         gaps = [later - earlier for earlier, later in zip(attempts, attempts[1:])]
         self.assertTrue(gaps)

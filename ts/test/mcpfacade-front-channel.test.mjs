@@ -1900,12 +1900,12 @@ test("refresh lock contention answers retryable", async (t) => {
  * A store that keeps returning a stale version would otherwise re-poll in a tight
  * spin for the whole cap. With the 50 ms poll interval the loop takes about
  * cap/interval ≈ 60 iterations over three seconds, so a bounded iteration count
- * and the measured minimum gap between attempts are what prove the wait rather
- * than a spin, and they pin the interval: removing the poll sleep makes the count
- * jump by orders of magnitude (and the gaps vanish), while drifting the interval
- * moves the count out of the band. The constant is module-private, so this
- * behavioral numeric pin is TypeScript's counterpart of the exact-value pins Go
- * and Python assert directly.
+ * and the measured gap between attempts are what prove the wait rather than a
+ * spin, and they pin the interval: removing the poll sleep makes the count jump
+ * by orders of magnitude (and the gaps vanish), a drifted-down interval shows as
+ * too-short a gap, and a drifted-up one as too long a fastest gap. The constant
+ * is module-private, so this behavioral numeric pin is TypeScript's counterpart
+ * of the exact-value pins Go and Python assert directly.
  */
 test("refresh version conflict retry yields", async (t) => {
   const harness = await newFrontChannelHarness(t);
@@ -1928,17 +1928,26 @@ test("refresh version conflict retry yields", async (t) => {
 
   // cap/interval = 3 000 / 50 = 60. A spin reaches this count in microseconds and
   // would be orders of magnitude larger, so the upper bound is the mutation
-  // tripwire; the lower bound catches a drifted-up interval.
-  assert.ok(attempts.length >= 35, `attempts ${attempts.length}`);
+  // tripwire.
+  assert.ok(attempts.length >= 5, `attempts ${attempts.length}`);
   assert.ok(attempts.length <= 100, `attempts ${attempts.length}`);
   const gaps = attempts.slice(1).map((at, index) => at - attempts[index]);
   assert.ok(gaps.length > 0, "the loop must re-poll at least once");
+  // Date.now() is millisecond-granular and a timer may land a millisecond under
+  // its delay (CI has observed 49ms for a 50ms sleep), so the lower bound carries
+  // a small tolerance; a spin is ~0ms. The fastest gap pins the interval from
+  // above, so a constant drifted up also fails.
   for (const gap of gaps) {
     assert.ok(
-      gap >= 50,
-      `every version-conflict re-poll must wait the 50 ms poll interval, saw ${gap}ms`,
+      gap >= 40,
+      `every version-conflict re-poll must wait about the 50 ms poll interval, saw ${gap}ms`,
     );
   }
+  const fastestGap = Math.min(...gaps);
+  assert.ok(
+    fastestGap <= 120,
+    `the poll interval must be about 50 ms, saw a fastest gap of ${fastestGap}ms`,
+  );
 });
 
 /**
