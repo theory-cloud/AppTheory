@@ -226,14 +226,17 @@ Important fail-closed rules:
 - `RequireBearerTokenMiddleware(...)` now requires a `Validator`. If you omit it, the middleware rejects every request
   with `401` instead of accepting any syntactically valid Bearer token.
 - The middleware derives the RFC9728 protected-resource metadata challenge URL only from an explicit
-  `ResourceMetadataURL` or from the injected `MCP_ENDPOINT`. It no longer falls back to `Host` /
-  `X-Forwarded-Proto` request headers.
+  `ResourceMetadataURL` or a route-derived `ResourceMetadataURLFunc`. It reads no environment variable and no longer
+  falls back to `Host` / `X-Forwarded-Proto` request headers; with neither configured it advertises the bare `Bearer`
+  challenge.
 - Invalid-audience bearer tokens are intentionally treated as authorization failures: the fixture-pinned response is
   `403 app.forbidden` without a `WWW-Authenticate` challenge, matching insufficient-scope denial. Missing or expired
   bearer tokens remain `401` discovery/challenge cases.
 
-When you deploy with `AppTheoryRemoteMcpServer`, the construct injects `MCP_ENDPOINT`. That is the canonical metadata
-source when you do not provide `ResourceMetadataURL` explicitly.
+When you deploy with `AppTheoryRemoteMcpServer`, the construct exposes the route-derived
+`protectedResourceMetadataUrl` (the RFC 9728 metadata URL template, with `{actor}` preserved when `actorPath` is
+enabled). Configure it — or a resolver built from it — on the bearer middleware when you do not provide
+`ResourceMetadataURL` explicitly. `MCP_ENDPOINT` is retired: no construct writes it and no runtime reads it.
 
 For migration notes covering Bearer validation, initial listener keepalive changes, and expired-session fail-closed
 behavior, see `docs/migration/v1-security.md`.

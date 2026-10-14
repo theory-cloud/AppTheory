@@ -517,8 +517,9 @@ here for operators who need implementation-level details:
 Remote MCP auth hardening notes:
 
 - `oauth.RequireBearerTokenMiddleware(...)` is fail-closed in Go: you must provide a `Validator`, and metadata
-  discovery for the `WWW-Authenticate` challenge comes from `ResourceMetadataURL` or `MCP_ENDPOINT`, not request
-  headers.
+  discovery for the `WWW-Authenticate` challenge comes from an explicit `ResourceMetadataURL` or a route-derived
+  `ResourceMetadataURLFunc` — never from an environment variable or request headers. With neither configured the
+  challenge is the bare `Bearer` form.
 - Invalid-audience bearer tokens are intentionally fixture-pinned as authorization failures: AppTheory returns
   `403 app.forbidden` without a `WWW-Authenticate` challenge, matching insufficient-scope denial so a token bound to
   another resource is not treated as a rediscovery prompt. Missing or expired bearers remain `401` challenge cases.

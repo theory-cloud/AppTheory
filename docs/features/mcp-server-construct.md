@@ -203,12 +203,14 @@ The construct writes only environment variables consumed by existing runtime cod
 | --- | --- | --- |
 | `MCP_SESSION_TABLE` | session state enabled | `runtime/mcp` DynamoDB session store |
 | `MCP_SESSION_TTL_MINUTES` | session state enabled | `runtime/mcp` session policy |
-| `MCP_ENDPOINT` | owned API mode only | `runtime/oauth` fallback 401 challenge |
 
-`MCP_ENDPOINT` is intentionally not injected in attach mode. An attached execute-api endpoint is often behind a custom
-front door or CDN and is not necessarily the public resource authority. The application must either pass the correct
-request-specific `ResourceMetadataURL` to bearer middleware or configure its public challenge endpoint in its own
-runtime environment. Adding a public-origin prop to the construct would reintroduce the THE-2861 failure class.
+`MCP_ENDPOINT` is retired in v6 in both directions: no construct writes it and no runtime reads it, so there is no shim.
+The bearer challenge is app-owned configuration — either an explicit `ResourceMetadataURL` or a route-derived
+`ResourceMetadataURLFunc` — and with neither configured the middleware advertises the bare `Bearer` challenge.
+`AppTheoryRemoteMcpServer` exposes the route-derived `protectedResourceMetadataUrl` (the RFC 9728 metadata URL template,
+with `{actor}` preserved when `actorPath` is enabled) as the value to configure; `AppTheoryMcpServer` exposes its
+route-derived protected-resource paths through `routeInventory` and `protectedResourceMetadataPaths`. The construct
+still does not accept an origin prop — adding one would reintroduce the THE-2861 failure class.
 
 The construct never writes the retired `APPTHEORY_MCP_PATH`, `APPTHEORY_MCP_PROTECTED_RESOURCE_PATH`,
 `APPTHEORY_MCP_AUTHORIZATION_SERVER_ISSUER`, or `APPTHEORY_MCP_JWKS_URI` variables.

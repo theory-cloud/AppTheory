@@ -28,7 +28,8 @@ Claude Remote MCP requires real incremental streaming for tool calls. On AWS tha
   - `GET /mcp/{actor}` (streaming enabled)
   - `DELETE /mcp/{actor}`
   - `GET /.well-known/oauth-protected-resource/mcp/{actor}` (co-registered RFC9728 discovery)
-- Lambda env var `MCP_ENDPOINT` pointing at the resolved `/mcp` URL or `/mcp/{actor}` template
+- the route contract as construct properties: `endpoint` (transport URL template) and the route-derived
+  `protectedResourceMetadataUrl` (RFC 9728 metadata URL template); no `MCP_ENDPOINT` environment variable is injected
 - optional DynamoDB tables:
   - session table (matches `runtime/mcp/session_dynamo.go` schema)
   - stream/event table (used by durable replay once the app wires a concrete `StreamStore`)
@@ -189,31 +190,32 @@ Important caveat:
 
 `AppTheoryRemoteMcpServer` injects these environment variables when the corresponding features are enabled:
 
-- always: `MCP_ENDPOINT`
 - session table: `MCP_SESSION_TABLE`, `MCP_SESSION_TTL_MINUTES`
 - stream table: `MCP_STREAM_TABLE`, `MCP_STREAM_TTL_MINUTES`
 - stream spill: `MCP_STREAM_SPILL_BUCKET`, `MCP_STREAM_SPILL_PREFIX`, `MCP_STREAM_SPILL_INLINE_MAX_BYTES`,
   `MCP_STREAM_MAX_EVENT_BYTES`
 - task table: `MCP_TASK_TABLE`, `MCP_TASK_TTL_MINUTES`
 
-`MCP_ENDPOINT` is the canonical deployed MCP resource URL or template:
+The route contract is exposed as construct properties, not environment variables. `endpoint` is the transport URL
+template (`.../mcp`, or `.../mcp/{actor}` when `actorPath: true`) and `protectedResourceMetadataUrl` is the
+route-derived RFC 9728 protected-resource metadata URL template, both derived from the same route model through the
+shared MCP route algebra. The metadata template preserves the `{actor}` placeholder, for example
+`https://{apiId}.execute-api.{region}.amazonaws.com/{stage}/.well-known/oauth-protected-resource/mcp/{actor}`, or the
+family form `.../.well-known/oauth-protected-resource/mcp` without a per-actor route.
 
-- execute-api hostname: `https://{apiId}.execute-api.{region}.amazonaws.com/{stage}/mcp`
-- custom domain without base path: `https://mcp.example.com/mcp`
-- custom domain with base path: `https://api.example.com/{basePath}/mcp`
-- per-actor execute-api template: `https://{apiId}.execute-api.{region}.amazonaws.com/{stage}/mcp/{actor}`
-- per-actor custom domain template: `https://mcp.example.com/mcp/{actor}`
-
-This matters for OAuth discovery. If `oauth.RequireBearerTokenMiddleware(...)` is used without an explicit
-`ResourceMetadataURL`, the middleware derives the RFC9728 `/.well-known/oauth-protected-resource` challenge URL from
-`MCP_ENDPOINT`.
+This matters for OAuth discovery. The runtime reads no environment variable for the challenge: pass the construct's
+`protectedResourceMetadataUrl` (or a resolver that substitutes `{actor}` from the matched route parameters) as
+`oauth.RequireBearerTokenOptions{ResourceMetadataURL: ...}` so the middleware advertises a matching `WWW-Authenticate`
+challenge. With no resolver and no explicit `ResourceMetadataURL`, the challenge is the bare `Bearer` form.
+`MCP_ENDPOINT` is retired — no construct writes it and no runtime reads it.
 
 Important fail-closed rules:
 
 - `RequireBearerTokenMiddleware(...)` requires an explicit `Validator`; omitting it causes every request to be rejected
   with `401`.
 - The middleware no longer derives protected-resource metadata from `Host` / `X-Forwarded-Proto` request headers.
-  Use `MCP_ENDPOINT` or pass `ResourceMetadataURL` explicitly.
+  Pass `ResourceMetadataURL` explicitly (the construct's `protectedResourceMetadataUrl` is the per-actor template to
+  configure).
 - Invalid-audience bearer tokens are intentionally treated as authorization failures: the fixture-pinned response is
   `403 app.forbidden` without a `WWW-Authenticate` challenge, matching insufficient-scope denial. Missing or expired
   bearer tokens remain `401` discovery/challenge cases.

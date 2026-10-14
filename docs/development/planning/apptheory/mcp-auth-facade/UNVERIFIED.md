@@ -19,6 +19,7 @@ These were checked directly during M0 and are safe to treat as fact:
 | Route inventory derives no `/register` and no callback route | `cdk/lib/mcp-server.ts:649-675`; `runtime/mcproutes` |
 | Go bearer validator receives `context.Context`; TS/Py validators receive the app context | `runtime/oauth/bearer.go:23,27`; `ts/src/oauth/index.ts:96,101`; `py/src/apptheory/oauth/__init__.py:163,164` |
 | Go challenge is single-header and metadata-URL derives from `MCP_ENDPOINT` | `runtime/oauth/bearer.go:194-222` |
+| ↳ **As-built note (2026-10-14, M3c-2): stale.** The challenge now derives only from `ResourceMetadataURL` / `ResourceMetadataURLFunc`; the runtime never reads `MCP_ENDPOINT`, and no construct injects it. | `runtime/oauth/bearer.go` (`RequireBearerTokenMiddleware`); `cdk/lib/remote-mcp-server.ts` (`protectedResourceMetadataUrl`) |
 | Only Go ships in-memory authorization-code/refresh stores | `runtime/oauth/tokens.go:35-167` |
 | M2 shipped as `fix(security)` (#1124, `b3ef924`) and is absent from the 6.0.0 BREAKING CHANGES list | `CHANGELOG.md:6-12,62` |
 | `UPGRADING.md` documents the MCP transport default flip | `UPGRADING.md` "MCP transport routes require credentials by default" |
