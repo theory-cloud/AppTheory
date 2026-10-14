@@ -455,7 +455,7 @@ func TestSharedFacadeRouteModelCallbackOverride(t *testing.T) {
 			if ok {
 				t.Fatalf("CallbackPathForConfiguredPath(%q) = %q, true; want failure", row.Configured, got)
 			}
-			if normalized, ok := NormalizeCallbackPath(row.Configured); ok {
+			if normalized, normalizedOK := NormalizeCallbackPath(row.Configured); normalizedOK {
 				t.Fatalf("NormalizeCallbackPath(%q) = %q, true; want failure", row.Configured, normalized)
 			}
 			continue
