@@ -1543,6 +1543,15 @@ function errorMessage(err) {
 const FRONT_CHANNEL_TRANSACTION_STATUS_PENDING = "pending";
 const FRONT_CHANNEL_CODE_STATUS_ISSUED = "issued";
 /**
+ * Bounds every front-channel POST body before it is parsed. The bound is a
+ * framework default, deliberately not a FacadeConfig field or an environment
+ * variable, so no adopter can widen the door; it applies to the raw request
+ * bytes and a body strictly larger than it fails closed with invalid_request.
+ * The token endpoint consumes it today and the DCR JSON body will inherit the
+ * same bound, so the name stays endpoint-neutral.
+ */
+const FRONT_CHANNEL_MAX_REQUEST_BODY_BYTES = 16384;
+/**
  * The closed, fixed client-facing error vocabulary of the front channel
  * (DESIGN §8). Every rejection of one error code carries the same description,
  * so the response never distinguishes an unknown key from a used one
@@ -1812,7 +1821,11 @@ async function handleToken(config, kind, ctx) {
     if (front === null) {
         throw new Error(`${ERROR_PREFIX} front channel is not configured`);
     }
-    const form = parseFormQuery(Buffer.from(ctx.request.body).toString("utf8"));
+    const body = Buffer.from(ctx.request.body);
+    if (body.byteLength > FRONT_CHANNEL_MAX_REQUEST_BODY_BYTES) {
+        return facadeErrorPage(400, "invalid_request");
+    }
+    const form = parseFormQuery(body.toString("utf8"));
     if (form === null) {
         return facadeErrorPage(400, "invalid_request");
     }

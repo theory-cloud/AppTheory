@@ -21,7 +21,7 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, cast
-from urllib.parse import parse_qs, quote_plus
+from urllib.parse import quote_plus
 
 from apptheory.app import App, Handler, _resolve, create_app
 from apptheory.cloudfront import origin_url
@@ -99,6 +99,17 @@ _METADATA_REQUEST_BODY = b'{"error":"invalid_request_host"}'
 
 # Status values the front channel writes into the store records it mints.
 _FRONT_CHANNEL_TRANSACTION_STATUS_PENDING = "pending"
+
+# Bounds every front-channel POST body before it is parsed. The bound is a
+# framework default, deliberately not a FacadeConfig field or an environment
+# variable, so no adopter can widen the door; it applies to the raw request
+# bytes and a body strictly larger than it fails closed with invalid_request.
+# The token endpoint consumes it today and the DCR JSON body will inherit the
+# same bound, so the name stays endpoint-neutral.
+_FRONT_CHANNEL_MAX_REQUEST_BODY_BYTES = 16384
+
+# The hex digits Go's url.QueryUnescape accepts inside a %XX escape.
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 
 # _FACADE_ERROR_DESCRIPTIONS is the closed, fixed client-facing error vocabulary
 # of the front channel (DESIGN section 8). Every rejection of one error code
@@ -1726,10 +1737,58 @@ def _new_opaque_token() -> str:
 
 
 def _parse_form(body: Any) -> dict[str, list[str]]:
+    """Parse an ``application/x-www-form-urlencoded`` body the way Go's
+    ``url.ParseQuery`` does, so a body the Go and TypeScript front channels
+    refuse cannot slip through here: segments are split on ``&`` and empty ones
+    are skipped, a literal ``;`` anywhere in a segment fails the whole parse,
+    each segment splits on its first ``=``, and both sides are unescaped with
+    ``QueryUnescape`` semantics. A malformed or truncated ``%`` escape, an
+    over-bound body, or invalid UTF-8 raises ``ValueError`` /
+    ``UnicodeDecodeError`` and the caller answers ``400 invalid_request``.
+    Repeated keys keep every value in order, so the first occurrence is
+    ``form[name][0]`` just as Go's ``values.Get`` returns it.
+    """
     if body is None:
-        return {}
+        body = b""
     raw = body if isinstance(body, bytes) else str(body).encode("utf-8")
-    return parse_qs(raw.decode("utf-8"), keep_blank_values=True)
+    if len(raw) > _FRONT_CHANNEL_MAX_REQUEST_BODY_BYTES:
+        raise ValueError("front channel request body exceeds the framework bound")
+    form: dict[str, list[str]] = {}
+    for segment in raw.decode("utf-8").split("&"):
+        if segment == "":
+            continue
+        if ";" in segment:
+            raise ValueError("invalid semicolon separator in query")
+        raw_key, _, raw_value = segment.partition("=")
+        key = _query_unescape(raw_key)
+        value = _query_unescape(raw_value)
+        form.setdefault(key, []).append(value)
+    return form
+
+
+def _query_unescape(value: str) -> str:
+    """Percent-decode one form component the way Go's ``QueryUnescape`` does:
+    ``+`` is a space and a malformed ``%`` escape is an error. The result is a
+    code-unit string (one code point per decoded byte), mirroring the byte
+    string the TypeScript front channel builds, so an ASCII form value
+    round-trips Go's raw-byte semantics.
+    """
+    out: list[str] = []
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char == "%":
+            if index + 2 >= len(value):
+                raise ValueError(f"invalid URL escape {value[index : index + 3]!r}")
+            hex_pair = value[index + 1 : index + 3]
+            if any(digit not in _HEX_DIGITS for digit in hex_pair):
+                raise ValueError(f"invalid URL escape {value[index : index + 3]!r}")
+            out.append(chr(int(hex_pair, 16)))
+            index += 3
+            continue
+        out.append(" " if char == "+" else char)
+        index += 1
+    return "".join(out)
 
 
 def _first_query_value(query: dict[str, list[str]], name: str) -> str:

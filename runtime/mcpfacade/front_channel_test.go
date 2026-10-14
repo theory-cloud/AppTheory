@@ -1,6 +1,7 @@
 package mcpfacade
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/url"
@@ -308,9 +309,9 @@ func TestFrontChannelAuthorizeRejectsUnknownClientAndRedirectWithoutRedirect(t *
 	require.Empty(t, locationOf(unmatched))
 }
 
-// redirectMatchConformanceFixture is the shared RFC 8252 §7.3 redirect-match
-// table, loaded from runtime/mcpfacade/ two levels below the module root.
-const redirectMatchConformanceFixture = "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-conformance.v1.json"
+// facadeConformanceFixture is the shared MCP auth facade conformance table,
+// loaded from runtime/mcpfacade/ two levels below the module root.
+const facadeConformanceFixture = "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-conformance.v1.json"
 
 // redirectMatchGroup names the fixture group this loader executes.
 const redirectMatchGroup = "redirect_match"
@@ -320,6 +321,50 @@ const redirectMatchGroup = "redirect_match"
 // TypeScript, and Python loaders, so no runtime can silently execute a smaller
 // table.
 const redirectMatchCaseCount = 11
+
+// formParseGroup names the /token request-body rule group the same shared table
+// carries, executed below through the real token handler.
+const formParseGroup = "form_parse"
+
+// formParseCaseCount is the number of form_parse rows the shared fixture must
+// carry; a change to the table must also be a deliberate edit in the Go,
+// TypeScript, and Python loaders, so no runtime can silently execute a smaller
+// table.
+const formParseCaseCount = 11
+
+// formParseConformanceDocument and formParseCase are the form_parse rows: the
+// small rows carry a literal body, and the bound rows carry a body_prefix padded
+// with "a" out to exactly total_bytes.
+type formParseConformanceDocument struct {
+	Cases []formParseCase `json:"cases"`
+}
+
+type formParseCase struct {
+	ID          string `json:"id"`
+	Group       string `json:"group"`
+	Body        string `json:"body"`
+	BodyPrefix  string `json:"body_prefix"`
+	TotalBytes  int    `json:"total_bytes"`
+	ExpectError string `json:"expect_error"`
+}
+
+// requestBody builds the raw body the row presents.
+func (row formParseCase) requestBody() []byte {
+	if row.TotalBytes == 0 {
+		return []byte(row.Body)
+	}
+	prefix := []byte(row.BodyPrefix)
+	return append(prefix, bytes.Repeat([]byte("a"), row.TotalBytes-len(prefix))...)
+}
+
+// label keeps a failure message readable for a bound row, whose literal body is
+// 16 KiB of padding.
+func (row formParseCase) label() string {
+	if row.TotalBytes == 0 {
+		return row.Body
+	}
+	return row.BodyPrefix + "<pad>"
+}
 
 type redirectMatchConformanceDocument struct {
 	Cases []redirectMatchCase `json:"cases"`
@@ -333,11 +378,11 @@ type redirectMatchCase struct {
 	Expect     string   `json:"expect"`
 }
 
-func loadRedirectMatchConformance(t *testing.T, target any) {
+func loadFacadeConformanceFixture(t *testing.T, target any) {
 	t.Helper()
-	body, err := os.ReadFile(redirectMatchConformanceFixture) // #nosec G304 -- path is a fixed test fixture path built from a constant directory.
-	require.NoErrorf(t, err, "read shared fixture %s", redirectMatchConformanceFixture)
-	require.NoErrorf(t, json.Unmarshal(body, target), "decode shared fixture %s", redirectMatchConformanceFixture)
+	body, err := os.ReadFile(facadeConformanceFixture) // #nosec G304 -- path is a fixed test fixture path built from a constant directory.
+	require.NoErrorf(t, err, "read shared fixture %s", facadeConformanceFixture)
+	require.NoErrorf(t, json.Unmarshal(body, target), "decode shared fixture %s", facadeConformanceFixture)
 }
 
 // TestFrontChannelAuthorizeEnforcesTheSharedRedirectMatchTable pins the RFC 8252
@@ -348,7 +393,7 @@ func loadRedirectMatchConformance(t *testing.T, target any) {
 // alone.
 func TestFrontChannelAuthorizeEnforcesTheSharedRedirectMatchTable(t *testing.T) {
 	var document redirectMatchConformanceDocument
-	loadRedirectMatchConformance(t, &document)
+	loadFacadeConformanceFixture(t, &document)
 
 	rows := make([]redirectMatchCase, 0, len(document.Cases))
 	for _, row := range document.Cases {
@@ -390,6 +435,49 @@ func TestFrontChannelAuthorizeEnforcesTheSharedRedirectMatchTable(t *testing.T) 
 	}
 
 	require.Equalf(t, redirectMatchCaseCount, executed, "executed %d %q cases", executed, redirectMatchGroup)
+}
+
+// TestFrontChannelTokenEnforcesTheSharedFormParseTable pins the one bounded,
+// strict /token request-body rule to the shared cross-runtime table through the
+// real handler: Go's url.ParseQuery is the reference, so a `;` separator or a
+// malformed percent escape is invalid_request for the whole body, a repeat key
+// keeps its first occurrence, and a raw body strictly larger than the 16384-byte
+// framework bound fails closed before any parse.
+func TestFrontChannelTokenEnforcesTheSharedFormParseTable(t *testing.T) {
+	var document formParseConformanceDocument
+	loadFacadeConformanceFixture(t, &document)
+
+	rows := make([]formParseCase, 0, len(document.Cases))
+	for _, row := range document.Cases {
+		require.NotEmptyf(t, row.Group, "case %q must carry a group", row.ID)
+		if row.Group == formParseGroup {
+			rows = append(rows, row)
+		}
+	}
+	require.Equalf(t, formParseCaseCount, len(rows), "loaded %d %q cases", len(rows), formParseGroup)
+
+	harness := newFrontChannelHarness(t)
+	executed := 0
+	for _, row := range rows {
+		executed++
+		t.Run(row.ID, func(t *testing.T) {
+			body := row.requestBody()
+			if row.TotalBytes != 0 {
+				require.Lenf(t, body, row.TotalBytes, "case %q must present exactly %d body bytes", row.ID, row.TotalBytes)
+			}
+
+			response := harness.serve("POST", harness.path(mcproutes.EndpointPath.OAuthTokenPath), nil, body)
+			require.Equalf(t, 400, response.Status, "body %q", row.label())
+
+			var payload struct {
+				Error string `json:"error"`
+			}
+			require.NoErrorf(t, json.Unmarshal(response.Body, &payload), "decode %q response", row.ID)
+			require.Equalf(t, row.ExpectError, payload.Error, "body %q", row.label())
+		})
+	}
+
+	require.Equalf(t, formParseCaseCount, executed, "executed %d %q cases", executed, formParseGroup)
 }
 
 // TestFrontChannelAuthorizeRequiresFreshS256PKCE pins T3: an absent challenge

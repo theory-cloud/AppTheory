@@ -14,6 +14,14 @@ import (
 	oauthstore "github.com/theory-cloud/apptheory/v6/runtime/oauth/store"
 )
 
+// frontChannelMaxRequestBodyBytes bounds every front-channel POST body before it
+// is parsed. The bound is a framework default, deliberately not a FacadeConfig
+// field or an environment variable, so no adopter can widen the door; it applies
+// to the raw request bytes and a body strictly larger than it fails closed with
+// invalid_request. The token endpoint consumes it today and the DCR JSON body
+// will inherit the same bound, so the name stays endpoint-neutral.
+const frontChannelMaxRequestBodyBytes = 16384
+
 // Status values the front channel writes into the store records it mints.
 const (
 	frontChannelTransactionStatusPending = "pending"
@@ -522,7 +530,11 @@ func (config normalizedConfig) handleToken(kind mcproutes.EndpointKind, ctx *app
 	if config.frontChannel == nil {
 		return nil, errFrontChannelMissing
 	}
-	form, err := url.ParseQuery(string(ctx.Request.Body))
+	body := ctx.Request.Body
+	if len(body) > frontChannelMaxRequestBodyBytes {
+		return facadeErrorPage(400, facadeErrorInvalidRequest), nil
+	}
+	form, err := url.ParseQuery(string(body))
 	if err != nil {
 		return facadeErrorPage(400, facadeErrorInvalidRequest), nil
 	}

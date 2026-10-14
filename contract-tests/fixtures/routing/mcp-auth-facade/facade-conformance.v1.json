@@ -2,7 +2,7 @@
   "id": "mcp.auth.facade.conformance",
   "kind": "conformance",
   "status": "M3c-1a",
-  "description": "One issuer-pin table for the RFC 9207 `iss` check of the MCP auth facade. Go's oauth.CanonicalizeIssuerURL is the reference: the scheme is lowercased, the authority is preserved byte-for-byte (host case and any explicit port survive), trailing slashes are trimmed from the decoded path, the path keeps its `;`-separated parameters, the query is kept (including a bare trailing `?`) and the fragment is kept. A row matches when both sides canonicalize and the canonical forms are byte-equal. Every runtime's loader runs the same rows and asserts the same outcomes; the uppercase-host and fragment rows exist because a host-lowercasing (WHATWG URL) or fragment-dropping (urllib) canonicalizer would wrongly answer `match`, and the dangling-`?`, `;params` and non-numeric-port rows exist because a `urllib`-based canonicalizer would likewise answer `match` or accept a URL Go refuses. The `redirect_match` group pins the RFC 8252 section 7.3 loopback rule as the real `/authorize` handler applies it: an exact registered==requested pairing always accepts, a loopback pair accepts when scheme, host, path, query, and fragment match exactly and the port alone is free to differ or be absent on either side (the ADV-1144-2 case), while a non-loopback pair accepts only byte-for-byte, so a differing path, a scheme downgrade, a query or fragment mismatch, a `localhost` to `127.0.0.1` host substitution, a differing non-loopback URI, or a requested URI absent from the registered list all fail closed with a 400 and no redirect.",
+  "description": "One issuer-pin table for the RFC 9207 `iss` check of the MCP auth facade. Go's oauth.CanonicalizeIssuerURL is the reference: the scheme is lowercased, the authority is preserved byte-for-byte (host case and any explicit port survive), trailing slashes are trimmed from the decoded path, the path keeps its `;`-separated parameters, the query is kept (including a bare trailing `?`) and the fragment is kept. A row matches when both sides canonicalize and the canonical forms are byte-equal. Every runtime's loader runs the same rows and asserts the same outcomes; the uppercase-host and fragment rows exist because a host-lowercasing (WHATWG URL) or fragment-dropping (urllib) canonicalizer would wrongly answer `match`, and the dangling-`?`, `;params` and non-numeric-port rows exist because a `urllib`-based canonicalizer would likewise answer `match` or accept a URL Go refuses. The `redirect_match` group pins the RFC 8252 section 7.3 loopback rule as the real `/authorize` handler applies it: an exact registered==requested pairing always accepts, a loopback pair accepts when scheme, host, path, query, and fragment match exactly and the port alone is free to differ or be absent on either side (the ADV-1144-2 case), while a non-loopback pair accepts only byte-for-byte, so a differing path, a scheme downgrade, a query or fragment mismatch, a `localhost` to `127.0.0.1` host substitution, a differing non-loopback URI, or a requested URI absent from the registered list all fail closed with a 400 and no redirect. The `form_parse` group pins the `/token` request-body rule as the real handler applies it: Go's url.ParseQuery is the reference, so a literal `;` separator or a malformed percent escape fails the whole parse with `invalid_request` and a repeat key keeps its first occurrence, and a raw body strictly larger than the 16384-byte framework bound is refused with `invalid_request` before any parsing.",
   "cases": [
     {
       "id": "issuer_pin.exact_equal_match",
@@ -269,6 +269,74 @@
       "registered": ["http://localhost/cb"],
       "requested": "http://127.0.0.1/cb",
       "expect": "reject"
+    },
+    {
+      "id": "form_parse.empty_body",
+      "group": "form_parse",
+      "body": "",
+      "expect_error": "invalid_request"
+    },
+    {
+      "id": "form_parse.missing_grant_type",
+      "group": "form_parse",
+      "body": "x=y",
+      "expect_error": "invalid_request"
+    },
+    {
+      "id": "form_parse.blank_grant_type",
+      "group": "form_parse",
+      "body": "grant_type=",
+      "expect_error": "invalid_request"
+    },
+    {
+      "id": "form_parse.semicolon_separator_rejected",
+      "group": "form_parse",
+      "body": "grant_type=refresh_token;x=1",
+      "expect_error": "invalid_request"
+    },
+    {
+      "id": "form_parse.malformed_escape_rejected",
+      "group": "form_parse",
+      "body": "%zz=1&grant_type=refresh_token",
+      "expect_error": "invalid_request"
+    },
+    {
+      "id": "form_parse.client_credentials_unsupported",
+      "group": "form_parse",
+      "body": "grant_type=client_credentials",
+      "expect_error": "unsupported_grant_type"
+    },
+    {
+      "id": "form_parse.refresh_token_unsupported",
+      "group": "form_parse",
+      "body": "grant_type=refresh_token",
+      "expect_error": "unsupported_grant_type"
+    },
+    {
+      "id": "form_parse.repeated_grant_type_first_occurrence_wins",
+      "group": "form_parse",
+      "body": "grant_type=refresh_token&grant_type=authorization_code",
+      "expect_error": "unsupported_grant_type"
+    },
+    {
+      "id": "form_parse.repeated_grant_type_code_then_refresh",
+      "group": "form_parse",
+      "body": "grant_type=authorization_code&grant_type=refresh_token",
+      "expect_error": "invalid_request"
+    },
+    {
+      "id": "form_parse.body_exactly_at_the_bound",
+      "group": "form_parse",
+      "body_prefix": "grant_type=refresh_token&pad=",
+      "total_bytes": 16384,
+      "expect_error": "unsupported_grant_type"
+    },
+    {
+      "id": "form_parse.body_one_byte_over_the_bound",
+      "group": "form_parse",
+      "body_prefix": "grant_type=refresh_token&pad=",
+      "total_bytes": 16385,
+      "expect_error": "invalid_request"
     }
   ]
 }

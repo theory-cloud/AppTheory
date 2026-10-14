@@ -60,6 +60,13 @@ REDIRECT_MATCH_GROUP = "redirect_match"
 # runtime can silently execute a smaller table.
 REDIRECT_MATCH_CASE_COUNT = 11
 
+FORM_PARSE_GROUP = "form_parse"
+
+# The number of form_parse rows the shared table must carry; a change to the
+# table must also be a deliberate edit in the Go and TypeScript loaders, so no
+# runtime can silently execute a smaller table.
+FORM_PARSE_CASE_COUNT = 11
+
 
 def _load_fixture() -> dict:
     with (FIXTURE_DIR / FIXTURE_NAME).open("r", encoding="utf-8") as handle:
@@ -439,6 +446,44 @@ class FrontChannelRedirectMatchConformanceTests(unittest.TestCase):
                 executed += 1
         print(f"redirect match conformance: {executed} cases run")
         self.assertEqual(REDIRECT_MATCH_CASE_COUNT, executed)
+
+
+def _form_parse_body(row: dict) -> bytes:
+    """Build the raw /token body a form_parse row presents: the literal body, or
+    body_prefix padded with "a" out to exactly total_bytes."""
+    total = row.get("total_bytes")
+    if not total:
+        return str(row.get("body") or "").encode("utf-8")
+    prefix = str(row.get("body_prefix") or "").encode("utf-8")
+    return prefix + b"a" * (int(total) - len(prefix))
+
+
+class FrontChannelFormParseConformanceTests(unittest.TestCase):
+    """Pins the one bounded, strict ``/token`` request-body rule to the shared
+    cross-runtime table through the real token handler: Go's ``url.ParseQuery``
+    is the reference, so a ``;`` separator or a malformed percent escape fails
+    the whole body (``invalid_request``), a repeated key keeps its first
+    occurrence, and a raw body strictly larger than the 16384-byte framework
+    bound fails closed before any parse.
+    """
+
+    def test_token_enforces_the_shared_form_parse_table(self) -> None:
+        rows = [case for case in _load_fixture()["cases"] if case["group"] == FORM_PARSE_GROUP]
+        self.assertEqual(FORM_PARSE_CASE_COUNT, len(rows))
+
+        harness = _FrontChannelHarness(self)
+        executed = 0
+        for row in rows:
+            with self.subTest(case=row["id"]):
+                response = harness.serve(
+                    "POST", harness.endpoint.oauth_token_path(), None, _form_parse_body(row)
+                )
+                self.assertEqual(400, response.status, row["id"])
+                payload = json.loads(response.body.decode("utf-8"))
+                self.assertEqual(row["expect_error"], payload.get("error"), row["id"])
+                executed += 1
+        print(f"form parse conformance: {executed} cases run")
+        self.assertEqual(FORM_PARSE_CASE_COUNT, executed)
 
 
 class FrontChannelCallbackTests(unittest.TestCase):

@@ -13,12 +13,13 @@ FIXTURE_NAME = "facade-conformance.v1.json"
 
 ISSUER_PIN_GROUP = "issuer_pin"
 
-# redirect_match is the sibling group the same shared table carries. It is
-# executed by py/tests/test_mcpfacade_front_channel.py through the real
-# /authorize handler, not here; the group ledger below keeps a new group from
-# appearing without a loader.
+# redirect_match and form_parse are the sibling groups the same shared table
+# carries. They are executed by py/tests/test_mcpfacade_front_channel.py through
+# the real /authorize and /token handlers, not here; the group ledger below keeps
+# a new group from appearing without a loader.
 REDIRECT_MATCH_GROUP = "redirect_match"
-FIXTURE_GROUPS = (ISSUER_PIN_GROUP, REDIRECT_MATCH_GROUP)
+FORM_PARSE_GROUP = "form_parse"
+FIXTURE_GROUPS = (ISSUER_PIN_GROUP, REDIRECT_MATCH_GROUP, FORM_PARSE_GROUP)
 
 # The number of issuer_pin rows the shared table must carry; a change to the
 # table must also be a deliberate edit here and in the Go and TypeScript loaders,

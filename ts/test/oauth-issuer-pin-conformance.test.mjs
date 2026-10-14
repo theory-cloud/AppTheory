@@ -28,7 +28,19 @@ const ISSUER_PIN_GROUP = "issuer_pin";
  */
 const REDIRECT_MATCH_GROUP = "redirect_match";
 
-const FIXTURE_GROUPS = [ISSUER_PIN_GROUP, REDIRECT_MATCH_GROUP];
+/**
+ * `form_parse` is the sibling group holding the `/token` request-body rule. It
+ * is executed by the facade front-channel test through the real token handler,
+ * not here; the group ledger below still lists it so a new group cannot appear
+ * without a loader.
+ */
+const FORM_PARSE_GROUP = "form_parse";
+
+const FIXTURE_GROUPS = [
+  ISSUER_PIN_GROUP,
+  REDIRECT_MATCH_GROUP,
+  FORM_PARSE_GROUP,
+];
 
 /**
  * The number of issuer_pin rows the shared table must carry; a change to the

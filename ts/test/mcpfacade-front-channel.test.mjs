@@ -64,6 +64,40 @@ const REDIRECT_MATCH_GROUP = "redirect_match";
  */
 const REDIRECT_MATCH_CASE_COUNT = 11;
 
+const FORM_PARSE_GROUP = "form_parse";
+
+/**
+ * The number of form_parse rows the shared table must carry; a change to the
+ * table must also be a deliberate edit in the Go and Python loaders, so no
+ * runtime can silently execute a smaller table.
+ */
+const FORM_PARSE_CASE_COUNT = 11;
+
+/**
+ * Builds the raw body a form_parse row presents: the small rows carry a literal
+ * body, and the bound rows carry `body_prefix` padded with "a" out to exactly
+ * `total_bytes`, so the row pins the byte length the handler sees.
+ */
+function formParseBody(row) {
+  if (row.total_bytes === undefined) {
+    return row.body ?? "";
+  }
+  const prefix = row.body_prefix ?? "";
+  const pad = Math.max(row.total_bytes - Buffer.byteLength(prefix, "utf8"), 0);
+  return prefix + "a".repeat(pad);
+}
+
+/**
+ * Keeps a failure message readable for a bound row, whose literal body is 16 KiB
+ * of padding.
+ */
+function formParseLabel(row) {
+  if (row.total_bytes === undefined) {
+    return JSON.stringify(row.body ?? "");
+  }
+  return `${row.body_prefix}<pad>`;
+}
+
 function loadFixture() {
   return JSON.parse(
     readFileSync(path.join(FIXTURE_DIR, FIXTURE_NAME), "utf8"),
@@ -363,6 +397,7 @@ async function newFrontChannelHarness(t) {
     stores,
     broker,
     kind,
+    tokenPath: oauthTokenPath(endpoint),
     authorize,
     callback,
     authorizeAndCallback,
@@ -469,6 +504,39 @@ test("authorize enforces the shared redirect_match table through the real handle
     }
   }
   assert.equal(executed, REDIRECT_MATCH_CASE_COUNT);
+});
+
+test("token enforces the shared form_parse table through the real handler", async (t) => {
+  const rows = (loadFixture().cases ?? []).filter(
+    (row) => row.group === FORM_PARSE_GROUP,
+  );
+  assert.equal(rows.length, FORM_PARSE_CASE_COUNT);
+
+  const harness = await newFrontChannelHarness(t);
+  let executed = 0;
+  for (const row of rows) {
+    executed += 1;
+    const body = formParseBody(row);
+    if (row.total_bytes !== undefined) {
+      assert.equal(
+        Buffer.byteLength(body, "utf8"),
+        row.total_bytes,
+        `case ${row.id} must present exactly ${row.total_bytes} body bytes`,
+      );
+    }
+
+    const response = await harness.serve(
+      "POST",
+      harness.tokenPath,
+      null,
+      Buffer.from(body, "utf8"),
+    );
+    const context = formParseLabel(row);
+    assert.equal(response.status, 400, context);
+    const payload = JSON.parse(bodyString(response));
+    assert.equal(payload.error, row.expect_error, context);
+  }
+  assert.equal(executed, FORM_PARSE_CASE_COUNT);
 });
 
 test("authorize requires fresh S256 PKCE and refuses a plain challenge", async (t) => {
