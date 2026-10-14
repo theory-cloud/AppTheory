@@ -125,6 +125,7 @@ var conformanceScenarios = map[string]func(*conformanceHarness, ConformanceCase)
 	"acquire_lock_exclusive_with_expiry": (*conformanceHarness).brokerAcquireLockExclusive,
 	"compare_and_swap_versioned":         (*conformanceHarness).brokerCompareAndSwapVersioned,
 	"compare_and_swap_unknown":           (*conformanceHarness).brokerCompareAndSwapUnknown,
+	"compare_and_swap_inherits_status":   (*conformanceHarness).brokerCompareAndSwapInheritsStatus,
 	"negative_expected_version":          (*conformanceHarness).brokerNegativeExpectedVersion,
 	"revoke_idempotent":                  (*conformanceHarness).brokerRevokeIdempotent,
 	"revoke_then_lock":                   (*conformanceHarness).brokerRevokeThenLock,
@@ -242,6 +243,13 @@ func (h *conformanceHarness) consumeCode(key string) error {
 }
 
 func (h *conformanceHarness) putBroker(key string) error {
+	return h.putBrokerStatus(key, BrokerStatusActive)
+}
+
+// putBrokerStatus seeds one handle through the store's own create path with the
+// caller's status, so a row can start from a status other than active without
+// going through the mutating lock path.
+func (h *conformanceHarness) putBrokerStatus(key, status string) error {
 	seeder, ok := h.stores.RouteRefreshBroker.(RouteRefreshBrokerSeeder)
 	if !ok {
 		return fmt.Errorf("%w: %T", ErrBrokerNotSeedable, h.stores.RouteRefreshBroker)
@@ -251,7 +259,7 @@ func (h *conformanceHarness) putBroker(key string) error {
 		Issuer:            "https://auth.example.test",
 		Stage:             "lab",
 		CanonicalResource: "https://mcp.example.test/mcp",
-		Status:            BrokerStatusActive,
+		Status:            status,
 	})
 }
 
@@ -336,16 +344,45 @@ func codeRecordVersionField(record *AuthorizationCodeRecord) int {
 	return record.Version
 }
 
+// transactionRecordVersionField reports a consumed transaction record's version,
+// or -1 when the consume returned no record. The status is deliberately not
+// reported for the transaction store: Go hands back the caller's status while
+// TypeScript and Python stamp the consume outcome onto the record.
+func transactionRecordVersionField(record *TransactionRecord) int {
+	if record == nil {
+		return -1
+	}
+	return record.Version
+}
+
 // putPayload seeds exactly one record through the store's put with the caller's
 // status and version, then reports what the store hands back. A row pins the
 // put-path payload contract — the caller's status is preserved verbatim and a
 // version below 1 is normalized to 1 — rather than only the outcome. An absent
-// put_status is the empty string and an absent put_version is 0.
+// put_status is the empty string and an absent put_version is 0. The transaction
+// store reports only the consumed version: Go returns the caller's status while
+// TypeScript and Python stamp the consume outcome on the record, so the status
+// encoding deliberately differs and is not compared for that store.
 func (h *conformanceHarness) putPayload(testCase ConformanceCase) (map[string]any, error) {
 	key := h.key(testCase, "record")
 	status := h.putStatusParam(testCase)
 	version := h.putVersionParam(testCase)
 	switch testCase.Store {
+	case conformanceStoreTransaction:
+		if err := h.stores.Transaction.Put(h.ctx(), &TransactionRecord{
+			StateHash: key,
+			ClientID:  "conformance-client",
+			Status:    "pending",
+			Version:   version,
+			ExpiresAt: h.expiry(testCase),
+		}); err != nil {
+			return nil, err
+		}
+		record, err := h.stores.Transaction.Consume(h.ctx(), key)
+		return map[string]any{
+			"consume": outcomeFor(err),
+			"version": transactionRecordVersionField(record),
+		}, nil
 	case conformanceStoreAuthCode:
 		if err := h.stores.AuthorizationCode.Put(h.ctx(), &AuthorizationCodeRecord{
 			CodeHash:  key,
@@ -514,9 +551,14 @@ func (h *conformanceHarness) concurrentConsume(testCase ConformanceCase) (map[st
 	return outcomeCounts(h.runConcurrent(h.count(testCase, conformanceParamConcurrency), consume)), nil
 }
 
+// clientPutGetUpdate seeds one client with the row's put version and walks the
+// versioned read/update path. The store's put owns the stored version, so a row
+// with a put_version above 1 pins that put forces version 1 rather than keeping
+// the caller's.
 func (h *conformanceHarness) clientPutGetUpdate(testCase ConformanceCase) (map[string]any, error) {
 	key := h.key(testCase, "client")
 	record := conformanceClientRecord(key)
+	record.Version = h.putVersionParam(testCase)
 	if err := h.stores.Client.Put(h.ctx(), record); err != nil {
 		return nil, err
 	}
@@ -652,6 +694,35 @@ func (h *conformanceHarness) brokerCompareAndSwapUnknown(testCase ConformanceCas
 	key := h.key(testCase, "handle")
 	_, err := h.stores.RouteRefreshBroker.CompareAndSwap(h.ctx(), &RouteRefreshBrokerRecord{HandleHash: key}, 0)
 	return map[string]any{"swap": outcomeFor(err)}, nil
+}
+
+// brokerCompareAndSwapInheritsStatus seeds a handle, takes the refresh lock so
+// the stored status becomes refreshing, and then swaps in a replacement that
+// states no status. The store adopts the stored status, so a rotation that
+// carries none cannot silently clear what the handle was in the middle of.
+func (h *conformanceHarness) brokerCompareAndSwapInheritsStatus(testCase ConformanceCase) (map[string]any, error) {
+	key := h.key(testCase, "handle")
+	if err := h.putBrokerStatus(key, BrokerStatusIssued); err != nil {
+		return nil, err
+	}
+	version, err := h.brokerVersion(key)
+	if err != nil {
+		return nil, err
+	}
+	if _, lockErr := h.stores.RouteRefreshBroker.AcquireLock(h.ctx(), key, "owner-inherit", version); lockErr != nil {
+		return nil, fmt.Errorf("acquire lock: %w", lockErr)
+	}
+	held, err := h.stores.RouteRefreshBroker.Get(h.ctx(), key)
+	if err != nil {
+		return nil, err
+	}
+	swapped, swapErr := h.stores.RouteRefreshBroker.CompareAndSwap(h.ctx(), &RouteRefreshBrokerRecord{
+		HandleHash: key,
+	}, held.Version)
+	if swapErr != nil {
+		return nil, fmt.Errorf("compare and swap: %w", swapErr)
+	}
+	return map[string]any{"status": swapped.Status}, nil
 }
 
 // brokerNegativeExpectedVersion pins that a negative expected version is never a

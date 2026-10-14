@@ -9,7 +9,7 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 from urllib.parse import urlparse
 
 from apptheory.context import Context
@@ -284,10 +284,65 @@ def resource_indicator_matches(expected: str, requested: str) -> bool:
 
 
 def canonicalize_issuer_url(raw: str) -> str | None:
-    parsed = urlparse(str(raw or "").strip())
-    if not parsed.scheme or not parsed.netloc:
+    """Canonicalize an RFC 9207 ``iss`` value exactly as Go's
+    ``oauth.CanonicalizeIssuerURL`` does, so the pinned issuer compares
+    byte-for-byte across runtimes. The scheme is lowercased; the authority is
+    preserved, so host case and an explicit port survive; the decoded path is
+    re-encoded with the Go ``net/url`` path rules and its trailing slashes are
+    trimmed; the raw query (including a bare trailing ``?``) and the raw
+    fragment are kept. Relative, empty, control-byte and malformed
+    percent-escape inputs return ``None``.
+
+    ``urllib`` cannot express this: it lowercases neither host nor port but it
+    drops ``;params``, discards a bare ``?``, keeps a malformed escape, and
+    accepts a non-numeric port. The helpers below therefore re-implement the
+    slice of ``net/url`` the reference depends on.
+    """
+    value = _go_trim_space(str(raw or ""))
+    if value == "" or _go_has_control_byte(value):
         return None
-    return parsed._replace(path=parsed.path.rstrip("/"), params="", fragment="").geturl()
+
+    rest, raw_fragment = _go_split_fragment(value)
+
+    scheme = _go_split_scheme(rest)
+    if scheme is None:
+        return None
+    scheme_name, rest = scheme
+
+    force_query, raw_query, rest = _go_split_query(rest)
+
+    target = _go_split_authority(rest)
+    if target is None:
+        return None
+    authority, raw_path = target
+
+    parts = _go_parse_authority(authority)
+    if parts is None:
+        return None
+
+    escaped_path = _go_escaped_path(raw_path)
+    if escaped_path is None:
+        return None
+
+    decoded_host = _go_unescape(parts.host, "host")
+    if decoded_host is None:
+        return None
+
+    out = f"{scheme_name}://"
+    if parts.userinfo is not None:
+        out += f"{parts.userinfo}@"
+    out += _go_escape_bytes(decoded_host, _GO_HOST_ALLOWED)
+    out += escaped_path
+    if force_query or raw_query != "":
+        out += f"?{raw_query}"
+
+    if raw_fragment is not None:
+        fragment = _go_fragment_suffix(raw_fragment)
+        if fragment is None:
+            return None
+        out += fragment
+
+    return out
 
 
 def bearer_token_from_headers(headers: dict[str, Any] | None) -> str:
@@ -565,6 +620,276 @@ def _join_url_path(base: str, suffix: str) -> str:
     if not right:
         return left or "/"
     return f"{left}/{right}"
+
+
+# The helpers below re-implement the slice of Go's `net/url` that
+# `oauth.CanonicalizeIssuerURL` depends on: scheme splitting, authority
+# parsing, and the escape table of `net/url`'s encoding modes. They are
+# deliberately local to this module (never `apptheory.mcpfacade`, which would be
+# circular) so the issuer pin cannot drift from Go.
+
+_GO_ALNUM = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+# The bytes each `net/url` encoding mode leaves unescaped, from its generated
+# `encoding_table.go`.
+_GO_PATH_ALLOWED = frozenset(_GO_ALNUM + b"-._~$&+,/:;=@")
+_GO_HOST_ALLOWED = frozenset(_GO_ALNUM + b"-._~!\"$&'()*+,:;<=>[]")
+_GO_FRAGMENT_ALLOWED = frozenset(_GO_ALNUM + b"-._~!$&()*+,/:;=?@")
+_GO_USERINFO_ALLOWED = frozenset(_GO_ALNUM + b"-._~$&+,;=")
+_GO_USERINFO_VALID = frozenset(_GO_ALNUM + b"-._:~!$&'()*+,;=%@")
+
+_GO_ESCAPE_ALLOWED: dict[str, frozenset[int]] = {
+    "path": _GO_PATH_ALLOWED,
+    "host": _GO_HOST_ALLOWED,
+    "fragment": _GO_FRAGMENT_ALLOWED,
+    "userinfo": _GO_USERINFO_ALLOWED,
+}
+
+# `net/url.validEncoded` always accepts these bytes, whatever the mode.
+_GO_ENCODED_LITERALS = frozenset(b"!$&'()*+,;=:@[]")
+
+_GO_ESCAPE_TABLE = tuple(f"%{index:02X}".encode("ascii") for index in range(256))
+
+# Go's `unicode.IsSpace`, which Python's `str.strip()` widens by the four ASCII
+# separators U+001C..U+001F that Go treats as control bytes instead.
+_GO_SPACE_CHARS = (
+    "\t\n\v\f\r \x85\xa0"
+    "\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000"
+)
+
+
+class _GoAuthority(NamedTuple):
+    """The ``host``/``userinfo`` half of a parsed authority."""
+
+    host: str
+    # Re-encoded the way Go's ``url.Userinfo.String()`` prints it, or None.
+    userinfo: str | None
+
+
+def _go_trim_space(value: str) -> str:
+    return value.strip(_GO_SPACE_CHARS)
+
+
+def _go_has_control_byte(value: str) -> bool:
+    return any(byte < 0x20 or byte == 0x7F for byte in value.encode("utf-8"))
+
+
+def _go_is_hex_byte(code: int) -> bool:
+    return 0x30 <= code <= 0x39 or 0x41 <= code <= 0x46 or 0x61 <= code <= 0x66
+
+
+def _go_unhex(code: int) -> int:
+    if 0x30 <= code <= 0x39:
+        return code - 0x30
+    if 0x41 <= code <= 0x46:
+        return code - 0x41 + 10
+    return code - 0x61 + 10
+
+
+def _go_escape_bytes(data: bytes, allowed: frozenset[int]) -> str:
+    out = bytearray()
+    for byte in data:
+        if byte in allowed:
+            out.append(byte)
+        else:
+            out += _GO_ESCAPE_TABLE[byte]
+    return out.decode("ascii")
+
+
+def _go_unescape(value: str, mode: str) -> bytes | None:
+    data = value.encode("utf-8")
+    out = bytearray()
+    index = 0
+    while index < len(data):
+        byte = data[index]
+        if byte == 0x25:
+            if index + 2 >= len(data):
+                return None
+            high = data[index + 1]
+            low = data[index + 2]
+            if not _go_is_hex_byte(high) or not _go_is_hex_byte(low):
+                return None
+            decoded = (_go_unhex(high) << 4) | _go_unhex(low)
+            escaped = high == 0x32 and low == 0x35
+            # In the host component %-encoding is only for non-ASCII bytes,
+            # except for the %25 that introduces an RFC 6874 zone identifier.
+            if mode == "host" and decoded < 0x80 and not escaped:
+                return None
+            out.append(decoded)
+            index += 3
+            continue
+        if mode == "host" and byte < 0x80 and byte not in _GO_HOST_ALLOWED:
+            return None
+        out.append(byte)
+        index += 1
+    return bytes(out)
+
+
+def _go_valid_encoded(value: str, mode: str) -> bool:
+    allowed = _GO_ESCAPE_ALLOWED[mode]
+    data = value.encode("utf-8")
+    index = 0
+    while index < len(data):
+        byte = data[index]
+        if byte == 0x25:
+            if index + 2 >= len(data):
+                return False
+            if not _go_is_hex_byte(data[index + 1]) or not _go_is_hex_byte(data[index + 2]):
+                return False
+            index += 3
+            continue
+        if byte not in _GO_ENCODED_LITERALS and byte not in allowed:
+            return False
+        index += 1
+    return True
+
+
+def _go_trim_trailing_slashes(data: bytes) -> bytes:
+    end = len(data)
+    while end > 0 and data[end - 1] == 0x2F:
+        end -= 1
+    return data[:end]
+
+
+def _go_escaped_path(raw_path: str) -> str | None:
+    """Go's `URL.EscapedPath` after `CanonicalizeIssuerURL` trimmed the path."""
+    decoded = _go_unescape(raw_path, "path")
+    if decoded is None:
+        return None
+    trimmed = _go_trim_trailing_slashes(decoded)
+    if _go_escape_bytes(decoded, _GO_PATH_ALLOWED) != raw_path:
+        hinted = _go_unescape(raw_path, "path")
+        if _go_valid_encoded(raw_path, "path") and hinted is not None and hinted == trimmed:
+            return raw_path
+    return _go_escape_bytes(trimmed, _GO_PATH_ALLOWED)
+
+
+def _go_fragment_suffix(raw_fragment: str) -> str | None:
+    """The `#...` Go prints for a fragment, or "" when the fragment is empty."""
+    decoded = _go_unescape(raw_fragment, "fragment")
+    if decoded is None:
+        return None
+    if len(decoded) == 0:
+        return ""
+    if _go_valid_encoded(raw_fragment, "fragment"):
+        return f"#{raw_fragment}"
+    return f"#{_go_escape_bytes(decoded, _GO_FRAGMENT_ALLOWED)}"
+
+
+def _go_split_fragment(value: str) -> tuple[str, str | None]:
+    hash_index = value.find("#")
+    if hash_index < 0:
+        return value, None
+    return value[:hash_index], value[hash_index + 1 :]
+
+
+def _go_split_query(value: str) -> tuple[bool, str, str]:
+    if value.endswith("?") and value.count("?") == 1:
+        return True, "", value[:-1]
+    query_index = value.find("?")
+    if query_index < 0:
+        return False, "", value
+    return False, value[query_index + 1 :], value[:query_index]
+
+
+def _go_split_authority(value: str) -> tuple[str, str] | None:
+    if not value.startswith("//"):
+        return None
+    path_start = value.find("/", 2)
+    if path_start < 0:
+        return value[2:], ""
+    return value[2:path_start], value[path_start:]
+
+
+def _go_is_ascii_letter(code: int) -> bool:
+    return 0x41 <= code <= 0x5A or 0x61 <= code <= 0x7A
+
+
+def _go_is_scheme_tail(code: int) -> bool:
+    return 0x30 <= code <= 0x39 or code in (0x2B, 0x2D, 0x2E)
+
+
+def _go_split_scheme(value: str) -> tuple[str, str] | None:
+    for index, char in enumerate(value):
+        code = ord(char)
+        if _go_is_ascii_letter(code):
+            continue
+        if index > 0 and _go_is_scheme_tail(code):
+            continue
+        if index > 0 and code == 0x3A:
+            return value[:index].lower(), value[index + 1 :]
+        return None
+    return None
+
+
+def _go_valid_optional_port(value: str) -> bool:
+    if value == "":
+        return True
+    if not value.startswith(":"):
+        return False
+    return all(0x30 <= ord(char) <= 0x39 for char in value[1:])
+
+
+def _go_is_ip_literal(value: str) -> bool:
+    if ":" not in value:
+        return False
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+", value):
+        return False
+    return re.fullmatch(r"[0-9A-Fa-f:.]+", value) is not None
+
+
+def _go_host_is_valid(host: str) -> bool:
+    open_bracket = host.rfind("[")
+    if open_bracket > 0:
+        return False
+    if open_bracket == 0:
+        close_bracket = host.rfind("]")
+        if close_bracket < 0:
+            return False
+        if not _go_valid_optional_port(host[close_bracket + 1 :]):
+            return False
+        if not _go_is_ip_literal(host[1:close_bracket]):
+            return False
+        return _go_unescape(host, "host") is not None
+    separator = host.find(":")
+    if separator >= 0 and not _go_valid_optional_port(host[separator:]):
+        return False
+    return _go_unescape(host, "host") is not None
+
+
+def _go_userinfo_is_valid(value: str) -> bool:
+    return all(ord(char) in _GO_USERINFO_VALID for char in value)
+
+
+def _go_encode_userinfo(raw: str) -> str | None:
+    separator = raw.find(":")
+    if separator < 0:
+        username = _go_unescape(raw, "userinfo")
+        return None if username is None else _go_escape_bytes(username, _GO_USERINFO_ALLOWED)
+    username = _go_unescape(raw[:separator], "userinfo")
+    password = _go_unescape(raw[separator + 1 :], "userinfo")
+    if username is None or password is None:
+        return None
+    encoded_username = _go_escape_bytes(username, _GO_USERINFO_ALLOWED)
+    encoded_password = _go_escape_bytes(password, _GO_USERINFO_ALLOWED)
+    return f"{encoded_username}:{encoded_password}"
+
+
+def _go_parse_authority(value: str) -> _GoAuthority | None:
+    at = value.rfind("@")
+    host = value if at < 0 else value[at + 1 :]
+    if host == "" or not _go_host_is_valid(host):
+        return None
+    if at < 0:
+        return _GoAuthority(host=host, userinfo=None)
+    raw = value[:at]
+    if not _go_userinfo_is_valid(raw):
+        return None
+    userinfo = _go_encode_userinfo(raw)
+    if userinfo is None:
+        return None
+    return _GoAuthority(host=host, userinfo=userinfo)
 
 
 def _normalize_dcr_request(

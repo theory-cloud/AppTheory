@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+import json
+import unittest
+from pathlib import Path
+from typing import Any
+
+from apptheory.oauth import canonicalize_issuer_url
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FIXTURE_DIR = REPO_ROOT / "contract-tests" / "fixtures" / "routing" / "mcp-auth-facade"
+FIXTURE_NAME = "facade-conformance.v1.json"
+
+ISSUER_PIN_GROUP = "issuer_pin"
+
+# redirect_match, form_parse, method_status, and dcr are the sibling groups the
+# same shared table carries. They are executed by
+# py/tests/test_mcpfacade_front_channel.py through the real handlers and mounted
+# app, not here; the group ledger below keeps a new group from appearing without
+# a loader.
+REDIRECT_MATCH_GROUP = "redirect_match"
+FORM_PARSE_GROUP = "form_parse"
+METHOD_STATUS_GROUP = "method_status"
+DCR_GROUP = "dcr"
+FIXTURE_GROUPS = (
+    ISSUER_PIN_GROUP,
+    REDIRECT_MATCH_GROUP,
+    FORM_PARSE_GROUP,
+    METHOD_STATUS_GROUP,
+    DCR_GROUP,
+)
+
+# The number of issuer_pin rows the shared table must carry; a change to the
+# table must also be a deliberate edit here and in the Go and TypeScript loaders,
+# so no runtime can silently execute a smaller table.
+ISSUER_PIN_CASE_COUNT = 27
+
+
+def _load_fixture() -> dict[str, Any]:
+    with (FIXTURE_DIR / FIXTURE_NAME).open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+class IssuerPinConformanceTests(unittest.TestCase):
+    """Pins the RFC 9207 ``iss`` check to the shared cross-runtime table.
+
+    A row matches exactly when both the configured and the claimed value
+    canonicalize and the canonical forms are byte-equal, so the host-case and
+    fragment rows fail closed on a canonicalizer that lowercases the host
+    (WHATWG URL) or drops the fragment (urllib).
+    """
+
+    fixture = _load_fixture()
+
+    def test_fixture_carries_only_the_known_conformance_groups(self) -> None:
+        cases = self.fixture["cases"]
+        self.assertEqual({case["group"] for case in cases}, set(FIXTURE_GROUPS))
+        issuer_pin_cases = [case for case in cases if case["group"] == ISSUER_PIN_GROUP]
+        self.assertEqual(len(issuer_pin_cases), ISSUER_PIN_CASE_COUNT)
+
+    def test_issuer_pin_cases(self) -> None:
+        cases = [case for case in self.fixture["cases"] if case["group"] == ISSUER_PIN_GROUP]
+        executed = 0
+        for case in cases:
+            with self.subTest(case=case["id"]):
+                self._run_case(case)
+                executed += 1
+        print(f"issuer pin conformance: {executed} cases run")
+        self.assertEqual(executed, ISSUER_PIN_CASE_COUNT)
+
+    def _run_case(self, case: dict[str, Any]) -> None:
+        expect = case["expect"]
+        self.assertIn(expect, ("match", "mismatch"))
+        configured = canonicalize_issuer_url(case["configured"])
+        claimed = canonicalize_issuer_url(case["claimed"])
+        matched = configured is not None and claimed is not None and configured == claimed
+        self.assertEqual(
+            matched,
+            expect == "match",
+            f"configured {case['configured']!r} -> {configured!r}, claimed {case['claimed']!r} -> {claimed!r}",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

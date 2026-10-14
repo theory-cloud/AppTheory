@@ -30,18 +30,18 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
 - `contract-tests/fixtures/vectorstore/` — SP14 semantic vector-store, Bedrock Titan embedding, metadata filter, and deterministic fake behavior
 
-The current corpus contains 284 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 284 -->
-Of those, 275 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners. The nine
+The current corpus contains 285 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 285 -->
+Of those, 275 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners. The ten
 nested tables under `routing/` — `mcp-route-algebra/expectations.json`, `mcp-route-algebra/facade-route-inventory.json`,
 `mcp-auth-facade/facade-transport-posture.v1.json`, `mcp-auth-facade/facade-route-model.v1.json`,
 `mcp-auth-facade/jwks-validator.v1.json`, `mcp-auth-facade/discovery-bootstrap.v1.json`,
-`mcp-auth-facade/route-challenge.v1.json`, `mcp-auth-facade/facade-provider-conformance.v1.json`, and
-`mcp-auth-facade/facade-store-conformance.v1.json` — are deliberate
+`mcp-auth-facade/route-challenge.v1.json`, `mcp-auth-facade/facade-provider-conformance.v1.json`,
+`mcp-auth-facade/facade-store-conformance.v1.json`, and `mcp-auth-facade/facade-conformance.v1.json` — are deliberate
 exceptions: the generic harness assumes all three runtime legs participate and only discovers one directory level,
 while these versioned contracts ship as loader tests. Go and CDK tests load the four route/facade tables directly, and
-the Go, TypeScript, and Python suites each load the three M2 acceptance tables and the two M3a provider/store
-conformance tables, so route and facade literals each exist exactly once. The generic schema gate validates one level
-deep, so the nested tables are validated by their loaders.
+the Go, TypeScript, and Python suites each load the three M2 acceptance tables, the two M3a provider/store
+conformance tables, and the M3c-1a facade conformance table, so route and facade literals each exist exactly once.
+The generic schema gate validates one level deep, so the nested tables are validated by their loaders.
 
 ## Schema gate
 

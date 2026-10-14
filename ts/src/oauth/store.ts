@@ -274,6 +274,7 @@ export class MemoryTransactionStore implements TransactionStore {
     if (expiryMs(stored.expiresAt) === null) {
       stored.expiresAt = this.defaultExpiry();
     }
+    stored.version = positiveInteger(stored.version, 1);
     this.records.set(stored.stateHash, stored);
     return Promise.resolve();
   }
@@ -377,12 +378,25 @@ export interface MemoryClientStoreOptions {
 /** In-memory reference ClientStore. */
 export class MemoryClientStore implements ClientStore {
   private readonly records = new Map<string, ClientRecord>();
+  private readonly now: () => Date;
 
+  constructor(options: MemoryClientStoreOptions = {}) {
+    this.now = options.now ?? (() => new Date());
+  }
+
+  /**
+   * Stores a copy at version 1, defaulting an unset or zero creation instant to
+   * the store clock. A client record has no TTL: the age-out policy is the
+   * application's, so put never applies one.
+   */
   put(record: ClientRecord): Promise<void> {
-    this.records.set(record.clientIdHash, {
-      ...structuredClone(record),
-      version: positiveInteger(record.version, 1),
-    });
+    const stored = structuredClone(record);
+    stored.version = 1;
+    const createdAtMs = expiryMs(stored.createdAt);
+    if (createdAtMs === null || createdAtMs === 0) {
+      stored.createdAt = this.now();
+    }
+    this.records.set(stored.clientIdHash, stored);
     return Promise.resolve();
   }
 
@@ -501,8 +515,10 @@ export class MemoryRouteRefreshBrokerStore
    * exist — never seeded, or aged out past its TTL — is `not_found`, and
    * creation is the seeder's separate `put`. The presented version must equal
    * the stored record's version, and a revoked record refuses every swap. A
-   * rotation keeps the handle's original stored-at instant, so refreshing a
-   * handle upstream does not extend its local lifetime.
+   * replacement that states no status adopts the stored one, so a rotation
+   * cannot silently clear the handle's status. A rotation keeps the handle's
+   * original stored-at instant, so refreshing a handle upstream does not extend
+   * its local lifetime.
    */
   compareAndSwap(
     record: RouteRefreshBrokerRecord,
@@ -526,6 +542,9 @@ export class MemoryRouteRefreshBrokerStore
       ...structuredClone(record),
       version: expectedVersion + 1,
     };
+    if (!swapped.status) {
+      swapped.status = current.status;
+    }
     this.records.set(swapped.handleHash, swapped);
     return Promise.resolve(structuredClone(swapped));
   }
@@ -770,6 +789,24 @@ async function runStoreCase(
       const putStatus =
         typeof params["put_status"] === "string" ? params["put_status"] : "";
       const putVersion = numberParam(params, "put_version", 0);
+      if (testCase.store === "transaction") {
+        const ttlSeconds = numberParam(params, "ttl_seconds", 600);
+        await stores.transaction.put(
+          transactionRecord(
+            key,
+            addSeconds(clock.now(), ttlSeconds),
+            putVersion,
+          ),
+        );
+        const consumed = await stores.transaction.consume(key);
+        // The status is deliberately not reported for the transaction store:
+        // Go hands back the caller's status while this store stamps the consume
+        // outcome on the record, so the two encodings differ by design.
+        return {
+          consume: transactionOutcome(consumed),
+          version: consumed?.version ?? -1,
+        };
+      }
       if (testCase.store === "authorization_code") {
         const ttlSeconds = numberParam(params, "ttl_seconds", 60);
         await stores.authorizationCode.put(
@@ -828,10 +865,16 @@ async function runStoreCase(
       );
     }
     case "put_get_update": {
-      const record = clientRecord(key);
+      // The store's put owns the stored version, so a row that supplies a
+      // put_version above 1 pins that put forces version 1.
+      const record = clientRecord(key, numberParam(params, "put_version", 0));
       await stores.client.put(record);
       const stored = await stores.client.get(key);
-      const updateOutcome = await clientUpdateOutcome(stores, record, 1);
+      const updateOutcome = await clientUpdateOutcome(
+        stores,
+        stored ?? record,
+        stored?.version ?? 1,
+      );
       return {
         get_version: stored?.version ?? 0,
         update: updateOutcome.outcome,
@@ -891,6 +934,23 @@ async function runStoreCase(
       );
       const stale = await brokerSwapOutcome(stores, brokerRecord(key), version);
       return { acquire_lock: acquired, swap: swapped, stale_swap: stale };
+    }
+    case "compare_and_swap_inherits_status": {
+      // A rotation that states no status adopts the stored one, so a swap
+      // against a locked handle stays refreshing rather than clearing it.
+      await seedBrokerRecord(stores, brokerRecord(key, { status: "issued" }));
+      const seeded = await stores.routeRefreshBroker.get(key);
+      await stores.routeRefreshBroker.acquireLock(
+        key,
+        "owner-inherit",
+        seeded?.version ?? 1,
+      );
+      const held = await stores.routeRefreshBroker.get(key);
+      const swapped = await stores.routeRefreshBroker.compareAndSwap(
+        brokerRecord(key, { status: "" }),
+        held?.version ?? 1,
+      );
+      return { status: swapped.status };
     }
     case "compare_and_swap_unknown": {
       // A swap never creates: this handle was never seeded, so the swap is
@@ -1255,7 +1315,11 @@ function tally(
   return counts;
 }
 
-function transactionRecord(key: string, expiresAt: Date): TransactionRecord {
+function transactionRecord(
+  key: string,
+  expiresAt: Date,
+  version = 1,
+): TransactionRecord {
   return {
     stateHash: key,
     clientIdHash: `client-hash:${key}`,
@@ -1273,7 +1337,7 @@ function transactionRecord(key: string, expiresAt: Date): TransactionRecord {
     agentId: "",
     status: "pending",
     expiresAt,
-    version: 1,
+    version,
   };
 }
 
@@ -1304,7 +1368,7 @@ function authorizationCodeRecord(
   };
 }
 
-function clientRecord(key: string): ClientRecord {
+function clientRecord(key: string, version = 1): ClientRecord {
   return {
     clientIdHash: key,
     clientId: "conformance-client",
@@ -1314,7 +1378,7 @@ function clientRecord(key: string): ClientRecord {
     responseTypes: ["code"],
     boundRoute: "https://mcp.example.test/mcp",
     createdAt: new Date(0),
-    version: 1,
+    version,
   };
 }
 

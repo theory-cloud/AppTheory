@@ -14,6 +14,14 @@ import (
 	oauthstore "github.com/theory-cloud/apptheory/v6/runtime/oauth/store"
 )
 
+// frontChannelMaxRequestBodyBytes bounds every front-channel POST body before it
+// is parsed. The bound is a framework default, deliberately not a FacadeConfig
+// field or an environment variable, so no adopter can widen the door; it applies
+// to the raw request bytes and a body strictly larger than it fails closed with
+// invalid_request. The token endpoint consumes it today and the DCR JSON body
+// will inherit the same bound, so the name stays endpoint-neutral.
+const frontChannelMaxRequestBodyBytes = 16384
+
 // Status values the front channel writes into the store records it mints.
 const (
 	frontChannelTransactionStatusPending = "pending"
@@ -93,6 +101,9 @@ func normalizeFrontChannel(config FacadeConfig) (*frontChannelConfig, error) {
 	}
 	if config.AuthorizeHandler != nil || config.TokenHandler != nil {
 		return nil, fmt.Errorf("mcpfacade: Provider owns the authorize and token routes; AuthorizeHandler and TokenHandler must not be configured with a front channel")
+	}
+	if config.RegisterHandler != nil {
+		return nil, fmt.Errorf("mcpfacade: Provider owns the register route; RegisterHandler must not be configured with a front channel")
 	}
 	if config.CallbackHandler != nil {
 		return nil, fmt.Errorf("mcpfacade: Provider owns the stage-global callback; CallbackHandler must not be configured with a front channel")
@@ -522,7 +533,11 @@ func (config normalizedConfig) handleToken(kind mcproutes.EndpointKind, ctx *app
 	if config.frontChannel == nil {
 		return nil, errFrontChannelMissing
 	}
-	form, err := url.ParseQuery(string(ctx.Request.Body))
+	body := ctx.Request.Body
+	if len(body) > frontChannelMaxRequestBodyBytes {
+		return facadeErrorPage(400, facadeErrorInvalidRequest), nil
+	}
+	form, err := url.ParseQuery(string(body))
 	if err != nil {
 		return facadeErrorPage(400, facadeErrorInvalidRequest), nil
 	}
@@ -839,7 +854,13 @@ func registeredRedirectURI(registered []string, requested string) bool {
 }
 
 // loopbackRedirectMatch allows the ephemeral-port form of RFC 8252 §7.3: a
-// loopback IP-literal redirect may be presented with a different port.
+// loopback redirect URI matches on scheme, host, path, query, and fragment while
+// the port alone is free to differ — or to be absent on either side — because a
+// native client obtains its loopback port from the OS at request time. The port
+// is therefore the only component excluded from the comparison, so the match
+// never widens beyond the client's own registered loopback redirect: the host
+// must be the same loopback host and the scheme/path/query/fragment must match
+// exactly (DESIGN §8.1, "loopback port flexibility only").
 func loopbackRedirectMatch(registered, requested string) bool {
 	registeredURL, ok := parseAbsoluteURL(registered)
 	if !ok {
@@ -852,16 +873,16 @@ func loopbackRedirectMatch(registered, requested string) bool {
 	if !isLoopbackHost(registeredURL.Hostname()) || !isLoopbackHost(requestedURL.Hostname()) {
 		return false
 	}
+	if !strings.EqualFold(registeredURL.Hostname(), requestedURL.Hostname()) {
+		return false
+	}
 	if registeredURL.Scheme != requestedURL.Scheme || registeredURL.Path != requestedURL.Path {
 		return false
 	}
 	if registeredURL.RawQuery != requestedURL.RawQuery || registeredURL.Fragment != requestedURL.Fragment {
 		return false
 	}
-	if registeredURL.Port() == "" || requestedURL.Port() == "" {
-		return false
-	}
-	return registeredURL.Port() != requestedURL.Port()
+	return true
 }
 
 func isLoopbackHost(hostname string) bool {
@@ -944,6 +965,15 @@ func (config normalizedConfig) authorizeHandlerFor(kind mcproutes.EndpointKind) 
 func (config normalizedConfig) tokenHandlerFor(kind mcproutes.EndpointKind) apptheory.Handler {
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		return config.handleToken(kind, ctx)
+	}
+}
+
+// registerHandlerFor builds the framework-owned per-kind RFC 7591 registration
+// handler. It is only called when the front-channel field set is declared, so
+// the route is mounted exactly when the facade owns the OAuth surface.
+func (config normalizedConfig) registerHandlerFor(kind mcproutes.EndpointKind) apptheory.Handler {
+	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return config.handleRegister(kind, ctx)
 	}
 }
 

@@ -1,9 +1,12 @@
 package mcpfacade
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/url"
+	"os"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -305,6 +308,289 @@ func TestFrontChannelAuthorizeRejectsUnknownClientAndRedirectWithoutRedirect(t *
 	unmatched := harness.authorize(func(query url.Values) { query.Set("redirect_uri", "https://evil.example/cb") })
 	require.Equal(t, 400, unmatched.Status)
 	require.Empty(t, locationOf(unmatched))
+}
+
+// facadeConformanceFixture is the shared MCP auth facade conformance table,
+// loaded from runtime/mcpfacade/ two levels below the module root.
+const facadeConformanceFixture = "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-conformance.v1.json"
+
+// redirectMatchGroup names the fixture group this loader executes.
+const redirectMatchGroup = "redirect_match"
+
+// redirectMatchCaseCount is the number of redirect_match rows the shared fixture
+// must carry; a change to the table must also be a deliberate edit in the Go,
+// TypeScript, and Python loaders, so no runtime can silently execute a smaller
+// table.
+const redirectMatchCaseCount = 11
+
+// formParseGroup names the /token request-body rule group the same shared table
+// carries, executed below through the real token handler.
+const formParseGroup = "form_parse"
+
+// formParseCaseCount is the number of form_parse rows the shared fixture must
+// carry; a change to the table must also be a deliberate edit in the Go,
+// TypeScript, and Python loaders, so no runtime can silently execute a smaller
+// table.
+const formParseCaseCount = 11
+
+// formParseConformanceDocument and formParseCase are the form_parse rows: the
+// small rows carry a literal body, and the bound rows carry a body_prefix padded
+// with "a" out to exactly total_bytes.
+type formParseConformanceDocument struct {
+	Cases []formParseCase `json:"cases"`
+}
+
+type formParseCase struct {
+	ID          string `json:"id"`
+	Group       string `json:"group"`
+	Body        string `json:"body"`
+	BodyPrefix  string `json:"body_prefix"`
+	TotalBytes  int    `json:"total_bytes"`
+	ExpectError string `json:"expect_error"`
+}
+
+// requestBody builds the raw body the row presents.
+func (row formParseCase) requestBody() []byte {
+	if row.TotalBytes == 0 {
+		return []byte(row.Body)
+	}
+	prefix := []byte(row.BodyPrefix)
+	return append(prefix, bytes.Repeat([]byte("a"), row.TotalBytes-len(prefix))...)
+}
+
+// label keeps a failure message readable for a bound row, whose literal body is
+// 16 KiB of padding.
+func (row formParseCase) label() string {
+	if row.TotalBytes == 0 {
+		return row.Body
+	}
+	return row.BodyPrefix + "<pad>"
+}
+
+type redirectMatchConformanceDocument struct {
+	Cases []redirectMatchCase `json:"cases"`
+}
+
+type redirectMatchCase struct {
+	ID         string   `json:"id"`
+	Group      string   `json:"group"`
+	Registered []string `json:"registered"`
+	Requested  string   `json:"requested"`
+	Expect     string   `json:"expect"`
+}
+
+func loadFacadeConformanceFixture(t *testing.T, target any) {
+	t.Helper()
+	body, err := os.ReadFile(facadeConformanceFixture) // #nosec G304 -- path is a fixed test fixture path built from a constant directory.
+	require.NoErrorf(t, err, "read shared fixture %s", facadeConformanceFixture)
+	require.NoErrorf(t, json.Unmarshal(body, target), "decode shared fixture %s", facadeConformanceFixture)
+}
+
+// TestFrontChannelAuthorizeEnforcesTheSharedRedirectMatchTable pins the RFC 8252
+// §7.3 loopback redirect rule to the shared cross-runtime table through the real
+// /authorize handler: an accepted row reaches the upstream redirect (302) and a
+// refused row renders the pre-redirect 400 error page with no Location, so the
+// open-redirect defense is proven end to end rather than against the matcher
+// alone.
+func TestFrontChannelAuthorizeEnforcesTheSharedRedirectMatchTable(t *testing.T) {
+	var document redirectMatchConformanceDocument
+	loadFacadeConformanceFixture(t, &document)
+
+	rows := make([]redirectMatchCase, 0, len(document.Cases))
+	for _, row := range document.Cases {
+		require.NotEmptyf(t, row.Group, "case %q must carry a group", row.ID)
+		if row.Group == redirectMatchGroup {
+			rows = append(rows, row)
+		}
+	}
+	require.Equalf(t, redirectMatchCaseCount, len(rows), "loaded %d %q cases", len(rows), redirectMatchGroup)
+
+	harness := newFrontChannelHarness(t)
+	executed := 0
+	for _, row := range rows {
+		executed++
+		t.Run(row.ID, func(t *testing.T) {
+			clientID := "redirect-match-" + row.ID
+			require.NoError(t, harness.stores.Client.Put(context.Background(), &oauthstore.ClientRecord{
+				ClientIDHash:            oauthstore.HashKey(clientID),
+				ClientID:                clientID,
+				RedirectURIs:            append([]string(nil), row.Registered...),
+				TokenEndpointAuthMethod: "none",
+			}))
+
+			response := harness.authorize(func(query url.Values) {
+				query.Set("client_id", clientID)
+				query.Set("redirect_uri", row.Requested)
+			})
+
+			switch row.Expect {
+			case "accept":
+				require.Equalf(t, 302, response.Status, "registered %v, requested %q", row.Registered, row.Requested)
+			case "reject":
+				require.Equalf(t, 400, response.Status, "registered %v, requested %q", row.Registered, row.Requested)
+				require.Emptyf(t, locationOf(response), "registered %v, requested %q", row.Registered, row.Requested)
+			default:
+				t.Fatalf("unknown expect %q", row.Expect)
+			}
+		})
+	}
+
+	require.Equalf(t, redirectMatchCaseCount, executed, "executed %d %q cases", executed, redirectMatchGroup)
+}
+
+// TestFrontChannelTokenEnforcesTheSharedFormParseTable pins the one bounded,
+// strict /token request-body rule to the shared cross-runtime table through the
+// real handler: Go's url.ParseQuery is the reference, so a `;` separator or a
+// malformed percent escape is invalid_request for the whole body, a repeat key
+// keeps its first occurrence, and a raw body strictly larger than the 16384-byte
+// framework bound fails closed before any parse.
+func TestFrontChannelTokenEnforcesTheSharedFormParseTable(t *testing.T) {
+	var document formParseConformanceDocument
+	loadFacadeConformanceFixture(t, &document)
+
+	rows := make([]formParseCase, 0, len(document.Cases))
+	for _, row := range document.Cases {
+		require.NotEmptyf(t, row.Group, "case %q must carry a group", row.ID)
+		if row.Group == formParseGroup {
+			rows = append(rows, row)
+		}
+	}
+	require.Equalf(t, formParseCaseCount, len(rows), "loaded %d %q cases", len(rows), formParseGroup)
+
+	harness := newFrontChannelHarness(t)
+	executed := 0
+	for _, row := range rows {
+		executed++
+		t.Run(row.ID, func(t *testing.T) {
+			body := row.requestBody()
+			if row.TotalBytes != 0 {
+				require.Lenf(t, body, row.TotalBytes, "case %q must present exactly %d body bytes", row.ID, row.TotalBytes)
+			}
+
+			response := harness.serve("POST", harness.path(mcproutes.EndpointPath.OAuthTokenPath), nil, body)
+			require.Equalf(t, 400, response.Status, "body %q", row.label())
+
+			var payload struct {
+				Error string `json:"error"`
+			}
+			require.NoErrorf(t, json.Unmarshal(response.Body, &payload), "decode %q response", row.ID)
+			require.Equalf(t, row.ExpectError, payload.Error, "body %q", row.label())
+		})
+	}
+
+	require.Equalf(t, formParseCaseCount, executed, "executed %d %q cases", executed, formParseGroup)
+}
+
+// methodStatusGroup names the route-model method-mismatch group the same shared
+// table carries, executed below through the real mounted app.
+const methodStatusGroup = "method_status"
+
+// methodStatusCaseCount is the number of method_status rows the shared fixture
+// must carry; a change to the table must also be a deliberate edit in the Go,
+// TypeScript, and Python loaders, so no runtime can silently execute a smaller
+// table.
+const methodStatusCaseCount = 10
+
+// methodStatusConformanceDocument and methodStatusCase are the method_status
+// rows: a mounted path with an unsupported method answers 405 with a sorted
+// allow header, and a path that is not mounted at all answers 404 with no allow.
+type methodStatusConformanceDocument struct {
+	Cases []methodStatusCase `json:"cases"`
+}
+
+type methodStatusCase struct {
+	ID           string   `json:"id"`
+	Group        string   `json:"group"`
+	Route        string   `json:"route"`
+	Method       string   `json:"method"`
+	ExpectStatus int      `json:"expect_status"`
+	ExpectAllow  []string `json:"expect_allow"`
+}
+
+// methodStatusRoutePath resolves a row's route key to the concrete path the
+// facade mounts, deriving every mounted path from the framework's route-algebra
+// helpers rather than a hard-coded string. The unmounted_token and unknown keys
+// are deliberately not mounted: the first is a bare MCP path with a trailing
+// segment, and the second is a path no kind's pattern can match.
+func (h *frontChannelHarness) methodStatusRoutePath(key string) string {
+	h.t.Helper()
+	switch key {
+	case "mcp":
+		return h.path(mcproutes.EndpointPath.MCPPath)
+	case "token":
+		return h.path(mcproutes.EndpointPath.OAuthTokenPath)
+	case "authorize":
+		return h.path(mcproutes.EndpointPath.OAuthAuthorizePath)
+	case "callback":
+		return mcproutes.DefaultCallbackPath
+	case "discovery_canonical":
+		return h.path(mcproutes.EndpointPath.OAuthAuthorizationServerPath)
+	case "discovery_suffix":
+		return h.path(mcproutes.EndpointPath.OAuthAuthorizationServerSuffixPath)
+	case "protected_resource":
+		return h.path(mcproutes.EndpointPath.ProtectedResourcePath)
+	case "unmounted_token":
+		return h.path(mcproutes.EndpointPath.MCPPath) + "/token"
+	case "unknown":
+		return "/unknown/mcp/path"
+	default:
+		h.t.Fatalf("unknown method_status route key %q", key)
+		return ""
+	}
+}
+
+// allowMethods returns the sorted methods the response's allow header lists, or
+// an empty list when the header is absent or empty.
+func allowMethods(response apptheory.Response) []string {
+	values := response.Headers["allow"]
+	if len(values) == 0 || strings.TrimSpace(values[0]) == "" {
+		return []string{}
+	}
+	parts := strings.Split(values[0], ",")
+	methods := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			methods = append(methods, trimmed)
+		}
+	}
+	sort.Strings(methods)
+	return methods
+}
+
+// TestFrontChannelMethodStatusEnforcesTheSharedTable pins the route-model
+// method-mismatch contract to the shared cross-runtime table through the real
+// mounted app: a mounted path with an unsupported method answers 405 with an
+// allow header listing the permitted methods, and a path that is not mounted at
+// all answers 404 with no allow header.
+func TestFrontChannelMethodStatusEnforcesTheSharedTable(t *testing.T) {
+	var document methodStatusConformanceDocument
+	loadFacadeConformanceFixture(t, &document)
+
+	rows := make([]methodStatusCase, 0, len(document.Cases))
+	for _, row := range document.Cases {
+		require.NotEmptyf(t, row.Group, "case %q must carry a group", row.ID)
+		if row.Group == methodStatusGroup {
+			rows = append(rows, row)
+		}
+	}
+	require.Equalf(t, methodStatusCaseCount, len(rows), "loaded %d %q cases", len(rows), methodStatusGroup)
+
+	harness := newFrontChannelHarness(t)
+	executed := 0
+	for _, row := range rows {
+		executed++
+		t.Run(row.ID, func(t *testing.T) {
+			response := harness.serve(row.Method, harness.methodStatusRoutePath(row.Route), nil, nil)
+
+			require.Equalf(t, row.ExpectStatus, response.Status, "route %q method %q", row.Route, row.Method)
+			require.Equalf(t, row.ExpectAllow, allowMethods(response), "route %q method %q", row.Route, row.Method)
+			if row.ExpectStatus == 404 {
+				require.Emptyf(t, response.Headers["allow"], "route %q method %q must carry no allow header", row.Route, row.Method)
+			}
+		})
+	}
+
+	require.Equalf(t, methodStatusCaseCount, executed, "executed %d %q cases", executed, methodStatusGroup)
 }
 
 // TestFrontChannelAuthorizeRequiresFreshS256PKCE pins T3: an absent challenge

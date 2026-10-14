@@ -2,14 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   DEFAULT_CALLBACK_PATH,
   createApp,
   hashKey,
+  mcpPath,
+  oauthAuthorizationServerPath,
+  oauthAuthorizationServerSuffixPath,
   oauthAuthorizePath,
+  oauthRegisterPath,
   oauthTokenPath,
   pkceChallengeS256,
+  protectedResourcePath,
   registerMcpFacade,
 } from "../dist/index.js";
 import {
@@ -35,6 +43,165 @@ const UPSTREAM_CODE = "upstream-authorization-code";
 const UPSTREAM_REFRESH_TOKEN = "upstream-refresh-token-value";
 const CLIENT_STATE = "client-state-1";
 const VERIFIER = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTU";
+
+// ---------------------------------------------------------------------------
+// Shared conformance fixture (the same table the Go and Python loaders read)
+// ---------------------------------------------------------------------------
+
+const FIXTURE_DIR = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "contract-tests",
+  "fixtures",
+  "routing",
+  "mcp-auth-facade",
+);
+
+const FIXTURE_NAME = "facade-conformance.v1.json";
+
+const REDIRECT_MATCH_GROUP = "redirect_match";
+
+/**
+ * The number of redirect_match rows the shared table must carry; a change to the
+ * table must also be a deliberate edit in the Go and Python loaders, so no
+ * runtime can silently execute a smaller table.
+ */
+const REDIRECT_MATCH_CASE_COUNT = 11;
+
+const FORM_PARSE_GROUP = "form_parse";
+
+/**
+ * The number of form_parse rows the shared table must carry; a change to the
+ * table must also be a deliberate edit in the Go and Python loaders, so no
+ * runtime can silently execute a smaller table.
+ */
+const FORM_PARSE_CASE_COUNT = 11;
+
+const METHOD_STATUS_GROUP = "method_status";
+
+/**
+ * The number of method_status rows the shared table must carry; a change to the
+ * table must also be a deliberate edit in the Go and Python loaders, so no
+ * runtime can silently execute a smaller table.
+ */
+const METHOD_STATUS_CASE_COUNT = 10;
+
+const DCR_GROUP = "dcr";
+
+/**
+ * The number of dcr rows the shared table must carry; a change to the table must
+ * also be a deliberate edit in the Go and Python loaders, so no runtime can
+ * silently execute a smaller table.
+ */
+const DCR_CASE_COUNT = 10;
+
+/**
+ * The number of bytes the serialized `pad` member adds around its "a" run:
+ * `,"pad":"` plus `"}`.
+ */
+const DCR_FRAME_OVERHEAD =
+  Buffer.byteLength(`,"pad":"`) + Buffer.byteLength(`"}`);
+
+/**
+ * Builds the raw body a form_parse row presents: the small rows carry a literal
+ * body, and the bound rows carry `body_prefix` padded with "a" out to exactly
+ * `total_bytes`, so the row pins the byte length the handler sees.
+ */
+function formParseBody(row) {
+  if (row.total_bytes === undefined) {
+    return row.body ?? "";
+  }
+  const prefix = row.body_prefix ?? "";
+  const pad = Math.max(row.total_bytes - Buffer.byteLength(prefix, "utf8"), 0);
+  return prefix + "a".repeat(pad);
+}
+
+/**
+ * Keeps a failure message readable for a bound row, whose literal body is 16 KiB
+ * of padding.
+ */
+function formParseLabel(row) {
+  if (row.total_bytes === undefined) {
+    return JSON.stringify(row.body ?? "");
+  }
+  return `${row.body_prefix}<pad>`;
+}
+
+/**
+ * Builds the raw body a dcr row presents: the row's JSON request verbatim, or,
+ * for a padded row, that request plus one ignored `pad` member sized so the
+ * serialized body is exactly `pad_to_bytes` bytes.
+ */
+function dcrBody(row) {
+  const compact = JSON.stringify(row.request ?? {});
+  if (row.pad_to_bytes === undefined || row.pad_to_bytes === 0) {
+    return Buffer.from(compact, "utf8");
+  }
+  const padding =
+    row.pad_to_bytes -
+    (Buffer.byteLength(compact, "utf8") - 1) -
+    DCR_FRAME_OVERHEAD;
+  if (padding < 1) {
+    throw new Error(`row ${row.id} cannot pad to ${row.pad_to_bytes} bytes`);
+  }
+  return Buffer.from(
+    `${compact.slice(0, -1)},"pad":"${"a".repeat(padding)}"}`,
+    "utf8",
+  );
+}
+
+function loadFixture() {
+  return JSON.parse(readFileSync(path.join(FIXTURE_DIR, FIXTURE_NAME), "utf8"));
+}
+
+/**
+ * Resolves a method_status row's route key to the concrete path the facade
+ * mounts, deriving every mounted path from the framework's route-algebra helpers
+ * rather than a hard-coded string. `unmounted_token` and `unknown` are
+ * deliberately not mounted: the first is a bare MCP path with a trailing
+ * segment, and the second is a path no kind's pattern can match.
+ */
+function methodStatusRoutePath(endpoint, key) {
+  switch (key) {
+    case "mcp":
+      return mcpPath(endpoint);
+    case "token":
+      return oauthTokenPath(endpoint);
+    case "authorize":
+      return oauthAuthorizePath(endpoint);
+    case "callback":
+      return DEFAULT_CALLBACK_PATH;
+    case "discovery_canonical":
+      return oauthAuthorizationServerPath(endpoint);
+    case "discovery_suffix":
+      return oauthAuthorizationServerSuffixPath(endpoint);
+    case "protected_resource":
+      return protectedResourcePath(endpoint);
+    case "unmounted_token":
+      return `${mcpPath(endpoint)}/token`;
+    case "unknown":
+      return "/unknown/mcp/path";
+    default:
+      throw new Error(`unknown method_status route key ${JSON.stringify(key)}`);
+  }
+}
+
+/**
+ * Returns the sorted methods the response's allow header lists, or an empty
+ * list when the header is absent or empty.
+ */
+function allowMethods(response) {
+  const raw = firstHeader(response.headers, "allow");
+  if (raw === undefined || raw.trim() === "") {
+    return [];
+  }
+  return raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part !== "")
+    .sort();
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -329,6 +496,9 @@ async function newFrontChannelHarness(t) {
     stores,
     broker,
     kind,
+    endpoint,
+    tokenPath: oauthTokenPath(endpoint),
+    registerPath: oauthRegisterPath(endpoint),
     authorize,
     callback,
     authorizeAndCallback,
@@ -355,10 +525,7 @@ test("hashKey is the unpadded base64url SHA-256 digest", () => {
     .update("abc", "utf8")
     .digest("base64url");
   assert.equal(hashKey("abc"), expected);
-  assert.equal(
-    hashKey("abc"),
-    "ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0",
-  );
+  assert.equal(hashKey("abc"), "ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0");
   assert.ok(!hashKey("abc").includes("="));
 });
 
@@ -394,6 +561,199 @@ test("authorize rejects unknown client and unmatched redirect without redirect",
   });
   assert.equal(unmatched.status, 400);
   assert.equal(locationOf(unmatched), "");
+});
+
+test("authorize enforces the shared redirect_match table through the real handler", async (t) => {
+  const rows = (loadFixture().cases ?? []).filter(
+    (row) => row.group === REDIRECT_MATCH_GROUP,
+  );
+  assert.equal(rows.length, REDIRECT_MATCH_CASE_COUNT);
+
+  const harness = await newFrontChannelHarness(t);
+  let executed = 0;
+  for (const row of rows) {
+    executed += 1;
+    const clientId = `redirect-match-${row.id}`;
+    await harness.stores.client.put({
+      clientIdHash: hashKey(clientId),
+      clientId,
+      redirectUris: [...row.registered],
+      tokenEndpointAuthMethod: "none",
+      grantTypes: [],
+      responseTypes: [],
+      boundRoute: "",
+      createdAt: new Date(0),
+      version: 0,
+    });
+
+    const response = await harness.authorize((query) => {
+      query.client_id = [clientId];
+      query.redirect_uri = [row.requested];
+    });
+
+    const context = `registered ${JSON.stringify(row.registered)}, requested ${row.requested}`;
+    if (row.expect === "accept") {
+      assert.equal(response.status, 302, context);
+    } else if (row.expect === "reject") {
+      assert.equal(response.status, 400, context);
+      assert.equal(locationOf(response), "", context);
+    } else {
+      assert.fail(`unknown expect ${JSON.stringify(row.expect)}`);
+    }
+  }
+  assert.equal(executed, REDIRECT_MATCH_CASE_COUNT);
+});
+
+test("token enforces the shared form_parse table through the real handler", async (t) => {
+  const rows = (loadFixture().cases ?? []).filter(
+    (row) => row.group === FORM_PARSE_GROUP,
+  );
+  assert.equal(rows.length, FORM_PARSE_CASE_COUNT);
+
+  const harness = await newFrontChannelHarness(t);
+  let executed = 0;
+  for (const row of rows) {
+    executed += 1;
+    const body = formParseBody(row);
+    if (row.total_bytes !== undefined) {
+      assert.equal(
+        Buffer.byteLength(body, "utf8"),
+        row.total_bytes,
+        `case ${row.id} must present exactly ${row.total_bytes} body bytes`,
+      );
+    }
+
+    const response = await harness.serve(
+      "POST",
+      harness.tokenPath,
+      null,
+      Buffer.from(body, "utf8"),
+    );
+    const context = formParseLabel(row);
+    assert.equal(response.status, 400, context);
+    const payload = JSON.parse(bodyString(response));
+    assert.equal(payload.error, row.expect_error, context);
+  }
+  assert.equal(executed, FORM_PARSE_CASE_COUNT);
+});
+
+test("method status enforces the shared method_status table through the real mounted app", async (t) => {
+  const rows = (loadFixture().cases ?? []).filter(
+    (row) => row.group === METHOD_STATUS_GROUP,
+  );
+  assert.equal(rows.length, METHOD_STATUS_CASE_COUNT);
+
+  const harness = await newFrontChannelHarness(t);
+  let executed = 0;
+  for (const row of rows) {
+    executed += 1;
+    const path = methodStatusRoutePath(harness.endpoint, row.route);
+    const response = await harness.serve(row.method, path, null, null);
+    const context = `route ${JSON.stringify(row.route)} method ${row.method}`;
+    assert.equal(response.status, row.expect_status, context);
+    assert.deepEqual(allowMethods(response), row.expect_allow, context);
+    if (row.expect_status === 404) {
+      assert.equal(firstHeader(response.headers, "allow"), undefined, context);
+    }
+  }
+  assert.equal(executed, METHOD_STATUS_CASE_COUNT);
+});
+
+test("register enforces the shared dcr table through the real mounted handler", async (t) => {
+  const rows = (loadFixture().cases ?? []).filter(
+    (row) => row.group === DCR_GROUP,
+  );
+  assert.equal(rows.length, DCR_CASE_COUNT);
+
+  let executed = 0;
+  for (const row of rows) {
+    executed += 1;
+    // A fresh harness per row: the per-route registration bucket is
+    // deterministic, so the rate-limited row's eleventh attempt is the first
+    // refusal.
+    const harness = await newFrontChannelHarness(t);
+    const body = dcrBody(row);
+    if (row.pad_to_bytes !== undefined && row.pad_to_bytes !== 0) {
+      assert.equal(
+        Buffer.byteLength(body, "utf8"),
+        row.pad_to_bytes,
+        `row ${row.id} must present exactly ${row.pad_to_bytes} body bytes`,
+      );
+    }
+
+    const repeat = row.repeat >= 1 ? row.repeat : 1;
+    let response;
+    for (let attempt = 0; attempt < repeat; attempt += 1) {
+      response = await harness.serve("POST", harness.registerPath, null, body);
+    }
+
+    const context = `row ${row.id}`;
+    assert.equal(response.status, row.expect_status, context);
+    const scanned = bodyString(response);
+    const payload = JSON.parse(scanned);
+    for (const token of row.expect_body_has) {
+      assert.ok(
+        scanned.includes(token),
+        `${context} body must include ${token}`,
+      );
+    }
+    for (const token of row.expect_body_absent) {
+      assert.ok(
+        !scanned.includes(token),
+        `${context} body must not include ${token}`,
+      );
+    }
+    if (row.expect_no_store) {
+      assert.equal(
+        firstHeader(response.headers, "cache-control"),
+        "no-store",
+        context,
+      );
+      assert.equal(
+        firstHeader(response.headers, "pragma"),
+        "no-cache",
+        context,
+      );
+    }
+    if (row.expect_header !== undefined && row.expect_header !== "") {
+      const value = firstHeader(response.headers, row.expect_header);
+      assert.notEqual(
+        value,
+        undefined,
+        `${context} must carry ${row.expect_header}`,
+      );
+      const seconds = Number.parseInt(value, 10);
+      assert.ok(
+        Number.isInteger(seconds) && seconds >= 1,
+        `${context} must not ask for a retry sooner than one second`,
+      );
+    }
+    if (row.expect_status === 201) {
+      const clientId = payload.client_id;
+      assert.ok(
+        typeof clientId === "string" && clientId.length >= 22,
+        `${context} must mint an id of at least 128 bits`,
+      );
+      assert.ok(
+        Object.hasOwn(payload, "client_id_issued_at"),
+        `${context} must carry client_id_issued_at`,
+      );
+      const record = await harness.stores.client.get(hashKey(clientId));
+      assert.notEqual(
+        record,
+        null,
+        `${context} must persist the registered client`,
+      );
+      assert.equal(record.tokenEndpointAuthMethod, "none", context);
+      assert.ok(record.redirectUris.length > 0, context);
+      assert.equal(
+        record.boundRoute,
+        `${BASE_URL}${mcpPath(harness.endpoint)}`,
+        `${context} must bind the client to the advertising route`,
+      );
+    }
+  }
+  assert.equal(executed, DCR_CASE_COUNT);
 });
 
 test("authorize requires fresh S256 PKCE and refuses a plain challenge", async (t) => {
@@ -559,9 +919,7 @@ test("a wrong verifier and an unknown code produce identical invalid_grant bodie
   assert.equal(wrong.status, 400);
   assert.match(bodyString(wrong), /"error":"invalid_grant"/);
 
-  const unknown = await harness.token(
-    harness.tokenForm("never-minted-code"),
-  );
+  const unknown = await harness.token(harness.tokenForm("never-minted-code"));
   assert.equal(unknown.status, 400);
   assert.equal(bodyString(wrong), bodyString(unknown));
 });

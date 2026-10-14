@@ -6,6 +6,7 @@ import threading
 import time
 import unittest
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from apptheory import (
@@ -43,6 +44,54 @@ FRONT_TEST_RESOURCE = FRONT_TEST_BASE_URL + "/acme/mcp"
 FRONT_TEST_VERIFIER = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTU"
 FRONT_TEST_WRONG_VERIFIER = "WRONGVERIFIERWRONGVERIFIERWRONGVERIFIER1234567890"
 FRONT_TEST_TIMEOUT_SECONDS = 10.0
+
+# ---------------------------------------------------------------------------
+# Shared conformance fixture (the same table the Go and TypeScript loaders read)
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FIXTURE_DIR = REPO_ROOT / "contract-tests" / "fixtures" / "routing" / "mcp-auth-facade"
+FIXTURE_NAME = "facade-conformance.v1.json"
+
+REDIRECT_MATCH_GROUP = "redirect_match"
+
+# The number of redirect_match rows the shared table must carry; a change to the
+# table must also be a deliberate edit in the Go and TypeScript loaders, so no
+# runtime can silently execute a smaller table.
+REDIRECT_MATCH_CASE_COUNT = 11
+
+FORM_PARSE_GROUP = "form_parse"
+
+# The number of form_parse rows the shared table must carry; a change to the
+# table must also be a deliberate edit in the Go and TypeScript loaders, so no
+# runtime can silently execute a smaller table.
+FORM_PARSE_CASE_COUNT = 11
+
+METHOD_STATUS_GROUP = "method_status"
+
+# The number of method_status rows the shared table must carry; a change to the
+# table must also be a deliberate edit in the Go and TypeScript loaders, so no
+# runtime can silently execute a smaller table.
+METHOD_STATUS_CASE_COUNT = 10
+
+DCR_GROUP = "dcr"
+
+# The number of dcr rows the shared table must carry; a change to the table must
+# also be a deliberate edit in the Go, TypeScript, and Python loaders, so no
+# runtime can silently execute a smaller table.
+DCR_CASE_COUNT = 10
+
+# The number of requests a dcr row sends when it carries no explicit repeat.
+DCR_DEFAULT_REPEAT = 1
+
+# The bytes the serialized pad member adds around its "a" run: `,"pad":"` plus
+# `"}`.
+DCR_PAD_FRAME_OVERHEAD = len(',"pad":"') + len('"}')
+
+
+def _load_fixture() -> dict:
+    with (FIXTURE_DIR / FIXTURE_NAME).open("r", encoding="utf-8") as handle:
+        return json.load(handle)
 
 
 class _ManualClock:
@@ -280,6 +329,9 @@ class _FrontChannelHarness:
     def token(self, form: dict[str, list[str]]) -> Response:
         return self.serve("POST", self.endpoint.oauth_token_path(), None, urlencode(form, doseq=True).encode())
 
+    def register(self, body: bytes) -> Response:
+        return self.serve("POST", self.endpoint.oauth_register_path(), None, body)
+
     def mint_access_token(self) -> str:
         return self.provider.mint_access_token()
 
@@ -370,6 +422,241 @@ class FrontChannelAuthorizeTests(unittest.TestCase):
         response = harness.authorize(lambda query: query.__setitem__("resource", [FRONT_TEST_BASE_URL + "/other/mcp"]))
         self.assertEqual(302, response.status)
         self.assertEqual("invalid_target", _location_query(response).get("error"))
+
+
+class FrontChannelRedirectMatchConformanceTests(unittest.TestCase):
+    """Pins the RFC 8252 section 7.3 loopback redirect rule to the shared
+    cross-runtime table through the real ``/authorize`` handler: an accepted row
+    reaches the upstream redirect (302), and a refused row renders the
+    pre-redirect 400 error page with no ``Location``, so the open-redirect
+    defense is proven end to end rather than against the matcher alone.
+    """
+
+    def test_authorize_enforces_the_shared_redirect_match_table(self) -> None:
+        rows = [case for case in _load_fixture()["cases"] if case["group"] == REDIRECT_MATCH_GROUP]
+        self.assertEqual(REDIRECT_MATCH_CASE_COUNT, len(rows))
+
+        harness = _FrontChannelHarness(self)
+        executed = 0
+        for row in rows:
+            with self.subTest(case=row["id"]):
+                client_id = "redirect-match-" + row["id"]
+                harness.stores.client.put(
+                    ClientRecord(
+                        client_id_hash=hash_key(client_id),
+                        client_id=client_id,
+                        redirect_uris=list(row["registered"]),
+                        token_endpoint_auth_method="none",
+                    )
+                )
+
+                def select(
+                    query: dict,
+                    _client_id: str = client_id,
+                    _requested: str = row["requested"],
+                ) -> None:
+                    query["client_id"] = [_client_id]
+                    query["redirect_uri"] = [_requested]
+
+                response = harness.authorize(select)
+                context = f"registered {row['registered']!r}, requested {row['requested']!r}"
+                if row["expect"] == "accept":
+                    self.assertEqual(302, response.status, context)
+                elif row["expect"] == "reject":
+                    self.assertEqual(400, response.status, context)
+                    self.assertEqual("", _location(response), context)
+                else:
+                    self.fail(f"unknown expect {row['expect']!r}")
+                executed += 1
+        print(f"redirect match conformance: {executed} cases run")
+        self.assertEqual(REDIRECT_MATCH_CASE_COUNT, executed)
+
+
+def _form_parse_body(row: dict) -> bytes:
+    """Build the raw /token body a form_parse row presents: the literal body, or
+    body_prefix padded with "a" out to exactly total_bytes."""
+    total = row.get("total_bytes")
+    if not total:
+        return str(row.get("body") or "").encode("utf-8")
+    prefix = str(row.get("body_prefix") or "").encode("utf-8")
+    return prefix + b"a" * (int(total) - len(prefix))
+
+
+class FrontChannelFormParseConformanceTests(unittest.TestCase):
+    """Pins the one bounded, strict ``/token`` request-body rule to the shared
+    cross-runtime table through the real token handler: Go's ``url.ParseQuery``
+    is the reference, so a ``;`` separator or a malformed percent escape fails
+    the whole body (``invalid_request``), a repeated key keeps its first
+    occurrence, and a raw body strictly larger than the 16384-byte framework
+    bound fails closed before any parse.
+    """
+
+    def test_token_enforces_the_shared_form_parse_table(self) -> None:
+        rows = [case for case in _load_fixture()["cases"] if case["group"] == FORM_PARSE_GROUP]
+        self.assertEqual(FORM_PARSE_CASE_COUNT, len(rows))
+
+        harness = _FrontChannelHarness(self)
+        executed = 0
+        for row in rows:
+            with self.subTest(case=row["id"]):
+                response = harness.serve("POST", harness.endpoint.oauth_token_path(), None, _form_parse_body(row))
+                self.assertEqual(400, response.status, row["id"])
+                payload = json.loads(response.body.decode("utf-8"))
+                self.assertEqual(row["expect_error"], payload.get("error"), row["id"])
+                executed += 1
+        print(f"form parse conformance: {executed} cases run")
+        self.assertEqual(FORM_PARSE_CASE_COUNT, executed)
+
+
+def _allow_methods(response: Response) -> list[str]:
+    """Returns the sorted methods the response's ``allow`` header lists, or an
+    empty list when the header is absent or empty."""
+    values = response.headers.get("allow") or []
+    if not values:
+        return []
+    return sorted(part.strip() for part in str(values[0]).split(",") if part.strip())
+
+
+def _method_status_route_path(endpoint: EndpointPath, key: str) -> str:
+    """Resolves a method_status row's route key to the concrete path the facade
+    mounts, deriving every mounted path from the framework's route-algebra helpers
+    rather than a hard-coded string. ``unmounted_token`` and ``unknown`` are
+    deliberately not mounted: the first is a bare MCP path with a trailing
+    segment, and the second is a path no kind's pattern can match."""
+    if key == "mcp":
+        return endpoint.mcp_path()
+    if key == "token":
+        return endpoint.oauth_token_path()
+    if key == "authorize":
+        return endpoint.oauth_authorize_path()
+    if key == "callback":
+        return DEFAULT_CALLBACK_PATH
+    if key == "discovery_canonical":
+        return endpoint.oauth_authorization_server_path()
+    if key == "discovery_suffix":
+        return endpoint.oauth_authorization_server_suffix_path()
+    if key == "protected_resource":
+        return endpoint.protected_resource_path()
+    if key == "unmounted_token":
+        return endpoint.mcp_path() + "/token"
+    if key == "unknown":
+        return "/unknown/mcp/path"
+    raise AssertionError(f"unknown method_status route key {key!r}")
+
+
+class FrontChannelMethodStatusConformanceTests(unittest.TestCase):
+    """Pins the route-model method-mismatch contract to the shared cross-runtime
+    table through the real mounted app: a mounted path with an unsupported method
+    answers 405 with an ``allow`` header listing the permitted methods, and a path
+    that is not mounted at all answers 404 with no ``allow`` header.
+    """
+
+    def test_method_status_enforces_the_shared_table(self) -> None:
+        rows = [case for case in _load_fixture()["cases"] if case["group"] == METHOD_STATUS_GROUP]
+        self.assertEqual(METHOD_STATUS_CASE_COUNT, len(rows))
+
+        harness = _FrontChannelHarness(self)
+        executed = 0
+        for row in rows:
+            with self.subTest(case=row["id"]):
+                path = _method_status_route_path(harness.endpoint, row["route"])
+                response = harness.serve(row["method"], path)
+                context = f"route {row['route']!r} method {row['method']!r}"
+                self.assertEqual(row["expect_status"], response.status, context)
+                self.assertEqual(list(row["expect_allow"]), _allow_methods(response), context)
+                if row["expect_status"] == 404:
+                    self.assertNotIn("allow", {name.lower() for name in response.headers}, context)
+                executed += 1
+        print(f"method status conformance: {executed} cases run")
+        self.assertEqual(METHOD_STATUS_CASE_COUNT, executed)
+
+
+def _dcr_request_body(row: dict) -> bytes:
+    """Build the raw /register body a dcr row presents: the row's request as
+    compact JSON, or that object with one ignored ``pad`` member appended so the
+    serialized body is exactly ``pad_to_bytes`` bytes long.
+    """
+    compact = json.dumps(row.get("request") or {}, separators=(",", ":")).encode("utf-8")
+    total = int(row.get("pad_to_bytes") or 0)
+    if total == 0:
+        return compact
+    if not compact.endswith(b"}") or len(compact) < 2:
+        raise AssertionError(f"row {row['id']!r} must serialize to a JSON object")
+    padding = total - (len(compact) - 1) - DCR_PAD_FRAME_OVERHEAD
+    if padding < 1:
+        raise AssertionError(f"row {row['id']!r} cannot pad to {total} bytes")
+    body = compact[:-1] + b',"pad":"' + b"a" * padding + b'"}'
+    if len(body) != total:
+        raise AssertionError(f"row {row['id']!r} must present exactly {total} body bytes")
+    return body
+
+
+class FrontChannelDCRConformanceTests(unittest.TestCase):
+    """Pins the RFC 7591 registration rule to the shared cross-runtime table
+    through the real mounted ``POST .../register`` handler: every row runs
+    against a fresh harness, so the per-route registration bucket is
+    deterministic and the rate-limited row's eleventh attempt is the first
+    refusal. A 201 row must also have persisted the client it minted, bound to
+    the advertising route the table's authorize handler computes.
+    """
+
+    def test_register_enforces_the_shared_dcr_table(self) -> None:
+        rows = [case for case in _load_fixture()["cases"] if case["group"] == DCR_GROUP]
+        self.assertEqual(DCR_CASE_COUNT, len(rows))
+
+        executed = 0
+        for row in rows:
+            with self.subTest(case=row["id"]):
+                harness = _FrontChannelHarness(self)
+                body = _dcr_request_body(row)
+
+                repeat = int(row.get("repeat") or 0)
+                if repeat < 1:
+                    repeat = DCR_DEFAULT_REPEAT
+                response = harness.register(body)
+                for _attempt in range(repeat - 1):
+                    response = harness.register(body)
+
+                self.assertEqual(row["expect_status"], response.status, f"row {row['id']} body {body!r}")
+
+                scanned = response.body.decode("utf-8", "replace")
+                payload = json.loads(scanned)
+                for token in row["expect_body_has"]:
+                    self.assertIn(token, scanned, row["id"])
+                for token in row["expect_body_absent"]:
+                    self.assertNotIn(token, scanned, row["id"])
+                if row["expect_no_store"]:
+                    self.assertEqual(["no-store"], response.headers.get("cache-control"), row["id"])
+                    self.assertEqual(["no-cache"], response.headers.get("pragma"), row["id"])
+                if row.get("expect_header"):
+                    values = response.headers.get(row["expect_header"]) or []
+                    self.assertTrue(values, row["id"])
+                    retry_after = int(str(values[0]))
+                    self.assertGreaterEqual(retry_after, 1, row["id"])
+                if row["expect_status"] == 201:
+                    self._assert_registered_client(harness, row, payload)
+                executed += 1
+        print(f"dcr conformance: {executed} cases run")
+        self.assertEqual(DCR_CASE_COUNT, executed)
+
+    def _assert_registered_client(self, harness: _FrontChannelHarness, row: dict, payload: dict) -> None:
+        """Prove a 201 row persisted the client it minted: the id resolves in the
+        client store, the record claims the public auth method and the validated
+        redirect URIs, and its bound route is the advertising route of the
+        endpoint kind, derived from the route algebra rather than a literal.
+        """
+        client_id = str(payload.get("client_id") or "")
+        self.assertTrue(client_id, row["id"])
+        # The minted id is 32 random bytes, so it is 43 base64url characters:
+        # the 22-character floor is the 128-bit minimum of DESIGN section 8.3.
+        self.assertGreaterEqual(len(client_id), 22, row["id"])
+        self.assertIn("client_id_issued_at", payload, row["id"])
+
+        record = harness.stores.client.get(hash_key(client_id))
+        self.assertIsNotNone(record, row["id"])
+        self.assertEqual("none", record.token_endpoint_auth_method, row["id"])
+        self.assertEqual(list(row["request"]["redirect_uris"]), record.redirect_uris, row["id"])
+        self.assertEqual(FRONT_TEST_BASE_URL + harness.endpoint.mcp_path(), record.bound_route, row["id"])
 
 
 class FrontChannelCallbackTests(unittest.TestCase):
