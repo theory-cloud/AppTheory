@@ -194,10 +194,17 @@ export declare class AppTheoryRemoteMcpServer extends Construct {
      * otherwise it is the family-wide
      * `https://{apiId}.execute-api.{region}.amazonaws.com/prod/.well-known/oauth-protected-resource/mcp`.
      *
-     * This is the construct's route-derived per-actor challenge surface. Pass it
-     * to `oauth.RequireBearerTokenOptions{ResourceMetadataURL: ...}` so the
-     * runtime advertises a matching `WWW-Authenticate` challenge; the runtime no
-     * longer reads an injected `MCP_ENDPOINT` environment variable.
+     * This is the construct's route-derived per-actor challenge surface. The
+     * construct injects no environment variable (the framework-injected
+     * `MCP_ENDPOINT` is retired), so pass this value into the adopter's own app
+     * code and configure it as the runtime's bearer template option —
+     * `oauth.RequireBearerTokenOptions{ResourceMetadataURLTemplate: ...}` (Go),
+     * `requireBearerTokenMiddleware({ resourceMetadataURLTemplate: ... })`
+     * (TypeScript), or
+     * `RequireBearerTokenOptions(resource_metadata_url_template=...)` (Python) —
+     * so the runtime resolves `{actor}` from the matched route and advertises a
+     * matching `WWW-Authenticate` challenge. Passing it as a static
+     * `ResourceMetadataURL` would advertise the literal `{actor}`.
      */
     readonly protectedResourceMetadataUrl: string;
     /**

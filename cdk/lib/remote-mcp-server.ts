@@ -1,4 +1,4 @@
-import { Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
+import { Annotations, Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as s3 from "aws-cdk-lib/aws-s3";
@@ -232,10 +232,17 @@ export class AppTheoryRemoteMcpServer extends Construct {
    * otherwise it is the family-wide
    * `https://{apiId}.execute-api.{region}.amazonaws.com/prod/.well-known/oauth-protected-resource/mcp`.
    *
-   * This is the construct's route-derived per-actor challenge surface. Pass it
-   * to `oauth.RequireBearerTokenOptions{ResourceMetadataURL: ...}` so the
-   * runtime advertises a matching `WWW-Authenticate` challenge; the runtime no
-   * longer reads an injected `MCP_ENDPOINT` environment variable.
+   * This is the construct's route-derived per-actor challenge surface. The
+   * construct injects no environment variable (the framework-injected
+   * `MCP_ENDPOINT` is retired), so pass this value into the adopter's own app
+   * code and configure it as the runtime's bearer template option —
+   * `oauth.RequireBearerTokenOptions{ResourceMetadataURLTemplate: ...}` (Go),
+   * `requireBearerTokenMiddleware({ resourceMetadataURLTemplate: ... })`
+   * (TypeScript), or
+   * `RequireBearerTokenOptions(resource_metadata_url_template=...)` (Python) —
+   * so the runtime resolves `{actor}` from the matched route and advertises a
+   * matching `WWW-Authenticate` challenge. Passing it as a static
+   * `ResourceMetadataURL` would advertise the literal `{actor}`.
    */
   public readonly protectedResourceMetadataUrl: string;
 
@@ -285,6 +292,18 @@ export class AppTheoryRemoteMcpServer extends Construct {
         routeModel.protectedResourcePath,
         ["GET"],
         props.handler,
+      );
+
+      // ADV-1148-1: the per-actor route is advertised as `protectedResourceMetadataUrl`
+      // (a URL template ending in `/mcp/{actor}`). No environment variable is injected,
+      // so the adopter must wire the value explicitly in their own app code.
+      Annotations.of(this).addWarning(
+        `actorPath: true mounts the per-actor route "${routeModel.protectedResourcePath}" and advertises it via the "protectedResourceMetadataUrl" property. ` +
+        "This construct injects no environment variable (the framework-injected MCP_ENDPOINT is retired), so pass \"protectedResourceMetadataUrl\" into your own app configuration and set it as the runtime's bearer template option: " +
+        "Go oauth.RequireBearerTokenOptions{ResourceMetadataURLTemplate: ...}, " +
+        "TypeScript requireBearerTokenMiddleware({ resourceMetadataURLTemplate: ... }), " +
+        "Python RequireBearerTokenOptions(resource_metadata_url_template=...). " +
+        "Without that wiring the protected per-actor route advertises only the bare \"Bearer\" challenge.",
       );
     }
     if (props.enableWellKnownMcpDiscovery) {

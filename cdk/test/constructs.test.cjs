@@ -7277,7 +7277,7 @@ test("AppTheoryRemoteMcpServer (basic) synthesizes expected template", () => {
     code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
   });
 
-  new apptheory.AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
+  const remoteMcp = new apptheory.AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
     handler: fn,
     apiName: "apptheory-remote-mcp-test",
   });
@@ -7326,6 +7326,34 @@ test("AppTheoryRemoteMcpServer (basic) synthesizes expected template", () => {
   assertStreamingRouteStageVariable(template, "GET", "/mcp");
   assertStreamingRouteStageVariable(template, "POST", "/mcp");
   assert.equal(restApiStageVariables(template)[restApiStreamingRouteStageVariableName("DELETE", "/mcp")], undefined);
+
+  // ADV-1148-1: the non-actor (`actorPath: false`) variant must still resolve to a
+  // mounted family route. The construct mounts the family transport route `/mcp`,
+  // and the advertised metadata URL must stay on that same origin with the
+  // algebra-derived family protected-resource path (never a hand-written string).
+  const familyStageName = Object.values(template.Resources).find((r) => r.Type === "AWS::ApiGateway::Stage")
+    .Properties.StageName;
+  const familyOrigin = `https://${remoteMcp.router.api.restApiId}.execute-api.${stack.region}.${stack.urlSuffix}/${familyStageName}`;
+  const familyProtectedPath = apptheory.AppTheoryMcpRouteAlgebra.protectedResourcePathFromMcpPath("/mcp");
+  assert.equal(
+    remoteMcp.protectedResourceMetadataUrl,
+    `${familyOrigin}${familyProtectedPath}`,
+    "the family metadata URL must be the algebra-derived family protected-resource path on the constructed origin",
+  );
+  assert.equal(remoteMcp.endpoint, `${familyOrigin}/mcp`, "the family endpoint must sit on the same origin");
+  assert.ok(
+    methodPaths.some(
+      (m) => m.method === "GET" && m.path === remoteMcp.endpoint.slice(familyOrigin.length),
+    ),
+    "the family endpoint must resolve to the mounted family GET route",
+  );
+  // ADV-1148-1: the per-actor wiring warning is scoped to the per-actor route; the
+  // family (actorPath: false) construct must not emit it.
+  assert.equal(
+    Node.of(remoteMcp).metadata.filter((entry) => entry.type === "aws:cdk:warning").length,
+    0,
+    "the family construct must not emit the per-actor wiring warning",
+  );
 
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("remote-mcp-server-basic", template);
@@ -7428,16 +7456,36 @@ test("AppTheoryRemoteMcpServer (actor path) synthesizes expected template", () =
   // from the shared route algebra plus the constructed execute-api origin.
   const algebraProtectedPath = apptheory.AppTheoryMcpRouteAlgebra.protectedResourcePathFromMcpPath("/mcp/{actor}");
   assert.equal(algebraProtectedPath, "/.well-known/oauth-protected-resource/mcp/{actor}");
-  const expectedProtectedResourceMetadataUrl =
-    `https://${remoteMcp.router.api.restApiId}.execute-api.${stack.region}.${stack.urlSuffix}/prod${algebraProtectedPath}`;
+  const stageName = Object.values(template.Resources).find((r) => r.Type === "AWS::ApiGateway::Stage")
+    .Properties.StageName;
+  const metadataOrigin =
+    `https://${remoteMcp.router.api.restApiId}.execute-api.${stack.region}.${stack.urlSuffix}/${stageName}`;
   assert.equal(
     remoteMcp.protectedResourceMetadataUrl,
-    expectedProtectedResourceMetadataUrl,
+    `${metadataOrigin}${algebraProtectedPath}`,
     "protectedResourceMetadataUrl should be the algebra-derived per-actor metadata URL template",
   );
   assert.ok(
     remoteMcp.endpoint.endsWith("/mcp/{actor}"),
     "endpoint should stay the per-actor transport template",
+  );
+
+  // ADV-1148-1: prove the advertised metadata URL maps to a route that is actually
+  // mounted in the synthesized template. Strip the origin-with-stage prefix to get
+  // the API-relative path, substitute a sample actor for {actor}, and require the
+  // path to be one of the mounted GET routes.
+  assert.ok(
+    remoteMcp.protectedResourceMetadataUrl.startsWith(metadataOrigin),
+    "the advertised metadata URL must sit on the constructed execute-api origin",
+  );
+  const advertisedPathTemplate = remoteMcp.protectedResourceMetadataUrl.slice(metadataOrigin.length);
+  const sampleActor = "alpha";
+  const advertisedPath = advertisedPathTemplate.replace("{actor}", sampleActor);
+  assert.ok(
+    methodPaths.some(
+      (m) => m.method === "GET" && m.path.replace("{actor}", sampleActor) === advertisedPath,
+    ),
+    "the advertised per-actor metadata URL must resolve to a mounted GET route",
   );
 
   const functions = Object.values(template.Resources).filter((resource) => resource.Type === "AWS::Lambda::Function");
@@ -7449,6 +7497,23 @@ test("AppTheoryRemoteMcpServer (actor path) synthesizes expected template", () =
       "the construct must not inject an MCP_ENDPOINT environment variable",
     );
   }
+
+  // ADV-1148-1: the construct emits a synth-time warning telling the adopter to wire
+  // `protectedResourceMetadataUrl` through their runtime's template option. CDK
+  // construct annotations are recorded as `aws:cdk:warning` metadata on the construct
+  // node (surfaced by `cdk synth` and in the cloud-assembly manifest), not in the
+  // CloudFormation template, so this is asserted against the node metadata.
+  const warningMetadata = Node.of(remoteMcp).metadata.filter((entry) => entry.type === "aws:cdk:warning");
+  assert.ok(
+    warningMetadata.some(
+      (entry) =>
+        entry.data.includes("protectedResourceMetadataUrl") &&
+        entry.data.includes("ResourceMetadataURLTemplate") &&
+        entry.data.includes("resourceMetadataURLTemplate") &&
+        entry.data.includes("resource_metadata_url_template"),
+    ),
+    "the per-actor construct must emit a synth warning naming protectedResourceMetadataUrl and each language's template option",
+  );
 
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("remote-mcp-server-actor-path", template);
@@ -7672,6 +7737,59 @@ test("AppTheoryRemoteMcpServer (with custom domain) synthesizes expected templat
   } else {
     expectSnapshot("remote-mcp-server-domain", template);
   }
+
+  // ADV-1148-1: the same origin/path consistency proof for a per-actor custom-domain
+  // deployment. The public origin is rebuilt from the *synthesized* DomainName and
+  // BasePathMapping values (not the input props), so the advertised metadata URL is
+  // provably on the deployed custom domain and maps to a mounted GET route.
+  const actorApp = new cdk.App();
+  const actorStack = new cdk.Stack(actorApp, "TestStack");
+  const actorFn = new lambda.Function(actorStack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const actorZone = new route53.PublicHostedZone(actorStack, "Zone", { zoneName: "example.com" });
+  const actorCert = new apptheory.AppTheoryCertificate(actorStack, "Cert", {
+    domainName: "mcp.example.com",
+    hostedZone: actorZone,
+  });
+  const actorRemoteMcp = new apptheory.AppTheoryRemoteMcpServer(actorStack, "RemoteMcp", {
+    handler: actorFn,
+    apiName: "apptheory-remote-mcp-domain-actor-test",
+    actorPath: true,
+    domain: {
+      domainName: "mcp.example.com",
+      certificate: actorCert.certificate,
+      hostedZone: actorZone,
+    },
+  });
+  const actorTemplate = assertions.Template.fromStack(actorStack).toJSON();
+
+  const basePathMapping = resourcesOfType(actorTemplate, "AWS::ApiGateway::BasePathMapping")[0];
+  const synthesizedDomainName = resourcesOfType(actorTemplate, "AWS::ApiGateway::DomainName")[0].Properties
+    .DomainName;
+  const synthesizedBasePath = String(basePathMapping.Properties.BasePath ?? "").replace(/^\/+|\/+$/g, "");
+  const mappedStage = actorTemplate.Resources[basePathMapping.Properties.Stage.Ref];
+  assert.equal(mappedStage.Properties.StageName, "prod", "the custom domain maps the deployed stage at its base path");
+  const synthesizedOrigin =
+    `https://${synthesizedDomainName}${synthesizedBasePath ? `/${synthesizedBasePath}` : ""}`;
+
+  const domainProtectedPath = apptheory.AppTheoryMcpRouteAlgebra.protectedResourcePathFromMcpPath("/mcp/{actor}");
+  assert.equal(
+    actorRemoteMcp.protectedResourceMetadataUrl,
+    `${synthesizedOrigin}${domainProtectedPath}`,
+    "the advertised per-actor metadata URL must sit on the synthesized custom-domain origin",
+  );
+  const domainAdvertisedPath = actorRemoteMcp.protectedResourceMetadataUrl
+    .slice(synthesizedOrigin.length)
+    .replace("{actor}", "alpha");
+  assert.ok(
+    restApiMethodPaths(actorTemplate).some(
+      (m) => m.method === "GET" && m.path.replace("{actor}", "alpha") === domainAdvertisedPath,
+    ),
+    "the advertised per-actor metadata URL must resolve to a mounted GET route on the custom domain",
+  );
 });
 
 // ============================================================================
