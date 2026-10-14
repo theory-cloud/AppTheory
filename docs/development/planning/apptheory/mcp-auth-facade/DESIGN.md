@@ -1,7 +1,10 @@
 # MCP auth facade — design (M0, item 1)
 
-Status: design for review (M0). §8 mechanics 1 (authorize), 2 (callback), and the `/token` `authorization_code`
-grant are as-built in M3b-ii across Go/TS/Py; `/register` DCR and brokered refresh are not implemented.
+Status: design for review (M0). §8 mechanics 1 (authorize), 2 (callback), 3 (`/register` DCR), and the `/token`
+`authorization_code` and `refresh_token` grants are as-built across Go/TS/Py — mechanics 1, 2, and the
+`authorization_code` grant in M3b-ii, mechanic 3 in M3c-1a, and the brokered refresh half of mechanic 4 in M3c-1b
+(whose four open parameters are recorded as the operator rulings R1-R4 at §8.4). No §8 mechanic remains
+unimplemented in the runtimes; the CDK half of §9 is still M3c-2.
 Last updated: 2026-10-14
 Owner: AppTheory
 
@@ -238,6 +241,14 @@ facade code revokes the broker record) and single-flight refresh depend on them.
 broker record's status to **`refreshing`**, the status the shared store-conformance row
 `store.route_refresh_broker.acquire_lock_sets_refreshing_status` pins in all three runtimes.
 
+The lock's lifetime is the store's, because `AcquireLock` is what writes `RefreshLockExpiresAt` and the SPI takes no
+per-call TTL. The framework's default lock TTL is **15 seconds** (ruling R3, §8.4): the M2.1 hardened upstream HTTP
+deadline is 10 seconds (`oauth`'s `defaultJWKSFetchTimeout`, shared by the discovery, token, and JWKS fetches), so the
+lock outlasts the one upstream call it protects by a 5-second margin, and it is well above the facade's 3-second
+coalesce wait cap so a waiter can never outlive the lock it waits on. The reference stores' default
+(`DefaultRouteRefreshLockTTL` / `DEFAULT_ROUTE_REFRESH_LOCK_TTL_SECONDS` / `UTC_NOW_LOCK_TTL_SECONDS`) is that value,
+pinned by a test in each runtime; a durable application-owned store must use the same 15 seconds.
+
 **Encryption of upstream material is a store obligation, not a framework seam.** The durable upstream refresh
 token lives in the broker record's `encrypted_upstream_refresh_token` field and the code record carries the
 upstream token response in its `encrypted_token_response` field, which embeds the upstream-minted access token (and
@@ -259,10 +270,11 @@ registration-time pairing of §4.2 — and **M3 fills them with the numbered mec
 **As built in M3b-ii:** the registrars mount the front channel when the front-channel `FacadeConfig` field set is
 declared, and mechanics **1**, **2**, and the `authorization_code` half of **4** are implemented in all three runtimes
 (tested over a loopback fake provider with real RSA keys and an injected clock). **As built in M3c-1a:** mechanic
-**3** (`/register` DCR) is mounted with the front channel and executed in all three runtimes. Not implemented: the
-**brokered refresh** half of **4** (the token endpoint answers `400 unsupported_grant_type` for `grant_type=refresh_token`;
-the code-exchange response already carries the framework-minted opaque refresh handle, but that handle cannot be
-redeemed yet — deferred to M3c-1b).
+**3** (`/register` DCR) is mounted with the front channel and executed in all three runtimes. **As built in M3c-1b:**
+the **brokered refresh** half of **4** is implemented in all three runtimes, so every §8 mechanic now exists in the
+runtimes and a handle the code exchange mints is redeemable. Nothing is mounted without all of its controls: the
+grant, its rotation/coalescing/grace/reuse mechanics, and the DCR bound-route enforcement all landed together with
+their executed shared conformance rows and their mutation-proven tests. The CDK half of §9 remains M3c-2.
 
 1. `/authorize` (GET) — **front-channel termination.** *As built (M3b-ii).* Validate registered client, exact redirect
    URI (loopback port flexibility only), `response_type=code`, S256 PKCE (mandatory; `plain`/absent refused),
@@ -293,17 +305,61 @@ redeemed yet — deferred to M3c-1b).
    only when its bound route equals the advertising route resource of the request being served, and refuse it at
    any other route with the same non-oracle `400 invalid_client` (no `Location`) an unknown client gets; a
    pre-registered client (empty `BoundRoute`) stays valid at every route.
-4. `/token` (POST) — **code exchange + brokered refresh.** *The `authorization_code` grant is as built (M3b-ii); the
-   brokered refresh half is deferred to M3c-1b.* Facade codes are single-use and bound to
+4. `/token` (POST) — **code exchange + brokered refresh.** *As built (M3b-ii for `authorization_code`, M3c-1b for
+   `refresh_token`).* Facade codes are single-use and bound to
    client/redirect/S256/route; a replay returns `invalid_grant` **and revokes the broker record the code
    minted**. Refresh presents an opaque route handle; the broker record binds issuer/client/subject/resource/
    scope fingerprint and holds the **encrypted** upstream refresh material. Concurrent refresh is
    single-flighted with a lock, coalescing, and a bounded grace response; rotation is atomic. The access token
    is returned byte-for-byte unmodified; `id_token` and upstream refresh material never reach the client.
    *As built (M3b-ii):* the code-exchange response already returns the framework-minted opaque refresh handle as
-   `refresh_token` (with the upstream access token byte-for-byte unmodified and `id_token` dropped), but the
-   `refresh_token` grant itself answers `400 unsupported_grant_type` until M3c-1b, so a returned handle cannot be
-   redeemed yet.
+   `refresh_token` (with the upstream access token byte-for-byte unmodified and `id_token` dropped).
+
+   **As built (M3c-1b) — the `refresh_token` grant, and the four operator rulings (R1-R4) that pin its open
+   parameters.** All four are framework constants: **no new `FacadeConfig` field and no environment variable** was
+   added, so no adopter can widen the refresh door.
+
+   **R1 — validation order.** Cheap local checks first, and neither the lock nor any upstream call happens until the
+   request is known valid: (1) bound the request — `refresh_token` present and at most 512 bytes, `client_id`
+   present — and identify the registered client through the same lookup `/authorize` and the code grant use (which
+   also applies the DCR bound-route rule of mechanic 3); (2) hash the handle and read the broker record, where a
+   missing (or locally expired), revoked, wrong-client, **or wrong-route** handle all return the *same*
+   `400 invalid_grant` — the route comparison is collapsed into the same body deliberately, so it cannot become a
+   handle-existence oracle; (3) **reuse** — a handle whose rotation grace window has already passed revokes the
+   whole grant (the presented record and every successor it minted) and returns `invalid_grant`; (4) scope and
+   resource (R4); (5) serve the grace replay if one is live; (6) otherwise acquire the lock, make the ONE upstream
+   `Provider.Refresh` call over the M2.1 hardened HTTP stack, and rotate atomically with a `CompareAndSwap` on the
+   broker record version.
+
+   **R2 — coalescing and grace.** Exactly **one** upstream refresh call per rotation, however many concurrent
+   callers present the same handle: a caller that loses the lock race waits a bounded time and is then served the
+   winner's successor tokens (if the rotation completed) or a `503 temporarily_unavailable` with `Retry-After`.
+   For **30 seconds** after a rotation, re-presenting the *previous* handle from the same client replays the *same*
+   successor tokens byte-for-byte, so a client whose response was lost does not lose its grant; the successor
+   response is held in the broker record's `encrypted_grace_refresh_response` field (the store encrypts it at rest
+   per §7 — the framework adds no encryption surface, and the in-memory reference stores stay non-durable and
+   non-encrypting). Beyond the window the previous handle is reuse. A rotation may return a new upstream refresh
+   material or keep the previous one (RFC 6749 §6, an AS MAY decline to rotate).
+
+   **R3 — values (framework constants, pinned by tests).** Lock TTL **15 s**; grace window **30 s**; coalesce wait
+   cap **3 s** (poll every 50 ms); the presented handle is bounded at **512 bytes**; the reuse revoke walk is
+   bounded; the refresh `503` carries a fixed `Retry-After` of 1 second. The lock TTL is a property of the broker
+   store (its `AcquireLock` writes `RefreshLockExpiresAt`, and the SPI takes no per-call TTL), so the reference
+   store's default `DefaultRouteRefreshLockTTL` is **15 s**: the M2.1 hardened upstream HTTP deadline is **10 s**
+   (`oauth`'s `defaultJWKSFetchTimeout`, shared by the discovery, token, and JWKS fetches), so 15 s is that deadline
+   plus a 5 s margin, and it is well above the 3 s coalesce cap so a waiter can never outlive the lock it waits on.
+   A durable application-owned store must use the same 15 s. The **coalesce wait budget is measured in real elapsed
+   time**, not on the injected framework clock, because the wait has to terminate even when that clock is frozen or
+   moved; grace, record lifetime, and rotation timestamps use the framework clock.
+
+   **R4 — scope and resource on refresh.** A **present** `resource` must equal the bound resource (a present but
+   different one is `400 invalid_target`); an omitted `resource` is served as the bound resource. A **present**
+   `scope` must be *exactly* the granted scope set — a wider set *and* a subset (including a present-but-empty
+   `scope`) are `400 invalid_scope`, because the upstream access token is returned byte-for-byte and the facade
+   cannot narrow it (RFC 6749 §6 lets a server decline a subset). A subset-accepting mode is deliberately **not**
+   built. Where the handle was minted is itself checked: a handle presented at another route's token endpoint is
+   refused in the same non-oracle `invalid_grant` class, which is what makes the binding meaningful even when the
+   client omits `resource`.
 
 See `THREAT_MODEL.md` for the control and the pinning test of each mechanic, and `MINIMAL_CONSUMER.md` for the
 end-to-end walkthrough that proves scenario (a) by construction.

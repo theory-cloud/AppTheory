@@ -15,8 +15,8 @@
     {
       "id": "T2",
       "threat": "code_replay",
-      "control": "single-use facade codes via atomic Consume; replay returns invalid_grant and revokes the broker record; upstream state consumed single-use",
-      "pin": ["facade-journey:token-replay-code", "facade-journey:refresh-revoked-handle", "store-spi:consume-once"]
+      "control": "single-use facade codes via atomic Consume; replay returns invalid_grant and revokes the broker record; upstream state consumed single-use; refresh reuse: a rotated handle re-presented after its grace window revokes the whole grant (the presented record and every successor it minted) and answers the same non-oracle invalid_grant an unknown handle gets",
+      "pin": ["facade-journey:token-replay-code", "facade-journey:refresh-revoked-handle", "store-spi:consume-once", "facade-conformance:refresh.reuse_after_grace_revokes", "facade-conformance:refresh.replayed_code_revokes_handle", "facade-conformance:refresh.handle_at_another_route_refused"]
     },
     {
       "id": "T3",
@@ -40,14 +40,14 @@
     {
       "id": "T6",
       "threat": "refresh_material_leakage",
-      "control": "no unencrypted upstream material stored: the durable upstream refresh token in the broker record, and any upstream material transiently carried in the code record (the encrypted token response), are encrypted only; opaque handle to the client; token response drops id_token; upstream error bodies never forwarded; access token byte-identical passthrough",
-      "pin": ["facade-journey:token-code-exchange", "facade-journey:token-refresh", "facade-journey:negative_assertions"]
+      "control": "no unencrypted upstream material stored: the durable upstream refresh token in the broker record, and any upstream material transiently carried in the code record (the encrypted token response), are encrypted only; opaque handle to the client; token response drops id_token; upstream error bodies never forwarded; access token byte-identical passthrough; as built in M3c-1b the refresh grant rotates the handle under exactly one upstream call and returns the upstream access token byte-for-byte with the framework's own successor handle, while the upstream refresh token and any id_token appear in no response, header, redirect, or error body, and the successor response is held only in the broker record's encrypted_grace_refresh_response field (a conforming store encrypts it at rest; the framework adds no encryption surface)",
+      "pin": ["facade-journey:token-code-exchange", "facade-journey:token-refresh", "facade-journey:negative_assertions", "facade-conformance:refresh.happy_rotation", "facade-conformance:refresh.reuse_within_grace_returns_same_tokens", "facade-conformance:refresh.unknown_handle", "facade-conformance:refresh.other_client_handle", "facade-conformance:refresh.oversized_handle_refused", "facade-conformance:refresh.missing_handle_refused", "facade-conformance:refresh.upstream_terminal_failure", "facade-conformance:refresh.upstream_transient_failure"]
     },
     {
       "id": "T7",
       "threat": "audience_resource_confusion",
-      "control": "RFC 8707 resource accepted/canonicalized/required to equal the route resource; audience must exactly equal the route URL; validated before broker mutation and at bearer time",
-      "pin": ["facade-journey:authorize-wrong-resource", "facade-journey:transport-wrong-audience"]
+      "control": "RFC 8707 resource accepted/canonicalized/required to equal the route resource; audience must exactly equal the route URL; validated before broker mutation and at bearer time; as built in M3c-1b the refresh grant binds the same way: a present resource must equal the bound resource and a present scope must be exactly the granted set (a wider set and a subset, including a present-but-empty scope, are refused with invalid_scope), and a handle presented at another route's token endpoint is refused in the same non-oracle invalid_grant class an unknown handle gets, so the binding cannot be bypassed by omitting resource",
+      "pin": ["facade-journey:authorize-wrong-resource", "facade-journey:transport-wrong-audience", "facade-conformance:refresh.resource_mismatch_refused", "facade-conformance:refresh.resource_exact_accepted", "facade-conformance:refresh.scope_subset_refused", "facade-conformance:refresh.scope_exact_accepted", "facade-conformance:refresh.handle_at_another_route_refused"]
     },
     {
       "id": "T8",

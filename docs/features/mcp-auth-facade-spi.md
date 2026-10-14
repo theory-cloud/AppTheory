@@ -212,9 +212,26 @@ belong to the framework rather than the application.
   (`400 invalid_grant`) and the following attempt is then a replay that revokes the broker record. A `resource` that is
   not the code's resource is `400 invalid_target`. On success the response is `200` carrying the upstream access token
   **byte-for-byte unmodified**, the upstream `token_type`/`expires_in`/`scope`, and the framework-minted **opaque
-  refresh handle** as `refresh_token`; it never carries an `id_token` or upstream refresh material. The endpoint
-  answers `400 unsupported_grant_type` for `grant_type=refresh_token` and for every other grant, and `400
-  invalid_request` for an absent grant type.
+  refresh handle** as `refresh_token`; it never carries an `id_token` or upstream refresh material.
+- **`POST …/token` — the `refresh_token` grant.** The client presents the opaque handle the code exchange returned and
+  the same `client_id`. A handle that is unknown, locally expired, revoked, bound to another client, or presented at
+  another route's token endpoint is one and the same `400 invalid_grant` (no oracle). A successful refresh rotates the
+  handle to a **fresh opaque handle** and answers `200` with the upstream access token **byte-for-byte** plus the
+  successor handle; an `id_token` and upstream refresh material never appear in the response, a header, a redirect, or
+  an error body. A **present** `resource` must equal the bound resource (`400 invalid_target` otherwise) and a
+  **present** `scope` must be *exactly* the granted scope set — a wider set and a subset, including a present-but-empty
+  `scope`, are `400 invalid_scope`, because the upstream access token is returned unmodified and cannot be narrowed. A
+  missing or over-512-byte handle is `400 invalid_request`. Refresh is **single-flighted** under the broker store's
+  lock, so concurrent callers of one handle cause exactly **one** upstream refresh call: a caller that loses that race
+  waits up to 3 seconds, then receives the winner's successor tokens or `503 temporarily_unavailable` with
+  `Retry-After`. For **30 seconds** after a rotation the **previous** handle replays the same successor tokens
+  byte-for-byte (an idempotent lost-response path); after that window the previous handle is **reuse**, which revokes
+  the whole grant and answers the same `invalid_grant`. A terminal upstream rejection is `400 invalid_grant` (the
+  record is revoked), an upstream gateway failure is `502 upstream_error`, and a transient upstream, store, lock, or
+  contention failure is `503 temporarily_unavailable` with `Retry-After`. The grace window, the 3-second coalesce wait
+  cap, the 512-byte handle bound, and the broker store's 15-second lock TTL are framework constants — no
+  `FacadeConfig` field and no environment variable. The endpoint still answers `400 unsupported_grant_type` for every
+  other grant and `400 invalid_request` for an absent grant type.
 - **`POST …/register` — RFC 7591 dynamic client registration.** The framework-owned handler bounds and validates the
   client metadata, mints a server-assigned opaque `client_id` (≥128 bits), and stores the record through the
   `ClientStore`, hash-keyed and bound to the advertising route. Only **public clients** are accepted
@@ -250,8 +267,10 @@ Three shared conformance tables drive all three runtimes from one source (`contr
   with expiry, idempotent revoke, rate-limit window) including concurrent-consume/rotate/revoke rows, run against the
   in-memory reference stores.
 - `facade-conformance.v1.json` — the front-channel behavior rows executed through the real mounted handlers: the RFC
-  9207 `iss` pin, the loopback redirect match, the bounded strict `/token` form parse, the method-mismatch rule, and
-  the RFC 7591 DCR (`dcr`) rows.
+  9207 `iss` pin, the loopback redirect match, the bounded strict `/token` form parse, the method-mismatch rule, the
+  RFC 7591 DCR (`dcr`) rows, the DCR route binding (`bound_route`) rows, and the brokered refresh (`refresh`) rows
+  (rotation, the grace replay, reuse-after-grace revocation, the byte-identical refusal set, the scope/resource rule,
+  the handle bound, replayed-code revocation, and the upstream terminal/transient failures).
 
 Any store — the in-memory ones now, an application's durable store later — must pass the store conformance suite. A
 fake provider (real RSA keys, real local HTTP, configurable success/error/slow/oversized-filler/oversized-valid-json/
@@ -284,11 +303,10 @@ facade itself derives when it looks a record up, and it grants no access of its 
 
 Still absent, by milestone:
 
-- **Brokered refresh:** the token endpoint answers `400 unsupported_grant_type` for `grant_type=refresh_token`. The
-  code-exchange response already carries the framework-minted opaque refresh handle, but that handle cannot be redeemed
-  yet; brokered refresh is the follow-on milestone (M3c-1b).
 - **CDK wiring:** no `cdk/**` change; the construct's `facade` attach prop does not yet wire the provider and stores or
-  the callback-path override.
+  the callback-path override (Wired by the follow-on milestone M3c-2).
+- **A subset-accepting refresh scope:** not built and not planned. A present `scope` on a refresh must be exactly the
+  granted set (ruling R4); the facade cannot narrow an upstream access token it returns byte-for-byte.
 - **A durable store:** the framework still ships none. The in-memory reference stores are non-durable and do not
   encrypt; a deployment supplies a durable store that discharges the encryption obligation above.
 - **Transport-route bearer enforcement** is unchanged (M1/M2).
