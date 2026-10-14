@@ -267,6 +267,13 @@ error code carries the same `error_description` — so the response never distin
 and relies on the store to seal it: a durable store **must** encrypt every `Encrypted*` field at rest, and the
 framework never writes upstream material to a log, a redirect, a response, or an error body.
 
+**The JSON bodies are semantically identical across runtimes, not byte-identical.** The token and error bodies are
+JSON encoded by each runtime's own encoder: Go's `encoding/json` HTML-escapes `&`, `<`, and `>` as `\u0026`,
+`\u003c`, and `\u003e`, while the TypeScript (`JSON.stringify`) and Python (`json.dumps(..., ensure_ascii=False)`)
+runtimes emit those characters raw. Every form decodes to the same values, and the grace replay is byte-identical
+**within** one runtime (which is what the 30-second replay requires); no cross-runtime byte equality is promised, so
+a cross-language golden comparison must normalize or compare decoded values, never raw bodies.
+
 ## Conformance suites and the fake provider
 
 Three shared conformance tables drive all three runtimes from one source (`contract-tests/fixtures/routing/mcp-auth-facade/`):

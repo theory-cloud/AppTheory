@@ -108,6 +108,13 @@ seconds — the last is the M2.1 hardened upstream HTTP deadline (10 s) plus a 5
 must use the same 15 seconds. A **durable store you supply must encrypt the broker record's
 `EncryptedGraceRefreshResponse` field at rest** like every other `Encrypted*` field; the framework performs no sealing.
 
+The token and error bodies are JSON and decode identically in all three runtimes, but their **bytes are not
+guaranteed equal across runtimes**. The Go runtime encodes them with Go's `encoding/json`, which HTML-escapes `&`,
+`<`, and `>` as `\u0026`, `\u003c`, and `\u003e`; the TypeScript and Python runtimes emit those characters raw.
+Both forms decode to the same values, the grace replay is byte-identical **within** each runtime (as the 30-second
+replay requires), and no contract pins cross-runtime byte equality — so a cross-language golden-file comparison
+must normalize the bytes or compare decoded values rather than raw bodies.
+
 **Not yet available in this line:** the **CDK `facade` wiring** (the follow-on milestone, M3c-2, owns it) — still no
 `cdk/**` change, so the construct's attach prop does not wire the provider and stores or the callback-path override.
 
