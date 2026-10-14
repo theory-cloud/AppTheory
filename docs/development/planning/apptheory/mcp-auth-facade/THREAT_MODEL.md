@@ -1,7 +1,8 @@
 # Named threat model — proxy facade (M0, item 5)
 
-Status: threat model for review (M0); T8/T9 control text revised to as-built in M2.1.
-Last updated: 2026-10-13
+Status: threat model for review (M0); T8/T9 control text revised to as-built in M2.1; T1/T2/T3/T4/T6/T7/T10 controls
+as-built in M3b-ii (Go/TS/Py).
+Last updated: 2026-10-14
 Owner: AppTheory
 
 ADV-P110-2 requires a **named** threat model for the proxy facade. Each row names the attack class, the
@@ -33,6 +34,38 @@ fail-closed seam.
 | T9 | **JWKS alg-confusion / cache poisoning.** A key or token using a non-RSA algorithm, `alg: none`, or a poisoned/expired key entry is accepted; a stale key survives rotation; or attacker-chosen `kid` values exhaust memory or amplify key-set fetches. | RS256 **only**; `alg: none` and HMAC algorithms rejected; key type must match an RSA signing key; keys cached by `kid`; unknown `kid` triggers a **bounded** refresh with a **cooldown** under a **global unknown-kid fetch budget** (32 fetches per 60 s by default), so distinct attacker kids cannot amplify token traffic into key-set traffic; kid strings are length-capped (256) and never enter a cache above the cap; the kid-window map and the key cache are bounded (1024 / 128 entries) and evict, so state cannot grow without bound; cache entries expire; issuer is checked before and after signature verification. | JWKS validator fixtures: `alg-none rejected`, `HS256 rejected`, `unknown-kid triggers one refresh`, `expired-key refresh`, `issuer-mismatch rejected`, `oversized-kid refused without a fetch`, `distinct attacker kids are globally bounded`, `evicted kid window allows one refetch`; plus per-runtime assertions that the window map and key cache never exceed their bounds. |
 | T10 | **Facade-callback CSRF / session-swap.** An attacker delivers their own upstream `code`/`state` pair to a victim (or to the victim's client), attempting to bind the victim's session to the attacker's upstream authorization (login CSRF), or to have the victim's client redeem the attacker's code. | The facade's upstream `state` is **minted by the facade** and **single-use**, keyed by `hash(upstream state)` in the transaction store: a `state` the facade never minted is rejected (400, no client redirect) and a replayed one is terminal. The callback correlates the transaction to the **registered client** + the client's own `state` + `redirect_uri` + the S256 challenge; the upstream code is exchanged **server-side only** and the facade code is bound to the client's PKCE verifier at `/token`; upstream RFC 9207 `iss` is verified. | `facade-journey` steps `callback-iss-mismatch` (400, no redirect), `callback-replayed-state` (terminal, no re-exchange), `callback-forged-state` (upstream state the facade never minted → 400, no client redirect), and `token-wrong-verifier` (400). The facade's own callback rejections are all `400` with no `Location`, whereas an upstream-code-exchange failure maps to a distinct **502 `upstream_error`** (DESIGN §8.2), so an implementation that skips the `iss` or `state` check reaches the exchange and changes the pinned result instead of coincidentally reproducing `400`. **Residual (client-side):** the standard client `state` + PKCE-verifier binding — an attacker-supplied code cannot be redeemed without the client's verifier, but a client that ignores its own `state` cannot *detect* the swap. Named as a non-claim below. |
 | T11 | **Metadata caching / cross-route cache poisoning.** A shared cache or client serves one route's PRM/discovery document for another route, or serves a stale document after the issuer/endpoint set changes; a route-derived document is cached under a family/global key. | Route-derived documents (PRM and RFC 8414 discovery) carry **`cache-control: no-store`**, so a route-specific `issuer`/`resource` is never cached and replayed for another route; in `family` issuer mode a bounded `public, max-age` may be configured instead (that document is not route-specific). The facade **emits its own route-derived document**; it does not proxy the upstream's cacheable discovery verbatim in `route` mode. | `facade-journey` steps `protected-resource-metadata` and `authorization-server-metadata` assert `cache-control: no-store`; the conformance kit Layer B asserts it per route. **Residual:** a client or shared cache that ignores `no-store` is out of framework scope (client/cache behavior); a `family`-mode deployment that overrides `no-store` accepts the standard shared-cache staleness risk. |
+
+## As-built (M3b-ii)
+
+The framework-owned front channel is implemented in Go, TypeScript, and Python and mounts when the front-channel
+`FacadeConfig` field set is declared. The controls for **T1, T2, T3, T4, T6, T7, and T10** are now **IMPLEMENTED and
+executed** in all three runtimes by the front-channel suites (`runtime/mcpfacade/front_channel_test.go`,
+`ts/test/mcpfacade-front-channel.test.mjs`, `py/tests/test_mcpfacade_front_channel.py`), each driving the real provider
+adapter over a loopback fake provider with real RSA keys and an injected clock:
+
+- **T1** — the authorize handler validates the registered client and the exact redirect URI before any redirect; an
+  unknown `client_id` is `400 invalid_client` and an unmatched `redirect_uri` is `400 invalid_request`, both with no
+  `Location`.
+- **T2** — facade codes are consumed single-use; a replay returns `400 invalid_grant` **and revokes the broker record
+  the code minted** (pinned by the replay and concurrent-redemption tests), and the expired-burn-then-replay path
+  revokes it too.
+- **T3** — S256 PKCE is required (an absent or `plain` challenge is refused); the verifier is bound to the code and
+  re-checked at exchange (`400 invalid_grant`).
+- **T4** — the callback verifies the upstream RFC 9207 `iss` **before** consuming the transaction or exchanging the
+  code; an absent or mismatched `iss` is rejected without consuming state and without an upstream call.
+- **T6** — the token response drops `id_token` and returns the framework-minted opaque handle, never upstream refresh
+  material; the callback and token responses are scanned for the upstream code and refresh token. **Residual:** the
+  store **MUST** encrypt the `Encrypted*` fields at rest (the framework performs no sealing, and the in-memory
+  reference stores neither persist nor encrypt), and the framework never writes upstream material to a log, a redirect,
+  a response, or an error body.
+- **T7** — `resource` is canonicalized and required to equal the route resource at authorize (`invalid_target`) and the
+  code's resource at token.
+- **T10** — the upstream `state` is minted by the facade and single-use; a forged state and a replayed state are both
+  rejected (`400`, no client redirect), and the callback correlates the transaction to the registered client, the
+  client's own `state`, the redirect URI, and the S256 challenge.
+
+Unchanged by this milestone: **T5** (DCR) is the follow-on milestone — the `/register` route is not mounted. **T8/T9**
+carry their as-built M2.1 controls, and **T11** is unchanged.
 
 ## Cross-cutting controls
 
