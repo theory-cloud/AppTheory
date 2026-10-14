@@ -10,6 +10,7 @@ import (
 	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
 	"github.com/theory-cloud/apptheory/v6/runtime/mcproutes"
 	"github.com/theory-cloud/apptheory/v6/runtime/oauth"
+	oauthstore "github.com/theory-cloud/apptheory/v6/runtime/oauth/store"
 )
 
 const (
@@ -163,6 +164,60 @@ type FacadeConfig struct {
 	// It is valid only with TransportPostureRuntimeBearer and is rejected under
 	// every other posture.
 	RequireBearerToken *oauth.RequireBearerTokenOptions
+
+	// Provider anchors the framework-owned front channel (DESIGN §8). When it is
+	// set, AppTheory owns /authorize, the stage-global upstream callback, and the
+	// /token authorization_code grant, and the rest of the front-channel field
+	// set below is required. A nil Provider leaves the front channel unowned: an
+	// application either supplies its own AuthorizeHandler/TokenHandler pair and
+	// CallbackHandler, or registers no OAuth surface at all. Setting any other
+	// front-channel field without Provider is a registration error.
+	Provider oauth.Provider
+
+	// Stores supplies the five facade store SPIs the front channel persists
+	// through (DESIGN §7): transaction, authorization code, client,
+	// route-refresh broker, and rate limit. All five are required when Provider
+	// is set. Each store owns its own TTL (DESIGN §7 TTL column), so no TTL is
+	// configured here.
+	//
+	// The framework's in-memory reference stores are non-durable and do not
+	// encrypt: they exist for deterministic tests and local development only. A
+	// durable store implementation MUST encrypt the Encrypted* record fields at
+	// rest (for example with persistence-layer encryption), because the facade
+	// hands the store upstream material, including the upstream-minted access
+	// token, exactly as the provider returned it and relies on the store to
+	// protect it (DESIGN §7).
+	Stores oauthstore.Stores
+
+	// UpstreamClientID is the facade's own OAuth client registration at the
+	// upstream provider (DESIGN §8.1): the upstream authorize request carries it
+	// and the server-side upstream code exchange presents it. It is also the
+	// expected azp/client_id of an upstream access token the facade validates
+	// (DESIGN §5.2, §6), so a token minted for another client is refused.
+	UpstreamClientID string
+
+	// UpstreamIssuer is the expected upstream issuer: the RFC 9207 iss value the
+	// upstream callback pins before consuming the transaction or exchanging the
+	// code (DESIGN §8.2) and the issuer the provider's Discovery call must verify
+	// before any published endpoint is trusted (DESIGN §5.2, §6). It must be an
+	// absolute HTTPS URL with no query or fragment, normalized like IssuerURL,
+	// and it is distinct from the client-facing issuer.
+	UpstreamIssuer string
+
+	// LifecycleScopes are scope values the facade adds to every upstream
+	// authorize request but never requires from the MCP client, for example the
+	// offline_access lifecycle scope that lets the upstream issue refresh
+	// material (FRAMEWORK_VS_POLICY row 7). Nil adds none. Values are validated
+	// like Scopes: trimmed, non-empty, and well-formed Unicode.
+	LifecycleScopes []string
+
+	// ProviderHints supplies the opaque provider hints for one authorize request
+	// (DESIGN §6): it receives the request context and returns the hint map, for
+	// example the account_id hint. A hint carries no authority — the provider
+	// derives authentication account context from its own validated binding, not
+	// from the hint (DESIGN §6). A nil function contributes no hints; an error is
+	// a fail-closed request-class rejection that never redirects.
+	ProviderHints func(ctx *apptheory.Context) (map[string]string, error)
 }
 
 // Route describes one endpoint-kind route family installed by the helper.
@@ -270,6 +325,9 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 	normalized.callbackHandler = config.CallbackHandler
 
 	if err := validatePostureSurfaceConfig(transportPosture, normalized.authorizeHandlers, normalized.registerHandlers, config.CallbackHandler, normalized.rootAuthorizationServer); err != nil {
+		return normalizedConfig{}, err
+	}
+	if err := validateFrontChannelConfig(config); err != nil {
 		return normalizedConfig{}, err
 	}
 	return normalized, nil

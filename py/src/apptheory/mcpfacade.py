@@ -39,7 +39,7 @@ from apptheory.mcproutes import (
     supported_oauth_discovery_templates,
     supported_oauth_facade_templates,
 )
-from apptheory.oauth import RequireBearerTokenOptions, require_bearer_token_middleware
+from apptheory.oauth import Provider, RequireBearerTokenOptions, Stores, require_bearer_token_middleware
 from apptheory.response import Response, normalize_response
 
 _HTTPS_SCHEME = "https"
@@ -136,6 +136,48 @@ class FacadeConfig:
     root_authorization_server: RootDiscoveryConfig | None = None
     transport_posture: str = "iam"
     require_bearer_token: RequireBearerTokenOptions | None = None
+    # ``provider`` anchors the framework-owned front channel (DESIGN section 8).
+    # When it is set, AppTheory owns ``/authorize``, the stage-global upstream
+    # callback, and the ``/token`` authorization_code grant, and the rest of the
+    # front-channel field set below is required. A ``None`` provider leaves the
+    # front channel unowned: an application either supplies its own
+    # ``authorize_handler``/``token_handler`` pair and ``callback_handler``, or
+    # registers no OAuth surface at all. Setting any other front-channel field
+    # without ``provider`` is a registration error.
+    provider: Provider | None = None
+    # ``stores`` supplies the five facade store SPIs the front channel persists
+    # through (DESIGN section 7): transaction, authorization code, client,
+    # route-refresh broker, and rate limit. All five are required when
+    # ``provider`` is set. Each store owns its own TTL (DESIGN section 7 TTL
+    # column), so no TTL is configured here.
+    stores: Stores | None = None
+    # ``upstream_client_id`` is the facade's own OAuth client registration at
+    # the upstream provider (DESIGN section 8.1): the upstream authorize request
+    # carries it and the server-side upstream code exchange presents it. It is
+    # also the expected azp/client_id of an upstream access token the facade
+    # validates (DESIGN section 5.2, section 6), so a token minted for another
+    # client is refused.
+    upstream_client_id: str = ""
+    # ``upstream_issuer`` is the expected upstream issuer: the RFC 9207 ``iss``
+    # value the upstream callback pins before consuming the transaction or
+    # exchanging the code (DESIGN section 8.2) and the issuer the provider's
+    # ``discovery`` call must verify before any published endpoint is trusted
+    # (DESIGN section 5.2, section 6). It must be an absolute HTTPS URL with no
+    # query or fragment, normalized like ``issuer_url``, and it is distinct from
+    # the client-facing issuer.
+    upstream_issuer: str = ""
+    # ``lifecycle_scopes`` are scope values the facade adds to every upstream
+    # authorize request but never requires from the MCP client, for example the
+    # ``offline_access`` lifecycle scope that lets the upstream issue refresh
+    # material (FRAMEWORK_VS_POLICY row 7). ``None`` adds none. Values are
+    # validated like ``scopes``: trimmed, non-empty, and well-formed Unicode.
+    lifecycle_scopes: list[str] | None = None
+    # ``provider_hints`` supplies the opaque provider hints for one authorize
+    # request (DESIGN section 6): it receives the request context and returns
+    # the hint map, for example the ``account_id`` hint. A hint carries no
+    # authority: the provider derives authentication account context from its
+    # own validated binding, not from the hint (DESIGN section 6).
+    provider_hints: Callable[[Context], dict[str, str]] | None = None
 
 
 @dataclass(slots=True)
@@ -242,6 +284,7 @@ def _normalize_config(config: FacadeConfig | None) -> _NormalizedConfig:
         normalized.callback_handler,
         normalized.root_authorization_server,
     )
+    _validate_front_channel_config(config)
     return normalized
 
 
@@ -349,6 +392,110 @@ def _validate_posture_surface_config(
         )
     if root_authorization_server is not None:
         raise ValueError(f"{_ERROR_PREFIX} TransportPosture none-public cannot enable RootAuthorizationServer")
+
+
+def _validate_front_channel_config(config: FacadeConfig) -> None:
+    """Validate the framework-owned front-channel field set of ``FacadeConfig``
+    (DESIGN section 8).
+
+    The set is declared by ``provider``: when it is set, every other required
+    front-channel field must be present and the application-owned handler
+    factories that would otherwise claim the same routes must be absent. Nothing
+    here mounts a route; it makes the declared public surface fail closed before
+    anything is registered.
+    """
+    if config.provider is None:
+        name = _front_channel_field_outside_provider(config)
+        if name is not None:
+            raise ValueError(
+                f"{_ERROR_PREFIX} {name} is set without Provider; the front-channel field set is anchored by Provider"
+            )
+        return
+    if _normalize_https_url(config.upstream_issuer or "", True) is None:
+        raise ValueError(
+            f"{_ERROR_PREFIX} front channel upstream issuer must be an absolute HTTPS URL without query or fragment"
+        )
+    if not _valid_upstream_client_id(config.upstream_client_id or ""):
+        raise ValueError(f"{_ERROR_PREFIX} front channel upstream client id is required and must be well-formed")
+    if config.lifecycle_scopes:
+        try:
+            _normalize_non_empty_list("lifecycle scope", config.lifecycle_scopes)
+        except ValueError as err:
+            raise ValueError(f"{_ERROR_PREFIX} {err}") from err
+    _validate_front_channel_stores(config.stores)
+    if config.authorize_handler is not None or config.token_handler is not None:
+        raise ValueError(
+            f"{_ERROR_PREFIX} Provider owns the authorize and token routes; "
+            "AuthorizeHandler and TokenHandler must not be configured with a front channel"
+        )
+    if config.callback_handler is not None:
+        raise ValueError(
+            f"{_ERROR_PREFIX} Provider owns the stage-global callback; "
+            "CallbackHandler must not be configured with a front channel"
+        )
+
+
+def _front_channel_field_outside_provider(config: FacadeConfig) -> str | None:
+    """Return the first front-channel field set while ``provider`` is absent, so
+    a partially configured front channel fails closed instead of half-registering.
+    """
+    if _front_channel_store_is_declared(config.stores):
+        return "Stores"
+    if (config.upstream_client_id or "").strip() != "":
+        return "UpstreamClientID"
+    if (config.upstream_issuer or "").strip() != "":
+        return "UpstreamIssuer"
+    if config.lifecycle_scopes:
+        return "LifecycleScopes"
+    if config.provider_hints is not None:
+        return "ProviderHints"
+    return None
+
+
+def _front_channel_store_is_declared(stores: Stores | None) -> bool:
+    if stores is None:
+        return False
+    return (
+        stores.transaction is not None
+        or stores.authorization_code is not None
+        or stores.client is not None
+        or stores.route_refresh_broker is not None
+        or stores.rate_limit is not None
+    )
+
+
+def _validate_front_channel_stores(stores: Stores | None) -> None:
+    """Require every one of the five store SPIs DESIGN section 7 defines: a
+    facade missing a store cannot persist the state its mechanics depend on, so
+    it fails closed rather than degrading.
+    """
+    missing = [
+        name
+        for name, value in (
+            ("Transaction", None if stores is None else stores.transaction),
+            ("AuthorizationCode", None if stores is None else stores.authorization_code),
+            ("Client", None if stores is None else stores.client),
+            ("RouteRefreshBroker", None if stores is None else stores.route_refresh_broker),
+            ("RateLimit", None if stores is None else stores.rate_limit),
+        )
+        if value is None
+    ]
+    if missing:
+        raise ValueError(f"{_ERROR_PREFIX} front channel requires all five stores; missing {', '.join(missing)}")
+
+
+def _valid_upstream_client_id(client_id: str) -> bool:
+    """Report whether an upstream client id is usable: a non-empty,
+    well-formed value. It is a registration identifier, not a secret.
+    """
+    value = (client_id or "").strip()
+    if value == "" or "\x00" in value:
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def _normalize_transport_posture(posture: str | None, require_bearer_token: RequireBearerTokenOptions | None) -> str:

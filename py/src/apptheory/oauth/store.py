@@ -229,6 +229,23 @@ class RateLimitStore(Protocol):
     def check_and_increment(self, key: RateLimitBucketKey) -> RateLimitResult: ...
 
 
+@dataclass(slots=True)
+class Stores:
+    """The five store SPIs of one deployment, so one value bundles a facade's
+    persistence surface.
+
+    The framework's in-memory implementations are for deterministic tests and
+    local development: a durable implementation is application-owned and MUST
+    encrypt the encrypted record fields at rest.
+    """
+
+    transaction: TransactionStore | None = None
+    authorization_code: AuthorizationCodeStore | None = None
+    client: ClientStore | None = None
+    route_refresh_broker: RouteRefreshBrokerStore | None = None
+    rate_limit: RateLimitStore | None = None
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -1214,6 +1231,7 @@ __all__ = [
     "RouteRefreshBrokerSeeder",
     "RouteRefreshBrokerStore",
     "StoreError",
+    "Stores",
     "TransactionRecord",
     "TransactionStore",
     "run_store_conformance",

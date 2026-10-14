@@ -1,7 +1,7 @@
 import type { App } from "./app.js";
-import type { Handler } from "./context.js";
+import type { Context, Handler } from "./context.js";
 import { type EndpointKind, type IssuerMode } from "./mcproutes.js";
-import { type RequireBearerTokenOptions } from "./oauth/index.js";
+import { type Provider, type RequireBearerTokenOptions, type Stores } from "./oauth/index.js";
 /**
  * URL mode selects the source of absolute URLs in facade metadata documents.
  *
@@ -91,6 +91,66 @@ export interface FacadeConfig {
     transportPosture?: McpTransportPosture;
     /** Valid only with runtime-bearer; refused under every other posture. */
     requireBearerToken?: RequireBearerTokenOptions;
+    /**
+     * Anchors the framework-owned front channel (DESIGN §8). When it is set,
+     * AppTheory owns `/authorize`, the stage-global upstream callback, and the
+     * `/token` authorization_code grant, and the rest of the front-channel field
+     * set below is required. An absent provider leaves the front channel
+     * unowned: an application either supplies its own
+     * `authorizeHandler`/`tokenHandler` pair and `callbackHandler`, or registers
+     * no OAuth surface at all. Setting any other front-channel field without
+     * `provider` is a registration error.
+     */
+    provider?: Provider;
+    /**
+     * The five facade store SPIs the front channel persists through (DESIGN §7):
+     * transaction, authorization code, client, route-refresh broker, and rate
+     * limit. All five are required when `provider` is set. Each store owns its
+     * own TTL (DESIGN §7 TTL column), so no TTL is configured here.
+     *
+     * The framework's in-memory reference stores are non-durable and do not
+     * encrypt: they exist for deterministic tests and local development only. A
+     * durable store implementation MUST encrypt the Encrypted* record fields at
+     * rest (for example with persistence-layer encryption), because the facade
+     * hands the store upstream material, including the upstream-minted access
+     * token, exactly as the provider returned it and relies on the store to
+     * protect it (DESIGN §7).
+     */
+    stores?: Stores;
+    /**
+     * The facade's own OAuth client registration at the upstream provider
+     * (DESIGN §8.1): the upstream authorize request carries it and the
+     * server-side upstream code exchange presents it. It is also the expected
+     * azp/client_id of an upstream access token the facade validates
+     * (DESIGN §5.2, §6), so a token minted for another client is refused.
+     */
+    upstreamClientID?: string;
+    /**
+     * The expected upstream issuer: the RFC 9207 `iss` value the upstream
+     * callback pins before consuming the transaction or exchanging the code
+     * (DESIGN §8.2) and the issuer the provider's `discovery` call must verify
+     * before any published endpoint is trusted (DESIGN §5.2, §6). It must be an
+     * absolute HTTPS URL with no query or fragment, normalized like `issuerURL`,
+     * and it is distinct from the client-facing issuer.
+     */
+    upstreamIssuer?: string;
+    /**
+     * Scope values the facade adds to every upstream authorize request but never
+     * requires from the MCP client, for example the `offline_access` lifecycle
+     * scope that lets the upstream issue refresh material (FRAMEWORK_VS_POLICY
+     * row 7). Absent adds none. Values are validated like `scopes`: trimmed,
+     * non-empty, and well-formed Unicode.
+     */
+    lifecycleScopes?: string[];
+    /**
+     * Supplies the opaque provider hints for one authorize request (DESIGN §6):
+     * it receives the request context and returns the hint map, for example the
+     * `account_id` hint. A hint carries no authority — the provider derives
+     * authentication account context from its own validated binding, not from
+     * the hint (DESIGN §6). An absent function contributes no hints; a rejected
+     * promise is a fail-closed request-class rejection that never redirects.
+     */
+    providerHints?: (ctx: Context) => Record<string, string> | Promise<Record<string, string>>;
 }
 /** One endpoint-kind route family installed by the helper. */
 export interface FacadeRoute {

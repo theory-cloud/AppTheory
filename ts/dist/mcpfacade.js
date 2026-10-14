@@ -63,6 +63,7 @@ function normalizeConfig(config) {
     normalized.mcpHandler = config.mcpHandler;
     normalized.callbackHandler = config.callbackHandler ?? null;
     validatePostureSurfaceConfig(transportPosture, normalized.authorizeHandlers, normalized.registerHandlers, normalized.callbackHandler, normalized.rootAuthorizationServer);
+    validateFrontChannelConfig(config);
     return normalized;
 }
 function normalizeDerivedConfig(config) {
@@ -157,6 +158,106 @@ function validatePostureSurfaceConfig(posture, authorizeHandlers, registerHandle
     if (rootAuthorizationServer !== null) {
         throw new Error(`${ERROR_PREFIX} TransportPosture none-public cannot enable RootAuthorizationServer`);
     }
+}
+/**
+ * Validates the framework-owned front-channel field set of `FacadeConfig`
+ * (DESIGN §8). The set is declared by `provider`: when it is set, every other
+ * required front-channel field must be present and the application-owned
+ * handler factories that would otherwise claim the same routes must be absent.
+ * Nothing here mounts a route; it makes the declared public surface fail closed
+ * before anything is registered.
+ */
+function validateFrontChannelConfig(config) {
+    if (config.provider === undefined || config.provider === null) {
+        const name = frontChannelFieldOutsideProvider(config);
+        if (name !== null) {
+            throw new Error(`${ERROR_PREFIX} ${name} is set without Provider; the front-channel field set is anchored by Provider`);
+        }
+        return;
+    }
+    if (normalizeHTTPSURL(config.upstreamIssuer ?? "", true) === null) {
+        throw new Error(`${ERROR_PREFIX} front channel upstream issuer must be an absolute HTTPS URL without query or fragment`);
+    }
+    if (!validUpstreamClientID(config.upstreamClientID ?? "")) {
+        throw new Error(`${ERROR_PREFIX} front channel upstream client id is required and must be well-formed`);
+    }
+    if ((config.lifecycleScopes ?? []).length > 0) {
+        try {
+            normalizeNonEmptyList("lifecycle scope", config.lifecycleScopes ?? []);
+        }
+        catch (err) {
+            throw new Error(`${ERROR_PREFIX} ${errorMessage(err)}`, { cause: err });
+        }
+    }
+    validateFrontChannelStores(config.stores);
+    if (isPresent(config.authorizeHandler) || isPresent(config.tokenHandler)) {
+        throw new Error(`${ERROR_PREFIX} Provider owns the authorize and token routes; AuthorizeHandler and TokenHandler must not be configured with a front channel`);
+    }
+    if (isPresent(config.callbackHandler)) {
+        throw new Error(`${ERROR_PREFIX} Provider owns the stage-global callback; CallbackHandler must not be configured with a front channel`);
+    }
+}
+/**
+ * Reports the first front-channel field that is set while `provider` is
+ * absent, so a partially configured front channel fails closed instead of
+ * half-registering.
+ */
+function frontChannelFieldOutsideProvider(config) {
+    if (frontChannelStoreIsDeclared(config.stores)) {
+        return "Stores";
+    }
+    if (String(config.upstreamClientID ?? "").trim() !== "") {
+        return "UpstreamClientID";
+    }
+    if (String(config.upstreamIssuer ?? "").trim() !== "") {
+        return "UpstreamIssuer";
+    }
+    if ((config.lifecycleScopes ?? []).length > 0) {
+        return "LifecycleScopes";
+    }
+    if (isPresent(config.providerHints)) {
+        return "ProviderHints";
+    }
+    return null;
+}
+function frontChannelStoreIsDeclared(stores) {
+    const bundle = (stores ?? {});
+    return (isPresent(bundle.transaction) ||
+        isPresent(bundle.authorizationCode) ||
+        isPresent(bundle.client) ||
+        isPresent(bundle.routeRefreshBroker) ||
+        isPresent(bundle.rateLimit));
+}
+/**
+ * Requires every one of the five store SPIs DESIGN §7 defines: a facade missing
+ * a store cannot persist the state its mechanics depend on, so it fails closed
+ * rather than degrading.
+ */
+function validateFrontChannelStores(stores) {
+    const bundle = (stores ?? {});
+    const missing = [
+        ["Transaction", bundle.transaction],
+        ["AuthorizationCode", bundle.authorizationCode],
+        ["Client", bundle.client],
+        ["RouteRefreshBroker", bundle.routeRefreshBroker],
+        ["RateLimit", bundle.rateLimit],
+    ]
+        .filter(([, value]) => !isPresent(value))
+        .map(([name]) => name);
+    if (missing.length > 0) {
+        throw new Error(`${ERROR_PREFIX} front channel requires all five stores; missing ${missing.join(", ")}`);
+    }
+}
+/**
+ * Reports whether an upstream client id is usable: a non-empty, well-formed
+ * value. It is a registration identifier, not a secret.
+ */
+function validUpstreamClientID(clientID) {
+    const value = String(clientID ?? "").trim();
+    return (value !== "" && !hasUnpairedSurrogate(value) && !value.includes("\u0000"));
+}
+function isPresent(value) {
+    return value !== undefined && value !== null;
 }
 function normalizeTransportPosture(posture, requireBearerToken) {
     const resolved = posture ?? "iam";

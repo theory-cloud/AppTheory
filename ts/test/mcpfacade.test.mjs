@@ -15,6 +15,13 @@ import {
   supportedOAuthDiscoveryTemplates,
   supportedOAuthFacadeTemplates,
 } from "../dist/index.js";
+import {
+  MemoryAuthorizationCodeStore,
+  MemoryClientStore,
+  MemoryRateLimitStore,
+  MemoryRouteRefreshBrokerStore,
+  MemoryTransactionStore,
+} from "../dist/oauth/store.js";
 
 // ---------------------------------------------------------------------------
 // Shared contract fixtures (README: consume the same rows as Go)
@@ -1085,4 +1092,200 @@ test("registration rejections match the shared rejection rows", async () => {
       }
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// Framework-owned front-channel field set (DESIGN §8): declared by `provider`
+// ---------------------------------------------------------------------------
+
+/** A no-op Provider adapter used only to declare a front channel. */
+function stubProvider() {
+  return {
+    discovery: async () => ({
+      issuer: "https://id.example.com",
+      authorizationEndpoint: "https://id.example.com/authorize",
+      tokenEndpoint: "https://id.example.com/token",
+      jwksUri: "https://id.example.com/jwks.json",
+      codeChallengeMethodsSupported: ["S256"],
+      authorizationResponseIssParameterSupported: true,
+      resourceParameterSupported: true,
+    }),
+    authorizationUrl: async () => "https://id.example.com/authorize",
+    exchangeCode: async () => ({ accessToken: "upstream", tokenType: "Bearer" }),
+    refresh: async () => ({ accessToken: "upstream", tokenType: "Bearer" }),
+    validateAccessToken: async () => ({
+      subject: "subject",
+      audience: "audience",
+      scopes: [],
+      authorizedParty: "",
+    }),
+  };
+}
+
+/** The five in-memory reference stores, as one bundle. */
+function referenceStores() {
+  return {
+    transaction: new MemoryTransactionStore(),
+    authorizationCode: new MemoryAuthorizationCodeStore(),
+    client: new MemoryClientStore(),
+    routeRefreshBroker: new MemoryRouteRefreshBrokerStore(),
+    rateLimit: new MemoryRateLimitStore(),
+  };
+}
+
+/** A complete, valid front-channel field set built on the reference stores. */
+function frontChannelConfig() {
+  return {
+    ...validConfig(),
+    provider: stubProvider(),
+    stores: referenceStores(),
+    upstreamClientID: "mcp_facade_client",
+    upstreamIssuer: "https://id.example.com",
+  };
+}
+
+test("front channel config accepts a complete set", () => {
+  const app = createApp({ tier: "p0" });
+  registerMcpFacade(app, frontChannelConfig());
+});
+
+test("front channel config requires every field", () => {
+  const cases = [
+    ["upstream client id", (c) => (c.upstreamClientID = ""), "upstream client id"],
+    [
+      "upstream client id whitespace",
+      (c) => (c.upstreamClientID = "   "),
+      "upstream client id",
+    ],
+    ["upstream issuer empty", (c) => (c.upstreamIssuer = ""), "upstream issuer"],
+    [
+      "upstream issuer not https",
+      (c) => (c.upstreamIssuer = "http://id.example.com"),
+      "upstream issuer",
+    ],
+    [
+      "upstream issuer with query",
+      (c) => (c.upstreamIssuer = "https://id.example.com?a=1"),
+      "upstream issuer",
+    ],
+    [
+      "empty lifecycle scope",
+      (c) => (c.lifecycleScopes = ["offline_access", "  "]),
+      "lifecycle scope",
+    ],
+  ];
+  for (const [name, mutate, want] of cases) {
+    const config = frontChannelConfig();
+    mutate(config);
+    assert.throws(() => registerMcpFacade(createApp({ tier: "p0" }), config), {
+      message: new RegExp(want),
+    }, name);
+  }
+});
+
+test("front channel config requires every store", () => {
+  const cases = [
+    ["transaction", (s) => (s.transaction = undefined), "Transaction"],
+    [
+      "authorization code",
+      (s) => (s.authorizationCode = undefined),
+      "AuthorizationCode",
+    ],
+    ["client", (s) => (s.client = undefined), "Client"],
+    [
+      "route refresh broker",
+      (s) => (s.routeRefreshBroker = undefined),
+      "RouteRefreshBroker",
+    ],
+    ["rate limit", (s) => (s.rateLimit = undefined), "RateLimit"],
+  ];
+  for (const [name, mutate, want] of cases) {
+    const config = frontChannelConfig();
+    mutate(config.stores);
+    let thrown;
+    assert.throws(
+      () => registerMcpFacade(createApp({ tier: "p0" }), config),
+      (err) => {
+        thrown = err;
+        return true;
+      },
+      name,
+    );
+    assert.match(thrown.message, new RegExp(want), name);
+    assert.match(thrown.message, /all five stores/, name);
+  }
+});
+
+test("front channel field set fails closed without provider", () => {
+  const cases = [
+    ["stores", (c) => (c.stores = referenceStores()), "Stores"],
+    ["upstream client id", (c) => (c.upstreamClientID = "mcp_x"), "UpstreamClientID"],
+    [
+      "upstream issuer",
+      (c) => (c.upstreamIssuer = "https://id.example.com"),
+      "UpstreamIssuer",
+    ],
+    [
+      "lifecycle scopes",
+      (c) => (c.lifecycleScopes = ["offline_access"]),
+      "LifecycleScopes",
+    ],
+    [
+      "provider hints",
+      (c) => (c.providerHints = () => ({ account_id: "acme" })),
+      "ProviderHints",
+    ],
+  ];
+  for (const [name, mutate, want] of cases) {
+    const config = validConfig();
+    mutate(config);
+    let thrown;
+    assert.throws(
+      () => registerMcpFacade(createApp({ tier: "p0" }), config),
+      (err) => {
+        thrown = err;
+        return true;
+      },
+      name,
+    );
+    assert.match(thrown.message, new RegExp(want), name);
+    assert.match(thrown.message, /without Provider/, name);
+  }
+});
+
+test("front channel rejects application-owned handler factories", () => {
+  const authorizeAndToken = frontChannelConfig();
+  authorizeAndToken.authorizeHandler = kindHandlerFactory("authorize");
+  authorizeAndToken.tokenHandler = kindHandlerFactory("token");
+  assert.throws(
+    () => registerMcpFacade(createApp({ tier: "p0" }), authorizeAndToken),
+    /AuthorizeHandler and TokenHandler must not be configured with a front channel/,
+  );
+
+  const callback = frontChannelConfig();
+  callback.callbackHandler = () => noContent();
+  assert.throws(
+    () => registerMcpFacade(createApp({ tier: "p0" }), callback),
+    /CallbackHandler must not be configured with a front channel/,
+  );
+});
+
+test("front channel lifecycle scopes are validated like scopes", () => {
+  const duplicated = frontChannelConfig();
+  duplicated.lifecycleScopes = ["offline_access", "offline_access"];
+  registerMcpFacade(createApp({ tier: "p0" }), duplicated);
+
+  const short = frontChannelConfig();
+  short.lifecycleScopes = ["aaa"];
+  registerMcpFacade(createApp({ tier: "p0" }), short);
+});
+
+test("front channel config is validated before any route is registered", async () => {
+  const app = createApp({ tier: "p0" });
+  const config = frontChannelConfig();
+  config.upstreamIssuer = "http://id.example.com";
+  assert.throws(() => registerMcpFacade(app, config));
+
+  const response = await serve(app, "GET", PROTECTED_RESOURCE_PATH);
+  assert.equal(response.status, 404);
 });
