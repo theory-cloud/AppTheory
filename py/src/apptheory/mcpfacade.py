@@ -2037,20 +2037,31 @@ def _handle_register_inner(config: _NormalizedConfig, kind: str, ctx: Context) -
     if failure is not None:
         return failure
     request, failure = _parse_dcr_request(body)
-    if failure is not None:
-        return failure
+    if request is None:
+        return _dcr_failure(failure, _dcr_invalid_client_metadata())
     registration, failure = _validate_dcr_request(request)
-    if failure is not None:
-        return failure
+    if registration is None:
+        return _dcr_failure(failure, _dcr_invalid_client_metadata())
     endpoint = _endpoint_from_route_params(ctx, kind)
     # The resource the client is bound to is the same route resource the
     # authorize handler computes for this endpoint kind, so the advertised route
     # and the persisted binding cannot drift.
     resource = _build_absolute_url(config, ctx, endpoint.mcp_path())
     client_id, failure = _persist_registered_client(front, registration, resource)
-    if failure is not None:
-        return failure
+    if client_id is None:
+        return _dcr_failure(failure, _dcr_unavailable_page(0))
     return _dcr_client_response(ctx, client_id, registration)
+
+
+def _dcr_failure(failure: Response | None, fallback: Response) -> Response:
+    """Return the failure a DCR step reported, or a fixed fail-closed response.
+
+    Every DCR step that reports no value reports a failure with it, so the
+    fallback is unreachable by contract; it exists so a missing value narrows for
+    the type checker and a step that ever broke that contract would still deny
+    rather than proceed.
+    """
+    return failure if failure is not None else fallback
 
 
 def _dcr_register_rate_limit(front: _FrontChannelConfig, kind: str, ctx: Context) -> Response | None:
@@ -2152,16 +2163,16 @@ def _validate_dcr_request(
     its class, never which member failed.
     """
     redirects, failure = _validated_dcr_redirect_uris(request.redirect_uris)
-    if failure is not None:
-        return None, failure
+    if redirects is None:
+        return None, _dcr_failure(failure, _dcr_invalid_client_metadata())
     if not _valid_dcr_token_endpoint_auth_method(request.token_endpoint_auth_method):
         return None, _dcr_invalid_client_metadata()
     grants, failure = _normalized_dcr_grant_types(request.grant_types)
-    if failure is not None:
-        return None, failure
+    if grants is None:
+        return None, _dcr_failure(failure, _dcr_invalid_client_metadata())
     responses, failure = _normalized_dcr_response_types(request.response_types)
-    if failure is not None:
-        return None, failure
+    if responses is None:
+        return None, _dcr_failure(failure, _dcr_invalid_client_metadata())
     if _utf8_byte_length(request.client_name) > _DCR_MAX_CLIENT_NAME_BYTES:
         return None, _dcr_invalid_client_metadata()
     if _utf8_byte_length(request.scope) > _DCR_MAX_SCOPE_BYTES:
