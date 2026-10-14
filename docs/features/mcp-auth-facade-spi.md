@@ -18,9 +18,10 @@ per-endpoint-kind `POST …/token` `authorization_code` grant. Nothing outside t
 `Provider` absent the facade owns no OAuth surface — the application either supplies its own handler factories or
 registers none, exactly as before.
 
-Not mounted or answered yet: the `/register` DCR route, the `refresh_token` grant at `/token` (the code-exchange
-response already carries a framework-minted opaque refresh handle, but that handle cannot be redeemed yet), and the CDK
-`facade` wiring. See "What the front channel does" below.
+Mounted: the per-endpoint-kind `POST …/register` RFC 7591 dynamic-client-registration route. Not mounted or answered
+yet: the `refresh_token` grant at `/token` (the code-exchange response already carries a framework-minted opaque
+refresh handle, but that handle cannot be redeemed yet), and the CDK `facade` wiring. See "What the front channel does"
+below.
 
 ## What the framework owns, and what the application owns
 
@@ -34,7 +35,8 @@ in `docs/development/planning/apptheory/mcp-auth-facade/FRAMEWORK_VS_POLICY.md`.
 | Conformance suites (provider + store) and the fake upstream provider | Framework |
 | Scope vocabulary, `offline_access` lifecycle scope, `account_id` hint semantics | Application |
 | Durable store backend (e.g. TableTheory/DynamoDB), encryption key/ARN, table shapes | Application |
-| DCR entropy/prefix, redirect allow-list policy, legacy-client adoption | Application |
+| DCR mechanics (RFC 7591 validation, https-or-loopback redirect enforcement, server-assigned ≥128-bit client ids, per-route rate limit, bound-route binding, hash-stored record) | Framework |
+| DCR redirect allow-list policy **beyond** the framework's https-or-loopback floor, legacy-client adoption | Application |
 
 ## Provider SPI
 
@@ -125,12 +127,13 @@ persist nor encrypt and must not be used as a durable store.
 
 ## Front-channel configuration
 
-The framework-owned front channel — the `/authorize` terminator, the stage-global upstream callback, and the
-`/token` authorization-code grant of DESIGN §8 — is declared by one `FacadeConfig` field set. **Declaring the set is
-what mounts the front channel:** with `Provider` set, registration validates the rest of the set, fails closed on an
-incomplete or contradictory set, and mounts the three route shapes driven by the provider and the five stores; with
-`Provider` absent the front channel stays unowned and no front-channel field may be set. The per-kind `/register` DCR
-route is separate and still application-owned until the DCR handler lands (see the Status note above).
+The framework-owned front channel — the `/authorize` terminator, the stage-global upstream callback, the
+`/token` authorization-code grant, and the `/register` dynamic-client-registration route of DESIGN §8 — is declared by
+one `FacadeConfig` field set. **Declaring the set is what mounts the front channel:** with `Provider` set,
+registration validates the rest of the set, fails closed on an incomplete or contradictory set, and mounts the four
+route shapes driven by the provider and the five stores; with `Provider` absent the front channel stays unowned and no
+front-channel field may be set (the `/register` and callback routes then mount only through the application-owned
+`RegisterHandler` / `CallbackHandler`).
 
 | Field (Go / TS / Python) | Purpose | Default | Validation | Fail-closed rule | Demanded by |
 | --- | --- | --- | --- | --- | --- |
@@ -212,6 +215,19 @@ belong to the framework rather than the application.
   refresh handle** as `refresh_token`; it never carries an `id_token` or upstream refresh material. The endpoint
   answers `400 unsupported_grant_type` for `grant_type=refresh_token` and for every other grant, and `400
   invalid_request` for an absent grant type.
+- **`POST …/register` — RFC 7591 dynamic client registration.** The framework-owned handler bounds and validates the
+  client metadata, mints a server-assigned opaque `client_id` (≥128 bits), and stores the record through the
+  `ClientStore`, hash-keyed and bound to the advertising route. Only **public clients** are accepted
+  (`token_endpoint_auth_method` absent or `none`); `grant_types` (if present) must include `authorization_code` and
+  `response_types` (if present) must include `code`; every `redirect_uri` must be an absolute URL with no fragment that
+  is either `https` or loopback `http`; unknown JSON members are ignored. Both the raw body and the metadata are
+  bounded, and the route is **per-route rate limited** through the `RateLimitStore`, keyed by the advertising route
+  kind plus the provider-derived source identity (a shared per-route bucket when no source identity is available, so it
+  fails closed to the stricter bucket), with a store or bucket error failing closed too. A refusal is `400` with a
+  fixed RFC 7591 error code (`invalid_client_metadata` or `invalid_redirect_uri`); a rate-limited or store-failed
+  request is `429` with the fixed code `temporarily_unavailable` and a `Retry-After` header. The `201` response carries
+  `client_id`, `client_id_issued_at`, the normalized metadata, and **no `client_secret`** (a public client has none),
+  with `cache-control: no-store`.
 
 **Provider failures are their own class.** A provider `AuthorizationURL` / `ExchangeCode` / `ValidateAccessToken`
 failure is never returned in the facade's `400` vocabulary: it is a distinct **`502`** carrying the fixed error code
@@ -225,7 +241,7 @@ framework never writes upstream material to a log, a redirect, a response, or an
 
 ## Conformance suites and the fake provider
 
-Two shared conformance tables drive all three runtimes from one source (`contract-tests/fixtures/routing/mcp-auth-facade/`):
+Three shared conformance tables drive all three runtimes from one source (`contract-tests/fixtures/routing/mcp-auth-facade/`):
 
 - `facade-provider-conformance.v1.json` — discovery, authorize-URL construction, code exchange, refresh and token
   validation rows, run against the Autheory adapter and a tiny second adapter (provider-neutrality) over a **real
@@ -233,6 +249,9 @@ Two shared conformance tables drive all three runtimes from one source (`contrac
 - `facade-store-conformance.v1.json` — the atomicity rows (single-use consume, replay vs unknown, rotation/CAS, lock
   with expiry, idempotent revoke, rate-limit window) including concurrent-consume/rotate/revoke rows, run against the
   in-memory reference stores.
+- `facade-conformance.v1.json` — the front-channel behavior rows executed through the real mounted handlers: the RFC
+  9207 `iss` pin, the loopback redirect match, the bounded strict `/token` form parse, the method-mismatch rule, and
+  the RFC 7591 DCR (`dcr`) rows.
 
 Any store — the in-memory ones now, an application's durable store later — must pass the store conformance suite. A
 fake provider (real RSA keys, real local HTTP, configurable success/error/slow/oversized-filler/oversized-valid-json/
@@ -246,7 +265,7 @@ response-size bound is observable rather than indistinguishable from a JSON pars
 | --- | --- | --- | --- |
 | Provider SPI + Autheory adapter | `runtime/oauth/provider.go`, `runtime/oauth/provider_autheory.go` | `ts/src/oauth/provider.ts` | `apptheory.oauth.provider`, `apptheory.oauth.autheory` |
 | Store SPI + reference stores | `runtime/oauth/store` | `ts/src/oauth/store.ts` | `apptheory.oauth.store` |
-| Framework-owned front channel | `runtime/mcpfacade/front_channel.go`, `runtime/mcpfacade/front_channel_config.go` | `ts/src/mcpfacade.ts` (front-channel section) | `apptheory.mcpfacade` (front-channel section) |
+| Framework-owned front channel | `runtime/mcpfacade/front_channel.go`, `runtime/mcpfacade/front_channel_config.go`, `runtime/mcpfacade/dcr.go` | `ts/src/mcpfacade.ts` (front-channel section) | `apptheory.mcpfacade` (front-channel section) |
 | Store key derivation | `oauthstore.HashKey` | `hashKey` | `hash_key` |
 | Fake provider (test support) | `testkit/oauthprovider` | `ts/src/testkit/oauthprovider.ts` | `apptheory.oauth.fake_provider` |
 
@@ -265,12 +284,9 @@ facade itself derives when it looks a record up, and it grants no access of its 
 
 Still absent, by milestone:
 
-- **DCR:** the `/register` route is not mounted — the derived `/register` pattern exists in the route model, but the
-  front channel registers no handler for it (the application owns it through `RegisterHandler` until the facade DCR
-  handler lands).
 - **Brokered refresh:** the token endpoint answers `400 unsupported_grant_type` for `grant_type=refresh_token`. The
   code-exchange response already carries the framework-minted opaque refresh handle, but that handle cannot be redeemed
-  yet; brokered refresh is the follow-on milestone (M3c).
+  yet; brokered refresh is the follow-on milestone (M3c-1b).
 - **CDK wiring:** no `cdk/**` change; the construct's `facade` attach prop does not yet wire the provider and stores or
   the callback-path override.
 - **A durable store:** the framework still ships none. The in-memory reference stores are non-durable and do not

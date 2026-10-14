@@ -44,6 +44,7 @@ import {
   requireBearerTokenMiddleware,
   type AuthorizationCodeRecord,
   type AuthorizationServerMetadata,
+  type ClientRecord,
   type ProtectedResourceMetadata,
   type Provider,
   type RequireBearerTokenOptions,
@@ -568,6 +569,11 @@ function normalizeFrontChannel(
       `${ERROR_PREFIX} Provider owns the authorize and token routes; AuthorizeHandler and TokenHandler must not be configured with a front channel`,
     );
   }
+  if (isPresent(config.registerHandler)) {
+    throw new Error(
+      `${ERROR_PREFIX} Provider owns the register route; RegisterHandler must not be configured with a front channel`,
+    );
+  }
   if (isPresent(config.callbackHandler)) {
     throw new Error(
       `${ERROR_PREFIX} Provider owns the stage-global callback; CallbackHandler must not be configured with a front channel`,
@@ -878,6 +884,18 @@ function buildRegistrations(
             route.kind,
             false,
             tokenHandlerFor(config, route.kind),
+          ),
+          authRequired: false,
+        },
+        // The RFC 7591 registration route is part of the front channel, so it
+        // follows the same posture-derived mount: it is never reached under the
+        // none-public posture, where nothing of the OAuth surface registers.
+        {
+          method: "POST",
+          pattern: route.registerPattern,
+          handler: checkedRegisterHandler(
+            route.kind,
+            registerHandlerFor(config, route.kind),
           ),
           authRequired: false,
         },
@@ -2306,6 +2324,18 @@ function tokenHandlerFor(
   return (ctx) => handleToken(config, kind, ctx);
 }
 
+/**
+ * Builds the framework-owned per-kind RFC 7591 registration handler. It is only
+ * called when the front-channel field set is declared, so the route is mounted
+ * exactly when the facade owns the OAuth surface.
+ */
+function registerHandlerFor(
+  config: NormalizedConfig,
+  kind: EndpointKind,
+): Handler {
+  return (ctx) => handleRegister(config, kind, ctx);
+}
+
 function callbackHandlerFor(config: NormalizedConfig): Handler {
   return (ctx) => handleCallback(config, ctx);
 }
@@ -2748,6 +2778,605 @@ async function handleAuthorizationCodeGrant(
     },
     cookies: [],
     body: Buffer.from(JSON.stringify(payload), "utf8"),
+    isBase64: false,
+  };
+}
+
+/**
+ * DCR framework defaults (DESIGN §8.3 / THREAT_MODEL T5). They are constants, so
+ * no adopter can widen the public registration door with a FacadeConfig field or
+ * an environment variable: every POST /register decision is bounded by these
+ * fixed values.
+ */
+const DCR_RATE_LIMIT = 10;
+const DCR_RATE_LIMIT_WINDOW_SECONDS = 60;
+const DCR_MAX_REDIRECT_URIS = 10;
+const DCR_MAX_CLIENT_NAME_BYTES = 256;
+const DCR_MAX_SCOPE_BYTES = 1024;
+
+/** Registration vocabulary: the only metadata values the facade accepts. */
+const DCR_TOKEN_ENDPOINT_AUTH_METHOD_NONE = "none";
+const DCR_GRANT_TYPE_AUTHORIZATION_CODE = "authorization_code";
+const DCR_GRANT_TYPE_REFRESH_TOKEN = "refresh_token";
+const DCR_RESPONSE_TYPE_CODE = "code";
+
+/**
+ * The RFC 7591 request members the facade reads. Every other JSON member of the
+ * body is ignored, exactly as RFC 7591 requires: a client that sends a member
+ * the facade does not understand still registers.
+ */
+const DCR_MEMBERS: readonly string[] = [
+  "redirect_uris",
+  "token_endpoint_auth_method",
+  "grant_types",
+  "response_types",
+  "client_name",
+  "scope",
+];
+
+/** The rate-limit operation bucket of the registration endpoint. */
+const DCR_OPERATION = "dcr";
+
+/**
+ * The shared rate-limit bucket identifier used when the runtime exposes no
+ * provider-derived source IP. An unidentifiable caller gets one shared per-route
+ * bucket rather than an unmetered one, which is the stricter fail-closed choice
+ * (THREAT_MODEL T5).
+ */
+const DCR_ANONYMOUS_IDENTIFIER = "anonymous";
+
+/**
+ * The closed client-facing error codes of the registration endpoint (RFC 7591
+ * §3.2.2 plus the RFC 6749 temporary-failure class). Registration never reuses
+ * the OAuth grant error vocabulary: a client that sees one of these codes knows
+ * the failure came from registration, not from a token request.
+ */
+const DCR_ERROR_INVALID_CLIENT_METADATA = "invalid_client_metadata";
+const DCR_ERROR_INVALID_REDIRECT_URI = "invalid_redirect_uri";
+const DCR_ERROR_TEMPORARILY_UNAVAILABLE = "temporarily_unavailable";
+
+/**
+ * The closed, fixed client-facing error vocabulary of the registration
+ * endpoint. Every rejection of one error code carries the same description, so
+ * the response never distinguishes which metadata member failed and cannot be
+ * used as an oracle (THREAT_MODEL cross-cutting: no oracle).
+ */
+const DCR_ERROR_DESCRIPTIONS: Record<string, string> = {
+  [DCR_ERROR_INVALID_CLIENT_METADATA]:
+    "the client metadata is missing or has an invalid value",
+  [DCR_ERROR_INVALID_REDIRECT_URI]:
+    "the redirect URI is not allowed for a public client",
+  [DCR_ERROR_TEMPORARILY_UNAVAILABLE]:
+    "the registration endpoint is temporarily unavailable",
+};
+
+/**
+ * The JSON registration request (RFC 7591 §2). Only these members are read and
+ * every other member is ignored. The list members are nullable so an absent
+ * member (a missing required list, or a list that defaults) is distinguishable
+ * from a present but empty one (an invalid list).
+ */
+interface DCRClientRequest {
+  redirectUris: string[] | null;
+  tokenEndpointAuthMethod: string;
+  grantTypes: string[] | null;
+  responseTypes: string[] | null;
+  clientName: string;
+  scope: string;
+}
+
+/** The validated, normalized metadata the facade stores and echoes back. */
+interface DCRClientRegistration {
+  redirectUris: string[];
+  grantTypes: string[];
+  responseTypes: string[];
+}
+
+/**
+ * Serves the derived POST /register route (DESIGN §8.3): RFC 7591 dynamic client
+ * registration of one public client, bound to the advertising route. It fails
+ * closed at every step, in this fixed order: the raw body bound, the per-route
+ * rate limit, the JSON parse, the metadata validation, and the store write. A
+ * request refused at any step gets one of the fixed error codes and never a
+ * distinguishing detail.
+ */
+async function handleRegister(
+  config: NormalizedConfig,
+  kind: EndpointKind,
+  ctx: Context,
+): Promise<Response> {
+  const front = config.frontChannel;
+  if (front === null) {
+    throw new Error(`${ERROR_PREFIX} front channel is not configured`);
+  }
+  const body = Buffer.from(ctx.request.body);
+  if (body.byteLength > FRONT_CHANNEL_MAX_REQUEST_BODY_BYTES) {
+    // Bound the raw body before it is parsed, so an oversized body costs the
+    // facade nothing more than this comparison.
+    return dcrErrorPage(400, DCR_ERROR_INVALID_CLIENT_METADATA);
+  }
+  const rateLimited = await registerRateLimit(front, ctx, kind);
+  if (rateLimited !== null) {
+    return rateLimited;
+  }
+  const request = parseDCRRequest(body);
+  if (request === null) {
+    return dcrErrorPage(400, DCR_ERROR_INVALID_CLIENT_METADATA);
+  }
+  const validated = validateDCRRequest(request);
+  if (validated.failure !== null) {
+    return validated.failure;
+  }
+  const endpoint = endpointFromRouteParams(ctx, kind);
+  const resourceResolution = frontChannelRouteResource(config, ctx, endpoint);
+  if (resourceResolution.failure !== null) {
+    return resourceResolution.failure;
+  }
+  const persisted = await persistRegisteredClient(
+    front,
+    ctx,
+    validated.value,
+    resourceResolution.value,
+  );
+  if (persisted.failure !== null) {
+    return persisted.failure;
+  }
+  return dcrClientResponse(ctx, persisted.clientID, validated.value);
+}
+
+/**
+ * Spends one attempt in the per-route registration bucket before any other work
+ * (THREAT_MODEL T5). The store error and the over-budget outcome map to the same
+ * 429 response: a rate-limit store that cannot answer must not become an
+ * unlimited registration path, so an error fails closed rather than open. A null
+ * result means the attempt is within budget.
+ */
+async function registerRateLimit(
+  front: FrontChannelConfig,
+  ctx: Context,
+  kind: EndpointKind,
+): Promise<Response | null> {
+  try {
+    const result = await front.stores.rateLimit.checkAndIncrement({
+      identifier: dcrRateLimitIdentifier(ctx),
+      resource: String(kind),
+      operation: DCR_OPERATION,
+      limit: DCR_RATE_LIMIT,
+      windowSeconds: DCR_RATE_LIMIT_WINDOW_SECONDS,
+    });
+    if (!result.allowed) {
+      return dcrUnavailablePage(ctx, result.resetAt);
+    }
+  } catch {
+    return dcrUnavailablePage(ctx, null);
+  }
+  return null;
+}
+
+/**
+ * Keys the registration bucket by the provider-derived source IP when the
+ * runtime exposes one, and falls back to one shared per-route bucket otherwise.
+ * The source IP comes from trusted provider request context only, never from a
+ * client-controlled forwarding header.
+ */
+function dcrRateLimitIdentifier(ctx: Context): string {
+  const ip = ctx.sourceIP().trim();
+  return ip === "" ? DCR_ANONYMOUS_IDENTIFIER : ip;
+}
+
+/**
+ * Decodes the JSON body. Unknown members are ignored, which is the RFC 7591
+ * behavior the facade relies on: a member it does not understand must not fail
+ * the registration. A malformed body, an empty body, or a known member of the
+ * wrong JSON type is one invalid_client_metadata response, so the decode fails
+ * closed the way a typed decoder would.
+ */
+function parseDCRRequest(body: Buffer): DCRClientRequest | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body.toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    // An empty or non-object body is one invalid_client_metadata response; a
+    // JSON null decodes to no members at all, which the redirect-URI rule
+    // refuses with the same code.
+    return null;
+  }
+  const members = new Map<string, unknown>();
+  for (const [rawKey, value] of Object.entries(parsed)) {
+    const member = dcrMemberName(rawKey);
+    if (member !== null) {
+      members.set(member, value);
+    }
+  }
+  const memberValue = (name: string): unknown =>
+    members.has(name) ? members.get(name) : undefined;
+  const redirectUris = dcrStringList(memberValue("redirect_uris"));
+  const grantTypes = dcrStringList(memberValue("grant_types"));
+  const responseTypes = dcrStringList(memberValue("response_types"));
+  const tokenEndpointAuthMethod = dcrStringMember(
+    memberValue("token_endpoint_auth_method"),
+  );
+  const clientName = dcrStringMember(memberValue("client_name"));
+  const scope = dcrStringMember(memberValue("scope"));
+  if (
+    redirectUris === undefined ||
+    grantTypes === undefined ||
+    responseTypes === undefined ||
+    tokenEndpointAuthMethod === null ||
+    clientName === null ||
+    scope === null
+  ) {
+    return null;
+  }
+  return {
+    redirectUris,
+    tokenEndpointAuthMethod,
+    grantTypes,
+    responseTypes,
+    clientName,
+    scope,
+  };
+}
+
+/**
+ * Maps one JSON member name to the request member it names, or null when it
+ * names none. The fold mirrors the Go decoder: an exact name wins, and an ASCII
+ * case-insensitive match identifies the same member otherwise.
+ */
+function dcrMemberName(key: string): string | null {
+  if (DCR_MEMBERS.includes(key)) {
+    return key;
+  }
+  const folded = key.replace(/[A-Z]/gu, (char) => char.toLowerCase());
+  return DCR_MEMBERS.includes(folded) ? folded : null;
+}
+
+/**
+ * Reads one optional string-list member. An absent member and an explicit JSON
+ * null are both "absent"; a present member must be an array of strings, because
+ * the decoder rejects any other shape as a parse failure.
+ */
+function dcrStringList(value: unknown): string[] | null | undefined {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const list: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      return undefined;
+    }
+    list.push(entry);
+  }
+  return list;
+}
+
+/**
+ * Reads one optional string member. An absent member and an explicit JSON null
+ * both decode to the empty string; any other type is a parse failure.
+ */
+function dcrStringMember(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  return typeof value === "string" ? value : null;
+}
+
+/**
+ * Applies the DESIGN §8.3 metadata rules to a parsed request and returns the
+ * normalized metadata the facade stores. Each rule reports the fixed code of its
+ * class, never which member failed.
+ */
+function validateDCRRequest(request: DCRClientRequest): {
+  value: DCRClientRegistration;
+  failure: Response | null;
+} {
+  const empty: DCRClientRegistration = {
+    redirectUris: [],
+    grantTypes: [],
+    responseTypes: [],
+  };
+  const redirects = validatedDCRRedirectURIs(request.redirectUris);
+  if (redirects.failure !== null) {
+    return { value: empty, failure: redirects.failure };
+  }
+  if (!validDCRTokenEndpointAuthMethod(request.tokenEndpointAuthMethod)) {
+    return {
+      value: empty,
+      failure: dcrErrorPage(400, DCR_ERROR_INVALID_CLIENT_METADATA),
+    };
+  }
+  const grants = normalizedDCRGrantTypes(request.grantTypes);
+  if (grants.failure !== null) {
+    return { value: empty, failure: grants.failure };
+  }
+  const responses = normalizedDCRResponseTypes(request.responseTypes);
+  if (responses.failure !== null) {
+    return { value: empty, failure: responses.failure };
+  }
+  if (
+    Buffer.byteLength(request.clientName, "utf8") > DCR_MAX_CLIENT_NAME_BYTES ||
+    Buffer.byteLength(request.scope, "utf8") > DCR_MAX_SCOPE_BYTES
+  ) {
+    return {
+      value: empty,
+      failure: dcrErrorPage(400, DCR_ERROR_INVALID_CLIENT_METADATA),
+    };
+  }
+  return {
+    value: {
+      redirectUris: redirects.value,
+      grantTypes: grants.value,
+      responseTypes: responses.value,
+    },
+    failure: null,
+  };
+}
+
+/**
+ * Enforces the redirect URI rule: the member is required, so an absent one is
+ * missing metadata (invalid_client_metadata); once present it must hold at least
+ * one and at most {@link DCR_MAX_REDIRECT_URIS} entries, and every entry must be
+ * an absolute URL with no fragment that is either https on any host or http on a
+ * loopback host (RFC 8252 §7.2/§7.3, THREAT_MODEL T5). Any violation of the list
+ * value itself is invalid_redirect_uri. Each accepted entry is returned trimmed
+ * and otherwise byte-identical, so the stored value is the one the client
+ * presented.
+ */
+function validatedDCRRedirectURIs(raw: string[] | null): {
+  value: string[];
+  failure: Response | null;
+} {
+  if (raw === null) {
+    return {
+      value: [],
+      failure: dcrErrorPage(400, DCR_ERROR_INVALID_CLIENT_METADATA),
+    };
+  }
+  if (raw.length === 0 || raw.length > DCR_MAX_REDIRECT_URIS) {
+    return {
+      value: [],
+      failure: dcrErrorPage(400, DCR_ERROR_INVALID_REDIRECT_URI),
+    };
+  }
+  const validated: string[] = [];
+  for (const candidate of raw) {
+    const redirectURI = validDCRRedirectURI(candidate);
+    if (redirectURI === null) {
+      return {
+        value: [],
+        failure: dcrErrorPage(400, DCR_ERROR_INVALID_REDIRECT_URI),
+      };
+    }
+    validated.push(redirectURI);
+  }
+  return { value: validated, failure: null };
+}
+
+/**
+ * Reports whether one redirect URI is an absolute https URL or an absolute http
+ * loopback URL, and returns its trimmed form.
+ */
+function validDCRRedirectURI(raw: string): string | null {
+  const candidate = String(raw ?? "").trim();
+  if (candidate === "") {
+    return null;
+  }
+  const parsed = parseAbsoluteURL(candidate);
+  if (parsed === null || parsed.hash !== "") {
+    return null;
+  }
+  if (parsed.scheme === "https") {
+    return candidate;
+  }
+  if (parsed.scheme === "http") {
+    return isLoopbackRedirectHost(parsed.hostname) ? candidate : null;
+  }
+  return null;
+}
+
+/**
+ * Enforces the public-client-only rule: the member is absent, empty, or exactly
+ * "none". Any other method — a confidential one the facade cannot honor — is
+ * refused rather than silently downgraded.
+ */
+function validDCRTokenEndpointAuthMethod(raw: string): boolean {
+  const method = String(raw ?? "").trim();
+  return method === "" || method === DCR_TOKEN_ENDPOINT_AUTH_METHOD_NONE;
+}
+
+/**
+ * Enforces the grant type list: when the member is present, every value must be
+ * authorization_code or refresh_token and the list must include
+ * authorization_code, because the facade only serves the authorization_code
+ * grant today. The result is trimmed and deduplicated in request order. An
+ * absent member means the RFC 7591 default, ["authorization_code"].
+ */
+function normalizedDCRGrantTypes(raw: string[] | null): {
+  value: string[];
+  failure: Response | null;
+} {
+  if (raw === null) {
+    return {
+      value: [DCR_GRANT_TYPE_AUTHORIZATION_CODE],
+      failure: null,
+    };
+  }
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  let includesAuthorizationCode = false;
+  for (const entry of raw) {
+    const value = entry.trim();
+    if (value === DCR_GRANT_TYPE_AUTHORIZATION_CODE) {
+      includesAuthorizationCode = true;
+    } else if (value !== DCR_GRANT_TYPE_REFRESH_TOKEN) {
+      return {
+        value: [],
+        failure: dcrErrorPage(400, DCR_ERROR_INVALID_CLIENT_METADATA),
+      };
+    }
+    if (seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    normalized.push(value);
+  }
+  if (!includesAuthorizationCode) {
+    return {
+      value: [],
+      failure: dcrErrorPage(400, DCR_ERROR_INVALID_CLIENT_METADATA),
+    };
+  }
+  return { value: normalized, failure: null };
+}
+
+/**
+ * Enforces the response type list: when the member is present, it must be
+ * non-empty and every value must be code, so the normalized list is exactly
+ * ["code"]. An absent member means the same default.
+ */
+function normalizedDCRResponseTypes(raw: string[] | null): {
+  value: string[];
+  failure: Response | null;
+} {
+  if (raw === null) {
+    return { value: [DCR_RESPONSE_TYPE_CODE], failure: null };
+  }
+  if (raw.length === 0) {
+    return {
+      value: [],
+      failure: dcrErrorPage(400, DCR_ERROR_INVALID_CLIENT_METADATA),
+    };
+  }
+  for (const entry of raw) {
+    if (entry.trim() !== DCR_RESPONSE_TYPE_CODE) {
+      return {
+        value: [],
+        failure: dcrErrorPage(400, DCR_ERROR_INVALID_CLIENT_METADATA),
+      };
+    }
+  }
+  return { value: [DCR_RESPONSE_TYPE_CODE], failure: null };
+}
+
+/**
+ * Mints the server-assigned client id and stores the record, hash-keyed and
+ * bound to the advertising route, so a client registered at one route can never
+ * be redeemed at another. The id is 32 random bytes (256 bits, well above the
+ * 128-bit floor of DESIGN §8.3). A store failure is the 429 class and never
+ * returns an id that was not persisted.
+ */
+async function persistRegisteredClient(
+  front: FrontChannelConfig,
+  ctx: Context,
+  registration: DCRClientRegistration,
+  boundRoute: string,
+): Promise<{ clientID: string; failure: Response | null }> {
+  const clientID = newOpaqueToken();
+  const record: ClientRecord = {
+    clientIdHash: hashKey(clientID),
+    clientId: clientID,
+    redirectUris: [...registration.redirectUris],
+    tokenEndpointAuthMethod: DCR_TOKEN_ENDPOINT_AUTH_METHOD_NONE,
+    grantTypes: [...registration.grantTypes],
+    responseTypes: [...registration.responseTypes],
+    boundRoute,
+    createdAt: new Date(0),
+    version: 0,
+  };
+  try {
+    await front.stores.client.put(record);
+  } catch {
+    return { clientID: "", failure: dcrUnavailablePage(ctx, null) };
+  }
+  return { clientID, failure: null };
+}
+
+/**
+ * Renders the 201 registration response: the server-assigned client id, its
+ * issue time, the validated metadata echoed back, and no secret of any kind. The
+ * body is bounded by the request bounds, so it cannot echo the request body or
+ * any error detail.
+ */
+function dcrClientResponse(
+  ctx: Context,
+  clientID: string,
+  registration: DCRClientRegistration,
+): Response {
+  const payload = {
+    client_id: clientID,
+    client_id_issued_at: Math.floor(ctx.now().getTime() / 1000),
+    redirect_uris: [...registration.redirectUris],
+    token_endpoint_auth_method: DCR_TOKEN_ENDPOINT_AUTH_METHOD_NONE,
+    grant_types: [...registration.grantTypes],
+    response_types: [...registration.responseTypes],
+  };
+  return dcrResponse(201, Buffer.from(JSON.stringify(payload), "utf8"));
+}
+
+/**
+ * Renders the registration 429 class: temporarily_unavailable with a Retry-After
+ * of at least one second. The delay is derived from resetAt when the rate-limit
+ * store reported one and from the framework window otherwise. A registration
+ * store failure takes this same page, so a caller that cannot be served is told
+ * to come back rather than being left to guess.
+ */
+function dcrUnavailablePage(ctx: Context, resetAt: Date | null): Response {
+  const response = dcrErrorPage(429, DCR_ERROR_TEMPORARILY_UNAVAILABLE);
+  response.headers["retry-after"] = [
+    String(dcrRetryAfterSeconds(ctx, resetAt)),
+  ];
+  return response;
+}
+
+/**
+ * Converts a reset instant to the whole seconds a client should wait: at least
+ * one second, and the framework window when no reset instant is known.
+ */
+function dcrRetryAfterSeconds(ctx: Context, resetAt: Date | null): number {
+  let delay = DCR_RATE_LIMIT_WINDOW_SECONDS * 1000;
+  if (resetAt !== null) {
+    delay = resetAt.getTime() - ctx.now().getTime();
+  }
+  const seconds = Math.ceil(delay / 1000);
+  return seconds < 1 ? 1 : seconds;
+}
+
+/**
+ * Renders a registration rejection: the closed registration error vocabulary,
+ * the fixed description of that code, and no cacheable representation.
+ */
+function dcrErrorPage(status: number, code: string): Response {
+  const body = Buffer.from(
+    JSON.stringify({
+      error: code,
+      error_description: DCR_ERROR_DESCRIPTIONS[code] ?? "",
+    }),
+    "utf8",
+  );
+  return dcrResponse(status, body);
+}
+
+/**
+ * Builds one registration response with the fixed non-cacheable header set
+ * (DESIGN §8.3): no client, proxy, or browser may retain a registration response
+ * body.
+ */
+function dcrResponse(status: number, body: Buffer): Response {
+  return {
+    status,
+    headers: {
+      "content-type": ["application/json; charset=utf-8"],
+      "cache-control": ["no-store"],
+      pragma: ["no-cache"],
+    },
+    cookies: [],
+    body,
     isBase64: false,
   };
 }

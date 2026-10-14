@@ -35,12 +35,19 @@ const formParseGroup = "form_parse"
 // cannot appear without a loader.
 const methodStatusGroup = "method_status"
 
+// dcrGroup is the sibling group holding the RFC 7591 dynamic-client registration
+// rule. It is executed by runtime/mcpfacade's registration tests through the real
+// mounted POST .../register handler, not here; the ledger below still lists it so
+// a new group cannot appear without a loader.
+const dcrGroup = "dcr"
+
 // fixtureGroups is every group the shared table is allowed to carry.
 var fixtureGroups = map[string]struct{}{
 	issuerPinGroup:     {},
 	redirectMatchGroup: {},
 	formParseGroup:     {},
 	methodStatusGroup:  {},
+	dcrGroup:           {},
 }
 
 // issuerPinCaseCount is the number of issuer_pin rows the shared fixture must

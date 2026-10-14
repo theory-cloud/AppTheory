@@ -14,6 +14,7 @@ import {
   oauthAuthorizationServerPath,
   oauthAuthorizationServerSuffixPath,
   oauthAuthorizePath,
+  oauthRegisterPath,
   oauthTokenPath,
   pkceChallengeS256,
   protectedResourcePath,
@@ -86,6 +87,22 @@ const METHOD_STATUS_GROUP = "method_status";
  */
 const METHOD_STATUS_CASE_COUNT = 10;
 
+const DCR_GROUP = "dcr";
+
+/**
+ * The number of dcr rows the shared table must carry; a change to the table must
+ * also be a deliberate edit in the Go and Python loaders, so no runtime can
+ * silently execute a smaller table.
+ */
+const DCR_CASE_COUNT = 10;
+
+/**
+ * The number of bytes the serialized `pad` member adds around its "a" run:
+ * `,"pad":"` plus `"}`.
+ */
+const DCR_FRAME_OVERHEAD =
+  Buffer.byteLength(`,"pad":"`) + Buffer.byteLength(`"}`);
+
 /**
  * Builds the raw body a form_parse row presents: the small rows carry a literal
  * body, and the bound rows carry `body_prefix` padded with "a" out to exactly
@@ -111,10 +128,31 @@ function formParseLabel(row) {
   return `${row.body_prefix}<pad>`;
 }
 
-function loadFixture() {
-  return JSON.parse(
-    readFileSync(path.join(FIXTURE_DIR, FIXTURE_NAME), "utf8"),
+/**
+ * Builds the raw body a dcr row presents: the row's JSON request verbatim, or,
+ * for a padded row, that request plus one ignored `pad` member sized so the
+ * serialized body is exactly `pad_to_bytes` bytes.
+ */
+function dcrBody(row) {
+  const compact = JSON.stringify(row.request ?? {});
+  if (row.pad_to_bytes === undefined || row.pad_to_bytes === 0) {
+    return Buffer.from(compact, "utf8");
+  }
+  const padding =
+    row.pad_to_bytes -
+    (Buffer.byteLength(compact, "utf8") - 1) -
+    DCR_FRAME_OVERHEAD;
+  if (padding < 1) {
+    throw new Error(`row ${row.id} cannot pad to ${row.pad_to_bytes} bytes`);
+  }
+  return Buffer.from(
+    `${compact.slice(0, -1)},"pad":"${"a".repeat(padding)}"}`,
+    "utf8",
   );
+}
+
+function loadFixture() {
+  return JSON.parse(readFileSync(path.join(FIXTURE_DIR, FIXTURE_NAME), "utf8"));
 }
 
 /**
@@ -145,9 +183,7 @@ function methodStatusRoutePath(endpoint, key) {
     case "unknown":
       return "/unknown/mcp/path";
     default:
-      throw new Error(
-        `unknown method_status route key ${JSON.stringify(key)}`,
-      );
+      throw new Error(`unknown method_status route key ${JSON.stringify(key)}`);
   }
 }
 
@@ -462,6 +498,7 @@ async function newFrontChannelHarness(t) {
     kind,
     endpoint,
     tokenPath: oauthTokenPath(endpoint),
+    registerPath: oauthRegisterPath(endpoint),
     authorize,
     callback,
     authorizeAndCallback,
@@ -488,10 +525,7 @@ test("hashKey is the unpadded base64url SHA-256 digest", () => {
     .update("abc", "utf8")
     .digest("base64url");
   assert.equal(hashKey("abc"), expected);
-  assert.equal(
-    hashKey("abc"),
-    "ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0",
-  );
+  assert.equal(hashKey("abc"), "ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0");
   assert.ok(!hashKey("abc").includes("="));
 });
 
@@ -623,6 +657,103 @@ test("method status enforces the shared method_status table through the real mou
     }
   }
   assert.equal(executed, METHOD_STATUS_CASE_COUNT);
+});
+
+test("register enforces the shared dcr table through the real mounted handler", async (t) => {
+  const rows = (loadFixture().cases ?? []).filter(
+    (row) => row.group === DCR_GROUP,
+  );
+  assert.equal(rows.length, DCR_CASE_COUNT);
+
+  let executed = 0;
+  for (const row of rows) {
+    executed += 1;
+    // A fresh harness per row: the per-route registration bucket is
+    // deterministic, so the rate-limited row's eleventh attempt is the first
+    // refusal.
+    const harness = await newFrontChannelHarness(t);
+    const body = dcrBody(row);
+    if (row.pad_to_bytes !== undefined && row.pad_to_bytes !== 0) {
+      assert.equal(
+        Buffer.byteLength(body, "utf8"),
+        row.pad_to_bytes,
+        `row ${row.id} must present exactly ${row.pad_to_bytes} body bytes`,
+      );
+    }
+
+    const repeat = row.repeat >= 1 ? row.repeat : 1;
+    let response;
+    for (let attempt = 0; attempt < repeat; attempt += 1) {
+      response = await harness.serve("POST", harness.registerPath, null, body);
+    }
+
+    const context = `row ${row.id}`;
+    assert.equal(response.status, row.expect_status, context);
+    const scanned = bodyString(response);
+    const payload = JSON.parse(scanned);
+    for (const token of row.expect_body_has) {
+      assert.ok(
+        scanned.includes(token),
+        `${context} body must include ${token}`,
+      );
+    }
+    for (const token of row.expect_body_absent) {
+      assert.ok(
+        !scanned.includes(token),
+        `${context} body must not include ${token}`,
+      );
+    }
+    if (row.expect_no_store) {
+      assert.equal(
+        firstHeader(response.headers, "cache-control"),
+        "no-store",
+        context,
+      );
+      assert.equal(
+        firstHeader(response.headers, "pragma"),
+        "no-cache",
+        context,
+      );
+    }
+    if (row.expect_header !== undefined && row.expect_header !== "") {
+      const value = firstHeader(response.headers, row.expect_header);
+      assert.notEqual(
+        value,
+        undefined,
+        `${context} must carry ${row.expect_header}`,
+      );
+      const seconds = Number.parseInt(value, 10);
+      assert.ok(
+        Number.isInteger(seconds) && seconds >= 1,
+        `${context} must not ask for a retry sooner than one second`,
+      );
+    }
+    if (row.expect_status === 201) {
+      const clientId = payload.client_id;
+      assert.ok(
+        typeof clientId === "string" && clientId.length >= 22,
+        `${context} must mint an id of at least 128 bits`,
+      );
+      assert.ok(
+        Object.hasOwn(payload, "client_id_issued_at"),
+        `${context} must carry client_id_issued_at`,
+      );
+      const record = await harness.stores.client.get(hashKey(clientId));
+      assert.notEqual(
+        record,
+        null,
+        `${context} must persist the registered client`,
+      );
+      assert.equal(record.tokenEndpointAuthMethod, "none", context);
+      assert.ok(record.redirectUris.length > 0, context);
+      assert.equal(
+        record.boundRoute,
+        `${BASE_URL}${mcpPath(harness.endpoint)}`,
+        `${context} must bind the client to the advertising route`,
+      );
+    }
+  }
+  assert.equal(executed, DCR_CASE_COUNT);
 });
 
 test("authorize requires fresh S256 PKCE and refuses a plain challenge", async (t) => {
@@ -788,9 +919,7 @@ test("a wrong verifier and an unknown code produce identical invalid_grant bodie
   assert.equal(wrong.status, 400);
   assert.match(bodyString(wrong), /"error":"invalid_grant"/);
 
-  const unknown = await harness.token(
-    harness.tokenForm("never-minted-code"),
-  );
+  const unknown = await harness.token(harness.tokenForm("never-minted-code"));
   assert.equal(unknown.status, 400);
   assert.equal(bodyString(wrong), bodyString(unknown));
 });

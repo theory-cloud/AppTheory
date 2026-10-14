@@ -44,11 +44,20 @@ const FORM_PARSE_GROUP = "form_parse";
  */
 const METHOD_STATUS_GROUP = "method_status";
 
+/**
+ * `dcr` is the sibling group holding the RFC 7591 dynamic-client registration
+ * rule. It is executed by the facade front-channel test through the real mounted
+ * POST .../register handler, not here; the group ledger below still lists it so a
+ * new group cannot appear without a loader.
+ */
+const DCR_GROUP = "dcr";
+
 const FIXTURE_GROUPS = [
   ISSUER_PIN_GROUP,
   REDIRECT_MATCH_GROUP,
   FORM_PARSE_GROUP,
   METHOD_STATUS_GROUP,
+  DCR_GROUP,
 ];
 
 /**
@@ -59,9 +68,7 @@ const FIXTURE_GROUPS = [
 const ISSUER_PIN_CASE_COUNT = 27;
 
 function loadFixture() {
-  return JSON.parse(
-    readFileSync(path.join(FIXTURE_DIR, FIXTURE_NAME), "utf8"),
-  );
+  return JSON.parse(readFileSync(path.join(FIXTURE_DIR, FIXTURE_NAME), "utf8"));
 }
 
 const fixture = loadFixture();

@@ -102,6 +102,9 @@ func normalizeFrontChannel(config FacadeConfig) (*frontChannelConfig, error) {
 	if config.AuthorizeHandler != nil || config.TokenHandler != nil {
 		return nil, fmt.Errorf("mcpfacade: Provider owns the authorize and token routes; AuthorizeHandler and TokenHandler must not be configured with a front channel")
 	}
+	if config.RegisterHandler != nil {
+		return nil, fmt.Errorf("mcpfacade: Provider owns the register route; RegisterHandler must not be configured with a front channel")
+	}
 	if config.CallbackHandler != nil {
 		return nil, fmt.Errorf("mcpfacade: Provider owns the stage-global callback; CallbackHandler must not be configured with a front channel")
 	}
@@ -962,6 +965,15 @@ func (config normalizedConfig) authorizeHandlerFor(kind mcproutes.EndpointKind) 
 func (config normalizedConfig) tokenHandlerFor(kind mcproutes.EndpointKind) apptheory.Handler {
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		return config.handleToken(kind, ctx)
+	}
+}
+
+// registerHandlerFor builds the framework-owned per-kind RFC 7591 registration
+// handler. It is only called when the front-channel field set is declared, so
+// the route is mounted exactly when the facade owns the OAuth surface.
+func (config normalizedConfig) registerHandlerFor(kind mcproutes.EndpointKind) apptheory.Handler {
+	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return config.handleRegister(kind, ctx)
 	}
 }
 

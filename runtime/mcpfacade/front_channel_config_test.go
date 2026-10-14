@@ -148,6 +148,13 @@ func TestFrontChannelRejectsApplicationOwnedHandlerFactories(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "AuthorizeHandler")
 	})
+	t.Run("register", func(t *testing.T) {
+		config := completeFrontChannelConfig()
+		config.RegisterHandler = kindHandlerFactory("register")
+		_, err := RegisterMCPFacade(apptheory.New(), config)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "RegisterHandler")
+	})
 	t.Run("callback", func(t *testing.T) {
 		config := completeFrontChannelConfig()
 		config.CallbackHandler = func(*apptheory.Context) (*apptheory.Response, error) { return apptheory.NoContent(), nil }
@@ -184,4 +191,25 @@ func TestFrontChannelConfigIsValidatedBeforeAnyRouteIsRegistered(t *testing.T) {
 	})
 	response := serve(app, "GET", resourcePath, nil)
 	require.Equal(t, 404, response.Status)
+}
+
+// TestNonePublicPostureRefusesTheFrontChannelAndItsRegisterRoute pins the mount
+// rule of the RFC 7591 registration route: it belongs to the framework-owned
+// front channel, and the none-public posture registers no OAuth surface at all,
+// so a none-public config that declares a front channel is refused at
+// registration time and leaves no register route mounted. The route therefore
+// cannot be reached without transport authorization through a front channel.
+func TestNonePublicPostureRefusesTheFrontChannelAndItsRegisterRoute(t *testing.T) {
+	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	config := completeFrontChannelConfig()
+	config.TransportPosture = TransportPostureNonePublic
+
+	inventory, err := RegisterMCPFacade(app, config)
+	require.Nil(t, inventory)
+	require.ErrorContains(t, err, "none-public registers no OAuth surface; the front-channel field set must not be configured")
+
+	registerPath := mustPath(t, func() (string, error) {
+		return mcproutes.EndpointPath{Kind: mcproutes.EndpointKindNamespace, ClientNamespace: "acme"}.OAuthRegisterPath()
+	})
+	require.Equal(t, 404, serve(app, "POST", registerPath, nil).Status)
 }

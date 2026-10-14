@@ -62,7 +62,9 @@ from apptheory.oauth.store import (
     STATUS_ISSUED,
     AuthorizationCodeRecord,
     AuthorizationCodeStore,
+    ClientRecord,
     ClientStore,
+    RateLimitBucketKey,
     RateLimitStore,
     RouteRefreshBrokerRecord,
     RouteRefreshBrokerStore,
@@ -131,6 +133,71 @@ _S256_CHALLENGE_LENGTH = 43
 
 # RFC 8252 section 7.3 loopback hosts whose ephemeral port may vary.
 _LOOPBACK_HOSTS = frozenset(("127.0.0.1", "::1", "localhost"))
+
+# RFC 7591 DCR framework defaults (DESIGN section 8.3 / THREAT_MODEL T5). They
+# are constants, so no adopter can widen the public registration door with a
+# FacadeConfig field or an environment variable: every POST /register decision
+# is bounded by these fixed values.
+#
+# _DCR_RATE_LIMIT is the per-route registration budget of one rate-limit window.
+# It is deliberately small: a legitimate client registers once, so a caller that
+# needs more is abusing the endpoint. The window matches the reference store's
+# own default window. _DCR_MAX_REDIRECT_URIS bounds the redirect URI list one
+# client may register: a metadata-list bound, not a redirect policy, because each
+# entry still has to pass the https-or-loopback rule. _DCR_MAX_CLIENT_NAME_BYTES
+# and _DCR_MAX_SCOPE_BYTES bound the two free-text metadata members in UTF-8
+# bytes; both are stored for display only and never parsed.
+_DCR_RATE_LIMIT = 10
+_DCR_RATE_LIMIT_WINDOW_SECONDS = 60
+_DCR_MAX_REDIRECT_URIS = 10
+_DCR_MAX_CLIENT_NAME_BYTES = 256
+_DCR_MAX_SCOPE_BYTES = 1024
+
+# Registration vocabulary. These are the only metadata values the framework
+# accepts, so a port cannot widen them by accident. The two names ruff reads as
+# credentials are RFC 7591 metadata values, never secrets.
+_DCR_TOKEN_ENDPOINT_AUTH_METHOD_NONE = "none"  # noqa: S105
+_DCR_GRANT_TYPE_AUTHORIZATION_CODE = "authorization_code"
+_DCR_GRANT_TYPE_REFRESH_TOKEN = "refresh_token"  # noqa: S105
+_DCR_RESPONSE_TYPE_CODE = "code"
+
+# _DCR_MEMBERS are the RFC 7591 request members the facade reads. Every other
+# JSON member of the body is ignored, exactly as RFC 7591 requires: a client that
+# sends a member the facade does not understand still registers.
+_DCR_MEMBERS = (
+    "redirect_uris",
+    "token_endpoint_auth_method",
+    "grant_types",
+    "response_types",
+    "client_name",
+    "scope",
+)
+# _DCR_LIST_MEMBERS are the members that decode as a JSON array of strings.
+_DCR_LIST_MEMBERS = ("redirect_uris", "grant_types", "response_types")
+
+# _DCR_OPERATION names the rate-limit operation bucket of the registration
+# endpoint in the (identifier, resource, operation) rate-limit key.
+_DCR_OPERATION = "dcr"
+
+# _DCR_ANONYMOUS_IDENTIFIER is the shared rate-limit bucket identifier used when
+# the runtime exposes no provider-derived source IP. An unidentifiable caller gets
+# one shared per-route bucket rather than an unmetered one, which is the stricter
+# fail-closed choice (THREAT_MODEL T5). It mirrors the transport middleware's
+# anonymous identifier.
+_DCR_ANONYMOUS_IDENTIFIER = "anonymous"
+
+# _DCR_ERROR_DESCRIPTIONS is the closed, fixed client-facing error vocabulary of
+# the registration endpoint (RFC 7591 section 3.2.2 plus the RFC 6749
+# temporary-failure class). Every rejection of one error code carries the same
+# description, so the response never distinguishes which metadata member failed
+# and cannot be used as an oracle. It is deliberately separate from
+# _FACADE_ERROR_DESCRIPTIONS: a client that sees one of these codes knows the
+# failure came from registration, not from a token request.
+_DCR_ERROR_DESCRIPTIONS: dict[str, str] = {
+    "invalid_client_metadata": "the client metadata is missing or has an invalid value",
+    "invalid_redirect_uri": "the redirect URI is not allowed for a public client",
+    "temporarily_unavailable": "the registration endpoint is temporarily unavailable",
+}
 
 # HandlerFactory returns an application-owned handler for one endpoint kind.
 # Factories run during facade registration, never during request handling.
@@ -534,6 +601,11 @@ def _normalize_front_channel(config: FacadeConfig) -> _FrontChannelConfig | None
             f"{_ERROR_PREFIX} Provider owns the authorize and token routes; "
             "AuthorizeHandler and TokenHandler must not be configured with a front channel"
         )
+    if config.register_handler is not None:
+        raise ValueError(
+            f"{_ERROR_PREFIX} Provider owns the register route; "
+            "RegisterHandler must not be configured with a front channel"
+        )
     if config.callback_handler is not None:
         raise ValueError(
             f"{_ERROR_PREFIX} Provider owns the stage-global callback; "
@@ -765,6 +837,18 @@ def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -
                     "POST",
                     route.token_pattern,
                     _checked_oauth_facade_handler(route.kind, False, token_handler),
+                    False,
+                )
+            )
+            # The RFC 7591 registration route is part of the front channel, so it
+            # follows the same posture-derived mount: it is never reached under
+            # the none-public posture, where nothing of the OAuth surface
+            # registers.
+            registrations.append(
+                _RouteRegistration(
+                    "POST",
+                    route.register_pattern,
+                    _checked_register_handler(route.kind, _front_channel_register_handler(config, route.kind)),
                     False,
                 )
             )
@@ -1257,6 +1341,18 @@ def _front_channel_authorize_handler(config: _NormalizedConfig, kind: str) -> Ha
 def _front_channel_token_handler(config: _NormalizedConfig, kind: str) -> Handler:
     def handler(ctx: Context) -> Response:
         return _handle_token(config, kind, ctx)
+
+    return handler
+
+
+def _front_channel_register_handler(config: _NormalizedConfig, kind: str) -> Handler:
+    """Build the framework-owned per-kind RFC 7591 registration handler. It is
+    only called when the front-channel field set is declared, so the route is
+    mounted exactly when the facade owns the OAuth surface.
+    """
+
+    def handler(ctx: Context) -> Response:
+        return _handle_register(config, kind, ctx)
 
     return handler
 
@@ -1878,6 +1974,404 @@ def _clamp_requested_scopes(requested: list[str], allowed: list[str]) -> tuple[l
 
 def _facade_scope_fingerprint(scopes: list[str]) -> str:
     return hash_key(" ".join(sorted(str(scope) for scope in scopes or [])))
+
+
+# ---------------------------------------------------------------------------
+# RFC 7591 dynamic client registration (DESIGN section 8.3)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class _DcrClientRequest:
+    """The JSON registration request (RFC 7591 section 2).
+
+    ``redirect_uris``, ``grant_types``, and ``response_types`` are ``None`` when
+    the member is absent, so an absent member (a missing required list, or a list
+    that defaults) is distinguishable from a present but empty one (an invalid
+    list).
+    """
+
+    redirect_uris: list[str] | None = None
+    token_endpoint_auth_method: str = ""
+    grant_types: list[str] | None = None
+    response_types: list[str] | None = None
+    client_name: str = ""
+    scope: str = ""
+
+
+@dataclass(slots=True)
+class _DcrClientRegistration:
+    """The validated, normalized metadata the facade stores and echoes back. It
+    carries no secret: these are public clients.
+    """
+
+    redirect_uris: list[str]
+    grant_types: list[str]
+    response_types: list[str]
+
+
+def _handle_register(config: _NormalizedConfig, kind: str, ctx: Context) -> Response:
+    """Serve the derived POST /register route (DESIGN section 8.3): RFC 7591
+    dynamic client registration of one public client, bound to the advertising
+    route. It fails closed at every step, in this fixed order: the raw body
+    bound, the per-route rate limit, the JSON parse, the metadata validation, and
+    the store write. A request that is refused at any step gets one of the three
+    fixed registration error codes and never a distinguishing detail.
+    """
+    try:
+        return _handle_register_inner(config, kind, ctx)
+    except _MetadataRequestError as err:
+        return _require_metadata_failure(err)
+
+
+def _handle_register_inner(config: _NormalizedConfig, kind: str, ctx: Context) -> Response:
+    front = config.front_channel
+    if front is None:
+        raise ValueError(f"{_ERROR_PREFIX} front channel is not configured")
+    body = _request_body_bytes(ctx.request.body)
+    if len(body) > _FRONT_CHANNEL_MAX_REQUEST_BODY_BYTES:
+        # Bound the raw body before it is parsed, so an oversized body costs the
+        # facade nothing more than this comparison.
+        return _dcr_invalid_client_metadata()
+    failure = _dcr_register_rate_limit(front, kind, ctx)
+    if failure is not None:
+        return failure
+    request, failure = _parse_dcr_request(body)
+    if failure is not None:
+        return failure
+    registration, failure = _validate_dcr_request(request)
+    if failure is not None:
+        return failure
+    endpoint = _endpoint_from_route_params(ctx, kind)
+    # The resource the client is bound to is the same route resource the
+    # authorize handler computes for this endpoint kind, so the advertised route
+    # and the persisted binding cannot drift.
+    resource = _build_absolute_url(config, ctx, endpoint.mcp_path())
+    client_id, failure = _persist_registered_client(front, registration, resource)
+    if failure is not None:
+        return failure
+    return _dcr_client_response(ctx, client_id, registration)
+
+
+def _dcr_register_rate_limit(front: _FrontChannelConfig, kind: str, ctx: Context) -> Response | None:
+    """Spend one attempt in the per-route registration bucket before any other
+    work (THREAT_MODEL T5). The store error and the over-budget outcome map to
+    the same 429 response: a rate-limit store that cannot answer must not become
+    an unlimited registration path, so an error fails closed rather than open. A
+    ``None`` result means the attempt is within budget.
+    """
+    try:
+        result = front.stores.rate_limit.check_and_increment(
+            RateLimitBucketKey(
+                identifier=_dcr_rate_limit_identifier(ctx),
+                resource=str(kind),
+                operation=_DCR_OPERATION,
+                limit=_DCR_RATE_LIMIT,
+                window_seconds=_DCR_RATE_LIMIT_WINDOW_SECONDS,
+            )
+        )
+    except Exception:  # noqa: BLE001 - an answering failure is the same 429 class
+        return _dcr_unavailable_page(0)
+    if not result.allowed:
+        return _dcr_unavailable_page(result.retry_after_seconds)
+    return None
+
+
+def _dcr_rate_limit_identifier(ctx: Context) -> str:
+    """Key the registration bucket by the provider-derived source IP when the
+    runtime exposes one, and fall back to one shared per-route bucket otherwise.
+    The source IP comes from trusted provider request context only
+    (``ctx.source_ip()``), never from a client-controlled forwarding header.
+    """
+    ip = ctx.source_ip().strip()
+    return ip if ip != "" else _DCR_ANONYMOUS_IDENTIFIER
+
+
+def _parse_dcr_request(body: bytes) -> tuple[_DcrClientRequest | None, Response | None]:
+    """Decode the JSON body. Unknown members are ignored, which is the RFC 7591
+    behavior the facade relies on: a member it does not understand must not fail
+    the registration. Every malformed body -- including an empty one -- is one
+    ``invalid_client_metadata`` response, as is a known member of the wrong JSON
+    type, so the decode fails closed the way a typed decoder would.
+    """
+    try:
+        decoded = jsonlib.loads(body, parse_constant=_reject_dcr_json_constant)
+    except ValueError:
+        return None, _dcr_invalid_client_metadata()
+    if not isinstance(decoded, dict):
+        return None, _dcr_invalid_client_metadata()
+    members: dict[str, Any] = {}
+    for raw_key, value in decoded.items():
+        member = _dcr_member_name(str(raw_key))
+        if member is not None:
+            members[member] = value
+    request = _DcrClientRequest()
+    for member in _DCR_MEMBERS:
+        if member not in members:
+            continue
+        value = members[member]
+        if value is None:
+            # A JSON null leaves the field at its zero value, so a null member
+            # reads as absent: a null redirect_uris is missing metadata, not an
+            # empty list.
+            continue
+        if member in _DCR_LIST_MEMBERS:
+            if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+                return None, _dcr_invalid_client_metadata()
+            setattr(request, member, list(value))
+            continue
+        if not isinstance(value, str):
+            return None, _dcr_invalid_client_metadata()
+        setattr(request, member, value)
+    return request, None
+
+
+def _dcr_member_name(key: str) -> str | None:
+    """Map one JSON member name to the request member it names, or ``None`` when
+    it names none. The fold mirrors the Go decoder: an exact name wins, and an
+    ASCII case-insensitive match identifies the same member otherwise.
+    """
+    if key in _DCR_MEMBERS:
+        return key
+    folded = "".join(chr(ord(char) + 32) if "A" <= char <= "Z" else char for char in key)
+    return folded if folded in _DCR_MEMBERS else None
+
+
+def _reject_dcr_json_constant(name: str) -> Any:
+    """Reject the JSON ``NaN``/``Infinity`` literals Python's decoder accepts but
+    Go's does not, so a body the Go facade refuses at parse time is refused here.
+    """
+    raise ValueError(f"invalid JSON constant {name}")
+
+
+def _validate_dcr_request(
+    request: _DcrClientRequest,
+) -> tuple[_DcrClientRegistration | None, Response | None]:
+    """Apply the DESIGN section 8.3 metadata rules to a parsed request and return
+    the normalized metadata the facade stores. Each rule reports the fixed code of
+    its class, never which member failed.
+    """
+    redirects, failure = _validated_dcr_redirect_uris(request.redirect_uris)
+    if failure is not None:
+        return None, failure
+    if not _valid_dcr_token_endpoint_auth_method(request.token_endpoint_auth_method):
+        return None, _dcr_invalid_client_metadata()
+    grants, failure = _normalized_dcr_grant_types(request.grant_types)
+    if failure is not None:
+        return None, failure
+    responses, failure = _normalized_dcr_response_types(request.response_types)
+    if failure is not None:
+        return None, failure
+    if _utf8_byte_length(request.client_name) > _DCR_MAX_CLIENT_NAME_BYTES:
+        return None, _dcr_invalid_client_metadata()
+    if _utf8_byte_length(request.scope) > _DCR_MAX_SCOPE_BYTES:
+        return None, _dcr_invalid_client_metadata()
+    return _DcrClientRegistration(redirect_uris=redirects, grant_types=grants, response_types=responses), None
+
+
+def _validated_dcr_redirect_uris(raw: list[str] | None) -> tuple[list[str] | None, Response | None]:
+    """Enforce the redirect URI rule: the member is required, so an absent one is
+    missing metadata (``invalid_client_metadata``); once present it must hold at
+    least one and at most ``_DCR_MAX_REDIRECT_URIS`` entries, and every entry must
+    be an absolute URL with no fragment that is either https on any host or http
+    on a loopback host (RFC 8252 section 7.2/7.3, THREAT_MODEL T5). Any violation
+    of the list value itself is ``invalid_redirect_uri``. Each accepted entry is
+    returned trimmed and otherwise byte-identical, so the stored value is the one
+    the client presented.
+    """
+    if raw is None:
+        return None, _dcr_invalid_client_metadata()
+    if len(raw) == 0 or len(raw) > _DCR_MAX_REDIRECT_URIS:
+        return None, _dcr_invalid_redirect_uri()
+    validated: list[str] = []
+    for candidate in raw:
+        redirect_uri = _valid_dcr_redirect_uri(candidate)
+        if redirect_uri is None:
+            return None, _dcr_invalid_redirect_uri()
+        validated.append(redirect_uri)
+    return validated, None
+
+
+def _valid_dcr_redirect_uri(raw: str) -> str | None:
+    """Return the trimmed form of one redirect URI when it is an absolute https
+    URL or an absolute http loopback URL, and ``None`` otherwise.
+    """
+    candidate = str(raw or "").strip()
+    if candidate == "":
+        return None
+    parsed = _parse_absolute_url(candidate)
+    # A bare trailing "#" is an empty fragment and passes, exactly as Go's
+    # url.Parse reports it.
+    if parsed is None or parsed.hash != "":
+        return None
+    if parsed.scheme == _HTTPS_SCHEME:
+        return candidate
+    if parsed.scheme == _HTTP_SCHEME and _front_channel_loopback_host(parsed.hostname):
+        return candidate
+    return None
+
+
+def _valid_dcr_token_endpoint_auth_method(raw: str) -> bool:
+    """Enforce the public-client-only rule: the member is absent, empty, or
+    exactly ``none``. Any other method -- a confidential one the facade cannot
+    honor -- is refused rather than silently downgraded.
+    """
+    method = str(raw or "").strip()
+    return method == "" or method == _DCR_TOKEN_ENDPOINT_AUTH_METHOD_NONE
+
+
+def _normalized_dcr_grant_types(raw: list[str] | None) -> tuple[list[str] | None, Response | None]:
+    """Enforce the grant type list: when the member is present, every value must
+    be ``authorization_code`` or ``refresh_token`` and the list must include
+    ``authorization_code``, because the facade only serves the
+    authorization_code grant today. The result is trimmed and deduplicated in
+    request order. An absent member means the RFC 7591 default,
+    ``["authorization_code"]``.
+    """
+    if raw is None:
+        return [_DCR_GRANT_TYPE_AUTHORIZATION_CODE], None
+    normalized: list[str] = []
+    seen: set[str] = set()
+    includes_authorization_code = False
+    for value in raw:
+        value = str(value or "").strip()
+        if value == _DCR_GRANT_TYPE_AUTHORIZATION_CODE:
+            includes_authorization_code = True
+        elif value != _DCR_GRANT_TYPE_REFRESH_TOKEN:
+            return None, _dcr_invalid_client_metadata()
+        if value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    if not includes_authorization_code:
+        return None, _dcr_invalid_client_metadata()
+    return normalized, None
+
+
+def _normalized_dcr_response_types(raw: list[str] | None) -> tuple[list[str] | None, Response | None]:
+    """Enforce the response type list: when the member is present, it must be
+    non-empty and every value must be ``code``, so the normalized list is exactly
+    ``["code"]``. An absent member means the same default.
+    """
+    if raw is None:
+        return [_DCR_RESPONSE_TYPE_CODE], None
+    if len(raw) == 0:
+        return None, _dcr_invalid_client_metadata()
+    for value in raw:
+        if str(value or "").strip() != _DCR_RESPONSE_TYPE_CODE:
+            return None, _dcr_invalid_client_metadata()
+    return [_DCR_RESPONSE_TYPE_CODE], None
+
+
+def _persist_registered_client(
+    front: _FrontChannelConfig,
+    registration: _DcrClientRegistration,
+    bound_route: str,
+) -> tuple[str | None, Response | None]:
+    """Mint the server-assigned client id and store the record, hash-keyed and
+    bound to the advertising route, so a client registered at one route can never
+    be redeemed at another. The id is 32 random bytes (256 bits, well above the
+    128-bit floor of DESIGN section 8.3). A store failure is the 429 class and
+    never returns an id that was not persisted.
+    """
+    client_id = _new_opaque_token()
+    record = ClientRecord(
+        client_id_hash=hash_key(client_id),
+        client_id=client_id,
+        redirect_uris=list(registration.redirect_uris),
+        token_endpoint_auth_method=_DCR_TOKEN_ENDPOINT_AUTH_METHOD_NONE,
+        grant_types=list(registration.grant_types),
+        response_types=list(registration.response_types),
+        bound_route=bound_route,
+    )
+    try:
+        front.stores.client.put(record)
+    except Exception:  # noqa: BLE001 - a store that cannot persist fails closed
+        return None, _dcr_unavailable_page(0)
+    return client_id, None
+
+
+def _dcr_client_response(
+    ctx: Context,
+    client_id: str | None,
+    registration: _DcrClientRegistration,
+) -> Response:
+    """Render the 201 registration response: the server-assigned client id, its
+    issue time, the validated metadata echoed back, and no secret of any kind.
+    The body is bounded by the request bounds, so it cannot echo the request body
+    or any error detail.
+    """
+    return _facade_json_response(
+        201,
+        {
+            "client_id": str(client_id or ""),
+            "client_id_issued_at": int(ctx.now().timestamp()),
+            "redirect_uris": list(registration.redirect_uris),
+            "token_endpoint_auth_method": _DCR_TOKEN_ENDPOINT_AUTH_METHOD_NONE,
+            "grant_types": list(registration.grant_types),
+            "response_types": list(registration.response_types),
+        },
+    )
+
+
+def _dcr_invalid_client_metadata() -> Response:
+    return _dcr_error_page(400, "invalid_client_metadata")
+
+
+def _dcr_invalid_redirect_uri() -> Response:
+    return _dcr_error_page(400, "invalid_redirect_uri")
+
+
+def _dcr_unavailable_page(retry_after_seconds: Any) -> Response:
+    """Render the registration 429 class: ``temporarily_unavailable`` with a
+    ``retry-after`` of at least one second. The delay comes from the rate-limit
+    store when it reported one and from the framework window otherwise. A
+    registration store failure takes this same page, so a caller that cannot be
+    served is told to come back rather than being left to guess.
+    """
+    response = _dcr_error_page(429, "temporarily_unavailable")
+    response.headers["retry-after"] = [str(_dcr_retry_after_seconds(retry_after_seconds))]
+    return response
+
+
+def _dcr_retry_after_seconds(value: Any) -> int:
+    """The whole seconds a client should wait: at least one second, and the
+    framework window when no reset instant is known.
+    """
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        seconds = 0
+    return seconds if seconds >= 1 else _DCR_RATE_LIMIT_WINDOW_SECONDS
+
+
+def _dcr_error_page(status: int, code: str) -> Response:
+    """Render a registration rejection: the closed registration error vocabulary,
+    the fixed description of that code, and no cacheable representation.
+    """
+    return _facade_json_response(
+        status,
+        {"error": code, "error_description": _DCR_ERROR_DESCRIPTIONS.get(code, "")},
+    )
+
+
+def _request_body_bytes(body: Any) -> bytes:
+    """The raw request bytes a body bound is measured against."""
+    if body is None:
+        return b""
+    if isinstance(body, bytes):
+        return body
+    if isinstance(body, bytearray):
+        return bytes(body)
+    return str(body).encode("utf-8")
+
+
+def _utf8_byte_length(value: Any) -> int:
+    """The UTF-8 byte length of a metadata string, the way Go measures a Go
+    string with ``len``. A lone surrogate counts the three bytes of the U+FFFD
+    the Go decoder substitutes for it.
+    """
+    return len(str(value or "").encode("utf-8", "surrogatepass"))
 
 
 # ---------------------------------------------------------------------------

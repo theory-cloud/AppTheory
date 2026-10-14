@@ -66,12 +66,13 @@ returned from the call. TypeScript and Python gain `FacadeConfig`, `FacadeRoute`
 
 The framework-owned MCP auth facade front channel is now mounted when the front-channel `FacadeConfig` field set is
 declared. Setting `Provider` makes `RegisterMCPFacade` / `registerMcpFacade` / `register_mcp_facade` own and mount the
-per-endpoint-kind `GET …/authorize` terminator, the one stage-global `GET /_oauth/mcp/callback`, and the
-per-endpoint-kind `POST …/token` `authorization_code` grant, driven by the provider SPI and the five store SPIs. The
+per-endpoint-kind `GET …/authorize` terminator, the one stage-global `GET /_oauth/mcp/callback`, the
+per-endpoint-kind `POST …/token` `authorization_code` grant, and the per-endpoint-kind `POST …/register` RFC 7591
+dynamic-client-registration route, driven by the provider SPI and the five store SPIs. The
 accompanying fields are `Stores`, `UpstreamClientID`, `UpstreamIssuer`, and optionally `LifecycleScopes` and
 `ProviderHints`; the set is all-or-none, and setting any other front-channel field without a `Provider` is a
-registration error. `Provider` is mutually exclusive with the application-owned `AuthorizeHandler`/`TokenHandler` pair
-and `CallbackHandler`, because it claims the same routes.
+registration error. `Provider` is mutually exclusive with the application-owned `AuthorizeHandler`/`TokenHandler` pair,
+`CallbackHandler`, and `RegisterHandler`, because it claims the same routes.
 
 Adopters that opt in must supply:
 
@@ -84,15 +85,19 @@ Adopters that opt in must supply:
 - the facade's own **upstream client id** and the expected **upstream issuer** (the RFC 9207 `iss` the callback pins
   before consuming the transaction or exchanging the code).
 
-Clients must be **pre-registered** through the `ClientStore`, keyed by the store hash helper (`oauthstore.HashKey` in
-Go, `hashKey` in TypeScript, `hash_key` in Python) so the facade derives the same key when it looks the client up,
-because dynamic client registration is not mounted.
+Clients can also be **registered through DCR** at the derived per-endpoint-kind `POST …/register` route (RFC 7591):
+the facade mints a server-assigned opaque client id (≥128 bits), requires public-client metadata
+(`token_endpoint_auth_method` absent or `none`), restricts redirect URIs to https or loopback (no fragment), bounds the
+metadata and the raw body, rate-limits per route, and stores the record through the `ClientStore` (hash-keyed and
+bound to the advertising route). A client the application already knows can still be **pre-registered** directly
+through the `ClientStore`, keyed by the store hash helper (`oauthstore.HashKey` in Go, `hashKey` in TypeScript,
+`hash_key` in Python) so the facade derives the same key when it looks the client up.
 
-**Not yet available in this line** (the follow-on milestone, M3c, owns them): DCR — the `/register` route is not
-mounted, so no client is created by a request; the **`refresh_token` grant** — the code-exchange response already
-returns a framework-minted opaque `refresh_token` handle, but the token endpoint answers `400 unsupported_grant_type`
-for it, so **a handle returned by the code exchange cannot be redeemed yet**; and the **CDK `facade` wiring** — still no
-`cdk/**` change, so the construct's attach prop does not wire the provider and stores or the callback-path override.
+**Not yet available in this line** (the follow-on milestone, M3c, owns them): the **`refresh_token` grant** — the
+code-exchange response already returns a framework-minted opaque `refresh_token` handle, but the token endpoint
+answers `400 unsupported_grant_type` for it, so **a handle returned by the code exchange cannot be redeemed yet**; and
+the **CDK `facade` wiring** — still no `cdk/**` change, so the construct's attach prop does not wire the provider and
+stores or the callback-path override.
 
 The store `put` normalization was also aligned across Go, TypeScript, and Python: the reference stores now preserve a
 caller-supplied `status` verbatim and normalize a version below 1 to 1 in all three runtimes (Go was already the
@@ -371,10 +376,11 @@ does not consume them until the facade mechanics land.
 
 See `docs/features/mcp-auth-facade-spi.md` for the interface reference and the framework-versus-application split.
 
-Not yet in this line: the facade mechanics themselves — front-channel termination, the upstream callback handler, the
-DCR handler, the code/refresh wiring, and the brokered refresh — and the edge `WWW-Authenticate` restoration construct
-plus the challenge alias bridge. The derived `/register` and callback **routes** exist and are mountable; their
-handlers remain application-owned until the mechanics land.
+Landed since: the facade mechanics themselves — front-channel termination, the upstream callback handler, the
+`authorization_code` code exchange, and the RFC 7591 DCR handler (all mounted once the front-channel field set is
+declared). Still not in this line: the brokered refresh grant, and the edge `WWW-Authenticate` restoration construct
+plus the challenge alias bridge. The derived `/register` and callback **routes** exist and are mountable; the callback
+and DCR handlers are framework-owned when `Provider` is set and application-owned otherwise.
 
 ## v4.x line
 

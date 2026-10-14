@@ -2,7 +2,7 @@
   "id": "mcp.auth.facade.conformance",
   "kind": "conformance",
   "status": "M3c-1a",
-  "description": "One issuer-pin table for the RFC 9207 `iss` check of the MCP auth facade. Go's oauth.CanonicalizeIssuerURL is the reference: the scheme is lowercased, the authority is preserved byte-for-byte (host case and any explicit port survive), trailing slashes are trimmed from the decoded path, the path keeps its `;`-separated parameters, the query is kept (including a bare trailing `?`) and the fragment is kept. A row matches when both sides canonicalize and the canonical forms are byte-equal. Every runtime's loader runs the same rows and asserts the same outcomes; the uppercase-host and fragment rows exist because a host-lowercasing (WHATWG URL) or fragment-dropping (urllib) canonicalizer would wrongly answer `match`, and the dangling-`?`, `;params` and non-numeric-port rows exist because a `urllib`-based canonicalizer would likewise answer `match` or accept a URL Go refuses. The `redirect_match` group pins the RFC 8252 section 7.3 loopback rule as the real `/authorize` handler applies it: an exact registered==requested pairing always accepts, a loopback pair accepts when scheme, host, path, query, and fragment match exactly and the port alone is free to differ or be absent on either side (the ADV-1144-2 case), while a non-loopback pair accepts only byte-for-byte, so a differing path, a scheme downgrade, a query or fragment mismatch, a `localhost` to `127.0.0.1` host substitution, a differing non-loopback URI, or a requested URI absent from the registered list all fail closed with a 400 and no redirect. The `form_parse` group pins the `/token` request-body rule as the real handler applies it: Go's url.ParseQuery is the reference, so a literal `;` separator or a malformed percent escape fails the whole parse with `invalid_request` and a repeat key keeps its first occurrence, and a raw body strictly larger than the 16384-byte framework bound is refused with `invalid_request` before any parsing. The `method_status` group pins the route-model method-mismatch contract against the real mounted app: a request to a mounted path with an unsupported method answers 405 with `allow` listing the permitted methods (sorted, comma-space separated), while a request to a path that is not mounted at all answers 404 with no `allow`. A row's `route` names a route the loader derives with the framework's route-algebra helpers for the `namespace` kind at MCP path `/acme/mcp`; `mcp`, `token`, `authorize`, `callback`, `discovery_canonical`, `discovery_suffix`, and `protected_resource` are mounted routes, whereas `unmounted_token` (the literal `/acme/mcp/token`) and `unknown` (the literal `/unknown/mcp/path`) are not mounted.",
+  "description": "One issuer-pin table for the RFC 9207 `iss` check of the MCP auth facade. Go's oauth.CanonicalizeIssuerURL is the reference: the scheme is lowercased, the authority is preserved byte-for-byte (host case and any explicit port survive), trailing slashes are trimmed from the decoded path, the path keeps its `;`-separated parameters, the query is kept (including a bare trailing `?`) and the fragment is kept. A row matches when both sides canonicalize and the canonical forms are byte-equal. Every runtime's loader runs the same rows and asserts the same outcomes; the uppercase-host and fragment rows exist because a host-lowercasing (WHATWG URL) or fragment-dropping (urllib) canonicalizer would wrongly answer `match`, and the dangling-`?`, `;params` and non-numeric-port rows exist because a `urllib`-based canonicalizer would likewise answer `match` or accept a URL Go refuses. The `redirect_match` group pins the RFC 8252 section 7.3 loopback rule as the real `/authorize` handler applies it: an exact registered==requested pairing always accepts, a loopback pair accepts when scheme, host, path, query, and fragment match exactly and the port alone is free to differ or be absent on either side (the ADV-1144-2 case), while a non-loopback pair accepts only byte-for-byte, so a differing path, a scheme downgrade, a query or fragment mismatch, a `localhost` to `127.0.0.1` host substitution, a differing non-loopback URI, or a requested URI absent from the registered list all fail closed with a 400 and no redirect. The `form_parse` group pins the `/token` request-body rule as the real handler applies it: Go's url.ParseQuery is the reference, so a literal `;` separator or a malformed percent escape fails the whole parse with `invalid_request` and a repeat key keeps its first occurrence, and a raw body strictly larger than the 16384-byte framework bound is refused with `invalid_request` before any parsing. The `method_status` group pins the route-model method-mismatch contract against the real mounted app: a request to a mounted path with an unsupported method answers 405 with `allow` listing the permitted methods (sorted, comma-space separated), while a request to a path that is not mounted at all answers 404 with no `allow`. A row's `route` names a route the loader derives with the framework's route-algebra helpers for the `namespace` kind at MCP path `/acme/mcp`; `mcp`, `token`, `authorize`, `callback`, `discovery_canonical`, `discovery_suffix`, and `protected_resource` are mounted routes, whereas `unmounted_token` (the literal `/acme/mcp/token`) and `unknown` (the literal `/unknown/mcp/path`) are not mounted. The `dcr` group pins the RFC 7591 dynamic-client registration rule as the real `POST .../register` handler applies it: a public client (`token_endpoint_auth_method` absent, empty, or `none`) presenting at least one and at most ten redirect URIs that are each an absolute URL with no fragment and either `https` on any host or `http` on a loopback host registers with `201`, a server-assigned `client_id`, no `client_secret`, `cache-control: no-store`, and a `ClientRecord.BoundRoute` equal to the advertising route; an `http` non-loopback redirect and a fragment redirect are `400 invalid_redirect_uri`, a missing `redirect_uris`, a confidential `token_endpoint_auth_method`, and a present `grant_types` list that omits `authorization_code` are `400 invalid_client_metadata`, a raw body strictly larger than the 16384-byte framework bound is `400 invalid_client_metadata` before any parse, and unknown JSON members are ignored (RFC 7591); the eleventh registration attempt inside one rate-limit window is `429 temporarily_unavailable` with a `Retry-After` header. Each row is executed against a fresh mounted app, so the per-route registration bucket is deterministic.",
   "cases": [
     {
       "id": "issuer_pin.exact_equal_match",
@@ -417,6 +417,108 @@
       "method": "POST",
       "expect_status": 404,
       "expect_allow": []
+    },
+    {
+      "id": "dcr.public_client_registers",
+      "group": "dcr",
+      "request": {"redirect_uris": ["https://client.example/callback"]},
+      "repeat": 1,
+      "expect_status": 201,
+      "expect_body_has": ["client_id"],
+      "expect_body_absent": ["client_secret"],
+      "expect_no_store": true
+    },
+    {
+      "id": "dcr.loopback_http_redirect",
+      "group": "dcr",
+      "request": {"redirect_uris": ["http://127.0.0.1:12345/cb"]},
+      "repeat": 1,
+      "expect_status": 201,
+      "expect_body_has": ["client_id"],
+      "expect_body_absent": ["client_secret"],
+      "expect_no_store": true
+    },
+    {
+      "id": "dcr.http_non_loopback_redirect",
+      "group": "dcr",
+      "request": {"redirect_uris": ["http://evil.example/cb"]},
+      "repeat": 1,
+      "expect_status": 400,
+      "expect_body_has": ["invalid_redirect_uri"],
+      "expect_body_absent": ["client_secret"],
+      "expect_no_store": true
+    },
+    {
+      "id": "dcr.fragment_redirect",
+      "group": "dcr",
+      "request": {"redirect_uris": ["https://client.example/callback#frag"]},
+      "repeat": 1,
+      "expect_status": 400,
+      "expect_body_has": ["invalid_redirect_uri"],
+      "expect_body_absent": ["client_secret"],
+      "expect_no_store": true
+    },
+    {
+      "id": "dcr.missing_redirect_uris",
+      "group": "dcr",
+      "request": {},
+      "repeat": 1,
+      "expect_status": 400,
+      "expect_body_has": ["invalid_client_metadata"],
+      "expect_body_absent": ["client_secret"],
+      "expect_no_store": true
+    },
+    {
+      "id": "dcr.confidential_token_endpoint_auth_method",
+      "group": "dcr",
+      "request": {"redirect_uris": ["https://client.example/callback"], "token_endpoint_auth_method": "client_secret_basic"},
+      "repeat": 1,
+      "expect_status": 400,
+      "expect_body_has": ["invalid_client_metadata"],
+      "expect_body_absent": ["client_secret"],
+      "expect_no_store": true
+    },
+    {
+      "id": "dcr.grant_types_without_authorization_code",
+      "group": "dcr",
+      "request": {"redirect_uris": ["https://client.example/callback"], "grant_types": ["refresh_token"]},
+      "repeat": 1,
+      "expect_status": 400,
+      "expect_body_has": ["invalid_client_metadata"],
+      "expect_body_absent": ["client_secret"],
+      "expect_no_store": true
+    },
+    {
+      "id": "dcr.unknown_members_ignored",
+      "group": "dcr",
+      "request": {"redirect_uris": ["https://client.example/callback"], "unknown_member": {"x": 1}},
+      "repeat": 1,
+      "expect_status": 201,
+      "expect_body_has": ["client_id"],
+      "expect_body_absent": ["client_secret", "unknown_member"],
+      "expect_no_store": true
+    },
+    {
+      "id": "dcr.body_over_the_framework_bound",
+      "group": "dcr",
+      "request": {"redirect_uris": ["https://client.example/callback"]},
+      "pad_to_bytes": 16385,
+      "repeat": 1,
+      "expect_status": 400,
+      "expect_body_has": ["invalid_client_metadata"],
+      "expect_body_absent": ["client_secret"],
+      "expect_no_store": true
+    },
+    {
+      "id": "dcr.rate_limited",
+      "group": "dcr",
+      "request": {"redirect_uris": ["https://client.example/callback"]},
+      "repeat": 11,
+      "expect_status": 429,
+      "expect_body_has": ["temporarily_unavailable"],
+      "expect_body_absent": ["client_secret"],
+      "expect_no_store": true,
+      "expect_header": "retry-after"
     }
   ]
 }

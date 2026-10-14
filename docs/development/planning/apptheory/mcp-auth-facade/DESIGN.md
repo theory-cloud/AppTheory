@@ -258,11 +258,11 @@ registration-time pairing of §4.2 — and **M3 fills them with the numbered mec
 
 **As built in M3b-ii:** the registrars mount the front channel when the front-channel `FacadeConfig` field set is
 declared, and mechanics **1**, **2**, and the `authorization_code` half of **4** are implemented in all three runtimes
-(tested over a loopback fake provider with real RSA keys and an injected clock). Not implemented: **3** (`/register`
-DCR — the derived pattern exists in the route model but no handler is registered unless the app supplies
-`RegisterHandler`) and the **brokered refresh** half of **4** (the token endpoint answers `400 unsupported_grant_type`
-for `grant_type=refresh_token`; the code-exchange response already carries the framework-minted opaque refresh handle,
-but that handle cannot be redeemed yet — deferred to M3c).
+(tested over a loopback fake provider with real RSA keys and an injected clock). **As built in M3c-1a:** mechanic
+**3** (`/register` DCR) is mounted with the front channel and executed in all three runtimes. Not implemented: the
+**brokered refresh** half of **4** (the token endpoint answers `400 unsupported_grant_type` for `grant_type=refresh_token`;
+the code-exchange response already carries the framework-minted opaque refresh handle, but that handle cannot be
+redeemed yet — deferred to M3c-1b).
 
 1. `/authorize` (GET) — **front-channel termination.** *As built (M3b-ii).* Validate registered client, exact redirect
    URI (loopback port flexibility only), `response_type=code`, S256 PKCE (mandatory; `plain`/absent refused),
@@ -285,13 +285,12 @@ but that handle cannot be redeemed yet — deferred to M3c).
    (`invalid_client`/`invalid_request`/`invalid_target` at authorize), and keeping the two distinguishable is what
    makes the callback `iss` and `state` pins hold — an implementation that skips either check reaches the exchange
    and changes the fixture's expected result instead of coincidentally reproducing `400`.
-3. `/register` (POST) — **RFC 7591 DCR.** *Not implemented (M3c): the derived `/register` pattern exists in the route
-   model, but the front channel registers no handler for it — the application owns it through `RegisterHandler`.* Public
+3. `/register` (POST) — **RFC 7591 DCR.** *As built (M3c-1a).* Public
    clients (`token_endpoint_auth_method=none`), https or
    loopback redirect URIs, server-assigned ids ≥128 bits, bound to the advertising route, per-route rate
    limited, hash-stored.
 4. `/token` (POST) — **code exchange + brokered refresh.** *The `authorization_code` grant is as built (M3b-ii); the
-   brokered refresh half is deferred to M3c.* Facade codes are single-use and bound to
+   brokered refresh half is deferred to M3c-1b.* Facade codes are single-use and bound to
    client/redirect/S256/route; a replay returns `invalid_grant` **and revokes the broker record the code
    minted**. Refresh presents an opaque route handle; the broker record binds issuer/client/subject/resource/
    scope fingerprint and holds the **encrypted** upstream refresh material. Concurrent refresh is
@@ -299,7 +298,7 @@ but that handle cannot be redeemed yet — deferred to M3c).
    is returned byte-for-byte unmodified; `id_token` and upstream refresh material never reach the client.
    *As built (M3b-ii):* the code-exchange response already returns the framework-minted opaque refresh handle as
    `refresh_token` (with the upstream access token byte-for-byte unmodified and `id_token` dropped), but the
-   `refresh_token` grant itself answers `400 unsupported_grant_type` until M3c, so a returned handle cannot be
+   `refresh_token` grant itself answers `400 unsupported_grant_type` until M3c-1b, so a returned handle cannot be
    redeemed yet.
 
 See `THREAT_MODEL.md` for the control and the pinning test of each mechanic, and `MINIMAL_CONSUMER.md` for the

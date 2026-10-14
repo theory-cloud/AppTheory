@@ -579,6 +579,11 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 			registrations = append(registrations,
 				routeRegistration{method: "GET", pattern: route.AuthorizePattern, handler: checkedOAuthFacadeHandler(route.Kind, true, config.authorizeHandlerFor(route.Kind))},
 				routeRegistration{method: "POST", pattern: route.TokenPattern, handler: checkedOAuthFacadeHandler(route.Kind, false, config.tokenHandlerFor(route.Kind))},
+				// The RFC 7591 registration route is part of the front channel,
+				// so it follows the same posture-derived mount: it is never
+				// reached under the none-public posture, where nothing of the
+				// OAuth surface registers.
+				routeRegistration{method: "POST", pattern: route.RegisterPattern, handler: checkedRegisterHandler(route.Kind, config.registerHandlerFor(route.Kind))},
 			)
 		}
 		if config.registerHandlers != nil {
