@@ -13,11 +13,15 @@ target app untouched.
 
 from __future__ import annotations
 
+import base64
+import contextlib
 import json as jsonlib
 import re
+import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
+from urllib.parse import parse_qs, quote_plus
 
 from apptheory.app import App, Handler, _resolve, create_app
 from apptheory.cloudfront import origin_url
@@ -39,7 +43,33 @@ from apptheory.mcproutes import (
     supported_oauth_discovery_templates,
     supported_oauth_facade_templates,
 )
-from apptheory.oauth import Provider, RequireBearerTokenOptions, Stores, require_bearer_token_middleware
+from apptheory.oauth import (
+    AuthorizationRequest,
+    CodeExchangeRequest,
+    Provider,
+    RequireBearerTokenOptions,
+    Stores,
+    TokenExpectations,
+    canonical_resource_url,
+    canonicalize_issuer_url,
+    new_pkce_code_verifier,
+    pkce_challenge_s256,
+    pkce_verify_s256,
+    require_bearer_token_middleware,
+)
+from apptheory.oauth.store import (
+    STATUS_EXPIRED,
+    STATUS_ISSUED,
+    AuthorizationCodeRecord,
+    AuthorizationCodeStore,
+    ClientStore,
+    RateLimitStore,
+    RouteRefreshBrokerRecord,
+    RouteRefreshBrokerStore,
+    TransactionRecord,
+    TransactionStore,
+    hash_key,
+)
 from apptheory.response import Response, normalize_response
 
 _HTTPS_SCHEME = "https"
@@ -66,6 +96,30 @@ METADATA_VARY_HEADER = (
 _ERROR_PREFIX = "AppTheoryMcpFacade:"
 _MCP_METHODS = ("POST", "GET", "DELETE")
 _METADATA_REQUEST_BODY = b'{"error":"invalid_request_host"}'
+
+# Status values the front channel writes into the store records it mints.
+_FRONT_CHANNEL_TRANSACTION_STATUS_PENDING = "pending"
+
+# _FACADE_ERROR_DESCRIPTIONS is the closed, fixed client-facing error vocabulary
+# of the front channel (DESIGN section 8). Every rejection of one error code
+# carries the same description, so the response never distinguishes an unknown
+# key from a used one (THREAT_MODEL cross-cutting: no oracle).
+_FACADE_ERROR_DESCRIPTIONS: dict[str, str] = {
+    "invalid_client": "the client is not registered",
+    "invalid_request": "the request is missing or has an invalid parameter",
+    "invalid_target": "the resource is not the resource this route authorizes",
+    "invalid_grant": "the grant is invalid, expired, or already used",
+    "unsupported_grant_type": "the grant type is not supported",
+    "upstream_error": "the upstream authorization server could not complete the request",
+}
+
+# The RFC 7636 S256 challenge alphabet (base64url) and the one length the shape
+# check accepts.
+_S256_CHALLENGE_ALPHABET = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+_S256_CHALLENGE_LENGTH = 43
+
+# RFC 8252 section 7.3 loopback hosts whose ephemeral port may vary.
+_LOOPBACK_HOSTS = frozenset(("127.0.0.1", "::1", "localhost"))
 
 # HandlerFactory returns an application-owned handler for one endpoint kind.
 # Factories run during facade registration, never during request handling.
@@ -209,6 +263,37 @@ class RouteInventory:
 
 
 @dataclass(slots=True)
+class _FrontChannelStores:
+    """The five store SPIs the front channel drives, each narrowed to non-None.
+
+    The front channel validates the full set at registration, so it drives them
+    without per-call None checks.
+    """
+
+    transaction: TransactionStore
+    authorization_code: AuthorizationCodeStore
+    client: ClientStore
+    route_refresh_broker: RouteRefreshBrokerStore
+    rate_limit: RateLimitStore
+
+
+@dataclass(slots=True)
+class _FrontChannelConfig:
+    """The validated front-channel field set of :class:`FacadeConfig`
+    (DESIGN section 8): the provider adapter and stores the front channel drives,
+    the facade's own upstream client, the expected upstream issuer, the
+    injectable lifecycle scopes, and the opaque provider-hint seam.
+    """
+
+    provider: Provider
+    stores: _FrontChannelStores
+    upstream_client_id: str
+    upstream_issuer: str
+    lifecycle_scopes: list[str]
+    provider_hints: Callable[[Context], dict[str, str]] | None
+
+
+@dataclass(slots=True)
 class _NormalizedConfig:
     issuer_url: str
     jwks_uri: str
@@ -229,6 +314,7 @@ class _NormalizedConfig:
     root_discovery_path: str
     transport_posture: str
     require_bearer_token: RequireBearerTokenOptions | None
+    front_channel: _FrontChannelConfig | None = None
 
 
 @dataclass(slots=True)
@@ -277,14 +363,15 @@ def _normalize_config(config: FacadeConfig | None) -> _NormalizedConfig:
     normalized.transport_posture = transport_posture
     normalized.require_bearer_token = config.require_bearer_token
     normalized.callback_handler = config.callback_handler
+    normalized.front_channel = _normalize_front_channel(config)
     _validate_posture_surface_config(
         transport_posture,
         normalized.authorize_handlers,
         normalized.register_handlers,
         normalized.callback_handler,
         normalized.root_authorization_server,
+        normalized.front_channel is not None,
     )
-    _validate_front_channel_config(config)
     return normalized
 
 
@@ -367,6 +454,7 @@ def _validate_posture_surface_config(
     register_handlers: dict[str, Handler] | None,
     callback_handler: Handler | None,
     root_authorization_server: dict[str, Any] | None,
+    front_channel: bool,
 ) -> None:
     """Make the posture-derived inventory authoritative.
 
@@ -390,19 +478,25 @@ def _validate_posture_surface_config(
             f"{_ERROR_PREFIX} TransportPosture none-public registers no OAuth surface; "
             "CallbackHandler must not be configured"
         )
+    if front_channel:
+        raise ValueError(
+            f"{_ERROR_PREFIX} TransportPosture none-public registers no OAuth surface; "
+            "the front-channel field set must not be configured"
+        )
     if root_authorization_server is not None:
         raise ValueError(f"{_ERROR_PREFIX} TransportPosture none-public cannot enable RootAuthorizationServer")
 
 
-def _validate_front_channel_config(config: FacadeConfig) -> None:
+def _normalize_front_channel(config: FacadeConfig) -> _FrontChannelConfig | None:
     """Validate the framework-owned front-channel field set of ``FacadeConfig``
-    (DESIGN section 8).
+    (DESIGN section 8) and return it.
 
     The set is declared by ``provider``: when it is set, every other required
     front-channel field must be present and the application-owned handler
-    factories that would otherwise claim the same routes must be absent. Nothing
-    here mounts a route; it makes the declared public surface fail closed before
-    anything is registered.
+    factories that would otherwise claim the same routes must be absent. A
+    ``None`` result means the front channel is not declared: the application
+    either owns the OAuth surface through its handler factories or registers
+    none.
     """
     if config.provider is None:
         name = _front_channel_field_outside_provider(config)
@@ -410,8 +504,9 @@ def _validate_front_channel_config(config: FacadeConfig) -> None:
             raise ValueError(
                 f"{_ERROR_PREFIX} {name} is set without Provider; the front-channel field set is anchored by Provider"
             )
-        return
-    if _normalize_https_url(config.upstream_issuer or "", True) is None:
+        return None
+    upstream_issuer = _normalize_https_url(config.upstream_issuer or "", True)
+    if upstream_issuer is None:
         raise ValueError(
             f"{_ERROR_PREFIX} front channel upstream issuer must be an absolute HTTPS URL without query or fragment"
         )
@@ -422,7 +517,7 @@ def _validate_front_channel_config(config: FacadeConfig) -> None:
             _normalize_non_empty_list("lifecycle scope", config.lifecycle_scopes)
         except ValueError as err:
             raise ValueError(f"{_ERROR_PREFIX} {err}") from err
-    _validate_front_channel_stores(config.stores)
+    stores = _require_front_channel_stores(config.stores)
     if config.authorize_handler is not None or config.token_handler is not None:
         raise ValueError(
             f"{_ERROR_PREFIX} Provider owns the authorize and token routes; "
@@ -433,6 +528,14 @@ def _validate_front_channel_config(config: FacadeConfig) -> None:
             f"{_ERROR_PREFIX} Provider owns the stage-global callback; "
             "CallbackHandler must not be configured with a front channel"
         )
+    return _FrontChannelConfig(
+        provider=config.provider,
+        stores=stores,
+        upstream_client_id=(config.upstream_client_id or "").strip(),
+        upstream_issuer=upstream_issuer,
+        lifecycle_scopes=list(config.lifecycle_scopes or []),
+        provider_hints=config.provider_hints,
+    )
 
 
 def _front_channel_field_outside_provider(config: FacadeConfig) -> str | None:
@@ -464,24 +567,38 @@ def _front_channel_store_is_declared(stores: Stores | None) -> bool:
     )
 
 
-def _validate_front_channel_stores(stores: Stores | None) -> None:
+def _require_front_channel_stores(stores: Stores | None) -> _FrontChannelStores:
     """Require every one of the five store SPIs DESIGN section 7 defines: a
     facade missing a store cannot persist the state its mechanics depend on, so
     it fails closed rather than degrading.
     """
+    if stores is None:
+        raise ValueError(
+            f"{_ERROR_PREFIX} front channel requires all five stores; "
+            "missing Transaction, AuthorizationCode, Client, RouteRefreshBroker, RateLimit"
+        )
     missing = [
         name
         for name, value in (
-            ("Transaction", None if stores is None else stores.transaction),
-            ("AuthorizationCode", None if stores is None else stores.authorization_code),
-            ("Client", None if stores is None else stores.client),
-            ("RouteRefreshBroker", None if stores is None else stores.route_refresh_broker),
-            ("RateLimit", None if stores is None else stores.rate_limit),
+            ("Transaction", stores.transaction),
+            ("AuthorizationCode", stores.authorization_code),
+            ("Client", stores.client),
+            ("RouteRefreshBroker", stores.route_refresh_broker),
+            ("RateLimit", stores.rate_limit),
         )
         if value is None
     ]
     if missing:
         raise ValueError(f"{_ERROR_PREFIX} front channel requires all five stores; missing {', '.join(missing)}")
+    # Every field is proven non-None by the missing-store check above; the casts
+    # carry that proof, which a list comprehension cannot express.
+    return _FrontChannelStores(
+        transaction=cast("TransactionStore", stores.transaction),
+        authorization_code=cast("AuthorizationCodeStore", stores.authorization_code),
+        client=cast("ClientStore", stores.client),
+        route_refresh_broker=cast("RouteRefreshBrokerStore", stores.route_refresh_broker),
+        rate_limit=cast("RateLimitStore", stores.rate_limit),
+    )
 
 
 def _valid_upstream_client_id(client_id: str) -> bool:
@@ -621,6 +738,25 @@ def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -
                     False,
                 )
             )
+        if config.front_channel is not None:
+            authorize_handler = _front_channel_authorize_handler(config, route.kind)
+            token_handler = _front_channel_token_handler(config, route.kind)
+            registrations.append(
+                _RouteRegistration(
+                    "GET",
+                    route.authorize_pattern,
+                    _checked_oauth_facade_handler(route.kind, True, authorize_handler),
+                    False,
+                )
+            )
+            registrations.append(
+                _RouteRegistration(
+                    "POST",
+                    route.token_pattern,
+                    _checked_oauth_facade_handler(route.kind, False, token_handler),
+                    False,
+                )
+            )
         if config.register_handlers is not None:
             registrations.append(
                 _RouteRegistration(
@@ -648,6 +784,10 @@ def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -
         )
     if inventory.callback_pattern != "" and config.callback_handler is not None:
         registrations.append(_RouteRegistration("GET", inventory.callback_pattern, config.callback_handler, False))
+    if inventory.callback_pattern != "" and config.front_channel is not None:
+        registrations.append(
+            _RouteRegistration("GET", inventory.callback_pattern, _front_channel_callback_handler(config), False)
+        )
 
     _validate_route_registrations(registrations)
     return registrations
@@ -1044,6 +1184,13 @@ def _metadata_request_failure(err: Exception) -> Response | None:
     )
 
 
+def _require_metadata_failure(err: _MetadataRequestError) -> Response:
+    failure = _metadata_request_failure(err)
+    if failure is None:
+        raise err
+    return failure
+
+
 def _metadata_response(document: dict[str, Any]) -> Response:
     # Go marshals the document with json.Marshal, which emits compact JSON in
     # struct-field order. The framework ``json()`` helper sorts keys and would
@@ -1082,6 +1229,590 @@ def _with_metadata_headers(next_handler: Callable[[Context], Response]) -> Calla
         return response
 
     return handler
+
+
+# ---------------------------------------------------------------------------
+# Framework-owned front channel (DESIGN section 8)
+# ---------------------------------------------------------------------------
+
+
+def _front_channel_authorize_handler(config: _NormalizedConfig, kind: str) -> Handler:
+    def handler(ctx: Context) -> Response:
+        return _handle_authorize(config, kind, ctx)
+
+    return handler
+
+
+def _front_channel_token_handler(config: _NormalizedConfig, kind: str) -> Handler:
+    def handler(ctx: Context) -> Response:
+        return _handle_token(config, kind, ctx)
+
+    return handler
+
+
+def _front_channel_callback_handler(config: _NormalizedConfig) -> Handler:
+    def handler(ctx: Context) -> Response:
+        return _handle_callback(config, ctx)
+
+    return handler
+
+
+def _handle_authorize(config: _NormalizedConfig, kind: str, ctx: Context) -> Response:
+    """Terminate the client-facing front channel (DESIGN section 8.1): validate
+    the registered client and its exact redirect URI before any redirect, require
+    S256 PKCE, record a single-use transaction, and send the browser upstream with
+    the facade's own client, callback, PKCE verifier, fresh state, resource,
+    hints, and clamped scope set.
+    """
+    try:
+        return _handle_authorize_inner(config, kind, ctx)
+    except _MetadataRequestError as err:
+        return _require_metadata_failure(err)
+
+
+def _handle_authorize_inner(config: _NormalizedConfig, kind: str, ctx: Context) -> Response:
+    front = config.front_channel
+    if front is None:
+        raise ValueError(f"{_ERROR_PREFIX} front channel is not configured")
+    endpoint = _endpoint_from_route_params(ctx, kind)
+    resource = _build_absolute_url(config, ctx, endpoint.mcp_path())
+    issuer = _front_channel_route_issuer(config, ctx, endpoint)
+
+    # Validation order (DESIGN section 8.1): client, redirect URI, response_type,
+    # S256 PKCE, state, resource, scope. Errors raised before the redirect URI is
+    # validated render an error page and never redirect.
+    client_id = _first_query_value(ctx.request.query, "client_id")
+    if client_id.strip() == "":
+        return _facade_error_page(400, "invalid_request")
+    client = front.stores.client.get(hash_key(client_id))
+    if client is None:
+        return _facade_error_page(400, "invalid_client")
+
+    redirect_uri = _first_query_value(ctx.request.query, "redirect_uri")
+    if not _registered_redirect_uri(client.redirect_uris, redirect_uri):
+        # Open-redirect defense: an unmatched redirect URI never redirects.
+        return _facade_error_page(400, "invalid_request")
+    client_state = _first_query_value(ctx.request.query, "state")
+    if _first_query_value(ctx.request.query, "response_type") != "code":
+        return _facade_client_error_redirect(redirect_uri, issuer, client_state, "invalid_request")
+    challenge = _first_query_value(ctx.request.query, "code_challenge")
+    if _first_query_value(ctx.request.query, "code_challenge_method") != "S256" or not _valid_s256_challenge(challenge):
+        return _facade_client_error_redirect(redirect_uri, issuer, client_state, "invalid_request")
+    requested_resource = _first_query_value(ctx.request.query, "resource").strip()
+    if requested_resource != "" and canonical_resource_url(requested_resource) != resource:
+        return _facade_client_error_redirect(redirect_uri, issuer, client_state, "invalid_target")
+    scopes, ok = _clamp_requested_scopes(ctx.request.query.get("scope") or [], config.scopes[kind])
+    if not ok:
+        return _facade_client_error_redirect(redirect_uri, issuer, client_state, "invalid_request")
+    upstream_scopes = [*scopes, *front.lifecycle_scopes]
+
+    hints: dict[str, str] = {}
+    if front.provider_hints is not None:
+        try:
+            hints = dict(front.provider_hints(ctx) or {})
+        except Exception:  # noqa: BLE001 - a fail-closed request-class rejection that never redirects
+            return _facade_error_page(400, "invalid_request")
+
+    upstream_state = _new_opaque_token()
+    code_verifier = new_pkce_code_verifier()
+    upstream_challenge = pkce_challenge_s256(code_verifier)
+    callback_url = _build_absolute_url(config, ctx, config.upstream_callback_path)
+
+    transaction = TransactionRecord(
+        state_hash=hash_key(upstream_state),
+        client_id_hash=hash_key(client_id),
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        code_challenge=challenge,
+        code_challenge_method="S256",
+        client_state=client_state,
+        encrypted_upstream_code_verifier=code_verifier,
+        scopes=list(scopes),
+        canonical_resource=resource,
+        endpoint_kind=kind,
+        client_namespace=endpoint.client_namespace,
+        partner_id=endpoint.partner_id,
+        agent_id=endpoint.agent_id,
+        status=_FRONT_CHANNEL_TRANSACTION_STATUS_PENDING,
+    )
+    front.stores.transaction.put(transaction)
+
+    try:
+        upstream_url = front.provider.authorization_url(
+            AuthorizationRequest(
+                upstream_client_id=front.upstream_client_id,
+                callback_url=callback_url,
+                code_challenge=upstream_challenge,
+                code_challenge_method="S256",
+                state=upstream_state,
+                resource=resource,
+                scopes=upstream_scopes,
+                hints=hints,
+            )
+        )
+    except Exception:  # noqa: BLE001 - provider failure is the distinct 502 class
+        return _facade_upstream_error_page()
+    return _facade_upstream_redirect(upstream_url)
+
+
+def _handle_callback(config: _NormalizedConfig, ctx: Context) -> Response:
+    """Complete the upstream leg (DESIGN section 8.2): verify the upstream
+    RFC 9207 ``iss`` before consuming the transaction or exchanging the code, so
+    an absent or mismatched ``iss`` fails closed without touching state. Any
+    provider failure after that is the distinct 502 ``upstream_error`` class,
+    never the facade's own 400.
+    """
+    try:
+        return _handle_callback_inner(config, ctx)
+    except _MetadataRequestError as err:
+        return _require_metadata_failure(err)
+
+
+def _handle_callback_inner(config: _NormalizedConfig, ctx: Context) -> Response:
+    front = config.front_channel
+    if front is None:
+        raise ValueError(f"{_ERROR_PREFIX} front channel is not configured")
+    expected_issuer = canonicalize_issuer_url(front.upstream_issuer)
+    if expected_issuer is None:
+        raise ValueError(f"{_ERROR_PREFIX} front channel upstream issuer is not canonicalizable")
+    claimed_issuer = canonicalize_issuer_url(_first_query_value(ctx.request.query, "iss"))
+    if claimed_issuer is None or claimed_issuer != expected_issuer:
+        return _facade_error_page(400, "invalid_request")
+    code = _first_query_value(ctx.request.query, "code").strip()
+    state = _first_query_value(ctx.request.query, "state").strip()
+    if code == "" or state == "":
+        return _facade_error_page(400, "invalid_request")
+
+    transaction = front.stores.transaction.consume(hash_key(state))
+    if transaction is None or transaction.status == STATUS_EXPIRED:
+        # An unminted, replayed, and expired state are one response class: the
+        # transaction store burns on first consume, so they are indistinguishable
+        # and stay indistinguishable on purpose (T10).
+        return _facade_error_page(400, "invalid_request")
+
+    callback_url = _build_absolute_url(config, ctx, config.upstream_callback_path)
+    try:
+        token_set = front.provider.exchange_code(
+            CodeExchangeRequest(
+                code=code,
+                upstream_client_id=front.upstream_client_id,
+                callback_url=callback_url,
+                code_verifier=transaction.encrypted_upstream_code_verifier,
+            )
+        )
+    except Exception:  # noqa: BLE001 - provider failure is the distinct 502 class
+        return _facade_upstream_error_page()
+    try:
+        claims = front.provider.validate_access_token(
+            token_set.access_token,
+            TokenExpectations(
+                expected_issuer=front.upstream_issuer,
+                expected_audience=transaction.canonical_resource,
+                allowed_authorized_parties=[front.upstream_client_id],
+            ),
+        )
+    except Exception:  # noqa: BLE001 - provider failure is the distinct 502 class
+        return _facade_upstream_error_page()
+
+    handle = _new_opaque_token()
+    broker_store = front.stores.route_refresh_broker
+    seeder_put = getattr(broker_store, "put", None)
+    if not callable(seeder_put):
+        raise ValueError(f"{_ERROR_PREFIX} route refresh broker store cannot be seeded")
+    broker = RouteRefreshBrokerRecord(
+        handle_hash=hash_key(handle),
+        issuer=front.upstream_issuer,
+        canonical_resource=transaction.canonical_resource,
+        client_namespace=transaction.client_namespace,
+        endpoint_kind=transaction.endpoint_kind,
+        partner_id=transaction.partner_id,
+        agent_id=transaction.agent_id,
+        client_id_hash=transaction.client_id_hash,
+        subject_id_hash=hash_key(claims.subject),
+        scopes=list(transaction.scopes),
+        scope_fingerprint=_facade_scope_fingerprint(transaction.scopes),
+        encrypted_upstream_refresh_token=token_set.refresh_token,
+        upstream_refresh_token_hash=hash_key(token_set.refresh_token),
+        upstream_client_id=front.upstream_client_id,
+        status=STATUS_ISSUED,
+    )
+    seeder_put(broker)
+
+    facade_code = _new_opaque_token()
+    code_record = AuthorizationCodeRecord(
+        code_hash=hash_key(facade_code),
+        client_id_hash=transaction.client_id_hash,
+        client_id=transaction.client_id,
+        redirect_uri=transaction.redirect_uri,
+        code_challenge=transaction.code_challenge,
+        code_challenge_method=transaction.code_challenge_method,
+        scopes=list(transaction.scopes),
+        canonical_resource=transaction.canonical_resource,
+        endpoint_kind=transaction.endpoint_kind,
+        client_namespace=transaction.client_namespace,
+        partner_id=transaction.partner_id,
+        agent_id=transaction.agent_id,
+        route_refresh_handle_hash=broker.handle_hash,
+        encrypted_route_refresh_handle=handle,
+        encrypted_token_response=_encode_token_set(token_set),
+        status=STATUS_ISSUED,
+    )
+    front.stores.authorization_code.put(code_record)
+
+    issuer = _front_channel_route_issuer(
+        config,
+        ctx,
+        EndpointPath(
+            kind=transaction.endpoint_kind,
+            client_namespace=transaction.client_namespace,
+            partner_id=transaction.partner_id,
+            agent_id=transaction.agent_id,
+        ),
+    )
+    values: dict[str, list[str]] = {"code": [facade_code], "iss": [issuer]}
+    if transaction.client_state != "":
+        values["state"] = [transaction.client_state]
+    return _facade_client_redirect(transaction.redirect_uri, values)
+
+
+def _handle_token(config: _NormalizedConfig, kind: str, ctx: Context) -> Response:
+    """Serve the token endpoint (DESIGN section 8.4). M3b owns the
+    authorization_code grant; the brokered refresh grant is M3c and answers
+    unsupported_grant_type until it lands, so no adopter assumes it works.
+    """
+    front = config.front_channel
+    if front is None:
+        raise ValueError(f"{_ERROR_PREFIX} front channel is not configured")
+    try:
+        form = _parse_form(ctx.request.body)
+    except (UnicodeDecodeError, ValueError):
+        return _facade_error_page(400, "invalid_request")
+    grant_type = _first_form_value(form, "grant_type")
+    if grant_type == "":
+        return _facade_error_page(400, "invalid_request")
+    if grant_type == "authorization_code":
+        return _handle_authorization_code_grant(config, kind, ctx, form)
+    # Ruled: the token response issues the refresh handle, but the refresh_token
+    # grant is M3c and is refused until then.
+    return _facade_error_page(400, "unsupported_grant_type")
+
+
+def _handle_authorization_code_grant(
+    config: _NormalizedConfig,
+    kind: str,
+    ctx: Context,
+    form: dict[str, list[str]],
+) -> Response:
+    front = config.front_channel
+    if front is None:
+        raise ValueError(f"{_ERROR_PREFIX} front channel is not configured")
+    code = _first_form_value(form, "code").strip()
+    redirect_uri = _first_form_value(form, "redirect_uri")
+    verifier = _first_form_value(form, "code_verifier")
+    if code == "" or redirect_uri.strip() == "" or verifier.strip() == "":
+        return _facade_error_page(400, "invalid_request")
+    client_id = _first_form_value(form, "client_id").strip()
+    if client_id == "":
+        return _facade_error_page(400, "invalid_client")
+    client = front.stores.client.get(hash_key(client_id))
+    if client is None:
+        return _facade_error_page(400, "invalid_client")
+    # Only public clients are registered through the facade; a client record
+    # that claims another authentication method fails closed.
+    method = str(client.token_endpoint_auth_method or "").strip()
+    if method != "" and method != "none":
+        return _facade_error_page(400, "invalid_client")
+    return _redeem_authorization_code(front, kind, form, code, redirect_uri, verifier, client_id)
+
+
+def _redeem_authorization_code(
+    front: _FrontChannelConfig,
+    kind: str,
+    form: dict[str, list[str]],
+    code: str,
+    redirect_uri: str,
+    verifier: str,
+    client_id: str,
+) -> Response:
+    result = front.stores.authorization_code.consume(hash_key(code))
+    if result is None:
+        return _facade_error_page(400, "invalid_grant")
+    if result.replayed:
+        # T2: a replayed code revokes the broker record it minted, so the
+        # refresh handle from that authorization dies with the replay.
+        _revoke_replayed_broker(front, result.record)
+        return _facade_error_page(400, "invalid_grant")
+    if result.expired or result.record is None:
+        return _facade_error_page(400, "invalid_grant")
+    record = result.record
+    if not _code_record_binding_matches(record, client_id, redirect_uri, kind):
+        return _facade_error_page(400, "invalid_grant")
+    if not _verifier_matches(verifier, record.code_challenge):
+        return _facade_error_page(400, "invalid_grant")
+    if not _requested_resource_matches(record, _first_form_value(form, "resource")):
+        return _facade_error_page(400, "invalid_target")
+    token_set = _decode_token_response(record.encrypted_token_response)
+    return _facade_token_response(token_set, record.encrypted_route_refresh_handle)
+
+
+def _revoke_replayed_broker(front: _FrontChannelConfig, record: AuthorizationCodeRecord | None) -> None:
+    if record is None or not record.route_refresh_handle_hash:
+        return
+    with contextlib.suppress(KeyError):
+        front.stores.route_refresh_broker.revoke(record.route_refresh_handle_hash)
+
+
+def _code_record_binding_matches(record: AuthorizationCodeRecord, client_id: str, redirect_uri: str, kind: str) -> bool:
+    return (
+        record.client_id == client_id
+        and record.redirect_uri == redirect_uri
+        and record.endpoint_kind == kind
+        and record.code_challenge_method == "S256"
+    )
+
+
+def _verifier_matches(verifier: str, challenge: str) -> bool:
+    try:
+        return pkce_verify_s256(verifier, challenge)
+    except ValueError:
+        return False
+
+
+def _requested_resource_matches(record: AuthorizationCodeRecord, requested: str) -> bool:
+    value = requested.strip()
+    return value == "" or canonical_resource_url(value) == record.canonical_resource
+
+
+def _decode_token_response(value: str) -> dict[str, Any]:
+    try:
+        token_set = jsonlib.loads(value)
+    except ValueError as err:
+        raise ValueError(f"{_ERROR_PREFIX} facade code record does not carry a token response: {err}") from err
+    if not isinstance(token_set, dict):
+        raise ValueError(f"{_ERROR_PREFIX} facade code record does not carry a token response")
+    return token_set
+
+
+def _front_channel_route_issuer(config: _NormalizedConfig, ctx: Context, endpoint: EndpointPath) -> str:
+    """The client-facing issuer: the route URL in route issuer mode and the
+    configured family issuer otherwise (DESIGN section 3.3).
+    """
+    if config.issuer_mode != ISSUER_MODE_ROUTE:
+        return config.issuer_url
+    return _build_absolute_url(config, ctx, endpoint.mcp_path())
+
+
+def _facade_token_response(token_set: dict[str, Any], refresh_handle: str) -> Response:
+    # The token response the facade returns (DESIGN section 8.4): the upstream
+    # access token byte-for-byte unmodified, the upstream token type, expiry, and
+    # scope, and the framework-minted opaque refresh handle. It never carries an
+    # id_token or any upstream refresh material.
+    payload: dict[str, Any] = {
+        "access_token": str(token_set.get("access_token") or ""),
+        "token_type": str(token_set.get("token_type") or ""),
+    }
+    expires_in = token_set.get("expires_in")
+    if isinstance(expires_in, int) and not isinstance(expires_in, bool) and expires_in != 0:
+        payload["expires_in"] = expires_in
+    scope = token_set.get("scope")
+    if isinstance(scope, str) and scope:
+        payload["scope"] = scope
+    if refresh_handle:
+        payload["refresh_token"] = refresh_handle
+    return _facade_json_response(200, payload)
+
+
+def _facade_error_page(status: int, code: str) -> Response:
+    """Render a facade rejection that never redirects (DESIGN section
+    8.1/8.2): the fixed error vocabulary, no upstream material, and no cacheable
+    representation.
+    """
+    return _facade_json_response(
+        status,
+        {"error": code, "error_description": _FACADE_ERROR_DESCRIPTIONS.get(code, "")},
+    )
+
+
+def _facade_upstream_error_page() -> Response:
+    """The gateway-class provider failure (DESIGN section 8.2): a distinct 502
+    carrying ``upstream_error``, never the facade's 400 vocabulary.
+    """
+    return _facade_error_page(502, "upstream_error")
+
+
+def _facade_client_error_redirect(redirect_uri: str, issuer: str, client_state: str, code: str) -> Response:
+    """Send an authorization error back to the client's validated redirect URI,
+    carrying the fixed error code, the client's own state, and the client-facing
+    RFC 9207 ``iss`` (FRAMEWORK_VS_POLICY row 1).
+    """
+    values: dict[str, list[str]] = {"error": [code], "iss": [issuer]}
+    description = _FACADE_ERROR_DESCRIPTIONS.get(code, "")
+    if description:
+        values["error_description"] = [description]
+    if client_state:
+        values["state"] = [client_state]
+    return _facade_client_redirect(redirect_uri, values)
+
+
+def _facade_client_redirect(target: str, values: dict[str, list[str]]) -> Response:
+    """Append values to the client's redirect URI without rewriting the URI
+    itself, so the redirect target stays byte-identical to the registered value.
+    """
+    location = target
+    encoded = _encode_query(values)
+    if encoded:
+        separator = "&" if "?" in location else "?"
+        location = location + separator + encoded
+    return _facade_redirect(location)
+
+
+def _facade_upstream_redirect(target: str) -> Response:
+    """Send the browser to the upstream authorize URL."""
+    return _facade_redirect(target)
+
+
+def _facade_redirect(location: str) -> Response:
+    return Response(
+        status=302,
+        headers={"location": [location], "cache-control": ["no-store"], "pragma": ["no-cache"]},
+        cookies=[],
+        body=b"",
+        is_base64=False,
+    )
+
+
+def _facade_json_response(status: int, payload: dict[str, Any]) -> Response:
+    body = jsonlib.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return Response(
+        status=status,
+        headers={
+            "content-type": ["application/json; charset=utf-8"],
+            "cache-control": ["no-store"],
+            "pragma": ["no-cache"],
+        },
+        cookies=[],
+        body=body,
+        is_base64=False,
+    )
+
+
+def _encode_query(values: dict[str, list[str]]) -> str:
+    """Mirror Go's ``url.Values.Encode``: keys sorted, ``quote_plus`` escaping."""
+    parts: list[str] = []
+    for key in sorted(values):
+        encoded_key = quote_plus(str(key))
+        parts.extend(f"{encoded_key}={quote_plus(str(value))}" for value in values[key])
+    return "&".join(parts)
+
+
+def _encode_token_set(token_set: Any) -> str:
+    return jsonlib.dumps(
+        {
+            "access_token": token_set.access_token,
+            "refresh_token": token_set.refresh_token,
+            "token_type": token_set.token_type,
+            "expires_in": int(token_set.expires_in or 0),
+            "scope": token_set.scope,
+            "id_token": token_set.id_token,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _new_opaque_token() -> str:
+    """A URL-safe opaque token for authorization codes and refresh handles."""
+    return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii").rstrip("=")
+
+
+def _parse_form(body: Any) -> dict[str, list[str]]:
+    if body is None:
+        return {}
+    raw = body if isinstance(body, bytes) else str(body).encode("utf-8")
+    return parse_qs(raw.decode("utf-8"), keep_blank_values=True)
+
+
+def _first_query_value(query: dict[str, list[str]], name: str) -> str:
+    values = query.get(name) or []
+    return str(values[0]) if values else ""
+
+
+def _first_form_value(form: dict[str, list[str]], name: str) -> str:
+    values = form.get(name) or []
+    return str(values[0]) if values else ""
+
+
+def _registered_redirect_uri(registered: list[str] | None, requested: str) -> bool:
+    """Report whether the request redirect URI matches one of the client's
+    registered URIs exactly, allowing RFC 8252 section 7.3 loopback port
+    flexibility only.
+    """
+    if requested is None or requested.strip() == "":
+        return False
+    for candidate in registered or []:
+        if candidate == requested:
+            return True
+        if _loopback_redirect_match(candidate, requested):
+            return True
+    return False
+
+
+def _loopback_redirect_match(registered: str, requested: str) -> bool:
+    """Allow the ephemeral-port form of RFC 8252 section 7.3: a loopback
+    IP-literal redirect may be presented with a different port.
+    """
+    registered_url = _parse_absolute_url(registered)
+    if registered_url is None:
+        return False
+    requested_url = _parse_absolute_url(requested)
+    if requested_url is None:
+        return False
+    if not _front_channel_loopback_host(registered_url.decoded_hostname) or not _front_channel_loopback_host(
+        requested_url.decoded_hostname
+    ):
+        return False
+    if registered_url.scheme != requested_url.scheme or registered_url.path != requested_url.path:
+        return False
+    if registered_url.search != requested_url.search or registered_url.hash != requested_url.hash:
+        return False
+    if registered_url.port == "" or requested_url.port == "":
+        return False
+    return registered_url.port != requested_url.port
+
+
+def _front_channel_loopback_host(hostname: str) -> bool:
+    return str(hostname or "").lower() in _LOOPBACK_HOSTS
+
+
+def _valid_s256_challenge(challenge: str) -> bool:
+    """Report whether a PKCE challenge is the RFC 7636 S256 shape: 43 base64url
+    characters.
+    """
+    value = str(challenge or "")
+    if len(value) != _S256_CHALLENGE_LENGTH:
+        return False
+    return all(character in _S256_CHALLENGE_ALPHABET for character in value)
+
+
+def _clamp_requested_scopes(requested: list[str], allowed: list[str]) -> tuple[list[str], bool]:
+    """Clamp a client request to the route scope set: an absent request takes
+    the route set, a present one is intersected with it in route order, and a
+    request that survives to nothing fails closed instead of silently broadening
+    to the route set.
+    """
+    if not requested:
+        return list(allowed), True
+    wanted: set[str] = set()
+    for raw in requested:
+        wanted.update(str(raw).split())
+    clamped = [value for value in allowed if value in wanted]
+    if not clamped:
+        return [], False
+    return clamped, True
+
+
+def _facade_scope_fingerprint(scopes: list[str]) -> str:
+    return hash_key(" ".join(sorted(str(scope) for scope in scopes or [])))
 
 
 # ---------------------------------------------------------------------------

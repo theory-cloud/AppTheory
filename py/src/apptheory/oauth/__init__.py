@@ -635,6 +635,7 @@ from apptheory.oauth.store import (  # noqa: E402
     Stores,
     TransactionRecord,
     TransactionStore,
+    hash_key,
     run_store_conformance,
 )
 
@@ -708,6 +709,7 @@ __all__ = [
     "canonical_resource_url",
     "canonicalize_issuer_url",
     "claude_dynamic_client_registration_policy",
+    "hash_key",
     "insufficient_scope_www_authenticate",
     "new_autheory_provider",
     "new_authorization_server_metadata",

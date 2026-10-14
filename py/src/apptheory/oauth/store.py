@@ -19,6 +19,8 @@ result of the call.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import threading
 from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, datetime, timedelta
@@ -250,6 +252,19 @@ class Stores:
     client: ClientStore | None = None
     route_refresh_broker: RouteRefreshBrokerStore | None = None
     rate_limit: RateLimitStore | None = None
+
+
+def hash_key(value: str) -> str:
+    """Return the store key for a protected value: the unpadded base64url
+    SHA-256 digest of the value.
+
+    Every store SPI is keyed by the hash of the value it protects and never by
+    the value itself, so a caller that seeds a record directly -- a
+    pre-registered client, for example -- derives the key with this helper and
+    the facade derives the same key when it looks the record up.
+    """
+    digest = hashlib.sha256(str(value).encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
 def _utc_now() -> datetime:
@@ -1240,5 +1255,6 @@ __all__ = [
     "Stores",
     "TransactionRecord",
     "TransactionStore",
+    "hash_key",
     "run_store_conformance",
 ]
