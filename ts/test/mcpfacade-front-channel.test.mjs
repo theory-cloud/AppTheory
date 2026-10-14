@@ -2,6 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   DEFAULT_CALLBACK_PATH,
@@ -35,6 +38,37 @@ const UPSTREAM_CODE = "upstream-authorization-code";
 const UPSTREAM_REFRESH_TOKEN = "upstream-refresh-token-value";
 const CLIENT_STATE = "client-state-1";
 const VERIFIER = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTU";
+
+// ---------------------------------------------------------------------------
+// Shared conformance fixture (the same table the Go and Python loaders read)
+// ---------------------------------------------------------------------------
+
+const FIXTURE_DIR = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "contract-tests",
+  "fixtures",
+  "routing",
+  "mcp-auth-facade",
+);
+
+const FIXTURE_NAME = "facade-conformance.v1.json";
+
+const REDIRECT_MATCH_GROUP = "redirect_match";
+
+/**
+ * The number of redirect_match rows the shared table must carry; a change to the
+ * table must also be a deliberate edit in the Go and Python loaders, so no
+ * runtime can silently execute a smaller table.
+ */
+const REDIRECT_MATCH_CASE_COUNT = 11;
+
+function loadFixture() {
+  return JSON.parse(
+    readFileSync(path.join(FIXTURE_DIR, FIXTURE_NAME), "utf8"),
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -394,6 +428,47 @@ test("authorize rejects unknown client and unmatched redirect without redirect",
   });
   assert.equal(unmatched.status, 400);
   assert.equal(locationOf(unmatched), "");
+});
+
+test("authorize enforces the shared redirect_match table through the real handler", async (t) => {
+  const rows = (loadFixture().cases ?? []).filter(
+    (row) => row.group === REDIRECT_MATCH_GROUP,
+  );
+  assert.equal(rows.length, REDIRECT_MATCH_CASE_COUNT);
+
+  const harness = await newFrontChannelHarness(t);
+  let executed = 0;
+  for (const row of rows) {
+    executed += 1;
+    const clientId = `redirect-match-${row.id}`;
+    await harness.stores.client.put({
+      clientIdHash: hashKey(clientId),
+      clientId,
+      redirectUris: [...row.registered],
+      tokenEndpointAuthMethod: "none",
+      grantTypes: [],
+      responseTypes: [],
+      boundRoute: "",
+      createdAt: new Date(0),
+      version: 0,
+    });
+
+    const response = await harness.authorize((query) => {
+      query.client_id = [clientId];
+      query.redirect_uri = [row.requested];
+    });
+
+    const context = `registered ${JSON.stringify(row.registered)}, requested ${row.requested}`;
+    if (row.expect === "accept") {
+      assert.equal(response.status, 302, context);
+    } else if (row.expect === "reject") {
+      assert.equal(response.status, 400, context);
+      assert.equal(locationOf(response), "", context);
+    } else {
+      assert.fail(`unknown expect ${JSON.stringify(row.expect)}`);
+    }
+  }
+  assert.equal(executed, REDIRECT_MATCH_CASE_COUNT);
 });
 
 test("authorize requires fresh S256 PKCE and refuses a plain challenge", async (t) => {

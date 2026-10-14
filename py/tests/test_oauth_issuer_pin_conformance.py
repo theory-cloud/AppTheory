@@ -13,6 +13,13 @@ FIXTURE_NAME = "facade-conformance.v1.json"
 
 ISSUER_PIN_GROUP = "issuer_pin"
 
+# redirect_match is the sibling group the same shared table carries. It is
+# executed by py/tests/test_mcpfacade_front_channel.py through the real
+# /authorize handler, not here; the group ledger below keeps a new group from
+# appearing without a loader.
+REDIRECT_MATCH_GROUP = "redirect_match"
+FIXTURE_GROUPS = (ISSUER_PIN_GROUP, REDIRECT_MATCH_GROUP)
+
 # The number of issuer_pin rows the shared table must carry; a change to the
 # table must also be a deliberate edit here and in the Go and TypeScript loaders,
 # so no runtime can silently execute a smaller table.
@@ -35,13 +42,14 @@ class IssuerPinConformanceTests(unittest.TestCase):
 
     fixture = _load_fixture()
 
-    def test_fixture_carries_only_issuer_pin_rows(self) -> None:
+    def test_fixture_carries_only_the_known_conformance_groups(self) -> None:
         cases = self.fixture["cases"]
-        self.assertEqual({case["group"] for case in cases}, {ISSUER_PIN_GROUP})
-        self.assertEqual(len(cases), ISSUER_PIN_CASE_COUNT)
+        self.assertEqual({case["group"] for case in cases}, set(FIXTURE_GROUPS))
+        issuer_pin_cases = [case for case in cases if case["group"] == ISSUER_PIN_GROUP]
+        self.assertEqual(len(issuer_pin_cases), ISSUER_PIN_CASE_COUNT)
 
     def test_issuer_pin_cases(self) -> None:
-        cases = self.fixture["cases"]
+        cases = [case for case in self.fixture["cases"] if case["group"] == ISSUER_PIN_GROUP]
         executed = 0
         for case in cases:
             with self.subTest(case=case["id"]):

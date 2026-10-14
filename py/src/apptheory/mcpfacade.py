@@ -1759,7 +1759,13 @@ def _registered_redirect_uri(registered: list[str] | None, requested: str) -> bo
 
 def _loopback_redirect_match(registered: str, requested: str) -> bool:
     """Allow the ephemeral-port form of RFC 8252 section 7.3: a loopback
-    IP-literal redirect may be presented with a different port.
+    redirect URI matches on scheme, host, path, query and fragment while the port
+    alone is free to differ -- or to be absent on either side -- because a native
+    client obtains its loopback port from the OS at request time. The port is
+    therefore the only component excluded from the comparison, so the match never
+    widens beyond the client's own registered loopback redirect: the host must be
+    the same loopback host and the scheme/path/query/fragment must match exactly
+    (DESIGN section 8.1, "loopback port flexibility only").
     """
     registered_url = _parse_absolute_url(registered)
     if registered_url is None:
@@ -1771,13 +1777,13 @@ def _loopback_redirect_match(registered: str, requested: str) -> bool:
         requested_url.decoded_hostname
     ):
         return False
-    if registered_url.scheme != requested_url.scheme or registered_url.path != requested_url.path:
-        return False
-    if registered_url.search != requested_url.search or registered_url.hash != requested_url.hash:
-        return False
-    if registered_url.port == "" or requested_url.port == "":
-        return False
-    return registered_url.port != requested_url.port
+    return (
+        registered_url.decoded_hostname.lower() == requested_url.decoded_hostname.lower()
+        and registered_url.scheme == requested_url.scheme
+        and registered_url.path == requested_url.path
+        and registered_url.search == requested_url.search
+        and registered_url.hash == requested_url.hash
+    )
 
 
 def _front_channel_loopback_host(hostname: str) -> bool:

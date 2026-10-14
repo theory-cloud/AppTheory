@@ -2,7 +2,7 @@
   "id": "mcp.auth.facade.conformance",
   "kind": "conformance",
   "status": "M3c-1a",
-  "description": "One issuer-pin table for the RFC 9207 `iss` check of the MCP auth facade. Go's oauth.CanonicalizeIssuerURL is the reference: the scheme is lowercased, the authority is preserved byte-for-byte (host case and any explicit port survive), trailing slashes are trimmed from the decoded path, the path keeps its `;`-separated parameters, the query is kept (including a bare trailing `?`) and the fragment is kept. A row matches when both sides canonicalize and the canonical forms are byte-equal. Every runtime's loader runs the same rows and asserts the same outcomes; the uppercase-host and fragment rows exist because a host-lowercasing (WHATWG URL) or fragment-dropping (urllib) canonicalizer would wrongly answer `match`, and the dangling-`?`, `;params` and non-numeric-port rows exist because a `urllib`-based canonicalizer would likewise answer `match` or accept a URL Go refuses.",
+  "description": "One issuer-pin table for the RFC 9207 `iss` check of the MCP auth facade. Go's oauth.CanonicalizeIssuerURL is the reference: the scheme is lowercased, the authority is preserved byte-for-byte (host case and any explicit port survive), trailing slashes are trimmed from the decoded path, the path keeps its `;`-separated parameters, the query is kept (including a bare trailing `?`) and the fragment is kept. A row matches when both sides canonicalize and the canonical forms are byte-equal. Every runtime's loader runs the same rows and asserts the same outcomes; the uppercase-host and fragment rows exist because a host-lowercasing (WHATWG URL) or fragment-dropping (urllib) canonicalizer would wrongly answer `match`, and the dangling-`?`, `;params` and non-numeric-port rows exist because a `urllib`-based canonicalizer would likewise answer `match` or accept a URL Go refuses. The `redirect_match` group pins the RFC 8252 section 7.3 loopback rule as the real `/authorize` handler applies it: an exact registered==requested pairing always accepts, a loopback pair accepts when scheme, host, path, query, and fragment match exactly and the port alone is free to differ or be absent on either side (the ADV-1144-2 case), while a non-loopback pair accepts only byte-for-byte, so a differing path, a scheme downgrade, a query or fragment mismatch, a `localhost` to `127.0.0.1` host substitution, a differing non-loopback URI, or a requested URI absent from the registered list all fail closed with a 400 and no redirect.",
   "cases": [
     {
       "id": "issuer_pin.exact_equal_match",
@@ -192,6 +192,83 @@
       "configured": "https://id.example.com",
       "claimed": "id.example.com",
       "expect": "mismatch"
+    },
+    {
+      "id": "redirect_match.exact_registered_equals_requested",
+      "group": "redirect_match",
+      "registered": ["http://127.0.0.1/cb"],
+      "requested": "http://127.0.0.1/cb",
+      "expect": "accept"
+    },
+    {
+      "id": "redirect_match.registered_portless_requested_with_port",
+      "group": "redirect_match",
+      "registered": ["http://127.0.0.1/cb"],
+      "requested": "http://127.0.0.1:12345/cb",
+      "expect": "accept"
+    },
+    {
+      "id": "redirect_match.registered_with_port_requested_portless",
+      "group": "redirect_match",
+      "registered": ["http://127.0.0.1:12345/cb"],
+      "requested": "http://127.0.0.1/cb",
+      "expect": "accept"
+    },
+    {
+      "id": "redirect_match.differing_loopback_ports",
+      "group": "redirect_match",
+      "registered": ["http://127.0.0.1:12345/cb"],
+      "requested": "http://127.0.0.1:9999/cb",
+      "expect": "accept"
+    },
+    {
+      "id": "redirect_match.different_path_rejected",
+      "group": "redirect_match",
+      "registered": ["http://127.0.0.1/cb"],
+      "requested": "http://127.0.0.1/other",
+      "expect": "reject"
+    },
+    {
+      "id": "redirect_match.scheme_downgrade_rejected",
+      "group": "redirect_match",
+      "registered": ["https://127.0.0.1/cb"],
+      "requested": "http://127.0.0.1/cb",
+      "expect": "reject"
+    },
+    {
+      "id": "redirect_match.query_mismatch_rejected",
+      "group": "redirect_match",
+      "registered": ["http://127.0.0.1/cb?tenant=a"],
+      "requested": "http://127.0.0.1/cb?tenant=b",
+      "expect": "reject"
+    },
+    {
+      "id": "redirect_match.fragment_mismatch_rejected",
+      "group": "redirect_match",
+      "registered": ["http://127.0.0.1/cb#a"],
+      "requested": "http://127.0.0.1/cb#b",
+      "expect": "reject"
+    },
+    {
+      "id": "redirect_match.non_loopback_different_path_rejected",
+      "group": "redirect_match",
+      "registered": ["https://client.example/callback"],
+      "requested": "https://client.example/other",
+      "expect": "reject"
+    },
+    {
+      "id": "redirect_match.unregistered_requested_rejected",
+      "group": "redirect_match",
+      "registered": ["https://client.example/callback"],
+      "requested": "https://other.example/callback",
+      "expect": "reject"
+    },
+    {
+      "id": "redirect_match.loopback_host_substitution_rejected",
+      "group": "redirect_match",
+      "registered": ["http://localhost/cb"],
+      "requested": "http://127.0.0.1/cb",
+      "expect": "reject"
     }
   ]
 }

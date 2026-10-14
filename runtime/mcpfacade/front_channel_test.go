@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -305,6 +306,90 @@ func TestFrontChannelAuthorizeRejectsUnknownClientAndRedirectWithoutRedirect(t *
 	unmatched := harness.authorize(func(query url.Values) { query.Set("redirect_uri", "https://evil.example/cb") })
 	require.Equal(t, 400, unmatched.Status)
 	require.Empty(t, locationOf(unmatched))
+}
+
+// redirectMatchConformanceFixture is the shared RFC 8252 §7.3 redirect-match
+// table, loaded from runtime/mcpfacade/ two levels below the module root.
+const redirectMatchConformanceFixture = "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-conformance.v1.json"
+
+// redirectMatchGroup names the fixture group this loader executes.
+const redirectMatchGroup = "redirect_match"
+
+// redirectMatchCaseCount is the number of redirect_match rows the shared fixture
+// must carry; a change to the table must also be a deliberate edit in the Go,
+// TypeScript, and Python loaders, so no runtime can silently execute a smaller
+// table.
+const redirectMatchCaseCount = 11
+
+type redirectMatchConformanceDocument struct {
+	Cases []redirectMatchCase `json:"cases"`
+}
+
+type redirectMatchCase struct {
+	ID         string   `json:"id"`
+	Group      string   `json:"group"`
+	Registered []string `json:"registered"`
+	Requested  string   `json:"requested"`
+	Expect     string   `json:"expect"`
+}
+
+func loadRedirectMatchConformance(t *testing.T, target any) {
+	t.Helper()
+	body, err := os.ReadFile(redirectMatchConformanceFixture) // #nosec G304 -- path is a fixed test fixture path built from a constant directory.
+	require.NoErrorf(t, err, "read shared fixture %s", redirectMatchConformanceFixture)
+	require.NoErrorf(t, json.Unmarshal(body, target), "decode shared fixture %s", redirectMatchConformanceFixture)
+}
+
+// TestFrontChannelAuthorizeEnforcesTheSharedRedirectMatchTable pins the RFC 8252
+// §7.3 loopback redirect rule to the shared cross-runtime table through the real
+// /authorize handler: an accepted row reaches the upstream redirect (302) and a
+// refused row renders the pre-redirect 400 error page with no Location, so the
+// open-redirect defense is proven end to end rather than against the matcher
+// alone.
+func TestFrontChannelAuthorizeEnforcesTheSharedRedirectMatchTable(t *testing.T) {
+	var document redirectMatchConformanceDocument
+	loadRedirectMatchConformance(t, &document)
+
+	rows := make([]redirectMatchCase, 0, len(document.Cases))
+	for _, row := range document.Cases {
+		require.NotEmptyf(t, row.Group, "case %q must carry a group", row.ID)
+		if row.Group == redirectMatchGroup {
+			rows = append(rows, row)
+		}
+	}
+	require.Equalf(t, redirectMatchCaseCount, len(rows), "loaded %d %q cases", len(rows), redirectMatchGroup)
+
+	harness := newFrontChannelHarness(t)
+	executed := 0
+	for _, row := range rows {
+		executed++
+		t.Run(row.ID, func(t *testing.T) {
+			clientID := "redirect-match-" + row.ID
+			require.NoError(t, harness.stores.Client.Put(context.Background(), &oauthstore.ClientRecord{
+				ClientIDHash:            oauthstore.HashKey(clientID),
+				ClientID:                clientID,
+				RedirectURIs:            append([]string(nil), row.Registered...),
+				TokenEndpointAuthMethod: "none",
+			}))
+
+			response := harness.authorize(func(query url.Values) {
+				query.Set("client_id", clientID)
+				query.Set("redirect_uri", row.Requested)
+			})
+
+			switch row.Expect {
+			case "accept":
+				require.Equalf(t, 302, response.Status, "registered %v, requested %q", row.Registered, row.Requested)
+			case "reject":
+				require.Equalf(t, 400, response.Status, "registered %v, requested %q", row.Registered, row.Requested)
+				require.Emptyf(t, locationOf(response), "registered %v, requested %q", row.Registered, row.Requested)
+			default:
+				t.Fatalf("unknown expect %q", row.Expect)
+			}
+		})
+	}
+
+	require.Equalf(t, redirectMatchCaseCount, executed, "executed %d %q cases", executed, redirectMatchGroup)
 }
 
 // TestFrontChannelAuthorizeRequiresFreshS256PKCE pins T3: an absent challenge

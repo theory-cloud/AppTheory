@@ -21,6 +21,16 @@ const FIXTURE_NAME = "facade-conformance.v1.json";
 const ISSUER_PIN_GROUP = "issuer_pin";
 
 /**
+ * `redirect_match` is the sibling group the same shared table carries. It is
+ * executed by the facade front-channel test through the real `/authorize`
+ * handler, not here; the group ledger below keeps a new group from appearing
+ * without a loader.
+ */
+const REDIRECT_MATCH_GROUP = "redirect_match";
+
+const FIXTURE_GROUPS = [ISSUER_PIN_GROUP, REDIRECT_MATCH_GROUP];
+
+/**
  * The number of issuer_pin rows the shared table must carry; a change to the
  * table must also be a deliberate edit here and in the Go and Python loaders,
  * so no runtime can silently execute a smaller table.
@@ -37,8 +47,9 @@ const fixture = loadFixture();
 const CASES = fixture.cases ?? [];
 const ISSUER_PIN_CASES = CASES.filter((row) => row.group === ISSUER_PIN_GROUP);
 
-test("the fixture carries only issuer_pin rows", () => {
-  assert.equal(ISSUER_PIN_CASES.length, CASES.length);
+test("the fixture carries only the known conformance groups", () => {
+  const groups = [...new Set(CASES.map((row) => row.group))].sort();
+  assert.deepEqual(groups, [...FIXTURE_GROUPS].sort());
   assert.equal(ISSUER_PIN_CASES.length, ISSUER_PIN_CASE_COUNT);
 });
 

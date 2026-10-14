@@ -839,7 +839,13 @@ func registeredRedirectURI(registered []string, requested string) bool {
 }
 
 // loopbackRedirectMatch allows the ephemeral-port form of RFC 8252 §7.3: a
-// loopback IP-literal redirect may be presented with a different port.
+// loopback redirect URI matches on scheme, host, path, query, and fragment while
+// the port alone is free to differ — or to be absent on either side — because a
+// native client obtains its loopback port from the OS at request time. The port
+// is therefore the only component excluded from the comparison, so the match
+// never widens beyond the client's own registered loopback redirect: the host
+// must be the same loopback host and the scheme/path/query/fragment must match
+// exactly (DESIGN §8.1, "loopback port flexibility only").
 func loopbackRedirectMatch(registered, requested string) bool {
 	registeredURL, ok := parseAbsoluteURL(registered)
 	if !ok {
@@ -852,16 +858,16 @@ func loopbackRedirectMatch(registered, requested string) bool {
 	if !isLoopbackHost(registeredURL.Hostname()) || !isLoopbackHost(requestedURL.Hostname()) {
 		return false
 	}
+	if !strings.EqualFold(registeredURL.Hostname(), requestedURL.Hostname()) {
+		return false
+	}
 	if registeredURL.Scheme != requestedURL.Scheme || registeredURL.Path != requestedURL.Path {
 		return false
 	}
 	if registeredURL.RawQuery != requestedURL.RawQuery || registeredURL.Fragment != requestedURL.Fragment {
 		return false
 	}
-	if registeredURL.Port() == "" || requestedURL.Port() == "" {
-		return false
-	}
-	return registeredURL.Port() != requestedURL.Port()
+	return true
 }
 
 func isLoopbackHost(hostname string) bool {

@@ -6,6 +6,7 @@ import threading
 import time
 import unittest
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from apptheory import (
@@ -43,6 +44,26 @@ FRONT_TEST_RESOURCE = FRONT_TEST_BASE_URL + "/acme/mcp"
 FRONT_TEST_VERIFIER = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTU"
 FRONT_TEST_WRONG_VERIFIER = "WRONGVERIFIERWRONGVERIFIERWRONGVERIFIER1234567890"
 FRONT_TEST_TIMEOUT_SECONDS = 10.0
+
+# ---------------------------------------------------------------------------
+# Shared conformance fixture (the same table the Go and TypeScript loaders read)
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FIXTURE_DIR = REPO_ROOT / "contract-tests" / "fixtures" / "routing" / "mcp-auth-facade"
+FIXTURE_NAME = "facade-conformance.v1.json"
+
+REDIRECT_MATCH_GROUP = "redirect_match"
+
+# The number of redirect_match rows the shared table must carry; a change to the
+# table must also be a deliberate edit in the Go and TypeScript loaders, so no
+# runtime can silently execute a smaller table.
+REDIRECT_MATCH_CASE_COUNT = 11
+
+
+def _load_fixture() -> dict:
+    with (FIXTURE_DIR / FIXTURE_NAME).open("r", encoding="utf-8") as handle:
+        return json.load(handle)
 
 
 class _ManualClock:
@@ -370,6 +391,54 @@ class FrontChannelAuthorizeTests(unittest.TestCase):
         response = harness.authorize(lambda query: query.__setitem__("resource", [FRONT_TEST_BASE_URL + "/other/mcp"]))
         self.assertEqual(302, response.status)
         self.assertEqual("invalid_target", _location_query(response).get("error"))
+
+
+class FrontChannelRedirectMatchConformanceTests(unittest.TestCase):
+    """Pins the RFC 8252 section 7.3 loopback redirect rule to the shared
+    cross-runtime table through the real ``/authorize`` handler: an accepted row
+    reaches the upstream redirect (302), and a refused row renders the
+    pre-redirect 400 error page with no ``Location``, so the open-redirect
+    defense is proven end to end rather than against the matcher alone.
+    """
+
+    def test_authorize_enforces_the_shared_redirect_match_table(self) -> None:
+        rows = [case for case in _load_fixture()["cases"] if case["group"] == REDIRECT_MATCH_GROUP]
+        self.assertEqual(REDIRECT_MATCH_CASE_COUNT, len(rows))
+
+        harness = _FrontChannelHarness(self)
+        executed = 0
+        for row in rows:
+            with self.subTest(case=row["id"]):
+                client_id = "redirect-match-" + row["id"]
+                harness.stores.client.put(
+                    ClientRecord(
+                        client_id_hash=hash_key(client_id),
+                        client_id=client_id,
+                        redirect_uris=list(row["registered"]),
+                        token_endpoint_auth_method="none",
+                    )
+                )
+
+                def select(
+                    query: dict,
+                    _client_id: str = client_id,
+                    _requested: str = row["requested"],
+                ) -> None:
+                    query["client_id"] = [_client_id]
+                    query["redirect_uri"] = [_requested]
+
+                response = harness.authorize(select)
+                context = f"registered {row['registered']!r}, requested {row['requested']!r}"
+                if row["expect"] == "accept":
+                    self.assertEqual(302, response.status, context)
+                elif row["expect"] == "reject":
+                    self.assertEqual(400, response.status, context)
+                    self.assertEqual("", _location(response), context)
+                else:
+                    self.fail(f"unknown expect {row['expect']!r}")
+                executed += 1
+        print(f"redirect match conformance: {executed} cases run")
+        self.assertEqual(REDIRECT_MATCH_CASE_COUNT, executed)
 
 
 class FrontChannelCallbackTests(unittest.TestCase):

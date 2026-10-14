@@ -17,6 +17,18 @@ const issuerPinConformanceFixture = "../../contract-tests/fixtures/routing/mcp-a
 // issuerPinGroup names the fixture group this loader executes.
 const issuerPinGroup = "issuer_pin"
 
+// redirectMatchGroup names the sibling group the same shared table carries. It
+// is executed by runtime/mcpfacade's front-channel tests through the real
+// /authorize handler, not here; the set below is a deliberate ledger so a new
+// group cannot appear without a loader.
+const redirectMatchGroup = "redirect_match"
+
+// fixtureGroups is every group the shared table is allowed to carry.
+var fixtureGroups = map[string]struct{}{
+	issuerPinGroup:     {},
+	redirectMatchGroup: {},
+}
+
 // issuerPinCaseCount is the number of issuer_pin rows the shared fixture must
 // carry; a change to the table must also be a deliberate edit here.
 const issuerPinCaseCount = 27
@@ -52,7 +64,11 @@ func TestIssuerPinConformance(t *testing.T) {
 
 	executed := 0
 	for _, fixtureCase := range document.Cases {
-		require.Equalf(t, issuerPinGroup, fixtureCase.Group, "case %q must be in group %q", fixtureCase.ID, issuerPinGroup)
+		_, knownGroup := fixtureGroups[fixtureCase.Group]
+		require.Truef(t, knownGroup, "case %q carries unknown group %q", fixtureCase.ID, fixtureCase.Group)
+		if fixtureCase.Group != issuerPinGroup {
+			continue
+		}
 		executed++
 
 		t.Run(fixtureCase.ID, func(t *testing.T) {

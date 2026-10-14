@@ -2823,8 +2823,14 @@ function registeredRedirectURI(
 }
 
 /**
- * Allows the ephemeral-port form of RFC 8252 §7.3: a loopback IP-literal
- * redirect may be presented with a different port.
+ * Allows the ephemeral-port form of RFC 8252 §7.3: a loopback redirect URI
+ * matches on scheme, host, path, query and fragment while the port alone is free
+ * to differ — or to be absent on either side — because a native client obtains
+ * its loopback port from the OS at request time. The port is therefore the only
+ * component excluded from the comparison, so the match never widens beyond the
+ * client's own registered loopback redirect: the host must be the same loopback
+ * host and the scheme/path/query/fragment must match exactly (DESIGN §8.1,
+ * "loopback port flexibility only").
  */
 function loopbackRedirectMatch(registered: string, requested: string): boolean {
   const registeredURL = parseAbsoluteURL(registered);
@@ -2842,6 +2848,12 @@ function loopbackRedirectMatch(registered: string, requested: string): boolean {
     return false;
   }
   if (
+    registeredURL.decodedHostname.toLowerCase() !==
+    requestedURL.decodedHostname.toLowerCase()
+  ) {
+    return false;
+  }
+  if (
     registeredURL.scheme !== requestedURL.scheme ||
     registeredURL.path !== requestedURL.path
   ) {
@@ -2853,10 +2865,7 @@ function loopbackRedirectMatch(registered: string, requested: string): boolean {
   ) {
     return false;
   }
-  if (registeredURL.port === "" || requestedURL.port === "") {
-    return false;
-  }
-  return registeredURL.port !== requestedURL.port;
+  return true;
 }
 
 function isLoopbackRedirectHost(hostname: string): boolean {
