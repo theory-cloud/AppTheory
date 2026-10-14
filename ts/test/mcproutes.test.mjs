@@ -421,3 +421,27 @@ test("shared facade route model pins the callback override derivations", () => {
     );
   }
 });
+
+test("shared facade route model pins the derived route-path charset", () => {
+  const section = facadeRouteModel.route_path_charset;
+  assert.ok(section, "the route model must carry a route_path_charset section");
+  assert.ok(
+    Array.isArray(section.cases) && section.cases.length > 0,
+    "the route_path_charset section must carry cases",
+  );
+  for (const row of section.cases) {
+    if (row.expect_error) {
+      assert.throws(
+        () => parseMcpPath(row.path),
+        undefined,
+        `parseMcpPath ${JSON.stringify(row)}`,
+      );
+      continue;
+    }
+    assert.deepEqual(
+      parseMcpPath(row.path),
+      { kind: ENDPOINT_KIND_NAMESPACE, clientNamespace: "acme" },
+      JSON.stringify(row),
+    );
+  }
+});
