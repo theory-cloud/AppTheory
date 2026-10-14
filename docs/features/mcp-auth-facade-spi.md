@@ -67,6 +67,16 @@ An upstream OAuth `invalid_request` maps onto the terminal `invalid_grant` (a cl
 facade request bug that reaches the upstream surfaces as a request-class error, and every other non-2xx —
 including an unrecognized upstream error code — is an `upstream_error`.
 
+**At the callback the class table above collapses to one outcome.** When the framework-owned front channel's
+callback calls the provider, **any** failure — the server-side `ExchangeCode`, and the `ValidateAccessToken` that
+follows it — is mapped to the gateway-class **`502 upstream_error`**, **over** the `ProviderError` class's own HTTP
+status: an `ExchangeCode` failure is `502` even when its class table row would say `400`. The class table describes
+the typed errors the SPI *produces*; the callback deliberately does not translate an upstream failure into the
+facade's own `400` request-class vocabulary (DESIGN §8.2). This is what keeps the callback's RFC 9207 `iss` and
+upstream `state` pins non-vacuous: an implementation that skipped either pin would reach the provider call and
+change the pinned result instead of coincidentally reproducing a `400`, and the two classes stay distinguishable to
+a client.
+
 ### Autheory adapter (first adapter)
 
 The adapter is discovery-driven: it takes `authorization_endpoint`, `token_endpoint` and `jwks_uri` from the
@@ -243,6 +253,13 @@ response-size bound is observable rather than indistinguishable from a JSON pars
 The Store SPI is a separate Go package because the package `oauth` already declares the older, narrower
 `AuthorizationCodeStore`/`RefreshTokenStore` types. The TypeScript rate-limit key type is exported as
 `RateLimitBucketKey` because the TypeScript SDK already exports `limited.RateLimitKey`.
+
+**The store-key helper is intended public API.** `oauthstore.HashKey` / `hashKey` / `hash_key` — the unpadded
+base64url SHA-256 of the protected value — is ratified as supported public surface, not an internal detail. Every
+store SPI is keyed by the hash of the value it protects and never by the value itself, so this helper is the seam
+an application uses to **pre-register a client** while DCR is unmounted (and, once DCR lands, to reconcile a client
+it already knows through another path). It is a pure, authority-free derivation: it only reproduces the key the
+facade itself derives when it looks a record up, and it grants no access of its own.
 
 ## Non-goals today
 
