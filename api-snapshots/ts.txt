@@ -144,6 +144,7 @@ FakeMicroVMProvider	class
 FakeOAuthProvider	class
 FakeOAuthProviderOptions	interface
 FakeObjectStore	class
+FakeRefreshStage	interface
 FakeTokenRequest	interface
 FakeVectorStore	class
 FakeWebSocketManagementClient	class
