@@ -88,6 +88,21 @@ DCR_DEFAULT_REPEAT = 1
 # `"}`.
 DCR_PAD_FRAME_OVERHEAD = len(',"pad":"') + len('"}')
 
+BOUND_ROUTE_GROUP = "bound_route"
+
+# The number of bound_route rows the shared table must carry; a change to the
+# table must also be a deliberate edit in the Go and TypeScript loaders, so no
+# runtime can silently execute a smaller table.
+BOUND_ROUTE_CASE_COUNT = 5
+
+# A client id no bound_route row ever registers, so a refusal row can present the
+# very same request for an unknown client and prove the two refusals are
+# byte-identical (THREAT_MODEL cross-cutting: no oracle).
+BOUND_ROUTE_UNKNOWN_CLIENT_ID = "bound-route-unknown-client"
+
+# The redirect URI every bound_route client registers and presents.
+BOUND_ROUTE_REDIRECT_URI = FRONT_TEST_REDIRECT_URI
+
 
 def _load_fixture() -> dict:
     with (FIXTURE_DIR / FIXTURE_NAME).open("r", encoding="utf-8") as handle:
@@ -657,6 +672,164 @@ class FrontChannelDCRConformanceTests(unittest.TestCase):
         self.assertEqual("none", record.token_endpoint_auth_method, row["id"])
         self.assertEqual(list(row["request"]["redirect_uris"]), record.redirect_uris, row["id"])
         self.assertEqual(FRONT_TEST_BASE_URL + harness.endpoint.mcp_path(), record.bound_route, row["id"])
+
+
+def _bound_route_endpoint(key: str) -> EndpointPath:
+    """Resolves a bound_route row's route key to the endpoint the loader serves
+    it at, so every mounted path is derived from the framework's route algebra
+    rather than a hard-coded string. ``namespace`` is the harness's own route;
+    ``agent`` is a different mounted route whose advertising resource genuinely
+    differs, so a bound-route comparison cannot pass by coinciding on one path.
+    """
+    if key == "namespace":
+        return EndpointPath(kind="namespace", client_namespace="acme")
+    if key == "agent":
+        return EndpointPath(kind="agent", client_namespace="acme", agent_id="agent-1")
+    raise AssertionError(f"unknown bound_route route key {key!r}")
+
+
+def _bound_route_resource(endpoint: EndpointPath) -> str:
+    """The advertising route resource of an endpoint, derived as the facade does."""
+    return FRONT_TEST_BASE_URL + endpoint.mcp_path()
+
+
+def _bound_route_authorize_query(endpoint: EndpointPath, client_id: str) -> dict[str, list[str]]:
+    """The valid authorize request the rows present, carrying the presented
+    route's own advertising resource."""
+    return {
+        "client_id": [client_id],
+        "redirect_uri": [BOUND_ROUTE_REDIRECT_URI],
+        "response_type": ["code"],
+        "code_challenge": [pkce_challenge_s256(FRONT_TEST_VERIFIER)],
+        "code_challenge_method": ["S256"],
+        "state": [FRONT_TEST_CLIENT_STATE],
+        "resource": [_bound_route_resource(endpoint)],
+    }
+
+
+def _bound_route_token_form(client_id: str, code: str) -> dict[str, list[str]]:
+    """The code-exchange form the rows present."""
+    return {
+        "grant_type": ["authorization_code"],
+        "code": [code],
+        "code_verifier": [FRONT_TEST_VERIFIER],
+        "redirect_uri": [BOUND_ROUTE_REDIRECT_URI],
+        "client_id": [client_id],
+    }
+
+
+def _bound_route_register(harness: _FrontChannelHarness, endpoint: EndpointPath) -> str:
+    """Registers one client through the real ``POST .../register`` handler at the
+    row's registered route and returns the server-assigned id."""
+    body = json.dumps({"redirect_uris": [BOUND_ROUTE_REDIRECT_URI]}, separators=(",", ":")).encode("utf-8")
+    response = harness.serve("POST", endpoint.oauth_register_path(), None, body)
+    if response.status != 201:
+        raise AssertionError(f"bound_route registration must succeed, got {response.status}")
+    client_id = str(json.loads(response.body.decode("utf-8")).get("client_id") or "")
+    if not client_id:
+        raise AssertionError("bound_route registration must mint a client id")
+    return client_id
+
+
+def _bound_route_mint_code(harness: _FrontChannelHarness, endpoint: EndpointPath, client_id: str) -> str:
+    """Completes authorize plus callback at the registered route and returns the
+    facade code, so a token row has a genuinely redeemable code minted for the
+    client it presents."""
+    authorize_response = harness.serve(
+        "GET", endpoint.oauth_authorize_path(), _bound_route_authorize_query(endpoint, client_id)
+    )
+    if authorize_response.status != 302:
+        raise AssertionError(
+            f"bound_route authorize at the registered route must redirect, got {authorize_response.status}"
+        )
+    callback = harness.serve(
+        "GET",
+        DEFAULT_CALLBACK_PATH,
+        {
+            "code": [FRONT_TEST_UPSTREAM_CODE],
+            "state": [_location_query(authorize_response).get("state", "")],
+            "iss": [FRONT_TEST_UPSTREAM_ISS],
+        },
+    )
+    if callback.status != 302:
+        raise AssertionError(f"bound_route callback must redirect, got {callback.status}")
+    code = _location_query(callback).get("code", "")
+    if not code:
+        raise AssertionError("bound_route callback must mint a facade code")
+    return code
+
+
+class FrontChannelBoundRouteConformanceTests(unittest.TestCase):
+    """Pins the registration route binding to the shared cross-runtime table
+    through the real mounted handlers: a client registered through
+    ``POST .../register`` is accepted only at the advertising route it registered
+    at and is refused at any other mounted route with the same non-oracle
+    invalid_client response an unknown client gets, while a pre-registered client
+    whose record carries no bound route stays valid at every route.
+    """
+
+    def test_bound_route_enforces_the_shared_table(self) -> None:
+        rows = [case for case in _load_fixture()["cases"] if case["group"] == BOUND_ROUTE_GROUP]
+        self.assertEqual(BOUND_ROUTE_CASE_COUNT, len(rows))
+
+        executed = 0
+        for row in rows:
+            with self.subTest(case=row["id"]):
+                harness = _FrontChannelHarness(self)
+                registered = _bound_route_endpoint(row["registered_at"])
+                presented = _bound_route_endpoint(row["presented_at"])
+                context = f"row {row['id']}"
+
+                client_id = FRONT_TEST_CLIENT_ID
+                if row["client"] == "dcr":
+                    client_id = _bound_route_register(harness, registered)
+                elif row["client"] != "pre_registered":
+                    raise AssertionError(f"unknown bound_route client {row['client']!r}")
+
+                if row["stage"] == "authorize":
+                    path = presented.oauth_authorize_path()
+                    response = harness.serve("GET", path, _bound_route_authorize_query(presented, client_id))
+                    unknown = harness.serve(
+                        "GET", path, _bound_route_authorize_query(presented, BOUND_ROUTE_UNKNOWN_CLIENT_ID)
+                    )
+                elif row["stage"] == "token":
+                    path = presented.oauth_token_path()
+                    code = _bound_route_mint_code(harness, registered, client_id)
+                    response = harness.serve(
+                        "POST", path, None, urlencode(_bound_route_token_form(client_id, code), doseq=True).encode()
+                    )
+                    unknown = harness.serve(
+                        "POST",
+                        path,
+                        None,
+                        urlencode(_bound_route_token_form(BOUND_ROUTE_UNKNOWN_CLIENT_ID, code), doseq=True).encode(),
+                    )
+                else:
+                    raise AssertionError(f"unknown bound_route stage {row['stage']!r}")
+
+                self.assertEqual(row["expect_status"], response.status, context)
+                if row["expect_status"] == 200:
+                    self.assertIn('"access_token"', response.body.decode("utf-8"), context)
+                if row["expect_status"] == 302:
+                    self.assertTrue(_location(response), f"{context} must redirect")
+                if row["expect_status"] != 400:
+                    executed += 1
+                    continue
+                # A refusal is the same non-oracle invalid_client response an unknown
+                # client gets at this very route: byte-identical body, no redirect,
+                # and no mention of any route the client might have registered at.
+                self.assertEqual(400, unknown.status, f"{context} unknown-client control")
+                self.assertEqual(
+                    unknown.body.decode("utf-8"),
+                    response.body.decode("utf-8"),
+                    f"{context} must be byte-identical to the unknown-client refusal",
+                )
+                self.assertEqual("", _location(response), f"{context} must not redirect")
+                self.assertIn('"error":"invalid_client"', response.body.decode("utf-8"), context)
+                self.assertNotIn("route", response.body.decode("utf-8"), f"{context} must not name a route")
+                executed += 1
+        print(f"bound route conformance: {executed} cases run")
+        self.assertEqual(BOUND_ROUTE_CASE_COUNT, executed)
 
 
 class FrontChannelCallbackTests(unittest.TestCase):

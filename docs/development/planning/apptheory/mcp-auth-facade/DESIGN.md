@@ -288,7 +288,11 @@ redeemed yet — deferred to M3c-1b).
 3. `/register` (POST) — **RFC 7591 DCR.** *As built (M3c-1a).* Public
    clients (`token_endpoint_auth_method=none`), https or
    loopback redirect URIs, server-assigned ids ≥128 bits, bound to the advertising route, per-route rate
-   limited, hash-stored.
+   limited, hash-stored. *Enforced as of M3c-1b:* the bound route is **checked at both client lookups**, not
+   merely stored — `/authorize` and `/token` accept a DCR-registered client (`ClientRecord.BoundRoute` non-empty)
+   only when its bound route equals the advertising route resource of the request being served, and refuse it at
+   any other route with the same non-oracle `400 invalid_client` (no `Location`) an unknown client gets; a
+   pre-registered client (empty `BoundRoute`) stays valid at every route.
 4. `/token` (POST) — **code exchange + brokered refresh.** *The `authorization_code` grant is as built (M3b-ii); the
    brokered refresh half is deferred to M3c-1b.* Facade codes are single-use and bound to
    client/redirect/S256/route; a replay returns `invalid_grant` **and revokes the broker record the code

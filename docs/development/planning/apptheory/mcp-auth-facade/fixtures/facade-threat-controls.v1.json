@@ -34,8 +34,8 @@
     {
       "id": "T5",
       "threat": "dcr_abuse",
-      "control": "public clients only; https or loopback redirects; server-assigned ids >= 128 bits, hash-stored; bound to the advertising route; per-route rate limit before work",
-      "pin": ["facade-journey:register-disallowed-redirect", "facade-journey:register-public-client", "facade-journey:register-rate-limited", "store-spi:RateLimitStore"]
+      "control": "public clients only; https or loopback redirects; server-assigned ids >= 128 bits, hash-stored; bound to the advertising route and enforced at both client lookups (/authorize and /token accept a DCR-registered client only at the route it registered at, refusing it anywhere else with the same non-oracle 400 invalid_client an unknown client gets; a pre-registered client with an empty BoundRoute stays valid at every route); per-route rate limit before work",
+      "pin": ["facade-journey:register-disallowed-redirect", "facade-journey:register-public-client", "facade-journey:register-rate-limited", "store-spi:RateLimitStore", "facade-conformance:bound_route.dcr_client_at_another_route_is_refused", "facade-conformance:bound_route.dcr_client_at_another_token_route_is_refused", "facade-conformance:bound_route.pre_registered_client_at_any_route_is_accepted"]
     },
     {
       "id": "T6",

@@ -41,6 +41,14 @@ const methodStatusGroup = "method_status"
 // a new group cannot appear without a loader.
 const dcrGroup = "dcr"
 
+// boundRouteGroup is the sibling group holding the registration route-binding
+// rule: a client registered through DCR is accepted only at the advertising
+// route it registered at. It is executed by runtime/mcpfacade's front-channel
+// tests through the real mounted /register, /authorize, and /token handlers, not
+// here; the ledger below still lists it so a new group cannot appear without a
+// loader.
+const boundRouteGroup = "bound_route"
+
 // fixtureGroups is every group the shared table is allowed to carry.
 var fixtureGroups = map[string]struct{}{
 	issuerPinGroup:     {},
@@ -48,6 +56,7 @@ var fixtureGroups = map[string]struct{}{
 	formParseGroup:     {},
 	methodStatusGroup:  {},
 	dcrGroup:           {},
+	boundRouteGroup:    {},
 }
 
 // issuerPinCaseCount is the number of issuer_pin rows the shared fixture must

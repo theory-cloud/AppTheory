@@ -756,6 +756,220 @@ test("register enforces the shared dcr table through the real mounted handler", 
   assert.equal(executed, DCR_CASE_COUNT);
 });
 
+const BOUND_ROUTE_GROUP = "bound_route";
+
+/**
+ * The number of bound_route rows the shared table must carry; a change to the
+ * table must also be a deliberate edit in the Go and Python loaders, so no
+ * runtime can silently execute a smaller table.
+ */
+const BOUND_ROUTE_CASE_COUNT = 5;
+
+/**
+ * A client id no bound_route row ever registers, so a refusal row can present the
+ * very same request for an unknown client and prove the two refusals are
+ * byte-identical (THREAT_MODEL cross-cutting: no oracle).
+ */
+const BOUND_ROUTE_UNKNOWN_CLIENT_ID = "bound-route-unknown-client";
+
+/** The redirect URI every bound_route client registers and presents. */
+const BOUND_ROUTE_REDIRECT_URI = CLIENT_REDIRECT;
+
+/**
+ * Resolves a bound_route row's route key to the endpoint the loader serves it
+ * at, so every mounted path is derived from the framework's route algebra rather
+ * than a hard-coded string. `namespace` is the harness's own route; `agent` is a
+ * different mounted route whose advertising resource genuinely differs, so a
+ * bound-route comparison cannot pass by coinciding on one path.
+ */
+function boundRouteEndpoint(key) {
+  switch (key) {
+    case "namespace":
+      return { kind: "namespace", clientNamespace: "acme" };
+    case "agent":
+      return { kind: "agent", clientNamespace: "acme", agentId: "agent-1" };
+    default:
+      throw new Error(`unknown bound_route route key ${JSON.stringify(key)}`);
+  }
+}
+
+/** The advertising route resource of an endpoint, derived as the facade does. */
+function boundRouteResource(endpoint) {
+  return `${BASE_URL}${mcpPath(endpoint)}`;
+}
+
+/** The valid authorize request the rows present, carrying the route resource. */
+function boundRouteAuthorizeQuery(endpoint, clientId) {
+  return {
+    client_id: [clientId],
+    redirect_uri: [BOUND_ROUTE_REDIRECT_URI],
+    response_type: ["code"],
+    code_challenge: [pkceChallengeS256(VERIFIER)],
+    code_challenge_method: ["S256"],
+    state: [CLIENT_STATE],
+    resource: [boundRouteResource(endpoint)],
+  };
+}
+
+/** The code-exchange form the rows present. */
+function boundRouteTokenForm(clientId, code) {
+  return new URLSearchParams({
+    grant_type: "authorization_code",
+    code,
+    code_verifier: VERIFIER,
+    redirect_uri: BOUND_ROUTE_REDIRECT_URI,
+    client_id: clientId,
+  });
+}
+
+/**
+ * Registers one client through the real POST .../register handler at the row's
+ * registered route and returns the server-assigned id.
+ */
+async function boundRouteRegister(harness, endpoint) {
+  const response = await harness.serve(
+    "POST",
+    oauthRegisterPath(endpoint),
+    null,
+    Buffer.from(
+      JSON.stringify({ redirect_uris: [BOUND_ROUTE_REDIRECT_URI] }),
+      "utf8",
+    ),
+  );
+  assert.equal(response.status, 201);
+  const clientId = JSON.parse(bodyString(response)).client_id;
+  assert.ok(typeof clientId === "string" && clientId !== "");
+  return clientId;
+}
+
+/**
+ * Completes authorize plus callback at the registered route and returns the
+ * facade code, so a token row has a genuinely redeemable code minted for the
+ * client it presents.
+ */
+async function boundRouteMintCode(harness, endpoint, clientId) {
+  const authorizeResponse = await harness.serve(
+    "GET",
+    oauthAuthorizePath(endpoint),
+    boundRouteAuthorizeQuery(endpoint, clientId),
+    null,
+  );
+  assert.equal(authorizeResponse.status, 302);
+  const callbackResponse = await harness.serve(
+    "GET",
+    DEFAULT_CALLBACK_PATH,
+    {
+      code: [UPSTREAM_CODE],
+      state: [locationQuery(authorizeResponse).get("state")],
+      iss: [UPSTREAM_ISS],
+    },
+    null,
+  );
+  assert.equal(callbackResponse.status, 302);
+  const code = locationQuery(callbackResponse).get("code");
+  assert.ok(code !== null && code !== "");
+  return code;
+}
+
+/**
+ * Pins the registration route binding to the shared cross-runtime table through
+ * the real mounted handlers: a client registered through POST .../register is
+ * accepted only at the advertising route it registered at and is refused at any
+ * other mounted route with the same non-oracle invalid_client response an unknown
+ * client gets, while a pre-registered client whose record carries no bound route
+ * stays valid at every route.
+ */
+test("bound route enforces the shared bound_route table through the real mounted handlers", async (t) => {
+  const rows = (loadFixture().cases ?? []).filter(
+    (row) => row.group === BOUND_ROUTE_GROUP,
+  );
+  assert.equal(rows.length, BOUND_ROUTE_CASE_COUNT);
+
+  let executed = 0;
+  for (const row of rows) {
+    executed += 1;
+    const harness = await newFrontChannelHarness(t);
+    const registered = boundRouteEndpoint(row.registered_at);
+    const presented = boundRouteEndpoint(row.presented_at);
+    const context = `row ${row.id}`;
+
+    let clientId = CLIENT_ID;
+    if (row.client === "dcr") {
+      clientId = await boundRouteRegister(harness, registered);
+    } else if (row.client !== "pre_registered") {
+      assert.fail(`unknown bound_route client ${JSON.stringify(row.client)}`);
+    }
+
+    let response;
+    let unknown;
+    if (row.stage === "authorize") {
+      const path = oauthAuthorizePath(presented);
+      response = await harness.serve(
+        "GET",
+        path,
+        boundRouteAuthorizeQuery(presented, clientId),
+        null,
+      );
+      unknown = await harness.serve(
+        "GET",
+        path,
+        boundRouteAuthorizeQuery(presented, BOUND_ROUTE_UNKNOWN_CLIENT_ID),
+        null,
+      );
+    } else if (row.stage === "token") {
+      const path = oauthTokenPath(presented);
+      const code = await boundRouteMintCode(harness, registered, clientId);
+      response = await harness.serve(
+        "POST",
+        path,
+        null,
+        Buffer.from(boundRouteTokenForm(clientId, code).toString(), "utf8"),
+      );
+      unknown = await harness.serve(
+        "POST",
+        path,
+        null,
+        Buffer.from(
+          boundRouteTokenForm(BOUND_ROUTE_UNKNOWN_CLIENT_ID, code).toString(),
+          "utf8",
+        ),
+      );
+    } else {
+      assert.fail(`unknown bound_route stage ${JSON.stringify(row.stage)}`);
+    }
+
+    assert.equal(response.status, row.expect_status, context);
+    if (row.expect_status === 200) {
+      assert.ok(
+        bodyString(response).includes('"access_token"'),
+        `${context} must return a token`,
+      );
+    }
+    if (row.expect_status === 302) {
+      assert.notEqual(locationOf(response), "", `${context} must redirect`);
+    }
+    if (row.expect_status !== 400) {
+      continue;
+    }
+    // A refusal is the same non-oracle invalid_client response an unknown client
+    // gets at this very route: byte-identical body, no redirect, and no mention
+    // of any route the client might have registered at.
+    assert.equal(unknown.status, 400, `${context} unknown-client control`);
+    assert.equal(
+      bodyString(response),
+      bodyString(unknown),
+      `${context} must be byte-identical to the unknown-client refusal`,
+    );
+    assert.equal(locationOf(response), "", `${context} must not redirect`);
+    assert.match(bodyString(response), /"error":"invalid_client"/, context);
+    assert.ok(
+      !bodyString(response).includes("route"),
+      `${context} must not name a route`,
+    );
+  }
+  assert.equal(executed, BOUND_ROUTE_CASE_COUNT);
+});
+
 test("authorize requires fresh S256 PKCE and refuses a plain challenge", async (t) => {
   const harness = await newFrontChannelHarness(t);
 

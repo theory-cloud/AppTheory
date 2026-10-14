@@ -1394,6 +1394,12 @@ def _handle_authorize_inner(config: _NormalizedConfig, kind: str, ctx: Context) 
     client = front.stores.client.get(hash_key(client_id))
     if client is None:
         return _facade_error_page(400, "invalid_client")
+    # The advertising route resource is the comparison value of the bound-route
+    # check: it was resolved above with _build_absolute_url over the route MCP
+    # path, the same derivation the registration handler bound the client record
+    # with.
+    if _client_bound_route_refused(client, resource):
+        return _facade_error_page(400, "invalid_client")
 
     redirect_uri = _first_query_value(ctx.request.query, "redirect_uri")
     if not _registered_redirect_uri(client.redirect_uris, redirect_uri):
@@ -1598,7 +1604,10 @@ def _handle_token(config: _NormalizedConfig, kind: str, ctx: Context) -> Respons
     if grant_type == "":
         return _facade_error_page(400, "invalid_request")
     if grant_type == "authorization_code":
-        return _handle_authorization_code_grant(config, kind, ctx, form)
+        try:
+            return _handle_authorization_code_grant(config, kind, ctx, form)
+        except _MetadataRequestError as err:
+            return _require_metadata_failure(err)
     # Ruled: the token response issues the refresh handle, but the refresh_token
     # grant is M3c and is refused until then.
     return _facade_error_page(400, "unsupported_grant_type")
@@ -1621,6 +1630,12 @@ def _handle_authorization_code_grant(
     client_id = _first_form_value(form, "client_id").strip()
     if client_id == "":
         return _facade_error_page(400, "invalid_client")
+    # The route resource is resolved before the store read, so an unresolvable
+    # request host fails closed for every client rather than only for a registered
+    # one, and the bound-route check below compares the record against the route
+    # this grant is actually presented at.
+    endpoint = _endpoint_from_route_params(ctx, kind)
+    route_resource = _build_absolute_url(config, ctx, endpoint.mcp_path())
     client = front.stores.client.get(hash_key(client_id))
     if client is None:
         return _facade_error_page(400, "invalid_client")
@@ -1628,6 +1643,8 @@ def _handle_authorization_code_grant(
     # that claims another authentication method fails closed.
     method = str(client.token_endpoint_auth_method or "").strip()
     if method != "" and method != "none":
+        return _facade_error_page(400, "invalid_client")
+    if _client_bound_route_refused(client, route_resource):
         return _facade_error_page(400, "invalid_client")
     return _redeem_authorization_code(front, kind, form, code, redirect_uri, verifier, client_id)
 
@@ -1895,6 +1912,22 @@ def _first_query_value(query: dict[str, list[str]], name: str) -> str:
 def _first_form_value(form: dict[str, list[str]], name: str) -> str:
     values = form.get(name) or []
     return str(values[0]) if values else ""
+
+
+def _client_bound_route_refused(client, route_resource: str) -> bool:
+    """Report whether a client the registration handler bound to one advertising
+    route is being presented at another (DESIGN section 8.3, THREAT_MODEL T5).
+
+    The bound route is the route resource the registration handler derived, so the
+    comparison is exact and no route can be reached by a generalized or prefix
+    match. A record that carries no bound route was pre-registered by the
+    application and is never refused. Both callers render a refused record with
+    the same invalid_client response an unknown client gets, so the response is
+    never an oracle for which route a client registered at and never names a
+    route.
+    """
+    bound_route = str(client.bound_route or "").strip()
+    return bound_route != "" and bound_route != route_resource
 
 
 def _registered_redirect_uri(registered: list[str] | None, requested: str) -> bool:

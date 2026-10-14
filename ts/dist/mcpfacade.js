@@ -1635,6 +1635,12 @@ async function handleAuthorize(config, kind, ctx) {
     if (client === null) {
         return facadeErrorPage(400, "invalid_client");
     }
+    // The advertising route resource is the comparison value of the bound-route
+    // check: it was resolved above with frontChannelRouteResource, the same helper
+    // the registration handler bound the client record with.
+    if (clientBoundRouteRefused(client, resource)) {
+        return facadeErrorPage(400, "invalid_client");
+    }
     const redirectURI = firstQueryValue(ctx.request.query, "redirect_uri");
     if (!registeredRedirectURI(client.redirectUris, redirectURI)) {
         // Open-redirect defense: an unmatched redirect URI never redirects.
@@ -1854,13 +1860,13 @@ async function handleToken(config, kind, ctx) {
         return facadeErrorPage(400, "invalid_request");
     }
     if (grantType === "authorization_code") {
-        return await handleAuthorizationCodeGrant(config, kind, form);
+        return await handleAuthorizationCodeGrant(config, kind, ctx, form);
     }
     // Ruled: the token response issues the refresh handle, but the refresh_token
     // grant is M3c and is refused until then.
     return facadeErrorPage(400, "unsupported_grant_type");
 }
-async function handleAuthorizationCodeGrant(config, kind, form) {
+async function handleAuthorizationCodeGrant(config, kind, ctx, form) {
     const front = config.frontChannel;
     if (front === null) {
         throw new Error(`${ERROR_PREFIX} front channel is not configured`);
@@ -1875,6 +1881,15 @@ async function handleAuthorizationCodeGrant(config, kind, form) {
     if (clientID === "") {
         return facadeErrorPage(400, "invalid_client");
     }
+    // The route resource is resolved before the store read, so an unresolvable
+    // request host fails closed for every client rather than only for a registered
+    // one, and the bound-route check below compares the record against the route
+    // this grant is actually presented at.
+    const endpoint = endpointFromRouteParams(ctx, kind);
+    const routeResolution = frontChannelRouteResource(config, ctx, endpoint);
+    if (routeResolution.failure !== null) {
+        return routeResolution.failure;
+    }
     const client = await front.stores.client.get(hashKey(clientID));
     if (client === null) {
         return facadeErrorPage(400, "invalid_client");
@@ -1883,6 +1898,9 @@ async function handleAuthorizationCodeGrant(config, kind, form) {
     // that claims another authentication method fails closed.
     const method = (client.tokenEndpointAuthMethod ?? "").trim();
     if (method !== "" && method !== "none") {
+        return facadeErrorPage(400, "invalid_client");
+    }
+    if (clientBoundRouteRefused(client, routeResolution.value)) {
         return facadeErrorPage(400, "invalid_client");
     }
     const consumeResult = await front.stores.authorizationCode.consume(hashKey(code));
@@ -2627,6 +2645,20 @@ function clampRequestedScopes(requested, allowed) {
 }
 function facadeScopeFingerprint(scopes) {
     return hashKey([...scopes].sort().join(" "));
+}
+/**
+ * Reports whether a client the registration handler bound to one advertising
+ * route is being presented at another (DESIGN §8.3, THREAT_MODEL T5). The bound
+ * route is the route resource `frontChannelRouteResource` derives, so the
+ * comparison is exact and no route can be reached by a generalized or prefix
+ * match. A record that carries no bound route was pre-registered by the
+ * application and is never refused. Both callers render a refused record with the
+ * same invalid_client response an unknown client gets, so the response is never
+ * an oracle for which route a client registered at and never names a route.
+ */
+function clientBoundRouteRefused(client, routeResource) {
+    const boundRoute = (client.boundRoute ?? "").trim();
+    return boundRoute !== "" && boundRoute !== routeResource;
 }
 /**
  * Renders a facade rejection that never redirects (DESIGN §8.1/§8.2): the fixed

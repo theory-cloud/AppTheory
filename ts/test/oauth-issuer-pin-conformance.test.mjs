@@ -52,12 +52,22 @@ const METHOD_STATUS_GROUP = "method_status";
  */
 const DCR_GROUP = "dcr";
 
+/**
+ * `bound_route` is the sibling group holding the registration route-binding
+ * rule: a client registered through DCR is accepted only at the advertising route
+ * it registered at. It is executed by the facade front-channel test through the
+ * real mounted /register, /authorize, and /token handlers, not here; the group
+ * ledger below still lists it so a new group cannot appear without a loader.
+ */
+const BOUND_ROUTE_GROUP = "bound_route";
+
 const FIXTURE_GROUPS = [
   ISSUER_PIN_GROUP,
   REDIRECT_MATCH_GROUP,
   FORM_PARSE_GROUP,
   METHOD_STATUS_GROUP,
   DCR_GROUP,
+  BOUND_ROUTE_GROUP,
 ];
 
 /**
