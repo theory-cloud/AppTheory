@@ -133,6 +133,15 @@ export declare function resourceIndicatorMatches(expected: string, requested: st
 export declare function rfc9728ResourceMetadataURL(resourceURL: string): string | null;
 export declare function resourceMetadataURLFromMcpEndpoint(mcpEndpoint: string): string | null;
 export declare function canonicalResourceURL(raw: string): string;
+/**
+ * Canonicalizes an RFC 9207 `iss` value exactly as the Go reference
+ * `oauth.CanonicalizeIssuerURL` does, because the pinned issuer is compared
+ * byte-for-byte across runtimes. The scheme is lowercased; the authority is
+ * preserved, so host case and an explicit port survive; the decoded path is
+ * re-encoded with the Go `net/url` path rules and its trailing slashes are
+ * trimmed; the raw query and fragment are kept. Relative, empty, control-byte
+ * and malformed-percent-escape inputs return null.
+ */
 export declare function canonicalizeIssuerURL(raw: string): string | null;
 export declare function bearerTokenFromHeaders(headers: Headers | undefined): string;
 export declare function requireBearerTokenMiddleware(options?: RequireBearerTokenOptions): Middleware;

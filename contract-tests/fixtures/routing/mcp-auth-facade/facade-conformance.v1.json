@@ -1,0 +1,197 @@
+{
+  "id": "mcp.auth.facade.conformance",
+  "kind": "conformance",
+  "status": "M3c-1a",
+  "description": "One issuer-pin table for the RFC 9207 `iss` check of the MCP auth facade. Go's oauth.CanonicalizeIssuerURL is the reference: the scheme is lowercased, the authority is preserved byte-for-byte (host case and any explicit port survive), trailing slashes are trimmed from the decoded path, the path keeps its `;`-separated parameters, the query is kept (including a bare trailing `?`) and the fragment is kept. A row matches when both sides canonicalize and the canonical forms are byte-equal. Every runtime's loader runs the same rows and asserts the same outcomes; the uppercase-host and fragment rows exist because a host-lowercasing (WHATWG URL) or fragment-dropping (urllib) canonicalizer would wrongly answer `match`, and the dangling-`?`, `;params` and non-numeric-port rows exist because a `urllib`-based canonicalizer would likewise answer `match` or accept a URL Go refuses.",
+  "cases": [
+    {
+      "id": "issuer_pin.exact_equal_match",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com",
+      "claimed": "https://id.example.com",
+      "expect": "match"
+    },
+    {
+      "id": "issuer_pin.root_slash_claimed_matches_bare_configured",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com",
+      "claimed": "https://id.example.com/",
+      "expect": "match"
+    },
+    {
+      "id": "issuer_pin.bare_claimed_matches_root_slash_configured",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com/",
+      "claimed": "https://id.example.com",
+      "expect": "match"
+    },
+    {
+      "id": "issuer_pin.surrounding_whitespace_matches",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com/",
+      "claimed": "  https://id.example.com/  ",
+      "expect": "match"
+    },
+    {
+      "id": "issuer_pin.uppercase_host_configured_accepts_lowercase_scheme_claimed",
+      "group": "issuer_pin",
+      "configured": "https://ID.EXAMPLE.COM",
+      "claimed": "HTTPS://ID.EXAMPLE.COM",
+      "expect": "match"
+    },
+    {
+      "id": "issuer_pin.uppercase_host_claimed_mismatches_lowercase_configured",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com",
+      "claimed": "HTTPS://ID.EXAMPLE.COM",
+      "expect": "mismatch"
+    },
+    {
+      "id": "issuer_pin.uppercase_host_claimed_mismatches_mixed_case_configured",
+      "group": "issuer_pin",
+      "configured": "https://Id.Example.Com",
+      "claimed": "https://ID.EXAMPLE.COM",
+      "expect": "mismatch"
+    },
+    {
+      "id": "issuer_pin.trailing_slash_path_pair_matches",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com/path",
+      "claimed": "https://id.example.com/path/",
+      "expect": "match"
+    },
+    {
+      "id": "issuer_pin.repeated_trailing_slash_path_pair_matches",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com/path/",
+      "claimed": "https://id.example.com/path///",
+      "expect": "match"
+    },
+    {
+      "id": "issuer_pin.differing_paths_mismatch",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com/path",
+      "claimed": "https://id.example.com/other",
+      "expect": "mismatch"
+    },
+    {
+      "id": "issuer_pin.path_parameter_segment_mismatch",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com/a",
+      "claimed": "https://id.example.com/a;b",
+      "expect": "mismatch"
+    },
+    {
+      "id": "issuer_pin.explicit_port_pair_matches",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com:8443/",
+      "claimed": "https://id.example.com:8443",
+      "expect": "match"
+    },
+    {
+      "id": "issuer_pin.differing_port_mismatch",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com",
+      "claimed": "https://id.example.com:8443",
+      "expect": "mismatch"
+    },
+    {
+      "id": "issuer_pin.explicit_default_port_mismatch",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com",
+      "claimed": "https://id.example.com:443",
+      "expect": "mismatch"
+    },
+    {
+      "id": "issuer_pin.non_numeric_port_mismatch",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com",
+      "claimed": "https://id.example.com:abc",
+      "expect": "mismatch"
+    },
+    {
+      "id": "issuer_pin.query_pair_matches",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com/?q=1",
+      "claimed": "https://id.example.com?q=1",
+      "expect": "match"
+    },
+    {
+      "id": "issuer_pin.query_vs_no_query_mismatch",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com",
+      "claimed": "https://id.example.com?q=1",
+      "expect": "mismatch"
+    },
+    {
+      "id": "issuer_pin.dangling_query_marker_mismatch",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com",
+      "claimed": "https://id.example.com/?",
+      "expect": "mismatch"
+    },
+    {
+      "id": "issuer_pin.fragment_pair_matches",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com/#frag",
+      "claimed": "https://id.example.com#frag",
+      "expect": "match"
+    },
+    {
+      "id": "issuer_pin.fragment_vs_no_fragment_mismatch",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com",
+      "claimed": "https://id.example.com#frag",
+      "expect": "mismatch"
+    },
+    {
+      "id": "issuer_pin.userinfo_pair_matches",
+      "group": "issuer_pin",
+      "configured": "https://user@id.example.com/",
+      "claimed": "https://user@id.example.com",
+      "expect": "match"
+    },
+    {
+      "id": "issuer_pin.userinfo_mismatch",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com",
+      "claimed": "https://user@id.example.com",
+      "expect": "mismatch"
+    },
+    {
+      "id": "issuer_pin.permitted_percent_escape_pair_matches",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com/%41",
+      "claimed": "https://id.example.com/%41",
+      "expect": "match"
+    },
+    {
+      "id": "issuer_pin.malformed_percent_escape_mismatch",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com",
+      "claimed": "https://id.example.com/%zz",
+      "expect": "mismatch"
+    },
+    {
+      "id": "issuer_pin.relative_claimed_mismatch",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com",
+      "claimed": "/relative",
+      "expect": "mismatch"
+    },
+    {
+      "id": "issuer_pin.empty_claimed_mismatch",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com",
+      "claimed": "",
+      "expect": "mismatch"
+    },
+    {
+      "id": "issuer_pin.scheme_less_claimed_mismatch",
+      "group": "issuer_pin",
+      "configured": "https://id.example.com",
+      "claimed": "id.example.com",
+      "expect": "mismatch"
+    }
+  ]
+}

@@ -127,13 +127,86 @@ export function resourceMetadataURLFromMcpEndpoint(mcpEndpoint) {
 export function canonicalResourceURL(raw) {
     return trimTrailingSlash(String(raw ?? "").trim());
 }
+/**
+ * Canonicalizes an RFC 9207 `iss` value exactly as the Go reference
+ * `oauth.CanonicalizeIssuerURL` does, because the pinned issuer is compared
+ * byte-for-byte across runtimes. The scheme is lowercased; the authority is
+ * preserved, so host case and an explicit port survive; the decoded path is
+ * re-encoded with the Go `net/url` path rules and its trailing slashes are
+ * trimmed; the raw query and fragment are kept. Relative, empty, control-byte
+ * and malformed-percent-escape inputs return null.
+ */
 export function canonicalizeIssuerURL(raw) {
-    const url = absoluteURL(raw);
-    if (!url)
+    const input = String(raw ?? "").trim();
+    if (input === "" || hasControlByte(input))
         return null;
-    url.pathname = trimTrailingSlash(url.pathname);
-    url.hash = "";
-    return url.toString();
+    let rest = input;
+    let rawFragment = null;
+    const hash = rest.indexOf("#");
+    if (hash >= 0) {
+        rawFragment = rest.slice(hash + 1);
+        rest = rest.slice(0, hash);
+    }
+    const scheme = splitURLScheme(rest);
+    if (!scheme)
+        return null;
+    rest = scheme.rest;
+    let forceQuery = false;
+    let rawQuery = "";
+    if (rest.endsWith("?") && rest.split("?").length === 2) {
+        forceQuery = true;
+        rest = rest.slice(0, -1);
+    }
+    else {
+        const query = rest.indexOf("?");
+        if (query >= 0) {
+            rawQuery = rest.slice(query + 1);
+            rest = rest.slice(0, query);
+        }
+    }
+    if (!rest.startsWith("//"))
+        return null;
+    const pathStart = rest.indexOf("/", 2);
+    const authority = pathStart < 0 ? rest.slice(2) : rest.slice(2, pathStart);
+    const rawPath = pathStart < 0 ? "" : rest.slice(pathStart);
+    const parts = parseAuthority(authority);
+    if (!parts)
+        return null;
+    const decodedPath = goUnescape(rawPath, "path");
+    if (decodedPath === null)
+        return null;
+    const trimmedPath = trimTrailingSlashBytes(decodedPath);
+    let escapedPath = goEscapeBytes(trimmedPath, goPathAllows);
+    if (goEscapeBytes(decodedPath, goPathAllows) !== rawPath) {
+        const hinted = goUnescape(rawPath, "path");
+        if (goValidEncoded(rawPath, "path") &&
+            hinted !== null &&
+            hinted.equals(trimmedPath)) {
+            escapedPath = rawPath;
+        }
+    }
+    const decodedHost = goUnescape(parts.host, "host");
+    if (decodedHost === null)
+        return null;
+    let out = `${scheme.scheme}://`;
+    if (parts.userinfo !== null)
+        out += `${parts.userinfo}@`;
+    out += goEscapeBytes(decodedHost, goHostAllows);
+    out += escapedPath;
+    if (forceQuery || rawQuery !== "")
+        out += `?${rawQuery}`;
+    if (rawFragment !== null) {
+        const decodedFragment = goUnescape(rawFragment, "fragment");
+        if (decodedFragment === null)
+            return null;
+        if (decodedFragment.length > 0) {
+            const fragment = goValidEncoded(rawFragment, "fragment")
+                ? rawFragment
+                : goEscapeBytes(decodedFragment, goFragmentAllows);
+            out += `#${fragment}`;
+        }
+    }
+    return out;
 }
 export function bearerTokenFromHeaders(headers) {
     const auth = firstHeader(headers, "authorization").trim();
@@ -449,6 +522,354 @@ function trimTrailingSlash(pathname) {
         end -= 1;
     }
     return value.slice(0, end);
+}
+const GO_HEX = "0123456789ABCDEF";
+// `net/url.validEncoded` always accepts these bytes, whatever the mode.
+const GO_ENCODED_LITERALS = new Set([
+    0x21, 0x24, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x3b, 0x3a, 0x3d, 0x40,
+    0x5b, 0x5d,
+]);
+function hasControlByte(value) {
+    for (let i = 0; i < value.length; i += 1) {
+        const code = value.charCodeAt(i);
+        if (code < 0x20 || code === 0x7f)
+            return true;
+    }
+    return false;
+}
+function goByte(bytes, index) {
+    return bytes[index] ?? 0;
+}
+function goIsHexByte(code) {
+    return ((code >= 0x30 && code <= 0x39) ||
+        (code >= 0x41 && code <= 0x46) ||
+        (code >= 0x61 && code <= 0x66));
+}
+function goUnhex(code) {
+    if (code >= 0x30 && code <= 0x39)
+        return code - 0x30;
+    if (code >= 0x41 && code <= 0x46)
+        return code - 0x41 + 10;
+    return code - 0x61 + 10;
+}
+function goPathAllows(code) {
+    if (code >= 0x30 && code <= 0x39)
+        return true;
+    if (code >= 0x41 && code <= 0x5a)
+        return true;
+    if (code >= 0x61 && code <= 0x7a)
+        return true;
+    switch (code) {
+        case 0x24: // $
+        case 0x26: // &
+        case 0x2b: // +
+        case 0x2c: // ,
+        case 0x2d: // -
+        case 0x2e: // .
+        case 0x2f: // /
+        case 0x3a: // :
+        case 0x3b: // ;
+        case 0x3d: // =
+        case 0x40: // @
+        case 0x5f: // _
+        case 0x7e: // ~
+            return true;
+        default:
+            return false;
+    }
+}
+function goHostAllows(code) {
+    if (code >= 0x30 && code <= 0x39)
+        return true;
+    if (code >= 0x41 && code <= 0x5a)
+        return true;
+    if (code >= 0x61 && code <= 0x7a)
+        return true;
+    switch (code) {
+        case 0x21: // !
+        case 0x22: // "
+        case 0x24: // $
+        case 0x26: // &
+        case 0x27: // '
+        case 0x28: // (
+        case 0x29: // )
+        case 0x2a: // *
+        case 0x2b: // +
+        case 0x2c: // ,
+        case 0x2d: // -
+        case 0x2e: // .
+        case 0x3a: // :
+        case 0x3b: // ;
+        case 0x3c: // <
+        case 0x3d: // =
+        case 0x3e: // >
+        case 0x5b: // [
+        case 0x5d: // ]
+        case 0x5f: // _
+        case 0x7e: // ~
+            return true;
+        default:
+            return false;
+    }
+}
+function goFragmentAllows(code) {
+    if (code >= 0x30 && code <= 0x39)
+        return true;
+    if (code >= 0x41 && code <= 0x5a)
+        return true;
+    if (code >= 0x61 && code <= 0x7a)
+        return true;
+    switch (code) {
+        case 0x21: // !
+        case 0x24: // $
+        case 0x26: // &
+        case 0x28: // (
+        case 0x29: // )
+        case 0x2a: // *
+        case 0x2b: // +
+        case 0x2c: // ,
+        case 0x2d: // -
+        case 0x2e: // .
+        case 0x2f: // /
+        case 0x3a: // :
+        case 0x3b: // ;
+        case 0x3d: // =
+        case 0x3f: // ?
+        case 0x40: // @
+        case 0x5f: // _
+        case 0x7e: // ~
+            return true;
+        default:
+            return false;
+    }
+}
+function goUserinfoAllows(code) {
+    if (code >= 0x30 && code <= 0x39)
+        return true;
+    if (code >= 0x41 && code <= 0x5a)
+        return true;
+    if (code >= 0x61 && code <= 0x7a)
+        return true;
+    switch (code) {
+        case 0x24: // $
+        case 0x26: // &
+        case 0x2b: // +
+        case 0x2c: // ,
+        case 0x2d: // -
+        case 0x2e: // .
+        case 0x3b: // ;
+        case 0x3d: // =
+        case 0x5f: // _
+        case 0x7e: // ~
+            return true;
+        default:
+            return false;
+    }
+}
+function goAllowsFor(mode) {
+    switch (mode) {
+        case "path":
+            return goPathAllows;
+        case "fragment":
+            return goFragmentAllows;
+        case "host":
+            return goHostAllows;
+        default:
+            return goUserinfoAllows;
+    }
+}
+function goEscapeBytes(bytes, allows) {
+    let out = "";
+    for (const byte of bytes) {
+        if (allows(byte)) {
+            out += String.fromCharCode(byte);
+            continue;
+        }
+        out += `%${GO_HEX.charAt(byte >> 4)}${GO_HEX.charAt(byte & 0x0f)}`;
+    }
+    return out;
+}
+function goUnescape(value, mode) {
+    const bytes = Buffer.from(value, "utf8");
+    const out = [];
+    let index = 0;
+    while (index < bytes.length) {
+        const byte = goByte(bytes, index);
+        if (byte === 0x25) {
+            if (index + 2 >= bytes.length)
+                return null;
+            const high = goByte(bytes, index + 1);
+            const low = goByte(bytes, index + 2);
+            if (!goIsHexByte(high) || !goIsHexByte(low))
+                return null;
+            const decoded = (goUnhex(high) << 4) | goUnhex(low);
+            const escaped = high === 0x32 && low === 0x35;
+            if (mode === "host" && decoded < 0x80 && !escaped)
+                return null;
+            out.push(decoded);
+            index += 3;
+            continue;
+        }
+        if (mode === "host" && byte < 0x80 && !goHostAllows(byte))
+            return null;
+        out.push(byte);
+        index += 1;
+    }
+    return Buffer.from(out);
+}
+function goValidEncoded(value, mode) {
+    const allows = goAllowsFor(mode);
+    const bytes = Buffer.from(value, "utf8");
+    for (let index = 0; index < bytes.length; index += 1) {
+        const byte = goByte(bytes, index);
+        if (byte === 0x25) {
+            if (index + 2 >= bytes.length ||
+                !goIsHexByte(goByte(bytes, index + 1)) ||
+                !goIsHexByte(goByte(bytes, index + 2))) {
+                return false;
+            }
+            index += 2;
+            continue;
+        }
+        if (GO_ENCODED_LITERALS.has(byte))
+            continue;
+        if (!allows(byte))
+            return false;
+    }
+    return true;
+}
+function trimTrailingSlashBytes(bytes) {
+    let end = bytes.length;
+    while (end > 0 && goByte(bytes, end - 1) === 0x2f) {
+        end -= 1;
+    }
+    return end === bytes.length ? bytes : bytes.subarray(0, end);
+}
+function splitURLScheme(value) {
+    for (let index = 0; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        if (isASCIILetter(code))
+            continue;
+        if (index > 0 && isSchemeTail(code))
+            continue;
+        if (index > 0 && code === 0x3a) {
+            const scheme = value.slice(0, index).toLowerCase();
+            return { scheme, rest: value.slice(index + 1) };
+        }
+        return null;
+    }
+    return null;
+}
+function isASCIILetter(code) {
+    return (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a);
+}
+function isSchemeTail(code) {
+    if (code >= 0x30 && code <= 0x39)
+        return true;
+    return code === 0x2b || code === 0x2d || code === 0x2e;
+}
+function validOptionalPort(value) {
+    if (value === "")
+        return true;
+    if (!value.startsWith(":"))
+        return false;
+    for (let index = 1; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        if (code < 0x30 || code > 0x39)
+            return false;
+    }
+    return true;
+}
+function isIPLiteral(value) {
+    if (!value.includes(":"))
+        return false;
+    if (/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/u.test(value))
+        return false;
+    return /^[0-9A-Fa-f:.]+$/u.test(value);
+}
+function hostIsValid(host) {
+    const openBracket = host.lastIndexOf("[");
+    if (openBracket > 0)
+        return false;
+    if (openBracket === 0) {
+        const closeBracket = host.lastIndexOf("]");
+        if (closeBracket < 0)
+            return false;
+        if (!validOptionalPort(host.slice(closeBracket + 1)))
+            return false;
+        if (!isIPLiteral(host.slice(1, closeBracket)))
+            return false;
+        return goUnescape(host, "host") !== null;
+    }
+    const separator = host.indexOf(":");
+    if (separator >= 0 && !validOptionalPort(host.slice(separator))) {
+        return false;
+    }
+    return goUnescape(host, "host") !== null;
+}
+function userinfoIsValid(value) {
+    for (let index = 0; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        if (code >= 0x30 && code <= 0x39)
+            continue;
+        if (code >= 0x41 && code <= 0x5a)
+            continue;
+        if (code >= 0x61 && code <= 0x7a)
+            continue;
+        switch (code) {
+            case 0x21: // !
+            case 0x24: // $
+            case 0x25: // %
+            case 0x26: // &
+            case 0x27: // '
+            case 0x28: // (
+            case 0x29: // )
+            case 0x2a: // *
+            case 0x2b: // +
+            case 0x2c: // ,
+            case 0x2d: // -
+            case 0x2e: // .
+            case 0x3a: // :
+            case 0x3b: // ;
+            case 0x3d: // =
+            case 0x40: // @
+            case 0x5f: // _
+            case 0x7e: // ~
+                continue;
+            default:
+                return false;
+        }
+    }
+    return true;
+}
+function encodeUserinfo(raw) {
+    const separator = raw.indexOf(":");
+    if (separator < 0) {
+        const username = goUnescape(raw, "userinfo");
+        return username === null ? null : goEscapeBytes(username, goUserinfoAllows);
+    }
+    const username = goUnescape(raw.slice(0, separator), "userinfo");
+    const password = goUnescape(raw.slice(separator + 1), "userinfo");
+    if (username === null || password === null)
+        return null;
+    const encodedUsername = goEscapeBytes(username, goUserinfoAllows);
+    const encodedPassword = goEscapeBytes(password, goUserinfoAllows);
+    return `${encodedUsername}:${encodedPassword}`;
+}
+function parseAuthority(value) {
+    const at = value.lastIndexOf("@");
+    const host = at < 0 ? value : value.slice(at + 1);
+    if (host === "" || !hostIsValid(host))
+        return null;
+    if (at < 0)
+        return { host, userinfo: null };
+    const raw = value.slice(0, at);
+    if (!userinfoIsValid(raw))
+        return null;
+    const userinfo = encodeUserinfo(raw);
+    if (userinfo === null)
+        return null;
+    return { host, userinfo };
 }
 function joinURLPath(base, suffix) {
     const left = trimTrailingSlash(String(base ?? ""));
