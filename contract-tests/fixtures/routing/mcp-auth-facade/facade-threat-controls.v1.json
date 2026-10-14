@@ -1,0 +1,294 @@
+{
+  "id": "mcp.auth.facade.threat_controls",
+  "kind": "conformance",
+  "status": "M3c-2",
+  "description": "Machine-readable form of THREAT_MODEL.md, lifted out of the M0 planning tree into the shared contract corpus. One case per threat row (T1-T11, ids threat.t1..threat.t11) names the attack class, the framework control, and the fixtures and per-runtime suites that pin it, so a pin is a test that fails if the control is removed. The table is data-driven and machine-checked: the Go, TypeScript, and Python mcpfacade suites and the CDK-TS route-algebra suite each load this table, assert its row count before and after, reject any case whose group is not threat_controls, and resolve every pins[] entry against the fixture it names, so an unresolvable pin fails the check and dropping a referenced row from any pinned table fails it too. The M0 contract envelope is folded into notes.contract and the cross-cutting invariants into notes.cross_cutting.",
+  "notes": {
+    "contract": {
+      "id": "m17.mcp-auth-facade/v1",
+      "section": "threat-controls",
+      "status": "design (M0)",
+      "notes": "Machine-readable form of THREAT_MODEL.md. Each row names the attack class, the framework control, and the fixture/test that pins it. A pin is a test that fails if the control is removed."
+    },
+    "cross_cutting": [
+      "fail closed on every rejection path",
+      "bounded error vocabularies; no upstream error body forwarding",
+      "no bearer material, upstream token, or PKCE verifier in logs/metrics/error bodies"
+    ],
+    "threat_rows": "Eleven rows, T1-T11. The M0 table carried no T12 and THREAT_MODEL.md carries the same eleven rows, so the lift preserves the count exactly and adds no row; the row-count constant is 11 in the Go, TypeScript, and Python checkers and in the CDK-TS assertion.",
+    "pin_vocabulary": {
+      "journey": "facade-journey.v1.json",
+      "conformance": "facade-conformance.v1.json",
+      "route_model": "facade-route-model.v1.json",
+      "transport_posture": "facade-transport-posture.v1.json",
+      "jwks_validator": "jwks-validator.v1.json",
+      "discovery_bootstrap": "discovery-bootstrap.v1.json",
+      "provider_conformance": "facade-provider-conformance.v1.json",
+      "store_conformance": "facade-store-conformance.v1.json",
+      "route_challenge": "route-challenge.v1.json"
+    },
+    "pin_resolution": "Every pins[] entry is {source, row}. source is one of the closed pin_vocabulary keys, naming a fixture in this directory, and row is a real row id or key inside it: journey resolves a cases[].id, or a dotted key path that exists in the document (notes.negative_assertions); conformance, provider_conformance, and store_conformance resolve a cases[].id; jwks_validator resolves a cases[].name; discovery_bootstrap resolves a cases[].name, or a dotted key path that exists in the document (host_guard); route_model, transport_posture, and route_challenge resolve a dotted key path. Every runtime checker loads each named fixture and treats an unresolvable row as a failure, so the table is bidirectional. source_pins preserves each M0 pin string verbatim for provenance. native_pins carries the M0 pin strings that name no corpus row: a design statement or the conformance kit's own harness layer cannot be resolved against a table, so it is deliberately excluded from pins rather than faked. runtime_executable is true exactly when a case carries at least one fixture-backed pin; cdk_visible is true when the CDK-TS suite can assert the case against the tables it already loads."
+  },
+  "cases": [
+    {
+      "id": "threat.t1",
+      "group": "threat_controls",
+      "threat": "authorize_open_redirect",
+      "control": "validate the registered client and the exact registered redirect URI (loopback port flexibility only) before any redirect; pre-validation errors never redirect",
+      "pins": [
+        { "source": "journey", "row": "journey.authorize-unregistered-client" },
+        { "source": "journey", "row": "journey.authorize-unmatched-redirect" }
+      ],
+      "native_pins": [],
+      "source_pins": [
+        "facade-journey:authorize-unregistered-client",
+        "facade-journey:authorize-unmatched-redirect"
+      ],
+      "runtime_executable": true,
+      "cdk_visible": false
+    },
+    {
+      "id": "threat.t2",
+      "group": "threat_controls",
+      "threat": "code_replay",
+      "control": "single-use facade codes via atomic Consume; replay returns invalid_grant and revokes the broker record; upstream state consumed single-use; refresh reuse: a rotated handle re-presented after its grace window revokes the whole grant (the presented record and every successor it minted) and answers the same non-oracle invalid_grant an unknown handle gets",
+      "pins": [
+        { "source": "journey", "row": "journey.token-replay-code" },
+        { "source": "journey", "row": "journey.refresh-revoked-handle" },
+        { "source": "store_conformance", "row": "store.authorization_code.consume_is_single_use_then_replayed" },
+        { "source": "store_conformance", "row": "store.transaction.consume_is_single_use" },
+        { "source": "conformance", "row": "refresh.reuse_after_grace_revokes" },
+        { "source": "conformance", "row": "refresh.replayed_code_revokes_handle" },
+        { "source": "conformance", "row": "refresh.handle_at_another_route_refused" }
+      ],
+      "native_pins": [],
+      "source_pins": [
+        "facade-journey:token-replay-code",
+        "facade-journey:refresh-revoked-handle",
+        "store-spi:consume-once",
+        "facade-conformance:refresh.reuse_after_grace_revokes",
+        "facade-conformance:refresh.replayed_code_revokes_handle",
+        "facade-conformance:refresh.handle_at_another_route_refused"
+      ],
+      "runtime_executable": true,
+      "cdk_visible": false
+    },
+    {
+      "id": "threat.t3",
+      "group": "threat_controls",
+      "threat": "pkce_downgrade",
+      "control": "code_challenge required; code_challenge_method must be exactly S256; absent or plain refused; verifier bound to the code",
+      "pins": [
+        { "source": "journey", "row": "journey.authorize-missing-challenge" },
+        { "source": "journey", "row": "journey.authorize-plain-challenge" },
+        { "source": "journey", "row": "journey.token-wrong-verifier" }
+      ],
+      "native_pins": [],
+      "source_pins": [
+        "facade-journey:authorize-missing-challenge",
+        "facade-journey:authorize-plain-challenge",
+        "facade-journey:token-wrong-verifier"
+      ],
+      "runtime_executable": true,
+      "cdk_visible": false
+    },
+    {
+      "id": "threat.t4",
+      "group": "threat_controls",
+      "threat": "mix_up_confused_deputy",
+      "control": "facade's own upstream client + fresh distinct upstream state + own PKCE verifier; verify upstream RFC 9207 iss on the callback; per-route issuer; single-use state",
+      "pins": [
+        { "source": "journey", "row": "journey.callback-iss-mismatch" },
+        { "source": "journey", "row": "journey.callback-absent-iss" },
+        { "source": "journey", "row": "journey.callback-replayed-state" },
+        { "source": "route_model", "row": "issuer_modes.route" }
+      ],
+      "native_pins": [],
+      "source_pins": [
+        "facade-journey:callback-iss-mismatch",
+        "facade-journey:callback-absent-iss",
+        "facade-journey:callback-replayed-state",
+        "facade-route-model:issuer_modes.route"
+      ],
+      "runtime_executable": true,
+      "cdk_visible": true,
+      "notes": "callback-iss-mismatch mints a fresh upstream state AND a valid upstream authorization code through a precondition authorize, then calls back with that minted code and minted state plus a mismatched upstream iss (evil.example); because the state is facade-minted and valid and the exchange would succeed, the iss verification (which happens before the transaction is consumed or the code exchanged, DESIGN §8.2) is the only way to yield the expected 400 with no client redirect, so the pin fails if iss verification is removed. callback-absent-iss reuses that shape but omits the iss parameter entirely: an absent iss is rejected in the same (400, no Location) class as a mismatch, before the transaction is consumed or the code exchanged, so an implementation that treats an absent iss as unpinned reaches the exchange and changes the pinned result"
+    },
+    {
+      "id": "threat.t5",
+      "group": "threat_controls",
+      "threat": "dcr_abuse",
+      "control": "public clients only; https or loopback redirects; server-assigned ids >= 128 bits, hash-stored; bound to the advertising route and enforced at both client lookups (/authorize and /token accept a DCR-registered client only at the route it registered at, refusing it anywhere else with the same non-oracle 400 invalid_client an unknown client gets; a pre-registered client with an empty BoundRoute stays valid at every route); per-route rate limit before work",
+      "pins": [
+        { "source": "journey", "row": "journey.register-disallowed-redirect" },
+        { "source": "journey", "row": "journey.register-public-client" },
+        { "source": "journey", "row": "journey.register-rate-limited" },
+        { "source": "store_conformance", "row": "store.rate_limit.check_and_increment_is_atomic" },
+        { "source": "store_conformance", "row": "store.rate_limit.window_resets_after_ttl" },
+        { "source": "conformance", "row": "bound_route.dcr_client_at_another_route_is_refused" },
+        { "source": "conformance", "row": "bound_route.dcr_client_at_another_token_route_is_refused" },
+        { "source": "conformance", "row": "bound_route.pre_registered_client_at_any_route_is_accepted" }
+      ],
+      "native_pins": [],
+      "source_pins": [
+        "facade-journey:register-disallowed-redirect",
+        "facade-journey:register-public-client",
+        "facade-journey:register-rate-limited",
+        "store-spi:RateLimitStore",
+        "facade-conformance:bound_route.dcr_client_at_another_route_is_refused",
+        "facade-conformance:bound_route.dcr_client_at_another_token_route_is_refused",
+        "facade-conformance:bound_route.pre_registered_client_at_any_route_is_accepted"
+      ],
+      "runtime_executable": true,
+      "cdk_visible": false
+    },
+    {
+      "id": "threat.t6",
+      "group": "threat_controls",
+      "threat": "refresh_material_leakage",
+      "control": "no unencrypted upstream material stored: the durable upstream refresh token in the broker record, and any upstream material transiently carried in the code record (the encrypted token response), are encrypted only; opaque handle to the client; token response drops id_token; upstream error bodies never forwarded; access token byte-identical passthrough; as built in M3c-1b the refresh grant rotates the handle under exactly one upstream call and returns the upstream access token byte-for-byte with the framework's own successor handle, while the upstream refresh token and any id_token appear in no response, header, redirect, or error body, and the successor response is held only in the broker record's encrypted_grace_refresh_response field (a conforming store encrypts it at rest; the framework adds no encryption surface)",
+      "pins": [
+        { "source": "journey", "row": "journey.token-code-exchange" },
+        { "source": "journey", "row": "journey.token-refresh" },
+        { "source": "journey", "row": "notes.negative_assertions" },
+        { "source": "conformance", "row": "refresh.happy_rotation" },
+        { "source": "conformance", "row": "refresh.reuse_within_grace_returns_same_tokens" },
+        { "source": "conformance", "row": "refresh.unknown_handle" },
+        { "source": "conformance", "row": "refresh.other_client_handle" },
+        { "source": "conformance", "row": "refresh.oversized_handle_refused" },
+        { "source": "conformance", "row": "refresh.missing_handle_refused" },
+        { "source": "conformance", "row": "refresh.upstream_terminal_failure" },
+        { "source": "conformance", "row": "refresh.upstream_transient_failure" }
+      ],
+      "native_pins": [],
+      "source_pins": [
+        "facade-journey:token-code-exchange",
+        "facade-journey:token-refresh",
+        "facade-journey:negative_assertions",
+        "facade-conformance:refresh.happy_rotation",
+        "facade-conformance:refresh.reuse_within_grace_returns_same_tokens",
+        "facade-conformance:refresh.unknown_handle",
+        "facade-conformance:refresh.other_client_handle",
+        "facade-conformance:refresh.oversized_handle_refused",
+        "facade-conformance:refresh.missing_handle_refused",
+        "facade-conformance:refresh.upstream_terminal_failure",
+        "facade-conformance:refresh.upstream_transient_failure"
+      ],
+      "runtime_executable": true,
+      "cdk_visible": false
+    },
+    {
+      "id": "threat.t7",
+      "group": "threat_controls",
+      "threat": "audience_resource_confusion",
+      "control": "RFC 8707 resource accepted/canonicalized/required to equal the route resource; audience must exactly equal the route URL; validated before broker mutation and at bearer time; as built in M3c-1b the refresh grant binds the same way: a present resource must equal the bound resource and a present scope must be exactly the granted set (a wider set and a subset, including a present-but-empty scope, are refused with invalid_scope), and a handle presented at another route's token endpoint is refused in the same non-oracle invalid_grant class an unknown handle gets, so the binding cannot be bypassed by omitting resource",
+      "pins": [
+        { "source": "journey", "row": "journey.authorize-wrong-resource" },
+        { "source": "journey", "row": "journey.transport-wrong-audience" },
+        { "source": "conformance", "row": "refresh.resource_mismatch_refused" },
+        { "source": "conformance", "row": "refresh.resource_exact_accepted" },
+        { "source": "conformance", "row": "refresh.scope_subset_refused" },
+        { "source": "conformance", "row": "refresh.scope_exact_accepted" },
+        { "source": "conformance", "row": "refresh.handle_at_another_route_refused" }
+      ],
+      "native_pins": [],
+      "source_pins": [
+        "facade-journey:authorize-wrong-resource",
+        "facade-journey:transport-wrong-audience",
+        "facade-conformance:refresh.resource_mismatch_refused",
+        "facade-conformance:refresh.resource_exact_accepted",
+        "facade-conformance:refresh.scope_subset_refused",
+        "facade-conformance:refresh.scope_exact_accepted",
+        "facade-conformance:refresh.handle_at_another_route_refused"
+      ],
+      "runtime_executable": true,
+      "cdk_visible": false
+    },
+    {
+      "id": "threat.t8",
+      "group": "threat_controls",
+      "threat": "ssrf_discovery_jwks_bootstrap",
+      "control": "https required; discovery doc issuer must equal the configured upstream issuer before trusting endpoints; cross-origin redirect and non-public host rejected; endpoints pinned to the verified issuer",
+      "pins": [
+        { "source": "discovery_bootstrap", "row": "issuer-mismatch-rejected" },
+        { "source": "discovery_bootstrap", "row": "non-https-rejected" },
+        { "source": "discovery_bootstrap", "row": "cross-origin-redirect-rejected" },
+        { "source": "discovery_bootstrap", "row": "host_guard" },
+        { "source": "provider_conformance", "row": "provider.discovery.issuer_mismatch_fails_closed" },
+        { "source": "provider_conformance", "row": "provider.discovery.non_https_fails_closed" },
+        { "source": "provider_conformance", "row": "provider.discovery.cross_origin_redirect_fails_closed" }
+      ],
+      "native_pins": [],
+      "source_pins": [
+        "m2-fixture:discovery-bootstrap (issuer mismatch rejected, non-HTTPS rejected, cross-origin redirect rejected)",
+        "provider-spi:Discovery.fail_closed"
+      ],
+      "runtime_executable": true,
+      "cdk_visible": false
+    },
+    {
+      "id": "threat.t9",
+      "group": "threat_controls",
+      "threat": "jwks_alg_confusion_cache_poisoning",
+      "control": "RS256 only; alg none and HMAC rejected; key type must match RSA signing key; keys cached by kid; unknown kid triggers a bounded cooldown-gated refresh; cache expires; issuer checked before and after verification",
+      "pins": [
+        { "source": "jwks_validator", "row": "alg-none-rejected" },
+        { "source": "jwks_validator", "row": "hs256-rejected" },
+        { "source": "jwks_validator", "row": "unknown-kid-triggers-one-refresh" },
+        { "source": "jwks_validator", "row": "expired-key-refresh" },
+        { "source": "jwks_validator", "row": "issuer-mismatch-rejected" }
+      ],
+      "native_pins": ["design:validator-alg-pinning"],
+      "source_pins": [
+        "m2-fixture:jwks-validator (alg-none rejected, HS256 rejected, unknown-kid triggers one refresh, expired-key refresh, issuer-mismatch rejected)",
+        "design:validator-alg-pinning"
+      ],
+      "runtime_executable": true,
+      "cdk_visible": false
+    },
+    {
+      "id": "threat.t10",
+      "group": "threat_controls",
+      "threat": "callback_csrf_session_swap",
+      "control": "facade-minted single-use upstream state keyed by hash(upstream state); an unminted state is rejected (400, no client redirect); the callback correlates client + client state + redirect_uri + S256 challenge and exchanges the upstream code server-side only; upstream iss verified; the facade code is bound to the client's PKCE verifier at /token",
+      "pins": [
+        { "source": "journey", "row": "journey.callback-iss-mismatch" },
+        { "source": "journey", "row": "journey.callback-absent-iss" },
+        { "source": "journey", "row": "journey.callback-replayed-state" },
+        { "source": "journey", "row": "journey.callback-forged-state" },
+        { "source": "journey", "row": "journey.token-wrong-verifier" }
+      ],
+      "native_pins": [],
+      "source_pins": [
+        "facade-journey:callback-iss-mismatch",
+        "facade-journey:callback-absent-iss",
+        "facade-journey:callback-replayed-state",
+        "facade-journey:callback-forged-state",
+        "facade-journey:token-wrong-verifier"
+      ],
+      "runtime_executable": true,
+      "cdk_visible": false,
+      "notes": "the callback's own rejections (iss mismatch, an absent iss, unminted or replayed state, an absent code) are all 400 with no Location, while a provider code-exchange failure is a distinct 502 upstream_error (DESIGN §8.2); a replayed upstream code arrives with its already-consumed state and therefore takes the replayed-state terminal path rather than a 400; because the two failure classes are distinguishable, callback-forged-state (an unminted state, 400) cannot coincide with a natural exchange-failure mapping, so the pin fails if the state check is removed",
+      "residual": "client-side state + PKCE-verifier binding: an attacker code cannot be redeemed without the client's verifier, but a client that ignores its own state cannot detect the swap"
+    },
+    {
+      "id": "threat.t11",
+      "group": "threat_controls",
+      "threat": "metadata_caching",
+      "control": "route-derived PRM and discovery documents carry cache-control: no-store so a route-specific issuer/resource is never cached for another route; family mode may set a bounded public max-age; the facade emits its own route-derived document rather than proxying the upstream's cacheable discovery verbatim",
+      "pins": [
+        { "source": "journey", "row": "journey.protected-resource-metadata" },
+        { "source": "journey", "row": "journey.authorization-server-metadata" }
+      ],
+      "native_pins": ["conformance-kit:Layer B per-route metadata"],
+      "source_pins": [
+        "facade-journey:protected-resource-metadata",
+        "facade-journey:authorization-server-metadata",
+        "conformance-kit:Layer B per-route metadata"
+      ],
+      "runtime_executable": true,
+      "cdk_visible": false,
+      "residual": "a client or shared cache that ignores no-store is out of framework scope; a family-mode deployment that overrides no-store accepts standard shared-cache staleness"
+    }
+  ]
+}

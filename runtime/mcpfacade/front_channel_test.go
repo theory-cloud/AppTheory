@@ -2161,3 +2161,210 @@ func executeJourneyTokenRow(t *testing.T, row journeyConformanceCase) {
 		require.Equalf(t, *row.ExpectHandlerInvocations, *session.invocations, "row %q handler invocations", row.ID)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Shared threat-controls table
+// (contract-tests/fixtures/.../facade-threat-controls.v1.json)
+// ---------------------------------------------------------------------------
+
+// mcpAuthFacadeFixtureDir is the directory the shared MCP auth facade tables
+// live in, two levels below the module root, shared by the threat-controls
+// checker so every pinned table is located exactly as the journey and
+// conformance loaders locate theirs.
+const mcpAuthFacadeFixtureDir = "../../contract-tests/fixtures/routing/mcp-auth-facade/"
+
+// facadeThreatControlsFixture is the shared threat-control pinning table.
+const facadeThreatControlsFixture = mcpAuthFacadeFixtureDir + "facade-threat-controls.v1.json"
+
+// threatControlsGroup is the single group the threat-controls table carries. The
+// checker refuses any other group, so a stray row cannot be silently ignored.
+const threatControlsGroup = "threat_controls"
+
+// threatControlsCaseCount is the number of threat rows the shared fixture must
+// carry; a change to the table must also be a deliberate edit in the Go,
+// TypeScript, and Python checkers, so no runtime can silently check fewer rows.
+const threatControlsCaseCount = 11
+
+// threatPinSource is one entry of the closed pin vocabulary: the fixture a pin
+// source names, and the row shapes that fixture is looked up in.
+type threatPinSource struct {
+	File       string
+	ByCaseID   bool
+	ByCaseName bool
+	ByKey      bool
+}
+
+// threatPinSources is the closed pin vocabulary every threat-controls pin source
+// must belong to. Each entry names a table in the corpus and how a pin's row is
+// resolved inside it: a cases[].id, a cases[].name, or a dotted key path.
+var threatPinSources = map[string]threatPinSource{
+	"journey":              {File: "facade-journey.v1.json", ByCaseID: true, ByKey: true},
+	"conformance":          {File: "facade-conformance.v1.json", ByCaseID: true},
+	"route_model":          {File: "facade-route-model.v1.json", ByKey: true},
+	"transport_posture":    {File: "facade-transport-posture.v1.json", ByKey: true},
+	"jwks_validator":       {File: "jwks-validator.v1.json", ByCaseName: true},
+	"discovery_bootstrap":  {File: "discovery-bootstrap.v1.json", ByCaseName: true, ByKey: true},
+	"provider_conformance": {File: "facade-provider-conformance.v1.json", ByCaseID: true},
+	"store_conformance":    {File: "facade-store-conformance.v1.json", ByCaseID: true},
+	"route_challenge":      {File: "route-challenge.v1.json", ByKey: true},
+}
+
+// threatControlsDocument and threatControlCase are the threat-controls rows: one
+// row per threat (T1-T11), each naming the attack class, the control, the
+// fixture-backed pins that resolve to executed rows, and the pin strings that
+// name no corpus row (a design statement or the conformance kit's own harness).
+type threatControlsDocument struct {
+	ID          string              `json:"id"`
+	Kind        string              `json:"kind"`
+	Status      string              `json:"status"`
+	Description string              `json:"description"`
+	Cases       []threatControlCase `json:"cases"`
+}
+
+type threatControlCase struct {
+	ID                string      `json:"id"`
+	Group             string      `json:"group"`
+	Threat            string      `json:"threat"`
+	Control           string      `json:"control"`
+	Pins              []threatPin `json:"pins"`
+	NativePins        []string    `json:"native_pins"`
+	SourcePins        []string    `json:"source_pins"`
+	RuntimeExecutable bool        `json:"runtime_executable"`
+	CDKVisible        bool        `json:"cdk_visible"`
+}
+
+type threatPin struct {
+	Source string `json:"source"`
+	Row    string `json:"row"`
+}
+
+func loadThreatControlsFixture(t *testing.T) threatControlsDocument {
+	t.Helper()
+	body, err := os.ReadFile(facadeThreatControlsFixture) // #nosec G304 -- path is a fixed test fixture path built from a constant directory.
+	require.NoErrorf(t, err, "read shared fixture %s", facadeThreatControlsFixture)
+	var document threatControlsDocument
+	require.NoErrorf(t, json.Unmarshal(body, &document), "decode shared fixture %s", facadeThreatControlsFixture)
+	return document
+}
+
+// TestFrontChannelThreatControlsResolveAgainstThePinnedTables proves every
+// threat row's pin resolves to an executed row in the table it names, so the
+// shared threat-controls table is bidirectional: dropping a referenced row fails
+// the check, and adding a pin that resolves to nothing fails it too.
+func TestFrontChannelThreatControlsResolveAgainstThePinnedTables(t *testing.T) {
+	document := loadThreatControlsFixture(t)
+	require.Equal(t, "mcp.auth.facade.threat_controls", document.ID)
+	require.Equal(t, "conformance", document.Kind)
+	require.NotEmpty(t, document.Status, "the threat-controls table must carry a status")
+	require.NotEmpty(t, document.Description, "the threat-controls table must carry a description")
+
+	documents := map[string]map[string]any{}
+	loadPinnedTable := func(source string) map[string]any {
+		if doc, ok := documents[source]; ok {
+			return doc
+		}
+		path := mcpAuthFacadeFixtureDir + threatPinSources[source].File
+		body, err := os.ReadFile(path) // #nosec G304 -- path is a fixed test fixture path built from a constant directory.
+		require.NoErrorf(t, err, "read pinned fixture %s", path)
+		var doc map[string]any
+		require.NoErrorf(t, json.Unmarshal(body, &doc), "decode pinned fixture %s", path)
+		documents[source] = doc
+		return doc
+	}
+
+	// resolves reports whether the pin's row is a real id, name, or key inside the
+	// table its source names.
+	resolves := func(sourceKey, row string) bool {
+		source := threatPinSources[sourceKey]
+		table := loadPinnedTable(sourceKey)
+		if source.ByCaseID || source.ByCaseName {
+			cases, _ := table["cases"].([]any)
+			for _, entry := range cases {
+				fields, ok := entry.(map[string]any)
+				if !ok {
+					continue
+				}
+				if source.ByCaseID {
+					if id, _ := fields["id"].(string); id != "" && id == row {
+						return true
+					}
+				}
+				if source.ByCaseName {
+					if name, _ := fields["name"].(string); name != "" && name == row {
+						return true
+					}
+				}
+			}
+		}
+		if !source.ByKey {
+			return false
+		}
+		var current any = table
+		for _, part := range strings.Split(row, ".") {
+			fields, ok := current.(map[string]any)
+			if !ok {
+				return false
+			}
+			next, ok := fields[part]
+			if !ok {
+				return false
+			}
+			current = next
+		}
+		return current != nil
+	}
+
+	rows := make([]threatControlCase, 0, len(document.Cases))
+	for _, row := range document.Cases {
+		require.NotEmptyf(t, row.Group, "case %q must carry a group", row.ID)
+		require.Equalf(
+			t,
+			threatControlsGroup,
+			row.Group,
+			"case %q carries group %q; the threat-controls checker reads only %q",
+			row.ID,
+			row.Group,
+			threatControlsGroup,
+		)
+		rows = append(rows, row)
+	}
+	require.Equalf(t, threatControlsCaseCount, len(rows), "loaded %d %q cases", len(rows), threatControlsGroup)
+
+	checked := 0
+	for _, row := range rows {
+		checked++
+		t.Run(row.ID, func(t *testing.T) {
+			require.NotEmptyf(t, row.Threat, "case %q must name the attack class", row.ID)
+			require.NotEmptyf(t, row.Control, "case %q must name the framework control", row.ID)
+			require.NotEmptyf(t, row.SourcePins, "case %q must preserve the pin strings it was lifted from", row.ID)
+			if row.RuntimeExecutable {
+				require.NotEmptyf(
+					t,
+					row.Pins,
+					"case %q is runtime_executable but carries no fixture-backed pin",
+					row.ID,
+				)
+			}
+			for _, pin := range row.Pins {
+				source, ok := threatPinSources[pin.Source]
+				require.Truef(
+					t,
+					ok,
+					"case %q pin source %q is outside the closed pin vocabulary",
+					row.ID,
+					pin.Source,
+				)
+				require.Truef(
+					t,
+					resolves(pin.Source, pin.Row),
+					"case %q pin %s:%s does not resolve inside %s",
+					row.ID,
+					pin.Source,
+					pin.Row,
+					source.File,
+				)
+			}
+		})
+	}
+	require.Equalf(t, threatControlsCaseCount, checked, "checked %d %q cases", checked, threatControlsGroup)
+}

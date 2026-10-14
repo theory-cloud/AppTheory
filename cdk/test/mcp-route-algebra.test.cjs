@@ -494,3 +494,114 @@ test("the shared journey table exists, carries one group, and agrees with the ro
     "the protected-resource row must pin the algebra-derived authorization server",
   );
 });
+
+// The shared threat-controls table (the table the Go, TypeScript, and Python
+// suites resolve every threat row against). CDK does not run the facade
+// mechanics, but the rows it can see -- the per-route issuer the mix-up defense
+// depends on, above all -- must resolve against the tables CDK already loads, so
+// a route-algebra change cannot silently invalidate a threat-control pin.
+const threatControls = JSON.parse(
+  fs.readFileSync(
+    path.resolve(
+      __dirname,
+      "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-threat-controls.v1.json",
+    ),
+    "utf8",
+  ),
+);
+
+/** The number of threat rows the shared table must carry (T1-T11). */
+const THREAT_CONTROLS_CASE_COUNT = 11;
+
+/** Reports whether a dotted key path exists inside a loaded table. */
+function dottedKeyExists(document, keyPath) {
+  let current = document;
+  for (const part of keyPath.split(".")) {
+    if (current === null || typeof current !== "object" || !(part in current)) {
+      return false;
+    }
+    current = current[part];
+  }
+  return current !== undefined && current !== null;
+}
+
+/**
+ * Resolves one threat-control pin against the tables this suite loads, or null
+ * when the pin names a table CDK does not load.
+ */
+function cdkPinResolves(pin) {
+  if (pin.source === "journey") {
+    return (
+      journey.cases.some((row) => row.id === pin.row) ||
+      dottedKeyExists(journey, pin.row)
+    );
+  }
+  if (pin.source === "route_model") {
+    return dottedKeyExists(routeModel, pin.row);
+  }
+  return null;
+}
+
+test("the shared threat-controls table resolves every CDK-visible pin against the loaded tables", () => {
+  assert.equal(threatControls.id, "mcp.auth.facade.threat_controls");
+  assert.equal(threatControls.kind, "conformance");
+  assert.ok(
+    typeof threatControls.description === "string" &&
+      threatControls.description.length > 0,
+    "the threat-controls table must carry a description",
+  );
+  assert.ok(Array.isArray(threatControls.cases), "the threat-controls table must carry cases");
+
+  const groups = new Set(threatControls.cases.map((row) => row.group));
+  assert.deepEqual(
+    [...groups],
+    ["threat_controls"],
+    "the threat-controls table carries exactly one group",
+  );
+  assert.equal(
+    threatControls.cases.length,
+    THREAT_CONTROLS_CASE_COUNT,
+    "threat row count",
+  );
+  assert.deepEqual(
+    threatControls.cases.map((row) => row.id),
+    Array.from(
+      { length: THREAT_CONTROLS_CASE_COUNT },
+      (_unused, index) => `threat.t${index + 1}`,
+    ),
+    "threat row ids must be T1-T11",
+  );
+
+  const visible = threatControls.cases.filter((row) => row.cdk_visible === true);
+  assert.ok(visible.length > 0, "at least one threat row must be CDK-visible");
+  for (const row of visible) {
+    assert.ok(
+      Array.isArray(row.pins) && row.pins.length > 0,
+      `CDK-visible case ${row.id} must carry fixture-backed pins`,
+    );
+    for (const pin of row.pins) {
+      const resolved = cdkPinResolves(pin);
+      assert.notEqual(
+        resolved,
+        null,
+        `CDK-visible case ${row.id} pins ${pin.source}:${pin.row}, whose source this suite does not load`,
+      );
+      assert.ok(
+        resolved,
+        `case ${row.id} pin ${pin.source}:${pin.row} does not resolve inside the table CDK loads`,
+      );
+    }
+  }
+
+  // T4 (mix-up / confused deputy) is the row the CDK side can see: the facade's
+  // per-route issuer mode is what makes a proxied upstream's tokens unusable at
+  // any other route.
+  const t4 = threatControls.cases.find((row) => row.id === "threat.t4");
+  assert.ok(
+    t4.pins.some(
+      (pin) => pin.source === "route_model" && pin.row === "issuer_modes.route",
+    ),
+    "T4 must pin the per-route issuer mode",
+  );
+  assert.equal(routeModel.issuer_modes.route.discovery_issuer, "<route URL>");
+});

@@ -2742,5 +2742,124 @@ class JourneyTableTests(unittest.TestCase):
             )
 
 
+# ---------------------------------------------------------------------------
+# Shared threat-controls table (the same table the Go and TypeScript checkers read)
+# ---------------------------------------------------------------------------
+
+THREAT_CONTROLS_FIXTURE_NAME = "facade-threat-controls.v1.json"
+
+THREAT_CONTROLS_GROUP = "threat_controls"
+
+# The number of threat rows the shared table must carry; a change to the table
+# must also be a deliberate edit in the Go and TypeScript checkers, so no runtime
+# can silently check fewer rows.
+THREAT_CONTROLS_CASE_COUNT = 11
+
+# The closed pin vocabulary: each source names a table in the corpus and the row
+# shapes a pin is resolved in -- a cases[].id, a cases[].name, or a dotted key
+# path.
+THREAT_PIN_SOURCES: dict[str, dict[str, Any]] = {
+    "journey": {"file": "facade-journey.v1.json", "by_case_id": True, "by_key": True},
+    "conformance": {"file": "facade-conformance.v1.json", "by_case_id": True},
+    "route_model": {"file": "facade-route-model.v1.json", "by_key": True},
+    "transport_posture": {"file": "facade-transport-posture.v1.json", "by_key": True},
+    "jwks_validator": {"file": "jwks-validator.v1.json", "by_case_name": True},
+    "discovery_bootstrap": {"file": "discovery-bootstrap.v1.json", "by_case_name": True, "by_key": True},
+    "provider_conformance": {"file": "facade-provider-conformance.v1.json", "by_case_id": True},
+    "store_conformance": {"file": "facade-store-conformance.v1.json", "by_case_id": True},
+    "route_challenge": {"file": "route-challenge.v1.json", "by_key": True},
+}
+
+
+def _load_threat_controls_fixture() -> dict:
+    with (FIXTURE_DIR / THREAT_CONTROLS_FIXTURE_NAME).open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _load_pinned_table(file_name: str) -> dict:
+    """Loads one pin vocabulary table, located exactly as the journey and
+    conformance loaders locate theirs.
+    """
+
+    with (FIXTURE_DIR / file_name).open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _threat_pin_resolves(source: dict, row: str, table: dict) -> bool:
+    """Reports whether the pin's row is a real id, name, or key inside the table."""
+
+    if source.get("by_case_id") or source.get("by_case_name"):
+        for entry in table.get("cases") or []:
+            if source.get("by_case_id") and entry.get("id") and entry.get("id") == row:
+                return True
+            if source.get("by_case_name") and entry.get("name") and entry.get("name") == row:
+                return True
+    if not source.get("by_key"):
+        return False
+    current: Any = table
+    for part in row.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return False
+        current = current[part]
+    return current is not None
+
+
+class ThreatControlsTableTests(unittest.TestCase):
+    """Proves every threat row is pinned to a row that exists in the table it names."""
+
+    def test_the_shared_threat_controls_table_pins_every_threat_row(self) -> None:
+        document = _load_threat_controls_fixture()
+        self.assertEqual("mcp.auth.facade.threat_controls", document["id"])
+        self.assertEqual("conformance", document["kind"])
+        self.assertTrue(document["status"], "the threat-controls table must carry a status")
+        self.assertTrue(document["description"], "the threat-controls table must carry a description")
+
+        tables: dict[str, dict] = {}
+
+        def table_for(source_key: str) -> dict:
+            if source_key not in tables:
+                tables[source_key] = _load_pinned_table(THREAT_PIN_SOURCES[source_key]["file"])
+            return tables[source_key]
+
+        rows = []
+        for row in document.get("cases") or []:
+            self.assertTrue(row.get("group"), f"case {row.get('id')} must carry a group")
+            self.assertEqual(
+                THREAT_CONTROLS_GROUP,
+                row.get("group"),
+                f"case {row.get('id')} carries group {row.get('group')!r}; "
+                f"the threat-controls checker reads only {THREAT_CONTROLS_GROUP!r}",
+            )
+            rows.append(row)
+        self.assertEqual(THREAT_CONTROLS_CASE_COUNT, len(rows))
+
+        checked = 0
+        for row in rows:
+            checked += 1
+            with self.subTest(row=row["id"]):
+                self.assertTrue(row.get("threat"), f"case {row['id']} must name the attack class")
+                self.assertTrue(row.get("control"), f"case {row['id']} must name the framework control")
+                self.assertTrue(
+                    row.get("source_pins"),
+                    f"case {row['id']} must preserve the pin strings it was lifted from",
+                )
+                if row.get("runtime_executable") is True:
+                    self.assertTrue(
+                        row.get("pins"),
+                        f"case {row['id']} is runtime_executable but carries no fixture-backed pin",
+                    )
+                for pin in row.get("pins") or []:
+                    source = THREAT_PIN_SOURCES.get(pin["source"])
+                    self.assertIsNotNone(
+                        source,
+                        f"case {row['id']} pin source {pin['source']!r} is outside the closed pin vocabulary",
+                    )
+                    self.assertTrue(
+                        _threat_pin_resolves(source, pin["row"], table_for(pin["source"])),
+                        f"case {row['id']} pin {pin['source']}:{pin['row']} does not resolve inside {source['file']}",
+                    )
+        self.assertEqual(THREAT_CONTROLS_CASE_COUNT, checked)
+
+
 if __name__ == "__main__":
     unittest.main()

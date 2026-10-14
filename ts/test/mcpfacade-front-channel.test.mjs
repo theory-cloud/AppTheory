@@ -3144,3 +3144,157 @@ test("the shared journey table executes every step through the mounted routes", 
   }
   assert.equal(executed, JOURNEY_CASE_COUNT);
 });
+
+// ---------------------------------------------------------------------------
+// Shared threat-controls table (the same table the Go and Python checkers read)
+// ---------------------------------------------------------------------------
+
+const THREAT_CONTROLS_FIXTURE_NAME = "facade-threat-controls.v1.json";
+
+const THREAT_CONTROLS_GROUP = "threat_controls";
+
+/**
+ * The number of threat rows the shared table must carry; a change to the table
+ * must also be a deliberate edit in the Go and Python checkers, so no runtime
+ * can silently check fewer rows.
+ */
+const THREAT_CONTROLS_CASE_COUNT = 11;
+
+/**
+ * The closed pin vocabulary: each source names a table in the corpus and the row
+ * shapes a pin is resolved in — a cases[].id, a cases[].name, or a dotted key
+ * path.
+ */
+const THREAT_PIN_SOURCES = {
+  journey: { file: "facade-journey.v1.json", byCaseID: true, byKey: true },
+  conformance: { file: "facade-conformance.v1.json", byCaseID: true },
+  route_model: { file: "facade-route-model.v1.json", byKey: true },
+  transport_posture: { file: "facade-transport-posture.v1.json", byKey: true },
+  jwks_validator: { file: "jwks-validator.v1.json", byCaseName: true },
+  discovery_bootstrap: {
+    file: "discovery-bootstrap.v1.json",
+    byCaseName: true,
+    byKey: true,
+  },
+  provider_conformance: {
+    file: "facade-provider-conformance.v1.json",
+    byCaseID: true,
+  },
+  store_conformance: { file: "facade-store-conformance.v1.json", byCaseID: true },
+  route_challenge: { file: "route-challenge.v1.json", byKey: true },
+};
+
+function loadThreatControlsFixture() {
+  return JSON.parse(
+    readFileSync(path.join(FIXTURE_DIR, THREAT_CONTROLS_FIXTURE_NAME), "utf8"),
+  );
+}
+
+/** Loads one table of the closed pin vocabulary, located exactly as the journey
+ * and conformance loaders locate theirs.
+ */
+function loadPinnedTable(fileName) {
+  return JSON.parse(readFileSync(path.join(FIXTURE_DIR, fileName), "utf8"));
+}
+
+/** Reports whether the pin's row is a real id, name, or key inside the table. */
+function threatPinResolves(source, row, table) {
+  if (source.byCaseID || source.byCaseName) {
+    for (const entry of table.cases ?? []) {
+      if (
+        source.byCaseID &&
+        typeof entry.id === "string" &&
+        entry.id !== "" &&
+        entry.id === row
+      ) {
+        return true;
+      }
+      if (
+        source.byCaseName &&
+        typeof entry.name === "string" &&
+        entry.name !== "" &&
+        entry.name === row
+      ) {
+        return true;
+      }
+    }
+  }
+  if (!source.byKey) {
+    return false;
+  }
+  let current = table;
+  for (const part of row.split(".")) {
+    if (current === null || typeof current !== "object" || !(part in current)) {
+      return false;
+    }
+    current = current[part];
+  }
+  return current !== undefined && current !== null;
+}
+
+/**
+ * Proves every threat row's pin resolves to an executed row in the table it
+ * names, so the shared threat-controls table is bidirectional: dropping a
+ * referenced row fails the check, and adding a pin that resolves to nothing
+ * fails it too.
+ */
+test("the shared threat-controls table pins every threat row to an executed row", async (t) => {
+  const document = loadThreatControlsFixture();
+  assert.equal(document.id, "mcp.auth.facade.threat_controls");
+  assert.equal(document.kind, "conformance");
+  assert.ok(typeof document.status === "string" && document.status.length > 0);
+  assert.ok(
+    typeof document.description === "string" && document.description.length > 0,
+  );
+
+  const tables = new Map();
+  const tableFor = (sourceKey) => {
+    if (!tables.has(sourceKey)) {
+      tables.set(sourceKey, loadPinnedTable(THREAT_PIN_SOURCES[sourceKey].file));
+    }
+    return tables.get(sourceKey);
+  };
+
+  const rows = [];
+  for (const row of document.cases ?? []) {
+    assert.ok(row.group, `case ${row.id} must carry a group`);
+    assert.equal(
+      row.group,
+      THREAT_CONTROLS_GROUP,
+      `case ${row.id} carries group ${row.group}; the threat-controls checker reads only ${THREAT_CONTROLS_GROUP}`,
+    );
+    rows.push(row);
+  }
+  assert.equal(rows.length, THREAT_CONTROLS_CASE_COUNT);
+
+  let checked = 0;
+  for (const row of rows) {
+    checked += 1;
+    await t.test(row.id, () => {
+      assert.ok(row.threat, `case ${row.id} must name the attack class`);
+      assert.ok(row.control, `case ${row.id} must name the framework control`);
+      assert.ok(
+        Array.isArray(row.source_pins) && row.source_pins.length > 0,
+        `case ${row.id} must preserve the pin strings it was lifted from`,
+      );
+      if (row.runtime_executable === true) {
+        assert.ok(
+          Array.isArray(row.pins) && row.pins.length > 0,
+          `case ${row.id} is runtime_executable but carries no fixture-backed pin`,
+        );
+      }
+      for (const pin of row.pins ?? []) {
+        const source = THREAT_PIN_SOURCES[pin.source];
+        assert.ok(
+          source,
+          `case ${row.id} pin source ${pin.source} is outside the closed pin vocabulary`,
+        );
+        assert.ok(
+          threatPinResolves(source, pin.row, tableFor(pin.source)),
+          `case ${row.id} pin ${pin.source}:${pin.row} does not resolve inside ${source.file}`,
+        );
+      }
+    });
+  }
+  assert.equal(checked, THREAT_CONTROLS_CASE_COUNT);
+});

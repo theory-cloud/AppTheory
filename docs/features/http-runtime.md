@@ -5,7 +5,7 @@ description: Tiered middleware, routing, normalization, and the AppTheory error 
 
 # HTTP Runtime (P0–P2)
 
-The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [286-vector corpus](../reference/contract-fixtures.md) includes 275 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the eleven nested MCP route-algebra and auth-facade tables. <!-- apptheory-fixture-count: 286 -->
+The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [287-vector corpus](../reference/contract-fixtures.md) includes 275 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the twelve nested MCP route-algebra and auth-facade tables. <!-- apptheory-fixture-count: 287 -->
 
 The runtime is **tiered.** You opt into a tier when you create the app:
 
@@ -349,4 +349,4 @@ Deliberately conservative, and reported rather than assumed joined:
 - [Logging Profiles](logging-profiles.md) — profile-backed structured JSON log output
 - [Sanitization](sanitization.md) — safe logging helpers
 - [Event Workloads](event-workloads.md) — the non-HTTP side of the runtime
-- [Contract Fixtures](../reference/contract-fixtures.md) — 286 vectors: 275 generic fixtures across Go/TS/Python plus eleven nested MCP route-algebra and auth-facade tables <!-- apptheory-fixture-count: 286 -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — 287 vectors: 275 generic fixtures across Go/TS/Python plus twelve nested MCP route-algebra and auth-facade tables <!-- apptheory-fixture-count: 287 -->
