@@ -263,7 +263,13 @@ class _MintingProvider:
 
 
 class _FrontChannelHarness:
-    def __init__(self, test: unittest.TestCase, provider_options: Any = None) -> None:
+    def __init__(
+        self,
+        test: unittest.TestCase,
+        provider_options: Any = None,
+        issuer_mode: str = "route",
+        registration_endpoint_url: str | None = None,
+    ) -> None:
         self._test = test
         self.clock = _ManualClock(datetime(2026, 1, 1, tzinfo=UTC))
         fake_options: dict[str, Any] = {
@@ -318,7 +324,8 @@ class _FrontChannelHarness:
         config = FacadeConfig(
             issuer_url=FRONT_TEST_BASE_URL + "/acme/mcp",
             jwks_uri=FRONT_TEST_UPSTREAM_ISS + "/.well-known/jwks.json",
-            issuer_mode="route",
+            issuer_mode=issuer_mode,
+            registration_endpoint_url=registration_endpoint_url or "",
             url_mode=URL_MODE_PUBLIC_BASE_URL,
             public_base_url=FRONT_TEST_BASE_URL,
             transport_posture="iam",
@@ -803,6 +810,109 @@ def _bound_route_mint_code(harness: _FrontChannelHarness, endpoint: EndpointPath
     if not code:
         raise AssertionError("bound_route callback must mint a facade code")
     return code
+
+
+METADATA_REGISTRATION_GROUP = "metadata_registration"
+
+# The number of metadata_registration rows the shared table must carry; a change
+# to the table must also be a deliberate edit in the Go and TypeScript loaders, so
+# no runtime can silently execute a smaller table.
+METADATA_REGISTRATION_CASE_COUNT = 6
+
+# The single route the group resolves, so a row exercises only the mount shape and
+# the issuer mode.
+METADATA_REGISTRATION_ENDPOINT = EndpointPath(kind="namespace", client_namespace="acme")
+
+
+def _metadata_registration_app(test: unittest.TestCase, row: dict) -> Any:
+    """Mount the facade a metadata_registration row asks for.
+
+    The front-channel field set is attached only for the rows that request it, so
+    the mounted ``/register`` route and the advertised member move together.
+    """
+    if row["front_channel"]:
+        return _FrontChannelHarness(
+            test,
+            issuer_mode=row["issuer_mode"],
+            registration_endpoint_url=row.get("registration_endpoint_url"),
+        ).app
+
+    config = FacadeConfig(
+        issuer_url=FRONT_TEST_BASE_URL + "/acme/mcp",
+        jwks_uri=FRONT_TEST_UPSTREAM_ISS + "/.well-known/jwks.json",
+        issuer_mode=row["issuer_mode"],
+        registration_endpoint_url=row.get("registration_endpoint_url") or "",
+        url_mode=URL_MODE_PUBLIC_BASE_URL,
+        public_base_url=FRONT_TEST_BASE_URL,
+        transport_posture="iam",
+        scopes={
+            "namespace": ["mcp:tools"],
+            "partner_namespace": ["mcp:tools"],
+            "agent": ["mcp:tools"],
+            "partner_agent": ["mcp:tools"],
+        },
+        mcp_handler=lambda _ctx: Response(status=204, headers={}, cookies=[], body=b"", is_base64=False),
+    )
+    if row.get("register_handler"):
+        config.register_handler = lambda _kind: (
+            lambda _ctx: Response(status=204, headers={}, cookies=[], body=b"", is_base64=False)
+        )
+    app = create_app(tier="p0")
+    register_mcp_facade(app, config)
+    return app
+
+
+def _metadata_registration_document(app: Any) -> dict:
+    response = app.serve(
+        Request(
+            method="GET",
+            path=METADATA_REGISTRATION_ENDPOINT.oauth_authorization_server_path(),
+            query={},
+            body=b"",
+            is_base64=False,
+        )
+    )
+    if response.status != 200:
+        raise AssertionError(f"discovery must answer 200, got {response.status}")
+    return json.loads(response.body.decode("utf-8"))
+
+
+class FrontChannelMetadataRegistrationTests(unittest.TestCase):
+    """Pins the advertised ``registration_endpoint`` to the mounted ``/register``
+    route through the real facade: the routed RFC 8414 document carries the member
+    exactly while the front channel or an explicit register handler mounts that
+    route, so a facade that mounts none never advertises a URL that 404s.
+    """
+
+    def test_metadata_advertises_registration_exactly_while_the_route_is_mounted(self) -> None:
+        rows = [case for case in _load_fixture()["cases"] if case["group"] == METADATA_REGISTRATION_GROUP]
+        self.assertEqual(METADATA_REGISTRATION_CASE_COUNT, len(rows))
+
+        register_path = METADATA_REGISTRATION_ENDPOINT.oauth_register_path()
+
+        executed = 0
+        for row in rows:
+            executed += 1
+            with self.subTest(case=row["id"]):
+                document = _metadata_registration_document(_metadata_registration_app(self, row))
+                expect = row["expect"]
+                if expect == "absent":
+                    self.assertNotIn(
+                        "registration_endpoint",
+                        document,
+                        f"row {row['id']} must omit registration_endpoint; the /register route is not mounted",
+                    )
+                elif expect == "configured":
+                    self.assertEqual(row["registration_endpoint_url"], document["registration_endpoint"])
+                elif expect == "issuer_derived":
+                    self.assertEqual(FRONT_TEST_BASE_URL + "/acme/mcp/register", document["registration_endpoint"])
+                elif expect == "route_derived":
+                    self.assertEqual(FRONT_TEST_BASE_URL + register_path, document["registration_endpoint"])
+                else:
+                    raise AssertionError(f"unknown expect {expect!r}")
+
+        self.assertEqual(METADATA_REGISTRATION_CASE_COUNT, executed)
+        print(f"metadata registration conformance: {executed} cases run")
 
 
 class FrontChannelBoundRouteConformanceTests(unittest.TestCase):

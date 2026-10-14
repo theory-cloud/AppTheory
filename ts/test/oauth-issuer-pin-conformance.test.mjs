@@ -71,6 +71,16 @@ const BOUND_ROUTE_GROUP = "bound_route";
  */
 const REFRESH_GROUP = "refresh";
 
+/**
+ * `metadata_registration` is the sibling group holding the advertised
+ * registration_endpoint contract: the routed RFC 8414 document carries the
+ * member exactly while the front channel or an explicit register handler mounts
+ * the /register route. It is executed by the facade front-channel test through
+ * the real mounted discovery handler, not here; the group ledger below still
+ * lists it so a new group cannot appear without a loader.
+ */
+const METADATA_REGISTRATION_GROUP = "metadata_registration";
+
 const FIXTURE_GROUPS = [
   ISSUER_PIN_GROUP,
   REDIRECT_MATCH_GROUP,
@@ -79,6 +89,7 @@ const FIXTURE_GROUPS = [
   DCR_GROUP,
   BOUND_ROUTE_GROUP,
   REFRESH_GROUP,
+  METADATA_REGISTRATION_GROUP,
 ];
 
 /**

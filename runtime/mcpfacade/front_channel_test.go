@@ -80,6 +80,12 @@ type frontChannelHarnessOptions struct {
 	// providerOptions mutates the fake upstream's options before it starts, so a
 	// test can serve a grant-specific or failing token response.
 	providerOptions func(*oauthprovider.Options)
+
+	// issuerMode and registrationEndpointURL tune the facade the harness
+	// registers. The zero issuerMode is the route mode every front-channel test
+	// uses.
+	issuerMode              mcproutes.IssuerMode
+	registrationEndpointURL string
 }
 
 // manualClockAdapter implements apptheory.Clock over the harness's ManualClock,
@@ -192,14 +198,19 @@ func newFrontChannelHarnessWith(t *testing.T, options frontChannelHarnessOptions
 	})
 	require.NoError(t, err)
 
+	issuerMode := options.issuerMode
+	if issuerMode == "" {
+		issuerMode = mcproutes.IssuerModeRoute
+	}
 	kind := mcproutes.EndpointKindNamespace
 	config := FacadeConfig{
-		IssuerURL:        frontTestBaseURL + "/acme/mcp",
-		JWKSURI:          frontTestUpstreamIss + "/.well-known/jwks.json",
-		IssuerMode:       mcproutes.IssuerModeRoute,
-		URLMode:          URLModePublicBaseURL,
-		PublicBaseURL:    frontTestBaseURL,
-		TransportPosture: TransportPostureIAM,
+		IssuerURL:               frontTestBaseURL + "/acme/mcp",
+		JWKSURI:                 frontTestUpstreamIss + "/.well-known/jwks.json",
+		IssuerMode:              issuerMode,
+		RegistrationEndpointURL: options.registrationEndpointURL,
+		URLMode:                 URLModePublicBaseURL,
+		PublicBaseURL:           frontTestBaseURL,
+		TransportPosture:        TransportPostureIAM,
 		Scopes: map[mcproutes.EndpointKind][]string{
 			mcproutes.EndpointKindNamespace:        {"mcp:tools"},
 			mcproutes.EndpointKindPartnerNamespace: {"mcp:tools"},
@@ -546,6 +557,118 @@ func TestFrontChannelTokenEnforcesTheSharedFormParseTable(t *testing.T) {
 	}
 
 	require.Equalf(t, formParseCaseCount, executed, "executed %d %q cases", executed, formParseGroup)
+}
+
+// metadataRegistrationGroup names the group the same shared table carries that
+// pins the advertised registration_endpoint to the mounted /register route.
+const metadataRegistrationGroup = "metadata_registration"
+
+// metadataRegistrationCaseCount is the number of metadata_registration rows the
+// shared fixture must carry; a change to the table must also be a deliberate
+// edit in the Go, TypeScript, and Python loaders, so no runtime can silently
+// execute a smaller table.
+const metadataRegistrationCaseCount = 6
+
+// metadataRegistrationConformanceDocument and metadataRegistrationCase are the
+// metadata_registration rows. `front_channel` and `register_handler` choose the
+// facade shape, and `expect` names how the row's advertised value is derived:
+// absent, the row's own configured URL, `<family issuer>/register`, or the
+// route's derived `/register` URL.
+type metadataRegistrationConformanceDocument struct {
+	Cases []metadataRegistrationCase `json:"cases"`
+}
+
+type metadataRegistrationCase struct {
+	ID                      string `json:"id"`
+	Group                   string `json:"group"`
+	IssuerMode              string `json:"issuer_mode"`
+	FrontChannel            bool   `json:"front_channel"`
+	RegisterHandler         bool   `json:"register_handler"`
+	RegistrationEndpointURL string `json:"registration_endpoint_url"`
+	Expect                  string `json:"expect"`
+}
+
+// metadataRegistrationEndpoint is the single route the group resolves, so a row
+// exercises only the mount shape and the issuer mode.
+func metadataRegistrationEndpoint() mcproutes.EndpointPath {
+	return mcproutes.EndpointPath{Kind: mcproutes.EndpointKindNamespace, ClientNamespace: "acme"}
+}
+
+// newMetadataRegistrationApp mounts a facade for one row. The front-channel
+// field set is attached only for the rows that ask for it, so the mounted
+// /register route and the advertised member move together.
+func newMetadataRegistrationApp(t *testing.T, row metadataRegistrationCase) *apptheory.App {
+	t.Helper()
+	if row.FrontChannel {
+		return newFrontChannelHarnessWith(t, frontChannelHarnessOptions{
+			issuerMode:              mcproutes.IssuerMode(row.IssuerMode),
+			registrationEndpointURL: row.RegistrationEndpointURL,
+		}).app
+	}
+	config := validConfig(URLModePublicBaseURL)
+	config.IssuerURL = frontTestBaseURL + "/acme/mcp"
+	config.PublicBaseURL = frontTestBaseURL
+	config.IssuerMode = mcproutes.IssuerMode(row.IssuerMode)
+	config.RegistrationEndpointURL = row.RegistrationEndpointURL
+	if row.RegisterHandler {
+		config.RegisterHandler = kindHandlerFactory("register")
+	}
+	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	_, err := RegisterMCPFacade(app, config)
+	require.NoError(t, err)
+	return app
+}
+
+// TestFrontChannelMetadataAdvertisesRegistrationExactlyWhileTheRouteIsMounted
+// pins the advertised registration_endpoint to the mounted /register route
+// through the real facade: the routed RFC 8414 document carries the member
+// exactly when the front channel or an explicit register handler mounts the
+// route, so a facade that mounts none never advertises a URL that 404s.
+func TestFrontChannelMetadataAdvertisesRegistrationExactlyWhileTheRouteIsMounted(t *testing.T) {
+	var document metadataRegistrationConformanceDocument
+	loadFacadeConformanceFixture(t, &document)
+
+	rows := make([]metadataRegistrationCase, 0, len(document.Cases))
+	for _, row := range document.Cases {
+		require.NotEmptyf(t, row.Group, "case %q must carry a group", row.ID)
+		if row.Group == metadataRegistrationGroup {
+			rows = append(rows, row)
+		}
+	}
+	require.Equalf(t, metadataRegistrationCaseCount, len(rows), "loaded %d %q cases", len(rows), metadataRegistrationGroup)
+
+	endpoint := metadataRegistrationEndpoint()
+	discoveryPath := mustPath(t, endpoint.OAuthAuthorizationServerPath)
+	registerPath := mustPath(t, endpoint.OAuthRegisterPath)
+
+	executed := 0
+	for _, row := range rows {
+		executed++
+		t.Run(row.ID, func(t *testing.T) {
+			app := newMetadataRegistrationApp(t, row)
+			response := serve(app, "GET", discoveryPath, nil)
+			require.Equalf(t, 200, response.Status, "row %q", row.ID)
+
+			var payload map[string]any
+			require.NoErrorf(t, json.Unmarshal(response.Body, &payload), "row %q", row.ID)
+
+			switch row.Expect {
+			case "absent":
+				_, present := payload["registration_endpoint"]
+				require.Falsef(t, present, "row %q must omit registration_endpoint; the /register route is not mounted", row.ID)
+			case "configured":
+				require.Equalf(t, row.RegistrationEndpointURL, payload["registration_endpoint"], "row %q", row.ID)
+			case "issuer_derived":
+				require.Equalf(t, frontTestBaseURL+"/acme/mcp/register", payload["registration_endpoint"], "row %q", row.ID)
+			case "route_derived":
+				require.Equalf(t, frontTestBaseURL+registerPath, payload["registration_endpoint"], "row %q", row.ID)
+			default:
+				t.Fatalf("unknown expect %q", row.Expect)
+			}
+		})
+	}
+
+	require.Equalf(t, metadataRegistrationCaseCount, executed, "executed %d %q cases", executed, metadataRegistrationGroup)
 }
 
 // methodStatusGroup names the route-model method-mismatch group the same shared

@@ -57,15 +57,24 @@ const boundRouteGroup = "bound_route"
 // appear without a loader.
 const refreshGroup = "refresh"
 
+// metadataRegistrationGroup is the sibling group holding the advertised
+// registration_endpoint contract: the routed RFC 8414 document carries the
+// member exactly while the front channel or an explicit register handler mounts
+// the /register route. It is executed by runtime/mcpfacade's front-channel tests
+// through the real mounted discovery handler, not here; the ledger below still
+// lists it so a new group cannot appear without a loader.
+const metadataRegistrationGroup = "metadata_registration"
+
 // fixtureGroups is every group the shared table is allowed to carry.
 var fixtureGroups = map[string]struct{}{
-	issuerPinGroup:     {},
-	redirectMatchGroup: {},
-	formParseGroup:     {},
-	methodStatusGroup:  {},
-	dcrGroup:           {},
-	boundRouteGroup:    {},
-	refreshGroup:       {},
+	issuerPinGroup:            {},
+	redirectMatchGroup:        {},
+	formParseGroup:            {},
+	methodStatusGroup:         {},
+	dcrGroup:                  {},
+	boundRouteGroup:           {},
+	refreshGroup:              {},
+	metadataRegistrationGroup: {},
 }
 
 // issuerPinCaseCount is the number of issuer_pin rows the shared fixture must

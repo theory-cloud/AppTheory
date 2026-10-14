@@ -1000,20 +1000,37 @@ func (config normalizedConfig) derivedMetadataRouteURL(
 	return absolute, nil, nil
 }
 
+// registrationRouteMounted reports whether buildRegistrations mounts the
+// RFC 7591 /register route: the front channel owns it, and an explicit register
+// handler mounts it on its own.
+func (config normalizedConfig) registrationRouteMounted() bool {
+	return config.frontChannel != nil || config.registerHandlers != nil
+}
+
 // routedIssuerAndRegistration returns the issuer and registration endpoint the
 // routed RFC 8414 document advertises. In route issuer mode the route URL is the
 // issuer and the registration endpoint is the route's own derived /register path,
-// so the advertised URL and the mounted route cannot drift.
+// so the advertised URL and the mounted route cannot drift. The registration
+// member is advertised exactly when the /register route is mounted, so a facade
+// that mounts no register route omits it instead of advertising a URL that 404s;
+// an empty return value is omitted from the document.
 func (config normalizedConfig) routedIssuerAndRegistration(
 	ctx *apptheory.Context,
 	endpoint mcproutes.EndpointPath,
 ) (string, string, *apptheory.Response, error) {
 	if config.issuerMode != mcproutes.IssuerModeRoute {
-		return config.issuerURL, config.registrationEndpointURL, nil, nil
+		registration := ""
+		if config.registrationRouteMounted() {
+			registration = config.registrationEndpointURL
+		}
+		return config.issuerURL, registration, nil, nil
 	}
 	issuer, response, err := config.derivedMetadataRouteURL(ctx, endpoint, mcproutes.EndpointPath.MCPPath)
 	if response != nil || err != nil {
 		return "", "", response, err
+	}
+	if !config.registrationRouteMounted() {
+		return issuer, "", nil, nil
 	}
 	registration, response, err := config.derivedMetadataRouteURL(ctx, endpoint, mcproutes.EndpointPath.OAuthRegisterPath)
 	if response != nil || err != nil {

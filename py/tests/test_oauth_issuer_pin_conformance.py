@@ -29,6 +29,10 @@ BOUND_ROUTE_GROUP = "bound_route"
 # bounded grace replay, reuse revocation, the scope and resource bindings of a
 # refresh request, and the typed refusals.
 REFRESH_GROUP = "refresh"
+# metadata_registration pins the advertised registration_endpoint to the mounted
+# /register route: the routed RFC 8414 document carries the member exactly while
+# the front channel or an explicit register handler mounts that route.
+METADATA_REGISTRATION_GROUP = "metadata_registration"
 FIXTURE_GROUPS = (
     ISSUER_PIN_GROUP,
     REDIRECT_MATCH_GROUP,
@@ -37,6 +41,7 @@ FIXTURE_GROUPS = (
     DCR_GROUP,
     BOUND_ROUTE_GROUP,
     REFRESH_GROUP,
+    METADATA_REGISTRATION_GROUP,
 )
 
 # The number of issuer_pin rows the shared table must carry; a change to the

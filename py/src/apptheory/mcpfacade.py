@@ -1225,7 +1225,10 @@ def _authorization_server_handler(config: _NormalizedConfig, kind: str) -> Handl
             "issuer": issuer,
             "authorization_endpoint": authorize_url,
             "token_endpoint": token_url,
-            "registration_endpoint": registration_endpoint,
+            # The member sits between token_endpoint and jwks_uri in Go's struct
+            # order, so it is spliced in positionally and omitted entirely when
+            # no register route is mounted.
+            **({"registration_endpoint": registration_endpoint} if registration_endpoint is not None else {}),
             "jwks_uri": config.jwks_uri,
             "response_types_supported": list(config.capabilities.response_types or []),
             "grant_types_supported": list(config.capabilities.grant_types or []),
@@ -1253,19 +1256,34 @@ def _serve_metadata(build: Callable[[Context], Response]) -> Handler:
     return handler
 
 
-def _routed_issuer_and_registration(config: _NormalizedConfig, ctx: Context, endpoint: EndpointPath) -> tuple[str, str]:
+def _registration_route_mounted(config: _NormalizedConfig) -> bool:
+    """Report whether the registration loop mounts the RFC 7591 /register route.
+
+    The front channel owns the route, and an explicit register handler mounts it
+    on its own.
+    """
+    return config.front_channel is not None or config.register_handlers is not None
+
+
+def _routed_issuer_and_registration(
+    config: _NormalizedConfig, ctx: Context, endpoint: EndpointPath
+) -> tuple[str, str | None]:
     """Return the issuer and registration endpoint the routed RFC 8414 document
     advertises.
 
     In route issuer mode the route URL is the issuer and the registration
     endpoint is the route's own derived /register path, so the advertised URL
-    and the mounted route cannot drift.
+    and the mounted route cannot drift. The registration member is advertised
+    exactly when the /register route is mounted, so a facade that mounts no
+    register route omits it instead of advertising a URL that 404s; ``None``
+    means the document carries no member.
     """
+    mounted = _registration_route_mounted(config)
     if config.issuer_mode != ISSUER_MODE_ROUTE:
-        return config.issuer_url, config.registration_endpoint_url
+        return config.issuer_url, config.registration_endpoint_url if mounted else None
     return (
         _build_absolute_url(config, ctx, endpoint.mcp_path()),
-        _build_absolute_url(config, ctx, endpoint.oauth_register_path()),
+        _build_absolute_url(config, ctx, endpoint.oauth_register_path()) if mounted else None,
     )
 
 

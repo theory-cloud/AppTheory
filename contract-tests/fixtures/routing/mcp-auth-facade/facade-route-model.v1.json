@@ -24,7 +24,7 @@
       "authorization_servers": ["<route URL>"],
       "discovery_issuer": "<route URL>",
       "jwks_uri": "<upstream JWKS URI — the upstream signs the access tokens the route hands to clients>",
-      "registration_endpoint": "<public base> + <register path>",
+      "registration_endpoint": "<public base> + <register path> — advertised only while the /register route is mounted, that is when the front channel or an explicit register handler is configured; otherwise the routed RFC 8414 document omits the member",
       "authorization_endpoint": "<public base> + <canonical discovery path> + /authorize",
       "token_endpoint": "<public base> + <canonical discovery path> + /token",
       "client_redirect_iss": "<route URL>"
@@ -106,7 +106,6 @@
       "discovery_url": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp",
       "authorization_endpoint": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/authorize",
       "token_endpoint": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/token",
-      "registration_endpoint": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/register",
       "issuer": "https://mcp.example.com/acme/mcp",
       "authorization_servers": ["https://mcp.example.com/acme/mcp"]
     }

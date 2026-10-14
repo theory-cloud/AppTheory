@@ -372,6 +372,10 @@ function frontChannelHarnessOptions(overrides = {}) {
     // Mutates the fake upstream's options before it starts, so a test can serve
     // a grant-specific or failing token response.
     providerOptions: overrides.providerOptions ?? (() => {}),
+    // Tune the facade the harness registers. The default issuer mode is the
+    // route mode every front-channel test uses.
+    issuerMode: overrides.issuerMode ?? "route",
+    registrationEndpointURL: overrides.registrationEndpointURL ?? null,
   };
 }
 
@@ -439,7 +443,7 @@ async function newFrontChannelHarness(t, overrides = {}) {
   const config = {
     issuerURL: `${BASE_URL}/acme/mcp`,
     jwksURI: `${UPSTREAM_ISS}/.well-known/jwks.json`,
-    issuerMode: "route",
+    issuerMode: options.issuerMode,
     urlMode: "public_base_url",
     publicBaseURL: BASE_URL,
     transportPosture: "iam",
@@ -455,6 +459,9 @@ async function newFrontChannelHarness(t, overrides = {}) {
     upstreamClientID: CLIENT_ID,
     upstreamIssuer: UPSTREAM_ISS,
   };
+  if (options.registrationEndpointURL !== null) {
+    config.registrationEndpointURL = options.registrationEndpointURL;
+  }
   await stores.client.put({
     clientIdHash: hashKey(CLIENT_ID),
     clientId: CLIENT_ID,
@@ -793,6 +800,128 @@ test("register enforces the shared dcr table through the real mounted handler", 
     }
   }
   assert.equal(executed, DCR_CASE_COUNT);
+});
+
+const METADATA_REGISTRATION_GROUP = "metadata_registration";
+
+/**
+ * The number of metadata_registration rows the shared table must carry; a change
+ * to the table must also be a deliberate edit in the Go and Python loaders, so
+ * no runtime can silently execute a smaller table.
+ */
+const METADATA_REGISTRATION_CASE_COUNT = 6;
+
+/** The single route the group resolves, so a row exercises only the mount shape. */
+const METADATA_REGISTRATION_ENDPOINT = {
+  kind: "namespace",
+  clientNamespace: "acme",
+};
+
+/**
+ * Mounts the facade a metadata_registration row asks for: the front-channel
+ * field set only for the rows that request it, so the mounted /register route
+ * and the advertised member move together.
+ */
+async function metadataRegistrationApp(t, row) {
+  if (row.front_channel) {
+    const harness = await newFrontChannelHarness(t, {
+      issuerMode: row.issuer_mode,
+      registrationEndpointURL: row.registration_endpoint_url ?? null,
+    });
+    return harness.app;
+  }
+  const config = {
+    issuerURL: `${BASE_URL}/acme/mcp`,
+    jwksURI: `${UPSTREAM_ISS}/.well-known/jwks.json`,
+    issuerMode: row.issuer_mode,
+    urlMode: "public_base_url",
+    publicBaseURL: BASE_URL,
+    transportPosture: "iam",
+    scopes: {
+      namespace: ["mcp:tools"],
+      partner_namespace: ["mcp:tools"],
+      agent: ["mcp:tools"],
+      partner_agent: ["mcp:tools"],
+    },
+    mcpHandler: () => noContent(),
+  };
+  if (row.registration_endpoint_url !== undefined) {
+    config.registrationEndpointURL = row.registration_endpoint_url;
+  }
+  if (row.register_handler === true) {
+    config.registerHandler = () => () => noContent();
+  }
+  const app = createApp({ tier: "p0" });
+  registerMcpFacade(app, config);
+  return app;
+}
+
+/**
+ * Serves the routed RFC 8414 document for one app with the same request shape the
+ * front-channel harness uses.
+ */
+async function metadataRegistrationDocument(app) {
+  const response = await app.serve({
+    method: "GET",
+    path: oauthAuthorizationServerPath(METADATA_REGISTRATION_ENDPOINT),
+    headers: {},
+    query: {},
+    body: Buffer.alloc(0),
+    isBase64: false,
+  });
+  assert.equal(response.status, 200);
+  return JSON.parse(bodyString(response));
+}
+
+test("routed metadata advertises registration exactly while the route is mounted", async (t) => {
+  const rows = (loadFixture().cases ?? []).filter(
+    (row) => row.group === METADATA_REGISTRATION_GROUP,
+  );
+  assert.equal(rows.length, METADATA_REGISTRATION_CASE_COUNT);
+
+  const registerPath = oauthRegisterPath(METADATA_REGISTRATION_ENDPOINT);
+
+  let executed = 0;
+  for (const row of rows) {
+    executed += 1;
+    await t.test(row.id, async () => {
+      const app = await metadataRegistrationApp(t, row);
+      const document = await metadataRegistrationDocument(app);
+
+      switch (row.expect) {
+        case "absent":
+          assert.ok(
+            !("registration_endpoint" in document),
+            `row ${row.id} must omit registration_endpoint; the /register route is not mounted`,
+          );
+          break;
+        case "configured":
+          assert.equal(
+            document.registration_endpoint,
+            row.registration_endpoint_url,
+            row.id,
+          );
+          break;
+        case "issuer_derived":
+          assert.equal(
+            document.registration_endpoint,
+            `${BASE_URL}/acme/mcp/register`,
+            row.id,
+          );
+          break;
+        case "route_derived":
+          assert.equal(
+            document.registration_endpoint,
+            `${BASE_URL}${registerPath}`,
+            row.id,
+          );
+          break;
+        default:
+          assert.fail(`unknown expect ${row.expect}`);
+      }
+    });
+  }
+  assert.equal(executed, METADATA_REGISTRATION_CASE_COUNT);
 });
 
 const BOUND_ROUTE_GROUP = "bound_route";

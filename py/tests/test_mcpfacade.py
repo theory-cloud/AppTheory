@@ -291,6 +291,9 @@ class McpFacadeMetadataDocumentTests(unittest.TestCase):
                 else:
                     config.jwks_uri = row["input"]
                     config.registration_endpoint_url = row["input"]
+                # The registration URL is advertised only while the register
+                # route is mounted, so the row's expected endpoint is observable.
+                config.register_handler = _kind_handler_factory("register")
 
                 if row.get("reject"):
                     with self.assertRaises(ValueError):
@@ -574,6 +577,9 @@ class McpFacadeMetadataDocumentTests(unittest.TestCase):
             code_challenge_methods=["plain"],
         )
         config.registration_endpoint_url = "https://accounts.example.com/custom-register"
+        # The configured endpoint is advertised only while the register route is
+        # mounted, so this config mounts a register handler.
+        config.register_handler = _kind_handler_factory("register")
         register_mcp_facade(app, config)
 
         protected = _serve(app, "GET", "/.well-known/oauth-protected-resource/acme/agents/helper/mcp")
@@ -723,12 +729,17 @@ class McpFacadeRouteModelTests(unittest.TestCase):
         self.assertEqual(resolved["issuer"], discovery_document["issuer"])
         self.assertEqual(resolved["authorization_endpoint"], discovery_document["authorization_endpoint"])
         self.assertEqual(resolved["token_endpoint"], discovery_document["token_endpoint"])
-        self.assertEqual(resolved["registration_endpoint"], discovery_document["registration_endpoint"])
+        # The worked example mounts no register route, so the routed document
+        # must omit registration_endpoint rather than advertise a URL that 404s.
+        self.assertNotIn("registration_endpoint", discovery_document)
 
     def test_issuer_mode_route_derives_per_route_issuer_and_resource(self) -> None:
         app = create_app(tier="p0")
         config = _valid_config(URL_MODE_PUBLIC_BASE_URL)
         config.issuer_mode = ISSUER_MODE_ROUTE
+        # The route-derived registration URL is advertised only while the
+        # register route is mounted, so this config mounts a register handler.
+        config.register_handler = _kind_handler_factory("register")
         inventory = register_mcp_facade(app, config)
         self.assertEqual(ISSUER_MODE_ROUTE, inventory.issuer_mode)
 
@@ -768,6 +779,33 @@ class McpFacadeRouteModelTests(unittest.TestCase):
         self.assertEqual(ISSUER_MODE_FAMILY, family_inventory.issuer_mode)
         family_protected = _serve(family_app, "GET", "/.well-known/oauth-protected-resource/acme/mcp")
         self.assertIn('"authorization_servers":["https://issuer.example.com"]', family_protected.body.decode())
+
+    def test_routed_metadata_advertises_registration_only_while_the_route_is_mounted(self) -> None:
+        def advertised(config: FacadeConfig) -> str | None:
+            app = create_app(tier="p0")
+            register_mcp_facade(app, config)
+            document = json.loads(_serve(app, "GET", "/.well-known/oauth-authorization-server/acme/mcp").body.decode())
+            return document.get("registration_endpoint")
+
+        family = _valid_config(URL_MODE_PUBLIC_BASE_URL)
+        self.assertIsNone(advertised(family))
+        family.register_handler = _kind_handler_factory("register")
+        self.assertEqual("https://issuer.example.com/register", advertised(family))
+
+        configured = _valid_config(URL_MODE_PUBLIC_BASE_URL)
+        configured.registration_endpoint_url = "https://accounts.example.com/custom-register"
+        self.assertIsNone(advertised(configured))
+        configured.register_handler = _kind_handler_factory("register")
+        self.assertEqual("https://accounts.example.com/custom-register", advertised(configured))
+
+        route = _valid_config(URL_MODE_PUBLIC_BASE_URL)
+        route.issuer_mode = ISSUER_MODE_ROUTE
+        self.assertIsNone(advertised(route))
+        route.register_handler = _kind_handler_factory("register")
+        self.assertEqual(
+            "https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/register",
+            advertised(route),
+        )
 
     def test_issuer_mode_rejects_unknown_value(self) -> None:
         config = _valid_config(URL_MODE_PUBLIC_BASE_URL)

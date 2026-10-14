@@ -780,7 +780,9 @@ function authorizationServerHandler(config, kind) {
             issuer,
             authorization_endpoint: authorizeURL,
             token_endpoint: tokenURL,
-            registration_endpoint: registrationEndpoint,
+            ...(registrationEndpoint === null
+                ? {}
+                : { registration_endpoint: registrationEndpoint }),
             jwks_uri: config.jwksURI,
             response_types_supported: [...config.capabilities.responseTypes],
             grant_types_supported: [...config.capabilities.grantTypes],
@@ -814,20 +816,34 @@ function serveMetadata(build) {
     };
 }
 /**
+ * Reports whether the registration loop mounts the RFC 7591 /register route:
+ * the front channel owns it, and an explicit register handler mounts it on its
+ * own.
+ */
+function registrationRouteMounted(config) {
+    return config.frontChannel !== null || config.registerHandlers !== null;
+}
+/**
  * Returns the issuer and registration endpoint the routed RFC 8414 document
  * advertises. In route issuer mode the route URL is the issuer and the
- * registration endpoint is the route's own derived /register path.
+ * registration endpoint is the route's own derived /register path. The
+ * registration member is advertised exactly when the /register route is mounted,
+ * so a facade that mounts no register route omits it instead of advertising a
+ * URL that 404s; `null` means the document carries no member.
  */
 function routedIssuerAndRegistration(config, ctx, endpoint) {
+    const mounted = registrationRouteMounted(config);
     if (config.issuerMode !== ISSUER_MODE_ROUTE) {
         return {
             issuer: config.issuerURL,
-            registrationEndpoint: config.registrationEndpointURL,
+            registrationEndpoint: mounted ? config.registrationEndpointURL : null,
         };
     }
     return {
         issuer: buildAbsoluteURL(config, ctx, mcpPath(endpoint)),
-        registrationEndpoint: buildAbsoluteURL(config, ctx, oauthRegisterPath(endpoint)),
+        registrationEndpoint: mounted
+            ? buildAbsoluteURL(config, ctx, oauthRegisterPath(endpoint))
+            : null,
     };
 }
 function endpointFromMCPRequest(ctx) {

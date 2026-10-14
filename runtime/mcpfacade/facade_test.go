@@ -843,6 +843,9 @@ func TestScopesCapabilitiesAndRegistrationEndpointAreApplicationOwned(t *testing
 		CodeChallengeMethods:     []string{"plain"},
 	}
 	config.RegistrationEndpointURL = "https://accounts.example.com/custom-register"
+	// The configured endpoint is advertised only while the register route is
+	// mounted, so this config mounts a register handler.
+	config.RegisterHandler = kindHandlerFactory("register")
 	_, err := RegisterMCPFacade(app, config)
 	require.NoError(t, err)
 
@@ -1341,6 +1344,9 @@ func TestIssuerModeRouteDerivesPerRouteIssuerAndResource(t *testing.T) {
 	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
 	config := validConfig(URLModePublicBaseURL)
 	config.IssuerMode = mcproutes.IssuerModeRoute
+	// The route-derived registration URL is advertised only while the register
+	// route is mounted, so this config mounts a register handler.
+	config.RegisterHandler = kindHandlerFactory("register")
 	inventory, err := RegisterMCPFacade(app, config)
 	require.NoError(t, err)
 	require.Equal(t, mcproutes.IssuerModeRoute, inventory.IssuerMode)
@@ -1364,6 +1370,55 @@ func TestIssuerModeRouteDerivesPerRouteIssuerAndResource(t *testing.T) {
 	require.Equal(t, mcproutes.IssuerModeFamily, familyInventory.IssuerMode)
 	familyProtected := serve(familyApp, "GET", "/.well-known/oauth-protected-resource/acme/mcp", nil)
 	require.Contains(t, string(familyProtected.Body), `"authorization_servers":["https://issuer.example.com"]`)
+}
+
+// TestRoutedMetadataAdvertisesRegistrationOnlyWhileTheRouteIsMounted is the
+// mount control's own test: the same family or route config gains the member
+// exactly when a register handler mounts /register, and omits it otherwise.
+func TestRoutedMetadataAdvertisesRegistrationOnlyWhileTheRouteIsMounted(t *testing.T) {
+	t.Parallel()
+	endpoint := mcproutes.EndpointPath{Kind: mcproutes.EndpointKindNamespace, ClientNamespace: "acme"}
+	discoveryPath := mustPath(t, endpoint.OAuthAuthorizationServerPath)
+	registerPath := mustPath(t, endpoint.OAuthRegisterPath)
+
+	assertAdvertised := func(t *testing.T, config FacadeConfig, want string) {
+		t.Helper()
+		app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+		_, err := RegisterMCPFacade(app, config)
+		require.NoError(t, err)
+		response := serve(app, "GET", discoveryPath, nil)
+		require.Equal(t, 200, response.Status)
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(response.Body, &payload))
+		if want == "" {
+			require.NotContains(t, payload, "registration_endpoint")
+			return
+		}
+		require.Equal(t, want, payload["registration_endpoint"])
+	}
+
+	t.Run("family mode", func(t *testing.T) {
+		config := validConfig(URLModePublicBaseURL)
+		assertAdvertised(t, config, "")
+		config.RegisterHandler = kindHandlerFactory("register")
+		assertAdvertised(t, config, "https://issuer.example.com/register")
+	})
+
+	t.Run("family mode with a configured endpoint", func(t *testing.T) {
+		config := validConfig(URLModePublicBaseURL)
+		config.RegistrationEndpointURL = "https://accounts.example.com/custom-register"
+		assertAdvertised(t, config, "")
+		config.RegisterHandler = kindHandlerFactory("register")
+		assertAdvertised(t, config, "https://accounts.example.com/custom-register")
+	})
+
+	t.Run("route mode", func(t *testing.T) {
+		config := validConfig(URLModePublicBaseURL)
+		config.IssuerMode = mcproutes.IssuerModeRoute
+		assertAdvertised(t, config, "")
+		config.RegisterHandler = kindHandlerFactory("register")
+		assertAdvertised(t, config, "https://front.example.com"+registerPath)
+	})
 }
 
 func TestIssuerModeRejectsUnknownValue(t *testing.T) {
@@ -1547,8 +1602,11 @@ func expectedProtectedResourceJSON(resource string, kind mcproutes.EndpointKind)
 	return fmt.Sprintf(`{"resource":%q,"authorization_servers":["https://issuer.example.com"],"jwks_uri":"https://issuer.example.com/jwks.json?set=active","scopes_supported":[%q]}`, resource, string(kind)+":use")
 }
 
+// expectedAuthorizationServerJSON pins the routed RFC 8414 document for the
+// plain config, which mounts no register route: registration_endpoint is
+// advertised only while that route is mounted, so the document omits it.
 func expectedAuthorizationServerJSON(authorizeURL, tokenURL string, kind mcproutes.EndpointKind) string {
-	return fmt.Sprintf(`{"issuer":"https://issuer.example.com","authorization_endpoint":%q,"token_endpoint":%q,"registration_endpoint":"https://issuer.example.com/register","jwks_uri":"https://issuer.example.com/jwks.json?set=active","response_types_supported":["code"],"grant_types_supported":["authorization_code","refresh_token"],"token_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":[%q]}`, authorizeURL, tokenURL, string(kind)+":use")
+	return fmt.Sprintf(`{"issuer":"https://issuer.example.com","authorization_endpoint":%q,"token_endpoint":%q,"jwks_uri":"https://issuer.example.com/jwks.json?set=active","response_types_supported":["code"],"grant_types_supported":["authorization_code","refresh_token"],"token_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":[%q]}`, authorizeURL, tokenURL, string(kind)+":use")
 }
 
 func assertMetadataHeaders(t *testing.T, response apptheory.Response) {
