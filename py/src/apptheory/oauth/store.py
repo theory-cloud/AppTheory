@@ -1264,9 +1264,7 @@ _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
     ("route_refresh_broker", "put_payload"): _scenario_broker_put_payload,
     ("route_refresh_broker", "acquire_lock_exclusive_with_expiry"): _scenario_broker_acquire_lock_exclusive_with_expiry,
     ("route_refresh_broker", "compare_and_swap_versioned"): _scenario_broker_compare_and_swap_versioned,
-    ("route_refresh_broker", "compare_and_swap_inherits_status"): (
-        _scenario_broker_compare_and_swap_inherits_status
-    ),
+    ("route_refresh_broker", "compare_and_swap_inherits_status"): (_scenario_broker_compare_and_swap_inherits_status),
     ("route_refresh_broker", "compare_and_swap_unknown"): _scenario_broker_compare_and_swap_unknown,
     ("route_refresh_broker", "negative_expected_version"): _scenario_broker_negative_expected_version,
     ("route_refresh_broker", "revoke_idempotent"): _scenario_broker_revoke_idempotent,

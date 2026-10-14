@@ -499,9 +499,7 @@ class FrontChannelFormParseConformanceTests(unittest.TestCase):
         executed = 0
         for row in rows:
             with self.subTest(case=row["id"]):
-                response = harness.serve(
-                    "POST", harness.endpoint.oauth_token_path(), None, _form_parse_body(row)
-                )
+                response = harness.serve("POST", harness.endpoint.oauth_token_path(), None, _form_parse_body(row))
                 self.assertEqual(400, response.status, row["id"])
                 payload = json.loads(response.body.decode("utf-8"))
                 self.assertEqual(row["expect_error"], payload.get("error"), row["id"])
