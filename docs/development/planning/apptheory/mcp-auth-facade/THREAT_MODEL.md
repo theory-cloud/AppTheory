@@ -64,6 +64,24 @@ adapter over a loopback fake provider with real RSA keys and an injected clock:
   rejected (`400`, no client redirect), and the callback correlates the transaction to the registered client, the
   client's own `state`, the redirect URI, and the S256 challenge.
 
+**As-built residuals recorded by the M3c-1a paired review (unchanged behavior, deliberately retained).** Both are
+consequences of the burn-on-first-consume ordering that keeps a replayed `state`/code indistinguishable from a forged
+one (T2, T10), and neither is redeemable by an attacker:
+
+- **Expired-first-consume leaves the broker record alive until its TTL (ADV-1144-5).** In all three runtimes an
+  **expired first consume** of a facade code burns the code (`400 invalid_grant`) but does **not** revoke the broker
+  record that code minted — only the *replay* path revokes it. Nothing redeemable ever reaches a client on that path
+  (the expired consume never returns a code-exchange response, so the framework-minted handle is never disclosed), so
+  the only effect is that a broker record whose handle was never handed out lingers to its TTL. Retained as-built:
+  revoking on expiry would make the expired path distinguishable from the replay path and weaken the T10 non-oracle
+  property.
+- **A hostile callback burns a victim's pending transaction (ADV-1144-6).** A callback that presents a **victim's
+  valid upstream `state`** together with an attacker's `code` consumes (burns) the victim's pending transaction on the
+  first consume — the same first-consume ordering T10 relies on. The attacker gains nothing redeemable: the upstream
+  exchange either fails or returns a code the facade binds to the **victim client's** PKCE verifier, which the
+  attacker cannot present at `/token`; but the victim's in-flight authorization is burned and must be restarted.
+  Recorded as the documented client-side trade-off of T10, not a framework defect.
+
 Unchanged by this milestone: **T5** (DCR) is the follow-on milestone — the `/register` route is not mounted. **T8/T9**
 carry their as-built M2.1 controls, and **T11** is unchanged.
 
