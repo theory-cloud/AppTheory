@@ -341,6 +341,18 @@ their executed shared conformance rows and their mutation-proven tests. The CDK 
    non-encrypting). Beyond the window the previous handle is reuse. A rotation may return a new upstream refresh
    material or keep the previous one (RFC 6749 §6, an AS MAY decline to rotate).
 
+   **Retention of the grace body (ADV-1146-1, decided as-built).** The stored successor response is deliberately
+   **not** cleared when the grace window closes. It is the only record of the successor handle a rotation minted
+   — the broker record has no successor-handle field — so it is the link the reuse walk of R1.4 follows to revoke
+   the successor; clearing it at grace expiry would silently truncate a whole-grant revoke down to the single
+   presented record and leave a live successor behind, which is a strictly worse security property. The body is
+   therefore retained for the **lifetime of the broker record** — until the store's broker-record TTL expires it
+   or a revoke removes it — not until the grace deadline, and it is protected across that whole lifetime by the
+   store's at-rest encryption obligation (§7). A durable store expires the grace body the same way it expires the
+   record (its record TTL), never at the grace deadline and never in the clear. The body adds no material that is
+   not already a store obligation elsewhere: it holds the successor handle and the upstream access token that were
+   already returned to that client, so it is the same class as the code record's encrypted token response.
+
    **R3 — values (framework constants, pinned by tests).** Lock TTL **15 s**; grace window **30 s**; coalesce wait
    cap **3 s** (poll every 50 ms); the presented handle is bounded at **512 bytes**; the reuse revoke walk is
    bounded; the refresh `503` carries a fixed `Retry-After` of 1 second. The lock TTL is a property of the broker

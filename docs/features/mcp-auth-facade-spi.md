@@ -125,6 +125,17 @@ the clear. The code record keeping the (encrypted) upstream token response is de
 exchange return the upstream access token byte-for-byte unmodified. The in-memory reference stores above neither
 persist nor encrypt and must not be used as a durable store.
 
+**The grace body is retained for the record's lifetime, not for the grace window.** The broker record's
+`EncryptedGraceRefreshResponse` field holds the successor token response a rotation produced — the successor
+handle plus the upstream access token that was already returned to that client — and it is the only link the
+reuse walk can follow to revoke that successor, because the record carries no separate successor-handle field.
+A store must therefore **not** clear the field when the 30-second grace window closes: doing so would truncate
+a post-expiry whole-grant revoke to the single presented record and leave the successor live. The field expires
+with the record, under the record's own TTL (the broker TTL in the table above), never at the grace deadline,
+and a durable store **must** encrypt it at rest for that whole lifetime like every other `Encrypted*` field.
+Nothing extra is exposed by keeping it: it adds no material that is not already covered by the encryption
+obligation (the successor handle and an access token the client already received).
+
 ## Front-channel configuration
 
 The framework-owned front channel — the `/authorize` terminator, the stage-global upstream callback, the
