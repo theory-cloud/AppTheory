@@ -270,6 +270,7 @@ type normalizedConfig struct {
 	rootDiscoveryPath       string
 	transportPosture        TransportPosture
 	requireBearerToken      *oauth.RequireBearerTokenOptions
+	frontChannel            *frontChannelConfig
 }
 
 type routeRegistration struct {
@@ -324,10 +325,13 @@ func normalizeConfig(config FacadeConfig) (normalizedConfig, error) {
 	normalized.mcpHandler = config.MCPHandler
 	normalized.callbackHandler = config.CallbackHandler
 
-	if err := validatePostureSurfaceConfig(transportPosture, normalized.authorizeHandlers, normalized.registerHandlers, config.CallbackHandler, normalized.rootAuthorizationServer); err != nil {
+	frontChannel, err := normalizeFrontChannel(config)
+	if err != nil {
 		return normalizedConfig{}, err
 	}
-	if err := validateFrontChannelConfig(config); err != nil {
+	normalized.frontChannel = frontChannel
+
+	if err := validatePostureSurfaceConfig(transportPosture, normalized.authorizeHandlers, normalized.registerHandlers, config.CallbackHandler, normalized.rootAuthorizationServer, normalized.frontChannel != nil); err != nil {
 		return normalizedConfig{}, err
 	}
 	return normalized, nil
@@ -427,6 +431,7 @@ func validatePostureSurfaceConfig(
 	authorizeHandlers, registerHandlers map[mcproutes.EndpointKind]apptheory.Handler,
 	callbackHandler apptheory.Handler,
 	rootAuthorizationServer *oauth.AuthorizationServerMetadata,
+	frontChannel bool,
 ) error {
 	if posture != TransportPostureNonePublic {
 		return nil
@@ -439,6 +444,9 @@ func validatePostureSurfaceConfig(
 	}
 	if callbackHandler != nil {
 		return fmt.Errorf("mcpfacade: TransportPosture none-public registers no OAuth surface; CallbackHandler must not be configured")
+	}
+	if frontChannel {
+		return fmt.Errorf("mcpfacade: TransportPosture none-public registers no OAuth surface; the front-channel field set must not be configured")
 	}
 	if rootAuthorizationServer != nil {
 		return fmt.Errorf("mcpfacade: TransportPosture none-public cannot enable RootAuthorizationServer")
@@ -567,6 +575,12 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 				routeRegistration{method: "POST", pattern: route.TokenPattern, handler: checkedOAuthFacadeHandler(route.Kind, false, config.tokenHandlers[route.Kind])},
 			)
 		}
+		if config.frontChannel != nil {
+			registrations = append(registrations,
+				routeRegistration{method: "GET", pattern: route.AuthorizePattern, handler: checkedOAuthFacadeHandler(route.Kind, true, config.authorizeHandlerFor(route.Kind))},
+				routeRegistration{method: "POST", pattern: route.TokenPattern, handler: checkedOAuthFacadeHandler(route.Kind, false, config.tokenHandlerFor(route.Kind))},
+			)
+		}
 		if config.registerHandlers != nil {
 			registrations = append(registrations,
 				routeRegistration{method: "POST", pattern: route.RegisterPattern, handler: checkedRegisterHandler(route.Kind, config.registerHandlers[route.Kind])},
@@ -588,6 +602,13 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 			method:  "GET",
 			pattern: inventory.CallbackPattern,
 			handler: config.callbackHandler,
+		})
+	}
+	if inventory.CallbackPattern != "" && config.frontChannel != nil {
+		registrations = append(registrations, routeRegistration{
+			method:  "GET",
+			pattern: inventory.CallbackPattern,
+			handler: config.callbackHandlerFor(),
 		})
 	}
 	if err := validateRouteRegistrations(registrations); err != nil {

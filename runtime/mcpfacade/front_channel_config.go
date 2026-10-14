@@ -8,45 +8,6 @@ import (
 	oauthstore "github.com/theory-cloud/apptheory/v6/runtime/oauth/store"
 )
 
-// validateFrontChannelConfig validates the framework-owned front-channel field
-// set of FacadeConfig (DESIGN §8). The set is declared by Provider: when it is
-// set, every other required front-channel field must be present and the
-// application-owned handler factories that would otherwise claim the same
-// routes must be absent. Nothing here mounts a route; it makes the declared
-// public surface fail closed before anything is registered.
-func validateFrontChannelConfig(config FacadeConfig) error {
-	if config.Provider == nil {
-		if name, set := frontChannelFieldOutsideProvider(config); set {
-			return fmt.Errorf(
-				"mcpfacade: %s is set without Provider; the front-channel field set is anchored by Provider",
-				name,
-			)
-		}
-		return nil
-	}
-	if _, ok := normalizeHTTPSURL(config.UpstreamIssuer, true); !ok {
-		return fmt.Errorf("mcpfacade: front channel upstream issuer must be an absolute HTTPS URL without query or fragment")
-	}
-	if !validUpstreamClientID(config.UpstreamClientID) {
-		return fmt.Errorf("mcpfacade: front channel upstream client id is required and must be well-formed")
-	}
-	if len(config.LifecycleScopes) > 0 {
-		if _, err := normalizeNonEmptyList("lifecycle scope", config.LifecycleScopes); err != nil {
-			return fmt.Errorf("mcpfacade: %w", err)
-		}
-	}
-	if err := validateFrontChannelStores(config.Stores); err != nil {
-		return err
-	}
-	if config.AuthorizeHandler != nil || config.TokenHandler != nil {
-		return fmt.Errorf("mcpfacade: Provider owns the authorize and token routes; AuthorizeHandler and TokenHandler must not be configured with a front channel")
-	}
-	if config.CallbackHandler != nil {
-		return fmt.Errorf("mcpfacade: Provider owns the stage-global callback; CallbackHandler must not be configured with a front channel")
-	}
-	return nil
-}
-
 // frontChannelFieldOutsideProvider reports the first front-channel field that is
 // set while Provider is nil, so a partially configured front channel fails
 // closed instead of half-registering.

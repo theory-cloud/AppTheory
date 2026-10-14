@@ -38,9 +38,9 @@ func (stubProvider) ValidateAccessToken(context.Context, string, oauth.TokenExpe
 	return &oauth.TokenClaims{Subject: "subject"}, nil
 }
 
-// frontChannelConfig returns a complete, valid front-channel field set built on
+// completeFrontChannelConfig returns a complete, valid front-channel field set built on
 // the in-memory reference stores.
-func frontChannelConfig() FacadeConfig {
+func completeFrontChannelConfig() FacadeConfig {
 	config := validConfig(URLModePublicBaseURL)
 	config.Provider = stubProvider{}
 	config.Stores = referenceStores()
@@ -61,7 +61,7 @@ func referenceStores() oauthstore.Stores {
 
 func TestFrontChannelConfigAcceptsACompleteSet(t *testing.T) {
 	app := apptheory.New()
-	_, err := RegisterMCPFacade(app, frontChannelConfig())
+	_, err := RegisterMCPFacade(app, completeFrontChannelConfig())
 	require.NoError(t, err)
 }
 
@@ -80,7 +80,7 @@ func TestFrontChannelConfigRequiresEveryField(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			config := frontChannelConfig()
+			config := completeFrontChannelConfig()
 			testCase.mutate(&config)
 			_, err := RegisterMCPFacade(apptheory.New(), config)
 			require.Error(t, err)
@@ -103,7 +103,7 @@ func TestFrontChannelConfigRequiresEveryStore(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			config := frontChannelConfig()
+			config := completeFrontChannelConfig()
 			testCase.mutate(&config.Stores)
 			_, err := RegisterMCPFacade(apptheory.New(), config)
 			require.Error(t, err)
@@ -141,7 +141,7 @@ func TestFrontChannelFieldSetFailsClosedWithoutProvider(t *testing.T) {
 
 func TestFrontChannelRejectsApplicationOwnedHandlerFactories(t *testing.T) {
 	t.Run("authorize and token", func(t *testing.T) {
-		config := frontChannelConfig()
+		config := completeFrontChannelConfig()
 		config.AuthorizeHandler = kindHandlerFactory("authorize")
 		config.TokenHandler = kindHandlerFactory("token")
 		_, err := RegisterMCPFacade(apptheory.New(), config)
@@ -149,7 +149,7 @@ func TestFrontChannelRejectsApplicationOwnedHandlerFactories(t *testing.T) {
 		require.Contains(t, err.Error(), "AuthorizeHandler")
 	})
 	t.Run("callback", func(t *testing.T) {
-		config := frontChannelConfig()
+		config := completeFrontChannelConfig()
 		config.CallbackHandler = func(*apptheory.Context) (*apptheory.Response, error) { return apptheory.NoContent(), nil }
 		_, err := RegisterMCPFacade(apptheory.New(), config)
 		require.Error(t, err)
@@ -158,12 +158,12 @@ func TestFrontChannelRejectsApplicationOwnedHandlerFactories(t *testing.T) {
 }
 
 func TestFrontChannelLifecycleScopesAreValidatedLikeScopes(t *testing.T) {
-	config := frontChannelConfig()
+	config := completeFrontChannelConfig()
 	config.LifecycleScopes = []string{"offline_access", "offline_access"}
 	_, err := RegisterMCPFacade(apptheory.New(), config)
 	require.NoError(t, err)
 
-	config = frontChannelConfig()
+	config = completeFrontChannelConfig()
 	config.LifecycleScopes = []string{strings.Repeat("a", 3)}
 	_, err = RegisterMCPFacade(apptheory.New(), config)
 	require.NoError(t, err)
@@ -174,7 +174,7 @@ func TestFrontChannelLifecycleScopesAreValidatedLikeScopes(t *testing.T) {
 // application with no facade route at all, not a half-registered surface.
 func TestFrontChannelConfigIsValidatedBeforeAnyRouteIsRegistered(t *testing.T) {
 	app := apptheory.New()
-	config := frontChannelConfig()
+	config := completeFrontChannelConfig()
 	config.UpstreamIssuer = "http://id.example.com"
 	_, err := RegisterMCPFacade(app, config)
 	require.Error(t, err)

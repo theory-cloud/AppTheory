@@ -23,6 +23,8 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"sync"
 	"time"
@@ -109,6 +111,16 @@ type RateLimitStore interface {
 // implements this with whatever create path it already has.
 type RouteRefreshBrokerSeeder interface {
 	Put(ctx context.Context, record *RouteRefreshBrokerRecord) error
+}
+
+// HashKey returns the store key for a protected value: the unpadded base64url
+// SHA-256 digest of the value. Every store SPI is keyed by the hash of the
+// value it protects and never by the value itself, so a caller that seeds a
+// record directly — a pre-registered client, for example — derives the key with
+// this helper and the facade derives the same key when it looks the record up.
+func HashKey(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 // Stores bundles the five store SPIs, so one value can drive the conformance

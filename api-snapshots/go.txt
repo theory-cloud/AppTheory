@@ -5708,6 +5708,8 @@ type TransactionStoreOptions struct {
 	TTL time.Duration
 }
 
+func HashKey(string) string
+
 func LoadConformanceCases(string) ([]ConformanceCase, error)
 
 func NewManualClock(time.Time) *ManualClock
