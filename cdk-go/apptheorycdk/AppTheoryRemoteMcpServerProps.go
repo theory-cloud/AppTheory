@@ -18,8 +18,10 @@ type AppTheoryRemoteMcpServerProps struct {
 	// co-registers the RFC 9728 discovery route at
 	// `/.well-known/oauth-protected-resource/mcp/{actor}`.
 	//
-	// The public `endpoint` and injected `MCP_ENDPOINT` environment variable
-	// become a template string ending in `/mcp/{actor}`.
+	// The public `endpoint` and `protectedResourceMetadataUrl` then become route
+	// templates ending in `/mcp/{actor}` and
+	// `/.well-known/oauth-protected-resource/mcp/{actor}` respectively. Both are
+	// derived from the same route model through the shared MCP route algebra.
 	// Default: false.
 	//
 	ActorPath *bool `field:"optional" json:"actorPath" yaml:"actorPath"`
