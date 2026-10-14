@@ -18,20 +18,6 @@
         },
         "Environment": {
           "Variables": {
-            "MCP_ENDPOINT": {
-              "Fn::Join": [
-                "",
-                [
-                  {
-                    "Fn::GetAtt": [
-                      "McpServerApi22C3CCFE",
-                      "ApiEndpoint"
-                    ]
-                  },
-                  "/{client_namespace}/mcp"
-                ]
-              ]
-            },
             "MCP_SESSION_TABLE": {
               "Ref": "McpServerSessionTable469EA0FB"
             },

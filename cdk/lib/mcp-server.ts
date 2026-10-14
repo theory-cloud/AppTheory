@@ -627,12 +627,6 @@ export class AppTheoryMcpServer extends Construct {
       (pattern) => `${stripTrailingSlash(endpointBase)}${pattern}`,
     );
     this.endpoint = this.endpoints[0];
-
-    // Attach-mode public authority belongs to the front door. Do not smuggle
-    // it into this construct as an origin prop.
-    if (!props.api) {
-      this.addEnvironment(props.handler, "MCP_ENDPOINT", this.endpoint);
-    }
   }
 
   private addRuntimeRoute(

@@ -71,8 +71,10 @@ export interface AppTheoryRemoteMcpServerProps {
      * co-registers the RFC 9728 discovery route at
      * `/.well-known/oauth-protected-resource/mcp/{actor}`.
      *
-     * The public `endpoint` and injected `MCP_ENDPOINT` environment variable
-     * become a template string ending in `/mcp/{actor}`.
+     * The public `endpoint` and `protectedResourceMetadataUrl` then become route
+     * templates ending in `/mcp/{actor}` and
+     * `/.well-known/oauth-protected-resource/mcp/{actor}` respectively. Both are
+     * derived from the same route model through the shared MCP route algebra.
      *
      * @default false
      */
@@ -181,6 +183,23 @@ export declare class AppTheoryRemoteMcpServer extends Construct {
      * The MCP endpoint URL or template (`.../mcp` or `.../mcp/{actor}`).
      */
     readonly endpoint: string;
+    /**
+     * The route-derived RFC 9728 protected-resource metadata URL template.
+     *
+     * Derived from the same route model as `endpoint` through the shared MCP
+     * route algebra: the algebra's resource-path → protected-resource-path
+     * derivation applied to the transport resource path, mounted on the same
+     * origin. With `actorPath` enabled this is a per-actor template such as
+     * `https://{apiId}.execute-api.{region}.amazonaws.com/prod/.well-known/oauth-protected-resource/mcp/{actor}`;
+     * otherwise it is the family-wide
+     * `https://{apiId}.execute-api.{region}.amazonaws.com/prod/.well-known/oauth-protected-resource/mcp`.
+     *
+     * This is the construct's route-derived per-actor challenge surface. Pass it
+     * to `oauth.RequireBearerTokenOptions{ResourceMetadataURL: ...}` so the
+     * runtime advertises a matching `WWW-Authenticate` challenge; the runtime no
+     * longer reads an injected `MCP_ENDPOINT` environment variable.
+     */
+    readonly protectedResourceMetadataUrl: string;
     /**
      * The DynamoDB session table (if enabled).
      */

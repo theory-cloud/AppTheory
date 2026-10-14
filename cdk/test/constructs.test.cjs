@@ -7398,7 +7398,7 @@ test("AppTheoryRemoteMcpServer (actor path) synthesizes expected template", () =
     code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
   });
 
-  new apptheory.AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
+  const remoteMcp = new apptheory.AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
     handler: fn,
     apiName: "apptheory-remote-mcp-actor-test",
     actorPath: true,
@@ -7424,10 +7424,31 @@ test("AppTheoryRemoteMcpServer (actor path) synthesizes expected template", () =
     "Should have GET protected resource metadata route for /mcp/{actor}",
   );
 
+  // The route-derived per-actor challenge surface, computed independently here
+  // from the shared route algebra plus the constructed execute-api origin.
+  const algebraProtectedPath = apptheory.AppTheoryMcpRouteAlgebra.protectedResourcePathFromMcpPath("/mcp/{actor}");
+  assert.equal(algebraProtectedPath, "/.well-known/oauth-protected-resource/mcp/{actor}");
+  const expectedProtectedResourceMetadataUrl =
+    `https://${remoteMcp.router.api.restApiId}.execute-api.${stack.region}.${stack.urlSuffix}/prod${algebraProtectedPath}`;
+  assert.equal(
+    remoteMcp.protectedResourceMetadataUrl,
+    expectedProtectedResourceMetadataUrl,
+    "protectedResourceMetadataUrl should be the algebra-derived per-actor metadata URL template",
+  );
+  assert.ok(
+    remoteMcp.endpoint.endsWith("/mcp/{actor}"),
+    "endpoint should stay the per-actor transport template",
+  );
+
   const functions = Object.values(template.Resources).filter((resource) => resource.Type === "AWS::Lambda::Function");
   assert.ok(functions.length >= 1, "Should synthesize a Lambda function");
-  const mcpEndpoint = functions[0].Properties?.Environment?.Variables?.MCP_ENDPOINT;
-  assert.ok(JSON.stringify(mcpEndpoint).includes("/prod/mcp/{actor}"), "MCP_ENDPOINT should use the actor template");
+  for (const lambdaFunction of functions) {
+    const variables = lambdaFunction.Properties?.Environment?.Variables ?? {};
+    assert.ok(
+      !Object.prototype.hasOwnProperty.call(variables, "MCP_ENDPOINT"),
+      "the construct must not inject an MCP_ENDPOINT environment variable",
+    );
+  }
 
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("remote-mcp-server-actor-path", template);

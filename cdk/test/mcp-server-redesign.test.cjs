@@ -444,10 +444,10 @@ test("AppTheoryMcpServer owned mode turns production defaults on", () => {
   assert.ok(stage.Properties.AccessLogSettings);
 
   const variables = resourcesOfType(template, "AWS::Lambda::Function")[0].Properties.Environment.Variables;
-  assert.ok(variables.MCP_ENDPOINT);
   assert.ok(variables.MCP_SESSION_TABLE);
   assert.equal(variables.MCP_SESSION_TTL_MINUTES, "60");
   for (const removed of [
+    "MCP_ENDPOINT",
     "APPTHEORY_MCP_PATH",
     "APPTHEORY_MCP_PROTECTED_RESOURCE_PATH",
     "APPTHEORY_MCP_AUTHORIZATION_SERVER_ISSUER",
