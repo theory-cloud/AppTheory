@@ -373,6 +373,12 @@ their executed shared conformance rows and their mutation-proven tests. The CDK 
    refused in the same non-oracle `invalid_grant` class, which is what makes the binding meaningful even when the
    client omits `resource`.
 
+   **As-built strengthening (ratified).** That route check is a steward-added strengthening beyond R4's literal
+   parameter rule — R4 on its own is bypassable by simply omitting `resource` — and the M3c-1b paired gate ratified
+   it as sound: it closes the omission bypass, collapses into the byte-identical non-oracle `invalid_grant` class of
+   an unknown handle, is enforced in all three runtimes, and breaks no legitimate journey (a token is audience-bound
+   to its minting route). It is recorded here as built and is **kept**.
+
 See `THREAT_MODEL.md` for the control and the pinning test of each mechanic, and `MINIMAL_CONSUMER.md` for the
 end-to-end walkthrough that proves scenario (a) by construction.
 
