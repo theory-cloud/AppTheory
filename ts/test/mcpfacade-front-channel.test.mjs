@@ -113,7 +113,7 @@ const DCR_GROUP = "dcr";
  * also be a deliberate edit in the Go and Python loaders, so no runtime can
  * silently execute a smaller table.
  */
-const DCR_CASE_COUNT = 10;
+const DCR_CASE_COUNT = 12;
 
 /**
  * The number of bytes the serialized `pad` member adds around its "a" run:

@@ -2846,14 +2846,17 @@ def _validated_dcr_redirect_uris(raw: list[str] | None) -> tuple[list[str] | Non
 
 def _valid_dcr_redirect_uri(raw: str) -> str | None:
     """Return the trimmed form of one redirect URI when it is an absolute https
-    URL or an absolute http loopback URL, and ``None`` otherwise.
+    URL or an absolute http loopback URL, and ``None`` otherwise. RFC 6749
+    section 3.1.2 forbids a fragment component on a redirection endpoint URI, and
+    any ``#`` begins a fragment whether or not anything follows it, so the rule is
+    applied to the raw string: ``_split_path_search_hash`` reports an empty hash
+    for a bare trailing ``#``. The parsed hash check below stays as defense in
+    depth.
     """
     candidate = str(raw or "").strip()
-    if candidate == "":
+    if candidate == "" or "#" in candidate:
         return None
     parsed = _parse_absolute_url(candidate)
-    # A bare trailing "#" is an empty fragment and passes, exactly as Go's
-    # url.Parse reports it.
     if parsed is None or parsed.hash != "":
         return None
     if parsed.scheme == _HTTPS_SCHEME:

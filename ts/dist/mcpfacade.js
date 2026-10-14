@@ -2944,11 +2944,18 @@ function validatedDCRRedirectURIs(raw) {
 }
 /**
  * Reports whether one redirect URI is an absolute https URL or an absolute http
- * loopback URL, and returns its trimmed form.
+ * loopback URL, and returns its trimmed form. RFC 6749 §3.1.2 forbids a fragment
+ * component on a redirection endpoint URI, and any "#" begins a fragment whether
+ * or not anything follows it, so the rule is applied to the raw string: the
+ * local parseURL leaves `hash` empty for a bare trailing "#". The parsed hash
+ * check below stays as defense in depth.
  */
 function validDCRRedirectURI(raw) {
     const candidate = String(raw ?? "").trim();
     if (candidate === "") {
+        return null;
+    }
+    if (candidate.includes("#")) {
         return null;
     }
     const parsed = parseAbsoluteURL(candidate);

@@ -100,7 +100,7 @@ DCR_GROUP = "dcr"
 # The number of dcr rows the shared table must carry; a change to the table must
 # also be a deliberate edit in the Go, TypeScript, and Python loaders, so no
 # runtime can silently execute a smaller table.
-DCR_CASE_COUNT = 10
+DCR_CASE_COUNT = 12
 
 # The number of requests a dcr row sends when it carries no explicit repeat.
 DCR_DEFAULT_REPEAT = 1

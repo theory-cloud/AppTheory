@@ -258,10 +258,18 @@ func validatedDCRRedirectURIs(raw *[]string) ([]string, *apptheory.Response) {
 }
 
 // validDCRRedirectURI reports whether one redirect URI is an absolute https URL
-// or an absolute http loopback URL, and returns its trimmed form.
+// or an absolute http loopback URL, and returns its trimmed form. RFC 6749
+// §3.1.2 forbids a fragment component on a redirection endpoint URI, and any "#"
+// begins a fragment whether or not anything follows it, so the rule is applied
+// to the raw string: net/url.Parse drops a bare trailing "#" (Fragment and
+// RawFragment both stay empty for `https://host/cb#`). The parsed fragment
+// checks below stay as defense in depth.
 func validDCRRedirectURI(raw string) (string, bool) {
 	candidate := strings.TrimSpace(raw)
 	if candidate == "" {
+		return "", false
+	}
+	if strings.Contains(candidate, "#") {
 		return "", false
 	}
 	parsed, ok := parseAbsoluteURL(candidate)
