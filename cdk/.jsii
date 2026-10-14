@@ -18499,7 +18499,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 404
+            "line": 409
           },
           "name": "mcpPath",
           "parameters": [
@@ -18548,7 +18548,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 432
+            "line": 437
           },
           "name": "oauthAuthorizationServerPath",
           "parameters": [
@@ -18572,7 +18572,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 462
+            "line": 467
           },
           "name": "oauthAuthorizationServerSuffixPath",
           "parameters": [
@@ -18596,7 +18596,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 441
+            "line": 446
           },
           "name": "oauthAuthorizePath",
           "parameters": [
@@ -18620,7 +18620,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 455
+            "line": 460
           },
           "name": "oauthRegisterPath",
           "parameters": [
@@ -18644,7 +18644,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 448
+            "line": 453
           },
           "name": "oauthTokenPath",
           "parameters": [
@@ -18668,7 +18668,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 325
+            "line": 330
           },
           "name": "parseMcpPath",
           "parameters": [
@@ -18692,7 +18692,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 423
+            "line": 428
           },
           "name": "protectedResourcePath",
           "parameters": [
@@ -18830,7 +18830,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 310
+            "line": 315
           },
           "name": "supportedOAuthDiscoveryTemplates",
           "returns": {
@@ -18894,7 +18894,7 @@
           },
           "locationInModule": {
             "filename": "lib/mcp-route-algebra.ts",
-            "line": 345
+            "line": 350
           },
           "name": "validateEndpointPath",
           "parameters": [
@@ -25572,7 +25572,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/remote-mcp-server.ts",
-          "line": 262
+          "line": 269
         },
         "parameters": [
           {
@@ -25618,13 +25618,13 @@
         },
         {
           "docs": {
-            "remarks": "Derived from the same route model as `endpoint` through the shared MCP\nroute algebra: the algebra's resource-path → protected-resource-path\nderivation applied to the transport resource path, mounted on the same\norigin. With `actorPath` enabled this is a per-actor template such as\n`https://{apiId}.execute-api.{region}.amazonaws.com/prod/.well-known/oauth-protected-resource/mcp/{actor}`;\notherwise it is the family-wide\n`https://{apiId}.execute-api.{region}.amazonaws.com/prod/.well-known/oauth-protected-resource/mcp`.\n\nThis is the construct's route-derived per-actor challenge surface. Pass it\nto `oauth.RequireBearerTokenOptions{ResourceMetadataURL: ...}` so the\nruntime advertises a matching `WWW-Authenticate` challenge; the runtime no\nlonger reads an injected `MCP_ENDPOINT` environment variable.",
+            "remarks": "Derived from the same route model as `endpoint` through the shared MCP\nroute algebra: the algebra's resource-path → protected-resource-path\nderivation applied to the transport resource path, mounted on the same\norigin. With `actorPath` enabled this is a per-actor template such as\n`https://{apiId}.execute-api.{region}.amazonaws.com/prod/.well-known/oauth-protected-resource/mcp/{actor}`;\notherwise it is the family-wide\n`https://{apiId}.execute-api.{region}.amazonaws.com/prod/.well-known/oauth-protected-resource/mcp`.\n\nThis is the construct's route-derived per-actor challenge surface. The\nconstruct injects no environment variable (the framework-injected\n`MCP_ENDPOINT` is retired), so pass this value into the adopter's own app\ncode and configure it as the runtime's bearer template option —\n`oauth.RequireBearerTokenOptions{ResourceMetadataURLTemplate: ...}` (Go),\n`requireBearerTokenMiddleware({ resourceMetadataURLTemplate: ... })`\n(TypeScript), or\n`RequireBearerTokenOptions(resource_metadata_url_template=...)` (Python) —\nso the runtime resolves `{actor}` from the matched route and advertises a\nmatching `WWW-Authenticate` challenge. Passing it as a static\n`ResourceMetadataURL` would advertise the literal `{actor}`.",
             "summary": "The route-derived RFC 9728 protected-resource metadata URL template."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 240
+            "line": 247
           },
           "name": "protectedResourceMetadataUrl",
           "type": {
@@ -25652,7 +25652,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 245
+            "line": 252
           },
           "name": "sessionTable",
           "optional": true,
@@ -25667,7 +25667,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 260
+            "line": 267
           },
           "name": "streamSpillBucket",
           "optional": true,
@@ -25682,7 +25682,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 250
+            "line": 257
           },
           "name": "streamTable",
           "optional": true,
@@ -25697,7 +25697,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 255
+            "line": 262
           },
           "name": "taskTable",
           "optional": true,
@@ -30815,5 +30815,5 @@
     }
   },
   "version": "6.0.0",
-  "fingerprint": "azRv0Wtg4nui5jOrKl0lRgBG9MPeuj5xjVKoNHGcKxw="
+  "fingerprint": "8jAVIDQFn81cM2jzYZmCgbZy6BkaVWJZ2skHgM6+HQA="
 }

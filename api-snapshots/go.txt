@@ -5299,11 +5299,15 @@ type RequireBearerTokenOptions struct {
 
 	ResourceMetadataURLFunc func(*apptheory.Context) (string, error)
 
+	ResourceMetadataURLTemplate string
+
 	Validator BearerTokenValidator
 
 	ClaimsValidator BearerTokenClaimsValidator
 
 	RequiredScopesFunc func(*apptheory.Context) ([]string, error)
+
+	resourceMetadataURLTemplate *resourceMetadataURLTemplate
 }
 
 type TokenClaims struct {
