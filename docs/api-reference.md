@@ -584,7 +584,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1160 exported top-level symbols</summary>
+<summary>1161 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -641,7 +641,8 @@ ErrStreamEventTooLarge, ErrStreamNotFound, ErrTaskNotFound, ErrTaskTerminal, Err
 Event, EventBridgeEvent, EventBridgeEventOptions, EventBridgeHandler, EventBridgePattern, EventBridgeRule, EventBridgeScheduledWorkloadResultSummary,
 EventBridgeScheduledWorkloadSummary, EventBridgeSelector, EventBridgeWorkloadEnvelope, EventBus, EventBusConfig, EventContext, EventHandler, EventMiddleware, EventQuery,
 FacadeConfig, Factory, FakeClient, FakeEmbedder, FakeProvider, FakeSNSClient, FakeStore, FakeStreamerClient, FixedWindowStrategy, FullyRedact, GenerateOpenAPI,
-GenerateOpenAPIJSON, GetDayWindow, GetFixedWindow, GetHourWindow, GetInput, GetMinuteWindow, GetOutput, GetPromptRequest, Handler, HandlerFactory, HookFailure,
+GenerateOpenAPIJSON, GetDayWindow, GetFixedWindow, GetHourWindow, GetInput, GetMinuteWindow, GetOutput, GetPromptRequest, Handler, HandlerFactory, HashKey,
+HookFailure,
 HookPrepareImage, HookReadiness, HookReady, HookResume, HookRun, HooksFromEMFMetricSink, HooksFromLogger, HooksFromLoggerAndEMFMetricSink, HooksFromProfileLogger,
 HookStart, HookStop, HookSuspend, HookTeardown, HookTerminate, HookValidate, HTML, HTMLStream, HTTPErrorFormat, HTTPErrorFormatFlatLegacy, HTTPErrorFormatNested,
 HTTPEventOptions, Icon, IdempotencyCreateOutcome, IdempotencyOutcomeAlreadyCompleted, IdempotencyOutcomeAlreadyInProgress, IdempotencyOutcomeCreated, IdempotencyStatus,

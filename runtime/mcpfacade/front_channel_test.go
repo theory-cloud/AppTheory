@@ -89,11 +89,13 @@ func (s *recordingBrokerStore) handleHashes() []string {
 func newFrontChannelHarness(t *testing.T) *frontChannelHarness {
 	t.Helper()
 	clock := oauthstore.NewManualClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	var reference oauthstore.RouteRefreshBrokerStore = oauthstore.NewMemoryRouteRefreshBrokerStore(oauthstore.RouteRefreshBrokerStoreOptions{Now: clock.Now})
+	seeder, ok := reference.(oauthstore.RouteRefreshBrokerSeeder)
+	require.True(t, ok, "the reference broker store must implement the seeder")
 	broker := &recordingBrokerStore{
-		RouteRefreshBrokerStore:  oauthstore.NewMemoryRouteRefreshBrokerStore(oauthstore.RouteRefreshBrokerStoreOptions{Now: clock.Now}),
-		RouteRefreshBrokerSeeder: nil,
+		RouteRefreshBrokerStore:  reference,
+		RouteRefreshBrokerSeeder: seeder,
 	}
-	broker.RouteRefreshBrokerSeeder = broker.RouteRefreshBrokerStore.(oauthstore.RouteRefreshBrokerSeeder)
 	stores := oauthstore.Stores{
 		Transaction:        oauthstore.NewMemoryTransactionStore(oauthstore.TransactionStoreOptions{Now: clock.Now}),
 		AuthorizationCode:  oauthstore.NewMemoryAuthorizationCodeStore(oauthstore.AuthorizationCodeStoreOptions{Now: clock.Now}),
