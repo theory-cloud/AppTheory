@@ -152,7 +152,7 @@ func newFrontChannelHarness(t *testing.T) *frontChannelHarness {
 		UpstreamIssuer:   frontTestUpstreamIss,
 	}
 	require.NoError(t, stores.Client.Put(context.Background(), &oauthstore.ClientRecord{
-		ClientIDHash:            facadeKeyHash(frontTestClientID),
+		ClientIDHash:            oauthstore.HashKey(frontTestClientID),
 		ClientID:                frontTestClientID,
 		RedirectURIs:            []string{"https://client.example/callback"},
 		TokenEndpointAuthMethod: "none",
@@ -266,7 +266,7 @@ func brokerHandleHash(t *testing.T, tokenResponse apptheory.Response) string {
 	}
 	require.NoError(t, json.Unmarshal(tokenResponse.Body, &payload))
 	require.NotEmpty(t, payload.RefreshToken)
-	return facadeKeyHash(payload.RefreshToken)
+	return oauthstore.HashKey(payload.RefreshToken)
 }
 
 // TestFrontChannelAuthorizeRedirectsUpstreamWithTheFacadesOwnMaterial pins
@@ -523,7 +523,7 @@ func TestFrontChannelTokenRejectsWrongVerifierAndUnknownCode(t *testing.T) {
 func TestFrontChannelTokenRejectsCodeIssuedToAnotherClient(t *testing.T) {
 	harness := newFrontChannelHarness(t)
 	require.NoError(t, harness.stores.Client.Put(context.Background(), &oauthstore.ClientRecord{
-		ClientIDHash:            facadeKeyHash("other-client"),
+		ClientIDHash:            oauthstore.HashKey("other-client"),
 		ClientID:                "other-client",
 		RedirectURIs:            []string{"https://client.example/callback"},
 		TokenEndpointAuthMethod: "none",

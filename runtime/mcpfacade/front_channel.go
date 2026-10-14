@@ -1,8 +1,6 @@
 package mcpfacade
 
 import (
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -122,7 +120,7 @@ func (config normalizedConfig) handleAuthorize(kind mcproutes.EndpointKind, ctx 
 	if strings.TrimSpace(clientID) == "" {
 		return facadeErrorPage(400, "invalid_request"), nil
 	}
-	client, err := front.stores.Client.Get(ctx.Context(), facadeKeyHash(clientID))
+	client, err := front.stores.Client.Get(ctx.Context(), oauthstore.HashKey(clientID))
 	if err != nil {
 		if errors.Is(err, oauthstore.ErrClientNotFound) {
 			return facadeErrorPage(400, "invalid_client"), nil
@@ -180,8 +178,8 @@ func (config normalizedConfig) handleAuthorize(kind mcproutes.EndpointKind, ctx 
 	}
 
 	transaction := &oauthstore.TransactionRecord{
-		StateHash:                     facadeKeyHash(upstreamState),
-		ClientIDHash:                  facadeKeyHash(clientID),
+		StateHash:                     oauthstore.HashKey(upstreamState),
+		ClientIDHash:                  oauthstore.HashKey(clientID),
 		ClientID:                      clientID,
 		RedirectURI:                   redirectURI,
 		CodeChallenge:                 challenge,
@@ -240,7 +238,7 @@ func (config normalizedConfig) handleCallback(ctx *apptheory.Context) (*apptheor
 		return facadeErrorPage(400, "invalid_request"), nil
 	}
 
-	transaction, err := front.stores.Transaction.Consume(ctx.Context(), facadeKeyHash(state))
+	transaction, err := front.stores.Transaction.Consume(ctx.Context(), oauthstore.HashKey(state))
 	if err != nil {
 		// An unminted, replayed, and expired state are one response class: the
 		// transaction store burns on first consume, so they are indistinguishable
@@ -282,7 +280,7 @@ func (config normalizedConfig) handleCallback(ctx *apptheory.Context) (*apptheor
 		return nil, fmt.Errorf("mcpfacade: route refresh broker store cannot be seeded")
 	}
 	broker := &oauthstore.RouteRefreshBrokerRecord{
-		HandleHash:                    facadeKeyHash(handle),
+		HandleHash:                    oauthstore.HashKey(handle),
 		Issuer:                        front.upstreamIssuer,
 		CanonicalResource:             transaction.CanonicalResource,
 		ClientNamespace:               transaction.ClientNamespace,
@@ -290,11 +288,11 @@ func (config normalizedConfig) handleCallback(ctx *apptheory.Context) (*apptheor
 		PartnerID:                     transaction.PartnerID,
 		AgentID:                       transaction.AgentID,
 		ClientIDHash:                  transaction.ClientIDHash,
-		SubjectIDHash:                 facadeKeyHash(claims.Subject),
+		SubjectIDHash:                 oauthstore.HashKey(claims.Subject),
 		Scopes:                        append([]string(nil), transaction.Scopes...),
 		ScopeFingerprint:              facadeScopeFingerprint(transaction.Scopes),
 		EncryptedUpstreamRefreshToken: tokenSet.RefreshToken,
-		UpstreamRefreshTokenHash:      facadeKeyHash(tokenSet.RefreshToken),
+		UpstreamRefreshTokenHash:      oauthstore.HashKey(tokenSet.RefreshToken),
 		UpstreamClientID:              front.upstreamClientID,
 		Status:                        oauthstore.BrokerStatusIssued,
 	}
@@ -311,7 +309,7 @@ func (config normalizedConfig) handleCallback(ctx *apptheory.Context) (*apptheor
 		return nil, err
 	}
 	codeRecord := &oauthstore.AuthorizationCodeRecord{
-		CodeHash:                    facadeKeyHash(facadeCode),
+		CodeHash:                    oauthstore.HashKey(facadeCode),
 		ClientIDHash:                transaction.ClientIDHash,
 		ClientID:                    transaction.ClientID,
 		RedirectURI:                 transaction.RedirectURI,
@@ -385,7 +383,7 @@ func (config normalizedConfig) handleAuthorizationCodeGrant(
 	if clientID == "" {
 		return facadeErrorPage(400, "invalid_client"), nil
 	}
-	client, err := front.stores.Client.Get(ctx.Context(), facadeKeyHash(clientID))
+	client, err := front.stores.Client.Get(ctx.Context(), oauthstore.HashKey(clientID))
 	if err != nil {
 		if errors.Is(err, oauthstore.ErrClientNotFound) {
 			return facadeErrorPage(400, "invalid_client"), nil
@@ -398,7 +396,7 @@ func (config normalizedConfig) handleAuthorizationCodeGrant(
 		return facadeErrorPage(400, "invalid_client"), nil
 	}
 
-	record, err := front.stores.AuthorizationCode.Consume(ctx.Context(), facadeKeyHash(code))
+	record, err := front.stores.AuthorizationCode.Consume(ctx.Context(), oauthstore.HashKey(code))
 	switch {
 	case errors.Is(err, oauthstore.ErrAuthorizationCodeReplayed):
 		// T2: a replayed code revokes the broker record it minted, so the
@@ -695,15 +693,7 @@ func clampRequestedScopes(requested []string, allowed []string) ([]string, bool)
 func facadeScopeFingerprint(scopes []string) string {
 	sorted := append([]string(nil), scopes...)
 	sort.Strings(sorted)
-	return facadeKeyHash(strings.Join(sorted, " "))
-}
-
-// facadeKeyHash is the store key derivation of DESIGN §7, shared with
-// oauthstore.HashKey so a caller that seeds a record and the facade that looks
-// it up derive the same key.
-func facadeKeyHash(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return base64.RawURLEncoding.EncodeToString(sum[:])
+	return oauthstore.HashKey(strings.Join(sorted, " "))
 }
 
 func firstQueryValue(query map[string][]string, name string) string {
