@@ -36,10 +36,19 @@ const REDIRECT_MATCH_GROUP = "redirect_match";
  */
 const FORM_PARSE_GROUP = "form_parse";
 
+/**
+ * `method_status` is the sibling group holding the route-model method-mismatch
+ * contract. It is executed by the facade front-channel test through the real
+ * mounted app, not here; the group ledger below still lists it so a new group
+ * cannot appear without a loader.
+ */
+const METHOD_STATUS_GROUP = "method_status";
+
 const FIXTURE_GROUPS = [
   ISSUER_PIN_GROUP,
   REDIRECT_MATCH_GROUP,
   FORM_PARSE_GROUP,
+  METHOD_STATUS_GROUP,
 ];
 
 /**

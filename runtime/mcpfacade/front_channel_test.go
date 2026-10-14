@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -478,6 +479,118 @@ func TestFrontChannelTokenEnforcesTheSharedFormParseTable(t *testing.T) {
 	}
 
 	require.Equalf(t, formParseCaseCount, executed, "executed %d %q cases", executed, formParseGroup)
+}
+
+// methodStatusGroup names the route-model method-mismatch group the same shared
+// table carries, executed below through the real mounted app.
+const methodStatusGroup = "method_status"
+
+// methodStatusCaseCount is the number of method_status rows the shared fixture
+// must carry; a change to the table must also be a deliberate edit in the Go,
+// TypeScript, and Python loaders, so no runtime can silently execute a smaller
+// table.
+const methodStatusCaseCount = 10
+
+// methodStatusConformanceDocument and methodStatusCase are the method_status
+// rows: a mounted path with an unsupported method answers 405 with a sorted
+// allow header, and a path that is not mounted at all answers 404 with no allow.
+type methodStatusConformanceDocument struct {
+	Cases []methodStatusCase `json:"cases"`
+}
+
+type methodStatusCase struct {
+	ID           string   `json:"id"`
+	Group        string   `json:"group"`
+	Route        string   `json:"route"`
+	Method       string   `json:"method"`
+	ExpectStatus int      `json:"expect_status"`
+	ExpectAllow  []string `json:"expect_allow"`
+}
+
+// methodStatusRoutePath resolves a row's route key to the concrete path the
+// facade mounts, deriving every mounted path from the framework's route-algebra
+// helpers rather than a hard-coded string. The unmounted_token and unknown keys
+// are deliberately not mounted: the first is a bare MCP path with a trailing
+// segment, and the second is a path no kind's pattern can match.
+func (h *frontChannelHarness) methodStatusRoutePath(key string) string {
+	h.t.Helper()
+	switch key {
+	case "mcp":
+		return h.path(mcproutes.EndpointPath.MCPPath)
+	case "token":
+		return h.path(mcproutes.EndpointPath.OAuthTokenPath)
+	case "authorize":
+		return h.path(mcproutes.EndpointPath.OAuthAuthorizePath)
+	case "callback":
+		return mcproutes.DefaultCallbackPath
+	case "discovery_canonical":
+		return h.path(mcproutes.EndpointPath.OAuthAuthorizationServerPath)
+	case "discovery_suffix":
+		return h.path(mcproutes.EndpointPath.OAuthAuthorizationServerSuffixPath)
+	case "protected_resource":
+		return h.path(mcproutes.EndpointPath.ProtectedResourcePath)
+	case "unmounted_token":
+		return h.path(mcproutes.EndpointPath.MCPPath) + "/token"
+	case "unknown":
+		return "/unknown/mcp/path"
+	default:
+		h.t.Fatalf("unknown method_status route key %q", key)
+		return ""
+	}
+}
+
+// allowMethods returns the sorted methods the response's allow header lists, or
+// an empty list when the header is absent or empty.
+func allowMethods(response apptheory.Response) []string {
+	values := response.Headers["allow"]
+	if len(values) == 0 || strings.TrimSpace(values[0]) == "" {
+		return []string{}
+	}
+	parts := strings.Split(values[0], ",")
+	methods := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			methods = append(methods, trimmed)
+		}
+	}
+	sort.Strings(methods)
+	return methods
+}
+
+// TestFrontChannelMethodStatusEnforcesTheSharedTable pins the route-model
+// method-mismatch contract to the shared cross-runtime table through the real
+// mounted app: a mounted path with an unsupported method answers 405 with an
+// allow header listing the permitted methods, and a path that is not mounted at
+// all answers 404 with no allow header.
+func TestFrontChannelMethodStatusEnforcesTheSharedTable(t *testing.T) {
+	var document methodStatusConformanceDocument
+	loadFacadeConformanceFixture(t, &document)
+
+	rows := make([]methodStatusCase, 0, len(document.Cases))
+	for _, row := range document.Cases {
+		require.NotEmptyf(t, row.Group, "case %q must carry a group", row.ID)
+		if row.Group == methodStatusGroup {
+			rows = append(rows, row)
+		}
+	}
+	require.Equalf(t, methodStatusCaseCount, len(rows), "loaded %d %q cases", len(rows), methodStatusGroup)
+
+	harness := newFrontChannelHarness(t)
+	executed := 0
+	for _, row := range rows {
+		executed++
+		t.Run(row.ID, func(t *testing.T) {
+			response := harness.serve(row.Method, harness.methodStatusRoutePath(row.Route), nil, nil)
+
+			require.Equalf(t, row.ExpectStatus, response.Status, "route %q method %q", row.Route, row.Method)
+			require.Equalf(t, row.ExpectAllow, allowMethods(response), "route %q method %q", row.Route, row.Method)
+			if row.ExpectStatus == 404 {
+				require.Emptyf(t, response.Headers["allow"], "route %q method %q must carry no allow header", row.Route, row.Method)
+			}
+		})
+	}
+
+	require.Equalf(t, methodStatusCaseCount, executed, "executed %d %q cases", executed, methodStatusGroup)
 }
 
 // TestFrontChannelAuthorizeRequiresFreshS256PKCE pins T3: an absent challenge

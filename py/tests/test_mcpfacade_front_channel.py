@@ -67,6 +67,13 @@ FORM_PARSE_GROUP = "form_parse"
 # runtime can silently execute a smaller table.
 FORM_PARSE_CASE_COUNT = 11
 
+METHOD_STATUS_GROUP = "method_status"
+
+# The number of method_status rows the shared table must carry; a change to the
+# table must also be a deliberate edit in the Go and TypeScript loaders, so no
+# runtime can silently execute a smaller table.
+METHOD_STATUS_CASE_COUNT = 10
+
 
 def _load_fixture() -> dict:
     with (FIXTURE_DIR / FIXTURE_NAME).open("r", encoding="utf-8") as handle:
@@ -484,6 +491,69 @@ class FrontChannelFormParseConformanceTests(unittest.TestCase):
                 executed += 1
         print(f"form parse conformance: {executed} cases run")
         self.assertEqual(FORM_PARSE_CASE_COUNT, executed)
+
+
+def _allow_methods(response: Response) -> list[str]:
+    """Returns the sorted methods the response's ``allow`` header lists, or an
+    empty list when the header is absent or empty."""
+    values = response.headers.get("allow") or []
+    if not values:
+        return []
+    return sorted(part.strip() for part in str(values[0]).split(",") if part.strip())
+
+
+def _method_status_route_path(endpoint: EndpointPath, key: str) -> str:
+    """Resolves a method_status row's route key to the concrete path the facade
+    mounts, deriving every mounted path from the framework's route-algebra helpers
+    rather than a hard-coded string. ``unmounted_token`` and ``unknown`` are
+    deliberately not mounted: the first is a bare MCP path with a trailing
+    segment, and the second is a path no kind's pattern can match."""
+    if key == "mcp":
+        return endpoint.mcp_path()
+    if key == "token":
+        return endpoint.oauth_token_path()
+    if key == "authorize":
+        return endpoint.oauth_authorize_path()
+    if key == "callback":
+        return DEFAULT_CALLBACK_PATH
+    if key == "discovery_canonical":
+        return endpoint.oauth_authorization_server_path()
+    if key == "discovery_suffix":
+        return endpoint.oauth_authorization_server_suffix_path()
+    if key == "protected_resource":
+        return endpoint.protected_resource_path()
+    if key == "unmounted_token":
+        return endpoint.mcp_path() + "/token"
+    if key == "unknown":
+        return "/unknown/mcp/path"
+    raise AssertionError(f"unknown method_status route key {key!r}")
+
+
+class FrontChannelMethodStatusConformanceTests(unittest.TestCase):
+    """Pins the route-model method-mismatch contract to the shared cross-runtime
+    table through the real mounted app: a mounted path with an unsupported method
+    answers 405 with an ``allow`` header listing the permitted methods, and a path
+    that is not mounted at all answers 404 with no ``allow`` header.
+    """
+
+    def test_method_status_enforces_the_shared_table(self) -> None:
+        rows = [case for case in _load_fixture()["cases"] if case["group"] == METHOD_STATUS_GROUP]
+        self.assertEqual(METHOD_STATUS_CASE_COUNT, len(rows))
+
+        harness = _FrontChannelHarness(self)
+        executed = 0
+        for row in rows:
+            with self.subTest(case=row["id"]):
+                path = _method_status_route_path(harness.endpoint, row["route"])
+                response = harness.serve(row["method"], path)
+                context = f"route {row['route']!r} method {row['method']!r}"
+                self.assertEqual(row["expect_status"], response.status, context)
+                self.assertEqual(list(row["expect_allow"]), _allow_methods(response), context)
+                if row["expect_status"] == 404:
+                    self.assertNotIn("allow", {name.lower() for name in response.headers}, context)
+                executed += 1
+        print(f"method status conformance: {executed} cases run")
+        self.assertEqual(METHOD_STATUS_CASE_COUNT, executed)
 
 
 class FrontChannelCallbackTests(unittest.TestCase):

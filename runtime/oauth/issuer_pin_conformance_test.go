@@ -29,11 +29,18 @@ const redirectMatchGroup = "redirect_match"
 // appear without a loader.
 const formParseGroup = "form_parse"
 
+// methodStatusGroup is the sibling group holding the route-model method-mismatch
+// contract. It is executed by runtime/mcpfacade's front-channel tests through the
+// real mounted app, not here; the ledger below still lists it so a new group
+// cannot appear without a loader.
+const methodStatusGroup = "method_status"
+
 // fixtureGroups is every group the shared table is allowed to carry.
 var fixtureGroups = map[string]struct{}{
 	issuerPinGroup:     {},
 	redirectMatchGroup: {},
 	formParseGroup:     {},
+	methodStatusGroup:  {},
 }
 
 // issuerPinCaseCount is the number of issuer_pin rows the shared fixture must

@@ -10,9 +10,13 @@ import {
   DEFAULT_CALLBACK_PATH,
   createApp,
   hashKey,
+  mcpPath,
+  oauthAuthorizationServerPath,
+  oauthAuthorizationServerSuffixPath,
   oauthAuthorizePath,
   oauthTokenPath,
   pkceChallengeS256,
+  protectedResourcePath,
   registerMcpFacade,
 } from "../dist/index.js";
 import {
@@ -73,6 +77,15 @@ const FORM_PARSE_GROUP = "form_parse";
  */
 const FORM_PARSE_CASE_COUNT = 11;
 
+const METHOD_STATUS_GROUP = "method_status";
+
+/**
+ * The number of method_status rows the shared table must carry; a change to the
+ * table must also be a deliberate edit in the Go and Python loaders, so no
+ * runtime can silently execute a smaller table.
+ */
+const METHOD_STATUS_CASE_COUNT = 10;
+
 /**
  * Builds the raw body a form_parse row presents: the small rows carry a literal
  * body, and the bound rows carry `body_prefix` padded with "a" out to exactly
@@ -102,6 +115,56 @@ function loadFixture() {
   return JSON.parse(
     readFileSync(path.join(FIXTURE_DIR, FIXTURE_NAME), "utf8"),
   );
+}
+
+/**
+ * Resolves a method_status row's route key to the concrete path the facade
+ * mounts, deriving every mounted path from the framework's route-algebra helpers
+ * rather than a hard-coded string. `unmounted_token` and `unknown` are
+ * deliberately not mounted: the first is a bare MCP path with a trailing
+ * segment, and the second is a path no kind's pattern can match.
+ */
+function methodStatusRoutePath(endpoint, key) {
+  switch (key) {
+    case "mcp":
+      return mcpPath(endpoint);
+    case "token":
+      return oauthTokenPath(endpoint);
+    case "authorize":
+      return oauthAuthorizePath(endpoint);
+    case "callback":
+      return DEFAULT_CALLBACK_PATH;
+    case "discovery_canonical":
+      return oauthAuthorizationServerPath(endpoint);
+    case "discovery_suffix":
+      return oauthAuthorizationServerSuffixPath(endpoint);
+    case "protected_resource":
+      return protectedResourcePath(endpoint);
+    case "unmounted_token":
+      return `${mcpPath(endpoint)}/token`;
+    case "unknown":
+      return "/unknown/mcp/path";
+    default:
+      throw new Error(
+        `unknown method_status route key ${JSON.stringify(key)}`,
+      );
+  }
+}
+
+/**
+ * Returns the sorted methods the response's allow header lists, or an empty
+ * list when the header is absent or empty.
+ */
+function allowMethods(response) {
+  const raw = firstHeader(response.headers, "allow");
+  if (raw === undefined || raw.trim() === "") {
+    return [];
+  }
+  return raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part !== "")
+    .sort();
 }
 
 // ---------------------------------------------------------------------------
@@ -397,6 +460,7 @@ async function newFrontChannelHarness(t) {
     stores,
     broker,
     kind,
+    endpoint,
     tokenPath: oauthTokenPath(endpoint),
     authorize,
     callback,
@@ -537,6 +601,28 @@ test("token enforces the shared form_parse table through the real handler", asyn
     assert.equal(payload.error, row.expect_error, context);
   }
   assert.equal(executed, FORM_PARSE_CASE_COUNT);
+});
+
+test("method status enforces the shared method_status table through the real mounted app", async (t) => {
+  const rows = (loadFixture().cases ?? []).filter(
+    (row) => row.group === METHOD_STATUS_GROUP,
+  );
+  assert.equal(rows.length, METHOD_STATUS_CASE_COUNT);
+
+  const harness = await newFrontChannelHarness(t);
+  let executed = 0;
+  for (const row of rows) {
+    executed += 1;
+    const path = methodStatusRoutePath(harness.endpoint, row.route);
+    const response = await harness.serve(row.method, path, null, null);
+    const context = `route ${JSON.stringify(row.route)} method ${row.method}`;
+    assert.equal(response.status, row.expect_status, context);
+    assert.deepEqual(allowMethods(response), row.expect_allow, context);
+    if (row.expect_status === 404) {
+      assert.equal(firstHeader(response.headers, "allow"), undefined, context);
+    }
+  }
+  assert.equal(executed, METHOD_STATUS_CASE_COUNT);
 });
 
 test("authorize requires fresh S256 PKCE and refuses a plain challenge", async (t) => {
