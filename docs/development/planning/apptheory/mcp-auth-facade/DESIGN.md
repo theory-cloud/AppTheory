@@ -4,7 +4,11 @@ Status: design for review (M0). §8 mechanics 1 (authorize), 2 (callback), 3 (`/
 `authorization_code` and `refresh_token` grants are as-built across Go/TS/Py — mechanics 1, 2, and the
 `authorization_code` grant in M3b-ii, mechanic 3 in M3c-1a, and the brokered refresh half of mechanic 4 in M3c-1b
 (whose four open parameters are recorded as the operator rulings R1-R4 at §8.4). No §8 mechanic remains
-unimplemented in the runtimes; the CDK half of §9 is still M3c-2.
+unimplemented in the runtimes. **M3c-2 landed the §9 CDK half**: the construct derives and wires the `/register`
+and callback routes from the route model, enforces the posture and defense-in-depth floor at synth, exposes the
+upstream callback-path override, and no longer injects `MCP_ENDPOINT` — the protected-resource challenge derives
+from configuration and the route model, never from an environment variable (§5.3). The journey and threat-control
+tables are executed from the shared corpus in all three runtimes.
 Last updated: 2026-10-14
 Owner: AppTheory
 
@@ -177,7 +181,11 @@ No JWT/JWKS validator ships today (gap G4). The facade adds one, in all three ru
 
 - **401** for missing / malformed / invalid / expired bearer, with
   `WWW-Authenticate: Bearer resource_metadata="<route metadata URL>"` where the metadata URL is derived from
-  the **matched route** (not from an environment variable as today for Go, `bearer.go:194-222`).
+  the **matched route** through a route-derived `ResourceMetadataURLFunc`, or taken from the explicit
+  `ResourceMetadataURL` option, and **never** from an environment variable — as-built in M3c-2, which removed
+  both the Go `MCP_ENDPOINT` fallback and the CDK `MCP_ENDPOINT` injection. A CDK deployment configures the
+  route-derived value the construct exposes (`AppTheoryRemoteMcpServer.protectedResourceMetadataUrl`); with no
+  resolver and no explicit URL the challenge is the bare `Bearer` form.
 - **403** `insufficient_scope` for a scope failure the server actually observed, carrying the scope set that
   remediates it. Any other forbidden denial advertises neither an error code nor a scope set.
 - **RFC 8707 resources:** `resource` is accepted at authorize and token, canonicalized, and must equal the
@@ -274,7 +282,7 @@ declared, and mechanics **1**, **2**, and the `authorization_code` half of **4**
 the **brokered refresh** half of **4** is implemented in all three runtimes, so every §8 mechanic now exists in the
 runtimes and a handle the code exchange mints is redeemable. Nothing is mounted without all of its controls: the
 grant, its rotation/coalescing/grace/reuse mechanics, and the DCR bound-route enforcement all landed together with
-their executed shared conformance rows and their mutation-proven tests. The CDK half of §9 remains M3c-2.
+their executed shared conformance rows and their mutation-proven tests. The CDK half of §9 landed in M3c-2 (see §9).
 
 1. `/authorize` (GET) — **front-channel termination.** *As built (M3b-ii).* Validate registered client, exact redirect
    URI (loopback port flexibility only), `response_type=code`, S256 PKCE (mandatory; `plain`/absent refused),
@@ -386,6 +394,15 @@ See `THREAT_MODEL.md` for the control and the pinning test of each mechanic, and
 end-to-end walkthrough that proves scenario (a) by construction.
 
 ## 9. CDK model
+
+*As built (M1–M2, closed in M3c-2).* `AppTheoryMcpServer` derives and mounts the transport, OAuth-surface,
+`/register`, and the single stage-global callback route from the route model (never hand-wired), enforces the
+transport posture and the defense-in-depth floor at synth (`validatePostureGuards`, `validateDefenseInDepth`,
+`validateOwningApiDefense`/`validateDenialSignal`, `originReachability` `disabled|locked` only), and exposes the
+`upstreamCallbackPath` prop for the runtime callback override. M3c-2 removed the `MCP_ENDPOINT` injection from both
+constructs and gave the legacy `AppTheoryRemoteMcpServer` a route-derived per-actor challenge
+(`protectedResourceMetadataUrl`, derived through the shared route algebra with the `{actor}` placeholder preserved),
+so no `WWW-Authenticate` challenge depends on an environment variable.
 
 - `AppTheoryMcpServer` gains `transportPosture` (replacing the `IAM|JWT` enum plus `unauthenticatedMcp`
   semantics) and the runtime-posture declaration prop used for pairing.
