@@ -497,17 +497,25 @@ def _require_time_claims(claims: dict[str, Any], now: datetime, skew: int) -> da
 
 
 def _require_authorized_party(claims: dict[str, Any], allowed_azp: set[str]) -> None:
+    # A present azp that is not a JSON string is a malformed claim rather than an
+    # absent one, so it cannot read as the allow-listed client_id. Go and
+    # TypeScript refuse the same value at their claim decode, whether or not an
+    # allow-list is configured, so the type rule is enforced here unconditionally
+    # too.
+    value = claims.get("azp")
+    if value is not None and not isinstance(value, str):
+        raise OAuthBearerError(ERR_INVALID_BEARER_TOKEN)
     if not allowed_azp:
         return
-    # Only an absent (empty) azp falls back to client_id. A present but blank azp
-    # is compared as it stands and refused, so a token cannot use whitespace to
-    # steer the check onto the client_id claim. The stricter reading is identical
-    # in the Go and TypeScript validators, and the allow-list holds trimmed
-    # values, so the comparison trims too.
-    value = claims.get("azp")
-    if not isinstance(value, str) or value == "":
-        value = claims.get("client_id")
-    trimmed = value.strip() if isinstance(value, str) else ""
+    # An azp that is absent (the key missing or JSON null) or empty falls back to
+    # client_id, which is how the Go and TypeScript decoders read it. A present
+    # azp is otherwise compared as it stands: a blank (whitespace) value is
+    # refused rather than allowed to steer the check onto the client_id claim.
+    # The allow-list holds trimmed values, so the comparison trims too.
+    if not value:
+        client_id = claims.get("client_id")
+        value = client_id if isinstance(client_id, str) else ""
+    trimmed = value.strip()
     if not trimmed or trimmed not in allowed_azp:
         raise OAuthBearerError(ERR_INVALID_BEARER_TOKEN)
 

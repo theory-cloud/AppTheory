@@ -74,6 +74,7 @@ _JWKS_REASON_CODES = {
     "audience_mismatch": ERR_BEARER_TOKEN_INVALID_AUDIENCE,
     "expired": ERR_BEARER_TOKEN_EXPIRED,
     "unknown_kid": ERR_INVALID_BEARER_TOKEN,
+    "claim_invalid": ERR_INVALID_BEARER_TOKEN,
 }
 
 _DISCOVERY_REASON_CODES = {
@@ -383,6 +384,7 @@ class JwksValidatorFixtureTests(unittest.TestCase):
             "issuer-mismatch-rejected": self._case_issuer_mismatch_rejected,
             "audience-mismatch-rejected": self._case_audience_mismatch_rejected,
             "expired-token-rejected": self._case_expired_token_rejected,
+            "azp-non-string-rejected": self._case_azp_non_string_rejected,
             "oversized-kid-refused-without-a-fetch": self._case_oversized_kid_refused,
             "distinct-attacker-kids-are-globally-bounded": self._case_distinct_attacker_kids_are_bounded,
             "evicted-kid-window-allows-one-refetch": self._case_evicted_kid_window_allows_refetch,
@@ -491,6 +493,16 @@ class JwksValidatorFixtureTests(unittest.TestCase):
         validator, transport, _clock = self._env()
         transport.push_json(JWKS_URI, _jwks(_jwk("k1", key)))
         token = _jwt(key, "k1", _claims(expires_in=-120))
+        accepted, code = _validate(validator, token)
+        return _Outcome(accepted=accepted, fetch_count=transport.fetch_count, error_code=code)
+
+    def _case_azp_non_string_rejected(self) -> _Outcome:
+        key = _test_key("azp-non-string")
+        validator, transport, _clock = self._env(allowed_azp=["client-1"])
+        transport.push_json(JWKS_URI, _jwks(_jwk("k1", key)))
+        # The azp is the JSON number 123 while client_id is the allow-listed
+        # value the token also carries.
+        token = _jwt(key, "k1", _claims(azp=123))
         accepted, code = _validate(validator, token)
         return _Outcome(accepted=accepted, fetch_count=transport.fetch_count, error_code=code)
 
@@ -745,6 +757,29 @@ class JwksValidatorBehaviourTests(unittest.TestCase):
         accepted, _code = _validate(wildcard, _jwt(key, "k1", _claims(azp="client-1")))
         self.assertFalse(accepted)
         self.assertTrue(_validate(wildcard, _jwt(key, "k1", _claims(azp="*")))[0])
+
+    def test_azp_non_string_is_rejected_even_when_client_id_is_allow_listed(self) -> None:
+        key = _test_key("azp-non-string")
+        validator, _transport, _clock = self._env_with_key(key, allowed_azp=["client-1"])
+
+        # An absent azp still falls back to the allow-listed client_id.
+        accepted, _code = _validate(validator, _jwt(key, "k1", _claims(azp=None)))
+        self.assertTrue(accepted, "an absent azp falls back to client_id")
+
+        # A present but non-string azp is a malformed claim, not an absent one:
+        # it is refused even though client_id is the allow-listed value.
+        for azp in (123, True, ["client-1"], {"value": "client-1"}):
+            with self.subTest(azp=azp):
+                rejected, code = _validate(validator, _jwt(key, "k1", _claims(azp=azp)))
+                self.assertFalse(rejected, "a non-string azp must never fall back to client_id")
+                self.assertEqual(code, ERR_INVALID_BEARER_TOKEN)
+
+        # The type rule is not conditional on an allow-list being configured: Go
+        # and TypeScript refuse a non-string azp while they decode the claims.
+        unguarded, _unguarded_transport, _unguarded_clock = self._env_with_key(key)
+        rejected, code = _validate(unguarded, _jwt(key, "k1", _claims(azp=123)))
+        self.assertFalse(rejected, "a non-string azp is refused with no allow-list configured too")
+        self.assertEqual(code, ERR_INVALID_BEARER_TOKEN)
 
     def test_clock_skew_allows_a_just_expired_token_and_a_not_yet_valid_token(self) -> None:
         key = _test_key("skew")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from apptheory.oauth.autheory import (
     AutheoryProviderOptions as Options,
 )
 from apptheory.oauth.autheory import (
+    _authorized_party_from_token,
     _default_http_transport,
     new_autheory_provider,
 )
@@ -50,6 +52,16 @@ ERROR_HTTP_STATUS = {
 def _load_fixture(name: str) -> dict[str, Any]:
     with (FIXTURE_DIR / name).open(encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _unsigned_token(claims: dict[str, Any]) -> str:
+    """A synthetic compact JWS carrying ``claims``; only its payload is read."""
+
+    def segment(value: dict[str, Any]) -> str:
+        encoded = json.dumps(value, separators=(",", ":")).encode("utf-8")
+        return base64.urlsafe_b64encode(encoded).decode("ascii").rstrip("=")
+
+    return f"{segment({'alg': 'RS256'})}.{segment(claims)}.signature"
 
 
 class _LoopbackTransport:
@@ -297,6 +309,58 @@ class AutheoryAdapterBehaviourTests(unittest.TestCase):
         provider = self._provider(issuer="http://auth.example.test")
         with self.assertRaises(ProviderError) as caught:
             provider.discovery()
+        self.assertEqual(caught.exception.error_class, "upstream_error")
+
+    def test_authorized_party_extraction_refuses_a_non_string_azp(self) -> None:
+        # An absent azp falls back to client_id, and a string azp is reported as
+        # it stands once trimmed.
+        self.assertEqual(_authorized_party_from_token(_unsigned_token({"client_id": "client-1"})), "client-1")
+        self.assertEqual(_authorized_party_from_token(_unsigned_token({"azp": " client-1 "})), "client-1")
+
+        # A present azp that is not a string is a malformed claim rather than an
+        # absent one: it is attributed to no party instead of standing in as the
+        # client_id the same token carries, which is how the Go adapter's claim
+        # decode reads the same token.
+        for azp in (123, ["client-1"], {"value": "client-1"}):
+            with self.subTest(azp=azp):
+                self.assertEqual(
+                    _authorized_party_from_token(_unsigned_token({"azp": azp, "client_id": "client-1"})),
+                    "",
+                )
+
+    def test_a_non_string_azp_is_rejected_before_any_party_is_attributed(self) -> None:
+        upstream = FakeUpstreamProvider(issuer=DEFAULT_ISSUER)
+        upstream.start()
+        self.addCleanup(upstream.stop)
+        adapter = new_autheory_provider(
+            Options(
+                issuer=DEFAULT_ISSUER,
+                http_get=_LoopbackTransport(upstream, DEFAULT_TIMEOUT_SECONDS),
+                allow_private_hosts=True,
+                http_timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+            )
+        )
+        audience = "https://mcp.example.test/mcp"
+        expectations = TokenExpectations(expected_issuer=DEFAULT_ISSUER, expected_audience=audience)
+
+        # The controls: a string azp is attributed, and an absent azp falls back
+        # to client_id, so the rejection below cannot come from a token that
+        # carries no party at all. No authorized-party allow-list is configured,
+        # so the type rule is what refuses the last token.
+        control = upstream.mint_access_token(audience=audience, authorized_party="client-1")
+        self.assertEqual(adapter.validate_access_token(control, expectations).authorized_party, "client-1")
+        fallback = upstream.mint_access_token(audience=audience, extra={"client_id": "client-1"})
+        self.assertEqual(adapter.validate_access_token(fallback, expectations).authorized_party, "client-1")
+
+        # The fail-open case: azp is the JSON number 123 while client_id is a
+        # string. A present azp that is not a string is a malformed claim, not an
+        # absent one, so it is refused instead of standing in as the client_id.
+        malformed = upstream.mint_access_token(
+            audience=audience,
+            extra={"azp": 123, "client_id": "client-1"},
+        )
+        with self.assertRaises(ProviderError) as caught:
+            adapter.validate_access_token(malformed, expectations)
         self.assertEqual(caught.exception.error_class, "upstream_error")
 
     def test_provider_error_messages_are_fixed_and_carry_no_upstream_body(self) -> None:

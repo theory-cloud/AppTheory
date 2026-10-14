@@ -70,6 +70,8 @@ func jwksFailureReason(err error) string {
 		return "unknown_kid"
 	case errors.Is(err, ErrBearerTokenExpired):
 		return "expired"
+	case errors.Is(err, errClaimInvalid):
+		return "claim_invalid"
 	case errors.Is(err, errInsecureURL):
 		return "non_https"
 	case errors.Is(err, errCrossOriginRedirect):
@@ -137,6 +139,7 @@ func jwksValidatorCaseRunners() map[string]func(*testing.T, jwksValidatorFixture
 		"issuer-mismatch-rejected":                    runFixtureIssuerMismatchRejected,
 		"audience-mismatch-rejected":                  runFixtureAudienceMismatchRejected,
 		"expired-token-rejected":                      runFixtureExpiredTokenRejected,
+		"azp-non-string-rejected":                     runFixtureAZPNonStringRejected,
 		"oversized-kid-refused-without-a-fetch":       runFixtureOversizedKidRefusedWithoutAFetch,
 		"distinct-attacker-kids-are-globally-bounded": runFixtureDistinctAttackerKidsAreGloballyBounded,
 		"evicted-kid-window-allows-one-refetch":       runFixtureEvictedKidWindowAllowsOneRefetch,
@@ -380,6 +383,26 @@ func runFixtureExpiredTokenRejected(t *testing.T, _ jwksValidatorFixtureCase) (*
 	})))
 	require.ErrorIs(t, expiredErr, ErrBearerTokenExpired)
 	return nil, expiredErr
+}
+
+// runFixtureAZPNonStringRejected pins the azp type rule: a present azp that is
+// not a JSON string is a malformed claim, not an absent one, so it never falls
+// back to the allow-listed client_id that travels in the same token.
+func runFixtureAZPNonStringRejected(t *testing.T, _ jwksValidatorFixtureCase) (*BearerTokenClaims, error) {
+	t.Helper()
+	key := newTestRSAKey(t)
+	server := newJWKSTestServer(t, testJWK(t, "key-1", key))
+	validator := newTestJWKSValidator(t, JWKSValidatorOptions{
+		Issuer:     jwksFixtureIssuer,
+		JWKSURI:    server.jwksURL(),
+		HTTPClient: server.client(),
+		Now:        frozenJWKSClock(jwksFixtureNow),
+		AllowedAZP: []string{"client-1"},
+	})
+	return validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(map[string]any{
+		"azp":       123,
+		"client_id": "client-1",
+	})))
 }
 
 // runFixtureOversizedKidRefusedWithoutAFetch pins the kid-length cap: an
@@ -722,6 +745,45 @@ func TestJWKSValidatorEnforcesTheAZPAllowList(t *testing.T) {
 	_, err = validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(nil)))
 	require.ErrorIs(t, err, ErrInvalidBearerToken)
 	require.Equal(t, "azp_not_allowed", jwksFailureReason(err))
+}
+
+// TestJWKSValidatorRejectsANonStringAZPEvenWhenTheClientIDIsAllowListed pins the
+// fail-open case the azp type rule closes: a token whose azp is a JSON number
+// and whose client_id is allow-listed is refused as a malformed claim, not
+// accepted through the client_id fallback.
+func TestJWKSValidatorRejectsANonStringAZPEvenWhenTheClientIDIsAllowListed(t *testing.T) {
+	key := newTestRSAKey(t)
+	server := newJWKSTestServer(t, testJWK(t, "key-1", key))
+	validator := newTestJWKSValidator(t, JWKSValidatorOptions{
+		Issuer:     jwksFixtureIssuer,
+		JWKSURI:    server.jwksURL(),
+		HTTPClient: server.client(),
+		Now:        frozenJWKSClock(jwksFixtureNow),
+		AllowedAZP: []string{"client-1"},
+	})
+
+	// The control: the same token with the azp as a string is refused too, so the
+	// rejection above cannot come from the allow-list being unconfigured.
+	_, err := validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(map[string]any{
+		"azp": "client-1",
+	})))
+	require.NoError(t, err, "a string azp equal to the allow-listed value is accepted")
+
+	// The fail-open case: azp is present and is not a string, while client_id is
+	// the allow-listed value. An absent azp falls back to client_id, but a
+	// present non-string azp is a malformed claim and is refused.
+	_, err = validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(map[string]any{
+		"azp":       123,
+		"client_id": "client-1",
+	})))
+	require.ErrorIs(t, err, ErrInvalidBearerToken)
+	require.Equal(t, "claim_invalid", jwksFailureReason(err))
+
+	// An absent azp alone still falls back to the allow-listed client_id.
+	_, err = validateTestToken(validator, signTestRS256Token(t, "key-1", key, testJWKSClaims(map[string]any{
+		"client_id": "client-1",
+	})))
+	require.NoError(t, err, "an absent azp falls back to client_id")
 }
 
 func TestJWKSValidatorFailsClosedOnSignatureAndKeyDoubts(t *testing.T) {

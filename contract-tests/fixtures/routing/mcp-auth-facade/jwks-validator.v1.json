@@ -2,7 +2,7 @@
   "contract": {
     "id": "m17.mcp-auth-facade/jwks-validator/v1",
     "status": "registered (M2)",
-    "notes": "Pins the JWKS/RS256 access-token validator's five T9 cases. Each case is executed by the Go, TypeScript, and Python loader tests against a real local JWKS HTTP server and real RSA keys generated in-test; no static secrets are committed. The fixture is a nested table (loaded by tests directly, not by the generic runner) because the cases need a live key server and real signatures."
+    "notes": "Pins the JWKS/RS256 access-token validator's T9 cases. Each case is executed by the Go, TypeScript, and Python loader tests against a real local JWKS HTTP server and real RSA keys generated in-test; no static secrets are committed. The fixture is a nested table (loaded by tests directly, not by the generic runner) because the cases need a live key server and real signatures."
   },
   "algorithm": {
     "allowed": ["RS256"],
@@ -73,6 +73,12 @@
       "scenario": "a correctly signed token whose exp is in the past",
       "expect": "rejected",
       "reason": "expired"
+    },
+    {
+      "name": "azp-non-string-rejected",
+      "scenario": "a correctly signed token whose azp is the JSON number 123 while the presented client_id is allow-listed",
+      "expect": "rejected",
+      "reason": "claim_invalid"
     },
     {
       "name": "oversized-kid-refused-without-a-fetch",

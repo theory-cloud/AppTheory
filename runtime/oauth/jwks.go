@@ -530,10 +530,12 @@ func (v *jwksValidator) checkAZP(claims jwksClaims) error {
 	if len(v.allowedAZP) == 0 {
 		return nil
 	}
-	// Only an absent (empty) azp falls back to client_id. A present but blank azp
-	// is compared as it stands and refused, so a token cannot use whitespace to
-	// steer the check onto the client_id claim. The stricter reading is identical
-	// in the TypeScript and Python validators.
+	// An azp that is absent or empty falls back to client_id. A present but blank
+	// (whitespace) azp is compared as it stands and refused, so a token cannot use
+	// whitespace to steer the check onto the client_id claim. A present azp that
+	// is not a JSON string never reaches this point: parseJWKSClaims refuses the
+	// whole claim set, and the TypeScript and Python validators refuse the same
+	// value at their claim decode.
 	value := claims.AZP
 	if value == "" {
 		value = claims.ClientID
