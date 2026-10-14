@@ -14,7 +14,7 @@ import (
 const storeConformanceFixture = "../../../contract-tests/fixtures/routing/mcp-auth-facade/facade-store-conformance.v1.json"
 
 // fixtureCaseCount is the case count the shared fixture must carry.
-const fixtureCaseCount = 38
+const fixtureCaseCount = 41
 
 func newStores(clock *store.ManualClock) store.Stores {
 	return store.Stores{

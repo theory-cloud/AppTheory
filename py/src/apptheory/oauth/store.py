@@ -262,9 +262,11 @@ class MemoryTransactionStore:
         self._lock = threading.Lock()
 
     def put(self, record: TransactionRecord) -> None:
+        """Stores a copy, preserving the caller's status and normalizing a
+        version below 1 to 1, as Go's in-memory reference store does."""
         stored = _copy_record(record)
-        stored.status = STATUS_ISSUED
-        stored.version = 1
+        if stored.version < 1:
+            stored.version = 1
         if stored.expires_at is None and self._ttl is not None:
             stored.expires_at = self._now() + timedelta(seconds=self._ttl)
         with self._lock:
@@ -295,9 +297,12 @@ class MemoryAuthorizationCodeStore:
         self._lock = threading.Lock()
 
     def put(self, record: AuthorizationCodeRecord) -> None:
+        """Stores a copy, preserving the caller's status and normalizing a
+        version below 1 to 1, as Go's in-memory reference store does. A re-put
+        clears the code's consumed flag."""
         stored = _copy_record(record)
-        stored.status = STATUS_ISSUED
-        stored.version = 1
+        if stored.version < 1:
+            stored.version = 1
         if stored.expires_at is None and self._ttl is not None:
             stored.expires_at = self._now() + timedelta(seconds=self._ttl)
         with self._lock:
@@ -389,9 +394,12 @@ class MemoryRouteRefreshBrokerStore:
         self._lock = threading.Lock()
 
     def put(self, record: RouteRefreshBrokerRecord) -> None:
+        """Stores a copy, preserving the caller's status and normalizing a
+        version below 1 to 1, as Go's in-memory reference store does. The
+        handle's stored-at instant is recorded for the local lifetime policy."""
         stored = _copy_record(record)
-        stored.status = stored.status or STATUS_ACTIVE
-        stored.version = 1
+        if stored.version < 1:
+            stored.version = 1
         with self._lock:
             self._records[stored.handle_hash] = (stored, self._now())
 
@@ -606,6 +614,14 @@ def _authorization_code_outcome(result: ConsumeResult | None) -> str:
     return "ok"
 
 
+def _authorization_code_record_fields(result: ConsumeResult | None) -> dict[str, Any]:
+    """Reports a consume's status and version, or the "none"/-1 sentinels when
+    the consume returned no record."""
+    if result is None or result.record is None:
+        return {"status": "none", "version": -1}
+    return {"status": result.record.status, "version": result.record.version}
+
+
 def _scenario_transaction_consume_single_use(
     stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
 ) -> None:
@@ -753,13 +769,8 @@ def _scenario_authorization_code_consume_record_payload(
     first = store.consume("code-hash")
     replay = store.consume("code-hash")
 
-    def fields(result: Any) -> dict[str, Any]:
-        if result is None or result.record is None:
-            return {"status": "none", "version": -1}
-        return {"status": result.record.status, "version": result.record.version}
-
-    first_fields = fields(first)
-    replay_fields = fields(replay)
+    first_fields = _authorization_code_record_fields(first)
+    replay_fields = _authorization_code_record_fields(replay)
     _assert_expected(
         expect,
         {
@@ -769,6 +780,59 @@ def _scenario_authorization_code_consume_record_payload(
             "replay": _authorization_code_outcome(replay),
             "replay_status": replay_fields["status"],
             "replay_version": replay_fields["version"],
+        },
+    )
+
+
+def _scenario_authorization_code_put_payload(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    """Seeds one code with the caller's status and version and reports what the
+    consume hands back, so a row pins the put-path payload contract rather than
+    only the outcome. An absent put_status is the empty string and an absent
+    put_version is 0."""
+    store = _authorization_code_store(stores, clock, _ttl_param(params))
+    store.put(
+        AuthorizationCodeRecord(
+            code_hash="code-hash",
+            status=params.get("put_status", ""),
+            version=int(params.get("put_version", 0)),
+        )
+    )
+    result = store.consume("code-hash")
+    fields = _authorization_code_record_fields(result)
+    _assert_expected(
+        expect,
+        {
+            "consume": _authorization_code_outcome(result),
+            "status": fields["status"],
+            "version": fields["version"],
+        },
+    )
+
+
+def _scenario_broker_put_payload(
+    stores: dict[str, Any], params: dict[str, Any], expect: dict[str, Any], clock: Any
+) -> None:
+    """Seeds one handle with the caller's status and version and reports what the
+    get hands back, so a row pins the put-path payload contract rather than only
+    the outcome. An absent put_status is the empty string and an absent
+    put_version is 0."""
+    store = _broker_store(stores, clock, None, UTC_NOW_LOCK_TTL_SECONDS)
+    store.put(
+        RouteRefreshBrokerRecord(
+            handle_hash="handle-hash",
+            status=params.get("put_status", ""),
+            version=int(params.get("put_version", 0)),
+        )
+    )
+    record = store.get("handle-hash")
+    _assert_expected(
+        expect,
+        {
+            "get": "ok" if record is not None else "not_found",
+            "status": record.status if record is not None else "none",
+            "version": record.version if record is not None else -1,
         },
     )
 
@@ -1094,6 +1158,7 @@ _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
     ("authorization_code", "consume_unknown"): _scenario_authorization_code_consume_unknown,
     ("authorization_code", "consume_after_ttl"): _scenario_authorization_code_consume_after_ttl,
     ("authorization_code", "consume_record_payload"): _scenario_authorization_code_consume_record_payload,
+    ("authorization_code", "put_payload"): _scenario_authorization_code_put_payload,
     ("authorization_code", "consume_after_ttl_then_replay"): (
         _scenario_authorization_code_consume_after_ttl_then_replay
     ),
@@ -1106,6 +1171,7 @@ _STORE_SCENARIOS: dict[tuple[str, str], Any] = {
     ("client", "update_stale_version"): _scenario_client_update_stale_version,
     ("client", "get_unknown"): _scenario_client_get_unknown,
     ("route_refresh_broker", "get_unknown"): _scenario_broker_get_unknown,
+    ("route_refresh_broker", "put_payload"): _scenario_broker_put_payload,
     ("route_refresh_broker", "acquire_lock_exclusive_with_expiry"): _scenario_broker_acquire_lock_exclusive_with_expiry,
     ("route_refresh_broker", "compare_and_swap_versioned"): _scenario_broker_compare_and_swap_versioned,
     ("route_refresh_broker", "compare_and_swap_unknown"): _scenario_broker_compare_and_swap_unknown,

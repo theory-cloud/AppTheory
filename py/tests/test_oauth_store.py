@@ -105,7 +105,7 @@ class StoreConformanceTests(unittest.TestCase):
 
     def test_fixture_table_is_complete(self) -> None:
         cases = self.fixture["cases"]
-        self.assertEqual(len(cases), 38)
+        self.assertEqual(len(cases), 41)
         self.assertEqual(
             {case["store"] for case in cases},
             {"transaction", "authorization_code", "client", "route_refresh_broker", "rate_limit"},
@@ -116,17 +116,18 @@ class StoreConformanceTests(unittest.TestCase):
         cases = self.fixture["cases"]
         ran = run_store_conformance(STORE_CLASSES, cases, self.clock)
         print(f"store conformance: {ran} cases run")
-        self.assertEqual(ran, 38)
-        self.assertEqual(len(cases), 38)
+        self.assertEqual(ran, 41)
+        self.assertEqual(len(cases), 41)
 
     def test_every_scenario_is_exercised(self) -> None:
         # Bidirectional: dropping or duplicating a shared row must fail here
         # rather than silently shrinking coverage. Distinct (store, scenario)
-        # pairs are two fewer than the 37 rows: the broker TTL boundary is
-        # probed by two rows that share one scenario, and the code payload rows
-        # share the consume_record_payload scenario.
+        # pairs are three fewer than the 41 rows: the broker TTL boundary is
+        # probed by two rows that share one scenario, the code payload rows
+        # share the consume_record_payload scenario, and the two put_payload
+        # rows pair the scenario with two stores.
         pairs = {(case["store"], case["scenario"]) for case in self.fixture["cases"]}
-        self.assertEqual(len(pairs), 36)
+        self.assertEqual(len(pairs), 38)
 
 
 class TransactionStoreTests(unittest.TestCase):

@@ -263,8 +263,8 @@ export declare class MemoryRouteRefreshBrokerStore implements RouteRefreshBroker
     /**
      * Seeds a handle: the store's own create path, and the only way a handle is
      * created. Creation is deliberately not a compare-and-swap, so a swap can
-     * never resurrect a handle. A copy is stored at version 1, and a record that
-     * carries no status defaults to `active`.
+     * never resurrect a handle. A copy is stored with the caller's status
+     * preserved verbatim, and a version below 1 is normalized to 1.
      */
     put(record: RouteRefreshBrokerRecord): Promise<void>;
     get(handleHash: string): Promise<RouteRefreshBrokerRecord | null>;
