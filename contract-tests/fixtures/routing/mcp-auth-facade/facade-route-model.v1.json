@@ -81,6 +81,20 @@
       "notes": "One callback route per deployment; correlated by the single-use upstream state recorded in the transaction store, so no per-kind callback multiply."
     }
   ],
+  "callback_override": {
+    "default": "/_oauth/mcp/callback",
+    "notes": "The stage-global upstream callback path is overridable (FacadeConfig.UpstreamCallbackPath on every runtime; AppTheoryMcpServerProps.upstreamCallbackPath on the CDK construct). An unset or whitespace-only value resolves to the contract default; every other value must be an absolute path with no query, fragment, or dot segment and is normalized with the same rules as every other route path. The CDK construct and all three runtimes resolve the override through the same algebra so the mounted and registered callback routes cannot diverge.",
+    "cases": [
+      { "configured": "", "expect_pattern": "/_oauth/mcp/callback" },
+      { "configured": "  /cb  ", "expect_pattern": "/cb" },
+      { "configured": "/cb", "expect_pattern": "/cb" },
+      { "configured": "/cb/", "expect_pattern": "/cb" },
+      { "configured": "/a/../b", "expect_error": true },
+      { "configured": "cb", "expect_error": true },
+      { "configured": "/cb?x=1", "expect_error": true },
+      { "configured": "/cb#f", "expect_error": true }
+    ]
+  },
   "worked_example": {
     "public_base_url": "https://mcp.example.com",
     "issuer_mode": "route",

@@ -10,6 +10,8 @@ import (
 
 const expectationsPath = "../../contract-tests/fixtures/routing/mcp-route-algebra/expectations.json"
 
+const facadeRouteModelPath = "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-route-model.v1.json"
+
 type routeAlgebraExpectations struct {
 	Contract                 contractExpectations       `json:"contract"`
 	Normalization            []normalizationExpectation `json:"normalization"`
@@ -39,6 +41,35 @@ type callbackPathExpectation struct {
 type callbackPathCase struct {
 	Configured string `json:"configured"`
 	Expected   string `json:"expected"`
+}
+
+type facadeRouteModel struct {
+	Contract struct {
+		DefaultCallbackPath string `json:"default_callback_path"`
+	} `json:"contract"`
+	CallbackOverride struct {
+		Default string                 `json:"default"`
+		Cases   []callbackOverrideCase `json:"cases"`
+	} `json:"callback_override"`
+}
+
+type callbackOverrideCase struct {
+	Configured    string `json:"configured"`
+	ExpectPattern string `json:"expect_pattern"`
+	ExpectError   bool   `json:"expect_error"`
+}
+
+func loadFacadeRouteModel(t *testing.T) facadeRouteModel {
+	t.Helper()
+	contents, err := os.ReadFile(facadeRouteModelPath)
+	if err != nil {
+		t.Fatalf("read facade route model: %v", err)
+	}
+	var model facadeRouteModel
+	if err := json.Unmarshal(contents, &model); err != nil {
+		t.Fatalf("parse facade route model: %v", err)
+	}
+	return model
 }
 
 type contractExpectations struct {
@@ -405,6 +436,32 @@ func TestStageGlobalCallbackAndIssuerModes(t *testing.T) {
 	for _, bad := range expected.CallbackPath.Reject {
 		if got, ok := NormalizeCallbackPath(bad); ok {
 			t.Fatalf("NormalizeCallbackPath(%q) = %q, true; want failure", bad, got)
+		}
+	}
+}
+
+func TestSharedFacadeRouteModelCallbackOverride(t *testing.T) {
+	t.Parallel()
+	model := loadFacadeRouteModel(t)
+	if model.CallbackOverride.Default != model.Contract.DefaultCallbackPath {
+		t.Fatalf("callback_override.default = %q, want %q", model.CallbackOverride.Default, model.Contract.DefaultCallbackPath)
+	}
+	if DefaultCallbackPath != model.CallbackOverride.Default {
+		t.Fatalf("DefaultCallbackPath = %q, want %q", DefaultCallbackPath, model.CallbackOverride.Default)
+	}
+	for _, row := range model.CallbackOverride.Cases {
+		got, ok := CallbackPathForConfiguredPath(row.Configured)
+		if row.ExpectError {
+			if ok {
+				t.Fatalf("CallbackPathForConfiguredPath(%q) = %q, true; want failure", row.Configured, got)
+			}
+			if normalized, ok := NormalizeCallbackPath(row.Configured); ok {
+				t.Fatalf("NormalizeCallbackPath(%q) = %q, true; want failure", row.Configured, normalized)
+			}
+			continue
+		}
+		if !ok || got != row.ExpectPattern {
+			t.Fatalf("CallbackPathForConfiguredPath(%q) = %q, %v; want %q, true", row.Configured, got, ok, row.ExpectPattern)
 		}
 	}
 }

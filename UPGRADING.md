@@ -115,8 +115,9 @@ Both forms decode to the same values, the grace replay is byte-identical **withi
 replay requires), and no contract pins cross-runtime byte equality — so a cross-language golden-file comparison
 must normalize the bytes or compare decoded values rather than raw bodies.
 
-**Not yet available in this line:** the **CDK `facade` wiring** (the follow-on milestone, M3c-2, owns it) — still no
-`cdk/**` change, so the construct's attach prop does not wire the provider and stores or the callback-path override.
+**Not yet available in this line:** the **CDK `facade` wiring** (the follow-on milestone, M3c-2, owns it) — the
+construct's attach prop does not yet wire the provider and stores. The stage-global callback path override is wired
+separately, through the construct's `upstreamCallbackPath` prop.
 
 The store `put` normalization was also aligned across Go, TypeScript, and Python: the reference stores now preserve a
 caller-supplied `status` verbatim and normalize a version below 1 to 1 in all three runtimes (Go was already the

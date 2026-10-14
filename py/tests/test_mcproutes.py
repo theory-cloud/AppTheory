@@ -49,9 +49,22 @@ EXPECTATIONS_PATH = (
     / "expectations.json"
 )
 
+FACADE_ROUTE_MODEL_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "contract-tests"
+    / "fixtures"
+    / "routing"
+    / "mcp-auth-facade"
+    / "facade-route-model.v1.json"
+)
+
 
 def load_expectations() -> dict:
     return json.loads(EXPECTATIONS_PATH.read_text(encoding="utf-8"))
+
+
+def load_facade_route_model() -> dict:
+    return json.loads(FACADE_ROUTE_MODEL_PATH.read_text(encoding="utf-8"))
 
 
 def endpoint_from(row: dict) -> EndpointPath:
@@ -258,6 +271,25 @@ class McpRouteAlgebraTests(unittest.TestCase):
         for bad in table["reject"]:
             with self.subTest(rejected=bad), self.assertRaises(ValueError):
                 normalize_callback_path(bad)
+
+    def test_shared_facade_route_model_callback_override(self) -> None:
+        model = load_facade_route_model()
+        override = model["callback_override"]
+        self.assertEqual(override["default"], model["contract"]["default_callback_path"])
+        self.assertEqual(DEFAULT_CALLBACK_PATH, override["default"])
+
+        for row in override["cases"]:
+            with self.subTest(case=row):
+                if row.get("expect_error"):
+                    with self.assertRaises(ValueError):
+                        callback_path_for_configured_path(row["configured"])
+                    with self.assertRaises(ValueError):
+                        normalize_callback_path(row["configured"])
+                    continue
+                self.assertEqual(
+                    callback_path_for_configured_path(row["configured"]),
+                    row["expect_pattern"],
+                )
 
     def test_shared_protected_resource_inverse_expectations(self) -> None:
         expected = load_expectations()["protected_resource_inverse"]

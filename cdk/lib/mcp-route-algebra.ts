@@ -264,6 +264,48 @@ export abstract class AppTheoryMcpRouteAlgebra {
     ];
   }
 
+  /**
+   * Resolve the effective stage-global callback path for a configured value.
+   *
+   * An unset (or whitespace-only) value resolves to `DEFAULT_CALLBACK_PATH`;
+   * every other value must normalize to a valid absolute callback path.
+   */
+  public static callbackPathForConfiguredPath(configured: string): string {
+    const trimmed = trimASCIIWhitespace(configured);
+    if (trimmed === "") {
+      return AppTheoryMcpRouteAlgebra.DEFAULT_CALLBACK_PATH;
+    }
+    return AppTheoryMcpRouteAlgebra.normalizeCallbackPath(trimmed);
+  }
+
+  /**
+   * Validate and normalize an absolute callback path.
+   *
+   * The path must be absolute, contain no query or fragment, and must not use a
+   * dot segment. It is normalized with the same rules as every other route path.
+   */
+  public static normalizeCallbackPath(rawPath: string): string {
+    const trimmed = trimASCIIWhitespace(rawPath);
+    if (trimmed === "" || !trimmed.startsWith("/")) {
+      throw new Error(
+        `mcproutes: callback path must be absolute ${JSON.stringify(rawPath)}`,
+      );
+    }
+    if (trimmed.includes("?") || trimmed.includes("#")) {
+      throw new Error(
+        `mcproutes: callback path must not include a query or fragment ${JSON.stringify(rawPath)}`,
+      );
+    }
+    for (const segment of trimmed.split("/")) {
+      if (segment === "." || segment === "..") {
+        throw new Error(
+          `mcproutes: callback path must not use dot segments ${JSON.stringify(rawPath)}`,
+        );
+      }
+    }
+    return normalizePath(trimmed);
+  }
+
   /** Return every canonical OAuth discovery template in contract order. */
   public static supportedOAuthDiscoveryTemplates(): AppTheoryMcpOAuthDiscoveryTemplate[] {
     return endpointTemplateSeeds().map(({ kind, pattern }) => ({

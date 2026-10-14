@@ -186,9 +186,9 @@ client record carries its registered redirect URIs and `token_endpoint_auth_meth
 **Not yet available** (the follow-on milestone owns them): DCR — the `/register` route is not mounted, so clients must
 be pre-registered; the **`refresh_token` grant** — the code-exchange response carries the framework-minted opaque
 refresh handle, but the token endpoint answers `400 unsupported_grant_type` for it until the brokered refresh lands, so
-a returned handle cannot be redeemed yet; and the **CDK `facade` wiring** — no `cdk/**` change, so the construct's
-attach prop does not yet wire the provider and stores or the callback-path override. Transport-route bearer enforcement
-is unchanged.
+a returned handle cannot be redeemed yet; and the **CDK `facade` wiring** — the construct's attach prop does not yet
+wire the provider and stores. The stage-global callback path override is wired separately, through the construct's
+`upstreamCallbackPath` prop. Transport-route bearer enforcement is unchanged.
 
 ## `theory-mcp-server` migration fitness
 

@@ -338,8 +338,10 @@ facade itself derives when it looks a record up, and it grants no access of its 
 
 Still absent, by milestone:
 
-- **CDK wiring:** no `cdk/**` change; the construct's `facade` attach prop does not yet wire the provider and stores or
-  the callback-path override (Wired by the follow-on milestone M3c-2).
+- **CDK wiring:** the `AppTheoryMcpServer` construct wires the stage-global callback path override through
+  `upstreamCallbackPath`, resolved by the same `AppTheoryMcpRouteAlgebra.callbackPathForConfiguredPath` the runtime
+  applies to `UpstreamCallbackPath`, so the mounted and registered callback routes cannot diverge. The construct's
+  `facade` attach prop does not yet wire the provider and stores (wired by a follow-on milestone).
 - **A subset-accepting refresh scope:** not built and not planned. A present `scope` on a refresh must be exactly the
   granted set (ruling R4); the facade cannot narrow an upstream access token it returns byte-for-byte.
 - **A durable store:** the framework still ships none. The in-memory reference stores are non-durable and do not

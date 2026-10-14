@@ -59,6 +59,18 @@ const expectations = JSON.parse(
   ),
 );
 
+// The stage-global callback override is pinned by the facade route model so the
+// CDK construct and every runtime resolve the same derivations.
+const facadeRouteModel = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-route-model.v1.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
+
 function expectedEndpoint(expectation) {
   const endpoint = {
     kind: expectation.kind,
@@ -382,4 +394,30 @@ test("callback path resolution and normalization", () => {
     assert.throws(() => normalizeCallbackPath(bad), undefined, bad);
   }
   assert.throws(() => callbackPathForConfiguredPath(table.reject[0]));
+});
+
+test("shared facade route model pins the callback override derivations", () => {
+  const override = facadeRouteModel.callback_override;
+  assert.equal(override.default, facadeRouteModel.contract.default_callback_path);
+  assert.equal(DEFAULT_CALLBACK_PATH, override.default);
+  for (const row of override.cases) {
+    if (row.expect_error) {
+      assert.throws(
+        () => callbackPathForConfiguredPath(row.configured),
+        undefined,
+        `callbackPathForConfiguredPath ${JSON.stringify(row)}`,
+      );
+      assert.throws(
+        () => normalizeCallbackPath(row.configured),
+        undefined,
+        `normalizeCallbackPath ${JSON.stringify(row)}`,
+      );
+      continue;
+    }
+    assert.equal(
+      callbackPathForConfiguredPath(row.configured),
+      row.expect_pattern,
+      JSON.stringify(row),
+    );
+  }
 });

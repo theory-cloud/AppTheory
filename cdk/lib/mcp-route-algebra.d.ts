@@ -127,6 +127,20 @@ export declare abstract class AppTheoryMcpRouteAlgebra {
      * this returns the contract default.
      */
     static supportedStageGlobalRoutes(): AppTheoryMcpStageGlobalRoute[];
+    /**
+     * Resolve the effective stage-global callback path for a configured value.
+     *
+     * An unset (or whitespace-only) value resolves to `DEFAULT_CALLBACK_PATH`;
+     * every other value must normalize to a valid absolute callback path.
+     */
+    static callbackPathForConfiguredPath(configured: string): string;
+    /**
+     * Validate and normalize an absolute callback path.
+     *
+     * The path must be absolute, contain no query or fragment, and must not use a
+     * dot segment. It is normalized with the same rules as every other route path.
+     */
+    static normalizeCallbackPath(rawPath: string): string;
     /** Return every canonical OAuth discovery template in contract order. */
     static supportedOAuthDiscoveryTemplates(): AppTheoryMcpOAuthDiscoveryTemplate[];
     /** Parse a concrete MCP path after contract normalization. */

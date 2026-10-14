@@ -326,6 +326,21 @@ export interface AppTheoryMcpServerProps {
   readonly transportAuthorizer?: AppTheoryMcpTransportAuthorizerOptions;
 
   /**
+   * Stage-global upstream OAuth callback path.
+   *
+   * The CDK-mounted callback route and the runtime-registered one must not
+   * diverge: this prop is resolved by
+   * `AppTheoryMcpRouteAlgebra.callbackPathForConfiguredPath`, the same algebra
+   * the runtime applies to `FacadeConfig.UpstreamCallbackPath`. Supply a
+   * synthesis-time literal absolute path with no query, fragment, or dot
+   * segment; an empty value keeps the contract default, and a value that
+   * collides with another derived route fails synthesis. Refused under
+   * `transportPosture: none-public`, which attaches no OAuth surface.
+   * @default AppTheoryMcpRouteAlgebra.DEFAULT_CALLBACK_PATH
+   */
+  readonly upstreamCallbackPath?: string;
+
+  /**
    * Session-state table configuration. The table defaults on.
    * @default enabled with production defaults
    */
@@ -458,6 +473,7 @@ export class AppTheoryMcpServer extends Construct {
     validatePostureGuards(props, routeFamily, posture);
     validateDefenseInDepth(props, posture);
     const authorizationRoutesAttached = posture !== AppTheoryMcpTransportPosture.NONE_PUBLIC;
+    const upstreamCallbackPath = resolveUpstreamCallbackPath(props);
 
     this.transportPosture = posture;
     this.mcpPaths = [...routeFamily.patterns];
@@ -465,6 +481,7 @@ export class AppTheoryMcpServer extends Construct {
       this.mcpPaths,
       authorizationRoutesAttached,
       routeFamily.rootAuthorizationServerDiscovery,
+      upstreamCallbackPath,
     );
     validateRouteInventory(this.routeInventory, authorizationRoutesAttached);
     this.protectedResourceMetadataPaths = this.routeInventory.routes.map(
@@ -762,10 +779,33 @@ function invalidRoutePattern(propName: string): Error {
   );
 }
 
+function resolveUpstreamCallbackPath(props: AppTheoryMcpServerProps): string {
+  const configured = props.upstreamCallbackPath;
+  if (configured === undefined) {
+    return AppTheoryMcpRouteAlgebra.DEFAULT_CALLBACK_PATH;
+  }
+  if (Token.isUnresolved(configured)) {
+    throw new Error(
+      "AppTheoryMcpServer: upstreamCallbackPath must be a synthesis-time literal route path",
+    );
+  }
+  try {
+    return AppTheoryMcpRouteAlgebra.callbackPathForConfiguredPath(configured);
+  } catch (err) {
+    const reason = err instanceof Error
+      ? err.message.replace(/^mcproutes: /, "")
+      : String(err);
+    throw new Error(
+      `AppTheoryMcpServer: upstreamCallbackPath is invalid: ${reason}`,
+    );
+  }
+}
+
 function buildRouteInventory(
   patterns: string[],
   authorizationRoutesAttached: boolean,
   rootAuthorizationServerAttached: boolean,
+  callbackPattern: string,
 ): AppTheoryMcpServerRouteInventory {
   return {
     contractVersion: AppTheoryMcpRouteAlgebra.CONTRACT_VERSION,
@@ -789,7 +829,7 @@ function buildRouteInventory(
     rootAuthorizationServerPattern:
       AppTheoryMcpRouteAlgebra.authorizationServerPathForResourcePath("/"),
     rootAuthorizationServerAttached,
-    callbackPattern: AppTheoryMcpRouteAlgebra.DEFAULT_CALLBACK_PATH,
+    callbackPattern,
   };
 }
 
@@ -1079,6 +1119,11 @@ function validatePostureGuards(
     if (props.runtimePosture !== undefined) {
       throw new Error(
         "AppTheoryMcpServer: transportPosture NONE_PUBLIC cannot declare runtimePosture",
+      );
+    }
+    if (props.upstreamCallbackPath !== undefined) {
+      throw new Error(
+        "AppTheoryMcpServer: transportPosture NONE_PUBLIC cannot declare upstreamCallbackPath",
       );
     }
     return;

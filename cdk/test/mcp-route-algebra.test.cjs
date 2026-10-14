@@ -328,3 +328,33 @@ test("v2 vocabulary pins the issuer modes and stage-global routes", () => {
     { name: "upstream_callback", pattern: "/_oauth/mcp/callback", methods: ["GET"] },
   ]);
 });
+
+test("shared route model pins the callback override derivations", () => {
+  const override = routeModel.callback_override;
+  assert.equal(override.default, routeModel.contract.default_callback_path);
+  assert.equal(Algebra.DEFAULT_CALLBACK_PATH, override.default);
+  assert.equal(Algebra.callbackPathForConfiguredPath(""), override.default);
+  assert.equal(Algebra.callbackPathForConfiguredPath("   "), override.default);
+  assert.equal(Algebra.normalizeCallbackPath(override.default), override.default);
+
+  for (const row of override.cases) {
+    if (row.expect_error) {
+      assert.throws(
+        () => Algebra.callbackPathForConfiguredPath(row.configured),
+        undefined,
+        `callbackPathForConfiguredPath ${JSON.stringify(row)}`,
+      );
+      assert.throws(
+        () => Algebra.normalizeCallbackPath(row.configured),
+        undefined,
+        `normalizeCallbackPath ${JSON.stringify(row)}`,
+      );
+      continue;
+    }
+    assert.equal(
+      Algebra.callbackPathForConfiguredPath(row.configured),
+      row.expect_pattern,
+      JSON.stringify(row),
+    );
+  }
+});
