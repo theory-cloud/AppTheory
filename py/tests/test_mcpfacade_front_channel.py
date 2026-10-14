@@ -81,6 +81,13 @@ FORM_PARSE_GROUP = "form_parse"
 # runtime can silently execute a smaller table.
 FORM_PARSE_CASE_COUNT = 11
 
+AUTHORIZE_PROVIDER_FAILURE_GROUP = "authorize_provider_failure"
+
+# The number of authorize_provider_failure rows the shared table must carry; a
+# change to the table must also be a deliberate edit in the Go and TypeScript
+# loaders, so no runtime can silently execute a smaller table.
+AUTHORIZE_PROVIDER_FAILURE_CASE_COUNT = 2
+
 METHOD_STATUS_GROUP = "method_status"
 
 # The number of method_status rows the shared table must carry; a change to the
@@ -231,15 +238,24 @@ class _MintingProvider:
     signature.
     """
 
-    def __init__(self, adapter, fake: FakeUpstreamProvider, issued_at: float) -> None:
+    def __init__(
+        self,
+        adapter,
+        fake: FakeUpstreamProvider,
+        issued_at: float,
+        fail_authorization_url: bool = False,
+    ) -> None:
         self._adapter = adapter
         self._fake = fake
         self._issued_at = issued_at
+        self._fail_authorization_url = fail_authorization_url
 
     def discovery(self):
         return self._adapter.discovery()
 
     def authorization_url(self, req):
+        if self._fail_authorization_url:
+            raise RuntimeError("minting provider: authorization URL unavailable")
         return self._adapter.authorization_url(req)
 
     def exchange_code(self, req: CodeExchangeRequest) -> TokenSet:
@@ -269,6 +285,8 @@ class _FrontChannelHarness:
         provider_options: Any = None,
         issuer_mode: str = "route",
         registration_endpoint_url: str | None = None,
+        provider_hints: Any = None,
+        fail_authorization_url: bool = False,
     ) -> None:
         self._test = test
         self.clock = _ManualClock(datetime(2026, 1, 1, tzinfo=UTC))
@@ -309,7 +327,7 @@ class _FrontChannelHarness:
             )
         )
         self.issued_at = time.time()
-        self.provider = _MintingProvider(adapter, self.fake, self.issued_at)
+        self.provider = _MintingProvider(adapter, self.fake, self.issued_at, fail_authorization_url)
         self.broker = _RecordingBrokerStore(MemoryRouteRefreshBrokerStore(now=self.clock.now))
         self.stores = Stores(
             transaction=MemoryTransactionStore(now=self.clock.now),
@@ -340,6 +358,7 @@ class _FrontChannelHarness:
             stores=self.stores,
             upstream_client_id=FRONT_TEST_CLIENT_ID,
             upstream_issuer=FRONT_TEST_UPSTREAM_ISS,
+            provider_hints=provider_hints,
         )
         self.stores.client.put(
             ClientRecord(
@@ -574,6 +593,46 @@ class FrontChannelFormParseConformanceTests(unittest.TestCase):
                 executed += 1
         print(f"form parse conformance: {executed} cases run")
         self.assertEqual(FORM_PARSE_CASE_COUNT, executed)
+
+
+class FrontChannelAuthorizeProviderFailureConformanceTests(unittest.TestCase):
+    """Pins the authorize leg's provider-call failure class to the shared
+    cross-runtime table through the real ``/authorize`` handler: a failing
+    provider AuthorizationURL builder and a failing app-supplied providerHints
+    each render the gateway-class 502 ``upstream_error`` error page with no
+    ``Location``, so the provider-call failure class is the same 502 as the
+    callback's rather than the facade's own 400 vocabulary.
+    """
+
+    def test_authorize_enforces_the_shared_provider_failure_table(self) -> None:
+        rows = [case for case in _load_fixture()["cases"] if case["group"] == AUTHORIZE_PROVIDER_FAILURE_GROUP]
+        self.assertEqual(AUTHORIZE_PROVIDER_FAILURE_CASE_COUNT, len(rows))
+
+        executed = 0
+        for row in rows:
+            with self.subTest(case=row["id"]):
+
+                def provider_hints(_ctx, _fail: str = row["fail"]) -> dict[str, str]:
+                    if _fail == "provider_hints":
+                        raise RuntimeError("provider hints unavailable")
+                    return {}
+
+                harness = _FrontChannelHarness(
+                    self,
+                    provider_hints=provider_hints,
+                    fail_authorization_url=row["fail"] == "authorization_url",
+                )
+                response = harness.authorize()
+                context = f"fail {row['fail']!r}"
+                self.assertEqual(row["expect_status"], response.status, context)
+                if row.get("expect_no_location"):
+                    self.assertEqual("", _location(response), context)
+                body = response.body.decode("utf-8", "replace")
+                for want in row["expect_body_has"]:
+                    self.assertIn(want, body, context)
+                executed += 1
+        print(f"authorize provider failure conformance: {executed} cases run")
+        self.assertEqual(AUTHORIZE_PROVIDER_FAILURE_CASE_COUNT, executed)
 
 
 def _allow_methods(response: Response) -> list[str]:

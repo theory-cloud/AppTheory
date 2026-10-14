@@ -65,16 +65,26 @@ const refreshGroup = "refresh"
 // lists it so a new group cannot appear without a loader.
 const metadataRegistrationGroup = "metadata_registration"
 
+// authorizeProviderFailureGroup is the sibling group holding the authorize leg's
+// provider-call failure class: a failing provider AuthorizationURL builder or a
+// failing app-supplied providerHints is the gateway-class 502 upstream_error
+// error page, while 400 stays the facade's own client-caused vocabulary. It is
+// executed by runtime/mcpfacade's front-channel tests through the real
+// /authorize handler, not here; the ledger below still lists it so a new group
+// cannot appear without a loader.
+const authorizeProviderFailureGroup = "authorize_provider_failure"
+
 // fixtureGroups is every group the shared table is allowed to carry.
 var fixtureGroups = map[string]struct{}{
-	issuerPinGroup:            {},
-	redirectMatchGroup:        {},
-	formParseGroup:            {},
-	methodStatusGroup:         {},
-	dcrGroup:                  {},
-	boundRouteGroup:           {},
-	refreshGroup:              {},
-	metadataRegistrationGroup: {},
+	issuerPinGroup:                {},
+	redirectMatchGroup:            {},
+	formParseGroup:                {},
+	methodStatusGroup:             {},
+	dcrGroup:                      {},
+	boundRouteGroup:               {},
+	refreshGroup:                  {},
+	metadataRegistrationGroup:     {},
+	authorizeProviderFailureGroup: {},
 }
 
 // issuerPinCaseCount is the number of issuer_pin rows the shared fixture must

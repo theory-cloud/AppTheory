@@ -372,7 +372,9 @@ class FacadeConfig:
     # request (DESIGN section 6): it receives the request context and returns
     # the hint map, for example the ``account_id`` hint. A hint carries no
     # authority: the provider derives authentication account context from its
-    # own validated binding, not from the hint (DESIGN section 6).
+    # own validated binding, not from the hint (DESIGN section 6). An error is a
+    # provider-call failure in the gateway class, so it maps to the 502
+    # ``upstream_error`` error page and never redirects (DESIGN section 8.2).
     provider_hints: Callable[[Context], dict[str, str]] | None = None
 
 
@@ -1505,8 +1507,8 @@ def _handle_authorize_inner(config: _NormalizedConfig, kind: str, ctx: Context) 
     if front.provider_hints is not None:
         try:
             hints = dict(front.provider_hints(ctx) or {})
-        except Exception:  # noqa: BLE001 - a fail-closed request-class rejection that never redirects
-            return _facade_error_page(400, "invalid_request")
+        except Exception:  # noqa: BLE001 - a provider-call failure is the gateway-class 502 that never redirects
+            return _facade_upstream_error_page()
 
     upstream_state = _new_opaque_token()
     code_verifier = new_pkce_code_verifier()

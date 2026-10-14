@@ -280,7 +280,10 @@ their executed shared conformance rows and their mutation-proven tests. The CDK 
    URI (loopback port flexibility only), `response_type=code`, S256 PKCE (mandatory; `plain`/absent refused),
    `state`, `resource`, and scope; record a single-use transaction; redirect the browser upstream with the
    facade's own client/callback/PKCE/fresh state/`resource`/hints/scopes. **Errors raised before the redirect
-   URI is validated never redirect** (open-redirect defense).
+   URI is validated never redirect** (open-redirect defense). A **provider-call failure** on this leg — the
+   provider's `AuthorizationURL` builder or the app-supplied `providerHints` — is the same gateway-class **502**
+   `upstream_error` page as the callback's (mechanic 2), while `400` stays reserved for the facade's **own**
+   client-caused rejections (`invalid_client`/`invalid_request`/`invalid_target`).
 2. `/callback` (GET) — **upstream callback.** *As built (M3b-ii).* Verify upstream RFC 9207 `iss` **before consuming the state or
    exchanging the code**, consume the upstream `state` single-use, exchange the upstream code server-side,
    validate the upstream token fail-closed, open the broker record, mint a facade code, and redirect the

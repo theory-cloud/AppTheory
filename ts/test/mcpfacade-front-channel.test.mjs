@@ -88,6 +88,15 @@ const FORM_PARSE_GROUP = "form_parse";
  */
 const FORM_PARSE_CASE_COUNT = 11;
 
+const AUTHORIZE_PROVIDER_FAILURE_GROUP = "authorize_provider_failure";
+
+/**
+ * The number of authorize_provider_failure rows the shared table must carry; a
+ * change to the table must also be a deliberate edit in the Go and Python
+ * loaders, so no runtime can silently execute a smaller table.
+ */
+const AUTHORIZE_PROVIDER_FAILURE_CASE_COUNT = 2;
+
 const METHOD_STATUS_GROUP = "method_status";
 
 /**
@@ -293,10 +302,11 @@ class CountingBridge {
  * is exercised against a real signature.
  */
 class MintingProvider {
-  constructor(adapter, fake, claims) {
+  constructor(adapter, fake, claims, failAuthorizationUrl = false) {
     this.adapter = adapter;
     this.fake = fake;
     this.claims = claims;
+    this.failAuthorizationUrl = failAuthorizationUrl;
   }
 
   discovery() {
@@ -304,6 +314,9 @@ class MintingProvider {
   }
 
   authorizationUrl(req) {
+    if (this.failAuthorizationUrl) {
+      throw new Error("minting provider: authorization URL unavailable");
+    }
     return this.adapter.authorizationUrl(req);
   }
 
@@ -376,6 +389,12 @@ function frontChannelHarnessOptions(overrides = {}) {
     // route mode every front-channel test uses.
     issuerMode: overrides.issuerMode ?? "route",
     registrationEndpointURL: overrides.registrationEndpointURL ?? null,
+    // Installs the front channel's app-supplied provider-hint seam when set, so
+    // a test can drive a failing providerHints.
+    providerHints: overrides.providerHints ?? null,
+    // Makes the upstream provider's authorizationUrl builder fail, so a test can
+    // drive the authorize leg's provider-call failure class.
+    failAuthorizationUrl: overrides.failAuthorizationUrl ?? false,
   };
 }
 
@@ -429,14 +448,19 @@ async function newFrontChannelHarness(t, overrides = {}) {
     fetchImpl: (input, init) => bridge.fetch(input, init),
     allowPrivateHosts: true,
   });
-  const provider = new MintingProvider(adapter, fake, {
-    issuer: UPSTREAM_ISS,
-    audience: `${BASE_URL}/acme/mcp`,
-    authorizedParty: CLIENT_ID,
-    subject: "user-1",
-    scope: "mcp:tools",
-    expiresInSeconds: 900,
-  });
+  const provider = new MintingProvider(
+    adapter,
+    fake,
+    {
+      issuer: UPSTREAM_ISS,
+      audience: `${BASE_URL}/acme/mcp`,
+      authorizedParty: CLIENT_ID,
+      subject: "user-1",
+      scope: "mcp:tools",
+      expiresInSeconds: 900,
+    },
+    options.failAuthorizationUrl,
+  );
 
   const kind = "namespace";
   const endpoint = { kind, clientNamespace: "acme" };
@@ -461,6 +485,9 @@ async function newFrontChannelHarness(t, overrides = {}) {
   };
   if (options.registrationEndpointURL !== null) {
     config.registrationEndpointURL = options.registrationEndpointURL;
+  }
+  if (options.providerHints !== null) {
+    config.providerHints = options.providerHints;
   }
   await stores.client.put({
     clientIdHash: hashKey(CLIENT_ID),
@@ -681,6 +708,39 @@ test("token enforces the shared form_parse table through the real handler", asyn
     assert.equal(payload.error, row.expect_error, context);
   }
   assert.equal(executed, FORM_PARSE_CASE_COUNT);
+});
+
+test("authorize enforces the shared authorize_provider_failure table through the real handler", async (t) => {
+  const rows = (loadFixture().cases ?? []).filter(
+    (row) => row.group === AUTHORIZE_PROVIDER_FAILURE_GROUP,
+  );
+  assert.equal(rows.length, AUTHORIZE_PROVIDER_FAILURE_CASE_COUNT);
+
+  let executed = 0;
+  for (const row of rows) {
+    executed += 1;
+    const harness = await newFrontChannelHarness(t, {
+      failAuthorizationUrl: row.fail === "authorization_url",
+      providerHints: async () => {
+        if (row.fail === "provider_hints") {
+          throw new Error("provider hints unavailable");
+        }
+        return {};
+      },
+    });
+
+    const response = await harness.authorize(undefined);
+    const context = `fail ${JSON.stringify(row.fail)}`;
+    assert.equal(response.status, row.expect_status, context);
+    if (row.expect_no_location) {
+      assert.equal(locationOf(response), "", context);
+    }
+    const body = bodyString(response);
+    for (const want of row.expect_body_has) {
+      assert.ok(body.includes(want), `${context}: body ${body}`);
+    }
+  }
+  assert.equal(executed, AUTHORIZE_PROVIDER_FAILURE_CASE_COUNT);
 });
 
 test("method status enforces the shared method_status table through the real mounted app", async (t) => {

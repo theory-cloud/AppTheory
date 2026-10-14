@@ -33,6 +33,11 @@ REFRESH_GROUP = "refresh"
 # /register route: the routed RFC 8414 document carries the member exactly while
 # the front channel or an explicit register handler mounts that route.
 METADATA_REGISTRATION_GROUP = "metadata_registration"
+# authorize_provider_failure pins the authorize leg's provider-call failure
+# class: a failing provider AuthorizationURL builder or a failing app-supplied
+# providerHints is the gateway-class 502 upstream_error error page, while 400
+# stays the facade's own client-caused vocabulary.
+AUTHORIZE_PROVIDER_FAILURE_GROUP = "authorize_provider_failure"
 FIXTURE_GROUPS = (
     ISSUER_PIN_GROUP,
     REDIRECT_MATCH_GROUP,
@@ -42,6 +47,7 @@ FIXTURE_GROUPS = (
     BOUND_ROUTE_GROUP,
     REFRESH_GROUP,
     METADATA_REGISTRATION_GROUP,
+    AUTHORIZE_PROVIDER_FAILURE_GROUP,
 )
 
 # The number of issuer_pin rows the shared table must carry; a change to the

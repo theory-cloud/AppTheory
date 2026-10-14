@@ -232,7 +232,8 @@ export interface FacadeConfig {
    * `account_id` hint. A hint carries no authority — the provider derives
    * authentication account context from its own validated binding, not from
    * the hint (DESIGN §6). An absent function contributes no hints; a rejected
-   * promise is a fail-closed request-class rejection that never redirects.
+   * promise is a provider-call failure in the gateway class, so it maps to the
+   * 502 upstream_error error page and never redirects (DESIGN §8.2).
    */
   providerHints?: (
     ctx: Context,
@@ -2467,7 +2468,10 @@ async function handleAuthorize(
     try {
       hints = await front.providerHints(ctx);
     } catch {
-      return facadeErrorPage(400, "invalid_request");
+      // A provider-call failure on the authorize leg is the same gateway-class
+      // 502 upstream_error page as the callback's; 400 stays the facade's own
+      // client-caused vocabulary (DESIGN §8.2).
+      return facadeUpstreamErrorPage();
     }
   }
 
@@ -2512,6 +2516,8 @@ async function handleAuthorize(
       ...(hints !== null ? { hints } : {}),
     });
   } catch {
+    // A provider-call failure on the authorize leg is the same gateway-class
+    // 502 upstream_error page as the callback's (DESIGN §8.2).
     return facadeUpstreamErrorPage();
   }
   return facadeUpstreamRedirect(upstreamURL);

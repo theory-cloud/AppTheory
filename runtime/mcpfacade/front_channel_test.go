@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"os"
 	"sort"
@@ -49,6 +50,19 @@ type mintingProvider struct {
 	oauth.Provider
 	server *oauthprovider.Server
 	claims oauthprovider.Claims
+
+	// failAuthorizationURL makes the AuthorizationURL builder fail, so a test can
+	// drive the authorize leg's provider-call failure class.
+	failAuthorizationURL bool
+}
+
+// AuthorizationURL fails when the harness was built with failAuthorizationURL
+// and otherwise delegates to the real adapter.
+func (p *mintingProvider) AuthorizationURL(req oauth.AuthorizationRequest) (string, error) {
+	if p.failAuthorizationURL {
+		return "", errors.New("mintingProvider: authorization URL unavailable")
+	}
+	return p.Provider.AuthorizationURL(req)
 }
 
 func (p *mintingProvider) ExchangeCode(ctx context.Context, req oauth.CodeExchangeRequest) (*oauth.TokenSet, error) {
@@ -86,6 +100,14 @@ type frontChannelHarnessOptions struct {
 	// uses.
 	issuerMode              mcproutes.IssuerMode
 	registrationEndpointURL string
+
+	// providerHints, when set, is installed as the front channel's app-supplied
+	// provider-hint seam, so a test can drive a failing providerHints.
+	providerHints func(*apptheory.Context) (map[string]string, error)
+
+	// failAuthorizationURL makes the upstream provider's AuthorizationURL builder
+	// fail, so a test can drive the authorize leg's provider-call failure class.
+	failAuthorizationURL bool
 }
 
 // manualClockAdapter implements apptheory.Clock over the harness's ManualClock,
@@ -229,10 +251,12 @@ func newFrontChannelHarnessWith(t *testing.T, options frontChannelHarnessOptions
 				Scope:           "mcp:tools",
 				ExpiresIn:       900,
 			},
+			failAuthorizationURL: options.failAuthorizationURL,
 		},
 		Stores:           stores,
 		UpstreamClientID: frontTestClientID,
 		UpstreamIssuer:   frontTestUpstreamIss,
+		ProviderHints:    options.providerHints,
 	}
 	require.NoError(t, stores.Client.Put(context.Background(), &oauthstore.ClientRecord{
 		ClientIDHash:            oauthstore.HashKey(frontTestClientID),
@@ -557,6 +581,81 @@ func TestFrontChannelTokenEnforcesTheSharedFormParseTable(t *testing.T) {
 	}
 
 	require.Equalf(t, formParseCaseCount, executed, "executed %d %q cases", executed, formParseGroup)
+}
+
+// authorizeProviderFailureGroup names the authorize leg's provider-call failure
+// class group the same shared table carries, executed below through the real
+// /authorize handler.
+const authorizeProviderFailureGroup = "authorize_provider_failure"
+
+// authorizeProviderFailureCaseCount is the number of authorize_provider_failure
+// rows the shared fixture must carry; a change to the table must also be a
+// deliberate edit in the Go, TypeScript, and Python loaders, so no runtime can
+// silently execute a smaller table.
+const authorizeProviderFailureCaseCount = 2
+
+// authorizeProviderFailureConformanceDocument and authorizeProviderFailureCase
+// are the authorize_provider_failure rows: fail selects which provider call the
+// harness makes fail.
+type authorizeProviderFailureConformanceDocument struct {
+	Cases []authorizeProviderFailureCase `json:"cases"`
+}
+
+type authorizeProviderFailureCase struct {
+	ID               string   `json:"id"`
+	Group            string   `json:"group"`
+	Fail             string   `json:"fail"`
+	ExpectStatus     int      `json:"expect_status"`
+	ExpectBodyHas    []string `json:"expect_body_has"`
+	ExpectNoLocation bool     `json:"expect_no_location"`
+}
+
+// TestFrontChannelAuthorizeEnforcesTheSharedProviderFailureTable pins the
+// authorize leg's provider-call failure class to the shared cross-runtime table
+// through the real /authorize handler: a failing provider AuthorizationURL
+// builder and a failing app-supplied providerHints each render the
+// gateway-class 502 upstream_error error page with no Location, so the
+// provider-call failure class is the same 502 as the callback's rather than the
+// facade's own 400 vocabulary.
+func TestFrontChannelAuthorizeEnforcesTheSharedProviderFailureTable(t *testing.T) {
+	var document authorizeProviderFailureConformanceDocument
+	loadFacadeConformanceFixture(t, &document)
+
+	rows := make([]authorizeProviderFailureCase, 0, len(document.Cases))
+	for _, row := range document.Cases {
+		require.NotEmptyf(t, row.Group, "case %q must carry a group", row.ID)
+		if row.Group == authorizeProviderFailureGroup {
+			rows = append(rows, row)
+		}
+	}
+	require.Equalf(t, authorizeProviderFailureCaseCount, len(rows), "loaded %d %q cases", len(rows), authorizeProviderFailureGroup)
+
+	executed := 0
+	for _, row := range rows {
+		executed++
+		t.Run(row.ID, func(t *testing.T) {
+			harness := newFrontChannelHarnessWith(t, frontChannelHarnessOptions{
+				failAuthorizationURL: row.Fail == "authorization_url",
+				providerHints: func(*apptheory.Context) (map[string]string, error) {
+					if row.Fail == "provider_hints" {
+						return nil, errors.New("provider hints unavailable")
+					}
+					return nil, nil
+				},
+			})
+
+			response := harness.authorize(nil)
+			require.Equalf(t, row.ExpectStatus, response.Status, "fail %q", row.Fail)
+			if row.ExpectNoLocation {
+				require.Emptyf(t, locationOf(response), "fail %q must not redirect", row.Fail)
+			}
+			for _, want := range row.ExpectBodyHas {
+				require.Containsf(t, string(response.Body), want, "fail %q", row.Fail)
+			}
+		})
+	}
+
+	require.Equalf(t, authorizeProviderFailureCaseCount, executed, "executed %d %q cases", executed, authorizeProviderFailureGroup)
 }
 
 // metadataRegistrationGroup names the group the same shared table carries that
