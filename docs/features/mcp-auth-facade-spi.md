@@ -55,6 +55,13 @@ Every upstream call goes through the same hardened HTTP stack the OIDC discovery
 deadline (10 s default), a 1 MiB response cap, a connect-time SSRF guard that refuses non-public addresses, and a
 redirect refusal. There is no separate, unbounded fetch path.
 
+**The JWKS key-set fetch is coalesced in Go and TypeScript, but not in Python.** The Go and TypeScript validators
+single-flight concurrent key-set fetches for one validator, so validations that miss the key cache at the same moment
+share a single upstream fetch. The Python validator does not coalesce: every concurrent unknown-`kid` validation
+performs its own key-set fetch. Each of those fetches is still independently bounded by the same 10-second deadline and
+still charges the same global unknown-`kid` fetch budget, so the difference is upstream request volume, not the bound
+and not the accept/reject decision.
+
 **`Refresh` must honor the deadline.** The framework's own adapter calls `Refresh` through that hardened stack, so
 the 10-second deadline bounds the upstream call it makes. An implementer's `Refresh` (or a durable store that backs
 the lock) must not ignore it: the broker refresh lock's TTL is 15 seconds — the 10-second deadline plus a 5-second
