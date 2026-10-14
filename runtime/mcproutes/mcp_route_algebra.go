@@ -424,6 +424,9 @@ func NormalizeCallbackPath(rawPath string) (string, bool) {
 	if rawPath == "" || !strings.HasPrefix(rawPath, "/") {
 		return "", false
 	}
+	if containsRefusedRoutePathBytes(rawPath) {
+		return "", false
+	}
 	if strings.ContainsAny(rawPath, "?#") {
 		return "", false
 	}
@@ -471,5 +474,21 @@ func splitPath(rawPath string) []string {
 
 func isPathSegment(value string) bool {
 	trimmed := strings.Trim(value, asciiWhitespaceTrimCutset)
-	return trimmed != "" && trimmed != "." && trimmed != ".." && !strings.Contains(value, "/")
+	return trimmed != "" && trimmed != "." && trimmed != ".." &&
+		!strings.Contains(value, "/") && !containsRefusedRoutePathBytes(trimmed)
+}
+
+// containsRefusedRoutePathBytes reports whether a route path, already trimmed at
+// its edges, carries the bytes the route algebra refuses: a percent-encoded
+// slash, an interior ASCII whitespace or control character, or a backslash.
+func containsRefusedRoutePathBytes(value string) bool {
+	if strings.Contains(value, "%2F") || strings.Contains(value, "%2f") {
+		return true
+	}
+	for _, r := range value {
+		if r == '\\' || r <= 0x1F || r == 0x20 || r == 0x7F {
+			return true
+		}
+	}
+	return false
 }

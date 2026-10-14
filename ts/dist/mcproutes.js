@@ -192,6 +192,9 @@ export function normalizeCallbackPath(rawPath) {
     if (trimmed === "" || !trimmed.startsWith("/")) {
         throw new Error(`mcproutes: callback path must be absolute ${JSON.stringify(rawPath)}`);
     }
+    if (containsRefusedRoutePathBytes(trimmed)) {
+        throw new Error(`mcproutes: callback path must not contain a percent-encoded slash, an interior ASCII whitespace or control character, or a backslash ${JSON.stringify(rawPath)}`);
+    }
     if (trimmed.includes("?") || trimmed.includes("#")) {
         throw new Error(`mcproutes: callback path must not include a query or fragment ${JSON.stringify(rawPath)}`);
     }
@@ -338,6 +341,22 @@ function isPathSegment(value) {
     return (trimmed !== "" &&
         trimmed !== "." &&
         trimmed !== ".." &&
-        !value.includes("/"));
+        !value.includes("/") &&
+        !containsRefusedRoutePathBytes(trimmed));
+}
+// containsRefusedRoutePathBytes reports whether a route path, already trimmed at
+// its edges, carries the bytes the route algebra refuses: a percent-encoded
+// slash, an interior ASCII whitespace or control character, or a backslash.
+function containsRefusedRoutePathBytes(value) {
+    if (value.includes("%2F") || value.includes("%2f")) {
+        return true;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        if (code === 0x5c || code <= 0x1f || code === 0x20 || code === 0x7f) {
+            return true;
+        }
+    }
+    return false;
 }
 //# sourceMappingURL=mcproutes.js.map

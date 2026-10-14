@@ -51,12 +51,21 @@ type facadeRouteModel struct {
 		Default string                 `json:"default"`
 		Cases   []callbackOverrideCase `json:"cases"`
 	} `json:"callback_override"`
+	RoutePathCharset struct {
+		Cases []routePathCharsetCase `json:"cases"`
+	} `json:"route_path_charset"`
 }
 
 type callbackOverrideCase struct {
 	Configured    string `json:"configured"`
 	ExpectPattern string `json:"expect_pattern"`
 	ExpectError   bool   `json:"expect_error"`
+}
+
+type routePathCharsetCase struct {
+	Path        string `json:"path"`
+	ExpectValid bool   `json:"expect_valid"`
+	ExpectError bool   `json:"expect_error"`
 }
 
 func loadFacadeRouteModel(t *testing.T) facadeRouteModel {
@@ -462,6 +471,30 @@ func TestSharedFacadeRouteModelCallbackOverride(t *testing.T) {
 		}
 		if !ok || got != row.ExpectPattern {
 			t.Fatalf("CallbackPathForConfiguredPath(%q) = %q, %v; want %q, true", row.Configured, got, ok, row.ExpectPattern)
+		}
+	}
+}
+
+// TestSharedFacadeRouteModelRoutePathCharset proves the derived-route-path
+// charset rule through the public parser: a valid row parses to the pinned
+// namespace endpoint and an expect_error row is refused.
+func TestSharedFacadeRouteModelRoutePathCharset(t *testing.T) {
+	t.Parallel()
+	model := loadFacadeRouteModel(t)
+	for _, row := range model.RoutePathCharset.Cases {
+		endpoint, err := ParseMCPPath(row.Path)
+		if row.ExpectError {
+			if err == nil {
+				t.Fatalf("ParseMCPPath(%q) = %#v; want failure", row.Path, endpoint)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("ParseMCPPath(%q): %v", row.Path, err)
+		}
+		want := EndpointPath{Kind: EndpointKindNamespace, ClientNamespace: "acme"}
+		if !reflect.DeepEqual(endpoint, want) {
+			t.Fatalf("ParseMCPPath(%q) = %#v, want %#v", row.Path, endpoint, want)
 		}
 	}
 }

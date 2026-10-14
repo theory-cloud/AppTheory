@@ -306,6 +306,9 @@ func normalizeMCPRoutePath(raw string) (string, bool) {
 	if raw == "" {
 		raw = MCPPath
 	}
+	if containsRefusedRoutePathBytes(raw) {
+		return "", false
+	}
 	// Literal MCP route paths use only RFC 3986 path characters, with percent-encoding required for whitespace and other characters outside that set.
 	if !literalMCPRoutePathPattern.MatchString(raw) {
 		return "", false
@@ -318,6 +321,22 @@ func normalizeMCPRoutePath(raw string) (string, bool) {
 		return "", false
 	}
 	return raw, true
+}
+
+// containsRefusedRoutePathBytes mirrors runtime/mcproutes' refused-charset rule
+// so a derived protected-resource path cannot inherit a hostile MCP resource
+// path: a percent-encoded slash, an ASCII whitespace or control character, or a
+// backslash is refused.
+func containsRefusedRoutePathBytes(value string) bool {
+	if strings.Contains(value, "%2F") || strings.Contains(value, "%2f") {
+		return true
+	}
+	for _, r := range value {
+		if r == '\\' || r <= 0x1F || r == 0x20 || r == 0x7F {
+			return true
+		}
+	}
+	return false
 }
 
 func protectedResourcePathForMCPPath(mcpPath string) string {

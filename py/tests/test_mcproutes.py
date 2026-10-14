@@ -291,6 +291,21 @@ class McpRouteAlgebraTests(unittest.TestCase):
                     row["expect_pattern"],
                 )
 
+    def test_shared_facade_route_model_route_path_charset(self) -> None:
+        section = load_facade_route_model()["route_path_charset"]
+        self.assertTrue(section["cases"], "the route_path_charset section must carry cases")
+
+        for row in section["cases"]:
+            with self.subTest(case=row):
+                if row.get("expect_error"):
+                    with self.assertRaises(ValueError):
+                        parse_mcp_path(row["path"])
+                    continue
+                self.assertEqual(
+                    parse_mcp_path(row["path"]),
+                    EndpointPath(kind=ENDPOINT_KIND_NAMESPACE, client_namespace="acme"),
+                )
+
     def test_shared_protected_resource_inverse_expectations(self) -> None:
         expected = load_expectations()["protected_resource_inverse"]
 

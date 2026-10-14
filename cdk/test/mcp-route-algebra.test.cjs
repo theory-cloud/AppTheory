@@ -359,6 +359,30 @@ test("shared route model pins the callback override derivations", () => {
   }
 });
 
+test("shared route model pins the derived route-path charset", () => {
+  const section = routeModel.route_path_charset;
+  assert.ok(section, "the route model must carry a route_path_charset section");
+  assert.ok(
+    Array.isArray(section.cases) && section.cases.length > 0,
+    "the route_path_charset section must carry cases",
+  );
+  for (const row of section.cases) {
+    if (row.expect_error) {
+      assert.throws(
+        () => Algebra.parseMcpPath(row.path),
+        undefined,
+        `parseMcpPath ${JSON.stringify(row)}`,
+      );
+      continue;
+    }
+    assert.deepEqual(
+      Algebra.parseMcpPath(row.path),
+      { kind: Algebra.ENDPOINT_KIND_NAMESPACE, clientNamespace: "acme" },
+      JSON.stringify(row),
+    );
+  }
+});
+
 // The shared minimal non-TMS consumer journey (the table the Go, TypeScript, and
 // Python suites execute row by row). CDK does not run the journey, but its
 // transport-credential-free and protected-resource-metadata rows must agree with
