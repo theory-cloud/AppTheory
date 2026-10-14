@@ -2,7 +2,6 @@ package oauth
 
 import (
 	"errors"
-	"os"
 	"strings"
 	"time"
 
@@ -64,7 +63,11 @@ type BearerTokenValidationOptions struct {
 type RequireBearerTokenOptions struct {
 	// ResourceMetadataURL is used to build the RFC9728 discovery challenge.
 	//
-	// If empty, the middleware attempts to derive it from MCP_ENDPOINT only.
+	// The middleware reads no environment variable. When this and
+	// ResourceMetadataURLFunc are both empty the challenge is the bare
+	// `Bearer` form with no resource_metadata parameter, so a missing
+	// configuration fails closed to an unadvertised discovery endpoint rather
+	// than to a value an injected MCP_ENDPOINT could influence.
 	ResourceMetadataURL string
 
 	// ResourceMetadataURLFunc returns the route-derived protected-resource
@@ -252,7 +255,8 @@ func quoteChallengeValue(value string) string {
 
 // resolvedResourceMetadataURL returns the protected-resource metadata URL for
 // the challenge. A route-derived resolver takes precedence; otherwise the
-// static option is used, falling back to a derivation from MCP_ENDPOINT.
+// static option is used. No environment variable is consulted, so an injected
+// MCP_ENDPOINT cannot influence the challenge.
 func resolvedResourceMetadataURL(c *apptheory.Context, opts RequireBearerTokenOptions) string {
 	if opts.ResourceMetadataURLFunc != nil {
 		derived, err := opts.ResourceMetadataURLFunc(c)
@@ -261,21 +265,7 @@ func resolvedResourceMetadataURL(c *apptheory.Context, opts RequireBearerTokenOp
 		}
 		return strings.TrimSpace(derived)
 	}
-	metaURL := strings.TrimSpace(opts.ResourceMetadataURL)
-	if metaURL != "" {
-		return metaURL
-	}
-	if c == nil {
-		return ""
-	}
-	mcpEndpoint := os.Getenv("MCP_ENDPOINT")
-	if resolved, ok := resolveAbsoluteURLPathTemplate(mcpEndpoint, c.Request.Path, c.Params); ok {
-		mcpEndpoint = resolved
-	}
-	if derived, ok := ResourceMetadataURLFromMcpEndpoint(mcpEndpoint); ok {
-		return derived
-	}
-	return ""
+	return strings.TrimSpace(opts.ResourceMetadataURL)
 }
 
 func unauthorizedResponse(c *apptheory.Context, opts RequireBearerTokenOptions) *apptheory.Response {
