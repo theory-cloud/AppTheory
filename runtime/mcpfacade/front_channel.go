@@ -32,12 +32,14 @@ const (
 // rejection uses one of these and the fixed description facadeErrorDescriptions
 // maps it to, so no response can widen the vocabulary.
 const (
-	facadeErrorInvalidClient        = "invalid_client"
-	facadeErrorInvalidRequest       = "invalid_request"
-	facadeErrorInvalidTarget        = "invalid_target"
-	facadeErrorInvalidGrant         = "invalid_grant"
-	facadeErrorUnsupportedGrantType = "unsupported_grant_type"
-	facadeErrorUpstream             = "upstream_error"
+	facadeErrorInvalidClient          = "invalid_client"
+	facadeErrorInvalidRequest         = "invalid_request"
+	facadeErrorInvalidTarget          = "invalid_target"
+	facadeErrorInvalidGrant           = "invalid_grant"
+	facadeErrorInvalidScope           = "invalid_scope"
+	facadeErrorUnsupportedGrantType   = "unsupported_grant_type"
+	facadeErrorUpstream               = "upstream_error"
+	facadeErrorTemporarilyUnavailable = "temporarily_unavailable"
 )
 
 // errFrontChannelMissing reports a front-channel handler invoked while the
@@ -50,12 +52,14 @@ var errFrontChannelMissing = errors.New("mcpfacade: front channel is not configu
 // the same description, so the response never distinguishes an unknown key from
 // a used one (THREAT_MODEL cross-cutting: no oracle).
 var facadeErrorDescriptions = map[string]string{
-	facadeErrorInvalidClient:        "the client is not registered",
-	facadeErrorInvalidRequest:       "the request is missing or has an invalid parameter",
-	facadeErrorInvalidTarget:        "the resource is not the resource this route authorizes",
-	facadeErrorInvalidGrant:         "the grant is invalid, expired, or already used",
-	facadeErrorUnsupportedGrantType: "the grant type is not supported",
-	facadeErrorUpstream:             "the upstream authorization server could not complete the request",
+	facadeErrorInvalidClient:          "the client is not registered",
+	facadeErrorInvalidRequest:         "the request is missing or has an invalid parameter",
+	facadeErrorInvalidTarget:          "the resource is not the resource this route authorizes",
+	facadeErrorInvalidGrant:           "the grant is invalid, expired, or already used",
+	facadeErrorInvalidScope:           "the requested scope is not exactly the granted scope set",
+	facadeErrorUnsupportedGrantType:   "the grant type is not supported",
+	facadeErrorUpstream:               "the upstream authorization server could not complete the request",
+	facadeErrorTemporarilyUnavailable: "the token endpoint is temporarily unavailable",
 }
 
 // frontChannelConfig is the validated front-channel field set of FacadeConfig
@@ -550,9 +554,9 @@ func (config normalizedConfig) callbackClientRedirect(
 	return facadeClientRedirect(transaction.RedirectURI, values), nil
 }
 
-// handleToken serves the token endpoint (DESIGN §8.4). M3b owns the
-// authorization_code grant; the brokered refresh grant is M3c and answers
-// unsupported_grant_type until it lands, so no adopter assumes it works.
+// handleToken serves the token endpoint (DESIGN §8.4). It owns the
+// authorization_code grant and the brokered refresh grant; the refresh grant's
+// mechanics live in refresh.go.
 func (config normalizedConfig) handleToken(kind mcproutes.EndpointKind, ctx *apptheory.Context) (*apptheory.Response, error) {
 	if config.frontChannel == nil {
 		return nil, errFrontChannelMissing
@@ -571,9 +575,7 @@ func (config normalizedConfig) handleToken(kind mcproutes.EndpointKind, ctx *app
 	case "authorization_code":
 		return config.handleAuthorizationCodeGrant(ctx, kind, form)
 	case "refresh_token":
-		// Ruled: the token response issues the refresh handle, but the
-		// refresh_token grant is M3c and is refused until then.
-		return facadeErrorPage(400, facadeErrorUnsupportedGrantType), nil
+		return config.handleRefreshTokenGrant(ctx, kind, form)
 	default:
 		return facadeErrorPage(400, facadeErrorUnsupportedGrantType), nil
 	}

@@ -30,7 +30,14 @@ UTC_NOW_TTL_TRANSACTION_SECONDS = 600
 UTC_NOW_TTL_AUTHORIZATION_CODE_SECONDS = 60
 UTC_NOW_TTL_ROUTE_REFRESH_BROKER_SECONDS = 900
 UTC_NOW_TTL_RATE_LIMIT_WINDOW_SECONDS = 60
-UTC_NOW_LOCK_TTL_SECONDS = 30
+# The broker's refresh lock has to outlast the single upstream refresh call it
+# protects while staying as short as possible when that call dies: the M2.1
+# hardened upstream HTTP deadline is 10 seconds (``oauth``'s default, shared by
+# the discovery, token, and JWKS fetches), so 15 seconds is that deadline plus a
+# five-second margin. It is also well above the facade's three-second coalesce
+# wait cap, so a waiter for an in-flight rotation can never outlive the lock it
+# is waiting on and steal it.
+UTC_NOW_LOCK_TTL_SECONDS = 15
 
 STATUS_ISSUED = "issued"
 STATUS_ACTIVE = "active"

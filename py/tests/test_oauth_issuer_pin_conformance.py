@@ -13,8 +13,8 @@ FIXTURE_NAME = "facade-conformance.v1.json"
 
 ISSUER_PIN_GROUP = "issuer_pin"
 
-# redirect_match, form_parse, method_status, dcr, and bound_route are the sibling
-# groups the same shared table carries. They are executed by
+# redirect_match, form_parse, method_status, dcr, bound_route, and refresh are
+# the sibling groups the same shared table carries. They are executed by
 # py/tests/test_mcpfacade_front_channel.py through the real handlers and mounted
 # app, not here; the group ledger below keeps a new group from appearing without
 # a loader.
@@ -25,6 +25,10 @@ DCR_GROUP = "dcr"
 # bound_route pins the registration route binding: a client registered through DCR
 # is accepted only at the advertising route it registered at.
 BOUND_ROUTE_GROUP = "bound_route"
+# refresh pins the brokered refresh grant's contract: single-flight rotation, the
+# bounded grace replay, reuse revocation, the scope and resource bindings of a
+# refresh request, and the typed refusals.
+REFRESH_GROUP = "refresh"
 FIXTURE_GROUPS = (
     ISSUER_PIN_GROUP,
     REDIRECT_MATCH_GROUP,
@@ -32,6 +36,7 @@ FIXTURE_GROUPS = (
     METHOD_STATUS_GROUP,
     DCR_GROUP,
     BOUND_ROUTE_GROUP,
+    REFRESH_GROUP,
 )
 
 # The number of issuer_pin rows the shared table must carry; a change to the

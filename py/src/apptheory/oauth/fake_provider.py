@@ -41,6 +41,10 @@ TOKEN_PATH = "/token"  # noqa: S105 - a URL route, not a credential
 AUTHORIZE_PATH = "/oauth/authorize"
 REGISTER_PATH = "/register"
 
+# The form value that selects the refresh grant, so the fake can serve that grant
+# a response distinct from the code exchange.
+GRANT_TYPE_REFRESH_TOKEN = "refresh_token"  # noqa: S105 - a form value, not a credential
+
 _SMALL_PRIMES = (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37)
 _SHA256_DIGEST_INFO_PREFIX = bytes.fromhex("3031300d060960864801650304020105000420")
 _CHUNK_BYTES = 64 * 1024
@@ -172,8 +176,17 @@ class _FakeUpstreamHandler(http.server.BaseHTTPRequestHandler):
         provider.last_token_form = form
         provider.last_client_id = form.get("client_id", "")
         provider.token_calls += 1
+        refresh_call = 0
+        if form.get("grant_type") == GRANT_TYPE_REFRESH_TOKEN:
+            provider.refresh_calls += 1
+            refresh_call = provider.refresh_calls
+            provider.last_refresh_form = dict(form)
         if provider.token_delay_seconds > 0:
             time.sleep(provider.token_delay_seconds)
+        if refresh_call > 0:
+            status, payload = provider.refresh_response_for(refresh_call)
+            self._send_json(status, payload)
+            return
         if provider.token_body_bytes > 0:
             self._send_stream(provider.token_status, provider.token_body_bytes)
             return
@@ -231,6 +244,19 @@ class _FakeUpstreamHandler(http.server.BaseHTTPRequestHandler):
         self.close_connection = True
 
 
+@dataclass(slots=True)
+class RefreshStage:
+    """One staged ``grant_type=refresh_token`` response.
+
+    ``status`` of zero means the steady-state refresh status and a ``body`` of
+    ``None`` means the steady-state refresh body, so a stage only has to override
+    the part it changes.
+    """
+
+    status: int = 0
+    body: dict[str, Any] | None = None
+
+
 class FakeUpstreamProvider:
     """A real loopback upstream serving discovery, JWKS, and ``/token``."""
 
@@ -245,6 +271,9 @@ class FakeUpstreamProvider:
         token_body_bytes: int = 0,
         token_body_padding_bytes: int = 0,
         token_delay_seconds: float = 0.0,
+        refresh_token_status: int = 0,
+        refresh_token_body: dict[str, Any] | None = None,
+        refresh_token_stages: list[RefreshStage] | None = None,
         kid: str = "fake-rs256-1",
         key_bits: int = 2048,
         key: tuple[int, int, int] | None = None,
@@ -257,12 +286,22 @@ class FakeUpstreamProvider:
         self.token_body_bytes = int(token_body_bytes)
         self.token_body_padding_bytes = int(token_body_padding_bytes)
         self.token_delay_seconds = float(token_delay_seconds)
+        # The refresh grant falls back to the ordinary token response, so a caller
+        # that configures nothing keeps the single-response behavior it had
+        # before; ``refresh_token_body`` is how a test gives the refresh grant its
+        # own access token, its own upstream refresh token, and its own id_token,
+        # so a facade that must hide upstream material is observable.
+        self.refresh_token_status = int(refresh_token_status) or self.token_status
+        self.refresh_token_body = refresh_token_body
+        self.refresh_token_stages = list(refresh_token_stages or [])
         self.kid = kid
         self.key = key if key is not None else shared_rsa_key(key_bits)
 
         self.request_count = 0
         self.token_calls = 0
+        self.refresh_calls = 0
         self.last_token_form: dict[str, str] = {}
+        self.last_refresh_form: dict[str, str] = {}
         self.last_client_id = ""
 
         self._server: http.server.ThreadingHTTPServer | None = None
@@ -301,6 +340,31 @@ class FakeUpstreamProvider:
 
     def jwks_document(self) -> dict[str, Any]:
         return {"keys": [jwk_entry(self.kid, self.key)]}
+
+    # -- refresh responses ---------------------------------------------------
+
+    def refresh_response_for(self, call: int) -> tuple[int, dict[str, Any]]:
+        """The staged or steady-state response of the nth
+        ``grant_type=refresh_token`` call (one-based): the nth stage when the
+        fake was staged that far, and the steady-state response after that.
+        """
+        status, payload = self.steady_state_refresh_response()
+        index = call - 1
+        if 0 <= index < len(self.refresh_token_stages):
+            stage = self.refresh_token_stages[index]
+            if stage.status:
+                status = int(stage.status)
+            if stage.body is not None:
+                payload = stage.body
+        return status, payload
+
+    def steady_state_refresh_response(self) -> tuple[int, dict[str, Any]]:
+        payload = self.refresh_token_body
+        if payload is None:
+            payload = self.token_body
+        if payload is None:
+            payload = {"access_token": "fake-access-token", "token_type": "Bearer", "expires_in": 900}
+        return self.refresh_token_status, payload
 
     # -- tokens --------------------------------------------------------------
 
@@ -436,6 +500,7 @@ def new_static_test_provider(
 
 __all__ = [
     "FakeUpstreamProvider",
+    "RefreshStage",
     "StaticTestProvider",
     "StaticTestProviderOptions",
     "b64url",

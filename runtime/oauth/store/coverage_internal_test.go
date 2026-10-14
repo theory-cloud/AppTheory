@@ -78,6 +78,36 @@ func TestMemoryStoreClockDefaultsAndNilRecords(t *testing.T) {
 	}
 }
 
+// TestReferenceBrokerLockTTLPinsTheUpstreamFetchDeadline pins the reference
+// broker store's default lock TTL to the number the brokered refresh grant is
+// built around: 15 seconds is the M2.1 hardened upstream HTTP deadline (10 s,
+// shared by the discovery, token, and JWKS fetches) plus a five-second margin,
+// and it is well above the facade's three-second coalesce wait cap, so a waiter
+// for an in-flight rotation can never outlive and steal the lock. Changing the
+// default without the matching facade change is a silent regression, so the
+// number and the expiry a lock actually writes are both pinned.
+func TestReferenceBrokerLockTTLPinsTheUpstreamFetchDeadline(t *testing.T) {
+	if DefaultRouteRefreshLockTTL != 15*time.Second {
+		t.Fatalf("DefaultRouteRefreshLockTTL = %s, want 15s", DefaultRouteRefreshLockTTL)
+	}
+	ctx := context.Background()
+	clock := NewManualClock(ConformanceEpoch)
+	broker := NewMemoryRouteRefreshBrokerStore(RouteRefreshBrokerStoreOptions{Now: clock.Now})
+	if err := broker.Put(ctx, &RouteRefreshBrokerRecord{HandleHash: "handle"}); err != nil {
+		t.Fatalf("broker Put = %v", err)
+	}
+	locked, err := broker.AcquireLock(ctx, "handle", "owner", 1)
+	if err != nil {
+		t.Fatalf("broker AcquireLock = %v", err)
+	}
+	if held := locked.RefreshLockExpiresAt.Sub(clock.Now()); held != DefaultRouteRefreshLockTTL {
+		t.Fatalf("lock is held for %s, want %s", held, DefaultRouteRefreshLockTTL)
+	}
+	if _, err := broker.AcquireLock(ctx, "handle", "thief", locked.Version); !errors.Is(err, ErrBrokerLocked) {
+		t.Fatalf("second AcquireLock = %v, want ErrBrokerLocked", err)
+	}
+}
+
 func TestMemoryBrokerStoreEdges(t *testing.T) {
 	ctx := context.Background()
 	clock := NewManualClock(ConformanceEpoch)

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,15 @@ const UPSTREAM_CODE = "upstream-authorization-code";
 const UPSTREAM_REFRESH_TOKEN = "upstream-refresh-token-value";
 const CLIENT_STATE = "client-state-1";
 const VERIFIER = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTU";
+
+// The refresh grant's own upstream material. The fake serves these only for
+// grant_type=refresh_token, so a refresh that returned upstream material
+// instead of a framework handle is distinguishable from the code exchange, and a
+// response that leaked either value is observable.
+const ROTATED_UPSTREAM_REFRESH_TOKEN = "upstream-refresh-token-rotated";
+const REFRESH_ACCESS_TOKEN = "upstream-rotated-access-token";
+const REFRESH_ID_TOKEN = "upstream-id-token-must-not-surface";
+const ROTATED_UPSTREAM_SCOPE = "mcp:tools";
 
 // ---------------------------------------------------------------------------
 // Shared conformance fixture (the same table the Go and Python loaders read)
@@ -353,7 +362,20 @@ class RecordingBrokerStore {
   }
 }
 
-async function newFrontChannelHarness(t) {
+/**
+ * Tunes the harness a test starts. Omitting the options is the default harness
+ * every front-channel test uses.
+ */
+function frontChannelHarnessOptions(overrides = {}) {
+  return {
+    // Mutates the fake upstream's options before it starts, so a test can serve
+    // a grant-specific or failing token response.
+    providerOptions: overrides.providerOptions ?? (() => {}),
+  };
+}
+
+async function newFrontChannelHarness(t, overrides = {}) {
+  const options = frontChannelHarnessOptions(overrides);
   const clock = new ManualClock(new Date("2026-01-01T00:00:00Z"));
   const now = () => clock.now();
   const handles = [];
@@ -369,7 +391,7 @@ async function newFrontChannelHarness(t) {
     rateLimit: new MemoryRateLimitStore({ now }),
   };
 
-  const fake = newFakeOAuthProvider({
+  const fakeOptions = {
     issuer: UPSTREAM_ISS,
     publicBaseUrl: UPSTREAM_ISS,
     tokenBody: {
@@ -379,7 +401,20 @@ async function newFrontChannelHarness(t) {
       refresh_token: UPSTREAM_REFRESH_TOKEN,
       scope: "mcp:tools",
     },
-  });
+    // The refresh grant gets its own response, so a facade that returned
+    // upstream refresh material or an id_token instead of a framework handle is
+    // observable in the body as well as in the call counts.
+    refreshTokenBody: {
+      access_token: REFRESH_ACCESS_TOKEN,
+      token_type: "Bearer",
+      expires_in: 900,
+      refresh_token: ROTATED_UPSTREAM_REFRESH_TOKEN,
+      scope: ROTATED_UPSTREAM_SCOPE,
+      id_token: REFRESH_ID_TOKEN,
+    },
+  };
+  options.providerOptions(fakeOptions);
+  const fake = newFakeOAuthProvider(fakeOptions);
   const loopbackUrl = await fake.start();
   t.after(() => fake.close());
   const bridge = new CountingBridge(UPSTREAM_ISS, loopbackUrl, fake.tokenPath);
@@ -431,7 +466,10 @@ async function newFrontChannelHarness(t) {
     version: 0,
   });
 
-  const app = createApp({ tier: "p0" });
+  // The app clock is the same deterministic instant the stores observe, so
+  // ctx.now() and the broker's now() move together when a test advances the
+  // clock: grace windows, record lifetimes, and rotation timestamps all do.
+  const app = createApp({ tier: "p0", clock });
   registerMcpFacade(app, config);
 
   const serve = async (method, path, query, body) => {
@@ -1160,11 +1198,10 @@ test("a code issued to one client cannot be redeemed by another", async (t) => {
   assert.match(bodyString(response), /"error":"invalid_grant"/);
 });
 
-test("the refresh_token grant is refused until M3c", async (t) => {
+test("a grant type the facade does not serve is refused", async (t) => {
   const harness = await newFrontChannelHarness(t);
   const response = await harness.token({
-    grant_type: "refresh_token",
-    refresh_token: "whatever-handle",
+    grant_type: "client_credentials",
     client_id: CLIENT_ID,
   });
   assert.equal(response.status, 400);
@@ -1211,4 +1248,987 @@ test("concurrent redemption of one code has exactly one winner", async (t) => {
   const record = await harness.stores.routeRefreshBroker.get(handles[0]);
   assert.ok(record !== null);
   assert.equal(record.status, "revoked");
+});
+
+// ---------------------------------------------------------------------------
+// Brokered refresh grant (mirrors runtime/mcpfacade/refresh_test.go)
+// ---------------------------------------------------------------------------
+
+/** The resource the harness's authorize leg binds. */
+const REFRESH_BOUND_RESOURCE = `${BASE_URL}/acme/mcp`;
+
+/** A second registered public client, used by the other-client cases. */
+const REFRESH_OTHER_CLIENT_ID = "facade-client-2";
+
+/**
+ * A refresh grant form presented by the harness's own client. `overrides` adds
+ * or replaces one member, so a case can present a scope or a resource beside the
+ * handle, or present as another client.
+ */
+function refreshForm(handle, overrides = {}) {
+  return {
+    grant_type: "refresh_token",
+    refresh_token: handle,
+    client_id: CLIENT_ID,
+    ...overrides,
+  };
+}
+
+/** Reads the framework handle a token response handed the client. */
+function responseHandle(response) {
+  const payload = JSON.parse(bodyString(response));
+  assert.ok(
+    typeof payload.refresh_token === "string" && payload.refresh_token !== "",
+    "a token response must carry a framework handle",
+  );
+  return payload.refresh_token;
+}
+
+/** Reads the access token a token response returned. */
+function responseAccessToken(response) {
+  const payload = JSON.parse(bodyString(response));
+  assert.ok(
+    typeof payload.access_token === "string" && payload.access_token !== "",
+    "a token response must carry an access token",
+  );
+  return payload.access_token;
+}
+
+/** A fresh opaque handle no broker record is keyed by. */
+function unknownHandle() {
+  return randomBytes(32).toString("base64url");
+}
+
+/**
+ * Completes authorize, callback, and the code exchange, and returns the token
+ * response plus the redeemed facade code, so a refresh test starts from a
+ * genuinely minted handle.
+ */
+async function exchangeTheCode(harness) {
+  const { code } = await harness.authorizeAndCallback();
+  const response = await harness.token(harness.tokenForm(code));
+  assert.equal(response.status, 200, bodyString(response));
+  return { exchange: response, code };
+}
+
+/** Runs the journey through the code exchange and returns the handle it minted. */
+async function mintedRefreshHandle(harness) {
+  const { exchange } = await exchangeTheCode(harness);
+  return responseHandle(exchange);
+}
+
+/** Reads the broker record a handle is keyed by. */
+async function brokerRecord(harness, handle) {
+  const record = await harness.stores.routeRefreshBroker.get(hashKey(handle));
+  assert.ok(record !== null, "the broker record must exist");
+  return record;
+}
+
+/** Registers the second public client the other-client cases present. */
+async function registerOtherClient(harness) {
+  await harness.stores.client.put({
+    clientIdHash: hashKey(REFRESH_OTHER_CLIENT_ID),
+    clientId: REFRESH_OTHER_CLIENT_ID,
+    redirectUris: [CLIENT_REDIRECT],
+    tokenEndpointAuthMethod: "none",
+    grantTypes: [],
+    responseTypes: [],
+    boundRoute: "",
+    createdAt: new Date(0),
+    version: 0,
+  });
+}
+
+/**
+ * Pins the brokered refresh framework defaults of operator ruling R3, so a
+ * change to any of them is a deliberate edit here rather than a silent behavior
+ * change. The TypeScript tests are external to the runtime module, so unlike the
+ * Go in-package test these pin each value at the boundary it produces rather
+ * than by reading the constant.
+ */
+test("the brokered refresh defaults are pinned", async (t) => {
+  // The handle byte bound: a 512-byte handle is read (and refused as the unknown
+  // handle it is), while 513 bytes are refused as invalid_request before the
+  // client is even identified.
+  const bound = await newFrontChannelHarness(t);
+  const atBound = await bound.token(refreshForm("a".repeat(512)));
+  assert.equal(atBound.status, 400);
+  assert.equal(
+    JSON.parse(bodyString(atBound)).error,
+    "invalid_grant",
+    "a 512-byte handle must be read, not refused as malformed",
+  );
+  const overBound = await bound.token(refreshForm("a".repeat(513)));
+  assert.equal(overBound.status, 400);
+  assert.equal(JSON.parse(bodyString(overBound)).error, "invalid_request");
+
+  // The grace window: a replayed rotation is inside the window one millisecond
+  // before thirty seconds and is reuse at exactly thirty seconds.
+  const grace = await newFrontChannelHarness(t);
+  const handle = await mintedRefreshHandle(grace);
+  const first = await grace.token(refreshForm(handle));
+  assert.equal(first.status, 200);
+  grace.clock.advance(30_000 - 1);
+  const replayed = await grace.token(refreshForm(handle));
+  assert.equal(replayed.status, 200, "29.999s must still replay the successor");
+  assert.equal(bodyString(replayed), bodyString(first));
+  grace.clock.advance(1);
+  const reused = await grace.token(refreshForm(handle));
+  assert.equal(reused.status, 400, "exactly 30s must be reuse");
+  assert.equal(JSON.parse(bodyString(reused)).error, "invalid_grant");
+
+  // The reference broker store's default lock TTL: fifteen seconds, which is
+  // above the three-second coalesce wait cap a waiter is bounded by.
+  const lock = await newFrontChannelHarness(t);
+  const lockHandle = await mintedRefreshHandle(lock);
+  const lockRecord = await brokerRecord(lock, lockHandle);
+  const locked = await lock.stores.routeRefreshBroker.acquireLock(
+    hashKey(lockHandle),
+    "owner",
+    lockRecord.version,
+  );
+  assert.equal(
+    locked.refreshLockExpiresAt.getTime() - lock.clock.now().getTime(),
+    15_000,
+  );
+});
+
+/**
+ * Pins the happy rotation: the refresh answers 200 with the upstream access token
+ * byte-for-byte, a NEW framework handle, and no upstream refresh material and no
+ * id_token, and the presented record ends up holding the successor response as
+ * its grace body.
+ */
+test("refresh rotates the handle and hides upstream material", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const first = await mintedRefreshHandle(harness);
+
+  const response = await harness.token(refreshForm(first));
+  assert.equal(response.status, 200, bodyString(response));
+  const body = bodyString(response);
+  assert.ok(body.includes(`"access_token":"${REFRESH_ACCESS_TOKEN}"`), body);
+  assert.ok(body.includes(`"token_type":"Bearer"`), body);
+  assert.ok(body.includes(`"scope":"${ROTATED_UPSTREAM_SCOPE}"`), body);
+  assert.ok(!body.includes(UPSTREAM_REFRESH_TOKEN));
+  assert.ok(!body.includes(ROTATED_UPSTREAM_REFRESH_TOKEN));
+  assert.ok(!body.includes(REFRESH_ID_TOKEN));
+  assert.ok(!body.includes("id_token"));
+
+  const second = responseHandle(response);
+  assert.notEqual(first, second);
+
+  const successor = await brokerRecord(harness, second);
+  assert.equal(
+    successor.encryptedUpstreamRefreshToken,
+    ROTATED_UPSTREAM_REFRESH_TOKEN,
+  );
+  assert.equal(
+    successor.upstreamRefreshTokenHash,
+    hashKey(ROTATED_UPSTREAM_REFRESH_TOKEN),
+  );
+  assert.equal(successor.status, "issued");
+  assert.equal(successor.clientIdHash, hashKey(CLIENT_ID));
+  assert.equal(successor.upstreamClientId, CLIENT_ID);
+  assert.equal(successor.canonicalResource, REFRESH_BOUND_RESOURCE);
+
+  const presented = await brokerRecord(harness, first);
+  assert.equal(presented.status, "active");
+  assert.equal(presented.encryptedGraceRefreshResponse, body);
+  assert.equal(
+    presented.graceExpiresAt.getTime(),
+    harness.clock.now().getTime() + 30_000,
+  );
+  assert.ok(!presented.refreshLockOwner);
+  assert.equal(presented.refreshLockExpiresAt, undefined);
+});
+
+/**
+ * Pins the single-flight upstream contract: the code exchange makes one token
+ * call, and each rotation makes exactly one more, presenting the recorded
+ * upstream material and the facade's own upstream client — never the framework
+ * handle.
+ */
+test("refresh makes exactly one upstream call per rotation", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const handle = await mintedRefreshHandle(harness);
+  assert.equal(harness.tokenCalls(), 1);
+  assert.equal(harness.fake.refreshCallCount(), 0);
+
+  const first = await harness.token(refreshForm(handle));
+  assert.equal(first.status, 200, bodyString(first));
+  assert.equal(harness.tokenCalls(), 2);
+  assert.equal(harness.fake.refreshCallCount(), 1);
+
+  const second = await harness.token(refreshForm(responseHandle(first)));
+  assert.equal(second.status, 200, bodyString(second));
+  assert.equal(harness.tokenCalls(), 3);
+  assert.equal(harness.fake.refreshCallCount(), 2);
+
+  const presented = harness.fake.lastRefreshRequest();
+  assert.equal(presented.get("refresh_token"), ROTATED_UPSTREAM_REFRESH_TOKEN);
+  assert.equal(presented.get("client_id"), CLIENT_ID);
+
+  // A grace replay makes no upstream call at all, so the count above is the
+  // rotation count and not a call count.
+  assert.equal((await harness.token(refreshForm(handle))).status, 200);
+  assert.equal(harness.tokenCalls(), 3);
+  assert.equal(harness.fake.refreshCallCount(), 2);
+});
+
+/**
+ * Pins the idempotent lost-response path: presenting the rotated handle again
+ * from the same client returns the identical status, headers, and body bytes,
+ * with no second upstream call, right up to the end of the window.
+ */
+test("refresh replays the same successor within the grace window", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const handle = await mintedRefreshHandle(harness);
+
+  const first = await harness.token(refreshForm(handle));
+  assert.equal(first.status, 200, bodyString(first));
+
+  const replayed = await harness.token(refreshForm(handle));
+  assert.equal(replayed.status, first.status);
+  assert.equal(bodyString(replayed), bodyString(first));
+  assert.deepEqual(
+    firstHeader(replayed.headers, "content-type"),
+    firstHeader(first.headers, "content-type"),
+  );
+  assert.deepEqual(
+    firstHeader(replayed.headers, "cache-control"),
+    firstHeader(first.headers, "cache-control"),
+  );
+  assert.deepEqual(
+    firstHeader(replayed.headers, "pragma"),
+    firstHeader(first.headers, "pragma"),
+  );
+  assert.equal(harness.fake.refreshCallCount(), 1);
+
+  harness.clock.advance(30_000 - 1_000);
+  const justInside = await harness.token(refreshForm(handle));
+  assert.equal(justInside.status, 200);
+  assert.equal(bodyString(justInside), bodyString(first));
+  assert.equal(harness.fake.refreshCallCount(), 1);
+});
+
+/**
+ * Pins reuse: presenting the rotated handle once the window has passed is refused
+ * with invalid_grant, the presented record is revoked, and the walk revokes the
+ * successor the rotation minted, so the successor handle is refused too.
+ */
+test("refresh after the grace window revokes the successor", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const handle = await mintedRefreshHandle(harness);
+
+  const rotated = await harness.token(refreshForm(handle));
+  assert.equal(rotated.status, 200, bodyString(rotated));
+  const successor = responseHandle(rotated);
+  assert.equal(harness.fake.refreshCallCount(), 1);
+
+  harness.clock.advance(30_000 + 1_000);
+  const reused = await harness.token(refreshForm(handle));
+  assert.equal(reused.status, 400);
+  assert.match(bodyString(reused), /"error":"invalid_grant"/);
+
+  assert.equal((await brokerRecord(harness, handle)).status, "revoked");
+  assert.equal((await brokerRecord(harness, successor)).status, "revoked");
+
+  const after = await harness.token(refreshForm(successor));
+  assert.equal(after.status, 400);
+  assert.match(bodyString(after), /"error":"invalid_grant"/);
+  assert.equal(harness.fake.refreshCallCount(), 1);
+});
+
+/**
+ * Pins the no-oracle rule: an unknown handle, a revoked handle, and a handle
+ * presented by another registered client are one byte-identical invalid_grant
+ * response. This is the Go test's own shape (three harnesses), and the
+ * wrong-route case below proves the same identity against a route-mismatched
+ * handle.
+ */
+test("refresh refusals are one invalid_grant body", async (t) => {
+  const unknownHarness = await newFrontChannelHarness(t);
+  const unknown = await unknownHarness.token(refreshForm(unknownHandle()));
+  assert.equal(unknown.status, 400);
+
+  const revokedHarness = await newFrontChannelHarness(t);
+  const revokedHandle = await mintedRefreshHandle(revokedHarness);
+  await revokedHarness.stores.routeRefreshBroker.revoke(hashKey(revokedHandle));
+  const revoked = await revokedHarness.token(refreshForm(revokedHandle));
+  assert.equal(revoked.status, 400);
+
+  const otherHarness = await newFrontChannelHarness(t);
+  const otherHandle = await mintedRefreshHandle(otherHarness);
+  await registerOtherClient(otherHarness);
+  const other = await otherHarness.token(
+    refreshForm(otherHandle, { client_id: REFRESH_OTHER_CLIENT_ID }),
+  );
+  assert.equal(other.status, 400);
+
+  const refusals = [unknown, revoked, other];
+  for (const [index, response] of refusals.entries()) {
+    assert.equal(response.status, 400, `refusal ${index}`);
+    assert.match(bodyString(response), /"error":"invalid_grant"/, `refusal ${index}`);
+    assert.equal(
+      bodyString(response),
+      bodyString(unknown),
+      `refusal ${index} must be byte-identical`,
+    );
+  }
+});
+
+/**
+ * Pins the route binding of the broker record (DESIGN §7: the record binds the
+ * resource) against the real handlers, and pins that closing it does not open a
+ * handle-existence oracle: a handle minted at one route and presented at another
+ * route's token endpoint is refused with the SAME byte-identical invalid_grant an
+ * unknown handle gets, while the very same handle is still redeemable at the route
+ * it was minted for, and the tracked upstream refresh count proves the
+ * wrong-route attempt never reached the upstream.
+ */
+test("refresh refuses a handle at another route", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const handle = await mintedRefreshHandle(harness);
+
+  const unknownResponse = await harness.token(refreshForm(unknownHandle()));
+  assert.equal(unknownResponse.status, 400);
+
+  const otherRoute = boundRouteEndpoint("agent");
+  const before = harness.fake.refreshCallCount();
+  const wrongRoute = await harness.serve(
+    "POST",
+    oauthTokenPath(otherRoute),
+    null,
+    Buffer.from(new URLSearchParams(refreshForm(handle)).toString(), "utf8"),
+  );
+  assert.equal(wrongRoute.status, 400);
+  assert.match(bodyString(wrongRoute), /"error":"invalid_grant"/);
+  assert.equal(
+    bodyString(wrongRoute),
+    bodyString(unknownResponse),
+    "a wrong-route handle must be the byte-identical unknown-handle refusal",
+  );
+  assert.equal(
+    harness.fake.refreshCallCount(),
+    before,
+    "a wrong-route handle must not reach the upstream",
+  );
+
+  const ownRoute = await harness.token(refreshForm(handle));
+  assert.equal(ownRoute.status, 200, bodyString(ownRoute));
+  assert.equal(
+    harness.fake.refreshCallCount(),
+    before + 1,
+    "the same handle must still be redeemable at the route it was minted for",
+  );
+});
+
+/**
+ * Pins ruling R4: an absent scope or resource takes the recorded value, an
+ * exactly equal one is accepted, a subset (which the empty member expresses,
+ * because the granted set has one member) and a wider set are invalid_scope, and
+ * a mismatched resource is invalid_target.
+ */
+test("refresh binds scope and resource", async (t) => {
+  const cases = [
+    { name: "absent_scope_and_resource_take_the_granted_values", overrides: {} },
+    {
+      name: "exact_scope_and_resource_are_accepted",
+      overrides: { scope: ROTATED_UPSTREAM_SCOPE, resource: REFRESH_BOUND_RESOURCE },
+    },
+    { name: "subset_scope_is_refused", overrides: { scope: "" }, error: "invalid_scope" },
+    {
+      name: "wider_scope_is_refused",
+      overrides: { scope: `${ROTATED_UPSTREAM_SCOPE} extra:scope` },
+      error: "invalid_scope",
+    },
+    {
+      name: "mismatched_resource_is_refused",
+      overrides: { resource: `${BASE_URL}/other/mcp` },
+      error: "invalid_target",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const harness = await newFrontChannelHarness(t);
+    const handle = await mintedRefreshHandle(harness);
+    const response = await harness.token(refreshForm(handle, testCase.overrides));
+    const context = `refresh binding ${testCase.name}`;
+    if (testCase.error === undefined) {
+      assert.equal(response.status, 200, `${context}: ${bodyString(response)}`);
+      assert.ok(
+        bodyString(response).includes(`"access_token":"${REFRESH_ACCESS_TOKEN}"`),
+        context,
+      );
+      assert.equal(harness.fake.refreshCallCount(), 1, context);
+      continue;
+    }
+    assert.equal(response.status, 400, `${context}: ${bodyString(response)}`);
+    assert.match(bodyString(response), new RegExp(`"error":"${testCase.error}"`), context);
+    // A refused request never reached the upstream, and the handle was not
+    // rotated by it.
+    assert.equal(harness.fake.refreshCallCount(), 0, context);
+    assert.equal((await brokerRecord(harness, handle)).status, "issued", context);
+  }
+});
+
+/**
+ * Pins the bound and the validation order of ruling R1: a missing, blank, or
+ * oversized handle is invalid_request before the client is even identified, while
+ * a well-formed handle with no client id is the client check's own
+ * invalid_client.
+ */
+test("refresh bounds the presented handle", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const oversized = "a".repeat(512 + 1);
+
+  const tooLong = await harness.token(refreshForm(oversized));
+  assert.equal(tooLong.status, 400);
+  assert.match(bodyString(tooLong), /"error":"invalid_request"/);
+
+  const missing = await harness.token({
+    grant_type: "refresh_token",
+    client_id: CLIENT_ID,
+  });
+  assert.equal(missing.status, 400);
+  assert.equal(bodyString(missing), bodyString(tooLong));
+
+  const blank = await harness.token(refreshForm(""));
+  assert.equal(blank.status, 400);
+  assert.equal(bodyString(blank), bodyString(tooLong));
+
+  // The bound is checked before the client lookup, so an oversized handle with
+  // no client at all is still invalid_request ...
+  const noClient = await harness.token({
+    grant_type: "refresh_token",
+    refresh_token: oversized,
+  });
+  assert.equal(noClient.status, 400);
+  assert.match(bodyString(noClient), /"error":"invalid_request"/);
+
+  // ... while a well-formed handle and no client is the client refusal.
+  const unidentified = await harness.token({
+    grant_type: "refresh_token",
+    refresh_token: "a".repeat(43),
+  });
+  assert.equal(unidentified.status, 400);
+  assert.match(bodyString(unidentified), /"error":"invalid_client"/);
+
+  assert.equal(harness.fake.refreshCallCount(), 0);
+});
+
+/**
+ * Pins journey step 9.1 / T2 against the refresh grant: once the authorization
+ * code is replayed, the broker record the code minted is revoked, so the handle
+ * it had already rotated into the client's hands is refused.
+ */
+test("refresh refuses a handle whose code was replayed", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const { exchange, code } = await exchangeTheCode(harness);
+  const handle = responseHandle(exchange);
+
+  const rotated = await harness.token(refreshForm(handle));
+  assert.equal(rotated.status, 200, bodyString(rotated));
+
+  const replay = await harness.token(harness.tokenForm(code));
+  assert.equal(replay.status, 400);
+  assert.match(bodyString(replay), /"error":"invalid_grant"/);
+
+  assert.equal((await brokerRecord(harness, handle)).status, "revoked");
+
+  const after = await harness.token(refreshForm(handle));
+  assert.equal(after.status, 400);
+  assert.match(bodyString(after), /"error":"invalid_grant"/);
+  assert.equal(harness.fake.refreshCallCount(), 1);
+});
+
+/**
+ * Pins single-flight under concurrency: sixteen simultaneous presentations of one
+ * handle produce exactly one upstream refresh call, and every caller receives the
+ * same successor body bytes — the winner's response or the grace replay of it.
+ */
+test("refresh concurrent callers receive one successor", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const handle = await mintedRefreshHandle(harness);
+  const form = refreshForm(handle);
+
+  const callers = 16;
+  const responses = await Promise.all(
+    Array.from({ length: callers }, () => harness.token(form)),
+  );
+
+  assert.equal(harness.fake.refreshCallCount(), 1);
+  const bodies = responses.map((response) => bodyString(response));
+  for (const [index, response] of responses.entries()) {
+    assert.equal(response.status, 200, `caller ${index} body ${bodies[index]}`);
+    assert.equal(
+      bodies[index],
+      bodies[0],
+      `caller ${index} must receive the winner's successor body`,
+    );
+  }
+  assert.ok(bodies[0].includes(`"access_token":"${REFRESH_ACCESS_TOKEN}"`));
+  // The successor handle the callers were all served is a framework handle, not
+  // the handle they presented.
+  assert.notEqual(responseHandle(responses[0]), handle);
+});
+
+/**
+ * Pins that reuse detection is safe under concurrency: once the grace window has
+ * passed, every concurrent presenter of the rotated handle is refused with
+ * invalid_grant, no upstream call is made, and the whole grant — the presented
+ * record and the successor it names — ends revoked. Revocation is idempotent, so
+ * more than one caller may perform it; the contract is that no caller is served
+ * and no caller can act on unrevoked state.
+ */
+test("refresh concurrent reuse after grace revokes once", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const handle = await mintedRefreshHandle(harness);
+  const rotated = await harness.token(refreshForm(handle));
+  assert.equal(rotated.status, 200, bodyString(rotated));
+  const successor = responseHandle(rotated);
+  harness.clock.advance(30_000 + 1_000);
+
+  const callers = 16;
+  const responses = await Promise.all(
+    Array.from({ length: callers }, () => harness.token(refreshForm(handle))),
+  );
+
+  const bodies = responses.map((response) => bodyString(response));
+  for (const [index, response] of responses.entries()) {
+    assert.equal(response.status, 400, `caller ${index} body ${bodies[index]}`);
+    assert.match(bodies[index], /"error":"invalid_grant"/, `caller ${index}`);
+    assert.equal(bodies[index], bodies[0], `caller ${index} must receive the same refusal`);
+  }
+  assert.equal(harness.fake.refreshCallCount(), 1);
+  assert.equal((await brokerRecord(harness, handle)).status, "revoked");
+  assert.equal((await brokerRecord(harness, successor)).status, "revoked");
+});
+
+/**
+ * Pins the reuse-detection revoke walk of ruling R1.4 and its bounded limit: the
+ * walk revokes the presented record and then follows the successor handle each
+ * revoked record names, stopping at the limit so a crafted or cyclic stored value
+ * can never loop. A ten-link chain seeded by hand therefore ends with exactly the
+ * first eight links revoked.
+ */
+test("refresh reuse revokes the grant up to the bounded walk limit", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const handles = Array.from({ length: 10 }, () => unknownHandle());
+  for (const [index, handle] of handles.entries()) {
+    const successor = handles[index + 1];
+    await harness.stores.routeRefreshBroker.put({
+      handleHash: hashKey(handle),
+      issuer: UPSTREAM_ISS,
+      stage: "",
+      canonicalResource: REFRESH_BOUND_RESOURCE,
+      clientNamespace: "acme",
+      endpointKind: "namespace",
+      partnerId: "",
+      agentId: "",
+      clientIdHash: hashKey(CLIENT_ID),
+      subjectIdHash: hashKey("user-1"),
+      scopes: [ROTATED_UPSTREAM_SCOPE],
+      scopeFingerprint: hashKey(ROTATED_UPSTREAM_SCOPE),
+      encryptedUpstreamRefreshToken: UPSTREAM_REFRESH_TOKEN,
+      upstreamRefreshTokenHash: hashKey(UPSTREAM_REFRESH_TOKEN),
+      upstreamClientId: CLIENT_ID,
+      // Every record claims a grace window that closed long ago, so presenting
+      // the first is reuse, and each names the next link as its successor.
+      encryptedGraceRefreshResponse:
+        successor === undefined
+          ? ""
+          : JSON.stringify({ refresh_token: successor }),
+      graceExpiresAt: new Date(0),
+      status: "issued",
+      version: 0,
+    });
+  }
+
+  const reused = await harness.token(refreshForm(handles[0]));
+  assert.equal(reused.status, 400);
+  assert.match(bodyString(reused), /"error":"invalid_grant"/);
+  assert.equal(harness.fake.refreshCallCount(), 0);
+
+  for (const [index, handle] of handles.entries()) {
+    const record = await brokerRecord(harness, handle);
+    const expected = index < 8 ? "revoked" : "issued";
+    assert.equal(record.status, expected, `chain link ${index}`);
+  }
+});
+
+/**
+ * Pins the coalesce wait cap: a caller that cannot take a lock another caller
+ * holds answers 503 temporarily_unavailable with a Retry-After, makes no upstream
+ * call, and waits the whole cap first. This test takes about three seconds,
+ * because the cap is real elapsed time and the point is that the caller waits it
+ * rather than sampling less than it.
+ */
+test("refresh lock contention answers retryable", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+  const handle = await mintedRefreshHandle(harness);
+  const record = await brokerRecord(harness, handle);
+  const locked = await harness.stores.routeRefreshBroker.acquireLock(
+    hashKey(handle),
+    "test-holder",
+    record.version,
+  );
+  assert.equal(locked.status, "refreshing");
+
+  const start = Date.now();
+  const response = await harness.token(refreshForm(handle));
+  const elapsed = Date.now() - start;
+
+  assert.equal(response.status, 503, bodyString(response));
+  assert.match(bodyString(response), /"error":"temporarily_unavailable"/);
+  const retryAfter = firstHeader(response.headers, "retry-after");
+  assert.notEqual(retryAfter, undefined);
+  assert.ok(Number.parseInt(retryAfter, 10) >= 1);
+  assert.ok(elapsed >= 3_000, `waited ${elapsed}ms, must wait the whole cap`);
+  assert.ok(elapsed < 33_000, `waited ${elapsed}ms`);
+  assert.equal(harness.fake.refreshCallCount(), 0);
+
+  // The caller that holds the lock is untouched by the waiter.
+  const held = await brokerRecord(harness, handle);
+  assert.equal(held.refreshLockOwner, "test-holder");
+});
+
+/**
+ * Pins the terminal provider failure: the recorded upstream material is dead, so
+ * the facade answers invalid_grant and revokes the presented record, and a later
+ * attempt never reaches the upstream again.
+ */
+test("refresh terminal upstream failure revokes", async (t) => {
+  const harness = await newFrontChannelHarness(t, {
+    providerOptions: (options) => {
+      options.refreshTokenStatus = 400;
+      options.refreshTokenBody = { error: "invalid_grant" };
+    },
+  });
+  const handle = await mintedRefreshHandle(harness);
+
+  const response = await harness.token(refreshForm(handle));
+  assert.equal(response.status, 400, bodyString(response));
+  assert.match(bodyString(response), /"error":"invalid_grant"/);
+  assert.equal(harness.fake.refreshCallCount(), 1);
+  assert.equal((await brokerRecord(harness, handle)).status, "revoked");
+
+  const after = await harness.token(refreshForm(handle));
+  assert.equal(after.status, 400);
+  assert.match(bodyString(after), /"error":"invalid_grant"/);
+  assert.equal(harness.fake.refreshCallCount(), 1);
+});
+
+/**
+ * Pins the transient provider failure: the facade answers 503
+ * temporarily_unavailable with a Retry-After, releases the lock and restores the
+ * record's status, and does not revoke the grant, so the very next attempt
+ * reaches the upstream again and rotates.
+ */
+test("refresh transient upstream failure keeps the handle", async (t) => {
+  const harness = await newFrontChannelHarness(t, {
+    providerOptions: (options) => {
+      options.refreshTokenStages = [
+        { status: 503, body: { error: "temporarily_unavailable" } },
+      ];
+    },
+  });
+  const handle = await mintedRefreshHandle(harness);
+
+  const failed = await harness.token(refreshForm(handle));
+  assert.equal(failed.status, 503, bodyString(failed));
+  assert.match(bodyString(failed), /"error":"temporarily_unavailable"/);
+  assert.deepEqual(firstHeader(failed.headers, "retry-after"), "1");
+  assert.equal(harness.fake.refreshCallCount(), 1);
+
+  const released = await brokerRecord(harness, handle);
+  assert.equal(released.status, "issued");
+  assert.ok(!released.refreshLockOwner);
+  assert.equal(released.refreshLockExpiresAt, undefined);
+
+  const recovered = await harness.token(refreshForm(handle));
+  assert.equal(recovered.status, 200, bodyString(recovered));
+  assert.ok(bodyString(recovered).includes(`"access_token":"${REFRESH_ACCESS_TOKEN}"`));
+  assert.notEqual(responseHandle(recovered), handle);
+  assert.equal(harness.fake.refreshCallCount(), 2);
+  assert.equal((await brokerRecord(harness, handle)).status, "active");
+});
+
+/**
+ * Scans every response and every client-presented form of a whole refresh journey
+ * against the upstream material the fake served: the upstream refresh tokens, the
+ * upstream id_token, the PKCE verifier, the upstream code, and the client state
+ * never appear anywhere, the upstream access tokens appear only in the responses
+ * that deliberately return them to their owner, and the facade code appears only
+ * in the callback that delivers it.
+ */
+test("refresh responses never carry upstream material", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+
+  const authorize = await harness.authorize(undefined);
+  assert.equal(authorize.status, 302);
+  const callback = await harness.serve(
+    "GET",
+    DEFAULT_CALLBACK_PATH,
+    {
+      code: [UPSTREAM_CODE],
+      state: [locationQuery(authorize).get("state")],
+      iss: [UPSTREAM_ISS],
+    },
+    null,
+  );
+  assert.equal(callback.status, 302);
+  const code = locationQuery(callback).get("code");
+  assert.ok(code !== null && code !== "");
+
+  const exchangeForm = harness.tokenForm(code);
+  const exchange = await harness.token(exchangeForm);
+  assert.equal(exchange.status, 200, bodyString(exchange));
+  const handle = responseHandle(exchange);
+
+  const rotated = await harness.token(refreshForm(handle));
+  assert.equal(rotated.status, 200, bodyString(rotated));
+  const grace = await harness.token(refreshForm(handle));
+  const scopeRefused = await harness.token(
+    refreshForm(handle, { scope: `${ROTATED_UPSTREAM_SCOPE} extra:scope` }),
+  );
+  const resourceRefused = await harness.token(
+    refreshForm(handle, { resource: `${BASE_URL}/other/mcp` }),
+  );
+  const oversized = await harness.token(refreshForm("a".repeat(512 + 1)));
+
+  // The two access tokens the design delivers, and the only responses allowed to
+  // carry each one.
+  const exchangedToken = responseAccessToken(exchange);
+  const rotatedToken = responseAccessToken(rotated);
+  const delivered = new Map([
+    [exchangedToken, new Set(["code_exchange"])],
+    [rotatedToken, new Set(["refresh", "grace_replay"])],
+  ]);
+
+  const responses = [
+    { name: "authorize", response: authorize, codeOK: false, stateOK: false },
+    { name: "callback", response: callback, codeOK: true, stateOK: true },
+    { name: "code_exchange", response: exchange, codeOK: false, stateOK: false },
+    { name: "refresh", response: rotated, codeOK: false, stateOK: false },
+    { name: "grace_replay", response: grace, codeOK: false, stateOK: false },
+    { name: "scope_refused", response: scopeRefused, codeOK: false, stateOK: false },
+    {
+      name: "resource_refused",
+      response: resourceRefused,
+      codeOK: false,
+      stateOK: false,
+    },
+    { name: "oversized_handle", response: oversized, codeOK: false, stateOK: false },
+  ];
+
+  const secrets = [
+    UPSTREAM_REFRESH_TOKEN,
+    ROTATED_UPSTREAM_REFRESH_TOKEN,
+    REFRESH_ID_TOKEN,
+    "id_token",
+    VERIFIER,
+    UPSTREAM_CODE,
+  ];
+  for (const entry of responses) {
+    const scanned = responseScan(entry.response);
+    for (const secret of secrets) {
+      assert.ok(
+        !scanned.includes(secret),
+        `${entry.name} response must not carry ${JSON.stringify(secret)}`,
+      );
+    }
+    // The client's own state is returned to it by the callback that receives it
+    // and by nothing else.
+    if (!entry.stateOK) {
+      assert.ok(
+        !scanned.includes(CLIENT_STATE),
+        `${entry.name} response must not carry the client state`,
+      );
+    }
+    if (!entry.codeOK) {
+      assert.ok(!scanned.includes(code), `${entry.name} response must not carry the facade code`);
+    }
+    for (const [token, names] of delivered) {
+      if (names.has(entry.name)) continue;
+      assert.ok(
+        !scanned.includes(token),
+        `${entry.name} response must not carry an access token delivered elsewhere`,
+      );
+    }
+  }
+  assert.ok(responseScan(exchange).includes(exchangedToken));
+  assert.ok(responseScan(rotated).includes(rotatedToken));
+  assert.ok(responseScan(grace).includes(rotatedToken));
+
+  // The client-presented forms carry the framework handle and nothing upstream.
+  const forms = [
+    exchangeForm,
+    refreshForm(handle),
+    refreshForm(responseHandle(rotated)),
+  ];
+  for (const form of forms) {
+    const encoded = new URLSearchParams(form).toString();
+    assert.ok(!encoded.includes(UPSTREAM_REFRESH_TOKEN));
+    assert.ok(!encoded.includes(ROTATED_UPSTREAM_REFRESH_TOKEN));
+    assert.ok(!encoded.includes(REFRESH_ID_TOKEN));
+    assert.ok(!encoded.includes(REFRESH_ACCESS_TOKEN));
+  }
+
+  // Positive control: the one form that must carry the upstream material — the
+  // facade's own upstream refresh call — does, with the facade's own upstream
+  // client, and never the framework handle the client presented.
+  const upstreamForm = harness.fake.lastRefreshRequest();
+  assert.equal(upstreamForm.get("refresh_token"), UPSTREAM_REFRESH_TOKEN);
+  assert.equal(upstreamForm.get("client_id"), CLIENT_ID);
+  assert.notEqual(upstreamForm.get("refresh_token"), handle);
+});
+
+const REFRESH_GROUP = "refresh";
+
+/**
+ * The number of refresh rows the shared table must carry; a change to the table
+ * must also be a deliberate edit in the Go, TypeScript, and Python loaders, so no
+ * runtime can silently execute a smaller table.
+ */
+const REFRESH_CASE_COUNT = 15;
+
+/**
+ * Stages the fake upstream a refresh row's scenario needs. Only the two
+ * upstream-failure scenarios need anything but the default fake.
+ */
+function refreshScenarioProviderOptions(scenario) {
+  switch (scenario) {
+    case "upstream_terminal_failure":
+      return (options) => {
+        options.refreshTokenStatus = 400;
+        options.refreshTokenBody = { error: "invalid_grant" };
+      };
+    case "upstream_transient_failure":
+      return (options) => {
+        options.refreshTokenStatus = 503;
+        options.refreshTokenBody = { error: "temporarily_unavailable" };
+      };
+    default:
+      return () => {};
+  }
+}
+
+/**
+ * Performs the common setup (authorize, callback, code exchange → a genuinely
+ * minted handle) and then the row's scenario, returning the response the row's
+ * expectation applies to.
+ */
+async function refreshScenarioResponse(harness, scenario) {
+  const { exchange, code } = await exchangeTheCode(harness);
+  const handle = responseHandle(exchange);
+
+  switch (scenario) {
+    case "happy_rotation":
+      return await harness.token(refreshForm(handle));
+    case "reuse_within_grace_returns_same_tokens": {
+      const first = await harness.token(refreshForm(handle));
+      assert.equal(first.status, 200);
+      const replayed = await harness.token(refreshForm(handle));
+      assert.equal(
+        bodyString(replayed),
+        bodyString(first),
+        "the grace replay must be byte-identical",
+      );
+      return replayed;
+    }
+    case "reuse_after_grace_revokes":
+      assert.equal((await harness.token(refreshForm(handle))).status, 200);
+      harness.clock.advance(30_000 + 1_000);
+      return await harness.token(refreshForm(handle));
+    case "unknown_handle":
+      return await harness.token(refreshForm(unknownHandle()));
+    case "other_client_handle":
+      await registerOtherClient(harness);
+      return await harness.token(
+        refreshForm(handle, { client_id: REFRESH_OTHER_CLIENT_ID }),
+      );
+    case "handle_at_another_route_refused":
+      return await harness.serve(
+        "POST",
+        oauthTokenPath(boundRouteEndpoint("agent")),
+        null,
+        Buffer.from(new URLSearchParams(refreshForm(handle)).toString(), "utf8"),
+      );
+    case "scope_subset_refused":
+      return await harness.token(refreshForm(handle, { scope: "" }));
+    case "scope_exact_accepted":
+      return await harness.token(
+        refreshForm(handle, { scope: ROTATED_UPSTREAM_SCOPE }),
+      );
+    case "resource_mismatch_refused":
+      return await harness.token(
+        refreshForm(handle, { resource: `${BASE_URL}/other/mcp` }),
+      );
+    case "resource_exact_accepted":
+      return await harness.token(
+        refreshForm(handle, { resource: REFRESH_BOUND_RESOURCE }),
+      );
+    case "oversized_handle_refused":
+      return await harness.token(refreshForm("a".repeat(512 + 1)));
+    case "missing_handle_refused":
+      return await harness.token({
+        grant_type: "refresh_token",
+        client_id: CLIENT_ID,
+      });
+    case "replayed_code_revokes_handle":
+      assert.equal((await harness.token(refreshForm(handle))).status, 200);
+      assert.equal((await harness.token(harness.tokenForm(code))).status, 400);
+      return await harness.token(refreshForm(handle));
+    case "upstream_terminal_failure":
+    case "upstream_transient_failure":
+      return await harness.token(refreshForm(handle));
+    default:
+      return assert.fail(`unknown refresh scenario ${JSON.stringify(scenario)}`);
+  }
+}
+
+/**
+ * Pins the brokered refresh grant to the shared cross-runtime table through the
+ * real token handler. Every row runs against a fresh mounted app and starts from
+ * the same setup — authorize, callback, and the code exchange — so each row
+ * presents a genuinely minted route handle rather than a seeded record.
+ */
+test("refresh enforces the shared refresh table through the real handlers", async (t) => {
+  const rows = (loadFixture().cases ?? []).filter(
+    (row) => row.group === REFRESH_GROUP,
+  );
+  assert.equal(rows.length, REFRESH_CASE_COUNT);
+
+  let executed = 0;
+  for (const row of rows) {
+    executed += 1;
+    const harness = await newFrontChannelHarness(t, {
+      providerOptions: refreshScenarioProviderOptions(row.scenario),
+    });
+    const response = await refreshScenarioResponse(harness, row.scenario);
+    const context = `row ${row.id}`;
+
+    assert.equal(response.status, row.expect_status, `${context} body ${bodyString(response)}`);
+    if (row.expect_error !== undefined && row.expect_error !== "") {
+      assert.match(
+        bodyString(response),
+        new RegExp(`"error":"${row.expect_error}"`),
+        context,
+      );
+    }
+    if (row.expect_retry_after === true) {
+      const value = firstHeader(response.headers, "retry-after");
+      assert.notEqual(value, undefined, `${context} must carry a Retry-After header`);
+      assert.ok(
+        Number.parseInt(value, 10) >= 1,
+        `${context} must not ask for a retry sooner than one second`,
+      );
+    }
+    const scanned = responseScan(response);
+    for (const absent of row.expect_absent ?? []) {
+      assert.ok(!scanned.includes(absent), `${context} must not carry ${JSON.stringify(absent)}`);
+    }
+  }
+  assert.equal(executed, REFRESH_CASE_COUNT);
 });

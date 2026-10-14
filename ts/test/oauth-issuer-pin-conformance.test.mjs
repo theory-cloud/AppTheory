@@ -61,6 +61,16 @@ const DCR_GROUP = "dcr";
  */
 const BOUND_ROUTE_GROUP = "bound_route";
 
+/**
+ * `refresh` is the sibling group holding the brokered refresh grant's contract:
+ * single-flight rotation, the bounded grace replay, reuse revocation, the scope
+ * and resource bindings of a refresh request, and the typed refusals. It is
+ * executed by the facade front-channel test through the real mounted token
+ * handler, not here; the group ledger below still lists it so a new group cannot
+ * appear without a loader.
+ */
+const REFRESH_GROUP = "refresh";
+
 const FIXTURE_GROUPS = [
   ISSUER_PIN_GROUP,
   REDIRECT_MATCH_GROUP,
@@ -68,6 +78,7 @@ const FIXTURE_GROUPS = [
   METHOD_STATUS_GROUP,
   DCR_GROUP,
   BOUND_ROUTE_GROUP,
+  REFRESH_GROUP,
 ];
 
 /**

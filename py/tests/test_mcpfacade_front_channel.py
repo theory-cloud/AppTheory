@@ -2,11 +2,13 @@ from __future__ import annotations
 
 # ruff: noqa: S105, S106
 import json
+import secrets
 import threading
 import time
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from apptheory import (
@@ -15,12 +17,14 @@ from apptheory import (
     create_app,
     register_mcp_facade,
 )
+from apptheory import mcpfacade as facade_module
 from apptheory.mcproutes import DEFAULT_CALLBACK_PATH, EndpointPath
 from apptheory.oauth import pkce_challenge_s256
 from apptheory.oauth.autheory import AutheoryProviderOptions, _default_http_transport, new_autheory_provider
-from apptheory.oauth.fake_provider import FakeUpstreamProvider
+from apptheory.oauth.fake_provider import FakeUpstreamProvider, RefreshStage
 from apptheory.oauth.provider import CodeExchangeRequest, TokenSet
 from apptheory.oauth.store import (
+    UTC_NOW_LOCK_TTL_SECONDS,
     ClientRecord,
     MemoryAuthorizationCodeStore,
     MemoryClientStore,
@@ -44,6 +48,15 @@ FRONT_TEST_RESOURCE = FRONT_TEST_BASE_URL + "/acme/mcp"
 FRONT_TEST_VERIFIER = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTU"
 FRONT_TEST_WRONG_VERIFIER = "WRONGVERIFIERWRONGVERIFIERWRONGVERIFIER1234567890"
 FRONT_TEST_TIMEOUT_SECONDS = 10.0
+
+# The refresh grant's own upstream material. The fake serves these only for
+# grant_type=refresh_token, so a refresh that returned upstream material instead
+# of a framework handle is distinguishable from the code exchange, and a response
+# that leaked either value is observable.
+FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN = "upstream-refresh-token-rotated"
+FRONT_TEST_REFRESH_ACCESS_TOKEN = "upstream-rotated-access-token"
+FRONT_TEST_REFRESH_ID_TOKEN = "upstream-id-token-must-not-surface"
+FRONT_TEST_ROTATED_UPSTREAM_SCOPE = "mcp:tools"
 
 # ---------------------------------------------------------------------------
 # Shared conformance fixture (the same table the Go and TypeScript loaders read)
@@ -102,6 +115,21 @@ BOUND_ROUTE_UNKNOWN_CLIENT_ID = "bound-route-unknown-client"
 
 # The redirect URI every bound_route client registers and presents.
 BOUND_ROUTE_REDIRECT_URI = FRONT_TEST_REDIRECT_URI
+
+REFRESH_GROUP = "refresh"
+
+# The number of refresh rows the shared table must carry; a change to the table
+# must also be a deliberate edit in the Go, TypeScript, and Python loaders, so no
+# runtime can silently execute a smaller table.
+REFRESH_CASE_COUNT = 15
+
+# A second registered public client, used to prove that a handle minted for one
+# client is refused for another with the same invalid_grant an unknown handle
+# gets.
+REFRESH_TEST_OTHER_CLIENT_ID = "facade-client-2"
+
+# The resource the harness's authorize leg binds.
+REFRESH_TEST_BOUND_RESOURCE = FRONT_TEST_BASE_URL + "/acme/mcp"
 
 
 def _load_fixture() -> dict:
@@ -234,19 +262,33 @@ class _MintingProvider:
 
 
 class _FrontChannelHarness:
-    def __init__(self, test: unittest.TestCase) -> None:
+    def __init__(self, test: unittest.TestCase, provider_options: Any = None) -> None:
         self._test = test
         self.clock = _ManualClock(datetime(2026, 1, 1, tzinfo=UTC))
-        self.fake = FakeUpstreamProvider(
-            issuer=FRONT_TEST_UPSTREAM_ISS,
-            token_body={
+        fake_options: dict[str, Any] = {
+            "issuer": FRONT_TEST_UPSTREAM_ISS,
+            "token_body": {
                 "access_token": "placeholder-upstream-access-token",
                 "token_type": "Bearer",
                 "expires_in": 900,
                 "refresh_token": FRONT_TEST_REFRESH_TOKEN,
                 "scope": "mcp:tools",
             },
-        )
+            # The refresh grant gets its own response, so a facade that returned
+            # upstream refresh material or an id_token instead of a framework
+            # handle is observable in the body as well as in the call counts.
+            "refresh_token_body": {
+                "access_token": FRONT_TEST_REFRESH_ACCESS_TOKEN,
+                "token_type": "Bearer",
+                "expires_in": 900,
+                "refresh_token": FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN,
+                "scope": FRONT_TEST_ROTATED_UPSTREAM_SCOPE,
+                "id_token": FRONT_TEST_REFRESH_ID_TOKEN,
+            },
+        }
+        if provider_options is not None:
+            provider_options(fake_options)
+        self.fake = FakeUpstreamProvider(**fake_options)
         self.fake.start()
         test.addCleanup(self.fake.stop)
 
@@ -300,7 +342,10 @@ class _FrontChannelHarness:
             )
         )
 
-        self.app = create_app()
+        # The injected clock is the same deterministic instant the stores observe,
+        # so grace windows, record lifetimes, and rotation timestamps all move
+        # together when a test advances the clock.
+        self.app = create_app(clock=self.clock)
         register_mcp_facade(self.app, config)
 
     # -- requests ------------------------------------------------------------
@@ -1016,12 +1061,14 @@ class FrontChannelTokenTests(unittest.TestCase):
         self.assertEqual(400, response.status)
         self.assertIn('"error":"invalid_grant"', response.body.decode())
 
-    def test_token_refuses_refresh_grant_until_m3c(self) -> None:
+    def test_token_refuses_an_unsupported_grant(self) -> None:
+        # The dispatch boundary the refresh grant did not move: a grant type the
+        # facade does not serve is still refused with unsupported_grant_type. The
+        # refresh grant itself is covered by the refresh tests below.
         harness = _FrontChannelHarness(self)
         response = harness.token(
             {
-                "grant_type": ["refresh_token"],
-                "refresh_token": ["whatever-handle"],
+                "grant_type": ["client_credentials"],
                 "client_id": [FRONT_TEST_CLIENT_ID],
             }
         )
@@ -1093,6 +1140,807 @@ class FrontChannelTokenTests(unittest.TestCase):
         record = harness.stores.route_refresh_broker.get(handles[0])
         self.assertIsNotNone(record)
         self.assertEqual("revoked", record.status)
+
+
+# ---------------------------------------------------------------------------
+# Brokered refresh grant (the Go suite in runtime/mcpfacade/refresh_test.go)
+# ---------------------------------------------------------------------------
+
+
+def _refresh_code_form(code: str) -> dict[str, list[str]]:
+    """The authorization_code exchange form the harness's authorize leg pins."""
+    return {
+        "grant_type": ["authorization_code"],
+        "code": [code],
+        "code_verifier": [FRONT_TEST_VERIFIER],
+        "redirect_uri": [FRONT_TEST_REDIRECT_URI],
+        "client_id": [FRONT_TEST_CLIENT_ID],
+    }
+
+
+def _refresh_form(handle: str) -> dict[str, list[str]]:
+    """A refresh grant form for one handle presented by the harness's own client."""
+    return {
+        "grant_type": ["refresh_token"],
+        "refresh_token": [handle],
+        "client_id": [FRONT_TEST_CLIENT_ID],
+    }
+
+
+def _refresh_form_value(handle: str, name: str, value: str) -> dict[str, list[str]]:
+    """_refresh_form with one extra member set, so a row or a case can present a
+    scope or a resource beside the handle."""
+    form = _refresh_form(handle)
+    form[name] = [value]
+    return form
+
+
+def _token_response_handle(response: Response) -> str:
+    """The framework handle a token response handed the client."""
+    handle = str(json.loads(response.body.decode("utf-8")).get("refresh_token") or "")
+    if not handle:
+        raise AssertionError("token response must carry a refresh handle")
+    return handle
+
+
+def _token_response_access_token(response: Response) -> str:
+    """The access token a token response returned."""
+    token = str(json.loads(response.body.decode("utf-8")).get("access_token") or "")
+    if not token:
+        raise AssertionError("token response must carry an access token")
+    return token
+
+
+def _exchange_the_code(harness: _FrontChannelHarness) -> tuple[Response, str]:
+    """Completes authorize, callback, and the code exchange, and returns the token
+    response plus the redeemed facade code, so a refresh test starts from a
+    genuinely minted handle."""
+    _callback, code = harness.authorize_and_callback()
+    response = harness.token(_refresh_code_form(code))
+    if response.status != 200:
+        raise AssertionError(f"the code exchange must succeed, got {response.status} {response.body!r}")
+    return response, code
+
+
+def _minted_refresh_handle(harness: _FrontChannelHarness) -> str:
+    """Runs the journey through the code exchange and returns the handle it minted."""
+    exchange, _code = _exchange_the_code(harness)
+    return _token_response_handle(exchange)
+
+
+def _broker_record(harness: _FrontChannelHarness, handle: str):
+    """The broker record a handle is keyed by."""
+    record = harness.stores.route_refresh_broker.get(hash_key(handle))
+    if record is None:
+        raise AssertionError(f"no broker record for handle {handle!r}")
+    return record
+
+
+def _unknown_handle() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def _register_other_client(harness: _FrontChannelHarness) -> None:
+    """Registers the second public client the other-client cases present."""
+    harness.stores.client.put(
+        ClientRecord(
+            client_id_hash=hash_key(REFRESH_TEST_OTHER_CLIENT_ID),
+            client_id=REFRESH_TEST_OTHER_CLIENT_ID,
+            redirect_uris=[FRONT_TEST_REDIRECT_URI],
+            token_endpoint_auth_method="none",
+        )
+    )
+
+
+def _refresh_at_another_route(harness: _FrontChannelHarness, handle: str) -> Response:
+    """Presents a refresh form at a mounted route other than the one the handle
+    was minted for, derived from the framework's route algebra rather than a
+    hard-coded path."""
+    other_route = _bound_route_endpoint("agent")
+    return harness.serve(
+        "POST",
+        other_route.oauth_token_path(),
+        None,
+        urlencode(_refresh_form(handle), doseq=True).encode(),
+    )
+
+
+class RefreshGrantDefaultsTests(unittest.TestCase):
+    """Pins the brokered refresh framework defaults of operator ruling R3, so a
+    change to any of them is a deliberate edit here rather than a silent behavior
+    change. It also pins the two relationships the numbers have to satisfy: the
+    coalesce wait cap must stay below the broker lock TTL (a waiter can never
+    outlive and steal the lock it waits for), and the grace window must stay above
+    that cap (a waiter that gives up inside the window still replays the
+    successor on its next attempt).
+    """
+
+    def test_refresh_grant_defaults_are_pinned(self) -> None:
+        self.assertEqual(30, facade_module._REFRESH_GRACE_WINDOW_SECONDS)
+        self.assertEqual(3.0, facade_module._REFRESH_COALESCE_WAIT_CAP_SECONDS)
+        self.assertEqual(0.05, facade_module._REFRESH_COALESCE_POLL_INTERVAL_SECONDS)
+        self.assertEqual(512, facade_module._FRONT_CHANNEL_MAX_REFRESH_HANDLE_BYTES)
+        self.assertEqual(8, facade_module._REFRESH_REVOKE_CHAIN_LIMIT)
+        self.assertEqual(1, facade_module._REFRESH_RETRY_AFTER_SECONDS)
+        self.assertEqual(15, UTC_NOW_LOCK_TTL_SECONDS)
+        self.assertLess(facade_module._REFRESH_COALESCE_WAIT_CAP_SECONDS, float(UTC_NOW_LOCK_TTL_SECONDS))
+        self.assertGreater(
+            facade_module._REFRESH_GRACE_WINDOW_SECONDS,
+            facade_module._REFRESH_COALESCE_WAIT_CAP_SECONDS,
+        )
+
+
+class RefreshGrantTests(unittest.TestCase):
+    """Pins the brokered refresh grant (DESIGN section 8.4 mechanic 4, operator
+    rulings R1-R4) against the real mounted token handler: single-flight rotation,
+    the bounded grace replay, reuse revocation, the route, scope, and resource
+    bindings, and the typed refusals."""
+
+    def test_refresh_rotates_the_handle_and_hides_upstream_material(self) -> None:
+        harness = _FrontChannelHarness(self)
+        first = _minted_refresh_handle(harness)
+
+        response = harness.token(_refresh_form(first))
+        self.assertEqual(200, response.status, response.body)
+        body = response.body.decode("utf-8")
+        self.assertIn('"access_token":"' + FRONT_TEST_REFRESH_ACCESS_TOKEN + '"', body)
+        self.assertIn('"token_type":"Bearer"', body)
+        self.assertIn('"scope":"' + FRONT_TEST_ROTATED_UPSTREAM_SCOPE + '"', body)
+        self.assertNotIn(FRONT_TEST_REFRESH_TOKEN, body)
+        self.assertNotIn(FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN, body)
+        self.assertNotIn(FRONT_TEST_REFRESH_ID_TOKEN, body)
+        self.assertNotIn("id_token", body)
+
+        second = _token_response_handle(response)
+        self.assertNotEqual(first, second)
+
+        successor = _broker_record(harness, second)
+        self.assertEqual(FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN, successor.encrypted_upstream_refresh_token)
+        self.assertEqual(
+            hash_key(FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN), successor.upstream_refresh_token_hash
+        )
+        self.assertEqual("issued", successor.status)
+        self.assertEqual(hash_key(FRONT_TEST_CLIENT_ID), successor.client_id_hash)
+        self.assertEqual(FRONT_TEST_CLIENT_ID, successor.upstream_client_id)
+        self.assertEqual(REFRESH_TEST_BOUND_RESOURCE, successor.canonical_resource)
+
+        presented = _broker_record(harness, first)
+        self.assertEqual("active", presented.status)
+        self.assertEqual(response.body.decode("utf-8"), presented.encrypted_grace_refresh_response)
+        self.assertEqual(harness.clock.now() + timedelta(seconds=30), presented.grace_expires_at)
+        self.assertEqual("", presented.refresh_lock_owner)
+        self.assertIsNone(presented.refresh_lock_expires_at)
+
+    def test_refresh_makes_exactly_one_upstream_call_per_rotation(self) -> None:
+        # The single-flight upstream contract: the code exchange makes one token
+        # call, and each rotation makes exactly one more, presenting the recorded
+        # upstream material and the facade's own upstream client — never the
+        # framework handle.
+        harness = _FrontChannelHarness(self)
+        handle = _minted_refresh_handle(harness)
+        self.assertEqual(1, harness.fake.token_calls)
+        self.assertEqual(0, harness.fake.refresh_calls)
+
+        first = harness.token(_refresh_form(handle))
+        self.assertEqual(200, first.status)
+        self.assertEqual(2, harness.fake.token_calls)
+        self.assertEqual(1, harness.fake.refresh_calls)
+
+        second = harness.token(_refresh_form(_token_response_handle(first)))
+        self.assertEqual(200, second.status)
+        self.assertEqual(3, harness.fake.token_calls)
+        self.assertEqual(2, harness.fake.refresh_calls)
+
+        presented = harness.fake.last_refresh_form
+        self.assertEqual(FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN, presented.get("refresh_token"))
+        self.assertEqual(FRONT_TEST_CLIENT_ID, presented.get("client_id"))
+
+        # A grace replay makes no upstream call at all, so the count above is the
+        # rotation count and not a call count.
+        self.assertEqual(200, harness.token(_refresh_form(handle)).status)
+        self.assertEqual(3, harness.fake.token_calls)
+        self.assertEqual(2, harness.fake.refresh_calls)
+
+    def test_refresh_replays_the_same_successor_within_the_grace_window(self) -> None:
+        # The idempotent lost-response path: presenting the rotated handle again
+        # from the same client returns the identical status, headers, and body
+        # bytes, with no second upstream call, right up to the end of the window.
+        harness = _FrontChannelHarness(self)
+        handle = _minted_refresh_handle(harness)
+
+        first = harness.token(_refresh_form(handle))
+        self.assertEqual(200, first.status)
+
+        replayed = harness.token(_refresh_form(handle))
+        self.assertEqual(first.status, replayed.status)
+        self.assertEqual(first.body, replayed.body)
+        self.assertEqual(first.headers["content-type"], replayed.headers["content-type"])
+        self.assertEqual(first.headers["cache-control"], replayed.headers["cache-control"])
+        self.assertEqual(first.headers["pragma"], replayed.headers["pragma"])
+        self.assertEqual(1, harness.fake.refresh_calls)
+
+        harness.clock.advance(30 - 1)
+        just_inside = harness.token(_refresh_form(handle))
+        self.assertEqual(200, just_inside.status)
+        self.assertEqual(first.body, just_inside.body)
+        self.assertEqual(1, harness.fake.refresh_calls)
+
+    def test_refresh_after_the_grace_window_revokes_the_successor(self) -> None:
+        # Reuse: presenting the rotated handle once the window has passed is
+        # refused with invalid_grant, the presented record is revoked, and the walk
+        # revokes the successor the rotation minted, so the successor handle is
+        # refused too.
+        harness = _FrontChannelHarness(self)
+        handle = _minted_refresh_handle(harness)
+
+        rotated = harness.token(_refresh_form(handle))
+        self.assertEqual(200, rotated.status)
+        successor = _token_response_handle(rotated)
+        self.assertEqual(1, harness.fake.refresh_calls)
+
+        harness.clock.advance(30 + 1)
+        reused = harness.token(_refresh_form(handle))
+        self.assertEqual(400, reused.status)
+        self.assertIn('"error":"invalid_grant"', reused.body.decode("utf-8"))
+
+        self.assertEqual("revoked", _broker_record(harness, handle).status)
+        self.assertEqual("revoked", _broker_record(harness, successor).status)
+
+        after = harness.token(_refresh_form(successor))
+        self.assertEqual(400, after.status)
+        self.assertIn('"error":"invalid_grant"', after.body.decode("utf-8"))
+        self.assertEqual(1, harness.fake.refresh_calls)
+
+    def test_refresh_refusals_are_one_invalid_grant_body(self) -> None:
+        # The no-oracle rule: an unknown handle, a revoked handle, a handle
+        # presented by another registered client, and a handle presented at
+        # another route are one byte-identical invalid_grant response.
+        unknown_harness = _FrontChannelHarness(self)
+        unknown = unknown_harness.token(_refresh_form(_unknown_handle()))
+        self.assertEqual(400, unknown.status)
+
+        revoked_harness = _FrontChannelHarness(self)
+        revoked_handle = _minted_refresh_handle(revoked_harness)
+        revoked_harness.stores.route_refresh_broker.revoke(hash_key(revoked_handle))
+        revoked = revoked_harness.token(_refresh_form(revoked_handle))
+        self.assertEqual(400, revoked.status)
+
+        other_harness = _FrontChannelHarness(self)
+        other_handle = _minted_refresh_handle(other_harness)
+        _register_other_client(other_harness)
+        other_form = _refresh_form(other_handle)
+        other_form["client_id"] = [REFRESH_TEST_OTHER_CLIENT_ID]
+        other = other_harness.token(other_form)
+        self.assertEqual(400, other.status)
+
+        for index, response in enumerate((unknown, revoked, other)):
+            self.assertEqual(400, response.status, f"refusal {index}")
+            self.assertIn('"error":"invalid_grant"', response.body.decode("utf-8"), f"refusal {index}")
+            self.assertEqual(unknown.body, response.body, f"refusal {index} must be byte-identical")
+
+    def test_refresh_refuses_a_handle_at_another_route(self) -> None:
+        # The route binding of the broker record (DESIGN section 7: the record
+        # binds the resource) against the real handlers, and proof that closing it
+        # does not open a handle-existence oracle: a handle minted at one route and
+        # presented at another route's token endpoint is refused with the SAME
+        # byte-identical invalid_grant an unknown handle gets, while the very same
+        # handle is still redeemable at the route it was minted for, and the
+        # tracked upstream refresh count proves the wrong-route attempt never
+        # reached the upstream.
+        harness = _FrontChannelHarness(self)
+        handle = _minted_refresh_handle(harness)
+
+        unknown_response = harness.token(_refresh_form(_unknown_handle()))
+        self.assertEqual(400, unknown_response.status)
+
+        before = harness.fake.refresh_calls
+        wrong_route = _refresh_at_another_route(harness, handle)
+        self.assertEqual(400, wrong_route.status)
+        self.assertIn('"error":"invalid_grant"', wrong_route.body.decode("utf-8"))
+        self.assertEqual(
+            unknown_response.body.decode("utf-8"),
+            wrong_route.body.decode("utf-8"),
+            "a wrong-route handle must be the byte-identical unknown-handle refusal",
+        )
+        self.assertEqual(before, harness.fake.refresh_calls, "a wrong-route handle must not reach the upstream")
+
+        own_route = harness.token(_refresh_form(handle))
+        self.assertEqual(200, own_route.status)
+        self.assertEqual(
+            before + 1,
+            harness.fake.refresh_calls,
+            "the same handle must still be redeemable at the route it was minted for",
+        )
+
+    def test_refresh_binds_scope_and_resource(self) -> None:
+        # Ruling R4: an absent scope or resource takes the recorded value, an
+        # exactly equal one is accepted, a subset (which the empty member
+        # expresses, because the granted set has one member) and a wider set are
+        # invalid_scope, and a mismatched resource is invalid_target.
+        def set_scope(form: dict[str, list[str]], value: str) -> None:
+            form["scope"] = [value]
+
+        def set_resource(form: dict[str, list[str]], value: str) -> None:
+            form["resource"] = [value]
+
+        def exact_scope_and_resource(form: dict[str, list[str]]) -> None:
+            set_scope(form, FRONT_TEST_ROTATED_UPSTREAM_SCOPE)
+            set_resource(form, REFRESH_TEST_BOUND_RESOURCE)
+
+        cases: tuple[tuple[str, str, Any], ...] = (
+            (
+                "absent_scope_and_resource_take_the_granted_values",
+                "",
+                lambda form: None,
+            ),
+            ("exact_scope_and_resource_are_accepted", "", exact_scope_and_resource),
+            ("subset_scope_is_refused", "invalid_scope", lambda form: set_scope(form, "")),
+            (
+                "wider_scope_is_refused",
+                "invalid_scope",
+                lambda form: set_scope(form, FRONT_TEST_ROTATED_UPSTREAM_SCOPE + " extra:scope"),
+            ),
+            (
+                "mismatched_resource_is_refused",
+                "invalid_target",
+                lambda form: set_resource(form, FRONT_TEST_BASE_URL + "/other/mcp"),
+            ),
+        )
+
+        for name, want_error, mutate in cases:
+            with self.subTest(case=name):
+                harness = _FrontChannelHarness(self)
+                handle = _minted_refresh_handle(harness)
+                form = _refresh_form(handle)
+                mutate(form)
+
+                response = harness.token(form)
+                if not want_error:
+                    self.assertEqual(200, response.status, response.body)
+                    self.assertIn('"access_token":"' + FRONT_TEST_REFRESH_ACCESS_TOKEN + '"', response.body.decode())
+                    self.assertEqual(1, harness.fake.refresh_calls)
+                    continue
+                self.assertEqual(400, response.status, response.body)
+                self.assertIn('"error":"' + want_error + '"', response.body.decode("utf-8"))
+                # A refused request never reached the upstream, and the handle was
+                # not rotated by it.
+                self.assertEqual(0, harness.fake.refresh_calls)
+                self.assertEqual("issued", _broker_record(harness, handle).status)
+
+    def test_refresh_present_but_empty_scope_is_refused(self) -> None:
+        # Presence, not emptiness, is what triggers ruling R4's check: the empty
+        # member is the empty scope set, and a wider-or-subset-accepting mode is
+        # deliberately not built.
+        harness = _FrontChannelHarness(self)
+        handle = _minted_refresh_handle(harness)
+        response = harness.token(_refresh_form_value(handle, "scope", ""))
+        self.assertEqual(400, response.status)
+        self.assertIn('"error":"invalid_scope"', response.body.decode("utf-8"))
+        self.assertEqual(0, harness.fake.refresh_calls)
+
+    def test_refresh_bounds_the_presented_handle(self) -> None:
+        # The bound and the validation order of ruling R1: a missing, blank, or
+        # oversized handle is invalid_request before the client is even
+        # identified, while a well-formed handle with no client id is the client
+        # check's own invalid_client.
+        harness = _FrontChannelHarness(self)
+        oversized = "a" * (facade_module._FRONT_CHANNEL_MAX_REFRESH_HANDLE_BYTES + 1)
+
+        too_long = harness.token(_refresh_form(oversized))
+        self.assertEqual(400, too_long.status)
+        self.assertIn('"error":"invalid_request"', too_long.body.decode("utf-8"))
+
+        missing = harness.token({"grant_type": ["refresh_token"], "client_id": [FRONT_TEST_CLIENT_ID]})
+        self.assertEqual(400, missing.status)
+        self.assertEqual(too_long.body, missing.body)
+
+        blank = harness.token(_refresh_form(""))
+        self.assertEqual(400, blank.status)
+        self.assertEqual(too_long.body, blank.body)
+
+        # The bound is checked before the client lookup, so an oversized handle
+        # with no client at all is still invalid_request ...
+        no_client = harness.token({"grant_type": ["refresh_token"], "refresh_token": [oversized]})
+        self.assertEqual(400, no_client.status)
+        self.assertIn('"error":"invalid_request"', no_client.body.decode("utf-8"))
+
+        # ... while a well-formed handle and no client is the client refusal.
+        unidentified = harness.token({"grant_type": ["refresh_token"], "refresh_token": ["a" * 43]})
+        self.assertEqual(400, unidentified.status)
+        self.assertIn('"error":"invalid_client"', unidentified.body.decode("utf-8"))
+
+        self.assertEqual(0, harness.fake.refresh_calls)
+
+    def test_refresh_replayed_code_revokes_the_handle(self) -> None:
+        # Journey step 9.1 / T2 against the refresh grant: once the authorization
+        # code is replayed, the broker record the code minted is revoked, so the
+        # handle it had already rotated into the client's hands is refused.
+        harness = _FrontChannelHarness(self)
+        exchange, code = _exchange_the_code(harness)
+        handle = _token_response_handle(exchange)
+
+        rotated = harness.token(_refresh_form(handle))
+        self.assertEqual(200, rotated.status)
+
+        replay = harness.token(_refresh_code_form(code))
+        self.assertEqual(400, replay.status)
+        self.assertIn('"error":"invalid_grant"', replay.body.decode("utf-8"))
+
+        self.assertEqual("revoked", _broker_record(harness, handle).status)
+
+        after = harness.token(_refresh_form(handle))
+        self.assertEqual(400, after.status)
+        self.assertIn('"error":"invalid_grant"', after.body.decode("utf-8"))
+        self.assertEqual(1, harness.fake.refresh_calls)
+
+    def test_refresh_concurrent_callers_receive_one_successor(self) -> None:
+        # Single-flight under concurrency: sixteen simultaneous presentations of
+        # one handle produce exactly one upstream refresh call, and every caller
+        # receives the same successor body bytes — the winner's response or the
+        # grace replay of it.
+        harness = _FrontChannelHarness(self)
+        handle = _minted_refresh_handle(harness)
+        form = urlencode(_refresh_form(handle), doseq=True).encode()
+
+        callers = 16
+        statuses: list[int | None] = [None] * callers
+        bodies: list[bytes] = [b""] * callers
+        barrier = threading.Barrier(callers)
+
+        def present(index: int) -> None:
+            barrier.wait()
+            response = harness.serve("POST", harness.endpoint.oauth_token_path(), None, form)
+            statuses[index] = response.status
+            bodies[index] = response.body
+
+        threads = [threading.Thread(target=present, args=(index,)) for index in range(callers)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(1, harness.fake.refresh_calls)
+        for index in range(callers):
+            self.assertEqual(200, statuses[index], f"caller {index} body {bodies[index]!r}")
+            self.assertEqual(bodies[0], bodies[index], f"caller {index} must receive the winner's successor body")
+        self.assertIn('"access_token":"' + FRONT_TEST_REFRESH_ACCESS_TOKEN + '"', bodies[0].decode("utf-8"))
+        # The successor handle the callers were all served is a framework handle,
+        # not the handle they presented.
+        winner = Response(status=200, headers={}, cookies=[], body=bodies[0], is_base64=False)
+        self.assertNotEqual(handle, _token_response_handle(winner))
+
+    def test_refresh_concurrent_reuse_after_grace_revokes_once(self) -> None:
+        # Reuse detection is safe under concurrency: once the grace window has
+        # passed, every concurrent presenter of the rotated handle is refused with
+        # invalid_grant, no upstream call is made, and the whole grant — the
+        # presented record and the successor it names — ends revoked. Revocation is
+        # idempotent, so more than one caller may perform it; the contract is that
+        # no caller is served and no caller can act on unrevoked state.
+        harness = _FrontChannelHarness(self)
+        handle = _minted_refresh_handle(harness)
+        rotated = harness.token(_refresh_form(handle))
+        self.assertEqual(200, rotated.status)
+        successor = _token_response_handle(rotated)
+        harness.clock.advance(30 + 1)
+
+        form = urlencode(_refresh_form(handle), doseq=True).encode()
+        callers = 16
+        statuses: list[int | None] = [None] * callers
+        bodies: list[bytes] = [b""] * callers
+        barrier = threading.Barrier(callers)
+
+        def present(index: int) -> None:
+            barrier.wait()
+            response = harness.serve("POST", harness.endpoint.oauth_token_path(), None, form)
+            statuses[index] = response.status
+            bodies[index] = response.body
+
+        threads = [threading.Thread(target=present, args=(index,)) for index in range(callers)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        for index in range(callers):
+            self.assertEqual(400, statuses[index], f"caller {index} body {bodies[index]!r}")
+            self.assertIn('"error":"invalid_grant"', bodies[index].decode("utf-8"), f"caller {index}")
+            self.assertEqual(bodies[0], bodies[index], f"caller {index} must receive the same refusal")
+        self.assertEqual(1, harness.fake.refresh_calls)
+        self.assertEqual("revoked", _broker_record(harness, handle).status)
+        self.assertEqual("revoked", _broker_record(harness, successor).status)
+
+    def test_refresh_lock_contention_answers_retryable(self) -> None:
+        # The coalesce wait cap: a caller that cannot take a lock another caller
+        # holds answers 503 temporarily_unavailable with a Retry-After, makes no
+        # upstream call, and waits the whole cap first. This test takes about
+        # three seconds, because the cap is real elapsed time and the point is that
+        # the caller waits it rather than sampling less than it.
+        harness = _FrontChannelHarness(self)
+        handle = _minted_refresh_handle(harness)
+        record = _broker_record(harness, handle)
+        locked = harness.stores.route_refresh_broker.acquire_lock(hash_key(handle), "test-holder", record.version)
+        self.assertEqual("refreshing", locked.status)
+
+        start = time.monotonic()
+        response = harness.token(_refresh_form(handle))
+        elapsed = time.monotonic() - start
+
+        self.assertEqual(503, response.status)
+        self.assertIn('"error":"temporarily_unavailable"', response.body.decode("utf-8"))
+        values = response.headers.get("retry-after") or []
+        self.assertTrue(values)
+        self.assertGreaterEqual(int(str(values[0])), 1)
+        self.assertGreaterEqual(elapsed, facade_module._REFRESH_COALESCE_WAIT_CAP_SECONDS)
+        self.assertLess(elapsed, facade_module._REFRESH_COALESCE_WAIT_CAP_SECONDS + 30)
+        self.assertEqual(0, harness.fake.refresh_calls)
+
+        # The caller that holds the lock is untouched by the waiter.
+        self.assertEqual("test-holder", _broker_record(harness, handle).refresh_lock_owner)
+
+    def test_refresh_terminal_upstream_failure_revokes(self) -> None:
+        # A terminal provider failure: the recorded upstream material is dead, so
+        # the facade answers invalid_grant and revokes the presented record, and a
+        # later attempt never reaches the upstream again.
+        harness = _FrontChannelHarness(self, _terminal_failure_provider_options)
+        handle = _minted_refresh_handle(harness)
+
+        response = harness.token(_refresh_form(handle))
+        self.assertEqual(400, response.status)
+        self.assertIn('"error":"invalid_grant"', response.body.decode("utf-8"))
+        self.assertEqual(1, harness.fake.refresh_calls)
+        self.assertEqual("revoked", _broker_record(harness, handle).status)
+
+        after = harness.token(_refresh_form(handle))
+        self.assertEqual(400, after.status)
+        self.assertIn('"error":"invalid_grant"', after.body.decode("utf-8"))
+        self.assertEqual(1, harness.fake.refresh_calls)
+
+    def test_refresh_transient_upstream_failure_keeps_the_handle(self) -> None:
+        # A transient provider failure: the facade answers 503
+        # temporarily_unavailable with a Retry-After, releases the lock and
+        # restores the record's status, and does not revoke the grant, so the very
+        # next attempt reaches the upstream again and rotates.
+        harness = _FrontChannelHarness(self, _transient_failure_provider_options)
+        handle = _minted_refresh_handle(harness)
+
+        failed = harness.token(_refresh_form(handle))
+        self.assertEqual(503, failed.status)
+        self.assertIn('"error":"temporarily_unavailable"', failed.body.decode("utf-8"))
+        self.assertEqual(["1"], failed.headers.get("retry-after"))
+        self.assertEqual(1, harness.fake.refresh_calls)
+
+        released = _broker_record(harness, handle)
+        self.assertEqual("issued", released.status)
+        self.assertEqual("", released.refresh_lock_owner)
+        self.assertIsNone(released.refresh_lock_expires_at)
+
+        recovered = harness.token(_refresh_form(handle))
+        self.assertEqual(200, recovered.status)
+        self.assertIn('"access_token":"' + FRONT_TEST_REFRESH_ACCESS_TOKEN + '"', recovered.body.decode("utf-8"))
+        self.assertNotEqual(handle, _token_response_handle(recovered))
+        self.assertEqual(2, harness.fake.refresh_calls)
+        self.assertEqual("active", _broker_record(harness, handle).status)
+
+    def test_refresh_responses_never_carry_upstream_material(self) -> None:
+        # Scans every response and every client-presented form of a whole refresh
+        # journey against the upstream material the fake served: the upstream
+        # refresh tokens, the upstream id_token, the PKCE verifier, the upstream
+        # code, and the client state never appear anywhere, the upstream access
+        # tokens appear only in the responses that deliberately return them to
+        # their owner, and the facade code appears only in the callback that
+        # delivers it.
+        harness = _FrontChannelHarness(self)
+
+        authorize = harness.authorize()
+        self.assertEqual(302, authorize.status)
+        callback = harness.serve(
+            "GET",
+            DEFAULT_CALLBACK_PATH,
+            {
+                "code": [FRONT_TEST_UPSTREAM_CODE],
+                "state": [_location_query(authorize).get("state", "")],
+                "iss": [FRONT_TEST_UPSTREAM_ISS],
+            },
+        )
+        self.assertEqual(302, callback.status)
+        code = _location_query(callback).get("code", "")
+        self.assertTrue(code)
+
+        exchange_form = _refresh_code_form(code)
+        exchange = harness.token(exchange_form)
+        self.assertEqual(200, exchange.status)
+        handle = _token_response_handle(exchange)
+
+        rotated = harness.token(_refresh_form(handle))
+        self.assertEqual(200, rotated.status)
+        grace = harness.token(_refresh_form(handle))
+        scope_refused = harness.token(
+            _refresh_form_value(handle, "scope", FRONT_TEST_ROTATED_UPSTREAM_SCOPE + " extra:scope")
+        )
+        resource_refused = harness.token(
+            _refresh_form_value(handle, "resource", FRONT_TEST_BASE_URL + "/other/mcp")
+        )
+        oversized = harness.token(
+            _refresh_form("a" * (facade_module._FRONT_CHANNEL_MAX_REFRESH_HANDLE_BYTES + 1))
+        )
+
+        # The two access tokens the design delivers, and the only responses
+        # allowed to carry each one.
+        exchanged_token = _token_response_access_token(exchange)
+        rotated_token = _token_response_access_token(rotated)
+        delivered = {
+            exchanged_token: {"code_exchange"},
+            rotated_token: {"refresh", "grace_replay"},
+        }
+
+        responses = (
+            ("authorize", authorize, False, False),
+            ("callback", callback, True, True),
+            ("code_exchange", exchange, False, False),
+            ("refresh", rotated, False, False),
+            ("grace_replay", grace, False, False),
+            ("scope_refused", scope_refused, False, False),
+            ("resource_refused", resource_refused, False, False),
+            ("oversized_handle", oversized, False, False),
+        )
+
+        upstream_secrets = (
+            FRONT_TEST_REFRESH_TOKEN,
+            FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN,
+            FRONT_TEST_REFRESH_ID_TOKEN,
+            "id_token",
+            FRONT_TEST_VERIFIER,
+            FRONT_TEST_UPSTREAM_CODE,
+        )
+        for name, response, code_ok, state_ok in responses:
+            scanned = _scan(response)
+            for secret in upstream_secrets:
+                self.assertNotIn(secret, scanned, f"{name} response must not carry {secret!r}")
+            # The client's own state is returned to it by the callback that
+            # receives it and by nothing else.
+            if not state_ok:
+                self.assertNotIn(FRONT_TEST_CLIENT_STATE, scanned, f"{name} response must not carry the client state")
+            if not code_ok:
+                self.assertNotIn(code, scanned, f"{name} response must not carry the facade code")
+            for token, names in delivered.items():
+                if name in names:
+                    continue
+                self.assertNotIn(
+                    token, scanned, f"{name} response must not carry an access token delivered elsewhere"
+                )
+        self.assertIn(exchanged_token, _scan(exchange))
+        self.assertIn(rotated_token, _scan(rotated))
+        self.assertIn(rotated_token, _scan(grace))
+
+        # The client-presented forms carry the framework handle and nothing
+        # upstream.
+        forms = (
+            exchange_form,
+            _refresh_form(handle),
+            _refresh_form(_token_response_handle(rotated)),
+        )
+        for form in forms:
+            encoded = urlencode(form, doseq=True)
+            self.assertNotIn(FRONT_TEST_REFRESH_TOKEN, encoded)
+            self.assertNotIn(FRONT_TEST_ROTATED_UPSTREAM_REFRESH_TOKEN, encoded)
+            self.assertNotIn(FRONT_TEST_REFRESH_ID_TOKEN, encoded)
+            self.assertNotIn(FRONT_TEST_REFRESH_ACCESS_TOKEN, encoded)
+
+        # Positive control: the one form that must carry the upstream material —
+        # the facade's own upstream refresh call — does, with the facade's own
+        # upstream client, and never the framework handle the client presented.
+        upstream_form = harness.fake.last_refresh_form
+        self.assertEqual(FRONT_TEST_REFRESH_TOKEN, upstream_form.get("refresh_token"))
+        self.assertEqual(FRONT_TEST_CLIENT_ID, upstream_form.get("client_id"))
+        self.assertNotEqual(handle, upstream_form.get("refresh_token"))
+
+
+def _terminal_failure_provider_options(options: dict[str, Any]) -> None:
+    """Stages the fake upstream a terminal refresh rejection."""
+    options["refresh_token_status"] = 400
+    options["refresh_token_body"] = {"error": "invalid_grant"}
+
+
+def _transient_failure_provider_options(options: dict[str, Any]) -> None:
+    """Stages the fake upstream one transient refresh failure that clears."""
+    options["refresh_token_stages"] = [RefreshStage(status=503, body={"error": "temporarily_unavailable"})]
+
+
+def _refresh_provider_options(scenario: str) -> Any:
+    """The fake-upstream mutator a shared refresh row's scenario needs. Only the
+    two upstream-failure scenarios need anything but the default fake."""
+    if scenario == "upstream_terminal_failure":
+        return _terminal_failure_provider_options
+    if scenario == "upstream_transient_failure":
+        return _transient_failure_provider_options
+    return None
+
+
+def _refresh_scenario_response(
+    test: unittest.TestCase,
+    harness: _FrontChannelHarness,
+    scenario: str,
+) -> Response:
+    """Performs the common setup and then the row's scenario, returning the
+    response the row's expectation applies to."""
+    exchange, code = _exchange_the_code(harness)
+    handle = _token_response_handle(exchange)
+
+    if scenario == "happy_rotation":
+        return harness.token(_refresh_form(handle))
+    if scenario == "reuse_within_grace_returns_same_tokens":
+        first = harness.token(_refresh_form(handle))
+        test.assertEqual(200, first.status)
+        replayed = harness.token(_refresh_form(handle))
+        test.assertEqual(first.body, replayed.body, "the grace replay must be byte-identical")
+        return replayed
+    if scenario == "reuse_after_grace_revokes":
+        test.assertEqual(200, harness.token(_refresh_form(handle)).status)
+        harness.clock.advance(facade_module._REFRESH_GRACE_WINDOW_SECONDS + 1)
+        return harness.token(_refresh_form(handle))
+    if scenario == "unknown_handle":
+        return harness.token(_refresh_form(_unknown_handle()))
+    if scenario == "other_client_handle":
+        _register_other_client(harness)
+        form = _refresh_form(handle)
+        form["client_id"] = [REFRESH_TEST_OTHER_CLIENT_ID]
+        return harness.token(form)
+    if scenario == "handle_at_another_route_refused":
+        return _refresh_at_another_route(harness, handle)
+    if scenario == "scope_subset_refused":
+        return harness.token(_refresh_form_value(handle, "scope", ""))
+    if scenario == "scope_exact_accepted":
+        return harness.token(_refresh_form_value(handle, "scope", FRONT_TEST_ROTATED_UPSTREAM_SCOPE))
+    if scenario == "resource_mismatch_refused":
+        return harness.token(_refresh_form_value(handle, "resource", FRONT_TEST_BASE_URL + "/other/mcp"))
+    if scenario == "resource_exact_accepted":
+        return harness.token(_refresh_form_value(handle, "resource", REFRESH_TEST_BOUND_RESOURCE))
+    if scenario == "oversized_handle_refused":
+        return harness.token(_refresh_form("a" * (facade_module._FRONT_CHANNEL_MAX_REFRESH_HANDLE_BYTES + 1)))
+    if scenario == "missing_handle_refused":
+        return harness.token({"grant_type": ["refresh_token"], "client_id": [FRONT_TEST_CLIENT_ID]})
+    if scenario == "replayed_code_revokes_handle":
+        test.assertEqual(200, harness.token(_refresh_form(handle)).status)
+        test.assertEqual(400, harness.token(_refresh_code_form(code)).status)
+        return harness.token(_refresh_form(handle))
+    if scenario in ("upstream_terminal_failure", "upstream_transient_failure"):
+        return harness.token(_refresh_form(handle))
+    raise AssertionError(f"unknown refresh scenario {scenario!r}")
+
+
+class RefreshGrantConformanceTests(unittest.TestCase):
+    """Pins the brokered refresh grant to the shared cross-runtime table through
+    the real token handler. Every row runs against a fresh mounted app and starts
+    from the same setup — authorize, callback, and the code exchange — so each row
+    presents a genuinely minted route handle rather than a seeded record."""
+
+    def test_refresh_enforces_the_shared_table(self) -> None:
+        rows = [case for case in _load_fixture()["cases"] if case["group"] == REFRESH_GROUP]
+        self.assertEqual(REFRESH_CASE_COUNT, len(rows))
+
+        executed = 0
+        for row in rows:
+            with self.subTest(case=row["id"]):
+                harness = _FrontChannelHarness(self, _refresh_provider_options(row["scenario"]))
+                response = _refresh_scenario_response(self, harness, row["scenario"])
+
+                self.assertEqual(row["expect_status"], response.status, f"row {row['id']} body {response.body!r}")
+                if row.get("expect_error"):
+                    self.assertIn(
+                        '"error":"' + row["expect_error"] + '"',
+                        response.body.decode("utf-8"),
+                        f"row {row['id']}",
+                    )
+                if row.get("expect_retry_after"):
+                    values = response.headers.get("retry-after") or []
+                    self.assertTrue(values, f"row {row['id']} must carry a Retry-After header")
+                    self.assertGreaterEqual(int(str(values[0])), 1, f"row {row['id']}")
+                scanned = _scan(response)
+                for absent in row.get("expect_absent") or []:
+                    self.assertNotIn(absent, scanned, f"row {row['id']} must not carry {absent!r}")
+                executed += 1
+        print(f"refresh conformance: {executed} cases run")
+        self.assertEqual(REFRESH_CASE_COUNT, executed)
 
 
 class FrontChannelNonePublicPostureTests(unittest.TestCase):

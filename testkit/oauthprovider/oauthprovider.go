@@ -12,6 +12,14 @@
 //   - slow/hung: TokenDelay (a delayed response the caller's fetch bound must cut)
 //   - rotated refresh: a TokenBody whose refresh_token differs from the one
 //     presented (the presented form is recorded as LastTokenRequest)
+//   - refresh: RefreshTokenStatus and RefreshTokenBody serve a
+//     grant_type=refresh_token response distinct from the code exchange — its own
+//     access token, its own upstream refresh token, and its own id_token — so a
+//     facade that hides upstream material is observable, while
+//     RefreshTokenStages stages the leading refresh responses in call order so a
+//     transient upstream failure that clears is observable too; RefreshCallCount
+//     and LastRefreshRequest report the refresh calls separately from the total
+//     TokenCallCount
 //   - oversized body: TokenBodyBytes serves filler that is not JSON, while
 //     TokenBodyPaddingBytes serves a well-formed token document whose
 //     access_token is itself longer than the caller's cap, so a size bound is
@@ -55,6 +63,10 @@ const (
 	textContentType    = "text/plain; charset=utf-8"
 	defaultExpiresIn   = 900
 	oversizedChunkSize = 32 * 1024
+
+	// grantTypeRefreshToken is the form value that selects the refresh grant, so
+	// the fake can serve that grant a response distinct from the code exchange.
+	grantTypeRefreshToken = "refresh_token"
 )
 
 // Options configures NewServer.
@@ -94,8 +106,33 @@ type Options struct {
 	// TokenDelay delays the token response, for a fetch timeout that must cut it.
 	TokenDelay time.Duration
 
+	// RefreshTokenStatus is the status of a grant_type=refresh_token response.
+	// Zero means TokenStatus.
+	RefreshTokenStatus int
+
+	// RefreshTokenBody is the JSON body of a grant_type=refresh_token response.
+	// Nil means TokenBody. It is how a test gives the refresh grant its own
+	// access token, its own upstream refresh token, and its own id_token, so a
+	// caller that must hide upstream material is observable.
+	RefreshTokenBody map[string]any
+
+	// RefreshTokenStages stages the leading grant_type=refresh_token responses in
+	// call order: the nth refresh call takes the nth stage, and every later call
+	// takes the steady-state response above. A stage whose Body is nil or whose
+	// Status is zero falls back to the steady-state value. It exists so a
+	// transient upstream failure that clears is observable.
+	RefreshTokenStages []RefreshStage
+
 	// Now is the mint clock for iat/exp. Nil means time.Now().UTC.
 	Now func() time.Time
+}
+
+// RefreshStage is one staged grant_type=refresh_token response.
+type RefreshStage struct {
+	// Status is the HTTP status. Zero means the steady-state refresh status.
+	Status int
+	// Body is the JSON body. Nil means the steady-state refresh body.
+	Body map[string]any
 }
 
 // Claims are the access-token claims MintAccessToken signs. The JSON tags match
@@ -128,13 +165,24 @@ type Server struct {
 	tokenBodyBytes      int
 	tokenBodyPadding    []byte
 	tokenDelay          time.Duration
+	refreshStatus       int
+	refreshBody         []byte
+	refreshStages       []stagedRefreshResponse
 	now                 func() time.Time
 
 	closeOnce sync.Once
 
-	mu               sync.Mutex
-	lastTokenRequest url.Values
-	tokenCalls       int
+	mu                 sync.Mutex
+	lastTokenRequest   url.Values
+	lastRefreshRequest url.Values
+	tokenCalls         int
+	refreshCalls       int
+}
+
+// stagedRefreshResponse is one pre-encoded grant_type=refresh_token response.
+type stagedRefreshResponse struct {
+	status int
+	body   []byte
 }
 
 // NewServer starts a real local HTTP server that impersonates the configured
@@ -164,6 +212,17 @@ func NewServer(tb testing.TB, opts Options) *Server {
 	if tokenStatus == 0 {
 		tokenStatus = http.StatusOK
 	}
+	// The refresh grant falls back to the ordinary token response, so a caller
+	// that configures nothing keeps the single-response behavior it had before.
+	tokenBody := encodeTokenBody(tb, opts.TokenBody)
+	refreshStatus := opts.RefreshTokenStatus
+	if refreshStatus == 0 {
+		refreshStatus = tokenStatus
+	}
+	refreshBody := tokenBody
+	if opts.RefreshTokenBody != nil {
+		refreshBody = encodeTokenBody(tb, opts.RefreshTokenBody)
+	}
 
 	server := &Server{
 		tb:                  tb,
@@ -175,10 +234,13 @@ func NewServer(tb testing.TB, opts Options) *Server {
 		omitDiscoveryIssuer: opts.OmitDiscoveryIssuer,
 		redirectTo:          opts.RedirectTo,
 		tokenStatus:         tokenStatus,
-		tokenBody:           encodeTokenBody(tb, opts.TokenBody),
+		tokenBody:           tokenBody,
 		tokenBodyBytes:      opts.TokenBodyBytes,
 		tokenBodyPadding:    encodePaddedTokenBody(tb, opts.TokenBodyPaddingBytes),
 		tokenDelay:          opts.TokenDelay,
+		refreshStatus:       refreshStatus,
+		refreshBody:         refreshBody,
+		refreshStages:       encodeRefreshStages(tb, opts.RefreshTokenStages, refreshStatus, refreshBody),
 		now:                 now,
 	}
 	server.server = httptest.NewServer(http.HandlerFunc(server.handle))
@@ -244,6 +306,28 @@ func (s *Server) TokenCallCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.tokenCalls
+}
+
+// LastRefreshRequest returns a copy of the form the last grant_type=refresh_token
+// request presented, so a test can observe the material and client that refresh
+// leg carried.
+func (s *Server) LastRefreshRequest() url.Values {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	clone := make(url.Values, len(s.lastRefreshRequest))
+	for name, values := range s.lastRefreshRequest {
+		clone[name] = append([]string(nil), values...)
+	}
+	return clone
+}
+
+// RefreshCallCount reports how many grant_type=refresh_token requests the fake
+// served, counted separately from the total TokenCallCount, so a facade's
+// single-flight rotation is observable.
+func (s *Server) RefreshCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.refreshCalls
 }
 
 // MintAccessToken returns a compact RS256 JWS over claims, signed with the
@@ -362,7 +446,7 @@ func (s *Server) handleToken(writer http.ResponseWriter, request *http.Request) 
 		http.Error(writer, "oauthprovider: bad token form", http.StatusBadRequest)
 		return
 	}
-	s.recordTokenRequest(request.PostForm)
+	refreshCall := s.recordTokenRequest(request.PostForm)
 
 	if s.tokenDelay > 0 {
 		timer := time.NewTimer(s.tokenDelay)
@@ -376,6 +460,11 @@ func (s *Server) handleToken(writer http.ResponseWriter, request *http.Request) 
 		}
 	}
 
+	if refreshCall > 0 {
+		response := s.refreshResponseFor(refreshCall)
+		writeBody(writer, response.status, jsonContentType, response.body)
+		return
+	}
 	if s.tokenBodyPadding != nil {
 		writeBody(writer, s.tokenStatus, jsonContentType, s.tokenBodyPadding)
 		return
@@ -389,7 +478,20 @@ func (s *Server) handleToken(writer http.ResponseWriter, request *http.Request) 
 	writeBody(writer, s.tokenStatus, jsonContentType, s.tokenBody)
 }
 
-func (s *Server) recordTokenRequest(form url.Values) {
+// refreshResponseFor returns the staged or steady-state response of the nth
+// grant_type=refresh_token call (one-based).
+func (s *Server) refreshResponseFor(call int) stagedRefreshResponse {
+	index := call - 1
+	if index >= 0 && index < len(s.refreshStages) {
+		return s.refreshStages[index]
+	}
+	return stagedRefreshResponse{status: s.refreshStatus, body: s.refreshBody}
+}
+
+// recordTokenRequest counts the call and records the form. It returns the
+// one-based index of a grant_type=refresh_token call, or zero for any other
+// grant, so the caller can select a staged refresh response.
+func (s *Server) recordTokenRequest(form url.Values) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tokenCalls++
@@ -397,6 +499,41 @@ func (s *Server) recordTokenRequest(form url.Values) {
 	for name, values := range form {
 		s.lastTokenRequest[name] = append([]string(nil), values...)
 	}
+	if form.Get("grant_type") != grantTypeRefreshToken {
+		return 0
+	}
+	s.refreshCalls++
+	s.lastRefreshRequest = make(url.Values, len(form))
+	for name, values := range form {
+		s.lastRefreshRequest[name] = append([]string(nil), values...)
+	}
+	return s.refreshCalls
+}
+
+// encodeRefreshStages pre-encodes the staged refresh responses, falling back to
+// the steady-state status and body for any stage that does not override them.
+func encodeRefreshStages(
+	tb testing.TB,
+	stages []RefreshStage,
+	status int,
+	body []byte,
+) []stagedRefreshResponse {
+	tb.Helper()
+	if len(stages) == 0 {
+		return nil
+	}
+	encoded := make([]stagedRefreshResponse, 0, len(stages))
+	for _, stage := range stages {
+		staged := stagedRefreshResponse{status: status, body: body}
+		if stage.Status != 0 {
+			staged.status = stage.Status
+		}
+		if stage.Body != nil {
+			staged.body = encodeTokenBody(tb, stage.Body)
+		}
+		encoded = append(encoded, staged)
+	}
+	return encoded
 }
 
 // encodeTokenBody pre-encodes the configured token body, so a handler never

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { ManualClock } from "../dist/clock.js";
 import {
+  BrokerLockedError,
   BrokerNotFoundError,
   MemoryAuthorizationCodeStore,
   MemoryClientStore,
@@ -194,6 +195,50 @@ test("the reference stores expose every store SPI operation", () => {
       );
     }
   }
+});
+
+/**
+ * Pins the reference broker store's default lock TTL to the number the brokered
+ * refresh grant is built around: 15 seconds is the M2.1 hardened upstream HTTP
+ * deadline (10 s, shared by the discovery, token, and JWKS fetches) plus a
+ * five-second margin, and it is well above the facade's three-second coalesce
+ * wait cap, so a waiter for an in-flight rotation can never outlive and steal the
+ * lock. The broker store is built with no explicit lock TTL here, so this reads
+ * the default the store applies. Changing the default without the matching facade
+ * change is a silent regression, so both the expiry a lock actually writes and the
+ * exclusivity it enforces are pinned.
+ */
+test("the broker store default lock TTL pins the upstream fetch deadline", async () => {
+  const clock = new ManualClock(EPOCH);
+  const broker = new MemoryRouteRefreshBrokerStore({ now: () => clock.now() });
+  await broker.put({
+    handleHash: "lock-ttl-handle",
+    issuer: "https://auth.example.test",
+    stage: "lab",
+    canonicalResource: "https://mcp.example.test/mcp",
+    clientNamespace: "conformance",
+    endpointKind: "mcp",
+    partnerId: "",
+    agentId: "",
+    clientIdHash: "client-hash",
+    subjectIdHash: "subject-hash",
+    scopes: ["scope-a"],
+    scopeFingerprint: "fingerprint",
+    encryptedUpstreamRefreshToken: "encrypted-refresh",
+    upstreamRefreshTokenHash: "refresh-hash",
+    upstreamClientId: "conformance-client",
+    status: "issued",
+    version: 1,
+  });
+  const locked = await broker.acquireLock("lock-ttl-handle", "owner", 1);
+  assert.equal(
+    locked.refreshLockExpiresAt.getTime() - clock.now().getTime(),
+    15_000,
+  );
+  await assert.rejects(
+    broker.acquireLock("lock-ttl-handle", "thief", locked.version),
+    (err) => err instanceof BrokerLockedError,
+  );
 });
 
 test("the broker store seeds through put and never creates on swap", async () => {

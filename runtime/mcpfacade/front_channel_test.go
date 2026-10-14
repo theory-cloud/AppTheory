@@ -28,6 +28,15 @@ const (
 	frontTestUpstreamCode = "upstream-authorization-code"
 	frontTestRefreshToken = "upstream-refresh-token-value"
 	frontTestClientState  = "client-state-1"
+
+	// The refresh grant's own upstream material. The fake serves these only for
+	// grant_type=refresh_token, so a refresh that returned upstream material
+	// instead of a framework handle is distinguishable from the code exchange,
+	// and a response that leaked either value is observable.
+	frontTestRotatedUpstreamRefreshToken = "upstream-refresh-token-rotated"
+	frontTestRefreshAccessToken          = "upstream-rotated-access-token"
+	frontTestRefreshIDToken              = "upstream-id-token-must-not-surface" // #nosec G101 -- a test fixture value asserted absent from every response, not a credential.
+	frontTestRotatedUpstreamScope        = "mcp:tools"
 )
 
 // mintingProvider wraps the real Autheory adapter. Every leg is the adapter
@@ -65,6 +74,24 @@ type frontChannelHarness struct {
 	kind   mcproutes.EndpointKind
 }
 
+// frontChannelHarnessOptions tunes the harness a test starts. The zero value is
+// the default harness every front-channel test uses.
+type frontChannelHarnessOptions struct {
+	// providerOptions mutates the fake upstream's options before it starts, so a
+	// test can serve a grant-specific or failing token response.
+	providerOptions func(*oauthprovider.Options)
+}
+
+// manualClockAdapter implements apptheory.Clock over the harness's ManualClock,
+// so ctx.Now() is the same deterministic instant the stores observe: grace
+// windows, record lifetimes, and rotation timestamps all move together when a
+// test advances the clock.
+type manualClockAdapter struct {
+	clock *oauthstore.ManualClock
+}
+
+func (a manualClockAdapter) Now() time.Time { return a.clock.Now() }
+
 // recordingBrokerStore decorates the reference broker store and records every
 // handle it is seeded with, so a test can observe the record a callback opened
 // without the front channel having to expose it.
@@ -91,6 +118,14 @@ func (s *recordingBrokerStore) handleHashes() []string {
 
 func newFrontChannelHarness(t *testing.T) *frontChannelHarness {
 	t.Helper()
+	return newFrontChannelHarnessWith(t, frontChannelHarnessOptions{})
+}
+
+func newFrontChannelHarnessWith(t *testing.T, options frontChannelHarnessOptions) *frontChannelHarness {
+	t.Helper()
+	if options.providerOptions == nil {
+		options.providerOptions = func(*oauthprovider.Options) {}
+	}
 	clock := oauthstore.NewManualClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	var reference oauthstore.RouteRefreshBrokerStore = oauthstore.NewMemoryRouteRefreshBrokerStore(oauthstore.RouteRefreshBrokerStoreOptions{Now: clock.Now})
 	seeder, ok := reference.(oauthstore.RouteRefreshBrokerSeeder)
@@ -107,7 +142,7 @@ func newFrontChannelHarness(t *testing.T) *frontChannelHarness {
 		RateLimit:          oauthstore.NewMemoryRateLimitStore(oauthstore.RateLimitStoreOptions{Now: clock.Now}),
 	}
 
-	fake := oauthprovider.NewServer(t, oauthprovider.Options{
+	fakeOptions := oauthprovider.Options{
 		Issuer: frontTestUpstreamIss,
 		TokenBody: map[string]any{
 			"access_token":  "placeholder-upstream-access-token",
@@ -116,7 +151,20 @@ func newFrontChannelHarness(t *testing.T) *frontChannelHarness {
 			"refresh_token": frontTestRefreshToken,
 			"scope":         "mcp:tools",
 		},
-	})
+		// The refresh grant gets its own response, so a facade that returned
+		// upstream refresh material or an id_token instead of a framework handle
+		// is observable in the body as well as in the call counts.
+		RefreshTokenBody: map[string]any{
+			"access_token":  frontTestRefreshAccessToken,
+			"token_type":    "Bearer",
+			"expires_in":    900,
+			"refresh_token": frontTestRotatedUpstreamRefreshToken,
+			"scope":         frontTestRotatedUpstreamScope,
+			"id_token":      frontTestRefreshIDToken,
+		},
+	}
+	options.providerOptions(&fakeOptions)
+	fake := oauthprovider.NewServer(t, fakeOptions)
 	adapter, err := oauth.NewAutheoryProvider(oauth.AutheoryProviderOptions{
 		Issuer:            fake.Issuer(),
 		ClientID:          frontTestClientID,
@@ -163,7 +211,7 @@ func newFrontChannelHarness(t *testing.T) *frontChannelHarness {
 		TokenEndpointAuthMethod: "none",
 	}))
 
-	app := apptheory.New()
+	app := apptheory.New(apptheory.WithClock(manualClockAdapter{clock: clock}))
 	_, err = RegisterMCPFacade(app, config)
 	require.NoError(t, err)
 	return &frontChannelHarness{t: t, app: app, fake: fake, clock: clock, stores: stores, broker: broker, kind: kind}
@@ -1065,15 +1113,15 @@ func TestFrontChannelTokenRejectsCodeIssuedToAnotherClient(t *testing.T) {
 	require.Contains(t, string(response.Body), `"error":"invalid_grant"`)
 }
 
-// TestFrontChannelTokenRefusesRefreshGrantUntilM3c pins the refresh ruling: the
-// token response issues the refresh handle but the refresh_token grant answers
-// unsupported_grant_type until the brokered refresh milestone lands.
-func TestFrontChannelTokenRefusesRefreshGrantUntilM3c(t *testing.T) {
+// TestFrontChannelTokenRefusesAnUnsupportedGrant pins the dispatch boundary the
+// refresh grant did not move: a grant type the facade does not serve is still
+// refused with unsupported_grant_type. The refresh grant itself is covered by
+// refresh_test.go.
+func TestFrontChannelTokenRefusesAnUnsupportedGrant(t *testing.T) {
 	harness := newFrontChannelHarness(t)
 	response := harness.token(url.Values{
-		"grant_type":    {"refresh_token"},
-		"refresh_token": {"whatever-handle"},
-		"client_id":     {frontTestClientID},
+		"grant_type": {"client_credentials"},
+		"client_id":  {frontTestClientID},
 	})
 	require.Equal(t, 400, response.Status)
 	require.Contains(t, string(response.Body), `"error":"unsupported_grant_type"`)

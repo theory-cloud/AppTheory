@@ -172,6 +172,19 @@ export class MemoryClientStore {
     }
 }
 /**
+ * The reference broker store's default refresh-lock TTL, matching Go's
+ * `oauthstore.DefaultRouteRefreshLockTTL`. It is 15 seconds because the lock has
+ * to outlast the single upstream refresh call it protects while staying as short
+ * as possible when that call dies: the M2.1 hardened upstream HTTP deadline is 10
+ * seconds (the provider adapter's `DEFAULT_FETCH_TIMEOUT_SECONDS`, shared by the
+ * discovery, token, and JWKS fetches), so 15 seconds is that deadline plus a
+ * five-second margin. It is also well above the facade's three-second coalesce
+ * wait cap, so a waiter that is waiting for a rotation can never outlive the lock
+ * it is waiting on and steal it. It is deliberately not exported: the value is
+ * pinned by the store test through the lock expiry a lock actually writes.
+ */
+const DEFAULT_ROUTE_REFRESH_LOCK_TTL_SECONDS = 15;
+/**
  * In-memory reference RouteRefreshBrokerStore. Each handle carries its own
  * lifetime: a handle older than the store's TTL is treated as absent by every
  * operation, so an expired handle can be neither read, locked, swapped nor
@@ -185,7 +198,8 @@ export class MemoryRouteRefreshBrokerStore {
     ttlMs;
     constructor(options = {}) {
         this.now = options.now ?? (() => new Date());
-        this.lockTtlMs = positiveSeconds(options.lockTtlSeconds, 30) * 1000;
+        this.lockTtlMs =
+            positiveSeconds(options.lockTtlSeconds, DEFAULT_ROUTE_REFRESH_LOCK_TTL_SECONDS) * 1000;
         this.ttlMs = positiveSeconds(options.ttlSeconds, 900) * 1000;
     }
     /**
