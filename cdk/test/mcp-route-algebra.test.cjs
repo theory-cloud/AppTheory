@@ -358,3 +358,139 @@ test("shared route model pins the callback override derivations", () => {
     );
   }
 });
+
+// The shared minimal non-TMS consumer journey (the table the Go, TypeScript, and
+// Python suites execute row by row). CDK does not run the journey, but its
+// transport-credential-free and protected-resource-metadata rows must agree with
+// the route model CDK synthesizes, so a route-algebra change cannot silently
+// invalidate the challenge or the metadata path the journey pins.
+const journey = JSON.parse(
+  fs.readFileSync(
+    path.resolve(
+      __dirname,
+      "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-journey.v1.json",
+    ),
+    "utf8",
+  ),
+);
+
+// The journey world's route, expressed the way the algebra helpers take it.
+const journeyEndpoint = {
+  kind: journey.notes.world.route_kind,
+  clientNamespace: journey.notes.world.client_namespace,
+};
+
+// The ordered step names MINIMAL_CONSUMER.md numbers 1 through 11 (the composite
+// steps carry dotted names), so a dropped or renamed step row fails here too.
+const journeyStepNames = [
+  "transport-credential-free",
+  "protected-resource-metadata",
+  "authorization-server-metadata",
+  "register-public-client",
+  "register-disallowed-redirect",
+  "register-rate-limited",
+  "authorize-front-channel",
+  "authorize-unregistered-client",
+  "authorize-unmatched-redirect",
+  "authorize-missing-challenge",
+  "authorize-plain-challenge",
+  "authorize-wrong-resource",
+  "callback-upstream-return",
+  "callback-iss-mismatch",
+  "callback-replayed-state",
+  "callback-forged-state",
+  "callback-absent-iss",
+  "token-code-exchange",
+  "token-replay-code",
+  "token-wrong-verifier",
+  "transport-with-valid-token",
+  "transport-wrong-audience",
+  "token-refresh",
+  "refresh-revoked-handle",
+  "transport-expired-token",
+  "transport-insufficient-scope",
+];
+
+test("the shared journey table exists, carries one group, and agrees with the route model", () => {
+  assert.equal(journey.id, "mcp.auth.facade.journey");
+  assert.equal(journey.kind, "conformance");
+  assert.equal(typeof journey.description, "string");
+  assert.ok(journey.description.length > 0, "the journey table must carry a description");
+  assert.ok(Array.isArray(journey.cases), "the journey table must carry cases");
+
+  const groups = new Set(journey.cases.map((row) => row.group));
+  assert.deepEqual([...groups], ["journey"], "the journey table carries exactly one group");
+  assert.equal(journey.cases.length, journeyStepNames.length, "journey step count");
+  assert.deepEqual(
+    journey.cases.map((row) => row.id),
+    journeyStepNames.map((name) => `journey.${name}`),
+    "journey step ids must be the ordered steps 1-11",
+  );
+
+  // The world the journey pins must be the world the route model derives, member
+  // for member, from the framework's own route algebra.
+  const world = journey.notes.world;
+  const worked = routeModel.worked_example;
+  assert.equal(world.public_base_url, worked.public_base_url);
+  assert.equal(world.route_kind, worked.kind);
+  assert.equal(world.client_namespace, worked.params.client_namespace);
+  assert.equal(world.resource, worked.resolved.resource);
+  assert.equal(
+    world.protected_resource_metadata_url,
+    worked.resolved.protected_resource_metadata_url,
+  );
+  assert.equal(world.discovery_url, worked.resolved.discovery_url);
+  assert.equal(world.authorization_endpoint, worked.resolved.authorization_endpoint);
+  assert.equal(world.token_endpoint, worked.resolved.token_endpoint);
+  assert.equal(world.issuer, worked.resolved.issuer);
+
+  assert.equal(Algebra.mcpPath(journeyEndpoint), "/acme/mcp");
+  assert.equal(
+    worked.resolved.resource,
+    world.public_base_url + Algebra.mcpPath(journeyEndpoint),
+  );
+  assert.equal(
+    worked.resolved.protected_resource_metadata_url,
+    world.public_base_url + Algebra.protectedResourcePath(journeyEndpoint),
+  );
+  assert.equal(
+    worked.resolved.authorization_endpoint,
+    world.public_base_url + Algebra.oauthAuthorizePath(journeyEndpoint),
+  );
+  assert.equal(
+    worked.resolved.token_endpoint,
+    world.public_base_url + Algebra.oauthTokenPath(journeyEndpoint),
+  );
+  assert.equal(
+    world.registration_endpoint,
+    world.public_base_url + Algebra.oauthRegisterPath(journeyEndpoint),
+  );
+  assert.equal(
+    world.callback_url,
+    world.public_base_url + routeModel.contract.default_callback_path,
+  );
+
+  // The transport-credential-free row's challenge names exactly that
+  // algebra-derived protected-resource metadata URL, and the
+  // protected-resource-metadata row advertises exactly the algebra-derived
+  // resource.
+  const byId = new Map(journey.cases.map((row) => [row.id, row]));
+  const credentialFree = byId.get("journey.transport-credential-free");
+  assert.equal(credentialFree.expect_status, 401);
+  assert.equal(credentialFree.expect_challenge_resource_metadata, true);
+  assert.equal(credentialFree.expect_handler_invocations, 0);
+
+  const metadata = byId.get("journey.protected-resource-metadata");
+  assert.equal(metadata.expect_status, 200);
+  assert.equal(metadata.expect_no_store, true);
+  assert.ok(
+    metadata.expect_body_has.includes(`"resource":"${worked.resolved.resource}"`),
+    "the protected-resource row must pin the algebra-derived route resource",
+  );
+  assert.ok(
+    metadata.expect_body_has.includes(
+      `"authorization_servers":["${worked.resolved.issuer}"]`,
+    ),
+    "the protected-resource row must pin the algebra-derived authorization server",
+  );
+});

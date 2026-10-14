@@ -12,15 +12,15 @@ executable pin. `CONFORMANCE_KIT.md` §4 records the M1 registration of the two 
 | --- | --- | --- |
 | `facade-provider-spi.v1.json` | `m17.mcp-auth-facade/v1` | provider SPI tests + the Autheory adapter contract test |
 | `facade-store-spi.v1.json` | `m17.mcp-auth-facade/v1` | store SPI tests (consume-once / CAS / TTL semantics) |
-| `facade-journey.v1.json` | `m17.mcp-auth-facade/v1` | end-to-end facade fixtures (Go/TS/Py) |
 | `facade-threat-controls.v1.json` | `m17.mcp-auth-facade/v1` | threat-control pinning (review aid + future fixtures) |
 
-`facade-route-model.v1.json` and `facade-transport-posture.v1.json` were authored here in M0 and **moved into the
-corpus in M1**; they now live at `contract-tests/fixtures/routing/mcp-auth-facade/` and are consumed directly by the Go
-and CDK-TS loader tests. Do not re-add them under this directory.
+`facade-route-model.v1.json`, `facade-transport-posture.v1.json`, and `facade-journey.v1.json` were authored here in
+M0 and have **moved into the corpus**; they now live at `contract-tests/fixtures/routing/mcp-auth-facade/` and are
+consumed directly by the Go, TypeScript, Python, and CDK-TS loader tests (the journey table as one `journey` row set
+executed by all three runtimes). Do not re-add them under this directory.
 
 Shape notes: these are versioned contract tables, matching
 `contract-tests/fixtures/routing/mcp-route-algebra/expectations.json` (a nested table loaded directly by tests),
 not the three-language single-envelope fixture format used by `tier: oauth` / `tier: mcp` vectors.
-`facade-journey.v1.json` is deliberately HTTP-shaped so it can become a `tier: facade` single-envelope fixture
-set when the runtime exists.
+The journey table keeps the same HTTP-shaped rows it was authored with, now carrying the closed row vocabulary each
+runtime's journey dispatcher executes.
