@@ -8,7 +8,6 @@ from typing import Any
 
 from apptheory.clock import ManualClock
 from apptheory.oauth.store import (
-    STATUS_EXPIRED,
     STATUS_REFRESHING,
     STATUS_REVOKED,
     AuthorizationCodeRecord,

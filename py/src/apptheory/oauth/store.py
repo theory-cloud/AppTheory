@@ -829,9 +829,7 @@ def _scenario_broker_get_unknown(
     _assert_expected(expect, {"get": "not_found" if store.get("unknown") is None else "ok"})
 
 
-def _broker_swap_outcome(
-    store: Any, record: RouteRefreshBrokerRecord, expected_version: int | None = None
-) -> str:
+def _broker_swap_outcome(store: Any, record: RouteRefreshBrokerRecord, expected_version: int | None = None) -> str:
     try:
         store.compare_and_swap(record, record.version if expected_version is None else expected_version)
     except BrokerRevokedError:
