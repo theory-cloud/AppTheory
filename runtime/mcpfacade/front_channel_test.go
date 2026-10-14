@@ -1721,7 +1721,8 @@ func journeyTokenField(t *testing.T, response apptheory.Response, field string) 
 	t.Helper()
 	var payload map[string]any
 	require.NoErrorf(t, json.Unmarshal(response.Body, &payload), "token response must be a JSON object")
-	value, _ := payload[field].(string)
+	value, ok := payload[field].(string)
+	require.Truef(t, ok, "token response member %s must be a string", field)
 	require.NotEmptyf(t, value, "token response must carry %s", field)
 	return value
 }
@@ -2278,19 +2279,22 @@ func TestFrontChannelThreatControlsResolveAgainstThePinnedTables(t *testing.T) {
 		source := threatPinSources[sourceKey]
 		table := loadPinnedTable(sourceKey)
 		if source.ByCaseID || source.ByCaseName {
-			cases, _ := table["cases"].([]any)
-			for _, entry := range cases {
+			caseEntries, entriesOK := table["cases"].([]any)
+			if !entriesOK {
+				return false
+			}
+			for _, entry := range caseEntries {
 				fields, ok := entry.(map[string]any)
 				if !ok {
 					continue
 				}
 				if source.ByCaseID {
-					if id, _ := fields["id"].(string); id != "" && id == row {
+					if id, idOK := fields["id"].(string); idOK && id != "" && id == row {
 						return true
 					}
 				}
 				if source.ByCaseName {
-					if name, _ := fields["name"].(string); name != "" && name == row {
+					if name, nameOK := fields["name"].(string); nameOK && name != "" && name == row {
 						return true
 					}
 				}
