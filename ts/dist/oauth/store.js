@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 /** A consumed client update presented a stale version. */
 export class ClientVersionConflictError extends Error {
     constructor(message = "client record version conflict") {
@@ -336,6 +337,16 @@ export class MemoryRateLimitStore {
         };
         return Promise.resolve(result);
     }
+}
+/**
+ * Returns the store key for a protected value: the unpadded base64url SHA-256
+ * digest of the value. Every store SPI is keyed by the hash of the value it
+ * protects and never by the value itself, so a caller that seeds a record
+ * directly — a pre-registered client, for example — derives the key with this
+ * helper and the facade derives the same key when it looks the record up.
+ */
+export function hashKey(value) {
+    return createHash("sha256").update(value, "utf8").digest("base64url");
 }
 /**
  * Runs the shared store conformance table against `stores`, resetting the

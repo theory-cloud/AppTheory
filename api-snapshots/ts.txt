@@ -704,6 +704,7 @@ getFixedWindow	function
 getHourWindow	function
 getLogger	function
 getMinuteWindow	function
+hashKey	function
 hooksFromEMFMetricSink	function
 hooksFromLogger	function
 hooksFromProfileLogger	function

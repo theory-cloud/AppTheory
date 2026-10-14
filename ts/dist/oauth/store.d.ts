@@ -30,7 +30,11 @@ export interface TransactionRecord {
     partnerId: string;
     agentId: string;
     status: TransactionStatus;
-    expiresAt: Date;
+    /**
+     * The record's expiry. Leave it unset to let the store apply its own
+     * transaction TTL; a set value is kept verbatim.
+     */
+    expiresAt?: Date;
     version: number;
 }
 export type TransactionStatus = "pending" | "consumed" | "expired";
@@ -58,7 +62,11 @@ export interface AuthorizationCodeRecord {
     /** The upstream TokenSet, encrypted; it embeds the upstream access token. */
     encryptedTokenResponse: string;
     status: AuthorizationCodeStatus;
-    expiresAt: Date;
+    /**
+     * The record's expiry. Leave it unset to let the store apply its own code
+     * TTL; a set value is kept verbatim.
+     */
+    expiresAt?: Date;
     version: number;
 }
 export type AuthorizationCodeStatus = "issued" | "consumed" | "expired";
@@ -330,6 +338,14 @@ export declare class MemoryRateLimitStore implements RateLimitStore {
      */
     checkAndIncrement(key: RateLimitBucketKey): Promise<RateLimitResult>;
 }
+/**
+ * Returns the store key for a protected value: the unpadded base64url SHA-256
+ * digest of the value. Every store SPI is keyed by the hash of the value it
+ * protects and never by the value itself, so a caller that seeds a record
+ * directly — a pre-registered client, for example — derives the key with this
+ * helper and the facade derives the same key when it looks the record up.
+ */
+export declare function hashKey(value: string): string;
 /** Every reference store, as one conformance subject. */
 export interface Stores {
     transaction: TransactionStore;

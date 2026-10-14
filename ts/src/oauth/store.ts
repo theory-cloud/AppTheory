@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { ManualClock } from "../clock.js";
 
 /**
@@ -32,7 +34,11 @@ export interface TransactionRecord {
   partnerId: string;
   agentId: string;
   status: TransactionStatus;
-  expiresAt: Date;
+  /**
+   * The record's expiry. Leave it unset to let the store apply its own
+   * transaction TTL; a set value is kept verbatim.
+   */
+  expiresAt?: Date;
   version: number;
 }
 
@@ -62,7 +68,11 @@ export interface AuthorizationCodeRecord {
   /** The upstream TokenSet, encrypted; it embeds the upstream access token. */
   encryptedTokenResponse: string;
   status: AuthorizationCodeStatus;
-  expiresAt: Date;
+  /**
+   * The record's expiry. Leave it unset to let the store apply its own code
+   * TTL; a set value is kept verbatim.
+   */
+  expiresAt?: Date;
   version: number;
 }
 
@@ -282,7 +292,7 @@ export class MemoryTransactionStore implements TransactionStore {
     return Promise.resolve(structuredClone(record));
   }
 
-  private expired(expiresAt: Date): boolean {
+  private expired(expiresAt: Date | undefined): boolean {
     const at = expiryMs(expiresAt);
     return at !== null && this.now().getTime() >= at;
   }
@@ -349,7 +359,7 @@ export class MemoryAuthorizationCodeStore implements AuthorizationCodeStore {
     });
   }
 
-  private expired(expiresAt: Date): boolean {
+  private expired(expiresAt: Date | undefined): boolean {
     const at = expiryMs(expiresAt);
     return at !== null && this.now().getTime() >= at;
   }
@@ -613,6 +623,17 @@ export class MemoryRateLimitStore implements RateLimitStore {
     };
     return Promise.resolve(result);
   }
+}
+
+/**
+ * Returns the store key for a protected value: the unpadded base64url SHA-256
+ * digest of the value. Every store SPI is keyed by the hash of the value it
+ * protects and never by the value itself, so a caller that seeds a record
+ * directly — a pre-registered client, for example — derives the key with this
+ * helper and the facade derives the same key when it looks the record up.
+ */
+export function hashKey(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("base64url");
 }
 
 /** Every reference store, as one conformance subject. */
