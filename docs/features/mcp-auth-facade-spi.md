@@ -84,6 +84,14 @@ Typed errors map to a closed client-facing vocabulary, so a caller never has to 
 | `invalid_request` | 400 (adapter-side; never reaches the upstream) |
 | `reauth_required` | 400 (terminal; only an explicit upstream stale/replaced signal) |
 
+The `reauth_required` class is a **defensive** mapping, carried identically by all three runtimes (Go
+`ProviderReauthRequired`, TypeScript the `reauth_required` member of the `ProviderErrorClass` union, Python
+`ERROR_REAUTH_REQUIRED`). The Autheory adapter's upstream never emits that code — Autheory reports every terminal
+refresh failure as `invalid_grant`, which the broker already handles — so no row can produce it from a real upstream
+response; the class, its 400 status and its terminal treatment are pinned so that a future provider which does emit
+it cannot be silently misclassified. A refresh that receives it is treated as terminal and revokes the broker
+record, exactly like `invalid_grant`.
+
 An upstream OAuth `invalid_request` maps onto the terminal `invalid_grant` (a client-facing 400, not a 502): a
 facade request bug that reaches the upstream surfaces as a request-class error, and every other non-2xx —
 including an unrecognized upstream error code — is an `upstream_error`.
@@ -172,7 +180,7 @@ front-channel field may be set (the `/register` and callback routes then mount o
 | `UpstreamClientID` / `upstreamClientID` / `upstream_client_id` | The facade's own upstream client registration: sent on the upstream authorize request and presented on the server-side code exchange, **and** the expected `azp`/`client_id` of a validated upstream access token | empty | non-blank, well-formed Unicode, no NUL | Registration error (`… upstream client id is required and must be well-formed`) | DESIGN §8.1; DESIGN §5.2, §6 |
 | `UpstreamIssuer` / `upstreamIssuer` / `upstream_issuer` | The expected upstream issuer: the RFC 9207 `iss` the callback pins before consuming the transaction or exchanging the code, and the issuer `Discovery` must verify before any published endpoint is trusted | empty | absolute HTTPS URL, no query, no fragment, normalized like `IssuerURL` | Registration error (`… upstream issuer must be an absolute HTTPS URL without query or fragment`) | DESIGN §8.2; DESIGN §5.2, §6 |
 | `LifecycleScopes` / `lifecycleScopes` / `lifecycle_scopes` | Scope values added to every upstream authorize request but never required from the MCP client (for example `offline_access`) | absent — adds none | each value trimmed, non-empty, and well-formed Unicode; duplicates collapse | Registration error (`lifecycle scope values cannot be empty` / `… must be well-formed Unicode`) | FRAMEWORK_VS_POLICY row 7 |
-| `ProviderHints` / `providerHints` / `provider_hints` | The opaque per-request hint seam for one authorize request (for example `account_id`); a hint carries **no authority** | absent — contributes no hints | none at registration (the function is opaque); a returned error is a provider-call failure in the gateway class (502 `upstream_error`), never a redirect | Registration error when set without `Provider` | DESIGN §6 |
+| `ProviderHints` / `providerHints` / `provider_hints` | The opaque per-request hint seam for one authorize request (for example `account_id`); a hint carries **no authority** | absent — contributes no hints | none at registration (the function is opaque); a hint whose trimmed, lower-cased name collides with a required or reserved authorize parameter (`response_type`, `client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method`, `state`, `resource`, `scope`) is refused by the adapter as `invalid_request` before the upstream is contacted, so a returned error is a provider-call failure in the gateway class (502 `upstream_error`), never a redirect | Registration error when set without `Provider` | DESIGN §6 |
 
 Every rejection uses the runtime's existing configuration-error prefix and the same message body (`mcpfacade: …`
 in Go, `AppTheoryMcpFacade: …` in TypeScript and Python).
