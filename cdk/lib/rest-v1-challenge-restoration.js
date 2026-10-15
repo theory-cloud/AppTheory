@@ -191,7 +191,7 @@ var AppTheoryRestV1OriginReachability;
  * covered by the distribution's default behavior.
  */
 class AppTheoryRestV1ChallengeRestoration extends constructs_1.Construct {
-    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRestV1ChallengeRestoration", version: "6.0.0" };
+    static [JSII_RTTI_SYMBOL_1] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRestV1ChallengeRestoration", version: "6.1.0" };
     /** The CloudFront distribution fronting the REST v1 origin. */
     distribution;
     /**
