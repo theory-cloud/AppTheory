@@ -217,8 +217,12 @@ and a declared surface missing its witness are refused; an unknown surface key, 
 misspelled surface field are refused rather than ignored; a tampered `sha256`, a tampered npm `integrity`, a wrong
 tree, a mismatched `source_date_epoch`, a wrong encoded `file`, a declared npm surface without its integrity, an
 environment variables-only attempt, a `live`/`staging` stage and an account mismatch all fail closed; and
-`--print-plan` writes nothing. It is wired into `make rubric`, so a builder that stops failing closed fails CI rather
-than the lab proof.
+`--print-plan` writes nothing. The named fail-closed errors are each reachable and each proven to fire *before* the
+generic backstops: an empty witnessed hash is refused by name with no build run and no hash compare, a failing
+build script surfaces its named per-surface build error (not a missing-artifact or hashing error), and a build that
+produces no artifact surfaces the named missing-artifact error (not a hashing traceback); the `sha256`/`integrity`
+compare stays the backstop for a present-but-wrong witness. It is wired into `make rubric`, so a builder that stops
+failing closed fails CI rather than the lab proof.
 
 ## 4.2 Integration note for the adoption stewards (TMS and Autheory)
 

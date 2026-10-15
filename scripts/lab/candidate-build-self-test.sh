@@ -214,22 +214,28 @@ PY
 write_config() {
   local path="$1"
   local stage="$2"
-  python3 - "${witness_json}" "${path}" "${stage}" <<'PY'
+  local commit_override="${3:-}"
+  local tree_override="${4:-}"
+  local epoch_override="${5:-}"
+  python3 - "${witness_json}" "${path}" "${stage}" "${commit_override}" "${tree_override}" "${epoch_override}" <<'PY'
 import json
 import sys
 
 witness = json.load(open(sys.argv[1]))
 out = sys.argv[2]
 stage = sys.argv[3]
+commit_override, tree_override, epoch_override = sys.argv[4], sys.argv[5], sys.argv[6]
 
 doc = {
     "stage": stage,
     "expected_account_id": "123456789012",
     "apptheory": {
         "candidate": {
-            "commit": witness["commit"],
-            "tree": witness["tree"],
-            "source_date_epoch": witness["source_date_epoch"],
+            # The overrides let a case bind a later fixture commit (for example one whose
+            # stand-in build script fails) while keeping the witnessed surface map.
+            "commit": commit_override or witness["commit"],
+            "tree": tree_override or witness["tree"],
+            "source_date_epoch": int(epoch_override) if epoch_override else witness["source_date_epoch"],
             "surfaces": witness["surfaces"],
         }
     },
@@ -786,6 +792,109 @@ PY
 run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_typo}" --out "${tmp}/out-typo"
 assert_status 1
 assert_stderr_contains "surface 'npm_cdk' carries unsupported field(s): sha_256"
+case_pass
+
+# --- case 22: an empty witnessed hash is refused by name before any build ---------------
+# The named presence error must be the control that stops the run: if the check were
+# removed, the surface would be built and only the later generic hash compare would catch
+# it (the backstop). Assert the named error AND that the backstop did not speak, and that
+# no build ran.
+case_start "an empty witnessed hash is refused by name before any build"
+cfg_empty_sha="${tmp}/cfg-empty-sha.json"
+write_config "${cfg_empty_sha}" "lab"
+python3 - "${cfg_empty_sha}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+doc = json.load(open(path))
+surfaces = doc["apptheory"]["candidate"]["surfaces"]
+surfaces["py_cdk_wheel"]["sha256"] = ""
+for name in list(surfaces):
+    if name != "py_cdk_wheel":
+        del surfaces[name]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+dist_before_sha="$(snapshot_dir "${fixture}/dist")"
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_empty_sha}" --out "${tmp}/out-empty-sha"
+assert_status 1
+assert_stderr_contains "declared surface 'py_cdk_wheel' is missing a non-empty sha256"
+[[ "${builder_stderr}" != *"hash mismatch"* ]] || case_fail "the generic hash backstop spoke instead of the named check"
+[[ "${builder_stderr}" != *"Traceback"* ]] || case_fail "a python traceback replaced the named refusal"
+dist_after_sha="$(snapshot_dir "${fixture}/dist")"
+[[ "${dist_before_sha}" == "${dist_after_sha}" ]] || case_fail "a refusal before the build still ran a build"
+case_pass
+
+# --- case 23: a failing per-surface build surfaces its named build error ---------------
+# The named build error must fire, not a later generic error: the artifact the failed build
+# would have produced is absent, so without the guard the run would end in a missing-
+# artifact or hashing error instead.
+case_start "a failing per-surface build surfaces its named build error"
+printf '#!/usr/bin/env bash\nset -euo pipefail\nexit 7\n' > "${fixture}/scripts/verify-cdk-python-build.sh"
+chmod +x "${fixture}/scripts/verify-cdk-python-build.sh"
+git -C "${fixture}" add -A
+git -C "${fixture}" commit -q -m "fixture: make the python cdk build fail"
+failing_commit="$(git -C "${fixture}" rev-parse HEAD)"
+failing_tree="$(git -C "${fixture}" rev-parse "HEAD^{tree}")"
+failing_epoch="$(git -C "${fixture}" show -s --format=%ct HEAD)"
+cfg_build_fail="${tmp}/cfg-build-fail.json"
+write_config "${cfg_build_fail}" "lab" "${failing_commit}" "${failing_tree}" "${failing_epoch}"
+python3 - "${cfg_build_fail}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+doc = json.load(open(path))
+surfaces = doc["apptheory"]["candidate"]["surfaces"]
+for name in list(surfaces):
+    if name != "py_cdk_wheel":
+        del surfaces[name]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_build_fail}" --out "${tmp}/out-build-fail"
+assert_status 1
+assert_stderr_contains "surface py_cdk_wheel build failed (./scripts/verify-cdk-python-build.sh)"
+[[ "${builder_stderr}" != *"artifact is missing"* ]] || case_fail "the missing-artifact error replaced the named build error"
+[[ "${builder_stderr}" != *"Traceback"* ]] || case_fail "a python traceback replaced the named build error"
+case_pass
+
+# --- case 24: a build that produces no artifact surfaces its named artifact error ------
+# A build that "succeeds" without producing the declared artifact must be named as such
+# rather than ending in a hashing traceback.
+case_start "a build that produces no artifact surfaces its named artifact error"
+printf '#!/usr/bin/env bash\nset -euo pipefail\n# deliberately produces no artifact\nexit 0\n' \
+  > "${fixture}/scripts/verify-cdk-python-build.sh"
+chmod +x "${fixture}/scripts/verify-cdk-python-build.sh"
+git -C "${fixture}" add -A
+git -C "${fixture}" commit -q -m "fixture: python cdk build writes nothing"
+silent_commit="$(git -C "${fixture}" rev-parse HEAD)"
+silent_tree="$(git -C "${fixture}" rev-parse "HEAD^{tree}")"
+silent_epoch="$(git -C "${fixture}" show -s --format=%ct HEAD)"
+cfg_no_artifact="${tmp}/cfg-no-artifact.json"
+write_config "${cfg_no_artifact}" "lab" "${silent_commit}" "${silent_tree}" "${silent_epoch}"
+python3 - "${cfg_no_artifact}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+doc = json.load(open(path))
+surfaces = doc["apptheory"]["candidate"]["surfaces"]
+for name in list(surfaces):
+    if name != "py_cdk_wheel":
+        del surfaces[name]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+rm -f "${fixture}/dist/apptheory_cdk-9.9.9-py3-none-any.whl"
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_no_artifact}" --out "${tmp}/out-no-artifact"
+assert_status 1
+assert_stderr_contains "surface py_cdk_wheel artifact is missing:"
+[[ "${builder_stderr}" != *"Traceback"* ]] || case_fail "a python traceback replaced the named artifact error"
+[[ "${builder_stderr}" != *"hash mismatch"* ]] || case_fail "the generic hash backstop spoke instead of the named artifact check"
+# Restore the fixture to its witnessed commit and its stand-in build scripts.
+git -C "${fixture}" reset -q --hard "${fixture_commit}"
 case_pass
 
 printf 'candidate-build: self-test PASS (%s cases)\n' "${cases_passed}"
