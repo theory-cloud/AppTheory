@@ -26,6 +26,39 @@ import (
 //     `mcp-www-authenticate` — consulted only when the optional alias bridge is
 //     enabled (off by default).
 //
+// ## The direct-endpoint caveat (DD-2)
+//
+// A CloudFront front door does **not** by itself make the origin unreachable.
+// The REST API keeps answering at its own
+// `<restApiId>.execute-api.<region>.<urlSuffix>` endpoint, which is exactly the
+// origin this distribution uses, so a client that skips the distribution still
+// reaches the origin and observes a **challenge-less `401`** for a REST v1
+// canonical-only app — the restoration never runs, and any edge-only control
+// (throttling at the edge, edge observability, the alias bridge) is bypassed on
+// that path. Authentication itself is unaffected: the runtime bearer gate still
+// refuses the request at the origin, so this is challenge loss and edge bypass,
+// not an authentication bypass.
+//
+// `originReachability` is therefore **required** (DD-2's mandatory
+// direct-origin decision):
+//
+//   - `DISABLED` — the REST API's `execute-api` default endpoint is disabled. The
+//     caller asserts it (`disableExecuteApiEndpointAsserted: true`) because this
+//     construct cannot mutate an external `IRestApi`. The construct does not
+//     verify the assertion, and the disabled hostname is the distribution's own
+//     origin hostname, so an app that disables the default endpoint must front the
+//     origin through a custom domain.
+//   - `LOCKED` — the origin is reachable only through this distribution. The
+//     construct injects `originLock.secret` as a custom origin header on every
+//     request to the origin, and the caller asserts
+//     (`originLock.asserted: true`) that the REST API verifies that header; the
+//     construct cannot attach the verification to an external `IRestApi`.
+//
+// A directly reachable origin (`direct`) is refused at synthesis. The decision
+// is recorded in the distribution's CloudFormation metadata
+// (`apptheory:rest-v1-challenge-restoration`), so the posture is auditable from
+// the synthesized template.
+//
 // The derived route set and the explicit ordered cache behaviors come from the
 // shared route algebra (`AppTheoryMcpRouteAlgebra`), so the construct is never
 // hand-wired. Parameterized derived routes (those carrying a `{parameter}`
@@ -46,6 +79,10 @@ type AppTheoryRestV1ChallengeRestoration interface {
 	Distribution() awscloudfront.Distribution
 	// The tree node.
 	Node() constructs.Node
+	// The origin-lock header name injected on every request to the origin, or `undefined` when the decision is `DISABLED`.
+	OriginLockHeaderName() *string
+	// The recorded DD-2 direct-origin reachability decision.
+	OriginReachability() AppTheoryRestV1OriginReachability
 	// The response headers the restoration function consults, in priority order.
 	//
 	// `["x-amzn-remapped-www-authenticate"]` when the alias bridge is disabled;
@@ -115,6 +152,26 @@ func (j *jsiiProxy_AppTheoryRestV1ChallengeRestoration) Node() constructs.Node {
 	_jsii_.Get(
 		j,
 		"node",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryRestV1ChallengeRestoration) OriginLockHeaderName() *string {
+	var returns *string
+	_jsii_.Get(
+		j,
+		"originLockHeaderName",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryRestV1ChallengeRestoration) OriginReachability() AppTheoryRestV1OriginReachability {
+	var returns AppTheoryRestV1OriginReachability
+	_jsii_.Get(
+		j,
+		"originReachability",
 		&returns,
 	)
 	return returns

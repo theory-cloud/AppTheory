@@ -14,6 +14,12 @@ type AppTheoryRestV1ChallengeRestorationProps struct {
 	// `restApiRootResourceId`) is accepted; the restoration is a documented no-op
 	// on HTTP API v2.
 	Origin awsapigateway.IRestApi `field:"required" json:"origin" yaml:"origin"`
+	// The mandatory DD-2 direct-origin reachability decision.
+	//
+	// Required. `DISABLED` and `LOCKED` synthesize; anything else — in particular a
+	// directly reachable origin — fails synthesis with an error that names the
+	// rejected decision.
+	OriginReachability AppTheoryRestV1OriginReachability `field:"required" json:"originReachability" yaml:"originReachability"`
 	// Optional challenge alias bridge.
 	// Default: disabled.
 	//
@@ -22,10 +28,18 @@ type AppTheoryRestV1ChallengeRestorationProps struct {
 	//
 	// Required when `domainNames` is set.
 	Certificate awscertificatemanager.ICertificate `field:"optional" json:"certificate" yaml:"certificate"`
+	// The caller's assertion that the REST API's `disableExecuteApiEndpoint` is set, required with `originReachability: DISABLED`.
+	//
+	// This construct fronts an external `IRestApi` it cannot mutate, so it cannot
+	// set the property for the caller; it requires the assertion instead and
+	// records it in the distribution metadata.
+	DisableExecuteApiEndpointAsserted *bool `field:"optional" json:"disableExecuteApiEndpointAsserted" yaml:"disableExecuteApiEndpointAsserted"`
 	// Optional custom domain names for the distribution.
 	//
 	// When set, `certificate` is required.
 	DomainNames *[]*string `field:"optional" json:"domainNames" yaml:"domainNames"`
+	// The mandatory origin lock, required with `originReachability: LOCKED`.
+	OriginLock *AppTheoryRestV1OriginLockOptions `field:"optional" json:"originLock" yaml:"originLock"`
 	// Optional CloudFront price class.
 	PriceClass awscloudfront.PriceClass `field:"optional" json:"priceClass" yaml:"priceClass"`
 	// MCP resource paths whose derived routes receive an explicit ordered cache behavior.
