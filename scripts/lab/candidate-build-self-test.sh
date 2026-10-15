@@ -11,9 +11,11 @@
 # Those stand-ins exist because the real builds need the network (npm ci / pip / jsii-pacmak).
 # They deterministically create the expected artifact files under dist/ with `gzip -n`, so they
 # are byte-stable across runs. This self-test therefore exercises the builder's config parsing,
-# repo binding, stage allowlist, environment refusal, per-surface hash verification, artifact
-# handling and receipt -- it does NOT re-test the real npm/python builds. One case asserts that
-# REPO itself ships the real build scripts so the fixture cannot drift away from reality.
+# repo binding, stage allowlist, environment refusal, the declared-surface-subset contract (a
+# declared subset is built and an undeclared surface is never built), per-surface hash
+# verification, artifact handling and receipt -- it does NOT re-test the real npm/python builds.
+# One case asserts that REPO itself ships the real build scripts so the fixture cannot drift
+# away from reality.
 #
 # Usage: bash scripts/lab/candidate-build-self-test.sh
 # Prints: candidate-build: self-test PASS (N cases)  |  candidate-build: self-test FAIL (<case>)
@@ -395,8 +397,8 @@ for stage in live staging; do
 done
 case_pass
 
-# --- case 5: missing surface fails -----------------------------------------------------
-case_start "missing surface fails"
+# --- case 5: a declared surface with no witness hash fails ------------------------------
+case_start "a declared surface with no witness hash fails"
 cfg_missing="${tmp}/cfg-missing.json"
 write_config "${cfg_missing}" "lab"
 python3 - "${cfg_missing}" <<'PY'
@@ -405,13 +407,15 @@ import sys
 
 path = sys.argv[1]
 doc = json.load(open(path))
-del doc["apptheory"]["candidate"]["surfaces"]["py_cdk_wheel"]
+# The surface stays declared, so it must be built and verified; without its witnessed
+# hash the builder refuses before building anything.
+del doc["apptheory"]["candidate"]["surfaces"]["py_cdk_wheel"]["sha256"]
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(doc, handle, indent=2)
 PY
 run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_missing}" --out "${tmp}/out5"
 assert_status 1
-assert_stderr_contains "missing surface 'py_cdk_wheel'"
+assert_stderr_contains "declared surface 'py_cdk_wheel' is missing a non-empty sha256"
 case_pass
 
 # --- case 6: environment-only candidate input is refused -------------------------------
@@ -572,6 +576,147 @@ run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_file}" --print
 assert_status 1
 assert_stderr_contains "theory-cloud-apptheory-cdk-9.9.8.tgz"
 assert_stderr_contains "theory-cloud-apptheory-cdk-9.9.9.tgz"
+case_pass
+
+# --- case 15: a declared subset is built, and undeclared surfaces are never built -------
+# The contract is a DECLARED SUBSET: only surfaces the config declares are built, verified,
+# handed over and receipted. The undeclared surfaces must not be built at all (their build
+# scripts must not run), so the fixture's dist/ keeps only the declared artifacts.
+case_start "a declared subset is built and undeclared surfaces are never built"
+cfg_subset="${tmp}/cfg-subset.json"
+write_config "${cfg_subset}" "lab"
+python3 - "${cfg_subset}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+doc = json.load(open(path))
+surfaces = doc["apptheory"]["candidate"]["surfaces"]
+# A TMS-class consumer: the Go runtime tree plus the npm CDK package.
+for name in list(surfaces):
+    if name not in ("go_runtime", "npm_cdk"):
+        del surfaces[name]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+rm -rf "${fixture}/dist"
+out_subset="${tmp}/out-subset"
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_subset}" --out "${out_subset}"
+assert_status 0
+for artifact in go_runtime.tar theory-cloud-apptheory-cdk-9.9.9.tgz; do
+  [[ -f "${out_subset}/${artifact}" ]] || case_fail "missing declared artifact in --out: ${artifact}"
+done
+for artifact in \
+  go_cdk.tar \
+  theory-cloud-apptheory-9.9.9.tgz \
+  apptheory-9.9.9-py3-none-any.whl \
+  apptheory-9.9.9.tar.gz \
+  apptheory_cdk-9.9.9-py3-none-any.whl; do
+  [[ ! -f "${out_subset}/${artifact}" ]] || case_fail "undeclared artifact was handed over: ${artifact}"
+done
+for artifact in \
+  go_cdk.tar \
+  theory-cloud-apptheory-9.9.9.tgz \
+  apptheory-9.9.9-py3-none-any.whl \
+  apptheory-9.9.9.tar.gz \
+  apptheory_cdk-9.9.9-py3-none-any.whl; do
+  [[ ! -f "${fixture}/dist/${artifact}" ]] || case_fail "undeclared surface was built: ${artifact}"
+done
+python3 - "${out_subset}/candidate-receipt.json" <<'PY'
+import json
+import sys
+
+receipt = json.load(open(sys.argv[1]))
+assert set(receipt["surfaces"]) == {"go_runtime", "npm_cdk"}, receipt["surfaces"]
+assert set(receipt["commands"]) == set(receipt["surfaces"]), receipt["commands"]
+PY
+last_line="$(printf '%s\n' "${builder_stdout}" | tail -n 1)"
+[[ "${last_line}" == "candidate-build: PASS (lab ${fixture_commit}; 2 surfaces verified)" ]] \
+  || case_fail "final PASS line mismatch: ${last_line}"
+case_pass
+
+# --- case 16: an empty declared surface set is refused ---------------------------------
+case_start "an empty declared surface set is refused"
+cfg_empty="${tmp}/cfg-empty.json"
+write_config "${cfg_empty}" "lab"
+python3 - "${cfg_empty}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+doc = json.load(open(path))
+doc["apptheory"]["candidate"]["surfaces"] = {}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_empty}" --out "${tmp}/out-empty"
+assert_status 1
+assert_stderr_contains "no declared surface"
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_empty}" --print-plan
+assert_status 1
+assert_stderr_contains "no declared surface"
+cfg_no_surfaces="${tmp}/cfg-no-surfaces.json"
+write_config "${cfg_no_surfaces}" "lab"
+python3 - "${cfg_no_surfaces}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+doc = json.load(open(path))
+del doc["apptheory"]["candidate"]["surfaces"]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_no_surfaces}" --out "${tmp}/out-no-surfaces"
+assert_status 1
+assert_stderr_contains "no declared surface"
+case_pass
+
+# --- case 17: a declared npm surface without its integrity fails -----------------------
+case_start "a declared npm surface without its integrity fails"
+cfg_no_integrity="${tmp}/cfg-no-integrity.json"
+write_config "${cfg_no_integrity}" "lab"
+python3 - "${cfg_no_integrity}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+doc = json.load(open(path))
+surfaces = doc["apptheory"]["candidate"]["surfaces"]
+del surfaces["npm_ts_runtime"]["integrity"]
+for name in list(surfaces):
+    if name != "npm_ts_runtime":
+        del surfaces[name]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_no_integrity}" --out "${tmp}/out-no-integrity"
+assert_status 1
+assert_stderr_contains "declared surface 'npm_ts_runtime' is missing its encoded integrity"
+case_pass
+
+# --- case 18: a declared surface the config cannot name fails --------------------------
+case_start "a declared surface with a stray file name fails"
+cfg_declared_file="${tmp}/cfg-declared-file.json"
+write_config "${cfg_declared_file}" "lab"
+python3 - "${cfg_declared_file}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+doc = json.load(open(path))
+surfaces = doc["apptheory"]["candidate"]["surfaces"]
+surfaces["py_runtime_wheel"]["file"] = "apptheory-9.9.8-py3-none-any.whl"
+for name in list(surfaces):
+    if name != "py_runtime_wheel":
+        del surfaces[name]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_declared_file}" --out "${tmp}/out-declared-file"
+assert_status 1
+assert_stderr_contains "declared surface 'py_runtime_wheel' file mismatch"
+assert_stderr_contains "apptheory-9.9.8-py3-none-any.whl"
 case_pass
 
 printf 'candidate-build: self-test PASS (%s cases)\n' "${cases_passed}"

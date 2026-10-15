@@ -161,9 +161,11 @@ gains an `apptheory.candidate` block (Autheory places it under `deployment.appth
 loader reads the `deployment` object) carrying `commit`, `tree`, `source_date_epoch` and the per-surface `sha256`
 values recorded by a witnessed build.
 
-`scripts/lab/candidate-build.sh` re-builds S1–S6 from the exported tree of that commit, verifies every
-per-surface hash and the tree (`git rev-parse <commit>^{tree}`), and writes a receipt stamping each surface with
-the commit, the tree and the hash. It refuses any stage other than `lab`, refuses any environment-variable input,
+`scripts/lab/candidate-build.sh` re-builds the declared surfaces (S1–S6) from the exported tree of that commit,
+verifies every declared per-surface hash and the tree (`git rev-parse <commit>^{tree}`), and writes a receipt
+stamping each declared surface with the commit, the tree and the hash. The config declares the subset the consumer
+uses — at least one surface — and an undeclared surface is never built, handed over or receipted, so a consumer that
+uses two surfaces declares two. It refuses any stage other than `lab`, refuses any environment-variable input,
 refuses a dirty working tree or a `HEAD` that is not the encoded commit, and deletes an artifact rather than hand
 one over when a hash does not match. There is **no action for a consumer that does not run lab candidate builds**:
 the builder is a repository script that adds no runtime code path and never runs on a release lane. Adopters should

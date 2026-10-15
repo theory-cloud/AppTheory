@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Purpose: lab candidate builder -- build and verify every AppTheory surface from one pinned commit.
+# Purpose: lab candidate builder -- build and verify the declared AppTheory surfaces from one pinned commit.
 #
 # This is the single AppTheory-provided entry point specified by
 # docs/development/planning/apptheory/mcp-auth-facade/CANDIDATE_BUILD_INTERFACE.md
@@ -10,10 +10,16 @@
 # environment variable -- SOURCE_DATE_EPOCH is derived from the pinned commit's committer
 # timestamp, which makes the per-surface artifact hashes reproducible.
 #
-# All seven surfaces are required, one per key in the config's `surfaces` map:
+# The config declares a SURFACE SUBSET, one entry per key in the config's `surfaces` map:
 #   go_runtime, go_cdk, npm_cdk, npm_ts_runtime, py_runtime_wheel, py_runtime_sdist, py_cdk_wheel
-# Binding every surface to one commit is a superset of "the surfaces the app consumes", so
-# a complete surface set is never wrong; a missing surface fails closed by name.
+# At least one surface must be declared. Only declared surfaces are built, verified,
+# handed over and receipted; an undeclared surface is never built, so a consumer that uses
+# two surfaces records two and gets two. Every declared surface is bound to the one pinned
+# commit exactly as a complete set would be, and a declared surface whose encoded witness
+# is incomplete fails closed by name.
+# One declared Python runtime surface runs the repository's single python build, which
+# produces both the wheel and the sdist; only the declared artifacts are verified, handed
+# over and receipted.
 #
 # Surface -> command (the builder invokes the repository's own deterministic build entry
 # points rather than re-implementing any build):
@@ -68,6 +74,8 @@ Usage: candidate-build.sh --config <stage-config.json> --out <dir> [--repo <appt
   --help              show this usage
 
 The only allowed candidate stage is: ${stage_allowlist}
+The config declares the surface subset that is built and verified, at least one of:
+  ${surface_names[*]}
 EOF
 }
 
@@ -223,6 +231,16 @@ if account is None and deployment is not None:
 emit("stage", stage)
 emit("expected_account_id", account)
 
+SURFACE_ORDER = (
+    "go_runtime",
+    "go_cdk",
+    "npm_cdk",
+    "npm_ts_runtime",
+    "py_runtime_wheel",
+    "py_runtime_sdist",
+    "py_cdk_wheel",
+)
+
 if candidate is None:
     sys.stdout.write("candidate_present\t0\n")
 else:
@@ -231,26 +249,24 @@ else:
     emit("tree", candidate.get("tree"))
     emit("source_date_epoch", candidate.get("source_date_epoch"))
 
+    # The declared surface subset: only these surfaces are built, verified, handed
+    # over and receipted.
     surfaces = as_dict(candidate.get("surfaces"))
-    for name in (
-        "go_runtime",
-        "go_cdk",
-        "npm_cdk",
-        "npm_ts_runtime",
-        "py_runtime_wheel",
-        "py_runtime_sdist",
-        "py_cdk_wheel",
-    ):
-        if surfaces is None:
-            continue
-        entry = as_dict(surfaces.get(name))
-        if entry is None:
-            continue
-        sys.stdout.write(f"surface_{name}_present\t1\n")
-        for field in ("file", "sha256", "integrity"):
-            value = entry.get(field)
-            if isinstance(value, str) and value != "":
-                sys.stdout.write(f"surface_{name}_{field}\t{value}\n")
+    declared = []
+    if surfaces is not None:
+        for name in SURFACE_ORDER:
+            if name not in surfaces:
+                continue
+            declared.append(name)
+            sys.stdout.write(f"surface_{name}_present\t1\n")
+            entry = as_dict(surfaces.get(name))
+            if entry is None:
+                continue
+            for field in ("file", "sha256", "integrity"):
+                value = entry.get(field)
+                if isinstance(value, str) and value != "":
+                    sys.stdout.write(f"surface_{name}_{field}\t{value}\n")
+    sys.stdout.write("declared_surfaces\t" + " ".join(declared) + "\n")
 PY
 then
   fail "invalid config ${config}: $(head -n 1 "${scratch}/config.err")"
@@ -273,19 +289,33 @@ if [[ "${CFG[candidate_present]-}" != "1" ]]; then
   fail "no encoded candidate block in ${config} (this builder never builds a stage without an encoded candidate block)"
 fi
 
-# Every one of the seven surfaces must be present with a non-empty sha256 (plus file and
-# integrity for the npm surfaces).
-for name in "${surface_names[@]}"; do
+# 4. The declared surface subset -- at least one surface, in canonical order.
+declared_surfaces=()
+if [[ -n "${CFG[declared_surfaces]-}" ]]; then
+  read -r -a declared_surfaces <<< "${CFG[declared_surfaces]}"
+fi
+if (( ${#declared_surfaces[@]} == 0 )); then
+  fail "no declared surface in ${config} (declare at least one of ${surface_names[*]} in the candidate surfaces map; a config that declares nothing builds nothing)"
+fi
+
+# 5. Every declared surface carries its encoded witness: a non-empty sha256, plus
+#    file and integrity for the two npm surfaces. An undeclared surface is not
+#    checked because it is never built, verified or handed over.
+for name in "${declared_surfaces[@]}"; do
   if [[ "${CFG[surface_${name}_present]-}" != "1" || -z "${CFG[surface_${name}_sha256]-}" ]]; then
-    fail "missing surface '${name}' (all seven surfaces must be present with a non-empty sha256)"
+    fail "declared surface '${name}' is missing a non-empty sha256 (every declared surface must carry its witnessed hash)"
   fi
 done
-for name in "${npm_surfaces[@]}"; do
-  [[ -n "${CFG[surface_${name}_file]-}" ]] || fail "surface '${name}' is missing its encoded file"
-  [[ -n "${CFG[surface_${name}_integrity]-}" ]] || fail "surface '${name}' is missing its encoded integrity"
+for name in "${declared_surfaces[@]}"; do
+  case " ${npm_surfaces[*]} " in
+    *" ${name} "*) ;;
+    *) continue ;;
+  esac
+  [[ -n "${CFG[surface_${name}_file]-}" ]] || fail "declared surface '${name}' is missing its encoded file"
+  [[ -n "${CFG[surface_${name}_integrity]-}" ]] || fail "declared surface '${name}' is missing its encoded integrity"
 done
 
-# 4. commit and tree are 40 lowercase hex characters.
+# 6. commit and tree are 40 lowercase hex characters.
 commit="${CFG[commit]-}"
 if ! [[ "${commit}" =~ ^[0-9a-f]{40}$ ]]; then
   fail "commit '${commit}' is not 40 lowercase hex characters"
@@ -295,7 +325,7 @@ if ! [[ "${tree}" =~ ^[0-9a-f]{40}$ ]]; then
   fail "tree '${tree}' is not 40 lowercase hex characters"
 fi
 
-# 5. expected_account_id, checked against --account-id when supplied.
+# 7. expected_account_id, checked against --account-id when supplied.
 expected_account="${CFG[expected_account_id]-}"
 if [[ -z "${expected_account}" ]]; then
   fail "expected_account_id is missing from ${config}"
@@ -304,7 +334,7 @@ if (( have_account_id == 1 )) && [[ "${account_id}" != "${expected_account}" ]];
   fail "account id mismatch (--account-id '${account_id}' != encoded expected_account_id '${expected_account}')"
 fi
 
-# 6. Repository binding.
+# 8. Repository binding.
 if [[ ! -d "${repo}" ]]; then
   fail "repo not found: ${repo}"
 fi
@@ -337,7 +367,7 @@ if [[ -z "$(git -C "${repo}" for-each-ref --contains "${commit}" --format='%(ref
   fail "commit '${commit}' is not reachable from any retained ref in ${repo}"
 fi
 
-# 7. source_date_epoch derives from the commit's committer timestamp.
+# 9. source_date_epoch derives from the commit's committer timestamp.
 committer_epoch="$(git -C "${repo}" show -s --format=%ct "${commit}")"
 if [[ -n "${CFG[source_date_epoch]-}" ]] && [[ "${CFG[source_date_epoch]}" != "${committer_epoch}" ]]; then
   fail "source_date_epoch mismatch (encoded '${CFG[source_date_epoch]}' != commit committer timestamp '${committer_epoch}')"
@@ -378,11 +408,11 @@ declare -A surface_command=(
 # The encoded `file`, when present, must equal the plain version-derived artifact basename. It
 # names the artifact the build must produce and can therefore never carry a path component, so
 # the artifact is always read from a direct child of the repository's dist/ tree. This runs
-# before any build, in both modes.
-for name in "${surface_names[@]}"; do
+# before any build, in both modes, for the declared surfaces.
+for name in "${declared_surfaces[@]}"; do
   encoded_file="${CFG[surface_${name}_file]-}"
   if [[ -n "${encoded_file}" ]] && [[ "${encoded_file}" != "${artifact_basename[${name}]}" ]]; then
-    fail "surface '${name}' file mismatch (encoded '${encoded_file}' != expected artifact basename '${artifact_basename[${name}]}')"
+    fail "declared surface '${name}' file mismatch (encoded '${encoded_file}' != expected artifact basename '${artifact_basename[${name}]}')"
   fi
 done
 
@@ -394,11 +424,11 @@ if (( print_plan == 1 )); then
   printf '  tree: %s\n' "${tree}"
   printf '  source_date_epoch: %s\n' "${effective_epoch}"
   printf '  expected_account_id: %s\n' "${expected_account}"
-  for name in "${surface_names[@]}"; do
+  for name in "${declared_surfaces[@]}"; do
     printf '  %-18s %s\n' "${name}" "${surface_command[${name}]}"
     printf '  %-18s -> %s sha256=%s\n' "" "${artifact_basename[${name}]}" "${CFG[surface_${name}_sha256]-}"
   done
-  printf 'candidate-build: PLAN OK (%s %s; %s surfaces would be verified)\n' "${stage}" "${commit}" "${#surface_names[@]}"
+  printf 'candidate-build: PLAN OK (%s %s; %s declared surfaces would be verified)\n' "${stage}" "${commit}" "${#declared_surfaces[@]}"
   exit 0
 fi
 
@@ -475,40 +505,60 @@ verify_and_copy() {
   surface_integrity["${name}"]="${expected_integrity}"
 }
 
-printf 'candidate-build: building %s surfaces from %s (SOURCE_DATE_EPOCH=%s)\n' "${#surface_names[@]}" "${commit}" "${effective_epoch}"
+printf 'candidate-build: building %s declared surfaces from %s (SOURCE_DATE_EPOCH=%s)\n' "${#declared_surfaces[@]}" "${commit}" "${effective_epoch}"
 
 # S1 -- go_runtime
-printf 'candidate-build: surface go_runtime\n'
-git -C "${repo}" archive --format=tar --output="${scratch}/go_runtime.tar" "${commit}" -- . ':(exclude)cdk-go' \
-  || fail "surface go_runtime build failed (git archive)"
-verify_and_copy go_runtime "${scratch}/go_runtime.tar"
+if [[ " ${declared_surfaces[*]} " == *" go_runtime "* ]]; then
+  printf 'candidate-build: surface go_runtime\n'
+  git -C "${repo}" archive --format=tar --output="${scratch}/go_runtime.tar" "${commit}" -- . ':(exclude)cdk-go' \
+    || fail "surface go_runtime build failed (git archive)"
+  verify_and_copy go_runtime "${scratch}/go_runtime.tar"
+fi
 
 # S2 -- go_cdk
-printf 'candidate-build: surface go_cdk\n'
-git -C "${repo}" archive --format=tar --output="${scratch}/go_cdk.tar" "${commit}" -- cdk-go/apptheorycdk \
-  || fail "surface go_cdk build failed (git archive)"
-verify_and_copy go_cdk "${scratch}/go_cdk.tar"
+if [[ " ${declared_surfaces[*]} " == *" go_cdk "* ]]; then
+  printf 'candidate-build: surface go_cdk\n'
+  git -C "${repo}" archive --format=tar --output="${scratch}/go_cdk.tar" "${commit}" -- cdk-go/apptheorycdk \
+    || fail "surface go_cdk build failed (git archive)"
+  verify_and_copy go_cdk "${scratch}/go_cdk.tar"
+fi
 
 # S3 -- npm_cdk
-printf 'candidate-build: surface npm_cdk\n'
-( cd "${repo}" && ./scripts/verify-cdk-ts-pack.sh ) || fail "surface npm_cdk build failed (./scripts/verify-cdk-ts-pack.sh)"
-verify_and_copy npm_cdk "$(surface_artifact_path npm_cdk)"
+if [[ " ${declared_surfaces[*]} " == *" npm_cdk "* ]]; then
+  printf 'candidate-build: surface npm_cdk\n'
+  ( cd "${repo}" && ./scripts/verify-cdk-ts-pack.sh ) || fail "surface npm_cdk build failed (./scripts/verify-cdk-ts-pack.sh)"
+  verify_and_copy npm_cdk "$(surface_artifact_path npm_cdk)"
+fi
 
 # S4 -- npm_ts_runtime
-printf 'candidate-build: surface npm_ts_runtime\n'
-( cd "${repo}" && ./scripts/verify-ts-pack.sh ) || fail "surface npm_ts_runtime build failed (./scripts/verify-ts-pack.sh)"
-verify_and_copy npm_ts_runtime "$(surface_artifact_path npm_ts_runtime)"
+if [[ " ${declared_surfaces[*]} " == *" npm_ts_runtime "* ]]; then
+  printf 'candidate-build: surface npm_ts_runtime\n'
+  ( cd "${repo}" && ./scripts/verify-ts-pack.sh ) || fail "surface npm_ts_runtime build failed (./scripts/verify-ts-pack.sh)"
+  verify_and_copy npm_ts_runtime "$(surface_artifact_path npm_ts_runtime)"
+fi
 
-# S5 -- python runtime (a single build produces both the wheel and the sdist).
-printf 'candidate-build: surface py_runtime_wheel + py_runtime_sdist\n'
-( cd "${repo}" && ./scripts/verify-python-build.sh ) || fail "surface py_runtime_wheel build failed (./scripts/verify-python-build.sh)"
-verify_and_copy py_runtime_wheel "$(surface_artifact_path py_runtime_wheel)"
-verify_and_copy py_runtime_sdist "$(surface_artifact_path py_runtime_sdist)"
+# S5 -- python runtime (a single build produces both the wheel and the sdist; only the
+# declared artifacts are verified, handed over and receipted).
+declared_python_runtime=()
+for name in "${declared_surfaces[@]}"; do
+  case "${name}" in
+    py_runtime_wheel|py_runtime_sdist) declared_python_runtime+=("${name}") ;;
+  esac
+done
+if (( ${#declared_python_runtime[@]} > 0 )); then
+  printf 'candidate-build: surface %s\n' "${declared_python_runtime[*]}"
+  ( cd "${repo}" && ./scripts/verify-python-build.sh ) || fail "surface ${declared_python_runtime[0]} build failed (./scripts/verify-python-build.sh)"
+  for name in "${declared_python_runtime[@]}"; do
+    verify_and_copy "${name}" "$(surface_artifact_path "${name}")"
+  done
+fi
 
 # S6 -- python CDK
-printf 'candidate-build: surface py_cdk_wheel\n'
-( cd "${repo}" && ./scripts/verify-cdk-python-build.sh ) || fail "surface py_cdk_wheel build failed (./scripts/verify-cdk-python-build.sh)"
-verify_and_copy py_cdk_wheel "$(surface_artifact_path py_cdk_wheel)"
+if [[ " ${declared_surfaces[*]} " == *" py_cdk_wheel "* ]]; then
+  printf 'candidate-build: surface py_cdk_wheel\n'
+  ( cd "${repo}" && ./scripts/verify-cdk-python-build.sh ) || fail "surface py_cdk_wheel build failed (./scripts/verify-cdk-python-build.sh)"
+  verify_and_copy py_cdk_wheel "$(surface_artifact_path py_cdk_wheel)"
+fi
 
 # Receipt (pretty JSON, keys sorted, no wall-clock timestamps).
 receipt_lines="${scratch}/receipt.tsv"
@@ -516,7 +566,7 @@ receipt_lines="${scratch}/receipt.tsv"
 for pair in "stage:${stage}" "commit:${commit}" "tree:${tree}" "source_date_epoch:${effective_epoch}"; do
   printf 'meta\t%s\t%s\n' "${pair%%:*}" "${pair#*:}" >> "${receipt_lines}"
 done
-for name in "${surface_names[@]}"; do
+for name in "${declared_surfaces[@]}"; do
   printf 'surface\t%s\t%s\t%s\t%s\t%s\n' \
     "${name}" \
     "${surface_artifact[${name}]}" \
@@ -572,8 +622,8 @@ printf '  stage: %s\n' "${stage}"
 printf '  commit: %s\n' "${commit}"
 printf '  tree: %s\n' "${tree}"
 printf '  source_date_epoch: %s\n' "${effective_epoch}"
-for name in "${surface_names[@]}"; do
+for name in "${declared_surfaces[@]}"; do
   printf '  %-18s %s  %s\n' "${name}" "${surface_sha[${name}]}" "${surface_artifact[${name}]}"
 done
 printf '  receipt: %s\n' "${receipt_path}"
-printf 'candidate-build: PASS (%s %s; %s surfaces verified)\n' "${stage}" "${commit}" "${#surface_names[@]}"
+printf 'candidate-build: PASS (%s %s; %s surfaces verified)\n' "${stage}" "${commit}" "${#declared_surfaces[@]}"

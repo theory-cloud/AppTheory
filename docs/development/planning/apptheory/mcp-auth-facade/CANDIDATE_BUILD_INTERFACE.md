@@ -143,10 +143,16 @@ decisions" 2026-10-12, item 8) and implemented here:
   builds. An encoded `source_date_epoch` is accepted only if it equals that value; a mismatch fails closed. The
   commit timestamp is intrinsic to the commit and cannot drift, so an encoded copy is never the authority.
 - **The lab stage allowlist is `{lab}` only.** `live` and `staging` are refused by name.
-- **The framework requires the complete seven-key surface set.** A config that omits any of `go_runtime`,
-  `go_cdk`, `npm_cdk`, `npm_ts_runtime`, `py_runtime_wheel`, `py_runtime_sdist`, `py_cdk_wheel` fails closed,
-  naming the missing surface. Requiring every surface is a strict superset of "bind the surfaces the app
-  consumes", so it is never wrong; the app's own receipt still carries its binary hash (operator decision 8).
+- **The framework builds and verifies the DECLARED surface subset.** The config's `surfaces` map names the
+  surfaces the consumer uses, at least one of them; only declared surfaces are built, verified, handed over and
+  receipted, and an undeclared surface is never built (so a TMS-class consumer that uses S1 and S3 declares S1 and
+  S3 and gets exactly those artifacts and receipt rows). Every declared surface is bound to the one pinned commit
+  exactly as a complete set would be, and a declared surface whose encoded witness is missing its `sha256` (or, for
+  an npm surface, its `file`/`integrity`) fails closed, naming the surface. A surface key that is not one of the
+  seven, or any non-annotation field on a declared surface, is refused rather than ignored (`§4.1` step 4). One
+  declared Python runtime surface runs the single python build, which produces both the wheel and the sdist; only
+  the declared artifacts are verified, handed over and receipted. The app's own receipt still carries its binary
+  hash (operator decision 8).
 - **The encoded `file` must equal the version-derived artifact basename** (`scripts/read-version.sh`, with the
   same `-rc.N` → `rcN` normalization the Python build scripts apply).
 
@@ -157,8 +163,9 @@ The checks run in this order, and each one fails closed before any artifact is h
    commit and is never read as input.
 2. **Stage allowlist** — `lab` only.
 3. **Candidate block present** — the builder never builds a stage without an encoded `candidate` block.
-4. **Surface completeness** — all seven keys present with a non-empty `sha256`, and `file` + `integrity` for the
-   two npm surfaces.
+4. **Declared surface completeness** — at least one surface declared, and every declared surface carrying a
+   non-empty `sha256`, plus `file` + `integrity` for a declared npm surface. An undeclared surface is not checked
+   because it is never built.
 5. `commit` and `tree` are 40 lowercase hex characters.
 6. `expected_account_id` is non-empty and equals a supplied `--account-id` when one is given. Resolving the
    account from AWS is the app deploy script's job; the builder takes the app's already-resolved value as an
@@ -189,11 +196,11 @@ the **verified** artifacts into `--out` and leaves that repository build output 
 
 **Receipt** (`<out>/candidate-receipt.json`, pretty-printed with sorted keys, no wall-clock timestamp so it is
 reproducible): `schema` (`apptheory.candidate-receipt/v1`), `stage`, `commit`, `tree`, `source_date_epoch`
-(integer), `builder` (the script's path), `surfaces` (surface key → `{artifact, sha256[, integrity]}`), and
-`commands` (surface key → the command string for that surface). The command strings are recorded in their
-reproducible template form — the literal `--repo` and scratch paths are the only values not embedded — which is
-the same notation as the table in §3. Standard output ends with
-`candidate-build: PASS (<stage> <commit>; 7 surfaces verified)`.
+(integer), `builder` (the script's path), `surfaces` (surface key → `{artifact, sha256[, integrity]}` for the
+declared surfaces only), and `commands` (surface key → the command string for that surface). The command strings are
+recorded in their reproducible template form — the literal `--repo` and scratch paths are the only values not
+embedded — which is the same notation as the table in §3. Standard output ends with
+`candidate-build: PASS (<stage> <commit>; <N> surfaces verified)`, where `<N>` is the declared surface count.
 
 **`--print-plan`** runs every check above, prints the resolved commit/tree/epoch/account, the per-surface command
 plan and the expected hashes, and exits 0 **without building anything and without writing a receipt**, so the plan
@@ -201,11 +208,13 @@ can never be mistaken for a verified candidate.
 
 **Self-test.** `scripts/lab/candidate-build-self-test.sh` exercises the builder against a throwaway fixture git
 repository (no network, no AWS, no credentials) and asserts: the example config shape is runnable; a valid config
-builds and verifies; a tampered `sha256`, a tampered npm `integrity`, a wrong tree, a mismatched
-`source_date_epoch`, a wrong encoded `file`, a missing surface, a dirty tree, a non-`HEAD` commit, an environment
-variables-only attempt, a `live`/`staging` stage and an account mismatch all fail closed; and `--print-plan` writes
-nothing. It is wired into `make rubric`, so a builder that stops failing closed fails CI rather than the lab
-proof.
+builds and verifies; a declared subset builds exactly its declared artifacts, hands none of the undeclared ones over,
+receipts only the declared ones and never runs an undeclared surface's build script; an empty declared surface set
+and a declared surface missing its witness are refused; a tampered `sha256`, a tampered npm `integrity`, a wrong tree,
+a mismatched `source_date_epoch`, a wrong encoded `file`, a declared npm surface without its integrity, an
+environment variables-only attempt, a `live`/`staging` stage and an account mismatch all fail closed; and
+`--print-plan` writes nothing. It is wired into `make rubric`, so a builder that stops failing closed fails CI rather
+than the lab proof.
 
 ## 4.2 Integration note for the adoption stewards (TMS and Autheory)
 
@@ -233,8 +242,9 @@ fails closed as ambiguous. `stage` and `expected_account_id` are read from the t
 - **TMS** has no per-stage config file at `origin/staging` (stage is a `-c stage=<lab|live>` context flag on
   `scripts/deploy/theorymcp-cdk.mjs` and the account comes from the AWS profile), so adoption must first
   materialize a stage config carrying the `candidate` block — top-level `apptheory.candidate` or a `deployment`
-  wrapper, either is accepted — and then pass it to the builder exactly as above. TMS's tooling consumes S1 and S3;
-  the builder still verifies the complete seven-key set.
+  wrapper, either is accepted — and then pass it to the builder exactly as above. TMS's tooling consumes S1 and S3,
+  so its config declares S1 and S3; the builder builds, verifies, hands over and receipts exactly those declared
+  surfaces and never builds the rest.
 
 **Before calling the builder**, the app's deploy step must place the AppTheory checkout on the pinned commit with a
 clean working tree: the builder requires `HEAD == commit`, an empty `git status --porcelain`, and
