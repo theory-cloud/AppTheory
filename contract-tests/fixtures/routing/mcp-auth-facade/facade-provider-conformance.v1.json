@@ -4,7 +4,7 @@
     "section": "provider-spi",
     "kind": "conformance",
     "status": "M3a",
-    "notes": "One conformance table for the provider SPI of DESIGN §6. Every provider adapter (the Autheory adapter and the tiny second test adapter that proves provider-neutrality) must pass every row. Each runtime's loader spins up a real local HTTP fake upstream with real RSA keys and runs the rows against the adapter; the same rows and outcomes must hold in Go, TypeScript and Python. The adapter never forwards an upstream error body to the client and never relaxes a fail-closed check."
+    "notes": "One conformance table for the provider SPI of DESIGN §6. Every provider adapter (the Autheory adapter and the tiny second test adapter that proves provider-neutrality) must pass every row. Each runtime's loader spins up a real local HTTP fake upstream with real RSA keys and runs the rows against the adapter; the same rows and outcomes must hold in Go, TypeScript and Python. The adapter never forwards an upstream error body to the client and never relaxes a fail-closed check. A hint whose name collides, case-insensitively, with a required or reserved authorize parameter (response_type, client_id, redirect_uri, code_challenge, code_challenge_method, state, resource, scope) is refused as invalid_request rather than being allowed to override or duplicate that parameter; a hint whose name carries leading or trailing whitespace is refused the same way rather than forwarded under its untrimmed spelling (which would add a second parameter) or silently trimmed onto a colliding one; a non-colliding, already-trimmed hint is still forwarded."
   },
   "error_classes": {
     "upstream_error": "an upstream provider failure (HTTP 502 in the facade vocabulary); includes a replayed/invalid upstream response, a signature or issuer mismatch, an expired token, an oversized document, and a non-2xx non-terminal call",
@@ -85,6 +85,131 @@
           "scope": "mcp:tools"
         }
       }
+    },
+    {
+      "id": "provider.authorization_url.hint_colliding_with_required_parameter_fails_closed",
+      "operation": "authorization_url",
+      "upstream": { "issuer": "https://auth.example.test", "discovery_issuer": "https://auth.example.test" },
+      "request": {
+        "upstream_client_id": "facade-client",
+        "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "code_challenge_method": "S256",
+        "state": "facade-upstream-state",
+        "resource": "https://mcp.example.test/mcp",
+        "scopes": ["mcp:tools"],
+        "hints": { "client_id": "attacker-client" }
+      },
+      "expect": { "outcome": "error", "error_class": "invalid_request" }
+    },
+    {
+      "id": "provider.authorization_url.hint_colliding_with_required_parameter_case_insensitively_fails_closed",
+      "operation": "authorization_url",
+      "upstream": { "issuer": "https://auth.example.test", "discovery_issuer": "https://auth.example.test" },
+      "request": {
+        "upstream_client_id": "facade-client",
+        "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "code_challenge_method": "S256",
+        "state": "facade-upstream-state",
+        "resource": "https://mcp.example.test/mcp",
+        "scopes": ["mcp:tools"],
+        "hints": { "Client_ID": "attacker-client" }
+      },
+      "expect": { "outcome": "error", "error_class": "invalid_request" }
+    },
+    {
+      "id": "provider.authorization_url.hint_colliding_with_state_fails_closed",
+      "operation": "authorization_url",
+      "upstream": { "issuer": "https://auth.example.test", "discovery_issuer": "https://auth.example.test" },
+      "request": {
+        "upstream_client_id": "facade-client",
+        "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "code_challenge_method": "S256",
+        "state": "facade-upstream-state",
+        "resource": "https://mcp.example.test/mcp",
+        "scopes": ["mcp:tools"],
+        "hints": { "state": "attacker-state" }
+      },
+      "expect": { "outcome": "error", "error_class": "invalid_request" }
+    },
+    {
+      "id": "provider.authorization_url.hint_name_with_surrounding_whitespace_fails_closed",
+      "operation": "authorization_url",
+      "upstream": { "issuer": "https://auth.example.test", "discovery_issuer": "https://auth.example.test" },
+      "request": {
+        "upstream_client_id": "facade-client",
+        "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "code_challenge_method": "S256",
+        "state": "facade-upstream-state",
+        "resource": "https://mcp.example.test/mcp",
+        "scopes": ["mcp:tools"],
+        "hints": { " account_id ": "acct_hint" }
+      },
+      "expect": { "outcome": "error", "error_class": "invalid_request" }
+    },
+    {
+      "id": "provider.authorization_url.padded_duplicate_hint_name_fails_closed",
+      "operation": "authorization_url",
+      "upstream": { "issuer": "https://auth.example.test", "discovery_issuer": "https://auth.example.test" },
+      "request": {
+        "upstream_client_id": "facade-client",
+        "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "code_challenge_method": "S256",
+        "state": "facade-upstream-state",
+        "resource": "https://mcp.example.test/mcp",
+        "scopes": ["mcp:tools"],
+        "hints": { "account_id": "acct_hint", " account_id ": "acct_hint_two" }
+      },
+      "expect": { "outcome": "error", "error_class": "invalid_request" }
+    },
+    {
+      "id": "provider.authorization_url.non_colliding_hint_is_forwarded",
+      "operation": "authorization_url",
+      "upstream": { "issuer": "https://auth.example.test", "discovery_issuer": "https://auth.example.test" },
+      "request": {
+        "upstream_client_id": "facade-client",
+        "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "code_challenge_method": "S256",
+        "state": "facade-upstream-state",
+        "resource": "https://mcp.example.test/mcp",
+        "scopes": ["mcp:tools"],
+        "hints": { "account_id": "acct_hint", "prompt": "login" }
+      },
+      "expect": {
+        "outcome": "ok",
+        "query": {
+          "response_type": "code",
+          "client_id": "facade-client",
+          "redirect_uri": "https://mcp.example.test/_oauth/mcp/callback",
+          "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+          "code_challenge_method": "S256",
+          "state": "facade-upstream-state",
+          "resource": "https://mcp.example.test/mcp",
+          "scope": "mcp:tools",
+          "account_id": "acct_hint",
+          "prompt": "login"
+        }
+      }
+    },
+    {
+      "id": "provider.authorization_url.missing_upstream_client_id_fails_closed",
+      "operation": "authorization_url",
+      "upstream": { "issuer": "https://auth.example.test", "discovery_issuer": "https://auth.example.test" },
+      "request": {
+        "upstream_client_id": "",
+        "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "code_challenge_method": "S256",
+        "state": "facade-upstream-state",
+        "resource": "https://mcp.example.test/mcp",
+        "scopes": ["mcp:tools"]
+      },
+      "expect": { "outcome": "error", "error_class": "invalid_request" }
     },
     {
       "id": "provider.authorization_url.missing_challenge_fails_closed",

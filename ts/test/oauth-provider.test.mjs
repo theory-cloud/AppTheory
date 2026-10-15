@@ -273,9 +273,9 @@ function assertCase(testCase, observed) {
   }
 }
 
-test("provider conformance fixture carries 22 cases", () => {
-  assert.equal(CASES.length, 22);
-  assert.equal(new Set(CASES.map((c) => c.id)).size, 22);
+test("provider conformance fixture carries 29 cases", () => {
+  assert.equal(CASES.length, 29);
+  assert.equal(new Set(CASES.map((c) => c.id)).size, 29);
 });
 
 test("the Autheory adapter satisfies the provider conformance table", async () => {
@@ -284,7 +284,7 @@ test("the Autheory adapter satisfies the provider conformance table", async () =
     assertCase(testCase, await observeCase(testCase));
     ran += 1;
   }
-  assert.equal(ran, 22);
+  assert.equal(ran, 29);
   console.log(
     `provider conformance: ${ran}/${CASES.length} cases passed (adapter + testkit fake upstream)`,
   );
@@ -313,4 +313,61 @@ test("the adapter's own transport applies the connect-time non-public-host guard
       return true;
     },
   );
+});
+
+test("a refused hint never reaches the upstream", async () => {
+  // The adapter is given a fetch that records every invocation and then fails,
+  // so a refused hint must reject without ever calling it. The second half of
+  // the test drives the same transport with a non-colliding hint, where the
+  // fetch *is* reached, so the double is proven non-vacuous: a regression that
+  // resolved discovery before refusing a hint would be observed here.
+  let calls = 0;
+  const provider = await newAutheoryProvider({
+    issuer: "https://auth.example.test",
+    fetchImpl: async () => {
+      calls += 1;
+      throw new Error("upstream must not be contacted");
+    },
+  });
+  const request = {
+    upstreamClientId: "facade-client",
+    callbackUrl: "https://mcp.example.test/_oauth/mcp/callback",
+    codeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+    codeChallengeMethod: "S256",
+    state: "facade-upstream-state",
+    resource: "https://mcp.example.test/mcp",
+    scopes: ["mcp:tools"],
+  };
+  await assert.rejects(
+    () => provider.authorizationUrl({ ...request, hints: { Client_ID: "x" } }),
+    (err) => {
+      assert.ok(
+        err instanceof ProviderError,
+        `expected a provider error, got ${String(err)}`,
+      );
+      assert.equal(err.errorClass, "invalid_request");
+      return true;
+    },
+  );
+  assert.equal(
+    calls,
+    0,
+    "a hint colliding with a required authorize parameter must be refused before any upstream call",
+  );
+  await assert.rejects(
+    () => provider.authorizationUrl({ ...request, hints: { account_id: "acct" } }),
+    (err) => {
+      assert.ok(
+        err instanceof ProviderError,
+        `expected a provider error, got ${String(err)}`,
+      );
+      assert.equal(
+        err.errorClass,
+        "temporarily_unavailable",
+        "the recording transport must be reached for a forwarded hint",
+      );
+      return true;
+    },
+  );
+  assert.equal(calls, 1, "the recording transport must be reached exactly once");
 });

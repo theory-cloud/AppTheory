@@ -124,7 +124,7 @@ class ProviderConformanceTests(unittest.TestCase):
 
     def test_fixture_table_is_complete(self) -> None:
         cases = self.fixture["cases"]
-        self.assertEqual(len(cases), 22)
+        self.assertEqual(len(cases), 29)
         self.assertEqual({case["operation"] for case in cases}, EXPECTED_OPERATIONS)
         self.assertTrue(self.fixture["autheory"]["resource_parameter_required_at_authorize"])
 
@@ -136,7 +136,7 @@ class ProviderConformanceTests(unittest.TestCase):
                 self._run_case(case)
                 executed += 1
         print(f"provider conformance: {executed} cases run")
-        self.assertEqual(executed, 22)
+        self.assertEqual(executed, 29)
 
     # -- dispatch ------------------------------------------------------------
 
@@ -278,6 +278,31 @@ class AutheoryAdapterBehaviourTests(unittest.TestCase):
         issuer = str(options.pop("issuer", DEFAULT_ISSUER))
         return new_autheory_provider(Options(issuer=issuer, allow_private_hosts=True, **options))
 
+    def _loopback_provider(self) -> Any:
+        upstream = FakeUpstreamProvider(issuer=DEFAULT_ISSUER)
+        upstream.start()
+        self.addCleanup(upstream.stop)
+        return new_autheory_provider(
+            Options(
+                issuer=DEFAULT_ISSUER,
+                http_get=_LoopbackTransport(upstream, DEFAULT_TIMEOUT_SECONDS),
+                allow_private_hosts=True,
+                http_timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+            )
+        )
+
+    def _authorize_request(self, **overrides: Any) -> AuthorizationRequest:
+        fields: dict[str, Any] = {
+            "upstream_client_id": "facade-client",
+            "callback_url": "https://mcp.example.test/_oauth/mcp/callback",
+            "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+            "code_challenge_method": "S256",
+            "state": "facade-upstream-state",
+            "resource": "https://mcp.example.test/mcp",
+        }
+        fields.update(overrides)
+        return AuthorizationRequest(**fields)
+
     def test_authorization_url_refuses_a_non_s256_method(self) -> None:
         provider = self._provider()
         with self.assertRaises(ProviderError) as caught:
@@ -292,6 +317,69 @@ class AutheoryAdapterBehaviourTests(unittest.TestCase):
                 )
             )
         self.assertEqual(caught.exception.error_class, "invalid_request")
+
+    def test_authorization_url_refuses_a_hint_colliding_with_a_reserved_parameter(self) -> None:
+        # A hint name that collides, case-insensitively and after trimming, with
+        # a parameter the adapter owns is refused rather than allowed to override
+        # or duplicate it. The required parameter never silently wins: the call
+        # fails closed with invalid_request, which is a behaviour change from the
+        # previous required-wins reading.
+        provider = self._loopback_provider()
+        for hint in (
+            "response_type",
+            "client_id",
+            "Client_ID",
+            " redirect_uri ",
+            "code_challenge",
+            "CODE_CHALLENGE_METHOD",
+            "State",
+            "resource",
+            # scope is reserved even when the request carries no scopes, so a
+            # hint can never introduce one.
+            "scope",
+        ):
+            with self.subTest(hint=hint):
+                with self.assertRaises(ProviderError) as caught:
+                    provider.authorization_url(self._authorize_request(hints={hint: "attacker-value"}))
+                self.assertEqual(caught.exception.error_class, "invalid_request")
+                self.assertEqual(caught.exception.op, "authorization_url")
+
+    def test_authorization_url_refuses_a_colliding_hint_before_any_upstream_call(self) -> None:
+        # The refusal is a pre-flight check: it runs before the endpoint is
+        # resolved, so the invalid_request class never reaches the upstream. The
+        # spy transport proves no discovery fetch happened, and the provider is
+        # asked to have cached no metadata either.
+        calls: list[str] = []
+
+        def spy_transport(
+            method: str, url: str, headers: dict[str, str], body: bytes | None
+        ) -> tuple[int, dict[str, str], bytes]:
+            calls.append(url)
+            raise AssertionError("a refused authorize request must not reach the upstream")
+
+        provider = new_autheory_provider(
+            Options(issuer=DEFAULT_ISSUER, http_get=spy_transport, allow_private_hosts=True)
+        )
+        for hint in ("client_id", "State"):
+            with self.subTest(hint=hint):
+                with self.assertRaises(ProviderError) as caught:
+                    provider.authorization_url(self._authorize_request(hints={hint: "attacker-value"}))
+                self.assertEqual(caught.exception.error_class, "invalid_request")
+        self.assertEqual(calls, [])
+        self.assertIsNone(provider._metadata)
+
+    def test_authorization_url_forwards_a_non_colliding_hint_verbatim(self) -> None:
+        provider = self._loopback_provider()
+        url = provider.authorization_url(
+            self._authorize_request(scopes=["mcp:tools"], hints={"account_id": "acct_hint", "prompt": "login"})
+        )
+        query = dict(parse_qsl(urlsplit(url).query, keep_blank_values=True))
+        self.assertEqual(query["account_id"], "acct_hint")
+        self.assertEqual(query["prompt"], "login")
+        # The required parameters are untouched by the forwarded hints.
+        self.assertEqual(query["client_id"], "facade-client")
+        self.assertEqual(query["state"], "facade-upstream-state")
+        self.assertEqual(query["scope"], "mcp:tools")
 
     def test_exchange_code_refuses_an_empty_verifier_before_any_upstream_call(self) -> None:
         provider = self._provider()

@@ -34,6 +34,12 @@ export interface AuthorizationRequest {
     state: string;
     resource: string;
     scopes: string[];
+    /**
+     * Opaque provider hints forwarded onto the authorize query. A hint whose
+     * name collides, case-insensitively after trimming, with a required or
+     * reserved authorize parameter is refused as `invalid_request` rather than
+     * being allowed to override or duplicate that parameter.
+     */
     hints?: Record<string, string>;
 }
 /** The inputs to one server-side upstream code exchange. */
@@ -87,6 +93,12 @@ export interface Provider {
 /** The Autheory adapter's configuration. */
 export interface AutheoryProviderOptions {
     issuer: string;
+    /**
+     * The adapter's own upstream client registration id, retained for parity
+     * with the Go and Python options. It is never read: the adapter never derives
+     * a request's client id from it, and a request that omits its upstream client
+     * id fails closed with `invalid_request`.
+     */
     clientId?: string;
     discoveryUrl?: string;
     tokenEndpoint?: string;
@@ -110,7 +122,6 @@ export declare function newAutheoryProvider(options: AutheoryProviderOptions): P
 /** The Autheory provider adapter. */
 export declare class AutheoryProvider implements Provider {
     private readonly issuer;
-    private readonly defaultClientId;
     private readonly discoveryUrlOverride;
     private readonly tokenEndpointOverride;
     private readonly authorizationEndpointOverride;
@@ -134,6 +145,15 @@ export declare class AutheoryProvider implements Provider {
      * call, and clears the cache when it fails so a later call retries.
      */
     private settleDiscovery;
+    /**
+     * Builds the absolute upstream authorize URL. Everything that can fail
+     * closed is checked before the endpoint is resolved, so no refused request
+     * reaches the upstream: a hint whose name collides, case-insensitively after
+     * trimming, with a required or reserved authorize parameter fails closed
+     * with `invalid_request`, and so does a request that omits its own upstream
+     * client id. The required parameters are then built first, so an accepted
+     * hint can never replace one.
+     */
     authorizationUrl(req: AuthorizationRequest): Promise<string>;
     exchangeCode(req: CodeExchangeRequest): Promise<TokenSet>;
     refresh(req: RefreshRequest): Promise<TokenSet>;

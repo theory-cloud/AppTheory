@@ -204,6 +204,18 @@ func TestAuthorizationRequestValidationPaths(t *testing.T) {
 	if err := missingResource.validate(); err == nil {
 		t.Fatal("a blank resource was accepted")
 	}
+
+	collidingHint := valid
+	collidingHint.Hints = map[string]string{" Client_ID ": "attacker-client"}
+	if err := collidingHint.validate(); err == nil {
+		t.Fatal("a hint colliding with a required parameter was accepted")
+	}
+
+	forwardedHint := valid
+	forwardedHint.Hints = map[string]string{"": "ignored", "account_id": "acct_hint"}
+	if err := forwardedHint.validate(); err != nil {
+		t.Fatalf("a non-colliding hint was rejected: %v", err)
+	}
 }
 
 func TestAuthorizationURLFailClosedPaths(t *testing.T) {
@@ -221,10 +233,9 @@ func TestAuthorizationURLFailClosedPaths(t *testing.T) {
 		t.Fatal("a non-https authorization endpoint was accepted")
 	}
 
-	// A blank hint name is skipped, a named hint is applied, and a required
-	// parameter can never be replaced by a hint.
+	// A blank hint name is skipped and a non-colliding hint is applied.
 	working := &AutheoryProvider{authzOverride: "https://auth.example.test/oauth/authorize?existing=1"}
-	request.Hints = map[string]string{"": "ignored", "account_id": "acct_hint", "state": "attacker-state"}
+	request.Hints = map[string]string{"": "ignored", "account_id": "acct_hint"}
 	raw, err := working.AuthorizationURL(request)
 	if err != nil {
 		t.Fatalf("AuthorizationURL: %v", err)
@@ -238,10 +249,22 @@ func TestAuthorizationURLFailClosedPaths(t *testing.T) {
 		t.Errorf("hint account_id = %q", query.Get("account_id"))
 	}
 	if query.Get("state") != "state" {
-		t.Errorf("a blank hint or a named hint overrode state: %q", query.Get("state"))
+		t.Errorf("a blank hint overrode state: %q", query.Get("state"))
 	}
 	if query.Get("existing") != "1" {
 		t.Errorf("the endpoint's own query was dropped: %q", raw)
+	}
+
+	// A hint colliding with a required parameter is refused, not applied.
+	for _, hints := range []map[string]string{
+		{"state": "attacker-state"},
+		{"Client_ID": "attacker-client"},
+		{" response_type ": "token"},
+	} {
+		request.Hints = hints
+		if raw, err := working.AuthorizationURL(request); err == nil {
+			t.Fatalf("a hint colliding with a required parameter was accepted: %q", raw)
+		}
 	}
 }
 

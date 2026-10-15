@@ -207,6 +207,78 @@ the builder is a repository script that adds no runtime code path and never runs
 read `docs/development/planning/apptheory/mcp-auth-facade/CANDIDATE_BUILD_INTERFACE.md` §4.1 (the interface as
 built) and §4.2 (how TMS and Autheory call it).
 
+### TableTheory 5.2.0 dependency and multi-window rate-limit error classification
+
+The v6 line now pins TableTheory 5.2.0 in all three runtimes: `github.com/theory-cloud/tabletheory/v5 v5.2.0` in Go,
+`theory-cloud-tabletheory-ts-5.2.0.tgz` in TypeScript and `tabletheory_py-5.2.0-py3-none-any.whl` in Python, together
+with the AWS SDK module versions TableTheory 5.2.0 requires under minimum version selection. Both non-Go assets are
+immutable GitHub Release assets, pinned by SHA-512
+`9bvnC3DyKjA7DziyRyfYoi5t/4hJt6YLlN1gGuhLPEioktUo3OgeUdbyO8luJyi1dcC1VE6pT4vnEM926QtsPQ==` for the TypeScript tarball
+and SHA-256 `bce361b931b5d44dc2d229ed18a2befa2f508d29e27ef649381ba61e9c23c359` for the Python wheel. Use the pinned
+assets through AppTheory's package metadata; do not substitute registry-published packages or mutable URLs.
+
+**The one behavioral change.** TableTheory 5.1.0 classifies a cancelled `TransactWrite` by its FIRST genuine
+cancellation reason. Go already classified by reason, but the pre-repin TypeScript and Python adapters did not, and
+they did not do so in the same way — measured on the base pins (`tabletheory-ts` 5.0.0, `tabletheory_py` 5.0.0), the
+two runtimes misclassified differently. All three runtimes now agree, so the multi-window rate limiters
+(`DynamoRateLimiter`) change behavior:
+
+| Cancellation class | Before (TypeScript 5.0.0) | Before (Python 5.0.0) | Now (Go, TypeScript, Python) |
+| --- | --- | --- | --- |
+| Genuine `ConditionalCheckFailed` — a window budget was exceeded | soft denial: `allowed=false` plus a retry-after | soft denial | unchanged |
+| A reason list that contains a `ConditionalCheckFailed` reason which is not the first genuine reason (for example a throttle first, the condition failure second) | soft denial | soft denial — the old Python matcher tested the whole reason list, not just the first genuine reason | follows the configured fail-open policy |
+| A cancellation whose message mentions `ConditionalCheckFailed` while its reason list carries no such reason | soft denial | soft denial — the old Python matcher also sniffed the message text | follows the configured fail-open policy |
+| A DynamoDB throttle, a transaction conflict, an unknown code, an all-`None` or empty reason list | soft denial | already followed the configured fail-open policy | follows the configured fail-open policy |
+
+In plain words: **TypeScript treated every cancellation as a condition failure and soft-denied all of them**, so a
+throttle or a transaction conflict no longer produces a soft denial in the TypeScript multi-window limiter; it now
+follows the configured `failOpen` policy exactly as Go always has. **Python was already reason-aware for the plain
+throttle, conflict, unknown-code, all-`None` and empty rows**, which admitted or failed closed exactly as they do
+now; what changes in Python is narrower — a cancellation was also read as a condition failure whenever the message
+mentioned `ConditionalCheckFailed`, or whenever the reason list carried a `ConditionalCheckFailed` reason anywhere
+rather than only in the first genuine position, and those two shapes now follow the configured `failOpen` policy as
+well. `failOpen: true`, the AppTheory default, admits the request; `failOpen: false` returns an `internal_error`.
+
+**To make a throttle deny instead of admit, configure fail-closed:** Go `limited.Config{FailOpen: false}`,
+TypeScript `new DynamoRateLimiter({ config: { failOpen: false } })`, Python
+`DynamoRateLimiter(config=replace(default_config(), fail_open=False))`. A consumer that previously depended on the
+misclassification — in TypeScript any cancellation read as a condition failure, in Python the narrower
+conditional-check-in-the-list or message-mention cases — should branch on the current error code instead:
+`ErrThrottled` / `ErrTransactionConflict` in TypeScript, `ThrottledError` / `TransactionConflictError` in Python.
+The shared conformance table `contract-tests/fixtures/routing/limiter/multi-window-cancellation.v1.json` pins every
+class in all three runtimes.
+
+**TableTheory 5.2.0 compatibility notes.** Nothing in TableTheory 5.1.0 or 5.2.0 changes stored bytes. On the Go
+Builder path the genuine-failure attribution is unchanged; sentinel selection on the `Transaction` API moved from
+"any reason" to "first genuine failure", which no AppTheory surface branches on. A cancellation that carries no
+genuine reason is now a generic transaction failure rather than a condition failure. Two additive TableTheory
+surfaces exist and AppTheory deliberately does **not** adopt them, so a consumer can: typed-only safe error helpers
+(`safeErrorFields` in TypeScript, `safe_dict()` on the Python error classes) that never include the retained cause,
+and opt-in item-image redaction (`new TheorydbClient(ddb, { redactItemImages: true })` in TypeScript, `Table(model,
+client=…, redact_item_images=True)` in Python) that strips cancellation-reason and condition-failure item images
+from the retained cause. Both are off by default, so a retained cause is the same object it was before; the plain
+statement of what the default still allows is in each runtime's `docs/troubleshooting.md`.
+
+### OAuth provider authorize-request validation fails closed on a colliding hint
+
+The provider adapters previously disagreed about a `ProviderHints` entry whose key collides with a required or
+reserved authorize parameter. Go and Python silently dropped the hint (the required parameter won); TypeScript
+applied hints after the required parameters, so a TS hint actually **overrode** `client_id`, `redirect_uri`,
+`state`, `code_challenge`, `code_challenge_method`, `response_type`, `resource` or `scope`. All three runtimes now
+refuse such a hint with the adapter's `invalid_request` class before any endpoint is resolved, and a non-colliding
+hint is still forwarded verbatim. The three runtimes also disagreed about a hint *name* carrying leading or trailing
+whitespace — Go forwarded the untrimmed name as a second query parameter while TypeScript and Python silently
+collapsed it onto the trimmed name — and all three now refuse such a name with the same `invalid_request` class.
+**Action:** an application that configured a colliding `ProviderHints` key — or a hint name with surrounding
+whitespace — now fails closed: the authorize request is not sent, and the facade reports it as the provider-call
+failure the `ProviderHints` seam already documents (502 `upstream_error`) — instead of having that hint silently
+ignored, injected, rewritten or duplicated. Rename the hint, or drop it.
+
+TypeScript also no longer falls back to the configured `clientId` when a request omits `upstreamClientId`: a blank
+request client id fails closed with `invalid_request`, matching Go and Python, which already required it. The
+`clientId` / `client_id` adapter options are retained for cross-runtime parity and never supply a request's client
+id.
+
 ## v5.x line
 
 AppTheory v5 is a major release on two axes: the Go module path moves to the next semantic import version, and the Go

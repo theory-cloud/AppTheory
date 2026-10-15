@@ -53,6 +53,23 @@ const TERMINAL_TOKEN_ERROR_CODES = new Set([
     "invalid_token",
 ]);
 /**
+ * The authorize parameters the adapter itself owns. A hint whose name collides
+ * with one of these -- compared case-insensitively after trimming -- is refused
+ * with `invalid_request` instead of being allowed to override or duplicate it:
+ * the required parameter wins by refusal, never by silent replacement. The set
+ * is identical in the Go and Python adapters.
+ */
+const RESERVED_AUTHORIZE_PARAMETERS = new Set([
+    "response_type",
+    "client_id",
+    "redirect_uri",
+    "code_challenge",
+    "code_challenge_method",
+    "state",
+    "resource",
+    "scope",
+]);
+/**
  * A provider-call failure in the facade's closed vocabulary. `httpStatus` is
  * the facade status the class maps to, and `op` names the SPI operation that
  * failed; both are safe to surface.
@@ -117,7 +134,6 @@ export async function newAutheoryProvider(options) {
 /** The Autheory provider adapter. */
 export class AutheoryProvider {
     issuer;
-    defaultClientId;
     discoveryUrlOverride;
     tokenEndpointOverride;
     authorizationEndpointOverride;
@@ -131,7 +147,6 @@ export class AutheoryProvider {
     constructor(options) {
         const opts = options ?? {};
         this.issuer = trimmed(opts.issuer);
-        this.defaultClientId = trimmed(opts.clientId);
         this.discoveryUrlOverride = trimmed(opts.discoveryUrl);
         this.tokenEndpointOverride = trimmed(opts.tokenEndpoint);
         this.authorizationEndpointOverride = trimmed(opts.authorizationEndpoint);
@@ -185,8 +200,17 @@ export class AutheoryProvider {
             throw error;
         }
     }
+    /**
+     * Builds the absolute upstream authorize URL. Everything that can fail
+     * closed is checked before the endpoint is resolved, so no refused request
+     * reaches the upstream: a hint whose name collides, case-insensitively after
+     * trimming, with a required or reserved authorize parameter fails closed
+     * with `invalid_request`, and so does a request that omits its own upstream
+     * client id. The required parameters are then built first, so an accepted
+     * hint can never replace one.
+     */
     async authorizationUrl(req) {
-        const clientId = trimmed(req?.upstreamClientId) || this.defaultClientId;
+        const clientId = trimmed(req?.upstreamClientId);
         const callbackUrl = trimmed(req?.callbackUrl);
         const codeChallenge = trimmed(req?.codeChallenge);
         const codeChallengeMethod = trimmed(req?.codeChallengeMethod);
@@ -201,6 +225,9 @@ export class AutheoryProvider {
             codeChallengeMethod !== "S256") {
             throw new ProviderError("invalid_request", OP_AUTHORIZATION_URL);
         }
+        // Hints are validated before the discovery/endpoint fetch, so a refused
+        // hint causes no upstream interaction at all.
+        const hints = forwardableHints(req?.hints);
         const metadata = await this.discovery();
         const url = new URL(metadata.authorizationEndpoint);
         url.searchParams.set("response_type", "code");
@@ -214,10 +241,10 @@ export class AutheoryProvider {
         const scope = joinScopes(req?.scopes ?? []);
         if (scope)
             url.searchParams.set("scope", scope);
-        for (const [key, value] of Object.entries(req?.hints ?? {})) {
-            const name = trimmed(key);
-            if (name)
-                url.searchParams.set(name, String(value ?? ""));
+        // The required parameters are already in place, so an accepted hint only
+        // ever adds a parameter the adapter does not own.
+        for (const [name, value] of hints) {
+            url.searchParams.set(name, value);
         }
         return url.toString();
     }
@@ -631,6 +658,33 @@ function stringListField(record, name) {
 }
 function joinScopes(scopes) {
     return normalizeList(scopes).join(" ");
+}
+/**
+ * Validates the caller's hints before any upstream call and returns the ones
+ * that may be forwarded, as already-trimmed name/value pairs. A blank name is
+ * dropped, a name that carries leading or trailing whitespace is refused (the
+ * three runtimes previously disagreed about it: Go forwarded the untrimmed name
+ * as a second query parameter while TypeScript and Python collapsed it onto the
+ * trimmed one), and a name that collides, case-insensitively after trimming,
+ * with a required or reserved authorize parameter is refused as
+ * `invalid_request`; this runs before the authorize endpoint is resolved, so a
+ * refused hint causes no upstream interaction.
+ */
+function forwardableHints(hints) {
+    const forwarded = [];
+    for (const [key, value] of Object.entries(hints ?? {})) {
+        const name = trimmed(key);
+        if (name !== key) {
+            throw new ProviderError("invalid_request", OP_AUTHORIZATION_URL);
+        }
+        if (!name)
+            continue;
+        if (RESERVED_AUTHORIZE_PARAMETERS.has(name.toLowerCase())) {
+            throw new ProviderError("invalid_request", OP_AUTHORIZATION_URL);
+        }
+        forwarded.push([name, String(value ?? "")]);
+    }
+    return forwarded;
 }
 function normalizeList(values) {
     const out = [];
