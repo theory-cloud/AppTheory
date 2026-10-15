@@ -10834,7 +10834,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/rest-v1-challenge-restoration.ts",
-        "line": 46
+        "line": 160
       },
       "name": "AppTheoryChallengeAliasBridgeOptions",
       "properties": [
@@ -10848,7 +10848,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-v1-challenge-restoration.ts",
-            "line": 57
+            "line": 171
           },
           "name": "enabled",
           "optional": true,
@@ -27526,14 +27526,14 @@
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
       "docs": {
-        "remarks": "AWS REST API v1 remaps the origin's `WWW-Authenticate` response header onto\n`x-amzn-remapped-www-authenticate`, so a canonical-only app loses the\nchallenge at the edge. This construct fronts the REST v1 `execute-api` origin\nwith a CloudFront distribution whose origin-response Lambda@Edge function\ncopies the first present source back onto `WWW-Authenticate` and removes the\nconsumed source headers.\n\nThe restore **source set**, in priority order, is:\n\n1. `x-amzn-remapped-www-authenticate` — the artifact AWS itself produces when\n   REST v1 remaps the origin header. Always consulted.\n2. the bridge aliases `x-theory-www-authenticate`, then\n   `mcp-www-authenticate` — consulted only when the optional alias bridge is\n   enabled (off by default).\n\nThe derived route set and the explicit ordered cache behaviors come from the\nshared route algebra (`AppTheoryMcpRouteAlgebra`), so the construct is never\nhand-wired. Parameterized derived routes (those carrying a `{parameter}`\nsegment) cannot be expressed as CloudFront path patterns and are therefore\ncovered by the distribution's default behavior.",
+        "remarks": "AWS REST API v1 remaps the origin's `WWW-Authenticate` response header onto\n`x-amzn-remapped-www-authenticate`, so a canonical-only app loses the\nchallenge at the edge. This construct fronts the REST v1 `execute-api` origin\nwith a CloudFront distribution whose origin-response Lambda@Edge function\ncopies the first present source back onto `WWW-Authenticate` and removes the\nconsumed source headers.\n\nThe restore **source set**, in priority order, is:\n\n1. `x-amzn-remapped-www-authenticate` — the artifact AWS itself produces when\n   REST v1 remaps the origin header. Always consulted.\n2. the bridge aliases `x-theory-www-authenticate`, then\n   `mcp-www-authenticate` — consulted only when the optional alias bridge is\n   enabled (off by default).\n\n## The direct-endpoint caveat (DD-2)\n\nA CloudFront front door does **not** by itself make the origin unreachable.\nThe REST API keeps answering at its own\n`<restApiId>.execute-api.<region>.<urlSuffix>` endpoint, which is exactly the\norigin this distribution uses, so a client that skips the distribution still\nreaches the origin and observes a **challenge-less `401`** for a REST v1\ncanonical-only app — the restoration never runs, and any edge-only control\n(throttling at the edge, edge observability, the alias bridge) is bypassed on\nthat path. Authentication itself is unaffected: the runtime bearer gate still\nrefuses the request at the origin, so this is challenge loss and edge bypass,\nnot an authentication bypass.\n\n`originReachability` is therefore **required** (DD-2's mandatory\ndirect-origin decision):\n\n- `DISABLED` — the REST API's `execute-api` default endpoint is disabled. The\n  caller asserts it (`disableExecuteApiEndpointAsserted: true`) because this\n  construct cannot mutate an external `IRestApi`. The construct does not\n  verify the assertion, and the disabled hostname is the distribution's own\n  origin hostname, so an app that disables the default endpoint must front the\n  origin through a custom domain.\n- `LOCKED` — the origin is reachable only through this distribution. The\n  construct injects `originLock.secret` as a custom origin header on every\n  request to the origin, and the caller asserts\n  (`originLock.asserted: true`) that the REST API verifies that header; the\n  construct cannot attach the verification to an external `IRestApi`.\n\nA directly reachable origin (`direct`) is refused at synthesis. The decision\nis recorded in the distribution's CloudFormation metadata\n(`apptheory:rest-v1-challenge-restoration`), so the posture is auditable from\nthe synthesized template.\n\nThe derived route set and the explicit ordered cache behaviors come from the\nshared route algebra (`AppTheoryMcpRouteAlgebra`), so the construct is never\nhand-wired. Parameterized derived routes (those carrying a `{parameter}`\nsegment) cannot be expressed as CloudFront path patterns and are therefore\ncovered by the distribution's default behavior.",
         "summary": "A framework CloudFront front door that restores the canonical `WWW-Authenticate` challenge for an AWS API Gateway REST API v1 origin."
       },
       "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestV1ChallengeRestoration",
       "initializer": {
         "locationInModule": {
           "filename": "lib/rest-v1-challenge-restoration.ts",
-          "line": 166
+          "line": 346
         },
         "parameters": [
           {
@@ -27559,7 +27559,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/rest-v1-challenge-restoration.ts",
-        "line": 135
+        "line": 306
       },
       "name": "AppTheoryRestV1ChallengeRestoration",
       "properties": [
@@ -27570,7 +27570,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-v1-challenge-restoration.ts",
-            "line": 149
+            "line": 320
           },
           "name": "aliasBridgeEnabled",
           "type": {
@@ -27585,7 +27585,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-v1-challenge-restoration.ts",
-            "line": 164
+            "line": 344
           },
           "name": "behaviorPathPatterns",
           "type": {
@@ -27604,7 +27604,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-v1-challenge-restoration.ts",
-            "line": 155
+            "line": 335
           },
           "name": "derivedRoutePaths",
           "type": {
@@ -27623,11 +27623,25 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-v1-challenge-restoration.ts",
-            "line": 137
+            "line": 308
           },
           "name": "distribution",
           "type": {
             "fqn": "aws-cdk-lib.aws_cloudfront.Distribution"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The recorded DD-2 direct-origin reachability decision."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-v1-challenge-restoration.ts",
+            "line": 323
+          },
+          "name": "originReachability",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestV1OriginReachability"
           }
         },
         {
@@ -27638,7 +27652,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-v1-challenge-restoration.ts",
-            "line": 146
+            "line": 317
           },
           "name": "restoreSourceHeaders",
           "type": {
@@ -27648,6 +27662,21 @@
               },
               "kind": "array"
             }
+          }
+        },
+        {
+          "docs": {
+            "summary": "The origin-lock header name injected on every request to the origin, or `undefined` when the decision is `DISABLED`."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-v1-challenge-restoration.ts",
+            "line": 329
+          },
+          "name": "originLockHeaderName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
           }
         }
       ],
@@ -27663,7 +27692,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/rest-v1-challenge-restoration.ts",
-        "line": 63
+        "line": 177
       },
       "name": "AppTheoryRestV1ChallengeRestorationProps",
       "properties": [
@@ -27676,11 +27705,27 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-v1-challenge-restoration.ts",
-            "line": 71
+            "line": 185
           },
           "name": "origin",
           "type": {
             "fqn": "aws-cdk-lib.aws_apigateway.IRestApi"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Required. `DISABLED` and `LOCKED` synthesize; anything else — in particular a\ndirectly reachable origin — fails synthesis with an error that names the\nrejected decision.",
+            "summary": "The mandatory DD-2 direct-origin reachability decision."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-v1-challenge-restoration.ts",
+            "line": 194
+          },
+          "name": "originReachability",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestV1OriginReachability"
           }
         },
         {
@@ -27692,7 +27737,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-v1-challenge-restoration.ts",
-            "line": 90
+            "line": 228
           },
           "name": "aliasBridge",
           "optional": true,
@@ -27709,12 +27754,29 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-v1-challenge-restoration.ts",
-            "line": 102
+            "line": 240
           },
           "name": "certificate",
           "optional": true,
           "type": {
             "fqn": "aws-cdk-lib.aws_certificatemanager.ICertificate"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "This construct fronts an external `IRestApi` it cannot mutate, so it cannot\nset the property for the caller; it requires the assertion instead and\nrecords it in the distribution metadata.",
+            "summary": "The caller's assertion that the REST API's `disableExecuteApiEndpoint` is set, required with `originReachability: DISABLED`."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-v1-challenge-restoration.ts",
+            "line": 204
+          },
+          "name": "disableExecuteApiEndpointAsserted",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
           }
         },
         {
@@ -27726,7 +27788,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-v1-challenge-restoration.ts",
-            "line": 97
+            "line": 235
           },
           "name": "domainNames",
           "optional": true,
@@ -27742,12 +27804,28 @@
         {
           "abstract": true,
           "docs": {
+            "summary": "The mandatory origin lock, required with `originReachability: LOCKED`."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-v1-challenge-restoration.ts",
+            "line": 209
+          },
+          "name": "originLock",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestV1OriginLockOptions"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
             "summary": "Optional CloudFront price class."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-v1-challenge-restoration.ts",
-            "line": 107
+            "line": 245
           },
           "name": "priceClass",
           "optional": true,
@@ -27765,7 +27843,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-v1-challenge-restoration.ts",
-            "line": 83
+            "line": 221
           },
           "name": "resourcePaths",
           "optional": true,
@@ -27780,6 +27858,105 @@
         }
       ],
       "symbolId": "lib/rest-v1-challenge-restoration:AppTheoryRestV1ChallengeRestorationProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestV1OriginLockOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "remarks": "The construct injects `secret` as the `headerName` custom origin header on\n**every** request it sends to the REST v1 origin, so an origin-side\nverification can refuse a request that did not come through this\ndistribution. The construct fronts an external `IRestApi`, so it cannot attach\nthat verification itself: the caller asserts it with `asserted: true`.",
+        "summary": "The origin lock for `originReachability: LOCKED`."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestV1OriginLockOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/rest-v1-challenge-restoration.ts",
+        "line": 121
+      },
+      "name": "AppTheoryRestV1OriginLockOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "This construct cannot attach a resource policy, authorizer, or any other\norigin-side verification to an external `IRestApi` it does not own, so it\nrefuses to synthesize until the caller records that the verification exists\nand requires the injected header. Must be `true`.",
+            "summary": "The caller's assertion that the REST API verifies the origin lock."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-v1-challenge-restoration.ts",
+            "line": 154
+          },
+          "name": "asserted",
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "32 to 128 characters of `[A-Za-z0-9._~-]`. The value is a literal CloudFront\norigin custom header value, so it appears verbatim in the synthesized\ntemplate and must not be (or contain) a credential you cannot rotate with the\nREST API's verification.",
+            "summary": "The literal secret injected as the origin-lock header on every CloudFront request to the origin."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-v1-challenge-restoration.ts",
+            "line": 131
+          },
+          "name": "secret",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "\"x-apptheory-origin-lock\"",
+            "remarks": "1 to 64 characters of `[A-Za-z0-9-]`, and never a name CloudFront reserves or\nthat rewrites the origin request contract (`Host`, `Authorization`,\n`Cookie`, `Content-Length`, `Transfer-Encoding`, `Connection`,\n`WWW-Authenticate`, `X-Forwarded-For`, or any `x-amz-*`, `x-amzn-*`, or\n`cloudfront-*` name).",
+            "summary": "The origin-lock header name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-v1-challenge-restoration.ts",
+            "line": 144
+          },
+          "name": "headerName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/rest-v1-challenge-restoration:AppTheoryRestV1OriginLockOptions"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestV1OriginReachability": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "docs": {
+        "remarks": "DD-2 (`DEFENSE_IN_DEPTH.md`) requires the deployment to **record** whether the\n`execute-api` default endpoint is directly reachable and, when it is, to make\nthat posture explicit. A directly reachable origin (`direct`) is **not**\nallowed: it is not a member of this enum and the construct refuses it at\nsynthesis.",
+        "summary": "The DD-2 direct-origin reachability decision for a REST v1 origin."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestV1OriginReachability",
+      "kind": "enum",
+      "locationInModule": {
+        "filename": "lib/rest-v1-challenge-restoration.ts",
+        "line": 83
+      },
+      "members": [
+        {
+          "docs": {
+            "remarks": "Because the construct fronts an external `IRestApi` it cannot mutate, the\ncaller must assert the disablement with\n`disableExecuteApiEndpointAsserted: true`.\n\nNote the platform shape: the disabled hostname is exactly the\n`<restApiId>.execute-api.<region>.<urlSuffix>` hostname this construct uses\nas its origin, so an app that disables the default endpoint must front its\nREST API through a custom domain (AWS requires a custom domain once the\ndefault endpoint is disabled). `LOCKED` is the posture for a REST v1 origin\nthis construct is expected to serve.",
+            "summary": "The REST API's `execute-api` default endpoint is disabled (`disableExecuteApiEndpoint`), so the API is not reachable at its default endpoint."
+          },
+          "name": "DISABLED"
+        },
+        {
+          "docs": {
+            "remarks": "Requires `originLock` carrying the origin-lock secret the construct injects\nas a custom origin header, plus the caller's assertion that the REST API\nverifies that header (the construct cannot attach an origin-side\nverification to an external `IRestApi`).",
+            "summary": "The origin is reachable only through this construct's CloudFront front door."
+          },
+          "name": "LOCKED"
+        }
+      ],
+      "name": "AppTheoryRestV1OriginReachability",
+      "symbolId": "lib/rest-v1-challenge-restoration:AppTheoryRestV1OriginReachability"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryS3Ingest": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -31109,5 +31286,5 @@
     }
   },
   "version": "6.0.0",
-  "fingerprint": "PbQy2hYJfSAdin8gafYealCyjrPTc1FJFNMuTTxCfqs="
+  "fingerprint": "WUziEhdyknzczqHeqbdBLAVydoYiw5DJ9A7/fDmU34A="
 }

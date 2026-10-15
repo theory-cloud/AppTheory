@@ -13,12 +13,15 @@ const cloudfront = require("aws-cdk-lib/aws-cloudfront");
 const {
   AppTheoryMcpRouteAlgebra: Algebra,
   AppTheoryRestV1ChallengeRestoration,
+  AppTheoryRestV1OriginReachability,
 } = require("../lib/index.js");
 
 const METADATA_KEY = "apptheory:rest-v1-challenge-restoration";
 const CONTRACT_ID = "m17.rest-v1-challenge-restoration/v1";
 const REMAP_HEADER = "x-amzn-remapped-www-authenticate";
 const ALIAS_HEADERS = ["x-theory-www-authenticate", "mcp-www-authenticate"];
+const ORIGIN_LOCK_HEADER = "x-apptheory-origin-lock";
+const ORIGIN_LOCK_SECRET = "0123456789abcdef0123456789abcdef";
 const NON_REST_V1_ORIGIN_MESSAGE =
   "AppTheoryRestV1ChallengeRestoration: origin must be an AWS API Gateway REST API (v1); " +
   "the WWW-Authenticate restoration is a documented no-op on HTTP API v2";
@@ -41,6 +44,15 @@ function newRestApi(stack) {
   return api;
 }
 
+// The DD-2 props every behavior test shares: a LOCKED origin with a valid lock.
+// The decision itself is exercised by the dedicated decision tests below.
+function locked() {
+  return {
+    originReachability: AppTheoryRestV1OriginReachability.LOCKED,
+    originLock: { secret: ORIGIN_LOCK_SECRET, asserted: true },
+  };
+}
+
 function resourcesOfType(template, type) {
   return Object.values(template.Resources ?? {}).filter(
     (resource) => resource.Type === type,
@@ -59,6 +71,12 @@ function distributionConfig(template) {
   return distributions[0].Properties.DistributionConfig;
 }
 
+function originOf(template) {
+  const config = distributionConfig(template);
+  assert.equal(config.Origins.length, 1, "one origin");
+  return config.Origins[0];
+}
+
 function orderedBehaviors(config) {
   return config.CacheBehaviors ?? [];
 }
@@ -69,6 +87,18 @@ function inlineLambdaCode(template) {
   const code = functions[0].Properties.Code?.ZipFile;
   assert.equal(typeof code, "string", "the edge Lambda carries inline code");
   return code;
+}
+
+function originRequestPolicyHeaders(template) {
+  const entries = resourcesOfTypeWithId(template, "AWS::CloudFront::OriginRequestPolicy");
+  assert.equal(entries.length, 1, "one shared origin request policy");
+  return entries[0][1].Properties.OriginRequestPolicyConfig.HeadersConfig;
+}
+
+function distributionMetadata(template) {
+  const distributions = resourcesOfTypeWithId(template, "AWS::CloudFront::Distribution");
+  assert.equal(distributions.length, 1);
+  return distributions[0][1].Metadata[METADATA_KEY];
 }
 
 function captureError(fn) {
@@ -108,6 +138,7 @@ function expectedDerivedRoutes(resourcePaths) {
 test("derives the route set from the shared route algebra", () => {
   const stack = newStack();
   const construct = new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+    ...locked(),
     origin: newRestApi(stack),
     resourcePaths: ["/mcp"],
   });
@@ -126,6 +157,7 @@ test("derives the route set from the shared route algebra", () => {
 test("synthesizes the distribution, origin request policy and origin-response edge function", () => {
   const stack = newStack();
   const construct = new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+    ...locked(),
     origin: newRestApi(stack),
   });
   const template = assertions.Template.fromStack(stack).toJSON();
@@ -146,22 +178,19 @@ test("synthesizes the distribution, origin request policy and origin-response ed
     "the origin is the REST API execute-api domain",
   );
 
-  // The shared origin request policy forwards every viewer header except Host,
-  // plus all cookies and all query strings (the CDK-native form of the managed
-  // ALL_VIEWER_EXCEPT_HOST_HEADER policy, which cannot carry Authorization in an
-  // allow list). The query string must be forwarded or the derived authorize and
-  // callback routes lose their parameters; cookies must be forwarded for a
-  // cookie-carried session.
-  const policyEntries = resourcesOfTypeWithId(
-    template,
-    "AWS::CloudFront::OriginRequestPolicy",
-  );
-  assert.equal(policyEntries.length, 1, "one shared origin request policy");
-  const [policyLogicalId, policy] = policyEntries[0];
-  assert.deepEqual(policy.Properties.OriginRequestPolicyConfig.HeadersConfig, {
+  // The shared origin request policy forwards every viewer header except Host
+  // and, under LOCKED, the origin-lock header as well (so a viewer copy cannot
+  // ride along with the CloudFront-injected one), plus all cookies and all query
+  // strings (the CDK-native form of the managed ALL_VIEWER_EXCEPT_HOST_HEADER
+  // policy, which cannot carry Authorization in an allow list). The query string
+  // must be forwarded or the derived authorize and callback routes lose their
+  // parameters; cookies must be forwarded for a cookie-carried session.
+  assert.deepEqual(originRequestPolicyHeaders(template), {
     HeaderBehavior: "allExcept",
-    Headers: ["Host"],
+    Headers: ["Host", ORIGIN_LOCK_HEADER],
   });
+  const entries = resourcesOfTypeWithId(template, "AWS::CloudFront::OriginRequestPolicy");
+  const [policyLogicalId, policy] = entries[0];
   assert.deepEqual(policy.Properties.OriginRequestPolicyConfig.CookiesConfig, {
     CookieBehavior: "all",
   });
@@ -212,6 +241,7 @@ test("synthesizes the distribution, origin request policy and origin-response ed
 test("the default alias bridge consults only the AWS REST v1 remap artifact", () => {
   const stack = newStack();
   const construct = new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+    ...locked(),
     origin: newRestApi(stack),
   });
 
@@ -241,6 +271,7 @@ test("the default alias bridge consults only the AWS REST v1 remap artifact", ()
 test("the enabled alias bridge consults the remap artifact before the alias spellings", () => {
   const stack = newStack();
   const construct = new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+    ...locked(),
     origin: newRestApi(stack),
     aliasBridge: { enabled: true },
   });
@@ -270,6 +301,7 @@ test("refuses an origin that is not a REST API v1", () => {
   const error = captureError(
     () =>
       new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+        ...locked(),
         origin: {},
       }),
   );
@@ -281,6 +313,7 @@ test("refuses domainNames without a certificate", () => {
   const error = captureError(
     () =>
       new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+        ...locked(),
         origin: newRestApi(stack),
         domainNames: ["api.example.com"],
       }),
@@ -296,6 +329,7 @@ test("refuses a resourcePaths entry the route model cannot derive", () => {
   const error = captureError(
     () =>
       new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+        ...locked(),
         origin: newRestApi(stack),
         resourcePaths: [42],
       }),
@@ -308,42 +342,273 @@ test("refuses a resourcePaths entry the route model cannot derive", () => {
   );
 });
 
-test("records the restoration marker in the distribution metadata", () => {
+test("refuses a missing or direct origin reachability decision at synthesis", () => {
+  const cases = [
+    { label: "missing", props: {}, received: "undefined" },
+    { label: "direct", props: { originReachability: "direct" }, received: '"direct"' },
+    { label: "unknown", props: { originReachability: "public" }, received: '"public"' },
+  ];
+  for (const { label, props, received } of cases) {
+    const stack = newStack();
+    const error = captureError(
+      () =>
+        new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+          origin: newRestApi(stack),
+          ...props,
+        }),
+    );
+    assert.ok(
+      error.message.includes("originReachability is required and must be"),
+      `${label}: expected the required-decision error, got: ${error.message}`,
+    );
+    assert.ok(
+      error.message.includes("AppTheoryRestV1OriginReachability.DISABLED or .LOCKED"),
+      label,
+    );
+    assert.ok(
+      error.message.includes("('direct') is not allowed") &&
+        error.message.includes(received),
+      `${label}: the rejected decision is named (${received})`,
+    );
+  }
+});
+
+test("DISABLED requires the caller's disablement assertion and injects no origin lock", () => {
+  // The assertion is mandatory: the construct fronts an external IRestApi it
+  // cannot mutate, so it never sets disableExecuteApiEndpoint itself.
+  const refusalStack = newStack();
+  const error = captureError(
+    () =>
+      new AppTheoryRestV1ChallengeRestoration(refusalStack, "Restoration", {
+        origin: newRestApi(refusalStack),
+        originReachability: AppTheoryRestV1OriginReachability.DISABLED,
+      }),
+  );
+  assert.ok(
+    error.message.includes("disableExecuteApiEndpointAsserted: true"),
+    `unexpected message: ${error.message}`,
+  );
+  assert.ok(error.message.includes("external IRestApi"));
+
   const stack = newStack();
   const construct = new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
     origin: newRestApi(stack),
+    originReachability: AppTheoryRestV1OriginReachability.DISABLED,
+    disableExecuteApiEndpointAsserted: true,
   });
+  assert.equal(construct.originReachability, "disabled");
+  assert.equal(construct.originLockHeaderName, undefined);
+
   const template = assertions.Template.fromStack(stack).toJSON();
-  const distributions = resourcesOfTypeWithId(template, "AWS::CloudFront::Distribution");
-  assert.equal(distributions.length, 1);
-  assert.deepEqual(distributions[0][1].Metadata[METADATA_KEY], {
+  const origin = originOf(template);
+  assert.equal(
+    origin.OriginCustomHeaders,
+    undefined,
+    "DISABLED injects no origin custom header",
+  );
+  assert.deepEqual(originRequestPolicyHeaders(template), {
+    HeaderBehavior: "allExcept",
+    Headers: ["Host"],
+  });
+  // The construct does not own the API, so it records the caller's assertion
+  // rather than mutating the external REST API.
+  const apis = resourcesOfType(template, "AWS::ApiGateway::RestApi");
+  assert.equal(apis.length, 1);
+  assert.equal(
+    apis[0].Properties.DisableExecuteApiEndpoint,
+    undefined,
+    "the construct never mutates an external IRestApi",
+  );
+  assert.deepEqual(distributionMetadata(template), {
     contractId: CONTRACT_ID,
     aliasBridge: false,
     sourceHeaders: [REMAP_HEADER],
     routeCount: construct.derivedRoutePaths.length,
+    originReachability: "disabled",
+    disableExecuteApiEndpointAsserted: true,
+  });
+});
+
+test("LOCKED requires a complete origin lock", () => {
+  const cases = [
+    {
+      label: "no originLock",
+      lock: undefined,
+      expected: "LOCKED requires originLock",
+    },
+    {
+      label: "asserted false",
+      lock: { secret: ORIGIN_LOCK_SECRET, asserted: false },
+      expected: "requires originLock.asserted: true",
+    },
+    {
+      label: "short secret",
+      lock: { secret: "tooshort", asserted: true },
+      expected: "originLock.secret must be 32..128 characters",
+    },
+    {
+      label: "secret with a control character",
+      lock: { secret: `${"a".repeat(32)}\r\nx`, asserted: true },
+      expected: "originLock.secret must be 32..128 characters",
+    },
+    {
+      label: "secret with whitespace",
+      lock: { secret: `${"a".repeat(31)} `, asserted: true },
+      expected: "originLock.secret must be 32..128 characters",
+    },
+    {
+      label: "reserved header name",
+      lock: { secret: ORIGIN_LOCK_SECRET, asserted: true, headerName: "authorization" },
+      expected: "is reserved by CloudFront or the origin request contract",
+    },
+    {
+      label: "aws reserved header prefix",
+      lock: { secret: ORIGIN_LOCK_SECRET, asserted: true, headerName: "x-amzn-trace-id" },
+      expected: "is reserved by CloudFront or the origin request contract",
+    },
+    {
+      label: "header name outside the alphabet",
+      lock: { secret: ORIGIN_LOCK_SECRET, asserted: true, headerName: "x lock" },
+      expected: "headerName must be 1..64 characters of [A-Za-z0-9-]",
+    },
+  ];
+  for (const { label, lock, expected } of cases) {
+    const stack = newStack();
+    const error = captureError(
+      () =>
+        new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+          origin: newRestApi(stack),
+          originReachability: AppTheoryRestV1OriginReachability.LOCKED,
+          ...(lock === undefined ? {} : { originLock: lock }),
+        }),
+    );
+    assert.ok(
+      error.message.includes(expected),
+      `${label}: expected "${expected}", got: ${error.message}`,
+    );
+  }
+});
+
+test("refuses contradictory reachability props", () => {
+  const disabledStack = newStack();
+  const disabledError = captureError(
+    () =>
+      new AppTheoryRestV1ChallengeRestoration(disabledStack, "Restoration", {
+        origin: newRestApi(disabledStack),
+        originReachability: AppTheoryRestV1OriginReachability.DISABLED,
+        disableExecuteApiEndpointAsserted: true,
+        originLock: { secret: ORIGIN_LOCK_SECRET, asserted: true },
+      }),
+  );
+  assert.ok(disabledError.message.includes("originLock is only valid with originReachability"));
+
+  const lockedStack = newStack();
+  const lockedError = captureError(
+    () =>
+      new AppTheoryRestV1ChallengeRestoration(lockedStack, "Restoration", {
+        ...locked(),
+        origin: newRestApi(lockedStack),
+        disableExecuteApiEndpointAsserted: true,
+      }),
+  );
+  assert.ok(
+    lockedError.message.includes("disableExecuteApiEndpointAsserted is only valid with originReachability"),
+  );
+});
+
+test("LOCKED injects the origin-lock header on the origin and never into the edge function", () => {
+  const stack = newStack();
+  const construct = new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+    ...locked(),
+    origin: newRestApi(stack),
+  });
+  assert.equal(construct.originReachability, "locked");
+  assert.equal(construct.originLockHeaderName, ORIGIN_LOCK_HEADER);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.deepEqual(originOf(template).OriginCustomHeaders, [
+    { HeaderName: ORIGIN_LOCK_HEADER, HeaderValue: ORIGIN_LOCK_SECRET },
+  ]);
+  assert.deepEqual(distributionMetadata(template), {
+    contractId: CONTRACT_ID,
+    aliasBridge: false,
+    sourceHeaders: [REMAP_HEADER],
+    routeCount: construct.derivedRoutePaths.length,
+    originReachability: "locked",
+    originLockHeader: ORIGIN_LOCK_HEADER,
+  });
+
+  const code = inlineLambdaCode(template);
+  assert.ok(
+    !code.includes(ORIGIN_LOCK_SECRET),
+    "the origin-lock secret reaches the origin, never the edge function",
+  );
+  assert.ok(
+    !code.includes(ORIGIN_LOCK_HEADER),
+    "the edge function does not consult the origin-lock header",
+  );
+});
+
+test("honors a custom origin-lock header name", () => {
+  const stack = newStack();
+  const construct = new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+    origin: newRestApi(stack),
+    originReachability: AppTheoryRestV1OriginReachability.LOCKED,
+    originLock: {
+      secret: ORIGIN_LOCK_SECRET,
+      asserted: true,
+      headerName: "x-example-origin-verify",
+    },
+  });
+  assert.equal(construct.originLockHeaderName, "x-example-origin-verify");
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.deepEqual(originOf(template).OriginCustomHeaders, [
+    { HeaderName: "x-example-origin-verify", HeaderValue: ORIGIN_LOCK_SECRET },
+  ]);
+  assert.deepEqual(originRequestPolicyHeaders(template), {
+    HeaderBehavior: "allExcept",
+    Headers: ["Host", "x-example-origin-verify"],
+  });
+});
+
+test("records the restoration marker in the distribution metadata", () => {
+  const stack = newStack();
+  const construct = new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+    ...locked(),
+    origin: newRestApi(stack),
+  });
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.deepEqual(distributionMetadata(template), {
+    contractId: CONTRACT_ID,
+    aliasBridge: false,
+    sourceHeaders: [REMAP_HEADER],
+    routeCount: construct.derivedRoutePaths.length,
+    originReachability: "locked",
+    originLockHeader: ORIGIN_LOCK_HEADER,
   });
 
   const bridgedStack = newStack();
   const bridged = new AppTheoryRestV1ChallengeRestoration(bridgedStack, "Restoration", {
+    ...locked(),
     origin: newRestApi(bridgedStack),
     aliasBridge: { enabled: true },
   });
   const bridgedTemplate = assertions.Template.fromStack(bridgedStack).toJSON();
-  const bridgedDistribution = resourcesOfTypeWithId(
-    bridgedTemplate,
-    "AWS::CloudFront::Distribution",
-  )[0][1];
-  assert.deepEqual(bridgedDistribution.Metadata[METADATA_KEY], {
+  assert.deepEqual(distributionMetadata(bridgedTemplate), {
     contractId: CONTRACT_ID,
     aliasBridge: true,
     sourceHeaders: [REMAP_HEADER, ...ALIAS_HEADERS],
     routeCount: bridged.derivedRoutePaths.length,
+    originReachability: "locked",
+    originLockHeader: ORIGIN_LOCK_HEADER,
   });
 });
 
 test("orders one cache behavior per literal derived route", () => {
   const stack = newStack();
   const construct = new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+    ...locked(),
     origin: newRestApi(stack),
     resourcePaths: ["/mcp"],
   });
@@ -368,6 +633,7 @@ test("orders one cache behavior per literal derived route", () => {
 test("accepts a parameterized resource path and covers it with the default behavior", () => {
   const stack = newStack();
   const construct = new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+    ...locked(),
     origin: newRestApi(stack),
     resourcePaths: ["/agents/{actor}/mcp"],
   });
@@ -405,6 +671,7 @@ test("accepts a parameterized resource path and covers it with the default behav
 test("treats an empty resourcePaths array as the default resource patterns", () => {
   const stack = newStack();
   const construct = new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+    ...locked(),
     origin: newRestApi(stack),
     resourcePaths: [],
   });
@@ -425,6 +692,7 @@ test("fronts the REST v1 domain when a certificate is supplied", () => {
     "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555",
   );
   new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+    ...locked(),
     origin: newRestApi(stack),
     domainNames: ["api.example.com"],
     certificate,
@@ -452,6 +720,7 @@ function originResponseEvent(headers) {
 test("restores the challenge from the remap artifact and removes the consumed header", () => {
   const stack = newStack();
   new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+    ...locked(),
     origin: newRestApi(stack),
   });
   const handler = loadInlineHandler(assertions.Template.fromStack(stack).toJSON());
@@ -477,6 +746,7 @@ test("restores the challenge from the remap artifact and removes the consumed he
 test("leaves an origin-emitted challenge intact and still removes the source header", () => {
   const stack = newStack();
   new AppTheoryRestV1ChallengeRestoration(stack, "Restoration", {
+    ...locked(),
     origin: newRestApi(stack),
   });
   const handler = loadInlineHandler(assertions.Template.fromStack(stack).toJSON());
@@ -498,6 +768,7 @@ test("leaves an origin-emitted challenge intact and still removes the source hea
 test("restores from a bridge alias only when the alias bridge is enabled", () => {
   const enabledStack = newStack();
   new AppTheoryRestV1ChallengeRestoration(enabledStack, "Restoration", {
+    ...locked(),
     origin: newRestApi(enabledStack),
     aliasBridge: { enabled: true },
   });
@@ -521,6 +792,7 @@ test("restores from a bridge alias only when the alias bridge is enabled", () =>
   // source to restore from, so no canonical challenge is synthesized.
   const disabledStack = newStack();
   new AppTheoryRestV1ChallengeRestoration(disabledStack, "Restoration", {
+    ...locked(),
     origin: newRestApi(disabledStack),
   });
   const disabledHandler = loadInlineHandler(
