@@ -489,16 +489,23 @@ def _resolve_override(value: Any) -> str | None:
 def _forwardable_authorize_hints(hints: dict[str, Any] | None, op: str) -> dict[str, str]:
     """The caller's hints with the reserved-name rule applied.
 
-    A blank name is skipped; a non-colliding name is forwarded under its trimmed
-    spelling, so a hint never reaches the upstream as a duplicate or an override
-    of a parameter the adapter owns. A name that collides, case-insensitively
-    after trimming, with a required or reserved authorize parameter is refused
-    with ``invalid_request`` — the required parameter is never silently replaced,
-    and the caller is never left believing it set something the adapter dropped.
+    A blank name is skipped; a name carrying leading or trailing whitespace is
+    refused (the three runtimes previously disagreed about it: Go forwarded the
+    untrimmed name as a second query parameter while TypeScript and Python
+    collapsed it onto the trimmed one); a non-colliding, already-trimmed name is
+    forwarded under its trimmed spelling, so a hint never reaches the upstream as
+    a duplicate or an override of a parameter the adapter owns. A name that
+    collides, case-insensitively after trimming, with a required or reserved
+    authorize parameter is refused with ``invalid_request`` — the required
+    parameter is never silently replaced, and the caller is never left believing
+    it set something the adapter dropped.
     """
     forwarded: dict[str, str] = {}
     for key, value in (hints or {}).items():
-        name = str(key).strip()
+        raw = str(key)
+        name = raw.strip()
+        if name != raw:
+            raise ProviderError(ERROR_INVALID_REQUEST, op)
         if not name:
             continue
         if name.lower() in RESERVED_AUTHORIZE_PARAMETERS:

@@ -875,10 +875,13 @@ function joinScopes(scopes: readonly string[]): string {
 /**
  * Validates the caller's hints before any upstream call and returns the ones
  * that may be forwarded, as already-trimmed name/value pairs. A blank name is
- * dropped, and a name that collides, case-insensitively after trimming, with a
- * required or reserved authorize parameter is refused as `invalid_request`;
- * this runs before the authorize endpoint is resolved, so a refused hint
- * causes no upstream interaction.
+ * dropped, a name that carries leading or trailing whitespace is refused (the
+ * three runtimes previously disagreed about it: Go forwarded the untrimmed name
+ * as a second query parameter while TypeScript and Python collapsed it onto the
+ * trimmed one), and a name that collides, case-insensitively after trimming,
+ * with a required or reserved authorize parameter is refused as
+ * `invalid_request`; this runs before the authorize endpoint is resolved, so a
+ * refused hint causes no upstream interaction.
  */
 function forwardableHints(
   hints: Record<string, string> | undefined,
@@ -886,6 +889,9 @@ function forwardableHints(
   const forwarded: Array<[string, string]> = [];
   for (const [key, value] of Object.entries(hints ?? {})) {
     const name = trimmed(key);
+    if (name !== key) {
+      throw new ProviderError("invalid_request", OP_AUTHORIZATION_URL);
+    }
     if (!name) continue;
     if (RESERVED_AUTHORIZE_PARAMETERS.has(name.toLowerCase())) {
       throw new ProviderError("invalid_request", OP_AUTHORIZATION_URL);

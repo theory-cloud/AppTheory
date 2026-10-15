@@ -21,7 +21,7 @@ import (
 const providerConformanceFixture = "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-provider-conformance.v1.json"
 
 // providerFixtureCaseCount is the case count the shared fixture must carry.
-const providerFixtureCaseCount = 27
+const providerFixtureCaseCount = 29
 
 // defaultFetchTimeout bounds one upstream call in the conformance harness,
 // unless the case states its own fetch_timeout_seconds.

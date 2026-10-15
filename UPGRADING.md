@@ -266,10 +266,13 @@ reserved authorize parameter. Go and Python silently dropped the hint (the requi
 applied hints after the required parameters, so a TS hint actually **overrode** `client_id`, `redirect_uri`,
 `state`, `code_challenge`, `code_challenge_method`, `response_type`, `resource` or `scope`. All three runtimes now
 refuse such a hint with the adapter's `invalid_request` class before any endpoint is resolved, and a non-colliding
-hint is still forwarded verbatim. **Action:** an application that configured a colliding `ProviderHints` key now
-fails closed — the authorize request is not sent, and the facade reports it as the provider-call failure the
-`ProviderHints` seam already documents (502 `upstream_error`) — instead of having that hint silently ignored or
-injected. Rename the hint, or drop it.
+hint is still forwarded verbatim. The three runtimes also disagreed about a hint *name* carrying leading or trailing
+whitespace — Go forwarded the untrimmed name as a second query parameter while TypeScript and Python silently
+collapsed it onto the trimmed name — and all three now refuse such a name with the same `invalid_request` class.
+**Action:** an application that configured a colliding `ProviderHints` key — or a hint name with surrounding
+whitespace — now fails closed: the authorize request is not sent, and the facade reports it as the provider-call
+failure the `ProviderHints` seam already documents (502 `upstream_error`) — instead of having that hint silently
+ignored, injected, rewritten or duplicated. Rename the hint, or drop it.
 
 TypeScript also no longer falls back to the configured `clientId` when a request omits `upstreamClientId`: a blank
 request client id fails closed with `invalid_request`, matching Go and Python, which already required it. The

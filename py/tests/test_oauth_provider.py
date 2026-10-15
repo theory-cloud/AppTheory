@@ -124,7 +124,7 @@ class ProviderConformanceTests(unittest.TestCase):
 
     def test_fixture_table_is_complete(self) -> None:
         cases = self.fixture["cases"]
-        self.assertEqual(len(cases), 27)
+        self.assertEqual(len(cases), 29)
         self.assertEqual({case["operation"] for case in cases}, EXPECTED_OPERATIONS)
         self.assertTrue(self.fixture["autheory"]["resource_parameter_required_at_authorize"])
 
@@ -136,7 +136,7 @@ class ProviderConformanceTests(unittest.TestCase):
                 self._run_case(case)
                 executed += 1
         print(f"provider conformance: {executed} cases run")
-        self.assertEqual(executed, 27)
+        self.assertEqual(executed, 29)
 
     # -- dispatch ------------------------------------------------------------
 

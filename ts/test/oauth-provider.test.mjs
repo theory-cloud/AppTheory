@@ -273,9 +273,9 @@ function assertCase(testCase, observed) {
   }
 }
 
-test("provider conformance fixture carries 27 cases", () => {
-  assert.equal(CASES.length, 27);
-  assert.equal(new Set(CASES.map((c) => c.id)).size, 27);
+test("provider conformance fixture carries 29 cases", () => {
+  assert.equal(CASES.length, 29);
+  assert.equal(new Set(CASES.map((c) => c.id)).size, 29);
 });
 
 test("the Autheory adapter satisfies the provider conformance table", async () => {
@@ -284,7 +284,7 @@ test("the Autheory adapter satisfies the provider conformance table", async () =
     assertCase(testCase, await observeCase(testCase));
     ran += 1;
   }
-  assert.equal(ran, 27);
+  assert.equal(ran, 29);
   console.log(
     `provider conformance: ${ran}/${CASES.length} cases passed (adapter + testkit fake upstream)`,
   );
