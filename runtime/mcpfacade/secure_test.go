@@ -28,7 +28,7 @@ const secureAppMountGroup = "secure_app_mount"
 // fixture must carry; a change to the table must also be a deliberate edit in
 // the Go, TypeScript, and Python loaders, so no runtime can silently execute a
 // smaller table.
-const secureAppMountCaseCount = 39
+const secureAppMountCaseCount = 40
 
 const (
 	// secureMountRouteResource is the advertising resource of the namespace route
@@ -104,6 +104,13 @@ type secureAppMountCase struct {
 	ExpectHandlerInvocations        *int   `json:"expect_handler_invocations"`
 	ExpectResolverInvocations       *int   `json:"expect_resolver_invocations"`
 	ExpectPolicyHookInvocations     *int   `json:"expect_policy_hook_invocations"`
+
+	// PolicyHook selects how the application's own policy hook answers: the zero
+	// value allows (the allow-policy every other request row pins), and "deny"
+	// denies with PolicyHookCode, so a row can pin a FACADE route against the
+	// policy hook's own denial rather than the transport gate's.
+	PolicyHook     string `json:"policy_hook"`
+	PolicyHookCode string `json:"policy_hook_code"`
 
 	// inventory_parity
 	ExpectEqual             bool   `json:"expect_equal"`
@@ -442,7 +449,8 @@ func executeSecureMountRequestRow(t *testing.T, row secureAppMountCase) {
 }
 
 // newSecureMountRequestApp mounts the facade on a SecureApp with the counting
-// resolver and allow-policy every request row pins and installs the
+// resolver and the policy hook the row names — the allow-policy every request
+// row pins, or a denial whose code the row carries — and installs the
 // application's own authenticated route beside it, exactly as TMS mounts its
 // non-MCP families on the same app.
 func newSecureMountRequestApp(t *testing.T, row secureAppMountCase) (*frontChannelHarness, *secureMountCounters) {
@@ -454,6 +462,13 @@ func newSecureMountRequestApp(t *testing.T, row secureAppMountCase) (*frontChann
 		securePrincipalResolver: counters.resolve,
 		policyHook:              counters.policy,
 		mcpInvocations:          &counters.mcpHandler,
+	}
+	if row.PolicyHook == "deny" {
+		code := row.PolicyHookCode
+		options.policyHook = func(*apptheory.Context) (*apptheory.PolicyDecision, error) {
+			counters.policyHook++
+			return &apptheory.PolicyDecision{Code: code}, nil
+		}
 	}
 	if options.transportPosture == TransportPostureRuntimeBearer {
 		options.requireBearerTokenFor = secureMountBearerTokenFor(t)

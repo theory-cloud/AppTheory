@@ -66,7 +66,7 @@ const SECURE_APP_MOUNT_GROUP = "secure_app_mount";
  * the table must also be a deliberate edit in the Go and Python loaders, so no
  * runtime can silently execute a smaller table.
  */
-const SECURE_APP_MOUNT_CASE_COUNT = 39;
+const SECURE_APP_MOUNT_CASE_COUNT = 40;
 
 /**
  * The rows of each scenario the shared table carries. The three loaders below
@@ -75,7 +75,7 @@ const SECURE_APP_MOUNT_CASE_COUNT = 39;
  */
 const SECURE_APP_SCENARIO_CASE_COUNTS = new Map([
   ["posture", 25],
-  ["request", 10],
+  ["request", 11],
   ["inventory_parity", 4],
 ]);
 
@@ -330,8 +330,13 @@ test("the secure_app_mount posture table pins every facade route's declared post
 // Request rows: the same authority table, driven through real requests
 // ---------------------------------------------------------------------------
 
-/** Counts resolver and PolicyHook invocations, so a row can pin both. */
-function countingSecureAuthority() {
+/**
+ * Counts resolver and PolicyHook invocations, so a row can pin both. The hook
+ * allows by default (returning no decision); a row that carries a denial code
+ * denies with it instead, so a request row can pin the policy hook's own
+ * denial rather than the transport gate's.
+ */
+function countingSecureAuthority(policyHookCode) {
   const resolver = { count: 0 };
   const policyHook = { count: 0 };
   return {
@@ -351,7 +356,10 @@ function countingSecureAuthority() {
     },
     hook: () => {
       policyHook.count += 1;
-      return undefined;
+      if (policyHookCode === undefined) {
+        return undefined;
+      }
+      return { code: policyHookCode };
     },
   };
 }
@@ -379,9 +387,10 @@ const AUDIT_HANDLER_BODY = "audit-ok";
  * Starts the row's world and mounts it on a tier-P2 SecureApp that also owns one
  * non-facade route, so every request row drives the closed-by-default app the
  * application itself would run: the facade's own routes plus one route the
- * application declared under its own principal authority.
+ * application declared under its own principal authority. A row that names a
+ * policy-hook denial installs a denying hook with the row's own code.
  */
-async function newSecureRequestHarness(t, transportPosture) {
+async function newSecureRequestHarness(t, transportPosture, policyHookCode) {
   const invocations = { count: 0 };
   const world = await startFrontChannelWorld(t, {
     transportPosture,
@@ -391,7 +400,7 @@ async function newSecureRequestHarness(t, transportPosture) {
       ? { requireBearerTokenFor: secureBearerTokenFor }
       : {}),
   });
-  const authority = countingSecureAuthority();
+  const authority = countingSecureAuthority(policyHookCode);
   const secure = new SecureApp({
     tier: "p2",
     clock: world.clock,
@@ -434,7 +443,11 @@ function secureTransportToken(harness, scope) {
 }
 
 async function executeSecureRequestRow(t, row) {
-  const harness = await newSecureRequestHarness(t, row.transport_posture);
+  const harness = await newSecureRequestHarness(
+    t,
+    row.transport_posture,
+    row.policy_hook === "deny" ? row.policy_hook_code : undefined,
+  );
   const context = `row ${row.id}`;
   const transportPath = mcpPath(harness.world.endpoint);
 

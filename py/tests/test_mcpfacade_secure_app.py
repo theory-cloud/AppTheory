@@ -36,6 +36,7 @@ from test_mcpfacade_front_channel import (
 from apptheory import (
     URL_MODE_PUBLIC_BASE_URL,
     FacadeConfig,
+    PolicyDecision,
     PrincipalKind,
     RequireBearerTokenOptions,
     RootDiscoveryConfig,
@@ -72,7 +73,7 @@ SECURE_APP_MOUNT_GROUP = "secure_app_mount"
 # The number of secure_app_mount rows the shared table must carry; a change to the
 # table must also be a deliberate edit in the Go and TypeScript loaders, so no
 # runtime can silently execute a smaller table.
-SECURE_APP_MOUNT_CASE_COUNT = 39
+SECURE_APP_MOUNT_CASE_COUNT = 40
 
 POSTURE_SCENARIO = "posture"
 REQUEST_SCENARIO = "request"
@@ -241,14 +242,19 @@ def _counted_resolver(invocations: _Invocations):
     return resolver
 
 
-def _counted_policy(invocations: _Invocations):
+def _counted_policy(invocations: _Invocations, denial_code: str | None = None):
     """The application's own policy hook: it allows everything and counts every
-    decision, so a route that never reached it is observable.
+    decision, so a route that never reached it is observable. A row that names a
+    denial code gets a hook that answers with that code instead, so a row can pin
+    a facade route against the policy hook's own denial rather than the transport
+    gate's.
     """
 
-    def policy(_ctx: Context) -> None:
+    def policy(_ctx: Context) -> PolicyDecision | None:
         invocations.policy += 1
-        return None
+        if denial_code is None:
+            return None
+        return PolicyDecision(code=denial_code, message="")
 
     return policy
 
@@ -269,6 +275,7 @@ def _mount_secure(
     tier: str = "p0",
     clock=None,
     with_non_facade_route: bool = False,
+    policy_denial_code: str | None = None,
 ) -> tuple[SecureApp, facade_module.RouteInventory]:
     """Mount the facade on a fresh SecureApp and, when asked, give that same app
     the application's own resolver, policy hook, and non-facade route, so the two
@@ -279,7 +286,7 @@ def _mount_secure(
         tier=tier,
         clock=clock,
         principal_resolver=_counted_resolver(counts) if with_non_facade_route else None,
-        policy_hook=_counted_policy(counts) if with_non_facade_route else None,
+        policy_hook=_counted_policy(counts, policy_denial_code) if with_non_facade_route else None,
     )
     inventory = register_mcp_facade_secure(secure, config)
     if with_non_facade_route:
@@ -467,6 +474,7 @@ class SecureAppMountConformanceTests(unittest.TestCase):
             tier="p2",
             clock=harness.clock,
             with_non_facade_route=True,
+            policy_denial_code=(row["policy_hook_code"] if row.get("policy_hook") == "deny" else None),
         )
 
         request = row["request"]

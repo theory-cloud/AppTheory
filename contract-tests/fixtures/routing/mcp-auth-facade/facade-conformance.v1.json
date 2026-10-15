@@ -1095,6 +1095,19 @@
       "expect_resolver_invocations": 1
     },
     {
+      "id": "secure_app_mount.request.runtime_bearer_transport_policy_denial_is_the_policy_hook_denial",
+      "group": "secure_app_mount",
+      "scenario": "request",
+      "transport_posture": "runtime-bearer",
+      "request": "transport_credential_free",
+      "policy_hook": "deny",
+      "policy_hook_code": "app.rate_limited",
+      "expect_status": 429,
+      "expect_handler_invocations": 0,
+      "expect_resolver_invocations": 0,
+      "expect_policy_hook_invocations": 1
+    },
+    {
       "id": "secure_app_mount.request.non_facade_route_requires_the_app_principal",
       "group": "secure_app_mount",
       "scenario": "request",
