@@ -145,15 +145,18 @@ unchanged because they are separate, non-posture-bearing registries.
 
 ### Framework registrars on a `SecureApp`
 
-Framework-owned registrars that mount several routes at once — `runtime/oauth.RegisterMCPServer` and the MCP OAuth
-facade's `RegisterMCPFacadeSecure`, plus their TypeScript and Python equivalents — register through these same
+Framework-owned registrars that mount several routes at once — the MCP OAuth facade's `RegisterMCPFacadeSecure` and its
+TypeScript and Python counterparts, and `runtime/oauth.RegisterMCPServer` — register through these same
 posture-carrying methods and declare one posture per route. They add no accessor to the app's core, so a route the
 application never declares stays undeliverable, and the application's own resolver, tier, and `PolicyHook` keep
-governing every route a registrar does not own. A registrar that mounts several routes is all-or-nothing on a
-`SecureApp`: it proves the whole plan before the app receives its first facade route, so a rejected plan — including
-a collision with a route the application already declares — adds no route at all. `RegisterMCPServer`'s split (a
-public discovery route, an `Authenticated` MCP endpoint) is the simplest form of the same rule; the facade's full
-table is in [MCP facade helper](mcp-facade-helper.md#closed-by-default-secureapp-mounts).
+governing every route a registrar does not own. The facade registrars are all-or-nothing on a `SecureApp`: the whole
+plan is proven before the app receives its first facade route, so a rejected plan — including a collision with a route
+the application declares on any surface that shares the app's router — adds no route at all. The
+`runtime/oauth.RegisterMCPServer` registrar is not all-or-nothing: it has no preflight, so it mounts its routes in
+order through these same methods, and a collision is reported by the app's own duplicate check after the routes it
+registered before that collision are already mounted. Its split (a public discovery route, an `Authenticated` MCP
+endpoint) is otherwise the simplest form of the posture rule; the facade's full table is in
+[MCP facade helper](mcp-facade-helper.md#closed-by-default-secureapp-mounts).
 
 ## Fixed ordering by tier
 
