@@ -26,6 +26,11 @@ bash ./scripts/test-verify-npm-install-hygiene.sh
 # malformed scanner reports, planted node paths) so a checker that stops
 # failing closed fails the rubric.
 bash ./scripts/test-check-visible-findings.sh
+# The lab candidate builder is the fail-closed entry point for "build AppTheory at a
+# pinned commit" (docs/development/planning/apptheory/mcp-auth-facade/CANDIDATE_BUILD_INTERFACE.md).
+# Run its offline self-test so a builder that stops refusing live, environment input, a dirty
+# tree, a wrong tree or a tampered surface hash fails the rubric instead of the lab proof.
+bash ./scripts/lab/candidate-build-self-test.sh
 bash ./gov-infra/verifiers/gov-verify-rubric.sh
 
 echo "rubric: PASS"

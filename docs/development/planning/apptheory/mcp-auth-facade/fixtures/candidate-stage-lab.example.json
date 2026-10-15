@@ -1,0 +1,59 @@
+{
+  "_comment": [
+    "Runnable example of the encoded candidate stage config read by scripts/lab/candidate-build.sh.",
+    "The builder takes every build input from this file and never from an operator environment",
+    "variable; it resolves the block at apptheory.candidate (preferred) or deployment.apptheory.candidate",
+    "(the Autheory app-theory/stages/*.json shape). All seven surfaces are required and each sha256 is",
+    "verified against a fresh build of the pinned commit; a mismatch fails closed. The exact hashes and",
+    "commit/tree below are placeholders -- a real candidate is admitted only by a witnessed build that",
+    "records the observed values here. See CANDIDATE_BUILD_INTERFACE.md (section 4) for the trust chain.",
+    "Values are placeholders of the correct shape only: 40 lowercase hex for commit/tree, 64 hex for",
+    "sha256, and an npm-shaped sha512 integrity. This example does not build anything on its own."
+  ],
+  "stage": "lab",
+  "expected_account_id": "123456789012",
+  "apptheory": {
+    "candidate": {
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "tree": "fedcba9876543210fedcba9876543210fedcba98",
+      "source_date_epoch": 1760000000,
+      "surfaces": {
+        "go_runtime": {
+          "_comment": "git archive of the root Go module tree at the pinned commit (excludes cdk-go)",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "go_cdk": {
+          "_comment": "git archive of the cdk-go/apptheorycdk module tree at the pinned commit",
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "npm_cdk": {
+          "_comment": "theory-cloud-apptheory-cdk-<version>.tgz; sha256 and npm integrity are both verified",
+          "file": "theory-cloud-apptheory-cdk-6.1.0.tgz",
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+        },
+        "npm_ts_runtime": {
+          "_comment": "theory-cloud-apptheory-<version>.tgz; sha256 and npm integrity are both verified",
+          "file": "theory-cloud-apptheory-6.1.0.tgz",
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+        },
+        "py_runtime_wheel": {
+          "_comment": "apptheory-<version>-py3-none-any.whl from ./scripts/verify-python-build.sh",
+          "file": "apptheory-6.1.0-py3-none-any.whl",
+          "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+        },
+        "py_runtime_sdist": {
+          "_comment": "apptheory-<version>.tar.gz from the same ./scripts/verify-python-build.sh run",
+          "file": "apptheory-6.1.0.tar.gz",
+          "sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+        },
+        "py_cdk_wheel": {
+          "_comment": "apptheory_cdk-<version>-py3-none-any.whl from ./scripts/verify-cdk-python-build.sh",
+          "file": "apptheory_cdk-6.1.0-py3-none-any.whl",
+          "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+        }
+      }
+    }
+  }
+}
