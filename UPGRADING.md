@@ -162,7 +162,9 @@ loader reads the `deployment` object) carrying `commit`, `tree`, `source_date_ep
 values recorded by a witnessed build.
 
 `scripts/lab/candidate-build.sh` re-builds the declared surfaces (S1–S6) from the exported tree of that commit,
-verifies every declared per-surface hash and the tree (`git rev-parse <commit>^{tree}`), and writes a receipt
+verifies every declared per-surface hash and the tree (`git rev-parse <commit>^{tree}`), and checks that each
+`git archive` surface carries exactly the pinned commit's tracked files (a committed `.gitattributes` with
+`export-ignore` cannot silently filter a handed-over tree), then writes a receipt
 stamping each declared surface with the commit, the tree and the hash. The config declares the subset the consumer
 uses — at least one surface — and an undeclared surface is never built, handed over or receipted, so a consumer that
 uses two surfaces declares two. It refuses any stage other than `lab`, refuses any environment-variable input,

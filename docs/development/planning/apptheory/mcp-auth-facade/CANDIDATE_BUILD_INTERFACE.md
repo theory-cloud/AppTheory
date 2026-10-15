@@ -179,15 +179,22 @@ The checks run in this order, and each one fails closed before any artifact is h
 8. **Per-surface verification** — each surface is built with the repository's own deterministic build script,
    then hashed; a `sha256` mismatch (or an npm `integrity` mismatch) prints the encoded value, the observed value
    and the artifact path, removes the artifact from `--out`, and exits 1. An artifact is copied into `--out` only
-   **after** it verifies.
+   **after** it verifies. The two `git archive` surfaces are checked for their entry list first (see below), so a
+   filtered tree is refused by name rather than by a hash that would have matched.
 
 Surface → command as built (the S1/S2 tree archives are hashed directly; S3–S6 invoke the repository's own
-pack/build scripts, which already honor `SOURCE_DATE_EPOCH` and normalize artifact mtimes):
+pack/build scripts, which already honor `SOURCE_DATE_EPOCH` and normalize artifact mtimes). The two `git archive`
+surfaces are additionally checked **entry by entry**: the archive's file list must equal the pinned commit's
+tracked file list (minus the nested `cdk-go` module for S1), because a commit-level `.gitattributes` carrying
+`export-ignore` silently drops paths from `git archive` — and since the witnessed build runs the same command it
+filters identically, the per-surface hash would still match a tree that is missing paths. Git offers no way to
+switch that filtering off (`--worktree-attributes` only *adds* worktree attributes; there is no `--no-attributes`),
+so the entry list is compared against `git ls-tree -r` and any difference fails closed before the hash compare.
 
 | Surface | Command | Artifact |
 | --- | --- | --- |
-| S1 `go_runtime` | `git -C <repo> archive --format=tar <commit> -- . ':(exclude)cdk-go'` | `go_runtime.tar` |
-| S2 `go_cdk` | `git -C <repo> archive --format=tar <commit> -- cdk-go/apptheorycdk` | `go_cdk.tar` |
+| S1 `go_runtime` | `git -C <repo> archive --format=tar <commit> -- . ':(exclude)cdk-go'` then an entry-list comparison against `git ls-tree -r <commit>` minus `cdk-go` | `go_runtime.tar` |
+| S2 `go_cdk` | `git -C <repo> archive --format=tar <commit> -- cdk-go/apptheorycdk` then an entry-list comparison against `git ls-tree -r <commit> -- cdk-go/apptheorycdk` | `go_cdk.tar` |
 | S3 `npm_cdk` | `./scripts/verify-cdk-ts-pack.sh` | `theory-cloud-apptheory-cdk-<version>.tgz` |
 | S4 `npm_ts_runtime` | `./scripts/verify-ts-pack.sh` | `theory-cloud-apptheory-<version>.tgz` |
 | S5 `py_runtime_wheel` | `./scripts/verify-python-build.sh` (one run) | `apptheory-<pyversion>-py3-none-any.whl` |
@@ -214,7 +221,10 @@ repository (no network, no AWS, no credentials) and asserts: the example config 
 builds and verifies; a declared subset builds exactly its declared artifacts, hands none of the undeclared ones over,
 receipts only the declared ones and never runs an undeclared surface's build script; an empty declared surface set
 and a declared surface missing its witness are refused; an unknown surface key, a per-surface `commit` and a
-misspelled surface field are refused rather than ignored; a tampered `sha256`, a tampered npm `integrity`, a wrong
+misspelled surface field are refused rather than ignored; a committed `.gitattributes` carrying `export-ignore` is
+refused because the archive's entry list no longer equals the pinned commit's tree — and that case reproduces the
+attack exactly, since the witness hash it uses is the hash of the *filtered* archive, which a hash-only builder
+accepts; a tampered `sha256`, a tampered npm `integrity`, a wrong
 tree, a mismatched `source_date_epoch`, a wrong encoded `file`, a declared npm surface without its integrity, an
 environment variables-only attempt, a `live`/`staging` stage and an account mismatch all fail closed; and
 `--print-plan` writes nothing. The named fail-closed errors are each reachable and each proven to fire *before* the

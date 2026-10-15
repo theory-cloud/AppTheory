@@ -13,7 +13,8 @@
 # are byte-stable across runs. This self-test therefore exercises the builder's config parsing,
 # repo binding, stage allowlist, environment refusal, the declared-surface-subset contract (a
 # declared subset is built and an undeclared surface is never built, an unknown surface key or
-# a non-annotation per-surface field is refused), per-surface hash
+# a non-annotation per-surface field is refused), the git-archive entry-list check (a committed
+# `export-ignore` .gitattributes is refused), per-surface hash
 # verification, artifact handling and receipt -- it does NOT re-test the real npm/python builds.
 # One case asserts that REPO itself ships the real build scripts so the fixture cannot drift
 # away from reality.
@@ -894,6 +895,80 @@ assert_stderr_contains "surface py_cdk_wheel artifact is missing:"
 [[ "${builder_stderr}" != *"Traceback"* ]] || case_fail "a python traceback replaced the named artifact error"
 [[ "${builder_stderr}" != *"hash mismatch"* ]] || case_fail "the generic hash backstop spoke instead of the named artifact check"
 # Restore the fixture to its witnessed commit and its stand-in build scripts.
+git -C "${fixture}" reset -q --hard "${fixture_commit}"
+case_pass
+
+# --- case 25: a committed .gitattributes export-ignore filter is refused ----------------
+# The attack (ADV-APPT1150-F1): commit an `export-ignore` .gitattributes at the pinned
+# commit. `git archive` then silently drops the filtered paths, and because the witnessed
+# build runs the SAME archive command it filters identically -- so the recorded hash still
+# matches and the builder would hand over a tree that is not the pinned commit's tree. The
+# witness below is computed from that same filtered archive, so this case fails ONLY if the
+# archive's entry list is compared against the commit tree: a hash-only builder passes it.
+case_start "a committed .gitattributes export-ignore filter is refused"
+printf 'cdk/ export-ignore\n' > "${fixture}/.gitattributes"
+git -C "${fixture}" add -A
+git -C "${fixture}" commit -q -m "fixture: commit an export-ignore .gitattributes"
+filter_commit="$(git -C "${fixture}" rev-parse HEAD)"
+filter_tree="$(git -C "${fixture}" rev-parse "HEAD^{tree}")"
+filter_epoch="$(git -C "${fixture}" show -s --format=%ct HEAD)"
+git -C "${fixture}" archive --format=tar --output="${tmp}/filtered.tar" "${filter_commit}" -- . ':(exclude)cdk-go'
+filtered_sha="$(python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "${tmp}/filtered.tar")"
+cfg_filter="${tmp}/cfg-filter.json"
+write_config "${cfg_filter}" "lab" "${filter_commit}" "${filter_tree}" "${filter_epoch}"
+python3 - "${cfg_filter}" "${filtered_sha}" <<'PY'
+import json
+import sys
+
+path, filtered_sha = sys.argv[1], sys.argv[2]
+doc = json.load(open(path))
+surfaces = doc["apptheory"]["candidate"]["surfaces"]
+for name in list(surfaces):
+    if name != "go_runtime":
+        del surfaces[name]
+# The witnessed hash of the FILTERED archive: the hash alone cannot tell the difference.
+surfaces["go_runtime"]["sha256"] = filtered_sha
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_filter}" --out "${tmp}/out-filter"
+assert_status 1
+assert_stderr_contains "surface go_runtime archive entry list does not match the pinned commit tree"
+assert_stderr_contains "filtered out of the archive"
+assert_stderr_contains "cdk/package.json"
+assert_stderr_contains ".gitattributes can silently drop paths from git archive"
+[[ "${builder_stderr}" != *"hash mismatch"* ]] \
+  || case_fail "the recorded hash matched the filtered archive, so only the entry list can refuse this"
+[[ ! -f "${tmp}/out-filter/go_runtime.tar" ]] || case_fail "a filtered archive was handed over"
+# The same filter must also be refused for S2 when it covers the cdk-go subtree.
+printf 'cdk-go/apptheorycdk/go.mod export-ignore\n' > "${fixture}/.gitattributes"
+git -C "${fixture}" add -A
+git -C "${fixture}" commit -q -m "fixture: export-ignore the nested module's go.mod"
+filtered_commit2="$(git -C "${fixture}" rev-parse HEAD)"
+filtered_tree2="$(git -C "${fixture}" rev-parse "HEAD^{tree}")"
+filtered_epoch2="$(git -C "${fixture}" show -s --format=%ct HEAD)"
+git -C "${fixture}" archive --format=tar --output="${tmp}/filtered-cdk.tar" "${filtered_commit2}" -- cdk-go/apptheorycdk
+filtered_cdk_sha="$(python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "${tmp}/filtered-cdk.tar")"
+cfg_filter_cdk="${tmp}/cfg-filter-cdk.json"
+write_config "${cfg_filter_cdk}" "lab" "${filtered_commit2}" "${filtered_tree2}" "${filtered_epoch2}"
+python3 - "${cfg_filter_cdk}" "${filtered_cdk_sha}" <<'PY'
+import json
+import sys
+
+path, filtered_sha = sys.argv[1], sys.argv[2]
+doc = json.load(open(path))
+surfaces = doc["apptheory"]["candidate"]["surfaces"]
+for name in list(surfaces):
+    if name != "go_cdk":
+        del surfaces[name]
+surfaces["go_cdk"]["sha256"] = filtered_sha
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_filter_cdk}" --out "${tmp}/out-filter-cdk"
+assert_status 1
+assert_stderr_contains "surface go_cdk archive entry list does not match the pinned commit tree"
+assert_stderr_contains "cdk-go/apptheorycdk/go.mod"
 git -C "${fixture}" reset -q --hard "${fixture_commit}"
 case_pass
 

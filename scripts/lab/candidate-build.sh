@@ -34,6 +34,15 @@
 #   py_runtime_sdist  ./scripts/verify-python-build.sh
 #   py_cdk_wheel      ./scripts/verify-cdk-python-build.sh
 #
+# The two git-archive surfaces are additionally checked entry by entry: the archive's file
+# list must equal the pinned commit's tracked file list (minus the nested cdk-go module for
+# S1). A commit-level .gitattributes carrying `export-ignore` silently drops paths from
+# `git archive`, and because the witnessed build runs the same command it filters
+# identically -- the per-surface hash would still match a tree that is missing paths. Git
+# offers no way to switch that filtering off (`--worktree-attributes` only adds worktree
+# attributes; there is no --no-attributes), so the entry list is compared against
+# `git ls-tree -r` and any difference fails closed.
+#
 # The builder is incapable of targeting live for two independent reasons: the `stage`
 # allowlist is exactly `lab`, and a config without an encoded `candidate` block is refused.
 #
@@ -493,6 +502,83 @@ declare -A surface_artifact=()
 declare -A surface_sha=()
 declare -A surface_integrity=()
 
+# Fails closed unless a git-archive surface carries exactly the pinned commit's tracked
+# file list (minus <exclude_path>, the nested cdk-go module, for S1).
+#
+# The archive is produced by `git archive`, which honours the commit's own .gitattributes:
+# an `export-ignore` there silently drops paths from the archive and the witnessed build
+# (the same command) filters identically, so the per-surface hash would still match a tree
+# that is missing paths. Git exposes no option to disable in-tree export
+# filtering (`--worktree-attributes` only *adds* worktree attributes), so the archive's
+# entry list is compared against `git ls-tree -r` and any difference -- a filtered path, or
+# an entry the pinned tree does not carry -- fails closed before the hash compare runs.
+verify_archive_matches_tree() {
+  local name="$1"
+  local archive="$2"
+  local exclude_path="$3"
+  shift 3
+  local expected="${scratch}/${name}_ls-tree.txt"
+  if ! git -C "${repo}" ls-tree -r --name-only "${commit}" "$@" > "${expected}" 2>"${scratch}/${name}_ls-tree.err"; then
+    fail "surface ${name}: could not list the pinned commit's tree ($(head -n 1 "${scratch}/${name}_ls-tree.err"))"
+  fi
+  local diagnosis="${scratch}/${name}_entry-diff.txt"
+  if ! python3 - "${archive}" "${expected}" "${exclude_path}" > "${diagnosis}" <<'PY'
+import sys
+import tarfile
+
+archive_path, expected_path, exclude_path = sys.argv[1], sys.argv[2], sys.argv[3]
+
+excluded = exclude_path.rstrip("/")
+
+
+def is_excluded(path):
+    if not excluded:
+        return False
+    return path == excluded or path.startswith(excluded + "/")
+
+
+with open(expected_path, "r", encoding="utf-8") as handle:
+    expected = {
+        line.strip()
+        for line in handle
+        if line.strip() and not is_excluded(line.strip())
+    }
+
+with tarfile.open(archive_path, "r:") as archive:
+    archived = {
+        member.name
+        for member in archive.getmembers()
+        if member.isfile() or member.issym() or member.islnk()
+    }
+
+filtered = sorted(expected - archived)
+extra = sorted(archived - expected)
+if not filtered and not extra:
+    raise SystemExit(0)
+
+
+def preview(paths):
+    shown = ", ".join(paths[:10])
+    return shown + (f" (+{len(paths) - 10} more)" if len(paths) > 10 else "")
+
+
+if filtered:
+    print("filtered out of the archive, though the pinned tree carries it: " + preview(filtered))
+if extra:
+    print("present in the archive but not in the pinned tree: " + preview(extra))
+print(
+    "the pinned commit's .gitattributes can silently drop paths from git archive "
+    "(export-ignore), and the witnessed build filters identically, so a filtered tree would "
+    "still match its recorded hash"
+)
+raise SystemExit(1)
+PY
+  then
+    cat "${diagnosis}" >&2
+    fail "surface ${name} archive entry list does not match the pinned commit tree (see the paths above)"
+  fi
+}
+
 verify_and_copy() {
   local name="$1"
   local artifact="$2"
@@ -543,6 +629,7 @@ if [[ " ${declared_surfaces[*]} " == *" go_runtime "* ]]; then
   printf 'candidate-build: surface go_runtime\n'
   git -C "${repo}" archive --format=tar --output="${scratch}/go_runtime.tar" "${commit}" -- . ':(exclude)cdk-go' \
     || fail "surface go_runtime build failed (git archive)"
+  verify_archive_matches_tree go_runtime "${scratch}/go_runtime.tar" "cdk-go"
   verify_and_copy go_runtime "${scratch}/go_runtime.tar"
 fi
 
@@ -551,6 +638,7 @@ if [[ " ${declared_surfaces[*]} " == *" go_cdk "* ]]; then
   printf 'candidate-build: surface go_cdk\n'
   git -C "${repo}" archive --format=tar --output="${scratch}/go_cdk.tar" "${commit}" -- cdk-go/apptheorycdk \
     || fail "surface go_cdk build failed (git archive)"
+  verify_archive_matches_tree go_cdk "${scratch}/go_cdk.tar" "" cdk-go/apptheorycdk
   verify_and_copy go_cdk "${scratch}/go_cdk.tar"
 fi
 
