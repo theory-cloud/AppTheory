@@ -1093,11 +1093,11 @@ def _preflight_secure_registrations(secure_app: SecureApp, registrations: list[_
 
     _validate_registration_entries(registrations, install)
 
-    declared = {
-        key
-        for route in secure_app.routes()
-        if (key := _shared_router_route_key(route)) is not None
-    }
+    declared: set[str] = set()
+    for route in secure_app.routes():
+        key = _shared_router_route_key(route)
+        if key is not None:
+            declared.add(key)
     for planned in probe.routes():
         key = _shared_router_route_key(planned)
         if key is None:
