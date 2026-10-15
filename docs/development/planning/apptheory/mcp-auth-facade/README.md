@@ -26,6 +26,13 @@ It answers operator rulings of 2026-10-12 (Factory docs/110):
 **M0 (design, contract and fixtures) is complete in this folder.** No runtime, CDK, or version change is in
 M0. M1–M4 implement the design; M5 migrates TMS/Autheory; M6 is the operator-run lab proof.
 
+**Implemented:** M1, M2 and M3 (delivered as M3b-i, M3b-ii, M3c-1a, M3c-1b and M3c-2) and M4 are implemented for
+Go, TypeScript, Python and CDK on the `staging` line. M4 covers the framework CDK edge `WWW-Authenticate`
+restoration construct for REST v1 origins (G9), the release-note correction mechanism (G11) and the deterministic
+`streamjoin` close test (G12), and it ships the lab candidate-build builder that §4 of
+`CANDIDATE_BUILD_INTERFACE.md` specifies. M5 (TMS/Autheory adoption) and M6 (the operator-run lab proof) are not
+started, and every lab item in `UNVERIFIED.md` stays open.
+
 ## Default-semantics recommendation (read this first)
 
 **Facade-scoped default flip.** An `AppTheoryMcpServer` that attaches the OAuth facade defaults to
@@ -47,10 +54,10 @@ operator reviews this at the M0 PR.
 | `CONFORMANCE_KIT.md` | Item 6 — the conformance-kit spec (synth posture pin, credential-free 401 + challenge, fail-closed). |
 | `MINIMAL_CONSUMER.md` | Item 6 — the worked minimal non-TMS consumer (scenario (a) by construction). |
 | `PARITY_AND_DELIVERY.md` | Item 7 — parity matrix, M1–M4, CI gates, deterministic `streamjoin`. |
-| `RELEASE_NOTE_CORRECTION.md` | Item 8 — correcting the 6.0.0 release notes under Release Please ownership. |
-| `CANDIDATE_BUILD_INTERFACE.md` | Item 9 — lab candidate build interface (one commit, per-surface hashes, refuse-live). |
+| `RELEASE_NOTE_CORRECTION.md` | Item 8 — correcting the 6.0.0 release notes under Release Please ownership (executed in M4; the durable record is `docs/release-notes-corrections.md`). |
+| `CANDIDATE_BUILD_INTERFACE.md` | Item 9 — lab candidate build interface (one commit, per-surface hashes, refuse-live); **implemented in M4** (`scripts/lab/candidate-build.sh` + self-test), with §4.1 the interface as built and §4.2 the integration note for TMS/Autheory. |
 | `UNVERIFIED.md` | Item 10 — honest unknown/unverified list. |
-| `fixtures/` | Planning-tree contract tables (`m17.mcp-auth-facade/v1`); the `m17.mcp-route-algebra/v2` and `m17.mcp-transport-posture/v1` tables now live in the corpus at `contract-tests/fixtures/routing/mcp-auth-facade/` (moved in M1). |
+| `fixtures/` | Planning-tree contract tables (`m17.mcp-auth-facade/v1`) and the runnable example candidate stage config; the `m17.mcp-route-algebra/v2` and `m17.mcp-transport-posture/v1` tables now live in the corpus at `contract-tests/fixtures/routing/mcp-auth-facade/` (moved in M1). |
 
 ## Contracts
 

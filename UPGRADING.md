@@ -115,9 +115,13 @@ Both forms decode to the same values, the grace replay is byte-identical **withi
 replay requires), and no contract pins cross-runtime byte equality — so a cross-language golden-file comparison
 must normalize the bytes or compare decoded values rather than raw bodies.
 
-**Not yet available in this line:** the **CDK `facade` wiring** (the follow-on milestone, M3c-2, owns it) — the
-construct's attach prop does not yet wire the provider and stores. The stage-global callback path override is wired
-separately, through the construct's `upstreamCallbackPath` prop.
+**Not yet available in this line:** the **CDK `facade` provider and store wiring**. The construct's `facade`
+attachment is a presence-only skeleton that marks a server as facade-configured and selects the `runtime-bearer`
+default (`AppTheoryMcpFacadeAttachment` carries a `providerId` only); it does not wire a provider adapter or the
+five store SPIs. A facade server therefore configures its provider and stores in the runtime
+(`FacadeConfig.Provider` / `.Stores`) as documented in `docs/features/mcp-auth-facade-spi.md`. The CDK wiring is an
+open framework item with no milestone assigned; it is recorded as an open question for the Factory. The
+stage-global callback path override, by contrast, is wired: pass the construct's `upstreamCallbackPath` prop.
 
 The store `put` normalization was also aligned across Go, TypeScript, and Python: the reference stores now preserve a
 caller-supplied `status` verbatim and normalize a version below 1 to 1 in all three runtimes (Go was already the
@@ -125,6 +129,46 @@ reference), pinned by a new shared `put_payload` conformance scenario.
 
 See `docs/features/mcp-auth-facade-spi.md` for the front-channel configuration table and
 `docs/features/mcp-facade-helper.md` for what the three registrars mount.
+
+### REST v1 edge `WWW-Authenticate` restoration
+
+AWS API Gateway **REST API v1** remaps an origin's `WWW-Authenticate` response header onto
+`x-amzn-remapped-www-authenticate`, so a REST v1 origin that answers `401` with the canonical RFC 9728 challenge
+loses the header at the edge. The new `AppTheoryRestV1ChallengeRestoration` construct fronts a REST v1 `execute-api`
+origin with CloudFront and restores the canonical header on the origin response, then removes the consumed source
+headers. It is additive: a stack that does not use it synthesizes exactly as before.
+
+The construct derives its route set from the shared route algebra (never a hand-written path list) and takes only
+`origin` as a required prop:
+
+```ts
+new AppTheoryRestV1ChallengeRestoration(this, "Challenge", { origin: restApi });
+```
+
+The restore source set is `x-amzn-remapped-www-authenticate` **always**, plus the optional alias bridge spellings
+(`x-theory-www-authenticate`, then `mcp-www-authenticate`) only when `aliasBridge: { enabled: true }` is set. The
+bridge is **off by default**, and while it is off the alias spellings do not appear in the deployed function source
+at all. The restoration runs as a CloudFront origin-response Lambda@Edge function, so the stack must be deployed
+with a **resolved account and region**, and the distribution's behaviors forward every viewer header except `Host`,
+plus all cookies and all query strings (without the query string the derived `authorize` and callback routes lose
+their parameters). Passing an HTTP API v2 origin fails synthesis: the restoration is a documented no-op there.
+
+### Lab candidate builds against a pinned commit
+
+A lab proof can build AppTheory itself at a pinned commit and bind **every consumed surface** to that one commit.
+The mechanism is encoded stage config, never an operator environment variable: the application's stage config
+gains an `apptheory.candidate` block (Autheory places it under `deployment.apptheory.candidate`, because its deploy
+loader reads the `deployment` object) carrying `commit`, `tree`, `source_date_epoch` and the per-surface `sha256`
+values recorded by a witnessed build.
+
+`scripts/lab/candidate-build.sh` re-builds S1–S6 from the exported tree of that commit, verifies every
+per-surface hash and the tree (`git rev-parse <commit>^{tree}`), and writes a receipt stamping each surface with
+the commit, the tree and the hash. It refuses any stage other than `lab`, refuses any environment-variable input,
+refuses a dirty working tree or a `HEAD` that is not the encoded commit, and deletes an artifact rather than hand
+one over when a hash does not match. There is **no action for a consumer that does not run lab candidate builds**:
+the builder is a repository script that adds no runtime code path and never runs on a release lane. Adopters should
+read `docs/development/planning/apptheory/mcp-auth-facade/CANDIDATE_BUILD_INTERFACE.md` §4.1 (the interface as
+built) and §4.2 (how TMS and Autheory call it).
 
 ## v5.x line
 

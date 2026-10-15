@@ -1,7 +1,9 @@
 # Candidate-build interface for lab proof (M0, item 9)
 
-Status: specification only for review (M0). Implementation is M4/M5; M0 does not build or deploy anything.
-Last updated: 2026-10-12
+Status: **implemented in M4**. `scripts/lab/candidate-build.sh` exists, is offline self-tested, and is wired into
+`make rubric`; §4.1 records the interface as built and the integration note for the adoption stewards. Consuming it
+is still the apps' work (M5): AppTheory builds nothing against an application and never calls AWS.
+Last updated: 2026-10-14
 Owner: AppTheory
 
 ADV-P110-5: the "build AppTheory at a pinned commit" lab mode must bind **every consumed surface** to the
@@ -73,6 +75,11 @@ All artifact builds already honor `SOURCE_DATE_EPOCH` (`scripts/verify-ts-pack.s
 `verify-python-build.sh`), which is what makes the hashes reproducible. The builder sets
 `SOURCE_DATE_EPOCH` from the config (not the clock) and builds from the **exported tree of the pinned commit**.
 
+This table is the original sketch of the per-surface commands. The **as-built** commands — which invoke the
+repository's own pack/build scripts (`scripts/verify-ts-pack.sh`, `verify-cdk-ts-pack.sh`,
+`verify-python-build.sh`, `verify-cdk-python-build.sh`) instead of re-implementing the packaging — are recorded in
+§4.1 and are what the builder runs.
+
 | Surface | Command (builder-invoked) | Expected output |
 | --- | --- | --- |
 | S1 (go_runtime) | `git -C <apptheory> archive --format=tar <commit> -- . ':(exclude)cdk-go'` → `sha256`; unpack into a scratch module dir | `go_runtime.sha256` over the exported **root Go module** tree (`github.com/theory-cloud/apptheory/v6`; excludes the nested `cdk-go` module) |
@@ -117,6 +124,128 @@ Because all surfaces are built from the one exported tree and every hash is conf
 consumes the receipts is provably a proof of a single commit across every surface. The receipt follows the
 Factory docs/096 deployed-commit stamp convention so the lab proof can cite it.
 
+## 4.1 As built (M4)
+
+Entry point: **`scripts/lab/candidate-build.sh`** (the repo root is derived from the script location, so a caller
+uses the path inside the AppTheory checkout it is building).
+
+```text
+candidate-build.sh --config <stage-config.json> --out <dir> [--repo <apptheory-root>] [--account-id <id>] [--print-plan]
+```
+
+Exit codes: `0` success, `1` a fail-closed refusal (every refusal prints `candidate-build: FAIL (<reason>)` on
+stderr), `2` a usage error (unknown flag, missing `--config`, or `--out` absent without `--print-plan`).
+
+Decisions the specification left open, as resolved by the operator (Factory docs/110, "M0 outcome and operator
+decisions" 2026-10-12, item 8) and implemented here:
+
+- **`source_date_epoch` is derived from the commit** (`git show -s --format=%ct <commit>`) and exported to the
+  builds. An encoded `source_date_epoch` is accepted only if it equals that value; a mismatch fails closed. The
+  commit timestamp is intrinsic to the commit and cannot drift, so an encoded copy is never the authority.
+- **The lab stage allowlist is `{lab}` only.** `live` and `staging` are refused by name.
+- **The framework requires the complete seven-key surface set.** A config that omits any of `go_runtime`,
+  `go_cdk`, `npm_cdk`, `npm_ts_runtime`, `py_runtime_wheel`, `py_runtime_sdist`, `py_cdk_wheel` fails closed,
+  naming the missing surface. Requiring every surface is a strict superset of "bind the surfaces the app
+  consumes", so it is never wrong; the app's own receipt still carries its binary hash (operator decision 8).
+- **The encoded `file` must equal the version-derived artifact basename** (`scripts/read-version.sh`, with the
+  same `-rc.N` → `rcN` normalization the Python build scripts apply).
+
+The checks run in this order, and each one fails closed before any artifact is handed over:
+
+1. **No environment input.** Any environment variable named `APPTHEORY_CANDIDATE_*` is refused by name. No
+   AppTheory build input comes from the environment; `SOURCE_DATE_EPOCH` is *set* by the builder from the config's
+   commit and is never read as input.
+2. **Stage allowlist** — `lab` only.
+3. **Candidate block present** — the builder never builds a stage without an encoded `candidate` block.
+4. **Surface completeness** — all seven keys present with a non-empty `sha256`, and `file` + `integrity` for the
+   two npm surfaces.
+5. `commit` and `tree` are 40 lowercase hex characters.
+6. `expected_account_id` is non-empty and equals a supplied `--account-id` when one is given. Resolving the
+   account from AWS is the app deploy script's job; the builder takes the app's already-resolved value as an
+   argument rather than reaching for credentials, and never reads it from the environment.
+7. **Repository binding** — a dirty working tree fails (naming the first offending path); `HEAD` must equal the
+   encoded `commit`; `git rev-parse <commit>^{tree}` must equal the encoded `tree`; and the commit must be
+   reachable from at least one ref (`git for-each-ref --contains`).
+8. **Per-surface verification** — each surface is built with the repository's own deterministic build script,
+   then hashed; a `sha256` mismatch (or an npm `integrity` mismatch) prints the encoded value, the observed value
+   and the artifact path, removes the artifact from `--out`, and exits 1. An artifact is copied into `--out` only
+   **after** it verifies.
+
+Surface → command as built (the S1/S2 tree archives are hashed directly; S3–S6 invoke the repository's own
+pack/build scripts, which already honor `SOURCE_DATE_EPOCH` and normalize artifact mtimes):
+
+| Surface | Command | Artifact |
+| --- | --- | --- |
+| S1 `go_runtime` | `git -C <repo> archive --format=tar <commit> -- . ':(exclude)cdk-go'` | `go_runtime.tar` |
+| S2 `go_cdk` | `git -C <repo> archive --format=tar <commit> -- cdk-go/apptheorycdk` | `go_cdk.tar` |
+| S3 `npm_cdk` | `./scripts/verify-cdk-ts-pack.sh` | `theory-cloud-apptheory-cdk-<version>.tgz` |
+| S4 `npm_ts_runtime` | `./scripts/verify-ts-pack.sh` | `theory-cloud-apptheory-<version>.tgz` |
+| S5 `py_runtime_wheel` | `./scripts/verify-python-build.sh` (one run) | `apptheory-<pyversion>-py3-none-any.whl` |
+| S5 `py_runtime_sdist` | (the same run) | `apptheory-<pyversion>.tar.gz` |
+| S6 `py_cdk_wheel` | `./scripts/verify-cdk-python-build.sh` | `apptheory_cdk-<pyversion>-py3-none-any.whl` |
+
+The npm and Python builds emit into the repository's own `dist/` (exactly as `make build` does); the builder copies
+the **verified** artifacts into `--out` and leaves that repository build output in place.
+
+**Receipt** (`<out>/candidate-receipt.json`, pretty-printed with sorted keys, no wall-clock timestamp so it is
+reproducible): `schema` (`apptheory.candidate-receipt/v1`), `stage`, `commit`, `tree`, `source_date_epoch`
+(integer), `builder` (the script's path), `surfaces` (surface key → `{artifact, sha256[, integrity]}`), and
+`commands` (surface key → the command string for that surface). The command strings are recorded in their
+reproducible template form — the literal `--repo` and scratch paths are the only values not embedded — which is
+the same notation as the table in §3. Standard output ends with
+`candidate-build: PASS (<stage> <commit>; 7 surfaces verified)`.
+
+**`--print-plan`** runs every check above, prints the resolved commit/tree/epoch/account, the per-surface command
+plan and the expected hashes, and exits 0 **without building anything and without writing a receipt**, so the plan
+can never be mistaken for a verified candidate.
+
+**Self-test.** `scripts/lab/candidate-build-self-test.sh` exercises the builder against a throwaway fixture git
+repository (no network, no AWS, no credentials) and asserts: the example config shape is runnable; a valid config
+builds and verifies; a tampered `sha256`, a tampered npm `integrity`, a wrong tree, a mismatched
+`source_date_epoch`, a wrong encoded `file`, a missing surface, a dirty tree, a non-`HEAD` commit, an environment
+variables-only attempt, a `live`/`staging` stage and an account mismatch all fail closed; and `--print-plan` writes
+nothing. It is wired into `make rubric`, so a builder that stops failing closed fails CI rather than the lab
+proof.
+
+## 4.2 Integration note for the adoption stewards (TMS and Autheory)
+
+**Where the block lives.** The builder reads the candidate block from `apptheory.candidate` at the top level of the
+config document, or from `deployment.apptheory.candidate`; if both are present they must be equal or the builder
+fails closed as ambiguous. `stage` and `expected_account_id` are read from the top level with a
+`deployment.*` fallback.
+
+- **Autheory** stage files are shaped `{"schema": 1, "deployment": {...}}` and `cdk/deploy.sh`'s loader reads
+  everything under `deployment` (`expected_account_id` at `deployment.expected_account_id`, enforced at
+  `cdk/deploy.sh:736-742`). Autheory should therefore place the block at **`deployment.apptheory.candidate`** so
+  its existing loader sees it, and add the `lab` stage entry as part of its adoption work. The call shape is:
+
+  ```bash
+  bash <apptheory-checkout>/scripts/lab/candidate-build.sh \
+    --config app-theory/stages/lab.json \
+    --repo <apptheory-checkout> \
+    --account-id "${CONFIG_EXPECTED_ACCOUNT}" \
+    --out "${CANDIDATE_OUT}"
+  ```
+
+  The `--account-id` value is the account the app already resolved and asserted for the stage; passing it makes
+  the builder re-check the encoded value independently. Omitting it keeps the builder's own guards (stage
+  allowlist, candidate-block presence, tree/HEAD binding) in force.
+- **TMS** has no per-stage config file at `origin/staging` (stage is a `-c stage=<lab|live>` context flag on
+  `scripts/deploy/theorymcp-cdk.mjs` and the account comes from the AWS profile), so adoption must first
+  materialize a stage config carrying the `candidate` block — top-level `apptheory.candidate` or a `deployment`
+  wrapper, either is accepted — and then pass it to the builder exactly as above. TMS's tooling consumes S1 and S3;
+  the builder still verifies the complete seven-key set.
+
+**Before calling the builder**, the app's deploy step must place the AppTheory checkout on the pinned commit with a
+clean working tree: the builder requires `HEAD == commit`, an empty `git status --porcelain`, and
+`git rev-parse <commit>^{tree}` equal to the encoded tree. The lab flow is therefore
+`git -C <apptheory> fetch && git -C <apptheory> checkout <commit>` → run the builder → consume
+`<out>/candidate-receipt.json` plus the artifacts in `--out`.
+
+**What the builder never does:** it does not write or amend the app's stage config (the hashes come from the
+app's witnessed build, never from the builder), it does not contact AWS or read credentials, it does not deploy
+anything, and it cannot target `live`.
+
 ## 5. Incapable of targeting live
 
 The builder refuses to run unless **all** of:
@@ -130,16 +259,20 @@ If the app's active stage is `live`, the live config has no `candidate` block an
 the mode cannot target live. The app deploy scripts must also refuse a live stage when a candidate block is
 absent (their existing stage guards), but AppTheory's builder is independently incapable of live.
 
-## 6. What is out of scope in M0
+## 6. What was out of scope in M0
 
 - No builder script, no app-side changes, no AWS calls, no credentials, no deploys.
-- The interface is specified so the app stewards (TMS/Autheory) can implement their side in M5 against a frozen
-  shape, and so the M4 builder has a contract to satisfy.
+- The interface was specified so the app stewards (TMS/Autheory) can implement their side in M5 against a frozen
+  shape, and so the M4 builder has a contract to satisfy. M4 delivered the contract's builder side only: the
+  builder script, its self-test, and the example config. No application was edited and no AWS call was made.
 
-## 7. Open decisions
+## 7. Decisions (resolved)
 
-1. Whether `source_date_epoch` is encoded explicitly or derived from the commit's committer timestamp
-   (recommend: derive from the commit; it is intrinsic to the commit and cannot drift).
-2. Whether the Go surfaces are bound by exported-tree hash or by a built binary hash (recommend: tree hash +
-   the app's own binary hash in its receipt; the tree hash is the framework-side binding).
-3. The exact lab stage allowlist (`{lab}` vs `{lab, staging}`); recommend `{lab}` only for the first proof.
+All three were resolved by the operator (Factory docs/110, "M0 outcome and operator decisions" 2026-10-12, item 8)
+and are implemented as described in §4.1:
+
+1. `source_date_epoch` is **derived from the commit** (`git show -s --format=%ct <commit>`); an encoded copy is
+   accepted only when it matches, and a mismatch fails closed.
+2. The Go surfaces are bound by **exported-tree hash** (S1/S2 `git archive` sha256), plus the app's own binary hash
+   in the app's receipt.
+3. The lab stage allowlist is **`{lab}` only**; `live` and `staging` are refused by name.

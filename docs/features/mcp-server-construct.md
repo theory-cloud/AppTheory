@@ -246,3 +246,19 @@ fork.
 
 `AppTheoryMcpProtectedResource` remains only for existing REST API stacks that intentionally synthesize a static
 metadata document. Its URL-valued props are deprecated and are not an alternate namespace deployment path.
+
+## REST v1 edge challenge restoration
+
+An AWS API Gateway REST API v1 origin remaps the `WWW-Authenticate` response header onto
+`x-amzn-remapped-www-authenticate`, so the canonical RFC 9728 challenge an MCP transport route returns can be lost
+before the client sees it. `AppTheoryRestV1ChallengeRestoration` fronts a REST v1 `execute-api` origin with
+CloudFront, derives its route set from `AppTheoryMcpRouteAlgebra` (never a hand-written path list), and attaches an
+origin-response Lambda@Edge function that restores `WWW-Authenticate` from the AWS remap artifact — and, only when
+the optional alias bridge is enabled, from the `x-theory-www-authenticate` then `mcp-www-authenticate` spellings —
+then removes the consumed source headers.
+
+The construct is additive and takes only `origin` as a required prop, so a stack that does not use it synthesizes
+unchanged. It requires a stack with a resolved account and region, and it fails synthesis on a non-REST-v1 origin
+(the restoration is a documented no-op on HTTP API v2). See the `AppTheoryRestV1ChallengeRestoration` section of the
+CDK package README and `UPGRADING.md`, section "REST v1 edge WWW-Authenticate restoration", for the source-set
+priority order and the optional alias bridge.
