@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
 import type { Context, Handler, Middleware } from "../context.js";
-import { json } from "../response.js";
+import { metadataJSON } from "../response.js";
 import type { Headers, Response } from "../types.js";
 
 export const CONTEXT_KEY_BEARER_TOKEN = "oauth.bearer_token";
@@ -104,13 +104,55 @@ export type BearerTokenClaimsValidator = (
 ) => BearerTokenClaims | Promise<BearerTokenClaims>;
 
 export interface BearerTokenValidationOptions {
-  requiredAudience?: string;
-  requiredScopes?: string[];
+  /**
+   * Static audience the token must be bound to, or a route-derived resolver
+   * that returns the exact matched-route audience. A function takes
+   * precedence, so audience can be the matched route URL rather than a
+   * process-global value.
+   */
+  requiredAudience?: string | ((ctx: Context) => string | Promise<string>);
+  /**
+   * Static scope set the token must carry, or a route-derived resolver that
+   * returns the scope set for the matched route. A function takes precedence.
+   */
+  requiredScopes?: string[] | ((ctx: Context) => string[] | Promise<string[]>);
   now?: () => Date;
 }
 
 export interface RequireBearerTokenOptions {
-  resourceMetadataURL?: string;
+  /**
+   * Static protected-resource metadata URL for the RFC 9728 challenge, or a
+   * route-derived resolver for the matched route. A function takes precedence.
+   */
+  resourceMetadataURL?: string | ((ctx: Context) => string | Promise<string>);
+  /**
+   * Absolute HTTPS URL template whose `{param}` placeholders are interpolated
+   * from the matched route's path parameters, so a per-actor route
+   * (`/mcp/{actor}`) advertises that actor's own RFC 9728 metadata URL with no
+   * hand-rolled resolver. It is explicit application configuration: the
+   * middleware reads no environment variable.
+   *
+   * The template is compiled when the middleware is constructed. It must be an
+   * absolute HTTPS URL with no userinfo, query, fragment, or percent escape and
+   * no `.` or `..` path segment, and its placeholders must appear in the path
+   * and name route parameters; a malformed template throws at registration
+   * rather than advertising a broken discovery URL.
+   *
+   * At request time a placeholder the matched route does not supply, or whose
+   * value is not a safe single path segment, makes the middleware emit the bare
+   * `Bearer` challenge. It never advertises a literal placeholder, and an
+   * unresolvable template does not fall back to `resourceMetadataURL`.
+   *
+   * When set it takes precedence over `resourceMetadataURL`; a
+   * `resourceMetadataURL` function still takes precedence over it.
+   */
+  resourceMetadataURLTemplate?: string;
+  /**
+   * Route-derived scope set used to build the 403 insufficient_scope
+   * remediation challenge. Consulted only when a validator reports a scope
+   * failure.
+   */
+  requiredScopes?: string[] | ((ctx: Context) => string[] | Promise<string[]>);
   validator?: BearerTokenValidator;
   claimsValidator?: BearerTokenClaimsValidator;
 }
@@ -195,13 +237,13 @@ export function newAuthorizationServerMetadata(
 export function protectedResourceMetadataHandler(
   metadata: ProtectedResourceMetadata,
 ): Handler {
-  return () => json(200, metadata);
+  return () => metadataJSON(200, metadata);
 }
 
 export function authorizationServerMetadataHandler(
   metadata: AuthorizationServerMetadata,
 ): Handler {
-  return () => json(200, metadata);
+  return () => metadataJSON(200, metadata);
 }
 
 export function protectedResourceWWWAuthenticate(
@@ -211,6 +253,41 @@ export function protectedResourceWWWAuthenticate(
   if (!value) return "Bearer";
   const escaped = value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
   return `Bearer resource_metadata="${escaped}"`;
+}
+
+/**
+ * Builds the RFC 6750 (RFC 9728-extended) insufficient_scope challenge
+ * carrying the route-derived remediation scope set. Order matches Go:
+ * `error`, then `scope` when non-empty, then `resource_metadata` when
+ * non-empty.
+ */
+export function insufficientScopeWWWAuthenticate(
+  scopes: string[],
+  resourceMetadataURL?: string,
+): string {
+  const normalized = (scopes ?? [])
+    .map((scope) => String(scope ?? "").trim())
+    .filter(Boolean);
+  const parts = ['Bearer error="insufficient_scope"'];
+  if (normalized.length > 0) {
+    parts.push(`scope=${quoteChallengeValue(normalized.join(" "))}`);
+  }
+  const url = String(resourceMetadataURL ?? "").trim();
+  if (url) parts.push(`resource_metadata=${quoteChallengeValue(url)}`);
+  return parts.join(", ");
+}
+
+/**
+ * Reports whether two RFC 8707 resource indicators denote the same protected
+ * resource after canonicalization. An empty expected indicator never matches.
+ */
+export function resourceIndicatorMatches(
+  expected: string,
+  requested: string,
+): boolean {
+  const canonicalExpected = canonicalResourceURL(expected);
+  if (!canonicalExpected) return false;
+  return canonicalExpected === canonicalResourceURL(requested);
 }
 
 export function rfc9728ResourceMetadataURL(resourceURL: string): string | null {
@@ -231,12 +308,89 @@ export function canonicalResourceURL(raw: string): string {
   return trimTrailingSlash(String(raw ?? "").trim());
 }
 
+/**
+ * Canonicalizes an RFC 9207 `iss` value exactly as the Go reference
+ * `oauth.CanonicalizeIssuerURL` does, because the pinned issuer is compared
+ * byte-for-byte across runtimes. The scheme is lowercased; the authority is
+ * preserved, so host case and an explicit port survive; the decoded path is
+ * re-encoded with the Go `net/url` path rules and its trailing slashes are
+ * trimmed; the raw query and fragment are kept. Relative, empty, control-byte
+ * and malformed-percent-escape inputs return null.
+ */
 export function canonicalizeIssuerURL(raw: string): string | null {
-  const url = absoluteURL(raw);
-  if (!url) return null;
-  url.pathname = trimTrailingSlash(url.pathname);
-  url.hash = "";
-  return url.toString();
+  const input = String(raw ?? "").trim();
+  if (input === "" || hasControlByte(input)) return null;
+
+  let rest = input;
+  let rawFragment: string | null = null;
+  const hash = rest.indexOf("#");
+  if (hash >= 0) {
+    rawFragment = rest.slice(hash + 1);
+    rest = rest.slice(0, hash);
+  }
+
+  const scheme = splitURLScheme(rest);
+  if (!scheme) return null;
+  rest = scheme.rest;
+
+  let forceQuery = false;
+  let rawQuery = "";
+  if (rest.endsWith("?") && rest.split("?").length === 2) {
+    forceQuery = true;
+    rest = rest.slice(0, -1);
+  } else {
+    const query = rest.indexOf("?");
+    if (query >= 0) {
+      rawQuery = rest.slice(query + 1);
+      rest = rest.slice(0, query);
+    }
+  }
+
+  if (!rest.startsWith("//")) return null;
+  const pathStart = rest.indexOf("/", 2);
+  const authority = pathStart < 0 ? rest.slice(2) : rest.slice(2, pathStart);
+  const rawPath = pathStart < 0 ? "" : rest.slice(pathStart);
+
+  const parts = parseAuthority(authority);
+  if (!parts) return null;
+
+  const decodedPath = goUnescape(rawPath, "path");
+  if (decodedPath === null) return null;
+  const trimmedPath = trimTrailingSlashBytes(decodedPath);
+
+  let escapedPath = goEscapeBytes(trimmedPath, goPathAllows);
+  if (goEscapeBytes(decodedPath, goPathAllows) !== rawPath) {
+    const hinted = goUnescape(rawPath, "path");
+    if (
+      goValidEncoded(rawPath, "path") &&
+      hinted !== null &&
+      hinted.equals(trimmedPath)
+    ) {
+      escapedPath = rawPath;
+    }
+  }
+
+  const decodedHost = goUnescape(parts.host, "host");
+  if (decodedHost === null) return null;
+
+  let out = `${scheme.scheme}://`;
+  if (parts.userinfo !== null) out += `${parts.userinfo}@`;
+  out += goEscapeBytes(decodedHost, goHostAllows);
+  out += escapedPath;
+  if (forceQuery || rawQuery !== "") out += `?${rawQuery}`;
+
+  if (rawFragment !== null) {
+    const decodedFragment = goUnescape(rawFragment, "fragment");
+    if (decodedFragment === null) return null;
+    if (decodedFragment.length > 0) {
+      const fragment = goValidEncoded(rawFragment, "fragment")
+        ? rawFragment
+        : goEscapeBytes(decodedFragment, goFragmentAllows);
+      out += `#${fragment}`;
+    }
+  }
+
+  return out;
 }
 
 export function bearerTokenFromHeaders(headers: Headers | undefined): string {
@@ -250,9 +404,21 @@ export function bearerTokenFromHeaders(headers: Headers | undefined): string {
   return token;
 }
 
+/**
+ * Enforces `Authorization: Bearer <token>` and, when missing or invalid,
+ * returns 401 with the MCP 2025-06-18 compatible WWW-Authenticate challenge
+ * that points to the protected resource metadata.
+ *
+ * A `resourceMetadataURLTemplate` is compiled here, at registration, and a
+ * malformed template throws: the middleware never serves a request whose
+ * challenge would advertise a broken or partially resolved discovery URL.
+ */
 export function requireBearerTokenMiddleware(
   options: RequireBearerTokenOptions = {},
 ): Middleware {
+  const resourceMetadataURLTemplate = compileResourceMetadataURLTemplate(
+    options.resourceMetadataURLTemplate,
+  );
   return async (ctx, next) => {
     let token: string;
     try {
@@ -264,13 +430,22 @@ export function requireBearerTokenMiddleware(
         return await next(ctx);
       }
       if (!options.validator) {
-        return unauthorizedResponse(ctx, options);
+        return await unauthorizedResponse(
+          ctx,
+          options,
+          resourceMetadataURLTemplate,
+        );
       }
       await options.validator(ctx, token);
       ctx.set(CONTEXT_KEY_BEARER_TOKEN, token);
       return await next(ctx);
     } catch (err) {
-      return bearerErrorResponse(ctx, options, err);
+      return await bearerErrorResponse(
+        ctx,
+        options,
+        err,
+        resourceMetadataURLTemplate,
+      );
     }
   };
 }
@@ -296,20 +471,26 @@ export function newMemoryBearerTokenValidator(
     if (record.expiresAt) claims.expiresAt = new Date(record.expiresAt);
     byToken.set(token, claims);
   }
-  const requiredAudience = String(options.requiredAudience ?? "").trim();
-  const requiredScopes = (options.requiredScopes ?? [])
-    .map((scope) => String(scope ?? "").trim())
-    .filter(Boolean);
+  const audienceOption = options.requiredAudience;
+  const scopesOption = options.requiredScopes;
   const now = options.now ?? (() => new Date());
-  return (_ctx, token) => {
+  return async (ctx, token) => {
     const claims = byToken.get(String(token ?? "").trim());
     if (!claims) throw new OAuthBearerError(ERR_INVALID_BEARER_TOKEN);
     if (claims.expiresAt && now().getTime() >= claims.expiresAt.getTime()) {
       throw new OAuthBearerError(ERR_BEARER_TOKEN_EXPIRED);
     }
+    const requiredAudience =
+      typeof audienceOption === "function"
+        ? String((await audienceOption(ctx)) ?? "").trim()
+        : String(audienceOption ?? "").trim();
     if (requiredAudience && claims.audience !== requiredAudience) {
       throw new OAuthBearerError(ERR_BEARER_TOKEN_INVALID_AUDIENCE);
     }
+    const requiredScopes =
+      typeof scopesOption === "function"
+        ? normalizeScopeList(await scopesOption(ctx))
+        : normalizeScopeList(scopesOption ?? []);
     if (missingScopes(claims.scopes ?? [], requiredScopes).length > 0) {
       throw new OAuthBearerError(ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE);
     }
@@ -402,11 +583,228 @@ export function pkceVerifyS256(
   return pkceChallengeS256(verifier) === String(expectedChallenge ?? "");
 }
 
-function unauthorizedResponse(
-  _ctx: Context,
+// A `{param}` protected-resource metadata URL template, compiled once at
+// registration so request time only validates and interpolates the matched
+// route parameters.
+interface ResourceMetadataURLTemplate {
+  template: string;
+  rawPath: string;
+  params: string[];
+}
+
+const RESOURCE_METADATA_URL_TEMPLATE_MAX_PARAM_BYTES = 128;
+
+// Placeholder names are deliberately narrow: they name route parameters, not
+// free-form expressions.
+const RESOURCE_METADATA_URL_TEMPLATE_PARAM_PATTERN = /^[a-z][a-z0-9_]*$/u;
+
+// The only bytes that may be interpolated into the advertised challenge URL.
+// The alphabet is the RFC 3986 unreserved set plus the three path-safe
+// punctuation bytes RFC 3986 allows unescaped; it is deliberately narrower than
+// the router's own segment rule, so the advertised URL cannot differ from the
+// matched route through case folding, percent-decoding, or separator handling
+// in a proxy, CDN, or client.
+const RESOURCE_METADATA_URL_TEMPLATE_VALUE_PATTERN = new RegExp(
+  `^[a-z0-9._~-]{1,${RESOURCE_METADATA_URL_TEMPLATE_MAX_PARAM_BYTES}}$`,
+  "u",
+);
+
+/**
+ * Validates a template and records the route parameters it interpolates.
+ *
+ * A template is valid when it is an absolute HTTPS URL with no userinfo, query,
+ * fragment, or percent-escape, with no `.` or `..` path segment, and every
+ * `{param}` placeholder sits in the URL path and names a lower-case route
+ * parameter. Placeholders outside the path are refused, because interpolating
+ * one would let a request steer the advertised authority rather than only its
+ * path suffix.
+ *
+ * A malformed template throws here, at registration, so a bad configuration
+ * fails closed at startup instead of at request time.
+ */
+function compileResourceMetadataURLTemplate(
+  raw: string | undefined,
+): ResourceMetadataURLTemplate | null {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) return null;
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template is not an absolute URL",
+    );
+  }
+  if (url.protocol !== "https:") {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template must be an absolute HTTPS URL",
+    );
+  }
+  // `new URL` reads `https:host/path` as a host, but Go reads it as an opaque
+  // URL with no host; require the explicit authority separator Go expects.
+  const afterScheme = trimmed.slice(url.protocol.length);
+  if (!afterScheme.startsWith("//")) {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template is not an absolute URL",
+    );
+  }
+  if (!url.host || !url.hostname) {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template must include a host",
+    );
+  }
+  // Split the raw authority and path out of the template text: the checks below
+  // read them rather than the parsed URL, because WHATWG normalization drops the
+  // differences Go and Python refuse (empty userinfo, dot segments).
+  const remainder = afterScheme.slice(2);
+  const slash = remainder.indexOf("/");
+  const authority = slash < 0 ? remainder : remainder.slice(0, slash);
+  const rawPath = slash < 0 ? "" : remainder.slice(slash);
+  // Userinfo is refused on the raw authority text: WHATWG parses
+  // `https://@api.example.com/x` to an empty userinfo, so `url.username ||
+  // url.password` is falsy and would let it through, while Go's
+  // `url.User != nil` and Python's `username is not None` both refuse it.
+  if (authority.includes("@")) {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template must not include userinfo",
+    );
+  }
+  if (trimmed.includes("?")) {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template must not include a query",
+    );
+  }
+  if (trimmed.includes("#")) {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template must not include a fragment",
+    );
+  }
+  if (authority.includes("{") || authority.includes("}")) {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template placeholders must appear in the path, not the authority",
+    );
+  }
+  if (rawPath.includes("%")) {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template must not percent-encode its path",
+    );
+  }
+  if (hasDotPathSegment(rawPath)) {
+    throw new Error(
+      'invalid ResourceMetadataURLTemplate: template must not contain a "." or ".." path segment',
+    );
+  }
+  return {
+    template: trimmed,
+    rawPath,
+    params: resourceMetadataURLTemplateParams(rawPath),
+  };
+}
+
+/**
+ * Reports whether a URL path carries a `.` or `..` segment.
+ *
+ * A static dot segment in a template is never intended, and the runtimes do not
+ * agree on what to do with one: Go and Python advertise the literal segment
+ * while a WHATWG URL parser normalizes it away, so the advertised URL would
+ * depend on the runtime. The template is refused instead.
+ */
+function hasDotPathSegment(rawPath: string): boolean {
+  return rawPath
+    .split("/")
+    .some((segment) => segment === "." || segment === "..");
+}
+
+/**
+ * Returns the distinct placeholder names in path order, refusing anything that
+ * is not a well-formed `{param}`.
+ */
+function resourceMetadataURLTemplateParams(rawPath: string): string[] {
+  const params: string[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < rawPath.length;) {
+    const char = rawPath[index];
+    if (char === "{") {
+      const end = rawPath.indexOf("}", index);
+      if (end < 0) {
+        throw new Error(
+          "invalid ResourceMetadataURLTemplate: template placeholder is unterminated",
+        );
+      }
+      const name = rawPath.slice(index + 1, end);
+      if (!RESOURCE_METADATA_URL_TEMPLATE_PARAM_PATTERN.test(name)) {
+        throw new Error(
+          `invalid ResourceMetadataURLTemplate: template placeholder "${name}" is not a route parameter name`,
+        );
+      }
+      if (!seen.has(name)) {
+        seen.add(name);
+        params.push(name);
+      }
+      index = end + 1;
+      continue;
+    }
+    if (char === "}") {
+      throw new Error(
+        'invalid ResourceMetadataURLTemplate: template has an unmatched "}"',
+      );
+    }
+    index += 1;
+  }
+  return params;
+}
+
+/**
+ * Interpolates the matched route parameters into the template.
+ *
+ * Every placeholder must be present in the matched route and its value must
+ * satisfy the pinned value rule; the resolved path is then checked to be free
+ * of leftover placeholders. A failure returns null so the caller emits the bare
+ * `Bearer` challenge instead of a literal placeholder or a partially resolved
+ * URL.
+ */
+function resolveResourceMetadataURLTemplate(
+  template: ResourceMetadataURLTemplate,
+  params: Record<string, string> | undefined,
+): string | null {
+  let resolvedPath = template.rawPath;
+  for (const name of template.params) {
+    const value = String((params ?? {})[name] ?? "");
+    if (!isSafeResourceMetadataURLTemplateValue(value)) return null;
+    resolvedPath = resolvedPath.replaceAll(`{${name}}`, value);
+  }
+  if (resolvedPath.includes("{") || resolvedPath.includes("}")) return null;
+  if (template.rawPath === "") return template.template;
+  const url = new URL(template.template);
+  url.pathname = resolvedPath;
+  return url.toString();
+}
+
+/**
+ * Reports whether a route parameter value may be interpolated into the
+ * advertised challenge URL.
+ *
+ * The pinned rule accepts 1..128 bytes drawn from `[a-z0-9._~-]`, excluding the
+ * dot segments `.` and `..`. Everything else — empty, `/`-containing,
+ * percent-encoded, upper-case, whitespace, control, or non-ASCII — is refused,
+ * and the caller then emits the bare `Bearer` challenge.
+ */
+function isSafeResourceMetadataURLTemplateValue(value: string): boolean {
+  if (value === "." || value === "..") return false;
+  return RESOURCE_METADATA_URL_TEMPLATE_VALUE_PATTERN.test(value);
+}
+
+async function unauthorizedResponse(
+  ctx: Context,
   options: RequireBearerTokenOptions,
-): Response {
-  const metadataURL = String(options.resourceMetadataURL ?? "").trim();
+  resourceMetadataURLTemplate: ResourceMetadataURLTemplate | null,
+): Promise<Response> {
+  const metadataURL = await resolveResourceMetadataURL(
+    ctx,
+    options,
+    resourceMetadataURLTemplate,
+  );
   const headers: Headers = {
     "content-type": ["application/json; charset=utf-8"],
   };
@@ -420,6 +818,38 @@ function unauthorizedResponse(
     body: Buffer.from(
       JSON.stringify({
         error: { code: "app.unauthorized", message: "unauthorized" },
+      }),
+      "utf8",
+    ),
+    isBase64: false,
+  };
+}
+
+async function insufficientScopeResponse(
+  ctx: Context,
+  options: RequireBearerTokenOptions,
+  resourceMetadataURLTemplate: ResourceMetadataURLTemplate | null,
+): Promise<Response> {
+  const scopes = await resolveRequiredScopes(ctx, options.requiredScopes);
+  const metadataURL = await resolveResourceMetadataURL(
+    ctx,
+    options,
+    resourceMetadataURLTemplate,
+  );
+  const headers: Headers = {
+    "content-type": ["application/json; charset=utf-8"],
+    "www-authenticate": [insufficientScopeWWWAuthenticate(scopes, metadataURL)],
+  };
+  return {
+    status: 403,
+    headers,
+    cookies: [],
+    body: Buffer.from(
+      JSON.stringify({
+        error: {
+          code: "app.insufficient_scope",
+          message: "insufficient scope",
+        },
       }),
       "utf8",
     ),
@@ -442,19 +872,79 @@ function forbiddenResponse(): Response {
   };
 }
 
-function bearerErrorResponse(
+async function bearerErrorResponse(
   ctx: Context,
   options: RequireBearerTokenOptions,
   err: unknown,
-): Response {
-  if (
-    err instanceof OAuthBearerError &&
-    (err.oauthCode === ERR_BEARER_TOKEN_INVALID_AUDIENCE ||
-      err.oauthCode === ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE)
-  ) {
-    return forbiddenResponse();
+  resourceMetadataURLTemplate: ResourceMetadataURLTemplate | null,
+): Promise<Response> {
+  if (err instanceof OAuthBearerError) {
+    if (err.oauthCode === ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE) {
+      return await insufficientScopeResponse(
+        ctx,
+        options,
+        resourceMetadataURLTemplate,
+      );
+    }
+    if (err.oauthCode === ERR_BEARER_TOKEN_INVALID_AUDIENCE) {
+      return forbiddenResponse();
+    }
   }
-  return unauthorizedResponse(ctx, options);
+  return await unauthorizedResponse(ctx, options, resourceMetadataURLTemplate);
+}
+
+/**
+ * Resolves the RFC 9728 protected-resource metadata URL for a challenge. A
+ * route-derived resolver takes precedence, then a route-parameter template,
+ * then the static option. A resolver or template failure degrades to no
+ * challenge URL, matching the Go middleware.
+ */
+async function resolveResourceMetadataURL(
+  ctx: Context,
+  options: RequireBearerTokenOptions,
+  resourceMetadataURLTemplate: ResourceMetadataURLTemplate | null,
+): Promise<string> {
+  const option = options.resourceMetadataURL;
+  if (typeof option === "function") {
+    try {
+      return String((await option(ctx)) ?? "").trim();
+    } catch {
+      return "";
+    }
+  }
+  if (resourceMetadataURLTemplate) {
+    const resolved = resolveResourceMetadataURLTemplate(
+      resourceMetadataURLTemplate,
+      ctx.params,
+    );
+    return resolved ?? "";
+  }
+  return String(option ?? "").trim();
+}
+
+/**
+ * Resolves the route-derived remediation scope set for a 403 challenge. A
+ * resolver failure degrades to an empty (omitted) scope set.
+ */
+async function resolveRequiredScopes(
+  ctx: Context,
+  option: RequireBearerTokenOptions["requiredScopes"],
+): Promise<string[]> {
+  try {
+    if (typeof option === "function") {
+      return normalizeScopeList(await option(ctx));
+    }
+    return normalizeScopeList(option ?? []);
+  } catch {
+    return [];
+  }
+}
+
+function quoteChallengeValue(value: string): string {
+  const escaped = String(value ?? "")
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"');
+  return `"${escaped}"`;
 }
 
 function firstHeader(headers: Headers | undefined, name: string): string {
@@ -481,6 +971,12 @@ function scopeFields(scope: string): string[] {
   return String(scope ?? "")
     .split(/\s+/u)
     .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function normalizeScopeList(scopes: readonly string[]): string[] {
+  return (scopes ?? [])
+    .map((scope) => String(scope ?? "").trim())
     .filter(Boolean);
 }
 
@@ -528,6 +1024,359 @@ function trimTrailingSlash(pathname: string): string {
   return value.slice(0, end);
 }
 
+// The helpers below re-implement the slice of Go's `net/url` that
+// `oauth.CanonicalizeIssuerURL` depends on: scheme splitting, authority
+// parsing, and the escape table of `net/url`'s encoding modes. They are
+// deliberately local to this module so the issuer pin cannot drift from Go.
+
+type GoEscapeMode = "path" | "fragment" | "host" | "userinfo";
+
+const GO_HEX = "0123456789ABCDEF";
+
+// `net/url.validEncoded` always accepts these bytes, whatever the mode.
+const GO_ENCODED_LITERALS = new Set([
+  0x21, 0x24, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x3b, 0x3a, 0x3d, 0x40,
+  0x5b, 0x5d,
+]);
+
+interface GoAuthority {
+  host: string;
+  /** Re-encoded the way Go's `Userinfo.String()` prints it, or null. */
+  userinfo: string | null;
+}
+
+function hasControlByte(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function goByte(bytes: Buffer, index: number): number {
+  return bytes[index] ?? 0;
+}
+
+function goIsHexByte(code: number): boolean {
+  return (
+    (code >= 0x30 && code <= 0x39) ||
+    (code >= 0x41 && code <= 0x46) ||
+    (code >= 0x61 && code <= 0x66)
+  );
+}
+
+function goUnhex(code: number): number {
+  if (code >= 0x30 && code <= 0x39) return code - 0x30;
+  if (code >= 0x41 && code <= 0x46) return code - 0x41 + 10;
+  return code - 0x61 + 10;
+}
+
+function goPathAllows(code: number): boolean {
+  if (code >= 0x30 && code <= 0x39) return true;
+  if (code >= 0x41 && code <= 0x5a) return true;
+  if (code >= 0x61 && code <= 0x7a) return true;
+  switch (code) {
+    case 0x24: // $
+    case 0x26: // &
+    case 0x2b: // +
+    case 0x2c: // ,
+    case 0x2d: // -
+    case 0x2e: // .
+    case 0x2f: // /
+    case 0x3a: // :
+    case 0x3b: // ;
+    case 0x3d: // =
+    case 0x40: // @
+    case 0x5f: // _
+    case 0x7e: // ~
+      return true;
+    default:
+      return false;
+  }
+}
+
+function goHostAllows(code: number): boolean {
+  if (code >= 0x30 && code <= 0x39) return true;
+  if (code >= 0x41 && code <= 0x5a) return true;
+  if (code >= 0x61 && code <= 0x7a) return true;
+  switch (code) {
+    case 0x21: // !
+    case 0x22: // "
+    case 0x24: // $
+    case 0x26: // &
+    case 0x27: // '
+    case 0x28: // (
+    case 0x29: // )
+    case 0x2a: // *
+    case 0x2b: // +
+    case 0x2c: // ,
+    case 0x2d: // -
+    case 0x2e: // .
+    case 0x3a: // :
+    case 0x3b: // ;
+    case 0x3c: // <
+    case 0x3d: // =
+    case 0x3e: // >
+    case 0x5b: // [
+    case 0x5d: // ]
+    case 0x5f: // _
+    case 0x7e: // ~
+      return true;
+    default:
+      return false;
+  }
+}
+
+function goFragmentAllows(code: number): boolean {
+  if (code >= 0x30 && code <= 0x39) return true;
+  if (code >= 0x41 && code <= 0x5a) return true;
+  if (code >= 0x61 && code <= 0x7a) return true;
+  switch (code) {
+    case 0x21: // !
+    case 0x24: // $
+    case 0x26: // &
+    case 0x28: // (
+    case 0x29: // )
+    case 0x2a: // *
+    case 0x2b: // +
+    case 0x2c: // ,
+    case 0x2d: // -
+    case 0x2e: // .
+    case 0x2f: // /
+    case 0x3a: // :
+    case 0x3b: // ;
+    case 0x3d: // =
+    case 0x3f: // ?
+    case 0x40: // @
+    case 0x5f: // _
+    case 0x7e: // ~
+      return true;
+    default:
+      return false;
+  }
+}
+
+function goUserinfoAllows(code: number): boolean {
+  if (code >= 0x30 && code <= 0x39) return true;
+  if (code >= 0x41 && code <= 0x5a) return true;
+  if (code >= 0x61 && code <= 0x7a) return true;
+  switch (code) {
+    case 0x24: // $
+    case 0x26: // &
+    case 0x2b: // +
+    case 0x2c: // ,
+    case 0x2d: // -
+    case 0x2e: // .
+    case 0x3b: // ;
+    case 0x3d: // =
+    case 0x5f: // _
+    case 0x7e: // ~
+      return true;
+    default:
+      return false;
+  }
+}
+
+function goAllowsFor(mode: GoEscapeMode): (code: number) => boolean {
+  switch (mode) {
+    case "path":
+      return goPathAllows;
+    case "fragment":
+      return goFragmentAllows;
+    case "host":
+      return goHostAllows;
+    default:
+      return goUserinfoAllows;
+  }
+}
+
+function goEscapeBytes(
+  bytes: Buffer,
+  allows: (code: number) => boolean,
+): string {
+  let out = "";
+  for (const byte of bytes) {
+    if (allows(byte)) {
+      out += String.fromCharCode(byte);
+      continue;
+    }
+    out += `%${GO_HEX.charAt(byte >> 4)}${GO_HEX.charAt(byte & 0x0f)}`;
+  }
+  return out;
+}
+
+function goUnescape(value: string, mode: GoEscapeMode): Buffer | null {
+  const bytes = Buffer.from(value, "utf8");
+  const out: number[] = [];
+  let index = 0;
+  while (index < bytes.length) {
+    const byte = goByte(bytes, index);
+    if (byte === 0x25) {
+      if (index + 2 >= bytes.length) return null;
+      const high = goByte(bytes, index + 1);
+      const low = goByte(bytes, index + 2);
+      if (!goIsHexByte(high) || !goIsHexByte(low)) return null;
+      const decoded = (goUnhex(high) << 4) | goUnhex(low);
+      const escaped = high === 0x32 && low === 0x35;
+      if (mode === "host" && decoded < 0x80 && !escaped) return null;
+      out.push(decoded);
+      index += 3;
+      continue;
+    }
+    if (mode === "host" && byte < 0x80 && !goHostAllows(byte)) return null;
+    out.push(byte);
+    index += 1;
+  }
+  return Buffer.from(out);
+}
+
+function goValidEncoded(value: string, mode: GoEscapeMode): boolean {
+  const allows = goAllowsFor(mode);
+  const bytes = Buffer.from(value, "utf8");
+  for (let index = 0; index < bytes.length; index += 1) {
+    const byte = goByte(bytes, index);
+    if (byte === 0x25) {
+      if (
+        index + 2 >= bytes.length ||
+        !goIsHexByte(goByte(bytes, index + 1)) ||
+        !goIsHexByte(goByte(bytes, index + 2))
+      ) {
+        return false;
+      }
+      index += 2;
+      continue;
+    }
+    if (GO_ENCODED_LITERALS.has(byte)) continue;
+    if (!allows(byte)) return false;
+  }
+  return true;
+}
+
+function trimTrailingSlashBytes(bytes: Buffer): Buffer {
+  let end = bytes.length;
+  while (end > 0 && goByte(bytes, end - 1) === 0x2f) {
+    end -= 1;
+  }
+  return end === bytes.length ? bytes : bytes.subarray(0, end);
+}
+
+function splitURLScheme(
+  value: string,
+): { scheme: string; rest: string } | null {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (isASCIILetter(code)) continue;
+    if (index > 0 && isSchemeTail(code)) continue;
+    if (index > 0 && code === 0x3a) {
+      const scheme = value.slice(0, index).toLowerCase();
+      return { scheme, rest: value.slice(index + 1) };
+    }
+    return null;
+  }
+  return null;
+}
+
+function isASCIILetter(code: number): boolean {
+  return (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a);
+}
+
+function isSchemeTail(code: number): boolean {
+  if (code >= 0x30 && code <= 0x39) return true;
+  return code === 0x2b || code === 0x2d || code === 0x2e;
+}
+
+function validOptionalPort(value: string): boolean {
+  if (value === "") return true;
+  if (!value.startsWith(":")) return false;
+  for (let index = 1; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x30 || code > 0x39) return false;
+  }
+  return true;
+}
+
+function isIPLiteral(value: string): boolean {
+  if (!value.includes(":")) return false;
+  if (/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/u.test(value)) return false;
+  return /^[0-9A-Fa-f:.]+$/u.test(value);
+}
+
+function hostIsValid(host: string): boolean {
+  const openBracket = host.lastIndexOf("[");
+  if (openBracket > 0) return false;
+  if (openBracket === 0) {
+    const closeBracket = host.lastIndexOf("]");
+    if (closeBracket < 0) return false;
+    if (!validOptionalPort(host.slice(closeBracket + 1))) return false;
+    if (!isIPLiteral(host.slice(1, closeBracket))) return false;
+    return goUnescape(host, "host") !== null;
+  }
+  const separator = host.indexOf(":");
+  if (separator >= 0 && !validOptionalPort(host.slice(separator))) {
+    return false;
+  }
+  return goUnescape(host, "host") !== null;
+}
+
+function userinfoIsValid(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0x30 && code <= 0x39) continue;
+    if (code >= 0x41 && code <= 0x5a) continue;
+    if (code >= 0x61 && code <= 0x7a) continue;
+    switch (code) {
+      case 0x21: // !
+      case 0x24: // $
+      case 0x25: // %
+      case 0x26: // &
+      case 0x27: // '
+      case 0x28: // (
+      case 0x29: // )
+      case 0x2a: // *
+      case 0x2b: // +
+      case 0x2c: // ,
+      case 0x2d: // -
+      case 0x2e: // .
+      case 0x3a: // :
+      case 0x3b: // ;
+      case 0x3d: // =
+      case 0x40: // @
+      case 0x5f: // _
+      case 0x7e: // ~
+        continue;
+      default:
+        return false;
+    }
+  }
+  return true;
+}
+
+function encodeUserinfo(raw: string): string | null {
+  const separator = raw.indexOf(":");
+  if (separator < 0) {
+    const username = goUnescape(raw, "userinfo");
+    return username === null ? null : goEscapeBytes(username, goUserinfoAllows);
+  }
+  const username = goUnescape(raw.slice(0, separator), "userinfo");
+  const password = goUnescape(raw.slice(separator + 1), "userinfo");
+  if (username === null || password === null) return null;
+  const encodedUsername = goEscapeBytes(username, goUserinfoAllows);
+  const encodedPassword = goEscapeBytes(password, goUserinfoAllows);
+  return `${encodedUsername}:${encodedPassword}`;
+}
+
+function parseAuthority(value: string): GoAuthority | null {
+  const at = value.lastIndexOf("@");
+  const host = at < 0 ? value : value.slice(at + 1);
+  if (host === "" || !hostIsValid(host)) return null;
+  if (at < 0) return { host, userinfo: null };
+  const raw = value.slice(0, at);
+  if (!userinfoIsValid(raw)) return null;
+  const userinfo = encodeUserinfo(raw);
+  if (userinfo === null) return null;
+  return { host, userinfo };
+}
+
 function joinURLPath(base: string, suffix: string): string {
   const left = trimTrailingSlash(String(base ?? ""));
   const right = trimLeadingAndTrailingSlashes(String(suffix ?? ""));
@@ -548,3 +1397,12 @@ function trimLeadingAndTrailingSlashes(value: string): string {
   }
   return value.slice(start, end);
 }
+
+export {
+  bootstrapOidcDiscovery,
+  newJwksValidator,
+  type JWKSValidatorOptions,
+} from "./jwks.js";
+
+export * from "./provider.js";
+export * from "./store.js";

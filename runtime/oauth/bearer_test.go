@@ -24,10 +24,10 @@ func TestBearerTokenFromHeaders_Missing(t *testing.T) {
 	require.ErrorIs(t, err, ErrMissingBearerToken)
 }
 
-func TestRequireBearerTokenMiddleware_401IncludesResourceMetadata(t *testing.T) {
-	t.Setenv("MCP_ENDPOINT", "https://mcp.example.com/mcp")
-
-	mw := RequireBearerTokenMiddleware(RequireBearerTokenOptions{})
+func TestRequireBearerTokenMiddleware_401IncludesConfiguredResourceMetadata(t *testing.T) {
+	mw := RequireBearerTokenMiddleware(RequireBearerTokenOptions{
+		ResourceMetadataURL: "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+	})
 	handler := mw(func(*apptheory.Context) (*apptheory.Response, error) {
 		return &apptheory.Response{Status: 200}, nil
 	})
@@ -45,11 +45,57 @@ func TestRequireBearerTokenMiddleware_401IncludesResourceMetadata(t *testing.T) 
 	require.Equal(t, []string{`Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"`}, resp.Headers["www-authenticate"])
 }
 
-func TestRequireBearerTokenMiddleware_401ResolvesActorTemplate(t *testing.T) {
-	t.Setenv("MCP_ENDPOINT", "https://mcp.example.com/mcp/{actor}")
+// TestRequireBearerTokenMiddleware_IgnoresMcpEndpointEnvironment pins the E1
+// ruling: the challenge never derives from the MCP_ENDPOINT environment
+// variable. A hostile value changes nothing — an unconfigured middleware
+// advertises the bare `Bearer` challenge, and a configured URL is used verbatim.
+func TestRequireBearerTokenMiddleware_IgnoresMcpEndpointEnvironment(t *testing.T) {
+	t.Setenv("MCP_ENDPOINT", "https://evil.example/mcp/{actor}")
+
+	deny := func(opts RequireBearerTokenOptions) []string {
+		t.Helper()
+		mw := RequireBearerTokenMiddleware(opts)
+		handler := mw(func(*apptheory.Context) (*apptheory.Response, error) {
+			return &apptheory.Response{Status: 200}, nil
+		})
+		resp, err := handler(&apptheory.Context{
+			Request: apptheory.Request{
+				Path: "/mcp/Arch",
+				Headers: map[string][]string{
+					"host":              {"evil.example"},
+					"x-forwarded-proto": {"https"},
+				},
+			},
+		})
+		require.NoError(t, err)
+		require.Equal(t, 401, resp.Status)
+		return resp.Headers["www-authenticate"]
+	}
+
+	require.Equal(t, []string{"Bearer"}, deny(RequireBearerTokenOptions{}))
+	require.Equal(t,
+		[]string{`Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"`},
+		deny(RequireBearerTokenOptions{ResourceMetadataURL: "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"}),
+	)
+}
+
+// TestRequireBearerTokenMiddleware_401ResolvesRouteDerivedMetadata pins the
+// supported per-actor seam: a route-derived resolver receives the matched
+// request context, so a per-actor challenge is resolved from the route
+// parameters rather than from an environment variable.
+func TestRequireBearerTokenMiddleware_401ResolvesRouteDerivedMetadata(t *testing.T) {
+	t.Setenv("MCP_ENDPOINT", "https://evil.example/mcp/{actor}")
 
 	app := apptheory.New()
-	app.Use(RequireBearerTokenMiddleware(RequireBearerTokenOptions{}))
+	app.Use(RequireBearerTokenMiddleware(RequireBearerTokenOptions{
+		ResourceMetadataURLFunc: func(c *apptheory.Context) (string, error) {
+			derived, ok := RFC9728ResourceMetadataURL("https://mcp.example.com/mcp/" + c.Params["actor"])
+			if !ok {
+				return "", errors.New("resource metadata URL is not derivable")
+			}
+			return derived, nil
+		},
+	}))
 	app.Get("/mcp/{actor}", func(*apptheory.Context) (*apptheory.Response, error) {
 		return &apptheory.Response{Status: 200}, nil
 	})
@@ -71,7 +117,7 @@ func TestRequireBearerTokenMiddleware_ValidatorRuns(t *testing.T) {
 	called := 0
 	mw := RequireBearerTokenMiddleware(RequireBearerTokenOptions{
 		ResourceMetadataURL: "https://mcp.example.com/.well-known/oauth-protected-resource",
-		Validator: func(context.Context, string) error {
+		Validator: func(*apptheory.Context, string) error {
 			called++
 			return nil
 		},
@@ -144,7 +190,43 @@ func TestRequireBearerTokenMiddleware_ClaimsValidatorStoresClaimsAndForbidsScope
 	})
 	require.NoError(t, err)
 	require.Equal(t, 403, resp.Status)
-	require.JSONEq(t, `{"error":{"code":"app.forbidden","message":"forbidden"}}`, string(resp.Body))
+	require.JSONEq(t, `{"error":{"code":"app.insufficient_scope","message":"insufficient scope"}}`, string(resp.Body))
+	// A scope failure carries the RFC 6750 insufficient_scope remediation
+	// challenge, built from the route-derived scope set when one is configured.
+	require.Equal(t, []string{
+		`Bearer error="insufficient_scope", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"`,
+	}, resp.Headers["www-authenticate"])
+}
+
+func TestRequireBearerTokenMiddleware_ScopeFailureCarriesRouteDerivedRemediation(t *testing.T) {
+	validator := NewMemoryBearerTokenValidator([]BearerTokenRecord{
+		{Token: "scoped-token", Subject: "user-1", Scopes: []string{"mcp:read"}},
+	}, BearerTokenValidationOptions{
+		RequiredScopesFunc: func(*apptheory.Context) ([]string, error) {
+			return []string{"mcp:read", "mcp:write"}, nil
+		},
+	})
+	mw := RequireBearerTokenMiddleware(RequireBearerTokenOptions{
+		ClaimsValidator: validator,
+		RequiredScopesFunc: func(*apptheory.Context) ([]string, error) {
+			return []string{"mcp:read", "mcp:write"}, nil
+		},
+		ResourceMetadataURLFunc: func(*apptheory.Context) (string, error) {
+			return "https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp", nil
+		},
+	})
+	handler := mw(func(*apptheory.Context) (*apptheory.Response, error) {
+		return &apptheory.Response{Status: 200}, nil
+	})
+
+	resp, err := handler(&apptheory.Context{
+		Request: apptheory.Request{Headers: map[string][]string{"authorization": {"Bearer scoped-token"}}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 403, resp.Status)
+	require.Equal(t, []string{
+		`Bearer error="insufficient_scope", scope="mcp:read mcp:write", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp"`,
+	}, resp.Headers["www-authenticate"])
 }
 
 func TestNewMemoryBearerTokenValidator_RejectsInvalidExpiredAndAudience(t *testing.T) {
@@ -171,11 +253,11 @@ func TestNewMemoryBearerTokenValidator_RejectsInvalidExpiredAndAudience(t *testi
 		Now:              func() time.Time { return now },
 	})
 
-	_, err := validator(context.Background(), "missing-token")
+	_, err := validator(nil, "missing-token")
 	require.ErrorIs(t, err, ErrInvalidBearerToken)
-	_, err = validator(context.Background(), "expired-token")
+	_, err = validator(nil, "expired-token")
 	require.ErrorIs(t, err, ErrBearerTokenExpired)
-	_, err = validator(context.Background(), "wrong-audience-token")
+	_, err = validator(nil, "wrong-audience-token")
 	require.ErrorIs(t, err, ErrBearerTokenInvalidAudience)
 }
 
@@ -211,7 +293,7 @@ func TestRequireBearerTokenMiddleware_MapsValidatorAudienceScopeErrors(t *testin
 		t.Run(tc.name, func(t *testing.T) {
 			mw := RequireBearerTokenMiddleware(RequireBearerTokenOptions{
 				ResourceMetadataURL: "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
-				Validator: func(context.Context, string) error {
+				Validator: func(*apptheory.Context, string) error {
 					return tc.err
 				},
 			})
@@ -252,7 +334,7 @@ func TestRequireBearerTokenMiddleware_RejectsWhenValidatorMissing(t *testing.T) 
 }
 
 func TestRequireBearerTokenMiddleware_DoesNotDeriveMetadataFromRequestHeaders(t *testing.T) {
-	t.Setenv("MCP_ENDPOINT", "")
+	t.Setenv("MCP_ENDPOINT", "https://evil.example/mcp/{actor}")
 
 	mw := RequireBearerTokenMiddleware(RequireBearerTokenOptions{})
 	handler := mw(func(*apptheory.Context) (*apptheory.Response, error) {

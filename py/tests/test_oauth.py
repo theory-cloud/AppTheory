@@ -2,6 +2,8 @@ from __future__ import annotations
 
 # ruff: noqa: S106
 import datetime as dt
+import json
+import os
 import unittest
 
 from apptheory import (
@@ -23,6 +25,7 @@ from apptheory import (
     canonical_resource_url,
     canonicalize_issuer_url,
     claude_dynamic_client_registration_policy,
+    insufficient_scope_www_authenticate,
     new_authorization_server_metadata,
     new_memory_bearer_token_validator,
     new_pkce_code_verifier,
@@ -32,6 +35,7 @@ from apptheory import (
     protected_resource_metadata_handler,
     protected_resource_www_authenticate,
     require_bearer_token_middleware,
+    resource_indicator_matches,
     resource_metadata_url_from_mcp_endpoint,
     rfc9728_resource_metadata_url,
     validate_dynamic_client_registration_request,
@@ -242,6 +246,103 @@ class OAuthRuntimeTests(unittest.TestCase):
         dict_ctx.set("oauth.bearer_claims", {"subject": "dict-user", "audience": "aud", "scopes": ["s1"]})
         self.assertEqual(bearer_token_claims_from_context(dict_ctx).subject, "dict-user")
 
+    def test_route_derived_scope_failure_emits_insufficient_scope_challenge(self) -> None:
+        validator = new_memory_bearer_token_validator(
+            [
+                BearerTokenRecord(
+                    token="scope-miss",
+                    subject="user-1",
+                    audience="https://mcp.example.com/mcp",
+                    scopes=["mcp:write"],
+                    expires_at=dt.datetime.fromtimestamp(1_700_003_600, tz=dt.UTC),
+                ),
+            ],
+            BearerTokenValidationOptions(
+                required_audience_func=lambda _ctx: "https://mcp.example.com/mcp",
+                required_scopes_func=lambda _ctx: ["mcp:read"],
+                now=lambda: dt.datetime.fromtimestamp(1_700_000_000, tz=dt.UTC),
+            ),
+        )
+        middleware = require_bearer_token_middleware(
+            RequireBearerTokenOptions(
+                resource_metadata_url_func=lambda _ctx: (
+                    "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+                ),
+                claims_validator=validator,
+                required_scopes_func=lambda _ctx: ["mcp:read"],
+            )
+        )
+        response = middleware(
+            _ctx({"authorization": ["Bearer scope-miss"]}),
+            lambda _ctx: self.fail("next should not run"),
+        )
+        self.assertEqual(response.status, 403)
+        self.assertEqual(response.headers["content-type"], ["application/json; charset=utf-8"])
+        self.assertEqual(
+            response.headers["www-authenticate"],
+            [
+                'Bearer error="insufficient_scope", scope="mcp:read", '
+                'resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"'
+            ],
+        )
+        self.assertEqual(
+            json.loads(response.body.decode("utf-8")),
+            {"error": {"code": "app.insufficient_scope", "message": "insufficient scope"}},
+        )
+
+    def test_route_derived_audience_failure_is_plain_forbidden(self) -> None:
+        validator = new_memory_bearer_token_validator(
+            [
+                BearerTokenRecord(
+                    token="wrong-audience",
+                    subject="user-1",
+                    audience="https://other.example.com/mcp",
+                    scopes=["mcp:read"],
+                    expires_at=dt.datetime.fromtimestamp(1_700_003_600, tz=dt.UTC),
+                ),
+            ],
+            BearerTokenValidationOptions(
+                required_audience_func=lambda _ctx: "https://mcp.example.com/mcp",
+                required_scopes_func=lambda _ctx: ["mcp:read"],
+                now=lambda: dt.datetime.fromtimestamp(1_700_000_000, tz=dt.UTC),
+            ),
+        )
+        middleware = require_bearer_token_middleware(
+            RequireBearerTokenOptions(
+                resource_metadata_url_func=lambda _ctx: (
+                    "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+                ),
+                claims_validator=validator,
+                required_scopes_func=lambda _ctx: ["mcp:read"],
+            )
+        )
+        response = middleware(
+            _ctx({"authorization": ["Bearer wrong-audience"]}),
+            lambda _ctx: self.fail("next should not run"),
+        )
+        self.assertEqual(response.status, 403)
+        self.assertNotIn("www-authenticate", response.headers)
+        self.assertEqual(
+            json.loads(response.body.decode("utf-8")),
+            {"error": {"code": "app.forbidden", "message": "forbidden"}},
+        )
+
+    def test_insufficient_scope_challenge_and_resource_indicator_helpers(self) -> None:
+        self.assertEqual(
+            insufficient_scope_www_authenticate([" mcp:read ", "", "mcp:write"], " https://mcp.example.com/pr "),
+            'Bearer error="insufficient_scope", scope="mcp:read mcp:write", '
+            'resource_metadata="https://mcp.example.com/pr"',
+        )
+        self.assertEqual(
+            insufficient_scope_www_authenticate(["mcp:read"]),
+            'Bearer error="insufficient_scope", scope="mcp:read"',
+        )
+        self.assertEqual(insufficient_scope_www_authenticate([], ""), 'Bearer error="insufficient_scope"')
+        self.assertTrue(resource_indicator_matches(" https://mcp.example.com/mcp/ ", "https://mcp.example.com/mcp"))
+        self.assertFalse(resource_indicator_matches("https://mcp.example.com/mcp", "https://other.example.com/mcp"))
+        self.assertFalse(resource_indicator_matches("", "https://mcp.example.com/mcp"))
+        self.assertFalse(resource_indicator_matches("   ", "   "))
+
     def test_dcr_policy_and_pkce_verifier_are_pinned(self) -> None:
         self.assertEqual(
             claude_dynamic_client_registration_policy().allowed_redirect_uris,
@@ -321,6 +422,32 @@ class OAuthRuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(len(new_pkce_code_verifier()), 43)
         with self.assertRaises(ValueError):
             validate_pkce_code_verifier("short")
+
+    def test_bearer_challenge_never_derives_from_mcp_endpoint_env(self) -> None:
+        previous = os.environ.get("MCP_ENDPOINT")
+        os.environ["MCP_ENDPOINT"] = "https://evil.example/mcp/{actor}"
+        try:
+            unconfigured = require_bearer_token_middleware(RequireBearerTokenOptions())
+            bare = unconfigured(_ctx(), lambda _ctx: self.fail("next should not run"))
+            self.assertEqual(bare.status, 401)
+            self.assertEqual(bare.headers["www-authenticate"], ["Bearer"])
+
+            configured = require_bearer_token_middleware(
+                RequireBearerTokenOptions(
+                    resource_metadata_url="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+                )
+            )
+            challenge = configured(_ctx(), lambda _ctx: self.fail("next should not run"))
+            self.assertEqual(challenge.status, 401)
+            self.assertEqual(
+                challenge.headers["www-authenticate"],
+                ['Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"'],
+            )
+        finally:
+            if previous is None:
+                os.environ.pop("MCP_ENDPOINT", None)
+            else:
+                os.environ["MCP_ENDPOINT"] = previous
 
 
 if __name__ == "__main__":

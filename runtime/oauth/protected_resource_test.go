@@ -383,6 +383,8 @@ func TestMCPServerConfigFailsClosed(t *testing.T) {
 		{MCPPath: "/.", AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
 		{MCPPath: "/..", AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
 		{MCPPath: "/mcp/./x", AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
+		{MCPPath: "/mcp%00", AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
+		{MCPPath: "/mcp%7f", AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
 		{MCPPath: "/my mcp", AuthorizationServerIssuer: "https://auth.example.com", JWKSURI: "https://auth.example.com/jwks.json"},
 	}
 	for _, cfg := range tests {

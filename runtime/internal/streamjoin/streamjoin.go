@@ -12,7 +12,7 @@
 //
 //   - the reader reaches EOF only after the producer has returned, so an
 //     adapter that drains a body to completion cannot return early;
-//   - closing the reader unblocks the producer (by closing the pipe and
+//   - closing the reader unblocks the producer (by closing the pipe and then
 //     canceling the producer context) and then waits for it to return, so an
 //     adapter that abandons a body also leaves no producer behind.
 //
@@ -99,14 +99,19 @@ func (b *Body) Read(p []byte) (int, error) {
 
 // Close stops the producer and waits for it to return. It is safe to call
 // concurrently with Read, and it is idempotent.
+//
+// The reader pipe is closed before the producer context is canceled. The pipe
+// keeps the error of whichever side closed first, so a read that is blocked in
+// the pipe — or that starts after Close — reports io.ErrClosedPipe rather than
+// whichever of the two unblocking paths happened to win the race.
 func (b *Body) Close() error {
 	if b == nil {
 		return nil
 	}
 
 	b.closeOnce.Do(func() {
-		b.cancel()
 		b.closeErr = b.pr.Close()
+		b.cancel()
 	})
 	b.join()
 	return b.closeErr

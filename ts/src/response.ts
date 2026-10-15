@@ -40,6 +40,38 @@ export function json(status: number, value: unknown): Response {
   });
 }
 
+/**
+ * Creates a JSON response for OAuth metadata documents. Go serializes these
+ * documents with `encoding/json`, which HTML-escapes `&`, `<`, `>`, U+2028,
+ * and U+2029; the same replacement set is applied here (without the key
+ * sorting `safeJSONForHTML` performs) so every runtime emits identical bytes.
+ */
+export function metadataJSON(status: number, value: unknown): Response {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value);
+  } catch (err) {
+    throw new Error(`json serialization failed: ${String(err)}`, {
+      cause: err,
+    });
+  }
+
+  serialized = serialized
+    .replace(/&/g, "\\u0026")
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+
+  return normalizeResponse({
+    status,
+    headers: { "content-type": ["application/json; charset=utf-8"] },
+    cookies: [],
+    body: Buffer.from(serialized, "utf8"),
+    isBase64: false,
+  });
+}
+
 /** Creates a binary response with an optional content type. */
 export function binary(
   status: number,

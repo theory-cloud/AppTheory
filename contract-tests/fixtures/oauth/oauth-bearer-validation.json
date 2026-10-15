@@ -246,14 +246,17 @@
           "headers": {
             "content-type": [
               "application/json; charset=utf-8"
+            ],
+            "www-authenticate": [
+              "Bearer error=\"insufficient_scope\", scope=\"mcp:read\", resource_metadata=\"https://mcp.example.com/.well-known/oauth-protected-resource/mcp\""
             ]
           },
           "cookies": [],
           "is_base64": false,
           "body_json": {
             "error": {
-              "code": "app.forbidden",
-              "message": "forbidden"
+              "code": "app.insufficient_scope",
+              "message": "insufficient scope"
             }
           }
         },

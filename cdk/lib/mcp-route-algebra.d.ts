@@ -26,6 +26,8 @@ export interface AppTheoryMcpOAuthFacadeTemplate {
     readonly authorizePattern: string;
     /** Derived token endpoint pattern. */
     readonly tokenPattern: string;
+    /** Derived RFC 7591 dynamic-client registration pattern. */
+    readonly registerPattern: string;
 }
 /** Canonical and suffix-compatible OAuth discovery patterns for an MCP endpoint kind. */
 export interface AppTheoryMcpOAuthDiscoveryTemplate {
@@ -36,6 +38,15 @@ export interface AppTheoryMcpOAuthDiscoveryTemplate {
     /** Derived suffix-compatible RFC 8414 discovery pattern. */
     readonly suffixPattern: string;
 }
+/** One route that is installed once per deployment instead of per MCP endpoint kind. */
+export interface AppTheoryMcpStageGlobalRoute {
+    /** Contract name of the stage-global route. */
+    readonly name: string;
+    /** Canonical route pattern. */
+    readonly pattern: string;
+    /** HTTP methods wired for the pattern. */
+    readonly methods: string[];
+}
 /**
  * AppTheory's canonical, versioned MCP route-algebra contract.
  *
@@ -45,7 +56,13 @@ export interface AppTheoryMcpOAuthDiscoveryTemplate {
  */
 export declare abstract class AppTheoryMcpRouteAlgebra {
     /** MCP route-algebra contract version. */
-    static readonly CONTRACT_VERSION = "m17.mcp-route-algebra/v1";
+    static readonly CONTRACT_VERSION = "m17.mcp-route-algebra/v2";
+    /** Superseded v1 route-algebra contract version, retained for read compatibility. */
+    static readonly CONTRACT_VERSION_V1 = "m17.mcp-route-algebra/v1";
+    /** Closed issuer-mode vocabulary member: one family-wide issuer for the whole facade. */
+    static readonly ISSUER_MODE_FAMILY = "family";
+    /** Closed issuer-mode vocabulary member: each route is its own authorization-server issuer. */
+    static readonly ISSUER_MODE_ROUTE = "route";
     /** Namespace endpoint kind. */
     static readonly ENDPOINT_KIND_NAMESPACE = "namespace";
     /** Partner-scoped namespace endpoint kind. */
@@ -66,6 +83,16 @@ export declare abstract class AppTheoryMcpRouteAlgebra {
     static readonly PROTECTED_RESOURCE_PREFIX = "/.well-known/oauth-protected-resource";
     /** RFC 8414 authorization-server metadata prefix. */
     static readonly AUTHORIZATION_SERVER_PREFIX = "/.well-known/oauth-authorization-server";
+    /**
+     * Stage-global upstream OAuth callback path.
+     *
+     * The callback is correlated by the single-use upstream state the facade
+     * minted, so one stage-global route is sufficient and no per-kind callback
+     * multiplies.
+     */
+    static readonly DEFAULT_CALLBACK_PATH = "/_oauth/mcp/callback";
+    /** Return the closed issuer-mode vocabulary in contract order. */
+    static supportedIssuerModes(): string[];
     /** Derive an RFC 9728 protected-resource path from a resource path. */
     static protectedResourcePathForResourcePath(resourcePath: string): string;
     /** Derive the canonical RFC 8414 discovery path from a resource path. */
@@ -74,6 +101,14 @@ export declare abstract class AppTheoryMcpRouteAlgebra {
     static authorizationAuthorizePathForResourcePath(resourcePath: string): string;
     /** Derive the token facade path from a resource path. */
     static authorizationTokenPathForResourcePath(resourcePath: string): string;
+    /**
+     * Derive the RFC 7591 dynamic-client registration facade path from a resource path.
+     *
+     * The routed discovery document advertises exactly this path as
+     * `registration_endpoint`, so the advertised URL and the mounted route
+     * cannot drift.
+     */
+    static authorizationRegisterPathForResourcePath(resourcePath: string): string;
     /** Derive the suffix-compatible RFC 8414 discovery path from a resource path. */
     static authorizationServerSuffixPathForResourcePath(resourcePath: string): string;
     /** Recover a resource path from an RFC 9728 protected-resource path. */
@@ -84,6 +119,28 @@ export declare abstract class AppTheoryMcpRouteAlgebra {
     static supportedEndpointTemplates(): AppTheoryMcpEndpointTemplate[];
     /** Return every canonical OAuth authorization facade template in contract order. */
     static supportedOAuthFacadeTemplates(): AppTheoryMcpOAuthFacadeTemplate[];
+    /**
+     * Return every stage-global route in contract order.
+     *
+     * v2 adds exactly one stage-global route: the upstream OAuth callback. The
+     * callback path is overridable at runtime (`FacadeConfig.UpstreamCallbackPath`);
+     * this returns the contract default.
+     */
+    static supportedStageGlobalRoutes(): AppTheoryMcpStageGlobalRoute[];
+    /**
+     * Resolve the effective stage-global callback path for a configured value.
+     *
+     * An unset (or whitespace-only) value resolves to `DEFAULT_CALLBACK_PATH`;
+     * every other value must normalize to a valid absolute callback path.
+     */
+    static callbackPathForConfiguredPath(configured: string): string;
+    /**
+     * Validate and normalize an absolute callback path.
+     *
+     * The path must be absolute, contain no query or fragment, and must not use a
+     * dot segment. It is normalized with the same rules as every other route path.
+     */
+    static normalizeCallbackPath(rawPath: string): string;
     /** Return every canonical OAuth discovery template in contract order. */
     static supportedOAuthDiscoveryTemplates(): AppTheoryMcpOAuthDiscoveryTemplate[];
     /** Parse a concrete MCP path after contract normalization. */
@@ -100,6 +157,8 @@ export declare abstract class AppTheoryMcpRouteAlgebra {
     static oauthAuthorizePath(endpoint: AppTheoryMcpEndpointPath): string;
     /** Build the endpoint's token facade path. */
     static oauthTokenPath(endpoint: AppTheoryMcpEndpointPath): string;
+    /** Build the endpoint's dynamic-client registration path. */
+    static oauthRegisterPath(endpoint: AppTheoryMcpEndpointPath): string;
     /** Build the endpoint's suffix-compatible RFC 8414 discovery path. */
     static oauthAuthorizationServerSuffixPath(endpoint: AppTheoryMcpEndpointPath): string;
 }

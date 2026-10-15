@@ -83,8 +83,8 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
   `AppTheoryMcpServerOwnedApiOptions`, `AppTheoryMcpSessionStateOptions`, and route-inventory data interfaces,
   `AppTheoryInstallParameters`,
   `AppTheoryS3VersionedIngress`, canonical `AppTheoryMcpPaths`, the additive `AppTheoryMcpRouteAlgebra` contract and
-  its `AppTheoryMcpEndpointPath`, `AppTheoryMcpEndpointTemplate`, `AppTheoryMcpOAuthFacadeTemplate`, and
-  `AppTheoryMcpOAuthDiscoveryTemplate` data interfaces,
+  its `AppTheoryMcpEndpointPath`, `AppTheoryMcpEndpointTemplate`, `AppTheoryMcpOAuthFacadeTemplate`,
+  `AppTheoryMcpOAuthDiscoveryTemplate`, and `AppTheoryMcpStageGlobalRoute` data interfaces,
   `AppTheoryRemoteMcpServer`, and the deprecated URL-valued compatibility props on
   `AppTheoryMcpProtectedResource`.
 - Event and ingestion surfaces: `AppTheoryQueue`, `AppTheoryEventBridgeBus`, `AppTheoryKinesisStream`,
@@ -101,7 +101,7 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `cdk/.jsii`.
 
 <details>
-<summary>152 exported top-level symbols</summary>
+<summary>164 exported top-level symbols</summary>
 
 ```text
 ApiBypassConfig, AppTheoryApiDomain, AppTheoryApiDomainProps, AppTheoryApp, AppTheoryAppProps
@@ -115,10 +115,11 @@ AppTheoryHostedZone, AppTheoryHostedZoneProps, AppTheoryHttpApi, AppTheoryHttpAp
 AppTheoryHttpApiProps, AppTheoryHttpApiStageOptions, AppTheoryHttpApiWafOptions, AppTheoryHttpIngestionEndpoint, AppTheoryHttpIngestionEndpointDomainOptions
 AppTheoryHttpIngestionEndpointProps, AppTheoryHttpIngestionEndpointStageOptions, AppTheoryInstallParameters, AppTheoryJobsTable, AppTheoryJobsTableProps, AppTheoryKinesisStream
 AppTheoryKinesisStreamMapping, AppTheoryKinesisStreamMappingProps, AppTheoryKinesisStreamProps, AppTheoryKmsKey, AppTheoryKmsKeyProps
-AppTheoryLambdaRole, AppTheoryLambdaRoleProps, AppTheoryLambdaTrafficShiftType, AppTheoryMcpPaths, AppTheoryMcpProtectedResource, AppTheoryMcpProtectedResourceProps
-AppTheoryMcpRouteFamily, AppTheoryMcpServer, AppTheoryMcpServerDomainOptions, AppTheoryMcpServerFacadeRoute, AppTheoryMcpServerOwnedApiOptions
-AppTheoryMcpServerProps, AppTheoryMcpServerRouteInventory, AppTheoryMcpServerStageOptions, AppTheoryMcpSessionStateOptions, AppTheoryMcpTransportAuthorizerKind
-AppTheoryMcpTransportAuthorizerOptions, AppTheoryMediaCdn
+AppTheoryLambdaRole, AppTheoryLambdaRoleProps, AppTheoryLambdaTrafficShiftType, AppTheoryMcpDenialSignalOptions, AppTheoryMcpFacadeAttachment, AppTheoryMcpOriginReachability
+AppTheoryMcpOwningApiDefenseOptions, AppTheoryMcpOwningApiThrottlingOptions, AppTheoryMcpPaths, AppTheoryMcpProtectedResource, AppTheoryMcpProtectedResourceProps
+AppTheoryMcpRouteFamily, AppTheoryMcpRuntimePostureOptions, AppTheoryMcpServer, AppTheoryMcpServerDomainOptions, AppTheoryMcpServerFacadeRoute
+AppTheoryMcpServerOwnedApiOptions, AppTheoryMcpServerProps, AppTheoryMcpServerRouteInventory, AppTheoryMcpServerStageOptions, AppTheoryMcpSessionStateOptions
+AppTheoryMcpTransportAuthorizerOptions, AppTheoryMcpTransportPosture, AppTheoryMediaCdn
 AppTheoryMediaCdnProps, AppTheoryMicrovmController, AppTheoryMicrovmControllerFunctionProps, AppTheoryMicrovmControllerProps, AppTheoryMicrovmControllerStageOptions
 AppTheoryMicrovmHookMode, AppTheoryMicrovmImage, AppTheoryMicrovmImageBuildHooks, AppTheoryMicrovmImageCloudWatchLogging, AppTheoryMicrovmImageCodeArtifact
 AppTheoryMicrovmImageCpuArchitecture, AppTheoryMicrovmImageCpuConfiguration, AppTheoryMicrovmImageEnvironmentVariable, AppTheoryMicrovmImageHooks, AppTheoryMicrovmImageLogging
@@ -136,6 +137,9 @@ AppTheoryVectorIndexProps, AppTheoryVpcEndpointConfig, AppTheoryWafRuleConfig, A
 IAppTheoryMicrovmImage, IAppTheoryMicrovmNetworkConnector, MediaCdnDomainConfig, PathRoutedFrontendDomainConfig, PrivateMediaConfig
 SpaOriginConfig
 AppTheoryMcpEndpointPath, AppTheoryMcpEndpointTemplate, AppTheoryMcpOAuthDiscoveryTemplate, AppTheoryMcpOAuthFacadeTemplate, AppTheoryMcpRouteAlgebra
+AppTheoryMcpStageGlobalRoute
+AppTheoryChallengeAliasBridgeOptions, AppTheoryRestV1ChallengeRestoration, AppTheoryRestV1ChallengeRestorationProps
+AppTheoryRestV1OriginLockOptions, AppTheoryRestV1OriginReachability
 ```
 
 </details>

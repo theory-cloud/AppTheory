@@ -47,6 +47,10 @@ What changed:
   accepting any syntactically valid `Authorization: Bearer ...` token.
 - The `WWW-Authenticate` `resource_metadata` challenge is derived only from an explicit `ResourceMetadataURL` or from
   `MCP_ENDPOINT`. It is no longer derived from `Host` / `X-Forwarded-Proto` request headers.
+  - **As of v6.0.0:** `MCP_ENDPOINT` is no longer injected by any construct and no longer read by the runtime, so the
+    metadata challenge comes only from an explicit `ResourceMetadataURL`, a route-derived `ResourceMetadataURLFunc`, or
+    a `{param}` `ResourceMetadataURLTemplate` (TypeScript `resourceMetadataURLTemplate`, Python
+    `resource_metadata_url_template`); with none configured the middleware advertises the bare `Bearer` challenge.
 - `GET /mcp` without `Last-Event-ID` now emits a short-lived keepalive SSE response and closes by default instead of
   staying open indefinitely.
 - Expired MCP sessions now fail closed instead of being refreshed back to life when a durable session record still
@@ -59,7 +63,13 @@ What you need to do:
    `RequireBearerTokenMiddleware(...)`.
 2. Ensure the middleware has an explicit metadata source:
    - set `ResourceMetadataURL`, or
-   - deploy through `AppTheoryRemoteMcpServer` so `MCP_ENDPOINT` is injected.
+   - supply a route-derived `ResourceMetadataURLFunc`, or
+   - pass the construct's `AppTheoryRemoteMcpServer.protectedResourceMetadataUrl` as the first-class
+     `ResourceMetadataURLTemplate` option (`resourceMetadataURLTemplate` in TypeScript, `resource_metadata_url_template`
+     in Python). The middleware interpolates `{actor}` from the matched route's path parameters and fails closed to the
+     bare `Bearer` challenge when the placeholder cannot be resolved.
+     Note that as of v6.0.0 `MCP_ENDPOINT` is no longer injected, so deploying through the construct is not itself a
+     metadata source.
 3. If you previously depended on request-header-derived metadata discovery, replace that with explicit configuration.
 4. If your client depended on an indefinitely open initial `GET /mcp` listener with no `Last-Event-ID`, either:
    - move to resumable stream replay, or

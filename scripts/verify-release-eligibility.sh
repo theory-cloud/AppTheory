@@ -6,9 +6,18 @@
 # This single predicate is shared by the two CI surfaces that must agree:
 #   - "Prerelease readiness (staging → premain)" on the staging -> premain PR,
 #     over origin/premain..origin/staging (the promotion range itself).
-#   - "Release eligibility (staging → premain)" on PRs to staging and on pushes
-#     to staging, over origin/premain..HEAD (the range that would exist after the
-#     change lands, so a PR cannot be green while its promotion fails).
+#   - "Release eligibility (staging → premain)" on pushes to staging, over
+#     origin/premain..HEAD (the range that would exist after the change lands).
+#     It deliberately does NOT run on pull requests into staging (see the scope
+#     note below).
+#
+# Scope note (operator decision 2026-10-12, PR #1136): the predicate is enforced
+# (a) on the staging -> premain promotion pull request and (b) on the push to
+# staging (the merged staging SHA), and is deliberately NOT enforced on pull
+# requests into staging. The job's pull_request leg is guarded on
+# base.ref == premain && head.ref == staging, so an ordinary PR into staging no
+# longer evaluates origin/premain..HEAD -- a range that, after a stable release
+# plus the main back-merge, holds only chore(release)/chore(main) commits.
 #
 # Post-release main back-merge exemption (opt-in via --allow-main-backmerge):
 # after a stable release the release train brings the released main branch back

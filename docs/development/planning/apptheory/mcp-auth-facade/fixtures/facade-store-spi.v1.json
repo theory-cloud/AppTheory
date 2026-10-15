@@ -1,0 +1,73 @@
+{
+  "contract": {
+    "id": "m17.mcp-auth-facade/v1",
+    "section": "store-spi",
+    "status": "design (M0)",
+    "notes": "Durable, pluggable stores with reference in-memory implementations for tests. Consume-once and compare-and-swap are required operations, not conventions: replay handling and single-flight refresh depend on them."
+  },
+  "stores": [
+    {
+      "name": "TransactionStore",
+      "key": "hash(upstream state)",
+      "operations": ["Put", "Consume"],
+      "atomicity": ["Consume is single-use"],
+      "ttl": "<= 10 minutes",
+      "fields": ["state_hash", "client_id_hash", "client_id", "redirect_uri", "code_challenge", "code_challenge_method", "client_state", "encrypted_upstream_code_verifier", "scopes", "canonical_resource", "endpoint_kind", "client_namespace", "partner_id", "agent_id", "status", "expires_at", "version"],
+      "notes": "Encrypted PKCE verifier is never logged."
+    },
+    {
+      "name": "AuthorizationCodeStore",
+      "key": "hash(facade code)",
+      "operations": ["Put", "Consume"],
+      "atomicity": ["Consume is single-use", "the record is retained after consume so a replay is distinguishable from an unknown code"],
+      "ttl": "<= 600 s (recommend 60 s)",
+      "fields": ["code_hash", "client_id_hash", "client_id", "redirect_uri", "code_challenge", "code_challenge_method", "scopes", "canonical_resource", "endpoint_kind", "client_namespace", "partner_id", "agent_id", "route_refresh_handle_hash", "encrypted_route_refresh_handle", "encrypted_token_response", "status", "expires_at", "version"],
+      "notes": "Holds no unencrypted upstream material. encrypted_token_response (the upstream TokenSet, encrypted) embeds the upstream-minted access token and is permitted, so the code exchange can return the access token byte-for-byte unmodified; the durable upstream refresh token is written to the broker record.",
+      "replay_behaviour": "replay returns invalid_grant and revokes the broker record the code minted"
+    },
+    {
+      "name": "ClientStore",
+      "key": "hash(client id)",
+      "operations": ["Put", "Get", "Update"],
+      "atomicity": ["Update is compare-and-swap on version"],
+      "ttl": "none (age-out policy, not TTL)",
+      "fields": ["client_id_hash", "client_id", "redirect_uris", "token_endpoint_auth_method", "grant_types", "response_types", "bound_route", "created_at", "version"]
+    },
+    {
+      "name": "RouteRefreshBrokerStore",
+      "key": "hash(route refresh handle)",
+      "operations": ["Get", "AcquireLock", "CompareAndSwap", "Revoke"],
+      "atomicity": ["AcquireLock is exclusive", "CompareAndSwap is versioned", "Revoke is idempotent"],
+      "ttl": "<= min(upstream refresh lifetime, route/session lifetime, local policy)",
+      "fields": ["handle_hash", "issuer", "stage", "canonical_resource", "client_namespace", "endpoint_kind", "partner_id", "agent_id", "client_id_hash", "subject_id_hash", "scopes", "scope_fingerprint", "encrypted_upstream_refresh_token", "upstream_refresh_token_hash", "upstream_client_id", "encrypted_grace_refresh_response", "grace_expires_at", "status", "refresh_lock_owner", "refresh_lock_expires_at", "version"],
+      "status_values": ["issued", "active", "refreshing", "revoked", "expired", "reauth_required"],
+      "notes": "SEP-2352: a handle is never rebound to a new issuer or client registration; the broker upstream issuer stays the stage upstream issuer while the client-facing route issuer is the route URL."
+    },
+    {
+      "name": "RateLimitStore",
+      "key": "(identifier, resource, operation)",
+      "operations": ["CheckAndIncrement"],
+      "atomicity": ["CheckAndIncrement is atomic"],
+      "ttl": "window",
+      "notes": "Per-route buckets for DCR and legacy adoption; a store failure fails closed when the app requires it."
+    }
+  ],
+  "reference_implementations": {
+    "in_memory": ["TransactionStore", "AuthorizationCodeStore", "ClientStore", "RouteRefreshBrokerStore", "RateLimitStore"],
+    "purpose": "deterministic tests and local development only",
+    "durability": "production implementations are application-owned (e.g. TableTheory/DynamoDB in TMS/Autheory)"
+  },
+  "single_flight_refresh": {
+    "lock_ttl": "framework default, app-overridable",
+    "coalesce_wait_bound": "framework default, app-overridable; must be < lock ttl",
+    "grace_window": "framework default, app-overridable; must exceed the wait bound and not exceed the lock ttl",
+    "behaviour": [
+      "winner performs the upstream refresh and writes the grace response",
+      "concurrent callers receive the winner's grace response without a second upstream call",
+      "the upstream leg presents the client that owns the recorded upstream material",
+      "rotation atomically replaces the encrypted upstream material under a versioned compare-and-swap",
+      "transient contention returns a retryable 503 with Retry-After, never invalid_grant",
+      "only an explicit upstream stale/replaced marks reauth_required"
+    ]
+  }
+}

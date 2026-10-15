@@ -44,6 +44,241 @@ Within the `/v5` to `/v6` module migration itself the Go API surface is unchange
 diff between the two lines is header-path-only, so Go code that compiles on v5 compiles on v6. The TypeScript and Python
 runtimes carry no module-path change.
 
+### MCP auth facade mounting in TypeScript and Python
+
+`registerMcpFacade` (TypeScript) and `register_mcp_facade` (Python) previously mounted only the MCP transport routes
+from an explicit `mcpPaths` / `mcp_paths` list. They now take the full facade configuration object that Go's
+`RegisterMCPFacade` accepts and mount the same route surface as Go from the shared route algebra: the MCP transport
+routes, the RFC 9728 protected-resource metadata route, both canonical and suffix-compatible RFC 8414
+authorization-server metadata routes, the derived authorize/token route shapes (only when both handler factories are
+supplied), the derived registration route shape (only when a register factory is supplied), the opt-in static root
+discovery route, and the single stage-global callback route. There is no `mcpPaths` argument any more: the routes are
+derived from the contract, not supplied.
+
+Migration for a transport-only caller: replace the `mcpPaths` argument with the facade configuration fields
+(`issuerURL`, `jwksURI`, `urlMode`, and per-kind `scopes` at minimum) and keep `mcpHandler` and `transportPosture` as
+they were. The registrars still mount routes only; authorize, token, register, and callback bodies remain app-owned,
+and nothing beyond what Go already mounts becomes reachable. `McpFacadeRegistration` is replaced by the `RouteInventory`
+returned from the call. TypeScript and Python gain `FacadeConfig`, `FacadeRoute`, `RouteInventory`, `FacadeCapabilities`
+/ `defaultCapabilities`, `RootDiscoveryConfig`, the URL-mode constants, and the `HandlerFactory` type.
+
+### MCP auth facade front channel
+
+The framework-owned MCP auth facade front channel is now mounted when the front-channel `FacadeConfig` field set is
+declared. Setting `Provider` makes `RegisterMCPFacade` / `registerMcpFacade` / `register_mcp_facade` own and mount the
+per-endpoint-kind `GET …/authorize` terminator, the one stage-global `GET /_oauth/mcp/callback`, the
+per-endpoint-kind `POST …/token` `authorization_code` grant, and the per-endpoint-kind `POST …/register` RFC 7591
+dynamic-client-registration route, driven by the provider SPI and the five store SPIs. The
+accompanying fields are `Stores`, `UpstreamClientID`, `UpstreamIssuer`, and optionally `LifecycleScopes` and
+`ProviderHints`; the set is all-or-none, and setting any other front-channel field without a `Provider` is a
+registration error. `Provider` is mutually exclusive with the application-owned `AuthorizeHandler`/`TokenHandler` pair,
+`CallbackHandler`, and `RegisterHandler`, because it claims the same routes.
+
+Adopters that opt in must supply:
+
+- a **provider adapter** (the Autheory adapter is the first implementation) and the **five stores**. A **durable store
+  MUST encrypt every `Encrypted*` field at rest** — the facade performs no sealing and hands the store upstream
+  material (including the upstream-minted access token in the code record and the upstream refresh token in the broker
+  record) exactly as the provider returned it. The framework's in-memory reference stores are non-durable and do not
+  encrypt, so they are for tests and local development only; a deployment supplies a durable store that discharges the
+  encryption obligation.
+- the facade's own **upstream client id** and the expected **upstream issuer** (the RFC 9207 `iss` the callback pins
+  before consuming the transaction or exchanging the code).
+
+Clients can also be **registered through DCR** at the derived per-endpoint-kind `POST …/register` route (RFC 7591):
+the facade mints a server-assigned opaque client id (≥128 bits), requires public-client metadata
+(`token_endpoint_auth_method` absent or `none`), restricts redirect URIs to https or loopback (no fragment), bounds the
+metadata and the raw body, rate-limits per route, and stores the record through the `ClientStore` (hash-keyed and
+bound to the advertising route). A client the application already knows can still be **pre-registered** directly
+through the `ClientStore`, keyed by the store hash helper (`oauthstore.HashKey` in Go, `hashKey` in TypeScript,
+`hash_key` in Python) so the facade derives the same key when it looks the client up.
+
+The **`refresh_token` grant now works**: the opaque handle the code-exchange response returns as `refresh_token` is
+redeemable at the same per-endpoint-kind `POST …/token` route, as of M3c-1b in all three runtimes. A refresh rotates
+the handle to a fresh opaque one and returns the upstream access token **byte-for-byte** (never an `id_token` or any
+upstream refresh material); it is single-flighted under a broker-store lock so concurrent callers of one handle cause
+exactly one upstream call, a caller that loses that race waits a bounded time and then receives either the winner's
+successor tokens or `503 temporarily_unavailable` with `Retry-After`, and for 30 seconds after a rotation the previous
+handle replays the **same** successor tokens byte-for-byte (so a lost response does not cost the client its grant).
+Beyond that window the previous handle is reuse and revokes the whole grant. A refresh request may not widen or narrow
+its scope: a present `scope` must be exactly the granted set and a present `resource` must be the bound resource.
+Four framework constants govern it and none is configurable (no `FacadeConfig` field, no environment variable): a
+30-second grace window, a 3-second coalesce wait cap, a 512-byte handle bound, and a broker-store lock TTL of 15
+seconds — the last is the M2.1 hardened upstream HTTP deadline (10 s) plus a 5-second margin, so a store you supply
+must use the same 15 seconds. A **durable store you supply must encrypt the broker record's
+`EncryptedGraceRefreshResponse` field at rest** like every other `Encrypted*` field; the framework performs no sealing.
+
+The token and error bodies are JSON and decode identically in all three runtimes, but their **bytes are not
+guaranteed equal across runtimes**. The Go runtime encodes them with Go's `encoding/json`, which HTML-escapes `&`,
+`<`, and `>` as `\u0026`, `\u003c`, and `\u003e`; the TypeScript and Python runtimes emit those characters raw.
+Both forms decode to the same values, the grace replay is byte-identical **within** each runtime (as the 30-second
+replay requires), and no contract pins cross-runtime byte equality — so a cross-language golden-file comparison
+must normalize the bytes or compare decoded values rather than raw bodies.
+
+**The CDK `facade` attachment is presence-only by design.** The construct's `facade` attachment marks a server as
+facade-configured and selects the `runtime-bearer` posture default (`AppTheoryMcpFacadeAttachment` carries a
+`providerId` and nothing else); its presence is what enables the facade route derivation and the defense-in-depth
+floor checks. It deliberately does not wire a provider adapter or the five store SPIs: a facade server configures its
+provider and stores in the runtime (`FacadeConfig.Provider` / `.Stores`) as documented in
+`docs/features/mcp-auth-facade-spi.md`, because provider and store choice is application policy
+(`FRAMEWORK_VS_POLICY.md`) rather than infrastructure. The stage-global callback path override is likewise wired:
+pass the construct's `upstreamCallbackPath` prop.
+
+The store `put` normalization was also aligned across Go, TypeScript, and Python: the reference stores now preserve a
+caller-supplied `status` verbatim and normalize a version below 1 to 1 in all three runtimes (Go was already the
+reference), pinned by a new shared `put_payload` conformance scenario.
+
+See `docs/features/mcp-auth-facade-spi.md` for the front-channel configuration table and
+`docs/features/mcp-facade-helper.md` for what the three registrars mount.
+
+### REST v1 edge `WWW-Authenticate` restoration
+
+AWS API Gateway **REST API v1** remaps an origin's `WWW-Authenticate` response header onto
+`x-amzn-remapped-www-authenticate`, so a REST v1 origin that answers `401` with the canonical RFC 9728 challenge
+loses the header at the edge. The new `AppTheoryRestV1ChallengeRestoration` construct fronts a REST v1 `execute-api`
+origin with CloudFront and restores the canonical header on the origin response, then removes the consumed source
+headers. It is additive: a stack that does not use it synthesizes exactly as before.
+
+The construct derives its route set from the shared route algebra (never a hand-written path list) and requires the
+DD-2 direct-origin decision in addition to the origin:
+
+```ts
+new AppTheoryRestV1ChallengeRestoration(this, "Challenge", {
+  origin: restApi,
+  originReachability: AppTheoryRestV1OriginReachability.LOCKED,
+  originLock: { secret: originLockSecret, asserted: true },
+});
+```
+
+**A CloudFront front door does not by itself make the origin unreachable.** The REST API keeps answering at its own
+`<restApiId>.execute-api.<region>.<urlSuffix>` endpoint, which is exactly the origin this distribution uses, so a
+client that skips the distribution still reaches the origin and observes a **challenge-less `401`** — the
+restoration never runs, and any edge-only control is bypassed on that path. Authentication itself is unaffected (the
+runtime bearer gate still refuses the request at the origin), so this is challenge loss and edge bypass, not an
+authentication bypass. `originReachability` is therefore required and a directly reachable origin (`direct`) is
+refused at synthesis:
+
+- `LOCKED` — the origin is reachable only through this distribution. The construct injects `originLock.secret` as a
+  custom origin header on every request to the origin, strips a viewer-supplied copy of that header at the edge, and
+  requires `originLock.asserted: true`, the caller's assertion that the REST API verifies the header (the construct
+  cannot attach a resource policy or authorizer to an external `IRestApi`). The lock's strength rests on the secret
+  staying confidential: a client that learns it can satisfy the origin-side verification directly. The secret is a
+  **defense-in-depth layer, not a credential store**: it is a literal CloudFront origin custom header value, so it
+  appears **verbatim in the synthesized template and in CloudFormation**; the 32–128 character `[A-Za-z0-9._~-]`
+  alphabet structurally excludes a `{{resolve:...}}` dynamic reference, so there is no Secrets Manager path and
+  rotation means changing the value and redeploying; it must not be (or contain) a secret that protects anything
+  else. Where a custom domain is acceptable, prefer `DISABLED`, which keeps no secret in the template.
+- `DISABLED` — the REST API's `execute-api` default endpoint is disabled. The caller asserts it
+  (`disableExecuteApiEndpointAsserted: true`) because the construct cannot mutate an external `IRestApi`. Note the
+  platform shape: the disabled hostname is the distribution's own origin hostname, and AWS requires a custom domain
+  once the default endpoint is disabled, so an app choosing `DISABLED` must front its REST API through a custom
+  domain rather than this construct's execute-api origin.
+
+The restore source set is `x-amzn-remapped-www-authenticate` **always**, plus the optional alias bridge spellings
+(`x-theory-www-authenticate`, then `mcp-www-authenticate`) only when `aliasBridge: { enabled: true }` is set. The
+bridge is **off by default**, and while it is off the alias spellings do not appear in the deployed function source
+at all. The restoration runs as a CloudFront origin-response Lambda@Edge function, so the stack must be deployed
+with a **resolved account and region**, and the distribution's behaviors forward every viewer header except `Host`
+(and, under `LOCKED`, the origin-lock header as well), plus all cookies and all query strings (without the query
+string the derived `authorize` and callback routes lose their parameters). Passing an HTTP API v2 origin fails
+synthesis: the restoration is a documented no-op there.
+
+### Lab candidate builds against a pinned commit
+
+A lab proof can build AppTheory itself at a pinned commit and bind **every consumed surface** to that one commit.
+The mechanism is encoded stage config, never an operator environment variable: the application's stage config
+gains an `apptheory.candidate` block (Autheory places it under `deployment.apptheory.candidate`, because its deploy
+loader reads the `deployment` object) carrying `commit`, `tree`, `source_date_epoch` and the per-surface `sha256`
+values recorded by a witnessed build.
+
+`scripts/lab/candidate-build.sh` re-builds the declared surfaces (S1–S6) from the exported tree of that commit,
+verifies every declared per-surface hash and the tree (`git rev-parse <commit>^{tree}`), and refuses a pinned commit
+whose tree carries an archive-affecting `.gitattributes` (`export-ignore` can only filter a handed-over tree and
+`export-subst` can only rewrite its file content, and the witnessed build runs the same archive command, so both
+are refused by name before anything is archived). Each `git archive` surface is then compared against the pinned
+commit twice: its file entry list must equal the tracked file list, and every file entry's blob content must equal
+the pinned blob (symlink targets and the executable bit included), then it writes a receipt
+stamping each declared surface with the commit, the tree and the hash. The config declares the subset the consumer
+uses — at least one surface — and an undeclared surface is never built, handed over or receipted, so a consumer that
+uses two surfaces declares two. It refuses any stage other than `lab`, refuses any environment-variable input,
+refuses a dirty working tree or a `HEAD` that is not the encoded commit, and deletes an artifact rather than hand
+one over when a hash does not match. There is **no action for a consumer that does not run lab candidate builds**:
+the builder is a repository script that adds no runtime code path and never runs on a release lane. Adopters should
+read `docs/development/planning/apptheory/mcp-auth-facade/CANDIDATE_BUILD_INTERFACE.md` §4.1 (the interface as
+built) and §4.2 (how TMS and Autheory call it).
+
+### TableTheory 5.2.0 dependency and multi-window rate-limit error classification
+
+The v6 line now pins TableTheory 5.2.0 in all three runtimes: `github.com/theory-cloud/tabletheory/v5 v5.2.0` in Go,
+`theory-cloud-tabletheory-ts-5.2.0.tgz` in TypeScript and `tabletheory_py-5.2.0-py3-none-any.whl` in Python, together
+with the AWS SDK module versions TableTheory 5.2.0 requires under minimum version selection. Both non-Go assets are
+immutable GitHub Release assets, pinned by SHA-512
+`9bvnC3DyKjA7DziyRyfYoi5t/4hJt6YLlN1gGuhLPEioktUo3OgeUdbyO8luJyi1dcC1VE6pT4vnEM926QtsPQ==` for the TypeScript tarball
+and SHA-256 `bce361b931b5d44dc2d229ed18a2befa2f508d29e27ef649381ba61e9c23c359` for the Python wheel. Use the pinned
+assets through AppTheory's package metadata; do not substitute registry-published packages or mutable URLs.
+
+**The one behavioral change.** TableTheory 5.1.0 classifies a cancelled `TransactWrite` by its FIRST genuine
+cancellation reason. Go already classified by reason, but the pre-repin TypeScript and Python adapters did not, and
+they did not do so in the same way — measured on the base pins (`tabletheory-ts` 5.0.0, `tabletheory_py` 5.0.0), the
+two runtimes misclassified differently. All three runtimes now agree, so the multi-window rate limiters
+(`DynamoRateLimiter`) change behavior:
+
+| Cancellation class | Before (TypeScript 5.0.0) | Before (Python 5.0.0) | Now (Go, TypeScript, Python) |
+| --- | --- | --- | --- |
+| Genuine `ConditionalCheckFailed` — a window budget was exceeded | soft denial: `allowed=false` plus a retry-after | soft denial | unchanged |
+| A reason list that contains a `ConditionalCheckFailed` reason which is not the first genuine reason (for example a throttle first, the condition failure second) | soft denial | soft denial — the old Python matcher tested the whole reason list, not just the first genuine reason | follows the configured fail-open policy |
+| A cancellation whose message mentions `ConditionalCheckFailed` while its reason list carries no such reason | soft denial | soft denial — the old Python matcher also sniffed the message text | follows the configured fail-open policy |
+| A DynamoDB throttle, a transaction conflict, an unknown code, an all-`None` or empty reason list | soft denial | already followed the configured fail-open policy | follows the configured fail-open policy |
+
+In plain words: **TypeScript treated every cancellation as a condition failure and soft-denied all of them**, so a
+throttle or a transaction conflict no longer produces a soft denial in the TypeScript multi-window limiter; it now
+follows the configured `failOpen` policy exactly as Go always has. **Python was already reason-aware for the plain
+throttle, conflict, unknown-code, all-`None` and empty rows**, which admitted or failed closed exactly as they do
+now; what changes in Python is narrower — a cancellation was also read as a condition failure whenever the message
+mentioned `ConditionalCheckFailed`, or whenever the reason list carried a `ConditionalCheckFailed` reason anywhere
+rather than only in the first genuine position, and those two shapes now follow the configured `failOpen` policy as
+well. `failOpen: true`, the AppTheory default, admits the request; `failOpen: false` returns an `internal_error`.
+
+**To make a throttle deny instead of admit, configure fail-closed:** Go `limited.Config{FailOpen: false}`,
+TypeScript `new DynamoRateLimiter({ config: { failOpen: false } })`, Python
+`DynamoRateLimiter(config=replace(default_config(), fail_open=False))`. A consumer that previously depended on the
+misclassification — in TypeScript any cancellation read as a condition failure, in Python the narrower
+conditional-check-in-the-list or message-mention cases — should branch on the current error code instead:
+`ErrThrottled` / `ErrTransactionConflict` in TypeScript, `ThrottledError` / `TransactionConflictError` in Python.
+The shared conformance table `contract-tests/fixtures/routing/limiter/multi-window-cancellation.v1.json` pins every
+class in all three runtimes.
+
+**TableTheory 5.2.0 compatibility notes.** Nothing in TableTheory 5.1.0 or 5.2.0 changes stored bytes. On the Go
+Builder path the genuine-failure attribution is unchanged; sentinel selection on the `Transaction` API moved from
+"any reason" to "first genuine failure", which no AppTheory surface branches on. A cancellation that carries no
+genuine reason is now a generic transaction failure rather than a condition failure. Two additive TableTheory
+surfaces exist and AppTheory deliberately does **not** adopt them, so a consumer can: typed-only safe error helpers
+(`safeErrorFields` in TypeScript, `safe_dict()` on the Python error classes) that never include the retained cause,
+and opt-in item-image redaction (`new TheorydbClient(ddb, { redactItemImages: true })` in TypeScript, `Table(model,
+client=…, redact_item_images=True)` in Python) that strips cancellation-reason and condition-failure item images
+from the retained cause. Both are off by default, so a retained cause is the same object it was before; the plain
+statement of what the default still allows is in each runtime's `docs/troubleshooting.md`.
+
+### OAuth provider authorize-request validation fails closed on a colliding hint
+
+The provider adapters previously disagreed about a `ProviderHints` entry whose key collides with a required or
+reserved authorize parameter. Go and Python silently dropped the hint (the required parameter won); TypeScript
+applied hints after the required parameters, so a TS hint actually **overrode** `client_id`, `redirect_uri`,
+`state`, `code_challenge`, `code_challenge_method`, `response_type`, `resource` or `scope`. All three runtimes now
+refuse such a hint with the adapter's `invalid_request` class before any endpoint is resolved, and a non-colliding
+hint is still forwarded verbatim. The three runtimes also disagreed about a hint *name* carrying leading or trailing
+whitespace — Go forwarded the untrimmed name as a second query parameter while TypeScript and Python silently
+collapsed it onto the trimmed name — and all three now refuse such a name with the same `invalid_request` class.
+**Action:** an application that configured a colliding `ProviderHints` key — or a hint name with surrounding
+whitespace — now fails closed: the authorize request is not sent, and the facade reports it as the provider-call
+failure the `ProviderHints` seam already documents (502 `upstream_error`) — instead of having that hint silently
+ignored, injected, rewritten or duplicated. Rename the hint, or drop it.
+
+TypeScript also no longer falls back to the configured `clientId` when a request omits `upstreamClientId`: a blank
+request client id fails closed with `invalid_request`, matching Go and Python, which already required it. The
+`clientId` / `client_id` adapter options are retained for cross-runtime parity and never supply a request's client
+id.
+
 ## v5.x line
 
 AppTheory v5 is a major release on two axes: the Go module path moves to the next semantic import version, and the Go
@@ -123,16 +358,44 @@ base-table key conditions, so the GSI change does not apply and no persisted-sha
 ### MCP transport routes require credentials by default
 
 This is a deliberate, declared security contract change. `AppTheoryMcpServer` MCP transport routes (`POST`, `GET`, and
-`DELETE` on every MCP pattern) now attach an authorizer instead of API Gateway `NONE`. The default authorizer is AWS
-IAM, or a JWT authorizer when `transportAuthorizer` supplies an issuer and audience. A credential-free request to a
-transport route is now rejected by API Gateway (HTTP `403` for IAM, `401` for JWT) before the runtime handler runs.
+`DELETE` on every MCP pattern) never default to a credential-free route; the construct resolves one `transportPosture`
+selection and attaches the matching authorizer, so a credential-free request is rejected before the runtime handler
+runs.
 
-The OAuth surface is unchanged: RFC 9728 protected-resource metadata, canonical and suffix RFC 8414 discovery, the
-authorize route, and the token route remain explicitly public (`NONE`) because OAuth clients must fetch those documents
-before they hold a token.
+| `transportPosture` | Transport-route authorizer | Validator |
+| --- | --- | --- |
+| `iam` (the default for a plain transport server) | AWS IAM | application |
+| `jwt` | static JWT authorizer (`transportAuthorizer` issuer + audience) | application |
+| `runtime-bearer` (the default once the server attaches `facade`) | `NONE` | mandatory RFC 9728 bearer validation |
+| `none-public` | `NONE` | none (deliberately public) |
 
-Existing deployments that let the runtime validate OAuth bearer tokens must either configure the transport authorizer
-to match their issuer and audience, or set the explicit opt-out to keep the previous behavior.
+The default is resolved from the construct's shape, not asked of the caller. An `AppTheoryMcpServer` that attaches the
+`facade` property — declaring that it fronts an auth provider on one domain — resolves to `runtime-bearer`; a plain
+transport server with no `facade` attachment keeps the `iam` default. Setting `transportPosture` explicitly overrides
+the default.
+
+`unauthenticatedMcp` is **removed** with no alias and no shim, and `AppTheoryMcpTransportAuthorizerKind` is removed
+with it. `transportAuthorizer` is now only the static JWT configuration for
+`transportPosture: AppTheoryMcpTransportPosture.JWT`, which requires an issuer and a non-empty audience; supplying it
+under any other posture fails synthesis.
+
+The OAuth surface is derived by route algebra `m17.mcp-route-algebra/v2`: RFC 9728 protected-resource metadata,
+canonical and suffix RFC 8414 discovery, and the authorize/token routes per MCP pattern, plus the derived `/register`
+path (canonical discovery path + `/register`) per pattern and one **stage-global** upstream callback route
+(`/_oauth/mcp/callback` by default, overridable through `FacadeConfig.UpstreamCallbackPath` /
+`routeFamily`-agnostic CDK derivation). Every OAuth-surface route is explicitly public (`NONE`) — OAuth clients must
+fetch those documents before they hold a token — and the whole surface registers only when the posture is not
+`none-public`: a `none-public` server registers no OAuth surface at all, so the runtime surface and the construct's
+`authorizationRoutesAttached` inventory cannot disagree.
+
+`none-public` is the explicit replacement for the removed `unauthenticatedMcp: true` opt-out. It is never a default,
+and because the transport authorizer is `NONE` it now carries the defense-in-depth floor: `originReachability` must be
+`disabled` or `locked` (a directly reachable origin is refused), and the throttling and access-logging decisions must be
+explicit. In owned-API mode the explicit throttling decision is `ownedApi.stage.throttlingEnabled: true`; in attach mode
+it is an `owningApiDefense` record of the owning API's access logging and throttle settings. Selecting `runtime-bearer`
+additionally requires an explicit `runtimePosture: { requireBearerToken: true }` declaration and a `denialSignal` (the
+denial metric is `apptheory.mcp.auth_denied`, dimensioned on the bounded outcome and route family only). Each missing
+requirement fails synthesis rather than degrading to a credential-free route.
 
 CDK before / after:
 
@@ -140,26 +403,42 @@ CDK before / after:
 // Before: every route was public and the runtime owned bearer validation.
 new AppTheoryMcpServer(this, "McpServer", { handler });
 
-// After (recommended): API Gateway validates JWTs before the runtime runs.
+// After (recommended): attach the facade; it selects the runtime-bearer default.
 new AppTheoryMcpServer(this, "McpServer", {
   handler,
+  facade: { providerId: "autheory" },
+  runtimePosture: { requireBearerToken: true },
+  originReachability: AppTheoryMcpOriginReachability.LOCKED,
+  denialSignal: { metricName: "apptheory.mcp.auth_denied" },
+  ownedApi: { stage: { throttlingEnabled: true } },
+});
+
+// After (explicit JWT): a static issuer and audience at the gateway.
+new AppTheoryMcpServer(this, "McpServer", {
+  handler,
+  transportPosture: AppTheoryMcpTransportPosture.JWT,
   transportAuthorizer: {
-    kind: AppTheoryMcpTransportAuthorizerKind.JWT,
     issuer: "https://accounts.example.com",
     audience: ["https://mcp.example.com"],
   },
 });
 
-// After (opt-out): keep the previous all-public behavior explicitly.
-new AppTheoryMcpServer(this, "McpServer", { handler, unauthenticatedMcp: true });
+// After (explicit public): the deliberate, never-default opt-out.
+new AppTheoryMcpServer(this, "McpServer", {
+  handler,
+  transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC,
+  originReachability: AppTheoryMcpOriginReachability.DISABLED,
+  ownedApi: { stage: { throttlingEnabled: true } },
+});
 ```
 
-On the Go side, `mcpfacade.RegisterMCPFacade` now registers the MCP transport routes with an authenticated posture by
-default: a request without a verified principal is rejected with HTTP `401` and the MCP handler never runs. The new
-`FacadeConfig.UnauthenticatedMcp` field is the runtime counterpart of the CDK opt-out, and the new
-`FacadeConfig.RequireBearerToken` field validates an RFC 9728 bearer token on those routes with the correct
-`WWW-Authenticate` challenge. Applications that own transport authentication must set one of them. `UnauthenticatedMcp`
-and `RequireBearerToken` are mutually exclusive.
+On the Go side, `mcpfacade.RegisterMCPFacade` registers the MCP transport routes with an authenticated posture by
+default, and a request without a verified principal is rejected with HTTP `401` before the MCP handler runs. The
+removed `FacadeConfig.UnauthenticatedMcp` field is replaced by `FacadeConfig.TransportPosture`
+(`mcpfacade.TransportPostureIAM` | `...JWT` | `...RuntimeBearer` | `...NonePublic`). `FacadeConfig.RequireBearerToken`
+is now valid **only** with `TransportPostureRuntimeBearer`: registration fails closed when the bearer validator is
+missing under `runtime-bearer`, and when it is supplied under `iam`, `jwt`, or `none-public`. TypeScript and Python gain
+the matching `registerMcpFacade` / `register_mcp_facade` registrars, which enforce the same posture/validator pairing.
 
 Go before / after:
 
@@ -174,20 +453,21 @@ _, err := mcpfacade.RegisterMCPFacade(app, mcpfacade.FacadeConfig{
     MCPHandler:   mcpHandler,
 })
 
-// After (recommended): validate bearer tokens on the transport routes.
+// After (recommended): validate RFC 9728 bearer tokens on the transport routes.
 _, err = mcpfacade.RegisterMCPFacade(app, mcpfacade.FacadeConfig{
-    IssuerURL:    issuer,
-    JWKSURI:      jwksURI,
-    URLMode:      mcpfacade.URLModePublicBaseURL,
-    PublicBaseURL: baseURL,
-    Scopes:       scopes,
-    MCPHandler:   mcpHandler,
+    IssuerURL:          issuer,
+    JWKSURI:            jwksURI,
+    URLMode:            mcpfacade.URLModePublicBaseURL,
+    PublicBaseURL:      baseURL,
+    Scopes:             scopes,
+    MCPHandler:         mcpHandler,
+    TransportPosture:   mcpfacade.TransportPostureRuntimeBearer,
     RequireBearerToken: &oauth.RequireBearerTokenOptions{Validator: myValidator},
 })
 
-// After (opt-out): the application owns transport authentication.
+// After (explicit public): register the transport routes without authentication.
 config := mcpfacade.FacadeConfig{ /* as before */ }
-config.UnauthenticatedMcp = true
+config.TransportPosture = mcpfacade.TransportPostureNonePublic
 _, err = mcpfacade.RegisterMCPFacade(app, config)
 ```
 
@@ -197,6 +477,90 @@ MCP handler themselves. Applications that already wrap the handler or configure
 `apptheory.WithAuthPrincipalHook` are unaffected: the default posture delegates to that principal hook. Wrapping the
 MCP handler without also configuring a principal hook does not exempt an application — route authorization runs before
 middleware and the handler, so every MCP transport request is still rejected with HTTP `401`.
+
+### MCP route algebra v2, route-aware bearer validation, and the RFC 9728/8707 challenge
+
+Route algebra `m17.mcp-route-algebra/v2` is now implemented in Go (`runtime/mcproutes`), TypeScript
+(`ts/src/mcproutes.ts`), Python (`apptheory.mcproutes`), and the jsii CDK construct, all driven by one shared
+expectation table. Beyond the v1 derivations it adds the derived `/register` path per MCP pattern, one stage-global
+upstream callback route, and the `IssuerMode` vocabulary (`family` | `route`).
+
+`FacadeConfig.IssuerMode = mcpfacade.IssuerModeRoute` (and the equivalent per-language option) makes each route its own
+authorization server: the routed RFC 9728 and RFC 8414 documents advertise the **route URL** as `resource`,
+`authorization_servers`, and `issuer`, and the discovered `registration_endpoint` is the route's own derived
+`/register` path. `jwks_uri` stays the upstream JWKS, because the upstream signs the access tokens the route hands to
+clients. `family` mode keeps the previous single-issuer behavior.
+
+The bearer validator is now **route-aware**: the Go validator types receive the AppTheory request context, and all three
+runtimes accept route-derived audience, scope, and challenge metadata resolvers, so the audience can be the exact
+matched route URL. The challenge's `resource_metadata` is built from the matched route whenever a route-derived
+resolver (`ResourceMetadataURLFunc`) or a `{param}` `ResourceMetadataURLTemplate` / `resourceMetadataURLTemplate` /
+`resource_metadata_url_template` is configured; otherwise it comes from the explicit `ResourceMetadataURL` option
+(precedence: resolver > template > static URL). The middleware reads no environment variable, and with none configured
+it advertises the bare `Bearer` challenge. It is never derived from the request's `Host` or forwarded headers.
+
+AppTheory ships its first JWT/JWKS access-token validator in all three runtimes. It pins `RS256` (the `alg: none` and
+`HS*` algorithm-confusion families are refused), requires a bounded `kid` cache with one cooldown-limited refresh per
+unknown kid **under a global unknown-kid fetch budget** (32 key-set fetches per 60-second window by default) and an
+expiry-driven rotation refresh, caps `kid` strings at 256 characters, and keeps the `kid`-window map and the key cache
+bounded and evicting (1024 windows / 128 keys). Every discovery and JWKS fetch is bounded end to end — the response
+headers and its body alike — by a 10-second framework timeout, so a hung, stalled, or trickling upstream cannot stall
+validation, and a refresh never holds the key lock across the network. Go and TypeScript additionally coalesce the
+key-set fetches of one validator (a single-flight refresh, so validations that miss the key cache at the same moment
+share one upstream fetch). Python does not coalesce: each concurrent unknown-`kid` validation there performs its own
+key-set fetch, and each of those fetches is independently bounded by the same 10-second timeout and charged against the
+same global unknown-`kid` fetch budget, so the gap is in upstream request volume rather than in the bound. It checks the
+issuer before and after signature verification, enforces the route-derived audience/scope and an `azp`/`client_id`
+allow-list — an absent `azp` falls back to `client_id`, while a present but blank `azp` is refused rather than falling
+back, and a present `azp` that is not a JSON string is refused as a malformed claim instead of being read as the
+`client_id`, identically in all three runtimes — and bootstraps OIDC discovery over HTTPS only, verifying the discovery
+issuer before trusting `jwks_uri` and refusing cross-origin redirects. Every failure path fails closed. The timeout and
+the budgets are framework defaults with a documented per-validator override (Go `FetchTimeout` / `MaxUnknownKidFetches`
+/ `UnknownKidFetchWindow`, TypeScript `fetchTimeoutSeconds` / `maxUnknownKidFetches` /
+`unknownKidFetchWindowSeconds`, Python `http_timeout_seconds` / `max_unknown_kid_fetches` /
+`unknown_kid_fetch_window_seconds`).
+
+The framework's own JWKS/discovery transport refuses to connect to an endpoint host that is not a public address —
+loopback, link-local (including the cloud metadata address `169.254.169.254`), private, unspecified, or multicast —
+both for literal IPs and for the addresses a name resolves to at connect time, so there is no DNS-rebinding window
+between the check and the connection. Local development and the repository's loopback test suites opt in through the
+documented `AllowPrivateHosts` (Go) / `allowPrivateHosts` (TypeScript) / `allow_private_hosts` (Python) override; it is
+off by default and is never enabled by the framework itself. The standalone discovery bootstrap helpers
+(`BootstrapOIDCDiscovery`, `bootstrapOidcDiscovery`, `bootstrap_oidc_discovery`) take the transport as an injected
+client/fetch/`http_get`, so the same override reaches them: a caller-supplied transport keeps its own connection policy,
+and each helper installs the guard only when the framework chooses the transport itself.
+
+Denials now carry the route-derived challenge. A missing, malformed, invalid, or expired token returns `401` with
+`WWW-Authenticate: Bearer resource_metadata="<matched route's protected-resource metadata URL>"`. A scope failure
+returns `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="<remediation scopes>",
+resource_metadata="<…>"` and body `{"error":{"code":"app.insufficient_scope"}}`; an audience failure and every other
+forbidden denial still return the plain `403` with no error code or scope set. RFC 8707 `resource` is canonicalized and
+must exactly equal the route resource (the resulting `aud` must equal the route URL).
+
+### MCP auth facade provider and store SPIs
+
+The facade's provider SPI and store SPIs now exist in all three runtimes, together with their normal parts. **Nothing
+is mounted and no action is required yet:** the packages are inert, no facade route is registered, and `FacadeConfig`
+does not consume them until the facade mechanics land.
+
+- The **provider SPI** (discovery, authorization-URL construction, code exchange, refresh, token validation through the
+  shipped JWKS/RS256 validator) ships with the **Autheory adapter** as the first implementation, a second tiny test
+  adapter proving provider-neutrality, and typed errors mapped to a closed client-facing vocabulary. Every upstream call
+  goes through the same bounded, SSRF-guarded, size-capped HTTP path the discovery and JWKS bootstraps use.
+- The **store SPIs** — `TransactionStore`, `AuthorizationCodeStore`, `ClientStore`, `RouteRefreshBrokerStore`,
+  `RateLimitStore` — ship with in-memory reference implementations and an injectable clock. Consume-once and
+  compare-and-swap are required atomic operations. **Production needs a durable store; the framework does not ship
+  one** — durable implementations are application-owned, and **no upstream material may be persisted unencrypted**.
+- Two shared conformance tables (`facade-provider-conformance.v1.json`, `facade-store-conformance.v1.json`) drive the
+  provider adapter and any store, and a fake upstream provider (real RSA keys, real local HTTP) ships in test support.
+
+See `docs/features/mcp-auth-facade-spi.md` for the interface reference and the framework-versus-application split.
+
+Landed since: the facade mechanics themselves — front-channel termination, the upstream callback handler, the
+`authorization_code` code exchange, and the RFC 7591 DCR handler (all mounted once the front-channel field set is
+declared). Still not in this line: the brokered refresh grant, and the edge `WWW-Authenticate` restoration construct
+plus the challenge alias bridge. The derived `/register` and callback **routes** exist and are mountable; the callback
+and DCR handlers are framework-owned when `Provider` is set and application-owned otherwise.
 
 ## v4.x line
 
@@ -450,8 +814,10 @@ The next v3 minor redesigns `AppTheoryMcpServer` around the route-algebra facade
 - `POST`, `GET`, and `DELETE` MCP transport plus protected-resource, canonical/suffix discovery, authorize, and token
   routes are wired by default;
 - the session table defaults on with retain semantics, and owned APIs default access logging and throttling on;
-- omitting issuer/JWKS no longer means unauthenticated MCP; use `unauthenticatedMcp: true` for the validated no-facade
-  opt-out;
+- omitting issuer/JWKS no longer means unauthenticated MCP; the deliberate no-facade opt-out is the explicit public
+  transport posture (`transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC`) with the defense-in-depth floor. The
+  intermediate `unauthenticatedMcp` opt-out is removed with no alias —
+  see [MCP transport routes require credentials by default](#mcp-transport-routes-require-credentials-by-default);
 - issuer/JWKS are no longer injected into `APPTHEORY_MCP_*` environment variables. Configure the explicit Go
   `mcpfacade.FacadeConfig`, including per-kind scopes and application-owned authorize/token handlers.
 
@@ -467,10 +833,21 @@ Every v3.1.x A6 prop except `handler` is deprecated in place: move `mcpPath` to 
 forms and `routeInventory`. The `api` accessor remains but is generalized to `IHttpApi`.
 
 `MCP_SESSION_TABLE` and `MCP_SESSION_TTL_MINUTES` remain construct-managed when session state is enabled.
-`MCP_ENDPOINT` is written only in owned mode, where the construct knows the public endpoint it owns. Attach-mode
-applications behind a front door or CDN must configure the correct request-specific bearer challenge in app-owned
-runtime configuration; the construct does not accept an origin prop. Review the complete migration table in
-[the MCP server facade guide](docs/features/mcp-server-construct.md) before upgrading.
+`MCP_ENDPOINT` is fully retired in v6: no construct writes it and no runtime reads it, so there is no shim. The bearer
+challenge is app-owned configuration — a route-derived `ResourceMetadataURLFunc`, the per-actor
+`ResourceMetadataURLTemplate` (TypeScript `resourceMetadataURLTemplate`, Python `resource_metadata_url_template`), or an
+explicit `ResourceMetadataURL` (precedence: resolver > template > static) — with the bare `Bearer` form when none is
+configured. `AppTheoryRemoteMcpServer` exposes the route-derived `protectedResourceMetadataUrl` (the RFC 9728 metadata
+URL template, with `{actor}` preserved when `actorPath` is enabled); `AppTheoryMcpServer` exposes the same route model
+through `routeInventory`.
+
+If you run the legacy `AppTheoryRemoteMcpServer` with `actorPath: true` and change nothing, the per-actor route
+advertises only the bare `Bearer` challenge: the construct injects no environment variable, so it cannot wire the
+challenge for you. The construct now emits a synth warning on that route naming `protectedResourceMetadataUrl`, and the
+fix is to pass `protectedResourceMetadataUrl` into your own app config and set it as your runtime's template option
+(`ResourceMetadataURLTemplate` / `resourceMetadataURLTemplate` / `resource_metadata_url_template`) so the middleware
+resolves `{actor}` from the matched route. The construct still does not accept a public-origin prop (THE-2861). Review
+the complete migration table in [the MCP server facade guide](docs/features/mcp-server-construct.md) before upgrading.
 
 `AppTheoryMcpProtectedResource` remains supported only for existing synth-time-static REST API documents. Its
 URL-valued `resource` and `authorizationServers` props stay deprecated; it is not a parallel namespace deployment

@@ -22,9 +22,13 @@ export * from "./kinesis-producer.js";
 export * from "./microvm.js";
 export * from "./mcp/index.js";
 export * from "./oauth/index.js";
+export * from "./mcpfacade.js";
+export * from "./mcproutes.js";
 export * from "./app.js";
 export * from "./testkit.js";
 export * from "./testkit/mcp.js";
+export * from "./testkit/mcpfacade.js";
+export * from "./testkit/oauthprovider.js";
 export * from "./websocket-management.js";
 export * from "./limited/index.js";
 //# sourceMappingURL=index.js.map

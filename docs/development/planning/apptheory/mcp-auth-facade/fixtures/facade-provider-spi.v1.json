@@ -1,0 +1,98 @@
+{
+  "contract": {
+    "id": "m17.mcp-auth-facade/v1",
+    "section": "provider-spi",
+    "status": "design (M0)",
+    "notes": "Provider-neutral upstream IdP adapter. Autheory is the first and only adapter in this program. The SPI is deliberately the minimum needed to derive the facade from requirements; provider-specific policy travels through hints and errors, never through framework branches."
+  },
+  "operations": [
+    {
+      "name": "Discovery",
+      "input": {},
+      "output": "ProviderMetadata",
+      "purpose": "OIDC/RFC 8414 discovery bootstrap; verify issuer equality before trusting any endpoint.",
+      "fail_closed": ["non-https", "issuer mismatch", "cross-origin redirect", "missing required fields"]
+    },
+    {
+      "name": "AuthorizationURL",
+      "input": "AuthorizationRequest",
+      "output": "url",
+      "purpose": "Build the upstream authorize URL the browser is redirected to from /authorize.",
+      "fail_closed": ["missing upstream client", "missing callback", "missing PKCE challenge"]
+    },
+    {
+      "name": "ExchangeCode",
+      "input": "CodeExchangeRequest",
+      "output": "TokenSet",
+      "purpose": "Server-side upstream code exchange presenting the facade's own client and PKCE verifier.",
+      "fail_closed": ["non-2xx", "missing access_token", "error body is never forwarded to the client"]
+    },
+    {
+      "name": "Refresh",
+      "input": "RefreshRequest",
+      "output": "TokenSet",
+      "purpose": "Upstream refresh presenting the OAuth client that owns the recorded upstream material.",
+      "fail_closed": ["non-2xx", "secret-bearing error body is never forwarded"]
+    },
+    {
+      "name": "ValidateAccessToken",
+      "input": "token + TokenExpectations",
+      "output": "TokenClaims",
+      "purpose": "Fail-closed validation before broker mutation or client response; never mutates the token.",
+      "fail_closed": ["issuer mismatch", "audience mismatch", "azp/client not allowed", "signature invalid", "expired", "insufficient scope"]
+    }
+  ],
+  "types": {
+    "ProviderMetadata": {
+      "fields": ["issuer", "authorization_endpoint", "token_endpoint", "jwks_uri", "code_challenge_methods_supported", "authorization_response_iss_parameter_supported", "resource_parameter_supported"]
+    },
+    "AuthorizationRequest": {
+      "fields": ["upstream_client_id", "callback_url", "code_challenge", "code_challenge_method", "state", "resource", "scopes", "hints"],
+      "notes": {
+        "state": "fresh upstream state, distinct from the client's state",
+        "hints": "opaque provider hints (e.g. account_id); the provider derives authentication account context from its own validated binding, never from the hint"
+      }
+    },
+    "CodeExchangeRequest": {
+      "fields": ["code", "upstream_client_id", "callback_url", "code_verifier"]
+    },
+    "RefreshRequest": {
+      "fields": ["refresh_material", "upstream_client_id"],
+      "notes": { "upstream_client_id": "the client that owns the recorded upstream material; the facade client store is the discriminator" }
+    },
+    "TokenExpectations": {
+      "fields": ["expected_issuer", "expected_audience", "required_scopes", "allowed_authorized_parties"]
+    },
+    "TokenSet": {
+      "fields": ["access_token", "refresh_token", "token_type", "expires_in", "scope", "id_token"],
+      "notes": "id_token, when present, is dropped by the facade and never returned to the client"
+    },
+    "TokenClaims": {
+      "fields": ["subject", "audience", "scopes", "expires_at", "authorized_party"]
+    }
+  },
+  "autheory_adapter": {
+    "issuer_by_stage": {
+      "live": "https://auth.autheory.app",
+      "lab": "https://auth.lab.autheory.app"
+    },
+    "discovery": "RFC 8414 / OIDC configuration; authorization_endpoint published as issuer + /oauth/authorize; jwks_uri = /.well-known/jwks.json; registration_endpoint = /register",
+    "capabilities": {
+      "authorization_response_iss_parameter_supported": true,
+      "resource_parameter_supported": true,
+      "code_challenge_methods_supported": ["S256"],
+      "token_endpoint_auth_methods_supported": ["none"],
+      "id_token_issued_for_relying_party": false
+    },
+    "dynamic_clients": { "client_id_prefix": "mcp_", "class": "dynamic MCP client" },
+    "refresh_binding": "refresh material is bound to the OAuth client it was issued to",
+    "legacy_client_verify": { "endpoint": "GET /internal/oauth/clients/{client_id}", "purpose": "backs optional app-side legacy client adoption (policy, not framework)" },
+    "account_hint": "account_id hint semantics are an Autheory contract detail; passed through as an opaque hint"
+  },
+  "invariants": [
+    "The upstream is the sole token minting authority; the facade never signs or re-signs access tokens.",
+    "The upstream access token is returned to the client byte-for-byte unmodified.",
+    "Upstream authorization codes, refresh tokens, and id_token never reach the client.",
+    "Upstream error bodies are never forwarded verbatim to the client."
+  ]
+}

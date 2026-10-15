@@ -1,0 +1,108 @@
+{
+  "contract": {
+    "id": "m17.mcp-auth-facade/jwks-validator/v1",
+    "status": "registered (M2)",
+    "notes": "Pins the JWKS/RS256 access-token validator's T9 cases. Each case is executed by the Go, TypeScript, and Python loader tests against a real local JWKS HTTP server and real RSA keys generated in-test; no static secrets are committed. The fixture is a nested table (loaded by tests directly, not by the generic runner) because the cases need a live key server and real signatures."
+  },
+  "algorithm": {
+    "allowed": ["RS256"],
+    "rejected": ["none", "HS256", "HS384", "HS512", "RS512", "ES256", "ES384", "ES512"]
+  },
+  "defaults": {
+    "unknown_kid_refresh": "one bounded refresh per kid, then cooldown",
+    "max_refresh_per_kid": 1,
+    "fetch_timeout_seconds": 10,
+    "max_kid_length": 256,
+    "max_window_entries": 1024,
+    "max_key_entries": 128,
+    "max_unknown_kid_fetches": 32,
+    "unknown_kid_fetch_window_seconds": 60,
+    "cache": "bounded, expiry-driven rotation refresh",
+    "issuer_check": "before and after signature verification",
+    "audience_check": "exact match against the route-derived audience",
+    "azp_check": "allow-list, no wildcards"
+  },
+  "cases": [
+    {
+      "name": "alg-none-rejected",
+      "scenario": "token header alg is none and the signature is empty",
+      "expect": "rejected",
+      "reason": "algorithm_not_allowed"
+    },
+    {
+      "name": "hs256-rejected",
+      "scenario": "token is signed HS256 using the RSA public key bytes as the HMAC secret",
+      "expect": "rejected",
+      "reason": "algorithm_not_allowed"
+    },
+    {
+      "name": "unknown-kid-triggers-one-refresh",
+      "scenario": "token kid is absent from the bounded cache and is published by the server after the first fetch",
+      "expect": "accepted",
+      "jwks_fetches": 2,
+      "bounded_refresh": true
+    },
+    {
+      "name": "unknown-kid-refresh-is-bounded",
+      "scenario": "a second token with a still-unknown kid arrives inside the refresh cooldown",
+      "expect": "rejected",
+      "jwks_fetches": 2,
+      "bounded_refresh": true
+    },
+    {
+      "name": "expired-key-refresh",
+      "scenario": "the cached key entry has expired and the server has rotated to a new key for the same kid",
+      "expect": "accepted",
+      "jwks_fetches": 2,
+      "bounded_refresh": true
+    },
+    {
+      "name": "issuer-mismatch-rejected",
+      "scenario": "a correctly signed token whose iss is not the configured issuer",
+      "expect": "rejected",
+      "reason": "issuer_mismatch"
+    },
+    {
+      "name": "audience-mismatch-rejected",
+      "scenario": "a correctly signed, correctly issued token whose aud is not the route-derived audience",
+      "expect": "rejected",
+      "reason": "audience_mismatch"
+    },
+    {
+      "name": "expired-token-rejected",
+      "scenario": "a correctly signed token whose exp is in the past",
+      "expect": "rejected",
+      "reason": "expired"
+    },
+    {
+      "name": "azp-non-string-rejected",
+      "scenario": "a correctly signed token whose azp is the JSON number 123 while the presented client_id is allow-listed",
+      "expect": "rejected",
+      "reason": "claim_invalid"
+    },
+    {
+      "name": "oversized-kid-refused-without-a-fetch",
+      "scenario": "a token whose kid is longer than defaults.max_kid_length is refused as an unknown key without touching any map and without a key-set fetch",
+      "expect": "rejected",
+      "reason": "unknown_kid",
+      "jwks_fetches": 0
+    },
+    {
+      "name": "distinct-attacker-kids-are-globally-bounded",
+      "scenario": "many distinct attacker-chosen kids are presented; the global unknown-kid fetch budget caps the key-set fetches at defaults.max_unknown_kid_fetches and every further kid is refused without another fetch",
+      "expect": "rejected",
+      "reason": "unknown_kid",
+      "distinct_kids": 200,
+      "bounded_global_fetch_budget": true
+    },
+    {
+      "name": "evicted-kid-window-allows-one-refetch",
+      "scenario": "with a kid-window map of max_window_entries, resolving a third kid evicts the first kid's window, so that kid is fetched again instead of being refused by its cooldown",
+      "expect": "rejected",
+      "reason": "unknown_kid",
+      "max_window_entries": 1,
+      "jwks_fetches": 6,
+      "bounded_window_map": true
+    }
+  ]
+}

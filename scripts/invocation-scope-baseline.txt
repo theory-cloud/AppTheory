@@ -112,6 +112,13 @@ ts/src/internal/aws-http.ts|withDeadline.<anonymous>[#1]|joined: withDeadline's 
 # its abort signal settles immediately, and a handler that ignores cancellation is
 # the documented residual bounded by the Lambda function timeout.
 ts/src/app.ts|timeoutMiddleware.<anonymous>[#1]|joined: the timeout path joins the handler task with settleWithin(...) for a bounded grace window before rethrowing app.timeout
+# The fake upstream OAuth provider is test support (never a production path).
+# Its HTTP request listener cannot await the async token handler, so the
+# handler's promise is not joined in the listener itself: handleToken fully
+# writes or ends the response before it settles, and close() awaits the server
+# close with every connection force-closed before it returns, so no handler can
+# outlive the server a test owns.
+ts/src/testkit/oauthprovider.ts|FakeOAuthProvider.handleRequest[#1]|joined: handleToken writes or ends the response before it settles, and close() awaits the server close with all connections forced shut before it returns
 
 # --- Python -----------------------------------------------------------------
 # The timeout middleware runs the handler on a worker thread so it can raise
@@ -120,3 +127,11 @@ ts/src/app.ts|timeoutMiddleware.<anonymous>[#1]|joined: the timeout path joins t
 # cooperative handler returns immediately, and a handler that ignores
 # cancellation is the documented residual bounded by the Lambda function timeout.
 py/src/apptheory/middleware.py|timeout_middleware.mw[#1]|joined: the deadline path joins the worker for a bounded grace window before raising app.timeout
+# The fake upstream OAuth provider is test support (never a production path).
+# Its serve_forever loop runs on a daemon thread started by start(); stop()
+# shuts the server down and joins that thread before returning, so the loop
+# cannot outlive the server a test owns.
+py/src/apptheory/oauth/fake_provider.py|FakeUpstreamProvider.start[#1]|joined: stop() shuts the server down and joins the serve thread before it returns
+# The store conformance runner builds its worker threads in a comprehension and
+# then starts and joins every one of them before it returns the results.
+py/src/apptheory/oauth/store.py|_run_concurrently[#1]|joined: every thread the comprehension builds is started and joined before the function returns
