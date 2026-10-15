@@ -191,7 +191,11 @@ func TestCloseEndsStreamEarlyForReader(t *testing.T) {
 		readErr <- err
 	}()
 
-	time.Sleep(10 * time.Millisecond)
+	// No handshake is needed and no sleep is allowed here: Close closes the
+	// reader pipe before it cancels the producer context, so a read that is
+	// already blocked and a read that starts after Close both report
+	// io.ErrClosedPipe. The assertion therefore does not depend on whether the
+	// read or the producer's pipe close wins a race.
 	if err := body.Close(); err != nil {
 		t.Fatalf("close body: %v", err)
 	}
