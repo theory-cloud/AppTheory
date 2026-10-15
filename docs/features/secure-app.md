@@ -143,6 +143,16 @@ The TypeScript methods are `get`, `post`, `appSyncField`, and `webSocket`; Pytho
 variants. Non-HTTP event registrations such as SQS, SNS, Kinesis, EventBridge, and DynamoDB Streams are forwarded
 unchanged because they are separate, non-posture-bearing registries.
 
+### Framework registrars on a `SecureApp`
+
+Framework-owned registrars that mount several routes at once — `runtime/oauth.RegisterMCPServer` and the MCP OAuth
+facade's `RegisterMCPFacadeSecure`, plus their TypeScript and Python equivalents — register through these same
+posture-carrying methods and declare one posture per route. They add no accessor to the app's core, so a route the
+application never declares stays undeliverable, and the application's own resolver, tier, and `PolicyHook` keep
+governing every route a registrar does not own. `RegisterMCPServer`'s split (a public discovery route, an
+`Authenticated` MCP endpoint) is the simplest form of the same rule; the facade's full table is in
+[MCP facade helper](mcp-facade-helper.md#closed-by-default-secureapp-mounts).
+
 ## Fixed ordering by tier
 
 The secure gate is a framework stage, not a user middleware. `Use` cannot remove, replace, or run before it.

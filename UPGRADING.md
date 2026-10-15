@@ -131,6 +131,40 @@ reference), pinned by a new shared `put_payload` conformance scenario.
 See `docs/features/mcp-auth-facade-spi.md` for the front-channel configuration table and
 `docs/features/mcp-facade-helper.md` for what the three registrars mount.
 
+### MCP auth facade on a closed-by-default `SecureApp`
+
+The facade registrars took the legacy `App` surface only, so an application whose route families already run on a
+closed-by-default `SecureApp` could not mount the facade at all: `SecureApp` wraps an unexported core with no
+accessor, and passing it to `RegisterMCPFacade` did not compile in Go. Switching such an application to a plain `App`
+to mount the facade is not an acceptable workaround, because it silently drops that application's
+`SecurePrincipalResolver`, tier, and `PolicyHook` for every route that shares the app.
+
+Each runtime now ships an additive companion registrar — `RegisterMCPFacadeSecure` (Go),
+`registerMcpFacadeSecure` (TypeScript), `register_mcp_facade_secure` (Python) — which installs the identical route
+inventory and behavior on a `SecureApp`, declaring the auth posture each facade route has always had. **No action is
+required for existing consumers**: the plain registrars, every `SecureApp` method, and every default are unchanged,
+and no `SecureApp` accessor was added.
+
+The declared postures are the authority table on a `SecureApp`: the MCP transport route takes the application's own
+principal gate under the `iam` and `jwt` postures (the counterpart of the plain path's `RequireAuth`), stays public
+with the facade's RFC 9728 bearer validator as its authority under `runtime-bearer`, and is deliberately public under
+`none-public`; every OAuth surface route — protected-resource metadata, authorization-server discovery, `/authorize`,
+`/token`, `/register`, and the stage-global callback — is public by design, exactly as it is on the plain path. A
+consumer can assert the table rather than trust it, through `SecureApp.Routes()` / `secureApp.routes()` /
+`secure_app.routes()` and the shared `secure_app_mount` conformance rows. A rejected configuration still adds no route
+at all. The runtime conformance kit ships the matching closed-by-default variants
+(`AssertCredentialFreeDeniedSecureApp`, `assertCredentialFreeTransportDeniedSecureApp`,
+`assert_credential_free_transport_denied_secure_app`, and their bearer and insufficient-scope companions), so a
+consumer's own suite drives either surface.
+
+The CDK `facade` attachment needs no change and no `secureApp`-shaped prop: the construct consumes declared props and
+never detects the runtime type, so the pairing rule is unchanged — `runtime-bearer` requires
+`runtimePosture.requireBearerToken: true` at construct time and the runtime mount declares the RFC 9728 bearer
+validator, on either surface.
+
+See `docs/features/mcp-facade-helper.md#closed-by-default-secureapp-mounts` for the worked example and the full
+route-authority table.
+
 ### REST v1 edge `WWW-Authenticate` restoration
 
 AWS API Gateway **REST API v1** remaps an origin's `WWW-Authenticate` response header onto
