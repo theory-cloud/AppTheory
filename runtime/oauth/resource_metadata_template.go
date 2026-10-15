@@ -55,30 +55,8 @@ func compileResourceMetadataURLTemplate(raw string) (*resourceMetadataURLTemplat
 	if err != nil {
 		return nil, fmt.Errorf("%w: template is not an absolute URL", ErrInvalidURL)
 	}
-	switch {
-	case !strings.EqualFold(u.Scheme, httpsScheme):
-		return nil, fmt.Errorf("%w: template must be an absolute HTTPS URL", ErrInvalidURL)
-	case u.Host == "" || u.Hostname() == "":
-		return nil, fmt.Errorf("%w: template must include a host", ErrInvalidURL)
-	case u.User != nil:
-		return nil, fmt.Errorf("%w: template must not include userinfo", ErrInvalidURL)
-	case u.RawQuery != "" || u.ForceQuery:
-		return nil, fmt.Errorf("%w: template must not include a query", ErrInvalidURL)
-	case u.Fragment != "" || u.RawFragment != "":
-		return nil, fmt.Errorf("%w: template must not include a fragment", ErrInvalidURL)
-	case strings.ContainsAny(u.Host, "{}"):
-		return nil, fmt.Errorf("%w: template placeholders must appear in the path, not the authority", ErrInvalidURL)
-	}
-
-	rawPath := u.RawPath
-	if rawPath == "" {
-		rawPath = u.Path
-	}
-	if strings.Contains(rawPath, "%") {
-		return nil, fmt.Errorf("%w: template must not percent-encode its path", ErrInvalidURL)
-	}
-	if hasDotPathSegment(u.Path) {
-		return nil, fmt.Errorf(`%w: template must not contain a "." or ".." path segment`, ErrInvalidURL)
+	if err = validateResourceMetadataURLTemplate(u); err != nil {
+		return nil, err
 	}
 
 	params, err := resourceMetadataURLTemplateParams(u.Path)
@@ -89,6 +67,39 @@ func compileResourceMetadataURLTemplate(raw string) (*resourceMetadataURLTemplat
 	compiled := &resourceMetadataURLTemplate{base: *u, params: params}
 	compiled.base.RawPath = ""
 	return compiled, nil
+}
+
+// validateResourceMetadataURLTemplate enforces the template shape rules on an
+// already-parsed URL: the authority rules, then the path rules. It is the one
+// list of shapes the compile step refuses, kept separate from
+// compileResourceMetadataURLTemplate so each refusal reads on its own.
+func validateResourceMetadataURLTemplate(u *url.URL) error {
+	switch {
+	case !strings.EqualFold(u.Scheme, httpsScheme):
+		return fmt.Errorf("%w: template must be an absolute HTTPS URL", ErrInvalidURL)
+	case u.Host == "" || u.Hostname() == "":
+		return fmt.Errorf("%w: template must include a host", ErrInvalidURL)
+	case u.User != nil:
+		return fmt.Errorf("%w: template must not include userinfo", ErrInvalidURL)
+	case u.RawQuery != "" || u.ForceQuery:
+		return fmt.Errorf("%w: template must not include a query", ErrInvalidURL)
+	case u.Fragment != "" || u.RawFragment != "":
+		return fmt.Errorf("%w: template must not include a fragment", ErrInvalidURL)
+	case strings.ContainsAny(u.Host, "{}"):
+		return fmt.Errorf("%w: template placeholders must appear in the path, not the authority", ErrInvalidURL)
+	}
+
+	rawPath := u.RawPath
+	if rawPath == "" {
+		rawPath = u.Path
+	}
+	if strings.Contains(rawPath, "%") {
+		return fmt.Errorf("%w: template must not percent-encode its path", ErrInvalidURL)
+	}
+	if hasDotPathSegment(u.Path) {
+		return fmt.Errorf(`%w: template must not contain a "." or ".." path segment`, ErrInvalidURL)
+	}
+	return nil
 }
 
 // hasDotPathSegment reports whether a URL path carries a `.` or `..` segment.
