@@ -20,6 +20,16 @@ const fixture = JSON.parse(
   ),
 );
 
+const routeModel = JSON.parse(
+  fs.readFileSync(
+    path.resolve(
+      __dirname,
+      "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-route-model.v1.json",
+    ),
+    "utf8",
+  ),
+);
+
 function handler(stack, id = "Fn") {
   return new lambda.Function(stack, id, {
     runtime: lambda.Runtime.NODEJS_24_X,
@@ -186,6 +196,7 @@ test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL author
       "stage",
       "transportAuthorizer",
       "transportPosture",
+      "upstreamCallbackPath",
     ],
     AppTheoryMcpTransportAuthorizerOptions: [
       "audience",
@@ -433,10 +444,10 @@ test("AppTheoryMcpServer owned mode turns production defaults on", () => {
   assert.ok(stage.Properties.AccessLogSettings);
 
   const variables = resourcesOfType(template, "AWS::Lambda::Function")[0].Properties.Environment.Variables;
-  assert.ok(variables.MCP_ENDPOINT);
   assert.ok(variables.MCP_SESSION_TABLE);
   assert.equal(variables.MCP_SESSION_TTL_MINUTES, "60");
   for (const removed of [
+    "MCP_ENDPOINT",
     "APPTHEORY_MCP_PATH",
     "APPTHEORY_MCP_PROTECTED_RESOURCE_PATH",
     "APPTHEORY_MCP_AUTHORIZATION_SERVER_ISSUER",
@@ -565,6 +576,100 @@ test("AppTheoryMcpServer rejects algebra-derived route collisions at synthesis",
       },
     }),
     /derived route family collides at GET \/\.well-known\/oauth-authorization-server\/a\/mcp/,
+  );
+});
+
+test("AppTheoryMcpServer defaults the upstream callback to the contract default", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "DefaultCallbackStack");
+  const server = new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack),
+    sessionState: { enabled: false },
+  });
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const contractDefault = routeModel.callback_override.default;
+  assert.equal(contractDefault, routeModel.contract.default_callback_path);
+  assert.equal(server.routeInventory.callbackPattern, contractDefault);
+  assert.ok(routeKeys(template).includes(`GET ${contractDefault}`));
+  assert.equal(server.routeInventory.callbackPattern, fixture.callback_pattern);
+});
+
+test("AppTheoryMcpServer normalizes and wires an upstream callback override", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "OverrideCallbackStack");
+  const server = new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack),
+    upstreamCallbackPath: "  /_oauth/custom/callback  ",
+    sessionState: { enabled: false },
+  });
+  const keys = new Set(routeKeys(assertions.Template.fromStack(stack).toJSON()));
+  assert.equal(server.routeInventory.callbackPattern, "/_oauth/custom/callback");
+  assert.ok(keys.has("GET /_oauth/custom/callback"));
+  assert.ok(!keys.has(`GET ${routeModel.contract.default_callback_path}`));
+});
+
+test("AppTheoryMcpServer rejects an invalid upstream callback override", () => {
+  const invalid = [
+    "cb",
+    "/cb?x=1",
+    "/cb#f",
+    "/a/../b",
+  ];
+  for (const [index, value] of invalid.entries()) {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, `InvalidCallback${index}`);
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        upstreamCallbackPath: value,
+        sessionState: { enabled: false },
+      }),
+      /upstreamCallbackPath is invalid/,
+      value,
+    );
+  }
+});
+
+test("AppTheoryMcpServer rejects an unresolved upstream callback token", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "CallbackTokenStack");
+  assert.throws(
+    () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+      handler: handler(stack),
+      upstreamCallbackPath: cdk.Fn.join("", ["/_oauth", "/callback"]),
+      sessionState: { enabled: false },
+    }),
+    /upstreamCallbackPath must be a synthesis-time literal route path/,
+  );
+});
+
+test("AppTheoryMcpServer rejects an upstream callback override that collides with a derived route", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "CallbackCollisionStack");
+  assert.throws(
+    () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+      handler: handler(stack),
+      upstreamCallbackPath:
+        "/.well-known/oauth-protected-resource/{client_namespace}/mcp",
+      sessionState: { enabled: false },
+    }),
+    /derived route family collides at GET \/\.well-known\/oauth-protected-resource\/\{client_namespace\}\/mcp/,
+  );
+});
+
+test("AppTheoryMcpServer refuses an upstream callback override under none-public", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "NonePublicCallbackStack");
+  assert.throws(
+    () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+      handler: handler(stack),
+      transportPosture: apptheory.AppTheoryMcpTransportPosture.NONE_PUBLIC,
+      originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+      upstreamCallbackPath: "/cb",
+      sessionState: { enabled: false },
+      ownedApi: { stage: { throttlingEnabled: true } },
+    }),
+    /transportPosture NONE_PUBLIC cannot declare upstreamCallbackPath/,
   );
 });
 
@@ -826,6 +931,10 @@ test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => 
     propsByName.get("runtimePosture").docs.remarks,
     /Required by `transportPosture: RUNTIME_BEARER`/s,
   );
+  assert.match(
+    propsByName.get("upstreamCallbackPath").docs.remarks,
+    /callbackPathForConfiguredPath[\s\S]*none-public/s,
+  );
 
   const guide = fs.readFileSync(
     path.resolve(__dirname, "../../docs/features/mcp-server-construct.md"),
@@ -850,6 +959,11 @@ test("AppTheoryMcpServer docs pin the canonical runtime-helper boundary", () => 
   );
   assert.match(guide, /never\s+consults an `apiEndpoint` supplied through `HttpApi\.fromHttpApiAttributes`/s);
   assert.match(guide, /Set `attachedApiStageName`.*non-`\$default` stage.*appears in each template/s);
+  assert.match(
+    guide,
+    /`upstreamCallbackPath`[\s\S]*callbackPathForConfiguredPath[\s\S]*none-public/s,
+    "the guide must document the stage-global callback override and its none-public refusal",
+  );
 
   const agentCoreGuides = [
     "../../docs/integrations/agentcore-mcp.md",

@@ -127,4 +127,17 @@ type AppTheoryMcpServerProps struct {
 	// Default: AppTheoryMcpTransportPosture.RUNTIME_BEARER when `facade` is attached, otherwise AppTheoryMcpTransportPosture.IAM
 	//
 	TransportPosture AppTheoryMcpTransportPosture `field:"optional" json:"transportPosture" yaml:"transportPosture"`
+	// Stage-global upstream OAuth callback path.
+	//
+	// The CDK-mounted callback route and the runtime-registered one must not
+	// diverge: this prop is resolved by
+	// `AppTheoryMcpRouteAlgebra.callbackPathForConfiguredPath`, the same algebra
+	// the runtime applies to `FacadeConfig.UpstreamCallbackPath`. Supply a
+	// synthesis-time literal absolute path with no query, fragment, or dot
+	// segment; an empty value keeps the contract default, and a value that
+	// collides with another derived route fails synthesis. Refused under
+	// `transportPosture: none-public`, which attaches no OAuth surface.
+	// Default: AppTheoryMcpRouteAlgebra.DEFAULT_CALLBACK_PATH
+	//
+	UpstreamCallbackPath *string `field:"optional" json:"upstreamCallbackPath" yaml:"upstreamCallbackPath"`
 }

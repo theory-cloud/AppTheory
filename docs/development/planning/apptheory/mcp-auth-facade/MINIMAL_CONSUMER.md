@@ -1,7 +1,7 @@
 # Worked minimal non-TMS consumer (M0, item 6b)
 
-Status: reference walkthrough for review (M0).
-Last updated: 2026-10-12
+Status: reference walkthrough (M0), kept as-built through M3c-2.
+Last updated: 2026-10-14
 Owner: AppTheory
 
 SAN-110-3: success criterion 2 ("a runtime-validated OAuth bearer MCP app behind an upstream provider on one
@@ -9,8 +9,9 @@ domain can be built without app-side route algebra, challenge emission, DCR rout
 hand-wired facade routes") must be **proven by construction**, not inferred from TMS. This is that
 construction: a fictional non-TMS application, `acme-mcp`, using a fictional provider **Acme ID**.
 
-Nothing here is implemented in M0. It is the target shape M1–M4 must make true, and the fixture
-`facade-journey.v1.json` (authored in this directory) is the walkthrough's machine-readable form.
+Nothing here was implemented in M0; it is the target shape M1–M4 made true. The fixture
+`facade-journey.v1.json` — authored in this directory and now executed from the shared corpus — is the walkthrough's
+machine-readable form.
 
 ## The whole application
 
@@ -75,8 +76,9 @@ callback routes; it does **not** require the app to spell a single route string.
 
 Base URL `https://mcp.example.com`; route resource `https://mcp.example.com/acme/mcp`; provider issuer
 `https://id.example.com`. These are exactly the fixture `world` domains in
-`fixtures/facade-journey.v1.json`, so the prose and the machine-readable transcript agree; the fictional
-provider `Acme ID` issues from `https://id.example.com`.
+`contract-tests/fixtures/routing/mcp-auth-facade/facade-journey.v1.json`, so the prose and the machine-readable
+transcript agree — and that transcript is now executed by the Go, TypeScript, and Python suites rather than being
+documentation only. The fictional provider `Acme ID` issues from `https://id.example.com`.
 
 | # | Client action | Framework answer |
 | --- | --- | --- |
@@ -102,14 +104,16 @@ provider `Acme ID` issues from `https://id.example.com`.
 
 ## Fixtures that make this construction checkable
 
-- `fixtures/facade-journey.v1.json` — the ordered transcript above (steps 1–11) with expected statuses,
-  headers, and bodies.
+- `contract-tests/fixtures/routing/mcp-auth-facade/facade-journey.v1.json` — the ordered transcript above (steps
+  1–11), with expected statuses, headers, and bodies, **executed** by the Go, TypeScript, and Python suites.
+- `contract-tests/fixtures/routing/mcp-auth-facade/facade-threat-controls.v1.json` — T1-T11, each pinned to the
+  executed row that proves it.
 - `contract-tests/fixtures/routing/mcp-auth-facade/facade-route-model.v1.json` — the derived paths and the `route`
   issuer/resource derivation the app never wrote (moved into the corpus in M1).
 - `contract-tests/fixtures/routing/mcp-auth-facade/facade-transport-posture.v1.json` — the posture expectations pinned
   by the conformance kit (moved into the corpus in M1).
-- `fixtures/facade-provider-spi.v1.json` / `facade-store-spi.v1.json` — the seams the app *did* supply (the
-  provider adapter and the durable stores).
+- planning-tree `fixtures/facade-provider-spi.v1.json` / `facade-store-spi.v1.json` — the seams the app *did* supply
+  (the provider adapter and the durable stores).
 
 ## Why this proves scenario (a)
 

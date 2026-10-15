@@ -24,7 +24,7 @@
       "authorization_servers": ["<route URL>"],
       "discovery_issuer": "<route URL>",
       "jwks_uri": "<upstream JWKS URI — the upstream signs the access tokens the route hands to clients>",
-      "registration_endpoint": "<public base> + <register path>",
+      "registration_endpoint": "<public base> + <register path> — advertised only while the /register route is mounted, that is when the front channel or an explicit register handler is configured; otherwise the routed RFC 8414 document omits the member",
       "authorization_endpoint": "<public base> + <canonical discovery path> + /authorize",
       "token_endpoint": "<public base> + <canonical discovery path> + /token",
       "client_redirect_iss": "<route URL>"
@@ -81,6 +81,39 @@
       "notes": "One callback route per deployment; correlated by the single-use upstream state recorded in the transaction store, so no per-kind callback multiply."
     }
   ],
+  "callback_override": {
+    "default": "/_oauth/mcp/callback",
+    "notes": "The stage-global upstream callback path is overridable (FacadeConfig.UpstreamCallbackPath on every runtime; AppTheoryMcpServerProps.upstreamCallbackPath on the CDK construct). An unset or whitespace-only value resolves to the contract default; every other value must be an absolute path with no query, fragment, or dot segment and is normalized with the same rules as every other route path. The CDK construct and all three runtimes resolve the override through the same algebra so the mounted and registered callback routes cannot diverge. After the ASCII-whitespace edge trim, a callback path is refused when it contains a percent-encoded slash, a percent-encoded ASCII control byte (`%00`-`%1F` or `%7F`, either hex case), an interior ASCII whitespace or control character, or a backslash.",
+    "cases": [
+      { "configured": "", "expect_pattern": "/_oauth/mcp/callback" },
+      { "configured": "  /cb  ", "expect_pattern": "/cb" },
+      { "configured": "/cb", "expect_pattern": "/cb" },
+      { "configured": "/cb/", "expect_pattern": "/cb" },
+      { "configured": "/a/../b", "expect_error": true },
+      { "configured": "cb", "expect_error": true },
+      { "configured": "/cb?x=1", "expect_error": true },
+      { "configured": "/cb#f", "expect_error": true },
+      { "configured": "/cb%2Fx", "expect_error": true },
+      { "configured": "/cb%2fx", "expect_error": true },
+      { "configured": "/cb%00", "expect_error": true },
+      { "configured": "/cb%7f", "expect_error": true },
+      { "configured": "/c b", "expect_error": true },
+      { "configured": "/cb\u0009x", "expect_error": true },
+      { "configured": "/cb\\x", "expect_error": true }
+    ]
+  },
+  "route_path_charset": {
+    "notes": "A derived MCP route path is refused when, after the existing ASCII-whitespace edge trim, it contains a percent-encoded slash, a percent-encoded ASCII control byte (`%00`-`%1F` or `%7F`, either hex case), an interior ASCII whitespace or control character, or a backslash. Only those bytes are refused: the escaped form of any other byte (for example `%20`, `%5C`, or `%7E`) stays accepted, and no previously accepted or refused row changes.",
+    "cases": [
+      { "path": "/acme/mcp", "expect_valid": true },
+      { "path": "/acme%2Fx/mcp", "expect_error": true },
+      { "path": "/acme%00/mcp", "expect_error": true },
+      { "path": "/acme%1f/mcp", "expect_error": true },
+      { "path": "/acme%7F/mcp", "expect_error": true },
+      { "path": "/ac me/mcp", "expect_error": true },
+      { "path": "/ac\\me/mcp", "expect_error": true }
+    ]
+  },
   "worked_example": {
     "public_base_url": "https://mcp.example.com",
     "issuer_mode": "route",
@@ -92,7 +125,6 @@
       "discovery_url": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp",
       "authorization_endpoint": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/authorize",
       "token_endpoint": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/token",
-      "registration_endpoint": "https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/register",
       "issuer": "https://mcp.example.com/acme/mcp",
       "authorization_servers": ["https://mcp.example.com/acme/mcp"]
     }

@@ -255,27 +255,3 @@ func TestRFC9728ResourceMetadataURLRootPath(t *testing.T) {
 		t.Fatalf("root resource metadata URL = %q %t", root, ok)
 	}
 }
-
-func TestResolveAbsoluteURLPathTemplateEdges(t *testing.T) {
-	if got, ok := resolveAbsoluteURLPathTemplate("https://api.example.test", "/mcp", nil); !ok || got != "https://api.example.test" {
-		t.Fatalf("pathless template = %q %t", got, ok)
-	}
-	if got, ok := resolveAbsoluteURLPathTemplate("https://api.example.test/mcp/{id}", "/mcp/7", nil); !ok || got != "https://api.example.test/mcp/7" {
-		t.Fatalf("request-derived segment = %q %t", got, ok)
-	}
-	if _, ok := resolveAbsoluteURLPathTemplate("https://api.example.test/mcp/{id}", "/unrelated", nil); ok {
-		t.Fatal("an unresolved template parameter was accepted")
-	}
-	if _, ok := resolveAbsoluteURLPathTemplate("not-a-url", "/mcp", nil); ok {
-		t.Fatal("a relative template URL was accepted")
-	}
-}
-
-func TestRouteTemplateParamEdges(t *testing.T) {
-	if _, ok := routeTemplateParam("{ }"); ok {
-		t.Fatal("a blank parameter name was accepted")
-	}
-	if name, ok := routeTemplateParam(" {id} "); !ok || name != "id" {
-		t.Fatalf("routeTemplateParam = %q %t", name, ok)
-	}
-}

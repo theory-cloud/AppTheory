@@ -328,3 +328,304 @@ test("v2 vocabulary pins the issuer modes and stage-global routes", () => {
     { name: "upstream_callback", pattern: "/_oauth/mcp/callback", methods: ["GET"] },
   ]);
 });
+
+test("shared route model pins the callback override derivations", () => {
+  const override = routeModel.callback_override;
+  assert.equal(override.default, routeModel.contract.default_callback_path);
+  assert.equal(Algebra.DEFAULT_CALLBACK_PATH, override.default);
+  assert.equal(Algebra.callbackPathForConfiguredPath(""), override.default);
+  assert.equal(Algebra.callbackPathForConfiguredPath("   "), override.default);
+  assert.equal(Algebra.normalizeCallbackPath(override.default), override.default);
+
+  for (const row of override.cases) {
+    if (row.expect_error) {
+      assert.throws(
+        () => Algebra.callbackPathForConfiguredPath(row.configured),
+        undefined,
+        `callbackPathForConfiguredPath ${JSON.stringify(row)}`,
+      );
+      assert.throws(
+        () => Algebra.normalizeCallbackPath(row.configured),
+        undefined,
+        `normalizeCallbackPath ${JSON.stringify(row)}`,
+      );
+      continue;
+    }
+    assert.equal(
+      Algebra.callbackPathForConfiguredPath(row.configured),
+      row.expect_pattern,
+      JSON.stringify(row),
+    );
+  }
+});
+
+test("shared route model pins the derived route-path charset", () => {
+  const section = routeModel.route_path_charset;
+  assert.ok(section, "the route model must carry a route_path_charset section");
+  assert.ok(
+    Array.isArray(section.cases) && section.cases.length > 0,
+    "the route_path_charset section must carry cases",
+  );
+  for (const row of section.cases) {
+    if (row.expect_error) {
+      assert.throws(
+        () => Algebra.parseMcpPath(row.path),
+        undefined,
+        `parseMcpPath ${JSON.stringify(row)}`,
+      );
+      continue;
+    }
+    assert.deepEqual(
+      Algebra.parseMcpPath(row.path),
+      { kind: Algebra.ENDPOINT_KIND_NAMESPACE, clientNamespace: "acme" },
+      JSON.stringify(row),
+    );
+  }
+});
+
+// The shared minimal non-TMS consumer journey (the table the Go, TypeScript, and
+// Python suites execute row by row). CDK does not run the journey, but its
+// transport-credential-free and protected-resource-metadata rows must agree with
+// the route model CDK synthesizes, so a route-algebra change cannot silently
+// invalidate the challenge or the metadata path the journey pins.
+const journey = JSON.parse(
+  fs.readFileSync(
+    path.resolve(
+      __dirname,
+      "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-journey.v1.json",
+    ),
+    "utf8",
+  ),
+);
+
+// The journey world's route, expressed the way the algebra helpers take it.
+const journeyEndpoint = {
+  kind: journey.notes.world.route_kind,
+  clientNamespace: journey.notes.world.client_namespace,
+};
+
+// The ordered step names MINIMAL_CONSUMER.md numbers 1 through 11 (the composite
+// steps carry dotted names), so a dropped or renamed step row fails here too.
+const journeyStepNames = [
+  "transport-credential-free",
+  "protected-resource-metadata",
+  "authorization-server-metadata",
+  "register-public-client",
+  "register-disallowed-redirect",
+  "register-rate-limited",
+  "authorize-front-channel",
+  "authorize-unregistered-client",
+  "authorize-unmatched-redirect",
+  "authorize-missing-challenge",
+  "authorize-plain-challenge",
+  "authorize-wrong-resource",
+  "callback-upstream-return",
+  "callback-iss-mismatch",
+  "callback-replayed-state",
+  "callback-forged-state",
+  "callback-absent-iss",
+  "token-code-exchange",
+  "token-replay-code",
+  "token-wrong-verifier",
+  "transport-with-valid-token",
+  "transport-wrong-audience",
+  "token-refresh",
+  "refresh-revoked-handle",
+  "transport-expired-token",
+  "transport-insufficient-scope",
+];
+
+test("the shared journey table exists, carries one group, and agrees with the route model", () => {
+  assert.equal(journey.id, "mcp.auth.facade.journey");
+  assert.equal(journey.kind, "conformance");
+  assert.equal(typeof journey.description, "string");
+  assert.ok(journey.description.length > 0, "the journey table must carry a description");
+  assert.ok(Array.isArray(journey.cases), "the journey table must carry cases");
+
+  const groups = new Set(journey.cases.map((row) => row.group));
+  assert.deepEqual([...groups], ["journey"], "the journey table carries exactly one group");
+  assert.equal(journey.cases.length, journeyStepNames.length, "journey step count");
+  assert.deepEqual(
+    journey.cases.map((row) => row.id),
+    journeyStepNames.map((name) => `journey.${name}`),
+    "journey step ids must be the ordered steps 1-11",
+  );
+
+  // The world the journey pins must be the world the route model derives, member
+  // for member, from the framework's own route algebra.
+  const world = journey.notes.world;
+  const worked = routeModel.worked_example;
+  assert.equal(world.public_base_url, worked.public_base_url);
+  assert.equal(world.route_kind, worked.kind);
+  assert.equal(world.client_namespace, worked.params.client_namespace);
+  assert.equal(world.resource, worked.resolved.resource);
+  assert.equal(
+    world.protected_resource_metadata_url,
+    worked.resolved.protected_resource_metadata_url,
+  );
+  assert.equal(world.discovery_url, worked.resolved.discovery_url);
+  assert.equal(world.authorization_endpoint, worked.resolved.authorization_endpoint);
+  assert.equal(world.token_endpoint, worked.resolved.token_endpoint);
+  assert.equal(world.issuer, worked.resolved.issuer);
+
+  assert.equal(Algebra.mcpPath(journeyEndpoint), "/acme/mcp");
+  assert.equal(
+    worked.resolved.resource,
+    world.public_base_url + Algebra.mcpPath(journeyEndpoint),
+  );
+  assert.equal(
+    worked.resolved.protected_resource_metadata_url,
+    world.public_base_url + Algebra.protectedResourcePath(journeyEndpoint),
+  );
+  assert.equal(
+    worked.resolved.authorization_endpoint,
+    world.public_base_url + Algebra.oauthAuthorizePath(journeyEndpoint),
+  );
+  assert.equal(
+    worked.resolved.token_endpoint,
+    world.public_base_url + Algebra.oauthTokenPath(journeyEndpoint),
+  );
+  assert.equal(
+    world.registration_endpoint,
+    world.public_base_url + Algebra.oauthRegisterPath(journeyEndpoint),
+  );
+  assert.equal(
+    world.callback_url,
+    world.public_base_url + routeModel.contract.default_callback_path,
+  );
+
+  // The transport-credential-free row's challenge names exactly that
+  // algebra-derived protected-resource metadata URL, and the
+  // protected-resource-metadata row advertises exactly the algebra-derived
+  // resource.
+  const byId = new Map(journey.cases.map((row) => [row.id, row]));
+  const credentialFree = byId.get("journey.transport-credential-free");
+  assert.equal(credentialFree.expect_status, 401);
+  assert.equal(credentialFree.expect_challenge_resource_metadata, true);
+  assert.equal(credentialFree.expect_handler_invocations, 0);
+
+  const metadata = byId.get("journey.protected-resource-metadata");
+  assert.equal(metadata.expect_status, 200);
+  assert.equal(metadata.expect_no_store, true);
+  assert.ok(
+    metadata.expect_body_has.includes(`"resource":"${worked.resolved.resource}"`),
+    "the protected-resource row must pin the algebra-derived route resource",
+  );
+  assert.ok(
+    metadata.expect_body_has.includes(
+      `"authorization_servers":["${worked.resolved.issuer}"]`,
+    ),
+    "the protected-resource row must pin the algebra-derived authorization server",
+  );
+});
+
+// The shared threat-controls table (the table the Go, TypeScript, and Python
+// suites resolve every threat row against). CDK does not run the facade
+// mechanics, but the rows it can see -- the per-route issuer the mix-up defense
+// depends on, above all -- must resolve against the tables CDK already loads, so
+// a route-algebra change cannot silently invalidate a threat-control pin.
+const threatControls = JSON.parse(
+  fs.readFileSync(
+    path.resolve(
+      __dirname,
+      "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-threat-controls.v1.json",
+    ),
+    "utf8",
+  ),
+);
+
+/** The number of threat rows the shared table must carry (T1-T11). */
+const THREAT_CONTROLS_CASE_COUNT = 11;
+
+/** Reports whether a dotted key path exists inside a loaded table. */
+function dottedKeyExists(document, keyPath) {
+  let current = document;
+  for (const part of keyPath.split(".")) {
+    if (current === null || typeof current !== "object" || !(part in current)) {
+      return false;
+    }
+    current = current[part];
+  }
+  return current !== undefined && current !== null;
+}
+
+/**
+ * Resolves one threat-control pin against the tables this suite loads, or null
+ * when the pin names a table CDK does not load.
+ */
+function cdkPinResolves(pin) {
+  if (pin.source === "journey") {
+    return (
+      journey.cases.some((row) => row.id === pin.row) ||
+      dottedKeyExists(journey, pin.row)
+    );
+  }
+  if (pin.source === "route_model") {
+    return dottedKeyExists(routeModel, pin.row);
+  }
+  return null;
+}
+
+test("the shared threat-controls table resolves every CDK-visible pin against the loaded tables", () => {
+  assert.equal(threatControls.id, "mcp.auth.facade.threat_controls");
+  assert.equal(threatControls.kind, "conformance");
+  assert.ok(
+    typeof threatControls.description === "string" &&
+      threatControls.description.length > 0,
+    "the threat-controls table must carry a description",
+  );
+  assert.ok(Array.isArray(threatControls.cases), "the threat-controls table must carry cases");
+
+  const groups = new Set(threatControls.cases.map((row) => row.group));
+  assert.deepEqual(
+    [...groups],
+    ["threat_controls"],
+    "the threat-controls table carries exactly one group",
+  );
+  assert.equal(
+    threatControls.cases.length,
+    THREAT_CONTROLS_CASE_COUNT,
+    "threat row count",
+  );
+  assert.deepEqual(
+    threatControls.cases.map((row) => row.id),
+    Array.from(
+      { length: THREAT_CONTROLS_CASE_COUNT },
+      (_unused, index) => `threat.t${index + 1}`,
+    ),
+    "threat row ids must be T1-T11",
+  );
+
+  const visible = threatControls.cases.filter((row) => row.cdk_visible === true);
+  assert.ok(visible.length > 0, "at least one threat row must be CDK-visible");
+  for (const row of visible) {
+    assert.ok(
+      Array.isArray(row.pins) && row.pins.length > 0,
+      `CDK-visible case ${row.id} must carry fixture-backed pins`,
+    );
+    for (const pin of row.pins) {
+      const resolved = cdkPinResolves(pin);
+      assert.notEqual(
+        resolved,
+        null,
+        `CDK-visible case ${row.id} pins ${pin.source}:${pin.row}, whose source this suite does not load`,
+      );
+      assert.ok(
+        resolved,
+        `case ${row.id} pin ${pin.source}:${pin.row} does not resolve inside the table CDK loads`,
+      );
+    }
+  }
+
+  // T4 (mix-up / confused deputy) is the row the CDK side can see: the facade's
+  // per-route issuer mode is what makes a proxied upstream's tokens unusable at
+  // any other route.
+  const t4 = threatControls.cases.find((row) => row.id === "threat.t4");
+  assert.ok(
+    t4.pins.some(
+      (pin) => pin.source === "route_model" && pin.row === "issuer_modes.route",
+    ),
+    "T4 must pin the per-route issuer mode",
+  );
+  assert.equal(routeModel.issuer_modes.route.discovery_issuer, "<route URL>");
+});

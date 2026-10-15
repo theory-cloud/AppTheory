@@ -192,6 +192,9 @@ export function normalizeCallbackPath(rawPath) {
     if (trimmed === "" || !trimmed.startsWith("/")) {
         throw new Error(`mcproutes: callback path must be absolute ${JSON.stringify(rawPath)}`);
     }
+    if (containsRefusedRoutePathBytes(trimmed)) {
+        throw new Error(`mcproutes: callback path must not contain a percent-encoded slash, an interior ASCII whitespace or control character, or a backslash ${JSON.stringify(rawPath)}`);
+    }
     if (trimmed.includes("?") || trimmed.includes("#")) {
         throw new Error(`mcproutes: callback path must not include a query or fragment ${JSON.stringify(rawPath)}`);
     }
@@ -338,6 +341,33 @@ function isPathSegment(value) {
     return (trimmed !== "" &&
         trimmed !== "." &&
         trimmed !== ".." &&
-        !value.includes("/"));
+        !value.includes("/") &&
+        !containsRefusedRoutePathBytes(trimmed));
+}
+// A percent-encoded ASCII control byte: %00-%1F or %7F, in either hex case.
+// Literal control bytes are already refused by the code-point scan below; the
+// escaped form is refused because a downstream proxy, CDN, or client may
+// percent-decode the route path before matching it, which would let the decoded
+// route differ from the advertised one. This is the one shared rule, mirrored in
+// Go (runtime/mcproutes + runtime/oauth), Python, and the CDK algebra.
+const PERCENT_ENCODED_CONTROL_BYTE_PATTERN = /%[01][0-9A-Fa-f]|%7[Ff]/u;
+// containsRefusedRoutePathBytes reports whether a route path, already trimmed at
+// its edges, carries the bytes the route algebra refuses: a percent-encoded
+// slash, a percent-encoded ASCII control byte, an interior ASCII whitespace or
+// control character, or a backslash.
+function containsRefusedRoutePathBytes(value) {
+    if (value.includes("%2F") || value.includes("%2f")) {
+        return true;
+    }
+    if (PERCENT_ENCODED_CONTROL_BYTE_PATTERN.test(value)) {
+        return true;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        if (code === 0x5c || code <= 0x1f || code === 0x20 || code === 0x7f) {
+            return true;
+        }
+    }
+    return false;
 }
 //# sourceMappingURL=mcproutes.js.map

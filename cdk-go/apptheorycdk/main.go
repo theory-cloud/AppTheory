@@ -1100,6 +1100,7 @@ func init() {
 		[]_jsii_.Member{
 			_jsii_.MemberProperty{JsiiProperty: "endpoint", GoGetter: "Endpoint"},
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "protectedResourceMetadataUrl", GoGetter: "ProtectedResourceMetadataUrl"},
 			_jsii_.MemberProperty{JsiiProperty: "router", GoGetter: "Router"},
 			_jsii_.MemberProperty{JsiiProperty: "sessionTable", GoGetter: "SessionTable"},
 			_jsii_.MemberProperty{JsiiProperty: "streamSpillBucket", GoGetter: "StreamSpillBucket"},

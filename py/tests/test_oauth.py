@@ -3,6 +3,7 @@ from __future__ import annotations
 # ruff: noqa: S106
 import datetime as dt
 import json
+import os
 import unittest
 
 from apptheory import (
@@ -421,6 +422,32 @@ class OAuthRuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(len(new_pkce_code_verifier()), 43)
         with self.assertRaises(ValueError):
             validate_pkce_code_verifier("short")
+
+    def test_bearer_challenge_never_derives_from_mcp_endpoint_env(self) -> None:
+        previous = os.environ.get("MCP_ENDPOINT")
+        os.environ["MCP_ENDPOINT"] = "https://evil.example/mcp/{actor}"
+        try:
+            unconfigured = require_bearer_token_middleware(RequireBearerTokenOptions())
+            bare = unconfigured(_ctx(), lambda _ctx: self.fail("next should not run"))
+            self.assertEqual(bare.status, 401)
+            self.assertEqual(bare.headers["www-authenticate"], ["Bearer"])
+
+            configured = require_bearer_token_middleware(
+                RequireBearerTokenOptions(
+                    resource_metadata_url="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+                )
+            )
+            challenge = configured(_ctx(), lambda _ctx: self.fail("next should not run"))
+            self.assertEqual(challenge.status, 401)
+            self.assertEqual(
+                challenge.headers["www-authenticate"],
+                ['Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"'],
+            )
+        finally:
+            if previous is None:
+                os.environ.pop("MCP_ENDPOINT", None)
+            else:
+                os.environ["MCP_ENDPOINT"] = previous
 
 
 if __name__ == "__main__":

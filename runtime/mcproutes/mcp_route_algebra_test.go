@@ -10,6 +10,8 @@ import (
 
 const expectationsPath = "../../contract-tests/fixtures/routing/mcp-route-algebra/expectations.json"
 
+const facadeRouteModelPath = "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-route-model.v1.json"
+
 type routeAlgebraExpectations struct {
 	Contract                 contractExpectations       `json:"contract"`
 	Normalization            []normalizationExpectation `json:"normalization"`
@@ -39,6 +41,44 @@ type callbackPathExpectation struct {
 type callbackPathCase struct {
 	Configured string `json:"configured"`
 	Expected   string `json:"expected"`
+}
+
+type facadeRouteModel struct {
+	Contract struct {
+		DefaultCallbackPath string `json:"default_callback_path"`
+	} `json:"contract"`
+	CallbackOverride struct {
+		Default string                 `json:"default"`
+		Cases   []callbackOverrideCase `json:"cases"`
+	} `json:"callback_override"`
+	RoutePathCharset struct {
+		Cases []routePathCharsetCase `json:"cases"`
+	} `json:"route_path_charset"`
+}
+
+type callbackOverrideCase struct {
+	Configured    string `json:"configured"`
+	ExpectPattern string `json:"expect_pattern"`
+	ExpectError   bool   `json:"expect_error"`
+}
+
+type routePathCharsetCase struct {
+	Path        string `json:"path"`
+	ExpectValid bool   `json:"expect_valid"`
+	ExpectError bool   `json:"expect_error"`
+}
+
+func loadFacadeRouteModel(t *testing.T) facadeRouteModel {
+	t.Helper()
+	contents, err := os.ReadFile(facadeRouteModelPath)
+	if err != nil {
+		t.Fatalf("read facade route model: %v", err)
+	}
+	var model facadeRouteModel
+	if err := json.Unmarshal(contents, &model); err != nil {
+		t.Fatalf("parse facade route model: %v", err)
+	}
+	return model
 }
 
 type contractExpectations struct {
@@ -405,6 +445,56 @@ func TestStageGlobalCallbackAndIssuerModes(t *testing.T) {
 	for _, bad := range expected.CallbackPath.Reject {
 		if got, ok := NormalizeCallbackPath(bad); ok {
 			t.Fatalf("NormalizeCallbackPath(%q) = %q, true; want failure", bad, got)
+		}
+	}
+}
+
+func TestSharedFacadeRouteModelCallbackOverride(t *testing.T) {
+	t.Parallel()
+	model := loadFacadeRouteModel(t)
+	if model.CallbackOverride.Default != model.Contract.DefaultCallbackPath {
+		t.Fatalf("callback_override.default = %q, want %q", model.CallbackOverride.Default, model.Contract.DefaultCallbackPath)
+	}
+	if DefaultCallbackPath != model.CallbackOverride.Default {
+		t.Fatalf("DefaultCallbackPath = %q, want %q", DefaultCallbackPath, model.CallbackOverride.Default)
+	}
+	for _, row := range model.CallbackOverride.Cases {
+		got, ok := CallbackPathForConfiguredPath(row.Configured)
+		if row.ExpectError {
+			if ok {
+				t.Fatalf("CallbackPathForConfiguredPath(%q) = %q, true; want failure", row.Configured, got)
+			}
+			if normalized, normalizedOK := NormalizeCallbackPath(row.Configured); normalizedOK {
+				t.Fatalf("NormalizeCallbackPath(%q) = %q, true; want failure", row.Configured, normalized)
+			}
+			continue
+		}
+		if !ok || got != row.ExpectPattern {
+			t.Fatalf("CallbackPathForConfiguredPath(%q) = %q, %v; want %q, true", row.Configured, got, ok, row.ExpectPattern)
+		}
+	}
+}
+
+// TestSharedFacadeRouteModelRoutePathCharset proves the derived-route-path
+// charset rule through the public parser: a valid row parses to the pinned
+// namespace endpoint and an expect_error row is refused.
+func TestSharedFacadeRouteModelRoutePathCharset(t *testing.T) {
+	t.Parallel()
+	model := loadFacadeRouteModel(t)
+	for _, row := range model.RoutePathCharset.Cases {
+		endpoint, err := ParseMCPPath(row.Path)
+		if row.ExpectError {
+			if err == nil {
+				t.Fatalf("ParseMCPPath(%q) = %#v; want failure", row.Path, endpoint)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("ParseMCPPath(%q): %v", row.Path, err)
+		}
+		want := EndpointPath{Kind: EndpointKindNamespace, ClientNamespace: "acme"}
+		if !reflect.DeepEqual(endpoint, want) {
+			t.Fatalf("ParseMCPPath(%q) = %#v, want %#v", row.Path, endpoint, want)
 		}
 	}
 }

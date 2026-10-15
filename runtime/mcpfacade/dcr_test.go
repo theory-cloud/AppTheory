@@ -21,7 +21,7 @@ const dcrGroup = "dcr"
 // dcrCaseCount is the number of dcr rows the shared fixture must carry; a change
 // to the table must also be a deliberate edit in the Go, TypeScript, and Python
 // loaders, so no runtime can silently execute a smaller table.
-const dcrCaseCount = 10
+const dcrCaseCount = 12
 
 // dcrDefaultRepeat is the number of requests a row sends when it carries no
 // explicit repeat.

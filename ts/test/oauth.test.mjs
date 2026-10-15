@@ -383,3 +383,35 @@ test("OAuth DCR policy and PKCE verifier are pinned", () => {
     true,
   );
 });
+
+test("the bearer challenge never derives from the MCP_ENDPOINT environment", async () => {
+  const previous = process.env.MCP_ENDPOINT;
+  process.env.MCP_ENDPOINT = "https://evil.example/mcp/{actor}";
+  try {
+    const unconfigured = requireBearerTokenMiddleware({});
+    const bare = await unconfigured(ctx({}, "/mcp/Arch"), async () =>
+      assert.fail("next should not run"),
+    );
+    assert.equal(bare.status, 401);
+    assert.equal(bare.headers["www-authenticate"][0], "Bearer");
+
+    const configured = requireBearerTokenMiddleware({
+      resourceMetadataURL:
+        "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+    });
+    const challenge = await configured(ctx({}, "/mcp/Arch"), async () =>
+      assert.fail("next should not run"),
+    );
+    assert.equal(challenge.status, 401);
+    assert.equal(
+      challenge.headers["www-authenticate"][0],
+      'Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"',
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.MCP_ENDPOINT;
+    } else {
+      process.env.MCP_ENDPOINT = previous;
+    }
+  }
+});

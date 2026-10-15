@@ -4,6 +4,7 @@ package mcproutes
 import (
 	"fmt"
 	"path"
+	"regexp"
 	"strings"
 )
 
@@ -11,6 +12,13 @@ const (
 	mcpSegment                = "mcp"
 	asciiWhitespaceTrimCutset = "\t\n\v\f\r "
 )
+
+// percentEncodedControlBytePattern matches a percent-encoded ASCII control
+// byte: `%00`-`%1F` and `%7F`, in either hex case. Literal control bytes are
+// already refused by the byte scan below; the escaped form is refused because a
+// downstream proxy, CDN, or client may percent-decode the route path before
+// matching it, which would let the decoded route differ from the advertised one.
+var percentEncodedControlBytePattern = regexp.MustCompile(`%[01][0-9A-Fa-f]|%7[Ff]`)
 
 const (
 	// ContractVersion is the MCP route-algebra contract implemented by this package.
@@ -424,6 +432,9 @@ func NormalizeCallbackPath(rawPath string) (string, bool) {
 	if rawPath == "" || !strings.HasPrefix(rawPath, "/") {
 		return "", false
 	}
+	if containsRefusedRoutePathBytes(rawPath) {
+		return "", false
+	}
 	if strings.ContainsAny(rawPath, "?#") {
 		return "", false
 	}
@@ -471,5 +482,25 @@ func splitPath(rawPath string) []string {
 
 func isPathSegment(value string) bool {
 	trimmed := strings.Trim(value, asciiWhitespaceTrimCutset)
-	return trimmed != "" && trimmed != "." && trimmed != ".." && !strings.Contains(value, "/")
+	return trimmed != "" && trimmed != "." && trimmed != ".." &&
+		!strings.Contains(value, "/") && !containsRefusedRoutePathBytes(trimmed)
+}
+
+// containsRefusedRoutePathBytes reports whether a route path, already trimmed at
+// its edges, carries the bytes the route algebra refuses: a percent-encoded
+// slash, a percent-encoded ASCII control byte, an interior ASCII whitespace or
+// control character, or a backslash.
+func containsRefusedRoutePathBytes(value string) bool {
+	if strings.Contains(value, "%2F") || strings.Contains(value, "%2f") {
+		return true
+	}
+	if percentEncodedControlBytePattern.MatchString(value) {
+		return true
+	}
+	for _, r := range value {
+		if r == '\\' || r <= 0x1F || r == 0x20 || r == 0x7F {
+			return true
+		}
+	}
+	return false
 }

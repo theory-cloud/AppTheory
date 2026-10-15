@@ -58,6 +58,7 @@ const DISCOVERY_PATH = "/.well-known/openid-configuration";
 const ERROR_CODE_BY_REASON = {
   algorithm_not_allowed: ERR_INVALID_BEARER_TOKEN,
   audience_mismatch: ERR_BEARER_TOKEN_INVALID_AUDIENCE,
+  claim_invalid: ERR_INVALID_BEARER_TOKEN,
   expired: ERR_BEARER_TOKEN_EXPIRED,
   issuer_mismatch: ERR_INVALID_BEARER_TOKEN,
   unknown_kid: ERR_INVALID_BEARER_TOKEN,
@@ -442,6 +443,24 @@ const JWKS_CASE_EXECUTORS = {
     });
   },
 
+  "azp-non-string-rejected": async (row) => {
+    await withEnv({ jwks: () => ({ body: { keys: [KEY_A.jwk] } }) }, async (env) => {
+      const validate = await newJwksValidator(
+        validatorOptions(env, { allowedAzp: ["client-1"] }),
+      );
+      // The azp is the JSON number 123 while client_id is the allow-listed
+      // value: a present non-string azp is a malformed claim, not an absent one,
+      // so it is refused rather than read as the allow-listed client_id.
+      const token = rs256Token(env, KEY_A, { azp: 123, client_id: "client-1" });
+      await assertRejectedWithReason(validate, token, row.reason, row.name);
+      assert.equal(
+        env.state.fetches,
+        0,
+        `${row.name}: a malformed claim is refused before any key fetch`,
+      );
+    });
+  },
+
   "oversized-kid-refused-without-a-fetch": async (row) => {
     const fixture = loadFixture("jwks-validator.v1.json");
     await withEnv({ jwks: () => ({ body: { keys: [KEY_A.jwk] } }) }, async (env) => {
@@ -736,6 +755,11 @@ test("the JWKS validator enforces the azp/client_id allow-list", async () => {
     // only an absent azp falls back.
     await reject(rs256Token(env, KEY_A, { azp: " ", client_id: "client-1" }));
 
+    // A present azp that is not a string is a malformed claim, not an absent
+    // one: it is refused even though the client_id in the same token is
+    // allow-listed (the fail-open case the type rule closes).
+    await reject(rs256Token(env, KEY_A, { azp: 123, client_id: "client-1" }));
+
     // An allow-listed client_id passes, and azp takes precedence over client_id.
     assert.equal(
       (await validate(ctx(), rs256Token(env, KEY_A, { client_id: "client-1" })))
@@ -994,6 +1018,65 @@ test("a hung upstream fails closed inside the fetch timeout bound", async () => 
       elapsed < 2000,
       `the fetch timeout must settle inside the bound, took ${elapsed}ms`,
     );
+  });
+});
+
+test("a body whose cancel never settles cannot hang the validation", async () => {
+  // An injected transport is free to return a body whose `cancel()` never
+  // settles. The reads are raced against the fetch deadline, so this body stalls
+  // until the deadline fires; the deadline then aborts the signal, and the abort
+  // listener starts a cancellation that never settles. The cancel-join is
+  // bounded by the same deadline, so the validation must still fail closed
+  // inside its bound instead of waiting on that cancellation forever.
+  const stalledBodyResponse = () => ({
+    status: 200,
+    headers: new Headers({ "content-type": "application/json" }),
+    body: {
+      getReader: () => ({
+        read: () => new Promise(() => {}),
+        cancel: () => new Promise(() => {}),
+      }),
+    },
+  });
+  await withEnv({ jwks: () => ({ body: { keys: [KEY_A.jwk] } }) }, async (env) => {
+    const validate = await newJwksValidator(
+      validatorOptions(env, {
+        fetchTimeoutSeconds: 0.2,
+        fetchImpl: async () => stalledBodyResponse(),
+      }),
+    );
+    const started = Date.now();
+    let failure = null;
+    // The race keeps the test itself from hanging; the elapsed assertion then
+    // proves the validator settled inside its own bound.
+    const outcome = await Promise.race([
+      validate(routeContext("/acme/mcp"), rs256Token(env, KEY_A)).then(
+        () => "resolved",
+        (error) => {
+          failure = error;
+          return "rejected";
+        },
+      ),
+      new Promise((resolve) => {
+        const timer = setTimeout(() => resolve("timed_out"), 2000);
+        if (typeof timer.unref === "function") timer.unref();
+      }),
+    ]);
+    const elapsed = Date.now() - started;
+    assert.equal(
+      outcome,
+      "rejected",
+      "a never-settling body cancel must fail closed, not hang",
+    );
+    assert.ok(
+      elapsed < 2000,
+      `the cancel-join must stay inside the fetch bound, took ${elapsed}ms`,
+    );
+    assert.ok(
+      failure instanceof OAuthBearerError,
+      `want OAuthBearerError, got ${failure}`,
+    );
+    assert.equal(failure.oauthCode, ERR_INVALID_BEARER_TOKEN);
   });
 });
 

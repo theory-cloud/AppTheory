@@ -11,6 +11,7 @@ import {
   createApp,
   hashKey,
   mcpPath,
+  newJwksValidator,
   oauthAuthorizationServerPath,
   oauthAuthorizationServerSuffixPath,
   oauthAuthorizePath,
@@ -18,6 +19,8 @@ import {
   oauthTokenPath,
   pkceChallengeS256,
   protectedResourcePath,
+  protectedResourceWWWAuthenticate,
+  insufficientScopeWWWAuthenticate,
   registerMcpFacade,
 } from "../dist/index.js";
 import {
@@ -88,6 +91,15 @@ const FORM_PARSE_GROUP = "form_parse";
  */
 const FORM_PARSE_CASE_COUNT = 11;
 
+const AUTHORIZE_PROVIDER_FAILURE_GROUP = "authorize_provider_failure";
+
+/**
+ * The number of authorize_provider_failure rows the shared table must carry; a
+ * change to the table must also be a deliberate edit in the Go and Python
+ * loaders, so no runtime can silently execute a smaller table.
+ */
+const AUTHORIZE_PROVIDER_FAILURE_CASE_COUNT = 2;
+
 const METHOD_STATUS_GROUP = "method_status";
 
 /**
@@ -104,7 +116,7 @@ const DCR_GROUP = "dcr";
  * also be a deliberate edit in the Go and Python loaders, so no runtime can
  * silently execute a smaller table.
  */
-const DCR_CASE_COUNT = 10;
+const DCR_CASE_COUNT = 12;
 
 /**
  * The number of bytes the serialized `pad` member adds around its "a" run:
@@ -293,10 +305,11 @@ class CountingBridge {
  * is exercised against a real signature.
  */
 class MintingProvider {
-  constructor(adapter, fake, claims) {
+  constructor(adapter, fake, claims, failAuthorizationUrl = false) {
     this.adapter = adapter;
     this.fake = fake;
     this.claims = claims;
+    this.failAuthorizationUrl = failAuthorizationUrl;
   }
 
   discovery() {
@@ -304,6 +317,9 @@ class MintingProvider {
   }
 
   authorizationUrl(req) {
+    if (this.failAuthorizationUrl) {
+      throw new Error("minting provider: authorization URL unavailable");
+    }
     return this.adapter.authorizationUrl(req);
   }
 
@@ -372,6 +388,30 @@ function frontChannelHarnessOptions(overrides = {}) {
     // Mutates the fake upstream's options before it starts, so a test can serve
     // a grant-specific or failing token response.
     providerOptions: overrides.providerOptions ?? (() => {}),
+    // Tune the facade the harness registers. The default issuer mode is the
+    // route mode every front-channel test uses.
+    issuerMode: overrides.issuerMode ?? "route",
+    registrationEndpointURL: overrides.registrationEndpointURL ?? null,
+    // Installs the front channel's app-supplied provider-hint seam when set, so
+    // a test can drive a failing providerHints.
+    providerHints: overrides.providerHints ?? null,
+    // Makes the upstream provider's authorizationUrl builder fail, so a test can
+    // drive the authorize leg's provider-call failure class.
+    failAuthorizationUrl: overrides.failAuthorizationUrl ?? false,
+    // Selects the transport posture the harness registers. The journey loader
+    // selects runtime-bearer so its transport rows exercise the real RFC 9728
+    // middleware; the default stays the IAM posture every front-channel test
+    // uses.
+    transportPosture: overrides.transportPosture ?? "iam",
+    // Maps the started fake and its bridge to the transport claims validator, so
+    // a validator can read the fake's key set and loopback rewrites.
+    requireBearerTokenFor: overrides.requireBearerTokenFor ?? null,
+    // Replaces the harness's default 204 MCP handler; the journey's valid-token
+    // row needs a handler that answers 200.
+    mcpHandler: overrides.mcpHandler ?? null,
+    // Counts every MCP handler invocation, so a transport row can pin
+    // handler_invocations.
+    mcpInvocations: overrides.mcpInvocations ?? null,
   };
 }
 
@@ -425,36 +465,61 @@ async function newFrontChannelHarness(t, overrides = {}) {
     fetchImpl: (input, init) => bridge.fetch(input, init),
     allowPrivateHosts: true,
   });
-  const provider = new MintingProvider(adapter, fake, {
-    issuer: UPSTREAM_ISS,
-    audience: `${BASE_URL}/acme/mcp`,
-    authorizedParty: CLIENT_ID,
-    subject: "user-1",
-    scope: "mcp:tools",
-    expiresInSeconds: 900,
-  });
+  const provider = new MintingProvider(
+    adapter,
+    fake,
+    {
+      issuer: UPSTREAM_ISS,
+      audience: `${BASE_URL}/acme/mcp`,
+      authorizedParty: CLIENT_ID,
+      subject: "user-1",
+      scope: "mcp:tools",
+      expiresInSeconds: 900,
+    },
+    options.failAuthorizationUrl,
+  );
 
   const kind = "namespace";
   const endpoint = { kind, clientNamespace: "acme" };
+  const invocationCounter = options.mcpInvocations;
+  const baseMcpHandler = options.mcpHandler ?? (() => noContent());
+  const mcpHandler = invocationCounter
+    ? (ctx) => {
+        invocationCounter.count += 1;
+        return baseMcpHandler(ctx);
+      }
+    : baseMcpHandler;
   const config = {
     issuerURL: `${BASE_URL}/acme/mcp`,
     jwksURI: `${UPSTREAM_ISS}/.well-known/jwks.json`,
-    issuerMode: "route",
+    issuerMode: options.issuerMode,
     urlMode: "public_base_url",
     publicBaseURL: BASE_URL,
-    transportPosture: "iam",
+    transportPosture: options.transportPosture,
     scopes: {
       namespace: ["mcp:tools"],
       partner_namespace: ["mcp:tools"],
       agent: ["mcp:tools"],
       partner_agent: ["mcp:tools"],
     },
-    mcpHandler: () => noContent(),
+    mcpHandler,
     provider,
     stores,
     upstreamClientID: CLIENT_ID,
     upstreamIssuer: UPSTREAM_ISS,
   };
+  let bearerValidator = null;
+  if (options.requireBearerTokenFor !== null) {
+    const bearerOptions = await options.requireBearerTokenFor(fake, bridge);
+    config.requireBearerToken = bearerOptions;
+    bearerValidator = bearerOptions.claimsValidator ?? null;
+  }
+  if (options.registrationEndpointURL !== null) {
+    config.registrationEndpointURL = options.registrationEndpointURL;
+  }
+  if (options.providerHints !== null) {
+    config.providerHints = options.providerHints;
+  }
   await stores.client.put({
     clientIdHash: hashKey(CLIENT_ID),
     clientId: CLIENT_ID,
@@ -473,11 +538,11 @@ async function newFrontChannelHarness(t, overrides = {}) {
   const app = createApp({ tier: "p0", clock });
   registerMcpFacade(app, config);
 
-  const serve = async (method, path, query, body) => {
+  const serve = async (method, path, query, body, headers = {}) => {
     const request = {
       method,
       path,
-      headers: {},
+      headers,
       query: query ?? {},
       body: body ?? Buffer.alloc(0),
       isBase64: false,
@@ -552,6 +617,9 @@ async function newFrontChannelHarness(t, overrides = {}) {
       ...overrides,
     }),
     tokenCalls: () => bridge.tokenCalls,
+    bearerValidator,
+    invocations: invocationCounter,
+    bridge,
   };
 }
 
@@ -676,6 +744,39 @@ test("token enforces the shared form_parse table through the real handler", asyn
   assert.equal(executed, FORM_PARSE_CASE_COUNT);
 });
 
+test("authorize enforces the shared authorize_provider_failure table through the real handler", async (t) => {
+  const rows = (loadFixture().cases ?? []).filter(
+    (row) => row.group === AUTHORIZE_PROVIDER_FAILURE_GROUP,
+  );
+  assert.equal(rows.length, AUTHORIZE_PROVIDER_FAILURE_CASE_COUNT);
+
+  let executed = 0;
+  for (const row of rows) {
+    executed += 1;
+    const harness = await newFrontChannelHarness(t, {
+      failAuthorizationUrl: row.fail === "authorization_url",
+      providerHints: async () => {
+        if (row.fail === "provider_hints") {
+          throw new Error("provider hints unavailable");
+        }
+        return {};
+      },
+    });
+
+    const response = await harness.authorize(undefined);
+    const context = `fail ${JSON.stringify(row.fail)}`;
+    assert.equal(response.status, row.expect_status, context);
+    if (row.expect_no_location) {
+      assert.equal(locationOf(response), "", context);
+    }
+    const body = bodyString(response);
+    for (const want of row.expect_body_has) {
+      assert.ok(body.includes(want), `${context}: body ${body}`);
+    }
+  }
+  assert.equal(executed, AUTHORIZE_PROVIDER_FAILURE_CASE_COUNT);
+});
+
 test("method status enforces the shared method_status table through the real mounted app", async (t) => {
   const rows = (loadFixture().cases ?? []).filter(
     (row) => row.group === METHOD_STATUS_GROUP,
@@ -793,6 +894,128 @@ test("register enforces the shared dcr table through the real mounted handler", 
     }
   }
   assert.equal(executed, DCR_CASE_COUNT);
+});
+
+const METADATA_REGISTRATION_GROUP = "metadata_registration";
+
+/**
+ * The number of metadata_registration rows the shared table must carry; a change
+ * to the table must also be a deliberate edit in the Go and Python loaders, so
+ * no runtime can silently execute a smaller table.
+ */
+const METADATA_REGISTRATION_CASE_COUNT = 6;
+
+/** The single route the group resolves, so a row exercises only the mount shape. */
+const METADATA_REGISTRATION_ENDPOINT = {
+  kind: "namespace",
+  clientNamespace: "acme",
+};
+
+/**
+ * Mounts the facade a metadata_registration row asks for: the front-channel
+ * field set only for the rows that request it, so the mounted /register route
+ * and the advertised member move together.
+ */
+async function metadataRegistrationApp(t, row) {
+  if (row.front_channel) {
+    const harness = await newFrontChannelHarness(t, {
+      issuerMode: row.issuer_mode,
+      registrationEndpointURL: row.registration_endpoint_url ?? null,
+    });
+    return harness.app;
+  }
+  const config = {
+    issuerURL: `${BASE_URL}/acme/mcp`,
+    jwksURI: `${UPSTREAM_ISS}/.well-known/jwks.json`,
+    issuerMode: row.issuer_mode,
+    urlMode: "public_base_url",
+    publicBaseURL: BASE_URL,
+    transportPosture: "iam",
+    scopes: {
+      namespace: ["mcp:tools"],
+      partner_namespace: ["mcp:tools"],
+      agent: ["mcp:tools"],
+      partner_agent: ["mcp:tools"],
+    },
+    mcpHandler: () => noContent(),
+  };
+  if (row.registration_endpoint_url !== undefined) {
+    config.registrationEndpointURL = row.registration_endpoint_url;
+  }
+  if (row.register_handler === true) {
+    config.registerHandler = () => () => noContent();
+  }
+  const app = createApp({ tier: "p0" });
+  registerMcpFacade(app, config);
+  return app;
+}
+
+/**
+ * Serves the routed RFC 8414 document for one app with the same request shape the
+ * front-channel harness uses.
+ */
+async function metadataRegistrationDocument(app) {
+  const response = await app.serve({
+    method: "GET",
+    path: oauthAuthorizationServerPath(METADATA_REGISTRATION_ENDPOINT),
+    headers: {},
+    query: {},
+    body: Buffer.alloc(0),
+    isBase64: false,
+  });
+  assert.equal(response.status, 200);
+  return JSON.parse(bodyString(response));
+}
+
+test("routed metadata advertises registration exactly while the route is mounted", async (t) => {
+  const rows = (loadFixture().cases ?? []).filter(
+    (row) => row.group === METADATA_REGISTRATION_GROUP,
+  );
+  assert.equal(rows.length, METADATA_REGISTRATION_CASE_COUNT);
+
+  const registerPath = oauthRegisterPath(METADATA_REGISTRATION_ENDPOINT);
+
+  let executed = 0;
+  for (const row of rows) {
+    executed += 1;
+    await t.test(row.id, async () => {
+      const app = await metadataRegistrationApp(t, row);
+      const document = await metadataRegistrationDocument(app);
+
+      switch (row.expect) {
+        case "absent":
+          assert.ok(
+            !("registration_endpoint" in document),
+            `row ${row.id} must omit registration_endpoint; the /register route is not mounted`,
+          );
+          break;
+        case "configured":
+          assert.equal(
+            document.registration_endpoint,
+            row.registration_endpoint_url,
+            row.id,
+          );
+          break;
+        case "issuer_derived":
+          assert.equal(
+            document.registration_endpoint,
+            `${BASE_URL}/acme/mcp/register`,
+            row.id,
+          );
+          break;
+        case "route_derived":
+          assert.equal(
+            document.registration_endpoint,
+            `${BASE_URL}${registerPath}`,
+            row.id,
+          );
+          break;
+        default:
+          assert.fail(`unknown expect ${row.expect}`);
+      }
+    });
+  }
+  assert.equal(executed, METADATA_REGISTRATION_CASE_COUNT);
 });
 
 const BOUND_ROUTE_GROUP = "bound_route";
@@ -2288,4 +2511,790 @@ test("refresh enforces the shared refresh table through the real handlers", asyn
     }
   }
   assert.equal(executed, REFRESH_CASE_COUNT);
+});
+
+// ---------------------------------------------------------------------------
+// Shared journey table (the same table the Go and Python loaders read)
+// ---------------------------------------------------------------------------
+
+const JOURNEY_FIXTURE_NAME = "facade-journey.v1.json";
+
+const JOURNEY_GROUP = "journey";
+
+/**
+ * The number of journey rows the shared table must carry; a change to the table
+ * must also be a deliberate edit in the Go and Python loaders, so no runtime can
+ * silently execute a shorter journey.
+ */
+const JOURNEY_CASE_COUNT = 26;
+
+/** The advertising resource of the namespace route the journey world describes. */
+const JOURNEY_ROUTE_RESOURCE = `${BASE_URL}/acme/mcp`;
+
+/** The route's RFC 9728 protected-resource metadata URL, named by every challenge. */
+const JOURNEY_METADATA_URL = `${BASE_URL}/.well-known/oauth-protected-resource/acme/mcp`;
+
+/** A route resource that is not the journey route's. */
+const JOURNEY_WRONG_AUDIENCE = `${BASE_URL}/other/mcp`;
+
+/** A client id no journey row registers. */
+const JOURNEY_UNKNOWN_CLIENT_ID = "unknown-client";
+
+/** A verifier that does not hash to the challenge the authorize step presented. */
+const JOURNEY_WRONG_VERIFIER =
+  "WRONGVERIFIERWRONGVERIFIERWRONGVERIFIER1234567890";
+
+function loadJourneyFixture() {
+  return JSON.parse(
+    readFileSync(path.join(FIXTURE_DIR, JOURNEY_FIXTURE_NAME), "utf8"),
+  );
+}
+
+/**
+ * Starts the journey harness: the front-channel harness with the runtime-bearer
+ * transport posture, a real JWKS claims validator over the fake upstream's key
+ * set, and an MCP handler that answers 200 and counts its invocations, so the
+ * journey's transport rows exercise the mounted facade's own transport
+ * middleware.
+ */
+async function newJourneyHarness(t) {
+  const invocations = { count: 0 };
+  const harness = await newFrontChannelHarness(t, {
+    transportPosture: "runtime-bearer",
+    requireBearerTokenFor: async (fake, bridge) => {
+      const claimsValidator = await newJwksValidator({
+        issuer: UPSTREAM_ISS,
+        jwksUri: `${UPSTREAM_ISS}/.well-known/jwks.json`,
+        fetchImpl: (input, init) => bridge.fetch(input, init),
+        allowPrivateHosts: true,
+        requiredAudience: JOURNEY_ROUTE_RESOURCE,
+        requiredScopes: ["mcp:tools"],
+      });
+      return {
+        resourceMetadataURL: JOURNEY_METADATA_URL,
+        claimsValidator,
+        requiredScopes: ["mcp:tools"],
+      };
+    },
+    mcpHandler: () => ({
+      status: 200,
+      headers: {},
+      cookies: [],
+      body: Buffer.from("mcp-ok", "utf8"),
+      isBase64: false,
+    }),
+    mcpInvocations: invocations,
+  });
+  harness.invocations = invocations;
+  return harness;
+}
+
+/** The full RFC 6749 section 4.1.3 authorization_code grant the token rows present. */
+function journeyTokenForm(code, verifier, overrides = {}) {
+  return {
+    grant_type: "authorization_code",
+    code,
+    code_verifier: verifier,
+    redirect_uri: CLIENT_REDIRECT,
+    client_id: CLIENT_ID,
+    ...overrides,
+  };
+}
+
+function journeyTokenField(response, field) {
+  const payload = JSON.parse(bodyString(response));
+  const value = payload[field];
+  assert.equal(
+    typeof value,
+    "string",
+    `token response must carry a string ${field}`,
+  );
+  assert.notEqual(value, "");
+  return value;
+}
+
+/**
+ * Mints the token a transport row presents. The fault tokens are minted by the
+ * fake's own key, so only the pinned claim differs and the refusal cannot come
+ * from a bad signature.
+ */
+function journeyTransportToken(harness, token) {
+  const claims = (audience, scope, expiresInSeconds) => ({
+    issuer: UPSTREAM_ISS,
+    audience,
+    authorizedParty: CLIENT_ID,
+    subject: "user-1",
+    scope,
+    expiresInSeconds,
+  });
+  switch (token) {
+    case "wrong_audience":
+      return harness.fake.mintAccessToken(
+        claims(JOURNEY_WRONG_AUDIENCE, "mcp:tools", 900),
+      );
+    case "expired":
+      return harness.fake.mintAccessToken(
+        claims(JOURNEY_ROUTE_RESOURCE, "mcp:tools", -60),
+      );
+    case "insufficient_scope":
+      return harness.fake.mintAccessToken(
+        claims(JOURNEY_ROUTE_RESOURCE, "mcp:read", 900),
+      );
+    default:
+      throw new Error(`unknown journey transport token ${JSON.stringify(token)}`);
+  }
+}
+
+/**
+ * Starts a journey harness and applies the row's declared precondition. Each row
+ * is executable in isolation: a row that needs facade material names the
+ * precondition that mints it, so dropping or reordering rows cannot silently
+ * weaken a later row.
+ */
+async function newJourneySession(t, precondition) {
+  const harness = await newJourneyHarness(t);
+  const session = {
+    harness,
+    invocations: harness.invocations,
+    upstreamState: "",
+    facadeCode: "",
+    handle: "",
+    accessToken: "",
+  };
+  if (precondition === undefined || precondition === "") {
+    return session;
+  }
+
+  const mintsAuthorize =
+    precondition === "authorize" ||
+    precondition === "authorize_consumed" ||
+    precondition.startsWith("authorize_callback");
+  if (!mintsAuthorize) {
+    assert.fail(`unknown journey precondition ${JSON.stringify(precondition)}`);
+  }
+
+  const authorizeResponse = await harness.authorize(undefined);
+  assert.equal(authorizeResponse.status, 302, `${precondition} authorize`);
+  session.upstreamState = locationQuery(authorizeResponse).get("state");
+  assert.ok(session.upstreamState, `${precondition} upstream state`);
+  if (precondition === "authorize") {
+    return session;
+  }
+
+  const callbackResponse = await harness.serve(
+    "GET",
+    DEFAULT_CALLBACK_PATH,
+    { code: [UPSTREAM_CODE], state: [session.upstreamState], iss: [UPSTREAM_ISS] },
+    null,
+  );
+  assert.equal(callbackResponse.status, 302, `${precondition} callback`);
+  session.facadeCode = locationQuery(callbackResponse).get("code");
+  assert.ok(session.facadeCode, `${precondition} facade code`);
+  if (precondition === "authorize_consumed" || precondition === "authorize_callback") {
+    return session;
+  }
+
+  const exchange = await harness.token(
+    journeyTokenForm(session.facadeCode, VERIFIER),
+  );
+  assert.equal(exchange.status, 200, `${precondition} exchange`);
+  session.accessToken = journeyTokenField(exchange, "access_token");
+  session.handle = journeyTokenField(exchange, "refresh_token");
+  if (precondition === "authorize_callback_exchange") {
+    return session;
+  }
+
+  const replay = await harness.token(
+    journeyTokenForm(session.facadeCode, VERIFIER),
+  );
+  assert.equal(replay.status, 400, `${precondition} replay`);
+  return session;
+}
+
+async function executeJourneyTransportRow(t, row) {
+  const session = await newJourneySession(t, row.precondition);
+  const harness = session.harness;
+
+  const headers = {};
+  switch (row.token) {
+    case "none":
+      break;
+    case "valid":
+      assert.ok(session.accessToken, `${row.id} needs the precondition's exchange`);
+      headers.authorization = [`Bearer ${session.accessToken}`];
+      break;
+    case "wrong_audience":
+    case "expired":
+    case "insufficient_scope":
+      headers.authorization = [
+        `Bearer ${journeyTransportToken(harness, row.token)}`,
+      ];
+      break;
+    default:
+      assert.fail(`row ${row.id} carries unknown token ${JSON.stringify(row.token)}`);
+  }
+
+  const response = await harness.serve(
+    "POST",
+    mcpPath(harness.endpoint),
+    null,
+    Buffer.from(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, "utf8"),
+    headers,
+  );
+
+  assert.equal(response.status, row.expect_status, `row ${row.id}`);
+  const challenge = firstHeader(response.headers, "www-authenticate");
+  if (row.expect_challenge_resource_metadata === true) {
+    assert.equal(
+      challenge,
+      protectedResourceWWWAuthenticate(JOURNEY_METADATA_URL),
+      `row ${row.id} must carry the RFC 9728 discovery challenge`,
+    );
+  } else if (row.expect_challenge_error !== undefined) {
+    assert.equal(
+      challenge,
+      insufficientScopeWWWAuthenticate([row.expect_challenge_scope], JOURNEY_METADATA_URL),
+      `row ${row.id} must carry the RFC 6750 insufficient_scope challenge`,
+    );
+  } else {
+    assert.equal(challenge, undefined, `row ${row.id} must advertise no challenge`);
+  }
+  if (row.expect_handler_invocations !== undefined) {
+    assert.equal(
+      session.invocations.count,
+      row.expect_handler_invocations,
+      `row ${row.id} handler invocations`,
+    );
+  }
+}
+
+async function executeJourneyMetadataRow(t, row, authorizationServer) {
+  const session = await newJourneySession(t, row.precondition);
+  const harness = session.harness;
+  const path_ = authorizationServer
+    ? oauthAuthorizationServerPath(harness.endpoint)
+    : protectedResourcePath(harness.endpoint);
+
+  const response = await harness.serve("GET", path_, null, null);
+  assert.equal(response.status, row.expect_status, `row ${row.id}`);
+
+  const body = bodyString(response);
+  for (const token of row.expect_body_has ?? []) {
+    assert.ok(body.includes(token), `row ${row.id} body must carry ${token}`);
+  }
+  if (row.expect_no_store === true) {
+    assert.equal(
+      firstHeader(response.headers, "cache-control"),
+      "no-store",
+      `row ${row.id}`,
+    );
+  }
+}
+
+async function executeJourneyRegisterRow(t, row) {
+  const harness = await newJourneyHarness(t);
+  const registerPath = oauthRegisterPath(harness.endpoint);
+
+  const body =
+    row.request === undefined
+      ? Buffer.alloc(0)
+      : Buffer.from(JSON.stringify(row.request), "utf8");
+  for (let attempt = 0; attempt < (row.prime_registrations ?? 0); attempt += 1) {
+    const primed = await harness.serve(
+      "POST",
+      registerPath,
+      null,
+      Buffer.from(`{"redirect_uris":["https://client.example/callback"]}`, "utf8"),
+    );
+    assert.equal(primed.status, 201, `row ${row.id} priming attempt ${attempt + 1}`);
+  }
+
+  const response = await harness.serve("POST", registerPath, null, body);
+  assert.equal(response.status, row.expect_status, `row ${row.id}`);
+
+  const scanned = bodyString(response);
+  for (const token of row.expect_body_has ?? []) {
+    assert.ok(scanned.includes(token), `row ${row.id} body must carry ${token}`);
+  }
+  if (row.expect_no_store === true) {
+    assert.equal(firstHeader(response.headers, "cache-control"), "no-store", `row ${row.id}`);
+    assert.equal(firstHeader(response.headers, "pragma"), "no-cache", `row ${row.id}`);
+  }
+  if (row.expect_retry_after === true) {
+    const value = firstHeader(response.headers, "retry-after");
+    assert.notEqual(value, undefined, `row ${row.id} must carry a retry-after header`);
+    assert.ok(
+      Number.parseInt(value, 10) >= 1,
+      `row ${row.id} must not ask for a retry sooner than one second`,
+    );
+  }
+  if (row.expect_bound_route === true) {
+    const clientId = JSON.parse(scanned).client_id;
+    assert.ok(clientId, `row ${row.id} must mint a client id`);
+    const record = await harness.stores.client.get(hashKey(clientId));
+    assert.ok(record !== null, `row ${row.id} must persist the registered client`);
+    assert.equal(record.boundRoute, JOURNEY_ROUTE_RESOURCE, `row ${row.id}`);
+  }
+}
+
+async function executeJourneyAuthorizeRow(t, row) {
+  const session = await newJourneySession(t, row.precondition);
+  const harness = session.harness;
+
+  const query = {
+    client_id: [row.client === "unknown" ? JOURNEY_UNKNOWN_CLIENT_ID : CLIENT_ID],
+    redirect_uri: [CLIENT_REDIRECT],
+    response_type: ["code"],
+    code_challenge: [pkceChallengeS256(VERIFIER)],
+    code_challenge_method: ["S256"],
+    state: [CLIENT_STATE],
+    resource: [JOURNEY_ROUTE_RESOURCE],
+  };
+  if (row.redirect_uri !== undefined) {
+    query.redirect_uri = [row.redirect_uri];
+  }
+  for (const key of row.omit ?? []) {
+    delete query[key];
+  }
+  for (const [key, value] of Object.entries(row.set ?? {})) {
+    query[key] = [value];
+  }
+
+  const response = await harness.serve(
+    "GET",
+    oauthAuthorizePath(harness.endpoint),
+    query,
+    null,
+  );
+  assert.equal(response.status, row.expect_status, `row ${row.id}`);
+
+  const location = locationOf(response);
+  if (row.expect_no_location === true) {
+    assert.equal(location, "", `row ${row.id} must not redirect`);
+  }
+  if (row.expect_error !== undefined) {
+    assert.ok(
+      locationQuery(response).get("error") === row.expect_error ||
+        bodyString(response).includes(`"error":"${row.expect_error}"`),
+      `row ${row.id} must answer error ${row.expect_error}; location ${location} body ${bodyString(response)}`,
+    );
+  }
+  if (row.expect_location_host !== undefined) {
+    assert.ok(
+      location.startsWith(`${row.expect_location_host}/`),
+      `row ${row.id} location ${location} must be beneath ${row.expect_location_host}`,
+    );
+  }
+  const queryResult = locationQuery(response);
+  for (const key of row.expect_location_query_has ?? []) {
+    assert.ok(queryResult.has(key), `row ${row.id} location must carry ${key}`);
+  }
+  for (const [key, value] of Object.entries(row.expect_location_query_equals ?? {})) {
+    assert.equal(queryResult.get(key), value, `row ${row.id} location ${key}`);
+  }
+  if (row.expect_upstream_state_distinct === true) {
+    const upstreamState = queryResult.get("state");
+    assert.ok(upstreamState, `row ${row.id} must mint an upstream state`);
+    assert.notEqual(
+      upstreamState,
+      CLIENT_STATE,
+      `row ${row.id} must mint an upstream state distinct from the client's`,
+    );
+  }
+}
+
+async function executeJourneyCallbackRow(t, row) {
+  const session = await newJourneySession(t, row.precondition);
+  const harness = session.harness;
+
+  const state = row.state === "precondition" ? session.upstreamState : row.state;
+  assert.ok(state !== "", `row ${row.id} needs the precondition's upstream state`);
+  const code = row.code === "upstream" ? UPSTREAM_CODE : row.code;
+  const query = { code: [code], state: [state] };
+  if (row.iss !== undefined && row.iss !== null) {
+    query.iss = [row.iss];
+  }
+
+  const before = harness.tokenCalls();
+  const response = await harness.serve("GET", DEFAULT_CALLBACK_PATH, query, null);
+
+  assert.equal(response.status, row.expect_status, `row ${row.id}`);
+  const location = locationOf(response);
+  if (row.expect_no_location === true) {
+    assert.equal(location, "", `row ${row.id} must not redirect`);
+  }
+  const body = bodyString(response);
+  for (const token of row.expect_body_has ?? []) {
+    assert.ok(body.includes(token), `row ${row.id} body must carry ${token}`);
+  }
+  if (row.expect_location_host !== undefined) {
+    assert.ok(
+      location.startsWith(`${row.expect_location_host}/`),
+      `row ${row.id} location ${location} must be beneath ${row.expect_location_host}`,
+    );
+  }
+  const queryResult = locationQuery(response);
+  for (const key of row.expect_location_query_has ?? []) {
+    assert.ok(queryResult.has(key), `row ${row.id} location must carry ${key}`);
+  }
+  for (const [key, value] of Object.entries(row.expect_location_query_equals ?? {})) {
+    assert.equal(queryResult.get(key), value, `row ${row.id} location ${key}`);
+  }
+  if ((row.expect_absent_from_location ?? []).length > 0) {
+    const leaked = responseScan(response);
+    for (const token of row.expect_absent_from_location) {
+      assert.ok(
+        !leaked.includes(token),
+        `row ${row.id} must not leak ${JSON.stringify(token)} anywhere in the response`,
+      );
+    }
+  }
+  if (row.expect_handler_invocations !== undefined) {
+    assert.equal(
+      session.invocations.count,
+      row.expect_handler_invocations,
+      `row ${row.id} handler invocations`,
+    );
+  }
+  if (row.expect_upstream_exchange_attempted === false) {
+    assert.equal(
+      harness.tokenCalls(),
+      before,
+      `row ${row.id} must attempt no upstream exchange`,
+    );
+  }
+  if (row.expect_transaction_consumed === false) {
+    const retry = await harness.serve(
+      "GET",
+      DEFAULT_CALLBACK_PATH,
+      { code: [code], state: [state], iss: [UPSTREAM_ISS] },
+      null,
+    );
+    assert.equal(
+      retry.status,
+      302,
+      `row ${row.id} must leave the transaction unconsumed for a correct retry`,
+    );
+    assert.ok(
+      locationQuery(retry).get("code"),
+      `row ${row.id} must complete on the retry`,
+    );
+  }
+  if (row.terminal === true) {
+    assert.equal(response.status, 400, `row ${row.id}: a consumed state is terminal`);
+    assert.equal(location, "", `row ${row.id}: a consumed state must not redirect`);
+    assert.equal(
+      harness.tokenCalls(),
+      before,
+      `row ${row.id}: a consumed state must never re-exchange`,
+    );
+  }
+}
+
+async function executeJourneyTokenRow(t, row) {
+  const session = await newJourneySession(t, row.precondition);
+  const harness = session.harness;
+
+  let response;
+  switch (row.mode) {
+    case "exchange":
+      response = await harness.token(
+        journeyTokenForm(session.facadeCode, VERIFIER),
+      );
+      break;
+    case "replay":
+      response = await harness.token(
+        journeyTokenForm(session.facadeCode, VERIFIER),
+      );
+      break;
+    case "wrong_verifier":
+      response = await harness.token(
+        journeyTokenForm(session.facadeCode, JOURNEY_WRONG_VERIFIER),
+      );
+      break;
+    case "refresh":
+    case "revoked_refresh":
+      assert.ok(session.handle, `row ${row.id} needs the precondition's handle`);
+      response = await harness.token({
+        grant_type: "refresh_token",
+        refresh_token: session.handle,
+        client_id: CLIENT_ID,
+      });
+      break;
+    default:
+      assert.fail(`row ${row.id} carries unknown token mode ${JSON.stringify(row.mode)}`);
+  }
+
+  assert.equal(response.status, row.expect_status, `row ${row.id}`);
+  const scanned = bodyString(response);
+  for (const token of row.expect_body_has ?? []) {
+    assert.ok(scanned.includes(token), `row ${row.id} body must carry ${token}`);
+  }
+  for (const token of row.expect_body_absent ?? []) {
+    assert.ok(!scanned.includes(token), `row ${row.id} must not carry ${token}`);
+  }
+  if (row.expect_error !== undefined) {
+    assert.ok(
+      scanned.includes(`"error":"${row.expect_error}"`),
+      `row ${row.id} must answer error ${row.expect_error}`,
+    );
+  }
+  if (row.expect_access_token_unchanged === true) {
+    const accessToken = journeyTokenField(response, "access_token");
+    if (row.mode === "refresh") {
+      assert.equal(
+        accessToken,
+        REFRESH_ACCESS_TOKEN,
+        `row ${row.id} must return the upstream refresh access token byte-for-byte`,
+      );
+    } else {
+      assert.ok(
+        harness.bearerValidator !== null,
+        `row ${row.id} needs the harness's JWKS claims validator`,
+      );
+      const claims = await harness.bearerValidator(undefined, accessToken);
+      assert.ok(
+        claims !== null,
+        `row ${row.id} must return the upstream-minted access token unchanged`,
+      );
+    }
+  }
+  if (row.expect_refresh_handle_opaque === true) {
+    const handle = journeyTokenField(response, "refresh_token");
+    assert.notEqual(
+      handle,
+      UPSTREAM_REFRESH_TOKEN,
+      `row ${row.id} must not hand back the upstream refresh token`,
+    );
+  }
+  if (row.expect_rotated_handle === true) {
+    const handle = journeyTokenField(response, "refresh_token");
+    assert.notEqual(handle, session.handle, `row ${row.id} must rotate the route handle`);
+  }
+  if (row.expect_broker_revoked === true) {
+    const record = await harness.stores.routeRefreshBroker.get(
+      hashKey(session.handle),
+    );
+    assert.ok(record !== null, `row ${row.id}`);
+    assert.equal(
+      record.status,
+      "revoked",
+      `row ${row.id} must revoke the broker record the code minted`,
+    );
+  }
+  if (row.expect_handler_invocations !== undefined) {
+    assert.equal(
+      session.invocations.count,
+      row.expect_handler_invocations,
+      `row ${row.id} handler invocations`,
+    );
+  }
+}
+
+/**
+ * Executes the whole minimal non-TMS consumer journey from the shared table
+ * through the real mounted routes: every step of MINIMAL_CONSUMER.md is one data
+ * row, and the Go, TypeScript, and Python loaders each execute all of them, so
+ * the journey is executed from shared data rather than narrated.
+ */
+test("the shared journey table executes every step through the mounted routes", async (t) => {
+  const document = loadJourneyFixture();
+  const rows = [];
+  for (const row of document.cases ?? []) {
+    assert.ok(row.group, `case ${row.id} must carry a group`);
+    assert.equal(
+      row.group,
+      JOURNEY_GROUP,
+      `case ${row.id} carries group ${row.group}; the journey loader executes only ${JOURNEY_GROUP}`,
+    );
+    rows.push(row);
+  }
+  assert.equal(rows.length, JOURNEY_CASE_COUNT);
+
+  let executed = 0;
+  for (const row of rows) {
+    executed += 1;
+    await t.test(row.id, async (t2) => {
+      switch (row.stage) {
+        case "transport":
+          await executeJourneyTransportRow(t2, row);
+          break;
+        case "protected_resource":
+          await executeJourneyMetadataRow(t2, row, false);
+          break;
+        case "authorization_server_metadata":
+          await executeJourneyMetadataRow(t2, row, true);
+          break;
+        case "register":
+          await executeJourneyRegisterRow(t2, row);
+          break;
+        case "authorize":
+          await executeJourneyAuthorizeRow(t2, row);
+          break;
+        case "callback":
+          await executeJourneyCallbackRow(t2, row);
+          break;
+        case "token":
+          await executeJourneyTokenRow(t2, row);
+          break;
+        default:
+          assert.fail(`row ${row.id} carries unknown stage ${JSON.stringify(row.stage)}`);
+      }
+    });
+  }
+  assert.equal(executed, JOURNEY_CASE_COUNT);
+});
+
+// ---------------------------------------------------------------------------
+// Shared threat-controls table (the same table the Go and Python checkers read)
+// ---------------------------------------------------------------------------
+
+const THREAT_CONTROLS_FIXTURE_NAME = "facade-threat-controls.v1.json";
+
+const THREAT_CONTROLS_GROUP = "threat_controls";
+
+/**
+ * The number of threat rows the shared table must carry; a change to the table
+ * must also be a deliberate edit in the Go and Python checkers, so no runtime
+ * can silently check fewer rows.
+ */
+const THREAT_CONTROLS_CASE_COUNT = 11;
+
+/**
+ * The closed pin vocabulary: each source names a table in the corpus and the row
+ * shapes a pin is resolved in — a cases[].id, a cases[].name, or a dotted key
+ * path.
+ */
+const THREAT_PIN_SOURCES = {
+  journey: { file: "facade-journey.v1.json", byCaseID: true, byKey: true },
+  conformance: { file: "facade-conformance.v1.json", byCaseID: true },
+  route_model: { file: "facade-route-model.v1.json", byKey: true },
+  transport_posture: { file: "facade-transport-posture.v1.json", byKey: true },
+  jwks_validator: { file: "jwks-validator.v1.json", byCaseName: true },
+  discovery_bootstrap: {
+    file: "discovery-bootstrap.v1.json",
+    byCaseName: true,
+    byKey: true,
+  },
+  provider_conformance: {
+    file: "facade-provider-conformance.v1.json",
+    byCaseID: true,
+  },
+  store_conformance: { file: "facade-store-conformance.v1.json", byCaseID: true },
+  route_challenge: { file: "route-challenge.v1.json", byKey: true },
+};
+
+function loadThreatControlsFixture() {
+  return JSON.parse(
+    readFileSync(path.join(FIXTURE_DIR, THREAT_CONTROLS_FIXTURE_NAME), "utf8"),
+  );
+}
+
+/** Loads one table of the closed pin vocabulary, located exactly as the journey
+ * and conformance loaders locate theirs.
+ */
+function loadPinnedTable(fileName) {
+  return JSON.parse(readFileSync(path.join(FIXTURE_DIR, fileName), "utf8"));
+}
+
+/** Reports whether the pin's row is a real id, name, or key inside the table. */
+function threatPinResolves(source, row, table) {
+  if (source.byCaseID || source.byCaseName) {
+    for (const entry of table.cases ?? []) {
+      if (
+        source.byCaseID &&
+        typeof entry.id === "string" &&
+        entry.id !== "" &&
+        entry.id === row
+      ) {
+        return true;
+      }
+      if (
+        source.byCaseName &&
+        typeof entry.name === "string" &&
+        entry.name !== "" &&
+        entry.name === row
+      ) {
+        return true;
+      }
+    }
+  }
+  if (!source.byKey) {
+    return false;
+  }
+  let current = table;
+  for (const part of row.split(".")) {
+    if (current === null || typeof current !== "object" || !(part in current)) {
+      return false;
+    }
+    current = current[part];
+  }
+  return current !== undefined && current !== null;
+}
+
+/**
+ * Proves every threat row's pin resolves to an executed row in the table it
+ * names, so the shared threat-controls table is bidirectional: dropping a
+ * referenced row fails the check, and adding a pin that resolves to nothing
+ * fails it too.
+ */
+test("the shared threat-controls table pins every threat row to an executed row", async (t) => {
+  const document = loadThreatControlsFixture();
+  assert.equal(document.id, "mcp.auth.facade.threat_controls");
+  assert.equal(document.kind, "conformance");
+  assert.ok(typeof document.status === "string" && document.status.length > 0);
+  assert.ok(
+    typeof document.description === "string" && document.description.length > 0,
+  );
+
+  const tables = new Map();
+  const tableFor = (sourceKey) => {
+    if (!tables.has(sourceKey)) {
+      tables.set(sourceKey, loadPinnedTable(THREAT_PIN_SOURCES[sourceKey].file));
+    }
+    return tables.get(sourceKey);
+  };
+
+  const rows = [];
+  for (const row of document.cases ?? []) {
+    assert.ok(row.group, `case ${row.id} must carry a group`);
+    assert.equal(
+      row.group,
+      THREAT_CONTROLS_GROUP,
+      `case ${row.id} carries group ${row.group}; the threat-controls checker reads only ${THREAT_CONTROLS_GROUP}`,
+    );
+    rows.push(row);
+  }
+  assert.equal(rows.length, THREAT_CONTROLS_CASE_COUNT);
+
+  let checked = 0;
+  for (const row of rows) {
+    checked += 1;
+    await t.test(row.id, () => {
+      assert.ok(row.threat, `case ${row.id} must name the attack class`);
+      assert.ok(row.control, `case ${row.id} must name the framework control`);
+      assert.ok(
+        Array.isArray(row.source_pins) && row.source_pins.length > 0,
+        `case ${row.id} must preserve the pin strings it was lifted from`,
+      );
+      if (row.runtime_executable === true) {
+        assert.ok(
+          Array.isArray(row.pins) && row.pins.length > 0,
+          `case ${row.id} is runtime_executable but carries no fixture-backed pin`,
+        );
+      }
+      for (const pin of row.pins ?? []) {
+        const source = THREAT_PIN_SOURCES[pin.source];
+        assert.ok(
+          source,
+          `case ${row.id} pin source ${pin.source} is outside the closed pin vocabulary`,
+        );
+        assert.ok(
+          threatPinResolves(source, pin.row, tableFor(pin.source)),
+          `case ${row.id} pin ${pin.source}:${pin.row} does not resolve inside ${source.file}`,
+        );
+      }
+    });
+  }
+  assert.equal(checked, THREAT_CONTROLS_CASE_COUNT);
 });

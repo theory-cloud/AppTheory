@@ -48,12 +48,28 @@ func validateAppTheoryMcpRouteAlgebra_AuthorizationTokenPathForResourcePathParam
 	return nil
 }
 
+func validateAppTheoryMcpRouteAlgebra_CallbackPathForConfiguredPathParameters(configured *string) error {
+	if configured == nil {
+		return fmt.Errorf("parameter configured is required, but nil was provided")
+	}
+
+	return nil
+}
+
 func validateAppTheoryMcpRouteAlgebra_McpPathParameters(endpoint *AppTheoryMcpEndpointPath) error {
 	if endpoint == nil {
 		return fmt.Errorf("parameter endpoint is required, but nil was provided")
 	}
 	if err := _jsii_.ValidateStruct(endpoint, func() string { return "parameter endpoint" }); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func validateAppTheoryMcpRouteAlgebra_NormalizeCallbackPathParameters(rawPath *string) error {
+	if rawPath == nil {
+		return fmt.Errorf("parameter rawPath is required, but nil was provided")
 	}
 
 	return nil

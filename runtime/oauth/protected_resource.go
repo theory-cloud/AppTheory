@@ -306,6 +306,9 @@ func normalizeMCPRoutePath(raw string) (string, bool) {
 	if raw == "" {
 		raw = MCPPath
 	}
+	if containsRefusedRoutePathBytes(raw) {
+		return "", false
+	}
 	// Literal MCP route paths use only RFC 3986 path characters, with percent-encoding required for whitespace and other characters outside that set.
 	if !literalMCPRoutePathPattern.MatchString(raw) {
 		return "", false
@@ -318,6 +321,31 @@ func normalizeMCPRoutePath(raw string) (string, bool) {
 		return "", false
 	}
 	return raw, true
+}
+
+// percentEncodedControlBytePattern matches a percent-encoded ASCII control
+// byte: `%00`-`%1F` and `%7F`, in either hex case. It mirrors the identical
+// pattern in runtime/mcproutes so the two copies of the refused-charset rule
+// cannot diverge.
+var percentEncodedControlBytePattern = regexp.MustCompile(`%[01][0-9A-Fa-f]|%7[Ff]`)
+
+// containsRefusedRoutePathBytes mirrors runtime/mcproutes' refused-charset rule
+// so a derived protected-resource path cannot inherit a hostile MCP resource
+// path: a percent-encoded slash, a percent-encoded ASCII control byte, an ASCII
+// whitespace or control character, or a backslash is refused.
+func containsRefusedRoutePathBytes(value string) bool {
+	if strings.Contains(value, "%2F") || strings.Contains(value, "%2f") {
+		return true
+	}
+	if percentEncodedControlBytePattern.MatchString(value) {
+		return true
+	}
+	for _, r := range value {
+		if r == '\\' || r <= 0x1F || r == 0x20 || r == 0x7F {
+			return true
+		}
+	}
+	return false
 }
 
 func protectedResourcePathForMCPPath(mcpPath string) string {
@@ -495,70 +523,6 @@ func ProtectedResourceMetadataURLForRequest(headers map[string][]string) (string
 		Path:   protectedResourceMetadataPath,
 	}
 	return u.String(), true
-}
-
-func resolveAbsoluteURLPathTemplate(resourceURL, requestPath string, params map[string]string) (string, bool) {
-	u, ok := parseAbsoluteURL(resourceURL)
-	if !ok {
-		return "", false
-	}
-
-	templateSegments := splitURLPath(u.Path)
-	if len(templateSegments) == 0 {
-		return u.String(), true
-	}
-
-	requestSegments := splitURLPath(requestPath)
-	resolved := make([]string, 0, len(templateSegments))
-	changed := false
-	for i, segment := range templateSegments {
-		name, isParam := routeTemplateParam(segment)
-		if !isParam {
-			resolved = append(resolved, segment)
-			continue
-		}
-
-		value := strings.TrimSpace(params[name])
-		if value == "" && len(requestSegments) == len(templateSegments) {
-			value = strings.TrimSpace(requestSegments[i])
-		}
-		if value == "" {
-			return "", false
-		}
-
-		resolved = append(resolved, value)
-		changed = true
-	}
-
-	if !changed {
-		return u.String(), true
-	}
-
-	out := *u
-	out.Path = "/" + strings.Join(resolved, "/")
-	out.RawPath = ""
-	return out.String(), true
-}
-
-func routeTemplateParam(segment string) (string, bool) {
-	segment = strings.TrimSpace(segment)
-	if !strings.HasPrefix(segment, "{") || !strings.HasSuffix(segment, "}") || len(segment) < 3 {
-		return "", false
-	}
-	name := strings.TrimSpace(segment[1 : len(segment)-1])
-	if name == "" {
-		return "", false
-	}
-	return name, true
-}
-
-func splitURLPath(path string) []string {
-	path = strings.TrimSpace(path)
-	path = strings.TrimPrefix(path, "/")
-	if path == "" {
-		return nil
-	}
-	return strings.Split(path, "/")
 }
 
 func firstHeader(headers map[string][]string, key string) string {

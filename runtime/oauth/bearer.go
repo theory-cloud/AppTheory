@@ -2,7 +2,7 @@ package oauth
 
 import (
 	"errors"
-	"os"
+	"fmt"
 	"strings"
 	"time"
 
@@ -64,14 +64,44 @@ type BearerTokenValidationOptions struct {
 type RequireBearerTokenOptions struct {
 	// ResourceMetadataURL is used to build the RFC9728 discovery challenge.
 	//
-	// If empty, the middleware attempts to derive it from MCP_ENDPOINT only.
+	// The middleware reads no environment variable. When this and
+	// ResourceMetadataURLFunc are both empty the challenge is the bare
+	// `Bearer` form with no resource_metadata parameter, so a missing
+	// configuration fails closed to an unadvertised discovery endpoint rather
+	// than to a value an injected MCP_ENDPOINT could influence.
 	ResourceMetadataURL string
 
 	// ResourceMetadataURLFunc returns the route-derived protected-resource
 	// metadata URL for the matched route. When set it takes precedence over
-	// ResourceMetadataURL, so the challenge is route-derived rather than
-	// family-wide.
+	// ResourceMetadataURLTemplate and ResourceMetadataURL, so the challenge is
+	// route-derived rather than family-wide.
 	ResourceMetadataURLFunc func(*apptheory.Context) (string, error)
+
+	// ResourceMetadataURLTemplate is an absolute HTTPS URL template whose
+	// `{param}` placeholders are interpolated from the matched route's path
+	// parameters, so a per-actor route (`/mcp/{actor}`) advertises that actor's
+	// own RFC 9728 metadata URL with no hand-rolled resolver. It is explicit
+	// application configuration: the middleware reads no environment variable.
+	//
+	// Pass the CDK construct's route-derived template straight through, for
+	// example `AppTheoryRemoteMcpServer.protectedResourceMetadataUrl` on the
+	// adopter's own configuration surface.
+	//
+	// The template is validated when the middleware is constructed — it must be
+	// an absolute HTTPS URL with no userinfo, query, fragment, or percent
+	// escape and no "." or ".." path segment, and its placeholders must appear
+	// in the path and name route parameters. A malformed template panics at
+	// registration rather than advertising a broken discovery URL, so a bad
+	// template fails closed at startup instead of at request time.
+	//
+	// At request time a placeholder that the matched route does not supply, or
+	// whose value is not a safe single path segment (see
+	// isSafeResourceMetadataURLTemplateValue), makes the middleware emit the
+	// bare `Bearer` challenge. It never advertises a literal placeholder.
+	//
+	// When set it takes precedence over ResourceMetadataURL; ResourceMetadataURLFunc
+	// still takes precedence over it.
+	ResourceMetadataURLTemplate string
 
 	// Validator is called for every request. If it is omitted, or if it returns
 	// an error, the request is rejected with 401.
@@ -86,12 +116,27 @@ type RequireBearerTokenOptions struct {
 	// 403 insufficient_scope remediation challenge. It is consulted only when a
 	// validator reports ErrBearerTokenInsufficientScope.
 	RequiredScopesFunc func(*apptheory.Context) ([]string, error)
+
+	// resourceMetadataURLTemplate is the compiled ResourceMetadataURLTemplate.
+	// It is nil when no template is configured.
+	resourceMetadataURLTemplate *resourceMetadataURLTemplate
 }
 
 // RequireBearerTokenMiddleware enforces `Authorization: Bearer <token>` and,
 // when missing/invalid, returns 401 with the MCP 2025-06-18 compatible
 // WWW-Authenticate challenge that points to protected resource metadata.
+//
+// A ResourceMetadataURLTemplate is compiled here, at registration, and a
+// malformed template panics: the middleware never serves a request whose
+// challenge would advertise a broken or partially resolved discovery URL.
 func RequireBearerTokenMiddleware(opts RequireBearerTokenOptions) apptheory.Middleware {
+	if strings.TrimSpace(opts.ResourceMetadataURLTemplate) != "" {
+		compiled, err := compileResourceMetadataURLTemplate(opts.ResourceMetadataURLTemplate)
+		if err != nil {
+			panic(fmt.Sprintf("oauth: invalid ResourceMetadataURLTemplate: %v", err))
+		}
+		opts.resourceMetadataURLTemplate = compiled
+	}
 	return func(next apptheory.Handler) apptheory.Handler {
 		return func(c *apptheory.Context) (*apptheory.Response, error) {
 			token, err := BearerTokenFromHeaders(c.Request.Headers)
@@ -251,8 +296,14 @@ func quoteChallengeValue(value string) string {
 }
 
 // resolvedResourceMetadataURL returns the protected-resource metadata URL for
-// the challenge. A route-derived resolver takes precedence; otherwise the
-// static option is used, falling back to a derivation from MCP_ENDPOINT.
+// the challenge. A route-derived resolver takes precedence, then a
+// route-parameter template, then the static option. No environment variable is
+// consulted, so an injected MCP_ENDPOINT cannot influence the challenge.
+//
+// A configured template that cannot be resolved for the matched route — a
+// missing parameter, or a parameter value outside the pinned value alphabet —
+// returns "" so the caller emits the bare `Bearer` challenge rather than a
+// literal placeholder.
 func resolvedResourceMetadataURL(c *apptheory.Context, opts RequireBearerTokenOptions) string {
 	if opts.ResourceMetadataURLFunc != nil {
 		derived, err := opts.ResourceMetadataURLFunc(c)
@@ -261,21 +312,18 @@ func resolvedResourceMetadataURL(c *apptheory.Context, opts RequireBearerTokenOp
 		}
 		return strings.TrimSpace(derived)
 	}
-	metaURL := strings.TrimSpace(opts.ResourceMetadataURL)
-	if metaURL != "" {
-		return metaURL
+	if opts.resourceMetadataURLTemplate != nil {
+		var params map[string]string
+		if c != nil {
+			params = c.Params
+		}
+		resolved, ok := opts.resourceMetadataURLTemplate.resolve(params)
+		if !ok {
+			return ""
+		}
+		return resolved
 	}
-	if c == nil {
-		return ""
-	}
-	mcpEndpoint := os.Getenv("MCP_ENDPOINT")
-	if resolved, ok := resolveAbsoluteURLPathTemplate(mcpEndpoint, c.Request.Path, c.Params); ok {
-		mcpEndpoint = resolved
-	}
-	if derived, ok := ResourceMetadataURLFromMcpEndpoint(mcpEndpoint); ok {
-		return derived
-	}
-	return ""
+	return strings.TrimSpace(opts.ResourceMetadataURL)
 }
 
 func unauthorizedResponse(c *apptheory.Context, opts RequireBearerTokenOptions) *apptheory.Response {

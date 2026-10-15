@@ -232,7 +232,8 @@ export interface FacadeConfig {
    * `account_id` hint. A hint carries no authority — the provider derives
    * authentication account context from its own validated binding, not from
    * the hint (DESIGN §6). An absent function contributes no hints; a rejected
-   * promise is a fail-closed request-class rejection that never redirects.
+   * promise is a provider-call failure in the gateway class, so it maps to the
+   * 502 upstream_error error page and never redirects (DESIGN §8.2).
    */
   providerHints?: (
     ctx: Context,
@@ -1378,7 +1379,9 @@ function authorizationServerHandler(
       issuer,
       authorization_endpoint: authorizeURL,
       token_endpoint: tokenURL,
-      registration_endpoint: registrationEndpoint,
+      ...(registrationEndpoint === null
+        ? {}
+        : { registration_endpoint: registrationEndpoint }),
       jwks_uri: config.jwksURI,
       response_types_supported: [...config.capabilities.responseTypes],
       grant_types_supported: [...config.capabilities.grantTypes],
@@ -1417,28 +1420,39 @@ function serveMetadata(
 }
 
 /**
+ * Reports whether the registration loop mounts the RFC 7591 /register route:
+ * the front channel owns it, and an explicit register handler mounts it on its
+ * own.
+ */
+function registrationRouteMounted(config: NormalizedConfig): boolean {
+  return config.frontChannel !== null || config.registerHandlers !== null;
+}
+
+/**
  * Returns the issuer and registration endpoint the routed RFC 8414 document
  * advertises. In route issuer mode the route URL is the issuer and the
- * registration endpoint is the route's own derived /register path.
+ * registration endpoint is the route's own derived /register path. The
+ * registration member is advertised exactly when the /register route is mounted,
+ * so a facade that mounts no register route omits it instead of advertising a
+ * URL that 404s; `null` means the document carries no member.
  */
 function routedIssuerAndRegistration(
   config: NormalizedConfig,
   ctx: Context,
   endpoint: EndpointPath,
-): { issuer: string; registrationEndpoint: string } {
+): { issuer: string; registrationEndpoint: string | null } {
+  const mounted = registrationRouteMounted(config);
   if (config.issuerMode !== ISSUER_MODE_ROUTE) {
     return {
       issuer: config.issuerURL,
-      registrationEndpoint: config.registrationEndpointURL,
+      registrationEndpoint: mounted ? config.registrationEndpointURL : null,
     };
   }
   return {
     issuer: buildAbsoluteURL(config, ctx, mcpPath(endpoint)),
-    registrationEndpoint: buildAbsoluteURL(
-      config,
-      ctx,
-      oauthRegisterPath(endpoint),
-    ),
+    registrationEndpoint: mounted
+      ? buildAbsoluteURL(config, ctx, oauthRegisterPath(endpoint))
+      : null,
   };
 }
 
@@ -2454,7 +2468,10 @@ async function handleAuthorize(
     try {
       hints = await front.providerHints(ctx);
     } catch {
-      return facadeErrorPage(400, "invalid_request");
+      // A provider-call failure on the authorize leg is the same gateway-class
+      // 502 upstream_error page as the callback's; 400 stays the facade's own
+      // client-caused vocabulary (DESIGN §8.2).
+      return facadeUpstreamErrorPage();
     }
   }
 
@@ -2499,6 +2516,8 @@ async function handleAuthorize(
       ...(hints !== null ? { hints } : {}),
     });
   } catch {
+    // A provider-call failure on the authorize leg is the same gateway-class
+    // 502 upstream_error page as the callback's (DESIGN §8.2).
     return facadeUpstreamErrorPage();
   }
   return facadeUpstreamRedirect(upstreamURL);
@@ -3940,11 +3959,18 @@ function validatedDCRRedirectURIs(raw: string[] | null): {
 
 /**
  * Reports whether one redirect URI is an absolute https URL or an absolute http
- * loopback URL, and returns its trimmed form.
+ * loopback URL, and returns its trimmed form. RFC 6749 §3.1.2 forbids a fragment
+ * component on a redirection endpoint URI, and any "#" begins a fragment whether
+ * or not anything follows it, so the rule is applied to the raw string: the
+ * local parseURL leaves `hash` empty for a bare trailing "#". The parsed hash
+ * check below stays as defense in depth.
  */
 function validDCRRedirectURI(raw: string): string | null {
   const candidate = String(raw ?? "").trim();
   if (candidate === "") {
+    return null;
+  }
+  if (candidate.includes("#")) {
     return null;
   }
   const parsed = parseAbsoluteURL(candidate);

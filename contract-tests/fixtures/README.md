@@ -10,7 +10,7 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/binding/` — P0 typed-handler body/query/path/header binding and binding-error envelopes
 - `contract-tests/fixtures/validation/` — P0 declarative validation rules and canonical 422 field-error envelopes
 - `contract-tests/fixtures/errors/` — P0 canonical framework error envelopes, panic recovery, 404/405, and Lift flat-legacy JSON parse compatibility
-- `contract-tests/fixtures/routing/` — P0 fail-closed route registration setup errors plus the nested shared MCP route-algebra and MCP auth-facade tables (`mcp-route-algebra/` and `mcp-auth-facade/`) consumed directly by Go and CDK-TS tests
+- `contract-tests/fixtures/routing/` — P0 fail-closed route registration setup errors plus the nested shared MCP route-algebra and MCP auth-facade tables (`mcp-route-algebra/` and `mcp-auth-facade/`) consumed directly by the Go, TypeScript, and Python loader suites and the CDK-TS tests
 - `contract-tests/fixtures/openapi/` — P0 descriptive OpenAPI generation with byte-pinned canonical JSON output
 - `contract-tests/fixtures/middleware-guardrails/` — P1 request-id, tenant, auth, CORS, guardrails, and legacy flat-error behavior
 - `contract-tests/fixtures/secure-app-p0/` — SecureApp P0 posture-gate ordering without importing portable stages
@@ -30,17 +30,19 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
 - `contract-tests/fixtures/vectorstore/` — SP14 semantic vector-store, Bedrock Titan embedding, metadata filter, and deterministic fake behavior
 
-The current corpus contains 285 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 285 -->
-Of those, 275 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners. The ten
+The current corpus contains 287 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 287 -->
+Of those, 275 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners. The twelve
 nested tables under `routing/` — `mcp-route-algebra/expectations.json`, `mcp-route-algebra/facade-route-inventory.json`,
 `mcp-auth-facade/facade-transport-posture.v1.json`, `mcp-auth-facade/facade-route-model.v1.json`,
 `mcp-auth-facade/jwks-validator.v1.json`, `mcp-auth-facade/discovery-bootstrap.v1.json`,
 `mcp-auth-facade/route-challenge.v1.json`, `mcp-auth-facade/facade-provider-conformance.v1.json`,
-`mcp-auth-facade/facade-store-conformance.v1.json`, and `mcp-auth-facade/facade-conformance.v1.json` — are deliberate
+`mcp-auth-facade/facade-store-conformance.v1.json`, `mcp-auth-facade/facade-conformance.v1.json`,
+`mcp-auth-facade/facade-journey.v1.json`, and `mcp-auth-facade/facade-threat-controls.v1.json` — are deliberate
 exceptions: the generic harness assumes all three runtime legs participate and only discovers one directory level,
 while these versioned contracts ship as loader tests. Go and CDK tests load the four route/facade tables directly, and
 the Go, TypeScript, and Python suites each load the three M2 acceptance tables, the two M3a provider/store
-conformance tables, and the M3c-1a facade conformance table, so route and facade literals each exist exactly once.
+conformance tables, and the M3c-1a facade conformance and M3c-2 facade journey and threat-controls tables, so route
+and facade literals each exist exactly once.
 The generic schema gate validates one level deep, so the nested tables are validated by their loaders.
 
 ## Schema gate

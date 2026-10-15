@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, NamedTuple
-from urllib.parse import urlparse
+from urllib.parse import SplitResult, urlparse, urlsplit
 
 from apptheory.context import Context
 from apptheory.response import Response, json
@@ -173,6 +173,23 @@ class RequireBearerTokenOptions:
     claims_validator: BearerTokenClaimsValidator | None = None
     resource_metadata_url_func: Callable[[Context], str] | None = None
     required_scopes_func: Callable[[Context], list[str]] | None = None
+    # An absolute HTTPS URL template whose `{param}` placeholders are
+    # interpolated from the matched route's path parameters, so a per-actor
+    # route advertises that actor's own RFC 9728 metadata URL with no hand-rolled
+    # resolver. It is explicit application configuration: the middleware reads
+    # no environment variable.
+    #
+    # The template is compiled when the middleware is built, and a malformed
+    # template raises ValueError there, so a bad configuration fails closed at
+    # registration instead of advertising a broken discovery URL. It must be an
+    # absolute HTTPS URL with no userinfo, query, fragment, or percent-escape
+    # and no "." or ".." path segment. At request time a placeholder the matched
+    # route does not supply, or a value outside the pinned alphabet, emits the
+    # bare `Bearer` challenge: a literal placeholder is never advertised and an
+    # unresolvable template never falls back to resource_metadata_url. When set
+    # it takes precedence over resource_metadata_url;
+    # resource_metadata_url_func still takes precedence over it.
+    resource_metadata_url_template: str = ""
 
 
 def new_protected_resource_metadata(resource: str, authorization_servers: list[str]) -> ProtectedResourceMetadata:
@@ -356,7 +373,19 @@ def bearer_token_from_headers(headers: dict[str, Any] | None) -> str:
 
 
 def require_bearer_token_middleware(options: RequireBearerTokenOptions | None = None):
+    """Enforce ``Authorization: Bearer <token>`` and, when it is missing or
+    invalid, return 401 with the MCP 2025-06-18 compatible WWW-Authenticate
+    challenge that points to the protected resource metadata.
+
+    A ``resource_metadata_url_template`` is compiled here, at registration, and
+    a malformed template raises ValueError: the middleware never serves a
+    request whose challenge would advertise a broken or partially resolved
+    discovery URL.
+    """
     opts = options or RequireBearerTokenOptions()
+    template: _ResourceMetadataURLTemplate | None = None
+    if str(opts.resource_metadata_url_template or "").strip():
+        template = _compile_resource_metadata_url_template(opts.resource_metadata_url_template)
 
     def middleware(ctx: Context, next_handler):
         try:
@@ -367,12 +396,12 @@ def require_bearer_token_middleware(options: RequireBearerTokenOptions | None = 
                 ctx.set(CONTEXT_KEY_BEARER_CLAIMS, _clone_claims(claims))
                 return next_handler(ctx)
             if opts.validator is None:
-                return _unauthorized_response(opts, ctx)
+                return _unauthorized_response(opts, ctx, template)
             opts.validator(ctx, token)
             ctx.set(CONTEXT_KEY_BEARER_TOKEN, token)
             return next_handler(ctx)
         except Exception as exc:  # noqa: BLE001
-            return _bearer_error_response(opts, exc, ctx)
+            return _bearer_error_response(opts, exc, ctx, template)
 
     return middleware
 
@@ -495,17 +524,184 @@ def pkce_verify_s256(verifier: str, expected_challenge: str) -> bool:
     return pkce_challenge_s256(verifier) == str(expected_challenge or "")
 
 
-def _resolved_resource_metadata_url(opts: RequireBearerTokenOptions, ctx: Context | None) -> str:
+# A `{param}` protected-resource metadata URL template, compiled once when the
+# middleware is built so request time only validates and interpolates the
+# matched route parameters.
+@dataclass(slots=True)
+class _ResourceMetadataURLTemplate:
+    base: SplitResult
+    params: list[str]
+
+
+_RESOURCE_METADATA_URL_TEMPLATE_MAX_PARAM_BYTES = 128
+
+# Placeholder names are deliberately narrow: they name route parameters, not
+# free-form expressions.
+_RESOURCE_METADATA_URL_TEMPLATE_PARAM_PATTERN = re.compile(r"[a-z][a-z0-9_]*")
+
+# The only bytes that may be interpolated into the advertised challenge URL. The
+# alphabet is the RFC 3986 unreserved set plus the three path-safe punctuation
+# bytes RFC 3986 allows unescaped; it is deliberately narrower than the router's
+# own segment rule, so the advertised URL cannot differ from the matched route
+# through case folding, percent-decoding, or separator handling in a proxy, CDN,
+# or client.
+_RESOURCE_METADATA_URL_TEMPLATE_VALUE_PATTERN = re.compile(
+    rf"[a-z0-9._~-]{{1,{_RESOURCE_METADATA_URL_TEMPLATE_MAX_PARAM_BYTES}}}"
+)
+
+
+def _compile_resource_metadata_url_template(raw: str) -> _ResourceMetadataURLTemplate:
+    """Validate a template and record the route parameters it interpolates.
+
+    A template is valid when it is an absolute HTTPS URL with no userinfo,
+    query, fragment, or percent-escape, with no ``.`` or ``..`` path segment,
+    and every ``{param}`` placeholder sits in the URL path and names a
+    lower-case route parameter. Placeholders outside the path are refused,
+    because interpolating one would let a request steer the advertised authority
+    rather than only its path suffix. ``urlsplit`` is used rather than
+    ``urlparse`` because it keeps ``;`` in the path the way Go's ``net/url``
+    does.
+
+    Raises ValueError on any violation, so a malformed template fails loudly at
+    registration rather than at request time.
+    """
+    trimmed = str(raw or "").strip()
+    if not trimmed:
+        raise ValueError("invalid ResourceMetadataURLTemplate: template is empty")
+    try:
+        parsed = urlsplit(trimmed)
+    except ValueError as exc:
+        raise ValueError("invalid ResourceMetadataURLTemplate: template is not an absolute URL") from exc
+    if parsed.scheme.lower() != "https":
+        raise ValueError("invalid ResourceMetadataURLTemplate: template must be an absolute HTTPS URL")
+    if not parsed.netloc or not parsed.hostname:
+        raise ValueError("invalid ResourceMetadataURLTemplate: template must include a host")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("invalid ResourceMetadataURLTemplate: template must not include userinfo")
+    if "?" in trimmed:
+        raise ValueError("invalid ResourceMetadataURLTemplate: template must not include a query")
+    if "#" in trimmed:
+        raise ValueError("invalid ResourceMetadataURLTemplate: template must not include a fragment")
+    if "{" in parsed.netloc or "}" in parsed.netloc:
+        raise ValueError(
+            "invalid ResourceMetadataURLTemplate: template placeholders must appear in the path, not the authority"
+        )
+    if "%" in parsed.path:
+        raise ValueError("invalid ResourceMetadataURLTemplate: template must not percent-encode its path")
+    if _has_dot_path_segment(parsed.path):
+        raise ValueError('invalid ResourceMetadataURLTemplate: template must not contain a "." or ".." path segment')
+    params = _resource_metadata_url_template_params(parsed.path)
+    return _ResourceMetadataURLTemplate(base=parsed, params=params)
+
+
+def _has_dot_path_segment(raw_path: str) -> bool:
+    """Report whether a URL path carries a ``.`` or ``..`` segment.
+
+    A static dot segment in a template is never intended, and the runtimes do
+    not agree on what to do with one: Go and Python advertise the literal
+    segment while a WHATWG URL parser normalizes it away, so the advertised URL
+    would depend on the runtime. The template is refused instead.
+    """
+    return any(segment in (".", "..") for segment in raw_path.split("/"))
+
+
+def _resource_metadata_url_template_params(raw_path: str) -> list[str]:
+    """Return the distinct placeholder names in path order, refusing anything
+    that is not a well-formed ``{param}``."""
+    params: list[str] = []
+    seen: set[str] = set()
+    index = 0
+    while index < len(raw_path):
+        char = raw_path[index]
+        if char == "{":
+            end = raw_path.find("}", index)
+            if end < 0:
+                raise ValueError("invalid ResourceMetadataURLTemplate: template placeholder is unterminated")
+            name = raw_path[index + 1 : end]
+            if _RESOURCE_METADATA_URL_TEMPLATE_PARAM_PATTERN.fullmatch(name) is None:
+                raise ValueError(
+                    f"invalid ResourceMetadataURLTemplate: template placeholder {name!r} is not a route parameter name"
+                )
+            if name not in seen:
+                seen.add(name)
+                params.append(name)
+            index = end + 1
+            continue
+        if char == "}":
+            raise ValueError('invalid ResourceMetadataURLTemplate: template has an unmatched "}"')
+        index += 1
+    return params
+
+
+def _resolve_resource_metadata_url_template(
+    template: _ResourceMetadataURLTemplate, params: dict[str, str] | None
+) -> str | None:
+    """Interpolate the matched route parameters into the template.
+
+    Every placeholder must be present in the matched route and its value must
+    satisfy the pinned value rule; the resolved URL is then checked to be free
+    of leftover placeholders. A failure returns None so the caller emits the
+    bare ``Bearer`` challenge instead of a literal placeholder or a partially
+    resolved URL.
+    """
+    resolved_path = template.base.path
+    for name in template.params:
+        value = str((params or {}).get(name, "") or "")
+        if not _is_safe_resource_metadata_url_template_value(value):
+            return None
+        resolved_path = resolved_path.replace("{" + name + "}", value)
+    if "{" in resolved_path or "}" in resolved_path:
+        return None
+    return template.base._replace(path=resolved_path, query="", fragment="").geturl()
+
+
+def _is_safe_resource_metadata_url_template_value(value: str) -> bool:
+    """Report whether a route parameter value may be interpolated into the
+    advertised challenge URL.
+
+    The pinned rule accepts 1..128 bytes drawn from ``[a-z0-9._~-]``, excluding
+    the dot segments ``.`` and ``..``. Everything else — empty, ``/``-containing,
+    percent-encoded, upper-case, whitespace, control, backslash, or non-ASCII —
+    is refused, and the caller then emits the bare ``Bearer`` challenge.
+    """
+    if value in (".", ".."):
+        return False
+    return _RESOURCE_METADATA_URL_TEMPLATE_VALUE_PATTERN.fullmatch(value) is not None
+
+
+def _resolved_resource_metadata_url(
+    opts: RequireBearerTokenOptions,
+    ctx: Context | None,
+    template: _ResourceMetadataURLTemplate | None = None,
+) -> str:
+    """Return the protected-resource metadata URL for the challenge.
+
+    A route-derived resolver takes precedence, then a route-parameter template,
+    then the static option; no environment variable is consulted. A configured
+    template that cannot be resolved for the matched route returns "" so the
+    caller emits the bare ``Bearer`` challenge rather than a literal placeholder
+    or the static URL.
+    """
     if opts.resource_metadata_url_func is not None and ctx is not None:
         try:
             return str(opts.resource_metadata_url_func(ctx) or "").strip()
         except Exception:  # noqa: BLE001
             return ""
+    if template is not None:
+        params = ctx.params if ctx is not None else None
+        resolved = _resolve_resource_metadata_url_template(template, params)
+        if resolved is None:
+            return ""
+        return resolved
     return str(opts.resource_metadata_url or "").strip()
 
 
-def _unauthorized_response(opts: RequireBearerTokenOptions, ctx: Context | None = None) -> Response:
-    metadata_url = _resolved_resource_metadata_url(opts, ctx)
+def _unauthorized_response(
+    opts: RequireBearerTokenOptions,
+    ctx: Context | None = None,
+    template: _ResourceMetadataURLTemplate | None = None,
+) -> Response:
+    metadata_url = _resolved_resource_metadata_url(opts, ctx, template)
     headers = {
         "content-type": ["application/json; charset=utf-8"],
         "www-authenticate": [protected_resource_www_authenticate(metadata_url) if metadata_url else "Bearer"],
@@ -535,7 +731,11 @@ def _forbidden_response() -> Response:
     )
 
 
-def _insufficient_scope_response(opts: RequireBearerTokenOptions, ctx: Context | None) -> Response:
+def _insufficient_scope_response(
+    opts: RequireBearerTokenOptions,
+    ctx: Context | None,
+    template: _ResourceMetadataURLTemplate | None = None,
+) -> Response:
     scopes: list[str] = []
     if opts.required_scopes_func is not None and ctx is not None:
         try:
@@ -544,7 +744,9 @@ def _insufficient_scope_response(opts: RequireBearerTokenOptions, ctx: Context |
             scopes = []
     headers = {
         "content-type": ["application/json; charset=utf-8"],
-        "www-authenticate": [insufficient_scope_www_authenticate(scopes, _resolved_resource_metadata_url(opts, ctx))],
+        "www-authenticate": [
+            insufficient_scope_www_authenticate(scopes, _resolved_resource_metadata_url(opts, ctx, template))
+        ],
     }
     body = jsonlib.dumps(
         {"error": {"code": "app.insufficient_scope", "message": "insufficient scope"}},
@@ -559,13 +761,18 @@ def _insufficient_scope_response(opts: RequireBearerTokenOptions, ctx: Context |
     )
 
 
-def _bearer_error_response(opts: RequireBearerTokenOptions, exc: Exception, ctx: Context | None = None) -> Response:
+def _bearer_error_response(
+    opts: RequireBearerTokenOptions,
+    exc: Exception,
+    ctx: Context | None = None,
+    template: _ResourceMetadataURLTemplate | None = None,
+) -> Response:
     if isinstance(exc, OAuthBearerError):
         if exc.oauth_code == ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE:
-            return _insufficient_scope_response(opts, ctx)
+            return _insufficient_scope_response(opts, ctx, template)
         if exc.oauth_code == ERR_BEARER_TOKEN_INVALID_AUDIENCE:
             return _forbidden_response()
-    return _unauthorized_response(opts, ctx)
+    return _unauthorized_response(opts, ctx, template)
 
 
 def _first_header(headers: dict[str, Any] | None, name: str) -> str:

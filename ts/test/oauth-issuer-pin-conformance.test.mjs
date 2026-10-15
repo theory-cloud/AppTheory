@@ -71,6 +71,27 @@ const BOUND_ROUTE_GROUP = "bound_route";
  */
 const REFRESH_GROUP = "refresh";
 
+/**
+ * `metadata_registration` is the sibling group holding the advertised
+ * registration_endpoint contract: the routed RFC 8414 document carries the
+ * member exactly while the front channel or an explicit register handler mounts
+ * the /register route. It is executed by the facade front-channel test through
+ * the real mounted discovery handler, not here; the group ledger below still
+ * lists it so a new group cannot appear without a loader.
+ */
+const METADATA_REGISTRATION_GROUP = "metadata_registration";
+
+/**
+ * `authorize_provider_failure` is the sibling group holding the authorize leg's
+ * provider-call failure class: a failing provider AuthorizationURL builder or a
+ * failing app-supplied providerHints is the gateway-class 502 upstream_error
+ * error page, while 400 stays the facade's own client-caused vocabulary. It is
+ * executed by the facade front-channel test through the real /authorize handler,
+ * not here; the group ledger below still lists it so a new group cannot appear
+ * without a loader.
+ */
+const AUTHORIZE_PROVIDER_FAILURE_GROUP = "authorize_provider_failure";
+
 const FIXTURE_GROUPS = [
   ISSUER_PIN_GROUP,
   REDIRECT_MATCH_GROUP,
@@ -79,6 +100,8 @@ const FIXTURE_GROUPS = [
   DCR_GROUP,
   BOUND_ROUTE_GROUP,
   REFRESH_GROUP,
+  METADATA_REGISTRATION_GROUP,
+  AUTHORIZE_PROVIDER_FAILURE_GROUP,
 ];
 
 /**

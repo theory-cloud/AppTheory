@@ -13,8 +13,13 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from apptheory import (
     URL_MODE_PUBLIC_BASE_URL,
+    JWKSValidatorOptions,
     FacadeConfig,
+    RequireBearerTokenOptions,
     create_app,
+    insufficient_scope_www_authenticate,
+    new_jwks_validator,
+    protected_resource_www_authenticate,
     register_mcp_facade,
 )
 from apptheory import mcpfacade as facade_module
@@ -32,6 +37,7 @@ from apptheory.oauth.store import (
     MemoryRateLimitStore,
     MemoryRouteRefreshBrokerStore,
     MemoryTransactionStore,
+    STATUS_REVOKED,
     Stores,
     hash_key,
 )
@@ -81,6 +87,13 @@ FORM_PARSE_GROUP = "form_parse"
 # runtime can silently execute a smaller table.
 FORM_PARSE_CASE_COUNT = 11
 
+AUTHORIZE_PROVIDER_FAILURE_GROUP = "authorize_provider_failure"
+
+# The number of authorize_provider_failure rows the shared table must carry; a
+# change to the table must also be a deliberate edit in the Go and TypeScript
+# loaders, so no runtime can silently execute a smaller table.
+AUTHORIZE_PROVIDER_FAILURE_CASE_COUNT = 2
+
 METHOD_STATUS_GROUP = "method_status"
 
 # The number of method_status rows the shared table must carry; a change to the
@@ -93,7 +106,7 @@ DCR_GROUP = "dcr"
 # The number of dcr rows the shared table must carry; a change to the table must
 # also be a deliberate edit in the Go, TypeScript, and Python loaders, so no
 # runtime can silently execute a smaller table.
-DCR_CASE_COUNT = 10
+DCR_CASE_COUNT = 12
 
 # The number of requests a dcr row sends when it carries no explicit repeat.
 DCR_DEFAULT_REPEAT = 1
@@ -231,15 +244,24 @@ class _MintingProvider:
     signature.
     """
 
-    def __init__(self, adapter, fake: FakeUpstreamProvider, issued_at: float) -> None:
+    def __init__(
+        self,
+        adapter,
+        fake: FakeUpstreamProvider,
+        issued_at: float,
+        fail_authorization_url: bool = False,
+    ) -> None:
         self._adapter = adapter
         self._fake = fake
         self._issued_at = issued_at
+        self._fail_authorization_url = fail_authorization_url
 
     def discovery(self):
         return self._adapter.discovery()
 
     def authorization_url(self, req):
+        if self._fail_authorization_url:
+            raise RuntimeError("minting provider: authorization URL unavailable")
         return self._adapter.authorization_url(req)
 
     def exchange_code(self, req: CodeExchangeRequest) -> TokenSet:
@@ -263,7 +285,19 @@ class _MintingProvider:
 
 
 class _FrontChannelHarness:
-    def __init__(self, test: unittest.TestCase, provider_options: Any = None) -> None:
+    def __init__(
+        self,
+        test: unittest.TestCase,
+        provider_options: Any = None,
+        issuer_mode: str = "route",
+        registration_endpoint_url: str | None = None,
+        provider_hints: Any = None,
+        fail_authorization_url: bool = False,
+        transport_posture: str = "iam",
+        require_bearer_token_for: Any = None,
+        mcp_handler: Any = None,
+        invocations: dict | None = None,
+    ) -> None:
         self._test = test
         self.clock = _ManualClock(datetime(2026, 1, 1, tzinfo=UTC))
         fake_options: dict[str, Any] = {
@@ -303,7 +337,7 @@ class _FrontChannelHarness:
             )
         )
         self.issued_at = time.time()
-        self.provider = _MintingProvider(adapter, self.fake, self.issued_at)
+        self.provider = _MintingProvider(adapter, self.fake, self.issued_at, fail_authorization_url)
         self.broker = _RecordingBrokerStore(MemoryRouteRefreshBrokerStore(now=self.clock.now))
         self.stores = Stores(
             transaction=MemoryTransactionStore(now=self.clock.now),
@@ -315,25 +349,41 @@ class _FrontChannelHarness:
         self.kind = "namespace"
         self.endpoint = EndpointPath(kind=self.kind, client_namespace="acme")
 
+        self.bearer_validator = None
+        base_mcp_handler = mcp_handler or (
+            lambda _ctx: Response(status=204, headers={}, cookies=[], body=b"", is_base64=False)
+        )
+
+        def _counting_mcp_handler(ctx) -> Response:
+            if invocations is not None:
+                invocations["count"] += 1
+            return base_mcp_handler(ctx)
+
         config = FacadeConfig(
             issuer_url=FRONT_TEST_BASE_URL + "/acme/mcp",
             jwks_uri=FRONT_TEST_UPSTREAM_ISS + "/.well-known/jwks.json",
-            issuer_mode="route",
+            issuer_mode=issuer_mode,
+            registration_endpoint_url=registration_endpoint_url or "",
             url_mode=URL_MODE_PUBLIC_BASE_URL,
             public_base_url=FRONT_TEST_BASE_URL,
-            transport_posture="iam",
+            transport_posture=transport_posture,
             scopes={
                 "namespace": ["mcp:tools"],
                 "partner_namespace": ["mcp:tools"],
                 "agent": ["mcp:tools"],
                 "partner_agent": ["mcp:tools"],
             },
-            mcp_handler=lambda _ctx: Response(status=204, headers={}, cookies=[], body=b"", is_base64=False),
+            mcp_handler=_counting_mcp_handler,
             provider=self.provider,
             stores=self.stores,
             upstream_client_id=FRONT_TEST_CLIENT_ID,
             upstream_issuer=FRONT_TEST_UPSTREAM_ISS,
+            provider_hints=provider_hints,
         )
+        if require_bearer_token_for is not None:
+            bearer_options = require_bearer_token_for(self.fake)
+            config.require_bearer_token = bearer_options
+            self.bearer_validator = bearer_options.claims_validator
         self.stores.client.put(
             ClientRecord(
                 client_id_hash=hash_key(FRONT_TEST_CLIENT_ID),
@@ -351,8 +401,24 @@ class _FrontChannelHarness:
 
     # -- requests ------------------------------------------------------------
 
-    def serve(self, method: str, path: str, query: dict | None = None, body: bytes = b"") -> Response:
-        return self.app.serve(Request(method=method, path=path, query=query or {}, body=body, is_base64=False))
+    def serve(
+        self,
+        method: str,
+        path: str,
+        query: dict | None = None,
+        body: bytes = b"",
+        headers: dict | None = None,
+    ) -> Response:
+        return self.app.serve(
+            Request(
+                method=method,
+                path=path,
+                headers=dict(headers or {}),
+                query=query or {},
+                body=body,
+                is_base64=False,
+            )
+        )
 
     def authorize(self, mutate=None) -> Response:
         query: dict[str, list[str]] = {
@@ -567,6 +633,46 @@ class FrontChannelFormParseConformanceTests(unittest.TestCase):
                 executed += 1
         print(f"form parse conformance: {executed} cases run")
         self.assertEqual(FORM_PARSE_CASE_COUNT, executed)
+
+
+class FrontChannelAuthorizeProviderFailureConformanceTests(unittest.TestCase):
+    """Pins the authorize leg's provider-call failure class to the shared
+    cross-runtime table through the real ``/authorize`` handler: a failing
+    provider AuthorizationURL builder and a failing app-supplied providerHints
+    each render the gateway-class 502 ``upstream_error`` error page with no
+    ``Location``, so the provider-call failure class is the same 502 as the
+    callback's rather than the facade's own 400 vocabulary.
+    """
+
+    def test_authorize_enforces_the_shared_provider_failure_table(self) -> None:
+        rows = [case for case in _load_fixture()["cases"] if case["group"] == AUTHORIZE_PROVIDER_FAILURE_GROUP]
+        self.assertEqual(AUTHORIZE_PROVIDER_FAILURE_CASE_COUNT, len(rows))
+
+        executed = 0
+        for row in rows:
+            with self.subTest(case=row["id"]):
+
+                def provider_hints(_ctx, _fail: str = row["fail"]) -> dict[str, str]:
+                    if _fail == "provider_hints":
+                        raise RuntimeError("provider hints unavailable")
+                    return {}
+
+                harness = _FrontChannelHarness(
+                    self,
+                    provider_hints=provider_hints,
+                    fail_authorization_url=row["fail"] == "authorization_url",
+                )
+                response = harness.authorize()
+                context = f"fail {row['fail']!r}"
+                self.assertEqual(row["expect_status"], response.status, context)
+                if row.get("expect_no_location"):
+                    self.assertEqual("", _location(response), context)
+                body = response.body.decode("utf-8", "replace")
+                for want in row["expect_body_has"]:
+                    self.assertIn(want, body, context)
+                executed += 1
+        print(f"authorize provider failure conformance: {executed} cases run")
+        self.assertEqual(AUTHORIZE_PROVIDER_FAILURE_CASE_COUNT, executed)
 
 
 def _allow_methods(response: Response) -> list[str]:
@@ -803,6 +909,109 @@ def _bound_route_mint_code(harness: _FrontChannelHarness, endpoint: EndpointPath
     if not code:
         raise AssertionError("bound_route callback must mint a facade code")
     return code
+
+
+METADATA_REGISTRATION_GROUP = "metadata_registration"
+
+# The number of metadata_registration rows the shared table must carry; a change
+# to the table must also be a deliberate edit in the Go and TypeScript loaders, so
+# no runtime can silently execute a smaller table.
+METADATA_REGISTRATION_CASE_COUNT = 6
+
+# The single route the group resolves, so a row exercises only the mount shape and
+# the issuer mode.
+METADATA_REGISTRATION_ENDPOINT = EndpointPath(kind="namespace", client_namespace="acme")
+
+
+def _metadata_registration_app(test: unittest.TestCase, row: dict) -> Any:
+    """Mount the facade a metadata_registration row asks for.
+
+    The front-channel field set is attached only for the rows that request it, so
+    the mounted ``/register`` route and the advertised member move together.
+    """
+    if row["front_channel"]:
+        return _FrontChannelHarness(
+            test,
+            issuer_mode=row["issuer_mode"],
+            registration_endpoint_url=row.get("registration_endpoint_url"),
+        ).app
+
+    config = FacadeConfig(
+        issuer_url=FRONT_TEST_BASE_URL + "/acme/mcp",
+        jwks_uri=FRONT_TEST_UPSTREAM_ISS + "/.well-known/jwks.json",
+        issuer_mode=row["issuer_mode"],
+        registration_endpoint_url=row.get("registration_endpoint_url") or "",
+        url_mode=URL_MODE_PUBLIC_BASE_URL,
+        public_base_url=FRONT_TEST_BASE_URL,
+        transport_posture="iam",
+        scopes={
+            "namespace": ["mcp:tools"],
+            "partner_namespace": ["mcp:tools"],
+            "agent": ["mcp:tools"],
+            "partner_agent": ["mcp:tools"],
+        },
+        mcp_handler=lambda _ctx: Response(status=204, headers={}, cookies=[], body=b"", is_base64=False),
+    )
+    if row.get("register_handler"):
+        config.register_handler = lambda _kind: (
+            lambda _ctx: Response(status=204, headers={}, cookies=[], body=b"", is_base64=False)
+        )
+    app = create_app(tier="p0")
+    register_mcp_facade(app, config)
+    return app
+
+
+def _metadata_registration_document(app: Any) -> dict:
+    response = app.serve(
+        Request(
+            method="GET",
+            path=METADATA_REGISTRATION_ENDPOINT.oauth_authorization_server_path(),
+            query={},
+            body=b"",
+            is_base64=False,
+        )
+    )
+    if response.status != 200:
+        raise AssertionError(f"discovery must answer 200, got {response.status}")
+    return json.loads(response.body.decode("utf-8"))
+
+
+class FrontChannelMetadataRegistrationTests(unittest.TestCase):
+    """Pins the advertised ``registration_endpoint`` to the mounted ``/register``
+    route through the real facade: the routed RFC 8414 document carries the member
+    exactly while the front channel or an explicit register handler mounts that
+    route, so a facade that mounts none never advertises a URL that 404s.
+    """
+
+    def test_metadata_advertises_registration_exactly_while_the_route_is_mounted(self) -> None:
+        rows = [case for case in _load_fixture()["cases"] if case["group"] == METADATA_REGISTRATION_GROUP]
+        self.assertEqual(METADATA_REGISTRATION_CASE_COUNT, len(rows))
+
+        register_path = METADATA_REGISTRATION_ENDPOINT.oauth_register_path()
+
+        executed = 0
+        for row in rows:
+            executed += 1
+            with self.subTest(case=row["id"]):
+                document = _metadata_registration_document(_metadata_registration_app(self, row))
+                expect = row["expect"]
+                if expect == "absent":
+                    self.assertNotIn(
+                        "registration_endpoint",
+                        document,
+                        f"row {row['id']} must omit registration_endpoint; the /register route is not mounted",
+                    )
+                elif expect == "configured":
+                    self.assertEqual(row["registration_endpoint_url"], document["registration_endpoint"])
+                elif expect == "issuer_derived":
+                    self.assertEqual(FRONT_TEST_BASE_URL + "/acme/mcp/register", document["registration_endpoint"])
+                elif expect == "route_derived":
+                    self.assertEqual(FRONT_TEST_BASE_URL + register_path, document["registration_endpoint"])
+                else:
+                    raise AssertionError(f"unknown expect {expect!r}")
+
+        self.assertEqual(METADATA_REGISTRATION_CASE_COUNT, executed)
+        print(f"metadata registration conformance: {executed} cases run")
 
 
 class FrontChannelBoundRouteConformanceTests(unittest.TestCase):
@@ -2011,6 +2220,645 @@ class FrontChannelNonePublicPostureTests(unittest.TestCase):
         with self.assertRaises(ValueError) as raised:
             register_mcp_facade(create_app(tier="p0"), config)
         self.assertIn("the front-channel field set must not be configured", str(raised.exception))
+
+
+# ---------------------------------------------------------------------------
+# Shared journey table (the same table the Go and TypeScript loaders read)
+# ---------------------------------------------------------------------------
+
+JOURNEY_FIXTURE_NAME = "facade-journey.v1.json"
+
+JOURNEY_GROUP = "journey"
+
+# The number of journey rows the shared table must carry; a change to the table
+# must also be a deliberate edit in the Go and TypeScript loaders, so no runtime
+# can silently execute a shorter journey.
+JOURNEY_CASE_COUNT = 26
+
+# The advertising resource of the namespace route the journey world describes.
+JOURNEY_ROUTE_RESOURCE = FRONT_TEST_BASE_URL + "/acme/mcp"
+
+# The route's RFC 9728 protected-resource metadata URL, named by every challenge.
+JOURNEY_METADATA_URL = FRONT_TEST_BASE_URL + "/.well-known/oauth-protected-resource/acme/mcp"
+
+# A route resource that is not the journey route's.
+JOURNEY_WRONG_AUDIENCE = FRONT_TEST_BASE_URL + "/other/mcp"
+
+# A client id no journey row registers.
+JOURNEY_UNKNOWN_CLIENT_ID = "unknown-client"
+
+# A verifier that does not hash to the challenge the authorize step presented.
+JOURNEY_WRONG_VERIFIER = "WRONGVERIFIERWRONGVERIFIERWRONGVERIFIER1234567890"
+
+
+def _load_journey_fixture() -> dict:
+    with (FIXTURE_DIR / JOURNEY_FIXTURE_NAME).open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _journey_bearer_options(fake: FakeUpstreamProvider) -> RequireBearerTokenOptions:
+    """The real JWKS claims validator over the fake upstream's key set."""
+
+    def http_get(url: str) -> tuple[int, dict[str, str], bytes]:
+        return _default_http_transport(
+            "GET",
+            fake.localize(url),
+            {},
+            None,
+            timeout=FRONT_TEST_TIMEOUT_SECONDS,
+            allow_private_hosts=True,
+        )
+
+    validator = new_jwks_validator(
+        JWKSValidatorOptions(
+            issuer=FRONT_TEST_UPSTREAM_ISS,
+            jwks_uri=fake.jwks_uri,
+            http_get=http_get,
+            allow_private_hosts=True,
+            required_audience=JOURNEY_ROUTE_RESOURCE,
+            required_scopes=["mcp:tools"],
+        )
+    )
+    return RequireBearerTokenOptions(
+        resource_metadata_url=JOURNEY_METADATA_URL,
+        claims_validator=validator,
+        required_scopes_func=lambda _ctx: ["mcp:tools"],
+    )
+
+
+def _journey_harness(test: unittest.TestCase) -> tuple[_FrontChannelHarness, dict]:
+    """Starts the journey harness: the front-channel harness with the
+    runtime-bearer transport posture, a real JWKS claims validator, and an MCP
+    handler that answers 200 and counts its invocations.
+    """
+    invocations = {"count": 0}
+    harness = _FrontChannelHarness(
+        test,
+        transport_posture="runtime-bearer",
+        require_bearer_token_for=_journey_bearer_options,
+        mcp_handler=lambda _ctx: Response(status=200, headers={}, cookies=[], body=b"mcp-ok", is_base64=False),
+        invocations=invocations,
+    )
+    return harness, invocations
+
+
+def _journey_token_form(code: str, verifier: str) -> dict[str, list[str]]:
+    """The full RFC 6749 section 4.1.3 authorization_code grant the token rows present."""
+    return {
+        "grant_type": ["authorization_code"],
+        "code": [code],
+        "code_verifier": [verifier],
+        "redirect_uri": [FRONT_TEST_REDIRECT_URI],
+        "client_id": [FRONT_TEST_CLIENT_ID],
+    }
+
+
+def _journey_token_field(response: Response, field: str) -> str:
+    payload = json.loads(response.body.decode("utf-8"))
+    value = payload.get(field)
+    if not isinstance(value, str) or not value:
+        raise AssertionError(f"token response must carry a string {field}")
+    return value
+
+
+def _journey_transport_token(harness: _FrontChannelHarness, token: str) -> str:
+    """Mints the token a transport row presents. The fault tokens are minted by
+    the fake's own key, so only the pinned claim differs and the refusal cannot
+    come from a bad signature.
+    """
+
+    def mint(audience: str, scope: str, expires_in: int) -> str:
+        return harness.fake.mint_access_token(
+            issuer=FRONT_TEST_UPSTREAM_ISS,
+            audience=audience,
+            authorized_party=FRONT_TEST_CLIENT_ID,
+            subject="user-1",
+            scope=scope,
+            expires_in=expires_in,
+        )
+
+    if token == "wrong_audience":
+        return mint(JOURNEY_WRONG_AUDIENCE, "mcp:tools", 900)
+    if token == "expired":
+        return mint(JOURNEY_ROUTE_RESOURCE, "mcp:tools", -60)
+    if token == "insufficient_scope":
+        return mint(JOURNEY_ROUTE_RESOURCE, "mcp:read", 900)
+    raise AssertionError(f"unknown journey transport token {token!r}")
+
+
+def _journey_session(test: unittest.TestCase, precondition: str) -> dict:
+    """Starts a journey harness and applies the row's declared precondition.
+
+    Each row is executable in isolation: a row that needs facade material names
+    the precondition that mints it, so dropping or reordering rows cannot
+    silently weaken a later row.
+    """
+    harness, invocations = _journey_harness(test)
+    session: dict[str, Any] = {
+        "harness": harness,
+        "invocations": invocations,
+        "upstream_state": "",
+        "facade_code": "",
+        "handle": "",
+        "access_token": "",
+    }
+    if not precondition:
+        return session
+
+    mints_authorize = (
+        precondition == "authorize"
+        or precondition == "authorize_consumed"
+        or precondition.startswith("authorize_callback")
+    )
+    if not mints_authorize:
+        raise AssertionError(f"unknown journey precondition {precondition!r}")
+
+    authorize_response = harness.authorize()
+    test.assertEqual(302, authorize_response.status, precondition)
+    session["upstream_state"] = _location_query(authorize_response).get("state", "")
+    test.assertTrue(session["upstream_state"], precondition)
+    if precondition == "authorize":
+        return session
+
+    callback = harness.serve(
+        "GET",
+        DEFAULT_CALLBACK_PATH,
+        {
+            "code": [FRONT_TEST_UPSTREAM_CODE],
+            "state": [session["upstream_state"]],
+            "iss": [FRONT_TEST_UPSTREAM_ISS],
+        },
+    )
+    test.assertEqual(302, callback.status, precondition)
+    session["facade_code"] = _location_query(callback).get("code", "")
+    test.assertTrue(session["facade_code"], precondition)
+    if precondition in ("authorize_consumed", "authorize_callback"):
+        return session
+
+    exchange = harness.token(_journey_token_form(session["facade_code"], FRONT_TEST_VERIFIER))
+    test.assertEqual(200, exchange.status, precondition)
+    session["access_token"] = _journey_token_field(exchange, "access_token")
+    session["handle"] = _journey_token_field(exchange, "refresh_token")
+    if precondition == "authorize_callback_exchange":
+        return session
+
+    replay = harness.token(_journey_token_form(session["facade_code"], FRONT_TEST_VERIFIER))
+    test.assertEqual(400, replay.status, precondition)
+    return session
+
+
+def _header(response: Response, name: str) -> str | None:
+    target = name.lower()
+    for key, values in (response.headers or {}).items():
+        if str(key).lower() == target:
+            return str(values[0]) if values else None
+    return None
+
+
+class JourneyTableTests(unittest.TestCase):
+    """Executes the shared minimal non-TMS consumer journey from the shared table."""
+
+    def test_the_shared_journey_table_executes_every_step(self) -> None:
+        document = _load_journey_fixture()
+        rows = []
+        for row in document.get("cases") or []:
+            self.assertTrue(row.get("group"), f"case {row.get('id')} must carry a group")
+            self.assertEqual(
+                JOURNEY_GROUP,
+                row.get("group"),
+                f"case {row.get('id')} carries group {row.get('group')!r}; "
+                f"the journey loader executes only {JOURNEY_GROUP!r}",
+            )
+            rows.append(row)
+        self.assertEqual(JOURNEY_CASE_COUNT, len(rows))
+
+        executed = 0
+        for row in rows:
+            executed += 1
+            with self.subTest(row=row["id"]):
+                stage = row["stage"]
+                if stage == "transport":
+                    self._transport(row)
+                elif stage == "protected_resource":
+                    self._metadata(row, authorization_server=False)
+                elif stage == "authorization_server_metadata":
+                    self._metadata(row, authorization_server=True)
+                elif stage == "register":
+                    self._register(row)
+                elif stage == "authorize":
+                    self._authorize(row)
+                elif stage == "callback":
+                    self._callback(row)
+                elif stage == "token":
+                    self._token(row)
+                else:
+                    self.fail(f"row {row['id']} carries unknown stage {stage!r}")
+        self.assertEqual(JOURNEY_CASE_COUNT, executed)
+
+    def _transport(self, row: dict) -> None:
+        session = _journey_session(self, row.get("precondition", ""))
+        harness = session["harness"]
+
+        headers: dict[str, list[str]] = {}
+        token = row["token"]
+        if token == "none":
+            pass
+        elif token == "valid":
+            self.assertTrue(session["access_token"], f"{row['id']} needs the precondition's exchange")
+            headers["authorization"] = [f"Bearer {session['access_token']}"]
+        elif token in ("wrong_audience", "expired", "insufficient_scope"):
+            headers["authorization"] = [f"Bearer {_journey_transport_token(harness, token)}"]
+        else:
+            self.fail(f"row {row['id']} carries unknown token {token!r}")
+
+        response = harness.serve(
+            "POST",
+            harness.endpoint.mcp_path(),
+            None,
+            b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
+            headers,
+        )
+        self.assertEqual(row["expect_status"], response.status, row["id"])
+
+        challenge = _header(response, "www-authenticate")
+        if row.get("expect_challenge_resource_metadata") is True:
+            self.assertEqual(
+                protected_resource_www_authenticate(JOURNEY_METADATA_URL),
+                challenge,
+                f"row {row['id']} must carry the RFC 9728 discovery challenge",
+            )
+        elif row.get("expect_challenge_error") is not None:
+            self.assertEqual(
+                insufficient_scope_www_authenticate(
+                    [row.get("expect_challenge_scope", "")], JOURNEY_METADATA_URL
+                ),
+                challenge,
+                f"row {row['id']} must carry the RFC 6750 insufficient_scope challenge",
+            )
+        else:
+            self.assertIsNone(challenge, f"row {row['id']} must advertise no challenge")
+
+        if row.get("expect_handler_invocations") is not None:
+            self.assertEqual(
+                row["expect_handler_invocations"],
+                session["invocations"]["count"],
+                f"row {row['id']} handler invocations",
+            )
+
+    def _metadata(self, row: dict, *, authorization_server: bool) -> None:
+        session = _journey_session(self, row.get("precondition", ""))
+        harness = session["harness"]
+        path = (
+            harness.endpoint.oauth_authorization_server_path()
+            if authorization_server
+            else harness.endpoint.protected_resource_path()
+        )
+
+        response = harness.serve("GET", path)
+        self.assertEqual(row["expect_status"], response.status, row["id"])
+        body = response.body.decode("utf-8")
+        for expected in row.get("expect_body_has") or []:
+            self.assertIn(expected, body, row["id"])
+        if row.get("expect_no_store") is True:
+            self.assertEqual("no-store", _header(response, "cache-control"), row["id"])
+
+    def _register(self, row: dict) -> None:
+        harness, _ = _journey_harness(self)
+        path = harness.endpoint.oauth_register_path()
+
+        body = b"" if row.get("request") is None else json.dumps(row["request"]).encode("utf-8")
+        for attempt in range(int(row.get("prime_registrations") or 0)):
+            primed = harness.serve(
+                "POST", path, None, b'{"redirect_uris":["https://client.example/callback"]}'
+            )
+            self.assertEqual(201, primed.status, f"row {row['id']} priming attempt {attempt + 1}")
+
+        response = harness.serve("POST", path, None, body)
+        self.assertEqual(row["expect_status"], response.status, row["id"])
+
+        scanned = response.body.decode("utf-8")
+        for expected in row.get("expect_body_has") or []:
+            self.assertIn(expected, scanned, row["id"])
+        if row.get("expect_no_store") is True:
+            self.assertEqual("no-store", _header(response, "cache-control"), row["id"])
+            self.assertEqual("no-cache", _header(response, "pragma"), row["id"])
+        if row.get("expect_retry_after") is True:
+            value = _header(response, "retry-after")
+            self.assertIsNotNone(value, f"row {row['id']} must carry a retry-after header")
+            self.assertGreaterEqual(int(value or 0), 1, f"row {row['id']} must reach the same second")
+        if row.get("expect_bound_route") is True:
+            client_id = str(json.loads(scanned)["client_id"])
+            self.assertTrue(client_id, f"row {row['id']} must mint a client id")
+            record = harness.stores.client.get(hash_key(client_id))
+            self.assertIsNotNone(record, f"row {row['id']} must persist the registered client")
+            self.assertEqual(JOURNEY_ROUTE_RESOURCE, record.bound_route, row["id"])
+
+    def _authorize(self, row: dict) -> None:
+        session = _journey_session(self, row.get("precondition", ""))
+        harness = session["harness"]
+
+        client_id = JOURNEY_UNKNOWN_CLIENT_ID if row.get("client") == "unknown" else FRONT_TEST_CLIENT_ID
+        query: dict[str, list[str]] = {
+            "client_id": [client_id],
+            "redirect_uri": [FRONT_TEST_REDIRECT_URI],
+            "response_type": ["code"],
+            "code_challenge": [pkce_challenge_s256(FRONT_TEST_VERIFIER)],
+            "code_challenge_method": ["S256"],
+            "state": [FRONT_TEST_CLIENT_STATE],
+            "resource": [JOURNEY_ROUTE_RESOURCE],
+        }
+        if row.get("redirect_uri"):
+            query["redirect_uri"] = [row["redirect_uri"]]
+        for key in row.get("omit") or []:
+            query.pop(key, None)
+        for key, value in (row.get("set") or {}).items():
+            query[key] = [value]
+
+        response = harness.serve("GET", harness.endpoint.oauth_authorize_path(), query)
+        self.assertEqual(row["expect_status"], response.status, row["id"])
+
+        location = _location(response)
+        if row.get("expect_no_location") is True:
+            self.assertEqual("", location, f"row {row['id']} must not redirect")
+        expected_error = row.get("expect_error")
+        if expected_error is not None:
+            in_body = f'"error":"{expected_error}"' in response.body.decode("utf-8")
+            self.assertTrue(
+                _location_query(response).get("error") == expected_error or in_body,
+                f"row {row['id']} must answer error {expected_error}; location {location}",
+            )
+        if row.get("expect_location_host"):
+            self.assertTrue(
+                location.startswith(row["expect_location_host"] + "/"),
+                f"row {row['id']} location {location} must be beneath {row['expect_location_host']}",
+            )
+        query_result = _location_query(response)
+        for key in row.get("expect_location_query_has") or []:
+            self.assertIn(key, query_result, f"row {row['id']} location must carry {key}")
+        for key, value in (row.get("expect_location_query_equals") or {}).items():
+            self.assertEqual(value, query_result.get(key), f"row {row['id']} location {key}")
+        if row.get("expect_upstream_state_distinct") is True:
+            upstream_state = query_result.get("state", "")
+            self.assertTrue(upstream_state, f"row {row['id']} must mint an upstream state")
+            self.assertNotEqual(
+                FRONT_TEST_CLIENT_STATE,
+                upstream_state,
+                f"row {row['id']} must mint an upstream state distinct from the client's",
+            )
+
+    def _callback(self, row: dict) -> None:
+        session = _journey_session(self, row.get("precondition", ""))
+        harness = session["harness"]
+
+        state = session["upstream_state"] if row.get("state") == "precondition" else str(row.get("state") or "")
+        self.assertTrue(state, f"row {row['id']} needs the precondition's upstream state")
+        code = FRONT_TEST_UPSTREAM_CODE if row.get("code") == "upstream" else str(row.get("code") or "")
+        query: dict[str, list[str]] = {"code": [code], "state": [state]}
+        if row.get("iss") is not None:
+            query["iss"] = [row["iss"]]
+
+        before = harness.fake.token_calls
+        response = harness.serve("GET", DEFAULT_CALLBACK_PATH, query)
+
+        self.assertEqual(row["expect_status"], response.status, row["id"])
+        location = _location(response)
+        if row.get("expect_no_location") is True:
+            self.assertEqual("", location, f"row {row['id']} must not redirect")
+        body = response.body.decode("utf-8")
+        for expected in row.get("expect_body_has") or []:
+            self.assertIn(expected, body, row["id"])
+        if row.get("expect_location_host"):
+            self.assertTrue(
+                location.startswith(row["expect_location_host"] + "/"),
+                f"row {row['id']} location {location} must be beneath {row['expect_location_host']}",
+            )
+        query_result = _location_query(response)
+        for key in row.get("expect_location_query_has") or []:
+            self.assertIn(key, query_result, f"row {row['id']} location must carry {key}")
+        for key, value in (row.get("expect_location_query_equals") or {}).items():
+            self.assertEqual(value, query_result.get(key), f"row {row['id']} location {key}")
+        if (row.get("expect_absent_from_location") or []):
+            leaked = _scan(response)
+            for absent in row["expect_absent_from_location"]:
+                self.assertNotIn(
+                    absent, leaked, f"row {row['id']} must not leak {absent!r} anywhere in the response"
+                )
+        if row.get("expect_handler_invocations") is not None:
+            self.assertEqual(
+                row["expect_handler_invocations"],
+                session["invocations"]["count"],
+                f"row {row['id']} handler invocations",
+            )
+        if row.get("expect_upstream_exchange_attempted") is False:
+            self.assertEqual(
+                before, harness.fake.token_calls, f"row {row['id']} must attempt no upstream exchange"
+            )
+        if row.get("expect_transaction_consumed") is False:
+            retry = harness.serve(
+                "GET",
+                DEFAULT_CALLBACK_PATH,
+                {"code": [code], "state": [state], "iss": [FRONT_TEST_UPSTREAM_ISS]},
+            )
+            self.assertEqual(
+                302,
+                retry.status,
+                f"row {row['id']} must leave the transaction unconsumed for a correct retry",
+            )
+            self.assertTrue(
+                _location_query(retry).get("code", ""),
+                f"row {row['id']} must complete on the retry",
+            )
+        if row.get("terminal") is True:
+            self.assertEqual(400, response.status, f"row {row['id']}: a consumed state is terminal")
+            self.assertEqual("", location, f"row {row['id']}: a consumed state must not redirect")
+            self.assertEqual(
+                before,
+                harness.fake.token_calls,
+                f"row {row['id']}: a consumed state must never re-exchange",
+            )
+
+    def _token(self, row: dict) -> None:
+        session = _journey_session(self, row.get("precondition", ""))
+        harness = session["harness"]
+
+        mode = row["mode"]
+        if mode == "exchange":
+            response = harness.token(_journey_token_form(session["facade_code"], FRONT_TEST_VERIFIER))
+        elif mode == "replay":
+            response = harness.token(_journey_token_form(session["facade_code"], FRONT_TEST_VERIFIER))
+        elif mode == "wrong_verifier":
+            response = harness.token(_journey_token_form(session["facade_code"], JOURNEY_WRONG_VERIFIER))
+        elif mode in ("refresh", "revoked_refresh"):
+            self.assertTrue(session["handle"], f"row {row['id']} needs the precondition's handle")
+            response = harness.token(
+                {
+                    "grant_type": ["refresh_token"],
+                    "refresh_token": [session["handle"]],
+                    "client_id": [FRONT_TEST_CLIENT_ID],
+                }
+            )
+        else:
+            self.fail(f"row {row['id']} carries unknown token mode {mode!r}")
+            return
+
+        self.assertEqual(row["expect_status"], response.status, row["id"])
+        scanned = response.body.decode("utf-8")
+        for expected in row.get("expect_body_has") or []:
+            self.assertIn(expected, scanned, row["id"])
+        for absent in row.get("expect_body_absent") or []:
+            self.assertNotIn(absent, scanned, row["id"])
+        if row.get("expect_error") is not None:
+            self.assertIn(f'"error":"{row.get("expect_error")}"', scanned, row["id"])
+        if row.get("expect_access_token_unchanged") is True:
+            access_token = _journey_token_field(response, "access_token")
+            if mode == "refresh":
+                self.assertEqual(
+                    FRONT_TEST_REFRESH_ACCESS_TOKEN,
+                    access_token,
+                    f"row {row['id']} must return the upstream refresh access token byte-for-byte",
+                )
+            else:
+                self.assertIsNotNone(harness.bearer_validator, f"row {row['id']} needs the JWKS validator")
+                harness.bearer_validator(None, access_token)
+        if row.get("expect_refresh_handle_opaque") is True:
+            handle = _journey_token_field(response, "refresh_token")
+            self.assertNotEqual(
+                FRONT_TEST_REFRESH_TOKEN,
+                handle,
+                f"row {row['id']} must not hand back the upstream refresh token",
+            )
+        if row.get("expect_rotated_handle") is True:
+            handle = _journey_token_field(response, "refresh_token")
+            self.assertNotEqual(handle, session["handle"], f"row {row['id']} must rotate the route handle")
+        if row.get("expect_broker_revoked") is True:
+            record = harness.stores.route_refresh_broker.get(hash_key(session["handle"]))
+            self.assertIsNotNone(record, row["id"])
+            self.assertEqual(STATUS_REVOKED, record.status, f"row {row['id']} must revoke the broker record")
+        if row.get("expect_handler_invocations") is not None:
+            self.assertEqual(
+                row["expect_handler_invocations"],
+                session["invocations"]["count"],
+                f"row {row['id']} handler invocations",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Shared threat-controls table (the same table the Go and TypeScript checkers read)
+# ---------------------------------------------------------------------------
+
+THREAT_CONTROLS_FIXTURE_NAME = "facade-threat-controls.v1.json"
+
+THREAT_CONTROLS_GROUP = "threat_controls"
+
+# The number of threat rows the shared table must carry; a change to the table
+# must also be a deliberate edit in the Go and TypeScript checkers, so no runtime
+# can silently check fewer rows.
+THREAT_CONTROLS_CASE_COUNT = 11
+
+# The closed pin vocabulary: each source names a table in the corpus and the row
+# shapes a pin is resolved in -- a cases[].id, a cases[].name, or a dotted key
+# path.
+THREAT_PIN_SOURCES: dict[str, dict[str, Any]] = {
+    "journey": {"file": "facade-journey.v1.json", "by_case_id": True, "by_key": True},
+    "conformance": {"file": "facade-conformance.v1.json", "by_case_id": True},
+    "route_model": {"file": "facade-route-model.v1.json", "by_key": True},
+    "transport_posture": {"file": "facade-transport-posture.v1.json", "by_key": True},
+    "jwks_validator": {"file": "jwks-validator.v1.json", "by_case_name": True},
+    "discovery_bootstrap": {"file": "discovery-bootstrap.v1.json", "by_case_name": True, "by_key": True},
+    "provider_conformance": {"file": "facade-provider-conformance.v1.json", "by_case_id": True},
+    "store_conformance": {"file": "facade-store-conformance.v1.json", "by_case_id": True},
+    "route_challenge": {"file": "route-challenge.v1.json", "by_key": True},
+}
+
+
+def _load_threat_controls_fixture() -> dict:
+    with (FIXTURE_DIR / THREAT_CONTROLS_FIXTURE_NAME).open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _load_pinned_table(file_name: str) -> dict:
+    """Loads one pin vocabulary table, located exactly as the journey and
+    conformance loaders locate theirs.
+    """
+
+    with (FIXTURE_DIR / file_name).open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _threat_pin_resolves(source: dict, row: str, table: dict) -> bool:
+    """Reports whether the pin's row is a real id, name, or key inside the table."""
+
+    if source.get("by_case_id") or source.get("by_case_name"):
+        for entry in table.get("cases") or []:
+            if source.get("by_case_id") and entry.get("id") and entry.get("id") == row:
+                return True
+            if source.get("by_case_name") and entry.get("name") and entry.get("name") == row:
+                return True
+    if not source.get("by_key"):
+        return False
+    current: Any = table
+    for part in row.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return False
+        current = current[part]
+    return current is not None
+
+
+class ThreatControlsTableTests(unittest.TestCase):
+    """Proves every threat row is pinned to a row that exists in the table it names."""
+
+    def test_the_shared_threat_controls_table_pins_every_threat_row(self) -> None:
+        document = _load_threat_controls_fixture()
+        self.assertEqual("mcp.auth.facade.threat_controls", document["id"])
+        self.assertEqual("conformance", document["kind"])
+        self.assertTrue(document["status"], "the threat-controls table must carry a status")
+        self.assertTrue(document["description"], "the threat-controls table must carry a description")
+
+        tables: dict[str, dict] = {}
+
+        def table_for(source_key: str) -> dict:
+            if source_key not in tables:
+                tables[source_key] = _load_pinned_table(THREAT_PIN_SOURCES[source_key]["file"])
+            return tables[source_key]
+
+        rows = []
+        for row in document.get("cases") or []:
+            self.assertTrue(row.get("group"), f"case {row.get('id')} must carry a group")
+            self.assertEqual(
+                THREAT_CONTROLS_GROUP,
+                row.get("group"),
+                f"case {row.get('id')} carries group {row.get('group')!r}; "
+                f"the threat-controls checker reads only {THREAT_CONTROLS_GROUP!r}",
+            )
+            rows.append(row)
+        self.assertEqual(THREAT_CONTROLS_CASE_COUNT, len(rows))
+
+        checked = 0
+        for row in rows:
+            checked += 1
+            with self.subTest(row=row["id"]):
+                self.assertTrue(row.get("threat"), f"case {row['id']} must name the attack class")
+                self.assertTrue(row.get("control"), f"case {row['id']} must name the framework control")
+                self.assertTrue(
+                    row.get("source_pins"),
+                    f"case {row['id']} must preserve the pin strings it was lifted from",
+                )
+                if row.get("runtime_executable") is True:
+                    self.assertTrue(
+                        row.get("pins"),
+                        f"case {row['id']} is runtime_executable but carries no fixture-backed pin",
+                    )
+                for pin in row.get("pins") or []:
+                    source = THREAT_PIN_SOURCES.get(pin["source"])
+                    self.assertIsNotNone(
+                        source,
+                        f"case {row['id']} pin source {pin['source']!r} is outside the closed pin vocabulary",
+                    )
+                    self.assertTrue(
+                        _threat_pin_resolves(source, pin["row"], table_for(pin["source"])),
+                        f"case {row['id']} pin {pin['source']}:{pin['row']} does not resolve inside {source['file']}",
+                    )
+        self.assertEqual(THREAT_CONTROLS_CASE_COUNT, checked)
 
 
 if __name__ == "__main__":

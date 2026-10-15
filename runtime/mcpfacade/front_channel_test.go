@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"os"
 	"sort"
@@ -49,6 +50,19 @@ type mintingProvider struct {
 	oauth.Provider
 	server *oauthprovider.Server
 	claims oauthprovider.Claims
+
+	// failAuthorizationURL makes the AuthorizationURL builder fail, so a test can
+	// drive the authorize leg's provider-call failure class.
+	failAuthorizationURL bool
+}
+
+// AuthorizationURL fails when the harness was built with failAuthorizationURL
+// and otherwise delegates to the real adapter.
+func (p *mintingProvider) AuthorizationURL(req oauth.AuthorizationRequest) (string, error) {
+	if p.failAuthorizationURL {
+		return "", errors.New("mintingProvider: authorization URL unavailable")
+	}
+	return p.Provider.AuthorizationURL(req)
 }
 
 func (p *mintingProvider) ExchangeCode(ctx context.Context, req oauth.CodeExchangeRequest) (*oauth.TokenSet, error) {
@@ -72,6 +86,11 @@ type frontChannelHarness struct {
 	stores oauthstore.Stores
 	broker *recordingBrokerStore
 	kind   mcproutes.EndpointKind
+
+	// bearerValidator is the transport claims validator the harness installed,
+	// when it installed one. The journey loader reuses it to prove an exchanged
+	// access token is a genuine upstream-minted token.
+	bearerValidator oauth.BearerTokenClaimsValidator
 }
 
 // frontChannelHarnessOptions tunes the harness a test starts. The zero value is
@@ -80,6 +99,40 @@ type frontChannelHarnessOptions struct {
 	// providerOptions mutates the fake upstream's options before it starts, so a
 	// test can serve a grant-specific or failing token response.
 	providerOptions func(*oauthprovider.Options)
+
+	// issuerMode and registrationEndpointURL tune the facade the harness
+	// registers. The zero issuerMode is the route mode every front-channel test
+	// uses.
+	issuerMode              mcproutes.IssuerMode
+	registrationEndpointURL string
+
+	// providerHints, when set, is installed as the front channel's app-supplied
+	// provider-hint seam, so a test can drive a failing providerHints.
+	providerHints func(*apptheory.Context) (map[string]string, error)
+
+	// failAuthorizationURL makes the upstream provider's AuthorizationURL builder
+	// fail, so a test can drive the authorize leg's provider-call failure class.
+	failAuthorizationURL bool
+
+	// transportPosture selects the transport posture the harness registers. The
+	// zero value is the IAM posture every front-channel test uses; the shared
+	// journey loader selects the runtime-bearer posture so its transport rows
+	// exercise the real RFC 9728 middleware.
+	transportPosture TransportPosture
+
+	// requireBearerTokenFor maps the started fake upstream to the transport
+	// claims validator the harness installs. It is a function because a validator
+	// has to read the fake's key set and loopback-rewriting client, which only
+	// exist once the fake has started.
+	requireBearerTokenFor func(*oauthprovider.Server) *oauth.RequireBearerTokenOptions
+
+	// mcpHandler, when set, replaces the harness's default 204 MCP handler; the
+	// journey's valid-token row needs a handler that answers 200.
+	mcpHandler apptheory.Handler
+
+	// mcpInvocations, when set, counts every MCP handler invocation, so a
+	// transport row can pin handler_invocations.
+	mcpInvocations *int
 }
 
 // manualClockAdapter implements apptheory.Clock over the harness's ManualClock,
@@ -192,21 +245,47 @@ func newFrontChannelHarnessWith(t *testing.T, options frontChannelHarnessOptions
 	})
 	require.NoError(t, err)
 
+	issuerMode := options.issuerMode
+	if issuerMode == "" {
+		issuerMode = mcproutes.IssuerModeRoute
+	}
+	transportPosture := options.transportPosture
+	if transportPosture == "" {
+		transportPosture = TransportPostureIAM
+	}
+	var requireBearerToken *oauth.RequireBearerTokenOptions
+	if options.requireBearerTokenFor != nil {
+		requireBearerToken = options.requireBearerTokenFor(fake)
+	}
+	mcpHandler := options.mcpHandler
+	if mcpHandler == nil {
+		mcpHandler = func(*apptheory.Context) (*apptheory.Response, error) { return apptheory.NoContent(), nil }
+	}
+	if options.mcpInvocations != nil {
+		inner := mcpHandler
+		counter := options.mcpInvocations
+		mcpHandler = func(ctx *apptheory.Context) (*apptheory.Response, error) {
+			*counter++
+			return inner(ctx)
+		}
+	}
 	kind := mcproutes.EndpointKindNamespace
 	config := FacadeConfig{
-		IssuerURL:        frontTestBaseURL + "/acme/mcp",
-		JWKSURI:          frontTestUpstreamIss + "/.well-known/jwks.json",
-		IssuerMode:       mcproutes.IssuerModeRoute,
-		URLMode:          URLModePublicBaseURL,
-		PublicBaseURL:    frontTestBaseURL,
-		TransportPosture: TransportPostureIAM,
+		IssuerURL:               frontTestBaseURL + "/acme/mcp",
+		JWKSURI:                 frontTestUpstreamIss + "/.well-known/jwks.json",
+		IssuerMode:              issuerMode,
+		RegistrationEndpointURL: options.registrationEndpointURL,
+		URLMode:                 URLModePublicBaseURL,
+		PublicBaseURL:           frontTestBaseURL,
+		TransportPosture:        transportPosture,
+		RequireBearerToken:      requireBearerToken,
 		Scopes: map[mcproutes.EndpointKind][]string{
 			mcproutes.EndpointKindNamespace:        {"mcp:tools"},
 			mcproutes.EndpointKindPartnerNamespace: {"mcp:tools"},
 			mcproutes.EndpointKindAgent:            {"mcp:tools"},
 			mcproutes.EndpointKindPartnerAgent:     {"mcp:tools"},
 		},
-		MCPHandler: func(*apptheory.Context) (*apptheory.Response, error) { return apptheory.NoContent(), nil },
+		MCPHandler: mcpHandler,
 		Provider: &mintingProvider{
 			Provider: adapter,
 			server:   fake,
@@ -218,10 +297,12 @@ func newFrontChannelHarnessWith(t *testing.T, options frontChannelHarnessOptions
 				Scope:           "mcp:tools",
 				ExpiresIn:       900,
 			},
+			failAuthorizationURL: options.failAuthorizationURL,
 		},
 		Stores:           stores,
 		UpstreamClientID: frontTestClientID,
 		UpstreamIssuer:   frontTestUpstreamIss,
+		ProviderHints:    options.providerHints,
 	}
 	require.NoError(t, stores.Client.Put(context.Background(), &oauthstore.ClientRecord{
 		ClientIDHash:            oauthstore.HashKey(frontTestClientID),
@@ -233,7 +314,11 @@ func newFrontChannelHarnessWith(t *testing.T, options frontChannelHarnessOptions
 	app := apptheory.New(apptheory.WithClock(manualClockAdapter{clock: clock}))
 	_, err = RegisterMCPFacade(app, config)
 	require.NoError(t, err)
-	return &frontChannelHarness{t: t, app: app, fake: fake, clock: clock, stores: stores, broker: broker, kind: kind}
+	harness := &frontChannelHarness{t: t, app: app, fake: fake, clock: clock, stores: stores, broker: broker, kind: kind}
+	if requireBearerToken != nil {
+		harness.bearerValidator = requireBearerToken.ClaimsValidator
+	}
+	return harness
 }
 
 func (h *frontChannelHarness) endpoint() mcproutes.EndpointPath {
@@ -546,6 +631,193 @@ func TestFrontChannelTokenEnforcesTheSharedFormParseTable(t *testing.T) {
 	}
 
 	require.Equalf(t, formParseCaseCount, executed, "executed %d %q cases", executed, formParseGroup)
+}
+
+// authorizeProviderFailureGroup names the authorize leg's provider-call failure
+// class group the same shared table carries, executed below through the real
+// /authorize handler.
+const authorizeProviderFailureGroup = "authorize_provider_failure"
+
+// authorizeProviderFailureCaseCount is the number of authorize_provider_failure
+// rows the shared fixture must carry; a change to the table must also be a
+// deliberate edit in the Go, TypeScript, and Python loaders, so no runtime can
+// silently execute a smaller table.
+const authorizeProviderFailureCaseCount = 2
+
+// authorizeProviderFailureConformanceDocument and authorizeProviderFailureCase
+// are the authorize_provider_failure rows: fail selects which provider call the
+// harness makes fail.
+type authorizeProviderFailureConformanceDocument struct {
+	Cases []authorizeProviderFailureCase `json:"cases"`
+}
+
+type authorizeProviderFailureCase struct {
+	ID               string   `json:"id"`
+	Group            string   `json:"group"`
+	Fail             string   `json:"fail"`
+	ExpectStatus     int      `json:"expect_status"`
+	ExpectBodyHas    []string `json:"expect_body_has"`
+	ExpectNoLocation bool     `json:"expect_no_location"`
+}
+
+// TestFrontChannelAuthorizeEnforcesTheSharedProviderFailureTable pins the
+// authorize leg's provider-call failure class to the shared cross-runtime table
+// through the real /authorize handler: a failing provider AuthorizationURL
+// builder and a failing app-supplied providerHints each render the
+// gateway-class 502 upstream_error error page with no Location, so the
+// provider-call failure class is the same 502 as the callback's rather than the
+// facade's own 400 vocabulary.
+func TestFrontChannelAuthorizeEnforcesTheSharedProviderFailureTable(t *testing.T) {
+	var document authorizeProviderFailureConformanceDocument
+	loadFacadeConformanceFixture(t, &document)
+
+	rows := make([]authorizeProviderFailureCase, 0, len(document.Cases))
+	for _, row := range document.Cases {
+		require.NotEmptyf(t, row.Group, "case %q must carry a group", row.ID)
+		if row.Group == authorizeProviderFailureGroup {
+			rows = append(rows, row)
+		}
+	}
+	require.Equalf(t, authorizeProviderFailureCaseCount, len(rows), "loaded %d %q cases", len(rows), authorizeProviderFailureGroup)
+
+	executed := 0
+	for _, row := range rows {
+		executed++
+		t.Run(row.ID, func(t *testing.T) {
+			harness := newFrontChannelHarnessWith(t, frontChannelHarnessOptions{
+				failAuthorizationURL: row.Fail == "authorization_url",
+				providerHints: func(*apptheory.Context) (map[string]string, error) {
+					if row.Fail == "provider_hints" {
+						return nil, errors.New("provider hints unavailable")
+					}
+					return nil, nil
+				},
+			})
+
+			response := harness.authorize(nil)
+			require.Equalf(t, row.ExpectStatus, response.Status, "fail %q", row.Fail)
+			if row.ExpectNoLocation {
+				require.Emptyf(t, locationOf(response), "fail %q must not redirect", row.Fail)
+			}
+			for _, want := range row.ExpectBodyHas {
+				require.Containsf(t, string(response.Body), want, "fail %q", row.Fail)
+			}
+		})
+	}
+
+	require.Equalf(t, authorizeProviderFailureCaseCount, executed, "executed %d %q cases", executed, authorizeProviderFailureGroup)
+}
+
+// metadataRegistrationGroup names the group the same shared table carries that
+// pins the advertised registration_endpoint to the mounted /register route.
+const metadataRegistrationGroup = "metadata_registration"
+
+// metadataRegistrationCaseCount is the number of metadata_registration rows the
+// shared fixture must carry; a change to the table must also be a deliberate
+// edit in the Go, TypeScript, and Python loaders, so no runtime can silently
+// execute a smaller table.
+const metadataRegistrationCaseCount = 6
+
+// metadataRegistrationConformanceDocument and metadataRegistrationCase are the
+// metadata_registration rows. `front_channel` and `register_handler` choose the
+// facade shape, and `expect` names how the row's advertised value is derived:
+// absent, the row's own configured URL, `<family issuer>/register`, or the
+// route's derived `/register` URL.
+type metadataRegistrationConformanceDocument struct {
+	Cases []metadataRegistrationCase `json:"cases"`
+}
+
+type metadataRegistrationCase struct {
+	ID                      string `json:"id"`
+	Group                   string `json:"group"`
+	IssuerMode              string `json:"issuer_mode"`
+	FrontChannel            bool   `json:"front_channel"`
+	RegisterHandler         bool   `json:"register_handler"`
+	RegistrationEndpointURL string `json:"registration_endpoint_url"`
+	Expect                  string `json:"expect"`
+}
+
+// metadataRegistrationEndpoint is the single route the group resolves, so a row
+// exercises only the mount shape and the issuer mode.
+func metadataRegistrationEndpoint() mcproutes.EndpointPath {
+	return mcproutes.EndpointPath{Kind: mcproutes.EndpointKindNamespace, ClientNamespace: "acme"}
+}
+
+// newMetadataRegistrationApp mounts a facade for one row. The front-channel
+// field set is attached only for the rows that ask for it, so the mounted
+// /register route and the advertised member move together.
+func newMetadataRegistrationApp(t *testing.T, row metadataRegistrationCase) *apptheory.App {
+	t.Helper()
+	if row.FrontChannel {
+		return newFrontChannelHarnessWith(t, frontChannelHarnessOptions{
+			issuerMode:              mcproutes.IssuerMode(row.IssuerMode),
+			registrationEndpointURL: row.RegistrationEndpointURL,
+		}).app
+	}
+	config := validConfig(URLModePublicBaseURL)
+	config.IssuerURL = frontTestBaseURL + "/acme/mcp"
+	config.PublicBaseURL = frontTestBaseURL
+	config.IssuerMode = mcproutes.IssuerMode(row.IssuerMode)
+	config.RegistrationEndpointURL = row.RegistrationEndpointURL
+	if row.RegisterHandler {
+		config.RegisterHandler = kindHandlerFactory("register")
+	}
+	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	_, err := RegisterMCPFacade(app, config)
+	require.NoError(t, err)
+	return app
+}
+
+// TestFrontChannelMetadataAdvertisesRegistrationExactlyWhileTheRouteIsMounted
+// pins the advertised registration_endpoint to the mounted /register route
+// through the real facade: the routed RFC 8414 document carries the member
+// exactly when the front channel or an explicit register handler mounts the
+// route, so a facade that mounts none never advertises a URL that 404s.
+func TestFrontChannelMetadataAdvertisesRegistrationExactlyWhileTheRouteIsMounted(t *testing.T) {
+	var document metadataRegistrationConformanceDocument
+	loadFacadeConformanceFixture(t, &document)
+
+	rows := make([]metadataRegistrationCase, 0, len(document.Cases))
+	for _, row := range document.Cases {
+		require.NotEmptyf(t, row.Group, "case %q must carry a group", row.ID)
+		if row.Group == metadataRegistrationGroup {
+			rows = append(rows, row)
+		}
+	}
+	require.Equalf(t, metadataRegistrationCaseCount, len(rows), "loaded %d %q cases", len(rows), metadataRegistrationGroup)
+
+	endpoint := metadataRegistrationEndpoint()
+	discoveryPath := mustPath(t, endpoint.OAuthAuthorizationServerPath)
+	registerPath := mustPath(t, endpoint.OAuthRegisterPath)
+
+	executed := 0
+	for _, row := range rows {
+		executed++
+		t.Run(row.ID, func(t *testing.T) {
+			app := newMetadataRegistrationApp(t, row)
+			response := serve(app, "GET", discoveryPath, nil)
+			require.Equalf(t, 200, response.Status, "row %q", row.ID)
+
+			var payload map[string]any
+			require.NoErrorf(t, json.Unmarshal(response.Body, &payload), "row %q", row.ID)
+
+			switch row.Expect {
+			case "absent":
+				_, present := payload["registration_endpoint"]
+				require.Falsef(t, present, "row %q must omit registration_endpoint; the /register route is not mounted", row.ID)
+			case "configured":
+				require.Equalf(t, row.RegistrationEndpointURL, payload["registration_endpoint"], "row %q", row.ID)
+			case "issuer_derived":
+				require.Equalf(t, frontTestBaseURL+"/acme/mcp/register", payload["registration_endpoint"], "row %q", row.ID)
+			case "route_derived":
+				require.Equalf(t, frontTestBaseURL+registerPath, payload["registration_endpoint"], "row %q", row.ID)
+			default:
+				t.Fatalf("unknown expect %q", row.Expect)
+			}
+		})
+	}
+
+	require.Equalf(t, metadataRegistrationCaseCount, executed, "executed %d %q cases", executed, metadataRegistrationGroup)
 }
 
 // methodStatusGroup names the route-model method-mismatch group the same shared

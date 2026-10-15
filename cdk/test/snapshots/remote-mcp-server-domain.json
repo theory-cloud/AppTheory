@@ -65,11 +65,6 @@
         "Code": {
           "ZipFile": "exports.handler = async () => ({ statusCode: 200, body: 'ok' });"
         },
-        "Environment": {
-          "Variables": {
-            "MCP_ENDPOINT": "https://mcp.example.com/mcp"
-          }
-        },
         "Handler": "index.handler",
         "Role": {
           "Fn::GetAtt": [

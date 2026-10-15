@@ -126,6 +126,28 @@ export interface RequireBearerTokenOptions {
    */
   resourceMetadataURL?: string | ((ctx: Context) => string | Promise<string>);
   /**
+   * Absolute HTTPS URL template whose `{param}` placeholders are interpolated
+   * from the matched route's path parameters, so a per-actor route
+   * (`/mcp/{actor}`) advertises that actor's own RFC 9728 metadata URL with no
+   * hand-rolled resolver. It is explicit application configuration: the
+   * middleware reads no environment variable.
+   *
+   * The template is compiled when the middleware is constructed. It must be an
+   * absolute HTTPS URL with no userinfo, query, fragment, or percent escape and
+   * no `.` or `..` path segment, and its placeholders must appear in the path
+   * and name route parameters; a malformed template throws at registration
+   * rather than advertising a broken discovery URL.
+   *
+   * At request time a placeholder the matched route does not supply, or whose
+   * value is not a safe single path segment, makes the middleware emit the bare
+   * `Bearer` challenge. It never advertises a literal placeholder, and an
+   * unresolvable template does not fall back to `resourceMetadataURL`.
+   *
+   * When set it takes precedence over `resourceMetadataURL`; a
+   * `resourceMetadataURL` function still takes precedence over it.
+   */
+  resourceMetadataURLTemplate?: string;
+  /**
    * Route-derived scope set used to build the 403 insufficient_scope
    * remediation challenge. Consulted only when a validator reports a scope
    * failure.
@@ -382,9 +404,21 @@ export function bearerTokenFromHeaders(headers: Headers | undefined): string {
   return token;
 }
 
+/**
+ * Enforces `Authorization: Bearer <token>` and, when missing or invalid,
+ * returns 401 with the MCP 2025-06-18 compatible WWW-Authenticate challenge
+ * that points to the protected resource metadata.
+ *
+ * A `resourceMetadataURLTemplate` is compiled here, at registration, and a
+ * malformed template throws: the middleware never serves a request whose
+ * challenge would advertise a broken or partially resolved discovery URL.
+ */
 export function requireBearerTokenMiddleware(
   options: RequireBearerTokenOptions = {},
 ): Middleware {
+  const resourceMetadataURLTemplate = compileResourceMetadataURLTemplate(
+    options.resourceMetadataURLTemplate,
+  );
   return async (ctx, next) => {
     let token: string;
     try {
@@ -396,13 +430,22 @@ export function requireBearerTokenMiddleware(
         return await next(ctx);
       }
       if (!options.validator) {
-        return await unauthorizedResponse(ctx, options);
+        return await unauthorizedResponse(
+          ctx,
+          options,
+          resourceMetadataURLTemplate,
+        );
       }
       await options.validator(ctx, token);
       ctx.set(CONTEXT_KEY_BEARER_TOKEN, token);
       return await next(ctx);
     } catch (err) {
-      return await bearerErrorResponse(ctx, options, err);
+      return await bearerErrorResponse(
+        ctx,
+        options,
+        err,
+        resourceMetadataURLTemplate,
+      );
     }
   };
 }
@@ -540,11 +583,228 @@ export function pkceVerifyS256(
   return pkceChallengeS256(verifier) === String(expectedChallenge ?? "");
 }
 
+// A `{param}` protected-resource metadata URL template, compiled once at
+// registration so request time only validates and interpolates the matched
+// route parameters.
+interface ResourceMetadataURLTemplate {
+  template: string;
+  rawPath: string;
+  params: string[];
+}
+
+const RESOURCE_METADATA_URL_TEMPLATE_MAX_PARAM_BYTES = 128;
+
+// Placeholder names are deliberately narrow: they name route parameters, not
+// free-form expressions.
+const RESOURCE_METADATA_URL_TEMPLATE_PARAM_PATTERN = /^[a-z][a-z0-9_]*$/u;
+
+// The only bytes that may be interpolated into the advertised challenge URL.
+// The alphabet is the RFC 3986 unreserved set plus the three path-safe
+// punctuation bytes RFC 3986 allows unescaped; it is deliberately narrower than
+// the router's own segment rule, so the advertised URL cannot differ from the
+// matched route through case folding, percent-decoding, or separator handling
+// in a proxy, CDN, or client.
+const RESOURCE_METADATA_URL_TEMPLATE_VALUE_PATTERN = new RegExp(
+  `^[a-z0-9._~-]{1,${RESOURCE_METADATA_URL_TEMPLATE_MAX_PARAM_BYTES}}$`,
+  "u",
+);
+
+/**
+ * Validates a template and records the route parameters it interpolates.
+ *
+ * A template is valid when it is an absolute HTTPS URL with no userinfo, query,
+ * fragment, or percent-escape, with no `.` or `..` path segment, and every
+ * `{param}` placeholder sits in the URL path and names a lower-case route
+ * parameter. Placeholders outside the path are refused, because interpolating
+ * one would let a request steer the advertised authority rather than only its
+ * path suffix.
+ *
+ * A malformed template throws here, at registration, so a bad configuration
+ * fails closed at startup instead of at request time.
+ */
+function compileResourceMetadataURLTemplate(
+  raw: string | undefined,
+): ResourceMetadataURLTemplate | null {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) return null;
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template is not an absolute URL",
+    );
+  }
+  if (url.protocol !== "https:") {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template must be an absolute HTTPS URL",
+    );
+  }
+  // `new URL` reads `https:host/path` as a host, but Go reads it as an opaque
+  // URL with no host; require the explicit authority separator Go expects.
+  const afterScheme = trimmed.slice(url.protocol.length);
+  if (!afterScheme.startsWith("//")) {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template is not an absolute URL",
+    );
+  }
+  if (!url.host || !url.hostname) {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template must include a host",
+    );
+  }
+  // Split the raw authority and path out of the template text: the checks below
+  // read them rather than the parsed URL, because WHATWG normalization drops the
+  // differences Go and Python refuse (empty userinfo, dot segments).
+  const remainder = afterScheme.slice(2);
+  const slash = remainder.indexOf("/");
+  const authority = slash < 0 ? remainder : remainder.slice(0, slash);
+  const rawPath = slash < 0 ? "" : remainder.slice(slash);
+  // Userinfo is refused on the raw authority text: WHATWG parses
+  // `https://@api.example.com/x` to an empty userinfo, so `url.username ||
+  // url.password` is falsy and would let it through, while Go's
+  // `url.User != nil` and Python's `username is not None` both refuse it.
+  if (authority.includes("@")) {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template must not include userinfo",
+    );
+  }
+  if (trimmed.includes("?")) {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template must not include a query",
+    );
+  }
+  if (trimmed.includes("#")) {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template must not include a fragment",
+    );
+  }
+  if (authority.includes("{") || authority.includes("}")) {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template placeholders must appear in the path, not the authority",
+    );
+  }
+  if (rawPath.includes("%")) {
+    throw new Error(
+      "invalid ResourceMetadataURLTemplate: template must not percent-encode its path",
+    );
+  }
+  if (hasDotPathSegment(rawPath)) {
+    throw new Error(
+      'invalid ResourceMetadataURLTemplate: template must not contain a "." or ".." path segment',
+    );
+  }
+  return {
+    template: trimmed,
+    rawPath,
+    params: resourceMetadataURLTemplateParams(rawPath),
+  };
+}
+
+/**
+ * Reports whether a URL path carries a `.` or `..` segment.
+ *
+ * A static dot segment in a template is never intended, and the runtimes do not
+ * agree on what to do with one: Go and Python advertise the literal segment
+ * while a WHATWG URL parser normalizes it away, so the advertised URL would
+ * depend on the runtime. The template is refused instead.
+ */
+function hasDotPathSegment(rawPath: string): boolean {
+  return rawPath
+    .split("/")
+    .some((segment) => segment === "." || segment === "..");
+}
+
+/**
+ * Returns the distinct placeholder names in path order, refusing anything that
+ * is not a well-formed `{param}`.
+ */
+function resourceMetadataURLTemplateParams(rawPath: string): string[] {
+  const params: string[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < rawPath.length;) {
+    const char = rawPath[index];
+    if (char === "{") {
+      const end = rawPath.indexOf("}", index);
+      if (end < 0) {
+        throw new Error(
+          "invalid ResourceMetadataURLTemplate: template placeholder is unterminated",
+        );
+      }
+      const name = rawPath.slice(index + 1, end);
+      if (!RESOURCE_METADATA_URL_TEMPLATE_PARAM_PATTERN.test(name)) {
+        throw new Error(
+          `invalid ResourceMetadataURLTemplate: template placeholder "${name}" is not a route parameter name`,
+        );
+      }
+      if (!seen.has(name)) {
+        seen.add(name);
+        params.push(name);
+      }
+      index = end + 1;
+      continue;
+    }
+    if (char === "}") {
+      throw new Error(
+        'invalid ResourceMetadataURLTemplate: template has an unmatched "}"',
+      );
+    }
+    index += 1;
+  }
+  return params;
+}
+
+/**
+ * Interpolates the matched route parameters into the template.
+ *
+ * Every placeholder must be present in the matched route and its value must
+ * satisfy the pinned value rule; the resolved path is then checked to be free
+ * of leftover placeholders. A failure returns null so the caller emits the bare
+ * `Bearer` challenge instead of a literal placeholder or a partially resolved
+ * URL.
+ */
+function resolveResourceMetadataURLTemplate(
+  template: ResourceMetadataURLTemplate,
+  params: Record<string, string> | undefined,
+): string | null {
+  let resolvedPath = template.rawPath;
+  for (const name of template.params) {
+    const value = String((params ?? {})[name] ?? "");
+    if (!isSafeResourceMetadataURLTemplateValue(value)) return null;
+    resolvedPath = resolvedPath.replaceAll(`{${name}}`, value);
+  }
+  if (resolvedPath.includes("{") || resolvedPath.includes("}")) return null;
+  if (template.rawPath === "") return template.template;
+  const url = new URL(template.template);
+  url.pathname = resolvedPath;
+  return url.toString();
+}
+
+/**
+ * Reports whether a route parameter value may be interpolated into the
+ * advertised challenge URL.
+ *
+ * The pinned rule accepts 1..128 bytes drawn from `[a-z0-9._~-]`, excluding the
+ * dot segments `.` and `..`. Everything else — empty, `/`-containing,
+ * percent-encoded, upper-case, whitespace, control, or non-ASCII — is refused,
+ * and the caller then emits the bare `Bearer` challenge.
+ */
+function isSafeResourceMetadataURLTemplateValue(value: string): boolean {
+  if (value === "." || value === "..") return false;
+  return RESOURCE_METADATA_URL_TEMPLATE_VALUE_PATTERN.test(value);
+}
+
 async function unauthorizedResponse(
   ctx: Context,
   options: RequireBearerTokenOptions,
+  resourceMetadataURLTemplate: ResourceMetadataURLTemplate | null,
 ): Promise<Response> {
-  const metadataURL = await resolveResourceMetadataURL(ctx, options);
+  const metadataURL = await resolveResourceMetadataURL(
+    ctx,
+    options,
+    resourceMetadataURLTemplate,
+  );
   const headers: Headers = {
     "content-type": ["application/json; charset=utf-8"],
   };
@@ -568,9 +828,14 @@ async function unauthorizedResponse(
 async function insufficientScopeResponse(
   ctx: Context,
   options: RequireBearerTokenOptions,
+  resourceMetadataURLTemplate: ResourceMetadataURLTemplate | null,
 ): Promise<Response> {
   const scopes = await resolveRequiredScopes(ctx, options.requiredScopes);
-  const metadataURL = await resolveResourceMetadataURL(ctx, options);
+  const metadataURL = await resolveResourceMetadataURL(
+    ctx,
+    options,
+    resourceMetadataURLTemplate,
+  );
   const headers: Headers = {
     "content-type": ["application/json; charset=utf-8"],
     "www-authenticate": [insufficientScopeWWWAuthenticate(scopes, metadataURL)],
@@ -611,26 +876,33 @@ async function bearerErrorResponse(
   ctx: Context,
   options: RequireBearerTokenOptions,
   err: unknown,
+  resourceMetadataURLTemplate: ResourceMetadataURLTemplate | null,
 ): Promise<Response> {
   if (err instanceof OAuthBearerError) {
     if (err.oauthCode === ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE) {
-      return await insufficientScopeResponse(ctx, options);
+      return await insufficientScopeResponse(
+        ctx,
+        options,
+        resourceMetadataURLTemplate,
+      );
     }
     if (err.oauthCode === ERR_BEARER_TOKEN_INVALID_AUDIENCE) {
       return forbiddenResponse();
     }
   }
-  return await unauthorizedResponse(ctx, options);
+  return await unauthorizedResponse(ctx, options, resourceMetadataURLTemplate);
 }
 
 /**
  * Resolves the RFC 9728 protected-resource metadata URL for a challenge. A
- * route-derived resolver takes precedence; a resolver failure degrades to no
+ * route-derived resolver takes precedence, then a route-parameter template,
+ * then the static option. A resolver or template failure degrades to no
  * challenge URL, matching the Go middleware.
  */
 async function resolveResourceMetadataURL(
   ctx: Context,
   options: RequireBearerTokenOptions,
+  resourceMetadataURLTemplate: ResourceMetadataURLTemplate | null,
 ): Promise<string> {
   const option = options.resourceMetadataURL;
   if (typeof option === "function") {
@@ -639,6 +911,13 @@ async function resolveResourceMetadataURL(
     } catch {
       return "";
     }
+  }
+  if (resourceMetadataURLTemplate) {
+    const resolved = resolveResourceMetadataURLTemplate(
+      resourceMetadataURLTemplate,
+      ctx.params,
+    );
+    return resolved ?? "";
   }
   return String(option ?? "").trim();
 }

@@ -63,5 +63,82 @@
       { "route_resource": "https://mcp.example.com/acme/mcp", "requested": "https://evil.example.com/acme/mcp" },
       { "route_resource": "https://mcp.example.com/acme/mcp", "requested": "" }
     ]
+  },
+  "resource_metadata_template": {
+    "notes": "The bearer middleware accepts an absolute HTTPS `{param}` template (`ResourceMetadataURLTemplate` / `resourceMetadataURLTemplate` / `resource_metadata_url_template`). Compilation happens once, at registration, and refuses a template that is not an absolute HTTPS URL free of userinfo (including an empty `@` userinfo, which a WHATWG parser accepts), query, fragment, or percent-escape, that carries a `.` or `..` path segment (Go and Python would advertise it literally while a WHATWG parser normalizes it away), or whose placeholders do not sit in the path and do not name route parameters. At request time every placeholder is interpolated from the matched route's path parameters, and a placeholder the route does not supply, or a value outside the pinned alphabet, fails closed to the bare `Bearer` challenge, so a literal placeholder is never advertised. Precedence is ResourceMetadataURLFunc > ResourceMetadataURLTemplate > ResourceMetadataURL.",
+    "value_rule": "A substituted route-parameter value must be 1..128 bytes of [a-z0-9._~-] and must not be \".\" or \"..\". Empty, `/`-containing, percent-encoded, upper-case, whitespace, control, backslash, and non-ASCII values are refused.",
+    "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp/{actor}",
+    "accept": [
+      {
+        "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp/{actor}",
+        "params": { "actor": "alpha" },
+        "expect_url": "https://api.example.com/.well-known/oauth-protected-resource/mcp/alpha"
+      },
+      {
+        "template": "https://api.example.com/.well-known/oauth-protected-resource/{client_namespace}/agents/{agent_id}/mcp",
+        "params": { "client_namespace": "acme", "agent_id": "agent-7" },
+        "expect_url": "https://api.example.com/.well-known/oauth-protected-resource/acme/agents/agent-7/mcp"
+      },
+      {
+        "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp",
+        "params": {},
+        "expect_url": "https://api.example.com/.well-known/oauth-protected-resource/mcp"
+      },
+      {
+        "template": "  https://api.example.com/.well-known/oauth-protected-resource/mcp/{actor}  ",
+        "params": { "actor": "alpha.beta_1~x" },
+        "expect_url": "https://api.example.com/.well-known/oauth-protected-resource/mcp/alpha.beta_1~x"
+      }
+    ],
+    "refused_template": [
+      { "template": "http://api.example.com/.well-known/oauth-protected-resource/mcp/{actor}" },
+      { "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp/{actor}?tenant=acme" },
+      { "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp/{actor}#frag" },
+      { "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp/{Actor}" },
+      { "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp/{}/mcp" },
+      { "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp/{actor" },
+      { "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp/actor}" },
+      { "template": "https://user@api.example.com/.well-known/oauth-protected-resource/mcp/{actor}" },
+      { "template": "https://{actor}.example.com/.well-known/oauth-protected-resource/mcp" },
+      { "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp%2F{actor}" },
+      { "template": "https://@api.example.com/.well-known/oauth-protected-resource/mcp/{actor}" },
+      { "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp/../{actor}" },
+      { "template": "https://api.example.com/.well-known/oauth-protected-resource/./mcp/{actor}" },
+      { "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp/.." }
+    ],
+    "refused_value": [
+      { "params": { "actor": "" } },
+      { "params": { "actor": "." } },
+      { "params": { "actor": ".." } },
+      { "params": { "actor": "alpha/beta" } },
+      { "params": { "actor": "alpha%2Fbeta" } },
+      { "params": { "actor": "Alpha" } },
+      { "params": { "actor": "alpha beta" } },
+      { "params": { "actor": "alpha\tbeta" } },
+      { "params": { "actor": "alpha\\beta" } },
+      { "params": { "actor": "alpha\u0000beta" } },
+      { "params": { "actor": "alphä" } },
+      { "params": { "actor": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
+    ],
+    "missing_param": [
+      { "params": {} },
+      { "params": { "namespace": "acme" } }
+    ],
+    "precedence": {
+      "notes": "A route-derived resolver wins over the template, and the template wins over the static URL.",
+      "func_wins": {
+        "resource_metadata_url_func": "https://func.example.com/.well-known/oauth-protected-resource/mcp/alpha",
+        "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp/{actor}",
+        "resource_metadata_url": "https://static.example.com/.well-known/oauth-protected-resource/mcp",
+        "params": { "actor": "alpha" },
+        "expect_url": "https://func.example.com/.well-known/oauth-protected-resource/mcp/alpha"
+      },
+      "template_wins": {
+        "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp/{actor}",
+        "resource_metadata_url": "https://static.example.com/.well-known/oauth-protected-resource/mcp",
+        "params": { "actor": "alpha" },
+        "expect_url": "https://api.example.com/.well-known/oauth-protected-resource/mcp/alpha"
+      }
+    }
   }
 }

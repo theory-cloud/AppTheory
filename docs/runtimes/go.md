@@ -5,7 +5,7 @@ description: The Go implementation of the AppTheory contract — routing, middle
 
 # Go Runtime
 
-The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — 275 single-envelope [contract fixtures](../reference/contract-fixtures.md) run in Go, TypeScript, and Python, while the remaining ten nested tables cover the MCP route algebra and the auth-facade surface (the M2 acceptance, M3a provider/store conformance, and M3b-i route-model and transport-posture tables load in every runtime; the route-algebra expectations and facade-inventory tables are Go/CDK-TS). <!-- apptheory-fixture-count: 285 -->
+The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — 275 single-envelope [contract fixtures](../reference/contract-fixtures.md) run in Go, TypeScript, and Python, while the remaining twelve nested tables cover the MCP route algebra and the auth-facade surface (the M2 acceptance, M3a provider/store conformance, and M3b-i route-model and transport-posture tables load in every runtime; the route-algebra expectations and facade-inventory tables are Go/CDK-TS). <!-- apptheory-fixture-count: 287 -->
 
 ## Install
 
@@ -181,11 +181,11 @@ See the [MCP Method Surface](../integrations/mcp.md) for the full Streamable HTT
 
 ## What's verified
 
-The Go runtime passes the 275 generic runner fixtures and directly consumes the MCP route-algebra, facade-inventory, and MCP auth-facade tables, covering all 285 contract vectors on every commit. <!-- apptheory-fixture-count: 285 --> Any behavioral divergence on a shared surface is treated as a contract bug — fix the implementation, or update the fixture and prove the change holds across every participating runtime.
+The Go runtime passes the 275 generic runner fixtures and directly consumes the MCP route-algebra, facade-inventory, and MCP auth-facade tables, covering all 287 contract vectors on every commit. <!-- apptheory-fixture-count: 287 --> Any behavioral divergence on a shared surface is treated as a contract bug — fix the implementation, or update the fixture and prove the change holds across every participating runtime.
 
 ## Next reads
 
 - [API Reference](../api-reference.md) — full surface table
 - [HTTP Runtime tiers](../features/http-runtime.md) — P0 / P1 / P2
 - [Event Shape Dispatch](../reference/event-shapes.md) — when `HandleLambda` calls what
-- [Contract Fixtures](../reference/contract-fixtures.md) — the 285-fixture covenant <!-- apptheory-fixture-count: 285 -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — the 287-fixture covenant <!-- apptheory-fixture-count: 287 -->

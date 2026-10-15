@@ -526,11 +526,13 @@ export async function newJwksValidator(
     if (missingScopes(claims.scopes, requiredScopes).length > 0) {
       throw new OAuthBearerError(ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE);
     }
-    // Only an absent (empty) `azp` falls back to `client_id`. A present but blank
-    // `azp` is compared as it stands and refused, so a token cannot use
-    // whitespace to steer the check onto the `client_id` claim; the stricter
-    // reading is identical in the Go and Python validators. The allow-list is
-    // built from trimmed values, so the comparison trims too.
+    // An `azp` that is absent or empty falls back to `client_id`. A present but
+    // blank (whitespace) `azp` is compared as it stands and refused, so a token
+    // cannot use whitespace to steer the check onto the `client_id` claim. A
+    // present `azp` that is not a string never reaches this point: `stringClaim`
+    // refuses it as `claim_invalid` while the claims are parsed, and the Go and
+    // Python validators refuse the same value at their claim decode. The
+    // allow-list is built from trimmed values, so the comparison trims too.
     const azp = claims.azp === "" ? claims.clientId : claims.azp;
     if (azpAllowList.size > 0 && !azpAllowList.has(azp.trim())) {
       throw invalidToken("azp_not_allowed");
@@ -851,13 +853,39 @@ async function boundRefreshWait(
 }
 
 /**
+ * Joins the body-stream cancellations one read started, bounded by the same
+ * deadline as the reads. A cancellation that is still in flight is awaited
+ * first, so the stream is never torn down behind the caller's back, but a
+ * `cancel()` that never settles — an injected transport is free to return one —
+ * is abandoned once the deadline expires instead of hanging the validation past
+ * its fetch bound. A cancellation that fails is already settled and is dropped
+ * with the same reasoning: the read's own outcome is what the caller must see.
+ */
+async function joinCancellations(
+  cancellations: readonly Promise<unknown>[],
+  race: DeadlineRace,
+): Promise<void> {
+  for (const cancellation of cancellations) {
+    try {
+      await race(cancellation);
+    } catch {
+      // The fetch deadline expired first: the cancellation that never settled is
+      // dropped rather than awaited past the bound. The read's own outcome is
+      // what the caller must see.
+    }
+  }
+}
+
+/**
  * Reads a document body while enforcing `MAX_DOCUMENT_BYTES`: a streamed body is
  * cancelled as soon as the running total crosses the cap, so oversized content
  * is never buffered whole. Every read races `race` (the fetch deadline), so a
  * stalled or trickling body is bounded by the same deadline as the response
  * head; `signal` is that deadline's controller, and when it aborts the body
  * stream is cancelled too, so the stalled response stops occupying its
- * connection instead of being abandoned mid-read.
+ * connection instead of being abandoned mid-read. Every cancellation, including
+ * the abort and the oversized-body ones, is joined under that same deadline, so
+ * a body whose `cancel()` never settles cannot hang the caller past the bound.
  */
 async function readBoundedBody(
   response: Response,
@@ -886,6 +914,7 @@ async function readBoundedBody(
   };
   if (signal.aborted) {
     cancellations.push(reader.cancel());
+    await joinCancellations(cancellations, race);
     throw new Error(
       `${ERROR_PREFIX} fetch_timeout: document fetch exceeded the timeout`,
     );
@@ -900,7 +929,7 @@ async function readBoundedBody(
       if (value) {
         total += value.byteLength;
         if (total > MAX_DOCUMENT_BYTES) {
-          await reader.cancel();
+          await joinCancellations([reader.cancel()], race);
           throw tooLarge();
         }
         chunks.push(value);
@@ -909,7 +938,7 @@ async function readBoundedBody(
     return Buffer.concat(chunks).toString("utf8");
   } finally {
     signal.removeEventListener("abort", cancelOnAbort);
-    await Promise.all(cancellations);
+    await joinCancellations(cancellations, race);
   }
 }
 

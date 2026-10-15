@@ -59,6 +59,18 @@ const expectations = JSON.parse(
   ),
 );
 
+// The stage-global callback override is pinned by the facade route model so the
+// CDK construct and every runtime resolve the same derivations.
+const facadeRouteModel = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-route-model.v1.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
+
 function expectedEndpoint(expectation) {
   const endpoint = {
     kind: expectation.kind,
@@ -382,4 +394,54 @@ test("callback path resolution and normalization", () => {
     assert.throws(() => normalizeCallbackPath(bad), undefined, bad);
   }
   assert.throws(() => callbackPathForConfiguredPath(table.reject[0]));
+});
+
+test("shared facade route model pins the callback override derivations", () => {
+  const override = facadeRouteModel.callback_override;
+  assert.equal(override.default, facadeRouteModel.contract.default_callback_path);
+  assert.equal(DEFAULT_CALLBACK_PATH, override.default);
+  for (const row of override.cases) {
+    if (row.expect_error) {
+      assert.throws(
+        () => callbackPathForConfiguredPath(row.configured),
+        undefined,
+        `callbackPathForConfiguredPath ${JSON.stringify(row)}`,
+      );
+      assert.throws(
+        () => normalizeCallbackPath(row.configured),
+        undefined,
+        `normalizeCallbackPath ${JSON.stringify(row)}`,
+      );
+      continue;
+    }
+    assert.equal(
+      callbackPathForConfiguredPath(row.configured),
+      row.expect_pattern,
+      JSON.stringify(row),
+    );
+  }
+});
+
+test("shared facade route model pins the derived route-path charset", () => {
+  const section = facadeRouteModel.route_path_charset;
+  assert.ok(section, "the route model must carry a route_path_charset section");
+  assert.ok(
+    Array.isArray(section.cases) && section.cases.length > 0,
+    "the route_path_charset section must carry cases",
+  );
+  for (const row of section.cases) {
+    if (row.expect_error) {
+      assert.throws(
+        () => parseMcpPath(row.path),
+        undefined,
+        `parseMcpPath ${JSON.stringify(row)}`,
+      );
+      continue;
+    }
+    assert.deepEqual(
+      parseMcpPath(row.path),
+      { kind: ENDPOINT_KIND_NAMESPACE, clientNamespace: "acme" },
+      JSON.stringify(row),
+    );
+  }
 });

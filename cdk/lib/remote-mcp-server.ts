@@ -1,4 +1,4 @@
-import { Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
+import { Annotations, Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as s3 from "aws-cdk-lib/aws-s3";
@@ -10,6 +10,8 @@ import {
   type AppTheoryRestApiRouterDomainOptions,
   type AppTheoryRestApiRouterStageOptions,
 } from "./rest-api-router";
+import { AppTheoryMcpPaths } from "./mcp-paths";
+import { AppTheoryMcpRouteAlgebra } from "./mcp-route-algebra";
 import { trimRepeatedChar } from "./private/string-utils";
 
 const STREAM_SPILL_INLINE_DEFAULT_BYTES = 32 * 1024;
@@ -92,8 +94,10 @@ export interface AppTheoryRemoteMcpServerProps {
    * co-registers the RFC 9728 discovery route at
    * `/.well-known/oauth-protected-resource/mcp/{actor}`.
    *
-   * The public `endpoint` and injected `MCP_ENDPOINT` environment variable
-   * become a template string ending in `/mcp/{actor}`.
+   * The public `endpoint` and `protectedResourceMetadataUrl` then become route
+   * templates ending in `/mcp/{actor}` and
+   * `/.well-known/oauth-protected-resource/mcp/{actor}` respectively. Both are
+   * derived from the same route model through the shared MCP route algebra.
    *
    * @default false
    */
@@ -218,6 +222,31 @@ export class AppTheoryRemoteMcpServer extends Construct {
   public readonly endpoint: string;
 
   /**
+   * The route-derived RFC 9728 protected-resource metadata URL template.
+   *
+   * Derived from the same route model as `endpoint` through the shared MCP
+   * route algebra: the algebra's resource-path → protected-resource-path
+   * derivation applied to the transport resource path, mounted on the same
+   * origin. With `actorPath` enabled this is a per-actor template such as
+   * `https://{apiId}.execute-api.{region}.amazonaws.com/prod/.well-known/oauth-protected-resource/mcp/{actor}`;
+   * otherwise it is the family-wide
+   * `https://{apiId}.execute-api.{region}.amazonaws.com/prod/.well-known/oauth-protected-resource/mcp`.
+   *
+   * This is the construct's route-derived per-actor challenge surface. The
+   * construct injects no environment variable (the framework-injected
+   * `MCP_ENDPOINT` is retired), so pass this value into the adopter's own app
+   * code and configure it as the runtime's bearer template option —
+   * `oauth.RequireBearerTokenOptions{ResourceMetadataURLTemplate: ...}` (Go),
+   * `requireBearerTokenMiddleware({ resourceMetadataURLTemplate: ... })`
+   * (TypeScript), or
+   * `RequireBearerTokenOptions(resource_metadata_url_template=...)` (Python) —
+   * so the runtime resolves `{actor}` from the matched route and advertises a
+   * matching `WWW-Authenticate` challenge. Passing it as a static
+   * `ResourceMetadataURL` would advertise the literal `{actor}`.
+   */
+  public readonly protectedResourceMetadataUrl: string;
+
+  /**
    * The DynamoDB session table (if enabled).
    */
   public readonly sessionTable?: dynamodb.ITable;
@@ -250,7 +279,8 @@ export class AppTheoryRemoteMcpServer extends Construct {
       scopePermissionToMethod: props.scopePermissionToMethod,
     });
 
-    const transportPath = props.actorPath ? "/mcp/{actor}" : "/mcp";
+    const routeModel = remoteMcpRouteModel(props.actorPath);
+    const transportPath = routeModel.resourcePath;
 
     // Streamable HTTP routes (streaming enabled for SSE delivery)
     this.router.addLambdaIntegration(transportPath, ["POST"], props.handler, { streaming: true });
@@ -259,9 +289,21 @@ export class AppTheoryRemoteMcpServer extends Construct {
 
     if (props.actorPath) {
       this.router.addLambdaIntegration(
-        "/.well-known/oauth-protected-resource/mcp/{actor}",
+        routeModel.protectedResourcePath,
         ["GET"],
         props.handler,
+      );
+
+      // ADV-1148-1: the per-actor route is advertised as `protectedResourceMetadataUrl`
+      // (a URL template ending in `/mcp/{actor}`). No environment variable is injected,
+      // so the adopter must wire the value explicitly in their own app code.
+      Annotations.of(this).addWarning(
+        `actorPath: true mounts the per-actor route "${routeModel.protectedResourcePath}" and advertises it via the "protectedResourceMetadataUrl" property. ` +
+        "This construct injects no environment variable (the framework-injected MCP_ENDPOINT is retired), so pass \"protectedResourceMetadataUrl\" into your own app configuration and set it as the runtime's bearer template option: " +
+        "Go oauth.RequireBearerTokenOptions{ResourceMetadataURLTemplate: ...}, " +
+        "TypeScript requireBearerTokenMiddleware({ resourceMetadataURLTemplate: ... }), " +
+        "Python RequireBearerTokenOptions(resource_metadata_url_template=...). " +
+        "Without that wiring the protected per-actor route advertises only the bare \"Bearer\" challenge.",
       );
     }
     if (props.enableWellKnownMcpDiscovery) {
@@ -372,8 +414,9 @@ export class AppTheoryRemoteMcpServer extends Construct {
     }
 
     const stageName = props.stage?.stageName ?? "prod";
-    this.endpoint = computeMcpEndpoint(this.router, stageName, props.domain, props.actorPath);
-    this.addEnvironment(props.handler, "MCP_ENDPOINT", this.endpoint);
+    const endpointOrigin = computeEndpointOrigin(this.router, stageName, props.domain);
+    this.endpoint = `${endpointOrigin}${routeModel.resourcePath}`;
+    this.protectedResourceMetadataUrl = `${endpointOrigin}${routeModel.protectedResourcePath}`;
   }
 
   /**
@@ -414,20 +457,46 @@ function streamSpillExpirationDays(ttlMinutes: number): number {
   return Math.max(1, Math.ceil(ttlMinutes / (24 * 60)));
 }
 
-function computeMcpEndpoint(
+/** The construct's route model, derived through the shared MCP route algebra. */
+interface RemoteMcpRouteModel {
+  /** MCP transport resource path (`/mcp` or `/mcp/{actor}`). */
+  readonly resourcePath: string;
+
+  /** Algebra-derived RFC 9728 protected-resource metadata route. */
+  readonly protectedResourcePath: string;
+}
+
+/**
+ * Build the route model from the shared MCP route-algebra surface.
+ *
+ * The protected-resource route is never hand-written: it is the algebra's
+ * resource-path → protected-resource-path derivation, so the mounted metadata
+ * route and the `protectedResourceMetadataUrl` template cannot drift. The
+ * `{actor}` placeholder survives the derivation intact.
+ */
+function remoteMcpRouteModel(actorPath?: boolean): RemoteMcpRouteModel {
+  const resourcePath = actorPath
+    ? `${AppTheoryMcpPaths.MCP}/{actor}`
+    : AppTheoryMcpPaths.MCP;
+  return {
+    resourcePath,
+    protectedResourcePath:
+      AppTheoryMcpRouteAlgebra.protectedResourcePathFromMcpPath(resourcePath),
+  };
+}
+
+function computeEndpointOrigin(
   router: AppTheoryRestApiRouter,
   stageName: string,
   domain?: AppTheoryRestApiRouterDomainOptions,
-  actorPath?: boolean,
 ): string {
-  const suffix = actorPath ? "/mcp/{actor}" : "/mcp";
   if (!domain) {
     const stack = Stack.of(router);
     const stage = String(stageName ?? "").trim() || "prod";
-    return `https://${router.api.restApiId}.execute-api.${stack.region}.${stack.urlSuffix}/${stage}${suffix}`;
+    return `https://${router.api.restApiId}.execute-api.${stack.region}.${stack.urlSuffix}/${stage}`;
   }
 
   const basePath = trimRepeatedChar(String(domain.basePath ?? "").trim(), "/");
   const prefix = basePath ? `/${basePath}` : "";
-  return `https://${domain.domainName}${prefix}${suffix}`;
+  return `https://${domain.domainName}${prefix}`;
 }

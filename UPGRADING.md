@@ -115,8 +115,9 @@ Both forms decode to the same values, the grace replay is byte-identical **withi
 replay requires), and no contract pins cross-runtime byte equality — so a cross-language golden-file comparison
 must normalize the bytes or compare decoded values rather than raw bodies.
 
-**Not yet available in this line:** the **CDK `facade` wiring** (the follow-on milestone, M3c-2, owns it) — still no
-`cdk/**` change, so the construct's attach prop does not wire the provider and stores or the callback-path override.
+**Not yet available in this line:** the **CDK `facade` wiring** (the follow-on milestone, M3c-2, owns it) — the
+construct's attach prop does not yet wire the provider and stores. The stage-global callback path override is wired
+separately, through the construct's `upstreamCallbackPath` prop.
 
 The store `put` normalization was also aligned across Go, TypeScript, and Python: the reference stores now preserve a
 caller-supplied `status` verbatim and normalize a version below 1 to 1 in all three runtimes (Go was already the
@@ -340,9 +341,10 @@ clients. `family` mode keeps the previous single-issuer behavior.
 The bearer validator is now **route-aware**: the Go validator types receive the AppTheory request context, and all three
 runtimes accept route-derived audience, scope, and challenge metadata resolvers, so the audience can be the exact
 matched route URL. The challenge's `resource_metadata` is built from the matched route whenever a route-derived
-resolver is configured; the bearer middleware otherwise falls back to the explicit `ResourceMetadataURL` option and,
-last, to the `MCP_ENDPOINT` environment variable that the CDK construct injects in owned mode. It is never derived from
-the request's `Host` or forwarded headers.
+resolver (`ResourceMetadataURLFunc`) or a `{param}` `ResourceMetadataURLTemplate` / `resourceMetadataURLTemplate` /
+`resource_metadata_url_template` is configured; otherwise it comes from the explicit `ResourceMetadataURL` option
+(precedence: resolver > template > static URL). The middleware reads no environment variable, and with none configured
+it advertises the bare `Bearer` challenge. It is never derived from the request's `Host` or forwarded headers.
 
 AppTheory ships its first JWT/JWKS access-token validator in all three runtimes. It pins `RS256` (the `alg: none` and
 `HS*` algorithm-confusion families are refused), requires a bounded `kid` cache with one cooldown-limited refresh per
@@ -350,14 +352,20 @@ unknown kid **under a global unknown-kid fetch budget** (32 key-set fetches per 
 expiry-driven rotation refresh, caps `kid` strings at 256 characters, and keeps the `kid`-window map and the key cache
 bounded and evicting (1024 windows / 128 keys). Every discovery and JWKS fetch is bounded end to end — the response
 headers and its body alike — by a 10-second framework timeout, so a hung, stalled, or trickling upstream cannot stall
-validation, and a refresh never holds the key lock across the network. It checks the issuer before and after signature
-verification, enforces the route-derived audience/scope and an `azp`/`client_id` allow-list — an absent `azp` falls back
-to `client_id`, while a present but blank `azp` is refused rather than falling back, identically in all three runtimes —
-and bootstraps OIDC discovery over HTTPS only, verifying the discovery issuer before trusting `jwks_uri` and refusing
-cross-origin redirects. Every failure path fails closed. The timeout and the budgets are framework defaults with a
-documented per-validator override (Go `FetchTimeout` / `MaxUnknownKidFetches` / `UnknownKidFetchWindow`, TypeScript
-`fetchTimeoutSeconds` / `maxUnknownKidFetches` / `unknownKidFetchWindowSeconds`, Python `http_timeout_seconds` /
-`max_unknown_kid_fetches` / `unknown_kid_fetch_window_seconds`).
+validation, and a refresh never holds the key lock across the network. Go and TypeScript additionally coalesce the
+key-set fetches of one validator (a single-flight refresh, so validations that miss the key cache at the same moment
+share one upstream fetch). Python does not coalesce: each concurrent unknown-`kid` validation there performs its own
+key-set fetch, and each of those fetches is independently bounded by the same 10-second timeout and charged against the
+same global unknown-`kid` fetch budget, so the gap is in upstream request volume rather than in the bound. It checks the
+issuer before and after signature verification, enforces the route-derived audience/scope and an `azp`/`client_id`
+allow-list — an absent `azp` falls back to `client_id`, while a present but blank `azp` is refused rather than falling
+back, and a present `azp` that is not a JSON string is refused as a malformed claim instead of being read as the
+`client_id`, identically in all three runtimes — and bootstraps OIDC discovery over HTTPS only, verifying the discovery
+issuer before trusting `jwks_uri` and refusing cross-origin redirects. Every failure path fails closed. The timeout and
+the budgets are framework defaults with a documented per-validator override (Go `FetchTimeout` / `MaxUnknownKidFetches`
+/ `UnknownKidFetchWindow`, TypeScript `fetchTimeoutSeconds` / `maxUnknownKidFetches` /
+`unknownKidFetchWindowSeconds`, Python `http_timeout_seconds` / `max_unknown_kid_fetches` /
+`unknown_kid_fetch_window_seconds`).
 
 The framework's own JWKS/discovery transport refuses to connect to an endpoint host that is not a public address —
 loopback, link-local (including the cloud metadata address `169.254.169.254`), private, unspecified, or multicast —
@@ -672,10 +680,21 @@ Every v3.1.x A6 prop except `handler` is deprecated in place: move `mcpPath` to 
 forms and `routeInventory`. The `api` accessor remains but is generalized to `IHttpApi`.
 
 `MCP_SESSION_TABLE` and `MCP_SESSION_TTL_MINUTES` remain construct-managed when session state is enabled.
-`MCP_ENDPOINT` is written only in owned mode, where the construct knows the public endpoint it owns. Attach-mode
-applications behind a front door or CDN must configure the correct request-specific bearer challenge in app-owned
-runtime configuration; the construct does not accept an origin prop. Review the complete migration table in
-[the MCP server facade guide](docs/features/mcp-server-construct.md) before upgrading.
+`MCP_ENDPOINT` is fully retired in v6: no construct writes it and no runtime reads it, so there is no shim. The bearer
+challenge is app-owned configuration — a route-derived `ResourceMetadataURLFunc`, the per-actor
+`ResourceMetadataURLTemplate` (TypeScript `resourceMetadataURLTemplate`, Python `resource_metadata_url_template`), or an
+explicit `ResourceMetadataURL` (precedence: resolver > template > static) — with the bare `Bearer` form when none is
+configured. `AppTheoryRemoteMcpServer` exposes the route-derived `protectedResourceMetadataUrl` (the RFC 9728 metadata
+URL template, with `{actor}` preserved when `actorPath` is enabled); `AppTheoryMcpServer` exposes the same route model
+through `routeInventory`.
+
+If you run the legacy `AppTheoryRemoteMcpServer` with `actorPath: true` and change nothing, the per-actor route
+advertises only the bare `Bearer` challenge: the construct injects no environment variable, so it cannot wire the
+challenge for you. The construct now emits a synth warning on that route naming `protectedResourceMetadataUrl`, and the
+fix is to pass `protectedResourceMetadataUrl` into your own app config and set it as your runtime's template option
+(`ResourceMetadataURLTemplate` / `resourceMetadataURLTemplate` / `resource_metadata_url_template`) so the middleware
+resolves `{actor}` from the matched route. The construct still does not accept a public-origin prop (THE-2861). Review
+the complete migration table in [the MCP server facade guide](docs/features/mcp-server-construct.md) before upgrading.
 
 `AppTheoryMcpProtectedResource` remains supported only for existing synth-time-static REST API documents. Its
 URL-valued `resource` and `authorizationServers` props stay deprecated; it is not a parallel namespace deployment

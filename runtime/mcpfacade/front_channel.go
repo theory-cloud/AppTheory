@@ -278,8 +278,13 @@ type authorizeUpstreamRequest struct {
 }
 
 // authorizeUpstreamURL records the single-use transaction and returns the
-// upstream authorize URL. An empty URL with a nil error is the provider-call
-// failure class.
+// upstream authorize URL. A failure of either provider call — the app-supplied
+// providerHints or the provider's AuthorizationURL builder — is the
+// provider-call failure class, so it returns the sentinel of a nil error with
+// an empty URL, which handleAuthorize renders as the gateway-class 502
+// upstream_error page (DESIGN §8.1/§8.2). Every internal error (opaque token,
+// PKCE verifier/challenge, callback URL, transaction store) still returns its
+// error, so a genuine internal failure propagates.
 func (config normalizedConfig) authorizeUpstreamURL(
 	ctx *apptheory.Context,
 	front *frontChannelConfig,
@@ -287,7 +292,7 @@ func (config normalizedConfig) authorizeUpstreamURL(
 ) (string, error) {
 	hints, err := front.providerHintValues(ctx)
 	if err != nil {
-		return "", err
+		return "", nil
 	}
 	upstreamState, err := oauth.NewOpaqueToken()
 	if err != nil {
@@ -325,7 +330,7 @@ func (config normalizedConfig) authorizeUpstreamURL(
 	if err = front.stores.Transaction.Put(ctx.Context(), transaction); err != nil {
 		return "", err
 	}
-	return front.provider.AuthorizationURL(oauth.AuthorizationRequest{
+	upstreamURL, err := front.provider.AuthorizationURL(oauth.AuthorizationRequest{
 		UpstreamClientID:    front.upstreamClientID,
 		CallbackURL:         callbackURL,
 		CodeChallenge:       upstreamChallenge,
@@ -335,6 +340,10 @@ func (config normalizedConfig) authorizeUpstreamURL(
 		Scopes:              append(append([]string(nil), request.scopes...), front.lifecycleScopes...),
 		Hints:               hints,
 	})
+	if err != nil {
+		return "", nil
+	}
+	return upstreamURL, nil
 }
 
 func (front *frontChannelConfig) providerHintValues(ctx *apptheory.Context) (map[string]string, error) {

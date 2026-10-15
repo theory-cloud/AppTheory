@@ -19,6 +19,28 @@ type AppTheoryRemoteMcpServer interface {
 	Endpoint() *string
 	// The tree node.
 	Node() constructs.Node
+	// The route-derived RFC 9728 protected-resource metadata URL template.
+	//
+	// Derived from the same route model as `endpoint` through the shared MCP
+	// route algebra: the algebra's resource-path → protected-resource-path
+	// derivation applied to the transport resource path, mounted on the same
+	// origin. With `actorPath` enabled this is a per-actor template such as
+	// `https://{apiId}.execute-api.{region}.amazonaws.com/prod/.well-known/oauth-protected-resource/mcp/{actor}`;
+	// otherwise it is the family-wide
+	// `https://{apiId}.execute-api.{region}.amazonaws.com/prod/.well-known/oauth-protected-resource/mcp`.
+	//
+	// This is the construct's route-derived per-actor challenge surface. The
+	// construct injects no environment variable (the framework-injected
+	// `MCP_ENDPOINT` is retired), so pass this value into the adopter's own app
+	// code and configure it as the runtime's bearer template option —
+	// `oauth.RequireBearerTokenOptions{ResourceMetadataURLTemplate: ...}` (Go),
+	// `requireBearerTokenMiddleware({ resourceMetadataURLTemplate: ... })`
+	// (TypeScript), or
+	// `RequireBearerTokenOptions(resource_metadata_url_template=...)` (Python) —
+	// so the runtime resolves `{actor}` from the matched route and advertises a
+	// matching `WWW-Authenticate` challenge. Passing it as a static
+	// `ResourceMetadataURL` would advertise the literal `{actor}`.
+	ProtectedResourceMetadataUrl() *string
 	// The underlying REST API router.
 	Router() AppTheoryRestApiRouter
 	// The DynamoDB session table (if enabled).
@@ -62,6 +84,16 @@ func (j *jsiiProxy_AppTheoryRemoteMcpServer) Node() constructs.Node {
 	_jsii_.Get(
 		j,
 		"node",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryRemoteMcpServer) ProtectedResourceMetadataUrl() *string {
+	var returns *string
+	_jsii_.Get(
+		j,
+		"protectedResourceMetadataUrl",
 		&returns,
 	)
 	return returns

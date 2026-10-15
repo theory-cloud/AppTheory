@@ -2,7 +2,7 @@
   "id": "mcp.auth.facade.conformance",
   "kind": "conformance",
   "status": "M3c-1b",
-  "description": "One issuer-pin table for the RFC 9207 `iss` check of the MCP auth facade. Go's oauth.CanonicalizeIssuerURL is the reference: the scheme is lowercased, the authority is preserved byte-for-byte (host case and any explicit port survive), trailing slashes are trimmed from the decoded path, the path keeps its `;`-separated parameters, the query is kept (including a bare trailing `?`) and the fragment is kept. A row matches when both sides canonicalize and the canonical forms are byte-equal. Every runtime's loader runs the same rows and asserts the same outcomes; the uppercase-host and fragment rows exist because a host-lowercasing (WHATWG URL) or fragment-dropping (urllib) canonicalizer would wrongly answer `match`, and the dangling-`?`, `;params` and non-numeric-port rows exist because a `urllib`-based canonicalizer would likewise answer `match` or accept a URL Go refuses. The `redirect_match` group pins the RFC 8252 section 7.3 loopback rule as the real `/authorize` handler applies it: an exact registered==requested pairing always accepts, a loopback pair accepts when scheme, host, path, query, and fragment match exactly and the port alone is free to differ or be absent on either side (the ADV-1144-2 case), while a non-loopback pair accepts only byte-for-byte, so a differing path, a scheme downgrade, a query or fragment mismatch, a `localhost` to `127.0.0.1` host substitution, a differing non-loopback URI, or a requested URI absent from the registered list all fail closed with a 400 and no redirect. The `form_parse` group pins the `/token` request-body rule as the real handler applies it: Go's url.ParseQuery is the reference, so a literal `;` separator or a malformed percent escape fails the whole parse with `invalid_request` and a repeat key keeps its first occurrence, and a raw body strictly larger than the 16384-byte framework bound is refused with `invalid_request` before any parsing. The `method_status` group pins the route-model method-mismatch contract against the real mounted app: a request to a mounted path with an unsupported method answers 405 with `allow` listing the permitted methods (sorted, comma-space separated), while a request to a path that is not mounted at all answers 404 with no `allow`. A row's `route` names a route the loader derives with the framework's route-algebra helpers for the `namespace` kind at MCP path `/acme/mcp`; `mcp`, `token`, `authorize`, `callback`, `discovery_canonical`, `discovery_suffix`, and `protected_resource` are mounted routes, whereas `unmounted_token` (the literal `/acme/mcp/token`) and `unknown` (the literal `/unknown/mcp/path`) are not mounted. The `dcr` group pins the RFC 7591 dynamic-client registration rule as the real `POST .../register` handler applies it: a public client (`token_endpoint_auth_method` absent, empty, or `none`) presenting at least one and at most ten redirect URIs that are each an absolute URL with no fragment and either `https` on any host or `http` on a loopback host registers with `201`, a server-assigned `client_id`, no `client_secret`, `cache-control: no-store`, and a `ClientRecord.BoundRoute` equal to the advertising route; an `http` non-loopback redirect and a fragment redirect are `400 invalid_redirect_uri`, a missing `redirect_uris`, a confidential `token_endpoint_auth_method`, and a present `grant_types` list that omits `authorization_code` are `400 invalid_client_metadata`, a raw body strictly larger than the 16384-byte framework bound is `400 invalid_client_metadata` before any parse, and unknown JSON members are ignored (RFC 7591); the eleventh registration attempt inside one rate-limit window is `429 temporarily_unavailable` with a `Retry-After` header. Each row is executed against a fresh mounted app, so the per-route registration bucket is deterministic. The `bound_route` group pins the registration route binding as the real `/authorize` and `/token` handlers apply it: a client registered through `POST .../register` is accepted only at the advertising route it registered at (its own route answers `302` at authorize and `200` at token), and is refused at any other mounted route with the same non-oracle `400 invalid_client` an unknown client gets (no `Location`, and no route named in the response), while a pre-registered client whose record carries no bound route stays valid at every route. A row's `registered_at` and `presented_at` name route keys the loader derives with the framework's route-algebra helpers rather than a hard-coded path: `namespace` is the route at MCP path `/acme/mcp` and `agent` is the second mounted route at MCP path `/acme/agents/agent-1/mcp`, whose advertising resource genuinely differs; a `refused` row also compares its response body byte-for-byte with the same request presented for a client the loader never registers at all, so the route-mismatch refusal is proven to be the unknown-client refusal. The `refresh` group pins the brokered refresh grant as the real `/token` handler applies it, with every row naming a `scenario` the loader implements after a common setup (a fresh mounted app, authorize plus callback, and the code exchange), so each row starts from a genuinely minted route handle: a refresh rotates the handle and answers `200` with the upstream access token byte-for-byte and a new framework handle; re-presenting the rotated (previous) handle from the same client inside the thirty-second grace window replays byte-identical successor tokens with no second upstream call, while re-presenting it after the window has passed is reuse and answers the same `400 invalid_grant` an unknown handle gets after revoking the whole grant, so the successor handle is refused afterwards; an unknown handle, a handle presented by another registered client, a handle presented at another route's token endpoint than the one it was minted for, a handle whose authorization code was replayed, and a terminal upstream refresh rejection are all the same non-oracle `400 invalid_grant`; a present `scope` that is not exactly the granted scope set is `400 invalid_scope` and a present `resource` that is not the bound resource is `400 invalid_target`, while an absent `scope`/`resource` takes the granted/bound value and an exactly equal one is accepted; a missing or oversized (over 512 bytes) handle is `400 invalid_request`; a transient upstream refresh failure is `503 temporarily_unavailable` with a `Retry-After` header; and no row's response carries upstream refresh material or an `id_token`.",
+  "description": "One issuer-pin table for the RFC 9207 `iss` check of the MCP auth facade. Go's oauth.CanonicalizeIssuerURL is the reference: the scheme is lowercased, the authority is preserved byte-for-byte (host case and any explicit port survive), trailing slashes are trimmed from the decoded path, the path keeps its `;`-separated parameters, the query is kept (including a bare trailing `?`) and the fragment is kept. A row matches when both sides canonicalize and the canonical forms are byte-equal. Every runtime's loader runs the same rows and asserts the same outcomes; the uppercase-host and fragment rows exist because a host-lowercasing (WHATWG URL) or fragment-dropping (urllib) canonicalizer would wrongly answer `match`, and the dangling-`?`, `;params` and non-numeric-port rows exist because a `urllib`-based canonicalizer would likewise answer `match` or accept a URL Go refuses. The `redirect_match` group pins the RFC 8252 section 7.3 loopback rule as the real `/authorize` handler applies it: an exact registered==requested pairing always accepts, a loopback pair accepts when scheme, host, path, query, and fragment match exactly and the port alone is free to differ or be absent on either side (the ADV-1144-2 case), while a non-loopback pair accepts only byte-for-byte, so a differing path, a scheme downgrade, a query or fragment mismatch, a `localhost` to `127.0.0.1` host substitution, a differing non-loopback URI, or a requested URI absent from the registered list all fail closed with a 400 and no redirect. The `form_parse` group pins the `/token` request-body rule as the real handler applies it: Go's url.ParseQuery is the reference, so a literal `;` separator or a malformed percent escape fails the whole parse with `invalid_request` and a repeat key keeps its first occurrence, and a raw body strictly larger than the 16384-byte framework bound is refused with `invalid_request` before any parsing. The `method_status` group pins the route-model method-mismatch contract against the real mounted app: a request to a mounted path with an unsupported method answers 405 with `allow` listing the permitted methods (sorted, comma-space separated), while a request to a path that is not mounted at all answers 404 with no `allow`. A row's `route` names a route the loader derives with the framework's route-algebra helpers for the `namespace` kind at MCP path `/acme/mcp`; `mcp`, `token`, `authorize`, `callback`, `discovery_canonical`, `discovery_suffix`, and `protected_resource` are mounted routes, whereas `unmounted_token` (the literal `/acme/mcp/token`) and `unknown` (the literal `/unknown/mcp/path`) are not mounted. The `dcr` group pins the RFC 7591 dynamic-client registration rule as the real `POST .../register` handler applies it: a public client (`token_endpoint_auth_method` absent, empty, or `none`) presenting at least one and at most ten redirect URIs that are each an absolute URL with no fragment and either `https` on any host or `http` on a loopback host registers with `201`, a server-assigned `client_id`, no `client_secret`, `cache-control: no-store`, and a `ClientRecord.BoundRoute` equal to the advertising route; an `http` non-loopback redirect and a fragment redirect are `400 invalid_redirect_uri`, and so is any fragment at all, empty or not: `https://client.example/callback#` is refused because RFC 6749 section 3.1.2 says a redirection endpoint URI must not include a fragment component and a `#` begins one whether or not anything follows it, and every runtime's rule is applied to the raw string because each one's URL parser normalizes a bare trailing `#` to an absent fragment (a percent-encoded `%23` inside a query value is not a fragment and is accepted), a missing `redirect_uris`, a confidential `token_endpoint_auth_method`, and a present `grant_types` list that omits `authorization_code` are `400 invalid_client_metadata`, a raw body strictly larger than the 16384-byte framework bound is `400 invalid_client_metadata` before any parse, and unknown JSON members are ignored (RFC 7591); the eleventh registration attempt inside one rate-limit window is `429 temporarily_unavailable` with a `Retry-After` header. Each row is executed against a fresh mounted app, so the per-route registration bucket is deterministic. The `bound_route` group pins the registration route binding as the real `/authorize` and `/token` handlers apply it: a client registered through `POST .../register` is accepted only at the advertising route it registered at (its own route answers `302` at authorize and `200` at token), and is refused at any other mounted route with the same non-oracle `400 invalid_client` an unknown client gets (no `Location`, and no route named in the response), while a pre-registered client whose record carries no bound route stays valid at every route. A row's `registered_at` and `presented_at` name route keys the loader derives with the framework's route-algebra helpers rather than a hard-coded path: `namespace` is the route at MCP path `/acme/mcp` and `agent` is the second mounted route at MCP path `/acme/agents/agent-1/mcp`, whose advertising resource genuinely differs; a `refused` row also compares its response body byte-for-byte with the same request presented for a client the loader never registers at all, so the route-mismatch refusal is proven to be the unknown-client refusal. The `refresh` group pins the brokered refresh grant as the real `/token` handler applies it, with every row naming a `scenario` the loader implements after a common setup (a fresh mounted app, authorize plus callback, and the code exchange), so each row starts from a genuinely minted route handle: a refresh rotates the handle and answers `200` with the upstream access token byte-for-byte and a new framework handle; re-presenting the rotated (previous) handle from the same client inside the thirty-second grace window replays byte-identical successor tokens with no second upstream call, while re-presenting it after the window has passed is reuse and answers the same `400 invalid_grant` an unknown handle gets after revoking the whole grant, so the successor handle is refused afterwards; an unknown handle, a handle presented by another registered client, a handle presented at another route's token endpoint than the one it was minted for, a handle whose authorization code was replayed, and a terminal upstream refresh rejection are all the same non-oracle `400 invalid_grant`; a present `scope` that is not exactly the granted scope set is `400 invalid_scope` and a present `resource` that is not the bound resource is `400 invalid_target`, while an absent `scope`/`resource` takes the granted/bound value and an exactly equal one is accepted; a missing or oversized (over 512 bytes) handle is `400 invalid_request`; a transient upstream refresh failure is `503 temporarily_unavailable` with a `Retry-After` header; and no row's response carries upstream refresh material or an `id_token`. The `metadata_registration` group pins the advertised `registration_endpoint` to the mounted `/register` route: the routed RFC 8414 document carries the member exactly while the front channel or an explicit register handler mounts that route, and omits it entirely otherwise, so a facade that mounts no register route never advertises a URL that 404s. A mounted route advertises the family URL in family issuer mode (the configured `RegistrationEndpointURL`, or the value derived from the family issuer when it is unset) and the route's own derived `/register` URL in route issuer mode. The `authorize_provider_failure` group pins the authorize leg's provider-call failure class as the real `/authorize` handler applies it: a failing provider AuthorizationURL builder (`fail: authorization_url`) and a failing app-supplied providerHints (`fail: provider_hints`) each render the same gateway-class `502` error page carrying the fixed `upstream_error` code with no `Location`, matching the callback's provider-failure class, while `400` stays the facade's own client-caused vocabulary (`invalid_client`/`invalid_request`/`invalid_target`).",
   "cases": [
     {
       "id": "issuer_pin.exact_equal_match",
@@ -459,6 +459,26 @@
       "expect_no_store": true
     },
     {
+      "id": "dcr.empty_fragment_redirect",
+      "group": "dcr",
+      "request": {"redirect_uris": ["https://client.example/callback#"]},
+      "repeat": 1,
+      "expect_status": 400,
+      "expect_body_has": ["invalid_redirect_uri"],
+      "expect_body_absent": ["client_secret"],
+      "expect_no_store": true
+    },
+    {
+      "id": "dcr.encoded_hash_in_query_accepted",
+      "group": "dcr",
+      "request": {"redirect_uris": ["https://client.example/callback?a=%23b"]},
+      "repeat": 1,
+      "expect_status": 201,
+      "expect_body_has": ["client_id"],
+      "expect_body_absent": ["client_secret"],
+      "expect_no_store": true
+    },
+    {
       "id": "dcr.missing_redirect_uris",
       "group": "dcr",
       "request": {},
@@ -681,6 +701,66 @@
       "expect_error": "temporarily_unavailable",
       "expect_retry_after": true,
       "expect_absent": ["upstream-refresh-token", "id_token"]
+    },
+    {
+      "id": "metadata_registration.family_without_a_register_route_omits_the_member",
+      "group": "metadata_registration",
+      "issuer_mode": "family",
+      "front_channel": false,
+      "expect": "absent"
+    },
+    {
+      "id": "metadata_registration.family_with_the_front_channel_advertises_the_family_url",
+      "group": "metadata_registration",
+      "issuer_mode": "family",
+      "front_channel": true,
+      "expect": "issuer_derived"
+    },
+    {
+      "id": "metadata_registration.family_with_a_register_handler_advertises_the_family_url",
+      "group": "metadata_registration",
+      "issuer_mode": "family",
+      "front_channel": false,
+      "register_handler": true,
+      "expect": "issuer_derived"
+    },
+    {
+      "id": "metadata_registration.route_with_the_front_channel_advertises_the_route_url",
+      "group": "metadata_registration",
+      "issuer_mode": "route",
+      "front_channel": true,
+      "expect": "route_derived"
+    },
+    {
+      "id": "metadata_registration.route_without_a_register_route_omits_the_member",
+      "group": "metadata_registration",
+      "issuer_mode": "route",
+      "front_channel": false,
+      "expect": "absent"
+    },
+    {
+      "id": "metadata_registration.family_with_an_explicit_endpoint_advertises_it",
+      "group": "metadata_registration",
+      "issuer_mode": "family",
+      "front_channel": true,
+      "registration_endpoint_url": "https://accounts.example.com/custom-register",
+      "expect": "configured"
+    },
+    {
+      "id": "authorize_provider_failure.authorization_url_error_is_502",
+      "group": "authorize_provider_failure",
+      "fail": "authorization_url",
+      "expect_status": 502,
+      "expect_body_has": ["upstream_error"],
+      "expect_no_location": true
+    },
+    {
+      "id": "authorize_provider_failure.provider_hints_error_is_502",
+      "group": "authorize_provider_failure",
+      "fail": "provider_hints",
+      "expect_status": 502,
+      "expect_body_has": ["upstream_error"],
+      "expect_no_location": true
     }
   ]
 }

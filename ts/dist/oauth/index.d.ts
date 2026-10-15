@@ -101,6 +101,28 @@ export interface RequireBearerTokenOptions {
      */
     resourceMetadataURL?: string | ((ctx: Context) => string | Promise<string>);
     /**
+     * Absolute HTTPS URL template whose `{param}` placeholders are interpolated
+     * from the matched route's path parameters, so a per-actor route
+     * (`/mcp/{actor}`) advertises that actor's own RFC 9728 metadata URL with no
+     * hand-rolled resolver. It is explicit application configuration: the
+     * middleware reads no environment variable.
+     *
+     * The template is compiled when the middleware is constructed. It must be an
+     * absolute HTTPS URL with no userinfo, query, fragment, or percent escape and
+     * no `.` or `..` path segment, and its placeholders must appear in the path
+     * and name route parameters; a malformed template throws at registration
+     * rather than advertising a broken discovery URL.
+     *
+     * At request time a placeholder the matched route does not supply, or whose
+     * value is not a safe single path segment, makes the middleware emit the bare
+     * `Bearer` challenge. It never advertises a literal placeholder, and an
+     * unresolvable template does not fall back to `resourceMetadataURL`.
+     *
+     * When set it takes precedence over `resourceMetadataURL`; a
+     * `resourceMetadataURL` function still takes precedence over it.
+     */
+    resourceMetadataURLTemplate?: string;
+    /**
      * Route-derived scope set used to build the 403 insufficient_scope
      * remediation challenge. Consulted only when a validator reports a scope
      * failure.
@@ -144,6 +166,15 @@ export declare function canonicalResourceURL(raw: string): string;
  */
 export declare function canonicalizeIssuerURL(raw: string): string | null;
 export declare function bearerTokenFromHeaders(headers: Headers | undefined): string;
+/**
+ * Enforces `Authorization: Bearer <token>` and, when missing or invalid,
+ * returns 401 with the MCP 2025-06-18 compatible WWW-Authenticate challenge
+ * that points to the protected resource metadata.
+ *
+ * A `resourceMetadataURLTemplate` is compiled here, at registration, and a
+ * malformed template throws: the middleware never serves a request whose
+ * challenge would advertise a broken or partially resolved discovery URL.
+ */
 export declare function requireBearerTokenMiddleware(options?: RequireBearerTokenOptions): Middleware;
 export declare function newMemoryBearerTokenValidator(records: BearerTokenRecord[], options?: BearerTokenValidationOptions): BearerTokenClaimsValidator;
 export declare function bearerTokenClaimsFromContext(ctx: Context): BearerTokenClaims | null;

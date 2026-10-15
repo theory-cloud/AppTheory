@@ -573,6 +573,9 @@ test("scopes, capabilities and registration endpoint are application-owned", asy
     codeChallengeMethods: ["plain"],
   };
   config.registrationEndpointURL = "https://accounts.example.com/custom-register";
+  // The configured endpoint is advertised only while the register route is
+  // mounted, so this config mounts a register handler.
+  config.registerHandler = kindHandlerFactory("register");
   registerMcpFacade(app, config);
 
   const protectedResource = await serve(
@@ -684,6 +687,9 @@ test("route issuer mode derives per-route issuer, resource and registration", as
   const app = createApp({ tier: "p0" });
   const config = validConfig();
   config.issuerMode = "route";
+  // The route-derived registration URL is advertised only while the register
+  // route is mounted, so this config mounts a register handler.
+  config.registerHandler = kindHandlerFactory("register");
   const inventory = registerMcpFacade(app, config);
   assert.equal(inventory.issuerMode, "route");
 
@@ -706,6 +712,47 @@ test("route issuer mode derives per-route issuer, resource and registration", as
   assert.equal(discovery.issuer, routeURL);
   assert.equal(
     discovery.registration_endpoint,
+    "https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/register",
+  );
+});
+
+test("routed metadata advertises registration only while the register route is mounted", async () => {
+  const advertised = async (config) => {
+    const app = createApp({ tier: "p0" });
+    registerMcpFacade(app, config);
+    const document = JSON.parse(
+      bodyString(
+        await serve(
+          app,
+          "GET",
+          "/.well-known/oauth-authorization-server/acme/mcp",
+        ),
+      ),
+    );
+    return document.registration_endpoint;
+  };
+
+  const family = validConfig();
+  assert.equal(await advertised(family), undefined);
+  family.registerHandler = kindHandlerFactory("register");
+  assert.equal(await advertised(family), "https://issuer.example.com/register");
+
+  const configured = validConfig();
+  configured.registrationEndpointURL =
+    "https://accounts.example.com/custom-register";
+  assert.equal(await advertised(configured), undefined);
+  configured.registerHandler = kindHandlerFactory("register");
+  assert.equal(
+    await advertised(configured),
+    "https://accounts.example.com/custom-register",
+  );
+
+  const route = validConfig();
+  route.issuerMode = "route";
+  assert.equal(await advertised(route), undefined);
+  route.registerHandler = kindHandlerFactory("register");
+  assert.equal(
+    await advertised(route),
     "https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/register",
   );
 });
@@ -954,7 +1001,9 @@ test("route model fixture patterns, stage-global route and worked example are pi
   assert.equal(discovery.issuer, resolved.issuer);
   assert.equal(discovery.authorization_endpoint, resolved.authorization_endpoint);
   assert.equal(discovery.token_endpoint, resolved.token_endpoint);
-  assert.equal(discovery.registration_endpoint, resolved.registration_endpoint);
+  // The worked example mounts no register route, so the routed document must
+  // omit registration_endpoint rather than advertise a URL that 404s.
+  assert.ok(!("registration_endpoint" in discovery));
 });
 
 test("default capabilities and defensive inventory clone", () => {
@@ -994,6 +1043,9 @@ test("advertised URLs match the shared normalization rows", async () => {
       config.jwksURI = row.input;
       config.registrationEndpointURL = row.input;
     }
+    // The registration URL is advertised only while the register route is
+    // mounted, so the row's expected endpoint is observable.
+    config.registerHandler = kindHandlerFactory("register");
 
     if (row.reject) {
       assert.throws(

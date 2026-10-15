@@ -470,13 +470,19 @@ def _authorized_party_from_token(token: str) -> str:
     """The verified token's azp claim, falling back to client_id.
 
     This only reads claims: the signature was already verified by the caller's
-    validator, and the token itself is never mutated. A blank azp falls back to
-    client_id, matching the Go and TypeScript adapters.
+    validator, and the token itself is never mutated. An absent, null, or blank
+    azp falls back to client_id, which is how the Go and TypeScript adapters read
+    the same token. A present azp that is not a string is a malformed claim
+    rather than an absent one, so it is attributed to no party instead of
+    standing in as client_id. That is the fail-closed reading, and the one the
+    Go adapter's claim decode already takes.
     """
     payload = _decode_payload(token)
     if payload is None:
         return ""
     azp = payload.get("azp")
+    if azp is not None and not isinstance(azp, str):
+        return ""
     trimmed = azp.strip() if isinstance(azp, str) else ""
     if trimmed:
         return trimmed

@@ -83,7 +83,8 @@ export class AgentCoreMcpStack extends cdk.Stack {
 
 This deploys an HTTP API v2 with the `/mcp` transport routes and no OAuth facade. AgentCore calls `POST /mcp`; the
 application must register the matching runtime handler, for example `app.Post("/mcp", srv.Handler())`. The construct
-writes `MCP_ENDPOINT` in owned mode, and `mcp.endpoints[0]` is the URL to configure in AgentCore.
+no longer writes `MCP_ENDPOINT`; `mcp.endpoints[0]` is the URL to configure in AgentCore, and the bearer challenge is
+app-owned configuration.
 
 If the singleton needs the full OAuth facade, drop `transportPosture` and register handlers for every derived entry in
 `mcp.routeInventory` in application code. Do not pair that singleton deployment with `RegisterMCPFacade`.

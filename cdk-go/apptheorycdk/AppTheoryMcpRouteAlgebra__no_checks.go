@@ -24,7 +24,15 @@ func validateAppTheoryMcpRouteAlgebra_AuthorizationTokenPathForResourcePathParam
 	return nil
 }
 
+func validateAppTheoryMcpRouteAlgebra_CallbackPathForConfiguredPathParameters(configured *string) error {
+	return nil
+}
+
 func validateAppTheoryMcpRouteAlgebra_McpPathParameters(endpoint *AppTheoryMcpEndpointPath) error {
+	return nil
+}
+
+func validateAppTheoryMcpRouteAlgebra_NormalizeCallbackPathParameters(rawPath *string) error {
 	return nil
 }
 

@@ -148,7 +148,8 @@ export interface FacadeConfig {
      * `account_id` hint. A hint carries no authority — the provider derives
      * authentication account context from its own validated binding, not from
      * the hint (DESIGN §6). An absent function contributes no hints; a rejected
-     * promise is a fail-closed request-class rejection that never redirects.
+     * promise is a provider-call failure in the gateway class, so it maps to the
+     * 502 upstream_error error page and never redirects (DESIGN §8.2).
      */
     providerHints?: (ctx: Context) => Record<string, string> | Promise<Record<string, string>>;
 }

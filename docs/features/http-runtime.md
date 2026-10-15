@@ -5,7 +5,7 @@ description: Tiered middleware, routing, normalization, and the AppTheory error 
 
 # HTTP Runtime (P0–P2)
 
-The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [285-vector corpus](../reference/contract-fixtures.md) includes 275 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the ten nested MCP route-algebra and auth-facade tables. <!-- apptheory-fixture-count: 285 -->
+The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [287-vector corpus](../reference/contract-fixtures.md) includes 275 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the twelve nested MCP route-algebra and auth-facade tables. <!-- apptheory-fixture-count: 287 -->
 
 The runtime is **tiered.** You opt into a tier when you create the app:
 
@@ -30,7 +30,12 @@ The smallest viable AppTheory:
 - `SourceProvenance` (see [Source Provenance](source-provenance.md)) — available even at P0
 - Strict route helpers (`GetStrict`, `handleStrict`, `handle_strict`)
 
-P0 is appropriate for tightly scoped functions that do their own auth, observability, and shedding.
+P0 is **the minimal tier, not a protected tier.** It is the frozen legacy pipeline and does **not** evaluate
+route-level transport postures: nothing about P0 adds an iam/jwt route guard, so an application that explicitly
+selects P0 must supply its own authentication (for example `oauth.RequireBearerTokenMiddleware`) or own transport
+authentication itself. P0 is appropriate for tightly scoped functions that do their own auth, observability, and
+shedding. The default tier (P2) and [SecureApp](secure-app.md) are the paths that evaluate the transport posture and
+its defense-in-depth pairing; the [MCP facade helper](mcp-facade-helper.md) states the same caveat for the facade.
 
 ### P1 — production HTTP defaults
 
@@ -344,4 +349,4 @@ Deliberately conservative, and reported rather than assumed joined:
 - [Logging Profiles](logging-profiles.md) — profile-backed structured JSON log output
 - [Sanitization](sanitization.md) — safe logging helpers
 - [Event Workloads](event-workloads.md) — the non-HTTP side of the runtime
-- [Contract Fixtures](../reference/contract-fixtures.md) — 285 vectors: 275 generic fixtures across Go/TS/Python plus ten nested MCP route-algebra and auth-facade tables <!-- apptheory-fixture-count: 285 -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — 287 vectors: 275 generic fixtures across Go/TS/Python plus twelve nested MCP route-algebra and auth-facade tables <!-- apptheory-fixture-count: 287 -->

@@ -55,6 +55,13 @@ Every upstream call goes through the same hardened HTTP stack the OIDC discovery
 deadline (10 s default), a 1 MiB response cap, a connect-time SSRF guard that refuses non-public addresses, and a
 redirect refusal. There is no separate, unbounded fetch path.
 
+**The JWKS key-set fetch is coalesced in Go and TypeScript, but not in Python.** The Go and TypeScript validators
+single-flight concurrent key-set fetches for one validator, so validations that miss the key cache at the same moment
+share a single upstream fetch. The Python validator does not coalesce: every concurrent unknown-`kid` validation
+performs its own key-set fetch. Each of those fetches is still independently bounded by the same 10-second deadline and
+still charges the same global unknown-`kid` fetch budget, so the difference is upstream request volume, not the bound
+and not the accept/reject decision.
+
 **`Refresh` must honor the deadline.** The framework's own adapter calls `Refresh` through that hardened stack, so
 the 10-second deadline bounds the upstream call it makes. An implementer's `Refresh` (or a durable store that backs
 the lock) must not ignore it: the broker refresh lock's TTL is 15 seconds — the 10-second deadline plus a 5-second
@@ -163,7 +170,7 @@ front-channel field may be set (the `/register` and callback routes then mount o
 | `UpstreamClientID` / `upstreamClientID` / `upstream_client_id` | The facade's own upstream client registration: sent on the upstream authorize request and presented on the server-side code exchange, **and** the expected `azp`/`client_id` of a validated upstream access token | empty | non-blank, well-formed Unicode, no NUL | Registration error (`… upstream client id is required and must be well-formed`) | DESIGN §8.1; DESIGN §5.2, §6 |
 | `UpstreamIssuer` / `upstreamIssuer` / `upstream_issuer` | The expected upstream issuer: the RFC 9207 `iss` the callback pins before consuming the transaction or exchanging the code, and the issuer `Discovery` must verify before any published endpoint is trusted | empty | absolute HTTPS URL, no query, no fragment, normalized like `IssuerURL` | Registration error (`… upstream issuer must be an absolute HTTPS URL without query or fragment`) | DESIGN §8.2; DESIGN §5.2, §6 |
 | `LifecycleScopes` / `lifecycleScopes` / `lifecycle_scopes` | Scope values added to every upstream authorize request but never required from the MCP client (for example `offline_access`) | absent — adds none | each value trimmed, non-empty, and well-formed Unicode; duplicates collapse | Registration error (`lifecycle scope values cannot be empty` / `… must be well-formed Unicode`) | FRAMEWORK_VS_POLICY row 7 |
-| `ProviderHints` / `providerHints` / `provider_hints` | The opaque per-request hint seam for one authorize request (for example `account_id`); a hint carries **no authority** | absent — contributes no hints | none at registration (the function is opaque); a returned error is a request-class rejection, never a redirect | Registration error when set without `Provider` | DESIGN §6 |
+| `ProviderHints` / `providerHints` / `provider_hints` | The opaque per-request hint seam for one authorize request (for example `account_id`); a hint carries **no authority** | absent — contributes no hints | none at registration (the function is opaque); a returned error is a provider-call failure in the gateway class (502 `upstream_error`), never a redirect | Registration error when set without `Provider` | DESIGN §6 |
 
 Every rejection uses the runtime's existing configuration-error prefix and the same message body (`mcpfacade: …`
 in Go, `AppTheoryMcpFacade: …` in TypeScript and Python).
@@ -252,7 +259,10 @@ belong to the framework rather than the application.
   contention failure is `503 temporarily_unavailable` with `Retry-After`. The grace window, the 3-second coalesce wait
   cap, the 512-byte handle bound, and the broker store's 15-second lock TTL are framework constants — no
   `FacadeConfig` field and no environment variable. The endpoint still answers `400 unsupported_grant_type` for every
-  other grant and `400 invalid_request` for an absent grant type.
+  other grant and `400 invalid_request` for an absent grant type. The refresh `503`'s `Retry-After` is a **fixed
+  framework constant** (1 second) and is never computed from the injected framework clock, so a test that advances
+  that clock can observe a `Retry-After` that disagrees with the harness's own real elapsed time — a harness artifact
+  of the two clocks, not a framework defect (ADV-1145-5).
 - **`POST …/register` — RFC 7591 dynamic client registration.** The framework-owned handler bounds and validates the
   client metadata, mints a server-assigned opaque `client_id` (≥128 bits), and stores the record through the
   `ClientStore`, hash-keyed and bound to the advertising route. Only **public clients** are accepted
@@ -270,8 +280,12 @@ belong to the framework rather than the application.
 **Provider failures are their own class.** A provider `AuthorizationURL` / `ExchangeCode` / `ValidateAccessToken`
 failure is never returned in the facade's `400` vocabulary: it is a distinct **`502`** carrying the fixed error code
 `upstream_error` (error page, no client redirect), so the facade's own request-class rejections and a gateway-class
-upstream failure stay distinguishable. The client-facing error vocabulary is closed and fixed — every rejection of one
-error code carries the same `error_description` — so the response never distinguishes an unknown key from a used one.
+upstream failure stay distinguishable. The rule is the same on both legs. On `/authorize`, a failure of the provider's
+`AuthorizationURL` builder **or of the app-supplied `ProviderHints`** is that gateway-class `502`, while the `400`
+vocabulary stays the facade's own client-caused rejections (`invalid_client`, `invalid_request`, `invalid_target`); on
+`/callback`, any exchange or token-validation failure is the `502`, which is what keeps the `iss` and `state` pins
+non-vacuous. The client-facing error vocabulary is closed and fixed — every rejection of one error code carries the
+same `error_description` — so the response never distinguishes an unknown key from a used one.
 
 **Encryption is still a store obligation.** The front channel hands each store the upstream material it must protect
 and relies on the store to seal it: a durable store **must** encrypt every `Encrypted*` field at rest, and the
@@ -331,8 +345,10 @@ facade itself derives when it looks a record up, and it grants no access of its 
 
 Still absent, by milestone:
 
-- **CDK wiring:** no `cdk/**` change; the construct's `facade` attach prop does not yet wire the provider and stores or
-  the callback-path override (Wired by the follow-on milestone M3c-2).
+- **CDK wiring:** the `AppTheoryMcpServer` construct wires the stage-global callback path override through
+  `upstreamCallbackPath`, resolved by the same `AppTheoryMcpRouteAlgebra.callbackPathForConfiguredPath` the runtime
+  applies to `UpstreamCallbackPath`, so the mounted and registered callback routes cannot diverge. The construct's
+  `facade` attach prop does not yet wire the provider and stores (wired by a follow-on milestone).
 - **A subset-accepting refresh scope:** not built and not planned. A present `scope` on a refresh must be exactly the
   granted set (ruling R4); the facade cannot narrow an upstream access token it returns byte-for-byte.
 - **A durable store:** the framework still ships none. The in-memory reference stores are non-durable and do not

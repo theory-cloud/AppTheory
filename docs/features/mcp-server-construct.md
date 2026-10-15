@@ -56,6 +56,30 @@ handlers for every entry in `routeInventory` and must not assume `RegisterMCPFac
 patterns. This boundary keeps the shipped helper and the deployed routes congruent instead of presenting a facade
 that returns 404 for every configured path.
 
+## Stage-global upstream callback
+
+The upstream OAuth callback is installed once per deployment rather than once per MCP kind: the callback is correlated
+by the single-use upstream state the facade minted, so no per-kind callback multiplies. The construct wires one `GET`
+route for it, exposed as `routeInventory.callbackPattern`.
+
+`upstreamCallbackPath` overrides the path. It must be a synthesis-time literal absolute path with no query, fragment, or
+dot segment, and it is normalized with the same rules as every other route path (`/cb/` becomes `/cb`). An empty value
+keeps the contract default, `AppTheoryMcpRouteAlgebra.DEFAULT_CALLBACK_PATH` (`/_oauth/mcp/callback`); a token, a
+relative path, or a value that collides with another derived route fails synthesis.
+
+```ts
+new AppTheoryMcpServer(this, "McpServer", {
+  handler,
+  upstreamCallbackPath: "/_oauth/mcp/callback",
+});
+```
+
+The construct resolves the prop through `AppTheoryMcpRouteAlgebra.callbackPathForConfiguredPath`, the same algebra the
+runtime applies to `FacadeConfig.UpstreamCallbackPath` in Go, TypeScript, and Python. Supplying the same value to the
+construct and to the runtime `FacadeConfig` keeps the CDK-mounted route and the runtime-registered route congruent
+instead of letting them diverge. `transportPosture: none-public` attaches no OAuth surface, so it refuses
+`upstreamCallbackPath`.
+
 ## Attach mode and owned mode
 
 Attach mode is for a shared front door. It adds `HttpRoute` resources to the supplied `IHttpApi` and creates no
@@ -135,7 +159,7 @@ policy and authorize/token behavior belong to the AppTheory runtime composition 
 fails closed if that pair is partial and does not install authorize/token runtime routes when both are absent.
 
 `none-public` wires only the three MCP transport methods and no OAuth facade, and it cannot be combined with
-`transportAuthorizer`, root discovery, the deprecated issuer/JWKS props, or `runtimePosture`.
+`transportAuthorizer`, root discovery, the deprecated issuer/JWKS props, `upstreamCallbackPath`, or `runtimePosture`.
 `RegisterMCPFacade` now registers the MCP transport routes with an authenticated posture by default and pairs its
 `FacadeConfig.TransportPosture` with `FacadeConfig.RequireBearerToken`, which validates RFC 9728 bearer tokens on those
 routes. Omitting runtime auth config is not an opt-out: the default CDK facade remains present and the runtime must
@@ -179,12 +203,18 @@ The construct writes only environment variables consumed by existing runtime cod
 | --- | --- | --- |
 | `MCP_SESSION_TABLE` | session state enabled | `runtime/mcp` DynamoDB session store |
 | `MCP_SESSION_TTL_MINUTES` | session state enabled | `runtime/mcp` session policy |
-| `MCP_ENDPOINT` | owned API mode only | `runtime/oauth` fallback 401 challenge |
 
-`MCP_ENDPOINT` is intentionally not injected in attach mode. An attached execute-api endpoint is often behind a custom
-front door or CDN and is not necessarily the public resource authority. The application must either pass the correct
-request-specific `ResourceMetadataURL` to bearer middleware or configure its public challenge endpoint in its own
-runtime environment. Adding a public-origin prop to the construct would reintroduce the THE-2861 failure class.
+`MCP_ENDPOINT` is retired in v6 in both directions: no construct writes it and no runtime reads it, so there is no shim.
+The bearer challenge is app-owned configuration — a route-derived `ResourceMetadataURLFunc`, the per-actor
+`ResourceMetadataURLTemplate` (TypeScript `resourceMetadataURLTemplate`, Python `resource_metadata_url_template`), or an
+explicit `ResourceMetadataURL` (precedence: resolver > template > static) — and with none configured the middleware
+advertises the bare `Bearer` challenge. `AppTheoryRemoteMcpServer` exposes the route-derived
+`protectedResourceMetadataUrl` (the RFC 9728 metadata URL template, with `{actor}` preserved when `actorPath` is
+enabled); pass it into your own app config and configure it as the template option so the middleware resolves `{actor}`
+from the matched route. The construct emits a synth warning on the per-actor route and injects no environment variable
+for this. `AppTheoryMcpServer` exposes its route-derived protected-resource paths through `routeInventory` and
+`protectedResourceMetadataPaths`. The construct still does not accept an origin prop — adding one would reintroduce the
+THE-2861 failure class.
 
 The construct never writes the retired `APPTHEORY_MCP_PATH`, `APPTHEORY_MCP_PROTECTED_RESOURCE_PATH`,
 `APPTHEORY_MCP_AUTHORIZATION_SERVER_ISSUER`, or `APPTHEORY_MCP_JWKS_URI` variables.
