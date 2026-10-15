@@ -27,14 +27,14 @@ func TestSecureDenialChallengeHeaders(t *testing.T) {
 			resolver: func(*Context) (*SecurePrincipal, error) {
 				return nil, &AppError{Code: errorCodeUnauthorized, Message: errorMessageUnauthorized}
 			},
-			wantBody: `{"error":{"code":"app.unauthorized","message":"unauthorized","request_id":"req_denial"}}`,
+			wantBody: `{"error":{"code":"app.unauthorized","message":"unauthorized","request_id":"req_denial","status_code":401}}`,
 		},
 		{
 			name: "portable denial renders without challenge headers",
 			resolver: func(*Context) (*SecurePrincipal, error) {
 				return nil, NewAppTheoryError(errorCodeUnauthorized, errorMessageUnauthorized)
 			},
-			wantBody: `{"error":{"code":"app.unauthorized","message":"unauthorized","request_id":"req_denial"}}`,
+			wantBody: `{"error":{"code":"app.unauthorized","message":"unauthorized","request_id":"req_denial","status_code":401}}`,
 		},
 		{
 			name: "denial carries www-authenticate challenge",
@@ -42,7 +42,7 @@ func TestSecureDenialChallengeHeaders(t *testing.T) {
 				return nil, NewAppTheoryError(errorCodeUnauthorized, errorMessageUnauthorized).
 					WithHeaders(map[string][]string{"WWW-Authenticate": {challenge}})
 			},
-			wantBody: `{"error":{"code":"app.unauthorized","message":"unauthorized","request_id":"req_denial"}}`,
+			wantBody: `{"error":{"code":"app.unauthorized","message":"unauthorized","request_id":"req_denial","status_code":401}}`,
 			wantExtra: map[string][]string{
 				"www-authenticate": {challenge},
 			},
@@ -56,7 +56,7 @@ func TestSecureDenialChallengeHeaders(t *testing.T) {
 						"x-denial-reason":  {"insufficient_scope"},
 					})
 			},
-			wantBody: `{"error":{"code":"app.forbidden","message":"forbidden","request_id":"req_denial"}}`,
+			wantBody: `{"error":{"code":"app.forbidden","message":"forbidden","request_id":"req_denial","status_code":403}}`,
 			wantExtra: map[string][]string{
 				"www-authenticate": {challenge},
 				"x-denial-reason":  {"insufficient_scope"},
@@ -68,7 +68,7 @@ func TestSecureDenialChallengeHeaders(t *testing.T) {
 				return nil, NewAppTheoryError(errorCodeUnauthorized, errorMessageUnauthorized).
 					WithHeaders(map[string][]string{"set-cookie": {"a=1; Path=/", "b=2; Path=/"}})
 			},
-			wantBody: `{"error":{"code":"app.unauthorized","message":"unauthorized","request_id":"req_denial"}}`,
+			wantBody: `{"error":{"code":"app.unauthorized","message":"unauthorized","request_id":"req_denial","status_code":401}}`,
 			wantCookies: []string{
 				"a=1; Path=/",
 				"b=2; Path=/",

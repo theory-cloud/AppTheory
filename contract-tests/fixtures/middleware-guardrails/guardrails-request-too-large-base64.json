@@ -30,7 +30,8 @@
         "error": {
           "code": "app.too_large",
           "message": "request too large",
-          "request_id": "req_test_123"
+          "request_id": "req_test_123",
+          "status_code": 413
         }
       },
       "is_base64": false

@@ -287,7 +287,7 @@ class OAuthRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             json.loads(response.body.decode("utf-8")),
-            {"error": {"code": "app.insufficient_scope", "message": "insufficient scope"}},
+            {"error": {"code": "app.insufficient_scope", "message": "insufficient scope", "status_code": 403}},
         )
 
     def test_route_derived_audience_failure_is_plain_forbidden(self) -> None:
@@ -324,7 +324,7 @@ class OAuthRuntimeTests(unittest.TestCase):
         self.assertNotIn("www-authenticate", response.headers)
         self.assertEqual(
             json.loads(response.body.decode("utf-8")),
-            {"error": {"code": "app.forbidden", "message": "forbidden"}},
+            {"error": {"code": "app.forbidden", "message": "forbidden", "status_code": 403}},
         )
 
     def test_insufficient_scope_challenge_and_resource_indicator_helpers(self) -> None:

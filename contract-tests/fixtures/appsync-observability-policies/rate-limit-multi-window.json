@@ -62,7 +62,8 @@
         "error": {
           "code": "app.rate_limited",
           "message": "rate limited",
-          "request_id": "req_test_123"
+          "request_id": "req_test_123",
+          "status_code": 429
         }
       },
       "is_base64": false

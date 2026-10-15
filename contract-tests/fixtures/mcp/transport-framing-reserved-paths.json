@@ -224,7 +224,8 @@
             "error": {
               "code": "app.not_found",
               "message": "not found",
-              "request_id": "req_mcp_123"
+              "request_id": "req_mcp_123",
+              "status_code": 404
             }
           }
         }
