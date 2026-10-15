@@ -87,7 +87,7 @@ from apptheory.oauth.store import (
     hash_key,
 )
 from apptheory.response import Response, normalize_response
-from apptheory.secure_types import AuthPosture, authenticated, public
+from apptheory.secure_types import AuthPosture, SecureRoute, authenticated, public
 
 _HTTPS_SCHEME = "https"
 _HTTP_SCHEME = "http"
@@ -112,10 +112,12 @@ METADATA_VARY_HEADER = (
 
 _ERROR_PREFIX = "AppTheoryMcpFacade:"
 _MCP_METHODS = ("POST", "GET", "DELETE")
-# The surface ``SecureApp.handle`` declares for its HTTP routes: the only
-# surface the secure preflight compares when it looks for a collision with a
-# route the caller's app already declares.
-_SECURE_HTTP_SURFACE = "http"
+# The surface ``SecureApp.websocket`` declares for its WebSocket routes: the one
+# secure surface that is not on the shared router, so the secure preflight
+# excludes it when it looks for a collision with a route the caller's app
+# already declares. Every other surface SecureApp exposes — ``http`` and
+# ``appsync`` — mounts on the shared router and is compared.
+_SECURE_WEBSOCKET_SURFACE = "websocket"
 _METADATA_REQUEST_BODY = b'{"error":"invalid_request_host"}'
 
 # Status values the front channel writes into the store records it mints.
@@ -1072,8 +1074,9 @@ def _preflight_secure_registrations(secure_app: SecureApp, registrations: list[_
     installed on a throwaway tier-P0 SecureApp, so an invalid entry, a duplicate
     inside the plan, or a pattern or posture the surface refuses fails with the
     caller's app untouched; then every planned route is compared with the routes
-    the caller's SecureApp already declares, so a collision with an application
-    route is reported before the first mount too. The SecureApp surface publishes
+    the caller's SecureApp already declares on any surface that shares the
+    router, so a collision with an application route is reported before the
+    first mount too. The SecureApp surface publishes
     its declared routes, so both failure classes can be pre-checked; the plain
     ``App`` surface publishes no route table, so :func:`register_mcp_facade` can
     pre-check the plan only.
@@ -1091,14 +1094,40 @@ def _preflight_secure_registrations(secure_app: SecureApp, registrations: list[_
     _validate_registration_entries(registrations, install)
 
     declared = {
-        f"{route.method} {route.path}" for route in secure_app.routes() if route.surface == _SECURE_HTTP_SURFACE
+        key
+        for route in secure_app.routes()
+        if (key := _shared_router_route_key(route)) is not None
     }
     for planned in probe.routes():
-        if planned.surface != _SECURE_HTTP_SURFACE:
+        key = _shared_router_route_key(planned)
+        if key is None:
             continue
-        key = f"{planned.method} {planned.path}"
         if key in declared:
             raise ValueError(f"{_ERROR_PREFIX} route {key} is already registered on the secure app")
+
+
+def _shared_router_route_key(route: SecureRoute) -> str | None:
+    """Return the exact key the shared router's duplicate check compares for one
+    declared route, or ``None`` when that route is not on the shared router.
+
+    That check is surface-agnostic: it compares the canonical method and path of
+    every route the router owns, whichever surface declared it, and
+    :meth:`SecureApp.appsync_field` mounts on that same router (``GET /<field>``
+    for ``Query`` and ``Subscription``, ``POST /<field>`` for ``Mutation``).
+    :meth:`SecureApp.routes` reports the same canonical method and path for both
+    surfaces, so the ``http`` and ``appsync`` surfaces key identically here and
+    an AppSync field that occupies a planned route's key is caught before the
+    first mount.
+
+    The ``websocket`` surface is the one exception. Its route keys live in their
+    own table with their own duplicate check, keyed by route key; it declares
+    neither a method nor a path, and it never reaches the router, so it cannot
+    occupy a router key. Returning ``None`` for it is what stops this comparison
+    from inventing a collision out of that empty method and path.
+    """
+    if route.surface == _SECURE_WEBSOCKET_SURFACE:
+        return None
+    return f"{route.method} {route.path}"
 
 
 def _declared_posture(registration: _RouteRegistration) -> AuthPosture:

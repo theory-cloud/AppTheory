@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { randomBytes } from "node:crypto";
 
-import type { App, AuthPosture } from "./app.js";
+import type { App, AuthPosture, SecureRoute } from "./app.js";
 import { Authenticated, createApp, Public, SecureApp } from "./app.js";
 import type { Context, Handler } from "./context.js";
 import {
@@ -1052,8 +1052,8 @@ function validateRouteRegistrations(registrations: RouteRegistration[]): void {
  *    entry, a duplicate inside the plan, or a pattern or posture the secure
  *    surface refuses fails with the caller's app untouched; and
  * 2. every planned route is compared with the routes the caller's SecureApp
- *    already declares, so a collision with an application route is reported
- *    before the first mount too.
+ *    already declares on any surface that shares the router, so a collision
+ *    with an application route is reported before the first mount too.
  *
  * The SecureApp surface publishes its declared routes ({@link SecureApp.routes}),
  * so both failure classes can be pre-checked. The plain App surface publishes no
@@ -1076,22 +1076,47 @@ function preflightSecureRegistrations(
 
   const declared = new Set<string>();
   for (const route of secureApp.routes()) {
-    if (route.surface !== "http") {
-      continue;
+    const key = sharedRouterRouteKey(route);
+    if (key !== null) {
+      declared.add(key);
     }
-    declared.add(`${route.method} ${route.path}`);
   }
   for (const planned of probe.routes()) {
-    if (planned.surface !== "http") {
+    const key = sharedRouterRouteKey(planned);
+    if (key === null) {
       continue;
     }
-    const key = `${planned.method} ${planned.path}`;
     if (declared.has(key)) {
       throw new Error(
         `${ERROR_PREFIX} route ${key} is already registered on the secure app`,
       );
     }
   }
+}
+
+/**
+ * Returns the exact key the shared router's duplicate check compares for one
+ * declared route, or null when that route is not on the shared router.
+ *
+ * That check is surface-agnostic: it compares the canonical method and path of
+ * every route the router owns, whichever surface declared it, and
+ * {@link SecureApp.appSyncField} mounts on that same router (GET /<field> for
+ * Query and Subscription, POST /<field> for Mutation). {@link SecureApp.routes}
+ * reports the same canonical method and path for both surfaces, so the HTTP and
+ * AppSync surfaces key identically here and an AppSync field that occupies a
+ * planned route's key is caught before the first mount.
+ *
+ * The WebSocket surface is the one exception. Its route keys live in their own
+ * table with their own duplicate check, keyed by route key; it declares neither
+ * a method nor a path, and it never reaches the router, so it cannot occupy a
+ * router key. Returning null for it is what stops this comparison from
+ * inventing a collision out of that empty method and path.
+ */
+function sharedRouterRouteKey(route: SecureRoute): string | null {
+  if (route.surface === "websocket") {
+    return null;
+  }
+  return `${route.method} ${route.path}`;
 }
 
 /**
