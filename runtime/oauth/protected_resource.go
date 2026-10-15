@@ -323,12 +323,21 @@ func normalizeMCPRoutePath(raw string) (string, bool) {
 	return raw, true
 }
 
+// percentEncodedControlBytePattern matches a percent-encoded ASCII control
+// byte: `%00`-`%1F` and `%7F`, in either hex case. It mirrors the identical
+// pattern in runtime/mcproutes so the two copies of the refused-charset rule
+// cannot diverge.
+var percentEncodedControlBytePattern = regexp.MustCompile(`%[01][0-9A-Fa-f]|%7[Ff]`)
+
 // containsRefusedRoutePathBytes mirrors runtime/mcproutes' refused-charset rule
 // so a derived protected-resource path cannot inherit a hostile MCP resource
-// path: a percent-encoded slash, an ASCII whitespace or control character, or a
-// backslash is refused.
+// path: a percent-encoded slash, a percent-encoded ASCII control byte, an ASCII
+// whitespace or control character, or a backslash is refused.
 func containsRefusedRoutePathBytes(value string) bool {
 	if strings.Contains(value, "%2F") || strings.Contains(value, "%2f") {
+		return true
+	}
+	if percentEncodedControlBytePattern.MatchString(value) {
 		return true
 	}
 	for _, r := range value {

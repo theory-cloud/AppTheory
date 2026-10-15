@@ -613,11 +613,23 @@ function isPathSegment(value: string): boolean {
   );
 }
 
+// A percent-encoded ASCII control byte: %00-%1F or %7F, in either hex case.
+// Literal control bytes are already refused by the code-point scan below; the
+// escaped form is refused because a downstream proxy, CDN, or client may
+// percent-decode the route path before matching it, which would let the decoded
+// route differ from the mounted one. This is the one shared rule, mirrored in
+// Go (runtime/mcproutes + runtime/oauth), TypeScript, and Python.
+const PERCENT_ENCODED_CONTROL_BYTE_PATTERN = /%[01][0-9A-Fa-f]|%7[Ff]/u;
+
 // containsRefusedRoutePathBytes reports whether a route path, already trimmed at
 // its edges, carries the bytes the route algebra refuses: a percent-encoded
-// slash, an interior ASCII whitespace or control character, or a backslash.
+// slash, a percent-encoded ASCII control byte, an interior ASCII whitespace or
+// control character, or a backslash.
 function containsRefusedRoutePathBytes(value: string): boolean {
   if (value.includes("%2F") || value.includes("%2f")) {
+    return true;
+  }
+  if (PERCENT_ENCODED_CONTROL_BYTE_PATTERN.test(value)) {
     return true;
   }
   for (let index = 0; index < value.length; index += 1) {

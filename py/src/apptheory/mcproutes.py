@@ -10,6 +10,7 @@ shared with the Go and TypeScript runtimes through
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,14 @@ _MCP_SEGMENT = "mcp"
 # U+000C, U+000D, U+0020). Unicode whitespace is deliberately not trimmed.
 _ASCII_WHITESPACE_TRIM_CUTSET = "\t\n\v\f\r "
 _ERROR_PREFIX = "mcproutes:"
+
+# A percent-encoded ASCII control byte: %00-%1F or %7F, in either hex case.
+# Literal control bytes are already refused by the character scan; the escaped
+# form is refused because a downstream proxy, CDN, or client may percent-decode
+# the route path before matching it, which would let the decoded route differ
+# from the advertised one. This is the one shared rule, mirrored in Go
+# (runtime/mcproutes + runtime/oauth), TypeScript, and the CDK algebra.
+_PERCENT_ENCODED_CONTROL_BYTE_PATTERN = re.compile(r"%[01][0-9A-Fa-f]|%7[Ff]")
 
 # ContractVersion is the MCP route-algebra contract implemented by this module.
 #
@@ -422,9 +431,12 @@ def _is_path_segment(value: str) -> bool:
 
 def _contains_refused_route_path_bytes(value: str) -> bool:
     """Report whether a route path, already trimmed at its edges, carries the
-    bytes the route algebra refuses: a percent-encoded slash, an interior ASCII
-    whitespace or control character, or a backslash.
+    bytes the route algebra refuses: a percent-encoded slash, a percent-encoded
+    ASCII control byte, an interior ASCII whitespace or control character, or a
+    backslash.
     """
     if "%2F" in value or "%2f" in value:
+        return True
+    if _PERCENT_ENCODED_CONTROL_BYTE_PATTERN.search(value) is not None:
         return True
     return any(ord(char) <= 0x1F or ord(char) == 0x20 or ord(char) == 0x7F or char == "\\" for char in value)
