@@ -188,6 +188,14 @@ export interface RouteInventory {
  * contract version and returns its route inventory. The helper owns
  * composition only: authorize and token routes are absent unless the
  * application supplies both handler factories.
+ *
+ * The whole plan is proven installable before the app receives its first facade
+ * route, so a configuration the facade rejects, an invalid entry, or a
+ * duplicate inside the plan adds no route at all. A collision with a route the
+ * application already registered on this plain App is detected by the app's own
+ * duplicate check while the plan is mounted: the plain App surface publishes no
+ * route table, so the facade cannot pre-check that collision the way
+ * {@link registerMcpFacadeSecure} can on a SecureApp.
  */
 export declare function registerMcpFacade(app: App, config: FacadeConfig): RouteInventory;
 /**
@@ -202,11 +210,13 @@ export declare function registerMcpFacade(app: App, config: FacadeConfig): Route
  * posture each of its routes has always had.
  *
  * The SecureApp stays closed by default: this helper adds only the facade's own
- * routes, each with a declared posture, and it adds none of them when
- * normalizeConfig rejects the configuration. A route the application never
- * declares remains undeliverable, and the application's own
- * SecurePrincipalResolver, tier, and PolicyHook keep governing every non-facade
- * route on the same app.
+ * routes, each with a declared posture, and it adds none of them when the plan
+ * is rejected. The whole plan is proven installable before the app receives its
+ * first facade route — every entry, and every collision with a route the app
+ * already declares — so a thrown error means zero facade routes were added. A
+ * route the application never declares remains undeliverable, and the
+ * application's own SecurePrincipalResolver, tier, and PolicyHook keep
+ * governing every non-facade route on the same app.
  */
 export declare function registerMcpFacadeSecure(secureApp: SecureApp, config: FacadeConfig): RouteInventory;
 /**

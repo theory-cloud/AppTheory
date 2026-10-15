@@ -289,6 +289,15 @@ type routeRegistration struct {
 // mcproutes.ContractVersion and returns its route inventory. The helper owns
 // composition only: authorize and token routes are absent unless the
 // application supplies both handler factories.
+//
+// The whole plan is proven installable before the app receives its first facade
+// route, so a configuration the facade rejects, an invalid entry, or a
+// duplicate inside the plan adds no route at all. A collision with a route the
+// application already registered on this plain App is detected by the app's own
+// duplicate check while the plan is mounted: the plain App surface publishes no
+// route table, so the facade cannot pre-check that collision the way
+// RegisterMCPFacadeSecure can on a SecureApp. See UPGRADING.md for the precise
+// guarantee on each surface.
 func RegisterMCPFacade(app *apptheory.App, config FacadeConfig) (*RouteInventory, error) {
 	if app == nil {
 		return nil, fmt.Errorf("mcpfacade: app is required")
@@ -324,11 +333,13 @@ func RegisterMCPFacade(app *apptheory.App, config FacadeConfig) (*RouteInventory
 // docs/features/mcp-facade-helper.md).
 //
 // The SecureApp stays closed by default: this helper adds only the facade's own
-// routes, each with a declared posture, and it adds none of them when
-// normalizeConfig rejects the configuration. A route the application never
-// declares remains undeliverable, and the application's own
-// SecurePrincipalResolver, tier, and PolicyHook keep governing every
-// non-facade route on the same app.
+// routes, each with a declared posture, and it adds none of them when the plan
+// is rejected. The whole plan is proven installable before the app receives its
+// first facade route — every entry, and every collision with a route the app
+// already declares — so a returned error means zero facade routes were added. A
+// route the application never declares remains undeliverable, and the
+// application's own SecurePrincipalResolver, tier, and PolicyHook keep
+// governing every non-facade route on the same app.
 func RegisterMCPFacadeSecure(secure *apptheory.SecureApp, config FacadeConfig) (*RouteInventory, error) {
 	if secure == nil {
 		return nil, fmt.Errorf("mcpfacade: secure app is required")
@@ -345,7 +356,7 @@ func RegisterMCPFacadeSecure(secure *apptheory.SecureApp, config FacadeConfig) (
 	if err != nil {
 		return nil, err
 	}
-	if err := validateSecureRouteRegistrations(registrations); err != nil {
+	if err := preflightSecureRegistrations(secure, registrations); err != nil {
 		return nil, err
 	}
 	if err := registerSecureRoutes(secure, registrations); err != nil {
@@ -687,15 +698,49 @@ func validateRouteRegistrations(registrations []routeRegistration) error {
 	})
 }
 
-// validateSecureRouteRegistrations is the SecureApp counterpart to
-// validateRouteRegistrations: the same inventory checks, installed on a
-// throwaway tier-P0 SecureApp so a posture the surface would reject fails
-// before the caller's app receives any route.
-func validateSecureRouteRegistrations(registrations []routeRegistration) error {
+// preflightSecureRegistrations proves the whole plan before the caller's
+// SecureApp receives any route, so a plan the registrar rejects is
+// all-or-nothing: a returned error means no facade route was added.
+//
+// It is the SecureApp counterpart to validateRouteRegistrations and runs the
+// same two checks, both before the first mount:
+//
+//  1. the plan is installed on a throwaway tier-P0 SecureApp, so an invalid
+//     entry, a duplicate inside the plan, or a pattern or posture the surface
+//     refuses fails with the caller's app untouched; and
+//  2. every planned route is compared with the routes the caller's SecureApp
+//     already declares, so a collision with an application route is reported
+//     before the first mount too.
+//
+// The SecureApp surface publishes its declared routes (Routes()), so both
+// failure classes can be pre-checked. The plain App surface publishes no route
+// table, so RegisterMCPFacade can pre-check the plan only; see the precise
+// guarantee in UPGRADING.md and docs/features/mcp-facade-helper.md.
+func preflightSecureRegistrations(secure *apptheory.SecureApp, registrations []routeRegistration) error {
 	probe := apptheory.NewSecure(apptheory.SecureOptions{Tier: apptheory.TierP0})
-	return validateRegistrationEntries(registrations, func(registration routeRegistration) error {
+	if err := validateRegistrationEntries(registrations, func(registration routeRegistration) error {
 		return handleSecureRoute(probe, registration.method, registration.pattern, registration.handler, registration.posture)
-	})
+	}); err != nil {
+		return err
+	}
+
+	declared := make(map[string]struct{})
+	for _, route := range secure.Routes() {
+		if route.Surface != apptheory.SecureRouteHTTP {
+			continue
+		}
+		declared[route.Method+" "+route.Path] = struct{}{}
+	}
+	for _, planned := range probe.Routes() {
+		if planned.Surface != apptheory.SecureRouteHTTP {
+			continue
+		}
+		key := planned.Method + " " + planned.Path
+		if _, occupied := declared[key]; occupied {
+			return fmt.Errorf("mcpfacade: route %s is already registered on the secure app", key)
+		}
+	}
+	return nil
 }
 
 // validateRegistrationEntries applies the surface-independent inventory checks:

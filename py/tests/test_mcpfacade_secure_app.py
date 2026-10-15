@@ -555,8 +555,9 @@ class SecureAppMountConformanceTests(unittest.TestCase):
 class SecureAppMountFailClosedTests(unittest.TestCase):
     """The SecureApp stays closed by default: a rejected configuration adds no
     route at all, a registration that declares no auth posture is refused before
-    any route reaches the caller's app, and a second mount of the same
-    configuration fails instead of silently succeeding.
+    any route reaches the caller's app, and a mount whose plan collides with a
+    route the app already declares — first or later in the plan — fails without
+    adding a single facade route.
     """
 
     def test_a_rejected_config_adds_no_route(self) -> None:
@@ -589,7 +590,7 @@ class SecureAppMountFailClosedTests(unittest.TestCase):
             )
         ]
         with self.assertRaises(ValueError) as raised:
-            facade_module._validate_secure_route_registrations(registrations)
+            facade_module._preflight_secure_registrations(SecureApp(tier="p0"), registrations)
         self.assertIn("invalid or duplicate route inventory entry POST /acme/mcp", str(raised.exception))
         self.assertIn("declares no auth posture", str(raised.exception))
 
@@ -610,8 +611,37 @@ class SecureAppMountFailClosedTests(unittest.TestCase):
 
         with self.assertRaises(ValueError) as raised:
             register_mcp_facade_secure(secure, config)
-        self.assertIn("register POST", str(raised.exception))
+        self.assertIn("already registered on the secure app", str(raised.exception))
         self.assertEqual(mounted, len(secure.routes()))
+
+    def test_secure_mount_rejects_a_non_first_collision_without_mounting_anything(self) -> None:
+        """The all-or-nothing guarantee of the SecureApp registrar: when the
+        application already owns the method+path of a LATER facade registration,
+        the mount is refused before the first route reaches the app, so the app's
+        route table is exactly what it was. A registrar that mounted as it went
+        would leave the earlier facade routes behind, which the second-mount test
+        above cannot see because its collision is the first entry of the plan.
+        """
+        config = _secure_config(None, transport_posture="iam", front_channel=False)
+        normalized = facade_module._normalize_config(config)
+        inventory = facade_module._build_inventory(normalized)
+        registrations = facade_module._build_registrations(normalized, inventory)
+        self.assertGreater(len(registrations), 4)
+
+        # The application owns the fourth planned route, not the first, so a
+        # mount-as-it-goes registrar would already have installed the first three.
+        collision = registrations[3]
+        self.assertEqual("GET", collision.method)
+
+        secure = SecureApp(tier="p0")
+        secure.get(collision.pattern, _no_content, authenticated())
+        declared = secure.routes()
+        self.assertEqual(1, len(declared))
+
+        with self.assertRaises(ValueError) as raised:
+            register_mcp_facade_secure(secure, config)
+        self.assertIn("already registered on the secure app", str(raised.exception))
+        self.assertEqual(declared, secure.routes())
 
 
 class SecureAppTmsJourneyTests(unittest.TestCase):

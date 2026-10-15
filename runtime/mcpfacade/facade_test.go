@@ -831,6 +831,40 @@ func TestRouteInventoryDuplicatesAndRegisteredCollisionsReturnErrors(t *testing.
 	require.Equal(t, 405, serve(app, "GET", "/acme/mcp", nil).Status)
 }
 
+// TestPlainMountCollisionAtALaterEntryIsReportedAndLeavesTheApplicationRouteIntact
+// pins what the plain registrar guarantees when the application already owns the
+// method+path of a LATER facade registration: the plan is refused with an error
+// that names the colliding entry, and the application's own route is untouched.
+//
+// The plain App surface publishes no route table, so the plain registrar cannot
+// pre-check that collision the way RegisterMCPFacadeSecure does on a SecureApp
+// (whose declared routes are readable through Routes()). UPGRADING.md and
+// docs/features/mcp-facade-helper.md state the precise guarantee on each
+// surface, and this test pins the parts that hold on the plain surface.
+func TestPlainMountCollisionAtALaterEntryIsReportedAndLeavesTheApplicationRouteIntact(t *testing.T) {
+	t.Parallel()
+	config := validConfig(URLModePublicBaseURL)
+	normalized, err := normalizeConfig(config)
+	require.NoError(t, err)
+	inventory, err := buildInventory(normalized)
+	require.NoError(t, err)
+	plan, err := buildRegistrations(normalized, inventory)
+	require.NoError(t, err)
+	require.Greater(t, len(plan), 4)
+
+	// The application owns the fourth planned route, not the first.
+	collision := plan[3]
+	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	app.Handle(collision.method, collision.pattern, func(*apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.Text(204, "application-owned"), nil
+	})
+
+	routeInventory, err := RegisterMCPFacade(app, config)
+	require.Nil(t, routeInventory)
+	require.ErrorContains(t, err, "register "+collision.method+" "+collision.pattern)
+	require.Equal(t, 204, serve(app, collision.method, collision.pattern, nil).Status)
+}
+
 func TestScopesCapabilitiesAndRegistrationEndpointAreApplicationOwned(t *testing.T) {
 	t.Parallel()
 	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))

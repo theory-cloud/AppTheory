@@ -347,6 +347,14 @@ class MetadataRequestError extends Error {
  * contract version and returns its route inventory. The helper owns
  * composition only: authorize and token routes are absent unless the
  * application supplies both handler factories.
+ *
+ * The whole plan is proven installable before the app receives its first facade
+ * route, so a configuration the facade rejects, an invalid entry, or a
+ * duplicate inside the plan adds no route at all. A collision with a route the
+ * application already registered on this plain App is detected by the app's own
+ * duplicate check while the plan is mounted: the plain App surface publishes no
+ * route table, so the facade cannot pre-check that collision the way
+ * {@link registerMcpFacadeSecure} can on a SecureApp.
  */
 export function registerMcpFacade(
   app: App,
@@ -374,11 +382,13 @@ export function registerMcpFacade(
  * posture each of its routes has always had.
  *
  * The SecureApp stays closed by default: this helper adds only the facade's own
- * routes, each with a declared posture, and it adds none of them when
- * normalizeConfig rejects the configuration. A route the application never
- * declares remains undeliverable, and the application's own
- * SecurePrincipalResolver, tier, and PolicyHook keep governing every non-facade
- * route on the same app.
+ * routes, each with a declared posture, and it adds none of them when the plan
+ * is rejected. The whole plan is proven installable before the app receives its
+ * first facade route — every entry, and every collision with a route the app
+ * already declares — so a thrown error means zero facade routes were added. A
+ * route the application never declares remains undeliverable, and the
+ * application's own SecurePrincipalResolver, tier, and PolicyHook keep
+ * governing every non-facade route on the same app.
  */
 export function registerMcpFacadeSecure(
   secureApp: SecureApp,
@@ -390,7 +400,7 @@ export function registerMcpFacadeSecure(
   const normalized = normalizeConfig(config);
   const inventory = buildInventory(normalized);
   const registrations = buildRegistrations(normalized, inventory);
-  validateSecureRouteRegistrations(registrations);
+  preflightSecureRegistrations(secureApp, registrations);
   registerSecureRoutes(secureApp, registrations);
   return cloneInventory(inventory);
 }
@@ -1031,12 +1041,26 @@ function validateRouteRegistrations(registrations: RouteRegistration[]): void {
 }
 
 /**
- * The SecureApp counterpart to {@link validateRouteRegistrations}: the same
- * inventory checks, installed on a throwaway tier-P0 SecureApp so a posture the
- * secure surface cannot decode, or a pattern it refuses, fails before the
- * caller's app receives any route.
+ * Proves the whole plan before the caller's {@link SecureApp} receives any
+ * route, so a plan the registrar rejects is all-or-nothing: a thrown error
+ * means no facade route was added.
+ *
+ * It is the SecureApp counterpart to {@link validateRouteRegistrations} and runs
+ * the same two checks, both before the first mount:
+ *
+ * 1. the plan is installed on a throwaway tier-P0 SecureApp, so an invalid
+ *    entry, a duplicate inside the plan, or a pattern or posture the secure
+ *    surface refuses fails with the caller's app untouched; and
+ * 2. every planned route is compared with the routes the caller's SecureApp
+ *    already declares, so a collision with an application route is reported
+ *    before the first mount too.
+ *
+ * The SecureApp surface publishes its declared routes ({@link SecureApp.routes}),
+ * so both failure classes can be pre-checked. The plain App surface publishes no
+ * route table, so {@link registerMcpFacade} can pre-check the plan only.
  */
-function validateSecureRouteRegistrations(
+function preflightSecureRegistrations(
+  secureApp: SecureApp,
   registrations: RouteRegistration[],
 ): void {
   const probe = new SecureApp({ tier: "p0" });
@@ -1049,6 +1073,25 @@ function validateSecureRouteRegistrations(
       registration.posture,
     );
   });
+
+  const declared = new Set<string>();
+  for (const route of secureApp.routes()) {
+    if (route.surface !== "http") {
+      continue;
+    }
+    declared.add(`${route.method} ${route.path}`);
+  }
+  for (const planned of probe.routes()) {
+    if (planned.surface !== "http") {
+      continue;
+    }
+    const key = `${planned.method} ${planned.path}`;
+    if (declared.has(key)) {
+      throw new Error(
+        `${ERROR_PREFIX} route ${key} is already registered on the secure app`,
+      );
+    }
+  }
 }
 
 /**
@@ -1132,7 +1175,7 @@ function registerSecureRoutes(
 /**
  * Declares one posture-bearing route on a SecureApp. It is the single place the
  * facade mounts on a secure surface, shared by the throwaway probe in
- * validateSecureRouteRegistrations and by registerSecureRoutes on the caller's
+ * preflightSecureRegistrations and by registerSecureRoutes on the caller's
  * app, so the preflight and the real mount cannot diverge.
  *
  * SecureApp.handle throws on a duplicate or invalid route exactly as App.handle

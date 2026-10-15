@@ -898,9 +898,10 @@ func TestSecureMountFailsClosed(t *testing.T) {
 			pattern: "/acme/mcp",
 			handler: func(*apptheory.Context) (*apptheory.Response, error) { return apptheory.Text(204, ""), nil },
 		}}
-		require.Error(t, validateSecureRouteRegistrations(registers))
-
 		secure := apptheory.NewSecure(apptheory.SecureOptions{})
+		require.Error(t, preflightSecureRegistrations(secure, registers))
+		require.Empty(t, secure.Routes())
+
 		require.Error(t, registerSecureRoutes(secure, registers))
 		require.Empty(t, secure.Routes())
 	})
@@ -915,7 +916,44 @@ func TestSecureMountFailsClosed(t *testing.T) {
 
 		inventory, err := RegisterMCPFacadeSecure(secure, config)
 		require.Nil(t, inventory)
-		require.ErrorContains(t, err, "duplicate route")
+		require.ErrorContains(t, err, "already registered on the secure app")
 		require.Equal(t, installed, secure.Routes())
 	})
+}
+
+// TestSecureMountRejectsANonFirstCollisionWithoutMountingAnything pins the
+// all-or-nothing guarantee of the SecureApp registrar: when the application
+// already owns the method+path of a LATER facade registration, the mount is
+// refused before the first route reaches the app, so the app's route table is
+// exactly what it was. A registrar that mounted as it went would leave the
+// earlier facade routes behind, which is what the earlier
+// "duplicate mount" row above cannot see because its collision is the first
+// entry of the plan.
+func TestSecureMountRejectsANonFirstCollisionWithoutMountingAnything(t *testing.T) {
+	t.Parallel()
+	config := validConfig(URLModePublicBaseURL)
+	normalized, err := normalizeConfig(config)
+	require.NoError(t, err)
+	inventory, err := buildInventory(normalized)
+	require.NoError(t, err)
+	registrations, err := buildRegistrations(normalized, inventory)
+	require.NoError(t, err)
+	require.Greater(t, len(registrations), 4)
+
+	// The application owns the fourth planned route, not the first, so a
+	// mount-as-it-goes registrar would already have installed the first three.
+	collision := registrations[3]
+	require.Equal(t, "GET", collision.method)
+
+	secure := apptheory.NewSecure(apptheory.SecureOptions{})
+	secure.Handle(collision.method, collision.pattern, func(*apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.Text(204, ""), nil
+	}, apptheory.Public())
+	declared := secure.Routes()
+	require.Len(t, declared, 1)
+
+	routeInventory, err := RegisterMCPFacadeSecure(secure, config)
+	require.Nil(t, routeInventory)
+	require.ErrorContains(t, err, "already registered on the secure app")
+	require.Equal(t, declared, secure.Routes())
 }

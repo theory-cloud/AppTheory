@@ -112,6 +112,10 @@ METADATA_VARY_HEADER = (
 
 _ERROR_PREFIX = "AppTheoryMcpFacade:"
 _MCP_METHODS = ("POST", "GET", "DELETE")
+# The surface ``SecureApp.handle`` declares for its HTTP routes: the only
+# surface the secure preflight compares when it looks for a collision with a
+# route the caller's app already declares.
+_SECURE_HTTP_SURFACE = "http"
 _METADATA_REQUEST_BODY = b'{"error":"invalid_request_host"}'
 
 # Status values the front channel writes into the store records it mints.
@@ -490,8 +494,14 @@ def register_mcp_facade(app: App | None, config: FacadeConfig) -> RouteInventory
     """Install the complete MCP OAuth facade and return its route inventory.
 
     The helper owns composition only: authorize and token routes are absent
-    unless the application supplies both handler factories. Registration fails
-    closed before any route is added.
+    unless the application supplies both handler factories. The whole plan is
+    proven installable before the app receives its first facade route, so a
+    configuration the facade rejects, an invalid entry, or a duplicate inside the
+    plan adds no route at all. The plain ``App`` surface publishes no route
+    table, so a collision with a route the application already registered on this
+    plain App is reported by the app's own duplicate check while the plan is
+    mounted rather than pre-checked; :func:`register_mcp_facade_secure` can
+    pre-check that collision on a SecureApp.
     """
     if app is None:
         raise ValueError(f"{_ERROR_PREFIX} app is required")
@@ -511,16 +521,19 @@ def register_mcp_facade_secure(secure_app: SecureApp | None, config: FacadeConfi
     each route's authority is declared differs, because every SecureApp route
     must state an auth posture. The SecureApp stays closed by default: this
     helper adds only the facade's own routes, each with a declared posture, and
-    it adds none of them when the configuration is rejected, while the
-    application's own principal resolver, tier, and policy hook keep governing
-    every non-facade route on the same app.
+    it adds none of them when the plan is rejected. The whole plan is proven
+    installable before the app receives its first facade route — every entry, and
+    every collision with a route the app already declares — so a raised error
+    means zero facade routes were added. A route the application never declares
+    remains undeliverable, and the application's own principal resolver, tier,
+    and policy hook keep governing every non-facade route on the same app.
     """
     if secure_app is None:
         raise ValueError(f"{_ERROR_PREFIX} secure app is required")
     normalized = _normalize_config(config)
     inventory = _build_inventory(normalized)
     registrations = _build_registrations(normalized, inventory)
-    _validate_secure_route_registrations(registrations)
+    _preflight_secure_registrations(secure_app, registrations)
     _register_secure_routes(secure_app, registrations)
     return _clone_inventory(inventory)
 
@@ -1050,10 +1063,20 @@ def _validate_route_registrations(registrations: list[_RouteRegistration]) -> No
     )
 
 
-def _validate_secure_route_registrations(registrations: list[_RouteRegistration]) -> None:
-    """The SecureApp counterpart to :func:`_validate_route_registrations`: the
-    same inventory checks, installed on a throwaway tier-P0 SecureApp so a posture
-    the surface would reject fails before the caller's app receives any route.
+def _preflight_secure_registrations(secure_app: SecureApp, registrations: list[_RouteRegistration]) -> None:
+    """The SecureApp counterpart to :func:`_validate_route_registrations`: it
+    proves the whole plan before the caller's app receives any route, so a plan
+    the registrar rejects is all-or-nothing.
+
+    It runs the same two checks, both before the first mount: the plan is
+    installed on a throwaway tier-P0 SecureApp, so an invalid entry, a duplicate
+    inside the plan, or a pattern or posture the surface refuses fails with the
+    caller's app untouched; then every planned route is compared with the routes
+    the caller's SecureApp already declares, so a collision with an application
+    route is reported before the first mount too. The SecureApp surface publishes
+    its declared routes, so both failure classes can be pre-checked; the plain
+    ``App`` surface publishes no route table, so :func:`register_mcp_facade` can
+    pre-check the plan only.
     """
     probe = SecureApp(tier="p0")
 
@@ -1066,6 +1089,16 @@ def _validate_secure_route_registrations(registrations: list[_RouteRegistration]
         )
 
     _validate_registration_entries(registrations, install)
+
+    declared = {
+        f"{route.method} {route.path}" for route in secure_app.routes() if route.surface == _SECURE_HTTP_SURFACE
+    }
+    for planned in probe.routes():
+        if planned.surface != _SECURE_HTTP_SURFACE:
+            continue
+        key = f"{planned.method} {planned.path}"
+        if key in declared:
+            raise ValueError(f"{_ERROR_PREFIX} route {key} is already registered on the secure app")
 
 
 def _declared_posture(registration: _RouteRegistration) -> AuthPosture:

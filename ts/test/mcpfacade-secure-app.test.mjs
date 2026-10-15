@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_CALLBACK_PATH,
   Authenticated,
+  Public,
   SecureApp,
   createApp,
   insufficientScopeWWWAuthenticate,
@@ -974,11 +975,9 @@ test("a second mount of the same config fails instead of shadowing routes", asyn
     (err) => {
       assert.match(
         err.message,
-        /^AppTheoryMcpFacade: register (POST|GET|DELETE) /,
+        /^AppTheoryMcpFacade: route (POST|GET|DELETE) \S+ is already registered on the secure app$/,
         `unexpected message ${err.message}`,
       );
-      assert.match(err.message, /duplicate route/);
-      assert.equal(err.cause instanceof Error, true, "the cause must be kept");
       return true;
     },
   );
@@ -986,5 +985,38 @@ test("a second mount of the same config fails instead of shadowing routes", asyn
     secure.routes().length,
     mounted,
     "the failed second mount must not add a route",
+  );
+});
+
+test("secure mount rejects a non-first collision without mounting anything", async (t) => {
+  const { config } = await worldForRow(t, {
+    transport_posture: "iam",
+    front_channel: false,
+  });
+
+  // The plan's fourth registration is the first route family's RFC 9728
+  // protected-resource GET (buildRegistrations pushes transport POST/GET/DELETE
+  // and then that GET per family), so the application owning it is a collision
+  // a mount-as-it-goes registrar could not see until it had already installed
+  // the three transport routes.
+  const plain = createApp({ tier: "p0" });
+  const inventory = registerMcpFacade(plain, config);
+  assert.ok(inventory.routes.length > 0, "the plan must declare a route family");
+  const collisionMethod = "GET";
+  const collisionPattern = inventory.routes[0].protectedResourcePattern;
+
+  const secure = new SecureApp({ tier: "p0" });
+  secure.handle(collisionMethod, collisionPattern, () => noContent(), Public());
+  const declared = secure.routes();
+  assert.equal(declared.length, 1, "the application must own exactly one route");
+
+  assert.throws(
+    () => registerMcpFacadeSecure(secure, config),
+    /already registered on the secure app/,
+  );
+  assert.deepStrictEqual(
+    secure.routes(),
+    declared,
+    "the refused mount must not add a single facade route",
   );
 });
