@@ -92,7 +92,9 @@ OpenAPI functions cannot read secure posture and are unsupported for `SecureApp`
 
 HTTP error compatibility:
 
-- Default HTTP error bodies remain nested under `error`.
+- Default HTTP error bodies remain nested under `error`, and every nested body carries
+  `error.status_code` — the HTTP status of the response actually sent — on framework-emitted rejections,
+  `AppTheoryError`, legacy `AppError`, bearer denials, the WebSocket error envelope, and the nested fallback body.
 - In the default nested envelope, any error whose code string is `EMPTY_BODY` or `INVALID_JSON` is remapped to
   canonical `app.bad_request` fields; the opt-in flat legacy format preserves those Lift-era codes/messages.
 - Lift-compatible flat HTTP error bodies are opt-in:

@@ -282,7 +282,10 @@ Error response envelope (v0) MUST include:
 
 Portable optional fields (v0 extension; present when available):
 
-- `error.status_code` (number): HTTP status used for the response.
+- `error.status_code` (number): HTTP status used for the response. **Present on every nested envelope**, including
+  framework-emitted errors, the nested fallback body, and an `AppTheoryError` whose status is unset (the resolved
+  status is reported). It is the only portable field that is not merely "present when available": the flat-legacy
+  format omits it and is otherwise unchanged.
 - `error.details` (object): client-safe structured details (must be JSON-serializable).
 - `error.trace_id` (string): trace/correlation identifier.
 - `error.timestamp` (string): RFC 3339 timestamp (UTC preferred).

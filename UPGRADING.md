@@ -20,6 +20,23 @@ range from the v5 line also carries other breaking runtime, CDK, TypeScript, and
 the v6 release notes for the commit-level detail, and treat the import-path move below as the mechanical part of the
 upgrade.
 
+### Nested HTTP error envelope always carries `error.status_code`
+
+The default nested HTTP error envelope now always includes `error.status_code`: the HTTP status of the response that was
+actually sent. It is emitted by every producer — framework-emitted rejections (routing `404`, `405`, `413`, `408`, `429`,
+`503`, panic-recovery `500`, streaming and adapter delivery failures), the legacy `AppError` path, a handler-returned
+`AppTheoryError` that leaves `status_code` unset (the resolved status is reported), the RFC 6750/9728 bearer denials, the
+WebSocket error envelope, and the nested fallback body.
+
+**Additive; no breaking change.** The key was already declared by the runtime contract as a portable optional field
+("present when available"), and nothing about the routing, status, or message of a rejection changes. Two consequences
+are worth checking:
+
+- A consumer that asserts an **exact** nested error body — string comparison or deep equality against a frozen body —
+  now sees one extra key and must add `status_code`. A consumer that reads `error.code` / `error.message` (or ignores
+  unknown keys) needs no change.
+- The opt-in **flat-legacy** HTTP error format is untouched: its bodies carry no `status_code` and stay byte-identical.
+
 ### Go module import paths
 
 AppTheory v6 moves the Go runtime and the generated CDK Go bindings onto the next semantic import version. Replace the
@@ -573,9 +590,10 @@ and each helper installs the guard only when the framework chooses the transport
 Denials now carry the route-derived challenge. A missing, malformed, invalid, or expired token returns `401` with
 `WWW-Authenticate: Bearer resource_metadata="<matched route's protected-resource metadata URL>"`. A scope failure
 returns `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="<remediation scopes>",
-resource_metadata="<…>"` and body `{"error":{"code":"app.insufficient_scope"}}`; an audience failure and every other
-forbidden denial still return the plain `403` with no error code or scope set. RFC 8707 `resource` is canonicalized and
-must exactly equal the route resource (the resulting `aud` must equal the route URL).
+resource_metadata="<…>"` and body
+`{"error":{"code":"app.insufficient_scope","message":"insufficient scope","status_code":403}}`; an audience failure and
+every other forbidden denial still return the plain `403` with no error code or scope set. RFC 8707 `resource` is
+canonicalized and must exactly equal the route resource (the resulting `aud` must equal the route URL).
 
 ### MCP auth facade provider and store SPIs
 

@@ -123,11 +123,19 @@ Default HTTP error responses use a **nested envelope**:
   "error": {
     "code": "not_found",
     "message": "User not found",
-    "details": { "id": "u_42" }
-  },
-  "request_id": "req-1"
+    "status_code": 404,
+    "details": { "id": "u_42" },
+    "request_id": "req-1"
+  }
 }
 ```
+
+`error.status_code` is the HTTP status of the response actually sent, and the nested envelope carries it on **every**
+error — framework-emitted rejections (routing `404`, `405`, `413`, `408`, `429`, `503`, panic-recovery `500`, streaming
+and adapter delivery failures), handler-returned `AppTheoryError` with or without an explicit status, the legacy
+`AppError` path, the RFC 6750/9728 bearer denials, the WebSocket error envelope, and the nested fallback body. A
+consumer that asserts an exact nested body sees this key; a consumer that reads `error.code`/`error.message` is
+unaffected.
 
 To match Lift's flat shape (one-time migration aid only — not for new apps):
 
@@ -172,10 +180,10 @@ into the buffered body with a bounded budget instead of silently dropping it:
 - a stream that does **not terminate within the budget** (a live session listener,
   an open replay) or a stream that **errors** fails closed with HTTP 500 and the
   nested AppTheory error body:
-  `{"error":{"code":"app.internal","message":"streaming response body cannot be delivered by the HTTP API v2 adapter"}}`
+  `{"error":{"code":"app.internal","message":"streaming response body cannot be delivered by the HTTP API v2 adapter","status_code":500}}`
   (the Function URL adapter names itself: `"...cannot be delivered by the Function URL adapter"`);
 - a stream whose total length **exceeds 4 MiB** maps to HTTP 413 payload too large
-  with the framework's size error body: `{"error":{"code":"app.too_large","message":"response too large"}}`,
+  with the framework's size error body: `{"error":{"code":"app.too_large","message":"response too large","status_code":413}}`,
   matching the `MaxResponseBytes` size semantics used elsewhere in the runtime;
 - a stream that closes empty only because the deadline fired fails closed as well,
   so the empty-`200` reconnect loop cannot reappear at the deadline boundary.
