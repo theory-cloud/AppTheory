@@ -1,0 +1,187 @@
+{
+  "contract": {
+    "id": "m18.multi-window-limiter/v1",
+    "section": "rate-limit-multi-window",
+    "kind": "conformance",
+    "status": "v6",
+    "notes": "One conformance table for the DynamoDB-backed multi-window rate limiter's handling of a cancelled TransactWrite, shared by the Go, TypeScript and Python runtimes. Every row drives the runtime's REAL limiter (pkg/limited.DynamoRateLimiter, ts/src/limited/limiter.ts DynamoRateLimiter, py apptheory.limited.limiter.DynamoRateLimiter) over a REAL TableTheory client bound to the runtime's fake DynamoDB, and queues a realistic cancellation shape through that fake's transaction-cancellation seam. DynamoDB classification is owned by TableTheory: the FIRST genuine cancellation reason decides the class, where a genuine reason is one whose code is present and is not DynamoDB's \"None\" placeholder. A genuine ConditionalCheckFailed is a condition failure (the request exceeded a window budget); a throttle, a transaction conflict, an unknown code, an all-None or empty reason list, or a message that merely mentions ConditionalCheckFailed is NOT a condition failure. TableTheory v5.2.0 pairs the runtimes on that rule (Go always had it; TypeScript and Python were misclassifying every cancellation as a condition failure before the repin). The observable contract is identical in all three runtimes: a condition failure is a soft denial (allowed=false with a retry-after), anything else follows the configured failOpen policy exactly as Go does (failOpen true admits, failOpen false returns an internal_error). Assertions are limited to runtime-agnostic scalars (allowed, retry-after presence, error type) so a divergence in any runtime fails this table. DELIVERY: a row without a \"deliver\" key is delivered through the fake's transaction-cancellation seam, which carries the ordered reason list only and lets the fake synthesize the service message; a row with \"deliver\": \"cancelled_exception\" must instead be delivered as a hand-built TransactionCanceledException carrying this row's exact \"message\" AND \"reasons\", because that row's premise IS the message text and a seam that dropped it would leave the row vacuous."
+  },
+  "limiter": {
+    "strategy": "multi_window",
+    "windows": [
+      { "duration_seconds": 60, "max_requests": 2 },
+      { "duration_seconds": 3600, "max_requests": 10 }
+    ],
+    "clock_epoch": "2026-01-01T00:00:00Z",
+    "key": {
+      "identifier": "acct_limiter_conformance",
+      "resource": "/v1/widgets",
+      "operation": "GET"
+    }
+  },
+  "outcomes": {
+    "admitted": "the limiter admits the request: no error, allowed=true. This is the failOpen=true result for any cancellation that is not a genuine condition failure.",
+    "soft_denial": "the limiter denies the request softly: no error, allowed=false and a non-null retry-after. This is the result for a genuine ConditionalCheckFailed cancellation under either failOpen policy, because a window budget was actually exceeded.",
+    "internal_error": "the limiter fails closed: an internal_error is returned/raised. This is the failOpen=false result for any cancellation that is not a genuine condition failure."
+  },
+  "cases": [
+    {
+      "id": "limiter.cancellation.genuine_condition_failure",
+      "class": "condition_failure",
+      "notes": "A single genuine ConditionalCheckFailed reason is a window budget miss: a soft denial under either failOpen policy.",
+      "cancellation": {
+        "message": "Transaction cancelled, please refer cancellation reasons for specific reasons [ConditionalCheckFailed]",
+        "reasons": [
+          { "code": "ConditionalCheckFailed", "message": "the conditional request failed" }
+        ]
+      },
+      "expect": { "fail_open": "soft_denial", "fail_closed": "soft_denial" }
+    },
+    {
+      "id": "limiter.cancellation.genuine_condition_failure_after_none",
+      "class": "condition_failure",
+      "notes": "A leading None placeholder keeps its position and is skipped; the first genuine reason is still the condition failure.",
+      "cancellation": {
+        "message": "Transaction cancelled, please refer cancellation reasons for specific reasons [None, ConditionalCheckFailed]",
+        "reasons": [
+          { "code": "None" },
+          { "code": "ConditionalCheckFailed", "message": "the conditional request failed" }
+        ]
+      },
+      "expect": { "fail_open": "soft_denial", "fail_closed": "soft_denial" }
+    },
+    {
+      "id": "limiter.cancellation.genuine_condition_failure_missing_code_in_position",
+      "class": "condition_failure",
+      "notes": "A reason whose Code is absent is not a genuine failure; the following ConditionalCheckFailed is the first genuine reason.",
+      "cancellation": {
+        "message": "Transaction cancelled, please refer cancellation reasons for specific reasons [None, ConditionalCheckFailed]",
+        "reasons": [
+          {},
+          { "code": "ConditionalCheckFailed", "message": "the conditional request failed" }
+        ]
+      },
+      "expect": { "fail_open": "soft_denial", "fail_closed": "soft_denial" }
+    },
+    {
+      "id": "limiter.cancellation.throttle_only",
+      "class": "throttle",
+      "notes": "A provisioned-throughput cancellation is a throttle, not a condition failure: failOpen decides.",
+      "cancellation": {
+        "message": "Transaction cancelled, please refer cancellation reasons for specific reasons [ProvisionedThroughputExceeded]",
+        "reasons": [
+          { "code": "ProvisionedThroughputExceeded", "message": "the level of configured provisioned throughput was exceeded" }
+        ]
+      },
+      "expect": { "fail_open": "admitted", "fail_closed": "internal_error" }
+    },
+    {
+      "id": "limiter.cancellation.throttle_after_none",
+      "class": "throttle",
+      "notes": "A leading None placeholder is skipped; the throttle is the first genuine reason.",
+      "cancellation": {
+        "message": "Transaction cancelled, please refer cancellation reasons for specific reasons [None, ThrottlingException]",
+        "reasons": [
+          { "code": "None" },
+          { "code": "ThrottlingException", "message": "rate exceeded" }
+        ]
+      },
+      "expect": { "fail_open": "admitted", "fail_closed": "internal_error" }
+    },
+    {
+      "id": "limiter.cancellation.transaction_conflict_only",
+      "class": "transaction_conflict",
+      "notes": "A transaction conflict is not a condition failure: failOpen decides.",
+      "cancellation": {
+        "message": "Transaction cancelled, please refer cancellation reasons for specific reasons [TransactionConflict]",
+        "reasons": [
+          { "code": "TransactionConflict", "message": "transaction conflict" }
+        ]
+      },
+      "expect": { "fail_open": "admitted", "fail_closed": "internal_error" }
+    },
+    {
+      "id": "limiter.cancellation.ordered_conflict_after_throttle",
+      "class": "transaction_conflict",
+      "notes": "Two genuine reasons in a fixed order; the first (throttle) decides. Either way the class is not a condition failure.",
+      "cancellation": {
+        "message": "Transaction cancelled, please refer cancellation reasons for specific reasons [ThrottlingException, TransactionConflict]",
+        "reasons": [
+          { "code": "ThrottlingException", "message": "rate exceeded" },
+          { "code": "TransactionConflict", "message": "transaction conflict" }
+        ]
+      },
+      "expect": { "fail_open": "admitted", "fail_closed": "internal_error" }
+    },
+    {
+      "id": "limiter.cancellation.ordered_throttle_before_condition",
+      "class": "throttle",
+      "notes": "The decisive row for the pre-repin misclassification: a condition failure that is NOT first must not be read as one. The throttle is the first genuine reason, so the request is admitted under failOpen rather than denied with a retry-after.",
+      "cancellation": {
+        "message": "Transaction cancelled, please refer cancellation reasons for specific reasons [ProvisionedThroughputExceeded, ConditionalCheckFailed]",
+        "reasons": [
+          { "code": "ProvisionedThroughputExceeded", "message": "the level of configured provisioned throughput was exceeded" },
+          { "code": "ConditionalCheckFailed", "message": "the conditional request failed" }
+        ]
+      },
+      "expect": { "fail_open": "admitted", "fail_closed": "internal_error" }
+    },
+    {
+      "id": "limiter.cancellation.ambiguous_all_none",
+      "class": "ambiguous",
+      "notes": "A cancellation in which no reason is genuine is ambiguous, not a condition failure.",
+      "cancellation": {
+        "message": "Transaction cancelled, please refer cancellation reasons for specific reasons [None, None]",
+        "reasons": [
+          { "code": "None" },
+          { "code": "None" }
+        ]
+      },
+      "expect": { "fail_open": "admitted", "fail_closed": "internal_error" }
+    },
+    {
+      "id": "limiter.cancellation.no_reasons",
+      "class": "ambiguous",
+      "notes": "A cancellation with an empty reason list carries no genuine failure and must not be inferred from the message.",
+      "cancellation": {
+        "message": "Transaction cancelled, please refer cancellation reasons for specific reasons",
+        "reasons": []
+      },
+      "expect": { "fail_open": "admitted", "fail_closed": "internal_error" }
+    },
+    {
+      "id": "limiter.cancellation.message_only_condition_text",
+      "class": "ambiguous",
+      "notes": "The pre-repin Python path sniffed the message text; a message that merely mentions ConditionalCheckFailed while carrying no genuine reason must NOT be classified as a condition failure. Delivered as a cancelled exception so the message text actually reaches the classifier.",
+      "deliver": "cancelled_exception",
+      "cancellation": {
+        "message": "Transaction cancelled, please refer cancellation reasons for specific reasons [ConditionalCheckFailed]",
+        "reasons": [
+          { "code": "None" }
+        ]
+      },
+      "expect": { "fail_open": "admitted", "fail_closed": "internal_error" }
+    },
+    {
+      "id": "limiter.cancellation.unknown_reason_code",
+      "class": "ambiguous",
+      "notes": "An unrecognized code is classified as a generic transaction failure, never as a condition failure.",
+      "cancellation": {
+        "message": "Transaction cancelled, please refer cancellation reasons for specific reasons [SomeFutureCapacityCode]",
+        "reasons": [
+          { "code": "SomeFutureCapacityCode", "message": "a code introduced after this table was written" }
+        ]
+      },
+      "expect": { "fail_open": "admitted", "fail_closed": "internal_error" }
+    },
+    {
+      "id": "limiter.transport.non_cancellation_error",
+      "class": "transport_error",
+      "notes": "A non-cancellation failure from the transaction call (the transport/ambiguity class) is never a condition failure.",
+      "transport_error": {
+        "message": "the transaction transport is unavailable"
+      },
+      "expect": { "fail_open": "admitted", "fail_closed": "internal_error" }
+    }
+  ]
+}
