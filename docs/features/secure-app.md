@@ -149,9 +149,11 @@ Framework-owned registrars that mount several routes at once — `runtime/oauth.
 facade's `RegisterMCPFacadeSecure`, plus their TypeScript and Python equivalents — register through these same
 posture-carrying methods and declare one posture per route. They add no accessor to the app's core, so a route the
 application never declares stays undeliverable, and the application's own resolver, tier, and `PolicyHook` keep
-governing every route a registrar does not own. `RegisterMCPServer`'s split (a public discovery route, an
-`Authenticated` MCP endpoint) is the simplest form of the same rule; the facade's full table is in
-[MCP facade helper](mcp-facade-helper.md#closed-by-default-secureapp-mounts).
+governing every route a registrar does not own. A registrar that mounts several routes is all-or-nothing on a
+`SecureApp`: it proves the whole plan before the app receives its first facade route, so a rejected plan — including
+a collision with a route the application already declares — adds no route at all. `RegisterMCPServer`'s split (a
+public discovery route, an `Authenticated` MCP endpoint) is the simplest form of the same rule; the facade's full
+table is in [MCP facade helper](mcp-facade-helper.md#closed-by-default-secureapp-mounts).
 
 ## Fixed ordering by tier
 

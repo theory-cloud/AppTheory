@@ -152,7 +152,13 @@ with the facade's RFC 9728 bearer validator as its authority under `runtime-bear
 `/token`, `/register`, and the stage-global callback — is public by design, exactly as it is on the plain path. A
 consumer can assert the table rather than trust it, through `SecureApp.Routes()` / `secureApp.routes()` /
 `secure_app.routes()` and the shared `secure_app_mount` conformance rows. A rejected configuration still adds no route
-at all. The runtime conformance kit ships the matching closed-by-default variants
+at all, and the mount itself is all-or-nothing: the registrars prove the whole plan before the surface receives its
+first facade route, so an invalid entry, a duplicate inside the plan, and a pattern or posture the surface refuses
+all add nothing. On a `SecureApp` a collision with a route the application already declares is pre-checked through
+`Routes()` and adds nothing either, so a returned error means zero facade routes were added. The plain `App` surface
+publishes no route table, so a collision with a route the application already registered there is the one case the
+plain registrar cannot pre-check: it is reported by the app's own duplicate check while the plan is mounted, and the
+entries the plan had already mounted before it stand. The runtime conformance kit ships the matching closed-by-default variants
 (`AssertCredentialFreeDeniedSecureApp`, `assertCredentialFreeTransportDeniedSecureApp`,
 `assert_credential_free_transport_denied_secure_app`, and their bearer and insufficient-scope companions), so a
 consumer's own suite drives either surface.

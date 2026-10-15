@@ -98,7 +98,9 @@ AppTheory derives and validates the full internal route inventory before touchin
 expose route introspection, so a collision with a route that was registered earlier is returned by the strict router
 registration guard when encountered instead of escaping as a panic. Routes installed earlier in the same facade call
 may remain registered after that error. Applications should register the facade before overlapping application routes
-and must discard an app whose registration returned an error.
+and must discard an app whose registration returned an error. On a `SecureApp`, whose declared routes *are* readable
+through `Routes()`, the same collision is pre-checked before any route is added, so nothing is left behind; see
+[Closed-by-default SecureApp mounts](#closed-by-default-secureapp-mounts).
 
 ## Closed-by-default SecureApp mounts
 
@@ -134,7 +136,16 @@ inventory, err := mcpfacade.RegisterMCPFacadeSecure(secure, mcpfacade.FacadeConf
 
 TypeScript and Python differ only in the call: `registerMcpFacadeSecure(secureApp, config)` and
 `register_mcp_facade_secure(secure_app, config)`. Both take the same `FacadeConfig` shape and return the same
-inventory, and both fail closed on a rejected configuration before adding any route.
+inventory, and both register all-or-nothing:
+
+- The whole plan is proven installable before the app receives its first facade route. A configuration the facade
+  rejects, an invalid entry, a duplicate inside the plan, a pattern or posture the surface refuses, and — on a
+  `SecureApp` — a collision with a route the application already declares all leave the route table exactly as it
+  was, so a returned error means zero facade routes were added.
+- On a plain `App` the plan is pre-checked the same way, but the plain surface publishes no route table (only
+  `SecureApp` does), so a collision with a route the application already registered on that plain `App` is reported
+  by the app's own duplicate check while the plan is mounted. That is the one collision the facade cannot pre-check,
+  and the entries the plan had already mounted before it stand.
 
 ### Route authority
 
