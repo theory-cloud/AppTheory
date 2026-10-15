@@ -2890,11 +2890,14 @@ def _new_oauth_fixture_app(runtime: Any, setup: dict[str, Any]) -> Any:
         runtime.protected_resource_metadata_handler(metadata),
     )
 
+    def route_scopes(_ctx):
+        return [str(v) for v in setup.get("required_scopes") or []]
+
     validator = runtime.new_memory_bearer_token_validator(
         _oauth_token_records(runtime, setup),
         runtime.BearerTokenValidationOptions(
             required_audience=str(setup.get("required_audience") or resource).strip(),
-            required_scopes=[str(v) for v in setup.get("required_scopes") or []],
+            required_scopes_func=route_scopes,
             now=lambda: fixed_now,
         ),
     )
@@ -2902,6 +2905,7 @@ def _new_oauth_fixture_app(runtime: Any, setup: dict[str, Any]) -> Any:
         runtime.RequireBearerTokenOptions(
             resource_metadata_url=metadata_url,
             claims_validator=validator,
+            required_scopes_func=route_scopes,
         )
     )
 

@@ -56,6 +56,30 @@ handlers for every entry in `routeInventory` and must not assume `RegisterMCPFac
 patterns. This boundary keeps the shipped helper and the deployed routes congruent instead of presenting a facade
 that returns 404 for every configured path.
 
+## Stage-global upstream callback
+
+The upstream OAuth callback is installed once per deployment rather than once per MCP kind: the callback is correlated
+by the single-use upstream state the facade minted, so no per-kind callback multiplies. The construct wires one `GET`
+route for it, exposed as `routeInventory.callbackPattern`.
+
+`upstreamCallbackPath` overrides the path. It must be a synthesis-time literal absolute path with no query, fragment, or
+dot segment, and it is normalized with the same rules as every other route path (`/cb/` becomes `/cb`). An empty value
+keeps the contract default, `AppTheoryMcpRouteAlgebra.DEFAULT_CALLBACK_PATH` (`/_oauth/mcp/callback`); a token, a
+relative path, or a value that collides with another derived route fails synthesis.
+
+```ts
+new AppTheoryMcpServer(this, "McpServer", {
+  handler,
+  upstreamCallbackPath: "/_oauth/mcp/callback",
+});
+```
+
+The construct resolves the prop through `AppTheoryMcpRouteAlgebra.callbackPathForConfiguredPath`, the same algebra the
+runtime applies to `FacadeConfig.UpstreamCallbackPath` in Go, TypeScript, and Python. Supplying the same value to the
+construct and to the runtime `FacadeConfig` keeps the CDK-mounted route and the runtime-registered route congruent
+instead of letting them diverge. `transportPosture: none-public` attaches no OAuth surface, so it refuses
+`upstreamCallbackPath`.
+
 ## Attach mode and owned mode
 
 Attach mode is for a shared front door. It adds `HttpRoute` resources to the supplied `IHttpApi` and creates no
@@ -105,12 +129,28 @@ attach-mode stage for endpoint-template derivation; it does not create, import, 
 returns one execute-api or owned-domain template per family member; parameterized values remain templates until
 request time.
 
-## Authenticated by default
+## Transport posture
 
 The full facade is wired by default, and the three MCP transport routes (`POST`, `GET`, and `DELETE` on every MCP
-pattern) now require credentials. They default to an IAM authorizer, or a JWT authorizer when `transportAuthorizer`
-supplies an issuer and audience, so a credential-free request to a transport route is rejected by API Gateway before
-the runtime handler runs.
+pattern) require credentials. A plain transport server defaults to an IAM authorizer; attaching `facade` marks the
+server facade-configured and flips the default to `runtime-bearer`, where the gateway authorizer is `NONE` and the
+runtime validates RFC 9728 bearer tokens. A credential-free request is then rejected by API Gateway (IAM/JWT) or by the
+runtime before the application handler runs.
+
+`transportPosture` selects the posture explicitly and overrides that default. The four values are `iam`, `jwt` (a static
+issuer and audience through `transportAuthorizer`), `runtime-bearer` (runtime-validated RFC 9728 bearer tokens), and
+`none-public` (deliberately public, never a default). `jwt` is the only posture that accepts `transportAuthorizer`;
+supplying it with `iam`, `runtime-bearer`, or `none-public` fails synthesis.
+
+`runtime-bearer` and `none-public` carry a mandatory defense-in-depth floor and fail synthesis without it:
+
+- `originReachability` must be `disabled` or `locked`; a directly reachable origin is refused;
+- `runtime-bearer` requires `runtimePosture: { requireBearerToken: true }`, which asserts the runtime registers the
+  transport routes with the runtime-validated bearer posture;
+- in owned mode the throttling decision must be explicit (`ownedApi.stage.throttlingEnabled: true`) and access logging
+  must stay on; in attach mode `owningApiDefense` records the owning API's access-logging and throttling decisions;
+- `runtime-bearer` also requires a `denialSignal` declaration naming the `apptheory.mcp.auth_denied` metric with the
+  bounded `outcome` and `route_family` dimensions.
 
 Discovery, protected-resource metadata, authorize, and token routes stay explicitly `NONE` so a supplied API's default
 authorizer cannot intercept OAuth traffic: OAuth clients must fetch those documents before they hold a token. Scope
@@ -118,12 +158,16 @@ policy and authorize/token behavior belong to the AppTheory runtime composition 
 `RegisterMCPFacade` with non-empty per-kind scopes and an application-owned authorize/token handler pair. The helper
 fails closed if that pair is partial and does not install authorize/token runtime routes when both are absent.
 
-For a genuinely public MCP application, `unauthenticatedMcp: true` is the explicit CDK opt-out. It wires only the three
-MCP transport methods and no OAuth facade, and it cannot be combined with `transportAuthorizer`, root discovery, or the
-deprecated issuer/JWKS props. `RegisterMCPFacade` now registers the MCP transport routes with an authenticated posture
-by default and exposes `FacadeConfig.UnauthenticatedMcp` for the same opt-out, or `FacadeConfig.RequireBearerToken` to
-validate RFC 9728 bearer tokens on those routes. Omitting runtime auth config is not an opt-out: the default CDK facade
-remains present and the runtime must initialize its explicit `FacadeConfig` successfully.
+`none-public` wires only the three MCP transport methods and no OAuth facade, and it cannot be combined with
+`transportAuthorizer`, root discovery, the deprecated issuer/JWKS props, `upstreamCallbackPath`, or `runtimePosture`.
+`RegisterMCPFacade` now registers the MCP transport routes with an authenticated posture by default and pairs its
+`FacadeConfig.TransportPosture` with `FacadeConfig.RequireBearerToken`, which validates RFC 9728 bearer tokens on those
+routes. Omitting runtime auth config is not an opt-out: the default CDK facade remains present and the runtime must
+initialize its explicit `FacadeConfig` successfully.
+
+The synthesized template records the resolved posture as CloudFormation `Metadata` under
+`apptheory:mcp-transport-posture` (`posture`, `contract_id`, `route_count`, `runtime_posture_declared`) so a
+conformance kit can compare a deployed posture with the runtime registration output.
 
 The v3.1.x `authorizationServerIssuer` and `jwksUri` props are deprecated together. They remain pair-validated for
 migration safety but no longer control facade wiring and no longer become environment variables. Move them into
@@ -140,16 +184,18 @@ Owned mode enables these defaults:
 | Stage throttling | on; 100 requests/second, burst 200 | `ownedApi.stage.throttlingEnabled: false` |
 
 Disabled surfaces reject their dependent options. For example, a disabled session table cannot also specify
-`tableName`, `ttlMinutes`, or `removalPolicy`; disabled throttling cannot specify rate or burst limits. Attach mode still
-creates the session table by default, but logging and throttling belong to the supplied API's owner. A shared front door
-must configure those controls on its own stage rather than asking an attached child construct to mutate them.
+`tableName`, `ttlMinutes`, or `removalPolicy`; disabled throttling cannot specify rate or burst limits. Under
+`runtime-bearer` and `none-public` the access-logging and throttling opt-outs are refused outright: the owned stage must
+keep access logging and an explicit throttling decision. Attach mode still creates the session table by default, but
+logging and throttling belong to the supplied API's owner. A shared front door must configure those controls on its own
+stage rather than asking an attached child construct to mutate them.
 
 ## Runtime helper and environment contract
 
 The construct and `runtime/mcpfacade` share routes, not configuration environment variables. `FacadeConfig` has no env
 reads. Issuer, JWKS, optional registration endpoint, URL mode, public base URL or hostname allowlist, per-kind scopes,
-capabilities, MCP handler, authorize/token factories, optional root discovery, and the transport authentication posture
-(`UnauthenticatedMcp` or `RequireBearerToken`) are app-owned values.
+capabilities, MCP handler, authorize/token factories, optional root discovery, and the transport posture
+(`FacadeConfig.TransportPosture` paired with `FacadeConfig.RequireBearerToken`) are app-owned values.
 
 The construct writes only environment variables consumed by existing runtime code:
 
@@ -157,12 +203,18 @@ The construct writes only environment variables consumed by existing runtime cod
 | --- | --- | --- |
 | `MCP_SESSION_TABLE` | session state enabled | `runtime/mcp` DynamoDB session store |
 | `MCP_SESSION_TTL_MINUTES` | session state enabled | `runtime/mcp` session policy |
-| `MCP_ENDPOINT` | owned API mode only | `runtime/oauth` fallback 401 challenge |
 
-`MCP_ENDPOINT` is intentionally not injected in attach mode. An attached execute-api endpoint is often behind a custom
-front door or CDN and is not necessarily the public resource authority. The application must either pass the correct
-request-specific `ResourceMetadataURL` to bearer middleware or configure its public challenge endpoint in its own
-runtime environment. Adding a public-origin prop to the construct would reintroduce the THE-2861 failure class.
+`MCP_ENDPOINT` is retired in v6 in both directions: no construct writes it and no runtime reads it, so there is no shim.
+The bearer challenge is app-owned configuration — a route-derived `ResourceMetadataURLFunc`, the per-actor
+`ResourceMetadataURLTemplate` (TypeScript `resourceMetadataURLTemplate`, Python `resource_metadata_url_template`), or an
+explicit `ResourceMetadataURL` (precedence: resolver > template > static) — and with none configured the middleware
+advertises the bare `Bearer` challenge. `AppTheoryRemoteMcpServer` exposes the route-derived
+`protectedResourceMetadataUrl` (the RFC 9728 metadata URL template, with `{actor}` preserved when `actorPath` is
+enabled); pass it into your own app config and configure it as the template option so the middleware resolves `{actor}`
+from the matched route. The construct emits a synth warning on the per-actor route and injects no environment variable
+for this. `AppTheoryMcpServer` exposes its route-derived protected-resource paths through `routeInventory` and
+`protectedResourceMetadataPaths`. The construct still does not accept an origin prop — adding one would reintroduce the
+THE-2861 failure class.
 
 The construct never writes the retired `APPTHEORY_MCP_PATH`, `APPTHEORY_MCP_PROTECTED_RESOURCE_PATH`,
 `APPTHEORY_MCP_AUTHORIZATION_SERVER_ISSUER`, or `APPTHEORY_MCP_JWKS_URI` variables.
@@ -194,3 +246,35 @@ fork.
 
 `AppTheoryMcpProtectedResource` remains only for existing REST API stacks that intentionally synthesize a static
 metadata document. Its URL-valued props are deprecated and are not an alternate namespace deployment path.
+
+## REST v1 edge challenge restoration
+
+An AWS API Gateway REST API v1 origin remaps the `WWW-Authenticate` response header onto
+`x-amzn-remapped-www-authenticate`, so the canonical RFC 9728 challenge an MCP transport route returns can be lost
+before the client sees it. `AppTheoryRestV1ChallengeRestoration` fronts a REST v1 `execute-api` origin with
+CloudFront, derives its route set from `AppTheoryMcpRouteAlgebra` (never a hand-written path list), and attaches an
+origin-response Lambda@Edge function that restores `WWW-Authenticate` from the AWS remap artifact — and, only when
+the optional alias bridge is enabled, from the `x-theory-www-authenticate` then `mcp-www-authenticate` spellings —
+then removes the consumed source headers.
+
+The construct requires the DD-2 direct-origin decision: pass `origin` plus
+`originReachability: AppTheoryRestV1OriginReachability.LOCKED` (with `originLock: { secret, asserted: true }`, which
+injects the secret as a custom origin header and strips a viewer-supplied copy at the edge) or
+`DISABLED` (with `disableExecuteApiEndpointAsserted: true`). A directly reachable origin (`direct`) is refused at
+synthesis, because the REST API's own `execute-api` endpoint is this distribution's origin: a client that bypasses
+the distribution still reaches it and sees a **challenge-less 401** (authentication still fails closed there, so it
+is challenge loss and edge bypass rather than an authentication bypass).
+
+The `LOCKED` secret is a **defense-in-depth layer, not a credential store**. It is a literal CloudFront origin
+custom header value, so it appears **verbatim in the synthesized template and in CloudFormation**; the
+`[A-Za-z0-9._~-]{32,128}` alphabet structurally excludes a `{{resolve:...}}` dynamic reference, so there is no
+Secrets Manager path and rotating it means changing the value and redeploying; and it must not be (or contain) a
+secret that protects anything else. Where a custom domain is acceptable, prefer `DISABLED`, which keeps no secret in
+the template.
+
+The construct is additive otherwise, so a
+stack that does not use it synthesizes unchanged. It requires a stack with a resolved account and region, and it
+fails synthesis on a non-REST-v1 origin (the restoration is a documented no-op on HTTP API v2). See the
+`AppTheoryRestV1ChallengeRestoration` surface note in the CDK package README and `UPGRADING.md`, section "REST v1
+edge WWW-Authenticate restoration", for the source-set priority order, the origin-reachability options and the
+optional alias bridge.

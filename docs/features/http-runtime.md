@@ -5,7 +5,7 @@ description: Tiered middleware, routing, normalization, and the AppTheory error 
 
 # HTTP Runtime (P0–P2)
 
-The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [276-vector corpus](../reference/contract-fixtures.md) includes 274 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the two Go/CDK-TS MCP route/facade tables. <!-- apptheory-fixture-count: 276 -->
+The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [288-vector corpus](../reference/contract-fixtures.md) includes 275 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the thirteen nested MCP route-algebra, auth-facade and limiter cancellation tables. <!-- apptheory-fixture-count: 288 -->
 
 The runtime is **tiered.** You opt into a tier when you create the app:
 
@@ -30,7 +30,12 @@ The smallest viable AppTheory:
 - `SourceProvenance` (see [Source Provenance](source-provenance.md)) — available even at P0
 - Strict route helpers (`GetStrict`, `handleStrict`, `handle_strict`)
 
-P0 is appropriate for tightly scoped functions that do their own auth, observability, and shedding.
+P0 is **the minimal tier, not a protected tier.** It is the frozen legacy pipeline and does **not** evaluate
+route-level transport postures: nothing about P0 adds an iam/jwt route guard, so an application that explicitly
+selects P0 must supply its own authentication (for example `oauth.RequireBearerTokenMiddleware`) or own transport
+authentication itself. P0 is appropriate for tightly scoped functions that do their own auth, observability, and
+shedding. The default tier (P2) and [SecureApp](secure-app.md) are the paths that evaluate the transport posture and
+its defense-in-depth pairing; the [MCP facade helper](mcp-facade-helper.md) states the same caveat for the facade.
 
 ### P1 — production HTTP defaults
 
@@ -51,6 +56,7 @@ P1 plus:
   request, including `duration_ms` and inbound trace IDs extracted from `traceparent` or `X-Amzn-Trace-Id`. See
   [Observability Hooks](observability.md) and [Logging Profiles](logging-profiles.md).
 - **Rate-limit / load-shed hooks** — the shared P2 contract pins the portable policy-hook outcome: a rejected request returns `app.rate_limited`, `429`, and `Retry-After` while still flowing through observability. Go additionally exports `RateLimitMiddleware`, which integrates with `pkg/limited` and fingerprints default credential-derived identifiers (`x-api-key`, `Authorization: Bearer`) with HMAC-SHA256 before they reach the limiter. TypeScript and Python expose policy hooks plus limiter primitives, but they do not currently ship a `RateLimitMiddleware` equivalent.
+- **Multi-window limiter cancellation classification** — the DynamoDB-backed multi-window limiter in all three runtimes classifies a cancelled `TransactWrite` by its **first genuine cancellation reason** (TableTheory 5.2.0 semantics; see [Upgrading](../UPGRADING.md#tabletheory-520-dependency-and-multi-window-rate-limit-error-classification)). A genuine `ConditionalCheckFailed` — the request exceeded a window budget — is a **soft denial**: `allowed=false` with a retry-after, in every runtime and under either fail-open policy. A DynamoDB throttle (`ThrottledError` / `ErrThrottled`), a transaction conflict (`TransactionConflictError` / `ErrTransactionConflict`), an unknown code, an all-`None` or empty reason list, or a cancellation whose message merely mentions `ConditionalCheckFailed` is **not** a condition failure and follows the configured fail-open policy exactly as Go always has: `failOpen: true` (the AppTheory default) admits the request, `failOpen: false` returns an `internal_error`. Set `failOpen` to `false` (Go `limited.Config.FailOpen`, TypeScript `config.failOpen`, Python `config.fail_open`) if a throttle must deny rather than admit. The shared table `contract-tests/fixtures/routing/limiter/multi-window-cancellation.v1.json` pins every class in Go, TypeScript and Python.
 
 P2 is what production applications use unless they have a reason not to. The default is P2 because most consumers should not be assembling these pieces from scratch.
 
@@ -344,4 +350,4 @@ Deliberately conservative, and reported rather than assumed joined:
 - [Logging Profiles](logging-profiles.md) — profile-backed structured JSON log output
 - [Sanitization](sanitization.md) — safe logging helpers
 - [Event Workloads](event-workloads.md) — the non-HTTP side of the runtime
-- [Contract Fixtures](../reference/contract-fixtures.md) — 276 vectors: 274 generic fixtures across Go/TS/Python plus two Go/CDK-TS MCP route/facade tables <!-- apptheory-fixture-count: 276 -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — 288 vectors: 275 generic fixtures across Go/TS/Python plus thirteen nested MCP route-algebra, auth-facade and limiter cancellation tables <!-- apptheory-fixture-count: 288 -->

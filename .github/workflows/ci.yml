@@ -232,7 +232,7 @@ jobs:
 
   staging-release-eligibility:
     name: Release eligibility (staging → premain)
-    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')
+    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -246,13 +246,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          # On a PR, HEAD is the pull request merge commit, so
-          # origin/premain..HEAD is the range that would exist after the merge;
-          # on a push it is the merged staging SHA, which is the exact range the
-          # staging → premain promotion PR re-checks. origin/main is fetched for
-          # the post-release main back-merge exemption only: after a stable
-          # release the returned main branch carries nothing release-please can
-          # ship, so that one merge must not read as a missing release driver.
+          # The gate runs on the staging → premain promotion pull request, where
+          # HEAD is the merge commit into premain, so origin/premain..HEAD is
+          # exactly the range the promotion ships. It also runs on the pushed
+          # staging SHA, which is that same range re-checked before the promotion.
+          # It deliberately does not run on pull requests into staging: those
+          # asked for a verdict on staging's whole post-release range, which
+          # carries no release-driving commit until the next feat:/fix:/perf:
+          # lands, so every docs-, chore-, test- and CI-only pull request failed a
+          # gate it could not fix (operator decision 2026-10-12). origin/main is
+          # fetched for the post-release main back-merge exemption only: after a
+          # stable release the returned main branch carries nothing release-please
+          # can ship, so that one merge must not read as a missing release driver.
           git fetch origin premain staging main --force
           bash scripts/verify-release-eligibility.sh \
             --range "origin/premain..HEAD" \

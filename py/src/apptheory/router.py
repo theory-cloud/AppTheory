@@ -139,7 +139,12 @@ def _route_registration_error(message: str) -> AppTheoryError:
 
 
 def _split_path(path: str) -> list[str]:
-    value = normalize_path(path).lstrip("/")
+    value = normalize_path(path)
+    # Strip exactly one leading slash, matching the Go and TypeScript routers:
+    # a doubled leading slash leaves an empty first segment, so "//acme/mcp"
+    # matches no route instead of being collapsed to "/acme/mcp".
+    if value.startswith("/"):
+        value = value[1:]
     if not value:
         return []
     return value.split("/")

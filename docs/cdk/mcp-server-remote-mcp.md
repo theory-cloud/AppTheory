@@ -28,7 +28,8 @@ Claude Remote MCP requires real incremental streaming for tool calls. On AWS tha
   - `GET /mcp/{actor}` (streaming enabled)
   - `DELETE /mcp/{actor}`
   - `GET /.well-known/oauth-protected-resource/mcp/{actor}` (co-registered RFC9728 discovery)
-- Lambda env var `MCP_ENDPOINT` pointing at the resolved `/mcp` URL or `/mcp/{actor}` template
+- the route contract as construct properties: `endpoint` (transport URL template) and the route-derived
+  `protectedResourceMetadataUrl` (RFC 9728 metadata URL template); no `MCP_ENDPOINT` environment variable is injected
 - optional DynamoDB tables:
   - session table (matches `runtime/mcp/session_dynamo.go` schema)
   - stream/event table (used by durable replay once the app wires a concrete `StreamStore`)
@@ -189,31 +190,94 @@ Important caveat:
 
 `AppTheoryRemoteMcpServer` injects these environment variables when the corresponding features are enabled:
 
-- always: `MCP_ENDPOINT`
 - session table: `MCP_SESSION_TABLE`, `MCP_SESSION_TTL_MINUTES`
 - stream table: `MCP_STREAM_TABLE`, `MCP_STREAM_TTL_MINUTES`
 - stream spill: `MCP_STREAM_SPILL_BUCKET`, `MCP_STREAM_SPILL_PREFIX`, `MCP_STREAM_SPILL_INLINE_MAX_BYTES`,
   `MCP_STREAM_MAX_EVENT_BYTES`
 - task table: `MCP_TASK_TABLE`, `MCP_TASK_TTL_MINUTES`
 
-`MCP_ENDPOINT` is the canonical deployed MCP resource URL or template:
+The route contract is exposed as construct properties, not environment variables. `endpoint` is the transport URL
+template (`.../mcp`, or `.../mcp/{actor}` when `actorPath: true`) and `protectedResourceMetadataUrl` is the
+route-derived RFC 9728 protected-resource metadata URL template, both derived from the same route model through the
+shared MCP route algebra. With `actorPath: true` the property is a real URL for the deployed API whose only remaining
+template placeholder is `{actor}` — the construct has already resolved the concrete API id, region, stage (or
+custom-domain base path), so it is not a string to retype by hand:
 
-- execute-api hostname: `https://{apiId}.execute-api.{region}.amazonaws.com/{stage}/mcp`
-- custom domain without base path: `https://mcp.example.com/mcp`
-- custom domain with base path: `https://api.example.com/{basePath}/mcp`
-- per-actor execute-api template: `https://{apiId}.execute-api.{region}.amazonaws.com/{stage}/mcp/{actor}`
-- per-actor custom domain template: `https://mcp.example.com/mcp/{actor}`
+```text
+https://a1b2c3d4.execute-api.us-east-1.amazonaws.com/prod/.well-known/oauth-protected-resource/mcp/{actor}
+```
 
-This matters for OAuth discovery. If `oauth.RequireBearerTokenMiddleware(...)` is used without an explicit
-`ResourceMetadataURL`, the middleware derives the RFC9728 `/.well-known/oauth-protected-resource` challenge URL from
-`MCP_ENDPOINT`.
+The `https://{apiId}.execute-api.{region}.amazonaws.com/{stage}/...` form is schematic. Placeholders in the URL
+authority are refused by the runtime's template compiler; only `{actor}`, a placeholder naming a matched route
+parameter, survives. Without `actorPath` the property is the family form
+`.../.well-known/oauth-protected-resource/mcp`.
+
+This matters for OAuth discovery. The runtime reads no environment variable for the challenge, and the construct
+injects none (the framework-injected `MCP_ENDPOINT` is retired). The supported wiring is explicit in your own app code:
+your CDK passes `server.protectedResourceMetadataUrl` into a configuration surface you already own, and your app passes
+that value to the runtime as the template option.
+
+Adopter's CDK — hand the property to your own config (a Lambda environment variable, a parameter-store value, or
+anything else you control):
+
+```ts
+const mcp = new AppTheoryRemoteMcpServer(stack, "Mcp", { handler, actorPath: true });
+
+new Function(stack, "App", {
+  // ... your own config surface:
+  environment: { RESOURCE_METADATA_URL_TEMPLATE: mcp.protectedResourceMetadataUrl },
+});
+```
+
+Adopter's app — wire that value as a per-actor template so the middleware resolves `{actor}` from the matched route:
+
+```go
+// Go
+middleware := oauth.RequireBearerTokenMiddleware(oauth.RequireBearerTokenOptions{
+    ResourceMetadataURLTemplate: cfg.ResourceMetadataURLTemplate,
+    ClaimsValidator:             validateAccessToken,
+})
+```
+
+```ts
+// TypeScript
+app.use(requireBearerTokenMiddleware({
+    resourceMetadataURLTemplate: cfg.resourceMetadataURLTemplate,
+    claimsValidator: validateAccessToken,
+}));
+```
+
+```python
+# Python
+middleware = require_bearer_token_middleware(RequireBearerTokenOptions(
+    resource_metadata_url_template=cfg.resource_metadata_url_template,
+    claims_validator=validate_access_token,
+))
+```
+
+Pinned template rules:
+
+- every `{param}` placeholder must name a parameter of the matched route; interpolation reads only that route's path
+  parameters,
+- a substituted value must be 1..128 bytes of `[a-z0-9._~-]` and must not be `.` or `..`; any other value, or a
+  placeholder the matched route does not supply, degrades the challenge to the bare `Bearer` form,
+- a malformed template fails at startup (panic / throw / raise) when the middleware is registered,
+- precedence is resolver > template > static URL (`ResourceMetadataURLFunc` > `ResourceMetadataURLTemplate` >
+  `ResourceMetadataURL`),
+- the middleware reads no environment variable.
+
+`MCP_ENDPOINT` is retired — no construct writes it and no runtime reads it. With no resolver, no template, and no
+explicit `ResourceMetadataURL`, the challenge is the bare `Bearer` form. When `actorPath: true` the construct emits a
+synth warning naming `protectedResourceMetadataUrl` and this wiring — a protected per-actor route that advertises only
+the bare `Bearer` challenge breaks Claude's RFC 9728 discovery.
 
 Important fail-closed rules:
 
 - `RequireBearerTokenMiddleware(...)` requires an explicit `Validator`; omitting it causes every request to be rejected
   with `401`.
 - The middleware no longer derives protected-resource metadata from `Host` / `X-Forwarded-Proto` request headers.
-  Use `MCP_ENDPOINT` or pass `ResourceMetadataURL` explicitly.
+  Configure the construct's `protectedResourceMetadataUrl` as the `ResourceMetadataURLTemplate` option (per-actor) so
+  the middleware interpolates `{actor}` from the matched route, or use a resolver / explicit `ResourceMetadataURL`.
 - Invalid-audience bearer tokens are intentionally treated as authorization failures: the fixture-pinned response is
   `403 app.forbidden` without a `WWW-Authenticate` challenge, matching insufficient-scope denial. Missing or expired
   bearer tokens remain `401` discovery/challenge cases.

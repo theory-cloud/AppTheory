@@ -15,26 +15,76 @@ const DEFAULT_THROTTLING_RATE_LIMIT = 100;
 const DEFAULT_THROTTLING_BURST_LIMIT = 200;
 const DEFAULT_SESSION_TTL_MINUTES = 60;
 const MCP_TRANSPORT_AUTHORIZER_ID = "McpTransportAuthorizer";
+const MCP_TRANSPORT_POSTURE_METADATA_KEY = "apptheory:mcp-transport-posture";
+const MCP_TRANSPORT_POSTURE_CONTRACT_ID = "m17.mcp-transport-posture/v1";
+const MCP_DENIAL_METRIC_NAME = "apptheory.mcp.auth_denied";
+const MCP_DENIAL_DIMENSIONS = ["outcome", "route_family"];
 
-/** Authorizer applied to the AppTheoryMcpServer MCP transport routes. */
-export enum AppTheoryMcpTransportAuthorizerKind {
-  /** AWS IAM (SigV4) authorization. The zero-configuration default. */
+/** Transport-route authorization posture for AppTheoryMcpServer. */
+export enum AppTheoryMcpTransportPosture {
+  /** AWS IAM (SigV4) on the transport routes. The default for a server with no facade attachment. */
   IAM = "iam",
-  /** JSON Web Token authorization against an OIDC/Cognito issuer. */
+  /** A static JWT authorizer (issuer + audience) on the transport routes. */
   JWT = "jwt",
+  /** The gateway authorizer is NONE and the runtime validates RFC 9728 bearer tokens. The default for a facade-configured server. */
+  RUNTIME_BEARER = "runtime-bearer",
+  /** Deliberately public MCP server: every transport route is public. Never a default. */
+  NONE_PUBLIC = "none-public",
 }
 
-/** Authenticated authorizer configuration for the MCP transport routes. */
+/** Presence-only skeleton of the upstream-provider attachment that selects the facade-scoped default. */
+export interface AppTheoryMcpFacadeAttachment {
+  /** Identifies the upstream authorization provider this server fronts (for example `autheory`). Provider wiring lands in M3; this milestone validates the attachment shape and uses its presence to select the `runtime-bearer` default. */
+  readonly providerId: string;
+}
+
+/** Runtime-side declaration that the transport routes validate RFC 9728 bearer tokens at runtime. */
+export interface AppTheoryMcpRuntimePostureOptions {
+  /** Assert the runtime registers the transport routes with the runtime-validated bearer posture (Go `FacadeConfig.RequireBearerToken`, TS `requireBearerTokenMiddleware`, Python `require_bearer_token_middleware`). Must be `true`. */
+  readonly requireBearerToken: boolean;
+}
+
+/** Direct-origin reachability decision required under `runtime-bearer` and `none-public`. */
+export enum AppTheoryMcpOriginReachability {
+  /** The execute-api default endpoint is disabled. */
+  DISABLED = "disabled",
+  /** The origin is reachable only through a locked front door (CloudFront / VPC origin). */
+  LOCKED = "locked",
+}
+
+/** Denial-telemetry declaration required under `runtime-bearer`. */
+export interface AppTheoryMcpDenialSignalOptions {
+  /** Denial metric name. Must be `apptheory.mcp.auth_denied`. @default apptheory.mcp.auth_denied */
+  readonly metricName?: string;
+  /** Bounded metric dimensions. Must be exactly `outcome` and `route_family`. @default ["outcome", "route_family"] */
+  readonly dimensions?: string[];
+}
+
+/** Owning-API stage throttling decision. */
+export interface AppTheoryMcpOwningApiThrottlingOptions {
+  /** Stage rate limit in requests per second. */
+  readonly rateLimit: number;
+  /** Stage burst limit. */
+  readonly burstLimit: number;
+}
+
+/** Attach-mode record of the owning API's defense-in-depth decisions (required under `runtime-bearer` and `none-public`). */
+export interface AppTheoryMcpOwningApiDefenseOptions {
+  /** Whether the owning API's stage has access logging enabled. Must be true. */
+  readonly accessLogging: boolean;
+  /** The owning API's stage throttling decision. */
+  readonly throttling: AppTheoryMcpOwningApiThrottlingOptions;
+}
+
+/** Static JWT configuration for `transportPosture: JWT`. */
 export interface AppTheoryMcpTransportAuthorizerOptions {
-  /** @default AppTheoryMcpTransportAuthorizerKind.IAM */
-  readonly kind?: AppTheoryMcpTransportAuthorizerKind;
-  /** Absolute HTTPS JWT issuer URL. Required when kind is JWT. @default undefined */
+  /** Absolute HTTPS JWT issuer URL. Required under `transportPosture: JWT`. @default undefined */
   readonly issuer?: string;
-  /** Accepted JWT audiences. Required when kind is JWT. @default undefined */
+  /** Accepted JWT audiences. Required under `transportPosture: JWT`. @default undefined */
   readonly audience?: string[];
-  /** Identity sources for the JWT authorizer. JWT only. @default ["$request.header.Authorization"] */
+  /** Identity sources for the JWT authorizer. @default ["$request.header.Authorization"] */
   readonly identitySource?: string[];
-  /** JWT authorizer resource name. JWT only. @default the authorizer construct id */
+  /** JWT authorizer resource name. @default the authorizer construct id */
   readonly authorizerName?: string;
 }
 
@@ -155,6 +205,7 @@ export interface AppTheoryMcpServerFacadeRoute {
   readonly discoverySuffixPattern: string;
   readonly authorizePattern: string;
   readonly tokenPattern: string;
+  readonly registerPattern: string;
   readonly authorizationRoutesAttached: boolean;
 }
 
@@ -164,6 +215,7 @@ export interface AppTheoryMcpServerRouteInventory {
   readonly routes: AppTheoryMcpServerFacadeRoute[];
   readonly rootAuthorizationServerPattern: string;
   readonly rootAuthorizationServerAttached: boolean;
+  readonly callbackPattern: string;
 }
 
 /** Props for the AppTheoryMcpServer construct. */
@@ -213,32 +265,80 @@ export interface AppTheoryMcpServerProps {
   readonly routeFamily?: AppTheoryMcpRouteFamily;
 
   /**
-   * Explicitly opt out of the OAuth facade and wire only MCP transport routes.
+   * Transport-route authorization posture.
    *
-   * This cannot be combined with legacy authorization props, root discovery, or
-   * `transportAuthorizer`. The Go helper `runtime/mcpfacade.RegisterMCPFacade`
-   * installs the authenticated canonical facade by default and exposes
-   * `FacadeConfig.UnauthenticatedMcp` for the same transport opt-out, so
-   * applications using this opt-out must own runtime registration for the
-   * transport routes.
-   * @default false
+   * An explicit selection overrides the facade-scoped default. When it is
+   * omitted, a server that attaches `facade` resolves to `runtime-bearer` and a
+   * plain transport server resolves to `iam`. `none-public` is never a default
+   * and carries the defense-in-depth floor.
+   * @default AppTheoryMcpTransportPosture.RUNTIME_BEARER when `facade` is attached, otherwise AppTheoryMcpTransportPosture.IAM
    */
-  readonly unauthenticatedMcp?: boolean;
+  readonly transportPosture?: AppTheoryMcpTransportPosture;
 
   /**
-   * Authorizer applied to the MCP transport routes only.
+   * Upstream-provider attachment that marks this server as facade-configured.
+   *
+   * The attachment's presence selects the `runtime-bearer` posture default.
+   * Provider wiring lands in M3; this milestone validates the attachment shape.
+   * @default undefined
+   */
+  readonly facade?: AppTheoryMcpFacadeAttachment;
+
+  /**
+   * Runtime-side RFC 9728 bearer validation declaration.
+   *
+   * Required by `transportPosture: RUNTIME_BEARER` and refused under every
+   * other posture.
+   * @default undefined
+   */
+  readonly runtimePosture?: AppTheoryMcpRuntimePostureOptions;
+
+  /**
+   * Direct-origin reachability decision required under RUNTIME_BEARER and
+   * NONE_PUBLIC. A directly reachable origin is refused.
+   * @default undefined
+   */
+  readonly originReachability?: AppTheoryMcpOriginReachability;
+
+  /**
+   * Denial-telemetry declaration required under RUNTIME_BEARER only.
+   * @default undefined
+   */
+  readonly denialSignal?: AppTheoryMcpDenialSignalOptions;
+
+  /**
+   * Attach-mode record of the owning API's throttling and access-logging
+   * decisions, required under RUNTIME_BEARER and NONE_PUBLIC.
+   * @default undefined
+   */
+  readonly owningApiDefense?: AppTheoryMcpOwningApiDefenseOptions;
+
+  /**
+   * Static JWT configuration for the MCP transport routes.
    *
    * Transport routes are the POST, GET, and DELETE routes on every MCP pattern.
-   * When `unauthenticatedMcp` is false (the default) those routes require
-   * credentials and default to IAM, so credential-free requests are rejected by
-   * API Gateway with 403. Discovery, protected-resource metadata, authorize,
-   * and token routes remain explicitly public (`NONE`) because OAuth clients
-   * must fetch them before they hold a token.
-   *
-   * Cannot be combined with `unauthenticatedMcp: true`.
-   * @default AppTheoryMcpTransportAuthorizerKind.IAM
+   * This prop is only valid with `transportPosture: JWT`, which requires an
+   * issuer and a non-empty audience. Discovery, protected-resource metadata,
+   * authorize, and token routes remain explicitly public (`NONE`) because OAuth
+   * clients must fetch them before they hold a token.
+   * @default undefined
    */
   readonly transportAuthorizer?: AppTheoryMcpTransportAuthorizerOptions;
+
+  /**
+   * Stage-global upstream OAuth callback path.
+   *
+   * The CDK-mounted callback route and the runtime-registered one must not
+   * diverge: this prop is resolved by
+   * `AppTheoryMcpRouteAlgebra.callbackPathForConfiguredPath`, the same algebra
+   * the runtime applies to `FacadeConfig.UpstreamCallbackPath`. Supply a
+   * synthesis-time literal absolute path with no query, fragment, or dot
+   * segment; an empty value keeps the contract default, and a value that
+   * collides with another derived route fails synthesis. Refused under
+   * `transportPosture: none-public`, which attaches no OAuth surface.
+   * @default AppTheoryMcpRouteAlgebra.DEFAULT_CALLBACK_PATH
+   */
+  readonly upstreamCallbackPath?: string;
 
   /**
    * Session-state table configuration. The table defaults on.
@@ -314,6 +414,14 @@ export class AppTheoryMcpServer extends Construct {
   public readonly ownedApi?: apigwv2.HttpApi;
   public readonly sessionTable?: dynamodb.ITable;
   /**
+   * Resolved transport-route authorization posture.
+   *
+   * Facade-configured servers resolve to `runtime-bearer` unless
+   * `transportPosture` overrides the default; plain transport servers resolve
+   * to `iam`. Deliberately public servers must select `none-public` explicitly.
+   */
+  public readonly transportPosture: AppTheoryMcpTransportPosture;
+  /**
    * Derived endpoint templates for the ordered MCP route family.
    *
    * In attach mode these are execute-api origin templates, not declarations of
@@ -355,28 +463,27 @@ export class AppTheoryMcpServer extends Construct {
     validateOwningMode(props);
     normalizeLegacyAuthConfig(props);
     const routeFamily = normalizeRouteFamily(props);
-    const unauthenticatedMcp = props.unauthenticatedMcp ?? false;
-    if (
-      unauthenticatedMcp
-      && (props.authorizationServerIssuer !== undefined || props.jwksUri !== undefined)
-    ) {
-      throw new Error(
-        "AppTheoryMcpServer: unauthenticatedMcp cannot be combined with authorizationServerIssuer or jwksUri",
-      );
-    }
-    if (unauthenticatedMcp && routeFamily.rootAuthorizationServerDiscovery) {
-      throw new Error(
-        "AppTheoryMcpServer: unauthenticatedMcp cannot enable rootAuthorizationServerDiscovery",
-      );
-    }
 
+    const posture = props.transportPosture
+      ?? (props.facade !== undefined
+        ? AppTheoryMcpTransportPosture.RUNTIME_BEARER
+        : AppTheoryMcpTransportPosture.IAM);
+    validateTransportPosture(posture);
+    validateFacadeAttachment(props.facade);
+    validatePostureGuards(props, routeFamily, posture);
+    validateDefenseInDepth(props, posture);
+    const authorizationRoutesAttached = posture !== AppTheoryMcpTransportPosture.NONE_PUBLIC;
+    const upstreamCallbackPath = resolveUpstreamCallbackPath(props);
+
+    this.transportPosture = posture;
     this.mcpPaths = [...routeFamily.patterns];
     this.routeInventory = buildRouteInventory(
       this.mcpPaths,
-      !unauthenticatedMcp,
+      authorizationRoutesAttached,
       routeFamily.rootAuthorizationServerDiscovery,
+      upstreamCallbackPath,
     );
-    validateRouteInventory(this.routeInventory, unauthenticatedMcp);
+    validateRouteInventory(this.routeInventory, authorizationRoutesAttached);
     this.protectedResourceMetadataPaths = this.routeInventory.routes.map(
       (route) => route.protectedResourcePattern,
     );
@@ -432,19 +539,36 @@ export class AppTheoryMcpServer extends Construct {
         scopePermissionToRoute: props.scopePermissionToRoute ?? true,
       },
     );
-    const transportAuthorizer = resolveTransportAuthorizer(props);
+    const transportAuthorizer = resolveTransportAuthorizer(props, posture);
     const runtimeOwnedAuth = new apigwv2.HttpNoneAuthorizer();
+    let firstTransportRoute: apigwv2.HttpRoute | undefined;
     for (const route of this.routeInventory.routes) {
       for (const method of route.mcpMethods) {
-        this.addRuntimeRoute(route.mcpPattern, toHttpMethod(method), integration, transportAuthorizer);
+        const created = this.addRuntimeRoute(
+          route.mcpPattern,
+          toHttpMethod(method),
+          integration,
+          transportAuthorizer,
+        );
+        firstTransportRoute = firstTransportRoute ?? created;
       }
-      if (!unauthenticatedMcp) {
+      if (authorizationRoutesAttached) {
         this.addRuntimeRoute(route.protectedResourcePattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
         this.addRuntimeRoute(route.discoveryCanonicalPattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
         this.addRuntimeRoute(route.discoverySuffixPattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
         this.addRuntimeRoute(route.authorizePattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
         this.addRuntimeRoute(route.tokenPattern, apigwv2.HttpMethod.POST, integration, runtimeOwnedAuth);
+        this.addRuntimeRoute(route.registerPattern, apigwv2.HttpMethod.POST, integration, runtimeOwnedAuth);
       }
+    }
+    // The upstream callback is stage-global, not per kind: wire it exactly once.
+    if (authorizationRoutesAttached) {
+      this.addRuntimeRoute(
+        this.routeInventory.callbackPattern,
+        apigwv2.HttpMethod.GET,
+        integration,
+        runtimeOwnedAuth,
+      );
     }
     if (this.routeInventory.rootAuthorizationServerAttached) {
       this.addRuntimeRoute(
@@ -454,6 +578,15 @@ export class AppTheoryMcpServer extends Construct {
         runtimeOwnedAuth,
       );
     }
+
+    const postureMarkerTarget = (this.ownedApi?.node.defaultChild
+      ?? firstTransportRoute?.node.defaultChild) as apigwv2.CfnApi | apigwv2.CfnRoute | undefined;
+    postureMarkerTarget?.addMetadata(MCP_TRANSPORT_POSTURE_METADATA_KEY, {
+      posture,
+      contract_id: MCP_TRANSPORT_POSTURE_CONTRACT_ID,
+      route_count: this.routeInventory.routes.length,
+      runtime_posture_declared: props.runtimePosture !== undefined,
+    });
 
     const sessionState = normalizeSessionState(props);
     if (sessionState.enabled) {
@@ -494,12 +627,6 @@ export class AppTheoryMcpServer extends Construct {
       (pattern) => `${stripTrailingSlash(endpointBase)}${pattern}`,
     );
     this.endpoint = this.endpoints[0];
-
-    // Attach-mode public authority belongs to the front door. Do not smuggle
-    // it into this construct as an origin prop.
-    if (!props.api) {
-      this.addEnvironment(props.handler, "MCP_ENDPOINT", this.endpoint);
-    }
   }
 
   private addRuntimeRoute(
@@ -507,8 +634,8 @@ export class AppTheoryMcpServer extends Construct {
     method: apigwv2.HttpMethod,
     integration: apigwv2Integrations.HttpLambdaIntegration,
     authorizer: apigwv2.IHttpRouteAuthorizer,
-  ): void {
-    new apigwv2.HttpRoute(this, `Route${this.routeSequence++}`, {
+  ): apigwv2.HttpRoute {
+    return new apigwv2.HttpRoute(this, `Route${this.routeSequence++}`, {
       httpApi: this.api,
       routeKey: apigwv2.HttpRouteKey.with(path, method),
       integration,
@@ -646,10 +773,33 @@ function invalidRoutePattern(propName: string): Error {
   );
 }
 
+function resolveUpstreamCallbackPath(props: AppTheoryMcpServerProps): string {
+  const configured = props.upstreamCallbackPath;
+  if (configured === undefined) {
+    return AppTheoryMcpRouteAlgebra.DEFAULT_CALLBACK_PATH;
+  }
+  if (Token.isUnresolved(configured)) {
+    throw new Error(
+      "AppTheoryMcpServer: upstreamCallbackPath must be a synthesis-time literal route path",
+    );
+  }
+  try {
+    return AppTheoryMcpRouteAlgebra.callbackPathForConfiguredPath(configured);
+  } catch (err) {
+    const reason = err instanceof Error
+      ? err.message.replace(/^mcproutes: /, "")
+      : String(err);
+    throw new Error(
+      `AppTheoryMcpServer: upstreamCallbackPath is invalid: ${reason}`,
+    );
+  }
+}
+
 function buildRouteInventory(
   patterns: string[],
   authorizationRoutesAttached: boolean,
   rootAuthorizationServerAttached: boolean,
+  callbackPattern: string,
 ): AppTheoryMcpServerRouteInventory {
   return {
     contractVersion: AppTheoryMcpRouteAlgebra.CONTRACT_VERSION,
@@ -666,17 +816,20 @@ function buildRouteInventory(
         AppTheoryMcpRouteAlgebra.authorizationAuthorizePathForResourcePath(mcpPattern),
       tokenPattern:
         AppTheoryMcpRouteAlgebra.authorizationTokenPathForResourcePath(mcpPattern),
+      registerPattern:
+        AppTheoryMcpRouteAlgebra.authorizationRegisterPathForResourcePath(mcpPattern),
       authorizationRoutesAttached,
     })),
     rootAuthorizationServerPattern:
       AppTheoryMcpRouteAlgebra.authorizationServerPathForResourcePath("/"),
     rootAuthorizationServerAttached,
+    callbackPattern,
   };
 }
 
 function validateRouteInventory(
   inventory: AppTheoryMcpServerRouteInventory,
-  unauthenticatedMcp: boolean,
+  authorizationRoutesAttached: boolean,
 ): void {
   const seen = new Set<string>();
   const add = (method: string, path: string): void => {
@@ -688,13 +841,17 @@ function validateRouteInventory(
   };
   for (const route of inventory.routes) {
     for (const method of route.mcpMethods) add(method, route.mcpPattern);
-    if (!unauthenticatedMcp) {
+    if (authorizationRoutesAttached) {
       add("GET", route.protectedResourcePattern);
       add("GET", route.discoveryCanonicalPattern);
       add("GET", route.discoverySuffixPattern);
       add("GET", route.authorizePattern);
       add("POST", route.tokenPattern);
+      add("POST", route.registerPattern);
     }
+  }
+  if (authorizationRoutesAttached) {
+    add("GET", inventory.callbackPattern);
   }
   if (inventory.rootAuthorizationServerAttached) {
     add("GET", inventory.rootAuthorizationServerPattern);
@@ -844,33 +1001,27 @@ function normalizeLegacyAuthConfig(props: AppTheoryMcpServerProps): void {
 
 function resolveTransportAuthorizer(
   props: AppTheoryMcpServerProps,
+  posture: AppTheoryMcpTransportPosture,
 ): apigwv2.IHttpRouteAuthorizer {
   const configured = props.transportAuthorizer;
-  if (props.unauthenticatedMcp ?? false) {
-    if (configured !== undefined) {
-      throw new Error(
-        "AppTheoryMcpServer: transportAuthorizer cannot be combined with unauthenticatedMcp: true",
-      );
-    }
-    return new apigwv2.HttpNoneAuthorizer();
-  }
-
-  const kind = configured?.kind ?? AppTheoryMcpTransportAuthorizerKind.IAM;
-  switch (kind) {
-    case AppTheoryMcpTransportAuthorizerKind.IAM: {
-      const jwtOnly = jwtOnlyTransportFields(configured);
-      if (jwtOnly.length !== 0) {
+  switch (posture) {
+    case AppTheoryMcpTransportPosture.IAM:
+    case AppTheoryMcpTransportPosture.RUNTIME_BEARER:
+    case AppTheoryMcpTransportPosture.NONE_PUBLIC: {
+      if (configured !== undefined) {
         throw new Error(
-          `AppTheoryMcpServer: transportAuthorizer ${jwtOnly.join(", ")} can only be set when kind is AppTheoryMcpTransportAuthorizerKind.JWT`,
+          "AppTheoryMcpServer: transportAuthorizer is only valid with transportPosture JWT",
         );
       }
-      return new apigwv2Authorizers.HttpIamAuthorizer();
+      return posture === AppTheoryMcpTransportPosture.IAM
+        ? new apigwv2Authorizers.HttpIamAuthorizer()
+        : new apigwv2.HttpNoneAuthorizer();
     }
-    case AppTheoryMcpTransportAuthorizerKind.JWT: {
+    case AppTheoryMcpTransportPosture.JWT: {
       const issuer = String(configured?.issuer ?? "").trim();
       if (issuer === "") {
         throw new Error(
-          "AppTheoryMcpServer: transportAuthorizer.issuer is required when kind is AppTheoryMcpTransportAuthorizerKind.JWT",
+          "AppTheoryMcpServer: transportAuthorizer.issuer is required when transportPosture is JWT",
         );
       }
       if (!Token.isUnresolved(issuer)) {
@@ -885,7 +1036,7 @@ function resolveTransportAuthorizer(
         .filter((value) => value !== "");
       if (audience.length === 0) {
         throw new Error(
-          "AppTheoryMcpServer: transportAuthorizer.audience requires at least one accepted audience when kind is AppTheoryMcpTransportAuthorizerKind.JWT",
+          "AppTheoryMcpServer: transportAuthorizer.audience requires at least one accepted audience when transportPosture is JWT",
         );
       }
       return new apigwv2Authorizers.HttpJwtAuthorizer(
@@ -900,21 +1051,185 @@ function resolveTransportAuthorizer(
     }
     default:
       throw new Error(
-        "AppTheoryMcpServer: transportAuthorizer.kind must be AppTheoryMcpTransportAuthorizerKind.IAM or AppTheoryMcpTransportAuthorizerKind.JWT",
+        "AppTheoryMcpServer: transportPosture must be AppTheoryMcpTransportPosture.IAM, .JWT, .RUNTIME_BEARER, or .NONE_PUBLIC",
       );
   }
 }
 
-function jwtOnlyTransportFields(
-  options?: AppTheoryMcpTransportAuthorizerOptions,
-): string[] {
-  if (options === undefined) return [];
-  const fields: string[] = [];
-  if (options.issuer !== undefined) fields.push("issuer");
-  if (options.audience !== undefined) fields.push("audience");
-  if (options.identitySource !== undefined) fields.push("identitySource");
-  if (options.authorizerName !== undefined) fields.push("authorizerName");
-  return fields;
+function postureLabel(posture: AppTheoryMcpTransportPosture): string {
+  switch (posture) {
+    case AppTheoryMcpTransportPosture.IAM: return "IAM";
+    case AppTheoryMcpTransportPosture.JWT: return "JWT";
+    case AppTheoryMcpTransportPosture.RUNTIME_BEARER: return "RUNTIME_BEARER";
+    case AppTheoryMcpTransportPosture.NONE_PUBLIC: return "NONE_PUBLIC";
+    default: return String(posture);
+  }
+}
+
+function validateTransportPosture(posture: AppTheoryMcpTransportPosture): void {
+  switch (posture) {
+    case AppTheoryMcpTransportPosture.IAM:
+    case AppTheoryMcpTransportPosture.JWT:
+    case AppTheoryMcpTransportPosture.RUNTIME_BEARER:
+    case AppTheoryMcpTransportPosture.NONE_PUBLIC:
+      return;
+    default:
+      throw new Error(
+        "AppTheoryMcpServer: transportPosture must be AppTheoryMcpTransportPosture.IAM, .JWT, .RUNTIME_BEARER, or .NONE_PUBLIC",
+      );
+  }
+}
+
+function validateFacadeAttachment(facade?: AppTheoryMcpFacadeAttachment): void {
+  if (facade === undefined) return;
+  const providerId = (facade as { providerId?: unknown })?.providerId;
+  if (
+    typeof providerId !== "string"
+    || providerId.trim() === ""
+    || Token.isUnresolved(providerId)
+  ) {
+    throw new Error(
+      "AppTheoryMcpServer: facade.providerId must be a non-empty synthesis-time literal string",
+    );
+  }
+}
+
+function validatePostureGuards(
+  props: AppTheoryMcpServerProps,
+  routeFamily: NormalizedRouteFamily,
+  posture: AppTheoryMcpTransportPosture,
+): void {
+  if (posture === AppTheoryMcpTransportPosture.NONE_PUBLIC) {
+    if (props.authorizationServerIssuer !== undefined || props.jwksUri !== undefined) {
+      throw new Error(
+        "AppTheoryMcpServer: transportPosture NONE_PUBLIC cannot be combined with authorizationServerIssuer or jwksUri",
+      );
+    }
+    if (routeFamily.rootAuthorizationServerDiscovery) {
+      throw new Error(
+        "AppTheoryMcpServer: transportPosture NONE_PUBLIC cannot enable rootAuthorizationServerDiscovery",
+      );
+    }
+    if (props.runtimePosture !== undefined) {
+      throw new Error(
+        "AppTheoryMcpServer: transportPosture NONE_PUBLIC cannot declare runtimePosture",
+      );
+    }
+    if (props.upstreamCallbackPath !== undefined) {
+      throw new Error(
+        "AppTheoryMcpServer: transportPosture NONE_PUBLIC cannot declare upstreamCallbackPath",
+      );
+    }
+    return;
+  }
+  if (
+    posture !== AppTheoryMcpTransportPosture.RUNTIME_BEARER
+    && props.runtimePosture !== undefined
+  ) {
+    throw new Error(
+      `AppTheoryMcpServer: transportPosture ${postureLabel(posture)} cannot declare runtimePosture`,
+    );
+  }
+}
+
+function validateDefenseInDepth(
+  props: AppTheoryMcpServerProps,
+  posture: AppTheoryMcpTransportPosture,
+): void {
+  if (
+    posture !== AppTheoryMcpTransportPosture.RUNTIME_BEARER
+    && posture !== AppTheoryMcpTransportPosture.NONE_PUBLIC
+  ) {
+    return;
+  }
+  const label = postureLabel(posture);
+  if (
+    posture === AppTheoryMcpTransportPosture.RUNTIME_BEARER
+    && (props.runtimePosture === undefined || props.runtimePosture.requireBearerToken !== true)
+  ) {
+    throw new Error(
+      "AppTheoryMcpServer: transportPosture RUNTIME_BEARER requires runtimePosture.requireBearerToken to be true",
+    );
+  }
+  if (
+    props.originReachability !== AppTheoryMcpOriginReachability.DISABLED
+    && props.originReachability !== AppTheoryMcpOriginReachability.LOCKED
+  ) {
+    throw new Error(
+      `AppTheoryMcpServer: transportPosture ${label} requires originReachability to be AppTheoryMcpOriginReachability.DISABLED or .LOCKED`,
+    );
+  }
+  if (props.api !== undefined) {
+    validateOwningApiDefense(props.owningApiDefense, label);
+  } else {
+    if (props.ownedApi?.stage?.throttlingEnabled !== true) {
+      throw new Error(
+        `AppTheoryMcpServer: transportPosture ${label} requires an explicit ownedApi.stage.throttlingEnabled: true throttling decision`,
+      );
+    }
+    if (props.ownedApi?.stage?.accessLogging === false) {
+      throw new Error(
+        `AppTheoryMcpServer: transportPosture ${label} requires access logging`,
+      );
+    }
+  }
+  if (posture === AppTheoryMcpTransportPosture.RUNTIME_BEARER) {
+    validateDenialSignal(props.denialSignal);
+  }
+}
+
+function validateOwningApiDefense(
+  defense: AppTheoryMcpOwningApiDefenseOptions | undefined,
+  label: string,
+): void {
+  if (defense === undefined) {
+    throw new Error(
+      `AppTheoryMcpServer: transportPosture ${label} requires owningApiDefense to record the owning API's access logging and throttling decisions`,
+    );
+  }
+  if (defense.accessLogging !== true) {
+    throw new Error(
+      `AppTheoryMcpServer: transportPosture ${label} requires owningApiDefense.accessLogging to be true`,
+    );
+  }
+  const throttling: Partial<AppTheoryMcpOwningApiThrottlingOptions> | undefined = defense.throttling;
+  const rateLimit = throttling?.rateLimit;
+  const burstLimit = throttling?.burstLimit;
+  if (
+    !Number.isFinite(rateLimit)
+    || (rateLimit as number) <= 0
+    || !Number.isFinite(burstLimit)
+    || (burstLimit as number) <= 0
+  ) {
+    throw new Error(
+      `AppTheoryMcpServer: transportPosture ${label} requires owningApiDefense.throttling rateLimit and burstLimit to be positive finite numbers`,
+    );
+  }
+}
+
+function validateDenialSignal(signal?: AppTheoryMcpDenialSignalOptions): void {
+  if (signal === undefined) {
+    throw new Error(
+      "AppTheoryMcpServer: transportPosture RUNTIME_BEARER requires denialSignal",
+    );
+  }
+  if (signal.metricName !== undefined && signal.metricName !== MCP_DENIAL_METRIC_NAME) {
+    throw new Error(
+      `AppTheoryMcpServer: denialSignal.metricName must be ${MCP_DENIAL_METRIC_NAME}`,
+    );
+  }
+  if (signal.dimensions !== undefined) {
+    const dimensions = Array.isArray(signal.dimensions) ? signal.dimensions : [];
+    const bounded = dimensions.length === MCP_DENIAL_DIMENSIONS.length
+      && MCP_DENIAL_DIMENSIONS.every(
+        (dimension) => dimensions.filter((value) => value === dimension).length === 1,
+      );
+    if (!bounded) {
+      throw new Error(
+        `AppTheoryMcpServer: denialSignal.dimensions must be exactly ${JSON.stringify(MCP_DENIAL_DIMENSIONS)}`,
+      );
+    }
+  }
 }
 
 function validateLiteralOAuthURL(value: string, allowQuery: boolean, message: string): void {

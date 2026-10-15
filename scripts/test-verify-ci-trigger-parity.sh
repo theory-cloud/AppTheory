@@ -33,6 +33,14 @@
 #   - widening the exemption's head ref binding (to `github.ref_name`), which
 #     would exempt pull requests whose content has not been released
 #
+# Round 3 records the operator decision of 2026-10-12: the release-eligibility
+# gate is scoped to the staging -> premain promotion pull request plus the push to
+# staging, and is skipped for pull requests into staging, where the post-release
+# range legitimately carries no release-driving commit. Its staging-lane coverage
+# is recorded in the guard's stagingLaneScopeExceptions, and the probes below keep
+# that exception honest: the push leg cannot go, the pull-request-to-staging leg
+# cannot come back behind it, and no other job inherits the carve-out.
+#
 # plus the canonical regressions (a promotion-scoped rubric, a push-broadened
 # deterministic-build job, a `pull_request` branch filter, and YAML smuggling)
 # and green controls proving the classifier is not vacuously failing.
@@ -111,7 +119,7 @@ mode = sys.argv[2]
 text = path.read_text(encoding="utf-8")
 RUBRIC_PREFIX = "    if: (github.event_name == 'workflow_dispatch'"
 BUILDS_PREFIX = "    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'"
-ELIGIBILITY_PREFIX = "    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')"
+ELIGIBILITY_PREFIX = "    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain'"
 
 
 def find_line(prefix):
@@ -145,9 +153,12 @@ elif mode == "rubric_fold":
         "      || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')"))
 elif mode == "builds_replace":
     replace_line(BUILDS_PREFIX, "    if: " + sys.argv[3])
-elif mode == "eligibility_pr_only":
+elif mode == "eligibility_push_leg_removed":
     replace_line(ELIGIBILITY_PREFIX,
-                 "    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'")
+                 "    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging'")
+elif mode == "eligibility_pr_leg_restored":
+    replace_line(ELIGIBILITY_PREFIX,
+                 "    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')")
 elif mode == "eligibility_backmerge_removed":
     if "--allow-main-backmerge" not in text:
         raise SystemExit("eligibility back-merge opt-in fixture not found")
@@ -231,10 +242,25 @@ reset_fixture
 mutate ci.yml builds_replace "github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging' || github.event_name == 'push'"
 expect_fail "deterministic builds broadened to a push" "staging-pull-request-only"
 
-# C. The staging release-eligibility gate keeps both of its legs.
+# C. The release-eligibility gate is scoped to the promotion lane (the
+# staging -> premain pull request) and to the push to staging. Dropping the push
+# leg leaves the staging lane uncovered and must fail (ADV-1073-R1-01); restoring
+# the pull-request-to-staging leg makes the recorded scope exception stale and
+# must fail too, so a widened condition cannot hide behind it.
 reset_fixture
-mutate ci.yml eligibility_pr_only
-expect_fail "eligibility gate stripped of its push-to-staging leg" "pull-request-to-staging-plus-push-to-staging"
+mutate ci.yml eligibility_push_leg_removed
+expect_fail "eligibility gate stripped of its push-to-staging leg" "promotion-pull-request-plus-push-to-staging"
+expect_fail "eligibility gate stripped of its push-to-staging leg" "the job must keep its push staging leg"
+
+reset_fixture
+mutate ci.yml eligibility_pr_leg_restored
+expect_fail "eligibility gate run on pull requests to staging again" "the job runs on pull requests to staging again"
+
+# C1. The exception is scoped to the recorded job: another job with only a
+# push-to-staging leg still violates push parity.
+reset_fixture
+mutate ci.yml append "$(new_job sneaky-push-only 'Sneaky push only' "github.event_name == 'push' && github.ref == 'refs/heads/staging'")"
+expect_fail "a third job carrying only the push-to-staging leg" "push parity"
 
 # C2. The post-release main back-merge exemption stays wired and narrow: losing
 # the opt-in hands the gate back to the plain predicate (the released staging SHA
@@ -352,6 +378,24 @@ jobs:
       - run: echo evil
 YAML
 expect_fail "new workflow scoped to the promotion lane" "not modeled"
+
+# The recorded staging-lane scope exception is scoped to ci.yml: a same-named job
+# in another workflow file does not inherit the carve-out.
+reset_fixture
+cat >"${root}/.github/workflows/evil-eligibility.yml" <<'YAML'
+name: evil-eligibility
+on:
+  push:
+    branches: [staging, main, premain]
+jobs:
+  staging-release-eligibility:
+    name: Release eligibility (staging -> premain)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo evil
+YAML
+expect_fail "a same-named job outside ci.yml does not inherit the scope exception" "push parity"
 
 # H. A reusable workflow's jobs are classified in the caller's context.
 reset_fixture

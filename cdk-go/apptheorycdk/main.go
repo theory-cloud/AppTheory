@@ -78,6 +78,10 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryCertificateProps",
 		reflect.TypeOf((*AppTheoryCertificateProps)(nil)).Elem(),
 	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryChallengeAliasBridgeOptions",
+		reflect.TypeOf((*AppTheoryChallengeAliasBridgeOptions)(nil)).Elem(),
+	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestination",
 		reflect.TypeOf((*AppTheoryCloudWatchLogsDestination)(nil)).Elem(),
@@ -599,6 +603,10 @@ func init() {
 		},
 	)
 	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpDenialSignalOptions",
+		reflect.TypeOf((*AppTheoryMcpDenialSignalOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpEndpointPath",
 		reflect.TypeOf((*AppTheoryMcpEndpointPath)(nil)).Elem(),
 	)
@@ -607,12 +615,32 @@ func init() {
 		reflect.TypeOf((*AppTheoryMcpEndpointTemplate)(nil)).Elem(),
 	)
 	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpFacadeAttachment",
+		reflect.TypeOf((*AppTheoryMcpFacadeAttachment)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpOAuthDiscoveryTemplate",
 		reflect.TypeOf((*AppTheoryMcpOAuthDiscoveryTemplate)(nil)).Elem(),
 	)
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpOAuthFacadeTemplate",
 		reflect.TypeOf((*AppTheoryMcpOAuthFacadeTemplate)(nil)).Elem(),
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpOriginReachability",
+		reflect.TypeOf((*AppTheoryMcpOriginReachability)(nil)).Elem(),
+		map[string]interface{}{
+			"DISABLED": AppTheoryMcpOriginReachability_DISABLED,
+			"LOCKED":   AppTheoryMcpOriginReachability_LOCKED,
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpOwningApiDefenseOptions",
+		reflect.TypeOf((*AppTheoryMcpOwningApiDefenseOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpOwningApiThrottlingOptions",
+		reflect.TypeOf((*AppTheoryMcpOwningApiThrottlingOptions)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpPaths",
@@ -652,6 +680,10 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteFamily",
 		reflect.TypeOf((*AppTheoryMcpRouteFamily)(nil)).Elem(),
 	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpRuntimePostureOptions",
+		reflect.TypeOf((*AppTheoryMcpRuntimePostureOptions)(nil)).Elem(),
+	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpServer",
 		reflect.TypeOf((*AppTheoryMcpServer)(nil)).Elem(),
@@ -672,6 +704,7 @@ func init() {
 			_jsii_.MemberProperty{JsiiProperty: "routeInventory", GoGetter: "RouteInventory"},
 			_jsii_.MemberProperty{JsiiProperty: "sessionTable", GoGetter: "SessionTable"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberProperty{JsiiProperty: "transportPosture", GoGetter: "TransportPosture"},
 			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
 		},
 		func() interface{} {
@@ -708,17 +741,23 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpSessionStateOptions",
 		reflect.TypeOf((*AppTheoryMcpSessionStateOptions)(nil)).Elem(),
 	)
-	_jsii_.RegisterEnum(
-		"@theory-cloud/apptheory-cdk.AppTheoryMcpTransportAuthorizerKind",
-		reflect.TypeOf((*AppTheoryMcpTransportAuthorizerKind)(nil)).Elem(),
-		map[string]interface{}{
-			"IAM": AppTheoryMcpTransportAuthorizerKind_IAM,
-			"JWT": AppTheoryMcpTransportAuthorizerKind_JWT,
-		},
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpStageGlobalRoute",
+		reflect.TypeOf((*AppTheoryMcpStageGlobalRoute)(nil)).Elem(),
 	)
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpTransportAuthorizerOptions",
 		reflect.TypeOf((*AppTheoryMcpTransportAuthorizerOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpTransportPosture",
+		reflect.TypeOf((*AppTheoryMcpTransportPosture)(nil)).Elem(),
+		map[string]interface{}{
+			"IAM":            AppTheoryMcpTransportPosture_IAM,
+			"JWT":            AppTheoryMcpTransportPosture_JWT,
+			"RUNTIME_BEARER": AppTheoryMcpTransportPosture_RUNTIME_BEARER,
+			"NONE_PUBLIC":    AppTheoryMcpTransportPosture_NONE_PUBLIC,
+		},
 	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryMediaCdn",
@@ -1065,6 +1104,7 @@ func init() {
 		[]_jsii_.Member{
 			_jsii_.MemberProperty{JsiiProperty: "endpoint", GoGetter: "Endpoint"},
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "protectedResourceMetadataUrl", GoGetter: "ProtectedResourceMetadataUrl"},
 			_jsii_.MemberProperty{JsiiProperty: "router", GoGetter: "Router"},
 			_jsii_.MemberProperty{JsiiProperty: "sessionTable", GoGetter: "SessionTable"},
 			_jsii_.MemberProperty{JsiiProperty: "streamSpillBucket", GoGetter: "StreamSpillBucket"},
@@ -1156,6 +1196,43 @@ func init() {
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterStageOptions",
 		reflect.TypeOf((*AppTheoryRestApiRouterStageOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryRestV1ChallengeRestoration",
+		reflect.TypeOf((*AppTheoryRestV1ChallengeRestoration)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "aliasBridgeEnabled", GoGetter: "AliasBridgeEnabled"},
+			_jsii_.MemberProperty{JsiiProperty: "behaviorPathPatterns", GoGetter: "BehaviorPathPatterns"},
+			_jsii_.MemberProperty{JsiiProperty: "derivedRoutePaths", GoGetter: "DerivedRoutePaths"},
+			_jsii_.MemberProperty{JsiiProperty: "distribution", GoGetter: "Distribution"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "originLockHeaderName", GoGetter: "OriginLockHeaderName"},
+			_jsii_.MemberProperty{JsiiProperty: "originReachability", GoGetter: "OriginReachability"},
+			_jsii_.MemberProperty{JsiiProperty: "restoreSourceHeaders", GoGetter: "RestoreSourceHeaders"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryRestV1ChallengeRestoration{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryRestV1ChallengeRestorationProps",
+		reflect.TypeOf((*AppTheoryRestV1ChallengeRestorationProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryRestV1OriginLockOptions",
+		reflect.TypeOf((*AppTheoryRestV1OriginLockOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryRestV1OriginReachability",
+		reflect.TypeOf((*AppTheoryRestV1OriginReachability)(nil)).Elem(),
+		map[string]interface{}{
+			"DISABLED": AppTheoryRestV1OriginReachability_DISABLED,
+			"LOCKED":   AppTheoryRestV1OriginReachability_LOCKED,
+		},
 	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryS3Ingest",

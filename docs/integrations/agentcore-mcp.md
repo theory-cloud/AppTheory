@@ -111,29 +111,33 @@ func main() {
 
 ## Deploy with AppTheory CDK (`AppTheoryMcpServer`)
 
-Use an explicit noncanonical family for the application-owned `POST /mcp` registration shown above. The construct
+Use an explicit noncanonical family for the application-owned `POST /mcp` registration shown above. A plain server
 authenticates MCP transport routes by default — API Gateway attaches an AWS IAM authorizer, or a JWT authorizer when
-`transportAuthorizer` supplies an issuer and audience — so a credential-free request is rejected before the runtime
-handler runs:
+`transportPosture: AppTheoryMcpTransportPosture.JWT` carries an issuer and audience — so a credential-free request is
+rejected before the runtime handler runs. This singleton is deliberately public instead, so it names
+`transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC` and pays the mandatory defense-in-depth floor:
 
 ```ts
 const mcp = new AppTheoryMcpServer(this, "McpServer", {
   handler,
   routeFamily: { patterns: ["/mcp"] },
-  // MCP transport routes are authenticated by default. AWS IAM (SigV4) is the zero-configuration
-  // authorizer, so AgentCore must sign its POST /mcp calls with IAM credentials. Use
-  // `transportAuthorizer: { kind: AppTheoryMcpTransportAuthorizerKind.JWT, issuer, audience }`
-  // for JWT instead.
-  transportAuthorizer: { kind: AppTheoryMcpTransportAuthorizerKind.IAM },
+  // `none-public` is never a default: name it, and record the floor.
+  transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC,
+  // The origin is reachable only through a locked front door (CloudFront).
+  // Use AppTheoryMcpOriginReachability.DISABLED when the execute-api default
+  // endpoint is disabled instead.
+  originReachability: AppTheoryMcpOriginReachability.LOCKED,
+  // The owning stage must keep an explicit throttling decision under this posture.
+  ownedApi: { stage: { throttlingEnabled: true } },
 });
 ```
 
 The construct wires the MCP transport methods for `/mcp`; AgentCore uses `POST`, and the application registers the
-matching runtime handler. To expose the endpoint without transport credentials for a trusted private path, opt out
-explicitly with `unauthenticatedMcp: true` and secure it in the application. If a singleton deployment needs
-application-owned OAuth bearer validation instead of the API Gateway authorizer, register every derived
-`routeInventory` entry in application code and validate the token in the handler. Do not use `RegisterMCPFacade`: it
-serves only the canonical default family.
+matching runtime handler. If a singleton deployment needs application-owned OAuth bearer validation instead of the API
+Gateway authorizer, select `transportPosture: AppTheoryMcpTransportPosture.RUNTIME_BEARER`, declare
+`runtimePosture: { requireBearerToken: true }` (the runtime registers
+`requireBearerTokenMiddleware`), and register every derived `routeInventory` entry in application code. Do not use
+`RegisterMCPFacade`: it serves only the canonical default family.
 
 Every route the construct wires adds its own route-scoped Lambda invoke permission by default. When the application
 shares one Lambda across the MCP facade and its own route bundle, set `scopePermissionToRoute: false` to collapse
@@ -349,15 +353,18 @@ curl -N \
 
 ## Security checklist (don’t ship an open tool endpoint)
 
-`AppTheoryMcpServer` authenticates the MCP transport routes by default (IAM, or a configured JWT
-`transportAuthorizer`). The quick start above keeps that default, so a credential-free request to `/mcp` is rejected
-before the runtime handler runs. Only opt out with `unauthenticatedMcp: true` when you deliberately secure the endpoint
-another way.
+`AppTheoryMcpServer` authenticates the MCP transport routes by default (IAM, or `transportPosture:
+AppTheoryMcpTransportPosture.JWT` with a configured `transportAuthorizer`). A plain server keeps that default, so a
+credential-free request to `/mcp` is rejected before the runtime handler runs. Only select
+`transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC` when you deliberately secure the endpoint another way, and
+remember that it fails synthesis without the `originReachability` and stage-throttling decisions.
 
-If you do opt out, secure it yourself:
+If you do select `none-public`, secure it yourself:
 
 - **Enforce auth in your handler** (e.g., require a shared secret header or JWT verification).
 - **Put the endpoint on a custom domain** and front it with CloudFront/WAF (if that matches your platform).
+- **Record the origin posture**: `originReachability: AppTheoryMcpOriginReachability.LOCKED` for a locked front door, or
+  `.DISABLED` when the execute-api default endpoint is off. A directly reachable origin is refused.
 - **Use a private network path** if your AgentCore integration supports it.
 
 AppTheory is a framework — if you need a different domain/auth story, wire it the way your platform requires.

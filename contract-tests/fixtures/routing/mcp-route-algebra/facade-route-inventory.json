@@ -1,5 +1,5 @@
 {
-  "contract_version": "m17.mcp-route-algebra/v1",
+  "contract_version": "m17.mcp-route-algebra/v2",
   "routes": [
     {
       "kind": "namespace",
@@ -14,6 +14,7 @@
       "discovery_suffix_pattern": "/{client_namespace}/mcp/.well-known/oauth-authorization-server",
       "authorize_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/mcp/authorize",
       "token_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/mcp/token",
+      "register_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/mcp/register",
       "authorization_routes_attached": true
     },
     {
@@ -29,6 +30,7 @@
       "discovery_suffix_pattern": "/{client_namespace}/partners/{partner_id}/mcp/.well-known/oauth-authorization-server",
       "authorize_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/authorize",
       "token_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/token",
+      "register_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/mcp/register",
       "authorization_routes_attached": true
     },
     {
@@ -44,6 +46,7 @@
       "discovery_suffix_pattern": "/{client_namespace}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server",
       "authorize_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/authorize",
       "token_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/token",
+      "register_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/agents/{agent_id}/mcp/register",
       "authorization_routes_attached": true
     },
     {
@@ -59,9 +62,13 @@
       "discovery_suffix_pattern": "/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/.well-known/oauth-authorization-server",
       "authorize_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/authorize",
       "token_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/token",
+      "register_pattern": "/.well-known/oauth-authorization-server/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp/register",
       "authorization_routes_attached": true
     }
   ],
   "root_authorization_server_pattern": "/.well-known/oauth-authorization-server",
   "root_authorization_server_attached": false
+,
+  "callback_pattern": "/_oauth/mcp/callback",
+  "issuer_mode": "family"
 }

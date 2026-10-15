@@ -35,6 +35,9 @@ export interface AppTheoryMcpOAuthFacadeTemplate {
 
   /** Derived token endpoint pattern. */
   readonly tokenPattern: string;
+
+  /** Derived RFC 7591 dynamic-client registration pattern. */
+  readonly registerPattern: string;
 }
 
 /** Canonical and suffix-compatible OAuth discovery patterns for an MCP endpoint kind. */
@@ -49,6 +52,18 @@ export interface AppTheoryMcpOAuthDiscoveryTemplate {
   readonly suffixPattern: string;
 }
 
+/** One route that is installed once per deployment instead of per MCP endpoint kind. */
+export interface AppTheoryMcpStageGlobalRoute {
+  /** Contract name of the stage-global route. */
+  readonly name: string;
+
+  /** Canonical route pattern. */
+  readonly pattern: string;
+
+  /** HTTP methods wired for the pattern. */
+  readonly methods: string[];
+}
+
 /**
  * AppTheory's canonical, versioned MCP route-algebra contract.
  *
@@ -58,7 +73,16 @@ export interface AppTheoryMcpOAuthDiscoveryTemplate {
  */
 export abstract class AppTheoryMcpRouteAlgebra {
   /** MCP route-algebra contract version. */
-  public static readonly CONTRACT_VERSION = "m17.mcp-route-algebra/v1";
+  public static readonly CONTRACT_VERSION = "m17.mcp-route-algebra/v2";
+
+  /** Superseded v1 route-algebra contract version, retained for read compatibility. */
+  public static readonly CONTRACT_VERSION_V1 = "m17.mcp-route-algebra/v1";
+
+  /** Closed issuer-mode vocabulary member: one family-wide issuer for the whole facade. */
+  public static readonly ISSUER_MODE_FAMILY = "family";
+
+  /** Closed issuer-mode vocabulary member: each route is its own authorization-server issuer. */
+  public static readonly ISSUER_MODE_ROUTE = "route";
 
   /** Namespace endpoint kind. */
   public static readonly ENDPOINT_KIND_NAMESPACE = "namespace";
@@ -95,6 +119,23 @@ export abstract class AppTheoryMcpRouteAlgebra {
   public static readonly AUTHORIZATION_SERVER_PREFIX =
     "/.well-known/oauth-authorization-server";
 
+  /**
+   * Stage-global upstream OAuth callback path.
+   *
+   * The callback is correlated by the single-use upstream state the facade
+   * minted, so one stage-global route is sufficient and no per-kind callback
+   * multiplies.
+   */
+  public static readonly DEFAULT_CALLBACK_PATH = "/_oauth/mcp/callback";
+
+  /** Return the closed issuer-mode vocabulary in contract order. */
+  public static supportedIssuerModes(): string[] {
+    return [
+      AppTheoryMcpRouteAlgebra.ISSUER_MODE_FAMILY,
+      AppTheoryMcpRouteAlgebra.ISSUER_MODE_ROUTE,
+    ];
+  }
+
   /** Derive an RFC 9728 protected-resource path from a resource path. */
   public static protectedResourcePathForResourcePath(
     resourcePath: string,
@@ -129,6 +170,19 @@ export abstract class AppTheoryMcpRouteAlgebra {
     resourcePath: string,
   ): string {
     return `${AppTheoryMcpRouteAlgebra.authorizationServerPathForResourcePath(resourcePath)}/token`;
+  }
+
+  /**
+   * Derive the RFC 7591 dynamic-client registration facade path from a resource path.
+   *
+   * The routed discovery document advertises exactly this path as
+   * `registration_endpoint`, so the advertised URL and the mounted route
+   * cannot drift.
+   */
+  public static authorizationRegisterPathForResourcePath(
+    resourcePath: string,
+  ): string {
+    return `${AppTheoryMcpRouteAlgebra.authorizationServerPathForResourcePath(resourcePath)}/register`;
   }
 
   /** Derive the suffix-compatible RFC 8414 discovery path from a resource path. */
@@ -186,7 +240,75 @@ export abstract class AppTheoryMcpRouteAlgebra {
         ),
       tokenPattern:
         AppTheoryMcpRouteAlgebra.authorizationTokenPathForResourcePath(pattern),
+      registerPattern:
+        AppTheoryMcpRouteAlgebra.authorizationRegisterPathForResourcePath(
+          pattern,
+        ),
     }));
+  }
+
+  /**
+   * Return every stage-global route in contract order.
+   *
+   * v2 adds exactly one stage-global route: the upstream OAuth callback. The
+   * callback path is overridable at runtime (`FacadeConfig.UpstreamCallbackPath`);
+   * this returns the contract default.
+   */
+  public static supportedStageGlobalRoutes(): AppTheoryMcpStageGlobalRoute[] {
+    return [
+      {
+        name: "upstream_callback",
+        pattern: AppTheoryMcpRouteAlgebra.DEFAULT_CALLBACK_PATH,
+        methods: ["GET"],
+      },
+    ];
+  }
+
+  /**
+   * Resolve the effective stage-global callback path for a configured value.
+   *
+   * An unset (or whitespace-only) value resolves to `DEFAULT_CALLBACK_PATH`;
+   * every other value must normalize to a valid absolute callback path.
+   */
+  public static callbackPathForConfiguredPath(configured: string): string {
+    const trimmed = trimASCIIWhitespace(configured);
+    if (trimmed === "") {
+      return AppTheoryMcpRouteAlgebra.DEFAULT_CALLBACK_PATH;
+    }
+    return AppTheoryMcpRouteAlgebra.normalizeCallbackPath(trimmed);
+  }
+
+  /**
+   * Validate and normalize an absolute callback path.
+   *
+   * The path must be absolute, contain no query or fragment, and must not use a
+   * dot segment. It is normalized with the same rules as every other route path.
+   */
+  public static normalizeCallbackPath(rawPath: string): string {
+    const trimmed = trimASCIIWhitespace(rawPath);
+    if (trimmed === "" || !trimmed.startsWith("/")) {
+      throw new Error(
+        `mcproutes: callback path must be absolute ${JSON.stringify(rawPath)}`,
+      );
+    }
+    if (containsRefusedRoutePathBytes(trimmed)) {
+      throw new Error(
+        `mcproutes: callback path must not contain a percent-encoded slash, an interior ASCII whitespace or control character, or a backslash ${JSON.stringify(rawPath)}`,
+      );
+    }
+    if (trimmed.includes("?") || trimmed.includes("#")) {
+      throw new Error(
+        `mcproutes: callback path must not include a query or fragment ${JSON.stringify(rawPath)}`,
+      );
+    }
+    for (const segment of trimmed.split("/")) {
+      if (segment === "." || segment === "..") {
+        throw new Error(
+          `mcproutes: callback path must not use dot segments ${JSON.stringify(rawPath)}`,
+        );
+      }
+    }
+    return normalizePath(trimmed);
   }
 
   /** Return every canonical OAuth discovery template in contract order. */
@@ -330,6 +452,13 @@ export abstract class AppTheoryMcpRouteAlgebra {
   /** Build the endpoint's token facade path. */
   public static oauthTokenPath(endpoint: AppTheoryMcpEndpointPath): string {
     return AppTheoryMcpRouteAlgebra.authorizationTokenPathForResourcePath(
+      AppTheoryMcpRouteAlgebra.mcpPath(endpoint),
+    );
+  }
+
+  /** Build the endpoint's dynamic-client registration path. */
+  public static oauthRegisterPath(endpoint: AppTheoryMcpEndpointPath): string {
+    return AppTheoryMcpRouteAlgebra.authorizationRegisterPathForResourcePath(
       AppTheoryMcpRouteAlgebra.mcpPath(endpoint),
     );
   }
@@ -479,6 +608,35 @@ function isPathSegment(value: string): boolean {
     trimmed !== "" &&
     trimmed !== "." &&
     trimmed !== ".." &&
-    !value.includes("/")
+    !value.includes("/") &&
+    !containsRefusedRoutePathBytes(trimmed)
   );
+}
+
+// A percent-encoded ASCII control byte: %00-%1F or %7F, in either hex case.
+// Literal control bytes are already refused by the code-point scan below; the
+// escaped form is refused because a downstream proxy, CDN, or client may
+// percent-decode the route path before matching it, which would let the decoded
+// route differ from the mounted one. This is the one shared rule, mirrored in
+// Go (runtime/mcproutes + runtime/oauth), TypeScript, and Python.
+const PERCENT_ENCODED_CONTROL_BYTE_PATTERN = /%[01][0-9A-Fa-f]|%7[Ff]/u;
+
+// containsRefusedRoutePathBytes reports whether a route path, already trimmed at
+// its edges, carries the bytes the route algebra refuses: a percent-encoded
+// slash, a percent-encoded ASCII control byte, an interior ASCII whitespace or
+// control character, or a backslash.
+function containsRefusedRoutePathBytes(value: string): boolean {
+  if (value.includes("%2F") || value.includes("%2f")) {
+    return true;
+  }
+  if (PERCENT_ENCODED_CONTROL_BYTE_PATTERN.test(value)) {
+    return true;
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code === 0x5c || code <= 0x1f || code === 0x20 || code === 0x7f) {
+      return true;
+    }
+  }
+  return false;
 }

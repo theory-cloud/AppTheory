@@ -40,7 +40,7 @@ jobs:
             --context "prerelease readiness"
   staging-release-eligibility:
     name: Release eligibility (staging -> premain)
-    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')
+    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')
     runs-on: ubuntu-latest
     steps:
       - name: Verify the promotion range stays release-eligible
@@ -73,7 +73,7 @@ jobs:
 `
 
 const rubricIfPrefix = "    if: (github.event_name == 'workflow_dispatch'"
-const eligibilityIfPrefix = "    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')"
+const eligibilityIfPrefix = "    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain'"
 
 func writeWorkflow(t *testing.T, text string) (string, string) {
 	t.Helper()
@@ -100,11 +100,12 @@ func evaluateText(t *testing.T, text string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	failures := checkParity(jobs)
+	failures := checkParity(jobs, true)
 	failures = append(failures, checkCIPushTrigger(workflow)...)
 	failures = append(failures, checkExactConditions(jobs)...)
 	failures = append(failures, checkBackmergeExemption(jobs)...)
 	failures = append(failures, checkExemptionsAreLive(jobs)...)
+	failures = append(failures, checkStagingLaneScopeExceptions(jobs)...)
 	failures = append(failures, checkCanary(jobs)...)
 	failures = append(failures, checkUnconditionalSteps(jobs)...)
 	return failures, nil
@@ -190,14 +191,35 @@ func TestGuardRejectsFoldedRubricCondition(t *testing.T) {
 }
 
 // TestGuardRejectsEligibilityPushLegRemoval is the ADV-1073-R1-01 regression:
-// dropping the push-to-staging leg of the release-eligibility gate must fail,
-// not pass as a semantically weaker condition.
+// dropping the push-to-staging leg of the release-eligibility gate must fail, not
+// pass as a semantically weaker condition, because that leg is the whole of the
+// staging-lane coverage the recorded scope exception stands on.
 func TestGuardRejectsEligibilityPushLegRemoval(t *testing.T) {
-	prOnly := replaceLine(baseWorkflow, eligibilityIfPrefix, "    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'")
-	if prOnly == baseWorkflow {
+	pushLegGone := replaceLine(baseWorkflow, eligibilityIfPrefix, "    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging'")
+	if pushLegGone == baseWorkflow {
 		t.Fatal("failed to build the eligibility fixture")
 	}
-	mustFailWith(t, prOnly, "pull-request-to-staging-plus-push-to-staging")
+	mustFailWith(t, pushLegGone, "promotion-pull-request-plus-push-to-staging")
+	mustFailWith(t, pushLegGone, "the job must keep its push staging leg")
+}
+
+// TestGuardRejectsUnnecessaryEligibilityScopeException pins the other half of the
+// recorded exception: while the gate runs on pull requests into staging again,
+// the exception is stale, so a widened condition cannot hide behind it.
+func TestGuardRejectsUnnecessaryEligibilityScopeException(t *testing.T) {
+	prLegRestored := replaceLine(baseWorkflow, eligibilityIfPrefix, "    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging') || (github.event_name == 'push' && github.ref == 'refs/heads/staging')")
+	if prLegRestored == baseWorkflow {
+		t.Fatal("failed to build the eligibility fixture")
+	}
+	mustFailWith(t, prLegRestored, "the job runs on pull requests to staging again")
+}
+
+// TestGuardRejectsThirdJobWithPushLegOnly pins the exception's scope: only the
+// recorded job may carry a push-to-staging leg without a pull-request-to-staging
+// leg, so the carve-out cannot be inherited by another job.
+func TestGuardRejectsThirdJobWithPushLegOnly(t *testing.T) {
+	text := baseWorkflow + "\n  sneaky-push-only:\n    name: Sneaky push only\n    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo sneaky\n"
+	mustFailWith(t, text, "push parity")
 }
 
 func TestGuardRejectsNewPromotionOnlyJob(t *testing.T) {
@@ -329,7 +351,7 @@ func TestGuardRejectsPromotionOnlyCallee(t *testing.T) {
 	if err != nil {
 		t.Fatalf("classify caller: %v", err)
 	}
-	failures := strings.Join(checkParity(jobs), "\n")
+	failures := strings.Join(checkParity(jobs, true), "\n")
 	if !strings.Contains(failures, "no pull-request-to-staging equivalent") {
 		t.Fatalf("a promotion-only callee job must fail parity, got: %v", failures)
 	}
@@ -353,7 +375,7 @@ func TestGuardAcceptsAllLaneCallee(t *testing.T) {
 	if err != nil {
 		t.Fatalf("classify caller: %v", err)
 	}
-	if failures := checkParity(jobs); len(failures) > 0 {
+	if failures := checkParity(jobs, true); len(failures) > 0 {
 		t.Fatalf("an all-lane callee job must pass parity, got: %v", failures)
 	}
 }

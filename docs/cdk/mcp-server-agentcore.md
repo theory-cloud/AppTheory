@@ -12,8 +12,10 @@ application-owned runtime registration. `runtime/mcpfacade.RegisterMCPFacade` se
 family; it is not configurable as the singleton runtime counterpart. See the
 [MCP Server Facade Construct](../features/mcp-server-construct.md).
 
-The minimal examples below also set `unauthenticatedMcp: true` because their application registers only `POST /mcp`.
-That flag removes the CDK OAuth facade; it does not authenticate the route. Authentication remains application-owned.
+The minimal examples below also select `transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC` because their
+application registers only `POST /mcp`. That posture removes the CDK OAuth facade and leaves the transport routes
+public; it does not authenticate them, so authentication remains application-owned. It also carries the mandatory
+defense-in-depth floor: `originReachability` plus an explicit stage-throttling decision.
 
 It also supports:
 
@@ -66,7 +68,12 @@ export class AgentCoreMcpStack extends cdk.Stack {
     const mcp = new AppTheoryMcpServer(this, "McpServer", {
       handler,
       routeFamily: { patterns: ["/mcp"] },
-      unauthenticatedMcp: true,
+      transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC,
+      // Locked front door, or AppTheoryMcpOriginReachability.DISABLED when the
+      // execute-api default endpoint is disabled.
+      originReachability: AppTheoryMcpOriginReachability.LOCKED,
+      // `none-public` requires an explicit owned-stage throttling decision.
+      ownedApi: { stage: { throttlingEnabled: true } },
     });
 
     new cdk.CfnOutput(this, "McpEndpoint", { value: mcp.endpoints[0] });
@@ -76,10 +83,11 @@ export class AgentCoreMcpStack extends cdk.Stack {
 
 This deploys an HTTP API v2 with the `/mcp` transport routes and no OAuth facade. AgentCore calls `POST /mcp`; the
 application must register the matching runtime handler, for example `app.Post("/mcp", srv.Handler())`. The construct
-writes `MCP_ENDPOINT` in owned mode, and `mcp.endpoints[0]` is the URL to configure in AgentCore.
+no longer writes `MCP_ENDPOINT`; `mcp.endpoints[0]` is the URL to configure in AgentCore, and the bearer challenge is
+app-owned configuration.
 
-If the singleton needs the full OAuth facade, omit `unauthenticatedMcp` and register handlers for every derived entry
-in `mcp.routeInventory` in application code. Do not pair that singleton deployment with `RegisterMCPFacade`.
+If the singleton needs the full OAuth facade, drop `transportPosture` and register handlers for every derived entry in
+`mcp.routeInventory` in application code. Do not pair that singleton deployment with `RegisterMCPFacade`.
 
 ---
 
@@ -94,7 +102,14 @@ from aws_cdk import (
 from aws_cdk import aws_lambda as _lambda
 from constructs import Construct
 
-from apptheory_cdk import AppTheoryMcpRouteFamily, AppTheoryMcpServer
+from apptheory_cdk import (
+    AppTheoryMcpOriginReachability,
+    AppTheoryMcpRouteFamily,
+    AppTheoryMcpServer,
+    AppTheoryMcpServerOwnedApiOptions,
+    AppTheoryMcpServerStageOptions,
+    AppTheoryMcpTransportPosture,
+)
 
 
 class AgentCoreMcpStack(Stack):
@@ -116,7 +131,11 @@ class AgentCoreMcpStack(Stack):
             "McpServer",
             handler=handler,
             route_family=AppTheoryMcpRouteFamily(patterns=["/mcp"]),
-            unauthenticated_mcp=True,
+            transport_posture=AppTheoryMcpTransportPosture.NONE_PUBLIC,
+            origin_reachability=AppTheoryMcpOriginReachability.LOCKED,
+            owned_api=AppTheoryMcpServerOwnedApiOptions(
+                stage=AppTheoryMcpServerStageOptions(throttling_enabled=True)
+            ),
         )
         CfnOutput(self, "McpEndpoint", value=mcp.endpoints[0])
 ```
@@ -131,7 +150,9 @@ To configure the default DynamoDB session table:
 const mcp = new AppTheoryMcpServer(this, "McpServer", {
   handler,
   routeFamily: { patterns: ["/mcp"] },
-  unauthenticatedMcp: true,
+  transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC,
+  originReachability: AppTheoryMcpOriginReachability.LOCKED,
+  ownedApi: { stage: { throttlingEnabled: true } },
   sessionState: { enabled: true, ttlMinutes: 60 },
 });
 ```
@@ -167,8 +188,10 @@ const cert = acm.Certificate.fromCertificateArn(this, "Cert", "arn:aws:acm:...")
 const mcp = new AppTheoryMcpServer(this, "McpServer", {
   handler,
   routeFamily: { patterns: ["/mcp"] },
-  unauthenticatedMcp: true,
+  transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC,
+  originReachability: AppTheoryMcpOriginReachability.LOCKED,
   ownedApi: {
+    stage: { throttlingEnabled: true },
     domain: {
       domainName: "mcp.example.com",
       certificate: cert,
@@ -196,11 +219,13 @@ To create an explicit stage and enable access logs or throttling:
 const mcp = new AppTheoryMcpServer(this, "McpServer", {
   handler,
   routeFamily: { patterns: ["/mcp"] },
-  unauthenticatedMcp: true,
+  transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC,
+  originReachability: AppTheoryMcpOriginReachability.LOCKED,
   ownedApi: {
     stage: {
       stageName: "prod",
       accessLogging: true,
+      throttlingEnabled: true,
       throttlingRateLimit: 50,
       throttlingBurstLimit: 100,
     },
@@ -235,10 +260,10 @@ routes this construct owns.
 
 ## Security and migration note
 
-`unauthenticatedMcp: true` is a deployment-facade opt-out, not an instruction to ship an open tool endpoint. Protect
-the application-owned `POST /mcp` registration through the normal AppTheory middleware chain. If the application owns
-a singleton OAuth facade, it must register every route in `routeInventory`; `RegisterMCPFacade` remains canonical-family
-only.
+`transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC` is a deployment-facade opt-in, not an instruction to ship
+an open tool endpoint. Protect the application-owned `POST /mcp` registration through the normal AppTheory middleware
+chain. If the application owns a singleton OAuth facade, it must register every route in `routeInventory`;
+`RegisterMCPFacade` remains canonical-family only.
 
 The v3.1.x issuer/JWKS construct props no longer configure runtime discovery or emit environment variables. Move
 those values into application-owned `mcpfacade.FacadeConfig` for the canonical family, or into the singleton's own

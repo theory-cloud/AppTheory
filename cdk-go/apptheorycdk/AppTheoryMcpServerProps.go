@@ -30,10 +30,21 @@ type AppTheoryMcpServerProps struct {
 	// Deprecated: Configure `runtime/mcpfacade.FacadeConfig.IssuerURL` in the
 	// application. The construct no longer injects issuer environment values.
 	AuthorizationServerIssuer *string `field:"optional" json:"authorizationServerIssuer" yaml:"authorizationServerIssuer"`
+	// Denial-telemetry declaration required under RUNTIME_BEARER only.
+	// Default: undefined.
+	//
+	DenialSignal *AppTheoryMcpDenialSignalOptions `field:"optional" json:"denialSignal" yaml:"denialSignal"`
 	// Deprecated: Use `ownedApi.domain`. Domains are invalid in attach mode.
 	Domain *AppTheoryMcpServerDomainOptions `field:"optional" json:"domain" yaml:"domain"`
 	// Deprecated: Use `sessionState.enabled`. Session state now defaults on.
 	EnableSessionTable *bool `field:"optional" json:"enableSessionTable" yaml:"enableSessionTable"`
+	// Upstream-provider attachment that marks this server as facade-configured.
+	//
+	// The attachment's presence selects the `runtime-bearer` posture default.
+	// Provider wiring lands in M3; this milestone validates the attachment shape.
+	// Default: undefined.
+	//
+	Facade *AppTheoryMcpFacadeAttachment `field:"optional" json:"facade" yaml:"facade"`
 	// JWKS URI from the v3.1.x A6 environment contract.
 	// Deprecated: Configure `runtime/mcpfacade.FacadeConfig.JWKSURI` in the
 	// application. The construct no longer injects JWKS environment values.
@@ -42,12 +53,22 @@ type AppTheoryMcpServerProps struct {
 	// Deprecated: Use `routeFamily.patterns`. The new default is the canonical
 	// four-pattern family; use `{ patterns: ['/mcp'] }` for the old singleton.
 	McpPath *string `field:"optional" json:"mcpPath" yaml:"mcpPath"`
+	// Direct-origin reachability decision required under RUNTIME_BEARER and NONE_PUBLIC.
+	//
+	// A directly reachable origin is refused.
+	// Default: undefined.
+	//
+	OriginReachability AppTheoryMcpOriginReachability `field:"optional" json:"originReachability" yaml:"originReachability"`
 	// Owned-API configuration for standalone mode.
 	//
 	// Invalid with `api`.
 	// Default: production-owned API defaults.
 	//
 	OwnedApi *AppTheoryMcpServerOwnedApiOptions `field:"optional" json:"ownedApi" yaml:"ownedApi"`
+	// Attach-mode record of the owning API's throttling and access-logging decisions, required under RUNTIME_BEARER and NONE_PUBLIC.
+	// Default: undefined.
+	//
+	OwningApiDefense *AppTheoryMcpOwningApiDefenseOptions `field:"optional" json:"owningApiDefense" yaml:"owningApiDefense"`
 	// Ordered MCP route family.
 	//
 	// Go `runtime/mcpfacade.RegisterMCPFacade` serves only the canonical default
@@ -56,6 +77,13 @@ type AppTheoryMcpServerProps struct {
 	// Default: AppTheoryMcpRouteAlgebra.supportedEndpointTemplates()
 	//
 	RouteFamily *AppTheoryMcpRouteFamily `field:"optional" json:"routeFamily" yaml:"routeFamily"`
+	// Runtime-side RFC 9728 bearer validation declaration.
+	//
+	// Required by `transportPosture: RUNTIME_BEARER` and refused under every
+	// other posture.
+	// Default: undefined.
+	//
+	RuntimePosture *AppTheoryMcpRuntimePostureOptions `field:"optional" json:"runtimePosture" yaml:"runtimePosture"`
 	// Whether Lambda invoke permissions should be scoped to individual HTTP API v2 routes.
 	//
 	// When false, the construct grants one API-scoped invoke permission per Lambda instead of
@@ -80,28 +108,36 @@ type AppTheoryMcpServerProps struct {
 	SessionTtlMinutes *float64 `field:"optional" json:"sessionTtlMinutes" yaml:"sessionTtlMinutes"`
 	// Deprecated: Use `ownedApi.stage`. Stage options are invalid in attach mode.
 	Stage *AppTheoryMcpServerStageOptions `field:"optional" json:"stage" yaml:"stage"`
-	// Authorizer applied to the MCP transport routes only.
+	// Static JWT configuration for the MCP transport routes.
 	//
 	// Transport routes are the POST, GET, and DELETE routes on every MCP pattern.
-	// When `unauthenticatedMcp` is false (the default) those routes require
-	// credentials and default to IAM, so credential-free requests are rejected by
-	// API Gateway with 403. Discovery, protected-resource metadata, authorize,
-	// and token routes remain explicitly public (`NONE`) because OAuth clients
-	// must fetch them before they hold a token.
-	//
-	// Cannot be combined with `unauthenticatedMcp: true`.
-	// Default: AppTheoryMcpTransportAuthorizerKind.IAM
+	// This prop is only valid with `transportPosture: JWT`, which requires an
+	// issuer and a non-empty audience. Discovery, protected-resource metadata,
+	// authorize, and token routes remain explicitly public (`NONE`) because OAuth
+	// clients must fetch them before they hold a token.
+	// Default: undefined.
 	//
 	TransportAuthorizer *AppTheoryMcpTransportAuthorizerOptions `field:"optional" json:"transportAuthorizer" yaml:"transportAuthorizer"`
-	// Explicitly opt out of the OAuth facade and wire only MCP transport routes.
+	// Transport-route authorization posture.
 	//
-	// This cannot be combined with legacy authorization props, root discovery, or
-	// `transportAuthorizer`. The Go helper `runtime/mcpfacade.RegisterMCPFacade`
-	// installs the authenticated canonical facade by default and exposes
-	// `FacadeConfig.UnauthenticatedMcp` for the same transport opt-out, so
-	// applications using this opt-out must own runtime registration for the
-	// transport routes.
-	// Default: false.
+	// An explicit selection overrides the facade-scoped default. When it is
+	// omitted, a server that attaches `facade` resolves to `runtime-bearer` and a
+	// plain transport server resolves to `iam`. `none-public` is never a default
+	// and carries the defense-in-depth floor.
+	// Default: AppTheoryMcpTransportPosture.RUNTIME_BEARER when `facade` is attached, otherwise AppTheoryMcpTransportPosture.IAM
 	//
-	UnauthenticatedMcp *bool `field:"optional" json:"unauthenticatedMcp" yaml:"unauthenticatedMcp"`
+	TransportPosture AppTheoryMcpTransportPosture `field:"optional" json:"transportPosture" yaml:"transportPosture"`
+	// Stage-global upstream OAuth callback path.
+	//
+	// The CDK-mounted callback route and the runtime-registered one must not
+	// diverge: this prop is resolved by
+	// `AppTheoryMcpRouteAlgebra.callbackPathForConfiguredPath`, the same algebra
+	// the runtime applies to `FacadeConfig.UpstreamCallbackPath`. Supply a
+	// synthesis-time literal absolute path with no query, fragment, or dot
+	// segment; an empty value keeps the contract default, and a value that
+	// collides with another derived route fails synthesis. Refused under
+	// `transportPosture: none-public`, which attaches no OAuth surface.
+	// Default: AppTheoryMcpRouteAlgebra.DEFAULT_CALLBACK_PATH
+	//
+	UpstreamCallbackPath *string `field:"optional" json:"upstreamCallbackPath" yaml:"upstreamCallbackPath"`
 }

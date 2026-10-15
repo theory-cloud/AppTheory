@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 
 import {
   ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE,
+  ERR_BEARER_TOKEN_INVALID_AUDIENCE,
   OAuthBearerError,
   bearerTokenClaimsFromContext,
+  insufficientScopeWWWAuthenticate,
   newAuthorizationServerMetadata,
   newMemoryBearerTokenValidator,
   newProtectedResourceMetadata,
@@ -12,14 +14,15 @@ import {
   pkceVerifyS256,
   protectedResourceWWWAuthenticate,
   requireBearerTokenMiddleware,
+  resourceIndicatorMatches,
   resourceMetadataURLFromMcpEndpoint,
   validateDynamicClientRegistrationRequest,
 } from "../dist/index.js";
 
-function ctx(headers = {}) {
+function ctx(headers = {}, path = "/mcp") {
   const values = new Map();
   return {
-    request: { headers },
+    request: { headers, path },
     set: (key, value) => values.set(key, value),
     get: (key) => values.get(key),
   };
@@ -49,7 +52,7 @@ test("OAuth protected resource metadata and challenge are deterministic", () => 
   );
 });
 
-test("OAuth bearer middleware distinguishes unauthorized and forbidden", async () => {
+test("OAuth bearer middleware distinguishes unauthorized, forbidden, and insufficient scope", async () => {
   const validator = newMemoryBearerTokenValidator(
     [
       {
@@ -66,6 +69,13 @@ test("OAuth bearer middleware distinguishes unauthorized and forbidden", async (
         scopes: ["mcp:write"],
         expiresAt: new Date(1_700_003_600_000),
       },
+      {
+        token: "audience-miss",
+        subject: "user-1",
+        audience: "https://other.example.com/mcp",
+        scopes: ["mcp:read"],
+        expiresAt: new Date(1_700_003_600_000),
+      },
     ],
     {
       requiredAudience: "https://mcp.example.com/mcp",
@@ -75,22 +85,51 @@ test("OAuth bearer middleware distinguishes unauthorized and forbidden", async (
   );
   const mw = requireBearerTokenMiddleware({
     resourceMetadataURL: "https://mcp.example.com/pr",
+    requiredScopes: ["mcp:read"],
     claimsValidator: validator,
   });
   const missing = await mw(ctx(), async () =>
     assert.fail("next should not run"),
   );
   assert.equal(missing.status, 401);
-  const forbidden = await mw(
+  assert.equal(
+    missing.headers["www-authenticate"][0],
+    'Bearer resource_metadata="https://mcp.example.com/pr"',
+  );
+  const insufficient = await mw(
     ctx({ authorization: ["Bearer scope-miss"] }),
     async () => assert.fail("next should not run"),
   );
+  assert.equal(insufficient.status, 403);
+  assert.equal(
+    insufficient.headers["www-authenticate"][0],
+    'Bearer error="insufficient_scope", scope="mcp:read", resource_metadata="https://mcp.example.com/pr"',
+  );
+  assert.deepEqual(
+    JSON.parse(Buffer.from(insufficient.body).toString("utf8")),
+    { error: { code: "app.insufficient_scope", message: "insufficient scope" } },
+  );
+  const forbidden = await mw(
+    ctx({ authorization: ["Bearer audience-miss"] }),
+    async () => assert.fail("next should not run"),
+  );
   assert.equal(forbidden.status, 403);
-  assert.throws(
-    () => validator(ctx(), "scope-miss"),
+  assert.equal(forbidden.headers["www-authenticate"], undefined);
+  assert.deepEqual(
+    JSON.parse(Buffer.from(forbidden.body).toString("utf8")),
+    { error: { code: "app.forbidden", message: "forbidden" } },
+  );
+  await assert.rejects(
+    validator(ctx(), "scope-miss"),
     (err) =>
       err instanceof OAuthBearerError &&
       err.oauthCode === ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE,
+  );
+  await assert.rejects(
+    validator(ctx(), "audience-miss"),
+    (err) =>
+      err instanceof OAuthBearerError &&
+      err.oauthCode === ERR_BEARER_TOKEN_INVALID_AUDIENCE,
   );
   const acceptedCtx = ctx({ authorization: ["Bearer valid"] });
   const accepted = await mw(acceptedCtx, async () => ({
@@ -104,6 +143,149 @@ test("OAuth bearer middleware distinguishes unauthorized and forbidden", async (
   assert.deepEqual(bearerTokenClaimsFromContext(acceptedCtx).scopes, [
     "mcp:read",
   ]);
+});
+
+test("OAuth bearer validator honours route-derived audience and scope resolvers", async () => {
+  const validator = newMemoryBearerTokenValidator(
+    [
+      {
+        token: "acme-token",
+        subject: "user-1",
+        audience: "https://mcp.example.com/acme/mcp",
+        scopes: ["mcp:read", "mcp:write"],
+        expiresAt: new Date(1_700_003_600_000),
+      },
+      {
+        token: "peer-token",
+        subject: "user-2",
+        audience: "https://mcp.example.com/other/mcp",
+        scopes: ["mcp:read"],
+        expiresAt: new Date(1_700_003_600_000),
+      },
+    ],
+    {
+      requiredAudience: (c) => `https://mcp.example.com${c.request.path}`,
+      requiredScopes: (c) =>
+        c.request.path === "/acme/mcp"
+          ? ["mcp:read", "mcp:write"]
+          : ["mcp:admin"],
+      now: () => new Date(1_700_000_000_000),
+    },
+  );
+  const claims = await validator(
+    ctx({ authorization: ["Bearer acme-token"] }, "/acme/mcp"),
+    "acme-token",
+  );
+  assert.deepEqual(claims.scopes, ["mcp:read", "mcp:write"]);
+  await assert.rejects(
+    validator(ctx({ authorization: ["Bearer peer-token"] }, "/other/mcp"), "peer-token"),
+    (err) =>
+      err instanceof OAuthBearerError &&
+      err.oauthCode === ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE,
+  );
+});
+
+test("OAuth scope failure carries the route-derived RFC 6750 challenge", async () => {
+  const validator = newMemoryBearerTokenValidator(
+    [
+      {
+        token: "scoped-token",
+        subject: "user-1",
+        audience: "https://mcp.example.com/acme/mcp",
+        scopes: ["mcp:read"],
+        expiresAt: new Date(1_700_003_600_000),
+      },
+    ],
+    {
+      requiredAudience: () => "https://mcp.example.com/acme/mcp",
+      requiredScopes: () => ["mcp:read", "mcp:write"],
+      now: () => new Date(1_700_000_000_000),
+    },
+  );
+  const mw = requireBearerTokenMiddleware({
+    resourceMetadataURL: () =>
+      "https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp",
+    requiredScopes: () => ["mcp:read", "mcp:write"],
+    claimsValidator: validator,
+  });
+  const resp = await mw(
+    ctx({ authorization: ["Bearer scoped-token"] }, "/acme/mcp"),
+    async () => assert.fail("next should not run"),
+  );
+  assert.equal(resp.status, 403);
+  assert.equal(
+    resp.headers["www-authenticate"][0],
+    'Bearer error="insufficient_scope", scope="mcp:read mcp:write", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp"',
+  );
+  assert.deepEqual(JSON.parse(Buffer.from(resp.body).toString("utf8")), {
+    error: { code: "app.insufficient_scope", message: "insufficient scope" },
+  });
+});
+
+test("OAuth audience failure is a plain 403 with no challenge", async () => {
+  const validator = newMemoryBearerTokenValidator(
+    [
+      {
+        token: "wrong-audience-token",
+        subject: "user-1",
+        audience: "https://other.example.com/mcp",
+        scopes: ["mcp:read"],
+        expiresAt: new Date(1_700_003_600_000),
+      },
+    ],
+    {
+      requiredAudience: () => "https://mcp.example.com/acme/mcp",
+      now: () => new Date(1_700_000_000_000),
+    },
+  );
+  const mw = requireBearerTokenMiddleware({
+    resourceMetadataURL: () =>
+      "https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp",
+    requiredScopes: () => ["mcp:read"],
+    claimsValidator: validator,
+  });
+  const resp = await mw(
+    ctx({ authorization: ["Bearer wrong-audience-token"] }, "/acme/mcp"),
+    async () => assert.fail("next should not run"),
+  );
+  assert.equal(resp.status, 403);
+  assert.equal(resp.headers["www-authenticate"], undefined);
+  assert.deepEqual(JSON.parse(Buffer.from(resp.body).toString("utf8")), {
+    error: { code: "app.forbidden", message: "forbidden" },
+  });
+});
+
+test("OAuth insufficient_scope challenge and resource indicator match are pinned", () => {
+  assert.equal(
+    insufficientScopeWWWAuthenticate([]),
+    'Bearer error="insufficient_scope"',
+  );
+  assert.equal(
+    insufficientScopeWWWAuthenticate(["mcp:read", "mcp:write"]),
+    'Bearer error="insufficient_scope", scope="mcp:read mcp:write"',
+  );
+  assert.equal(
+    insufficientScopeWWWAuthenticate(
+      ["mcp:read"],
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+    ),
+    'Bearer error="insufficient_scope", scope="mcp:read", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"',
+  );
+  assert.equal(
+    resourceIndicatorMatches(
+      "https://mcp.example.com/mcp",
+      " https://mcp.example.com/mcp/ ",
+    ),
+    true,
+  );
+  assert.equal(
+    resourceIndicatorMatches(
+      "https://mcp.example.com/mcp",
+      "https://other.example.com/mcp",
+    ),
+    false,
+  );
+  assert.equal(resourceIndicatorMatches("", ""), false);
 });
 
 test("OAuth authorization server metadata supports opt-in revocation/device endpoints", () => {
@@ -200,4 +382,36 @@ test("OAuth DCR policy and PKCE verifier are pinned", () => {
     pkceVerifyS256(verifier, "ZtNPunH49FD35FWYhT5Tv8I7vRKQJ8uxMaL0_9eHjNA"),
     true,
   );
+});
+
+test("the bearer challenge never derives from the MCP_ENDPOINT environment", async () => {
+  const previous = process.env.MCP_ENDPOINT;
+  process.env.MCP_ENDPOINT = "https://evil.example/mcp/{actor}";
+  try {
+    const unconfigured = requireBearerTokenMiddleware({});
+    const bare = await unconfigured(ctx({}, "/mcp/Arch"), async () =>
+      assert.fail("next should not run"),
+    );
+    assert.equal(bare.status, 401);
+    assert.equal(bare.headers["www-authenticate"][0], "Bearer");
+
+    const configured = requireBearerTokenMiddleware({
+      resourceMetadataURL:
+        "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+    });
+    const challenge = await configured(ctx({}, "/mcp/Arch"), async () =>
+      assert.fail("next should not run"),
+    );
+    assert.equal(challenge.status, 401);
+    assert.equal(
+      challenge.headers["www-authenticate"][0],
+      'Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"',
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.MCP_ENDPOINT;
+    } else {
+      process.env.MCP_ENDPOINT = previous;
+    }
+  }
 });

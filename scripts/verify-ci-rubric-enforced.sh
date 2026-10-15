@@ -142,9 +142,10 @@ require_contains "${ci}" "name: Verify deterministic builds" \
 # requires it with strict_required_status_checks_policy: true, so the merged
 # staging SHA is the tested SHA, and premain/main only ever receive staging
 # content. scripts/verify-ci-trigger-parity.sh enforces, by parsing rather than
-# matching text: the rubric and deterministic-build conditions; the staging
-# release-eligibility gate's pull-request-to-staging *and* push-to-staging legs
-# (a push-leg removal is a coverage regression, not a simplification); the
+# matching text: the rubric and deterministic-build conditions; the
+# release-eligibility gate's promotion-pull-request *and* push-to-staging legs,
+# with the staging-lane scope exception recorded in cmd/ci-guard (a push-leg
+# removal is a coverage regression, not a simplification); the
 # push/promotion parity of every other job, including jobs whose effective
 # runnability comes from a `needs:` edge; both promotion lanes; every workflow
 # file in .github/workflows/ (ci.yml classified, justified non-gating publishers

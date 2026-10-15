@@ -25,6 +25,10 @@ Release automation is driven by Conventional Commits. `feat:` and `fix:` entries
 
 Upgrade policy is maintained separately from the generated changelog. When a minor line changes runtime behavior, deployment defaults, dependency floors, generated-artifact expectations, or deprecation posture, update `UPGRADING.md` in the same change or release-prep PR. The changelog lists commits; `UPGRADING.md` lists consumer action and per-line compatibility notes.
 
+### Release-note corrections
+
+Release Please never regenerates a past release section, so a published release note is frozen at the shape it had when its tag was cut and a hand edit to it would be dropped or duplicated on the next generated release. Corrections to already-published release notes are therefore recorded in [`release-notes-corrections.md`](./release-notes-corrections.md), which names the incomplete note, the omitted or wrong entry with its commit and pull request, and the consumer action. The correcting change lands as a release-visible `fix:` or `feat:` commit so the next generated release section carries the correction; a `docs:`-typed commit alone is not rendered. Published tags and release assets are immutable, so an edit to a published GitHub Release body is an operator action, recorded as such on that page.
+
 The full rubric runs only for PRs targeting `staging` and optional manual `workflow_dispatch` CI runs. Manual CI dispatch defaults to running the rubric; generated release-PR artifact sync dispatches CI with the full rubric disabled and waits only for release hygiene/build checks. The standalone `Verify deterministic builds` CI job also runs only for PRs targeting `staging`; generated release PR sync must not require or wait for that skipped context. `premain` and `main` run release hygiene, branch version sync, release-branch provenance, package build, and publish postcondition checks; they must not run the full rubric or deterministic-build job on release publish paths.
 
 Generated release PRs have one CI trigger. Release Please version commits and generated-artifact sync commits carry

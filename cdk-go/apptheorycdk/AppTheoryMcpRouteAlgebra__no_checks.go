@@ -8,6 +8,10 @@ func validateAppTheoryMcpRouteAlgebra_AuthorizationAuthorizePathForResourcePathP
 	return nil
 }
 
+func validateAppTheoryMcpRouteAlgebra_AuthorizationRegisterPathForResourcePathParameters(resourcePath *string) error {
+	return nil
+}
+
 func validateAppTheoryMcpRouteAlgebra_AuthorizationServerPathForResourcePathParameters(resourcePath *string) error {
 	return nil
 }
@@ -20,7 +24,15 @@ func validateAppTheoryMcpRouteAlgebra_AuthorizationTokenPathForResourcePathParam
 	return nil
 }
 
+func validateAppTheoryMcpRouteAlgebra_CallbackPathForConfiguredPathParameters(configured *string) error {
+	return nil
+}
+
 func validateAppTheoryMcpRouteAlgebra_McpPathParameters(endpoint *AppTheoryMcpEndpointPath) error {
+	return nil
+}
+
+func validateAppTheoryMcpRouteAlgebra_NormalizeCallbackPathParameters(rawPath *string) error {
 	return nil
 }
 
@@ -33,6 +45,10 @@ func validateAppTheoryMcpRouteAlgebra_OauthAuthorizationServerSuffixPathParamete
 }
 
 func validateAppTheoryMcpRouteAlgebra_OauthAuthorizePathParameters(endpoint *AppTheoryMcpEndpointPath) error {
+	return nil
+}
+
+func validateAppTheoryMcpRouteAlgebra_OauthRegisterPathParameters(endpoint *AppTheoryMcpEndpointPath) error {
 	return nil
 }
 

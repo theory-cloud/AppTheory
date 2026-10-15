@@ -154,12 +154,14 @@ CloudFormation generates the physical names for all six groups, none can hit the
 - Use `AppTheoryRestApi` when you need REST API v1 but not multi-Lambda routing
 - Use `AppTheoryRestApiRouter` when you need SSE or response streaming
 - Use `AppTheoryMcpServer` for the route-algebra MCP facade. Supply `api` for a shared front door or omit it for the
-  standalone owned API; the MCP transport routes require credentials by default (IAM, or a JWT `transportAuthorizer`),
-  while OAuth discovery, protected-resource metadata, authorize, and token routes stay public. Then use Go
-  `mcpfacade.RegisterMCPFacade` with explicit app-owned issuer, JWKS, scopes, capabilities, and handlers. Public
-  unauthenticated MCP requires the explicit `unauthenticatedMcp` opt-out on the construct, or
-  `FacadeConfig.UnauthenticatedMcp` on the Go helper; `FacadeConfig.RequireBearerToken` validates bearer tokens on the
-  transport routes instead.
+  standalone owned API; the MCP transport routes require credentials by default (`iam`, or `jwt` with a configured
+  `transportAuthorizer`), while OAuth discovery, protected-resource metadata, authorize, and token routes stay public.
+  Attaching `facade` flips the default to `runtime-bearer`, where the gateway authorizer is `NONE` and the runtime
+  validates RFC 9728 bearer tokens. Then use Go `mcpfacade.RegisterMCPFacade` with explicit app-owned issuer, JWKS,
+  scopes, capabilities, and handlers. A deliberately public MCP server must select
+  `transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC` and carry the mandatory `originReachability` and
+  throttling floor; `runtime-bearer` additionally requires `FacadeConfig.RequireBearerToken` on the runtime side and a
+  `denialSignal` declaration.
 - Use `AppTheoryRemoteMcpServer` when REST API v1 response streaming and resumable Remote MCP transport are required;
   do not start new namespace applications on the URL-valued `AppTheoryMcpProtectedResource` compatibility construct.
 - Use `AppTheorySsrSite` when you need the canonical FaceTheory-first SSR/SSG/ISR deployment story

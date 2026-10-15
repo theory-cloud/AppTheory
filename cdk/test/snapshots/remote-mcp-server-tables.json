@@ -104,26 +104,6 @@
         },
         "Environment": {
           "Variables": {
-            "MCP_ENDPOINT": {
-              "Fn::Join": [
-                "",
-                [
-                  "https://",
-                  {
-                    "Ref": "RemoteMcpApi6A28A6F0"
-                  },
-                  ".execute-api.",
-                  {
-                    "Ref": "AWS::Region"
-                  },
-                  ".",
-                  {
-                    "Ref": "AWS::URLSuffix"
-                  },
-                  "/prod/mcp"
-                ]
-              ]
-            },
             "MCP_SESSION_TABLE": {
               "Ref": "RemoteMcpSessionTable949CA67A"
             },
