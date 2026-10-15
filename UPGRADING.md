@@ -218,24 +218,32 @@ and SHA-256 `bce361b931b5d44dc2d229ed18a2befa2f508d29e27ef649381ba61e9c23c359` f
 assets through AppTheory's package metadata; do not substitute registry-published packages or mutable URLs.
 
 **The one behavioral change.** TableTheory 5.1.0 classifies a cancelled `TransactWrite` by its FIRST genuine
-cancellation reason. Before this repin the TypeScript and Python adapters treated any cancellation as a condition
-failure, while Go already classified by reason. All three now agree, so the TypeScript and Python multi-window rate
-limiters (`DynamoRateLimiter`) change behavior:
+cancellation reason. Go already classified by reason, but the pre-repin TypeScript and Python adapters did not, and
+they did not do so in the same way — measured on the base pins (`tabletheory-ts` 5.0.0, `tabletheory_py` 5.0.0), the
+two runtimes misclassified differently. All three runtimes now agree, so the multi-window rate limiters
+(`DynamoRateLimiter`) change behavior:
 
-| Cancellation class | Before (TypeScript, Python) | Now (Go, TypeScript, Python) |
-| --- | --- | --- |
-| Genuine `ConditionalCheckFailed` — a window budget was exceeded | soft denial: `allowed=false` plus a retry-after | unchanged |
-| DynamoDB throttle, transaction conflict, an unknown code, an all-`None` or empty reason list, or a message that only mentions `ConditionalCheckFailed` | soft denial plus a retry-after | follows the configured fail-open policy |
+| Cancellation class | Before (TypeScript 5.0.0) | Before (Python 5.0.0) | Now (Go, TypeScript, Python) |
+| --- | --- | --- | --- |
+| Genuine `ConditionalCheckFailed` — a window budget was exceeded | soft denial: `allowed=false` plus a retry-after | soft denial | unchanged |
+| A reason list that contains a `ConditionalCheckFailed` reason which is not the first genuine reason (for example a throttle first, the condition failure second) | soft denial | soft denial — the old Python matcher tested the whole reason list, not just the first genuine reason | follows the configured fail-open policy |
+| A cancellation whose message mentions `ConditionalCheckFailed` while its reason list carries no such reason | soft denial | soft denial — the old Python matcher also sniffed the message text | follows the configured fail-open policy |
+| A DynamoDB throttle, a transaction conflict, an unknown code, an all-`None` or empty reason list | soft denial | already followed the configured fail-open policy | follows the configured fail-open policy |
 
-In plain words: **a DynamoDB throttle or a transaction conflict no longer produces a soft denial in the TypeScript
-and Python multi-window limiters.** Such a cancellation now follows the configured `failOpen` policy exactly as Go
-always has: `failOpen: true`, the AppTheory default, admits the request; `failOpen: false` returns an
-`internal_error`.
+In plain words: **TypeScript treated every cancellation as a condition failure and soft-denied all of them**, so a
+throttle or a transaction conflict no longer produces a soft denial in the TypeScript multi-window limiter; it now
+follows the configured `failOpen` policy exactly as Go always has. **Python was already reason-aware for the plain
+throttle, conflict, unknown-code, all-`None` and empty rows**, which admitted or failed closed exactly as they do
+now; what changes in Python is narrower — a cancellation was also read as a condition failure whenever the message
+mentioned `ConditionalCheckFailed`, or whenever the reason list carried a `ConditionalCheckFailed` reason anywhere
+rather than only in the first genuine position, and those two shapes now follow the configured `failOpen` policy as
+well. `failOpen: true`, the AppTheory default, admits the request; `failOpen: false` returns an `internal_error`.
 
 **To make a throttle deny instead of admit, configure fail-closed:** Go `limited.Config{FailOpen: false}`,
 TypeScript `new DynamoRateLimiter({ config: { failOpen: false } })`, Python
 `DynamoRateLimiter(config=replace(default_config(), fail_open=False))`. A consumer that previously depended on the
-misclassification — reading a throttle as a condition failure — should branch on the current error code instead:
+misclassification — in TypeScript any cancellation read as a condition failure, in Python the narrower
+conditional-check-in-the-list or message-mention cases — should branch on the current error code instead:
 `ErrThrottled` / `ErrTransactionConflict` in TypeScript, `ThrottledError` / `TransactionConflictError` in Python.
 The shared conformance table `contract-tests/fixtures/routing/limiter/multi-window-cancellation.v1.json` pins every
 class in all three runtimes.
