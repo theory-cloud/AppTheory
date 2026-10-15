@@ -1,4 +1,5 @@
 import type { App } from "./app.js";
+import { SecureApp } from "./app.js";
 import type { Context, Handler } from "./context.js";
 import { type EndpointKind, type IssuerMode } from "./mcproutes.js";
 import { type Provider, type RequireBearerTokenOptions, type Stores } from "./oauth/index.js";
@@ -189,6 +190,25 @@ export interface RouteInventory {
  * application supplies both handler factories.
  */
 export declare function registerMcpFacade(app: App, config: FacadeConfig): RouteInventory;
+/**
+ * Installs the complete MCP OAuth facade on a closed-by-default
+ * {@link SecureApp} and returns its route inventory.
+ *
+ * It is the SecureApp counterpart to {@link registerMcpFacade} and produces the
+ * same route inventory and the same request-time behavior. The difference is
+ * how each route's authority is declared: on the plain App surface the facade
+ * expresses transport security with the `authRequired` route option, while here
+ * every route must declare an explicit auth posture, so the facade declares the
+ * posture each of its routes has always had.
+ *
+ * The SecureApp stays closed by default: this helper adds only the facade's own
+ * routes, each with a declared posture, and it adds none of them when
+ * normalizeConfig rejects the configuration. A route the application never
+ * declares remains undeliverable, and the application's own
+ * SecurePrincipalResolver, tier, and PolicyHook keep governing every non-facade
+ * route on the same app.
+ */
+export declare function registerMcpFacadeSecure(secureApp: SecureApp, config: FacadeConfig): RouteInventory;
 /**
  * Validates and canonicalizes a request-derived origin. Accepts HTTPS, plus
  * HTTP only for loopback hosts, and removes scheme-default ports.

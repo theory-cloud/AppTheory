@@ -61,8 +61,14 @@ operator-facing API guidance. Keep these human-authored groups current when the 
   metadata, the derived authorize/token/register shapes (only when the matching handler factories are supplied), the
   opt-in root discovery route, and the stage-global callback — failing closed before any route is added. It registers
   the transport routes under one explicit `McpTransportPosture` (`iam` | `jwt` | `runtime-bearer` | `none-public`) and
-  fails closed when the posture and the runtime bearer assertion disagree. The testkit helpers `countingTransportHandler`,
-  `assertCredentialFreeTransportDenied`, and `assertBearerTokenReachesTransportHandler` pin that a credential-free
+  fails closed when the posture and the runtime bearer assertion disagree. `registerMcpFacadeSecure(secureApp, config)`
+  is the closed-by-default counterpart: it mounts the identical surface and returns the identical inventory, declaring
+  each route's explicit `AuthPosture` instead of a route option — the transport routes are `Authenticated()` under
+  `iam`/`jwt` and `Public()` under `runtime-bearer`/`none-public`, and every OAuth-surface route is `Public()`. The
+  application's own `SecurePrincipalResolver`, tier, and `PolicyHook` keep governing every non-facade route, and an
+  undeclared route stays undeliverable. The testkit helpers `countingTransportHandler`,
+  `assertCredentialFreeTransportDenied`, and `assertBearerTokenReachesTransportHandler` — and their
+  `...SecureApp` companions, which drive the same assertions through a `SecureApp` — pin that a credential-free
   transport request is denied before it reaches
   the handler, and that a valid bearer token does reach it.
 - Storage and data helpers: `ObjectStore`, `ObjectRef`, `createS3ObjectStore`, `ObjectStoreUploadGranter`, `DynamoJobLedger`, and rate-limit
@@ -87,13 +93,14 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>850 exported top-level symbols</summary>
+<summary>854 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, AGENT_MCP_PATTERN, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest, APIGatewayProxyResponse,
 APIGatewayV2HTTPRequest, APIGatewayV2HTTPResponse, APIGatewayWebSocketProxyRequest, App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo,
 AppSyncResolverRequest, AppTheoryError, AppTheoryErrorDetails, appTheoryErrorFromAppError, AppTheoryErrorOptions, assertBearerTokenReachesTransportHandler,
-assertCredentialFreeTransportDenied, assertInsufficientScopeTransportDenied, AtomicRateLimiter, Authenticated, AuthenticatedAnyOf, AutheoryProvider,
+assertBearerTokenReachesTransportHandlerSecureApp, assertCredentialFreeTransportDenied, assertCredentialFreeTransportDeniedSecureApp,
+assertInsufficientScopeTransportDenied, assertInsufficientScopeTransportDeniedSecureApp, AtomicRateLimiter, Authenticated, AuthenticatedAnyOf, AutheoryProvider,
 AutheoryProviderOptions, AuthHook, AUTHORIZATION_SERVER_PREFIX, authorizationAuthorizePathForResourcePath, AuthorizationCodeConsumeResult, AuthorizationCodeRecord,
 AuthorizationCodeStatus, AuthorizationCodeStore, authorizationRegisterPathForResourcePath, AuthorizationRequest, AuthorizationServerMetadata,
 authorizationServerMetadataHandler, AuthorizationServerMetadataOptions, authorizationServerPathForResourcePath, authorizationServerSuffixPathForResourcePath,
@@ -189,7 +196,7 @@ protectedResourcePathForResourcePath, protectedResourcePathFromMcpPath, protecte
 Public, PutVectorsInput, Query, QueryHit, QueryVectorsInput, RandomIdGenerator, rapidConnectXMLPatterns, RateLimitBucketKey, RateLimitEntry, RateLimiter, RateLimiterError,
 RateLimitKey, RateLimitResult, RateLimitStore, RateLimitStrategy, rateLimitTableName, RateLimitWindow, RealClock, ReconstructingMicroVMSessionRegistry,
 ReconstructingMicroVMSessionRegistryOptions, reconstructMicroVMSessionRecord, RecordStatus, RefreshLeaseInput, RefreshRequest, RefreshSemaphoreSlotInput,
-registerControllerRoutes, registerMcpFacade, registerMicroVMControllerRoutes, ReleaseLeaseInput, ReleaseSemaphoreSlotInput, reportKinesisPutRecordsFailures, Request,
+registerControllerRoutes, registerMcpFacade, registerMcpFacadeSecure, registerMicroVMControllerRoutes, ReleaseLeaseInput, ReleaseSemaphoreSlotInput, reportKinesisPutRecordsFailures, Request,
 requireBearerTokenMiddleware, RequireBearerTokenOptions, required, requiredForbiddenMicroVMOperationFields, requireEventBridgeWorkloadEnvelope, ResolvedCapabilities,
 resourceIndicatorMatches, resourceMetadataURLFromMcpEndpoint, resourceName, resourcePathFromProtectedResourcePath, Response, rfc9728ResourceMetadataURL,
 RootDiscoveryConfig, RouteInventory, RouteOptions, RouteRefreshBrokerRecord, RouteRefreshBrokerSeeder, RouteRefreshBrokerStatus, RouteRefreshBrokerStore, runStoreConformance, S3Encryption,

@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 from typing import Any, cast
 from urllib.parse import quote_plus
 
-from apptheory.app import App, Handler, _resolve, create_app
+from apptheory.app import App, Handler, SecureApp, _resolve, create_app
 from apptheory.cloudfront import origin_url
 from apptheory.context import Context
 from apptheory.mcproutes import (
@@ -87,6 +87,7 @@ from apptheory.oauth.store import (
     hash_key,
 )
 from apptheory.response import Response, normalize_response
+from apptheory.secure_types import AuthPosture, authenticated, public
 
 _HTTPS_SCHEME = "https"
 _HTTP_SCHEME = "http"
@@ -467,6 +468,11 @@ class _RouteRegistration:
     pattern: str
     handler: Handler
     auth_required: bool
+    # ``posture`` is the declared SecureApp authorization posture, used only by
+    # the SecureApp registrar. The plain-App path never reads it; a registration
+    # built outside :func:`_build_registrations` declares none, and the SecureApp
+    # surface then refuses it rather than guessing an authority.
+    posture: AuthPosture | None = None
 
 
 class _MetadataRequestError(Exception):
@@ -493,6 +499,29 @@ def register_mcp_facade(app: App | None, config: FacadeConfig) -> RouteInventory
     inventory = _build_inventory(normalized)
     registrations = _build_registrations(normalized, inventory)
     _register_routes(app, registrations)
+    return _clone_inventory(inventory)
+
+
+def register_mcp_facade_secure(secure_app: SecureApp | None, config: FacadeConfig) -> RouteInventory:
+    """Install the complete MCP OAuth facade on a closed-by-default
+    :class:`SecureApp` and return its route inventory.
+
+    It is the SecureApp counterpart to :func:`register_mcp_facade` and produces
+    the same route inventory and the same request-time behavior; only the way
+    each route's authority is declared differs, because every SecureApp route
+    must state an auth posture. The SecureApp stays closed by default: this
+    helper adds only the facade's own routes, each with a declared posture, and
+    it adds none of them when the configuration is rejected, while the
+    application's own principal resolver, tier, and policy hook keep governing
+    every non-facade route on the same app.
+    """
+    if secure_app is None:
+        raise ValueError(f"{_ERROR_PREFIX} secure app is required")
+    normalized = _normalize_config(config)
+    inventory = _build_inventory(normalized)
+    registrations = _build_registrations(normalized, inventory)
+    _validate_secure_route_registrations(registrations)
+    _register_secure_routes(secure_app, registrations)
     return _clone_inventory(inventory)
 
 
@@ -840,17 +869,47 @@ def _normalize_url_mode(config: FacadeConfig) -> tuple[str, set[str]]:
     raise ValueError(f"{_ERROR_PREFIX} URL mode must be public_base_url or request_host")
 
 
+def _transport_posture_declaration(config: _NormalizedConfig) -> AuthPosture:
+    """Return the SecureApp auth posture the facade declares for the three MCP
+    transport routes.
+
+    IAM and JWT are gateway-fronted postures whose plain-App expression is the
+    RequireAuth route option, which requires a resolved principal; the SecureApp
+    counterpart of that requirement is ``authenticated()``, so the application's
+    own principal resolver stays the authority for the transport route.
+    Runtime-bearer registers no route option on the plain surface because the
+    RFC 9728 bearer middleware enforces the request and fails closed, so the
+    declared posture is ``public()`` and that validator is the authority.
+    None-public is deliberately public by contract.
+    """
+    if config.transport_posture in ("iam", "jwt"):
+        return authenticated()
+    return public()
+
+
 def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -> list[_RouteRegistration]:
     registrations: list[_RouteRegistration] = []
     auth_required = config.transport_posture in ("iam", "jwt")
+    transport_posture = _transport_posture_declaration(config)
+    # Every other facade route is public by contract: a client must reach the
+    # RFC 9728 metadata before it holds a token, /authorize and /token are the
+    # unauthenticated client-facing protocol surface (PKCE and the single-use code
+    # are the authority there), RFC 7591 registration admits public clients only,
+    # and the upstream callback pins state and iss.
+    surface_posture = public()
     for route in inventory.routes:
         handler = _checked_mcp_handler(route.kind, config.mcp_handler)
         if config.require_bearer_token is not None:
             handler = _with_bearer_assertion(config.require_bearer_token, handler)
-        registrations.append(_RouteRegistration("POST", route.mcp_pattern, handler, auth_required))
-        registrations.append(_RouteRegistration("GET", route.mcp_pattern, handler, auth_required))
-        registrations.append(_RouteRegistration("DELETE", route.mcp_pattern, handler, auth_required))
-
+        registrations.append(
+            _RouteRegistration("POST", route.mcp_pattern, handler, auth_required, posture=transport_posture)
+        )
+        registrations.append(
+            _RouteRegistration("GET", route.mcp_pattern, handler, auth_required, posture=transport_posture)
+        )
+        registrations.append(
+            _RouteRegistration("DELETE", route.mcp_pattern, handler, auth_required, posture=transport_posture)
+        )
         # The OAuth surface follows the posture-derived inventory, not mere
         # handler presence: under the none-public posture nothing OAuth-surface
         # registers, so the runtime surface cannot disagree with the CDK
@@ -863,12 +922,19 @@ def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -
                 route.protected_resource_pattern,
                 _protected_resource_handler(config, route.kind),
                 False,
+                posture=surface_posture,
             )
         )
 
         discovery_handler = _authorization_server_handler(config, route.kind)
-        registrations.append(_RouteRegistration("GET", route.discovery_canonical_pattern, discovery_handler, False))
-        registrations.append(_RouteRegistration("GET", route.discovery_suffix_pattern, discovery_handler, False))
+        registrations.append(
+            _RouteRegistration(
+                "GET", route.discovery_canonical_pattern, discovery_handler, False, posture=surface_posture
+            )
+        )
+        registrations.append(
+            _RouteRegistration("GET", route.discovery_suffix_pattern, discovery_handler, False, posture=surface_posture)
+        )
 
         if config.authorize_handlers is not None and config.token_handlers is not None:
             registrations.append(
@@ -877,6 +943,7 @@ def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -
                     route.authorize_pattern,
                     _checked_oauth_facade_handler(route.kind, True, config.authorize_handlers[route.kind]),
                     False,
+                    posture=surface_posture,
                 )
             )
             registrations.append(
@@ -885,6 +952,7 @@ def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -
                     route.token_pattern,
                     _checked_oauth_facade_handler(route.kind, False, config.token_handlers[route.kind]),
                     False,
+                    posture=surface_posture,
                 )
             )
         if config.front_channel is not None:
@@ -896,6 +964,7 @@ def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -
                     route.authorize_pattern,
                     _checked_oauth_facade_handler(route.kind, True, authorize_handler),
                     False,
+                    posture=surface_posture,
                 )
             )
             registrations.append(
@@ -904,6 +973,7 @@ def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -
                     route.token_pattern,
                     _checked_oauth_facade_handler(route.kind, False, token_handler),
                     False,
+                    posture=surface_posture,
                 )
             )
             # The RFC 7591 registration route is part of the front channel, so it
@@ -916,6 +986,7 @@ def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -
                     route.register_pattern,
                     _checked_register_handler(route.kind, _front_channel_register_handler(config, route.kind)),
                     False,
+                    posture=surface_posture,
                 )
             )
         if config.register_handlers is not None:
@@ -925,6 +996,7 @@ def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -
                     route.register_pattern,
                     _checked_register_handler(route.kind, config.register_handlers[route.kind]),
                     False,
+                    posture=surface_posture,
                 )
             )
 
@@ -941,13 +1013,24 @@ def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -
                 inventory.root_authorization_server_pattern,
                 _with_metadata_headers(lambda _ctx, _document=root_document: _metadata_response(_document)),
                 False,
+                posture=surface_posture,
             )
         )
     if inventory.callback_pattern != "" and config.callback_handler is not None:
-        registrations.append(_RouteRegistration("GET", inventory.callback_pattern, config.callback_handler, False))
+        registrations.append(
+            _RouteRegistration(
+                "GET", inventory.callback_pattern, config.callback_handler, False, posture=surface_posture
+            )
+        )
     if inventory.callback_pattern != "" and config.front_channel is not None:
         registrations.append(
-            _RouteRegistration("GET", inventory.callback_pattern, _front_channel_callback_handler(config), False)
+            _RouteRegistration(
+                "GET",
+                inventory.callback_pattern,
+                _front_channel_callback_handler(config),
+                False,
+                posture=surface_posture,
+            )
         )
 
     _validate_route_registrations(registrations)
@@ -955,8 +1038,56 @@ def _build_registrations(config: _NormalizedConfig, inventory: RouteInventory) -
 
 
 def _validate_route_registrations(registrations: list[_RouteRegistration]) -> None:
-    seen: set[str] = set()
     probe = create_app(tier="p0")
+    _validate_registration_entries(
+        registrations,
+        lambda method, registration: probe.handle(
+            method,
+            registration.pattern,
+            registration.handler,
+            auth_required=registration.auth_required,
+        ),
+    )
+
+
+def _validate_secure_route_registrations(registrations: list[_RouteRegistration]) -> None:
+    """The SecureApp counterpart to :func:`_validate_route_registrations`: the
+    same inventory checks, installed on a throwaway tier-P0 SecureApp so a posture
+    the surface would reject fails before the caller's app receives any route.
+    """
+    probe = SecureApp(tier="p0")
+
+    def install(method: str, registration: _RouteRegistration) -> None:
+        probe.handle(
+            method,
+            registration.pattern,
+            registration.handler,
+            _declared_posture(registration),
+        )
+
+    _validate_registration_entries(registrations, install)
+
+
+def _declared_posture(registration: _RouteRegistration) -> AuthPosture:
+    """Return the posture a registration declares, refusing one that declares
+    none: the closed-by-default surface never guesses an authority for a route,
+    so a route reaches it only with a posture an adopter stated.
+    """
+    posture = registration.posture
+    if posture is None:
+        raise ValueError(f"{_ERROR_PREFIX} route {registration.method} {registration.pattern} declares no auth posture")
+    return posture
+
+
+def _validate_registration_entries(
+    registrations: list[_RouteRegistration],
+    install: Callable[[str, _RouteRegistration], object],
+) -> None:
+    """Apply the surface-independent inventory checks: every entry must name a
+    method, pattern, and handler, must not duplicate another entry, and must be
+    acceptable to install.
+    """
+    seen: set[str] = set()
     for registration in registrations:
         method = str(registration.method or "").strip().upper()
         key = f"{method} {registration.pattern}"
@@ -966,7 +1097,7 @@ def _validate_route_registrations(registrations: list[_RouteRegistration]) -> No
             raise ValueError(f"{_ERROR_PREFIX} duplicate route inventory entry {key}")
         seen.add(key)
         try:
-            probe.handle(method, registration.pattern, registration.handler, auth_required=registration.auth_required)
+            install(method, registration)
         except Exception as err:
             raise ValueError(f"{_ERROR_PREFIX} invalid or duplicate route inventory entry {key}: {err}") from err
 
@@ -979,6 +1110,19 @@ def _register_routes(app: App, registrations: list[_RouteRegistration]) -> None:
                 registration.pattern,
                 registration.handler,
                 auth_required=registration.auth_required,
+            )
+        except Exception as err:
+            raise ValueError(f"{_ERROR_PREFIX} register {registration.method} {registration.pattern}: {err}") from err
+
+
+def _register_secure_routes(secure_app: SecureApp, registrations: list[_RouteRegistration]) -> None:
+    for registration in registrations:
+        try:
+            secure_app.handle(
+                registration.method,
+                registration.pattern,
+                registration.handler,
+                _declared_posture(registration),
             )
         except Exception as err:
             raise ValueError(f"{_ERROR_PREFIX} register {registration.method} {registration.pattern}: {err}") from err

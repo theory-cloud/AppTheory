@@ -82,11 +82,11 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>765 exported top-level symbols</summary>
+<summary>769 exported top-level symbols</summary>
 
 ```text
 AGENT_MCP_PATTERN, App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError,
-assert_bearer_token_reaches_transport_handler, assert_credential_free_transport_denied, assert_insufficient_scope_transport_denied, AtomicRateLimiter, authenticated,
+assert_bearer_token_reaches_transport_handler, assert_bearer_token_reaches_transport_handler_secure_app, assert_credential_free_transport_denied, assert_credential_free_transport_denied_secure_app, assert_insufficient_scope_transport_denied, assert_insufficient_scope_transport_denied_secure_app, AtomicRateLimiter, authenticated,
 authenticated_any_of, AutheoryProvider, AutheoryProviderOptions, authorization_authorize_path_for_resource_path, authorization_register_path_for_resource_path,
 authorization_server_metadata_handler, authorization_server_path_for_resource_path, AUTHORIZATION_SERVER_PREFIX, authorization_server_suffix_path_for_resource_path,
 authorization_token_path_for_resource_path, AuthorizationCodeRecord, AuthorizationCodeStore, AuthorizationRequest, AuthorizationServerMetadata, AuthPosture,
@@ -175,7 +175,7 @@ ProfileLoggerOptions, protected_resource_metadata_handler, protected_resource_pa
 protected_resource_www_authenticate, ProtectedResourceMetadata, Provider, ProviderError, ProviderMetadata, public, PutVectorsInput, query, QueryHit, QueryVectorsInput,
 rapid_connect_xml_patterns, rate_limit_table_name, RateLimitBucketKey, RateLimitEntry, RateLimiter, RateLimiterError, RateLimitKey, RateLimitResult, RateLimitStore,
 RateLimitStrategy, RateLimitWindow, RealClock, RealIdGenerator, reconstruct_microvm_session_record, ReconstructingMicroVMSessionRegistry, RefreshRequest,
-register_controller_routes, register_mcp_facade, register_microvm_controller_routes, report_kinesis_put_records_failures, Request, require_bearer_token_middleware,
+register_controller_routes, register_mcp_facade, register_mcp_facade_secure, register_microvm_controller_routes, report_kinesis_put_records_failures, Request, require_bearer_token_middleware,
 require_eventbridge_workload_envelope, RequireBearerTokenOptions, required, required_forbidden_microvm_operation_fields, resource_indicator_matches,
 resource_metadata_url_from_mcp_endpoint, resource_name, resource_path_from_protected_resource_path, Response, rfc9728_resource_metadata_url, RootDiscoveryConfig,
 RouteInventory, RouteRefreshBrokerRecord, RouteRefreshBrokerSeeder, RouteRefreshBrokerStore, run_store_conformance, S3_ENCRYPTION_BUCKET_DEFAULT, S3_ENCRYPTION_KMS,

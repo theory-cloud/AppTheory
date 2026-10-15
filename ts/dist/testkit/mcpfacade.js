@@ -27,7 +27,18 @@ export function countingTransportHandler() {
  * resourceMetadataURL, and no invocation of the application handler.
  */
 export async function assertCredentialFreeTransportDenied(app, method, path, resourceMetadataURL, handler) {
-    const response = await app.serve(transportRequest(method, path));
+    return assertCredentialFreeTransportDeniedOn(app, method, path, resourceMetadataURL, handler);
+}
+/**
+ * {@link assertCredentialFreeTransportDenied} on a closed-by-default
+ * {@link SecureApp}, so a consumer that runs its route families on a SecureApp
+ * proves the same RFC 9728 denial without dropping to a plain app.
+ */
+export async function assertCredentialFreeTransportDeniedSecureApp(secureApp, method, path, resourceMetadataURL, handler) {
+    return assertCredentialFreeTransportDeniedOn(secureApp, method, path, resourceMetadataURL, handler);
+}
+async function assertCredentialFreeTransportDeniedOn(surface, method, path, resourceMetadataURL, handler) {
+    const response = await surface.serve(transportRequest(method, path));
     assertFacade(response.status === 401, `credential-free ${method} ${path}: status = ${response.status}, want 401`);
     const expected = protectedResourceWWWAuthenticate(resourceMetadataURL);
     const actual = firstHeader(response.headers, "www-authenticate");
@@ -43,7 +54,18 @@ export async function assertCredentialFreeTransportDenied(app, method, path, res
  * invocation of the application handler.
  */
 export async function assertInsufficientScopeTransportDenied(app, method, path, token, resourceMetadataURL, scopes, handler) {
-    const response = await app.serve(transportRequest(method, path, { authorization: [`Bearer ${token}`] }));
+    return assertInsufficientScopeTransportDeniedOn(app, method, path, token, resourceMetadataURL, scopes, handler);
+}
+/**
+ * {@link assertInsufficientScopeTransportDenied} on a closed-by-default
+ * {@link SecureApp}.
+ */
+export async function assertInsufficientScopeTransportDeniedSecureApp(secureApp, method, path, token, resourceMetadataURL, scopes, handler) {
+    return assertInsufficientScopeTransportDeniedOn(secureApp, method, path, token, resourceMetadataURL, scopes, handler);
+}
+async function assertInsufficientScopeTransportDeniedOn(surface, method, path, token, resourceMetadataURL, scopes, handler) {
+    const before = handler.invocations();
+    const response = await surface.serve(transportRequest(method, path, { authorization: [`Bearer ${token}`] }));
     assertFacade(response.status === 403, `insufficient-scope ${method} ${path}: status = ${response.status}, want 403`);
     const expected = insufficientScopeWWWAuthenticate(scopes, resourceMetadataURL);
     const actual = firstHeader(response.headers, "www-authenticate");
@@ -51,7 +73,7 @@ export async function assertInsufficientScopeTransportDenied(app, method, path, 
     const code = bodyErrorCode(response.body);
     assertFacade(code === "app.insufficient_scope", `insufficient-scope ${method} ${path}: body error code = ${JSON.stringify(code)}, want "app.insufficient_scope"`);
     const invocations = handler.invocations();
-    assertFacade(invocations === 0, `insufficient-scope ${method} ${path}: MCP handler invoked ${invocations} times, want 0`);
+    assertFacade(invocations === before, `insufficient-scope ${method} ${path}: MCP handler invoked ${invocations - before} additional times, want 0`);
 }
 /**
  * The positive control for {@link assertCredentialFreeTransportDenied}: a
@@ -59,8 +81,19 @@ export async function assertInsufficientScopeTransportDenied(app, method, path, 
  * is not "always deny".
  */
 export async function assertBearerTokenReachesTransportHandler(app, method, path, token, handler) {
+    return assertBearerTokenReachesTransportHandlerOn(app, method, path, token, handler);
+}
+/**
+ * {@link assertBearerTokenReachesTransportHandler} on a closed-by-default
+ * {@link SecureApp}, the positive control for
+ * {@link assertCredentialFreeTransportDeniedSecureApp}.
+ */
+export async function assertBearerTokenReachesTransportHandlerSecureApp(secureApp, method, path, token, handler) {
+    return assertBearerTokenReachesTransportHandlerOn(secureApp, method, path, token, handler);
+}
+async function assertBearerTokenReachesTransportHandlerOn(surface, method, path, token, handler) {
     const before = handler.invocations();
-    const response = await app.serve(transportRequest(method, path, { authorization: [`Bearer ${token}`] }));
+    const response = await surface.serve(transportRequest(method, path, { authorization: [`Bearer ${token}`] }));
     assertFacade(response.status === 204, `bearer ${method} ${path}: status = ${response.status}, want 204`);
     const invocations = handler.invocations();
     assertFacade(invocations === before + 1, `bearer ${method} ${path}: MCP handler invocations = ${invocations}, want ${before + 1}`);
