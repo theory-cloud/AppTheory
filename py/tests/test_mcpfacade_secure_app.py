@@ -651,6 +651,43 @@ class SecureAppMountFailClosedTests(unittest.TestCase):
         self.assertIn("already registered on the secure app", str(raised.exception))
         self.assertEqual(declared, secure.routes())
 
+    def test_secure_mount_rejects_a_cross_surface_collision_without_mounting_anything(self) -> None:
+        """The all-or-nothing guarantee against a collision with a route the
+        caller's app declares on a DIFFERENT surface. ``SecureApp.appsync_field``
+        mounts ``GET /<field>`` for ``Query`` and ``Subscription`` and
+        ``POST /<field>`` for ``Mutation`` on the SAME shared router the facade
+        mounts on, and that router's duplicate check is surface-agnostic, so a
+        preflight that compared only the ``http`` surface would miss the
+        collision, let the mount start, and leave the facade routes that preceded
+        it mounted.
+        """
+        config = _secure_config(None, transport_posture="iam", front_channel=False)
+        normalized = facade_module._normalize_config(config)
+        inventory = facade_module._build_inventory(normalized)
+        registrations = facade_module._build_registrations(normalized, inventory)
+        self.assertGreater(len(registrations), 4)
+
+        # The collision is the fourth planned route, not the first, so a
+        # mount-as-it-goes registrar would already have installed the first three.
+        collision = registrations[3]
+        self.assertEqual("GET", collision.method)
+        self.assertTrue(collision.pattern.startswith("/"), collision.pattern)
+
+        # A Query field is a GET on the shared router at "/"+field, so the field
+        # name that collides with the planned path is that path without its slash.
+        secure = SecureApp(tier="p0")
+        secure.appsync_field("Query", collision.pattern[1:], _no_content, authenticated())
+        declared = secure.routes()
+        self.assertEqual(1, len(declared))
+        self.assertEqual("appsync", declared[0].surface)
+        collision_key = f"{declared[0].method} {declared[0].path}"
+
+        with self.assertRaises(ValueError) as raised:
+            register_mcp_facade_secure(secure, config)
+        self.assertEqual(declared, secure.routes())
+        self.assertIn("already registered on the secure app", str(raised.exception))
+        self.assertIn(collision_key, str(raised.exception))
+
 
 class SecureAppTmsJourneyTests(unittest.TestCase):
     """The complete TMS-topology journey over the SecureApp, through the really

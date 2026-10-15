@@ -1033,3 +1033,50 @@ test("secure mount rejects a non-first collision without mounting anything", asy
     "the refused mount must not add a single facade route",
   );
 });
+
+test("secure mount rejects a cross-surface collision without mounting anything", async (t) => {
+  const { config } = await worldForRow(t, {
+    transport_posture: "iam",
+    front_channel: false,
+  });
+
+  // The collision is the plan's fourth registration — the first route family's
+  // RFC 9728 protected-resource GET — so a mount-as-it-goes registrar would
+  // already have installed the three transport routes. The route that owns it is
+  // declared on a DIFFERENT surface: appSyncField mounts GET /<field> for Query
+  // and Subscription and POST /<field> for Mutation on the SAME shared router the
+  // facade mounts on, and that router's duplicate check is surface-agnostic. A
+  // preflight that compared only the HTTP surface would miss it.
+  const plain = createApp({ tier: "p0" });
+  const inventory = registerMcpFacade(plain, config);
+  assert.ok(inventory.routes.length > 0, "the plan must declare a route family");
+  const collisionPattern = inventory.routes[0].protectedResourcePattern;
+  assert.ok(collisionPattern.startsWith("/"), `unexpected pattern ${collisionPattern}`);
+
+  const secure = new SecureApp({ tier: "p0" });
+  secure.appSyncField("Query", collisionPattern.slice(1), () => noContent(), Public());
+  const declared = secure.routes();
+  assert.equal(declared.length, 1, "the application must own exactly one route");
+  assert.equal(declared[0].surface, "appsync", "the collision must be cross-surface");
+  const collisionKey = `${declared[0].method} ${declared[0].path}`;
+
+  let failure;
+  assert.throws(
+    () => registerMcpFacadeSecure(secure, config),
+    (err) => {
+      failure = err;
+      return true;
+    },
+  );
+  assert.deepStrictEqual(
+    secure.routes(),
+    declared,
+    "the refused mount must not add a single facade route",
+  );
+  assert.ok(
+    failure.message.includes(
+      `route ${collisionKey} is already registered on the secure app`,
+    ),
+    `the error must name the cross-surface collision, got ${failure.message}`,
+  );
+});

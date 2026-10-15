@@ -972,3 +972,48 @@ func TestSecureMountRejectsANonFirstCollisionWithoutMountingAnything(t *testing.
 	require.ErrorContains(t, err, "already registered on the secure app")
 	require.Equal(t, declared, secure.Routes())
 }
+
+// TestSecureMountRejectsACrossSurfaceCollisionWithoutMountingAnything pins the
+// all-or-nothing guarantee against a collision with a route the caller's app
+// declares on a DIFFERENT surface than the facade mounts on. SecureApp.
+// AppSyncField registers GET /<field> for Query and Subscription and POST
+// /<field> for Mutation on the SAME shared router the facade mounts on, and the
+// router's duplicate check is surface-agnostic, so an AppSync field whose path is
+// a facade route's path occupies that route's key. A preflight that compared only
+// the HTTP surface would miss it, let the mount start, and leave the facade
+// routes that preceded the collision mounted.
+func TestSecureMountRejectsACrossSurfaceCollisionWithoutMountingAnything(t *testing.T) {
+	t.Parallel()
+	config := validConfig(URLModePublicBaseURL)
+	normalized, err := normalizeConfig(config)
+	require.NoError(t, err)
+	inventory, err := buildInventory(normalized)
+	require.NoError(t, err)
+	registrations, err := buildRegistrations(normalized, inventory)
+	require.NoError(t, err)
+	require.Greater(t, len(registrations), 4)
+
+	// The collision is the fourth planned route, so a mount-as-it-goes registrar
+	// would already have installed the first three.
+	collision := registrations[3]
+	require.Equal(t, "GET", collision.method)
+	require.True(t, strings.HasPrefix(collision.pattern, "/"), "collision pattern %q", collision.pattern)
+	// A Query field is a GET on the shared router at "/"+field, so the field
+	// name that collides with the planned path is that path without its slash.
+	field := strings.TrimPrefix(collision.pattern, "/")
+
+	secure := apptheory.NewSecure(apptheory.SecureOptions{})
+	secure.AppSyncField("Query", field, func(*apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.Text(204, ""), nil
+	}, apptheory.Public())
+	declared := secure.Routes()
+	require.Len(t, declared, 1)
+	require.Equal(t, apptheory.SecureRouteAppSync, declared[0].Surface)
+	collisionKey := declared[0].Method + " " + declared[0].Path
+
+	routeInventory, err := RegisterMCPFacadeSecure(secure, config)
+	require.Nil(t, routeInventory)
+	require.Equal(t, declared, secure.Routes())
+	require.ErrorContains(t, err, "already registered on the secure app")
+	require.ErrorContains(t, err, collisionKey)
+}
