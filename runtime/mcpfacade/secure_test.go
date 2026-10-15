@@ -28,7 +28,7 @@ const secureAppMountGroup = "secure_app_mount"
 // fixture must carry; a change to the table must also be a deliberate edit in
 // the Go, TypeScript, and Python loaders, so no runtime can silently execute a
 // smaller table.
-const secureAppMountCaseCount = 40
+const secureAppMountCaseCount = 41
 
 const (
 	// secureMountRouteResource is the advertising resource of the namespace route

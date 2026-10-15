@@ -73,7 +73,7 @@ SECURE_APP_MOUNT_GROUP = "secure_app_mount"
 # The number of secure_app_mount rows the shared table must carry; a change to the
 # table must also be a deliberate edit in the Go and TypeScript loaders, so no
 # runtime can silently execute a smaller table.
-SECURE_APP_MOUNT_CASE_COUNT = 40
+SECURE_APP_MOUNT_CASE_COUNT = 41
 
 POSTURE_SCENARIO = "posture"
 REQUEST_SCENARIO = "request"

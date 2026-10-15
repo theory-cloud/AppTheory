@@ -66,7 +66,7 @@ const SECURE_APP_MOUNT_GROUP = "secure_app_mount";
  * the table must also be a deliberate edit in the Go and Python loaders, so no
  * runtime can silently execute a smaller table.
  */
-const SECURE_APP_MOUNT_CASE_COUNT = 40;
+const SECURE_APP_MOUNT_CASE_COUNT = 41;
 
 /**
  * The rows of each scenario the shared table carries. The three loaders below
@@ -74,7 +74,7 @@ const SECURE_APP_MOUNT_CASE_COUNT = 40;
  * three and be executed, so a silently dropped row cannot pass.
  */
 const SECURE_APP_SCENARIO_CASE_COUNTS = new Map([
-  ["posture", 25],
+  ["posture", 26],
   ["request", 11],
   ["inventory_parity", 4],
 ]);

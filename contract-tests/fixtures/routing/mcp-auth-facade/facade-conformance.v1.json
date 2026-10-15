@@ -939,6 +939,17 @@
       "expect_posture": "authenticated"
     },
     {
+      "id": "secure_app_mount.posture.jwt_transport_get_is_authenticated",
+      "group": "secure_app_mount",
+      "scenario": "posture",
+      "transport_posture": "jwt",
+      "front_channel": false,
+      "route": "transport",
+      "method": "GET",
+      "expect_present": true,
+      "expect_posture": "authenticated"
+    },
+    {
       "id": "secure_app_mount.posture.jwt_transport_delete_is_authenticated",
       "group": "secure_app_mount",
       "scenario": "posture",
