@@ -108,10 +108,10 @@ export interface RequireBearerTokenOptions {
      * middleware reads no environment variable.
      *
      * The template is compiled when the middleware is constructed. It must be an
-     * absolute HTTPS URL with no userinfo, query, fragment, or percent escape,
-     * and its placeholders must appear in the path and name route parameters; a
-     * malformed template throws at registration rather than advertising a broken
-     * discovery URL.
+     * absolute HTTPS URL with no userinfo, query, fragment, or percent escape and
+     * no `.` or `..` path segment, and its placeholders must appear in the path
+     * and name route parameters; a malformed template throws at registration
+     * rather than advertising a broken discovery URL.
      *
      * At request time a placeholder the matched route does not supply, or whose
      * value is not a safe single path segment, makes the middleware emit the bare

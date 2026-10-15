@@ -41,10 +41,11 @@ type resourceMetadataURLTemplate struct {
 // parameters it interpolates.
 //
 // A template is valid when it is an absolute HTTPS URL with no userinfo, query,
-// fragment, or percent-escape, and every `{param}` placeholder sits in the URL
-// path and names a lower-case route parameter. Placeholders outside the path
-// are refused, because interpolating one would let a request steer the
-// advertised authority rather than only its path suffix.
+// fragment, or percent-escape, with no `.` or `..` path segment, and every
+// `{param}` placeholder sits in the URL path and names a lower-case route
+// parameter. Placeholders outside the path are refused, because interpolating
+// one would let a request steer the advertised authority rather than only its
+// path suffix.
 func compileResourceMetadataURLTemplate(raw string) (*resourceMetadataURLTemplate, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -76,6 +77,9 @@ func compileResourceMetadataURLTemplate(raw string) (*resourceMetadataURLTemplat
 	if strings.Contains(rawPath, "%") {
 		return nil, fmt.Errorf("%w: template must not percent-encode its path", ErrInvalidURL)
 	}
+	if hasDotPathSegment(u.Path) {
+		return nil, fmt.Errorf(`%w: template must not contain a "." or ".." path segment`, ErrInvalidURL)
+	}
 
 	params, err := resourceMetadataURLTemplateParams(u.Path)
 	if err != nil {
@@ -85,6 +89,21 @@ func compileResourceMetadataURLTemplate(raw string) (*resourceMetadataURLTemplat
 	compiled := &resourceMetadataURLTemplate{base: *u, params: params}
 	compiled.base.RawPath = ""
 	return compiled, nil
+}
+
+// hasDotPathSegment reports whether a URL path carries a `.` or `..` segment.
+//
+// A static dot segment in a template is never intended, and the runtimes do not
+// agree on what to do with one: Go and Python advertise the literal segment
+// while a WHATWG URL parser normalizes it away, so the advertised URL would
+// depend on the runtime. The template is refused instead.
+func hasDotPathSegment(rawPath string) bool {
+	for _, segment := range strings.Split(rawPath, "/") {
+		if segment == "." || segment == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // resourceMetadataURLTemplateParams returns the distinct placeholder names in

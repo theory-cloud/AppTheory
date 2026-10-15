@@ -181,13 +181,14 @@ class RequireBearerTokenOptions:
     #
     # The template is compiled when the middleware is built, and a malformed
     # template raises ValueError there, so a bad configuration fails closed at
-    # registration instead of advertising a broken discovery URL. At request
-    # time a placeholder the matched route does not supply, or a value outside
-    # the pinned alphabet, emits the bare `Bearer` challenge: a literal
-    # placeholder is never advertised and an unresolvable template never falls
-    # back to resource_metadata_url. When set it takes precedence over
-    # resource_metadata_url; resource_metadata_url_func still takes precedence
-    # over it.
+    # registration instead of advertising a broken discovery URL. It must be an
+    # absolute HTTPS URL with no userinfo, query, fragment, or percent-escape
+    # and no "." or ".." path segment. At request time a placeholder the matched
+    # route does not supply, or a value outside the pinned alphabet, emits the
+    # bare `Bearer` challenge: a literal placeholder is never advertised and an
+    # unresolvable template never falls back to resource_metadata_url. When set
+    # it takes precedence over resource_metadata_url;
+    # resource_metadata_url_func still takes precedence over it.
     resource_metadata_url_template: str = ""
 
 
@@ -553,12 +554,13 @@ def _compile_resource_metadata_url_template(raw: str) -> _ResourceMetadataURLTem
     """Validate a template and record the route parameters it interpolates.
 
     A template is valid when it is an absolute HTTPS URL with no userinfo,
-    query, fragment, or percent-escape, and every ``{param}`` placeholder sits
-    in the URL path and names a lower-case route parameter. Placeholders outside
-    the path are refused, because interpolating one would let a request steer
-    the advertised authority rather than only its path suffix. ``urlsplit`` is
-    used rather than ``urlparse`` because it keeps ``;`` in the path the way
-    Go's ``net/url`` does.
+    query, fragment, or percent-escape, with no ``.`` or ``..`` path segment,
+    and every ``{param}`` placeholder sits in the URL path and names a
+    lower-case route parameter. Placeholders outside the path are refused,
+    because interpolating one would let a request steer the advertised authority
+    rather than only its path suffix. ``urlsplit`` is used rather than
+    ``urlparse`` because it keeps ``;`` in the path the way Go's ``net/url``
+    does.
 
     Raises ValueError on any violation, so a malformed template fails loudly at
     registration rather than at request time.
@@ -586,8 +588,21 @@ def _compile_resource_metadata_url_template(raw: str) -> _ResourceMetadataURLTem
         )
     if "%" in parsed.path:
         raise ValueError("invalid ResourceMetadataURLTemplate: template must not percent-encode its path")
+    if _has_dot_path_segment(parsed.path):
+        raise ValueError('invalid ResourceMetadataURLTemplate: template must not contain a "." or ".." path segment')
     params = _resource_metadata_url_template_params(parsed.path)
     return _ResourceMetadataURLTemplate(base=parsed, params=params)
+
+
+def _has_dot_path_segment(raw_path: str) -> bool:
+    """Report whether a URL path carries a ``.`` or ``..`` segment.
+
+    A static dot segment in a template is never intended, and the runtimes do
+    not agree on what to do with one: Go and Python advertise the literal
+    segment while a WHATWG URL parser normalizes it away, so the advertised URL
+    would depend on the runtime. The template is refused instead.
+    """
+    return any(segment in (".", "..") for segment in raw_path.split("/"))
 
 
 def _resource_metadata_url_template_params(raw_path: str) -> list[str]:

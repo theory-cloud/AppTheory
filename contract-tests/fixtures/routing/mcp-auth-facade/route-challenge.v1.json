@@ -65,7 +65,7 @@
     ]
   },
   "resource_metadata_template": {
-    "notes": "The bearer middleware accepts an absolute HTTPS `{param}` template (`ResourceMetadataURLTemplate` / `resourceMetadataURLTemplate` / `resource_metadata_url_template`). Compilation happens once, at registration, and refuses a template that is not an absolute HTTPS URL free of userinfo, query, fragment, or percent-escape, or whose placeholders do not sit in the path and do not name route parameters. At request time every placeholder is interpolated from the matched route's path parameters, and a placeholder the route does not supply, or a value outside the pinned alphabet, fails closed to the bare `Bearer` challenge, so a literal placeholder is never advertised. Precedence is ResourceMetadataURLFunc > ResourceMetadataURLTemplate > ResourceMetadataURL.",
+    "notes": "The bearer middleware accepts an absolute HTTPS `{param}` template (`ResourceMetadataURLTemplate` / `resourceMetadataURLTemplate` / `resource_metadata_url_template`). Compilation happens once, at registration, and refuses a template that is not an absolute HTTPS URL free of userinfo (including an empty `@` userinfo, which a WHATWG parser accepts), query, fragment, or percent-escape, that carries a `.` or `..` path segment (Go and Python would advertise it literally while a WHATWG parser normalizes it away), or whose placeholders do not sit in the path and do not name route parameters. At request time every placeholder is interpolated from the matched route's path parameters, and a placeholder the route does not supply, or a value outside the pinned alphabet, fails closed to the bare `Bearer` challenge, so a literal placeholder is never advertised. Precedence is ResourceMetadataURLFunc > ResourceMetadataURLTemplate > ResourceMetadataURL.",
     "value_rule": "A substituted route-parameter value must be 1..128 bytes of [a-z0-9._~-] and must not be \".\" or \"..\". Empty, `/`-containing, percent-encoded, upper-case, whitespace, control, backslash, and non-ASCII values are refused.",
     "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp/{actor}",
     "accept": [
@@ -100,7 +100,11 @@
       { "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp/actor}" },
       { "template": "https://user@api.example.com/.well-known/oauth-protected-resource/mcp/{actor}" },
       { "template": "https://{actor}.example.com/.well-known/oauth-protected-resource/mcp" },
-      { "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp%2F{actor}" }
+      { "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp%2F{actor}" },
+      { "template": "https://@api.example.com/.well-known/oauth-protected-resource/mcp/{actor}" },
+      { "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp/../{actor}" },
+      { "template": "https://api.example.com/.well-known/oauth-protected-resource/./mcp/{actor}" },
+      { "template": "https://api.example.com/.well-known/oauth-protected-resource/mcp/.." }
     ],
     "refused_value": [
       { "params": { "actor": "" } },

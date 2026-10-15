@@ -89,10 +89,10 @@ type RequireBearerTokenOptions struct {
 	//
 	// The template is validated when the middleware is constructed — it must be
 	// an absolute HTTPS URL with no userinfo, query, fragment, or percent
-	// escape, and its placeholders must appear in the path and name route
-	// parameters. A malformed template panics at registration rather than
-	// advertising a broken discovery URL, so a bad template fails closed at
-	// startup instead of at request time.
+	// escape and no "." or ".." path segment, and its placeholders must appear
+	// in the path and name route parameters. A malformed template panics at
+	// registration rather than advertising a broken discovery URL, so a bad
+	// template fails closed at startup instead of at request time.
 	//
 	// At request time a placeholder that the matched route does not supply, or
 	// whose value is not a safe single path segment (see

@@ -133,10 +133,10 @@ export interface RequireBearerTokenOptions {
    * middleware reads no environment variable.
    *
    * The template is compiled when the middleware is constructed. It must be an
-   * absolute HTTPS URL with no userinfo, query, fragment, or percent escape,
-   * and its placeholders must appear in the path and name route parameters; a
-   * malformed template throws at registration rather than advertising a broken
-   * discovery URL.
+   * absolute HTTPS URL with no userinfo, query, fragment, or percent escape and
+   * no `.` or `..` path segment, and its placeholders must appear in the path
+   * and name route parameters; a malformed template throws at registration
+   * rather than advertising a broken discovery URL.
    *
    * At request time a placeholder the matched route does not supply, or whose
    * value is not a safe single path segment, makes the middleware emit the bare
@@ -613,10 +613,11 @@ const RESOURCE_METADATA_URL_TEMPLATE_VALUE_PATTERN = new RegExp(
  * Validates a template and records the route parameters it interpolates.
  *
  * A template is valid when it is an absolute HTTPS URL with no userinfo, query,
- * fragment, or percent-escape, and every `{param}` placeholder sits in the URL
- * path and names a lower-case route parameter. Placeholders outside the path
- * are refused, because interpolating one would let a request steer the
- * advertised authority rather than only its path suffix.
+ * fragment, or percent-escape, with no `.` or `..` path segment, and every
+ * `{param}` placeholder sits in the URL path and names a lower-case route
+ * parameter. Placeholders outside the path are refused, because interpolating
+ * one would let a request steer the advertised authority rather than only its
+ * path suffix.
  *
  * A malformed template throws here, at registration, so a bad configuration
  * fails closed at startup instead of at request time.
@@ -653,7 +654,18 @@ function compileResourceMetadataURLTemplate(
       "invalid ResourceMetadataURLTemplate: template must include a host",
     );
   }
-  if (url.username || url.password) {
+  // Split the raw authority and path out of the template text: the checks below
+  // read them rather than the parsed URL, because WHATWG normalization drops the
+  // differences Go and Python refuse (empty userinfo, dot segments).
+  const remainder = afterScheme.slice(2);
+  const slash = remainder.indexOf("/");
+  const authority = slash < 0 ? remainder : remainder.slice(0, slash);
+  const rawPath = slash < 0 ? "" : remainder.slice(slash);
+  // Userinfo is refused on the raw authority text: WHATWG parses
+  // `https://@api.example.com/x` to an empty userinfo, so `url.username ||
+  // url.password` is falsy and would let it through, while Go's
+  // `url.User != nil` and Python's `username is not None` both refuse it.
+  if (authority.includes("@")) {
     throw new Error(
       "invalid ResourceMetadataURLTemplate: template must not include userinfo",
     );
@@ -668,11 +680,6 @@ function compileResourceMetadataURLTemplate(
       "invalid ResourceMetadataURLTemplate: template must not include a fragment",
     );
   }
-
-  const remainder = afterScheme.slice(2);
-  const slash = remainder.indexOf("/");
-  const authority = slash < 0 ? remainder : remainder.slice(0, slash);
-  const rawPath = slash < 0 ? "" : remainder.slice(slash);
   if (authority.includes("{") || authority.includes("}")) {
     throw new Error(
       "invalid ResourceMetadataURLTemplate: template placeholders must appear in the path, not the authority",
@@ -683,11 +690,28 @@ function compileResourceMetadataURLTemplate(
       "invalid ResourceMetadataURLTemplate: template must not percent-encode its path",
     );
   }
+  if (hasDotPathSegment(rawPath)) {
+    throw new Error(
+      'invalid ResourceMetadataURLTemplate: template must not contain a "." or ".." path segment',
+    );
+  }
   return {
     template: trimmed,
     rawPath,
     params: resourceMetadataURLTemplateParams(rawPath),
   };
+}
+
+/**
+ * Reports whether a URL path carries a `.` or `..` segment.
+ *
+ * A static dot segment in a template is never intended, and the runtimes do not
+ * agree on what to do with one: Go and Python advertise the literal segment
+ * while a WHATWG URL parser normalizes it away, so the advertised URL would
+ * depend on the runtime. The template is refused instead.
+ */
+function hasDotPathSegment(rawPath: string): boolean {
+  return rawPath.split("/").some((segment) => segment === "." || segment === "..");
 }
 
 /**
