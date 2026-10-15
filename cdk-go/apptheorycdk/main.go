@@ -78,6 +78,10 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryCertificateProps",
 		reflect.TypeOf((*AppTheoryCertificateProps)(nil)).Elem(),
 	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryChallengeAliasBridgeOptions",
+		reflect.TypeOf((*AppTheoryChallengeAliasBridgeOptions)(nil)).Elem(),
+	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestination",
 		reflect.TypeOf((*AppTheoryCloudWatchLogsDestination)(nil)).Elem(),
@@ -1192,6 +1196,43 @@ func init() {
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterStageOptions",
 		reflect.TypeOf((*AppTheoryRestApiRouterStageOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryRestV1ChallengeRestoration",
+		reflect.TypeOf((*AppTheoryRestV1ChallengeRestoration)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "aliasBridgeEnabled", GoGetter: "AliasBridgeEnabled"},
+			_jsii_.MemberProperty{JsiiProperty: "behaviorPathPatterns", GoGetter: "BehaviorPathPatterns"},
+			_jsii_.MemberProperty{JsiiProperty: "derivedRoutePaths", GoGetter: "DerivedRoutePaths"},
+			_jsii_.MemberProperty{JsiiProperty: "distribution", GoGetter: "Distribution"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "originLockHeaderName", GoGetter: "OriginLockHeaderName"},
+			_jsii_.MemberProperty{JsiiProperty: "originReachability", GoGetter: "OriginReachability"},
+			_jsii_.MemberProperty{JsiiProperty: "restoreSourceHeaders", GoGetter: "RestoreSourceHeaders"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryRestV1ChallengeRestoration{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryRestV1ChallengeRestorationProps",
+		reflect.TypeOf((*AppTheoryRestV1ChallengeRestorationProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryRestV1OriginLockOptions",
+		reflect.TypeOf((*AppTheoryRestV1OriginLockOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryRestV1OriginReachability",
+		reflect.TypeOf((*AppTheoryRestV1OriginReachability)(nil)).Elem(),
+		map[string]interface{}{
+			"DISABLED": AppTheoryRestV1OriginReachability_DISABLED,
+			"LOCKED":   AppTheoryRestV1OriginReachability_LOCKED,
+		},
 	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryS3Ingest",

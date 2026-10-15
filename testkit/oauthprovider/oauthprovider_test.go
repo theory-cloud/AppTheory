@@ -531,7 +531,8 @@ func TestMintAccessTokenOmitsEmptyClaims(t *testing.T) {
 }
 
 func TestMintAccessTokenTamperedSignature(t *testing.T) {
-	server := NewServer(t, Options{Issuer: "https://auth.example.test"})
+	at := time.Date(2026, time.March, 1, 12, 0, 0, 0, time.UTC)
+	server := NewServer(t, Options{Issuer: "https://auth.example.test", Now: func() time.Time { return at }})
 	defer server.Close()
 
 	claims := Claims{Issuer: "https://auth.example.test", Subject: "user-1", ExpiresIn: 60}

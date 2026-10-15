@@ -54,9 +54,11 @@ milestone that ships Go without TS/Py/CDK is not done.
 
 - Posture vocabulary (`iam` | `jwt` | `runtime-bearer` | `none-public`) + the **`facade` attach prop** +
   default resolution (item 3) in CDK. The `facade` attach prop is the input to the default-resolution predicate
-  (`DEFAULT_SEMANTICS.md` Option A): it lands in **M1** as a **presence-only skeleton** — the upstream-provider
-  attachment property whose presence selects the `runtime-bearer` default — with its provider wiring filled in
-  M3, so M1's default resolution is implementable without interpretation.
+  (`DEFAULT_SEMANTICS.md` Option A): it lands in **M1** as a **presence-only** attachment — the upstream-provider
+  attachment property whose presence selects the `runtime-bearer` default — and that presence-only shape is the
+  design, not a placeholder: the provider and the five store SPIs are runtime `FacadeConfig` configuration owned by
+  the application (`FRAMEWORK_VS_POLICY.md`), so no construct milestone fills them in. M1's default resolution is
+  therefore implementable without interpretation and stays correct.
 - **Facade registrar skeletons in Go/TS/Py** carrying the posture field and the **registration-time fail-closed
   pairing** check: a `runtime-bearer` posture without the explicit runtime-posture assertion returns an error
   before any route is registered. The skeletons contain posture + pairing only; the facade handler bodies are
@@ -95,6 +97,20 @@ milestone that ships Go without TS/Py/CDK is not done.
 - Release-note correction mechanism executed (item 8) — docs only.
 - Deterministic `streamjoin` close test (§3).
 - Parity: the CDK construct is jsii (all languages); the flake fix is Go-only by nature.
+
+**As-built (M4).** The edge construct is `AppTheoryRestV1ChallengeRestoration` (jsii, so all CDK languages) in
+`cdk/lib/rest-v1-challenge-restoration.ts`: an origin-response Lambda@Edge function that copies the first present
+source header onto `WWW-Authenticate` and deletes the consumed source headers, plus a CloudFront distribution whose
+ordered cache behaviors are derived from the shared route algebra (parameterized derived routes are covered by the
+default behavior, since CloudFront path patterns cannot express a `{param}` segment). The restore source set is the
+AWS REST v1 remap artifact `x-amzn-remapped-www-authenticate` always, and the alias bridge spellings
+(`x-theory-www-authenticate`, `mcp-www-authenticate`) only when the optional alias bridge is enabled — off by
+default, and then absent from the deployed function source entirely. A non-REST-v1 origin fails synthesis. The
+release-note correction is executed as `docs/release-notes-corrections.md` plus a release-visible `fix(docs):`
+commit (§ of `RELEASE_NOTE_CORRECTION.md`), with the published `6.0.0` Release-body edit left as an explicit
+operator action. `streamjoin` `Close` now closes the reader pipe before canceling the producer context and the test
+has no sleep (§3). M4 also ships the lab candidate-build builder (`scripts/lab/candidate-build.sh`) specified by
+`CANDIDATE_BUILD_INTERFACE.md` §4.
 
 ## 3. G12 — deterministic `TestCloseEndsStreamEarlyForReader`
 

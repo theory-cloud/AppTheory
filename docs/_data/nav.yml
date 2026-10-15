@@ -84,6 +84,7 @@ groups:
       - { id: operations,             title: Operations,              url: /guides/operations/,         icon: activity,     tag: new }
       - { id: dependency-automation, title: Dependency Automation,  url: /dependency-automation/,     icon: refresh-cw }
       - { id: release-process,        title: Release Process,         url: /release-process/,            icon: tag }
+      - { id: release-notes-corrections, title: Release-Note Corrections, url: /release-notes-corrections/, icon: file-text }
       - { id: development-guidelines, title: Development Guidelines,  url: /development-guidelines/,     icon: check-square }
 
   - label: Reference
@@ -139,6 +140,7 @@ order:
   - operations
   - dependency-automation
   - release-process
+  - release-notes-corrections
   - development-guidelines
   - ref-contract
   - ref-events
@@ -194,6 +196,7 @@ url_to_id:
   /guides/operations/:                         operations
   /dependency-automation/:                     dependency-automation
   /release-process/:                            release-process
+  /release-notes-corrections/:                  release-notes-corrections
   /development-guidelines/:                     development-guidelines
   /reference/contract-fixtures/:                ref-contract
   /reference/event-shapes/:                     ref-events

@@ -188,16 +188,20 @@ The client journey steps that now work:
 3. The client redeems the code with `POST …/token` (`grant_type=authorization_code`) and receives the upstream access
    token **byte-for-byte unmodified** plus a framework-minted **opaque refresh handle**.
 
-**The application must pre-register clients.** Dynamic client registration is not mounted, so no client is created by a
-request: the application seeds each client into the `ClientStore`, keyed by the store hash helper (`oauthstore.HashKey`
-in Go, `hashKey` in TypeScript, `hash_key` in Python) so the facade derives the same key when it looks the client up. A
-client record carries its registered redirect URIs and `token_endpoint_auth_method=none` (public clients only).
+**Dynamic client registration is mounted.** The registrars mount the per-endpoint-kind `POST …/register` route, so a
+request can create a public client (RFC 7591, https-or-loopback redirects, server-assigned ids bound to the
+advertising route). The application must still **seed** clients it wants to exist before any request, into the
+`ClientStore`, keyed by the store hash helper (`oauthstore.HashKey` in Go, `hashKey` in TypeScript, `hash_key` in
+Python) so the facade derives the same key when it looks the client up. A client record carries its registered
+redirect URIs and `token_endpoint_auth_method=none` (public clients only).
 
-**Not yet available** (the follow-on milestone owns them): DCR — the `/register` route is not mounted, so clients must
-be pre-registered; the **`refresh_token` grant** — the code-exchange response carries the framework-minted opaque
-refresh handle, but the token endpoint answers `400 unsupported_grant_type` for it until the brokered refresh lands, so
-a returned handle cannot be redeemed yet; and the **CDK `facade` wiring** — the construct's attach prop does not yet
-wire the provider and stores. The stage-global callback path override is wired separately, through the construct's
+**Also shipped:** the **`refresh_token` grant** at `POST …/token` — the code-exchange response carries the
+framework-minted opaque refresh handle and that handle can be redeemed (single-flight brokered refresh, rotating,
+with the framework's 30-second grace replay), as documented in `docs/features/mcp-auth-facade-spi.md`. The **CDK
+`facade` attachment is presence-only by design**: its presence selects the `runtime-bearer` posture default and
+enables the route derivation and defense-in-depth floor checks, while the provider and the five store SPIs are
+runtime `FacadeConfig` wiring (`FRAMEWORK_VS_POLICY.md`), not a construct item. The stage-global callback path
+override is wired separately, through the construct's
 `upstreamCallbackPath` prop. Transport-route bearer enforcement is unchanged.
 
 ## `theory-mcp-server` migration fitness

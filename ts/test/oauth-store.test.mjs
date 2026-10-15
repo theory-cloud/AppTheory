@@ -241,11 +241,48 @@ test("the broker store default lock TTL pins the upstream fetch deadline", async
   );
 });
 
+/**
+ * Pins the shared conformance table's broker lock TTL to the reference store's
+ * mandated default. The table is what judges a durable store, so a table that
+ * drifted away from the mandate would judge a conforming 15-second store as
+ * non-conforming. The broker here is built with no explicit lock TTL, so this
+ * reads the default the store actually applies.
+ */
+test("the conformance table's lock TTL is the reference store's mandated default", async () => {
+  const clock = new ManualClock(EPOCH);
+  const broker = new MemoryRouteRefreshBrokerStore({ now: () => clock.now() });
+  await broker.put({
+    handleHash: "conformance-lock-ttl",
+    issuer: "https://auth.example.test",
+    stage: "lab",
+    canonicalResource: "https://mcp.example.test/mcp",
+    clientNamespace: "conformance",
+    endpointKind: "mcp",
+    partnerId: "",
+    agentId: "",
+    clientIdHash: "client-hash",
+    subjectIdHash: "subject-hash",
+    scopes: ["scope-a"],
+    scopeFingerprint: "fingerprint",
+    encryptedUpstreamRefreshToken: "encrypted-refresh",
+    upstreamRefreshTokenHash: "refresh-hash",
+    upstreamClientId: "conformance-client",
+    status: "issued",
+    version: 1,
+  });
+  const locked = await broker.acquireLock("conformance-lock-ttl", "owner", 1);
+  assert.equal(
+    LOCK_TTL_SECONDS,
+    (locked.refreshLockExpiresAt.getTime() - clock.now().getTime()) / 1000,
+    "the shared table's lock_ttl_seconds must equal the reference store's mandated default",
+  );
+});
+
 test("the broker store seeds through put and never creates on swap", async () => {
   const clock = new ManualClock(EPOCH);
   const brokers = new MemoryRouteRefreshBrokerStore({
     now: () => clock.now(),
-    lockTtlSeconds: 30,
+    lockTtlSeconds: LOCK_TTL_SECONDS,
   });
   const record = (handleHash) => ({
     handleHash,
@@ -343,7 +380,7 @@ test("reference stores never hand out or retain their stored slices", async () =
 
   const brokers = new MemoryRouteRefreshBrokerStore({
     now: () => clock.now(),
-    lockTtlSeconds: 30,
+    lockTtlSeconds: LOCK_TTL_SECONDS,
   });
   const handle = {
     handleHash: "alias-broker",

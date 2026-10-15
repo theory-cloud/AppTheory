@@ -115,9 +115,14 @@ Both forms decode to the same values, the grace replay is byte-identical **withi
 replay requires), and no contract pins cross-runtime byte equality — so a cross-language golden-file comparison
 must normalize the bytes or compare decoded values rather than raw bodies.
 
-**Not yet available in this line:** the **CDK `facade` wiring** (the follow-on milestone, M3c-2, owns it) — the
-construct's attach prop does not yet wire the provider and stores. The stage-global callback path override is wired
-separately, through the construct's `upstreamCallbackPath` prop.
+**The CDK `facade` attachment is presence-only by design.** The construct's `facade` attachment marks a server as
+facade-configured and selects the `runtime-bearer` posture default (`AppTheoryMcpFacadeAttachment` carries a
+`providerId` and nothing else); its presence is what enables the facade route derivation and the defense-in-depth
+floor checks. It deliberately does not wire a provider adapter or the five store SPIs: a facade server configures its
+provider and stores in the runtime (`FacadeConfig.Provider` / `.Stores`) as documented in
+`docs/features/mcp-auth-facade-spi.md`, because provider and store choice is application policy
+(`FRAMEWORK_VS_POLICY.md`) rather than infrastructure. The stage-global callback path override is likewise wired:
+pass the construct's `upstreamCallbackPath` prop.
 
 The store `put` normalization was also aligned across Go, TypeScript, and Python: the reference stores now preserve a
 caller-supplied `status` verbatim and normalize a version below 1 to 1 in all three runtimes (Go was already the
@@ -125,6 +130,82 @@ reference), pinned by a new shared `put_payload` conformance scenario.
 
 See `docs/features/mcp-auth-facade-spi.md` for the front-channel configuration table and
 `docs/features/mcp-facade-helper.md` for what the three registrars mount.
+
+### REST v1 edge `WWW-Authenticate` restoration
+
+AWS API Gateway **REST API v1** remaps an origin's `WWW-Authenticate` response header onto
+`x-amzn-remapped-www-authenticate`, so a REST v1 origin that answers `401` with the canonical RFC 9728 challenge
+loses the header at the edge. The new `AppTheoryRestV1ChallengeRestoration` construct fronts a REST v1 `execute-api`
+origin with CloudFront and restores the canonical header on the origin response, then removes the consumed source
+headers. It is additive: a stack that does not use it synthesizes exactly as before.
+
+The construct derives its route set from the shared route algebra (never a hand-written path list) and requires the
+DD-2 direct-origin decision in addition to the origin:
+
+```ts
+new AppTheoryRestV1ChallengeRestoration(this, "Challenge", {
+  origin: restApi,
+  originReachability: AppTheoryRestV1OriginReachability.LOCKED,
+  originLock: { secret: originLockSecret, asserted: true },
+});
+```
+
+**A CloudFront front door does not by itself make the origin unreachable.** The REST API keeps answering at its own
+`<restApiId>.execute-api.<region>.<urlSuffix>` endpoint, which is exactly the origin this distribution uses, so a
+client that skips the distribution still reaches the origin and observes a **challenge-less `401`** — the
+restoration never runs, and any edge-only control is bypassed on that path. Authentication itself is unaffected (the
+runtime bearer gate still refuses the request at the origin), so this is challenge loss and edge bypass, not an
+authentication bypass. `originReachability` is therefore required and a directly reachable origin (`direct`) is
+refused at synthesis:
+
+- `LOCKED` — the origin is reachable only through this distribution. The construct injects `originLock.secret` as a
+  custom origin header on every request to the origin, strips a viewer-supplied copy of that header at the edge, and
+  requires `originLock.asserted: true`, the caller's assertion that the REST API verifies the header (the construct
+  cannot attach a resource policy or authorizer to an external `IRestApi`). The lock's strength rests on the secret
+  staying confidential: a client that learns it can satisfy the origin-side verification directly. The secret is a
+  **defense-in-depth layer, not a credential store**: it is a literal CloudFront origin custom header value, so it
+  appears **verbatim in the synthesized template and in CloudFormation**; the 32–128 character `[A-Za-z0-9._~-]`
+  alphabet structurally excludes a `{{resolve:...}}` dynamic reference, so there is no Secrets Manager path and
+  rotation means changing the value and redeploying; it must not be (or contain) a secret that protects anything
+  else. Where a custom domain is acceptable, prefer `DISABLED`, which keeps no secret in the template.
+- `DISABLED` — the REST API's `execute-api` default endpoint is disabled. The caller asserts it
+  (`disableExecuteApiEndpointAsserted: true`) because the construct cannot mutate an external `IRestApi`. Note the
+  platform shape: the disabled hostname is the distribution's own origin hostname, and AWS requires a custom domain
+  once the default endpoint is disabled, so an app choosing `DISABLED` must front its REST API through a custom
+  domain rather than this construct's execute-api origin.
+
+The restore source set is `x-amzn-remapped-www-authenticate` **always**, plus the optional alias bridge spellings
+(`x-theory-www-authenticate`, then `mcp-www-authenticate`) only when `aliasBridge: { enabled: true }` is set. The
+bridge is **off by default**, and while it is off the alias spellings do not appear in the deployed function source
+at all. The restoration runs as a CloudFront origin-response Lambda@Edge function, so the stack must be deployed
+with a **resolved account and region**, and the distribution's behaviors forward every viewer header except `Host`
+(and, under `LOCKED`, the origin-lock header as well), plus all cookies and all query strings (without the query
+string the derived `authorize` and callback routes lose their parameters). Passing an HTTP API v2 origin fails
+synthesis: the restoration is a documented no-op there.
+
+### Lab candidate builds against a pinned commit
+
+A lab proof can build AppTheory itself at a pinned commit and bind **every consumed surface** to that one commit.
+The mechanism is encoded stage config, never an operator environment variable: the application's stage config
+gains an `apptheory.candidate` block (Autheory places it under `deployment.apptheory.candidate`, because its deploy
+loader reads the `deployment` object) carrying `commit`, `tree`, `source_date_epoch` and the per-surface `sha256`
+values recorded by a witnessed build.
+
+`scripts/lab/candidate-build.sh` re-builds the declared surfaces (S1–S6) from the exported tree of that commit,
+verifies every declared per-surface hash and the tree (`git rev-parse <commit>^{tree}`), and refuses a pinned commit
+whose tree carries an archive-affecting `.gitattributes` (`export-ignore` can only filter a handed-over tree and
+`export-subst` can only rewrite its file content, and the witnessed build runs the same archive command, so both
+are refused by name before anything is archived). Each `git archive` surface is then compared against the pinned
+commit twice: its file entry list must equal the tracked file list, and every file entry's blob content must equal
+the pinned blob (symlink targets and the executable bit included), then it writes a receipt
+stamping each declared surface with the commit, the tree and the hash. The config declares the subset the consumer
+uses — at least one surface — and an undeclared surface is never built, handed over or receipted, so a consumer that
+uses two surfaces declares two. It refuses any stage other than `lab`, refuses any environment-variable input,
+refuses a dirty working tree or a `HEAD` that is not the encoded commit, and deletes an artifact rather than hand
+one over when a hash does not match. There is **no action for a consumer that does not run lab candidate builds**:
+the builder is a repository script that adds no runtime code path and never runs on a release lane. Adopters should
+read `docs/development/planning/apptheory/mcp-auth-facade/CANDIDATE_BUILD_INTERFACE.md` §4.1 (the interface as
+built) and §4.2 (how TMS and Autheory call it).
 
 ## v5.x line
 

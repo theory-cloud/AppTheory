@@ -96,8 +96,10 @@ func conformanceFixtureCases(tb testing.TB) []store.ConformanceCase {
 func newTTLIgnoringBrokerStores(clock *store.ManualClock) store.Stores {
 	stores := newStores(clock)
 	stores.RouteRefreshBroker = store.NewMemoryRouteRefreshBrokerStore(store.RouteRefreshBrokerStoreOptions{
-		Now:     clock.Now,
-		LockTTL: 30 * time.Second,
+		Now: clock.Now,
+		// The table's mandated lock TTL: the broken bundle must break exactly one
+		// semantic (the handle lifetime), not the lock.
+		LockTTL: store.DefaultRouteRefreshLockTTL,
 		TTL:     100 * time.Hour,
 	})
 	return stores

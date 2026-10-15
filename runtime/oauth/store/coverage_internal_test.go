@@ -112,9 +112,11 @@ func TestMemoryBrokerStoreEdges(t *testing.T) {
 	ctx := context.Background()
 	clock := NewManualClock(ConformanceEpoch)
 	brokers := NewMemoryRouteRefreshBrokerStore(RouteRefreshBrokerStoreOptions{
-		Now:     clock.Now,
-		TTL:     10 * time.Minute,
-		LockTTL: 30 * time.Second,
+		Now: clock.Now,
+		TTL: 10 * time.Minute,
+		// This edge test never advances the clock, so the lock TTL is incidental;
+		// it uses the mandated default rather than a second, stale number.
+		LockTTL: DefaultRouteRefreshLockTTL,
 	})
 
 	if err := brokers.Put(ctx, nil); !errors.Is(err, ErrRecordKeyRequired) {
