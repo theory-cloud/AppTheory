@@ -263,7 +263,16 @@ injects the secret as a custom origin header and strips a viewer-supplied copy a
 `DISABLED` (with `disableExecuteApiEndpointAsserted: true`). A directly reachable origin (`direct`) is refused at
 synthesis, because the REST API's own `execute-api` endpoint is this distribution's origin: a client that bypasses
 the distribution still reaches it and sees a **challenge-less 401** (authentication still fails closed there, so it
-is challenge loss and edge bypass rather than an authentication bypass). The construct is additive otherwise, so a
+is challenge loss and edge bypass rather than an authentication bypass).
+
+The `LOCKED` secret is a **defense-in-depth layer, not a credential store**. It is a literal CloudFront origin
+custom header value, so it appears **verbatim in the synthesized template and in CloudFormation**; the
+`[A-Za-z0-9._~-]{32,128}` alphabet structurally excludes a `{{resolve:...}}` dynamic reference, so there is no
+Secrets Manager path and rotating it means changing the value and redeploying; and it must not be (or contain) a
+secret that protects anything else. Where a custom domain is acceptable, prefer `DISABLED`, which keeps no secret in
+the template.
+
+The construct is additive otherwise, so a
 stack that does not use it synthesizes unchanged. It requires a stack with a resolved account and region, and it
 fails synthesis on a non-REST-v1 origin (the restoration is a documented no-op on HTTP API v2). See the
 `AppTheoryRestV1ChallengeRestoration` surface note in the CDK package README and `UPGRADING.md`, section "REST v1

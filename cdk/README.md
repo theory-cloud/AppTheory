@@ -94,12 +94,15 @@ new AppTheoryHttpApi(stack, "Api", { handler: fn, apiName: "my-api" });
   alias spellings only when `aliasBridge` is enabled). Its route set comes from `AppTheoryMcpRouteAlgebra`, never a
   hand-written path list, and it **requires the DD-2 direct-origin decision**:
   `originReachability: AppTheoryRestV1OriginReachability.LOCKED` with `originLock: { secret, asserted: true }` (the
-  secret is injected as a custom origin header, and a viewer-supplied copy is stripped at the edge), or `DISABLED`
-  with `disableExecuteApiEndpointAsserted: true`. A directly reachable origin (`direct`) is refused at synthesis: the
-  REST API's own `execute-api` endpoint is this distribution's origin, so a client that bypasses the distribution
-  still reaches it and observes a challenge-less `401` (the runtime gate still refuses there, so this is challenge
-  loss rather than an authentication bypass). Non-REST-v1 origins and `domainNames` without a certificate fail
-  synthesis.
+  secret is injected as a custom origin header, and a viewer-supplied copy is stripped at the edge; it is a
+  defense-in-depth layer, not a credential store, so it appears **verbatim in the synthesized template and in
+  CloudFormation** — the alphabet structurally forbids a `{{resolve:...}}` dynamic reference, so rotation means
+  changing the value and redeploying, and it must not be or contain a secret that protects anything else), or
+  `DISABLED` with `disableExecuteApiEndpointAsserted: true` (no secret in the template, so prefer it where a custom
+  domain is acceptable). A directly reachable origin (`direct`) is refused at synthesis: the REST API's own
+  `execute-api` endpoint is this distribution's origin, so a client that bypasses the distribution still reaches it
+  and observes a challenge-less `401` (the runtime gate still refuses there, so this is challenge loss rather than an
+  authentication bypass). Non-REST-v1 origins and `domainNames` without a certificate fail synthesis.
 - `AppTheoryS3VersionedIngress` is the fixed namespace artifact bucket surface. It always enables versioning,
   public-access blocking, S3-managed encryption, TLS enforcement, and seven-day incomplete-multipart reaping. Each
   helper grants one action (`s3:PutObject` or `s3:GetObjectVersion`) on one object resource. Literal inputs are exact

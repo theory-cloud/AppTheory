@@ -162,7 +162,12 @@ refused at synthesis:
   custom origin header on every request to the origin, strips a viewer-supplied copy of that header at the edge, and
   requires `originLock.asserted: true`, the caller's assertion that the REST API verifies the header (the construct
   cannot attach a resource policy or authorizer to an external `IRestApi`). The lock's strength rests on the secret
-  staying confidential: a client that learns it can satisfy the origin-side verification directly.
+  staying confidential: a client that learns it can satisfy the origin-side verification directly. The secret is a
+  **defense-in-depth layer, not a credential store**: it is a literal CloudFront origin custom header value, so it
+  appears **verbatim in the synthesized template and in CloudFormation**; the 32–128 character `[A-Za-z0-9._~-]`
+  alphabet structurally excludes a `{{resolve:...}}` dynamic reference, so there is no Secrets Manager path and
+  rotation means changing the value and redeploying; it must not be (or contain) a secret that protects anything
+  else. Where a custom domain is acceptable, prefer `DISABLED`, which keeps no secret in the template.
 - `DISABLED` — the REST API's `execute-api` default endpoint is disabled. The caller asserts it
   (`disableExecuteApiEndpointAsserted: true`) because the construct cannot mutate an external `IRestApi`. Note the
   platform shape: the disabled hostname is the distribution's own origin hostname, and AWS requires a custom domain
