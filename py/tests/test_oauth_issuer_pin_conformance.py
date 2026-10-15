@@ -38,6 +38,13 @@ METADATA_REGISTRATION_GROUP = "metadata_registration"
 # providerHints is the gateway-class 502 upstream_error error page, while 400
 # stays the facade's own client-caused vocabulary.
 AUTHORIZE_PROVIDER_FAILURE_GROUP = "authorize_provider_failure"
+# secure_app_mount is the SecureApp seam's authority table: the posture every
+# facade route must declare on a closed-by-default app, the requests that must
+# still be refused or served under the application's own principal authority, and
+# the equality of the two registrars' route inventories. It is executed by the
+# SecureApp seam test, not here; the group ledger below still lists it so a new
+# group cannot appear without a loader.
+SECURE_APP_MOUNT_GROUP = "secure_app_mount"
 FIXTURE_GROUPS = (
     ISSUER_PIN_GROUP,
     REDIRECT_MATCH_GROUP,
@@ -48,6 +55,7 @@ FIXTURE_GROUPS = (
     REFRESH_GROUP,
     METADATA_REGISTRATION_GROUP,
     AUTHORIZE_PROVIDER_FAILURE_GROUP,
+    SECURE_APP_MOUNT_GROUP,
 )
 
 # The number of issuer_pin rows the shared table must carry; a change to the

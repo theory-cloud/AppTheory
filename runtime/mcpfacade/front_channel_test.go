@@ -79,8 +79,16 @@ func (p *mintingProvider) ExchangeCode(ctx context.Context, req oauth.CodeExchan
 }
 
 type frontChannelHarness struct {
-	t      *testing.T
-	app    *apptheory.App
+	t   *testing.T
+	app *apptheory.App
+	// secure is the app the harness mounted the facade on when secureTopology
+	// asked for the closed-by-default surface, and nil on the plain-App path.
+	secure *apptheory.SecureApp
+	// inventory is the route inventory the harness's registrar returned, so a
+	// row can resolve a route name to the path the mount actually installed
+	// rather than to a hard-coded string.
+	inventory *RouteInventory
+
 	fake   *oauthprovider.Server
 	clock  *oauthstore.ManualClock
 	stores oauthstore.Stores
@@ -133,6 +141,22 @@ type frontChannelHarnessOptions struct {
 	// mcpInvocations, when set, counts every MCP handler invocation, so a
 	// transport row can pin handler_invocations.
 	mcpInvocations *int
+
+	// rootAuthorizationServer, when set, configures the harness's facade with
+	// the root authorization-server discovery route, so a row can mount it on
+	// both the plain and the secure surface.
+	rootAuthorizationServer *RootDiscoveryConfig
+
+	// secureTopology mounts the facade on a closed-by-default SecureApp instead
+	// of the plain App, so the same journey machinery can drive the SecureApp
+	// seam. The zero value is the plain-App path every front-channel test uses.
+	secureTopology bool
+
+	// securePrincipalResolver and policyHook, when set, are installed on the
+	// SecureApp the harness builds, so a row can count the application's own
+	// principal resolution and policy evaluation on a non-facade route.
+	securePrincipalResolver apptheory.SecurePrincipalResolver
+	policyHook              apptheory.PolicyHook
 }
 
 // manualClockAdapter implements apptheory.Clock over the harness's ManualClock,
@@ -303,6 +327,8 @@ func newFrontChannelHarnessWith(t *testing.T, options frontChannelHarnessOptions
 		UpstreamClientID: frontTestClientID,
 		UpstreamIssuer:   frontTestUpstreamIss,
 		ProviderHints:    options.providerHints,
+
+		RootAuthorizationServer: options.rootAuthorizationServer,
 	}
 	require.NoError(t, stores.Client.Put(context.Background(), &oauthstore.ClientRecord{
 		ClientIDHash:            oauthstore.HashKey(frontTestClientID),
@@ -311,10 +337,19 @@ func newFrontChannelHarnessWith(t *testing.T, options frontChannelHarnessOptions
 		TokenEndpointAuthMethod: "none",
 	}))
 
-	app := apptheory.New(apptheory.WithClock(manualClockAdapter{clock: clock}))
-	_, err = RegisterMCPFacade(app, config)
+	harness := &frontChannelHarness{t: t, fake: fake, clock: clock, stores: stores, broker: broker, kind: kind}
+	if options.secureTopology {
+		harness.secure = apptheory.NewSecure(apptheory.SecureOptions{
+			Clock:             manualClockAdapter{clock: clock},
+			PrincipalResolver: options.securePrincipalResolver,
+			PolicyHook:        options.policyHook,
+		})
+		harness.inventory, err = RegisterMCPFacadeSecure(harness.secure, config)
+	} else {
+		harness.app = apptheory.New(apptheory.WithClock(manualClockAdapter{clock: clock}))
+		harness.inventory, err = RegisterMCPFacade(harness.app, config)
+	}
 	require.NoError(t, err)
-	harness := &frontChannelHarness{t: t, app: app, fake: fake, clock: clock, stores: stores, broker: broker, kind: kind}
 	if requireBearerToken != nil {
 		harness.bearerValidator = requireBearerToken.ClaimsValidator
 	}
@@ -339,6 +374,9 @@ func (h *frontChannelHarness) serve(method, path string, query url.Values, body 
 		request.Query = query
 	}
 	request.Body = body
+	if h.secure != nil {
+		return h.secure.Serve(context.Background(), request)
+	}
 	return h.app.Serve(context.Background(), request)
 }
 
@@ -536,6 +574,27 @@ func loadFacadeConformanceFixture(t *testing.T, target any) {
 	body, err := os.ReadFile(facadeConformanceFixture) // #nosec G304 -- path is a fixed test fixture path built from a constant directory.
 	require.NoErrorf(t, err, "read shared fixture %s", facadeConformanceFixture)
 	require.NoErrorf(t, json.Unmarshal(body, target), "decode shared fixture %s", facadeConformanceFixture)
+}
+
+// decodeFacadeConformanceCase decodes one raw row of the shared table into a
+// group's own row type, and reports whether the row belongs to that group. The
+// shared table is decoded row by row where a member name carries more than one
+// JSON type across groups: a dcr row's `request` is the registration document
+// while a secure_app_mount row's `request` names a request kind, so one
+// whole-document decode into either group's row type refuses the other's rows.
+func decodeFacadeConformanceCase(t *testing.T, raw json.RawMessage, group string, target any) bool {
+	t.Helper()
+	var header struct {
+		ID    string `json:"id"`
+		Group string `json:"group"`
+	}
+	require.NoErrorf(t, json.Unmarshal(raw, &header), "decode shared fixture case")
+	require.NotEmptyf(t, header.Group, "case %q must carry a group", header.ID)
+	if header.Group != group {
+		return false
+	}
+	require.NoErrorf(t, json.Unmarshal(raw, target), "decode %q case %q", group, header.ID)
+	return true
 }
 
 // TestFrontChannelAuthorizeEnforcesTheSharedRedirectMatchTable pins the RFC 8252
