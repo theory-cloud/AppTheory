@@ -38,6 +38,26 @@ const CASES = fixture.cases ?? [];
 // fail the run instead of silently shrinking what is covered.
 const FIXTURE_CASE_COUNT = 13;
 
+// The rows themselves, in fixture order. A count alone cannot see a renamed or
+// reordered row, so the table's identity is pinned: each id names the row whose
+// premise the table documents, and a row that stops answering to its name has to
+// fail the run rather than quietly answer to a new one.
+const FIXTURE_CASE_IDS = [
+  "limiter.cancellation.genuine_condition_failure",
+  "limiter.cancellation.genuine_condition_failure_after_none",
+  "limiter.cancellation.genuine_condition_failure_missing_code_in_position",
+  "limiter.cancellation.throttle_only",
+  "limiter.cancellation.throttle_after_none",
+  "limiter.cancellation.transaction_conflict_only",
+  "limiter.cancellation.ordered_conflict_after_throttle",
+  "limiter.cancellation.ordered_throttle_before_condition",
+  "limiter.cancellation.ambiguous_all_none",
+  "limiter.cancellation.no_reasons",
+  "limiter.cancellation.message_only_condition_text",
+  "limiter.cancellation.unknown_reason_code",
+  "limiter.transport.non_cancellation_error",
+];
+
 const LIMITER = fixture.limiter ?? {};
 const EPOCH = new Date(LIMITER.clock_epoch);
 const WINDOWS = (LIMITER.windows ?? []).map((window) => ({
@@ -236,6 +256,11 @@ function assertOutcome(testCase, policy, result) {
 }
 
 test("the shared multi-window cancellation table carries 13 cases", () => {
+  assert.deepEqual(
+    CASES.map((testCase) => testCase.id),
+    FIXTURE_CASE_IDS,
+    "the fixture's case ids must be exactly this table's rows, in order: a renamed, inserted, dropped or reordered row fails here",
+  );
   assert.equal(CASES.length, FIXTURE_CASE_COUNT);
   assert.equal(
     new Set(CASES.map((testCase) => testCase.id)).size,

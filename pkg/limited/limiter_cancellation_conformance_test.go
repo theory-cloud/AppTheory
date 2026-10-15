@@ -18,8 +18,27 @@ import (
 )
 
 // limiterCancellationFixtureCaseCount pins the shared fixture's row count so a
-// dropped or renamed row fails this suite instead of silently shrinking it.
+// dropped row fails this suite instead of silently shrinking it.
 const limiterCancellationFixtureCaseCount = 13
+
+// limiterCancellationFixtureCaseIDs pins the shared fixture's rows by id, in
+// fixture order, so a renamed, inserted, dropped or reordered row fails the
+// suite instead of only moving a count.
+var limiterCancellationFixtureCaseIDs = []string{
+	"limiter.cancellation.genuine_condition_failure",
+	"limiter.cancellation.genuine_condition_failure_after_none",
+	"limiter.cancellation.genuine_condition_failure_missing_code_in_position",
+	"limiter.cancellation.throttle_only",
+	"limiter.cancellation.throttle_after_none",
+	"limiter.cancellation.transaction_conflict_only",
+	"limiter.cancellation.ordered_conflict_after_throttle",
+	"limiter.cancellation.ordered_throttle_before_condition",
+	"limiter.cancellation.ambiguous_all_none",
+	"limiter.cancellation.no_reasons",
+	"limiter.cancellation.message_only_condition_text",
+	"limiter.cancellation.unknown_reason_code",
+	"limiter.transport.non_cancellation_error",
+}
 
 const limiterCancellationFixturePath = "../../contract-tests/fixtures/routing/limiter/multi-window-cancellation.v1.json"
 
@@ -159,12 +178,21 @@ func loadLimiterCancellationFixture(t *testing.T) limiterCancellationFixture {
 	require.NoError(t, json.Unmarshal(raw, &fixture))
 	require.Equal(t, "multi_window", fixture.Limiter.Strategy)
 	require.Len(t, fixture.Limiter.Windows, 2)
+	require.Equal(t, limiterCancellationFixtureCaseIDs, fixture.caseIDs(), "fixture case ids diverged from the pinned list")
 
 	epoch, parseErr := time.Parse(time.RFC3339, fixture.Limiter.ClockEpoch)
 	require.NoError(t, parseErr)
 	fixture.epoch = epoch
 
 	return fixture
+}
+
+func (f limiterCancellationFixture) caseIDs() []string {
+	ids := make([]string, 0, len(f.Cases))
+	for _, testCase := range f.Cases {
+		ids = append(ids, testCase.ID)
+	}
+	return ids
 }
 
 func (f limiterCancellationFixture) windowConfigs() []WindowConfig {

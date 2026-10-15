@@ -22,6 +22,21 @@ from apptheory.limited.types import Config, LimitDecision, RateLimitKey  # noqa:
 
 FIXTURE_PATH = REPO_ROOT / "contract-tests" / "fixtures" / "routing" / "limiter" / "multi-window-cancellation.v1.json"
 FIXTURE_CASE_COUNT = 13
+FIXTURE_CASE_IDS = (
+    "limiter.cancellation.genuine_condition_failure",
+    "limiter.cancellation.genuine_condition_failure_after_none",
+    "limiter.cancellation.genuine_condition_failure_missing_code_in_position",
+    "limiter.cancellation.throttle_only",
+    "limiter.cancellation.throttle_after_none",
+    "limiter.cancellation.transaction_conflict_only",
+    "limiter.cancellation.ordered_conflict_after_throttle",
+    "limiter.cancellation.ordered_throttle_before_condition",
+    "limiter.cancellation.ambiguous_all_none",
+    "limiter.cancellation.no_reasons",
+    "limiter.cancellation.message_only_condition_text",
+    "limiter.cancellation.unknown_reason_code",
+    "limiter.transport.non_cancellation_error",
+)
 FIXTURE_EPOCH = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
 TABLE_NAME = "rate-limits"
 
@@ -92,6 +107,11 @@ class TestLimitedMultiWindowCancellation(unittest.TestCase):
         self.assertEqual(self.limiter_spec["strategy"], "multi_window")
         self.assertEqual(len(self.limiter_spec["windows"]), 2)
         self.assertEqual(len(self.cases), FIXTURE_CASE_COUNT)
+        self.assertEqual(
+            [case["id"] for case in self.cases],
+            list(FIXTURE_CASE_IDS),
+            "fixture case ids must match the pinned list exactly, in order",
+        )
 
     def _key(self) -> RateLimitKey:
         key = self.limiter_spec["key"]
