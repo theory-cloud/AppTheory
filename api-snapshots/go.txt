@@ -6160,9 +6160,15 @@ type Handler struct {
 
 func AssertBearerTokenReachesHandler(testing.TB, *testkit.Env, *apptheory.App, string, string, string, *Handler)
 
+func AssertBearerTokenReachesHandlerSecureApp(testing.TB, *testkit.Env, *apptheory.SecureApp, string, string, string, *Handler)
+
 func AssertCredentialFreeDenied(testing.TB, *testkit.Env, *apptheory.App, string, string, string, *Handler)
 
+func AssertCredentialFreeDeniedSecureApp(testing.TB, *testkit.Env, *apptheory.SecureApp, string, string, string, *Handler)
+
 func AssertInsufficientScopeRemediation(testing.TB, *testkit.Env, *apptheory.App, string, string, string, string, *Handler)
+
+func AssertInsufficientScopeRemediationSecureApp(testing.TB, *testkit.Env, *apptheory.SecureApp, string, string, string, string, *Handler)
 
 func NewHandler() *Handler
 

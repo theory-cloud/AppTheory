@@ -589,7 +589,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1163 exported top-level symbols</summary>
+<summary>1166 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -597,7 +597,7 @@ AccountAssertionVerified, AcquireLeaseInput, AcquireSemaphoreSlotInput, AgentMCP
 AppError, AppSyncContext, AppSyncEvent, AppSyncEventOptions, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest, AppTheoryError, AppTheoryErrorFromAppError,
 ArtifactEntry, ArtifactVerificationArchiveInvalid, ArtifactVerificationDigestMismatch, ArtifactVerificationInvalidRequest, ArtifactVerificationState,
 ArtifactVerificationUnavailable, ArtifactVerificationVerified, ArtifactVerificationVersionMismatch, ArtifactVerificationVersionRequired, AsAppTheoryError, AsProviderError,
-AssertAccount, AssertBearerTokenReachesHandler, AssertCredentialFreeDenied, AssertError, AssertHasTools, AssertInsufficientScopeRemediation, AssertToolResult, AssumeFirst,
+AssertAccount, AssertBearerTokenReachesHandler, AssertBearerTokenReachesHandlerSecureApp, AssertCredentialFreeDenied, AssertCredentialFreeDeniedSecureApp, AssertError, AssertHasTools, AssertInsufficientScopeRemediation, AssertInsufficientScopeRemediationSecureApp, AssertToolResult, AssumeFirst,
 AssumeFirstResult, AssumeRoleAPI, AssumeRoleRequest, AtomicRateLimiter, AuthContext, Authenticated, AuthenticatedAnyOf, AutheoryProvider, AutheoryProviderOptions,
 AuthHook, AuthoritativeOriginURL, AuthorizationAuthorizePathForResourcePath, AuthorizationCodeRecord, AuthorizationCodeStore, AuthorizationCodeStoreOptions,
 AuthorizationRegisterPathForResourcePath, AuthorizationRequest, AuthorizationServerMetadata, AuthorizationServerMetadataHandler, AuthorizationServerMetadataOption,
