@@ -362,6 +362,37 @@ func (p *AutheoryProvider) jwksEndpoint(ctx context.Context) (string, error) {
 	})
 }
 
+// reservedAuthorizeParameters is the set of authorize parameters the adapter
+// always sets itself. A hint whose name collides with one of them is refused by
+// validateAuthorizationHints rather than allowed to override or duplicate it.
+var reservedAuthorizeParameters = map[string]struct{}{
+	queryFieldResponseType:        {},
+	formFieldClientID:             {},
+	formFieldRedirectURI:          {},
+	queryFieldCodeChallenge:       {},
+	queryFieldCodeChallengeMethod: {},
+	queryFieldState:               {},
+	queryFieldResource:            {},
+	queryFieldScope:               {},
+}
+
+// validateAuthorizationHints refuses a hint whose name collides,
+// case-insensitively and after trimming, with a required or reserved authorize
+// parameter. A blank hint name is skipped; a non-colliding hint is forwarded
+// unchanged by AuthorizationURL.
+func validateAuthorizationHints(hints map[string]string) error {
+	for name := range hints {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			continue
+		}
+		if _, reserved := reservedAuthorizeParameters[strings.ToLower(trimmed)]; reserved {
+			return NewProviderError(ProviderInvalidRequest, providerOpAuthorizationURL, providerMsgRequestInvalid)
+		}
+	}
+	return nil
+}
+
 // validate applies the adapter's fail-closed request checks. A request that
 // cannot be sent never reaches the upstream.
 func (req AuthorizationRequest) validate() error {
@@ -375,12 +406,13 @@ func (req AuthorizationRequest) validate() error {
 	if req.CodeChallengeMethod != pkceMethodS256 {
 		return NewProviderError(ProviderInvalidRequest, providerOpAuthorizationURL, providerMsgRequestInvalid)
 	}
-	return nil
+	return validateAuthorizationHints(req.Hints)
 }
 
 // AuthorizationURL builds the upstream authorize URL. The adapter always sends
-// resource (Autheory requires it, RFC 8707); hints are applied before the
-// required parameters so a hint can never override one.
+// resource (Autheory requires it, RFC 8707); a hint whose name collides with a
+// required or reserved authorize parameter is refused as invalid_request, and a
+// non-colliding hint is still forwarded.
 func (p *AutheoryProvider) AuthorizationURL(req AuthorizationRequest) (string, error) {
 	if err := req.validate(); err != nil {
 		return "", err

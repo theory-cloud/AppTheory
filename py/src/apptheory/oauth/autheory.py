@@ -78,6 +78,24 @@ TERMINAL_TOKEN_ERROR_CODES = frozenset(
     }
 )
 
+# The authorize parameters the adapter itself owns. A hint whose name collides
+# with one of these — compared case-insensitively after trimming — is refused
+# with invalid_request instead of being allowed to override or duplicate it.
+# The required parameter is never silently replaced: a caller that tries to set
+# one is asking for something this adapter will not do.
+RESERVED_AUTHORIZE_PARAMETERS = frozenset(
+    {
+        "response_type",
+        "client_id",
+        "redirect_uri",
+        "code_challenge",
+        "code_challenge_method",
+        "state",
+        "resource",
+        "scope",
+    }
+)
+
 # The JWKS validator receives the route-aware context, but this adapter pins
 # issuer/audience/scopes per call, so the placeholder route is never consulted.
 _VALIDATION_CONTEXT = Context(request=Request(method="POST", path="/", headers={}, query={}, body=b"", is_base64=False))
@@ -85,9 +103,17 @@ _VALIDATION_CONTEXT = Context(request=Request(method="POST", path="/", headers={
 
 @dataclass(slots=True)
 class AutheoryProviderOptions:
-    """Construction options for :class:`AutheoryProvider`."""
+    """Construction options for :class:`AutheoryProvider`.
+
+    ``client_id`` is the adapter's own upstream client registration id. It is
+    never read: the adapter does not supply a request's client id from it.
+    """
 
     issuer: str
+    # The adapter's own upstream client registration id. It is retained for
+    # parity with the Go option and is never read: the adapter does NOT derive a
+    # request's client id from it, and a request that omits its own upstream
+    # client id fails closed with invalid_request.
     client_id: str = ""
     discovery_url: str = ""
     token_endpoint: str = ""
@@ -130,6 +156,17 @@ class AutheoryProvider:
         return self._metadata
 
     def authorization_url(self, req: AuthorizationRequest) -> str:
+        """Builds the upstream authorize URL.
+
+        The required parameters are validated and built first, then the caller's
+        hints are applied. A hint whose trimmed, lower-cased name is in
+        :data:`RESERVED_AUTHORIZE_PARAMETERS` collides with a required or
+        reserved authorize parameter and is refused with ``invalid_request``;
+        a non-colliding hint is forwarded verbatim as an opaque provider hint.
+
+        The hint rules are checked *before* discovery, so a refused hint never
+        causes — and never depends on — an upstream metadata fetch.
+        """
         op = "authorization_url"
         client_id = str(req.upstream_client_id or "").strip()
         callback_url = str(req.callback_url or "").strip()
@@ -146,6 +183,9 @@ class AutheoryProvider:
             or code_challenge_method != S256
         ):
             raise ProviderError(ERROR_INVALID_REQUEST, op)
+        # Checked here, before the endpoint is resolved, so a hint that collides
+        # with a parameter the adapter owns is refused without reaching upstream.
+        hints = _forwardable_authorize_hints(req.hints, op)
         endpoint = self.discovery().authorization_endpoint
         params: dict[str, str] = {
             "response_type": "code",
@@ -160,10 +200,11 @@ class AutheoryProvider:
         scopes = [str(scope).strip() for scope in req.scopes or [] if str(scope).strip()]
         if scopes:
             params["scope"] = " ".join(scopes)
-        for key, value in (req.hints or {}).items():
-            name = str(key).strip()
-            if name and name not in params:
-                params[name] = str(value)
+        # Every key ``params`` carries is drawn from
+        # :data:`RESERVED_AUTHORIZE_PARAMETERS`, and the check above refused every
+        # hint naming one of those, so a forwarded hint never overwrites a
+        # required parameter.
+        params.update(hints)
         separator = "&" if "?" in endpoint else "?"
         return f"{endpoint}{separator}{urlencode(params)}"
 
@@ -443,6 +484,27 @@ def _resolve_override(value: Any) -> str | None:
     if resolved is None:
         raise ProviderError(ERROR_UPSTREAM, "discovery")
     return resolved
+
+
+def _forwardable_authorize_hints(hints: dict[str, Any] | None, op: str) -> dict[str, str]:
+    """The caller's hints with the reserved-name rule applied.
+
+    A blank name is skipped; a non-colliding name is forwarded under its trimmed
+    spelling, so a hint never reaches the upstream as a duplicate or an override
+    of a parameter the adapter owns. A name that collides, case-insensitively
+    after trimming, with a required or reserved authorize parameter is refused
+    with ``invalid_request`` — the required parameter is never silently replaced,
+    and the caller is never left believing it set something the adapter dropped.
+    """
+    forwarded: dict[str, str] = {}
+    for key, value in (hints or {}).items():
+        name = str(key).strip()
+        if not name:
+            continue
+        if name.lower() in RESERVED_AUTHORIZE_PARAMETERS:
+            raise ProviderError(ERROR_INVALID_REQUEST, op)
+        forwarded[name] = str(value)
+    return forwarded
 
 
 def _json_object(payload: bytes) -> dict[str, Any] | None:

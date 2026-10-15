@@ -21,7 +21,7 @@ import (
 const providerConformanceFixture = "../../contract-tests/fixtures/routing/mcp-auth-facade/facade-provider-conformance.v1.json"
 
 // providerFixtureCaseCount is the case count the shared fixture must carry.
-const providerFixtureCaseCount = 22
+const providerFixtureCaseCount = 27
 
 // defaultFetchTimeout bounds one upstream call in the conformance harness,
 // unless the case states its own fetch_timeout_seconds.
@@ -664,29 +664,72 @@ func TestAutheoryProviderValidateFailClosed(t *testing.T) {
 	}
 }
 
-// TestAutheoryProviderHintsCannotOverrideRequiredParameters pins the fail-closed
-// ordering of AuthorizationURL: an opaque hint may add a parameter but never
-// replace a required one such as client_id or state.
-func TestAutheoryProviderHintsCannotOverrideRequiredParameters(t *testing.T) {
+// TestAutheoryProviderCollidingHintsFailClosed pins the fail-closed rule of
+// AuthorizationURL: a hint whose name collides, case-insensitively and after
+// trimming, with a required or reserved authorize parameter is refused as
+// invalid_request before any upstream call, while a non-colliding hint is still
+// forwarded and leaves the required parameters untouched.
+func TestAutheoryProviderCollidingHintsFailClosed(t *testing.T) {
 	server := oauthprovider.NewServer(t, oauthprovider.Options{Issuer: "https://auth.example.test"})
 	defer server.Close()
 	provider := newTestProvider(t, server, defaultFetchTimeout)
 
-	raw, err := provider.AuthorizationURL(oauthruntime.AuthorizationRequest{
-		UpstreamClientID:    conformanceFacadeClientID,
-		CallbackURL:         conformanceCallbackURL,
-		CodeChallenge:       "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
-		CodeChallengeMethod: "S256",
-		State:               "facade-upstream-state",
-		Resource:            conformanceResource,
-		Scopes:              []string{"mcp:tools"},
-		Hints: map[string]string{
-			"client_id":  "attacker-client",
-			"state":      "attacker-state",
-			"resource":   "https://evil.example.test/mcp",
-			"account_id": "acct_hint",
-		},
+	colliding := map[string]map[string]string{
+		"client_id":        {"client_id": "attacker-client"},
+		"case_insensitive": {"Client_ID": "attacker-client"},
+		"state":            {"state": "attacker-state"},
+		"resource":         {"resource": "https://evil.example.test/mcp"},
+		"scope":            {"scope": "admin"},
+		"trimmed":          {" response_type ": "token"},
+	}
+	for name, hints := range colliding {
+		t.Run(name, func(t *testing.T) {
+			raw, err := provider.AuthorizationURL(baseAuthorizationRequest(hints))
+			if err == nil {
+				t.Fatalf("authorization url = %q, want a fail-closed error", raw)
+			}
+			providerErr, ok := oauthruntime.AsProviderError(err)
+			if !ok {
+				t.Fatalf("error %v is not a *ProviderError", err)
+			}
+			if providerErr.Class != oauthruntime.ProviderInvalidRequest {
+				t.Errorf("error class = %q, want %q", providerErr.Class, oauthruntime.ProviderInvalidRequest)
+			}
+			if providerErr.Op != "authorization_url" {
+				t.Errorf("error operation = %q, want %q", providerErr.Op, "authorization_url")
+			}
+		})
+	}
+
+	// A collision is refused before the authorize endpoint is even resolved: a
+	// non-secure endpoint override would otherwise fail as an upstream error.
+	insecure, err := oauthruntime.NewAutheoryProvider(oauthruntime.AutheoryProviderOptions{
+		Issuer:                server.Issuer(),
+		ClientID:              conformanceFacadeClientID,
+		AuthorizationEndpoint: "http://insecure.example.test/authorize",
+		AllowPrivateHosts:     true,
+		FetchTimeout:          defaultFetchTimeout,
 	})
+	if err != nil {
+		t.Fatalf("new autheory provider: %v", err)
+	}
+	raw, err := insecure.AuthorizationURL(baseAuthorizationRequest(map[string]string{"state": "attacker-state"}))
+	if err == nil {
+		t.Fatalf("authorization url = %q, want a fail-closed error", raw)
+	}
+	providerErr, ok := oauthruntime.AsProviderError(err)
+	if !ok {
+		t.Fatalf("error %v is not a *ProviderError", err)
+	}
+	if providerErr.Class != oauthruntime.ProviderInvalidRequest {
+		t.Errorf("error class = %q, want %q (the hint was refused before endpoint resolution)",
+			providerErr.Class, oauthruntime.ProviderInvalidRequest)
+	}
+
+	raw, err = provider.AuthorizationURL(baseAuthorizationRequest(map[string]string{
+		"account_id": "acct_hint",
+		"prompt":     "login",
+	}))
 	if err != nil {
 		t.Fatalf("authorization url: %v", err)
 	}
@@ -703,11 +746,27 @@ func TestAutheoryProviderHintsCannotOverrideRequiredParameters(t *testing.T) {
 	}
 	for name, expected := range required {
 		if actual := query.Get(name); actual != expected {
-			t.Errorf("hint overrode %s: got %q, want %q", name, actual, expected)
+			t.Errorf("non-colliding hint disturbed %s: got %q, want %q", name, actual, expected)
 		}
 	}
-	if actual := query.Get("account_id"); actual != "acct_hint" {
-		t.Errorf("hint account_id = %q, want %q", actual, "acct_hint")
+	for name, expected := range map[string]string{"account_id": "acct_hint", "prompt": "login"} {
+		if actual := query.Get(name); actual != expected {
+			t.Errorf("hint %s = %q, want %q", name, actual, expected)
+		}
+	}
+}
+
+// baseAuthorizationRequest is a valid authorize request with the given hints.
+func baseAuthorizationRequest(hints map[string]string) oauthruntime.AuthorizationRequest {
+	return oauthruntime.AuthorizationRequest{
+		UpstreamClientID:    conformanceFacadeClientID,
+		CallbackURL:         conformanceCallbackURL,
+		CodeChallenge:       "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+		CodeChallengeMethod: "S256",
+		State:               "facade-upstream-state",
+		Resource:            conformanceResource,
+		Scopes:              []string{"mcp:tools"},
+		Hints:               hints,
 	}
 }
 

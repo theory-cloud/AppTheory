@@ -85,6 +85,24 @@ const TERMINAL_TOKEN_ERROR_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The authorize parameters the adapter itself owns. A hint whose name collides
+ * with one of these -- compared case-insensitively after trimming -- is refused
+ * with `invalid_request` instead of being allowed to override or duplicate it:
+ * the required parameter wins by refusal, never by silent replacement. The set
+ * is identical in the Go and Python adapters.
+ */
+const RESERVED_AUTHORIZE_PARAMETERS: ReadonlySet<string> = new Set([
+  "response_type",
+  "client_id",
+  "redirect_uri",
+  "code_challenge",
+  "code_challenge_method",
+  "state",
+  "resource",
+  "scope",
+]);
+
+/**
  * A provider-call failure in the facade's closed vocabulary. `httpStatus` is
  * the facade status the class maps to, and `op` names the SPI operation that
  * failed; both are safe to surface.
@@ -123,6 +141,12 @@ export interface AuthorizationRequest {
   state: string;
   resource: string;
   scopes: string[];
+  /**
+   * Opaque provider hints forwarded onto the authorize query. A hint whose
+   * name collides, case-insensitively after trimming, with a required or
+   * reserved authorize parameter is refused as `invalid_request` rather than
+   * being allowed to override or duplicate that parameter.
+   */
   hints?: Record<string, string>;
 }
 
@@ -186,6 +210,12 @@ export interface Provider {
 /** The Autheory adapter's configuration. */
 export interface AutheoryProviderOptions {
   issuer: string;
+  /**
+   * The adapter's own upstream client registration id, retained for parity
+   * with the Go and Python options. It is never read: the adapter never derives
+   * a request's client id from it, and a request that omits its upstream client
+   * id fails closed with `invalid_request`.
+   */
   clientId?: string;
   discoveryUrl?: string;
   tokenEndpoint?: string;
@@ -263,7 +293,6 @@ export async function newAutheoryProvider(
 /** The Autheory provider adapter. */
 export class AutheoryProvider implements Provider {
   private readonly issuer: string;
-  private readonly defaultClientId: string;
   private readonly discoveryUrlOverride: string;
   private readonly tokenEndpointOverride: string;
   private readonly authorizationEndpointOverride: string;
@@ -281,7 +310,6 @@ export class AutheoryProvider implements Provider {
   constructor(options: AutheoryProviderOptions) {
     const opts = options ?? ({} as AutheoryProviderOptions);
     this.issuer = trimmed(opts.issuer);
-    this.defaultClientId = trimmed(opts.clientId);
     this.discoveryUrlOverride = trimmed(opts.discoveryUrl);
     this.tokenEndpointOverride = trimmed(opts.tokenEndpoint);
     this.authorizationEndpointOverride = trimmed(opts.authorizationEndpoint);
@@ -341,8 +369,17 @@ export class AutheoryProvider implements Provider {
     }
   }
 
+  /**
+   * Builds the absolute upstream authorize URL. Everything that can fail
+   * closed is checked before the endpoint is resolved, so no refused request
+   * reaches the upstream: a hint whose name collides, case-insensitively after
+   * trimming, with a required or reserved authorize parameter fails closed
+   * with `invalid_request`, and so does a request that omits its own upstream
+   * client id. The required parameters are then built first, so an accepted
+   * hint can never replace one.
+   */
   async authorizationUrl(req: AuthorizationRequest): Promise<string> {
-    const clientId = trimmed(req?.upstreamClientId) || this.defaultClientId;
+    const clientId = trimmed(req?.upstreamClientId);
     const callbackUrl = trimmed(req?.callbackUrl);
     const codeChallenge = trimmed(req?.codeChallenge);
     const codeChallengeMethod = trimmed(req?.codeChallengeMethod);
@@ -359,6 +396,9 @@ export class AutheoryProvider implements Provider {
     ) {
       throw new ProviderError("invalid_request", OP_AUTHORIZATION_URL);
     }
+    // Hints are validated before the discovery/endpoint fetch, so a refused
+    // hint causes no upstream interaction at all.
+    const hints = forwardableHints(req?.hints);
     const metadata = await this.discovery();
     const url = new URL(metadata.authorizationEndpoint);
     url.searchParams.set("response_type", "code");
@@ -371,9 +411,10 @@ export class AutheoryProvider implements Provider {
     url.searchParams.set("resource", resource);
     const scope = joinScopes(req?.scopes ?? []);
     if (scope) url.searchParams.set("scope", scope);
-    for (const [key, value] of Object.entries(req?.hints ?? {})) {
-      const name = trimmed(key);
-      if (name) url.searchParams.set(name, String(value ?? ""));
+    // The required parameters are already in place, so an accepted hint only
+    // ever adds a parameter the adapter does not own.
+    for (const [name, value] of hints) {
+      url.searchParams.set(name, value);
     }
     return url.toString();
   }
@@ -829,6 +870,29 @@ function stringListField(
 
 function joinScopes(scopes: readonly string[]): string {
   return normalizeList(scopes).join(" ");
+}
+
+/**
+ * Validates the caller's hints before any upstream call and returns the ones
+ * that may be forwarded, as already-trimmed name/value pairs. A blank name is
+ * dropped, and a name that collides, case-insensitively after trimming, with a
+ * required or reserved authorize parameter is refused as `invalid_request`;
+ * this runs before the authorize endpoint is resolved, so a refused hint
+ * causes no upstream interaction.
+ */
+function forwardableHints(
+  hints: Record<string, string> | undefined,
+): Array<[string, string]> {
+  const forwarded: Array<[string, string]> = [];
+  for (const [key, value] of Object.entries(hints ?? {})) {
+    const name = trimmed(key);
+    if (!name) continue;
+    if (RESERVED_AUTHORIZE_PARAMETERS.has(name.toLowerCase())) {
+      throw new ProviderError("invalid_request", OP_AUTHORIZATION_URL);
+    }
+    forwarded.push([name, String(value ?? "")]);
+  }
+  return forwarded;
 }
 
 function normalizeList(values: readonly string[]): string[] {
