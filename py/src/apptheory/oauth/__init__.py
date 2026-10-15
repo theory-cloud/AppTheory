@@ -707,7 +707,7 @@ def _unauthorized_response(
         "www-authenticate": [protected_resource_www_authenticate(metadata_url) if metadata_url else "Bearer"],
     }
     body = jsonlib.dumps(
-        {"error": {"code": "app.unauthorized", "message": "unauthorized"}},
+        {"error": {"code": "app.unauthorized", "message": "unauthorized", "status_code": 401}},
         separators=(",", ":"),
     ).encode("utf-8")
     return Response(
@@ -724,9 +724,9 @@ def _forbidden_response() -> Response:
         status=403,
         headers={"content-type": ["application/json; charset=utf-8"]},
         cookies=[],
-        body=jsonlib.dumps({"error": {"code": "app.forbidden", "message": "forbidden"}}, separators=(",", ":")).encode(
-            "utf-8"
-        ),
+        body=jsonlib.dumps(
+            {"error": {"code": "app.forbidden", "message": "forbidden", "status_code": 403}}, separators=(",", ":")
+        ).encode("utf-8"),
         is_base64=False,
     )
 
@@ -749,7 +749,7 @@ def _insufficient_scope_response(
         ],
     }
     body = jsonlib.dumps(
-        {"error": {"code": "app.insufficient_scope", "message": "insufficient scope"}},
+        {"error": {"code": "app.insufficient_scope", "message": "insufficient scope", "status_code": 403}},
         separators=(",", ":"),
     ).encode("utf-8")
     return Response(

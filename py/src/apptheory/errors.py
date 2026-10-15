@@ -164,12 +164,16 @@ def error_response_with_format(
     headers_out = canonicalize_headers(headers or {})
     headers_out["content-type"] = ["application/json; charset=utf-8"]
 
+    status = status_for_error_code(_canonical_runtime_error_code(code))
     body_code, body_message = _canonical_http_error_fields(error_format, code, message)
-    body = _serialize_http_error_body(error_format, {"code": body_code, "message": body_message})
+    error: dict[str, Any] = {"code": body_code, "message": body_message}
+    if normalize_http_error_format(error_format) != HTTP_ERROR_FORMAT_FLAT_LEGACY:
+        error["status_code"] = status
+    body = _serialize_http_error_body(error_format, error)
 
     return normalize_response(
         Response(
-            status=status_for_error_code(_canonical_runtime_error_code(code)),
+            status=status,
             headers=headers_out,
             cookies=[],
             body=body,
@@ -225,8 +229,10 @@ def error_response_with_request_id_trace_id_and_format(
     headers_out["content-type"] = ["application/json; charset=utf-8"]
 
     body_code, body_message = _canonical_http_error_fields(error_format, code, message)
+    status = status_for_error_code(_canonical_runtime_error_code(code))
     error: dict[str, Any] = {"code": body_code, "message": body_message}
     if normalize_http_error_format(error_format) != HTTP_ERROR_FORMAT_FLAT_LEGACY:
+        error["status_code"] = status
         if request_id:
             error["request_id"] = str(request_id)
         resolved_trace_id = str(trace_id or "").strip()
@@ -237,7 +243,7 @@ def error_response_with_request_id_trace_id_and_format(
 
     return normalize_response(
         Response(
-            status=status_for_error_code(_canonical_runtime_error_code(code)),
+            status=status,
             headers=headers_out,
             cookies=[],
             body=body,
@@ -277,8 +283,8 @@ def error_response_from_app_theory_error_with_format(
     status = int(exc.status_code) if exc.status_code and exc.status_code > 0 else status_for_error_code(body_code)
 
     error: dict[str, Any] = {"code": body_code, "message": body_message}
-    if normalized_format != HTTP_ERROR_FORMAT_FLAT_LEGACY and exc.status_code and exc.status_code > 0:
-        error["status_code"] = int(exc.status_code)
+    if normalized_format != HTTP_ERROR_FORMAT_FLAT_LEGACY:
+        error["status_code"] = status
     if exc.details is not None:
         error["details"] = exc.details
 

@@ -97,17 +97,22 @@ func errorResponseWithFormat(format HTTPErrorFormat, code, message string, heade
 	headers = canonicalizeHeaders(headers)
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
+	status := statusForErrorCode(canonicalRuntimeErrorCode(code))
 	bodyCode, bodyMessage := canonicalHTTPErrorFields(format, code, message)
-	body, err := marshalHTTPErrorBody(format, map[string]any{
+	errBody := map[string]any{
 		"code":    bodyCode,
 		"message": bodyMessage,
-	})
+	}
+	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested {
+		errBody["status_code"] = status
+	}
+	body, err := marshalHTTPErrorBody(format, errBody)
 	if err != nil {
 		body = fallbackHTTPErrorBody(format)
 	}
 
 	return Response{
-		Status:   statusForErrorCode(canonicalRuntimeErrorCode(code)),
+		Status:   status,
 		Headers:  headers,
 		Cookies:  relocateSetCookieHeaders(headers),
 		Body:     body,
@@ -148,8 +153,8 @@ func errorResponseFromAppTheoryErrorWithFormat(
 		"code":    bodyCode,
 		"message": bodyMessage,
 	}
-	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested && err.StatusCode != 0 {
-		errBody["status_code"] = err.StatusCode
+	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested {
+		errBody["status_code"] = status
 	}
 	if len(err.Details) > 0 {
 		errBody["details"] = err.Details
@@ -208,15 +213,17 @@ func errorResponseWithRequestIDTraceIDAndFormat(
 	headers = canonicalizeHeaders(headers)
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
+	status := statusForErrorCode(canonicalRuntimeErrorCode(code))
 	bodyCode, bodyMessage := canonicalHTTPErrorFields(format, code, message)
 	errBody := map[string]any{
 		"code":    bodyCode,
 		"message": bodyMessage,
 	}
-	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested && requestID != "" {
-		errBody["request_id"] = requestID
-	}
 	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested {
+		errBody["status_code"] = status
+		if requestID != "" {
+			errBody["request_id"] = requestID
+		}
 		if traceID = strings.TrimSpace(traceID); traceID != "" {
 			errBody["trace_id"] = traceID
 		}
@@ -227,7 +234,7 @@ func errorResponseWithRequestIDTraceIDAndFormat(
 	}
 
 	return Response{
-		Status:   statusForErrorCode(canonicalRuntimeErrorCode(code)),
+		Status:   status,
 		Headers:  headers,
 		Cookies:  relocateSetCookieHeaders(headers),
 		Body:     body,
@@ -289,5 +296,5 @@ func fallbackHTTPErrorBody(format HTTPErrorFormat) []byte {
 	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatFlatLegacy {
 		return []byte(`{"code":"app.internal","message":"internal error"}`)
 	}
-	return []byte(`{"error":{"code":"app.internal","message":"internal error"}}`)
+	return []byte(`{"error":{"code":"app.internal","message":"internal error","status_code":500}}`)
 }

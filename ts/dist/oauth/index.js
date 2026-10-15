@@ -544,7 +544,11 @@ async function unauthorizedResponse(ctx, options, resourceMetadataURLTemplate) {
         headers,
         cookies: [],
         body: Buffer.from(JSON.stringify({
-            error: { code: "app.unauthorized", message: "unauthorized" },
+            error: {
+                code: "app.unauthorized",
+                message: "unauthorized",
+                status_code: 401,
+            },
         }), "utf8"),
         isBase64: false,
     };
@@ -564,6 +568,7 @@ async function insufficientScopeResponse(ctx, options, resourceMetadataURLTempla
             error: {
                 code: "app.insufficient_scope",
                 message: "insufficient scope",
+                status_code: 403,
             },
         }), "utf8"),
         isBase64: false,
@@ -575,7 +580,11 @@ function forbiddenResponse() {
         headers: { "content-type": ["application/json; charset=utf-8"] },
         cookies: [],
         body: Buffer.from(JSON.stringify({
-            error: { code: "app.forbidden", message: "forbidden" },
+            error: {
+                code: "app.forbidden",
+                message: "forbidden",
+                status_code: 403,
+            },
         }), "utf8"),
         isBase64: false,
     };

@@ -137,6 +137,7 @@ function canonicalRuntimeErrorCode(code: string): string {
 function errorBodyFromAppTheoryError(
   format: HTTPErrorFormat,
   err: AppTheoryError,
+  status: number,
   requestId: string,
   traceId: string = "",
 ): Record<string, unknown> {
@@ -151,12 +152,8 @@ function errorBodyFromAppTheoryError(
     message: canonical.message,
   };
 
-  if (
-    normalizeHTTPErrorFormat(format) !== HTTP_ERROR_FORMAT_FLAT_LEGACY &&
-    typeof err.statusCode === "number" &&
-    err.statusCode > 0
-  ) {
-    error["status_code"] = err.statusCode;
+  if (normalizeHTTPErrorFormat(format) !== HTTP_ERROR_FORMAT_FLAT_LEGACY) {
+    error["status_code"] = status;
   }
   if (err.details !== undefined) {
     error["details"] = err.details;
@@ -184,6 +181,25 @@ function errorBodyFromAppTheoryError(
   return error;
 }
 
+// The Go and Python renderers marshal the error object through a key-sorted map
+// (encoding/json map ordering; json.dumps(sort_keys=True)), so the nested envelope
+// is byte-identical across runtimes only if TypeScript emits the same key order.
+// Flat-legacy is deliberately left in insertion order to stay byte-identical.
+function sortKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortKeysDeep);
+  }
+  if (value && typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(source).sort()) {
+      sorted[key] = sortKeysDeep(source[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
 function serializeHTTPErrorBody(
   format: HTTPErrorFormat,
   error: Record<string, unknown>,
@@ -191,7 +207,7 @@ function serializeHTTPErrorBody(
   if (normalizeHTTPErrorFormat(format) === HTTP_ERROR_FORMAT_FLAT_LEGACY) {
     return Buffer.from(JSON.stringify(error), "utf8");
   }
-  return Buffer.from(JSON.stringify({ error }), "utf8");
+  return Buffer.from(JSON.stringify({ error: sortKeysDeep(error) }), "utf8");
 }
 
 function errorResponseFromAppTheoryErrorWithFormat(
@@ -217,7 +233,7 @@ function errorResponseFromAppTheoryErrorWithFormat(
     cookies: [],
     body: serializeHTTPErrorBody(
       format,
-      errorBodyFromAppTheoryError(format, err, requestId, traceId),
+      errorBodyFromAppTheoryError(format, err, status, requestId, traceId),
     ),
     isBase64: false,
   });
@@ -245,14 +261,21 @@ export function errorResponseWithFormat(
   const outHeaders = { ...canonicalizeHeaders(headers) };
   outHeaders["content-type"] = ["application/json; charset=utf-8"];
 
+  const status = statusForErrorCode(canonicalRuntimeErrorCode(code));
+  const canonical = canonicalHTTPErrorFields(format, code, message);
+  const error: Record<string, unknown> = {
+    code: canonical.code,
+    message: canonical.message,
+  };
+  if (normalizeHTTPErrorFormat(format) !== HTTP_ERROR_FORMAT_FLAT_LEGACY) {
+    error["status_code"] = status;
+  }
+
   return normalizeResponse({
-    status: statusForErrorCode(canonicalRuntimeErrorCode(code)),
+    status,
     headers: outHeaders,
     cookies: [],
-    body: serializeHTTPErrorBody(
-      format,
-      canonicalHTTPErrorFields(format, code, message),
-    ),
+    body: serializeHTTPErrorBody(format, error),
     isBase64: false,
   });
 }
@@ -301,23 +324,22 @@ export function errorResponseWithRequestIdTraceIdAndFormat(
   outHeaders["content-type"] = ["application/json; charset=utf-8"];
 
   const canonical = canonicalHTTPErrorFields(format, code, message);
-  const error: Record<string, string> = {
+  const status = statusForErrorCode(canonicalRuntimeErrorCode(code));
+  const error: Record<string, unknown> = {
     code: canonical.code,
     message: canonical.message,
   };
-  if (
-    normalizeHTTPErrorFormat(format) !== HTTP_ERROR_FORMAT_FLAT_LEGACY &&
-    requestId
-  ) {
-    error["request_id"] = String(requestId);
-  }
   if (normalizeHTTPErrorFormat(format) !== HTTP_ERROR_FORMAT_FLAT_LEGACY) {
+    error["status_code"] = status;
+    if (requestId) {
+      error["request_id"] = String(requestId);
+    }
     const resolvedTraceId = String(traceId ?? "").trim();
     if (resolvedTraceId) error["trace_id"] = resolvedTraceId;
   }
 
   return normalizeResponse({
-    status: statusForErrorCode(canonicalRuntimeErrorCode(code)),
+    status,
     headers: outHeaders,
     cookies: [],
     body: serializeHTTPErrorBody(format, error),
