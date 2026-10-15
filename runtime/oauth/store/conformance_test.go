@@ -30,12 +30,47 @@ func newStores(clock *store.ManualClock) store.Stores {
 		RouteRefreshBroker: store.NewMemoryRouteRefreshBrokerStore(store.RouteRefreshBrokerStoreOptions{
 			Now: clock.Now,
 			// The shared table's lock_ttl_seconds; the lock TTL is a store
-			// option, not a per-call argument.
-			LockTTL: 30 * time.Second,
+			// option, not a per-call argument. It must be the framework-mandated
+			// default, which TestStoreConformanceLockTTLIsTheMandatedDefault pins
+			// against the fixture.
+			LockTTL: store.DefaultRouteRefreshLockTTL,
 		}),
 		RateLimit: store.NewMemoryRateLimitStore(store.RateLimitStoreOptions{
 			Now: clock.Now,
 		}),
+	}
+}
+
+// TestStoreConformanceLockTTLIsTheMandatedDefault pins the shared table's broker
+// lock TTL to the framework-mandated default (15 s: the M2.1 hardened upstream
+// HTTP deadline plus a five-second margin). A conforming durable store is judged
+// against the table's lock_ttl_seconds, so a table that drifted away from the
+// mandate would judge a correct store as non-conforming.
+func TestStoreConformanceLockTTLIsTheMandatedDefault(t *testing.T) {
+	cases, err := store.LoadConformanceCases(storeConformanceFixture)
+	if err != nil {
+		t.Fatalf("load store conformance fixture: %v", err)
+	}
+	observed := 0.0
+	for _, testCase := range cases {
+		raw, ok := testCase.Params["lock_ttl_seconds"]
+		if !ok {
+			continue
+		}
+		value, ok := raw.(float64)
+		if !ok {
+			t.Fatalf("case %s lock_ttl_seconds = %#v, want a number", testCase.ID, raw)
+		}
+		if value > observed {
+			observed = value
+		}
+	}
+	if observed == 0 {
+		t.Fatal("no conformance row pins a lock_ttl_seconds; the broker lock TTL would be unmeasured")
+	}
+	want := store.DefaultRouteRefreshLockTTL.Seconds()
+	if observed != want {
+		t.Fatalf("fixture lock_ttl_seconds = %v, want the mandated default %v", observed, want)
 	}
 }
 
@@ -172,7 +207,7 @@ func TestRouteRefreshBrokerStoreLockAndRevocation(t *testing.T) {
 	clock := store.NewManualClock(store.ConformanceEpoch)
 	brokers := store.NewMemoryRouteRefreshBrokerStore(store.RouteRefreshBrokerStoreOptions{
 		Now:     clock.Now,
-		LockTTL: 30 * time.Second,
+		LockTTL: 15 * time.Second,
 	})
 
 	if err := brokers.Put(ctx, &store.RouteRefreshBrokerRecord{HandleHash: "handle-1", Status: store.BrokerStatusActive}); err != nil {
@@ -190,7 +225,7 @@ func TestRouteRefreshBrokerStoreLockAndRevocation(t *testing.T) {
 		t.Fatalf("contended lock error = %v, want ErrBrokerLocked", lockErr)
 	}
 
-	clock.Advance(31 * time.Second)
+	clock.Advance(16 * time.Second)
 	if _, reacquireErr := brokers.AcquireLock(ctx, "handle-1", "owner-2", locked.Version); reacquireErr != nil {
 		t.Fatalf("re-acquire after lock expiry: %v", reacquireErr)
 	}

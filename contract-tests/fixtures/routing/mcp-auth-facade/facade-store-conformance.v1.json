@@ -4,7 +4,7 @@
     "section": "store-spi",
     "kind": "conformance",
     "status": "M3a",
-    "notes": "One conformance table for the five store SPIs of DESIGN §7. Every store (the framework's in-memory reference stores now, an application's durable store later) must pass every row. The rows are executed by the runtime loader tests in Go, TypeScript and Python against the in-memory reference stores; the same rows and outcomes must hold in all three. Scenario names dispatch to each runtime's store methods; `expect` carries the observable outcome. Consume-once and compare-and-swap are required atomic operations, not conventions."
+    "notes": "One conformance table for the five store SPIs of DESIGN §7. Every store (the framework's in-memory reference stores now, an application's durable store later) must pass every row. The rows are executed by the runtime loader tests in Go, TypeScript and Python against the in-memory reference stores; the same rows and outcomes must hold in all three. Scenario names dispatch to each runtime's store methods; `expect` carries the observable outcome. Consume-once and compare-and-swap are required atomic operations, not conventions. The broker lock TTL those rows measure is the framework-mandated 15 seconds (oauthstore.DefaultRouteRefreshLockTTL, TS DEFAULT_ROUTE_REFRESH_LOCK_TTL_SECONDS, py UTC_NOW_LOCK_TTL_SECONDS): the M2.1 hardened upstream HTTP deadline plus a five-second margin, and each runtime's suite pins the table's lock_ttl_seconds to that default so a conforming durable store is judged against the mandated value."
   },
   "clock": {
     "epoch": "2026-01-01T00:00:00Z",
@@ -147,8 +147,8 @@
       "scenario": "acquire_lock_exclusive_with_expiry",
       "params": {
         "put": 1,
-        "lock_ttl_seconds": 30,
-        "advance_seconds": 31
+        "lock_ttl_seconds": 15,
+        "advance_seconds": 16
       },
       "expect": { "first": "ok", "contended": "locked", "after_expiry": "ok" }
     },
@@ -191,7 +191,7 @@
       "id": "store.route_refresh_broker.concurrent_acquire_lock_exactly_one_winner",
       "store": "route_refresh_broker",
       "scenario": "concurrent_acquire_lock",
-      "params": { "put": 1, "lock_ttl_seconds": 30, "concurrency": 16 },
+      "params": { "put": 1, "lock_ttl_seconds": 15, "concurrency": 16 },
       "expect": { "ok": 1, "locked": 15 }
     },
     {

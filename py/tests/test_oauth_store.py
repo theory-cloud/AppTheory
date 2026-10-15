@@ -57,7 +57,7 @@ class TTLIgnoringBrokerStore(MemoryRouteRefreshBrokerStore):
 
     TTL_SECONDS = 360000
 
-    def __init__(self, now: Any = None, ttl: int | None = None, lock_ttl_seconds: int = 30) -> None:
+    def __init__(self, now: Any = None, ttl: int | None = None, lock_ttl_seconds: int = UTC_NOW_LOCK_TTL_SECONDS) -> None:
         super().__init__(now=now, ttl=self.TTL_SECONDS, lock_ttl_seconds=lock_ttl_seconds)
 
 
@@ -119,6 +119,19 @@ class StoreConformanceTests(unittest.TestCase):
         print(f"store conformance: {ran} cases run")
         self.assertEqual(ran, 44)
         self.assertEqual(len(cases), 44)
+
+    def test_fixture_lock_ttl_is_the_mandated_default(self) -> None:
+        # A conforming durable store is judged against the table's
+        # lock_ttl_seconds, so the table must carry the framework-mandated lock
+        # TTL (15 s: the M2.1 hardened upstream HTTP deadline plus a five-second
+        # margin) or it would judge a correct store as non-conforming.
+        ttls = [
+            int(case["params"]["lock_ttl_seconds"])
+            for case in self.fixture["cases"]
+            if "lock_ttl_seconds" in case.get("params", {})
+        ]
+        self.assertTrue(ttls, "no conformance row pins a lock_ttl_seconds")
+        self.assertEqual(max(ttls), UTC_NOW_LOCK_TTL_SECONDS)
 
     def test_every_scenario_is_exercised(self) -> None:
         # Bidirectional: dropping or duplicating a shared row must fail here
@@ -219,14 +232,16 @@ class ClientStoreTests(unittest.TestCase):
 class RouteRefreshBrokerStoreTests(unittest.TestCase):
     def setUp(self) -> None:
         self.clock = ManualClock(_epoch("2026-01-01T00:00:00Z"))
-        self.store = MemoryRouteRefreshBrokerStore(now=self.clock.now, ttl=900, lock_ttl_seconds=30)
+        self.store = MemoryRouteRefreshBrokerStore(
+            now=self.clock.now, ttl=900, lock_ttl_seconds=UTC_NOW_LOCK_TTL_SECONDS
+        )
 
     def test_lock_is_exclusive_and_expires(self) -> None:
         self.store.put(RouteRefreshBrokerRecord(handle_hash="h"))
         self.store.acquire_lock("h", "owner-1", 1)
         with self.assertRaises(BrokerLockedError):
             self.store.acquire_lock("h", "owner-2", 2)
-        self.clock.advance(dt.timedelta(seconds=31))
+        self.clock.advance(dt.timedelta(seconds=UTC_NOW_LOCK_TTL_SECONDS + 1))
         locked = self.store.acquire_lock("h", "owner-3", 2)
         self.assertEqual(locked.refresh_lock_owner, "owner-3")
 
@@ -366,7 +381,9 @@ class SliceIsolationTests(unittest.TestCase):
         self.assertEqual(again.response_types, ["code"])
 
     def test_broker_store_copies_returned_scopes(self) -> None:
-        store = MemoryRouteRefreshBrokerStore(now=self.clock.now, ttl=900, lock_ttl_seconds=30)
+        store = MemoryRouteRefreshBrokerStore(
+            now=self.clock.now, ttl=900, lock_ttl_seconds=UTC_NOW_LOCK_TTL_SECONDS
+        )
         record = RouteRefreshBrokerRecord(handle_hash="handle", status="active", scopes=["scope-a"])
         store.put(record)
         record.scopes[0] = "mutated-caller"
