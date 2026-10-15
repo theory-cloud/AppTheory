@@ -456,7 +456,9 @@ function compileResourceMetadataURLTemplate(raw) {
  * depend on the runtime. The template is refused instead.
  */
 function hasDotPathSegment(rawPath) {
-    return rawPath.split("/").some((segment) => segment === "." || segment === "..");
+    return rawPath
+        .split("/")
+        .some((segment) => segment === "." || segment === "..");
 }
 /**
  * Returns the distinct placeholder names in path order, refusing anything that

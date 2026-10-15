@@ -711,7 +711,9 @@ function compileResourceMetadataURLTemplate(
  * depend on the runtime. The template is refused instead.
  */
 function hasDotPathSegment(rawPath: string): boolean {
-  return rawPath.split("/").some((segment) => segment === "." || segment === "..");
+  return rawPath
+    .split("/")
+    .some((segment) => segment === "." || segment === "..");
 }
 
 /**
