@@ -3866,6 +3866,8 @@ func DefaultCapabilities() Capabilities
 
 func RegisterMCPFacade(*apptheory.App, FacadeConfig) (*RouteInventory, error)
 
+func RegisterMCPFacadeSecure(*apptheory.SecureApp, FacadeConfig) (*RouteInventory, error)
+
 func (*metadataRequestError) Error() string
 
 ## github.com/theory-cloud/apptheory/v6/runtime/mcproutes

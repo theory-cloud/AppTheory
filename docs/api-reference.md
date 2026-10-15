@@ -589,7 +589,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1162 exported top-level symbols</summary>
+<summary>1163 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -697,7 +697,7 @@ QueryInput, RandomIDGenerator, RandomIdGenerator, RapidConnectXMLPatterns, RateL
 RateLimiter, RateLimitKey, RateLimitLimited, RateLimitMiddleware, RateLimitResult, RateLimitStore, RateLimitStoreOptions, RateLimitStrategy, RateLimitWindow, RawJSON,
 ReadResourceRequest, ReadSSEMessage, RealClock, ReconstructingSessionRegistry, ReconstructSessionRecord, RecordStatus, RecordStatusFailed, RecordStatusPending,
 RecordStatusProcessing, RecordStatusSkipped, RecordStatusSucceeded, RefreshLeaseInput, RefreshRequest, RefreshSemaphoreSlotInput, RefreshStage, RefreshTokenRecord, RefreshTokenStore,
-RegisterControllerRoutes, RegisterMCPFacade, RegisterMCPServer, RegisterMicroVMControllerRoutes, RegistryClient, RegistryClientOption, RelatedTaskMetadata,
+RegisterControllerRoutes, RegisterMCPFacade, RegisterMCPFacadeSecure, RegisterMCPServer, RegisterMicroVMControllerRoutes, RegistryClient, RegistryClientOption, RelatedTaskMetadata,
 ReleaseLeaseInput, ReleaseSemaphoreSlotInput, ReportKinesisPutRecordsFailures, Request, RequireAnyScope, RequireAuth, RequireBearerTokenMiddleware,
 RequireBearerTokenOptions, RequiredForbiddenOperationFields, RequiredOperations, RequireEventBridgeWorkloadEnvelope, RequireScope, ResourceContent, ResourceDef,
 ResourceHandler, ResourceMetadataURLFromMcpEndpoint, ResourceName, ResourcePathFromProtectedResourcePath, ResourceRegistry, ResourceSubscription, ResourceSubscriptionHook,
