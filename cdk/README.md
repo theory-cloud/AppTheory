@@ -88,6 +88,18 @@ new AppTheoryHttpApi(stack, "Api", { handler: fn, apiName: "my-api" });
 - `AppTheoryInstallParameters` is the required, account-agnostic namespace installation surface. It emits the ten
   governed `String` parameters and the `TargetAccountMatchesCaller` CloudFormation Rule; consuming constructs use its
   typed string-token accessors rather than accepting a second identity-injection path.
+- `AppTheoryRestV1ChallengeRestoration` fronts an AWS API Gateway REST API v1 `execute-api` origin with CloudFront
+  and restores the canonical `WWW-Authenticate` challenge from the `x-amzn-remapped-www-authenticate` artifact
+  through an origin-response Lambda@Edge function (plus the `x-theory-www-authenticate` / `mcp-www-authenticate`
+  alias spellings only when `aliasBridge` is enabled). Its route set comes from `AppTheoryMcpRouteAlgebra`, never a
+  hand-written path list, and it **requires the DD-2 direct-origin decision**:
+  `originReachability: AppTheoryRestV1OriginReachability.LOCKED` with `originLock: { secret, asserted: true }` (the
+  secret is injected as a custom origin header, and a viewer-supplied copy is stripped at the edge), or `DISABLED`
+  with `disableExecuteApiEndpointAsserted: true`. A directly reachable origin (`direct`) is refused at synthesis: the
+  REST API's own `execute-api` endpoint is this distribution's origin, so a client that bypasses the distribution
+  still reaches it and observes a challenge-less `401` (the runtime gate still refuses there, so this is challenge
+  loss rather than an authentication bypass). Non-REST-v1 origins and `domainNames` without a certificate fail
+  synthesis.
 - `AppTheoryS3VersionedIngress` is the fixed namespace artifact bucket surface. It always enables versioning,
   public-access blocking, S3-managed encryption, TLS enforcement, and seven-day incomplete-multipart reaping. Each
   helper grants one action (`s3:PutObject` or `s3:GetObjectVersion`) on one object resource. Literal inputs are exact

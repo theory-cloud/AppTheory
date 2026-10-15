@@ -54,9 +54,11 @@ milestone that ships Go without TS/Py/CDK is not done.
 
 - Posture vocabulary (`iam` | `jwt` | `runtime-bearer` | `none-public`) + the **`facade` attach prop** +
   default resolution (item 3) in CDK. The `facade` attach prop is the input to the default-resolution predicate
-  (`DEFAULT_SEMANTICS.md` Option A): it lands in **M1** as a **presence-only skeleton** — the upstream-provider
-  attachment property whose presence selects the `runtime-bearer` default — with its provider wiring filled in
-  M3, so M1's default resolution is implementable without interpretation.
+  (`DEFAULT_SEMANTICS.md` Option A): it lands in **M1** as a **presence-only** attachment — the upstream-provider
+  attachment property whose presence selects the `runtime-bearer` default — and that presence-only shape is the
+  design, not a placeholder: the provider and the five store SPIs are runtime `FacadeConfig` configuration owned by
+  the application (`FRAMEWORK_VS_POLICY.md`), so no construct milestone fills them in. M1's default resolution is
+  therefore implementable without interpretation and stays correct.
 - **Facade registrar skeletons in Go/TS/Py** carrying the posture field and the **registration-time fail-closed
   pairing** check: a `runtime-bearer` posture without the explicit runtime-posture assertion returns an error
   before any route is registered. The skeletons contain posture + pairing only; the facade handler bodies are

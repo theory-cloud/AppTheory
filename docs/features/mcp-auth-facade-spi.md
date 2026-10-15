@@ -18,10 +18,12 @@ per-endpoint-kind `POST …/token` `authorization_code` grant. Nothing outside t
 `Provider` absent the facade owns no OAuth surface — the application either supplies its own handler factories or
 registers none, exactly as before.
 
-Mounted: the per-endpoint-kind `POST …/register` RFC 7591 dynamic-client-registration route. Not mounted or answered
-yet: the `refresh_token` grant at `/token` (the code-exchange response already carries a framework-minted opaque
-refresh handle, but that handle cannot be redeemed yet), and the CDK `facade` wiring. See "What the front channel does"
-below.
+Mounted: the per-endpoint-kind `POST …/register` RFC 7591 dynamic-client-registration route, and the
+`refresh_token` grant at `/token` — the brokered refresh (single-flight, rotating, with the framework's 30-second
+grace replay) answers a handle the code exchange minted. The CDK `facade` attachment is **presence-only by design**:
+its presence selects the `runtime-bearer` posture and enables the route derivation and the defense-in-depth floor
+checks, while the provider and the five store SPIs are runtime `FacadeConfig` wiring, not a CDK item
+(`FRAMEWORK_VS_POLICY.md`). See "What the front channel does" below.
 
 ## What the framework owns, and what the application owns
 
@@ -348,7 +350,10 @@ Still absent, by milestone:
 - **CDK wiring:** the `AppTheoryMcpServer` construct wires the stage-global callback path override through
   `upstreamCallbackPath`, resolved by the same `AppTheoryMcpRouteAlgebra.callbackPathForConfiguredPath` the runtime
   applies to `UpstreamCallbackPath`, so the mounted and registered callback routes cannot diverge. The construct's
-  `facade` attach prop does not yet wire the provider and stores (wired by a follow-on milestone).
+  `facade` attach prop is presence-only **by design** and deliberately does not wire the provider and the stores: its
+  presence selects the `runtime-bearer` posture and enables the route derivation and the defense-in-depth floor
+  checks, while the provider and the five store SPIs are runtime `FacadeConfig` configuration
+  (`FRAMEWORK_VS_POLICY.md`).
 - **A subset-accepting refresh scope:** not built and not planned. A present `scope` on a refresh must be exactly the
   granted set (ruling R4); the facade cannot narrow an upstream access token it returns byte-for-byte.
 - **A durable store:** the framework still ships none. The in-memory reference stores are non-durable and do not

@@ -257,8 +257,15 @@ origin-response Lambda@Edge function that restores `WWW-Authenticate` from the A
 the optional alias bridge is enabled, from the `x-theory-www-authenticate` then `mcp-www-authenticate` spellings —
 then removes the consumed source headers.
 
-The construct is additive and takes only `origin` as a required prop, so a stack that does not use it synthesizes
-unchanged. It requires a stack with a resolved account and region, and it fails synthesis on a non-REST-v1 origin
-(the restoration is a documented no-op on HTTP API v2). See the `AppTheoryRestV1ChallengeRestoration` section of the
-CDK package README and `UPGRADING.md`, section "REST v1 edge WWW-Authenticate restoration", for the source-set
-priority order and the optional alias bridge.
+The construct requires the DD-2 direct-origin decision: pass `origin` plus
+`originReachability: AppTheoryRestV1OriginReachability.LOCKED` (with `originLock: { secret, asserted: true }`, which
+injects the secret as a custom origin header and strips a viewer-supplied copy at the edge) or
+`DISABLED` (with `disableExecuteApiEndpointAsserted: true`). A directly reachable origin (`direct`) is refused at
+synthesis, because the REST API's own `execute-api` endpoint is this distribution's origin: a client that bypasses
+the distribution still reaches it and sees a **challenge-less 401** (authentication still fails closed there, so it
+is challenge loss and edge bypass rather than an authentication bypass). The construct is additive otherwise, so a
+stack that does not use it synthesizes unchanged. It requires a stack with a resolved account and region, and it
+fails synthesis on a non-REST-v1 origin (the restoration is a documented no-op on HTTP API v2). See the
+`AppTheoryRestV1ChallengeRestoration` surface note in the CDK package README and `UPGRADING.md`, section "REST v1
+edge WWW-Authenticate restoration", for the source-set priority order, the origin-reachability options and the
+optional alias bridge.

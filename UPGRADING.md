@@ -115,13 +115,14 @@ Both forms decode to the same values, the grace replay is byte-identical **withi
 replay requires), and no contract pins cross-runtime byte equality — so a cross-language golden-file comparison
 must normalize the bytes or compare decoded values rather than raw bodies.
 
-**Not yet available in this line:** the **CDK `facade` provider and store wiring**. The construct's `facade`
-attachment is a presence-only skeleton that marks a server as facade-configured and selects the `runtime-bearer`
-default (`AppTheoryMcpFacadeAttachment` carries a `providerId` only); it does not wire a provider adapter or the
-five store SPIs. A facade server therefore configures its provider and stores in the runtime
-(`FacadeConfig.Provider` / `.Stores`) as documented in `docs/features/mcp-auth-facade-spi.md`. The CDK wiring is an
-open framework item with no milestone assigned; it is recorded as an open question for the Factory. The
-stage-global callback path override, by contrast, is wired: pass the construct's `upstreamCallbackPath` prop.
+**The CDK `facade` attachment is presence-only by design.** The construct's `facade` attachment marks a server as
+facade-configured and selects the `runtime-bearer` posture default (`AppTheoryMcpFacadeAttachment` carries a
+`providerId` and nothing else); its presence is what enables the facade route derivation and the defense-in-depth
+floor checks. It deliberately does not wire a provider adapter or the five store SPIs: a facade server configures its
+provider and stores in the runtime (`FacadeConfig.Provider` / `.Stores`) as documented in
+`docs/features/mcp-auth-facade-spi.md`, because provider and store choice is application policy
+(`FRAMEWORK_VS_POLICY.md`) rather than infrastructure. The stage-global callback path override is likewise wired:
+pass the construct's `upstreamCallbackPath` prop.
 
 The store `put` normalization was also aligned across Go, TypeScript, and Python: the reference stores now preserve a
 caller-supplied `status` verbatim and normalize a version below 1 to 1 in all three runtimes (Go was already the
@@ -138,20 +139,44 @@ loses the header at the edge. The new `AppTheoryRestV1ChallengeRestoration` cons
 origin with CloudFront and restores the canonical header on the origin response, then removes the consumed source
 headers. It is additive: a stack that does not use it synthesizes exactly as before.
 
-The construct derives its route set from the shared route algebra (never a hand-written path list) and takes only
-`origin` as a required prop:
+The construct derives its route set from the shared route algebra (never a hand-written path list) and requires the
+DD-2 direct-origin decision in addition to the origin:
 
 ```ts
-new AppTheoryRestV1ChallengeRestoration(this, "Challenge", { origin: restApi });
+new AppTheoryRestV1ChallengeRestoration(this, "Challenge", {
+  origin: restApi,
+  originReachability: AppTheoryRestV1OriginReachability.LOCKED,
+  originLock: { secret: originLockSecret, asserted: true },
+});
 ```
+
+**A CloudFront front door does not by itself make the origin unreachable.** The REST API keeps answering at its own
+`<restApiId>.execute-api.<region>.<urlSuffix>` endpoint, which is exactly the origin this distribution uses, so a
+client that skips the distribution still reaches the origin and observes a **challenge-less `401`** — the
+restoration never runs, and any edge-only control is bypassed on that path. Authentication itself is unaffected (the
+runtime bearer gate still refuses the request at the origin), so this is challenge loss and edge bypass, not an
+authentication bypass. `originReachability` is therefore required and a directly reachable origin (`direct`) is
+refused at synthesis:
+
+- `LOCKED` — the origin is reachable only through this distribution. The construct injects `originLock.secret` as a
+  custom origin header on every request to the origin, strips a viewer-supplied copy of that header at the edge, and
+  requires `originLock.asserted: true`, the caller's assertion that the REST API verifies the header (the construct
+  cannot attach a resource policy or authorizer to an external `IRestApi`). The lock's strength rests on the secret
+  staying confidential: a client that learns it can satisfy the origin-side verification directly.
+- `DISABLED` — the REST API's `execute-api` default endpoint is disabled. The caller asserts it
+  (`disableExecuteApiEndpointAsserted: true`) because the construct cannot mutate an external `IRestApi`. Note the
+  platform shape: the disabled hostname is the distribution's own origin hostname, and AWS requires a custom domain
+  once the default endpoint is disabled, so an app choosing `DISABLED` must front its REST API through a custom
+  domain rather than this construct's execute-api origin.
 
 The restore source set is `x-amzn-remapped-www-authenticate` **always**, plus the optional alias bridge spellings
 (`x-theory-www-authenticate`, then `mcp-www-authenticate`) only when `aliasBridge: { enabled: true }` is set. The
 bridge is **off by default**, and while it is off the alias spellings do not appear in the deployed function source
 at all. The restoration runs as a CloudFront origin-response Lambda@Edge function, so the stack must be deployed
-with a **resolved account and region**, and the distribution's behaviors forward every viewer header except `Host`,
-plus all cookies and all query strings (without the query string the derived `authorize` and callback routes lose
-their parameters). Passing an HTTP API v2 origin fails synthesis: the restoration is a documented no-op there.
+with a **resolved account and region**, and the distribution's behaviors forward every viewer header except `Host`
+(and, under `LOCKED`, the origin-lock header as well), plus all cookies and all query strings (without the query
+string the derived `authorize` and callback routes lose their parameters). Passing an HTTP API v2 origin fails
+synthesis: the restoration is a documented no-op there.
 
 ### Lab candidate builds against a pinned commit
 
