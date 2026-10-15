@@ -163,9 +163,12 @@ The checks run in this order, and each one fails closed before any artifact is h
    commit and is never read as input.
 2. **Stage allowlist** — `lab` only.
 3. **Candidate block present** — the builder never builds a stage without an encoded `candidate` block.
-4. **Declared surface completeness** — at least one surface declared, and every declared surface carrying a
-   non-empty `sha256`, plus `file` + `integrity` for a declared npm surface. An undeclared surface is not checked
-   because it is never built.
+4. **Declared surface completeness and surface vocabulary** — at least one surface declared, and every declared
+   surface carrying a non-empty `sha256`, plus `file` + `integrity` for a declared npm surface. An undeclared
+   surface is not checked because it is never built. A surface key outside the seven, and any field on a declared
+   surface that is neither an input (`file`, `sha256`, `integrity`) nor a `_`-prefixed annotation, is refused
+   rather than ignored: a per-surface `commit` in particular is invalid, because the one encoded `commit` binds
+   every surface, and a misspelled input would otherwise look like an unbound surface.
 5. `commit` and `tree` are 40 lowercase hex characters.
 6. `expected_account_id` is non-empty and equals a supplied `--account-id` when one is given. Resolving the
    account from AWS is the app deploy script's job; the builder takes the app's already-resolved value as an
@@ -210,8 +213,9 @@ can never be mistaken for a verified candidate.
 repository (no network, no AWS, no credentials) and asserts: the example config shape is runnable; a valid config
 builds and verifies; a declared subset builds exactly its declared artifacts, hands none of the undeclared ones over,
 receipts only the declared ones and never runs an undeclared surface's build script; an empty declared surface set
-and a declared surface missing its witness are refused; a tampered `sha256`, a tampered npm `integrity`, a wrong tree,
-a mismatched `source_date_epoch`, a wrong encoded `file`, a declared npm surface without its integrity, an
+and a declared surface missing its witness are refused; an unknown surface key, a per-surface `commit` and a
+misspelled surface field are refused rather than ignored; a tampered `sha256`, a tampered npm `integrity`, a wrong
+tree, a mismatched `source_date_epoch`, a wrong encoded `file`, a declared npm surface without its integrity, an
 environment variables-only attempt, a `live`/`staging` stage and an account mismatch all fail closed; and
 `--print-plan` writes nothing. It is wired into `make rubric`, so a builder that stops failing closed fails CI rather
 than the lab proof.

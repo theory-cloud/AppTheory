@@ -16,7 +16,10 @@
 # handed over and receipted; an undeclared surface is never built, so a consumer that uses
 # two surfaces records two and gets two. Every declared surface is bound to the one pinned
 # commit exactly as a complete set would be, and a declared surface whose encoded witness
-# is incomplete fails closed by name.
+# is incomplete fails closed by name. A surface key outside the seven, and any field on a
+# declared surface that is not an input (`file`, `sha256`, `integrity`) or a `_`-prefixed
+# annotation, are refused rather than silently ignored -- a per-surface `commit` in
+# particular is invalid, because the one encoded `commit` binds every surface.
 # One declared Python runtime surface runs the repository's single python build, which
 # produces both the wheel and the sdist; only the declared artifacts are verified, handed
 # over and receipted.
@@ -241,6 +244,9 @@ SURFACE_ORDER = (
     "py_cdk_wheel",
 )
 
+# The only per-surface inputs; anything else must be a '_'-prefixed annotation.
+SURFACE_FIELDS = ("file", "sha256", "integrity")
+
 if candidate is None:
     sys.stdout.write("candidate_present\t0\n")
 else:
@@ -250,19 +256,44 @@ else:
     emit("source_date_epoch", candidate.get("source_date_epoch"))
 
     # The declared surface subset: only these surfaces are built, verified, handed
-    # over and receipted.
+    # over and receipted. A surface key outside the seven, and any non-annotation
+    # field on a declared surface, is refused rather than silently ignored.
     surfaces = as_dict(candidate.get("surfaces"))
     declared = []
     if surfaces is not None:
+        unknown_surfaces = sorted(key for key in surfaces if key not in SURFACE_ORDER)
+        if unknown_surfaces:
+            raise SystemExit(
+                "unknown surface key(s) in candidate.surfaces: "
+                + ", ".join(unknown_surfaces)
+                + " (a declared surface must be one of "
+                + ", ".join(SURFACE_ORDER)
+                + ")"
+            )
         for name in SURFACE_ORDER:
             if name not in surfaces:
                 continue
+            entry = as_dict(surfaces.get(name))
+            if entry is not None:
+                unsupported = sorted(
+                    key
+                    for key in entry
+                    if not key.startswith("_") and key not in SURFACE_FIELDS
+                )
+                if unsupported:
+                    raise SystemExit(
+                        "surface '" + name + "' carries unsupported field(s): "
+                        + ", ".join(unsupported)
+                        + " (one commit binds every surface, so a per-surface commit is invalid; "
+                        + "allowed fields are "
+                        + ", ".join(SURFACE_FIELDS)
+                        + ", plus '_'-prefixed annotations)"
+                    )
             declared.append(name)
             sys.stdout.write(f"surface_{name}_present\t1\n")
-            entry = as_dict(surfaces.get(name))
             if entry is None:
                 continue
-            for field in ("file", "sha256", "integrity"):
+            for field in SURFACE_FIELDS:
                 value = entry.get(field)
                 if isinstance(value, str) and value != "":
                     sys.stdout.write(f"surface_{name}_{field}\t{value}\n")

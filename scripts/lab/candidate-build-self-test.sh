@@ -12,7 +12,8 @@
 # They deterministically create the expected artifact files under dist/ with `gzip -n`, so they
 # are byte-stable across runs. This self-test therefore exercises the builder's config parsing,
 # repo binding, stage allowlist, environment refusal, the declared-surface-subset contract (a
-# declared subset is built and an undeclared surface is never built), per-surface hash
+# declared subset is built and an undeclared surface is never built, an unknown surface key or
+# a non-annotation per-surface field is refused), per-surface hash
 # verification, artifact handling and receipt -- it does NOT re-test the real npm/python builds.
 # One case asserts that REPO itself ships the real build scripts so the fixture cannot drift
 # away from reality.
@@ -717,6 +718,74 @@ run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_declared_file}
 assert_status 1
 assert_stderr_contains "declared surface 'py_runtime_wheel' file mismatch"
 assert_stderr_contains "apptheory-9.9.8-py3-none-any.whl"
+case_pass
+
+# --- case 19: an unknown surface key is refused ----------------------------------------
+# A key that is not one of the seven must never be silently ignored: the config author
+# would believe a surface is bound when nothing about it is built or verified.
+case_start "an unknown surface key is refused"
+cfg_unknown="${tmp}/cfg-unknown.json"
+write_config "${cfg_unknown}" "lab"
+python3 - "${cfg_unknown}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+doc = json.load(open(path))
+surfaces = doc["apptheory"]["candidate"]["surfaces"]
+surfaces["go_runtime_extra"] = {"sha256": "8" * 64}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_unknown}" --out "${tmp}/out-unknown"
+assert_status 1
+assert_stderr_contains "unknown surface key(s) in candidate.surfaces: go_runtime_extra"
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_unknown}" --print-plan
+assert_status 1
+assert_stderr_contains "unknown surface key(s) in candidate.surfaces: go_runtime_extra"
+case_pass
+
+# --- case 20: a per-surface commit is refused ------------------------------------------
+# One encoded commit binds every surface, so a per-surface commit is invalid per the
+# interface spec and must be refused rather than ignored.
+case_start "a per-surface commit is refused"
+cfg_surface_commit="${tmp}/cfg-surface-commit.json"
+write_config "${cfg_surface_commit}" "lab"
+python3 - "${cfg_surface_commit}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+doc = json.load(open(path))
+surfaces = doc["apptheory"]["candidate"]["surfaces"]
+surfaces["go_runtime"]["commit"] = "9" * 40
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_surface_commit}" --out "${tmp}/out-surface-commit"
+assert_status 1
+assert_stderr_contains "surface 'go_runtime' carries unsupported field(s): commit"
+assert_stderr_contains "per-surface commit is invalid"
+case_pass
+
+# --- case 21: a misspelled surface field is refused ------------------------------------
+case_start "a misspelled surface field is refused"
+cfg_typo="${tmp}/cfg-typo.json"
+write_config "${cfg_typo}" "lab"
+python3 - "${cfg_typo}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+doc = json.load(open(path))
+surface = doc["apptheory"]["candidate"]["surfaces"]["npm_cdk"]
+surface["sha_256"] = surface.pop("sha256")
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_typo}" --out "${tmp}/out-typo"
+assert_status 1
+assert_stderr_contains "surface 'npm_cdk' carries unsupported field(s): sha_256"
 case_pass
 
 printf 'candidate-build: self-test PASS (%s cases)\n' "${cases_passed}"
