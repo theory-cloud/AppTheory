@@ -126,7 +126,7 @@ class TestLimitedMultiWindowCancellation(unittest.TestCase):
         fake = StatefulDynamoDBClient()
         if "transport_error" in case:
             fake.queue_transaction_error(RuntimeError(str(case["transport_error"]["message"])))
-        elif case.get("deliver") == "cancelled_exception":
+        elif case.get("deliver") == "canceled_exception":
             # Deliver the row's exact message and reasons, bypassing the fake's
             # synthesized message so the classifier really sees this text.
             fake.queue_transaction_error(_cancellation_client_error(case["cancellation"]))
@@ -182,7 +182,7 @@ class TestLimitedMultiWindowCancellation(unittest.TestCase):
             if "deliver" in case:
                 self.assertEqual(
                     case["deliver"],
-                    "cancelled_exception",
+                    "canceled_exception",
                     f"{case['id']} has an unrecognized deliver mode",
                 )
                 self.assertTrue(

@@ -14,7 +14,7 @@ import { DynamoRateLimiter } from "../dist/limited/limiter.js";
 import { MultiWindowStrategy } from "../dist/limited/strategies.js";
 
 // The shared multi-window cancellation table: one conformance table for how a
-// DynamoDB-backed multi-window limiter reads a cancelled TransactWrite, driven
+// DynamoDB-backed multi-window limiter reads a canceled TransactWrite, driven
 // here against the TypeScript runtime's REAL limiter over a REAL TableTheory
 // client bound to TableTheory's stateful fake DynamoDB. The rows queue the
 // cancellation shapes a real transaction produces, so the assertion is what the
@@ -80,7 +80,7 @@ const POLICIES = [
 const OUTCOMES = ["admitted", "soft_denial", "internal_error"];
 
 // The one delivery a row may ask for beyond the fake's own seam.
-const DELIVER_CANCELLED_EXCEPTION = "cancelled_exception";
+const DELIVER_CANCELLED_EXCEPTION = "canceled_exception";
 
 // A reason's code and message survive at their position; a fixture reason that
 // omits either one omits it here too, so "no code in this slot" and DynamoDB's

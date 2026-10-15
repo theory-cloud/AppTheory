@@ -42,10 +42,10 @@ var limiterCancellationFixtureCaseIDs = []string{
 
 const limiterCancellationFixturePath = "../../contract-tests/fixtures/routing/limiter/multi-window-cancellation.v1.json"
 
-// limiterFixtureDeliverCancelledException is the only supported "deliver" value:
-// the row must be handed to TableTheory as a hand-built cancelled exception so
+// limiterFixtureDeliverCanceledException is the only supported "deliver" value:
+// the row must be handed to TableTheory as a hand-built canceled exception so
 // its exact cancellation message reaches the classifier.
-const limiterFixtureDeliverCancelledException = "cancelled_exception"
+const limiterFixtureDeliverCanceledException = "canceled_exception"
 
 const (
 	outcomeAdmitted      = "admitted"
@@ -222,11 +222,11 @@ func (c limiterCancellationCase) validate(t *testing.T) {
 	require.Contains(t, []string{outcomeAdmitted, outcomeSoftDenial, outcomeInternalError}, c.Expect.FailOpen)
 	require.Contains(t, []string{outcomeAdmitted, outcomeSoftDenial, outcomeInternalError}, c.Expect.FailClosed)
 
-	if c.Deliver != "" && c.Deliver != limiterFixtureDeliverCancelledException {
+	if c.Deliver != "" && c.Deliver != limiterFixtureDeliverCanceledException {
 		t.Fatalf("case %q declares unsupported deliver %q", c.ID, c.Deliver)
 	}
-	if c.Deliver == limiterFixtureDeliverCancelledException {
-		require.NotNil(t, c.Cancellation, "case %q delivers a cancelled exception without a cancellation", c.ID)
+	if c.Deliver == limiterFixtureDeliverCanceledException {
+		require.NotNil(t, c.Cancellation, "case %q delivers a canceled exception without a cancellation", c.ID)
 	}
 
 	switch {
@@ -302,10 +302,10 @@ func queueFixtureTransactionFailure(t *testing.T, fake *fakedb.Fake, testCase li
 	t.Helper()
 
 	switch {
-	case testCase.Cancellation != nil && testCase.Deliver == limiterFixtureDeliverCancelledException:
+	case testCase.Cancellation != nil && testCase.Deliver == limiterFixtureDeliverCanceledException:
 		// This row's premise is the message text, so it is delivered as a
-		// hand-built cancelled exception carrying the exact message and reasons.
-		fake.QueueTransactionError(fixtureCancelledException(testCase.Cancellation))
+		// hand-built canceled exception carrying the exact message and reasons.
+		fake.QueueTransactionError(fixtureCanceledException(testCase.Cancellation))
 	case testCase.Cancellation != nil:
 		// The cancellation seam carries the ordered reason list only; the fake
 		// synthesizes the service message.
@@ -317,7 +317,7 @@ func queueFixtureTransactionFailure(t *testing.T, fake *fakedb.Fake, testCase li
 	}
 }
 
-func fixtureCancelledException(cancellation *limiterFixtureCancellation) *types.TransactionCanceledException {
+func fixtureCanceledException(cancellation *limiterFixtureCancellation) *types.TransactionCanceledException {
 	return &types.TransactionCanceledException{
 		Message:             aws.String(cancellation.Message),
 		CancellationReasons: fixtureCancellationReasons(cancellation.Reasons),
