@@ -951,6 +951,14 @@ assert_stderr_contains ".gitattributes:1: pattern 'cdk/' sets the archive-affect
 [[ "${builder_stderr}" != *"hash mismatch"* ]] \
   || case_fail "the recorded hash matched the filtered archive, so only the attribute refusal can refuse this"
 [[ ! -f "${tmp}/out-filter/go_runtime.tar" ]] || case_fail "a filtered archive was handed over"
+# The refusal is a property of the pinned tree, so it must fire in --print-plan mode as well
+# (the plan path reaches this check before it refuses or prints anything), and as the same named
+# error: a check that only runs on the build path would leave the plan mode green.
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_filter}" --print-plan
+assert_status 1
+assert_stderr_contains "archive-affecting .gitattributes attribute"
+[[ "${builder_stderr}" != *"archive entry list does not match"* ]] \
+  || case_fail "the entry-list check spoke instead of the named attribute refusal in --print-plan"
 # The same filter must also be refused for S2 when it covers the cdk-go subtree.
 printf 'cdk-go/apptheorycdk/go.mod export-ignore\n' > "${fixture}/.gitattributes"
 git -C "${fixture}" add -A

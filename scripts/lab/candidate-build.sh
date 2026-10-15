@@ -464,74 +464,15 @@ for name in "${declared_surfaces[@]}"; do
   fi
 done
 
-# 10. Archive-affecting attributes in the pinned commit's tree are refused before anything is
-#     archived or planned. Only the git-archive surfaces are affected, so a config that declares
-#     neither S1 nor S2 is not judged by this check.
-archive_surfaces=()
-for name in "${declared_surfaces[@]}"; do
-  case "${name}" in
-    go_runtime|go_cdk) archive_surfaces+=("${name}") ;;
-  esac
-done
-if (( ${#archive_surfaces[@]} > 0 )); then
-  refuse_archive_affecting_attributes
-fi
-
-if (( print_plan == 1 )); then
-  printf 'candidate-build: PLAN (nothing built, no receipt written)\n'
-  printf '  config: %s\n' "${config}"
-  printf '  stage: %s\n' "${stage}"
-  printf '  commit: %s\n' "${commit}"
-  printf '  tree: %s\n' "${tree}"
-  printf '  source_date_epoch: %s\n' "${effective_epoch}"
-  printf '  expected_account_id: %s\n' "${expected_account}"
-  for name in "${declared_surfaces[@]}"; do
-    printf '  %-18s %s\n' "${name}" "${surface_command[${name}]}"
-    printf '  %-18s -> %s sha256=%s\n' "" "${artifact_basename[${name}]}" "${CFG[surface_${name}_sha256]-}"
-  done
-  printf 'candidate-build: PLAN OK (%s %s; %s declared surfaces would be verified)\n' "${stage}" "${commit}" "${#declared_surfaces[@]}"
-  exit 0
-fi
-
-# Real build: --out is the destination for the verified artifacts and the receipt.
-mkdir -p "${out}" || fail "cannot create --out directory: ${out}"
-out="$(cd "${out}" && pwd)"
-
-sha256_of() {
-  python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$1"
-}
-
-integrity_of() {
-  python3 -c 'import base64, hashlib, sys; print("sha512-" + base64.b64encode(hashlib.sha512(open(sys.argv[1], "rb").read()).digest()).decode())' "$1"
-}
-
-# Locate the artifact for a package surface. The encoded `file` names the artifact the build
-# must produce; verify_and_copy then checks the produced basename against the version-derived
-# expected basename, so a mismatched encoded name fails closed at build time. When a surface
-# carries no encoded `file` (allowed for the Python surfaces), the version-derived name is used.
-surface_artifact_path() {
-  local name="$1"
-  local encoded="${CFG[surface_${name}_file]-}"
-  if [[ -n "${encoded}" ]]; then
-    printf '%s' "${repo}/dist/${encoded}"
-  else
-    printf '%s' "${repo}/dist/${artifact_basename[${name}]}"
-  fi
-}
-
-declare -A surface_artifact=()
-declare -A surface_sha=()
-declare -A surface_integrity=()
-
 # Fails closed when the pinned commit's tree carries any archive-affecting attribute.
 #
 # `git archive` honours the commit's own `.gitattributes`, and the witnessed build runs the same
 # command, so a committed `export-ignore` (drops paths) or `export-subst` (rewrites `$Format:...$`
 # content) is invisible to the recorded hash. Neither has any legitimate use in a candidate tree --
 # an archive surface must be the pinned tree byte for byte -- so the whole class is refused by name
-# here, before anything is archived, and the entry-list and content comparisons below stay the
-# backstop for attributes applied from outside the tree (`$GIT_DIR/info/attributes` and a global
-# attributesFile are honoured by `git archive` too).
+# here, before anything is archived (or planned), and the entry-list and content comparisons below
+# stay the backstop for attributes applied from outside the tree (`$GIT_DIR/info/attributes` and a
+# global attributesFile are honoured by `git archive` too).
 refuse_archive_affecting_attributes() {
   local listing="${scratch}/attributes-list.txt"
   if ! git -C "${repo}" ls-tree -r -z --name-only "${commit}" > "${listing}" 2>"${scratch}/attributes-list.err"; then
@@ -599,6 +540,65 @@ PY
     fail "the pinned commit carries an archive-affecting .gitattributes attribute (see the lines above)"
   fi
 }
+
+# 10. Archive-affecting attributes in the pinned commit's tree are refused before anything is
+#     archived or planned. Only the git-archive surfaces are affected, so a config that declares
+#     neither S1 nor S2 is not judged by this check.
+archive_surfaces=()
+for name in "${declared_surfaces[@]}"; do
+  case "${name}" in
+    go_runtime|go_cdk) archive_surfaces+=("${name}") ;;
+  esac
+done
+if (( ${#archive_surfaces[@]} > 0 )); then
+  refuse_archive_affecting_attributes
+fi
+
+if (( print_plan == 1 )); then
+  printf 'candidate-build: PLAN (nothing built, no receipt written)\n'
+  printf '  config: %s\n' "${config}"
+  printf '  stage: %s\n' "${stage}"
+  printf '  commit: %s\n' "${commit}"
+  printf '  tree: %s\n' "${tree}"
+  printf '  source_date_epoch: %s\n' "${effective_epoch}"
+  printf '  expected_account_id: %s\n' "${expected_account}"
+  for name in "${declared_surfaces[@]}"; do
+    printf '  %-18s %s\n' "${name}" "${surface_command[${name}]}"
+    printf '  %-18s -> %s sha256=%s\n' "" "${artifact_basename[${name}]}" "${CFG[surface_${name}_sha256]-}"
+  done
+  printf 'candidate-build: PLAN OK (%s %s; %s declared surfaces would be verified)\n' "${stage}" "${commit}" "${#declared_surfaces[@]}"
+  exit 0
+fi
+
+# Real build: --out is the destination for the verified artifacts and the receipt.
+mkdir -p "${out}" || fail "cannot create --out directory: ${out}"
+out="$(cd "${out}" && pwd)"
+
+sha256_of() {
+  python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$1"
+}
+
+integrity_of() {
+  python3 -c 'import base64, hashlib, sys; print("sha512-" + base64.b64encode(hashlib.sha512(open(sys.argv[1], "rb").read()).digest()).decode())' "$1"
+}
+
+# Locate the artifact for a package surface. The encoded `file` names the artifact the build
+# must produce; verify_and_copy then checks the produced basename against the version-derived
+# expected basename, so a mismatched encoded name fails closed at build time. When a surface
+# carries no encoded `file` (allowed for the Python surfaces), the version-derived name is used.
+surface_artifact_path() {
+  local name="$1"
+  local encoded="${CFG[surface_${name}_file]-}"
+  if [[ -n "${encoded}" ]]; then
+    printf '%s' "${repo}/dist/${encoded}"
+  else
+    printf '%s' "${repo}/dist/${artifact_basename[${name}]}"
+  fi
+}
+
+declare -A surface_artifact=()
+declare -A surface_sha=()
+declare -A surface_integrity=()
 
 # Fails closed unless a git-archive surface carries exactly the pinned commit's tracked
 # file list (minus <exclude_path>, the nested cdk-go module, for S1).
