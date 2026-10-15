@@ -13,11 +13,14 @@
 # are byte-stable across runs. This self-test therefore exercises the builder's config parsing,
 # repo binding, stage allowlist, environment refusal, the declared-surface-subset contract (a
 # declared subset is built and an undeclared surface is never built, an unknown surface key or
-# a non-annotation per-surface field is refused), the git-archive entry-list check (a committed
-# `export-ignore` .gitattributes is refused), per-surface hash
-# verification, artifact handling and receipt -- it does NOT re-test the real npm/python builds.
+# a non-annotation per-surface field is refused), the whole git-archive attribute class (a
+# committed `export-ignore` or `export-subst` .gitattributes is refused by name, and the
+# entry-list and blob-content comparisons still refuse an attribute applied from outside the
+# tree), per-surface hash verification, artifact handling and receipt -- it does NOT re-test the
+# real npm/python builds.
 # One case asserts that REPO itself ships the real build scripts so the fixture cannot drift
-# away from reality.
+# away from reality, and one runs the real builder against this repository's own tree (offline,
+# S1 only), so the archive checks are proven not to refuse a real tree.
 #
 # Usage: bash scripts/lab/candidate-build-self-test.sh
 # Prints: candidate-build: self-test PASS (N cases)  |  candidate-build: self-test FAIL (<case>)
@@ -80,6 +83,10 @@ make_fixture() {
   printf '{"name":"fixture-ts-runtime","version":"9.9.9"}\n' > "${fixture}/ts/package.json"
   printf '[project]\nname = "fixture-py"\nversion = "9.9.9"\n' > "${fixture}/py/pyproject.toml"
   printf 'module github.com/example/apptheory/cdk-go/apptheorycdk/v6\n\ngo 1.26.5\n' > "${fixture}/cdk-go/apptheorycdk/go.mod"
+  # A file carrying an export-subst placeholder, so a fixture commit can reproduce the
+  # `export-subst` attack ($Format:%H$ -> the substituted commit id) as well as the
+  # `export-ignore` one. With no attribute set its archived bytes equal its blob.
+  printf 'commit %s\n' '$Format:%H$' > "${fixture}/VERSION-TEMPLATE.txt"
 
   cat > "${fixture}/scripts/read-version.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -902,9 +909,11 @@ case_pass
 # The attack (ADV-APPT1150-F1): commit an `export-ignore` .gitattributes at the pinned
 # commit. `git archive` then silently drops the filtered paths, and because the witnessed
 # build runs the SAME archive command it filters identically -- so the recorded hash still
-# matches and the builder would hand over a tree that is not the pinned commit's tree. The
-# witness below is computed from that same filtered archive, so this case fails ONLY if the
-# archive's entry list is compared against the commit tree: a hash-only builder passes it.
+# matches and a hash-only builder would hand over a tree that is not the pinned commit's. The
+# witness below is computed from that same filtered archive, so this case fails unless the
+# pinned commit is refused. The refusal must be the named, tree-level ATTRIBUTE error (the
+# whole class, fired before anything is archived) -- not the entry-list comparison and not the
+# content compare, which stay as the backstop for attributes set outside the tree.
 case_start "a committed .gitattributes export-ignore filter is refused"
 printf 'cdk/ export-ignore\n' > "${fixture}/.gitattributes"
 git -C "${fixture}" add -A
@@ -933,12 +942,14 @@ with open(path, "w", encoding="utf-8") as handle:
 PY
 run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_filter}" --out "${tmp}/out-filter"
 assert_status 1
-assert_stderr_contains "surface go_runtime archive entry list does not match the pinned commit tree"
-assert_stderr_contains "filtered out of the archive"
-assert_stderr_contains "cdk/package.json"
-assert_stderr_contains ".gitattributes can silently drop paths from git archive"
+assert_stderr_contains "archive-affecting .gitattributes attribute"
+assert_stderr_contains ".gitattributes:1: pattern 'cdk/' sets the archive-affecting attribute 'export-ignore'"
+[[ "${builder_stderr}" != *"archive entry list does not match"* ]] \
+  || case_fail "the entry-list check spoke instead of the named attribute refusal"
+[[ "${builder_stderr}" != *"archive content does not match"* ]] \
+  || case_fail "the content compare spoke instead of the named attribute refusal"
 [[ "${builder_stderr}" != *"hash mismatch"* ]] \
-  || case_fail "the recorded hash matched the filtered archive, so only the entry list can refuse this"
+  || case_fail "the recorded hash matched the filtered archive, so only the attribute refusal can refuse this"
 [[ ! -f "${tmp}/out-filter/go_runtime.tar" ]] || case_fail "a filtered archive was handed over"
 # The same filter must also be refused for S2 when it covers the cdk-go subtree.
 printf 'cdk-go/apptheorycdk/go.mod export-ignore\n' > "${fixture}/.gitattributes"
@@ -967,9 +978,212 @@ with open(path, "w", encoding="utf-8") as handle:
 PY
 run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_filter_cdk}" --out "${tmp}/out-filter-cdk"
 assert_status 1
-assert_stderr_contains "surface go_cdk archive entry list does not match the pinned commit tree"
-assert_stderr_contains "cdk-go/apptheorycdk/go.mod"
+assert_stderr_contains "archive-affecting .gitattributes attribute"
+assert_stderr_contains ".gitattributes:1: pattern 'cdk-go/apptheorycdk/go.mod' sets the archive-affecting attribute 'export-ignore'"
 git -C "${fixture}" reset -q --hard "${fixture_commit}"
+case_pass
+
+# --- case 26: a committed .gitattributes export-subst filter is refused ------------------
+# The second attack of the same class (ADV-APPT1150-R1-1): `export-subst` rewrites file
+# CONTENT ($Format:%H$ -> the substituted commit id) and leaves every entry name in place, so
+# the entry list is unchanged and the recorded hash -- the hash of the substituted archive --
+# still matches. The case first proves the attack is real on the fixture (archived bytes differ
+# from the pinned blob, entry names do not), then requires the named tree-level refusal, not
+# the content compare behind it.
+case_start "a committed .gitattributes export-subst filter is refused"
+printf '* export-subst\n' > "${fixture}/.gitattributes"
+git -C "${fixture}" add -A
+git -C "${fixture}" commit -q -m "fixture: commit an export-subst .gitattributes"
+subst_commit="$(git -C "${fixture}" rev-parse HEAD)"
+subst_tree="$(git -C "${fixture}" rev-parse "HEAD^{tree}")"
+subst_epoch="$(git -C "${fixture}" show -s --format=%ct HEAD)"
+git -C "${fixture}" archive --format=tar --output="${tmp}/subst.tar" "${subst_commit}" -- . ':(exclude)cdk-go'
+subst_sha="$(python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "${tmp}/subst.tar")"
+python3 - "${tmp}/subst.tar" "${fixture}" "${subst_commit}" <<'PY'
+import subprocess
+import sys
+import tarfile
+
+archive_path, repo, commit = sys.argv[1], sys.argv[2], sys.argv[3]
+with tarfile.open(archive_path, "r:") as archive:
+    names = sorted(
+        member.name
+        for member in archive.getmembers()
+        if member.isfile() or member.issym() or member.islnk()
+    )
+    archived = archive.extractfile(archive.getmember("VERSION-TEMPLATE.txt")).read()
+pinned = subprocess.run(
+    ["git", "-C", repo, "cat-file", "blob", f"{commit}:VERSION-TEMPLATE.txt"],
+    check=True,
+    capture_output=True,
+).stdout
+assert archived != pinned, "export-subst did not rewrite the archived content"
+assert archived.strip().endswith(commit.encode()), archived
+listed = subprocess.run(
+    ["git", "-C", repo, "ls-tree", "-r", "--name-only", commit, "--", "."],
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout.split()
+expected_names = sorted(
+    name for name in listed if not (name == "cdk-go" or name.startswith("cdk-go/"))
+)
+assert names == expected_names, (names, expected_names)
+PY
+cfg_subst="${tmp}/cfg-subst.json"
+write_config "${cfg_subst}" "lab" "${subst_commit}" "${subst_tree}" "${subst_epoch}"
+python3 - "${cfg_subst}" "${subst_sha}" <<'PY'
+import json
+import sys
+
+path, filtered_sha = sys.argv[1], sys.argv[2]
+doc = json.load(open(path))
+surfaces = doc["apptheory"]["candidate"]["surfaces"]
+for name in list(surfaces):
+    if name != "go_runtime":
+        del surfaces[name]
+# The witnessed hash of the SUBSTITUTED archive: neither the hash nor the entry list can tell
+# the difference.
+surfaces["go_runtime"]["sha256"] = filtered_sha
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_subst}" --out "${tmp}/out-subst"
+assert_status 1
+assert_stderr_contains "archive-affecting .gitattributes attribute"
+assert_stderr_contains "sets the archive-affecting attribute 'export-subst'"
+[[ "${builder_stderr}" != *"archive entry list does not match"* ]] \
+  || case_fail "the entry-list check spoke instead of the named attribute refusal"
+[[ "${builder_stderr}" != *"archive content does not match"* ]] \
+  || case_fail "the content compare spoke instead of the named attribute refusal"
+[[ "${builder_stderr}" != *"hash mismatch"* ]] \
+  || case_fail "the recorded hash matched the substituted archive, so only the attribute refusal can refuse this"
+[[ ! -f "${tmp}/out-subst/go_runtime.tar" ]] || case_fail "a substituted archive was handed over"
+git -C "${fixture}" reset -q --hard "${fixture_commit}"
+case_pass
+
+# --- case 27: an out-of-tree export-ignore attribute is refused by the entry list --------
+# `git archive` also honours $GIT_DIR/info/attributes, which is not part of the pinned tree, so
+# the tree-level refusal cannot see it: the entry-list comparison must still refuse a path the
+# filter dropped. This keeps the entry-list control load-bearing now that the tree case
+# (case 25) is refused earlier by name.
+case_start "an out-of-tree export-ignore attribute is refused by the entry list"
+mkdir -p "${fixture}/.git/info"
+printf 'cdk/ export-ignore\n' > "${fixture}/.git/info/attributes"
+git -C "${fixture}" archive --format=tar --output="${tmp}/info-filtered.tar" "${fixture_commit}" -- . ':(exclude)cdk-go'
+info_filtered_sha="$(python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "${tmp}/info-filtered.tar")"
+cfg_info_filter="${tmp}/cfg-info-filter.json"
+write_config "${cfg_info_filter}" "lab"
+python3 - "${cfg_info_filter}" "${info_filtered_sha}" <<'PY'
+import json
+import sys
+
+path, filtered_sha = sys.argv[1], sys.argv[2]
+doc = json.load(open(path))
+surfaces = doc["apptheory"]["candidate"]["surfaces"]
+for name in list(surfaces):
+    if name != "go_runtime":
+        del surfaces[name]
+surfaces["go_runtime"]["sha256"] = filtered_sha
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_info_filter}" --out "${tmp}/out-info-filter"
+assert_status 1
+assert_stderr_contains "surface go_runtime archive entry list does not match the pinned commit tree"
+assert_stderr_contains "filtered out of the archive"
+assert_stderr_contains "cdk/package.json"
+[[ "${builder_stderr}" != *"archive-affecting"* ]] \
+  || case_fail "the tree-level attribute refusal fired for an attribute outside the pinned tree"
+[[ "${builder_stderr}" != *"archive content does not match"* ]] \
+  || case_fail "the content compare spoke instead of the entry-list check"
+rm -f "${fixture}/.git/info/attributes"
+case_pass
+
+# --- case 28: an out-of-tree export-subst attribute is refused by the content compare ----
+# The same out-of-tree route with `export-subst`: the entry names are unchanged, so the
+# entry-list comparison passes and ONLY the blob-by-blob content compare can refuse it. This is
+# the case that fails if the content compare is removed, so it pins that control.
+case_start "an out-of-tree export-subst attribute is refused by the archive content compare"
+mkdir -p "${fixture}/.git/info"
+printf '* export-subst\n' > "${fixture}/.git/info/attributes"
+git -C "${fixture}" archive --format=tar --output="${tmp}/info-subst.tar" "${fixture_commit}" -- . ':(exclude)cdk-go'
+info_subst_sha="$(python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "${tmp}/info-subst.tar")"
+cfg_info_subst="${tmp}/cfg-info-subst.json"
+write_config "${cfg_info_subst}" "lab"
+python3 - "${cfg_info_subst}" "${info_subst_sha}" <<'PY'
+import json
+import sys
+
+path, filtered_sha = sys.argv[1], sys.argv[2]
+doc = json.load(open(path))
+surfaces = doc["apptheory"]["candidate"]["surfaces"]
+for name in list(surfaces):
+    if name != "go_runtime":
+        del surfaces[name]
+surfaces["go_runtime"]["sha256"] = filtered_sha
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+run_builder bash "${builder}" --repo "${fixture}" --config "${cfg_info_subst}" --out "${tmp}/out-info-subst"
+assert_status 1
+assert_stderr_contains "surface go_runtime archive content does not match the pinned commit tree"
+assert_stderr_contains "VERSION-TEMPLATE.txt"
+assert_stderr_contains "content differs from the pinned blob"
+[[ "${builder_stderr}" != *"archive-affecting"* ]] \
+  || case_fail "the tree-level attribute refusal fired for an attribute outside the pinned tree"
+[[ "${builder_stderr}" != *"archive entry list does not match"* ]] \
+  || case_fail "the entry-list check spoke, though export-subst leaves every entry name in place"
+[[ "${builder_stderr}" != *"hash mismatch"* ]] \
+  || case_fail "the recorded hash matched the substituted archive, so only the content compare can refuse this"
+[[ ! -f "${tmp}/out-info-subst/go_runtime.tar" ]] || case_fail "a substituted archive was handed over"
+rm -f "${fixture}/.git/info/attributes"
+case_pass
+
+# --- case 29: the repository's own tree trips no archive check ---------------------------
+# The new controls must not refuse a real tree. The fixture cases prove it for the fixture; this
+# case runs the real builder against THIS repository (S1 only -- the npm and python surfaces are
+# the only ones that need the network), so the tree-level attribute refusal, the entry-list
+# comparison and the blob-by-blob content compare all run over the repository's own tracked
+# files. The candidate builder requires a clean working tree, so a dirty checkout fails this
+# case with that reason rather than a misleading one.
+case_start "the repository's own tree trips no archive check"
+if [[ -n "$(git -C "${repo_root}" status --porcelain)" ]]; then
+  case_fail "the checkout is dirty, so the builder cannot run against it (the candidate builder requires a clean working tree)"
+fi
+real_commit="$(git -C "${repo_root}" rev-parse HEAD)"
+real_tree="$(git -C "${repo_root}" rev-parse "HEAD^{tree}")"
+real_epoch="$(git -C "${repo_root}" show -s --format=%ct HEAD)"
+git -C "${repo_root}" archive --format=tar --output="${tmp}/real-go_runtime.tar" "${real_commit}" -- . ':(exclude)cdk-go'
+real_sha="$(python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "${tmp}/real-go_runtime.tar")"
+cfg_real="${tmp}/cfg-real.json"
+python3 - "${cfg_real}" "${real_commit}" "${real_tree}" "${real_epoch}" "${real_sha}" <<'PY'
+import json
+import sys
+
+path, commit, tree, epoch, sha = sys.argv[1:6]
+doc = {
+    "stage": "lab",
+    "expected_account_id": "123456789012",
+    "apptheory": {
+        "candidate": {
+            "commit": commit,
+            "tree": tree,
+            "source_date_epoch": int(epoch),
+            "surfaces": {"go_runtime": {"sha256": sha}},
+        }
+    },
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2)
+PY
+run_builder bash "${builder}" --repo "${repo_root}" --config "${cfg_real}" --out "${tmp}/out-real"
+assert_status 0
+[[ -f "${tmp}/out-real/go_runtime.tar" ]] || case_fail "the real-tree build handed over no go_runtime.tar"
+last_line="$(printf '%s\n' "${builder_stdout}" | tail -n 1)"
+[[ "${last_line}" == "candidate-build: PASS (lab ${real_commit}; 1 surfaces verified)" ]] \
+  || case_fail "final PASS line mismatch: ${last_line}"
+rm -f "${tmp}/real-go_runtime.tar" "${tmp}/out-real/go_runtime.tar"
 case_pass
 
 printf 'candidate-build: self-test PASS (%s cases)\n' "${cases_passed}"

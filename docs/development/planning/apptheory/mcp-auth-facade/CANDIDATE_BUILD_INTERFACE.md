@@ -179,22 +179,49 @@ The checks run in this order, and each one fails closed before any artifact is h
 8. **Per-surface verification** — each surface is built with the repository's own deterministic build script,
    then hashed; a `sha256` mismatch (or an npm `integrity` mismatch) prints the encoded value, the observed value
    and the artifact path, removes the artifact from `--out`, and exits 1. An artifact is copied into `--out` only
-   **after** it verifies. The two `git archive` surfaces are checked for their entry list first (see below), so a
-   filtered tree is refused by name rather than by a hash that would have matched.
+   **after** it verifies. The two `git archive` surfaces are additionally checked before their recorded hash is
+   compared (steps 9 and 10 below).
+9. **The archive-affecting attribute class is refused by name, before anything is archived.** When the config
+   declares S1 or S2, every `.gitattributes` anywhere in the pinned commit's tree is read (`git ls-tree -r` +
+   `git cat-file blob <commit>:<path>`) and the commit is refused when any of them sets `export-ignore` or
+   `export-subst` (its `-attr`/`!attr` spellings included, and a macro definition line counts), naming the file and
+   line. Neither attribute has a legitimate use in a candidate tree: an archive surface must be the pinned tree
+   byte for byte. A config that declares neither archive surface is not judged by this check.
+10. **Archive content is compared blob by blob.** Each built archive is compared with the pinned commit twice: its
+    file entry list first (an `export-subst` archive leaves every entry name in place), then — for every file,
+    symlink and hardlink entry — the blob content. See the paragraphs below.
 
 Surface → command as built (the S1/S2 tree archives are hashed directly; S3–S6 invoke the repository's own
-pack/build scripts, which already honor `SOURCE_DATE_EPOCH` and normalize artifact mtimes). The two `git archive`
-surfaces are additionally checked **entry by entry**: the archive's file list must equal the pinned commit's
-tracked file list (minus the nested `cdk-go` module for S1), because a commit-level `.gitattributes` carrying
-`export-ignore` silently drops paths from `git archive` — and since the witnessed build runs the same command it
-filters identically, the per-surface hash would still match a tree that is missing paths. Git offers no way to
-switch that filtering off (`--worktree-attributes` only *adds* worktree attributes; there is no `--no-attributes`),
-so the entry list is compared against `git ls-tree -r` and any difference fails closed before the hash compare.
+pack/build scripts, which already honor `SOURCE_DATE_EPOCH` and normalize artifact mtimes).
+
+The two `git archive` surfaces are checked **three ways**, because `git archive` honours the pinned commit's own
+`.gitattributes` and the witnessed build runs the same command — so a filtered or rewritten archive would still
+match its own recorded hash:
+
+- **The attribute class is refused up front** (step 9). A committed `export-ignore` silently drops paths and a
+  committed `export-subst` rewrites file content; either one is refused by name, before any archive is built, so
+  the clear error fires first.
+- **The entry list must equal the pinned commit's tracked file list** (minus the nested `cdk-go` module for S1).
+  Git offers no way to switch export filtering off (`--worktree-attributes` only *adds* worktree attributes; there
+  is no `--no-attributes`), so the archive's file entry list is compared against `git ls-tree -r` and any
+  difference — a filtered path, or an entry the pinned tree does not carry — fails closed.
+- **Every entry's blob content must equal the pinned blob** (step 10). This closes the rest of the class: an
+  `export-subst` archive keeps every entry name in place, so the entry list and the recorded hash both still
+  match. Each archive entry is hashed as a git blob (`sha1("blob <len>\0<content>")`) and compared with the blob
+  object id `git ls-tree -r` reports for that path, with the symlink target checked (the link text *is* the blob)
+  and the executable bit compared as well (`git archive` derives the permission bits from the file type and the
+  operator's umask, so only the exec bit is comparable). Indexing uses `git ls-tree -r -z`, so paths are compared
+  as bytes rather than as quoted text.
+
+The attribute refusal is a property of the pinned tree, so it is the named, up-front error; the entry-list and
+content comparisons are the backstop for attributes applied from outside the tree — `git archive` also honours
+`$GIT_DIR/info/attributes` and a global `attributesFile`, which no tree scan can see. Any difference in any of the
+three fails closed before the recorded hash compare runs.
 
 | Surface | Command | Artifact |
 | --- | --- | --- |
-| S1 `go_runtime` | `git -C <repo> archive --format=tar <commit> -- . ':(exclude)cdk-go'` then an entry-list comparison against `git ls-tree -r <commit>` minus `cdk-go` | `go_runtime.tar` |
-| S2 `go_cdk` | `git -C <repo> archive --format=tar <commit> -- cdk-go/apptheorycdk` then an entry-list comparison against `git ls-tree -r <commit> -- cdk-go/apptheorycdk` | `go_cdk.tar` |
+| S1 `go_runtime` | `git -C <repo> archive --format=tar <commit> -- . ':(exclude)cdk-go'`, then an entry-list comparison against `git ls-tree -r <commit>` minus `cdk-go` and a blob-content comparison against the same index (with the pinned commit refused up front if any in-tree `.gitattributes` is archive-affecting; `git ls-tree -r -z` is used for the content index) | `go_runtime.tar` |
+| S2 `go_cdk` | `git -C <repo> archive --format=tar <commit> -- cdk-go/apptheorycdk`, then an entry-list comparison against `git ls-tree -r <commit> -- cdk-go/apptheorycdk` and a blob-content comparison against the same index (with the pinned commit refused up front if any in-tree `.gitattributes` is archive-affecting) | `go_cdk.tar` |
 | S3 `npm_cdk` | `./scripts/verify-cdk-ts-pack.sh` | `theory-cloud-apptheory-cdk-<version>.tgz` |
 | S4 `npm_ts_runtime` | `./scripts/verify-ts-pack.sh` | `theory-cloud-apptheory-<version>.tgz` |
 | S5 `py_runtime_wheel` | `./scripts/verify-python-build.sh` (one run) | `apptheory-<pyversion>-py3-none-any.whl` |
@@ -221,10 +248,15 @@ repository (no network, no AWS, no credentials) and asserts: the example config 
 builds and verifies; a declared subset builds exactly its declared artifacts, hands none of the undeclared ones over,
 receipts only the declared ones and never runs an undeclared surface's build script; an empty declared surface set
 and a declared surface missing its witness are refused; an unknown surface key, a per-surface `commit` and a
-misspelled surface field are refused rather than ignored; a committed `.gitattributes` carrying `export-ignore` is
-refused because the archive's entry list no longer equals the pinned commit's tree — and that case reproduces the
-attack exactly, since the witness hash it uses is the hash of the *filtered* archive, which a hash-only builder
-accepts; a tampered `sha256`, a tampered npm `integrity`, a wrong
+misspelled surface field are refused rather than ignored; a committed `.gitattributes` carrying `export-ignore` or
+`export-subst` is refused by name, and both attacks are reproduced exactly — each case records the hash of the
+filtered (respectively substituted) archive, which a hash-only builder accepts, the `export-subst` case proves the
+archived bytes really differ from the pinned blob while the entry names do not, and each asserts the named
+attribute refusal fired *before* the entry-list and content backstops; an attribute set outside the tree
+(`$GIT_DIR/info/attributes`, which no tree scan can see) is still refused — by the entry-list comparison for
+`export-ignore`, and by the blob-content comparison for `export-subst`; and the repository's own tree trips no
+archive check, because one case runs the real builder against this checkout (S1 only, offline); a tampered
+`sha256`, a tampered npm `integrity`, a wrong
 tree, a mismatched `source_date_epoch`, a wrong encoded `file`, a declared npm surface without its integrity, an
 environment variables-only attempt, a `live`/`staging` stage and an account mismatch all fail closed; and
 `--print-plan` writes nothing. The named fail-closed errors are each reachable and each proven to fire *before* the

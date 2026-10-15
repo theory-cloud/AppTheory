@@ -34,14 +34,22 @@
 #   py_runtime_sdist  ./scripts/verify-python-build.sh
 #   py_cdk_wheel      ./scripts/verify-cdk-python-build.sh
 #
-# The two git-archive surfaces are additionally checked entry by entry: the archive's file
-# list must equal the pinned commit's tracked file list (minus the nested cdk-go module for
-# S1). A commit-level .gitattributes carrying `export-ignore` silently drops paths from
-# `git archive`, and because the witnessed build runs the same command it filters
-# identically -- the per-surface hash would still match a tree that is missing paths. Git
-# offers no way to switch that filtering off (`--worktree-attributes` only adds worktree
-# attributes; there is no --no-attributes), so the entry list is compared against
-# `git ls-tree -r` and any difference fails closed.
+# The two git-archive surfaces are checked three ways, because `git archive` honours the pinned
+# commit's own .gitattributes and the witnessed build runs the same command -- so a filtered or
+# rewritten archive still matches its own recorded hash:
+#   * the pinned commit is refused up front when any `.gitattributes` in its tree carries an
+#     archive-affecting attribute (`export-ignore`, `export-subst`): the named refusal for the
+#     whole class;
+#   * the archive's file entry list must equal the pinned commit's tracked file list (minus the
+#     nested cdk-go module for S1), because a committed `export-ignore` silently drops paths
+#     from `git archive` and git offers no way to switch that filtering off
+#     (`--worktree-attributes` only *adds* attributes);
+#   * every archived file entry's blob content must equal the pinned commit's blob for that
+#     path (symlink targets and the executable bit included), because `export-subst` rewrites
+#     file content while leaving every entry name in place.
+# The entry list and the content compare are also the backstop for attributes applied from
+# outside the tree (`$GIT_DIR/info/attributes` and a global attributesFile are honoured too).
+# Any difference in any of the three fails closed, before the recorded hash compare runs.
 #
 # The builder is incapable of targeting live for two independent reasons: the `stage`
 # allowlist is exactly `lab`, and a config without an encoded `candidate` block is refused.
@@ -456,6 +464,19 @@ for name in "${declared_surfaces[@]}"; do
   fi
 done
 
+# 10. Archive-affecting attributes in the pinned commit's tree are refused before anything is
+#     archived or planned. Only the git-archive surfaces are affected, so a config that declares
+#     neither S1 nor S2 is not judged by this check.
+archive_surfaces=()
+for name in "${declared_surfaces[@]}"; do
+  case "${name}" in
+    go_runtime|go_cdk) archive_surfaces+=("${name}") ;;
+  esac
+done
+if (( ${#archive_surfaces[@]} > 0 )); then
+  refuse_archive_affecting_attributes
+fi
+
 if (( print_plan == 1 )); then
   printf 'candidate-build: PLAN (nothing built, no receipt written)\n'
   printf '  config: %s\n' "${config}"
@@ -502,16 +523,94 @@ declare -A surface_artifact=()
 declare -A surface_sha=()
 declare -A surface_integrity=()
 
+# Fails closed when the pinned commit's tree carries any archive-affecting attribute.
+#
+# `git archive` honours the commit's own `.gitattributes`, and the witnessed build runs the same
+# command, so a committed `export-ignore` (drops paths) or `export-subst` (rewrites `$Format:...$`
+# content) is invisible to the recorded hash. Neither has any legitimate use in a candidate tree --
+# an archive surface must be the pinned tree byte for byte -- so the whole class is refused by name
+# here, before anything is archived, and the entry-list and content comparisons below stay the
+# backstop for attributes applied from outside the tree (`$GIT_DIR/info/attributes` and a global
+# attributesFile are honoured by `git archive` too).
+refuse_archive_affecting_attributes() {
+  local listing="${scratch}/attributes-list.txt"
+  if ! git -C "${repo}" ls-tree -r -z --name-only "${commit}" > "${listing}" 2>"${scratch}/attributes-list.err"; then
+    fail "could not list the pinned commit's tree ($(head -n 1 "${scratch}/attributes-list.err"))"
+  fi
+  local targets="${scratch}/attributes-targets.tsv"
+  : > "${targets}"
+  local found=0
+  local path blob
+  while IFS= read -r -d '' path; do
+    [[ "${path##*/}" == ".gitattributes" ]] || continue
+    found=$((found + 1))
+    blob="${scratch}/attributes-${found}.txt"
+    if ! git -C "${repo}" cat-file blob "${commit}:${path}" > "${blob}" 2>"${scratch}/attributes-cat.err"; then
+      fail "could not read '${path}' from the pinned commit ($(head -n 1 "${scratch}/attributes-cat.err"))"
+    fi
+    printf '%s\t%s\n' "${path}" "${blob}" >> "${targets}"
+  done < "${listing}"
+  if (( found == 0 )); then
+    return 0
+  fi
+  local diagnosis="${scratch}/attributes-diagnosis.txt"
+  if ! python3 - "${targets}" > "${diagnosis}" <<'PY'
+import sys
+
+# The attributes that change what `git archive` writes. `-attr` and `!attr` floor the same name,
+# and a macro definition line (`[attr]name ...`) carries the attribute tokens too, so every
+# non-comment line is scanned.
+ARCHIVE_AFFECTING = ("export-ignore", "export-subst")
+
+offenders = []
+with open(sys.argv[1], "r", encoding="utf-8", errors="surrogateescape") as manifest:
+    for record in manifest:
+        record = record.rstrip("\n")
+        if not record:
+            continue
+        path, blob_path = record.split("\t", 1)
+        with open(blob_path, "r", encoding="utf-8", errors="surrogateescape") as blob:
+            for number, raw in enumerate(blob, 1):
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                fields = line.split()
+                pattern = fields[0]
+                for attribute in fields[1:]:
+                    name = attribute.lstrip("-!").split("=", 1)[0]
+                    if name in ARCHIVE_AFFECTING:
+                        offenders.append((path, number, pattern, attribute))
+
+if not offenders:
+    raise SystemExit(0)
+
+for path, number, pattern, attribute in offenders:
+    print(f"{path}:{number}: pattern '{pattern}' sets the archive-affecting attribute '{attribute}'")
+print(
+    "git archive honours these attributes and the witnessed build runs the same command, so a "
+    "filtered path (export-ignore) or rewritten file content (export-subst) would still match its "
+    "recorded hash; the builder refuses the whole attribute class rather than hand over an archive "
+    "that is not the pinned commit's"
+)
+raise SystemExit(1)
+PY
+  then
+    cat "${diagnosis}" >&2
+    fail "the pinned commit carries an archive-affecting .gitattributes attribute (see the lines above)"
+  fi
+}
+
 # Fails closed unless a git-archive surface carries exactly the pinned commit's tracked
 # file list (minus <exclude_path>, the nested cdk-go module, for S1).
 #
-# The archive is produced by `git archive`, which honours the commit's own .gitattributes:
-# an `export-ignore` there silently drops paths from the archive and the witnessed build
-# (the same command) filters identically, so the per-surface hash would still match a tree
-# that is missing paths. Git exposes no option to disable in-tree export
-# filtering (`--worktree-attributes` only *adds* worktree attributes), so the archive's
-# entry list is compared against `git ls-tree -r` and any difference -- a filtered path, or
-# an entry the pinned tree does not carry -- fails closed before the hash compare runs.
+# The archive is produced by `git archive`, which honours the commit's own .gitattributes: an
+# `export-ignore` there silently drops paths from the archive and the witnessed build (the same
+# command) filters identically, so the per-surface hash would still match a tree that is missing
+# paths. Git exposes no option to disable in-tree export filtering (`--worktree-attributes` only
+# *adds* worktree attributes), so the archive's entry list is compared against `git ls-tree -r`
+# and any difference -- a filtered path, or an entry the pinned tree does not carry -- fails
+# closed before the hash compare runs. The attribute refusal above and the content compare below
+# cover the rest of the class.
 verify_archive_matches_tree() {
   local name="$1"
   local archive="$2"
@@ -579,6 +678,113 @@ PY
   fi
 }
 
+# Fails closed unless every blob content in a git-archive surface equals the pinned commit's
+# blob for that path.
+#
+# The entry-list check cannot see `export-subst`: it rewrites file *content* (`$Format:...$`
+# expands to the substituted value) while leaving every entry name in place, so a rewritten
+# archive -- whose recorded hash is the hash of the rewritten archive -- would pass both the
+# entry list and the hash compare. Every archive file entry is therefore hashed as a git blob
+# (`sha1("blob <len>\0<content>")`) and compared to the pinned blob object id, with the symlink
+# target (the link text *is* the blob) checked, plus the executable bit -- `git archive` derives
+# the mode from the file type and the operator's umask, so only the exec bit is comparable.
+verify_archive_content_matches_tree() {
+  local name="$1"
+  local archive="$2"
+  local exclude_path="$3"
+  shift 3
+  local index="${scratch}/${name}_blob-index.txt"
+  if ! git -C "${repo}" ls-tree -r -z "${commit}" "$@" > "${index}" 2>"${scratch}/${name}_blob-index.err"; then
+    fail "surface ${name}: could not index the pinned commit's blobs ($(head -n 1 "${scratch}/${name}_blob-index.err"))"
+  fi
+  local diagnosis="${scratch}/${name}_content-diff.txt"
+  if ! python3 - "${archive}" "${index}" "${exclude_path}" > "${diagnosis}" <<'PY'
+import hashlib
+import sys
+import tarfile
+
+archive_path, index_path, exclude_path = sys.argv[1], sys.argv[2], sys.argv[3]
+
+excluded = exclude_path.rstrip("/")
+
+
+def is_excluded(path):
+    if not excluded:
+        return False
+    return path == excluded or path.startswith(excluded + "/")
+
+
+def blob_id(payload):
+    return hashlib.sha1(b"blob %d\0" % len(payload) + payload).hexdigest()
+
+
+expected = {}
+with open(index_path, "rb") as handle:
+    for record in handle.read().split(b"\0"):
+        if not record:
+            continue
+        meta, path_bytes = record.split(b"\t", 1)
+        mode, object_type, oid = meta.decode("ascii").split(" ")
+        # A gitlink (submodule) is not a blob: `git archive` writes a directory entry for it.
+        if object_type != "blob":
+            continue
+        path = path_bytes.decode("utf-8", "surrogateescape")
+        if is_excluded(path):
+            continue
+        expected[path] = (mode, oid)
+
+problems = []
+with tarfile.open(archive_path, "r:") as archive:
+    for member in archive.getmembers():
+        if not (member.isfile() or member.issym() or member.islnk()):
+            continue
+        if member.name not in expected:
+            continue  # the entry-list check owns names the pinned tree does not carry
+        mode, oid = expected[member.name]
+        if member.issym():
+            payload = member.linkname.encode("utf-8", "surrogateescape")
+        else:
+            handle = archive.extractfile(member)
+            if handle is None:
+                problems.append((member.name, "the archive carries no content for this entry"))
+                continue
+            payload = handle.read()
+        observed = blob_id(payload)
+        if observed != oid:
+            problems.append(
+                (
+                    member.name,
+                    "content differs from the pinned blob "
+                    "(archive blob {}, pinned tree blob {})".format(observed, oid),
+                )
+            )
+            continue
+        if member.issym():
+            continue
+        if mode == "100755" and not member.mode & 0o100:
+            problems.append((member.name, "the pinned tree marks this file executable and the archive does not"))
+        elif mode == "100644" and member.mode & 0o100:
+            problems.append((member.name, "the archive marks this file executable and the pinned tree does not"))
+
+for path, detail in problems[:10]:
+    print(f"{path}: {detail}")
+if len(problems) > 10:
+    print(f"(+{len(problems) - 10} more)")
+if problems:
+    print(
+        "the archived bytes are not the pinned commit's: an export-subst attribute rewrites file "
+        "content and leaves every entry name in place, so the entry list and the recorded hash can "
+        "both still match"
+    )
+    raise SystemExit(1)
+raise SystemExit(0)
+PY
+  then
+    cat "${diagnosis}" >&2
+    fail "surface ${name} archive content does not match the pinned commit tree (see the paths above)"
+  fi
+}
+
 verify_and_copy() {
   local name="$1"
   local artifact="$2"
@@ -630,6 +836,7 @@ if [[ " ${declared_surfaces[*]} " == *" go_runtime "* ]]; then
   git -C "${repo}" archive --format=tar --output="${scratch}/go_runtime.tar" "${commit}" -- . ':(exclude)cdk-go' \
     || fail "surface go_runtime build failed (git archive)"
   verify_archive_matches_tree go_runtime "${scratch}/go_runtime.tar" "cdk-go"
+  verify_archive_content_matches_tree go_runtime "${scratch}/go_runtime.tar" "cdk-go"
   verify_and_copy go_runtime "${scratch}/go_runtime.tar"
 fi
 
@@ -639,6 +846,7 @@ if [[ " ${declared_surfaces[*]} " == *" go_cdk "* ]]; then
   git -C "${repo}" archive --format=tar --output="${scratch}/go_cdk.tar" "${commit}" -- cdk-go/apptheorycdk \
     || fail "surface go_cdk build failed (git archive)"
   verify_archive_matches_tree go_cdk "${scratch}/go_cdk.tar" "" cdk-go/apptheorycdk
+  verify_archive_content_matches_tree go_cdk "${scratch}/go_cdk.tar" "" cdk-go/apptheorycdk
   verify_and_copy go_cdk "${scratch}/go_cdk.tar"
 fi
 
