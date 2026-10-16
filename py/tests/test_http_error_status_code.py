@@ -39,6 +39,33 @@ def _unserializable_details_app(error_format: str) -> App:
     return app
 
 
+def _circular_details() -> dict[str, object]:
+    """A details mapping with a cycle, which json.dumps rejects with ValueError."""
+    details: dict[str, object] = {"reason": "x"}
+    details["self"] = details
+    return details
+
+
+def _circular_details_app(error_format: str) -> App:
+    """An App whose handler raises an envelope holding a cycle.
+
+    json raises ``ValueError`` for a cycle, not the ``TypeError`` an unserializable value
+    raises, so the internal-error fallback has to catch both.
+    """
+    app = App(tier="p0", http_error_format=error_format)
+
+    def teapot(_ctx) -> Response:
+        raise AppTheoryError(
+            code="teapot",
+            message="I am a teapot",
+            status_code=418,
+            details=_circular_details(),
+        )
+
+    app.get("/teapot", teapot)
+    return app
+
+
 class ServedErrorStatusCodeTests(unittest.TestCase):
     """The nested envelope must report the status the runtime actually sent (#1161)."""
 
@@ -147,6 +174,30 @@ class ServedErrorStatusCodeTests(unittest.TestCase):
 
     def test_unserializable_details_flat_legacy_sends_the_internal_error_fallback_with_status_500(self) -> None:
         response = self._serve(_unserializable_details_app("flat_legacy"), Request(method="GET", path="/teapot"))
+        self.assertEqual(response.status, 500)
+        self.assertEqual(
+            bytes(response.body).decode("utf-8"),
+            '{"code":"app.internal","message":"internal error"}',
+        )
+        self.assertEqual(
+            list(response.headers["content-type"]),
+            ["application/json; charset=utf-8"],
+        )
+
+    def test_circular_details_nested_sends_the_internal_error_fallback_with_status_500(self) -> None:
+        response = self._serve(_circular_details_app("nested"), Request(method="GET", path="/teapot"))
+        self.assertEqual(response.status, 500)
+        self.assertEqual(
+            bytes(response.body).decode("utf-8"),
+            '{"error":{"code":"app.internal","message":"internal error","status_code":500}}',
+        )
+        self.assertEqual(
+            list(response.headers["content-type"]),
+            ["application/json; charset=utf-8"],
+        )
+
+    def test_circular_details_flat_legacy_sends_the_internal_error_fallback_with_status_500(self) -> None:
+        response = self._serve(_circular_details_app("flat_legacy"), Request(method="GET", path="/teapot"))
         self.assertEqual(response.status, 500)
         self.assertEqual(
             bytes(response.body).decode("utf-8"),
