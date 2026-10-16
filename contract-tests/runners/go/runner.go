@@ -145,7 +145,9 @@ func compareLegacyResponseBody(expected FixtureResponse, actualBody []byte) erro
 		if !jsonEqual(expectedJSON, actualJSON) {
 			return fmt.Errorf("body_json mismatch")
 		}
-		return nil
+		if expected.Body == nil {
+			return nil
+		}
 	}
 
 	var expectedBodyBytes []byte

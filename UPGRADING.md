@@ -52,6 +52,90 @@ document that never sets it stays byte-identical.
 
 **Additive; no breaking change.** No other document changes.
 
+### Scalable MCP route model and the new-API migration recipe
+
+`AppTheoryMcpServer` gains `routeModel` (`AppTheoryMcpRouteModel`), and `AppTheoryHttpApi` gains explicit
+posture-carrying `routes`, route-keyed `routeSettings` throttling, and a configurable `stage.accessLogFormat`. The
+default is unchanged in both constructs.
+
+- **`explicit` (the default)** — one HTTP API v2 route per derived route key: the construct's historical inventory,
+  including its positional route construct ids. A stack that does not set `routeModel` synthesizes byte-identically and
+  deploys in place with no change.
+- **`consolidated`** — exactly two routes, `ANY /` and `ANY /{proxy+}`, backed by one shared integration. The gateway
+  no longer enumerates the derived inventory; the AppTheory runtime router performs method and path dispatch,
+  path-parameter capture, and denial.
+- **Posture restriction** — consolidation never changes gateway admission, so every gateway route must be `NONE`:
+  `consolidated` is valid only for `transportPosture` `runtime-bearer` and `none-public`. `iam` and `jwt` are refused at
+  synthesis (`AppTheoryMcpServer: routeModel consolidated is only valid for transportPosture RUNTIME_BEARER or
+  NONE_PUBLIC ...`). Consolidated mode may also attach only to an API that has no routes at attach time.
+- **Unchanged runtime contract** — `routeInventory`, `mcpPaths`, `protectedResourceMetadataPaths`, and `endpoints`
+  carry the same derived values in both models, and the runtime still registers every entry in `routeInventory`.
+- **Whole-stack attach guard** — "no routes at attach time" is checked across the whole stack, not just the API's
+  construct children, so a route wired onto the attached API from a sibling construct scope (for example stack-level
+  `OAuthFacadeRoute0`, `OAuthFacadeRoute1`, ... constructs) now fails the attach. Routes added *after* the construct
+  creates its greedy routes — whether the API is attached or construct-owned — remain allowed only when they carry a
+  non-`NONE` authorizer and do not redeclare `ANY /` or `ANY /{proxy+}`; both rules are enforced at synthesis.
+- **`routeSettings` is validated** — `AppTheoryHttpApi` now rejects a `routeSettings` key that matches no route the
+  construct emits, naming the emitted keys, instead of letting API Gateway silently ignore the entry. Keys are the
+  greedy `ANY /` and `ANY /{proxy+}` plus one `<METHOD> <path>` per `routes` entry.
+- **Consumer `OPTIONS` vs `cors`** — when `cors` is set, `buildCorsPreflight` includes `OPTIONS` in its default
+  `allowMethods`, and the API-level CORS configuration answers matching preflight requests before any route
+  integration runs, so a declared `OPTIONS` route on the same path is shadowed. Setting `cors.allowMethods` without
+  `OPTIONS` removes gateway preflight handling entirely, leaving a declared `OPTIONS` route as the only responder for a
+  preflight request — declare the methods you need in `cors.allowMethods` instead of relying on a declared route.
+
+```ts
+new AppTheoryMcpServer(this, "ConsolidatedMcp", {
+  handler,
+  transportPosture: AppTheoryMcpTransportPosture.RUNTIME_BEARER,
+  runtimePosture: { requireBearerToken: true },
+  originReachability: AppTheoryMcpOriginReachability.LOCKED,
+  denialSignal: {},
+  ownedApi: { stage: { throttlingEnabled: true } },
+  routeModel: AppTheoryMcpRouteModel.CONSOLIDATED,
+});
+```
+
+**Migration recipe for a deployed `explicit` server: new-API swap.** A route key is held by exactly one route resource
+per API, and CloudFormation tracks those resources by logical id. Renaming a deployed route's construct id while
+keeping its key is a create-before-delete collision: CloudFormation creates the new logical id while the old one still
+holds the key, and the update fails. A brand-new API has no such history — route keys are unique per API, so its routes
+cannot collide with any route in the old API — which makes the new-API swap collision-free by construction:
+
+1. create the new consolidated API (the construct emits the semantic route ids `RouteAnyRoot` and `RouteAnyProxy`);
+2. move the origin to it, for example by repointing the CloudFront behaviour (or the custom-domain API mapping);
+3. delete the old positional API wholesale.
+
+Two operational edges are worth planning for. A client that calls the old `execute-api` hostname directly, rather than
+through the front door, loses that hostname when the old API is deleted; and the old API's deletion is unordered
+against front-door edge propagation, so edges can briefly return `502`. Deleting the old API one deploy later, after
+propagation, avoids that window.
+
+**Additive; no breaking change.** `explicit` stays the default and byte-identical, so an existing stack deploys in place
+with no action; consolidation is opt-in and, in this release, limited to the `runtime-bearer` and `none-public`
+postures. See the
+[MCP server facade guide](docs/features/mcp-server-construct.md#route-model-explicit-and-consolidated).
+
+#### Explicit route identity: `routeIdMode`
+
+`AppTheoryMcpServer` also gains `routeIdMode` (`AppTheoryMcpRouteIdMode`) for the explicit model. The default is
+`legacy`, which keeps the positional `Route0`, `Route1`, ... construct ids byte-identical, so an existing stack deploys
+in place with no action. `semantic` derives each id from the route method and pattern (for example
+`RoutePOSTClientNamespaceMcp`), so inserting, removing, or reordering a route family never renames an unrelated route.
+
+`semantic` is intended for **newly created** explicit APIs. Switching an existing deployed explicit API from `legacy`
+to `semantic` in place renames every route in one update, which is itself the create-before-delete collision described
+above, so adopt it on an existing stack only through the same new-API swap: create the new explicit API with
+`routeIdMode: AppTheoryMcpRouteIdMode.SEMANTIC`, move the origin, then delete the old positional API. The
+`consolidated` model ignores `routeIdMode` and always emits the fixed ids `RouteAnyRoot` and `RouteAnyProxy`.
+
+A `legacy` to `semantic` move can be checked before deploying: synthesize the before-template and the after-template of
+the same stack and run the reusable transition helper shipped in `cdk/lib/route-transition` — it fails closed on any
+route key held by two logical ids in the same API across the transition.
+
+**Additive; no breaking change.** `routeIdMode` defaults to `legacy`, so omitting it is byte-identical to the previous
+release.
+
 ### Server-issued HTTP request IDs
 
 The HTTP runtime now lets an application choose where the request ID comes from. The default is unchanged: a well-formed

@@ -30,6 +30,7 @@ type FixtureSetup struct {
 	LoggingProfile        json.RawMessage                   `json:"logging_profile,omitempty"`
 	OpenAPI               json.RawMessage                   `json:"openapi,omitempty"`
 	MCP                   FixtureMCPSetup                   `json:"mcp,omitempty"`
+	MCPFacade             *FixtureMCPFacadeSetup            `json:"mcp_facade,omitempty"`
 	OAuth                 FixtureOAuthSetup                 `json:"oauth,omitempty"`
 	ObjectStore           FixtureObjectStoreSetup           `json:"objectstore,omitempty"`
 	VectorStore           FixtureVectorStoreSetup           `json:"vectorstore,omitempty"`
@@ -246,6 +247,52 @@ type FixtureOAuthDCRPolicy struct {
 	AllowedRedirectURIs []string `json:"allowed_redirect_uris,omitempty"`
 	RequirePublicClient bool     `json:"require_public_client,omitempty"`
 	RequireRefreshToken bool     `json:"require_refresh_token,omitempty"`
+}
+
+// FixtureMCPFacadeSetup mounts the MCP OAuth facade on the p0 application so a
+// fixture can drive its real responses. Every field is optional and falls back
+// to the pinned contract vector in
+// contract-tests/fixtures/routing/mcp-route-algebra/expectations.json.
+type FixtureMCPFacadeSetup struct {
+	Issuer              string                  `json:"issuer,omitempty"`
+	JWKSURI             string                  `json:"jwks_uri,omitempty"`
+	PublicBaseURL       string                  `json:"public_base_url,omitempty"`
+	ResourceMetadataURL string                  `json:"resource_metadata_url,omitempty"`
+	Scopes              []string                `json:"scopes,omitempty"`
+	Bearer              *FixtureMCPFacadeBearer `json:"bearer,omitempty"`
+}
+
+// FixtureMCPFacadeBearer selects the runtime-bearer transport posture and the
+// deterministic in-memory token records that posture validates against.
+type FixtureMCPFacadeBearer struct {
+	AcceptedTokens   []FixtureMCPFacadeToken `json:"accepted_tokens,omitempty"`
+	RequiredScopes   []string                `json:"required_scopes,omitempty"`
+	RequiredAudience string                  `json:"required_audience,omitempty"`
+}
+
+// FixtureMCPFacadeToken is one accepted bearer token. A bare string is a token
+// with no scopes, which expresses the insufficient-scope case; the object form
+// carries the token's own scope set.
+type FixtureMCPFacadeToken struct {
+	Token    string   `json:"token"`
+	Subject  string   `json:"subject,omitempty"`
+	Audience string   `json:"audience,omitempty"`
+	Scopes   []string `json:"scopes,omitempty"`
+}
+
+func (t *FixtureMCPFacadeToken) UnmarshalJSON(data []byte) error {
+	var asString string
+	if err := json.Unmarshal(data, &asString); err == nil {
+		*t = FixtureMCPFacadeToken{Token: asString}
+		return nil
+	}
+	type tokenAlias FixtureMCPFacadeToken
+	var token tokenAlias
+	if err := json.Unmarshal(data, &token); err != nil {
+		return err
+	}
+	*t = FixtureMCPFacadeToken(token)
+	return nil
 }
 
 type FixtureOAuthInput struct {

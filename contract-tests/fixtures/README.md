@@ -5,7 +5,7 @@ Fixtures are shared, machine-readable test vectors used to prevent cross-languag
 File layout is organized by behavior domain. The historical tier/milestone label remains inside each fixture's
 `tier` metadata and fixture `id`; directory names are not the contract identifier.
 
-- `contract-tests/fixtures/http-core/` — P0 runtime core: request/response normalization, source provenance, Lambda URL/ALB adapters, and baseline routing
+- `contract-tests/fixtures/http-core/` — P0 runtime core: request/response normalization, source provenance, Lambda URL/ALB adapters, baseline routing, and the mounted MCP auth facade under a greedy route key
 - `contract-tests/fixtures/http-core-v2-streaming/` — P0 buffered HTTP API v2 / Function URL adapter streaming contract: terminating streams drain into the buffered body; live or over-budget streams fail closed with the documented 500 error shape
 - `contract-tests/fixtures/binding/` — P0 typed-handler body/query/path/header binding and binding-error envelopes
 - `contract-tests/fixtures/validation/` — P0 declarative validation rules and canonical 422 field-error envelopes
@@ -30,8 +30,8 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
 - `contract-tests/fixtures/vectorstore/` — SP14 semantic vector-store, Bedrock Titan embedding, metadata filter, and deterministic fake behavior
 
-The current corpus contains 305 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 305 -->
-Of those, 292 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners. The thirteen
+The current corpus contains 319 machine-readable contract vectors plus the internal schema file. <!-- apptheory-fixture-count: 319 -->
+Of those, 306 are single-envelope behavior fixtures executed by the Go, TypeScript, and Python runners. The thirteen
 nested tables under `routing/` — `limiter/multi-window-cancellation.v1.json`, `mcp-route-algebra/expectations.json`, `mcp-route-algebra/facade-route-inventory.json`,
 `mcp-auth-facade/facade-transport-posture.v1.json`, `mcp-auth-facade/facade-route-model.v1.json`,
 `mcp-auth-facade/jwks-validator.v1.json`, `mcp-auth-facade/discovery-bootstrap.v1.json`,
@@ -184,6 +184,27 @@ failures, and the accepted-token context shape. Missing and expired bearer token
 `WWW-Authenticate`); invalid-audience and insufficient-scope tokens are authorization failures (`403 app.forbidden`)
 without a challenge. The DCR/PKCE fixtures pin RFC 7591 public-client registration constraints,
 S256 code challenge verification, authorization-code exchange, and canonical failure envelopes.
+
+## MCP auth facade mount (`setup.mcp_facade`)
+
+`setup.mcp_facade` mounts the runtimes' own MCP OAuth facade (`registerMcpFacade` / `register_mcp_facade`) on the
+fixture application, so a fixture observes the facade's real responses — exact document bytes, challenge headers, and
+error envelopes — rather than a runner-owned stand-in. Every field is optional and falls back to the pinned vector in
+`routing/mcp-route-algebra/expectations.json`:
+
+- `issuer`, `jwks_uri`, `public_base_url`, `resource_metadata_url`: the facade's advertised URLs.
+- `scopes`: the scope set applied to every endpoint kind.
+- `bearer`: selects the `runtime-bearer` transport posture over deterministic in-memory token records.
+  - `accepted_tokens`: known tokens; a bare string is a token with no scopes, and the object form carries the token's
+    own `scopes`.
+  - `required_scopes`: the route scope set a token must carry. A credential-free or unknown token is the `401` case
+    (RFC 9728 `resource_metadata` challenge); a known token missing a required scope is the `403
+    insufficient_scope` case (RFC 6750 `error`/`scope`/`resource_metadata` challenge).
+
+The mounted facade serves the client-facing route algebra, so a fixture asserts its real responses through
+`input.aws_event` with a greedy `ANY /{proxy+}` (or `ANY /`) route key. The `http-core` `mcp-facade-greedy-*`
+fixtures pin the RFC 9728 protected-resource metadata document, both RFC 8414 discovery routes (canonical and
+suffix), and the MCP transport route's `401` and `403` bearer challenges.
 
 
 ## HTTP source provenance fixtures

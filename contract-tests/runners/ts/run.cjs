@@ -2656,7 +2656,9 @@ function compareMCPStep(expected, actual) {
     if (!deepEqual(expected.body_json, actualJson)) {
       return { ok: false, reason: "body_json mismatch", actual, expected };
     }
-    return { ok: true };
+    if (!expected.body) {
+      return { ok: true };
+    }
   }
   const expectedBody = expected.body ? decodeFixtureBody(expected.body) : Buffer.alloc(0);
   if (!expectedBody.equals(actual.body)) {
@@ -2951,7 +2953,9 @@ function compareOAuthStep(expected, actual) {
     if (!deepEqual(expected.body_json, actualJson)) {
       return { ok: false, reason: "body_json mismatch", actual, expected };
     }
-    return { ok: true };
+    if (!expected.body) {
+      return { ok: true };
+    }
   }
   const expectedBody = expected.body ? decodeFixtureBody(expected.body) : Buffer.alloc(0);
   if (!expectedBody.equals(actual.body)) {
@@ -3464,12 +3468,23 @@ function secureOpenAPIErrorMatches(expected, message) {
 
 function secureResponseMatches(expected, actual) {
   if (!actual) return false;
-  const expectedBody = expected.body ? decodeFixtureBody(expected.body) : Buffer.alloc(0);
+  if (Object.prototype.hasOwnProperty.call(expected, "body_json")) {
+    let actualJson;
+    try {
+      actualJson = JSON.parse(Buffer.from(actual.body ?? []).toString("utf8"));
+    } catch {
+      return false;
+    }
+    if (!deepEqual(expected.body_json, actualJson)) return false;
+  }
+  if (expected.body || !Object.prototype.hasOwnProperty.call(expected, "body_json")) {
+    const expectedBody = expected.body ? decodeFixtureBody(expected.body) : Buffer.alloc(0);
+    if (!Buffer.from(actual.body ?? []).equals(Buffer.from(expectedBody))) return false;
+  }
   return Number(expected.status) === Number(actual.status) &&
     deepEqual(canonicalizeHeaders(expected.headers ?? {}), canonicalizeHeaders(actual.headers ?? {})) &&
     deepEqual(expected.cookies ?? [], actual.cookies ?? []) &&
-    Boolean(expected.is_base64) === Boolean(actual.isBase64) &&
-    Buffer.from(actual.body ?? []).equals(Buffer.from(expectedBody));
+    Boolean(expected.is_base64) === Boolean(actual.isBase64);
 }
 
 function cloneSecureFixtureValue(value) {
@@ -3477,8 +3492,31 @@ function cloneSecureFixtureValue(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function secureCanonicalResponseFromAPIGatewayV2Response(resp) {
+  const canonical = canonicalResponseFromAPIGatewayV2Response(resp);
+  return {
+    status: canonical.status,
+    headers: canonical.headers,
+    cookies: canonical.cookies,
+    body: canonical.body,
+    isBase64: canonical.is_base64,
+  };
+}
+
 async function runSecureFixtureStep(app, setup, step) {
   if (step.operation === "http") {
+    const source = String(step.aws_event?.source ?? "")
+      .trim()
+      .toLowerCase();
+    if (source === "apigw_v2") {
+      const output = await app.serveAPIGatewayV2(step.aws_event?.event ?? {});
+      const response = secureCanonicalResponseFromAPIGatewayV2Response(output);
+      return {
+        status: response.status,
+        errorCode: secureErrorCode(Buffer.from(response.body).toString("utf8")),
+        response,
+      };
+    }
     const request = step.request ?? {};
     const response = await app.serve({
       method: request.method,
@@ -3783,6 +3821,12 @@ function compareFixture(fixture, actual, effects) {
     }
     if (!deepEqual(expected.body_json, actualJson)) {
       return { ok: false, reason: "body_json mismatch", actual, expected };
+    }
+    if (expected.body) {
+      const expectedBytes = decodeFixtureBody(expected.body);
+      if (!expectedBytes.equals(actual.body)) {
+        return { ok: false, reason: "body mismatch", actual, expected };
+      }
     }
     const expectedLogs = fixture.expect?.logs ?? [];
     const expectedMetrics = fixture.expect?.metrics ?? [];
@@ -5500,6 +5544,9 @@ async function runFixtureP0(fixture) {
 
   let actualError = null;
   try {
+    if (fixture.setup?.mcp_facade) {
+      registerFixtureMCPFacade(runtime, app, fixture.setup.mcp_facade);
+    }
     for (const route of fixture.setup?.routes ?? []) {
       app.handle(route.method, route.path, routeHandlerForRegistration(runtime, route));
     }
@@ -5569,6 +5616,90 @@ async function runFixtureP0(fixture) {
   };
 
   return { actual, effects: newEffects() };
+}
+
+// The fixture-facing contract vector for the MCP OAuth facade's own default
+// values. They are the pinned values of
+// contract-tests/fixtures/routing/mcp-route-algebra/expectations.json, so a
+// fixture that omits a field still drives the bytes the runtime contract pins.
+const FIXTURE_MCP_FACADE_DEFAULTS = Object.freeze({
+  issuer: "https://issuer.example.com/",
+  jwksURI: "https://issuer.example.com/jwks.json?set=active",
+  publicBaseURL: "https://front.example.com/",
+  resourceMetadataURL:
+    "https://front.example.com/.well-known/oauth-protected-resource/acme/mcp",
+  scopes: ["namespace:use"],
+});
+
+function fixtureMCPFacadeValue(value, fallback) {
+  const text = String(value ?? "").trim();
+  return text === "" ? fallback : text;
+}
+
+// registerFixtureMCPFacade mounts the real MCP OAuth facade on a p0 fixture
+// application. The facade is mounted, not reimplemented: every response a
+// fixture observes is the runtime's own route behavior.
+function registerFixtureMCPFacade(runtime, app, setup) {
+  const scopes =
+    Array.isArray(setup?.scopes) && setup.scopes.length > 0
+      ? setup.scopes.map(String)
+      : FIXTURE_MCP_FACADE_DEFAULTS.scopes.slice();
+  const scopeMap = {};
+  for (const template of runtime.supportedEndpointTemplates()) {
+    scopeMap[template.kind] = scopes.slice();
+  }
+
+  const config = {
+    issuerURL: fixtureMCPFacadeValue(
+      setup?.issuer,
+      FIXTURE_MCP_FACADE_DEFAULTS.issuer,
+    ),
+    jwksURI: fixtureMCPFacadeValue(
+      setup?.jwks_uri,
+      FIXTURE_MCP_FACADE_DEFAULTS.jwksURI,
+    ),
+    urlMode: "public_base_url",
+    publicBaseURL: fixtureMCPFacadeValue(
+      setup?.public_base_url,
+      FIXTURE_MCP_FACADE_DEFAULTS.publicBaseURL,
+    ),
+    scopes: scopeMap,
+    mcpHandler: () => ({
+      status: 204,
+      headers: {},
+      cookies: [],
+      body: Buffer.alloc(0),
+      isBase64: false,
+    }),
+    transportPosture: "iam",
+  };
+
+  if (setup?.bearer) {
+    const requiredScopes = (setup.bearer.required_scopes ?? []).map(String);
+    const records = (setup.bearer.accepted_tokens ?? []).map((entry) => {
+      if (typeof entry === "string") return { token: entry };
+      return {
+        token: String(entry?.token ?? ""),
+        subject: String(entry?.subject ?? ""),
+        audience: String(entry?.audience ?? ""),
+        scopes: Array.isArray(entry?.scopes) ? entry.scopes.map(String) : [],
+      };
+    });
+    config.transportPosture = "runtime-bearer";
+    config.requireBearerToken = {
+      resourceMetadataURL: fixtureMCPFacadeValue(
+        setup?.resource_metadata_url,
+        FIXTURE_MCP_FACADE_DEFAULTS.resourceMetadataURL,
+      ),
+      claimsValidator: runtime.newMemoryBearerTokenValidator(records, {
+        requiredAudience: String(setup.bearer.required_audience ?? ""),
+        requiredScopes,
+      }),
+      requiredScopes: () => requiredScopes.slice(),
+    };
+  }
+
+  runtime.registerMcpFacade(app, config);
 }
 
 function canonicalResponseFromAPIGatewayV2Response(resp) {

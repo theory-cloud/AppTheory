@@ -15,17 +15,36 @@ import (
 
 	"github.com/theory-cloud/apptheory/v6/pkg/naming"
 	apptheory "github.com/theory-cloud/apptheory/v6/runtime"
+	"github.com/theory-cloud/apptheory/v6/runtime/mcpfacade"
+	"github.com/theory-cloud/apptheory/v6/runtime/mcproutes"
+	"github.com/theory-cloud/apptheory/v6/runtime/oauth"
 	"github.com/theory-cloud/apptheory/v6/testkit"
 )
+
+// newFixtureP0App builds the application every p0 fixture runs against: the
+// tier pipeline, the optional MCP OAuth facade mount, then the fixture routes.
+func newFixtureP0App(f Fixture) (*apptheory.App, error) {
+	app := apptheory.New(
+		apptheory.WithTier(apptheory.TierP0),
+		apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormat(f.Setup.HTTPErrorFormat)),
+	)
+	if f.Setup.MCPFacade != nil {
+		if err := registerFixtureMCPFacade(app, *f.Setup.MCPFacade); err != nil {
+			return nil, err
+		}
+	}
+	if err := registerAppTheoryFixtureRoutes(app, f.Setup.Routes); err != nil {
+		return nil, err
+	}
+	return app, nil
+}
 
 func runFixtureP0(f Fixture) error {
 	var app *apptheory.App
 	setupErr := captureSetupError(func() error {
-		app = apptheory.New(
-			apptheory.WithTier(apptheory.TierP0),
-			apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormat(f.Setup.HTTPErrorFormat)),
-		)
-		return registerAppTheoryFixtureRoutes(app, f.Setup.Routes)
+		var err error
+		app, err = newFixtureP0App(f)
+		return err
 	})
 
 	if expectsSetupError(f) {
@@ -67,6 +86,89 @@ func serveFixtureP0(app *apptheory.App, f Fixture) (apptheory.Response, error) {
 	return app.Serve(context.Background(), req), nil
 }
 
+// The fixture-facing contract vector for the MCP OAuth facade's own default
+// values. They are the pinned values of
+// contract-tests/fixtures/routing/mcp-route-algebra/expectations.json, so a
+// fixture that omits a field still drives the same bytes the runtime contract
+// pins.
+const (
+	fixtureMCPFacadeDefaultIssuer              = "https://issuer.example.com/"
+	fixtureMCPFacadeDefaultJWKSURI             = "https://issuer.example.com/jwks.json?set=active"
+	fixtureMCPFacadeDefaultPublicBaseURL       = "https://front.example.com/"
+	fixtureMCPFacadeDefaultResourceMetadataURL = "https://front.example.com/.well-known/oauth-protected-resource/acme/mcp"
+)
+
+var fixtureMCPFacadeEndpointKinds = []mcproutes.EndpointKind{
+	mcproutes.EndpointKindNamespace,
+	mcproutes.EndpointKindPartnerNamespace,
+	mcproutes.EndpointKindAgent,
+	mcproutes.EndpointKindPartnerAgent,
+}
+
+// registerFixtureMCPFacade mounts the real MCP OAuth facade on a p0 fixture
+// application. The facade is mounted, not reimplemented: every response a
+// fixture observes is the runtime's own route behavior.
+func registerFixtureMCPFacade(app *apptheory.App, setup FixtureMCPFacadeSetup) error {
+	scopes := append([]string(nil), setup.Scopes...)
+	if len(scopes) == 0 {
+		scopes = []string{"namespace:use"}
+	}
+	scopeMap := make(map[mcproutes.EndpointKind][]string, len(fixtureMCPFacadeEndpointKinds))
+	for _, kind := range fixtureMCPFacadeEndpointKinds {
+		scopeMap[kind] = append([]string(nil), scopes...)
+	}
+
+	config := mcpfacade.FacadeConfig{
+		IssuerURL:        fixtureMCPFacadeValue(setup.Issuer, fixtureMCPFacadeDefaultIssuer),
+		JWKSURI:          fixtureMCPFacadeValue(setup.JWKSURI, fixtureMCPFacadeDefaultJWKSURI),
+		URLMode:          mcpfacade.URLModePublicBaseURL,
+		PublicBaseURL:    fixtureMCPFacadeValue(setup.PublicBaseURL, fixtureMCPFacadeDefaultPublicBaseURL),
+		Scopes:           scopeMap,
+		MCPHandler:       fixtureMCPFacadeHandler,
+		TransportPosture: mcpfacade.TransportPostureIAM,
+	}
+
+	if setup.Bearer != nil {
+		requiredScopes := append([]string(nil), setup.Bearer.RequiredScopes...)
+		records := make([]oauth.BearerTokenRecord, 0, len(setup.Bearer.AcceptedTokens))
+		for _, token := range setup.Bearer.AcceptedTokens {
+			records = append(records, oauth.BearerTokenRecord{
+				Token:    token.Token,
+				Subject:  token.Subject,
+				Audience: token.Audience,
+				Scopes:   append([]string(nil), token.Scopes...),
+			})
+		}
+		config.TransportPosture = mcpfacade.TransportPostureRuntimeBearer
+		config.RequireBearerToken = &oauth.RequireBearerTokenOptions{
+			ResourceMetadataURL: fixtureMCPFacadeValue(setup.ResourceMetadataURL, fixtureMCPFacadeDefaultResourceMetadataURL),
+			ClaimsValidator: oauth.NewMemoryBearerTokenValidator(records, oauth.BearerTokenValidationOptions{
+				RequiredAudience: setup.Bearer.RequiredAudience,
+				RequiredScopes:   requiredScopes,
+			}),
+			RequiredScopesFunc: func(*apptheory.Context) ([]string, error) {
+				return append([]string(nil), requiredScopes...), nil
+			},
+		}
+	}
+
+	if _, err := mcpfacade.RegisterMCPFacade(app, config); err != nil {
+		return fmt.Errorf("register mcp facade: %w", err)
+	}
+	return nil
+}
+
+func fixtureMCPFacadeHandler(*apptheory.Context) (*apptheory.Response, error) {
+	return apptheory.NoContent(), nil
+}
+
+func fixtureMCPFacadeValue(value, fallback string) string {
+	if value = strings.TrimSpace(value); value != "" {
+		return value
+	}
+	return fallback
+}
+
 func serveFixtureP0AWS(app *apptheory.App, awsEvent *FixtureAWSEvent) (apptheory.Response, error) {
 	source := strings.ToLower(strings.TrimSpace(awsEvent.Source))
 	switch source {
@@ -97,11 +199,8 @@ func serveFixtureP0AWS(app *apptheory.App, awsEvent *FixtureAWSEvent) (apptheory
 }
 
 func printFailureP0(f Fixture) {
-	app := apptheory.New(
-		apptheory.WithTier(apptheory.TierP0),
-		apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormat(f.Setup.HTTPErrorFormat)),
-	)
-	if err := registerAppTheoryFixtureRoutes(app, f.Setup.Routes); err != nil {
+	app, err := newFixtureP0App(f)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "  got: <unavailable>\n")
 		printExpected(f)
 		return
@@ -966,7 +1065,9 @@ func compareFixtureResponseBody(expected FixtureResponse, actual apptheory.Respo
 		if !jsonEqual(expectedJSON, actualJSON) {
 			return fmt.Errorf("body_json mismatch")
 		}
-		return nil
+		if expected.Body == nil {
+			return nil
+		}
 	}
 
 	var expectedBodyBytes []byte

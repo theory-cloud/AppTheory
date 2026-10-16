@@ -30,6 +30,14 @@ type AppTheoryMcpServerProps struct {
 	// Deprecated: Configure `runtime/mcpfacade.FacadeConfig.IssuerURL` in the
 	// application. The construct no longer injects issuer environment values.
 	AuthorizationServerIssuer *string `field:"optional" json:"authorizationServerIssuer" yaml:"authorizationServerIssuer"`
+	// CORS preflight for a construct-owned API.
+	//
+	// Set to `true` for AppTheory
+	// defaults or supply an `AppTheoryHttpApiCorsOptions` object. Invalid in
+	// attach mode, where the owning API configures CORS.
+	// Default: undefined.
+	//
+	Cors interface{} `field:"optional" json:"cors" yaml:"cors"`
 	// Denial-telemetry declaration required under RUNTIME_BEARER only.
 	// Default: undefined.
 	//
@@ -77,6 +85,49 @@ type AppTheoryMcpServerProps struct {
 	// Default: AppTheoryMcpRouteAlgebra.supportedEndpointTemplates()
 	//
 	RouteFamily *AppTheoryMcpRouteFamily `field:"optional" json:"routeFamily" yaml:"routeFamily"`
+	// Construct-id derivation for the explicit route model.
+	//
+	// `legacy` (the default) assigns positional ids in emission order and is
+	// byte-stable for deployed stacks. `semantic` derives each id from its route
+	// method and pattern, so inserting, removing, or reordering a route family
+	// never renames an unrelated route; it is intended for newly created explicit
+	// APIs.
+	//
+	// Switching an existing deployed explicit API from `legacy` to `semantic` in
+	// place renames every route in one update, which is exactly the
+	// create-before-delete route-key collision the migration check refuses. Adopt
+	// `semantic` on an existing stack only through the new-API swap documented in
+	// `UPGRADING.md`.
+	//
+	// This prop applies to `routeModel: explicit` only. The `consolidated` model
+	// already emits the two fixed semantic ids `RouteAnyRoot` and `RouteAnyProxy`.
+	// Default: AppTheoryMcpRouteIdMode.LEGACY
+	//
+	RouteIdMode AppTheoryMcpRouteIdMode `field:"optional" json:"routeIdMode" yaml:"routeIdMode"`
+	// Route-emission model.
+	//
+	// `explicit` (the default) wires the full derived route inventory as one HTTP
+	// API v2 route per route key and is byte-stable for deployed stacks.
+	// `consolidated` wires exactly two greedy routes, `ANY /` and `ANY /{proxy+}`,
+	// and is valid only for the `runtime-bearer` and `none-public` transport
+	// postures; `iam` and `jwt` are refused at synthesis.
+	//
+	// Consolidated mode is allowed on a construct-owned API, or on an attached
+	// API that has no routes at attach time. "No routes" is enforced over the
+	// whole stack, not just the API's own children: a route wired onto the
+	// attached API from any sibling construct scope is refused, because it holds
+	// a route key the greedy routes would collide with.
+	//
+	// A consumer may still add explicit, more specific routes to the consolidated
+	// API afterwards, in either the attached or the construct-owned mode. That
+	// exception is enforced at synthesis time and is allowed only when the added
+	// route carries a non-NONE authorizer and does not redeclare the greedy
+	// `ANY /` or `ANY /{proxy+}` key. Within it, a full method+path match beats the
+	// greedy routes by API Gateway precedence, and a wrong-method hit on such a
+	// path falls to the runtime's fail-closed 404/405.
+	// Default: AppTheoryMcpRouteModel.EXPLICIT
+	//
+	RouteModel AppTheoryMcpRouteModel `field:"optional" json:"routeModel" yaml:"routeModel"`
 	// Runtime-side RFC 9728 bearer validation declaration.
 	//
 	// Required by `transportPosture: RUNTIME_BEARER` and refused under every

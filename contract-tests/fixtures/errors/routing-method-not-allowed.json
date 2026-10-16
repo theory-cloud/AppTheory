@@ -41,6 +41,10 @@
         ]
       },
       "cookies": [],
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"error\":{\"code\":\"app.method_not_allowed\",\"message\":\"method not allowed\",\"status_code\":405}}"
+      },
       "body_json": {
         "error": {
           "code": "app.method_not_allowed",

@@ -414,6 +414,22 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryHttpApiProps",
 		reflect.TypeOf((*AppTheoryHttpApiProps)(nil)).Elem(),
 	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryHttpApiRouteAuthorizer",
+		reflect.TypeOf((*AppTheoryHttpApiRouteAuthorizer)(nil)).Elem(),
+		map[string]interface{}{
+			"IAM":  AppTheoryHttpApiRouteAuthorizer_IAM,
+			"NONE": AppTheoryHttpApiRouteAuthorizer_NONE,
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryHttpApiRouteOptions",
+		reflect.TypeOf((*AppTheoryHttpApiRouteOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryHttpApiRouteThrottling",
+		reflect.TypeOf((*AppTheoryHttpApiRouteThrottling)(nil)).Elem(),
+	)
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryHttpApiStageOptions",
 		reflect.TypeOf((*AppTheoryHttpApiStageOptions)(nil)).Elem(),
@@ -679,6 +695,22 @@ func init() {
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteFamily",
 		reflect.TypeOf((*AppTheoryMcpRouteFamily)(nil)).Elem(),
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteIdMode",
+		reflect.TypeOf((*AppTheoryMcpRouteIdMode)(nil)).Elem(),
+		map[string]interface{}{
+			"LEGACY":   AppTheoryMcpRouteIdMode_LEGACY,
+			"SEMANTIC": AppTheoryMcpRouteIdMode_SEMANTIC,
+		},
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteModel",
+		reflect.TypeOf((*AppTheoryMcpRouteModel)(nil)).Elem(),
+		map[string]interface{}{
+			"EXPLICIT":     AppTheoryMcpRouteModel_EXPLICIT,
+			"CONSOLIDATED": AppTheoryMcpRouteModel_CONSOLIDATED,
+		},
 	)
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpRuntimePostureOptions",

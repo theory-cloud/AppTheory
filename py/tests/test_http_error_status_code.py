@@ -156,7 +156,7 @@ class ServedErrorStatusCodeTests(unittest.TestCase):
         missing = self._serve(app, Request(method="GET", path="/missing"))
         self.assertEqual(
             bytes(missing.body).decode("utf-8"),
-            '{"code": "app.not_found", "message": "not found"}',
+            '{"code":"app.not_found","message":"not found"}',
         )
         self.assertNotIn("status_code", json.loads(bytes(missing.body)))
 
