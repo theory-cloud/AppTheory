@@ -137,10 +137,12 @@ test("flat-legacy error envelopes stay byte-identical and carry no status_code",
   assert.equal(portable.status, 200);
 });
 
-// An AppTheoryError whose details carry a value with no JSON representation
-// cannot be serialized, so the response is the internal-error fallback (issue
-// #1161 boundary).
-async function serveUnserializableDetails(format) {
+// An AppTheoryError whose details carry a value that genuinely has no JSON
+// representation cannot be serialized, so the response is the internal-error
+// fallback (issue #1161 boundary). A bigint is one such value and a cycle is
+// another: sortKeysDeep rejects the cycle before JSON.stringify would recurse
+// without bound.
+async function serveTeapotWithDetails(format, details) {
   const app = new App({
     tier: "p0",
     ...(format ? { httpErrorFormat: format } : {}),
@@ -148,17 +150,30 @@ async function serveUnserializableDetails(format) {
   app.get("/teapot", async () => {
     const err = new AppTheoryError("teapot", "I am a teapot");
     err.statusCode = 418;
-    err.details = { unserializable: () => {} };
+    err.details = details;
     throw err;
   });
   return app.serve({ method: "GET", path: "/teapot", headers: {}, body: "" });
 }
 
-test("an unserializable nested envelope is sent as the internal-error fallback with status 500", async () => {
-  const response = await serveUnserializableDetails(null);
+function bodyText(response) {
+  return Buffer.from(response.body).toString("utf8");
+}
+
+function cyclicDetails() {
+  const details = { reason: "x" };
+  details.self = details;
+  return details;
+}
+
+test("a nested envelope carrying a bigint is sent as the internal-error fallback with status 500", async () => {
+  const response = await serveTeapotWithDetails(null, {
+    reason: "x",
+    count: 10n,
+  });
   assert.equal(response.status, 500);
   assert.equal(
-    Buffer.from(response.body).toString("utf8"),
+    bodyText(response),
     '{"error":{"code":"app.internal","message":"internal error","status_code":500}}',
   );
   assert.deepEqual(response.headers["content-type"], [
@@ -166,14 +181,82 @@ test("an unserializable nested envelope is sent as the internal-error fallback w
   ]);
 });
 
-test("an unserializable flat-legacy envelope is sent as the internal-error fallback with status 500", async () => {
-  const response = await serveUnserializableDetails("flat_legacy");
+test("a flat-legacy envelope carrying a bigint is sent as the internal-error fallback with status 500", async () => {
+  const response = await serveTeapotWithDetails("flat_legacy", {
+    reason: "x",
+    count: 10n,
+  });
   assert.equal(response.status, 500);
   assert.equal(
-    Buffer.from(response.body).toString("utf8"),
+    bodyText(response),
     '{"code":"app.internal","message":"internal error"}',
   );
   assert.deepEqual(response.headers["content-type"], [
     "application/json; charset=utf-8",
   ]);
+});
+
+test("a nested envelope carrying a cycle is sent as the internal-error fallback with status 500", async () => {
+  const response = await serveTeapotWithDetails(null, cyclicDetails());
+  assert.equal(response.status, 500);
+  assert.equal(
+    bodyText(response),
+    '{"error":{"code":"app.internal","message":"internal error","status_code":500}}',
+  );
+});
+
+test("a flat-legacy envelope carrying a cycle is sent as the internal-error fallback with status 500", async () => {
+  const response = await serveTeapotWithDetails("flat_legacy", cyclicDetails());
+  assert.equal(response.status, 500);
+  assert.equal(
+    bodyText(response),
+    '{"code":"app.internal","message":"internal error"}',
+  );
+});
+
+// `details: { reason: "x", hint: undefined }` is a handler error carrying an
+// absent optional field. Standard JSON.stringify omits the key, so the response
+// is the normal 4xx envelope with status_code matching the status on the wire;
+// only a value that cannot be serialized at all triggers the fallback.
+test("details with an undefined property keep the nested envelope and omit the key", async () => {
+  const response = await serveTeapotWithDetails(null, {
+    reason: "x",
+    hint: undefined,
+  });
+  assert.equal(response.status, 418);
+  assert.equal(
+    bodyText(response),
+    '{"error":{"code":"teapot","details":{"reason":"x"},"message":"I am a teapot","status_code":418}}',
+  );
+  const body = JSON.parse(bodyText(response));
+  assert.equal(body.error.status_code, response.status);
+  assert.equal("hint" in body.error.details, false);
+});
+
+test("details with an undefined property keep the flat-legacy envelope and omit the key", async () => {
+  const response = await serveTeapotWithDetails("flat_legacy", {
+    reason: "x",
+    hint: undefined,
+  });
+  assert.equal(response.status, 418);
+  assert.equal(
+    bodyText(response),
+    '{"code":"teapot","message":"I am a teapot","details":{"reason":"x"}}',
+  );
+  assert.equal("hint" in JSON.parse(bodyText(response)).details, false);
+});
+
+test("details with a function-valued property keep the nested envelope and omit it", async () => {
+  const response = await serveTeapotWithDetails(null, {
+    reason: "x",
+    onDone: () => {},
+  });
+  assert.equal(response.status, 418);
+  assert.equal(
+    bodyText(response),
+    '{"error":{"code":"teapot","details":{"reason":"x"},"message":"I am a teapot","status_code":418}}',
+  );
+  const body = JSON.parse(bodyText(response));
+  assert.equal(body.error.status_code, response.status);
+  assert.equal("onDone" in body.error.details, false);
 });
