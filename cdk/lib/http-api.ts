@@ -230,6 +230,19 @@ export interface AppTheoryHttpApiProps {
    * and a wrong-method request on such a path is denied by the runtime with the
    * fail-closed 404/405 envelope.
    *
+   * Route construct ids are derived from the method and path, so inserting,
+   * removing, or reordering an entry never renames an unrelated route.
+   *
+   * A declared `OPTIONS` route coexists with, and can be shadowed by, the
+   * API-level CORS configuration `cors` installs. `buildCorsPreflight` includes
+   * `OPTIONS` in its default `allowMethods`, and while `OPTIONS` is in that
+   * list API Gateway answers matching preflight requests itself before the
+   * route integration runs, so a declared `OPTIONS` route on the same path is
+   * never reached. Setting `cors.allowMethods` without `OPTIONS` removes gateway
+   * preflight handling entirely; a declared `OPTIONS` route is then the only
+   * thing that answers a preflight request, and it is subject to that route's
+   * own authorizer. Declare the methods you need in `cors.allowMethods` rather
+   * than depending on a declared `OPTIONS` route.
    * @default undefined
    */
   readonly routes?: AppTheoryHttpApiRouteOptions[];
@@ -237,6 +250,12 @@ export interface AppTheoryHttpApiProps {
   /**
    * Route-level throttling keyed by API Gateway route key (for example
    * `"ANY /{proxy+}"`). Applied to the stage's route settings.
+   *
+   * Every key is validated at synthesis time against the route keys this
+   * construct emits — the greedy `ANY /` and `ANY /{proxy+}` routes plus one
+   * `<METHOD> <path>` key per `routes` entry. A key that matches no emitted
+   * route fails synthesis with a named error listing the emitted keys, rather
+   * than being silently ignored by API Gateway.
    * @default undefined
    */
   readonly routeSettings?: { [routeKey: string]: AppTheoryHttpApiRouteThrottling };
@@ -324,6 +343,11 @@ export class AppTheoryHttpApi extends Construct {
     this.stage = stage;
     this.configureAccessLogging(stageOpts, stage);
 
+    // Every route key this construct emits, in API Gateway `METHOD path` form.
+    // `routeSettings` is validated against this set so a typo is a named
+    // synthesis error instead of silently ignored stage configuration.
+    const emittedRouteKeys = new Set(["ANY /", "ANY /{proxy+}"]);
+
     this.api.addRoutes({
       path: "/",
       methods: [apigwv2.HttpMethod.ANY],
@@ -344,10 +368,10 @@ export class AppTheoryHttpApi extends Construct {
 
     const explicitRoutes = props.routes ?? [];
     if (explicitRoutes.length > 0) {
-      this.addExplicitRoutes(explicitRoutes, props.handler, props.scopePermissionToRoute ?? true);
+      this.addExplicitRoutes(explicitRoutes, props.handler, props.scopePermissionToRoute ?? true, emittedRouteKeys);
     }
     if (props.routeSettings !== undefined) {
-      configureRouteSettings(stage, props.routeSettings);
+      configureRouteSettings(stage, props.routeSettings, emittedRouteKeys);
     }
 
     if (props.domain) {
@@ -359,6 +383,7 @@ export class AppTheoryHttpApi extends Construct {
     routes: AppTheoryHttpApiRouteOptions[],
     routeHandler: lambda.IFunction,
     scopePermissionToRoute: boolean,
+    emittedRouteKeys: Set<string>,
   ): void {
     const integration = new apigwv2Integrations.HttpLambdaIntegration("Explicit", routeHandler, {
       payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_2_0,
@@ -387,6 +412,7 @@ export class AppTheoryHttpApi extends Construct {
           );
         }
         seen.add(routeId);
+        emittedRouteKeys.add(`${method} ${routePath}`);
         new apigwv2.HttpRoute(this, routeId, {
           httpApi: this.api,
           routeKey: apigwv2.HttpRouteKey.with(routePath, method as apigwv2.HttpMethod),
@@ -477,10 +503,16 @@ function explicitRouteAuthorizer(posture?: AppTheoryHttpApiRouteAuthorizer): api
 function configureRouteSettings(
   stage: apigwv2.IStage,
   settings: { [routeKey: string]: AppTheoryHttpApiRouteThrottling },
+  emittedRouteKeys: Set<string>,
 ): void {
   const cfnStage = stage.node.defaultChild as apigwv2.CfnStage;
   const mapped: { [routeKey: string]: { [property: string]: number } } = {};
   for (const [routeKey, value] of Object.entries(settings)) {
+    if (!emittedRouteKeys.has(routeKey)) {
+      throw new Error(
+        `AppTheoryHttpApi: routeSettings[${JSON.stringify(routeKey)}] does not match any route this construct emits (emitted: ${[...emittedRouteKeys].sort().map((key) => JSON.stringify(key)).join(", ")})`,
+      );
+    }
     const rateLimit = value.rateLimit;
     const burstLimit = value.burstLimit;
     if (rateLimit === undefined && burstLimit === undefined) {

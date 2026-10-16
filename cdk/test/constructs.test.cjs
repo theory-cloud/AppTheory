@@ -895,6 +895,32 @@ test("AppTheoryHttpApi adds semantically identified explicit routes, access-log 
   );
 });
 
+test("AppTheoryHttpApi accepts routeSettings for an emitted explicit route key", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "HttpApiExplicitRouteSettings");
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryHttpApi(stack, "HttpApi", {
+    handler: fn,
+    routes: [{ path: "/v1/ping", methods: ["GET", "POST"] }],
+    stage: { throttlingRateLimit: 100, throttlingBurstLimit: 200 },
+    routeSettings: {
+      "ANY /": { rateLimit: 10 },
+      "GET /v1/ping": { rateLimit: 20, burstLimit: 40 },
+    },
+  });
+
+  const [cfnStage] = resourcesOfType(assertions.Template.fromStack(stack).toJSON(), "AWS::ApiGatewayV2::Stage");
+  assert.deepEqual(cfnStage.Properties.RouteSettings, {
+    "ANY /": { ThrottlingRateLimit: 10 },
+    "GET /v1/ping": { ThrottlingRateLimit: 20, ThrottlingBurstLimit: 40 },
+  });
+});
+
 test("AppTheoryHttpApi refuses invalid explicit-route and stage configuration", () => {
   const fnFor = (stack) => new lambda.Function(stack, "Fn", {
     runtime: lambda.Runtime.NODEJS_24_X,
@@ -927,6 +953,16 @@ test("AppTheoryHttpApi refuses invalid explicit-route and stage configuration", 
       name: "route settings without throttling",
       props: { routeSettings: { "ANY /{proxy+}": {} } },
       error: /routeSettings\["ANY \/\{proxy\+}"\] requires rateLimit or burstLimit/,
+    },
+    {
+      name: "route settings for a route the construct does not emit",
+      props: { routeSettings: { "POST /nope": { rateLimit: 5 } } },
+      error: /routeSettings\["POST \/nope"\] does not match any route this construct emits/,
+    },
+    {
+      name: "route settings for an explicit route that is not declared",
+      props: { routes: [{ path: "/v1/ping", methods: ["GET"] }], routeSettings: { "POST /v1/ping": { rateLimit: 5 } } },
+      error: /routeSettings\["POST \/v1\/ping"\] does not match any route this construct emits/,
     },
   ];
   for (const [index, item] of cases.entries()) {
