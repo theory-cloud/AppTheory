@@ -1637,8 +1637,10 @@ func expectedProtectedResourceJSON(resource string, kind mcproutes.EndpointKind)
 }
 
 // expectedAuthorizationServerJSON pins the routed RFC 8414 document for the
-// plain config, which mounts no register route: registration_endpoint is
-// advertised only while that route is mounted, so the document omits it.
+// plain config, which mounts no register route and owns no front channel:
+// registration_endpoint is advertised only while that route is mounted, and the
+// RFC 9207 `iss` member follows front-channel ownership, so the document omits
+// both.
 func expectedAuthorizationServerJSON(authorizeURL, tokenURL string, kind mcproutes.EndpointKind) string {
 	return fmt.Sprintf(`{"issuer":"https://issuer.example.com","authorization_endpoint":%q,"token_endpoint":%q,"jwks_uri":"https://issuer.example.com/jwks.json?set=active","response_types_supported":["code"],"grant_types_supported":["authorization_code","refresh_token"],"token_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":[%q]}`, authorizeURL, tokenURL, string(kind)+":use")
 }
@@ -1647,4 +1649,53 @@ func assertMetadataHeaders(t *testing.T, response apptheory.Response) {
 	t.Helper()
 	require.Equal(t, []string{"no-store"}, response.Headers["cache-control"])
 	require.Equal(t, []string{"Host, X-Forwarded-Host, X-AppTheory-Original-Host, X-FaceTheory-Original-Host, Forwarded, CloudFront-Forwarded-Proto, X-Forwarded-Proto"}, response.Headers["vary"])
+}
+
+// TestAppOwnedAuthorizeRoutedMetadataOmitsRFC9207IssParameterSupport pins the
+// routed document's disposition when the application owns the front channel:
+// with an AuthorizeHandler/TokenHandler pair and no Provider, the facade mounts
+// the authorize/token routes but cannot prove `iss` is sent on the client
+// callback, so every routed authorization-server document of every route kind
+// and issuer mode leaves the RFC 9207 member absent (an absent member means
+// false, RFC 8414 section 2). The root discovery document omits it for its own
+// reason: its endpoints belong to the upstream authorization server, which this
+// facade does not own.
+func TestAppOwnedAuthorizeRoutedMetadataOmitsRFC9207IssParameterSupport(t *testing.T) {
+	t.Parallel()
+	for _, issuerMode := range []mcproutes.IssuerMode{mcproutes.IssuerModeFamily, mcproutes.IssuerModeRoute} {
+		t.Run(string(issuerMode), func(t *testing.T) {
+			t.Parallel()
+			app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+			config := validConfig(URLModePublicBaseURL)
+			config.IssuerMode = issuerMode
+			config.RootAuthorizationServer = validRootDiscoveryConfig()
+			// The application-owned authorize/token pair: Provider stays nil, so
+			// the facade has no front channel and cannot claim `iss`.
+			config.AuthorizeHandler = kindHandlerFactory("authorize")
+			config.TokenHandler = kindHandlerFactory("token")
+			inventory, err := RegisterMCPFacade(app, config)
+			require.NoError(t, err)
+			require.True(t, inventory.RootAuthorizationServerAttached)
+
+			for _, route := range inventory.Routes {
+				require.Truef(t, route.AuthorizationRoutesAttached, "%s", route.Kind)
+				// The app-owned authorize route really is mounted and served by
+				// the application, so the omission below is the app-owned
+				// surface's disposition and not a missing route.
+				authorize := serve(app, "GET", route.AuthorizePattern, nil)
+				require.Equalf(t, 200, authorize.Status, "%s", route.AuthorizePattern)
+				require.Equalf(t, "authorize:"+string(route.Kind), string(authorize.Body), "%s", route.AuthorizePattern)
+
+				for _, path := range []string{route.DiscoveryCanonicalPattern, route.DiscoverySuffixPattern} {
+					response := serve(app, "GET", path, nil)
+					require.Equalf(t, 200, response.Status, "%s", path)
+					require.NotContainsf(t, string(response.Body), "authorization_response_iss_parameter_supported", "%s", path)
+				}
+			}
+
+			root := serve(app, "GET", inventory.RootAuthorizationServerPattern, nil)
+			require.Equal(t, 200, root.Status)
+			require.NotContains(t, string(root.Body), "authorization_response_iss_parameter_supported")
+		})
+	}
 }

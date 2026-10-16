@@ -1443,6 +1443,14 @@ def _authorization_server_handler(config: _NormalizedConfig, kind: str) -> Handl
             "token_endpoint_auth_methods_supported": list(config.capabilities.token_endpoint_auth_methods or []),
             "code_challenge_methods_supported": list(config.capabilities.code_challenge_methods or []),
             "scopes_supported": list(config.scopes[kind]),
+            # The member follows front-channel ownership: it is advertised only
+            # while the framework-owned front channel serves the authorization
+            # responses, because only then does the facade send RFC 9207 `iss`
+            # on the client callback, on success and on error redirects alike.
+            # An application-owned AuthorizeHandler/TokenHandler pair (no front
+            # channel) leaves it absent, as do the root discovery document and
+            # the generic builder, neither of which serves the front channel.
+            **({"authorization_response_iss_parameter_supported": True} if config.front_channel is not None else {}),
         }
         return _with_metadata_headers(lambda _ctx, _document=document: _metadata_response(_document))(ctx)
 

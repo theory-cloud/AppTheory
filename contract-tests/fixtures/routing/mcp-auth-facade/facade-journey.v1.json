@@ -71,10 +71,11 @@
         "\"token_endpoint\":\"https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/token\"",
         "\"registration_endpoint\":\"https://mcp.example.com/.well-known/oauth-authorization-server/acme/mcp/register\"",
         "\"jwks_uri\":\"https://id.example.com/.well-known/jwks.json\"",
-        "\"code_challenge_methods_supported\":[\"S256\"]"
+        "\"code_challenge_methods_supported\":[\"S256\"]",
+        "\"authorization_response_iss_parameter_supported\":true"
       ],
       "expect_no_store": true,
-      "reason": "The routed RFC 8414 document advertises the route issuer and the route's own endpoints, the upstream key set that signs the access tokens the route hands clients, and S256 as the only PKCE method; registration_endpoint is advertised because the front channel mounts the register route."
+      "reason": "The routed RFC 8414 document advertises the route issuer and the route's own endpoints, the upstream key set that signs the access tokens the route hands clients, and S256 as the only PKCE method; registration_endpoint is advertised because the front channel mounts the register route. It also advertises RFC 9207 `iss` support, because the front channel sends the route issuer as `iss` on the client callback, the same `iss` step 6 pins on the redirect."
     },
     {
       "id": "journey.register-public-client",
@@ -197,7 +198,11 @@
       },
       "expect_status": 302,
       "expect_error": "invalid_request",
-      "reason": "S256 required; plain refused. Every earlier-validated parameter is valid, so invalid_request is the only reachable outcome."
+      "expect_location_query_has": ["iss"],
+      "expect_location_query_equals": {
+        "iss": "https://mcp.example.com/acme/mcp"
+      },
+      "reason": "S256 required; plain refused. Every earlier-validated parameter is valid, so invalid_request is the only reachable outcome. An error redirect also carries the route issuer as the RFC 9207 `iss`, byte-equal to the issuer the routed metadata row advertises and the `iss` the completed callback carries, so the advertised support covers the error path too."
     },
     {
       "id": "journey.authorize-wrong-resource",

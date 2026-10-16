@@ -1169,6 +1169,17 @@ func authorizationServerHandler(config normalizedConfig, kind mcproutes.Endpoint
 			TokenEndpointAuthMethodsSupported: append([]string(nil), config.capabilities.TokenEndpointAuthMethods...),
 			CodeChallengeMethodsSupported:     append([]string(nil), config.capabilities.CodeChallengeMethods...),
 			ScopesSupported:                   append([]string(nil), config.scopes[kind]...),
+			// The member follows front-channel ownership: the routed document
+			// advertises RFC 9207 `iss` only while the framework-owned front
+			// channel serves the authorization responses, because only then does
+			// the facade send `iss` on the client callback, on success and on
+			// error redirects alike. An application-owned
+			// AuthorizeHandler/TokenHandler pair (Provider nil) leaves it absent,
+			// as do the root discovery document, whose fixed endpoints belong to
+			// the upstream authorization server, and the generic builder, which
+			// serves no front channel. An absent member means false (RFC 8414
+			// section 2).
+			AuthorizationResponseIssParameterSupported: config.frontChannel != nil,
 		}
 		return withMetadataHeaders(oauth.AuthorizationServerMetadataHandler(metadata))(ctx)
 	}

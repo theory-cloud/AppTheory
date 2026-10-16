@@ -20,6 +20,38 @@ range from the v5 line also carries other breaking runtime, CDK, TypeScript, and
 the v6 release notes for the commit-level detail, and treat the import-path move below as the mechanical part of the
 upgrade.
 
+### Routed MCP facade metadata advertises RFC 9207 `iss` support
+
+The MCP auth facade's routed authorization-server document now carries
+`authorization_response_iss_parameter_supported: true` (RFC 8414 / RFC 9207)
+whenever the facade owns the front channel. In that posture the front channel
+already sent the route issuer as `iss` on the client callback, on success and on
+error redirects alike; the document now says so, so an RFC 9207-aware MCP client
+can require `iss` on the callback instead of ignoring it.
+
+- **Go**: the routed discovery response of `mcpfacade.RegisterMCPFacade` and `mcpfacade.RegisterMCPFacadeSecure`.
+- **TypeScript**: the routed discovery response of `registerMcpFacade` and `registerMcpFacadeSecure`.
+- **Python**: the routed discovery response of `register_mcp_facade` and `register_mcp_facade_secure`.
+
+The member follows front-channel ownership rather than a separate option, so its
+disposition is:
+
+- **advertised** while the facade owns the front channel (the front-channel field
+  set is declared, so the framework serves the authorize/callback/token bodies);
+- **absent** when the application owns the front channel through an
+  `AuthorizeHandler`/`TokenHandler` pair (`Provider` unset), where the facade
+  mounts the routes but cannot prove `iss` is sent;
+- **absent** on the root discovery document, whose fixed endpoints belong to the
+  upstream authorization server, and on the generic builder
+  (`oauth.NewAuthorizationServerMetadata`, `newAuthorizationServerMetadata`,
+  `new_authorization_server_metadata`).
+
+An absent member means false. Each runtime's `AuthorizationServerMetadata` type
+gains one optional member, emitted only while it is the boolean `true`, so a
+document that never sets it stays byte-identical.
+
+**Additive; no breaking change.** No other document changes.
+
 ### Server-issued HTTP request IDs
 
 The HTTP runtime now lets an application choose where the request ID comes from. The default is unchanged: a well-formed
