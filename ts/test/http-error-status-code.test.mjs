@@ -196,6 +196,25 @@ test("a flat-legacy envelope carrying a bigint is sent as the internal-error fal
   ]);
 });
 
+// JSON.stringify unwraps a boxed BigInt to the bigint it wraps and then refuses to
+// serialize it, so a boxed bigint has no JSON representation either. Copying its own
+// keys alone finds none and renders `{}` in place of the value, which would keep the
+// original status and hide from the fallback a value it is documented to catch.
+test("a nested envelope carrying a boxed bigint is sent as the internal-error fallback with status 500", async () => {
+  const response = await serveTeapotWithDetails(null, {
+    reason: "x",
+    nested: { count: Object(10n) },
+  });
+  assert.equal(response.status, 500);
+  assert.equal(
+    bodyText(response),
+    '{"error":{"code":"app.internal","message":"internal error","status_code":500}}',
+  );
+  assert.deepEqual(response.headers["content-type"], [
+    "application/json; charset=utf-8",
+  ]);
+});
+
 test("a nested envelope carrying a cycle is sent as the internal-error fallback with status 500", async () => {
   const response = await serveTeapotWithDetails(null, cyclicDetails());
   assert.equal(response.status, 500);

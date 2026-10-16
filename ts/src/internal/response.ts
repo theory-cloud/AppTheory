@@ -244,11 +244,14 @@ function sortKeysDeepValue(
   // JSON.stringify renders a boxed Number, String, or Boolean as the primitive it
   // wraps, and a Map or Set as `{}` — neither collection has own enumerable
   // properties. Copying keys alone yields `{}` for every one of them, which is
-  // right only for the collections.
+  // right only for the collections. A boxed BigInt unwraps the same way, to the
+  // bigint JSON.stringify refuses to serialize: copying its (empty) own keys would
+  // render `{}` and hide the value the internal-error fallback exists to catch.
   if (
     value instanceof Number ||
     value instanceof String ||
-    value instanceof Boolean
+    value instanceof Boolean ||
+    value instanceof BigInt
   ) {
     return value.valueOf();
   }
