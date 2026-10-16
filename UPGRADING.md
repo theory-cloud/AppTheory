@@ -57,9 +57,12 @@ line feed, other control character, or a non-ASCII character — is no longer us
 echoed in the response header, the nested `error.request_id` field, or the logs. Such a request now falls back to the
 invocation request ID, else a generated ID. Well-formed ids behave exactly as before. The limit and character set are
 framework constants (`apptheory.MaxClientRequestIDLength` / `MAX_CLIENT_REQUEST_ID_LENGTH`) and are not configurable.
-TypeScript and Python also align with Go by trimming the edge whitespace of an otherwise well-formed value; they
-previously used the header value untrimmed. The shape predicate is exported if you want to apply the same rule yourself:
-Go `apptheory.IsWellFormedClientRequestID`, TypeScript `isWellFormedClientRequestId`, Python
+All three runtimes trim the same ASCII whitespace set — a space, tab, line feed, vertical tab, form feed, or carriage
+return (` \t\n\v\f\r`) — so the shape rule is identical everywhere. TypeScript and Python now trim the edge whitespace
+of an otherwise well-formed value; they previously used the header value untrimmed. Go previously trimmed Unicode
+whitespace, so a client id padded with a non-ASCII whitespace character such as `U+00A0` (no-break space) is now
+malformed and ignored instead of being used as the request ID. The shape predicate is exported if you want to apply the
+same rule yourself: Go `apptheory.IsWellFormedClientRequestID`, TypeScript `isWellFormedClientRequestId`, Python
 `is_well_formed_client_request_id`.
 
 Two boundaries are worth knowing before you adopt the server-issued source:
