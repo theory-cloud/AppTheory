@@ -3809,6 +3809,8 @@ def run_fixture_secure(
         "id_generator": _MCPFixedIdGenerator("req_test_123"),
         "websocket_support": bool(setup.get("websocket_support")),
     }
+    if (fixture.get("setup") or {}).get("request_id_source"):
+        app_options["request_id_source"] = (fixture.get("setup") or {}).get("request_id_source")
     if setup.get("principal_resolver") is not False:
         app_options["principal_resolver"] = resolver
     if setup.get("policy_hook"):
@@ -6156,6 +6158,7 @@ def run_fixture_m12(
     app = runtime.create_app(
         tier="p1",
         http_error_format=str(setup.get("http_error_format") or ""),
+        request_id_source=str(setup.get("request_id_source") or ""),
         id_generator=ids,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
@@ -6224,6 +6227,7 @@ def run_fixture_m14(
     app = runtime.create_app(
         tier="p1",
         http_error_format=str(setup.get("http_error_format") or ""),
+        request_id_source=str(setup.get("request_id_source") or ""),
         id_generator=ids,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
@@ -6464,6 +6468,7 @@ def run_fixture_p1(
     app = runtime.create_app(
         tier="p1",
         http_error_format=str(setup.get("http_error_format") or ""),
+        request_id_source=str(setup.get("request_id_source") or ""),
         id_generator=ids,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
@@ -6593,6 +6598,7 @@ def run_fixture_p2(
     app = runtime.create_app(
         tier="p2",
         http_error_format=str(setup.get("http_error_format") or ""),
+        request_id_source=str(setup.get("request_id_source") or ""),
         id_generator=ids,
         clock=clock,
         limits=runtime.Limits(
@@ -6698,6 +6704,7 @@ def run_fixture_p2_output(
             )
     app = runtime.create_app(
         tier="p2",
+        request_id_source=str(setup.get("request_id_source") or ""),
         id_generator=ids,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),

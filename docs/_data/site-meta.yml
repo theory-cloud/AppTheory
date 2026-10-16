@@ -25,4 +25,4 @@ quick_start:
   - { title: "Universal Lambda dispatcher", desc: "One HandleLambda for HTTP, AppSync, SQS, and EventBridge.",             url: /api-reference/,                    icon: shuffle }
   - { title: "MCP server in one Lambda",  desc: "Go Streamable HTTP runtime, sessions, and resumable SSE.",                url: /integrations/mcp/,                 icon: share }
   - { title: "Source provenance",         desc: "Safe HTTP source IP from provider context — never client headers.",       url: /features/source-provenance/,       icon: shield-check }
-  - { title: "Contract fixtures",         desc: "288 vectors: 275 shared runtime fixtures plus thirteen nested MCP route-algebra, auth-facade and limiter conformance tables.", url: /reference/contract-fixtures/,      icon: list-checks } # apptheory-fixture-count: 288
+  - { title: "Contract fixtures",         desc: "294 vectors: 281 shared runtime fixtures plus thirteen nested MCP route-algebra, auth-facade and limiter conformance tables.", url: /reference/contract-fixtures/,      icon: list-checks } # apptheory-fixture-count: 294

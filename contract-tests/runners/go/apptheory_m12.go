@@ -10,7 +10,7 @@ import (
 
 func runFixtureM12(f Fixture) error {
 	now := time.Unix(0, 0).UTC()
-	app := newAppTheoryFixtureAppP1(now, f.Setup.Limits, f.Setup.CORS, f.Setup.HTTPErrorFormat)
+	app := newAppTheoryFixtureAppP1(now, f.Setup.Limits, f.Setup.CORS, f.Setup.HTTPErrorFormat, f.Setup.RequestIDSource)
 	var metrics []FixtureMetricRecord
 
 	for _, name := range f.Setup.Middlewares {

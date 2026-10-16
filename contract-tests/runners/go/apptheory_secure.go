@@ -60,6 +60,7 @@ func runFixtureSecure(f Fixture) error {
 		Tier:              apptheory.Tier(strings.TrimSpace(f.Setup.SecureApp.Tier)),
 		Clock:             fixedClock{now: time.Unix(0, 0).UTC()},
 		IDGenerator:       fixedIDGenerator{id: "req_test_123"},
+		RequestIDSource:   apptheory.RequestIDSource(f.Setup.RequestIDSource),
 		WebSocketSupport:  f.Setup.SecureApp.WebSocketSupport,
 		PrincipalResolver: resolver,
 		PolicyHook:        policy,

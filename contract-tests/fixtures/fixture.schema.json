@@ -196,6 +196,7 @@
           }
         },
         "http_error_format": { "type": "string" },
+        "request_id_source": { "type": "string", "enum": ["default", "server"] },
         "sqs": { "type": "array", "items": { "$ref": "#/$defs/namedHandler" } },
         "eventbridge": { "type": "array", "items": { "$ref": "#/$defs/namedHandler" } },
         "dynamodb": { "type": "array", "items": { "$ref": "#/$defs/namedHandler" } },

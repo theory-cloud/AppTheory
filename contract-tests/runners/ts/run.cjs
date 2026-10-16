@@ -3250,6 +3250,9 @@ async function runFixtureSecure(fixture) {
     clock: { now: () => new Date(0) },
     ids: { newId: () => "req_test_123" },
     webSocketSupport: Boolean(setup.websocket_support),
+    ...(fixture.setup?.request_id_source
+      ? { requestIdSource: fixture.setup.request_id_source }
+      : {}),
     policyHook: setup.policy_hook ? async () => {
       policyCalls += 1;
       return { code: 'app.rate_limited', message: 'rate limited' };
@@ -5288,6 +5291,9 @@ async function runFixtureM12(fixture) {
     ...(fixture.setup?.http_error_format
       ? { httpErrorFormat: fixture.setup.http_error_format }
       : {}),
+    ...(fixture.setup?.request_id_source
+      ? { requestIdSource: fixture.setup.request_id_source }
+      : {}),
     limits: {
       maxRequestBytes: Number(limits.max_request_bytes ?? 0),
       maxResponseBytes: Number(limits.max_response_bytes ?? 0),
@@ -5375,6 +5381,9 @@ async function runFixtureM14(fixture) {
     ids,
     ...(fixture.setup?.http_error_format
       ? { httpErrorFormat: fixture.setup.http_error_format }
+      : {}),
+    ...(fixture.setup?.request_id_source
+      ? { requestIdSource: fixture.setup.request_id_source }
       : {}),
     limits: {
       maxRequestBytes: Number(limits.max_request_bytes ?? 0),
@@ -5710,6 +5719,9 @@ async function runFixtureP1(fixture) {
     ...(fixture.setup?.http_error_format
       ? { httpErrorFormat: fixture.setup.http_error_format }
       : {}),
+    ...(fixture.setup?.request_id_source
+      ? { requestIdSource: fixture.setup.request_id_source }
+      : {}),
     limits: {
       maxRequestBytes: Number(limits.max_request_bytes ?? 0),
       maxResponseBytes: Number(limits.max_response_bytes ?? 0),
@@ -5814,6 +5826,9 @@ async function runFixtureP2(fixture) {
     clock,
     ...(fixture.setup?.http_error_format
       ? { httpErrorFormat: fixture.setup.http_error_format }
+      : {}),
+    ...(fixture.setup?.request_id_source
+      ? { requestIdSource: fixture.setup.request_id_source }
       : {}),
     limits: {
       maxRequestBytes: Number(limits.max_request_bytes ?? 0),
@@ -5999,6 +6014,9 @@ async function runFixtureP2Output(fixture) {
     ids,
     ...(fixture.setup?.http_error_format
       ? { httpErrorFormat: fixture.setup.http_error_format }
+      : {}),
+    ...(fixture.setup?.request_id_source
+      ? { requestIdSource: fixture.setup.request_id_source }
       : {}),
     limits: {
       maxRequestBytes: Number(limits.max_request_bytes ?? 0),
