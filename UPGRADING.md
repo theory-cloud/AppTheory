@@ -86,6 +86,11 @@ are worth checking:
   unknown keys) needs no change.
 - The opt-in **flat-legacy** HTTP error format is untouched: its bodies carry no `status_code` and stay byte-identical.
 
+An envelope that cannot be serialized — an `AppTheoryError` whose `Details` are not JSON-serializable, which already
+violates the error contract's precondition that details be JSON-serializable — is now reported as the internal-error
+fallback sent with status `500` rather than as a body whose `status_code` disagreed with the status on the wire, which
+changes the response only for those already-invalid inputs and leaves the flat-legacy fallback body byte-identical.
+
 ### Go module import paths
 
 AppTheory v6 moves the Go runtime and the generated CDK Go bindings onto the next semantic import version. Replace the

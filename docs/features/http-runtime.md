@@ -173,6 +173,12 @@ and adapter delivery failures), handler-returned `AppTheoryError` with or withou
 consumer that asserts an exact nested body sees this key; a consumer that reads `error.code`/`error.message` is
 unaffected.
 
+An envelope that cannot be serialized — an `AppTheoryError` whose `details` are not JSON-serializable, which already
+violates the error contract — is never sent in a degraded form: the runtime sends the internal-error fallback with status
+`500` (`{"error":{"code":"app.internal","message":"internal error","status_code":500}}` nested,
+`{"code":"app.internal","message":"internal error"}` flat-legacy), so a body whose `status_code` disagrees with the sent
+status is never sent.
+
 To match Lift's flat shape (one-time migration aid only — not for new apps):
 
 ```go
