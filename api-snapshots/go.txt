@@ -1833,6 +1833,8 @@ const HTTPErrorFormatFlatLegacy HTTPErrorFormat = "flat_legacy"
 
 const HTTPErrorFormatNested HTTPErrorFormat = "nested"
 
+const MaxClientRequestIDLength = 128
+
 const PrincipalExternal PrincipalKind = "external"
 
 const PrincipalInternal PrincipalKind = "internal"
@@ -2041,6 +2043,8 @@ type Context struct {
 	ws              *WebSocketContext
 	appsync         *AppSyncContext
 	securePrincipal *SecurePrincipal
+
+	clientRequestID string
 
 	values map[string]any
 }
@@ -2501,6 +2505,8 @@ func InternalOnly() AuthPosture
 
 func IsLambda() bool
 
+func IsWellFormedClientRequestID(string) bool
+
 func JSON(int, any) (*Response, error)
 
 func JSONHandler[Req, Resp any](func(*Context, Req) (Resp, error)) Handler
@@ -2710,6 +2716,8 @@ func (*AppTheoryError) WithTraceID(string) *AppTheoryError
 func (*Context) AsAppSync() *AppSyncContext
 
 func (*Context) AsWebSocket() *WebSocketContext
+
+func (*Context) ClientRequestID() string
 
 func (*Context) Context() context.Context
 

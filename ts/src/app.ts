@@ -104,6 +104,7 @@ import {
   REQUEST_ID_SOURCE_SERVER,
   type RequestIdSource,
   normalizeRequestIdSource,
+  wellFormedClientRequestId,
 } from "./request-id-source.js";
 import { vary } from "./response.js";
 import {
@@ -1182,6 +1183,11 @@ export class App {
     let path = normalizePath(request.path);
     let route = UNMATCHED_ROUTE_TEMPLATE;
 
+    // The client x-request-id is exposed to handlers through
+    // Context.clientRequestId only when it is well-formed.
+    const clientRequestId = wellFormedClientRequestId(
+      firstHeaderValue(preHeaders, "x-request-id"),
+    );
     let requestId = "";
     if (this._requestIdSource !== REQUEST_ID_SOURCE_SERVER) {
       requestId = firstHeaderValue(preHeaders, "x-request-id");
@@ -1340,6 +1346,7 @@ export class App {
       traceId,
       tenantId,
       authIdentity: "",
+      clientRequestId,
       remainingMs,
       middlewareTrace,
       tenantBindingRequired: this._tenantBindingRequired(),
@@ -2526,6 +2533,7 @@ function cloneContextWithTimeoutCarrier(
     traceId: ctx.traceId,
     tenantId: ctx.tenantId,
     authIdentity: ctx.authIdentity,
+    clientRequestId: ctx.clientRequestId,
     tenantBound: ctx.tenantBound,
     tenantBindingRequired: ctx.tenantBindingRequired,
     remainingMs: ctx.remainingMs,

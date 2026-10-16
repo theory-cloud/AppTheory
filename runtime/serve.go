@@ -272,14 +272,15 @@ func (a *App) serveP2(ctx context.Context, req Request, opts serveOptions) (resp
 }
 
 type portableServeState struct {
-	method    string
-	path      string
-	route     string
-	requestID string
-	traceID   string
-	origin    string
-	tenantID  string
-	errorCode string
+	method          string
+	path            string
+	route           string
+	requestID       string
+	clientRequestID string
+	traceID         string
+	origin          string
+	tenantID        string
+	errorCode       string
 }
 
 func (a *App) servePortable(ctx context.Context, req Request, tier Tier, opts serveOptions) (resp Response) {
@@ -311,7 +312,7 @@ func (a *App) servePortableCore(ctx context.Context, req Request, tier Tier, sta
 	state.method = strings.ToUpper(strings.TrimSpace(req.Method))
 	state.path = normalizePath(req.Path)
 	state.route = unmatchedRouteTemplate
-	state.requestID = a.resolvePortableRequestID(headers, opts)
+	state.requestID, state.clientRequestID = a.resolvePortableRequestIDs(headers, opts)
 	state.traceID = extractTraceIDFromHeaders(headers)
 
 	state.origin = firstHeaderValue(headers, "origin")
@@ -346,6 +347,7 @@ func (a *App) servePortableCore(ctx context.Context, req Request, tier Tier, sta
 		RemainingMS:           remainingMS,
 		MiddlewareTrace:       trace,
 		TenantBindingRequired: a.tenantBindingRequired(),
+		clientRequestID:       state.clientRequestID,
 	}
 	if opts.configure != nil {
 		opts.configure(requestCtx)
@@ -454,16 +456,22 @@ func requestForNormalizeError(fallback Request, normalized Request, errorCode st
 	return fallback
 }
 
-func (a *App) resolvePortableRequestID(headers map[string][]string, opts serveOptions) string {
+// resolvePortableRequestIDs resolves the request ID and the client-supplied
+// request ID for a portable (P1/P2) request.
+//
+// The well-formed client value is returned in both request-ID source modes so
+// the request context can expose it for correlation.
+func (a *App) resolvePortableRequestIDs(headers map[string][]string, opts serveOptions) (requestID string, clientRequestID string) {
+	clientRequestID = wellFormedClientRequestID(firstHeaderValue(headers, "x-request-id"))
 	if !a.serverIssuedRequestIDs() {
 		if requestID := strings.TrimSpace(firstHeaderValue(headers, "x-request-id")); requestID != "" {
-			return requestID
+			return requestID, clientRequestID
 		}
 	}
 	if fallbackRequestID := strings.TrimSpace(opts.fallbackRequestID); fallbackRequestID != "" {
-		return fallbackRequestID
+		return fallbackRequestID, clientRequestID
 	}
-	return a.newRequestID()
+	return a.newRequestID(), clientRequestID
 }
 
 func (a *App) serverIssuedRequestIDs() bool {

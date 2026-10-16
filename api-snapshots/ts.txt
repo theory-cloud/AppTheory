@@ -213,6 +213,7 @@ LoggingProfileRequestContext	interface
 LoggingProfileSanitization	interface
 LoggingProfileSanitizer	type
 LoggingProfileValidationError	class
+MAX_CLIENT_REQUEST_ID_LENGTH	const
 MAX_PRESIGN_PUT_EXPIRES_IN	const
 MCP_CODE_HEADER_MISMATCH	const
 MCP_CODE_INTERNAL_ERROR	const
@@ -721,6 +722,7 @@ insufficientScopeWWWAuthenticate	function
 isAppTheoryError	const
 isMicroVMTerminalState	function
 isSupportedProfileOutputField	function
+isWellFormedClientRequestId	function
 jobLockSortKey	function
 jobMetaSortKey	function
 jobPartitionKey	function
@@ -868,5 +870,6 @@ validateValue	function
 validateVector	function
 validationError	function
 vary	function
+wellFormedClientRequestId	function
 wrapError	function
 wrapJobLedgerError	function

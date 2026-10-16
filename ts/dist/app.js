@@ -14,7 +14,7 @@ import { normalizeRequest } from "./internal/request.js";
 import { errorResponse, errorResponseWithFormat, errorResponseWithRequestId, errorResponseWithRequestIdTraceIdAndFormat, normalizeResponse, responseForError, responseForErrorWithFormat, responseForErrorWithRequestId, responseForErrorWithRequestIdTraceIdAndFormat, } from "./internal/response.js";
 import { Router } from "./internal/router.js";
 import { extractTraceIdFromHeaders } from "./internal/trace-context.js";
-import { REQUEST_ID_SOURCE_SERVER, normalizeRequestIdSource, } from "./request-id-source.js";
+import { REQUEST_ID_SOURCE_SERVER, normalizeRequestIdSource, wellFormedClientRequestId, } from "./request-id-source.js";
 import { vary } from "./response.js";
 import { generateSecureOpenAPI, generateSecureOpenAPIJSON, } from "./secure-openapi.js";
 import { cloneSecurePrincipal, normalizeSecurePrincipal, } from "./secure-principal.js";
@@ -629,6 +629,9 @@ export class App {
         let method = normalizeMethod(request.method);
         let path = normalizePath(request.path);
         let route = UNMATCHED_ROUTE_TEMPLATE;
+        // The client x-request-id is exposed to handlers through
+        // Context.clientRequestId only when it is well-formed.
+        const clientRequestId = wellFormedClientRequestId(firstHeaderValue(preHeaders, "x-request-id"));
         let requestId = "";
         if (this._requestIdSource !== REQUEST_ID_SOURCE_SERVER) {
             requestId = firstHeaderValue(preHeaders, "x-request-id");
@@ -716,6 +719,7 @@ export class App {
             traceId,
             tenantId,
             authIdentity: "",
+            clientRequestId,
             remainingMs,
             middlewareTrace,
             tenantBindingRequired: this._tenantBindingRequired(),
@@ -1558,6 +1562,7 @@ function cloneContextWithTimeoutCarrier(ctx, carrier) {
         traceId: ctx.traceId,
         tenantId: ctx.tenantId,
         authIdentity: ctx.authIdentity,
+        clientRequestId: ctx.clientRequestId,
         tenantBound: ctx.tenantBound,
         tenantBindingRequired: ctx.tenantBindingRequired,
         remainingMs: ctx.remainingMs,

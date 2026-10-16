@@ -36,6 +36,11 @@ type Context struct {
 	appsync         *AppSyncContext
 	securePrincipal *SecurePrincipal
 
+	// clientRequestID is the well-formed, client-supplied x-request-id header
+	// value, or empty when the header is absent or malformed. It is exposed
+	// read-only through ClientRequestID.
+	clientRequestID string
+
 	values map[string]any
 }
 
@@ -135,6 +140,26 @@ func (c *Context) TraceContextID() string {
 		return ""
 	}
 	return strings.TrimSpace(c.TraceID)
+}
+
+// ClientRequestID returns the well-formed client-supplied x-request-id header
+// value, or an empty string when the header is absent or malformed.
+//
+// The value is client-supplied and untrusted. Use it for identity and
+// correlation only — never for authorization. A value is well-formed when,
+// after trimming leading and trailing whitespace, it is 1 to
+// MaxClientRequestIDLength visible ASCII characters; see
+// IsWellFormedClientRequestID.
+//
+// The value is available in both request-ID source modes. In
+// RequestIDSourceServer mode it is exposed here and nowhere else: it is never
+// the request ID, the error envelope request_id, the x-request-id response
+// header, or a log field.
+func (c *Context) ClientRequestID() string {
+	if c == nil {
+		return ""
+	}
+	return c.clientRequestID
 }
 
 func (c *Context) JSONValue() (any, error) {

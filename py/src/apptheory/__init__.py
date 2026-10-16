@@ -738,7 +738,14 @@ from apptheory.openapi import (
     generate_openapi_json,
 )
 from apptheory.request import Request
-from apptheory.request_id_source import REQUEST_ID_SOURCE_DEFAULT, REQUEST_ID_SOURCE_SERVER
+from apptheory.request_id_source import (
+    MAX_CLIENT_REQUEST_ID_LENGTH,
+    REQUEST_ID_SOURCE_DEFAULT,
+    REQUEST_ID_SOURCE_SERVER,
+    is_well_formed_client_request_id,
+    normalize_request_id_source,
+    well_formed_client_request_id,
+)
 from apptheory.response import Response, binary, html, html_stream, json, safe_json_for_html, text
 from apptheory.sanitization import (
     mask_first_last,
@@ -1157,6 +1164,7 @@ __all__ = [
     "LoggingProfileSanitization",
     "LoggingProfileSanitizer",
     "LoggingProfileValidationError",
+    "MAX_CLIENT_REQUEST_ID_LENGTH",
     "ManualClock",
     "ManualIdGenerator",
     "MaxPutDeleteBatchSize",
@@ -1475,6 +1483,7 @@ __all__ = [
     "internal_only",
     "is_microvm_terminal_state",
     "is_supported_profile_output_field",
+    "is_well_formed_client_request_id",
     "job_lock_sort_key",
     "job_meta_sort_key",
     "job_partition_key",
@@ -1604,5 +1613,6 @@ __all__ = [
     "validate_vector",
     "validation_error",
     "vary",
+    "well_formed_client_request_id",
     "wrap_job_ledger_error",
 ]

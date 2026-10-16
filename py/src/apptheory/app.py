@@ -45,6 +45,7 @@ from apptheory.request_id_source import (
     REQUEST_ID_SOURCE_DEFAULT,
     REQUEST_ID_SOURCE_SERVER,
     normalize_request_id_source,
+    well_formed_client_request_id,
 )
 from apptheory.response import Response, normalize_response
 from apptheory.router import Router
@@ -983,11 +984,13 @@ class App:
         path = str(request.path or "").strip() or "/"
         route = _UNMATCHED_ROUTE_TEMPLATE
 
-        if self._request_id_source == REQUEST_ID_SOURCE_SERVER:
-            client_request_id = ""
-        else:
-            client_request_id = _first_header_value(pre_headers, "x-request-id")
-        request_id = client_request_id or str(fallback_request_id or "").strip() or self._id_generator.new_id()
+        # The well-formed client x-request-id is exposed to handlers through
+        # Context.client_request_id in both request-ID source modes.
+        client_request_id = well_formed_client_request_id(_first_header_value(pre_headers, "x-request-id"))
+        request_id = ""
+        if self._request_id_source != REQUEST_ID_SOURCE_SERVER:
+            request_id = _first_header_value(pre_headers, "x-request-id")
+        request_id = request_id or str(fallback_request_id or "").strip() or self._id_generator.new_id()
         origin = _first_header_value(pre_headers, "origin")
         tenant_id = _extract_tenant_id(pre_headers, pre_query)
         remaining_ms = _remaining_ms(ctx)
@@ -1109,6 +1112,7 @@ class App:
             trace_id=trace_id,
             tenant_id=tenant_id,
             auth_identity="",
+            client_request_id=client_request_id,
             remaining_ms=remaining_ms,
             middleware_trace=trace,
             tenant_binding_required=self._tenant_binding_required(),

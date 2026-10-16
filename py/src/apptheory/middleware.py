@@ -75,6 +75,7 @@ def _clone_context_with_timeout_ctx(ctx: Context, carrier: Any) -> Context:
         trace_id=ctx.trace_id,
         tenant_id=ctx.tenant_id,
         auth_identity=ctx.auth_identity,
+        client_request_id=ctx.client_request_id,
         remaining_ms=ctx.remaining_ms,
         middleware_trace=ctx.middleware_trace,
         websocket=ctx.websocket,
