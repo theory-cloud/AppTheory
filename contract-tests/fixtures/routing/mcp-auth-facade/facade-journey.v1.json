@@ -198,7 +198,11 @@
       },
       "expect_status": 302,
       "expect_error": "invalid_request",
-      "reason": "S256 required; plain refused. Every earlier-validated parameter is valid, so invalid_request is the only reachable outcome."
+      "expect_location_query_has": ["iss"],
+      "expect_location_query_equals": {
+        "iss": "https://mcp.example.com/acme/mcp"
+      },
+      "reason": "S256 required; plain refused. Every earlier-validated parameter is valid, so invalid_request is the only reachable outcome. An error redirect also carries the route issuer as the RFC 9207 `iss`, byte-equal to the issuer the routed metadata row advertises and the `iss` the completed callback carries, so the advertised support covers the error path too."
     },
     {
       "id": "journey.authorize-wrong-resource",
