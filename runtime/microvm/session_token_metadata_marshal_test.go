@@ -6,8 +6,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/stretchr/testify/require"
-	"github.com/theory-cloud/tabletheory/v5/pkg/marshal"
-	"github.com/theory-cloud/tabletheory/v5/pkg/model"
+	"github.com/theory-cloud/tabletheory/v6/pkg/marshal"
+	"github.com/theory-cloud/tabletheory/v6/pkg/model"
 )
 
 // Regression for https://github.com/theory-cloud/AppTheory/issues/883:
