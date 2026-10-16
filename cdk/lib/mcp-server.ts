@@ -291,11 +291,17 @@ export interface AppTheoryMcpServerProps {
    * postures; `iam` and `jwt` are refused at synthesis.
    *
    * Consolidated mode is allowed on a construct-owned API, or on an attached
-   * API that has no routes at attach time. A consumer may add explicit, more
-   * specific routes with a stricter authorizer on the same API afterwards; a
-   * full method+path match beats the greedy routes by API Gateway precedence,
-   * and a wrong-method hit on such a path falls to the runtime's fail-closed
-   * 404/405.
+   * API that has no routes at attach time. "No routes" is enforced over the
+   * whole stack, not just the API's own children: a route wired onto the
+   * attached API from any sibling construct scope is refused, because it holds
+   * a route key the greedy routes would collide with.
+   *
+   * A consumer may still add explicit, more specific routes to the attached API
+   * afterwards. That exception is enforced at synthesis time and is allowed
+   * only when the added route carries a non-NONE authorizer and does not
+   * redeclare the greedy `ANY /` or `ANY /{proxy+}` key. Within it, a full
+   * method+path match beats the greedy routes by API Gateway precedence, and a
+   * wrong-method hit on such a path falls to the runtime's fail-closed 404/405.
    * @default AppTheoryMcpRouteModel.EXPLICIT
    */
   readonly routeModel?: AppTheoryMcpRouteModel;
@@ -570,7 +576,7 @@ export class AppTheoryMcpServer extends Construct {
     const routeIdMode = resolveRouteIdMode(props);
     this.routeIdMode = routeIdMode;
     if (routeModel === AppTheoryMcpRouteModel.CONSOLIDATED && props.api !== undefined) {
-      assertConsolidatedAttachAllowed(props.api);
+      assertConsolidatedAttachAllowed(this, props.api);
     }
     const authorizationRoutesAttached = posture !== AppTheoryMcpTransportPosture.NONE_PUBLIC;
     const upstreamCallbackPath = resolveUpstreamCallbackPath(props);
@@ -649,12 +655,15 @@ export class AppTheoryMcpServer extends Construct {
         integration,
         transportAuthorizer,
       );
-      this.addConsolidatedRoute(
+      const proxyRoute = this.addConsolidatedRoute(
         CONSOLIDATED_PROXY_ROUTE_ID,
         "/{proxy+}",
         integration,
         transportAuthorizer,
       );
+      if (props.api !== undefined) {
+        registerConsolidatedAttachValidation(this, this.api, [firstTransportRoute, proxyRoute]);
+      }
     } else {
       const runtimeOwnedAuth = new apigwv2.HttpNoneAuthorizer();
       for (const route of this.routeInventory.routes) {
@@ -1272,13 +1281,114 @@ function resolveRouteIdMode(props: AppTheoryMcpServerProps): AppTheoryMcpRouteId
   );
 }
 
-function assertConsolidatedAttachAllowed(api: apigwv2.IHttpApi): void {
-  const existingRoutes = api.node.children.filter((child) => child instanceof apigwv2.HttpRoute);
+/**
+ * The two greedy route keys a consolidated model owns. A consumer route that
+ * redeclares one of them would make the API reject the update.
+ */
+const CONSOLIDATED_GREEDY_ROUTE_KEYS = new Set(["ANY /", "ANY /{proxy+}"]);
+
+/**
+ * Resolve an `ApiId` (or any template value) to a comparable string, so a
+ * `Ref` token and its logical id compare equal across two templates of the same
+ * stack.
+ */
+function comparableApiId(scope: Construct, value: unknown): string {
+  return JSON.stringify(Stack.of(scope).resolve(value));
+}
+
+/**
+ * Every API Gateway v2 route bound to `api`, regardless of which construct
+ * scope created it.
+ *
+ * `api.node.children` only sees routes the API itself (or a child scope)
+ * created, which misses the common pattern of a stack-level construct wiring a
+ * route onto an attached API. Walking the stack and resolving each `CfnRoute`'s
+ * `ApiId` sees both.
+ */
+function routesBoundToApi(scope: Construct, api: apigwv2.IHttpApi): apigwv2.CfnRoute[] {
+  const stack = Stack.of(scope);
+  const apiKey = comparableApiId(scope, api.apiId);
+  const found: apigwv2.CfnRoute[] = [];
+  const visit = (node: Construct): void => {
+    if (node instanceof apigwv2.HttpRoute) {
+      if (comparableApiId(scope, node.httpApi.apiId) === apiKey) {
+        found.push(node.node.defaultChild as apigwv2.CfnRoute);
+      }
+      // The route's own CfnRoute child is the same route; do not double count.
+      return;
+    }
+    if (node instanceof apigwv2.CfnRoute && comparableApiId(scope, node.apiId) === apiKey) {
+      found.push(node);
+    }
+    for (const child of node.node.children) {
+      visit(child);
+    }
+  };
+  visit(stack);
+  return found.filter((route) => route !== undefined);
+}
+
+/**
+ * Refuse a consolidated attach onto an API that already carries routes.
+ *
+ * The check deliberately walks the whole stack: a route bound to the attached
+ * API from a sibling construct scope is just as much a route key the
+ * consolidated greedy routes would collide with as one created under the API
+ * itself.
+ */
+function assertConsolidatedAttachAllowed(scope: Construct, api: apigwv2.IHttpApi): void {
+  const existingRoutes = routesBoundToApi(scope, api);
   if (existingRoutes.length > 0) {
     throw new Error(
-      "AppTheoryMcpServer: routeModel consolidated may attach only to an API that has no routes at attach time; attach to a new or empty API, or use routeModel explicit",
+      "AppTheoryMcpServer: routeModel consolidated may attach only to an API that has no routes at attach time; "
+      + `the API already carries ${existingRoutes.length} route(s): ${existingRoutes.map((route) => route.node.path).join(", ")}; `
+      + "attach to a new or empty API, or use routeModel explicit",
     );
   }
+}
+
+/**
+ * Register the synth-time rule for routes added to a consolidated API AFTER
+ * the construct attached.
+ *
+ * The documented exception is what makes consolidated attach usable in a real
+ * front door: a consumer may add explicit, more specific routes afterwards. It
+ * is allowed only when the route carries a non-NONE authorizer (so the greedy
+ * routes never silently widen a stricter posture) and does not redeclare a
+ * greedy route key (which API Gateway would reject as a duplicate).
+ */
+function registerConsolidatedAttachValidation(
+  scope: Construct,
+  api: apigwv2.IHttpApi,
+  ownedRoutes: apigwv2.HttpRoute[],
+): void {
+  const owned = new Set(
+    ownedRoutes.map((route) => route.node.defaultChild as apigwv2.CfnRoute),
+  );
+  Stack.of(scope).node.addValidation({
+    validate: () => {
+      const errors: string[] = [];
+      for (const route of routesBoundToApi(scope, api)) {
+        if (owned.has(route)) {
+          continue;
+        }
+        const routeKey = route.routeKey;
+        if (CONSOLIDATED_GREEDY_ROUTE_KEYS.has(routeKey)) {
+          errors.push(
+            `AppTheoryMcpServer: routeModel consolidated already owns the greedy API Gateway route key ${JSON.stringify(routeKey)} on this API; a consumer route added after attach must not redeclare it (${route.node.path})`,
+          );
+          continue;
+        }
+        const authorizationType = String(route.authorizationType ?? "NONE").toUpperCase();
+        if (authorizationType === "NONE") {
+          errors.push(
+            `AppTheoryMcpServer: a route added to a consolidated API after attach must carry a non-NONE authorizer, because the greedy routes admit every method and path at the gateway (${routeKey} from ${route.node.path})`,
+          );
+        }
+      }
+      return errors;
+    },
+  });
 }
 
 function validateFacadeAttachment(facade?: AppTheoryMcpFacadeAttachment): void {

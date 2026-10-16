@@ -240,11 +240,17 @@ export interface AppTheoryMcpServerProps {
      * postures; `iam` and `jwt` are refused at synthesis.
      *
      * Consolidated mode is allowed on a construct-owned API, or on an attached
-     * API that has no routes at attach time. A consumer may add explicit, more
-     * specific routes with a stricter authorizer on the same API afterwards; a
-     * full method+path match beats the greedy routes by API Gateway precedence,
-     * and a wrong-method hit on such a path falls to the runtime's fail-closed
-     * 404/405.
+     * API that has no routes at attach time. "No routes" is enforced over the
+     * whole stack, not just the API's own children: a route wired onto the
+     * attached API from any sibling construct scope is refused, because it holds
+     * a route key the greedy routes would collide with.
+     *
+     * A consumer may still add explicit, more specific routes to the attached API
+     * afterwards. That exception is enforced at synthesis time and is allowed
+     * only when the added route carries a non-NONE authorizer and does not
+     * redeclare the greedy `ANY /` or `ANY /{proxy+}` key. Within it, a full
+     * method+path match beats the greedy routes by API Gateway precedence, and a
+     * wrong-method hit on such a path falls to the runtime's fail-closed 404/405.
      * @default AppTheoryMcpRouteModel.EXPLICIT
      */
     readonly routeModel?: AppTheoryMcpRouteModel;

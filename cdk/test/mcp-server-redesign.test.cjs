@@ -1544,6 +1544,135 @@ test("AppTheoryMcpServer consolidated template is stable", () => {
   }
 });
 
+test("AppTheoryMcpServer consolidated attach sees a route bound from a sibling construct scope", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "ConsolidatedSiblingRouteStack");
+  const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
+    httpApiId: "api-sibling",
+    apiEndpoint: "https://api.example.com",
+  });
+  // The TMS shape: an OAuth facade route wired onto the attached API by a
+  // stack-level construct, not by the API or the server.
+  for (const [index, routePath] of ["/oauth/authorize", "/oauth/token"].entries()) {
+    new apigwv2.HttpRoute(stack, `OAuthFacadeRoute${index}`, {
+      httpApi: importedApi,
+      routeKey: apigwv2.HttpRouteKey.with(routePath, apigwv2.HttpMethod.GET),
+      integration: new apigwv2Integrations.HttpLambdaIntegration(`OAuthInt${index}`, handler(stack, `Fn${index}`)),
+      authorizer: new apigwv2Authorizers.HttpIamAuthorizer(),
+    });
+  }
+  assert.equal(
+    importedApi.node.children.filter((child) => child instanceof apigwv2.HttpRoute).length,
+    0,
+    "the sibling routes are not children of the API, so a children-only guard cannot see them",
+  );
+  assert.throws(
+    () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+      handler: handler(stack, "FnServer"),
+      api: importedApi,
+      transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
+      runtimePosture: { requireBearerToken: true },
+      originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+      denialSignal: {},
+      owningApiDefense: { accessLogging: true, throttling: { rateLimit: 50, burstLimit: 100 } },
+      sessionState: { enabled: false },
+      routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
+    }),
+    /routeModel consolidated may attach only to an API that has no routes at attach time/,
+  );
+});
+
+test("AppTheoryMcpServer consolidated attach ignores routes on a different API in the same stack", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "ConsolidatedOtherApiStack");
+  const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
+    httpApiId: "api-target",
+    apiEndpoint: "https://api.example.com",
+  });
+  const otherApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "OtherApi", {
+    httpApiId: "api-other",
+    apiEndpoint: "https://other.example.com",
+  });
+  new apigwv2.HttpRoute(stack, "OtherRoute", {
+    httpApi: otherApi,
+    routeKey: apigwv2.HttpRouteKey.with("/other", apigwv2.HttpMethod.GET),
+    integration: new apigwv2Integrations.HttpLambdaIntegration("OtherInt", handler(stack)),
+    authorizer: new apigwv2Authorizers.HttpIamAuthorizer(),
+  });
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack, "FnServer"),
+    api: importedApi,
+    transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
+    runtimePosture: { requireBearerToken: true },
+    originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+    denialSignal: {},
+    owningApiDefense: { accessLogging: true, throttling: { rateLimit: 50, burstLimit: 100 } },
+    sessionState: { enabled: false },
+    routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
+  });
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.deepEqual(routeKeys(template), ["ANY /", "ANY /{proxy+}", "GET /other"]);
+});
+
+function consolidatedAttachWithLaterRoute(routeKey, authorizer, id) {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "ConsolidatedLaterRouteStack");
+  const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
+    httpApiId: "api-later",
+    apiEndpoint: "https://api.example.com",
+  });
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack, "FnServer"),
+    api: importedApi,
+    transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
+    runtimePosture: { requireBearerToken: true },
+    originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+    denialSignal: {},
+    owningApiDefense: { accessLogging: true, throttling: { rateLimit: 50, burstLimit: 100 } },
+    sessionState: { enabled: false },
+    routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
+  });
+  const separator = routeKey.indexOf(" ");
+  new apigwv2.HttpRoute(stack, id, {
+    httpApi: importedApi,
+    routeKey: apigwv2.HttpRouteKey.with(
+      routeKey.slice(separator + 1),
+      routeKey.slice(0, separator),
+    ),
+    integration: new apigwv2Integrations.HttpLambdaIntegration(`LaterInt${id}`, handler(stack, `LaterFn${id}`)),
+    authorizer,
+  });
+  return { app, stack };
+}
+
+test("AppTheoryMcpServer consolidated attach allows a stricter route added after attach", () => {
+  const { stack } = consolidatedAttachWithLaterRoute("GET /admin", new apigwv2Authorizers.HttpIamAuthorizer(), "LaterIam");
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const admin = resourcesOfType(template, "AWS::ApiGatewayV2::Route")
+    .find((route) => route.Properties.RouteKey === "GET /admin");
+  assert.equal(admin.Properties.AuthorizationType, "AWS_IAM");
+  assert.ok(
+    routeKeys(template).includes("ANY /{proxy+}"),
+    "the greedy routes survive alongside the stricter consumer route",
+  );
+});
+
+test("AppTheoryMcpServer consolidated attach refuses a NONE route added after attach", () => {
+  const { stack } = consolidatedAttachWithLaterRoute("GET /open", new apigwv2.HttpNoneAuthorizer(), "LaterNone");
+  assert.throws(
+    () => assertions.Template.fromStack(stack),
+    /a route added to a consolidated API after attach must carry a non-NONE authorizer/,
+  );
+});
+
+test("AppTheoryMcpServer consolidated attach refuses a route added after attach that redeclares a greedy key", () => {
+  const { stack } = consolidatedAttachWithLaterRoute("ANY /{proxy+}", new apigwv2Authorizers.HttpIamAuthorizer(), "LaterGreedy");
+  assert.throws(
+    () => assertions.Template.fromStack(stack),
+    /already owns the greedy API Gateway route key "ANY \/\{proxy\+\}"/,
+  );
+});
+
 test("AppTheoryMcpServer routeIdMode semantic derives ids from method and pattern", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "ExplicitSemanticStack");
