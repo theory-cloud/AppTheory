@@ -196,6 +196,7 @@ export interface AppTheoryHttpApiProps {
      * full method+path match outranks the greedy route by API Gateway precedence,
      * and a wrong-method request on such a path is denied by the runtime with the
      * fail-closed 404/405 envelope.
+     *
      * @default undefined
      */
     readonly routes?: AppTheoryHttpApiRouteOptions[];

@@ -12,6 +12,7 @@ import { Construct } from "constructs";
 import { AppTheoryMcpRouteAlgebra } from "./mcp-route-algebra";
 import { buildCorsPreflight } from "./cors";
 import type { AppTheoryHttpApiCorsOptions } from "./http-api";
+import { semanticRouteConstructId } from "./route-ids";
 
 const CONSOLIDATED_ROOT_ROUTE_ID = "RouteAnyRoot";
 const CONSOLIDATED_PROXY_ROUTE_ID = "RouteAnyProxy";
@@ -41,6 +42,25 @@ export enum AppTheoryMcpRouteModel {
    * are refused at synthesis time.
    */
   CONSOLIDATED = "consolidated",
+}
+
+/** Construct-id derivation for the explicit route model. */
+export enum AppTheoryMcpRouteIdMode {
+  /**
+   * Positional ids (`Route0`, `Route1`, ...) assigned in emission order. This
+   * is the construct's historical inventory and stays byte-identical for
+   * deployed stacks. The default.
+   */
+  LEGACY = "legacy",
+  /**
+   * Ids derived from the route method and pattern, so inserting, removing, or
+   * reordering a route family never renames an unrelated route. Intended for
+   * newly created explicit APIs: switching an existing deployed explicit API
+   * from `legacy` to `semantic` in place renames every route, which is itself a
+   * create-before-delete collision. Adopt it on an existing stack only through
+   * the new-API swap described in `UPGRADING.md`.
+   */
+  SEMANTIC = "semantic",
 }
 
 /** Transport-route authorization posture for AppTheoryMcpServer. */
@@ -281,6 +301,27 @@ export interface AppTheoryMcpServerProps {
   readonly routeModel?: AppTheoryMcpRouteModel;
 
   /**
+   * Construct-id derivation for the explicit route model.
+   *
+   * `legacy` (the default) assigns positional ids in emission order and is
+   * byte-stable for deployed stacks. `semantic` derives each id from its route
+   * method and pattern, so inserting, removing, or reordering a route family
+   * never renames an unrelated route; it is intended for newly created explicit
+   * APIs.
+   *
+   * Switching an existing deployed explicit API from `legacy` to `semantic` in
+   * place renames every route in one update, which is exactly the
+   * create-before-delete route-key collision the migration check refuses. Adopt
+   * `semantic` on an existing stack only through the new-API swap documented in
+   * `UPGRADING.md`.
+   *
+   * This prop applies to `routeModel: explicit` only. The `consolidated` model
+   * already emits the two fixed semantic ids `RouteAnyRoot` and `RouteAnyProxy`.
+   * @default AppTheoryMcpRouteIdMode.LEGACY
+   */
+  readonly routeIdMode?: AppTheoryMcpRouteIdMode;
+
+  /**
    * CORS preflight for a construct-owned API. Set to `true` for AppTheory
    * defaults or supply an `AppTheoryHttpApiCorsOptions` object. Invalid in
    * attach mode, where the owning API configures CORS.
@@ -459,6 +500,8 @@ export interface AppTheoryMcpServerProps {
  */
 export class AppTheoryMcpServer extends Construct {
   private routeSequence = 0;
+  private routeIdMode = AppTheoryMcpRouteIdMode.LEGACY;
+  private readonly routeIds = new Set<string>();
 
   public readonly api: apigwv2.IHttpApi;
   public readonly ownedApi?: apigwv2.HttpApi;
@@ -524,6 +567,8 @@ export class AppTheoryMcpServer extends Construct {
     validateDefenseInDepth(props, posture);
     const routeModel = resolveRouteModel(props);
     validateRouteModelPosture(routeModel, posture);
+    const routeIdMode = resolveRouteIdMode(props);
+    this.routeIdMode = routeIdMode;
     if (routeModel === AppTheoryMcpRouteModel.CONSOLIDATED && props.api !== undefined) {
       assertConsolidatedAttachAllowed(props.api);
     }
@@ -706,12 +751,26 @@ export class AppTheoryMcpServer extends Construct {
     integration: apigwv2Integrations.HttpLambdaIntegration,
     authorizer: apigwv2.IHttpRouteAuthorizer,
   ): apigwv2.HttpRoute {
-    return new apigwv2.HttpRoute(this, `Route${this.routeSequence++}`, {
+    return new apigwv2.HttpRoute(this, this.nextRouteConstructId(method, path), {
       httpApi: this.api,
       routeKey: apigwv2.HttpRouteKey.with(path, method),
       integration,
       authorizer,
     });
+  }
+
+  private nextRouteConstructId(method: apigwv2.HttpMethod, path: string): string {
+    if (this.routeIdMode !== AppTheoryMcpRouteIdMode.SEMANTIC) {
+      return `Route${this.routeSequence++}`;
+    }
+    const id = semanticRouteConstructId(method, path);
+    if (this.routeIds.has(id)) {
+      throw new Error(
+        `AppTheoryMcpServer: routeIdMode semantic derives the duplicate route construct id ${id} for route key ${method} ${path}`,
+      );
+    }
+    this.routeIds.add(id);
+    return id;
   }
 
   private addConsolidatedRoute(
@@ -1195,6 +1254,22 @@ function validateRouteModelPosture(
       `AppTheoryMcpServer: routeModel consolidated is only valid for transportPosture RUNTIME_BEARER or NONE_PUBLIC; transportPosture ${postureLabel(posture)} keeps the explicit route model because consolidation must never change gateway admission`,
     );
   }
+}
+
+function resolveRouteIdMode(props: AppTheoryMcpServerProps): AppTheoryMcpRouteIdMode {
+  const configured = props.routeIdMode;
+  if (configured === undefined) {
+    return AppTheoryMcpRouteIdMode.LEGACY;
+  }
+  if (
+    configured === AppTheoryMcpRouteIdMode.LEGACY
+    || configured === AppTheoryMcpRouteIdMode.SEMANTIC
+  ) {
+    return configured;
+  }
+  throw new Error(
+    "AppTheoryMcpServer: routeIdMode must be AppTheoryMcpRouteIdMode.LEGACY or .SEMANTIC",
+  );
 }
 
 function assertConsolidatedAttachAllowed(api: apigwv2.IHttpApi): void {

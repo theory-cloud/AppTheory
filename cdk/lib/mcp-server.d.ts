@@ -25,6 +25,24 @@ export declare enum AppTheoryMcpRouteModel {
      */
     CONSOLIDATED = "consolidated"
 }
+/** Construct-id derivation for the explicit route model. */
+export declare enum AppTheoryMcpRouteIdMode {
+    /**
+     * Positional ids (`Route0`, `Route1`, ...) assigned in emission order. This
+     * is the construct's historical inventory and stays byte-identical for
+     * deployed stacks. The default.
+     */
+    LEGACY = "legacy",
+    /**
+     * Ids derived from the route method and pattern, so inserting, removing, or
+     * reordering a route family never renames an unrelated route. Intended for
+     * newly created explicit APIs: switching an existing deployed explicit API
+     * from `legacy` to `semantic` in place renames every route, which is itself a
+     * create-before-delete collision. Adopt it on an existing stack only through
+     * the new-API swap described in `UPGRADING.md`.
+     */
+    SEMANTIC = "semantic"
+}
 /** Transport-route authorization posture for AppTheoryMcpServer. */
 export declare enum AppTheoryMcpTransportPosture {
     /** AWS IAM (SigV4) on the transport routes. The default for a server with no facade attachment. */
@@ -231,6 +249,26 @@ export interface AppTheoryMcpServerProps {
      */
     readonly routeModel?: AppTheoryMcpRouteModel;
     /**
+     * Construct-id derivation for the explicit route model.
+     *
+     * `legacy` (the default) assigns positional ids in emission order and is
+     * byte-stable for deployed stacks. `semantic` derives each id from its route
+     * method and pattern, so inserting, removing, or reordering a route family
+     * never renames an unrelated route; it is intended for newly created explicit
+     * APIs.
+     *
+     * Switching an existing deployed explicit API from `legacy` to `semantic` in
+     * place renames every route in one update, which is exactly the
+     * create-before-delete route-key collision the migration check refuses. Adopt
+     * `semantic` on an existing stack only through the new-API swap documented in
+     * `UPGRADING.md`.
+     *
+     * This prop applies to `routeModel: explicit` only. The `consolidated` model
+     * already emits the two fixed semantic ids `RouteAnyRoot` and `RouteAnyProxy`.
+     * @default AppTheoryMcpRouteIdMode.LEGACY
+     */
+    readonly routeIdMode?: AppTheoryMcpRouteIdMode;
+    /**
      * CORS preflight for a construct-owned API. Set to `true` for AppTheory
      * defaults or supply an `AppTheoryHttpApiCorsOptions` object. Invalid in
      * attach mode, where the owning API configures CORS.
@@ -386,6 +424,8 @@ export interface AppTheoryMcpServerProps {
  */
 export declare class AppTheoryMcpServer extends Construct {
     private routeSequence;
+    private routeIdMode;
+    private readonly routeIds;
     readonly api: apigwv2.IHttpApi;
     readonly ownedApi?: apigwv2.HttpApi;
     readonly sessionTable?: dynamodb.ITable;
@@ -430,6 +470,7 @@ export declare class AppTheoryMcpServer extends Construct {
     readonly accessLogGroup?: logs.ILogGroup;
     constructor(scope: Construct, id: string, props: AppTheoryMcpServerProps);
     private addRuntimeRoute;
+    private nextRouteConstructId;
     private addConsolidatedRoute;
     private addEnvironment;
     private setupCustomDomain;

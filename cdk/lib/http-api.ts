@@ -11,6 +11,7 @@ import { Construct } from "constructs";
 import { AppTheoryApiDomain } from "./api-domain";
 import { buildCorsPreflight } from "./cors";
 import type { AppTheoryRegionalWafOptions } from "./regional-waf";
+import { semanticRouteConstructId } from "./route-ids";
 
 export interface AppTheoryHttpApiCorsOptions {
   /**
@@ -228,6 +229,7 @@ export interface AppTheoryHttpApiProps {
    * full method+path match outranks the greedy route by API Gateway precedence,
    * and a wrong-method request on such a path is denied by the runtime with the
    * fail-closed 404/405 envelope.
+   *
    * @default undefined
    */
   readonly routes?: AppTheoryHttpApiRouteOptions[];
@@ -378,7 +380,7 @@ export class AppTheoryHttpApi extends Construct {
             `AppTheoryHttpApi: routes method must be one of ${[...EXPLICIT_ROUTE_METHODS].join(", ")} (got ${JSON.stringify(rawMethod)})`,
           );
         }
-        const routeId = explicitRouteConstructId(method, routePath);
+        const routeId = semanticRouteConstructId(method, routePath);
         if (seen.has(routeId)) {
           throw new Error(
             `AppTheoryHttpApi: routes contains the duplicate route ${method} ${routePath}`,
@@ -464,18 +466,6 @@ function normalizeExplicitRoutePath(value: string): string {
     }
   }
   return routePath;
-}
-
-function explicitRouteConstructId(method: string, routePath: string): string {
-  return `Route${semanticRouteToken(method)}${semanticRouteToken(routePath)}`;
-}
-
-function semanticRouteToken(value: string): string {
-  const parts = String(value).split(/[^A-Za-z0-9]+/).filter((part) => part !== "");
-  if (parts.length === 0) {
-    return "Root";
-  }
-  return parts.map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join("");
 }
 
 function explicitRouteAuthorizer(posture?: AppTheoryHttpApiRouteAuthorizer): apigwv2.IHttpRouteAuthorizer {

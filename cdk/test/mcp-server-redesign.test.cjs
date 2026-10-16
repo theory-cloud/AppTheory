@@ -5,6 +5,8 @@ const test = require("node:test");
 
 const cdk = require("aws-cdk-lib");
 const apigwv2 = require("aws-cdk-lib/aws-apigatewayv2");
+const apigwv2Authorizers = require("aws-cdk-lib/aws-apigatewayv2-authorizers");
+const apigwv2Integrations = require("aws-cdk-lib/aws-apigatewayv2-integrations");
 const lambda = require("aws-cdk-lib/aws-lambda");
 const assertions = require("aws-cdk-lib/assertions");
 
@@ -189,6 +191,7 @@ test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL author
       "ownedApi",
       "owningApiDefense",
       "routeFamily",
+      "routeIdMode",
       "routeModel",
       "runtimePosture",
       "scopePermissionToRoute",
@@ -1539,4 +1542,84 @@ test("AppTheoryMcpServer consolidated template is stable", () => {
   } else {
     expectSnapshot("mcp-server-consolidated", template);
   }
+});
+
+test("AppTheoryMcpServer routeIdMode semantic derives ids from method and pattern", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "ExplicitSemanticStack");
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack),
+    sessionState: { enabled: false },
+    ownedApi: { stage: { throttlingEnabled: true } },
+    routeIdMode: apptheory.AppTheoryMcpRouteIdMode.SEMANTIC,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const routeIds = Object.entries(template.Resources)
+    .filter(([, resource]) => resource.Type === "AWS::ApiGatewayV2::Route")
+    .map(([id]) => id);
+  assert.ok(
+    routeIds.some((id) => id.startsWith("McpServerRoutePOSTClientNamespaceMcp")),
+    "the transport route id encodes its method and pattern",
+  );
+  assert.ok(
+    routeIds.some((id) => id.startsWith("McpServerRouteGETWellKnownOauthProtectedResourceClientNamespaceMcp")),
+    "the discovery route id encodes its method and pattern",
+  );
+  assert.ok(
+    !routeIds.some((id) => /Route\d/.test(id)),
+    "semantic ids must never be positional counters",
+  );
+  for (const id of routeIds) {
+    assert.ok(
+      id.length <= 255,
+      `the derived logical id must stay within the CloudFormation limit (${id.length}): ${id}`,
+    );
+  }
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("mcp-server-explicit-semantic", template);
+  } else {
+    expectSnapshot("mcp-server-explicit-semantic", template);
+  }
+});
+
+test("AppTheoryMcpServer default routeIdMode keeps the legacy positional ids", () => {
+  const idsFor = (routeIdMode) => {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "ExplicitIdModeStack");
+    new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+      handler: handler(stack),
+      sessionState: { enabled: false },
+      ownedApi: { stage: { throttlingEnabled: true } },
+      routeIdMode,
+    });
+    return Object.entries(assertions.Template.fromStack(stack).toJSON().Resources)
+      .filter(([, resource]) => resource.Type === "AWS::ApiGatewayV2::Route")
+      .map(([id]) => id)
+      .sort();
+  };
+  assert.deepEqual(
+    idsFor(undefined),
+    idsFor(apptheory.AppTheoryMcpRouteIdMode.LEGACY),
+    "omitting routeIdMode must be byte-identical to legacy",
+  );
+  assert.notDeepEqual(
+    idsFor(apptheory.AppTheoryMcpRouteIdMode.SEMANTIC),
+    idsFor(undefined),
+    "semantic mode must not silently fall back to the positional counter",
+  );
+});
+
+test("AppTheoryMcpServer refuses an unknown routeIdMode", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "ExplicitIdModeInvalidStack");
+  assert.throws(
+    () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+      handler: handler(stack),
+      sessionState: { enabled: false },
+      routeIdMode: "positional",
+    }),
+    /routeIdMode must be AppTheoryMcpRouteIdMode.LEGACY or .SEMANTIC/,
+  );
 });
