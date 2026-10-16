@@ -72,9 +72,9 @@ default is unchanged in both constructs.
   carry the same derived values in both models, and the runtime still registers every entry in `routeInventory`.
 - **Whole-stack attach guard** — "no routes at attach time" is checked across the whole stack, not just the API's
   construct children, so a route wired onto the attached API from a sibling construct scope (for example stack-level
-  `OAuthFacadeRoute0`, `OAuthFacadeRoute1`, ... constructs) now fails the attach. Routes added *after* attach remain
-  allowed only when they carry a non-`NONE` authorizer and do not redeclare `ANY /` or `ANY /{proxy+}`; both rules are
-  enforced at synthesis.
+  `OAuthFacadeRoute0`, `OAuthFacadeRoute1`, ... constructs) now fails the attach. Routes added *after* the construct
+  creates its greedy routes — whether the API is attached or construct-owned — remain allowed only when they carry a
+  non-`NONE` authorizer and do not redeclare `ANY /` or `ANY /{proxy+}`; both rules are enforced at synthesis.
 - **`routeSettings` is validated** — `AppTheoryHttpApi` now rejects a `routeSettings` key that matches no route the
   construct emits, naming the emitted keys, instead of letting API Gateway silently ignore the entry. Keys are the
   greedy `ANY /` and `ANY /{proxy+}` plus one `<METHOD> <path>` per `routes` entry.

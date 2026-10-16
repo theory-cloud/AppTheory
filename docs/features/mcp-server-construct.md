@@ -92,11 +92,12 @@ refused with `AppTheoryMcpServer: routeModel consolidated may attach only to an 
 followed by the offending construct paths. Attaching a consolidated server only inspects the API it attaches to, so a
 route on a different API in the same stack is unaffected.
 
-A consumer may still add explicit, more specific routes to the API *after* attach with a stricter authorizer: a full
-method+path match beats the greedy routes by API Gateway precedence, and a wrong-method hit on such a path falls to the
-runtime's fail-closed 404/405. That exception is validated at synthesis and is allowed only when the added route carries
-a non-`NONE` authorizer and does not redeclare the greedy `ANY /` or `ANY /{proxy+}` route key. Either violation fails
-synthesis with `AppTheoryMcpServer: a route added to a consolidated API after attach must carry a non-NONE authorizer`
+A consumer may still add explicit, more specific routes to the consolidated API *after* the construct creates its greedy
+routes — in either the attached or the construct-owned mode — with a stricter authorizer: a full method+path match beats
+the greedy routes by API Gateway precedence, and a wrong-method hit on such a path falls to the runtime's fail-closed
+404/405. That exception is validated at synthesis and is allowed only when the added route carries a non-`NONE`
+authorizer and does not redeclare the greedy `ANY /` or `ANY /{proxy+}` route key. Either violation fails synthesis with
+`AppTheoryMcpServer: a route added to a consolidated API after construction must carry a non-NONE authorizer`
 or `AppTheoryMcpServer: routeModel consolidated already owns the greedy API Gateway route key "ANY /{proxy+}"`.
 
 `routeModel` changes only the API Gateway route resources. The runtime contract is unchanged: `routeInventory`,
