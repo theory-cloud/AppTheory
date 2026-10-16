@@ -455,13 +455,19 @@ func requestForNormalizeError(fallback Request, normalized Request, errorCode st
 }
 
 func (a *App) resolvePortableRequestID(headers map[string][]string, opts serveOptions) string {
-	if requestID := strings.TrimSpace(firstHeaderValue(headers, "x-request-id")); requestID != "" {
-		return requestID
+	if !a.serverIssuedRequestIDs() {
+		if requestID := strings.TrimSpace(firstHeaderValue(headers, "x-request-id")); requestID != "" {
+			return requestID
+		}
 	}
 	if fallbackRequestID := strings.TrimSpace(opts.fallbackRequestID); fallbackRequestID != "" {
 		return fallbackRequestID
 	}
 	return a.newRequestID()
+}
+
+func (a *App) serverIssuedRequestIDs() bool {
+	return a != nil && a.requestIDSource == RequestIDSourceServer
 }
 
 func portableTrace(origin string) []string {

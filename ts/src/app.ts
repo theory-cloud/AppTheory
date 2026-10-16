@@ -100,6 +100,11 @@ import {
 } from "./internal/response.js";
 import { Router } from "./internal/router.js";
 import { extractTraceIdFromHeaders } from "./internal/trace-context.js";
+import {
+  REQUEST_ID_SOURCE_SERVER,
+  type RequestIdSource,
+  normalizeRequestIdSource,
+} from "./request-id-source.js";
 import { vary } from "./response.js";
 import {
   generateSecureOpenAPI,
@@ -437,6 +442,7 @@ export interface SecureOptions {
   ids?: IdGenerator;
   tier?: Tier;
   httpErrorFormat?: HTTPErrorFormat;
+  requestIdSource?: RequestIdSource;
   limits?: Limits;
   cors?: CORSConfig;
   principalResolver?: SecurePrincipalResolver;
@@ -458,6 +464,7 @@ interface AppOptions {
   ids?: IdGenerator;
   tier?: Tier;
   httpErrorFormat?: HTTPErrorFormat;
+  requestIdSource?: RequestIdSource;
   limits?: Limits;
   cors?: CORSConfig;
   authHook?: AuthHook;
@@ -538,6 +545,7 @@ export class App {
   private readonly _ids: IdGenerator;
   private readonly _tier: Tier;
   private readonly _httpErrorFormat: HTTPErrorFormat;
+  private readonly _requestIdSource: RequestIdSource;
   private readonly _limits: NormalizedLimits;
   private readonly _cors: NormalizedCORSConfig;
   private readonly _authHook: AuthHook | null;
@@ -572,6 +580,7 @@ export class App {
         ? options.tier
         : "p2";
     this._httpErrorFormat = normalizeHTTPErrorFormat(options.httpErrorFormat);
+    this._requestIdSource = normalizeRequestIdSource(options.requestIdSource);
     this._limits = {
       maxRequestBytes: Number(options.limits?.maxRequestBytes ?? 0),
       maxResponseBytes: Number(options.limits?.maxResponseBytes ?? 0),
@@ -1173,7 +1182,10 @@ export class App {
     let path = normalizePath(request.path);
     let route = UNMATCHED_ROUTE_TEMPLATE;
 
-    let requestId = firstHeaderValue(preHeaders, "x-request-id");
+    let requestId = "";
+    if (this._requestIdSource !== REQUEST_ID_SOURCE_SERVER) {
+      requestId = firstHeaderValue(preHeaders, "x-request-id");
+    }
     if (!requestId) {
       requestId = String(contextOptions?.fallbackRequestId ?? "").trim();
       if (!requestId) {
@@ -2165,6 +2177,7 @@ const SECURE_OPTION_KEYS = new Set([
   "ids",
   "tier",
   "httpErrorFormat",
+  "requestIdSource",
   "limits",
   "cors",
   "principalResolver",
@@ -2210,6 +2223,9 @@ export class SecureApp {
       ...(options.ids !== undefined ? { ids: options.ids } : {}),
       ...(options.httpErrorFormat !== undefined
         ? { httpErrorFormat: options.httpErrorFormat }
+        : {}),
+      ...(options.requestIdSource !== undefined
+        ? { requestIdSource: options.requestIdSource }
         : {}),
       ...(options.limits !== undefined ? { limits: options.limits } : {}),
       ...(options.cors !== undefined ? { cors: options.cors } : {}),
@@ -2394,6 +2410,7 @@ export function createApp(
     ids?: IdGenerator;
     tier?: Tier;
     httpErrorFormat?: HTTPErrorFormat;
+    requestIdSource?: RequestIdSource;
     limits?: Limits;
     cors?: CORSConfig;
     authHook?: AuthHook;

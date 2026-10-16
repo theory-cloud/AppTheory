@@ -738,6 +738,7 @@ from apptheory.openapi import (
     generate_openapi_json,
 )
 from apptheory.request import Request
+from apptheory.request_id_source import REQUEST_ID_SOURCE_DEFAULT, REQUEST_ID_SOURCE_SERVER
 from apptheory.response import Response, binary, html, html_stream, json, safe_json_for_html, text
 from apptheory.sanitization import (
     mask_first_last,
@@ -1011,6 +1012,8 @@ __all__ = [
     "PARTNER_AGENT_MCP_PATTERN",
     "PARTNER_NAMESPACE_MCP_PATTERN",
     "PROTECTED_RESOURCE_PREFIX",
+    "REQUEST_ID_SOURCE_DEFAULT",
+    "REQUEST_ID_SOURCE_SERVER",
     "S3_ENCRYPTION_BUCKET_DEFAULT",
     "S3_ENCRYPTION_KMS",
     "S3_ENCRYPTION_S3_MANAGED",

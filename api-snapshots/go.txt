@@ -1839,6 +1839,10 @@ const PrincipalInternal PrincipalKind = "internal"
 
 const RateLimitDecisionKey = "rate_limit_decision"
 
+const RequestIDSourceDefault RequestIDSource = "default"
+
+const RequestIDSourceServer RequestIDSource = "server"
+
 const SecureRouteAppSync SecureRouteSurface = "appsync"
 
 const SecureRouteHTTP SecureRouteSurface = "http"
@@ -1871,6 +1875,7 @@ type App struct {
 	ids              IDGenerator
 	tier             Tier
 	httpErrorFormat  HTTPErrorFormat
+	requestIDSource  RequestIDSource
 	limits           Limits
 	cors             CORSConfig
 	auth             AuthHook
@@ -2311,6 +2316,8 @@ type Request struct {
 	TraceID string
 }
 
+type RequestIDSource string
+
 type Response struct {
 	Status int
 
@@ -2352,6 +2359,7 @@ type SecureOptions struct {
 	IDGenerator            IDGenerator
 	Tier                   Tier
 	HTTPErrorFormat        HTTPErrorFormat
+	RequestIDSource        RequestIDSource
 	Limits                 Limits
 	CORS                   CORSConfig
 	PrincipalResolver      SecurePrincipalResolver
@@ -2594,6 +2602,8 @@ func WithLimits(Limits) Option
 func WithObservability(ObservabilityHooks) Option
 
 func WithPolicyHook(PolicyHook) Option
+
+func WithRequestIDSource(RequestIDSource) Option
 
 func WithTenantClaim(string) Option
 
