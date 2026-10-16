@@ -251,6 +251,29 @@ class McpFacadeContractSurfaceTests(unittest.TestCase):
 
 
 class McpFacadeMetadataDocumentTests(unittest.TestCase):
+    def test_routed_metadata_advertises_rfc9207_iss_parameter_support(self) -> None:
+        app = create_app(tier="p0")
+        config = _valid_config(URL_MODE_PUBLIC_BASE_URL)
+        config.root_authorization_server = _valid_root_discovery_config()
+        inventory = register_mcp_facade(app, config)
+        self.assertTrue(inventory.root_authorization_server_attached)
+
+        for route in inventory.routes:
+            for path in (route.discovery_canonical_pattern, route.discovery_suffix_pattern):
+                with self.subTest(path=path):
+                    response = _serve(app, "GET", path)
+                    self.assertEqual(200, response.status)
+                    self.assertIs(
+                        True,
+                        json.loads(response.body.decode())["authorization_response_iss_parameter_supported"],
+                    )
+
+        # Root discovery describes the upstream authorization server, so it does
+        # not claim `iss` support.
+        root = _serve(app, "GET", inventory.root_authorization_server_pattern)
+        self.assertEqual(200, root.status)
+        self.assertNotIn("authorization_response_iss_parameter_supported", root.body.decode())
+
     def test_shared_fixture_pins_routed_document_bytes_per_kind_and_mode(self) -> None:
         documents = json.loads(_EXPECTATIONS_PATH.read_text(encoding="utf-8"))["documents"]
         self.assertEqual(10, len(documents))
@@ -596,7 +619,8 @@ class McpFacadeMetadataDocumentTests(unittest.TestCase):
             '"grant_types_supported":["urn:custom:grant"],'
             '"token_endpoint_auth_methods_supported":["client_secret_post"],'
             '"code_challenge_methods_supported":["plain"],'
-            '"scopes_supported":["custom:read","custom:write"]}',
+            '"scopes_supported":["custom:read","custom:write"],'
+            '"authorization_response_iss_parameter_supported":true}',
             discovery.body.decode(),
         )
 
@@ -770,6 +794,7 @@ class McpFacadeRouteModelTests(unittest.TestCase):
                 "token_endpoint_auth_methods_supported": ["none"],
                 "code_challenge_methods_supported": ["S256"],
                 "scopes_supported": ["namespace:use"],
+                "authorization_response_iss_parameter_supported": True,
             },
             json.loads(discovery.body),
         )

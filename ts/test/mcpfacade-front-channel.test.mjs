@@ -2898,3 +2898,28 @@ test("the shared threat-controls table pins every threat row to an executed row"
   }
   assert.equal(checked, THREAT_CONTROLS_CASE_COUNT);
 });
+
+// ---------------------------------------------------------------------------
+// RFC 9207 advertisement
+// ---------------------------------------------------------------------------
+
+test("front-channel routed metadata advertises the iss it sends", async (t) => {
+  const harness = await newFrontChannelHarness(t);
+
+  const metadata = await harness.serve(
+    "GET",
+    oauthAuthorizationServerPath(harness.endpoint),
+    null,
+    null,
+  );
+  assert.equal(metadata.status, 200);
+  const document = JSON.parse(bodyString(metadata));
+  assert.equal(document.authorization_response_iss_parameter_supported, true);
+  assert.equal(typeof document.issuer, "string");
+  assert.notEqual(document.issuer, "");
+
+  // The advertised issuer is byte-equal to the `iss` the client callback
+  // carries, so the claim matches the front channel's own behavior.
+  const { callback } = await harness.authorizeAndCallback();
+  assert.equal(locationQuery(callback).get("iss"), document.issuer);
+});

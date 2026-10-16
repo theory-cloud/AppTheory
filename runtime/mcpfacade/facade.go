@@ -1169,6 +1169,13 @@ func authorizationServerHandler(config normalizedConfig, kind mcproutes.Endpoint
 			TokenEndpointAuthMethodsSupported: append([]string(nil), config.capabilities.TokenEndpointAuthMethods...),
 			CodeChallengeMethodsSupported:     append([]string(nil), config.capabilities.CodeChallengeMethods...),
 			ScopesSupported:                   append([]string(nil), config.scopes[kind]...),
+			// The front channel always sends RFC 9207 `iss` on the client
+			// callback, on success and on error redirects alike, so the routed
+			// document advertises it. The root discovery document describes the
+			// upstream authorization server, whose responses this facade does not
+			// own, and the generic builder serves no front channel: neither sets
+			// the member.
+			AuthorizationResponseIssParameterSupported: true,
 		}
 		return withMetadataHeaders(oauth.AuthorizationServerMetadataHandler(metadata))(ctx)
 	}

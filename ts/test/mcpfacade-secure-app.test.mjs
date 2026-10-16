@@ -1080,3 +1080,30 @@ test("secure mount rejects a cross-surface collision without mounting anything",
     `the error must name the cross-surface collision, got ${failure.message}`,
   );
 });
+
+// ---------------------------------------------------------------------------
+// RFC 9207 advertisement on the SecureApp registrar
+// ---------------------------------------------------------------------------
+
+test("secure routed metadata advertises RFC 9207 iss parameter support", async (t) => {
+  const world = await startFrontChannelWorld(t);
+  const secure = new SecureApp({ tier: "p0" });
+  const inventory = registerMcpFacadeSecure(secure, world.config);
+  const surfaces = frontChannelSurfaces(secure, world);
+
+  for (const route of inventory.routes) {
+    for (const routePath of [
+      route.discoveryCanonicalPattern,
+      route.discoverySuffixPattern,
+    ]) {
+      const response = await surfaces.serve("GET", routePath, null, null);
+      assert.equal(response.status, 200, routePath);
+      assert.equal(
+        JSON.parse(bodyString(response))
+          .authorization_response_iss_parameter_supported,
+        true,
+        routePath,
+      );
+    }
+  }
+});

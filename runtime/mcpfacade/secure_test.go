@@ -1017,3 +1017,29 @@ func TestSecureMountRejectsACrossSurfaceCollisionWithoutMountingAnything(t *test
 	require.ErrorContains(t, err, "already registered on the secure app")
 	require.ErrorContains(t, err, collisionKey)
 }
+
+// TestSecureRoutedMetadataAdvertisesRFC9207IssParameterSupported proves the
+// SecureApp registrar serves the same RFC 9207 claim as the plain-App registrar:
+// every routed authorization-server route the SecureApp mounts advertises `iss`
+// support.
+func TestSecureRoutedMetadataAdvertisesRFC9207IssParameterSupported(t *testing.T) {
+	t.Parallel()
+	row := secureAppMountCase{
+		ID:               "rfc9207-iss-parameter",
+		Group:            secureAppMountGroup,
+		Scenario:         "inventory_parity",
+		TransportPosture: string(TransportPostureIAM),
+		IssuerMode:       string(mcproutes.IssuerModeRoute),
+		ExpectEqual:      true,
+	}
+	secure, inventory := newSecureMountApp(t, row)
+	for _, route := range inventory.Routes {
+		for _, path := range []string{route.DiscoveryCanonicalPattern, route.DiscoverySuffixPattern} {
+			response := serveSecure(t, secure, "GET", path, nil, nil)
+			require.Equalf(t, 200, response.Status, "%s", path)
+			var document map[string]any
+			require.NoError(t, json.Unmarshal(response.Body, &document))
+			require.Equalf(t, true, document["authorization_response_iss_parameter_supported"], "%s", path)
+		}
+	}
+}

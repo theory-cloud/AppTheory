@@ -309,6 +309,38 @@ test("metadata documents byte-match the shared golden for every kind and URL mod
   }
 });
 
+test("routed metadata advertises RFC 9207 iss parameter support", async () => {
+  const app = createApp({ tier: "p0" });
+  const config = validConfig();
+  config.rootAuthorizationServer = validRootDiscoveryConfig();
+  const inventory = registerMcpFacade(app, config);
+
+  for (const route of inventory.routes) {
+    for (const routePath of [
+      route.discoveryCanonicalPattern,
+      route.discoverySuffixPattern,
+    ]) {
+      const response = await serve(app, "GET", routePath);
+      assert.equal(response.status, 200, routePath);
+      assert.equal(
+        JSON.parse(bodyString(response))
+          .authorization_response_iss_parameter_supported,
+        true,
+        routePath,
+      );
+    }
+  }
+
+  // Root discovery describes the upstream authorization server, so it does not
+  // claim `iss` support.
+  const root = await serve(app, "GET", inventory.rootAuthorizationServerPattern);
+  assert.equal(root.status, 200);
+  assert.equal(
+    bodyString(root).includes("authorization_response_iss_parameter_supported"),
+    false,
+  );
+});
+
 test("discovery rebuilds path-parameter identity for every kind", async () => {
   const app = createApp({ tier: "p0" });
   registerMcpFacade(app, validConfig());
@@ -594,7 +626,7 @@ test("scopes, capabilities and registration endpoint are application-owned", asy
   );
   assert.equal(
     bodyString(discovery),
-    `{"issuer":"https://issuer.example.com","authorization_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/authorize","token_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/token","registration_endpoint":"https://accounts.example.com/custom-register","jwks_uri":"https://issuer.example.com/jwks.json?set=active","response_types_supported":["device_code"],"grant_types_supported":["urn:custom:grant"],"token_endpoint_auth_methods_supported":["client_secret_post"],"code_challenge_methods_supported":["plain"],"scopes_supported":["custom:read","custom:write"]}`,
+    `{"issuer":"https://issuer.example.com","authorization_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/authorize","token_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/token","registration_endpoint":"https://accounts.example.com/custom-register","jwks_uri":"https://issuer.example.com/jwks.json?set=active","response_types_supported":["device_code"],"grant_types_supported":["urn:custom:grant"],"token_endpoint_auth_methods_supported":["client_secret_post"],"code_challenge_methods_supported":["plain"],"scopes_supported":["custom:read","custom:write"],"authorization_response_iss_parameter_supported":true}`,
   );
 });
 

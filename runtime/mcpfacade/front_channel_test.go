@@ -1551,3 +1551,24 @@ func TestFrontChannelConcurrentCodeRedemptionHasExactlyOneWinner(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, oauthstore.BrokerStatusRevoked, record.Status)
 }
+
+// TestFrontChannelRoutedMetadataAdvertisesTheIssItSends ties the routed
+// document's RFC 9207 claim to the front channel's behavior in one executed
+// test: the document advertises authorization_response_iss_parameter_supported
+// and its issuer is byte-equal to the `iss` the client callback carries.
+func TestFrontChannelRoutedMetadataAdvertisesTheIssItSends(t *testing.T) {
+	t.Parallel()
+	harness := newFrontChannelHarness(t)
+
+	metadata := harness.serve("GET", harness.path(mcproutes.EndpointPath.OAuthAuthorizationServerPath), nil, nil)
+	require.Equal(t, 200, metadata.Status)
+	require.Contains(t, string(metadata.Body), `"authorization_response_iss_parameter_supported":true`)
+	var document struct {
+		Issuer string `json:"issuer"`
+	}
+	require.NoError(t, json.Unmarshal(metadata.Body, &document))
+	require.NotEmpty(t, document.Issuer)
+
+	callback, _ := harness.authorizeAndCallback("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTU")
+	require.Equal(t, document.Issuer, locationQuery(t, callback).Get("iss"))
+}

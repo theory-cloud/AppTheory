@@ -1443,6 +1443,12 @@ def _authorization_server_handler(config: _NormalizedConfig, kind: str) -> Handl
             "token_endpoint_auth_methods_supported": list(config.capabilities.token_endpoint_auth_methods or []),
             "code_challenge_methods_supported": list(config.capabilities.code_challenge_methods or []),
             "scopes_supported": list(config.scopes[kind]),
+            # The front channel always sends RFC 9207 `iss` on the client
+            # callback, on success and on error redirects alike, so the routed
+            # document advertises it; the root discovery document describes the
+            # upstream authorization server and the generic builder serves no
+            # front channel, so neither sets the member.
+            "authorization_response_iss_parameter_supported": True,
         }
         return _with_metadata_headers(lambda _ctx, _document=document: _metadata_response(_document))(ctx)
 

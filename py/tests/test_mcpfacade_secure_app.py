@@ -948,3 +948,23 @@ class SecureAppConformanceKitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class SecureAppMetadataIssAdvertisementTests(unittest.TestCase):
+    """The SecureApp registrar serves the same RFC 9207 claim the plain-App
+    registrar does: every routed authorization-server route the SecureApp mounts
+    advertises ``iss`` support.
+    """
+
+    def test_secure_routed_metadata_advertises_rfc9207_iss_parameter_support(self) -> None:
+        config = _secure_config(None, transport_posture="iam", front_channel=False)
+        secure, inventory = _mount_secure(config)
+
+        for route in inventory.routes:
+            for path in (route.discovery_canonical_pattern, route.discovery_suffix_pattern):
+                with self.subTest(path=path):
+                    response = _serve(secure, "GET", path)
+                    self.assertEqual(200, response.status)
+                    self.assertIs(
+                        True,
+                        json.loads(response.body.decode())["authorization_response_iss_parameter_supported"],
+                    )

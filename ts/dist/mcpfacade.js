@@ -973,6 +973,12 @@ function authorizationServerHandler(config, kind) {
                 ...config.capabilities.codeChallengeMethods,
             ],
             scopes_supported: [...config.scopes[kind]],
+            // The front channel always sends RFC 9207 `iss` on the client callback,
+            // on success and on error redirects alike, so the routed document
+            // advertises it; the root discovery document describes the upstream
+            // authorization server and the generic builder serves no front channel,
+            // so neither sets the member.
+            authorization_response_iss_parameter_supported: true,
         };
         return withMetadataHeaders(authorizationServerMetadataHandler(metadata))(ctx);
     });

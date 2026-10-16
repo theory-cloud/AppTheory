@@ -886,7 +886,7 @@ func TestScopesCapabilitiesAndRegistrationEndpointAreApplicationOwned(t *testing
 	protected := serve(app, "GET", "/.well-known/oauth-protected-resource/acme/agents/helper/mcp", nil)
 	require.Contains(t, string(protected.Body), `"scopes_supported":["custom:read","custom:write"]`)
 	discovery := serve(app, "GET", "/.well-known/oauth-authorization-server/acme/agents/helper/mcp", nil)
-	require.Equal(t, `{"issuer":"https://issuer.example.com","authorization_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/authorize","token_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/token","registration_endpoint":"https://accounts.example.com/custom-register","jwks_uri":"https://issuer.example.com/jwks.json?set=active","response_types_supported":["device_code"],"grant_types_supported":["urn:custom:grant"],"token_endpoint_auth_methods_supported":["client_secret_post"],"code_challenge_methods_supported":["plain"],"scopes_supported":["custom:read","custom:write"]}`, string(discovery.Body))
+	require.Equal(t, `{"issuer":"https://issuer.example.com","authorization_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/authorize","token_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/agents/helper/mcp/token","registration_endpoint":"https://accounts.example.com/custom-register","jwks_uri":"https://issuer.example.com/jwks.json?set=active","response_types_supported":["device_code"],"grant_types_supported":["urn:custom:grant"],"token_endpoint_auth_methods_supported":["client_secret_post"],"code_challenge_methods_supported":["plain"],"scopes_supported":["custom:read","custom:write"],"authorization_response_iss_parameter_supported":true}`, string(discovery.Body))
 }
 
 func TestMissingPlugPointsLeaveAuthorizationRoutesUnregistered(t *testing.T) {
@@ -1394,7 +1394,7 @@ func TestIssuerModeRouteDerivesPerRouteIssuerAndResource(t *testing.T) {
 
 	discovery := serve(app, "GET", "/.well-known/oauth-authorization-server/acme/mcp", nil)
 	require.Equal(t, 200, discovery.Status)
-	require.JSONEq(t, `{"issuer":"`+routeURL+`","authorization_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/authorize","token_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/token","registration_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/register","jwks_uri":"https://issuer.example.com/jwks.json?set=active","response_types_supported":["code"],"grant_types_supported":["authorization_code","refresh_token"],"token_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":["namespace:use"]}`, string(discovery.Body))
+	require.JSONEq(t, `{"issuer":"`+routeURL+`","authorization_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/authorize","token_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/token","registration_endpoint":"https://front.example.com/.well-known/oauth-authorization-server/acme/mcp/register","jwks_uri":"https://issuer.example.com/jwks.json?set=active","response_types_supported":["code"],"grant_types_supported":["authorization_code","refresh_token"],"token_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":["namespace:use"],"authorization_response_iss_parameter_supported":true}`, string(discovery.Body))
 
 	// family mode keeps advertising one family-wide issuer.
 	familyApp := apptheory.New(apptheory.WithTier(apptheory.TierP0))
@@ -1640,11 +1640,47 @@ func expectedProtectedResourceJSON(resource string, kind mcproutes.EndpointKind)
 // plain config, which mounts no register route: registration_endpoint is
 // advertised only while that route is mounted, so the document omits it.
 func expectedAuthorizationServerJSON(authorizeURL, tokenURL string, kind mcproutes.EndpointKind) string {
-	return fmt.Sprintf(`{"issuer":"https://issuer.example.com","authorization_endpoint":%q,"token_endpoint":%q,"jwks_uri":"https://issuer.example.com/jwks.json?set=active","response_types_supported":["code"],"grant_types_supported":["authorization_code","refresh_token"],"token_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":[%q]}`, authorizeURL, tokenURL, string(kind)+":use")
+	return fmt.Sprintf(`{"issuer":"https://issuer.example.com","authorization_endpoint":%q,"token_endpoint":%q,"jwks_uri":"https://issuer.example.com/jwks.json?set=active","response_types_supported":["code"],"grant_types_supported":["authorization_code","refresh_token"],"token_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":[%q],"authorization_response_iss_parameter_supported":true}`, authorizeURL, tokenURL, string(kind)+":use")
 }
 
 func assertMetadataHeaders(t *testing.T, response apptheory.Response) {
 	t.Helper()
 	require.Equal(t, []string{"no-store"}, response.Headers["cache-control"])
 	require.Equal(t, []string{"Host, X-Forwarded-Host, X-AppTheory-Original-Host, X-FaceTheory-Original-Host, Forwarded, CloudFront-Forwarded-Proto, X-Forwarded-Proto"}, response.Headers["vary"])
+}
+
+// TestRoutedMetadataAdvertisesRFC9207IssParameterSupported pins the facade's own
+// RFC 9207 advertisement on the plain-App registrar: every routed
+// authorization-server document of every route kind and issuer mode claims `iss`
+// support, because the front channel always sends `iss` on the client callback.
+// The root discovery document and the generic builder keep the member absent,
+// because neither surface owns the authorization responses it describes.
+func TestRoutedMetadataAdvertisesRFC9207IssParameterSupported(t *testing.T) {
+	t.Parallel()
+	for _, issuerMode := range []mcproutes.IssuerMode{mcproutes.IssuerModeFamily, mcproutes.IssuerModeRoute} {
+		t.Run(string(issuerMode), func(t *testing.T) {
+			t.Parallel()
+			app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+			config := validConfig(URLModePublicBaseURL)
+			config.IssuerMode = issuerMode
+			config.RootAuthorizationServer = validRootDiscoveryConfig()
+			inventory, err := RegisterMCPFacade(app, config)
+			require.NoError(t, err)
+			require.True(t, inventory.RootAuthorizationServerAttached)
+
+			for _, route := range inventory.Routes {
+				for _, path := range []string{route.DiscoveryCanonicalPattern, route.DiscoverySuffixPattern} {
+					response := serve(app, "GET", path, nil)
+					require.Equalf(t, 200, response.Status, "%s", path)
+					var document map[string]any
+					require.NoError(t, json.Unmarshal(response.Body, &document))
+					require.Equalf(t, true, document["authorization_response_iss_parameter_supported"], "%s", path)
+				}
+			}
+
+			root := serve(app, "GET", inventory.RootAuthorizationServerPattern, nil)
+			require.Equal(t, 200, root.Status)
+			require.NotContains(t, string(root.Body), "authorization_response_iss_parameter_supported")
+		})
+	}
 }
