@@ -41,7 +41,7 @@ its defense-in-depth pairing; the [MCP facade helper](mcp-facade-helper.md) stat
 
 P0 plus:
 
-- **Request-id propagation** — `x-request-id` echoed on the response, generated when absent, and surfaced on the runtime context (`ctx.RequestID` in Go, `ctx.requestId` in TypeScript, `ctx.request_id` in Python). The ID's source is selectable; see **Request ID** below.
+- **Request-id propagation** — `x-request-id` echoed on the response, generated when absent, and surfaced on the runtime context (`ctx.RequestID` in Go, `ctx.requestId` in TypeScript, `ctx.request_id` in Python; the well-formed client-supplied value is separately readable as `ctx.ClientRequestID()` / `ctx.clientRequestId` / `ctx.client_request_id`). The ID's source is selectable and the client value must be well-formed; see **Request ID** below.
 - **Tenant extraction** — convention-based tenant resolution from headers or the auth identity, available on the runtime context (`TenantID` / `tenantId` / `tenant_id`).
 - **Auth hooks** — pluggable identity resolvers; the resolved identity is exposed on the runtime context (`AuthIdentity` / `authIdentity` / `auth_identity`) or the request fails closed.
 - **CORS** — opt-in preflight handling and response header rewrites.
@@ -64,7 +64,9 @@ P2 is what production applications use unless they have a reason not to. The def
 
 Every P1+ request carries a request ID on the runtime context (`ctx.RequestID` / `ctx.requestId` / `ctx.request_id`), in the `x-request-id` response header, and — on error responses — as `error.request_id` in the nested envelope. The same value flows into the P2 observability log, span, and metric records.
 
-By default the runtime honors a client-supplied `x-request-id` header exactly as it always has. When the header is absent, resolution falls back to the invocation request ID where the surface supplies one (the Lambda request ID on the AppSync path), and otherwise generates an ID. That order is unchanged.
+By default the runtime honors a client-supplied `x-request-id` header. When the header is absent, resolution falls back to the invocation request ID where the surface supplies one (the Lambda request ID on the AppSync path), and otherwise generates an ID. That order is unchanged.
+
+A client value is used only when it is **well-formed**: after trimming leading and trailing whitespace it is 1 to 128 characters long and every character is visible ASCII (`0x21`–`0x7E`). The limit and the character set are framework constants (`apptheory.MaxClientRequestIDLength` in Go, `MAX_CLIENT_REQUEST_ID_LENGTH` in TypeScript and Python), not configuration. A malformed value — more than 128 characters, or containing a space, tab, carriage return, line feed, other control character, or a non-ASCII character — is ignored as if the header were absent, so it never becomes the request ID and never appears in the response header, the error envelope, or the logs.
 
 Some API contracts require a request ID that a caller cannot choose or forge — a correlation ID for audit and support flows. Those applications opt into a server-issued ID:
 
@@ -76,9 +78,23 @@ Some API contracts require a request ID that a caller cannot choose or forge —
 
 In server-issued mode the client `x-request-id` header is never used as the request identity: resolution drops straight to the fallback request ID, then to a generated ID. The handler context, the error envelope, the response header, and the log/observability fields all carry the server-issued value.
 
-The option is additive. The default is the historical behavior, the client value is not preserved in another field, and client values are neither validated nor normalized. `SecureApp` accepts the same option through its closed options surface and applies no different default.
+### Reading the client value
 
-The setting applies to every surface that resolves a request ID from the request: the HTTP path and the AppSync path (which forwards `event.request.headers`), in all three runtimes. Surfaces that never read a client request ID are unchanged — WebSocket and the non-HTTP event sources derive their ID from the API Gateway request-context ID or the Lambda request ID.
+An application that wants the caller's own value — to correlate with a client-side log, for example — reads it from the request context. The accessor returns the well-formed client value in **both** request-ID source modes, and an empty value when the header is absent or malformed. It never returns a malformed value:
+
+| Runtime | Accessor |
+| --- | --- |
+| Go | `ctx.ClientRequestID()` |
+| TypeScript | `ctx.clientRequestId` |
+| Python | `ctx.client_request_id` |
+
+In server-issued mode the accessor is the only place the client value appears. The framework adds no log field for it.
+
+**Security note.** The client request ID is client-supplied and untrusted. Use it for identity and correlation only — never for authorization, access control, or audit assertions, and never as a storage key without your own validation. The shape rule bounds the value (1–128 visible-ASCII characters) so it is safe to place in a response header, a log field, and the error envelope; it does not make the value truthful. The raw `x-request-id` request header is never rewritten or scrubbed — `ctx.Request.Headers` keeps exactly what the caller sent — so read the accessor when you want the validated form.
+
+The request-ID source option is additive. `SecureApp` accepts the same option through its closed options surface and applies no different default.
+
+The setting applies to every surface that resolves a request ID from the request: the HTTP path and the AppSync path (which forwards `event.request.headers`), in all three runtimes. Surfaces that never read a client request ID are unchanged — WebSocket and the non-HTTP event sources derive their ID from the API Gateway request-context ID or the Lambda request ID, and their request contexts return an empty client value.
 
 ## Route registration
 

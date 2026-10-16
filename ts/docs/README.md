@@ -93,7 +93,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>858 exported top-level symbols</summary>
+<summary>861 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, AGENT_MCP_PATTERN, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest, APIGatewayProxyResponse,
@@ -134,7 +134,7 @@ FakeOAuthProvider, FakeOAuthProviderOptions, FakeObjectStore, FakeRefreshStage, 
 formatRfc3339Nano, formatWindowId, generateOpenAPI, generateOpenAPIJSON, getDayWindow, getFixedWindow, getHourWindow, getLogger, getMinuteWindow, GetVectorsInput, Handler,
 HandlerFactory, hashKey, Headers, hooksFromEMFMetricSink, hooksFromLogger, hooksFromProfileLogger, html, htmlStream, HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED,
 HTTPErrorFormat, IdempotencyCreateOutcome, IdempotencyStatus, IDGenerator, IdGenerator, InspectSemaphoreInput, insufficientScopeWWWAuthenticate, InternalOnly,
-isAppTheoryError, isMicroVMTerminalState, ISSUER_MODE_FAMILY, ISSUER_MODE_ROUTE, IssuerMode, isSupportedProfileOutputField, JobLedgerError, JobLedgerErrorType, JobLock,
+isAppTheoryError, isMicroVMTerminalState, ISSUER_MODE_FAMILY, ISSUER_MODE_ROUTE, IssuerMode, isSupportedProfileOutputField, isWellFormedClientRequestId, JobLedgerError, JobLedgerErrorType, JobLock,
 jobLockSortKey, JobMeta, jobMetaSortKey, jobPartitionKey, JobRecord, jobRecordSortKey, JobRequest, jobRequestSortKey, JobsConfig, jobsTableName, JobStatus, json,
 JWKSValidatorOptions, kinesisCloudWatchLogsSubscriptionRecord, KinesisCloudWatchLogsSubscriptionRecordOptions, KinesisEvent, KinesisEventRecord, KinesisEventRecordInput,
 KinesisEventResponse, KinesisHandler, KinesisJsonRecord, KinesisJsonRecordOptions, KinesisJsonRecordSummary, KinesisPutRecordsFailure, KinesisPutRecordsFailureReport,
@@ -143,7 +143,7 @@ Limit, LimitDecision, Limits, LogFields, LOGGING_PROFILE_CLOUDWATCH_JSON, LOGGIN
 LOGGING_PROFILE_SCHEMA_VERSION, LoggingProfileAlertingHints, loggingProfileCatalog, LoggingProfileConfig, LoggingProfileEncoding, LoggingProfileEnrichment,
 LoggingProfileError, LoggingProfileErrorCapture, LoggingProfileEvent, LoggingProfileJobContext, LoggingProfileRequestContext, LoggingProfileSanitization,
 LoggingProfileSanitizer, LoggingProfileValidationError, loggingProfileValidationErrors, LogRecord, ManualClock, ManualIdGenerator, mapMicroVMProviderState, maskFirstLast,
-maskFirstLast4, matchesIfNoneMatch, max, MAX_PRESIGN_PUT_EXPIRES_IN, maxLength, MaxPutDeleteBatchSize, MaxQueryTopK, MCP_CODE_HEADER_MISMATCH, MCP_CODE_INTERNAL_ERROR,
+maskFirstLast4, matchesIfNoneMatch, max, MAX_CLIENT_REQUEST_ID_LENGTH, MAX_PRESIGN_PUT_EXPIRES_IN, maxLength, MaxPutDeleteBatchSize, MaxQueryTopK, MCP_CODE_HEADER_MISMATCH, MCP_CODE_INTERNAL_ERROR,
 MCP_CODE_INVALID_PARAMS, MCP_CODE_INVALID_REQUEST, MCP_CODE_METHOD_NOT_FOUND, MCP_CODE_MISSING_REQUIRED_CLIENT_CAPABILITY, MCP_CODE_PARSE_ERROR, MCP_CODE_SERVER_ERROR,
 MCP_CODE_UNSUPPORTED_PROTOCOL_VERSION, MCP_HEADER_LAST_EVENT_ID, MCP_HEADER_METHOD, MCP_HEADER_NAME, MCP_HEADER_PROTOCOL_VERSION, MCP_HEADER_SESSION_ID,
 MCP_PROTOCOL_SHAPE_2025_11_25, MCP_PROTOCOL_SHAPE_2026_07_28, MCP_PROTOCOL_SHAPE_UNKNOWN, MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_2026_07_28,
@@ -216,7 +216,7 @@ validateMicroVMRealLifecycleContract, validateMicroVMSessionRecord, validateMicr
 validateMicroVMSessionStatus, validateMicroVMSessionTokenMetadata, validateObjectRef, validateOrThrow, validatePKCECodeVerifier, validatePresignPutInput,
 validateRequiredMetadata, validateValue, validateVector, VALIDATION_RULE_ENUM, VALIDATION_RULE_MAX, VALIDATION_RULE_MAX_LENGTH, VALIDATION_RULE_MIN,
 VALIDATION_RULE_MIN_LENGTH, VALIDATION_RULE_PATTERN, VALIDATION_RULE_REQUIRED, validationError, ValidationFieldError, ValidationRuleName, ValidationRuleSpec,
-ValidationSchema, vary, VectorRecord, VectorStore, VECTORSTORE_ERROR_DIMENSION_MISMATCH, VECTORSTORE_ERROR_EMBEDDING_FAILED, VECTORSTORE_ERROR_INVALID_CONFIG,
+ValidationSchema, vary, VectorRecord, VectorStore, wellFormedClientRequestId, VECTORSTORE_ERROR_DIMENSION_MISMATCH, VECTORSTORE_ERROR_EMBEDDING_FAILED, VECTORSTORE_ERROR_INVALID_CONFIG,
 VECTORSTORE_ERROR_INVALID_INPUT, VECTORSTORE_ERROR_INVALID_VECTOR, VECTORSTORE_ERROR_NOT_FOUND, VECTORSTORE_ERROR_UNSUPPORTED_OPERATION, VectorStoreCall, VectorStoreError,
 WebSocketCall, WebSocketClientFactory, WebSocketContext, WebSocketManagementClient, WebSocketManagementClientLike, WindowConfig, WindowLimit, wrapError, wrapJobLedgerError,
 XMLSanitizationPattern

@@ -22,7 +22,7 @@ upgrade.
 
 ### Server-issued HTTP request IDs
 
-The HTTP runtime now lets an application choose where the request ID comes from. The default is unchanged: a non-empty
+The HTTP runtime now lets an application choose where the request ID comes from. The default is unchanged: a well-formed
 client `x-request-id` header is honored, and the runtime falls back to the invocation request ID where the surface
 supplies one, then to a generated ID.
 
@@ -39,10 +39,30 @@ source:
 **Additive; no breaking change.** Existing applications keep the historical resolution order, so nothing changes
 unless you opt in. In server-issued mode a client `x-request-id` is never used as the request identity; the handler
 context, the nested `error.request_id` field, the `x-request-id` response header, and the P2 observability records all
-carry the server-issued value. The client value is not preserved in another field, and client values are neither
-validated nor normalized — a caller that sends a forged ID simply does not influence the request identity.
+carry the server-issued value. A caller that sends a forged ID simply does not influence the request identity.
 
-Two boundaries are worth knowing before you adopt it:
+An application that wants the caller's own value reads it from the request context. The accessor returns the value only
+when it is well-formed, in both modes, and an empty value otherwise:
+
+- **Go**: `ctx.ClientRequestID()`
+- **TypeScript**: `ctx.clientRequestId`
+- **Python**: `ctx.client_request_id`
+
+The value is client-supplied and untrusted — identity and correlation only, never authorization. The framework adds no
+log field for it, and the raw `x-request-id` request header is still delivered exactly as received.
+
+**One default-mode behavior change worth knowing.** A client `x-request-id` that is not well-formed — over 128
+characters, or containing any character outside visible ASCII (`0x21`–`0x7E`), such as a space, tab, carriage return,
+line feed, other control character, or a non-ASCII character — is no longer used as the request ID and is no longer
+echoed in the response header, the nested `error.request_id` field, or the logs. Such a request now falls back to the
+invocation request ID, else a generated ID. Well-formed ids behave exactly as before. The limit and character set are
+framework constants (`apptheory.MaxClientRequestIDLength` / `MAX_CLIENT_REQUEST_ID_LENGTH`) and are not configurable.
+TypeScript and Python also align with Go by trimming the edge whitespace of an otherwise well-formed value; they
+previously used the header value untrimmed. The shape predicate is exported if you want to apply the same rule yourself:
+Go `apptheory.IsWellFormedClientRequestID`, TypeScript `isWellFormedClientRequestId`, Python
+`is_well_formed_client_request_id`.
+
+Two boundaries are worth knowing before you adopt the server-issued source:
 
 - The setting covers every surface that resolves a request ID from the request: the HTTP path and the AppSync path
   (AppSync forwards `event.request.headers`), in every runtime. WebSocket and the non-HTTP event sources never read a

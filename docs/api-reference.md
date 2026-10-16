@@ -108,6 +108,10 @@ Request ID source:
 - By default the HTTP runtime honors a client-supplied `x-request-id` header, falls back to the invocation request
   ID where the surface supplies one, and otherwise generates an ID. The resolved value reaches the handler context,
   the nested `error.request_id` envelope field, the `x-request-id` response header, and the P2 observability records.
+- A client value is used only when it is well-formed: after trimming leading and trailing whitespace it is 1 to 128
+  characters long and every character is visible ASCII (`0x21`–`0x7E`). The limit and character set are framework
+  constants, not configuration. A malformed value (over 128 characters, or containing a space, control character, or
+  non-ASCII character) is ignored as if the header were absent.
 - Applications whose contract requires a server-issued (caller-cannot-choose) request ID opt in:
   - Go: `apptheory.WithRequestIDSource(apptheory.RequestIDSourceServer)` or
     `apptheory.NewSecure(apptheory.SecureOptions{RequestIDSource: apptheory.RequestIDSourceServer})`
@@ -116,8 +120,14 @@ Request ID source:
   - Python: `create_app(request_id_source=REQUEST_ID_SOURCE_SERVER)` or
     `SecureApp(request_id_source=REQUEST_ID_SOURCE_SERVER)`
 - In server-issued mode the client `x-request-id` header is never used as the request identity; resolution uses the
-  fallback request ID, else a generated ID. The option is additive: the default is unchanged, the client value is
-  not preserved elsewhere, and client values are neither validated nor normalized.
+  fallback request ID, else a generated ID. The option is additive: the default resolution order is unchanged.
+- The well-formed client value is readable from the request context in both modes and is empty when the header is
+  absent or malformed: Go `ctx.ClientRequestID()`, TypeScript `ctx.clientRequestId`, Python `ctx.client_request_id`.
+  It is client-supplied and untrusted — identity and correlation only, never authorization. No log field carries it,
+  and the raw request headers are not rewritten.
+- The shape predicate is exported per runtime: Go `apptheory.IsWellFormedClientRequestID` and
+  `apptheory.MaxClientRequestIDLength`, TypeScript `isWellFormedClientRequestId` and
+  `MAX_CLIENT_REQUEST_ID_LENGTH`, Python `is_well_formed_client_request_id` and `MAX_CLIENT_REQUEST_ID_LENGTH`.
 - The setting covers the HTTP and AppSync resolution sites (AppSync forwards `event.request.headers`) in all three
   runtimes. WebSocket and the non-HTTP event sources never read a client request ID and are unchanged.
 
@@ -609,7 +619,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1170 exported top-level symbols</summary>
+<summary>1172 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -672,7 +682,7 @@ HookPrepareImage, HookReadiness, HookReady, HookResume, HookRun, HooksFromEMFMet
 HookStart, HookStop, HookSuspend, HookTeardown, HookTerminate, HookValidate, HTML, HTMLStream, HTTPErrorFormat, HTTPErrorFormatFlatLegacy, HTTPErrorFormatNested,
 HTTPEventOptions, Icon, IdempotencyCreateOutcome, IdempotencyOutcomeAlreadyCompleted, IdempotencyOutcomeAlreadyInProgress, IdempotencyOutcomeCreated, IdempotencyStatus,
 IdempotencyStatusCompleted, IdempotencyStatusInProgress, IdentifierKey, IDGenerator, IdGenerator, InitializeRequest, InitialSessionListenerBudgetOptions, InputRequest,
-InputRequiredResult, InspectSemaphoreInput, InsufficientScopeWWWAuthenticate, InternalOnly, IsLambda, IssuerMode, IssuerModeFamily, IssuerModeRoute, IsTerminalState,
+InputRequiredResult, InspectSemaphoreInput, InsufficientScopeWWWAuthenticate, InternalOnly, IsLambda, IssuerMode, IssuerModeFamily, IssuerModeRoute, IsTerminalState, IsWellFormedClientRequestID,
 JobLedger, JobLock, JobLockSortKey, JobMeta, JobMetaSortKey, JobPartitionKey, JobRecord, JobRecordSortKey, JobRequest, JobRequestSortKey, JobStatus, JobStatusCanceled,
 JobStatusFailed, JobStatusPending, JobStatusRunning, JobStatusSucceeded, JSON, JWKSValidatorOptions, KindControllerSession, KindLifecycle,
 KinesisCloudWatchLogsSubscriptionRecord, KinesisCloudWatchLogsSubscriptionRecordOptions, KinesisEvent, KinesisEventOptions, KinesisHandler, KinesisJSONRecord,
@@ -685,7 +695,7 @@ LoggingProfileAlertingHints, LoggingProfileCatalog, LoggingProfileCloudWatchJSON
 LoggingProfileError, LoggingProfileErrorCapture, LoggingProfileEvent, LoggingProfileJobContext, LoggingProfileLegacy, LoggingProfileLocalDev,
 LoggingProfilePayTheoryAlertV1, LoggingProfileRequestContext, LoggingProfileSanitization, LoggingProfileSchemaVersion, LoggingProfileValidationError,
 LoggingProfileValidationErrors, LogRecord, ManualClock, ManualIDGenerator, MapProviderState, MarshalResponse, MaskCardNumber, MaskCompletelyFunc, MaskFirstLast,
-MaskFirstLast4, MaskTokenLastFour, MatchesIfNoneMatch, MaxPresignPutExpiresIn, MaxPutDeleteBatchSize, MaxQueryTopK, MaxVersionedArtifactBytes, MaxVersionedArtifactEntries,
+MaskFirstLast4, MaskTokenLastFour, MatchesIfNoneMatch, MaxClientRequestIDLength, MaxPresignPutExpiresIn, MaxPutDeleteBatchSize, MaxQueryTopK, MaxVersionedArtifactBytes, MaxVersionedArtifactEntries,
 MCPPath, MCPServerConfig, MemoryAuthorizationCodeStore, MemoryClientStore, MemoryEventBus, MemoryRateLimitStore, MemoryRefreshTokenStore, MemoryRouteRefreshBrokerStore,
 MemorySessionRegistry, MemorySessionStore, MemorySessionStoreOption, MemoryStreamStore, MemoryStreamStoreOption, MemoryTaskStore, MemoryTransactionStore, MetricRecord,
 Middleware, MultiWindowStrategy, MustJSON, MustSSEResponse, NamespaceMCPPattern, New, NewAppTheoryError, NewAutheoryProvider, NewAuthorizationServerMetadata,

@@ -272,7 +272,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full contributor docs, including the 
 ## Security & production notes
 
 - CSRF protection and secure cookie flags are application concerns; set `Secure`/`HttpOnly`/`SameSite` explicitly in `Set-Cookie`.
-- Request IDs can be supplied via `x-request-id`; validate/override if your threat model requires it.
+- Request IDs can be supplied via `x-request-id`. The runtime uses the value only when it is well-formed (1–128 visible-ASCII characters after trimming edge whitespace) and never treats it as authorization; read the validated client value with `ctx.ClientRequestID()` / `ctx.clientRequestId` / `ctx.client_request_id`.
 - Retries/backoff for event sources are handled by AWS trigger settings (retry policies, DLQs/redrive), not by the runtime.
 - Distribution is **GitHub Releases only** — there is no npm publish, no PyPI publish, and no raw-SDK escape hatch.
 
