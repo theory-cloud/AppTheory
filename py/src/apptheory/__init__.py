@@ -743,7 +743,6 @@ from apptheory.request_id_source import (
     REQUEST_ID_SOURCE_DEFAULT,
     REQUEST_ID_SOURCE_SERVER,
     is_well_formed_client_request_id,
-    normalize_request_id_source,
     well_formed_client_request_id,
 )
 from apptheory.response import Response, binary, html, html_stream, json, safe_json_for_html, text
@@ -934,6 +933,7 @@ __all__ = [
     "LOGGING_PROFILE_LOCAL_DEV",
     "LOGGING_PROFILE_PAYTHEORY_ALERT_V1",
     "LOGGING_PROFILE_SCHEMA_VERSION",
+    "MAX_CLIENT_REQUEST_ID_LENGTH",
     "MAX_PRESIGN_PUT_EXPIRES_IN",
     "MCP_CODE_HEADER_MISMATCH",
     "MCP_CODE_INTERNAL_ERROR",
@@ -1164,7 +1164,6 @@ __all__ = [
     "LoggingProfileSanitization",
     "LoggingProfileSanitizer",
     "LoggingProfileValidationError",
-    "MAX_CLIENT_REQUEST_ID_LENGTH",
     "ManualClock",
     "ManualIdGenerator",
     "MaxPutDeleteBatchSize",
