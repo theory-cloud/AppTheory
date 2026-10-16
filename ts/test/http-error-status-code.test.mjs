@@ -136,3 +136,44 @@ test("flat-legacy error envelopes stay byte-identical and carry no status_code",
   });
   assert.equal(portable.status, 200);
 });
+
+// An AppTheoryError whose details carry a value with no JSON representation
+// cannot be serialized, so the response is the internal-error fallback (issue
+// #1161 boundary).
+async function serveUnserializableDetails(format) {
+  const app = new App({
+    tier: "p0",
+    ...(format ? { httpErrorFormat: format } : {}),
+  });
+  app.get("/teapot", async () => {
+    const err = new AppTheoryError("teapot", "I am a teapot");
+    err.statusCode = 418;
+    err.details = { unserializable: () => {} };
+    throw err;
+  });
+  return app.serve({ method: "GET", path: "/teapot", headers: {}, body: "" });
+}
+
+test("an unserializable nested envelope is sent as the internal-error fallback with status 500", async () => {
+  const response = await serveUnserializableDetails(null);
+  assert.equal(response.status, 500);
+  assert.equal(
+    Buffer.from(response.body).toString("utf8"),
+    '{"error":{"code":"app.internal","message":"internal error","status_code":500}}',
+  );
+  assert.deepEqual(response.headers["content-type"], [
+    "application/json; charset=utf-8",
+  ]);
+});
+
+test("an unserializable flat-legacy envelope is sent as the internal-error fallback with status 500", async () => {
+  const response = await serveUnserializableDetails("flat_legacy");
+  assert.equal(response.status, 500);
+  assert.equal(
+    Buffer.from(response.body).toString("utf8"),
+    '{"code":"app.internal","message":"internal error"}',
+  );
+  assert.deepEqual(response.headers["content-type"], [
+    "application/json; charset=utf-8",
+  ]);
+});

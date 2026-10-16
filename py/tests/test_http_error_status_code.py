@@ -23,6 +23,22 @@ def _ok(_ctx) -> Response:
     return Response(status=200, headers={}, cookies=[], body=b"ok")
 
 
+def _unserializable_details_app(error_format: str) -> App:
+    """An App whose handler raises an envelope that json cannot serialize."""
+    app = App(tier="p0", http_error_format=error_format)
+
+    def teapot(_ctx) -> Response:
+        raise AppTheoryError(
+            code="teapot",
+            message="I am a teapot",
+            status_code=418,
+            details={"unserializable": object()},
+        )
+
+    app.get("/teapot", teapot)
+    return app
+
+
 class ServedErrorStatusCodeTests(unittest.TestCase):
     """The nested envelope must report the status the runtime actually sent (#1161)."""
 
@@ -116,6 +132,30 @@ class ServedErrorStatusCodeTests(unittest.TestCase):
             '{"code": "app.not_found", "message": "not found"}',
         )
         self.assertNotIn("status_code", json.loads(bytes(missing.body)))
+
+    def test_unserializable_details_nested_sends_the_internal_error_fallback_with_status_500(self) -> None:
+        response = self._serve(_unserializable_details_app("nested"), Request(method="GET", path="/teapot"))
+        self.assertEqual(response.status, 500)
+        self.assertEqual(
+            bytes(response.body).decode("utf-8"),
+            '{"error":{"code":"app.internal","message":"internal error","status_code":500}}',
+        )
+        self.assertEqual(
+            list(response.headers["content-type"]),
+            ["application/json; charset=utf-8"],
+        )
+
+    def test_unserializable_details_flat_legacy_sends_the_internal_error_fallback_with_status_500(self) -> None:
+        response = self._serve(_unserializable_details_app("flat_legacy"), Request(method="GET", path="/teapot"))
+        self.assertEqual(response.status, 500)
+        self.assertEqual(
+            bytes(response.body).decode("utf-8"),
+            '{"code":"app.internal","message":"internal error"}',
+        )
+        self.assertEqual(
+            list(response.headers["content-type"]),
+            ["application/json; charset=utf-8"],
+        )
 
 
 if __name__ == "__main__":

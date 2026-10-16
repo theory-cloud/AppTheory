@@ -121,3 +121,47 @@ func TestServedSecureDenialEnvelopeCarriesTheServedStatusCode(t *testing.T) {
 func okHandler(_ *Context) (*Response, error) {
 	return Text(200, "ok"), nil
 }
+
+// unserializableDetailsApp serves an AppTheoryError whose Details carry a value
+// encoding/json cannot marshal, so no envelope renderer can serialize it.
+func unserializableDetailsApp(format HTTPErrorFormat) *App {
+	app := New(WithTier(TierP0), WithHTTPErrorFormat(format))
+	app.Get("/teapot", func(_ *Context) (*Response, error) {
+		portable := NewAppTheoryError("teapot", "I am a teapot")
+		portable.StatusCode = 418
+		portable.Details = map[string]any{"unserializable": make(chan int)}
+		return nil, portable
+	})
+	return app
+}
+
+// TestServedUnserializableDetailsSendsTheInternalErrorFallbackNested pins the
+// nested half of the issue #1161 boundary for an envelope that cannot be
+// serialized: the internal-error fallback is sent with status 500, so the nested
+// status_code can never disagree with the status on the wire.
+func TestServedUnserializableDetailsSendsTheInternalErrorFallbackNested(t *testing.T) {
+	resp := unserializableDetailsApp(HTTPErrorFormatNested).Serve(context.Background(), Request{Method: "GET", Path: "/teapot"})
+	assertUnserializableDetailsFallback(t, resp, `{"error":{"code":"app.internal","message":"internal error","status_code":500}}`)
+}
+
+// TestServedUnserializableDetailsSendsTheInternalErrorFallbackFlatLegacy pins the
+// flat-legacy half: its fallback body stays byte-identical to the fallback the
+// format has always sent, and it too is sent with status 500.
+func TestServedUnserializableDetailsSendsTheInternalErrorFallbackFlatLegacy(t *testing.T) {
+	resp := unserializableDetailsApp(HTTPErrorFormatFlatLegacy).Serve(context.Background(), Request{Method: "GET", Path: "/teapot"})
+	assertUnserializableDetailsFallback(t, resp, `{"code":"app.internal","message":"internal error"}`)
+}
+
+func assertUnserializableDetailsFallback(t *testing.T, resp Response, wantBody string) {
+	t.Helper()
+	if resp.Status != fallbackHTTPErrorStatus() {
+		t.Fatalf("status = %d, want %d (body %q)", resp.Status, fallbackHTTPErrorStatus(), string(resp.Body))
+	}
+	if got := string(resp.Body); got != wantBody {
+		t.Fatalf("body = %q, want %q", got, wantBody)
+	}
+	contentType := resp.Headers["content-type"]
+	if len(contentType) != 1 || contentType[0] != "application/json; charset=utf-8" {
+		t.Fatalf("content-type = %v, want the header the normal error path sets", contentType)
+	}
+}
