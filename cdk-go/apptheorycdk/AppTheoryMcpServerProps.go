@@ -118,12 +118,13 @@ type AppTheoryMcpServerProps struct {
 	// attached API from any sibling construct scope is refused, because it holds
 	// a route key the greedy routes would collide with.
 	//
-	// A consumer may still add explicit, more specific routes to the attached API
-	// afterwards. That exception is enforced at synthesis time and is allowed
-	// only when the added route carries a non-NONE authorizer and does not
-	// redeclare the greedy `ANY /` or `ANY /{proxy+}` key. Within it, a full
-	// method+path match beats the greedy routes by API Gateway precedence, and a
-	// wrong-method hit on such a path falls to the runtime's fail-closed 404/405.
+	// A consumer may still add explicit, more specific routes to the consolidated
+	// API afterwards, in either the attached or the construct-owned mode. That
+	// exception is enforced at synthesis time and is allowed only when the added
+	// route carries a non-NONE authorizer and does not redeclare the greedy
+	// `ANY /` or `ANY /{proxy+}` key. Within it, a full method+path match beats the
+	// greedy routes by API Gateway precedence, and a wrong-method hit on such a
+	// path falls to the runtime's fail-closed 404/405.
 	// Default: AppTheoryMcpRouteModel.EXPLICIT
 	//
 	RouteModel AppTheoryMcpRouteModel `field:"optional" json:"routeModel" yaml:"routeModel"`
