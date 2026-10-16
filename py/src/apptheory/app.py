@@ -984,12 +984,15 @@ class App:
         path = str(request.path or "").strip() or "/"
         route = _UNMATCHED_ROUTE_TEMPLATE
 
-        # The well-formed client x-request-id is exposed to handlers through
-        # Context.client_request_id in both request-ID source modes.
+        # The client x-request-id is honored as the request ID only when it is
+        # well-formed and the app is in the default source mode. A malformed
+        # value is ignored as if the header were absent, so it can never reach
+        # the response header, the error envelope, the handler context, or the
+        # logs.
         client_request_id = well_formed_client_request_id(_first_header_value(pre_headers, "x-request-id"))
         request_id = ""
         if self._request_id_source != REQUEST_ID_SOURCE_SERVER:
-            request_id = _first_header_value(pre_headers, "x-request-id")
+            request_id = client_request_id
         request_id = request_id or str(fallback_request_id or "").strip() or self._id_generator.new_id()
         origin = _first_header_value(pre_headers, "origin")
         tenant_id = _extract_tenant_id(pre_headers, pre_query)

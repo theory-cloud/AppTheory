@@ -629,12 +629,14 @@ export class App {
         let method = normalizeMethod(request.method);
         let path = normalizePath(request.path);
         let route = UNMATCHED_ROUTE_TEMPLATE;
-        // The client x-request-id is exposed to handlers through
-        // Context.clientRequestId only when it is well-formed.
+        // The client x-request-id is honored as the request ID only when it is
+        // well-formed and the app is in the default source mode. A malformed value
+        // is ignored as if the header were absent, so it can never reach the
+        // response header, the error envelope, the handler context, or the logs.
         const clientRequestId = wellFormedClientRequestId(firstHeaderValue(preHeaders, "x-request-id"));
         let requestId = "";
         if (this._requestIdSource !== REQUEST_ID_SOURCE_SERVER) {
-            requestId = firstHeaderValue(preHeaders, "x-request-id");
+            requestId = clientRequestId;
         }
         if (!requestId) {
             requestId = String(contextOptions?.fallbackRequestId ?? "").trim();

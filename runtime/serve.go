@@ -459,14 +459,16 @@ func requestForNormalizeError(fallback Request, normalized Request, errorCode st
 // resolvePortableRequestIDs resolves the request ID and the client-supplied
 // request ID for a portable (P1/P2) request.
 //
-// The well-formed client value is returned in both request-ID source modes so
-// the request context can expose it for correlation.
+// In the default request-ID source mode the client x-request-id header is used
+// as the request ID only when it is well-formed; a malformed value is ignored
+// as if the header were absent, so it can never reach the response header, the
+// error envelope, the handler context, or the logs. The well-formed client value
+// is returned in both modes so the request context can expose it for
+// correlation.
 func (a *App) resolvePortableRequestIDs(headers map[string][]string, opts serveOptions) (requestID string, clientRequestID string) {
 	clientRequestID = wellFormedClientRequestID(firstHeaderValue(headers, "x-request-id"))
-	if !a.serverIssuedRequestIDs() {
-		if requestID := strings.TrimSpace(firstHeaderValue(headers, "x-request-id")); requestID != "" {
-			return requestID, clientRequestID
-		}
+	if !a.serverIssuedRequestIDs() && clientRequestID != "" {
+		return clientRequestID, clientRequestID
 	}
 	if fallbackRequestID := strings.TrimSpace(opts.fallbackRequestID); fallbackRequestID != "" {
 		return fallbackRequestID, clientRequestID
