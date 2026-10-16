@@ -1450,11 +1450,7 @@ def _authorization_server_handler(config: _NormalizedConfig, kind: str) -> Handl
             # An application-owned AuthorizeHandler/TokenHandler pair (no front
             # channel) leaves it absent, as do the root discovery document and
             # the generic builder, neither of which serves the front channel.
-            **(
-                {"authorization_response_iss_parameter_supported": True}
-                if config.front_channel is not None
-                else {}
-            ),
+            **({"authorization_response_iss_parameter_supported": True} if config.front_channel is not None else {}),
         }
         return _with_metadata_headers(lambda _ctx, _document=document: _metadata_response(_document))(ctx)
 
