@@ -617,6 +617,12 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 			"remaining_ms":  ctx.RemainingMS,
 		})
 	},
+	"echo_request_ids": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"request_id":        ctx.RequestID,
+			"client_request_id": ctx.ClientRequestID(),
+		})
+	},
 	"echo_middleware_trace": func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		return apptheory.JSON(200, map[string]any{
 			"trace": ctx.MiddlewareTrace,

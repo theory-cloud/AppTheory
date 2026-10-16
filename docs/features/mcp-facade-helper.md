@@ -9,6 +9,11 @@ description: Golden-path runtime composition for parameterized MCP endpoints and
 `py/src/apptheory/mcpfacade.py` (Python, `register_mcp_facade`) are the runtime composition half of
 `m17.mcp-route-algebra/v2`. One call installs the complete per-pattern MCP OAuth facade for the `namespace`,
 `partner_namespace`, `agent`, and `partner_agent` endpoint kinds without copying route strings into the application.
+
+Each runtime also ships a **closed-by-default companion** for applications whose route families already run on a
+`SecureApp`: `RegisterMCPFacadeSecure` (Go), `registerMcpFacadeSecure` (TypeScript), and
+`register_mcp_facade_secure` (Python). It mounts the same routes with the same behavior and returns the same route
+inventory; see [Closed-by-default SecureApp mounts](#closed-by-default-secureapp-mounts).
 All three registrars mount the same routes from the shared route algebra, resolve the same issuer/URL modes and
 capabilities, pair the same transport postures, and emit byte-identical metadata documents from the same config.
 
@@ -93,7 +98,107 @@ AppTheory derives and validates the full internal route inventory before touchin
 expose route introspection, so a collision with a route that was registered earlier is returned by the strict router
 registration guard when encountered instead of escaping as a panic. Routes installed earlier in the same facade call
 may remain registered after that error. Applications should register the facade before overlapping application routes
-and must discard an app whose registration returned an error.
+and must discard an app whose registration returned an error. On a `SecureApp`, whose declared routes *are* readable
+through `Routes()`, the same collision is pre-checked before any route is added, so nothing is left behind; see
+[Closed-by-default SecureApp mounts](#closed-by-default-secureapp-mounts).
+
+## Closed-by-default SecureApp mounts
+
+`SecureApp` requires every route to declare exactly one authorization posture at registration, so an application that
+runs its own route families on a `SecureApp` (the golden consumer runs its MCP, download, GitHub, email, internal, and
+OAuth families on one `SecureApp`, with a principal resolver backing its admission engine) cannot pass that app to the
+plain registrars. It must not switch to a plain `App` to mount the facade either: that silently drops the
+application's principal resolver, tier, and `PolicyHook` for every route that shares the app.
+
+The companion registrars solve exactly that. `RegisterMCPFacadeSecure` (Go), `registerMcpFacadeSecure` (TypeScript),
+and `register_mcp_facade_secure` (Python) install the identical route inventory — the same patterns, handlers,
+metadata documents, challenges, and `RouteInventory` — and declare the posture each facade route has always had. No
+`SecureApp` accessor is added, and no `SecureApp` guarantee is weakened: the registrar uses the same
+posture-carrying registration methods any application uses, so a route the application never declares stays
+undeliverable.
+
+```go
+secure := apptheory.NewSecure(apptheory.SecureOptions{
+    PrincipalResolver: tmsPrincipalResolver, // the app's own admission engine
+    PolicyHook:        tmsPolicyHook,        // tier P2 policy, unchanged
+})
+
+// The application's non-MCP families keep their own postures.
+secure.Get("/internal/audit", auditHandler, apptheory.Authenticated())
+secure.Post("/internal/jobs", jobsHandler, apptheory.InternalOnly())
+
+inventory, err := mcpfacade.RegisterMCPFacadeSecure(secure, mcpfacade.FacadeConfig{
+    // ... the same FacadeConfig the plain registrar accepts.
+    TransportPosture:   mcpfacade.TransportPostureRuntimeBearer,
+    RequireBearerToken: &oauth.RequireBearerTokenOptions{ /* issuer, audience, JWKS */ },
+})
+```
+
+TypeScript and Python differ only in the call: `registerMcpFacadeSecure(secureApp, config)` and
+`register_mcp_facade_secure(secure_app, config)`. Both take the same `FacadeConfig` shape and return the same
+inventory, and both register all-or-nothing:
+
+- The whole plan is proven installable before the app receives its first facade route. A configuration the facade
+  rejects, an invalid entry, a duplicate inside the plan, a pattern or posture the surface refuses, and — on a
+  `SecureApp` — a collision with a route the application already declares all leave the route table exactly as it
+  was, so a returned error means zero facade routes were added.
+- On a plain `App` the plan is pre-checked the same way, but the plain surface publishes no route table (only
+  `SecureApp` does), so a collision with a route the application already registered on that plain `App` is reported
+  by the app's own duplicate check while the plan is mounted. That is the one collision the facade cannot pre-check,
+  and the entries the plan had already mounted before it stand.
+
+### Route authority
+
+The table is the authority for the facade's routes on a `SecureApp`. It is the same authority the plain-`App` path
+has always had, restated in `SecureApp`'s explicit vocabulary.
+
+| Route family | Plain `App` expression | `SecureApp` posture | Who authenticates |
+| --- | --- | --- | --- |
+| MCP transport (`POST`/`GET`/`DELETE`), posture `iam` or `jwt` | `RequireAuth()` route option | `Authenticated()` | The application's `SecurePrincipalResolver`. The gateway has already validated the caller; the app still decides who it is. |
+| MCP transport, posture `runtime-bearer` | no route option | `Public()` | The facade's RFC 9728 bearer validator (`RequireBearerToken`), which fails closed. The `SecureApp` resolver is deliberately not consulted, because the request carries an OAuth bearer token rather than an app session. |
+| MCP transport, posture `none-public` | no route option | `Public()` | Nobody, by explicit `FacadeConfig` contract. Never a default. |
+| Protected-resource metadata (RFC 9728) | no route option | `Public()` | Nobody: clients fetch it before they hold a token. |
+| Authorization-server discovery, canonical and suffix (RFC 8414) | no route option | `Public()` | Nobody: discovery is public by design. |
+| `/authorize` and `/token` | no route option | `Public()` | The client-facing protocol surface itself: PKCE and the single-use code are the authority there. |
+| `/register` (RFC 7591 DCR) | no route option | `Public()` | The DCR handler, which admits public clients only. |
+| Stage-global upstream callback | no route option | `Public()` | The callback handler, which pins `state` and the RFC 9207 `iss` before it consumes anything. |
+| Root authorization-server document, when `RootAuthorizationServer` is set | no route option | `Public()` | Nobody: public metadata. |
+
+`Public()` here is a declaration, never an omission. No facade route is unauthenticated by accident: under
+`runtime-bearer` the transport route is public at the `SecureApp` layer *and* wrapped in the RFC 9728 bearer
+middleware, so a credential-free request is answered with the `WWW-Authenticate` challenge (401) and a token missing a
+route scope with the `insufficient_scope` challenge (403) before the application's MCP handler runs. Under `iam` and
+`jwt` the transport route takes the application's own principal gate, exactly as `RequireAuth` does on a plain `App`,
+so the same request is answered with the app's own denial instead.
+
+A consumer can assert all of this instead of trusting prose: `SecureApp.Routes()` (Go), `secureApp.routes()`
+(TypeScript), and `secure_app.routes()` (Python) return the registered routes with their declared postures, and the
+shared `secure_app_mount` conformance rows in
+`contract-tests/fixtures/routing/mcp-auth-facade/facade-conformance.v1.json` pin that table for every transport
+posture in all three runtimes.
+
+The runtime conformance kit carries the same closed-by-default variants as its plain-`App` helpers, so a consumer's
+own suite asserts either surface with the same three outcomes: `AssertCredentialFreeDeniedSecureApp` /
+`AssertBearerTokenReachesHandlerSecureApp` / `AssertInsufficientScopeRemediationSecureApp` (Go),
+`assertCredentialFreeTransportDeniedSecureApp` / `assertBearerTokenReachesTransportHandlerSecureApp` /
+`assertInsufficientScopeTransportDeniedSecureApp` (TypeScript), and
+`assert_credential_free_transport_denied_secure_app` / `assert_bearer_token_reaches_transport_handler_secure_app` /
+`assert_insufficient_scope_transport_denied_secure_app` (Python). Each drives the facade's RFC 9728 bearer
+enforcement on the closed-by-default app, so a consumer proves the same 401, 403, and admitted-transport outcomes
+without dropping to a plain `App`.
+
+The `PolicyHook` (tier P2) runs before the posture gate on both surfaces, so a consumer whose hook denies a request
+denies it on facade routes too. That is the consumer's declared authority, not a framework loophole, and it is the same
+on either surface.
+
+### CDK pairing
+
+The CDK `facade` attachment stays presence-only and needs no change for a `SecureApp`-based runtime: the construct
+consumes declared props, never detects which runtime type is behind the handler. The pairing rule is the same for both
+surfaces — the construct synthesizes its posture marker from `transportPosture`, and `runtime-bearer` requires
+`runtimePosture.requireBearerToken: true` at construct time while the runtime must mount the facade with
+`TransportPostureRuntimeBearer` plus `RequireBearerToken`. On a `SecureApp` that is exactly what the companion
+registrar declares, so the defense-in-depth floor is satisfied by the same configuration.
 
 ## Absolute URL modes
 
@@ -245,18 +350,16 @@ matching Go's `encoding/json`; golden rows that exercise those characters back t
 `facade-transport-posture.v1.json`, and the route-inventory fixture are consumed by the Go, TypeScript, and Python
 suites alike. The framework-owned front channel (authorize/callback/token mechanics, code-store single-use and
 replay→revoke, and wiring the provider and store SPIs into the facade config) is now implemented in all three runtimes
-and mounts when the front-channel field set is declared — see [Framework-owned front channel](#framework-owned-front-channel).
-Still scheduled for a follow-up milestone: dynamic client registration, the brokered refresh grant, and the CDK facade
-wiring.
+and mounts when the front-channel field set is declared — see [Framework-owned front channel](#framework-owned-front-channel). Dynamic client registration, the
+brokered refresh grant, and the CDK facade wiring have all shipped since; the sections above describe them as built.
 
 ## Non-goals
 
 - no authorize/token behavior, grant issuance, upstream proxying, admission, or scope-selection logic **except the
   framework-owned front channel described above**: with the front-channel field set declared, the framework owns the
-  authorize/callback/token mechanics; otherwise the registrars mount the routes and applications own the bodies;
-- no DCR handler (`/register` is app-owned until the framework DCR handler lands) and no brokered `refresh_token`
-  grant — the code-exchange response carries the opaque refresh handle, but the grant answers `unsupported_grant_type`
-  until the follow-on milestone;
+  authorize/callback/token mechanics and mounts the RFC 7591 `/register` route and the brokered `refresh_token` grant;
+  otherwise the registrars mount the routes and applications own the bodies;
+- no way to mount the facade on a closed-by-default `SecureApp` other than the additive companion registrar described
+  above — in particular no `SecureApp` accessor and no widening of the plain registrar's parameter type;
 - no fifth/root endpoint kind or routed root authorization facade;
-- no CDK wiring or jsii/CDK-Go regeneration in this change;
 - no alternative route registration or private route strings outside `runtime/mcproutes`.

@@ -190,7 +190,7 @@ func TestRequireBearerTokenMiddleware_ClaimsValidatorStoresClaimsAndForbidsScope
 	})
 	require.NoError(t, err)
 	require.Equal(t, 403, resp.Status)
-	require.JSONEq(t, `{"error":{"code":"app.insufficient_scope","message":"insufficient scope"}}`, string(resp.Body))
+	require.JSONEq(t, `{"error":{"code":"app.insufficient_scope","message":"insufficient scope","status_code":403}}`, string(resp.Body))
 	// A scope failure carries the RFC 6750 insufficient_scope remediation
 	// challenge, built from the route-derived scope set when one is configured.
 	require.Equal(t, []string{

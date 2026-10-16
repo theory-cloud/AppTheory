@@ -20,6 +20,83 @@ range from the v5 line also carries other breaking runtime, CDK, TypeScript, and
 the v6 release notes for the commit-level detail, and treat the import-path move below as the mechanical part of the
 upgrade.
 
+### Server-issued HTTP request IDs
+
+The HTTP runtime now lets an application choose where the request ID comes from. The default is unchanged: a well-formed
+client `x-request-id` header is honored, and the runtime falls back to the invocation request ID where the surface
+supplies one, then to a generated ID.
+
+An application whose contract requires a request ID that a caller cannot choose or forge opts into the server-issued
+source:
+
+- **Go**: `apptheory.New(apptheory.WithRequestIDSource(apptheory.RequestIDSourceServer))`, or
+  `apptheory.NewSecure(apptheory.SecureOptions{RequestIDSource: apptheory.RequestIDSourceServer})`
+- **TypeScript**: `createApp({ requestIdSource: REQUEST_ID_SOURCE_SERVER })`, or
+  `new SecureApp({ requestIdSource: REQUEST_ID_SOURCE_SERVER })`
+- **Python**: `create_app(request_id_source=REQUEST_ID_SOURCE_SERVER)`, or
+  `SecureApp(request_id_source=REQUEST_ID_SOURCE_SERVER)`
+
+**Additive; no breaking change.** Existing applications keep the historical resolution order, so nothing changes
+unless you opt in. In server-issued mode a client `x-request-id` is never used as the request identity; the handler
+context, the nested `error.request_id` field, the `x-request-id` response header, and the P2 observability records all
+carry the server-issued value. A caller that sends a forged ID simply does not influence the request identity.
+
+An application that wants the caller's own value reads it from the request context. The accessor returns the value only
+when it is well-formed, in both modes, and an empty value otherwise:
+
+- **Go**: `ctx.ClientRequestID()`
+- **TypeScript**: `ctx.clientRequestId`
+- **Python**: `ctx.client_request_id`
+
+The value is client-supplied and untrusted — identity and correlation only, never authorization. The framework adds no
+log field for it, and the raw `x-request-id` request header is still delivered exactly as received.
+
+**One default-mode behavior change worth knowing.** A client `x-request-id` that is not well-formed — over 128
+characters, or containing any character outside visible ASCII (`0x21`–`0x7E`), such as a space, tab, carriage return,
+line feed, other control character, or a non-ASCII character — is no longer used as the request ID and is no longer
+echoed in the response header, the nested `error.request_id` field, or the logs. Such a request now falls back to the
+invocation request ID, else a generated ID. Well-formed ids behave exactly as before. The limit and character set are
+framework constants (`apptheory.MaxClientRequestIDLength` / `MAX_CLIENT_REQUEST_ID_LENGTH`) and are not configurable.
+All three runtimes trim the same ASCII whitespace set — a space, tab, line feed, vertical tab, form feed, or carriage
+return (` \t\n\v\f\r`) — so the shape rule is identical everywhere. TypeScript and Python now trim the edge whitespace
+of an otherwise well-formed value; they previously used the header value untrimmed. Go previously trimmed Unicode
+whitespace, so a client id padded with a non-ASCII whitespace character such as `U+00A0` (no-break space) is now
+malformed and ignored instead of being used as the request ID. The shape predicate is exported if you want to apply the
+same rule yourself: Go `apptheory.IsWellFormedClientRequestID`, TypeScript `isWellFormedClientRequestId`, Python
+`is_well_formed_client_request_id`.
+
+Two boundaries are worth knowing before you adopt the server-issued source:
+
+- The setting covers every surface that resolves a request ID from the request: the HTTP path and the AppSync path
+  (AppSync forwards `event.request.headers`), in every runtime. WebSocket and the non-HTTP event sources never read a
+  client request ID and are unaffected.
+- `SecureApp` accepts the same option through its closed options surface and applies no different default.
+
+### Nested HTTP error envelope always carries `error.status_code`
+
+The default nested HTTP error envelope now always includes `error.status_code`: the HTTP status of the response that was
+actually sent. It is emitted by every producer — framework-emitted rejections (routing `404`, `405`, `413`, `408`, `429`,
+`503`, panic-recovery `500`, streaming and adapter delivery failures), the legacy `AppError` path, a handler-returned
+`AppTheoryError` that leaves `status_code` unset (the resolved status is reported), the RFC 6750/9728 bearer denials, the
+WebSocket error envelope, and the nested fallback body.
+
+**Additive; no breaking change.** The key was already declared by the runtime contract as a portable optional field
+("present when available"), and nothing about the routing, status, or message of a rejection changes. Two consequences
+are worth checking:
+
+- A consumer that asserts an **exact** nested error body — string comparison or deep equality against a frozen body —
+  now sees one extra key and must add `status_code`. A consumer that reads `error.code` / `error.message` (or ignores
+  unknown keys) needs no change.
+- The opt-in **flat-legacy** HTTP error format is untouched: its bodies carry no `status_code` and stay byte-identical.
+
+An envelope that cannot be serialized — an `AppTheoryError` whose `Details` hold a value the runtime's JSON encoder
+refuses, such as a cycle in any runtime or a bigint in TypeScript, which already violates the error contract's
+precondition that details be JSON-serializable — is now reported as the internal-error fallback sent with status `500`
+rather than as a body whose `status_code` disagreed with the status on the wire, which changes the response only for
+those already-invalid inputs and leaves the flat-legacy fallback body byte-identical. In TypeScript an `undefined`,
+function, or symbol property is not such a value: it keeps its standard JSON encoding (omitted from an object, `null` in
+an array) and the envelope is sent normally.
+
 ### Go module import paths
 
 AppTheory v6 moves the Go runtime and the generated CDK Go bindings onto the next semantic import version. Replace the
@@ -130,6 +207,46 @@ reference), pinned by a new shared `put_payload` conformance scenario.
 
 See `docs/features/mcp-auth-facade-spi.md` for the front-channel configuration table and
 `docs/features/mcp-facade-helper.md` for what the three registrars mount.
+
+### MCP auth facade on a closed-by-default `SecureApp`
+
+The facade registrars took the legacy `App` surface only, so an application whose route families already run on a
+closed-by-default `SecureApp` could not mount the facade at all: `SecureApp` wraps an unexported core with no
+accessor, and passing it to `RegisterMCPFacade` did not compile in Go. Switching such an application to a plain `App`
+to mount the facade is not an acceptable workaround, because it silently drops that application's
+`SecurePrincipalResolver`, tier, and `PolicyHook` for every route that shares the app.
+
+Each runtime now ships an additive companion registrar — `RegisterMCPFacadeSecure` (Go),
+`registerMcpFacadeSecure` (TypeScript), `register_mcp_facade_secure` (Python) — which installs the identical route
+inventory and behavior on a `SecureApp`, declaring the auth posture each facade route has always had. **No action is
+required for existing consumers**: the plain registrars, every `SecureApp` method, and every default are unchanged,
+and no `SecureApp` accessor was added.
+
+The declared postures are the authority table on a `SecureApp`: the MCP transport route takes the application's own
+principal gate under the `iam` and `jwt` postures (the counterpart of the plain path's `RequireAuth`), stays public
+with the facade's RFC 9728 bearer validator as its authority under `runtime-bearer`, and is deliberately public under
+`none-public`; every OAuth surface route — protected-resource metadata, authorization-server discovery, `/authorize`,
+`/token`, `/register`, and the stage-global callback — is public by design, exactly as it is on the plain path. A
+consumer can assert the table rather than trust it, through `SecureApp.Routes()` / `secureApp.routes()` /
+`secure_app.routes()` and the shared `secure_app_mount` conformance rows. A rejected configuration still adds no route
+at all, and the mount itself is all-or-nothing: the registrars prove the whole plan before the surface receives its
+first facade route, so an invalid entry, a duplicate inside the plan, and a pattern or posture the surface refuses
+all add nothing. On a `SecureApp` a collision with a route the application already declares is pre-checked through
+`Routes()` and adds nothing either, so a returned error means zero facade routes were added. The plain `App` surface
+publishes no route table, so a collision with a route the application already registered there is the one case the
+plain registrar cannot pre-check: it is reported by the app's own duplicate check while the plan is mounted, and the
+entries the plan had already mounted before it stand. The runtime conformance kit ships the matching closed-by-default variants
+(`AssertCredentialFreeDeniedSecureApp`, `assertCredentialFreeTransportDeniedSecureApp`,
+`assert_credential_free_transport_denied_secure_app`, and their bearer and insufficient-scope companions), so a
+consumer's own suite drives either surface.
+
+The CDK `facade` attachment needs no change and no `secureApp`-shaped prop: the construct consumes declared props and
+never detects the runtime type, so the pairing rule is unchanged — `runtime-bearer` requires
+`runtimePosture.requireBearerToken: true` at construct time and the runtime mount declares the RFC 9728 bearer
+validator, on either surface.
+
+See `docs/features/mcp-facade-helper.md#closed-by-default-secureapp-mounts` for the worked example and the full
+route-authority table.
 
 ### REST v1 edge `WWW-Authenticate` restoration
 
@@ -533,9 +650,10 @@ and each helper installs the guard only when the framework chooses the transport
 Denials now carry the route-derived challenge. A missing, malformed, invalid, or expired token returns `401` with
 `WWW-Authenticate: Bearer resource_metadata="<matched route's protected-resource metadata URL>"`. A scope failure
 returns `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="<remediation scopes>",
-resource_metadata="<…>"` and body `{"error":{"code":"app.insufficient_scope"}}`; an audience failure and every other
-forbidden denial still return the plain `403` with no error code or scope set. RFC 8707 `resource` is canonicalized and
-must exactly equal the route resource (the resulting `aud` must equal the route URL).
+resource_metadata="<…>"` and body
+`{"error":{"code":"app.insufficient_scope","message":"insufficient scope","status_code":403}}`; an audience failure and
+every other forbidden denial still return the plain `403` with no error code or scope set. RFC 8707 `resource` is
+canonicalized and must exactly equal the route resource (the resulting `aud` must equal the route URL).
 
 ### MCP auth facade provider and store SPIs
 

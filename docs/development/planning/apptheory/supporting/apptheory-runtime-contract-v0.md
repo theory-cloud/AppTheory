@@ -191,10 +191,18 @@ When a handler requests JSON parsing:
 ## Request ID semantics (P1)
 
 - The canonical request-id header is `X-Request-Id` (normalized as `x-request-id`).
-- If the incoming request includes `x-request-id`, the runtime MUST propagate it.
+- The runtime resolves the request ID from a configurable source. The default source MUST propagate a non-empty
+  incoming `x-request-id`.
 - If the incoming request does not include `x-request-id`, the runtime MUST generate one.
+- An application MAY select the server-issued source. Under that source the runtime MUST NOT treat an incoming
+  `x-request-id` as the request identity: it resolves the ID from the invocation request ID where the surface
+  supplies one, and otherwise generates one. Selecting the source is additive; the default source behavior MUST NOT
+  change.
 - The runtime MUST include `x-request-id` on the response (success and error).
 - For P1+ error responses, the runtime MUST include `error.request_id` in the error envelope.
+- The resolved request ID is the value on the handler context, the `x-request-id` response header, `error.request_id`,
+  and the P2 log/span `request_id` / `request.id` fields. Selecting the source MUST NOT add a second field carrying
+  the client-supplied value, and MUST NOT validate or normalize client-supplied values.
 
 ## Tenant semantics (P1)
 
@@ -282,7 +290,10 @@ Error response envelope (v0) MUST include:
 
 Portable optional fields (v0 extension; present when available):
 
-- `error.status_code` (number): HTTP status used for the response.
+- `error.status_code` (number): HTTP status used for the response. **Present on every nested envelope**, including
+  framework-emitted errors, the nested fallback body, and an `AppTheoryError` whose status is unset (the resolved
+  status is reported). It is the only portable field that is not merely "present when available": the flat-legacy
+  format omits it and is otherwise unchanged.
 - `error.details` (object): client-safe structured details (must be JSON-serializable).
 - `error.trace_id` (string): trace/correlation identifier.
 - `error.timestamp` (string): RFC 3339 timestamp (UTC preferred).

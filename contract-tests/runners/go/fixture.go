@@ -22,6 +22,7 @@ type Fixture struct {
 type FixtureSetup struct {
 	Limits                FixtureLimits                     `json:"limits,omitempty"`
 	HTTPErrorFormat       string                            `json:"http_error_format,omitempty"`
+	RequestIDSource       string                            `json:"request_id_source,omitempty"`
 	Routes                []FixtureRoute                    `json:"routes,omitempty"`
 	Middlewares           []string                          `json:"middlewares,omitempty"`
 	CORS                  FixtureCORSConfig                 `json:"cors,omitempty"`

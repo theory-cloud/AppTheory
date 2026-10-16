@@ -59,6 +59,16 @@ export declare class Context {
     remainingMs: number;
     middlewareTrace: string[];
     /**
+     * The well-formed, client-supplied `x-request-id` header value, or an empty
+     * string when the header is absent or malformed.
+     *
+     * The value is client-supplied and untrusted. Use it for identity and
+     * correlation only — never for authorization. It is available in both
+     * request-ID source modes; in the server-issued mode it is exposed here and
+     * nowhere else.
+     */
+    readonly clientRequestId: string;
+    /**
      * Reports that `tenantId` was derived from the verified principal's
      * configured tenant claim rather than a caller-supplied header or query value.
      */
@@ -85,6 +95,7 @@ export declare class Context {
         traceId?: string;
         tenantId?: string;
         authIdentity?: string;
+        clientRequestId?: string;
         tenantBound?: boolean;
         tenantBindingRequired?: boolean;
         remainingMs?: number;

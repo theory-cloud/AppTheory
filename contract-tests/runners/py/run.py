@@ -3809,6 +3809,8 @@ def run_fixture_secure(
         "id_generator": _MCPFixedIdGenerator("req_test_123"),
         "websocket_support": bool(setup.get("websocket_support")),
     }
+    if (fixture.get("setup") or {}).get("request_id_source"):
+        app_options["request_id_source"] = (fixture.get("setup") or {}).get("request_id_source")
     if setup.get("principal_resolver") is not False:
         app_options["principal_resolver"] = resolver
     if setup.get("policy_hook"):
@@ -4672,6 +4674,19 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
                     "tenant_id": getattr(ctx, "tenant_id", ""),
                     "auth_identity": getattr(ctx, "auth_identity", ""),
                     "remaining_ms": int(getattr(ctx, "remaining_ms", 0) or 0),
+                },
+            )
+
+        return handler
+
+    if name == "echo_request_ids":
+
+        def handler(ctx):
+            return runtime.json(
+                200,
+                {
+                    "request_id": getattr(ctx, "request_id", ""),
+                    "client_request_id": getattr(ctx, "client_request_id", ""),
                 },
             )
 
@@ -6156,6 +6171,7 @@ def run_fixture_m12(
     app = runtime.create_app(
         tier="p1",
         http_error_format=str(setup.get("http_error_format") or ""),
+        request_id_source=str(setup.get("request_id_source") or ""),
         id_generator=ids,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
@@ -6224,6 +6240,7 @@ def run_fixture_m14(
     app = runtime.create_app(
         tier="p1",
         http_error_format=str(setup.get("http_error_format") or ""),
+        request_id_source=str(setup.get("request_id_source") or ""),
         id_generator=ids,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
@@ -6464,6 +6481,7 @@ def run_fixture_p1(
     app = runtime.create_app(
         tier="p1",
         http_error_format=str(setup.get("http_error_format") or ""),
+        request_id_source=str(setup.get("request_id_source") or ""),
         id_generator=ids,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
@@ -6593,6 +6611,7 @@ def run_fixture_p2(
     app = runtime.create_app(
         tier="p2",
         http_error_format=str(setup.get("http_error_format") or ""),
+        request_id_source=str(setup.get("request_id_source") or ""),
         id_generator=ids,
         clock=clock,
         limits=runtime.Limits(
@@ -6698,6 +6717,7 @@ def run_fixture_p2_output(
             )
     app = runtime.create_app(
         tier="p2",
+        request_id_source=str(setup.get("request_id_source") or ""),
         id_generator=ids,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),

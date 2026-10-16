@@ -7,7 +7,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from apptheory.app import App, AuthHook, Limits, ObservabilityHooks, PolicyHook, create_app
+from apptheory.app import App, AuthHook, Limits, ObservabilityHooks, PolicyHook, SecureApp, create_app
 from apptheory.aws_events import AppSyncResolverEvent
 from apptheory.aws_events import build_appsync_event as _build_appsync_event
 from apptheory.clock import ManualClock
@@ -614,7 +614,32 @@ def assert_credential_free_transport_denied(
     The request must return 401 with the exact WWW-Authenticate challenge for
     resource_metadata_url, and the application handler must never run.
     """
-    response = app.serve(_transport_request(method, path))
+    _assert_credential_free_transport_denied(app, method, path, resource_metadata_url, handler)
+
+
+def assert_credential_free_transport_denied_secure_app(
+    secure_app: SecureApp,
+    method: str,
+    path: str,
+    resource_metadata_url: str,
+    handler: CountingTransportHandler,
+) -> None:
+    """``assert_credential_free_transport_denied`` on a closed-by-default ``SecureApp``.
+
+    A consumer whose route families run on a ``SecureApp`` proves the same
+    RFC 9728 denial without dropping to a plain ``App``.
+    """
+    _assert_credential_free_transport_denied(secure_app, method, path, resource_metadata_url, handler)
+
+
+def _assert_credential_free_transport_denied(
+    surface: App | SecureApp,
+    method: str,
+    path: str,
+    resource_metadata_url: str,
+    handler: CountingTransportHandler,
+) -> None:
+    response = surface.serve(_transport_request(method, path))
     if response.status != 401:
         raise AssertionError(f"mcpfacade: credential-free {method} {path}: status = {response.status}, want 401")
     expected = protected_resource_www_authenticate(resource_metadata_url)
@@ -637,8 +662,31 @@ def assert_bearer_token_reaches_transport_handler(
     handler: CountingTransportHandler,
 ) -> None:
     """Positive control: an accepted token reaches the handler exactly once."""
+    _assert_bearer_token_reaches_transport_handler(app, method, path, token, handler)
+
+
+def assert_bearer_token_reaches_transport_handler_secure_app(
+    secure_app: SecureApp,
+    method: str,
+    path: str,
+    token: str,
+    handler: CountingTransportHandler,
+) -> None:
+    """``assert_bearer_token_reaches_transport_handler`` on a ``SecureApp``, the
+    positive control for ``assert_credential_free_transport_denied_secure_app``.
+    """
+    _assert_bearer_token_reaches_transport_handler(secure_app, method, path, token, handler)
+
+
+def _assert_bearer_token_reaches_transport_handler(
+    surface: App | SecureApp,
+    method: str,
+    path: str,
+    token: str,
+    handler: CountingTransportHandler,
+) -> None:
     before = handler.invocations
-    response = app.serve(_transport_request(method, path, {"authorization": [f"Bearer {token}"]}))
+    response = surface.serve(_transport_request(method, path, {"authorization": [f"Bearer {token}"]}))
     if response.status != 204:
         raise AssertionError(f"mcpfacade: bearer {method} {path}: status = {response.status}, want 204")
     if handler.invocations != before + 1:
@@ -662,7 +710,33 @@ def assert_insufficient_scope_transport_denied(
     for scopes and resource_metadata_url plus the ``app.insufficient_scope``
     body error code, and the application handler must never run.
     """
-    response = app.serve(_transport_request(method, path, {"authorization": [f"Bearer {token}"]}))
+    _assert_insufficient_scope_transport_denied(app, method, path, token, resource_metadata_url, scopes, handler)
+
+
+def assert_insufficient_scope_transport_denied_secure_app(
+    secure_app: SecureApp,
+    method: str,
+    path: str,
+    token: str,
+    resource_metadata_url: str,
+    scopes: list[str],
+    handler: CountingTransportHandler,
+) -> None:
+    """``assert_insufficient_scope_transport_denied`` on a closed-by-default ``SecureApp``."""
+    _assert_insufficient_scope_transport_denied(secure_app, method, path, token, resource_metadata_url, scopes, handler)
+
+
+def _assert_insufficient_scope_transport_denied(
+    surface: App | SecureApp,
+    method: str,
+    path: str,
+    token: str,
+    resource_metadata_url: str,
+    scopes: list[str],
+    handler: CountingTransportHandler,
+) -> None:
+    before = handler.invocations
+    response = surface.serve(_transport_request(method, path, {"authorization": [f"Bearer {token}"]}))
     if response.status != 403:
         raise AssertionError(f"mcpfacade: insufficient-scope {method} {path}: status = {response.status}, want 403")
     expected = insufficient_scope_www_authenticate(scopes, resource_metadata_url)
@@ -676,9 +750,10 @@ def assert_insufficient_scope_transport_denied(
         raise AssertionError(
             f'mcpfacade: insufficient-scope {method} {path}: body error code = {code!r}, want "app.insufficient_scope"'
         )
-    if handler.invocations != 0:
+    if handler.invocations != before:
         raise AssertionError(
-            f"mcpfacade: insufficient-scope {method} {path}: MCP handler invoked {handler.invocations} times, want 0"
+            "mcpfacade: insufficient-scope "
+            f"{method} {path}: MCP handler invoked {handler.invocations - before} additional times, want 0"
         )
 
 

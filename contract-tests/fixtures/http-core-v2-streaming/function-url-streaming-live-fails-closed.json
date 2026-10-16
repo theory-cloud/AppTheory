@@ -31,7 +31,8 @@
       "body_json": {
         "error": {
           "code": "app.internal",
-          "message": "streaming response body cannot be delivered by the Function URL adapter"
+          "message": "streaming response body cannot be delivered by the Function URL adapter",
+          "status_code": 500
         }
       },
       "is_base64": false

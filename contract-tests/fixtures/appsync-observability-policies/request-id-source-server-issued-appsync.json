@@ -1,0 +1,39 @@
+{
+  "id": "p2.request_id.source_server_issued_appsync",
+  "tier": "p2",
+  "name": "Server-issued request-ID source ignores client AppSync request headers and keeps the Lambda fallback id",
+  "setup": {
+    "request_id_source": "server",
+    "routes": [
+      { "method": "POST", "path": "/createThing", "handler": "echo_context" }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "appsync",
+      "event": {
+        "arguments": {},
+        "request": {
+          "headers": {
+            "x-request-id": "req_client_forged"
+          }
+        },
+        "info": {
+          "fieldName": "createThing",
+          "parentTypeName": "Mutation"
+        }
+      }
+    },
+    "context": {
+      "aws_request_id": "aws-req-fallback"
+    }
+  },
+  "expect": {
+    "output_json": {
+      "request_id": "aws-req-fallback",
+      "tenant_id": "",
+      "auth_identity": "",
+      "remaining_ms": 0
+    }
+  }
+}

@@ -817,7 +817,11 @@ async function unauthorizedResponse(
     cookies: [],
     body: Buffer.from(
       JSON.stringify({
-        error: { code: "app.unauthorized", message: "unauthorized" },
+        error: {
+          code: "app.unauthorized",
+          message: "unauthorized",
+          status_code: 401,
+        },
       }),
       "utf8",
     ),
@@ -849,6 +853,7 @@ async function insufficientScopeResponse(
         error: {
           code: "app.insufficient_scope",
           message: "insufficient scope",
+          status_code: 403,
         },
       }),
       "utf8",
@@ -864,7 +869,11 @@ function forbiddenResponse(): Response {
     cookies: [],
     body: Buffer.from(
       JSON.stringify({
-        error: { code: "app.forbidden", message: "forbidden" },
+        error: {
+          code: "app.forbidden",
+          message: "forbidden",
+          status_code: 403,
+        },
       }),
       "utf8",
     ),

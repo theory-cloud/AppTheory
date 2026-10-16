@@ -31,7 +31,7 @@
       "status": 400,
       "headers": { "content-type": ["application/json; charset=utf-8"] },
       "cookies": [],
-      "body_json": { "error": { "code": "app.bad_request", "message": "bad request" } },
+      "body_json": { "error": { "code": "app.bad_request", "message": "bad request", "status_code": 400} },
       "is_base64": false
     }
   }

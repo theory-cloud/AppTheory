@@ -341,7 +341,7 @@ func unauthorizedResponse(c *apptheory.Context, opts RequireBearerTokenOptions) 
 	return &apptheory.Response{
 		Status:  401,
 		Headers: headers,
-		Body:    []byte(`{"error":{"code":"app.unauthorized","message":"unauthorized"}}`),
+		Body:    []byte(`{"error":{"code":"app.unauthorized","message":"unauthorized","status_code":401}}`),
 	}
 }
 
@@ -351,7 +351,7 @@ func forbiddenResponse() *apptheory.Response {
 		Headers: map[string][]string{
 			"content-type": {"application/json; charset=utf-8"},
 		},
-		Body: []byte(`{"error":{"code":"app.forbidden","message":"forbidden"}}`),
+		Body: []byte(`{"error":{"code":"app.forbidden","message":"forbidden","status_code":403}}`),
 	}
 }
 
@@ -374,7 +374,7 @@ func insufficientScopeResponse(c *apptheory.Context, opts RequireBearerTokenOpti
 	return &apptheory.Response{
 		Status:  403,
 		Headers: headers,
-		Body:    []byte(`{"error":{"code":"app.insufficient_scope","message":"insufficient scope"}}`),
+		Body:    []byte(`{"error":{"code":"app.insufficient_scope","message":"insufficient scope","status_code":403}}`),
 	}
 }
 

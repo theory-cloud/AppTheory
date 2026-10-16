@@ -5,7 +5,7 @@ description: Tiered middleware, routing, normalization, and the AppTheory error 
 
 # HTTP Runtime (P0–P2)
 
-The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [288-vector corpus](../reference/contract-fixtures.md) includes 275 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the thirteen nested MCP route-algebra, auth-facade and limiter cancellation tables. <!-- apptheory-fixture-count: 288 -->
+The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [305-vector corpus](../reference/contract-fixtures.md) includes 292 generic runner fixtures — including SP09 MCP, SP12 OAuth, and SP13 objectstore across Go, TypeScript, and Python — plus the thirteen nested MCP route-algebra, auth-facade and limiter cancellation tables. <!-- apptheory-fixture-count: 305 -->
 
 The runtime is **tiered.** You opt into a tier when you create the app:
 
@@ -41,7 +41,7 @@ its defense-in-depth pairing; the [MCP facade helper](mcp-facade-helper.md) stat
 
 P0 plus:
 
-- **Request-id propagation** — `x-request-id` echoed on the response, generated when absent, and surfaced on the runtime context (`ctx.RequestID` in Go, `ctx.requestId` in TypeScript, `ctx.request_id` in Python).
+- **Request-id propagation** — `x-request-id` echoed on the response, generated when absent, and surfaced on the runtime context (`ctx.RequestID` in Go, `ctx.requestId` in TypeScript, `ctx.request_id` in Python; the well-formed client-supplied value is separately readable as `ctx.ClientRequestID()` / `ctx.clientRequestId` / `ctx.client_request_id`). The ID's source is selectable and the client value must be well-formed; see **Request ID** below.
 - **Tenant extraction** — convention-based tenant resolution from headers or the auth identity, available on the runtime context (`TenantID` / `tenantId` / `tenant_id`).
 - **Auth hooks** — pluggable identity resolvers; the resolved identity is exposed on the runtime context (`AuthIdentity` / `authIdentity` / `auth_identity`) or the request fails closed.
 - **CORS** — opt-in preflight handling and response header rewrites.
@@ -59,6 +59,42 @@ P1 plus:
 - **Multi-window limiter cancellation classification** — the DynamoDB-backed multi-window limiter in all three runtimes classifies a cancelled `TransactWrite` by its **first genuine cancellation reason** (TableTheory 5.2.0 semantics; see [Upgrading](../UPGRADING.md#tabletheory-520-dependency-and-multi-window-rate-limit-error-classification)). A genuine `ConditionalCheckFailed` — the request exceeded a window budget — is a **soft denial**: `allowed=false` with a retry-after, in every runtime and under either fail-open policy. A DynamoDB throttle (`ThrottledError` / `ErrThrottled`), a transaction conflict (`TransactionConflictError` / `ErrTransactionConflict`), an unknown code, an all-`None` or empty reason list, or a cancellation whose message merely mentions `ConditionalCheckFailed` is **not** a condition failure and follows the configured fail-open policy exactly as Go always has: `failOpen: true` (the AppTheory default) admits the request, `failOpen: false` returns an `internal_error`. Set `failOpen` to `false` (Go `limited.Config.FailOpen`, TypeScript `config.failOpen`, Python `config.fail_open`) if a throttle must deny rather than admit. The shared table `contract-tests/fixtures/routing/limiter/multi-window-cancellation.v1.json` pins every class in Go, TypeScript and Python.
 
 P2 is what production applications use unless they have a reason not to. The default is P2 because most consumers should not be assembling these pieces from scratch.
+
+## Request ID
+
+Every P1+ request carries a request ID on the runtime context (`ctx.RequestID` / `ctx.requestId` / `ctx.request_id`), in the `x-request-id` response header, and — on error responses — as `error.request_id` in the nested envelope. The same value flows into the P2 observability log, span, and metric records.
+
+By default the runtime honors a client-supplied `x-request-id` header. When the header is absent, resolution falls back to the invocation request ID where the surface supplies one (the Lambda request ID on the AppSync path), and otherwise generates an ID. That order is unchanged.
+
+A client value is used only when it is **well-formed**: after trimming leading and trailing whitespace it is 1 to 128 characters long and every character is visible ASCII (`0x21`–`0x7E`). The limit and the character set are framework constants (`apptheory.MaxClientRequestIDLength` in Go, `MAX_CLIENT_REQUEST_ID_LENGTH` in TypeScript and Python), not configuration. A malformed value — more than 128 characters, or containing a space, tab, carriage return, line feed, other control character, or a non-ASCII character — is ignored as if the header were absent, so it never becomes the request ID and never appears in the response header, the error envelope, or the logs.
+
+Some API contracts require a request ID that a caller cannot choose or forge — a correlation ID for audit and support flows. Those applications opt into a server-issued ID:
+
+| Runtime | Default | Server-issued |
+| --- | --- | --- |
+| Go | `apptheory.New()` | `apptheory.New(apptheory.WithRequestIDSource(apptheory.RequestIDSourceServer))`, or `apptheory.NewSecure(apptheory.SecureOptions{RequestIDSource: apptheory.RequestIDSourceServer})` |
+| TypeScript | `createApp()` | `createApp({ requestIdSource: REQUEST_ID_SOURCE_SERVER })`, or `new SecureApp({ requestIdSource: REQUEST_ID_SOURCE_SERVER })` |
+| Python | `create_app()` | `create_app(request_id_source=REQUEST_ID_SOURCE_SERVER)`, or `SecureApp(request_id_source=REQUEST_ID_SOURCE_SERVER)` |
+
+In server-issued mode the client `x-request-id` header is never used as the request identity: resolution drops straight to the fallback request ID, then to a generated ID. The handler context, the error envelope, the response header, and the log/observability fields all carry the server-issued value.
+
+### Reading the client value
+
+An application that wants the caller's own value — to correlate with a client-side log, for example — reads it from the request context. The accessor returns the well-formed client value in **both** request-ID source modes, and an empty value when the header is absent or malformed. It never returns a malformed value:
+
+| Runtime | Accessor |
+| --- | --- |
+| Go | `ctx.ClientRequestID()` |
+| TypeScript | `ctx.clientRequestId` |
+| Python | `ctx.client_request_id` |
+
+In server-issued mode the accessor is the only place the client value appears. The framework adds no log field for it.
+
+**Security note.** The client request ID is client-supplied and untrusted. Use it for identity and correlation only — never for authorization, access control, or audit assertions, and never as a storage key without your own validation. The shape rule bounds the value (1–128 visible-ASCII characters) so it is safe to place in a response header, a log field, and the error envelope; it does not make the value truthful. The raw `x-request-id` request header is never rewritten or scrubbed — `ctx.Request.Headers` keeps exactly what the caller sent — so read the accessor when you want the validated form.
+
+The request-ID source option is additive. `SecureApp` accepts the same option through its closed options surface and applies no different default.
+
+The setting applies to every surface that resolves a request ID from the request: the HTTP path and the AppSync path (which forwards `event.request.headers`), in all three runtimes. Surfaces that never read a client request ID are unchanged — WebSocket and the non-HTTP event sources derive their ID from the API Gateway request-context ID or the Lambda request ID, and their request contexts return an empty client value.
 
 ## Route registration
 
@@ -123,11 +159,27 @@ Default HTTP error responses use a **nested envelope**:
   "error": {
     "code": "not_found",
     "message": "User not found",
-    "details": { "id": "u_42" }
-  },
-  "request_id": "req-1"
+    "status_code": 404,
+    "details": { "id": "u_42" },
+    "request_id": "req-1"
+  }
 }
 ```
+
+`error.status_code` is the HTTP status of the response actually sent, and the nested envelope carries it on **every**
+error — framework-emitted rejections (routing `404`, `405`, `413`, `408`, `429`, `503`, panic-recovery `500`, streaming
+and adapter delivery failures), handler-returned `AppTheoryError` with or without an explicit status, the legacy
+`AppError` path, the RFC 6750/9728 bearer denials, the WebSocket error envelope, and the nested fallback body. A
+consumer that asserts an exact nested body sees this key; a consumer that reads `error.code`/`error.message` is
+unaffected.
+
+An envelope that cannot be serialized — an `AppTheoryError` whose `details` hold a value the runtime's JSON encoder
+refuses, such as a cycle in any runtime or a bigint in TypeScript, which already violates the error contract — is never
+sent in a degraded form: the runtime sends the internal-error fallback with status `500`
+(`{"error":{"code":"app.internal","message":"internal error","status_code":500}}` nested,
+`{"code":"app.internal","message":"internal error"}` flat-legacy), so a body whose `status_code` disagrees with the sent
+status is never sent. In TypeScript an `undefined`, function, or symbol property is not such a value: it keeps its
+standard JSON encoding (omitted from an object, `null` in an array) and the envelope is sent normally.
 
 To match Lift's flat shape (one-time migration aid only — not for new apps):
 
@@ -172,10 +224,10 @@ into the buffered body with a bounded budget instead of silently dropping it:
 - a stream that does **not terminate within the budget** (a live session listener,
   an open replay) or a stream that **errors** fails closed with HTTP 500 and the
   nested AppTheory error body:
-  `{"error":{"code":"app.internal","message":"streaming response body cannot be delivered by the HTTP API v2 adapter"}}`
+  `{"error":{"code":"app.internal","message":"streaming response body cannot be delivered by the HTTP API v2 adapter","status_code":500}}`
   (the Function URL adapter names itself: `"...cannot be delivered by the Function URL adapter"`);
 - a stream whose total length **exceeds 4 MiB** maps to HTTP 413 payload too large
-  with the framework's size error body: `{"error":{"code":"app.too_large","message":"response too large"}}`,
+  with the framework's size error body: `{"error":{"code":"app.too_large","message":"response too large","status_code":413}}`,
   matching the `MaxResponseBytes` size semantics used elsewhere in the runtime;
 - a stream that closes empty only because the deadline fired fails closed as well,
   so the empty-`200` reconnect loop cannot reappear at the deadline boundary.
@@ -350,4 +402,4 @@ Deliberately conservative, and reported rather than assumed joined:
 - [Logging Profiles](logging-profiles.md) — profile-backed structured JSON log output
 - [Sanitization](sanitization.md) — safe logging helpers
 - [Event Workloads](event-workloads.md) — the non-HTTP side of the runtime
-- [Contract Fixtures](../reference/contract-fixtures.md) — 288 vectors: 275 generic fixtures across Go/TS/Python plus thirteen nested MCP route-algebra, auth-facade and limiter cancellation tables <!-- apptheory-fixture-count: 288 -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — 305 vectors: 292 generic fixtures across Go/TS/Python plus thirteen nested MCP route-algebra, auth-facade and limiter cancellation tables <!-- apptheory-fixture-count: 305 -->

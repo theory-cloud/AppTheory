@@ -315,6 +315,7 @@ class SecureAppTests(unittest.TestCase):
                     "code": "app.unauthorized",
                     "message": "unauthorized",
                     "request_id": "req_denial",
+                    "status_code": 401,
                 }
             },
         )

@@ -279,12 +279,25 @@ type routeRegistration struct {
 	pattern string
 	handler apptheory.Handler
 	options []apptheory.RouteOption
+	// posture is the declared SecureApp authorization posture for this route,
+	// used only by RegisterMCPFacadeSecure. The plain-App path ignores it and
+	// keeps expressing its route security through options.
+	posture apptheory.AuthPosture
 }
 
 // RegisterMCPFacade installs the complete MCP OAuth facade described by
 // mcproutes.ContractVersion and returns its route inventory. The helper owns
 // composition only: authorize and token routes are absent unless the
 // application supplies both handler factories.
+//
+// The whole plan is proven installable before the app receives its first facade
+// route, so a configuration the facade rejects, an invalid entry, or a
+// duplicate inside the plan adds no route at all. A collision with a route the
+// application already registered on this plain App is detected by the app's own
+// duplicate check while the plan is mounted: the plain App surface publishes no
+// route table, so the facade cannot pre-check that collision the way
+// RegisterMCPFacadeSecure can on a SecureApp. See UPGRADING.md for the precise
+// guarantee on each surface.
 func RegisterMCPFacade(app *apptheory.App, config FacadeConfig) (*RouteInventory, error) {
 	if app == nil {
 		return nil, fmt.Errorf("mcpfacade: app is required")
@@ -302,6 +315,51 @@ func RegisterMCPFacade(app *apptheory.App, config FacadeConfig) (*RouteInventory
 		return nil, err
 	}
 	if err := registerRoutes(app, registrations); err != nil {
+		return nil, err
+	}
+
+	return cloneInventory(inventory), nil
+}
+
+// RegisterMCPFacadeSecure installs the complete MCP OAuth facade on a
+// closed-by-default SecureApp and returns its route inventory.
+//
+// It is the SecureApp counterpart to RegisterMCPFacade and produces the same
+// route inventory and the same request-time behavior. The difference is how
+// each route's authority is declared: on the plain App surface the facade
+// expresses transport security with route options, while here every route must
+// declare an explicit auth posture, so the facade declares the posture each of
+// its routes has always had (see the authority table in the package docs and in
+// docs/features/mcp-facade-helper.md).
+//
+// The SecureApp stays closed by default: this helper adds only the facade's own
+// routes, each with a declared posture, and it adds none of them when the plan
+// is rejected. The whole plan is proven installable before the app receives its
+// first facade route — every entry, and every collision with a route the app
+// already declares — so a returned error means zero facade routes were added. A
+// route the application never declares remains undeliverable, and the
+// application's own SecurePrincipalResolver, tier, and PolicyHook keep
+// governing every non-facade route on the same app.
+func RegisterMCPFacadeSecure(secure *apptheory.SecureApp, config FacadeConfig) (*RouteInventory, error) {
+	if secure == nil {
+		return nil, fmt.Errorf("mcpfacade: secure app is required")
+	}
+	normalized, err := normalizeConfig(config)
+	if err != nil {
+		return nil, err
+	}
+	inventory, err := buildInventory(normalized)
+	if err != nil {
+		return nil, err
+	}
+	registrations, err := buildRegistrations(normalized, inventory)
+	if err != nil {
+		return nil, err
+	}
+	if err := preflightSecureRegistrations(secure, registrations); err != nil {
+		return nil, err
+	}
+	if err := registerSecureRoutes(secure, registrations); err != nil {
 		return nil, err
 	}
 
@@ -542,15 +600,22 @@ func normalizeURLMode(config FacadeConfig) (string, map[string]struct{}, error) 
 func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]routeRegistration, error) {
 	registrations := make([]routeRegistration, 0, len(inventory.Routes)*9+2)
 	transportOptions := transportRouteOptions(config)
+	transportPosture := transportPostureDeclaration(config)
+	// Every other facade route is public by contract: clients must reach the
+	// RFC 9728 metadata before they hold a token, /authorize and /token are the
+	// unauthenticated client-facing protocol surface (PKCE and the single-use
+	// code are the authority there), RFC 7591 registration admits public clients
+	// only, and the upstream callback pins state and iss.
+	surfacePosture := apptheory.Public()
 	for _, route := range inventory.Routes {
 		mcpHandler := checkedMCPHandler(route.Kind, config.mcpHandler)
 		if config.requireBearerToken != nil {
 			mcpHandler = oauth.RequireBearerTokenMiddleware(*config.requireBearerToken)(mcpHandler)
 		}
 		registrations = append(registrations,
-			routeRegistration{method: "POST", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions},
-			routeRegistration{method: "GET", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions},
-			routeRegistration{method: "DELETE", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions},
+			routeRegistration{method: "POST", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions, posture: transportPosture},
+			routeRegistration{method: "GET", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions, posture: transportPosture},
+			routeRegistration{method: "DELETE", pattern: route.MCPPattern, handler: mcpHandler, options: transportOptions, posture: transportPosture},
 		)
 
 		// The OAuth surface follows the posture-derived inventory, not mere
@@ -561,35 +626,35 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 			continue
 		}
 		registrations = append(registrations,
-			routeRegistration{method: "GET", pattern: route.ProtectedResourcePattern, handler: protectedResourceHandler(config, route.Kind)},
+			routeRegistration{method: "GET", pattern: route.ProtectedResourcePattern, handler: protectedResourceHandler(config, route.Kind), posture: surfacePosture},
 		)
 
 		discoveryHandler := authorizationServerHandler(config, route.Kind)
 		registrations = append(registrations,
-			routeRegistration{method: "GET", pattern: route.DiscoveryCanonicalPattern, handler: discoveryHandler},
-			routeRegistration{method: "GET", pattern: route.DiscoverySuffixPattern, handler: discoveryHandler},
+			routeRegistration{method: "GET", pattern: route.DiscoveryCanonicalPattern, handler: discoveryHandler, posture: surfacePosture},
+			routeRegistration{method: "GET", pattern: route.DiscoverySuffixPattern, handler: discoveryHandler, posture: surfacePosture},
 		)
 
 		if config.authorizeHandlers != nil {
 			registrations = append(registrations,
-				routeRegistration{method: "GET", pattern: route.AuthorizePattern, handler: checkedOAuthFacadeHandler(route.Kind, true, config.authorizeHandlers[route.Kind])},
-				routeRegistration{method: "POST", pattern: route.TokenPattern, handler: checkedOAuthFacadeHandler(route.Kind, false, config.tokenHandlers[route.Kind])},
+				routeRegistration{method: "GET", pattern: route.AuthorizePattern, handler: checkedOAuthFacadeHandler(route.Kind, true, config.authorizeHandlers[route.Kind]), posture: surfacePosture},
+				routeRegistration{method: "POST", pattern: route.TokenPattern, handler: checkedOAuthFacadeHandler(route.Kind, false, config.tokenHandlers[route.Kind]), posture: surfacePosture},
 			)
 		}
 		if config.frontChannel != nil {
 			registrations = append(registrations,
-				routeRegistration{method: "GET", pattern: route.AuthorizePattern, handler: checkedOAuthFacadeHandler(route.Kind, true, config.authorizeHandlerFor(route.Kind))},
-				routeRegistration{method: "POST", pattern: route.TokenPattern, handler: checkedOAuthFacadeHandler(route.Kind, false, config.tokenHandlerFor(route.Kind))},
+				routeRegistration{method: "GET", pattern: route.AuthorizePattern, handler: checkedOAuthFacadeHandler(route.Kind, true, config.authorizeHandlerFor(route.Kind)), posture: surfacePosture},
+				routeRegistration{method: "POST", pattern: route.TokenPattern, handler: checkedOAuthFacadeHandler(route.Kind, false, config.tokenHandlerFor(route.Kind)), posture: surfacePosture},
 				// The RFC 7591 registration route is part of the front channel,
 				// so it follows the same posture-derived mount: it is never
 				// reached under the none-public posture, where nothing of the
 				// OAuth surface registers.
-				routeRegistration{method: "POST", pattern: route.RegisterPattern, handler: checkedRegisterHandler(route.Kind, config.registerHandlerFor(route.Kind))},
+				routeRegistration{method: "POST", pattern: route.RegisterPattern, handler: checkedRegisterHandler(route.Kind, config.registerHandlerFor(route.Kind)), posture: surfacePosture},
 			)
 		}
 		if config.registerHandlers != nil {
 			registrations = append(registrations,
-				routeRegistration{method: "POST", pattern: route.RegisterPattern, handler: checkedRegisterHandler(route.Kind, config.registerHandlers[route.Kind])},
+				routeRegistration{method: "POST", pattern: route.RegisterPattern, handler: checkedRegisterHandler(route.Kind, config.registerHandlers[route.Kind]), posture: surfacePosture},
 			)
 		}
 	}
@@ -601,6 +666,7 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 			method:  "GET",
 			pattern: inventory.RootAuthorizationServerPattern,
 			handler: withMetadataHeaders(oauth.AuthorizationServerMetadataHandler(config.rootAuthorizationServer)),
+			posture: surfacePosture,
 		})
 	}
 	if inventory.CallbackPattern != "" && config.callbackHandler != nil {
@@ -608,6 +674,7 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 			method:  "GET",
 			pattern: inventory.CallbackPattern,
 			handler: config.callbackHandler,
+			posture: surfacePosture,
 		})
 	}
 	if inventory.CallbackPattern != "" && config.frontChannel != nil {
@@ -615,6 +682,7 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 			method:  "GET",
 			pattern: inventory.CallbackPattern,
 			handler: config.callbackHandlerFor(),
+			posture: surfacePosture,
 		})
 	}
 	if err := validateRouteRegistrations(registrations); err != nil {
@@ -624,8 +692,85 @@ func buildRegistrations(config normalizedConfig, inventory *RouteInventory) ([]r
 }
 
 func validateRouteRegistrations(registrations []routeRegistration) error {
-	seen := make(map[string]struct{}, len(registrations))
 	probe := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	return validateRegistrationEntries(registrations, func(registration routeRegistration) error {
+		return handleRoute(probe, registration.method, registration.pattern, registration.handler, registration.options...)
+	})
+}
+
+// preflightSecureRegistrations proves the whole plan before the caller's
+// SecureApp receives any route, so a plan the registrar rejects is
+// all-or-nothing: a returned error means no facade route was added.
+//
+// It is the SecureApp counterpart to validateRouteRegistrations and runs the
+// same two checks, both before the first mount:
+//
+//  1. the plan is installed on a throwaway tier-P0 SecureApp, so an invalid
+//     entry, a duplicate inside the plan, or a pattern or posture the surface
+//     refuses fails with the caller's app untouched; and
+//  2. every planned route is compared with the routes the caller's SecureApp
+//     already declares ON ANY SURFACE THAT SHARES THE ROUTER, so a collision
+//     with an application route is reported before the first mount too.
+//
+// The SecureApp surface publishes its declared routes (Routes()), so both
+// failure classes can be pre-checked. The plain App surface publishes no route
+// table, so RegisterMCPFacade can pre-check the plan only; see the precise
+// guarantee in UPGRADING.md and docs/features/mcp-facade-helper.md.
+func preflightSecureRegistrations(secure *apptheory.SecureApp, registrations []routeRegistration) error {
+	probe := apptheory.NewSecure(apptheory.SecureOptions{Tier: apptheory.TierP0})
+	if err := validateRegistrationEntries(registrations, func(registration routeRegistration) error {
+		return handleSecureRoute(probe, registration.method, registration.pattern, registration.handler, registration.posture)
+	}); err != nil {
+		return err
+	}
+
+	declared := make(map[string]struct{})
+	for _, route := range secure.Routes() {
+		if key, onSharedRouter := sharedRouterRouteKey(route); onSharedRouter {
+			declared[key] = struct{}{}
+		}
+	}
+	for _, planned := range probe.Routes() {
+		key, onSharedRouter := sharedRouterRouteKey(planned)
+		if !onSharedRouter {
+			continue
+		}
+		if _, occupied := declared[key]; occupied {
+			return fmt.Errorf("mcpfacade: route %s is already registered on the secure app", key)
+		}
+	}
+	return nil
+}
+
+// sharedRouterRouteKey returns the exact key the shared router's duplicate check
+// compares for one declared route, and whether that route is on the shared
+// router at all.
+//
+// That check is surface-agnostic: it compares the canonical method and path of
+// every route the router owns, whichever surface declared it, and
+// SecureApp.AppSyncField mounts on that same router (GET /<field> for Query and
+// Subscription, POST /<field> for Mutation). SecureApp.Routes() reports the same
+// canonical method and path for both surfaces, so the HTTP and AppSync surfaces
+// key identically here and an AppSync field that occupies a planned route's key
+// is caught before the first mount.
+//
+// The WebSocket surface is the one exception. Its route keys live in their own
+// table with their own duplicate check, keyed by route key; it declares neither
+// a method nor a path, and it never reaches the router, so it cannot occupy a
+// router key. Excluding it is what stops this comparison from inventing a
+// collision out of that empty method and path.
+func sharedRouterRouteKey(route apptheory.SecureRoute) (string, bool) {
+	if route.Surface == apptheory.SecureRouteWebSocket {
+		return "", false
+	}
+	return route.Method + " " + route.Path, true
+}
+
+// validateRegistrationEntries applies the surface-independent inventory checks:
+// every entry must name a method, pattern, and handler, must not duplicate
+// another entry, and must be acceptable to install.
+func validateRegistrationEntries(registrations []routeRegistration, install func(routeRegistration) error) error {
+	seen := make(map[string]struct{}, len(registrations))
 	for _, registration := range registrations {
 		method := strings.ToUpper(strings.TrimSpace(registration.method))
 		key := method + " " + registration.pattern
@@ -636,7 +781,7 @@ func validateRouteRegistrations(registrations []routeRegistration) error {
 			return fmt.Errorf("mcpfacade: duplicate route inventory entry %s", key)
 		}
 		seen[key] = struct{}{}
-		if err := handleRoute(probe, method, registration.pattern, registration.handler, registration.options...); err != nil {
+		if err := install(registration); err != nil {
 			return fmt.Errorf("mcpfacade: invalid or duplicate route inventory entry %s: %w", key, err)
 		}
 	}
@@ -646,6 +791,15 @@ func validateRouteRegistrations(registrations []routeRegistration) error {
 func registerRoutes(app *apptheory.App, registrations []routeRegistration) error {
 	for _, registration := range registrations {
 		if err := handleRoute(app, registration.method, registration.pattern, registration.handler, registration.options...); err != nil {
+			return fmt.Errorf("mcpfacade: register %s %s: %w", registration.method, registration.pattern, err)
+		}
+	}
+	return nil
+}
+
+func registerSecureRoutes(secure *apptheory.SecureApp, registrations []routeRegistration) error {
+	for _, registration := range registrations {
+		if err := handleSecureRoute(secure, registration.method, registration.pattern, registration.handler, registration.posture); err != nil {
 			return fmt.Errorf("mcpfacade: register %s %s: %w", registration.method, registration.pattern, err)
 		}
 	}
@@ -667,6 +821,26 @@ func handleRoute(app *apptheory.App, method, pattern string, handler apptheory.H
 	return nil
 }
 
+// handleSecureRoute declares one posture-bearing route on a SecureApp and turns
+// a registration panic into an error. SecureApp.Handle panics on a duplicate or
+// invalid route exactly as App.Handle does, so the SecureApp registrar recovers
+// the same way handleRoute does and preserves the (*RouteInventory, error)
+// contract of the two Register* entry points.
+func handleSecureRoute(secure *apptheory.SecureApp, method, pattern string, handler apptheory.Handler, posture apptheory.AuthPosture) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			switch value := recovered.(type) {
+			case error:
+				err = value
+			default:
+				err = fmt.Errorf("route registration panic: %v", value)
+			}
+		}
+	}()
+	secure.Handle(method, pattern, handler, posture)
+	return nil
+}
+
 // transportRouteOptions returns the route-level posture for the three MCP
 // transport routes (POST, GET, and DELETE on every MCP pattern).
 //
@@ -679,6 +853,27 @@ func transportRouteOptions(config normalizedConfig) []apptheory.RouteOption {
 		return []apptheory.RouteOption{apptheory.RequireAuth()}
 	}
 	return nil
+}
+
+// transportPostureDeclaration returns the SecureApp auth posture the facade
+// declares for the three MCP transport routes. It is the SecureApp counterpart
+// of transportRouteOptions: the same three postures, expressed in the
+// closed-by-default vocabulary SecureApp requires at registration.
+//
+// IAM and JWT are gateway-fronted postures whose plain-App expression is the
+// RequireAuth route option, which requires a resolved principal. The SecureApp
+// counterpart of that requirement is Authenticated(), so the application's own
+// SecurePrincipalResolver remains the authority for the transport route.
+//
+// RuntimeBearer registers no route option on the plain surface because the RFC
+// 9728 bearer middleware enforces the request and fails closed, so the declared
+// posture here is Public and the facade's bearer validator is the authority.
+// NonePublic is deliberately public by contract.
+func transportPostureDeclaration(config normalizedConfig) apptheory.AuthPosture {
+	if config.transportPosture == TransportPostureIAM || config.transportPosture == TransportPostureJWT {
+		return apptheory.Authenticated()
+	}
+	return apptheory.Public()
 }
 
 func indexFacadeTemplates(templates []mcproutes.OAuthFacadeTemplate) map[mcproutes.EndpointKind]mcproutes.OAuthFacadeTemplate {

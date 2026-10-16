@@ -1,4 +1,4 @@
-import type { App } from "../app.js";
+import type { App, SecureApp } from "../app.js";
 import type { Handler } from "../context.js";
 /**
  * A counting MCP transport handler plus the number of requests that reached it.
@@ -21,6 +21,12 @@ export declare function countingTransportHandler(): CountingTransportHandler;
  */
 export declare function assertCredentialFreeTransportDenied(app: App, method: string, path: string, resourceMetadataURL: string, handler: CountingTransportHandler): Promise<void>;
 /**
+ * {@link assertCredentialFreeTransportDenied} on a closed-by-default
+ * {@link SecureApp}, so a consumer that runs its route families on a SecureApp
+ * proves the same RFC 9728 denial without dropping to a plain app.
+ */
+export declare function assertCredentialFreeTransportDeniedSecureApp(secureApp: SecureApp, method: string, path: string, resourceMetadataURL: string, handler: CountingTransportHandler): Promise<void>;
+/**
  * Drives a request carrying a token the route scope map rejects to method path
  * and asserts the RFC 6750 insufficient_scope denial: HTTP 403, the exact
  * WWW-Authenticate challenge for the remediation scopes and
@@ -29,9 +35,20 @@ export declare function assertCredentialFreeTransportDenied(app: App, method: st
  */
 export declare function assertInsufficientScopeTransportDenied(app: App, method: string, path: string, token: string, resourceMetadataURL: string, scopes: string[], handler: CountingTransportHandler): Promise<void>;
 /**
+ * {@link assertInsufficientScopeTransportDenied} on a closed-by-default
+ * {@link SecureApp}.
+ */
+export declare function assertInsufficientScopeTransportDeniedSecureApp(secureApp: SecureApp, method: string, path: string, token: string, resourceMetadataURL: string, scopes: string[], handler: CountingTransportHandler): Promise<void>;
+/**
  * The positive control for {@link assertCredentialFreeTransportDenied}: a
  * request carrying token reaches the handler exactly once, proving the denial
  * is not "always deny".
  */
 export declare function assertBearerTokenReachesTransportHandler(app: App, method: string, path: string, token: string, handler: CountingTransportHandler): Promise<void>;
+/**
+ * {@link assertBearerTokenReachesTransportHandler} on a closed-by-default
+ * {@link SecureApp}, the positive control for
+ * {@link assertCredentialFreeTransportDeniedSecureApp}.
+ */
+export declare function assertBearerTokenReachesTransportHandlerSecureApp(secureApp: SecureApp, method: string, path: string, token: string, handler: CountingTransportHandler): Promise<void>;
 //# sourceMappingURL=mcpfacade.d.ts.map

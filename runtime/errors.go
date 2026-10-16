@@ -97,17 +97,23 @@ func errorResponseWithFormat(format HTTPErrorFormat, code, message string, heade
 	headers = canonicalizeHeaders(headers)
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
+	status := statusForErrorCode(canonicalRuntimeErrorCode(code))
 	bodyCode, bodyMessage := canonicalHTTPErrorFields(format, code, message)
-	body, err := marshalHTTPErrorBody(format, map[string]any{
+	errBody := map[string]any{
 		"code":    bodyCode,
 		"message": bodyMessage,
-	})
+	}
+	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested {
+		errBody["status_code"] = status
+	}
+	body, err := marshalHTTPErrorBody(format, errBody)
 	if err != nil {
+		status = fallbackHTTPErrorStatus()
 		body = fallbackHTTPErrorBody(format)
 	}
 
 	return Response{
-		Status:   statusForErrorCode(canonicalRuntimeErrorCode(code)),
+		Status:   status,
 		Headers:  headers,
 		Cookies:  relocateSetCookieHeaders(headers),
 		Body:     body,
@@ -148,8 +154,8 @@ func errorResponseFromAppTheoryErrorWithFormat(
 		"code":    bodyCode,
 		"message": bodyMessage,
 	}
-	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested && err.StatusCode != 0 {
-		errBody["status_code"] = err.StatusCode
+	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested {
+		errBody["status_code"] = status
 	}
 	if len(err.Details) > 0 {
 		errBody["details"] = err.Details
@@ -173,6 +179,7 @@ func errorResponseFromAppTheoryErrorWithFormat(
 
 	body, jsonErr := marshalHTTPErrorBody(format, errBody)
 	if jsonErr != nil {
+		status = fallbackHTTPErrorStatus()
 		body = fallbackHTTPErrorBody(format)
 	}
 
@@ -208,26 +215,29 @@ func errorResponseWithRequestIDTraceIDAndFormat(
 	headers = canonicalizeHeaders(headers)
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
+	status := statusForErrorCode(canonicalRuntimeErrorCode(code))
 	bodyCode, bodyMessage := canonicalHTTPErrorFields(format, code, message)
 	errBody := map[string]any{
 		"code":    bodyCode,
 		"message": bodyMessage,
 	}
-	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested && requestID != "" {
-		errBody["request_id"] = requestID
-	}
 	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested {
+		errBody["status_code"] = status
+		if requestID != "" {
+			errBody["request_id"] = requestID
+		}
 		if traceID = strings.TrimSpace(traceID); traceID != "" {
 			errBody["trace_id"] = traceID
 		}
 	}
 	body, err := marshalHTTPErrorBody(format, errBody)
 	if err != nil {
+		status = fallbackHTTPErrorStatus()
 		body = fallbackHTTPErrorBody(format)
 	}
 
 	return Response{
-		Status:   statusForErrorCode(canonicalRuntimeErrorCode(code)),
+		Status:   status,
 		Headers:  headers,
 		Cookies:  relocateSetCookieHeaders(headers),
 		Body:     body,
@@ -276,6 +286,11 @@ func responseForErrorWithRequestIDTraceIDAndFormat(format HTTPErrorFormat, err e
 	return errorResponseWithRequestIDTraceIDAndFormat(format, errorCodeInternal, errorMessageInternal, nil, requestID, traceID)
 }
 
+// marshalHTTPErrorBody renders the error envelope. It fails when the envelope
+// carries a value encoding/json cannot represent — for example an
+// AppTheoryError.Details value that is not JSON-serializable — and every caller
+// must then send fallbackHTTPErrorBody with fallbackHTTPErrorStatus, so a body
+// whose status_code disagrees with the status on the wire is never sent.
 func marshalHTTPErrorBody(format HTTPErrorFormat, errBody map[string]any) ([]byte, error) {
 	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatFlatLegacy {
 		return json.Marshal(errBody)
@@ -285,9 +300,19 @@ func marshalHTTPErrorBody(format HTTPErrorFormat, errBody map[string]any) ([]byt
 	})
 }
 
+// fallbackHTTPErrorStatus is the status sent with fallbackHTTPErrorBody, so the
+// nested fallback body's status_code always matches the status on the wire.
+func fallbackHTTPErrorStatus() int {
+	return statusForErrorCode(errorCodeInternal)
+}
+
+// fallbackHTTPErrorBody is the internal-error envelope sent when the intended
+// envelope cannot be serialized. It carries no request id, trace id, timestamp,
+// or stack trace: a response that failed to serialize reports the internal
+// error and nothing about the original error.
 func fallbackHTTPErrorBody(format HTTPErrorFormat) []byte {
 	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatFlatLegacy {
 		return []byte(`{"code":"app.internal","message":"internal error"}`)
 	}
-	return []byte(`{"error":{"code":"app.internal","message":"internal error"}}`)
+	return []byte(`{"error":{"code":"app.internal","message":"internal error","status_code":500}}`)
 }

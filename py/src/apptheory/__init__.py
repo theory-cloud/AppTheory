@@ -349,6 +349,7 @@ from apptheory.mcpfacade import (
     RouteInventory,
     default_capabilities,
     register_mcp_facade,
+    register_mcp_facade_secure,
 )
 from apptheory.mcproutes import (
     AGENT_MCP_PATTERN,
@@ -737,6 +738,13 @@ from apptheory.openapi import (
     generate_openapi_json,
 )
 from apptheory.request import Request
+from apptheory.request_id_source import (
+    MAX_CLIENT_REQUEST_ID_LENGTH,
+    REQUEST_ID_SOURCE_DEFAULT,
+    REQUEST_ID_SOURCE_SERVER,
+    is_well_formed_client_request_id,
+    well_formed_client_request_id,
+)
 from apptheory.response import Response, binary, html, html_stream, json, safe_json_for_html, text
 from apptheory.sanitization import (
     mask_first_last,
@@ -776,8 +784,11 @@ from apptheory.testkit import (
     TestEnv,
     WebSocketCall,
     assert_bearer_token_reaches_transport_handler,
+    assert_bearer_token_reaches_transport_handler_secure_app,
     assert_credential_free_transport_denied,
+    assert_credential_free_transport_denied_secure_app,
     assert_insufficient_scope_transport_denied,
+    assert_insufficient_scope_transport_denied_secure_app,
     build_appsync_event,
     build_websocket_event,
     cloudwatch_logs_subscription_data,
@@ -922,6 +933,7 @@ __all__ = [
     "LOGGING_PROFILE_LOCAL_DEV",
     "LOGGING_PROFILE_PAYTHEORY_ALERT_V1",
     "LOGGING_PROFILE_SCHEMA_VERSION",
+    "MAX_CLIENT_REQUEST_ID_LENGTH",
     "MAX_PRESIGN_PUT_EXPIRES_IN",
     "MCP_CODE_HEADER_MISMATCH",
     "MCP_CODE_INTERNAL_ERROR",
@@ -1007,6 +1019,8 @@ __all__ = [
     "PARTNER_AGENT_MCP_PATTERN",
     "PARTNER_NAMESPACE_MCP_PATTERN",
     "PROTECTED_RESOURCE_PREFIX",
+    "REQUEST_ID_SOURCE_DEFAULT",
+    "REQUEST_ID_SOURCE_SERVER",
     "S3_ENCRYPTION_BUCKET_DEFAULT",
     "S3_ENCRYPTION_KMS",
     "S3_ENCRYPTION_S3_MANAGED",
@@ -1366,8 +1380,11 @@ __all__ = [
     "WebSocketCall",
     "WebSocketContext",
     "assert_bearer_token_reaches_transport_handler",
+    "assert_bearer_token_reaches_transport_handler_secure_app",
     "assert_credential_free_transport_denied",
+    "assert_credential_free_transport_denied_secure_app",
     "assert_insufficient_scope_transport_denied",
+    "assert_insufficient_scope_transport_denied_secure_app",
     "authenticated",
     "authenticated_any_of",
     "authorization_authorize_path_for_resource_path",
@@ -1465,6 +1482,7 @@ __all__ = [
     "internal_only",
     "is_microvm_terminal_state",
     "is_supported_profile_output_field",
+    "is_well_formed_client_request_id",
     "job_lock_sort_key",
     "job_meta_sort_key",
     "job_partition_key",
@@ -1528,6 +1546,7 @@ __all__ = [
     "reconstruct_microvm_session_record",
     "register_controller_routes",
     "register_mcp_facade",
+    "register_mcp_facade_secure",
     "register_microvm_controller_routes",
     "report_kinesis_put_records_failures",
     "require_bearer_token_middleware",
@@ -1593,5 +1612,6 @@ __all__ = [
     "validate_vector",
     "validation_error",
     "vary",
+    "well_formed_client_request_id",
     "wrap_job_ledger_error",
 ]

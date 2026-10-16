@@ -1,0 +1,41 @@
+{
+  "id": "p2.request_id.shape_malformed_appsync_fallback",
+  "tier": "p2",
+  "name": "A malformed AppSync client x-request-id falls back to the Lambda request ID",
+  "setup": {
+    "request_id_source": "default",
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/createThing",
+        "handler": "echo_request_ids"
+      }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "appsync",
+      "event": {
+        "arguments": {},
+        "request": {
+          "headers": {
+            "x-request-id": "evil\r\nx-injected: 1"
+          }
+        },
+        "info": {
+          "fieldName": "createThing",
+          "parentTypeName": "Mutation"
+        }
+      }
+    },
+    "context": {
+      "aws_request_id": "aws-req-fallback"
+    }
+  },
+  "expect": {
+    "output_json": {
+      "request_id": "aws-req-fallback",
+      "client_request_id": ""
+    }
+  }
+}

@@ -107,7 +107,13 @@ test("OAuth bearer middleware distinguishes unauthorized, forbidden, and insuffi
   );
   assert.deepEqual(
     JSON.parse(Buffer.from(insufficient.body).toString("utf8")),
-    { error: { code: "app.insufficient_scope", message: "insufficient scope" } },
+    {
+      error: {
+        code: "app.insufficient_scope",
+        message: "insufficient scope",
+        status_code: 403,
+      },
+    },
   );
   const forbidden = await mw(
     ctx({ authorization: ["Bearer audience-miss"] }),
@@ -117,7 +123,7 @@ test("OAuth bearer middleware distinguishes unauthorized, forbidden, and insuffi
   assert.equal(forbidden.headers["www-authenticate"], undefined);
   assert.deepEqual(
     JSON.parse(Buffer.from(forbidden.body).toString("utf8")),
-    { error: { code: "app.forbidden", message: "forbidden" } },
+    { error: { code: "app.forbidden", message: "forbidden", status_code: 403 } },
   );
   await assert.rejects(
     validator(ctx(), "scope-miss"),
@@ -218,7 +224,11 @@ test("OAuth scope failure carries the route-derived RFC 6750 challenge", async (
     'Bearer error="insufficient_scope", scope="mcp:read mcp:write", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/acme/mcp"',
   );
   assert.deepEqual(JSON.parse(Buffer.from(resp.body).toString("utf8")), {
-    error: { code: "app.insufficient_scope", message: "insufficient scope" },
+    error: {
+      code: "app.insufficient_scope",
+      message: "insufficient scope",
+      status_code: 403,
+    },
   });
 });
 
@@ -251,7 +261,7 @@ test("OAuth audience failure is a plain 403 with no challenge", async () => {
   assert.equal(resp.status, 403);
   assert.equal(resp.headers["www-authenticate"], undefined);
   assert.deepEqual(JSON.parse(Buffer.from(resp.body).toString("utf8")), {
-    error: { code: "app.forbidden", message: "forbidden" },
+    error: { code: "app.forbidden", message: "forbidden", status_code: 403 },
   });
 });
 

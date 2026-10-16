@@ -22,7 +22,7 @@
       "status": 422,
       "headers": { "content-type": ["application/json; charset=utf-8"] },
       "cookies": [],
-      "body_json": { "error": { "code": "app.validation_failed", "message": "validation failed" } },
+      "body_json": { "error": { "code": "app.validation_failed", "message": "validation failed", "status_code": 422} },
       "is_base64": false
     }
   }

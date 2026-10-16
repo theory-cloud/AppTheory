@@ -312,6 +312,7 @@ type SecureOptions struct {
 	IDGenerator            IDGenerator
 	Tier                   Tier
 	HTTPErrorFormat        HTTPErrorFormat
+	RequestIDSource        RequestIDSource
 	Limits                 Limits
 	CORS                   CORSConfig
 	PrincipalResolver      SecurePrincipalResolver
@@ -354,6 +355,7 @@ func NewSecure(opts SecureOptions) *SecureApp {
 		ids:                    ids,
 		tier:                   tier,
 		httpErrorFormat:        normalizeHTTPErrorFormat(opts.HTTPErrorFormat),
+		requestIDSource:        normalizeRequestIDSource(opts.RequestIDSource),
 		limits:                 opts.Limits,
 		cors:                   normalizeCORSConfig(opts.CORS),
 		obs:                    opts.Observability,
