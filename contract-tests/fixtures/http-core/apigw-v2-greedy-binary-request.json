@@ -1,0 +1,52 @@
+{
+  "id": "p0.adapter.apigw_v2.greedy_binary_request",
+  "tier": "p0",
+  "name": "APIGW v2: a base64 request body under ANY /{proxy+} reaches the handler decoded",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/echo", "handler": "echo_request" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/echo",
+      "query": {},
+      "headers": { "content-type": ["application/octet-stream"] },
+      "body": { "encoding": "base64", "value": "aGk=" },
+      "is_base64": true
+    },
+    "aws_event": {
+      "source": "apigw_v2",
+      "event": {
+        "version": "2.0",
+        "routeKey": "ANY /{proxy+}",
+        "rawPath": "/echo",
+        "rawQueryString": "",
+        "cookies": [],
+        "headers": { "content-type": "application/octet-stream" },
+        "queryStringParameters": null,
+        "requestContext": { "http": { "method": "POST", "path": "/echo" } },
+        "body": "aGk=",
+        "isBase64Encoded": true
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "method": "POST",
+        "path": "/echo",
+        "query": {},
+        "headers": { "content-type": ["application/octet-stream"] },
+        "cookies": {},
+        "body_b64": "aGk=",
+        "is_base64": true
+      },
+      "is_base64": false
+    }
+  }
+}

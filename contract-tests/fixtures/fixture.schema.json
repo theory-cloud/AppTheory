@@ -211,6 +211,7 @@
         "microvm_execution_role": { "type": "object", "additionalProperties": true },
         "microvm_runtime_logging": { "type": "object", "additionalProperties": true },
         "mcp": { "$ref": "#/$defs/mcpSetup" },
+        "mcp_facade": { "$ref": "#/$defs/mcpFacadeSetup" },
         "oauth": { "$ref": "#/$defs/oauthSetup" },
         "objectstore": { "$ref": "#/$defs/objectstoreSetup" },
         "vectorstore": { "$ref": "#/$defs/vectorstoreSetup" },
@@ -496,6 +497,49 @@
         "expires_unix_ms": { "type": "integer" },
         "data": { "$ref": "#/$defs/stringMap" }
       }
+    },
+    "mcpFacadeSetup": {
+      "type": "object",
+      "description": "Mounts the real MCP OAuth facade on the fixture application. Omitted fields fall back to the pinned route-algebra vector.",
+      "additionalProperties": false,
+      "properties": {
+        "issuer": { "type": "string", "minLength": 1 },
+        "jwks_uri": { "type": "string", "minLength": 1 },
+        "public_base_url": { "type": "string", "minLength": 1 },
+        "resource_metadata_url": { "type": "string", "minLength": 1 },
+        "scopes": { "$ref": "#/$defs/stringArray" },
+        "bearer": { "$ref": "#/$defs/mcpFacadeBearer" }
+      }
+    },
+    "mcpFacadeBearer": {
+      "type": "object",
+      "description": "Selects the runtime-bearer transport posture and the deterministic token records it validates against: an unknown or absent token is the 401 case, a token missing a required scope is the 403 case.",
+      "additionalProperties": false,
+      "properties": {
+        "accepted_tokens": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/mcpFacadeToken" }
+        },
+        "required_scopes": { "$ref": "#/$defs/stringArray" },
+        "required_audience": { "type": "string", "minLength": 1 }
+      }
+    },
+    "mcpFacadeToken": {
+      "description": "One accepted bearer token. A bare string is a token with no scopes; the object form carries the token's own scope set.",
+      "anyOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "required": ["token"],
+          "additionalProperties": false,
+          "properties": {
+            "token": { "type": "string", "minLength": 1 },
+            "subject": { "type": "string" },
+            "audience": { "type": "string" },
+            "scopes": { "$ref": "#/$defs/stringArray" }
+          }
+        }
+      ]
     },
     "openapiSpec": {
       "type": "object",

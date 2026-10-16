@@ -1,0 +1,44 @@
+{
+  "id": "p0.adapter.apigw_v2.greedy_dispatch_path_params",
+  "tier": "p0",
+  "name": "APIGW v2: an ANY /{proxy+} route key dispatches on method and path with greedy parameters",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/files/{proxy+}", "handler": "echo_path_params" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/files/a/b/c",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    },
+    "aws_event": {
+      "source": "apigw_v2",
+      "event": {
+        "version": "2.0",
+        "routeKey": "ANY /{proxy+}",
+        "rawPath": "/files/a/b/c",
+        "rawQueryString": "",
+        "cookies": [],
+        "headers": {},
+        "queryStringParameters": null,
+        "requestContext": { "http": { "method": "GET", "path": "/files/a/b/c" } },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": { "params": { "proxy": "a/b/c" } },
+      "is_base64": false
+    }
+  }
+}
