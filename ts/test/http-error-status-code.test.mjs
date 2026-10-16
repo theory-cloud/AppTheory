@@ -260,3 +260,132 @@ test("details with a function-valued property keep the nested envelope and omit 
   assert.equal(body.error.status_code, response.status);
   assert.equal("onDone" in body.error.details, false);
 });
+
+// A Date carries `toJSON` on its prototype, so sorting the nested envelope must
+// resolve that hook before it copies keys or the value silently becomes `{}`.
+test("a Date in nested details is rendered through its toJSON hook", async () => {
+  const response = await serveTeapotWithDetails(null, {
+    at: new Date("2026-01-02T03:04:05Z"),
+  });
+  assert.equal(response.status, 418);
+  assert.equal(
+    bodyText(response),
+    '{"error":{"code":"teapot","details":{"at":"2026-01-02T03:04:05.000Z"},"message":"I am a teapot","status_code":418}}',
+  );
+});
+
+test("a Date inside an array in nested details is rendered through its toJSON hook", async () => {
+  const response = await serveTeapotWithDetails(null, {
+    times: [new Date("2026-01-02T03:04:05Z")],
+  });
+  assert.equal(response.status, 418);
+  assert.equal(
+    bodyText(response),
+    '{"error":{"code":"teapot","details":{"times":["2026-01-02T03:04:05.000Z"]},"message":"I am a teapot","status_code":418}}',
+  );
+});
+
+// Decimal, money, and temporal types keep `toJSON` on the class prototype, the same
+// shape as Date. The hook's result is itself key-sorted, so scale precedes units.
+class PrototypeToJSON {
+  constructor(units) {
+    this.units = units;
+  }
+
+  toJSON() {
+    return { units: this.units, scale: 2 };
+  }
+}
+
+test("a class instance with a prototype toJSON is rendered through the hook and key-sorted", async () => {
+  const response = await serveTeapotWithDetails(null, {
+    price: new PrototypeToJSON("250"),
+  });
+  assert.equal(response.status, 418);
+  assert.equal(
+    bodyText(response),
+    '{"error":{"code":"teapot","details":{"price":{"scale":2,"units":"250"}},"message":"I am a teapot","status_code":418}}',
+  );
+});
+
+test("an object with an own toJSON property is rendered through the hook", async () => {
+  const response = await serveTeapotWithDetails(null, {
+    tenant: {
+      name: "acme",
+      toJSON() {
+        return { zeta: 1, alpha: "acme" };
+      },
+    },
+  });
+  assert.equal(response.status, 418);
+  assert.equal(
+    bodyText(response),
+    '{"error":{"code":"teapot","details":{"tenant":{"alpha":"acme","zeta":1}},"message":"I am a teapot","status_code":418}}',
+  );
+});
+
+// The reference serializer sorts only the keys of plain objects, through a replacer
+// that JSON.stringify invokes after it has applied a value's `toJSON` hook. It is
+// independent of the runtime's own sortKeysDeep, so agreement between the two is a
+// real parity check rather than a restatement of the implementation.
+function canonicalJSON(payload) {
+  return JSON.stringify(payload, (_key, value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return value;
+    }
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) {
+      return value;
+    }
+    const sorted = {};
+    for (const key of Object.keys(value).sort()) {
+      sorted[key] = value[key];
+    }
+    return sorted;
+  });
+}
+
+test("a nested body is byte-identical to JSON.stringify of the same envelope after key sorting", async () => {
+  const details = {
+    at: new Date("2026-01-02T03:04:05Z"),
+    times: [new Date("2025-12-31T23:59:59Z")],
+    counts: new Number(7),
+    labels: new Set(["x"]),
+    index: new Map([["k", "v"]]),
+    price: new PrototypeToJSON("250"),
+    tenant: { name: "acme", toJSON: () => ({ zeta: 1, alpha: "acme" }) },
+  };
+  const response = await serveTeapotWithDetails(null, details);
+  assert.equal(response.status, 418);
+  assert.equal(
+    bodyText(response),
+    canonicalJSON({
+      error: {
+        code: "teapot",
+        message: "I am a teapot",
+        status_code: 418,
+        details,
+      },
+    }),
+  );
+});
+
+// Flat-legacy hands the envelope straight to JSON.stringify, so a Date in details was
+// never at risk from sorting. Pinning it shows the fix left that path alone.
+test("a flat-legacy envelope renders a Date in details exactly as JSON.stringify does", async () => {
+  const details = { at: new Date("2026-01-02T03:04:05Z") };
+  const response = await serveTeapotWithDetails("flat_legacy", details);
+  assert.equal(response.status, 418);
+  assert.equal(
+    bodyText(response),
+    '{"code":"teapot","message":"I am a teapot","details":{"at":"2026-01-02T03:04:05.000Z"}}',
+  );
+  assert.equal(
+    bodyText(response),
+    JSON.stringify({
+      code: "teapot",
+      message: "I am a teapot",
+      details,
+    }),
+  );
+});
