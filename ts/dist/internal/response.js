@@ -129,10 +129,9 @@ function errorBodyFromAppTheoryError(format, err, status, requestId, traceId = "
     }
     return error;
 }
-// An error envelope value that has no faithful JSON representation — a
-// function, a symbol, a bigint, `undefined`, or a cycle — fails the envelope
-// instead of being silently dropped, so a caller never receives a body that
-// quietly lost a field.
+// A cycle in the error envelope is rejected by sortKeysDeep before the
+// serializer ever sees it, turning what would be an unbounded recursion into the
+// internal-error fallback.
 class HTTPErrorBodySerializationError extends Error {
 }
 const FALLBACK_HTTP_ERROR_STATUS = 500;
@@ -176,26 +175,18 @@ function sortKeysDeep(value, ancestors = new WeakSet()) {
     }
     return value;
 }
-// JSON.stringify drops a function, symbol, or `undefined` property and throws on
-// a bigint, so a replacer that refuses all four keeps the envelope faithful: an
-// error that cannot be rendered in full is reported as the internal-error
-// fallback rather than truncated without notice.
-function strictJSONStringify(payload) {
-    return JSON.stringify(payload, (_key, value) => {
-        if (value === undefined ||
-            typeof value === "function" ||
-            typeof value === "symbol" ||
-            typeof value === "bigint") {
-            throw new HTTPErrorBodySerializationError("error envelope contains a value with no JSON representation");
-        }
-        return value;
-    });
-}
+// Plain JSON.stringify is the serializer, so the internal-error fallback fires
+// only when the envelope genuinely has no JSON representation: a bigint, or a
+// cycle that sortKeysDeep has not already rejected, or anything else
+// JSON.stringify throws on. Its standard treatment of an `undefined`, function,
+// or symbol property — omitted from an object, null in an array — is the
+// faithful JSON rendering of an absent optional field and is left exactly as it
+// was before the fallback existed.
 function serializeHTTPErrorBody(format, error) {
     const payload = normalizeHTTPErrorFormat(format) === HTTP_ERROR_FORMAT_FLAT_LEGACY
         ? error
         : { error: sortKeysDeep(error) };
-    return Buffer.from(strictJSONStringify(payload), "utf8");
+    return Buffer.from(JSON.stringify(payload), "utf8");
 }
 // Renders the error envelope, falling back to the internal-error body sent with
 // status 500 when it cannot be serialized, so the status_code in the body never
