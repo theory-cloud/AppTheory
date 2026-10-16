@@ -296,12 +296,13 @@ export interface AppTheoryMcpServerProps {
    * attached API from any sibling construct scope is refused, because it holds
    * a route key the greedy routes would collide with.
    *
-   * A consumer may still add explicit, more specific routes to the attached API
-   * afterwards. That exception is enforced at synthesis time and is allowed
-   * only when the added route carries a non-NONE authorizer and does not
-   * redeclare the greedy `ANY /` or `ANY /{proxy+}` key. Within it, a full
-   * method+path match beats the greedy routes by API Gateway precedence, and a
-   * wrong-method hit on such a path falls to the runtime's fail-closed 404/405.
+   * A consumer may still add explicit, more specific routes to the consolidated
+   * API afterwards, in either the attached or the construct-owned mode. That
+   * exception is enforced at synthesis time and is allowed only when the added
+   * route carries a non-NONE authorizer and does not redeclare the greedy
+   * `ANY /` or `ANY /{proxy+}` key. Within it, a full method+path match beats the
+   * greedy routes by API Gateway precedence, and a wrong-method hit on such a
+   * path falls to the runtime's fail-closed 404/405.
    * @default AppTheoryMcpRouteModel.EXPLICIT
    */
   readonly routeModel?: AppTheoryMcpRouteModel;
@@ -661,9 +662,7 @@ export class AppTheoryMcpServer extends Construct {
         integration,
         transportAuthorizer,
       );
-      if (props.api !== undefined) {
-        registerConsolidatedAttachValidation(this, this.api, [firstTransportRoute, proxyRoute]);
-      }
+      registerConsolidatedAttachValidation(this, this.api, [firstTransportRoute, proxyRoute]);
     } else {
       const runtimeOwnedAuth = new apigwv2.HttpNoneAuthorizer();
       for (const route of this.routeInventory.routes) {
@@ -1348,14 +1347,16 @@ function assertConsolidatedAttachAllowed(scope: Construct, api: apigwv2.IHttpApi
 }
 
 /**
- * Register the synth-time rule for routes added to a consolidated API AFTER
- * the construct attached.
+ * Register the synth-time rule for routes added to a consolidated API after
+ * the construct created its greedy routes.
  *
- * The documented exception is what makes consolidated attach usable in a real
- * front door: a consumer may add explicit, more specific routes afterwards. It
- * is allowed only when the route carries a non-NONE authorizer (so the greedy
- * routes never silently widen a stricter posture) and does not redeclare a
- * greedy route key (which API Gateway would reject as a duplicate).
+ * The rule applies in both consolidated modes: an API the construct attached
+ * to, and one the construct owns. The documented exception is what makes
+ * consolidated routes usable in a real front door: a consumer may add
+ * explicit, more specific routes afterwards. It is allowed only when the
+ * route carries a non-NONE authorizer (so the greedy routes never silently
+ * widen a stricter posture) and does not redeclare a greedy route key (which
+ * API Gateway would reject as a duplicate).
  */
 function registerConsolidatedAttachValidation(
   scope: Construct,
@@ -1375,14 +1376,14 @@ function registerConsolidatedAttachValidation(
         const routeKey = route.routeKey;
         if (CONSOLIDATED_GREEDY_ROUTE_KEYS.has(routeKey)) {
           errors.push(
-            `AppTheoryMcpServer: routeModel consolidated already owns the greedy API Gateway route key ${JSON.stringify(routeKey)} on this API; a consumer route added after attach must not redeclare it (${route.node.path})`,
+            `AppTheoryMcpServer: routeModel consolidated already owns the greedy API Gateway route key ${JSON.stringify(routeKey)} on this API; a route added after construction must not redeclare it (${route.node.path})`,
           );
           continue;
         }
         const authorizationType = String(route.authorizationType ?? "NONE").toUpperCase();
         if (authorizationType === "NONE") {
           errors.push(
-            `AppTheoryMcpServer: a route added to a consolidated API after attach must carry a non-NONE authorizer, because the greedy routes admit every method and path at the gateway (${routeKey} from ${route.node.path})`,
+            `AppTheoryMcpServer: a route added to a consolidated API after construction must carry a non-NONE authorizer, because the greedy routes admit every method and path at the gateway (${routeKey} from ${route.node.path})`,
           );
         }
       }

@@ -1661,7 +1661,7 @@ test("AppTheoryMcpServer consolidated attach refuses a NONE route added after at
   const { stack } = consolidatedAttachWithLaterRoute("GET /open", new apigwv2.HttpNoneAuthorizer(), "LaterNone");
   assert.throws(
     () => assertions.Template.fromStack(stack),
-    /a route added to a consolidated API after attach must carry a non-NONE authorizer/,
+    /a route added to a consolidated API after construction must carry a non-NONE authorizer/,
   );
 });
 
@@ -1670,6 +1670,60 @@ test("AppTheoryMcpServer consolidated attach refuses a route added after attach 
   assert.throws(
     () => assertions.Template.fromStack(stack),
     /already owns the greedy API Gateway route key "ANY \/\{proxy\+\}"/,
+  );
+});
+
+function consolidatedOwnedWithLaterRoute(routeKey, authorizer, id) {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "ConsolidatedOwnedLaterRouteStack");
+  const server = new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack, "FnServer"),
+    transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
+    runtimePosture: { requireBearerToken: true },
+    originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+    denialSignal: {},
+    sessionState: { enabled: false },
+    ownedApi: { stage: { throttlingEnabled: true } },
+    routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
+  });
+  const separator = routeKey.indexOf(" ");
+  new apigwv2.HttpRoute(stack, id, {
+    httpApi: server.api,
+    routeKey: apigwv2.HttpRouteKey.with(
+      routeKey.slice(separator + 1),
+      routeKey.slice(0, separator),
+    ),
+    integration: new apigwv2Integrations.HttpLambdaIntegration(`OwnedInt${id}`, handler(stack, `OwnedFn${id}`)),
+    authorizer,
+  });
+  return { app, stack, server };
+}
+
+test("AppTheoryMcpServer consolidated owned API refuses a NONE route added after construction", () => {
+  const { stack } = consolidatedOwnedWithLaterRoute("GET /open", new apigwv2.HttpNoneAuthorizer(), "OwnedNone");
+  assert.throws(
+    () => assertions.Template.fromStack(stack),
+    /a route added to a consolidated API after construction must carry a non-NONE authorizer/,
+  );
+});
+
+test("AppTheoryMcpServer consolidated owned API refuses a route added after construction that redeclares a greedy key", () => {
+  const { stack } = consolidatedOwnedWithLaterRoute("ANY /{proxy+}", new apigwv2Authorizers.HttpIamAuthorizer(), "OwnedGreedy");
+  assert.throws(
+    () => assertions.Template.fromStack(stack),
+    /already owns the greedy API Gateway route key "ANY \/\{proxy\+\}"/,
+  );
+});
+
+test("AppTheoryMcpServer consolidated owned API allows a stricter route added after construction", () => {
+  const { stack } = consolidatedOwnedWithLaterRoute("GET /admin", new apigwv2Authorizers.HttpIamAuthorizer(), "OwnedIam");
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const admin = resourcesOfType(template, "AWS::ApiGatewayV2::Route")
+    .find((route) => route.Properties.RouteKey === "GET /admin");
+  assert.equal(admin.Properties.AuthorizationType, "AWS_IAM");
+  assert.ok(
+    routeKeys(template).includes("ANY /{proxy+}"),
+    "the greedy routes survive alongside the stricter construct-owned consumer route",
   );
 });
 
