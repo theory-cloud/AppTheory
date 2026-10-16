@@ -951,13 +951,14 @@ if __name__ == "__main__":
 
 class SecureAppMetadataIssAdvertisementTests(unittest.TestCase):
     """The SecureApp registrar serves the same RFC 9207 claim the plain-App
-    registrar does: every routed authorization-server route the SecureApp mounts
-    advertises ``iss`` support.
+    registrar does when the framework owns the front channel: every routed
+    authorization-server route the SecureApp mounts advertises ``iss`` support.
     """
 
     def test_secure_routed_metadata_advertises_rfc9207_iss_parameter_support(self) -> None:
-        config = _secure_config(None, transport_posture="iam", front_channel=False)
-        secure, inventory = _mount_secure(config)
+        harness = _FrontChannelHarness(self)
+        config = _secure_config(harness, transport_posture="iam", front_channel=True)
+        secure, inventory = _mount_secure(config, clock=harness.clock)
 
         for route in inventory.routes:
             for path in (route.discovery_canonical_pattern, route.discovery_suffix_pattern):

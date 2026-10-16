@@ -973,12 +973,17 @@ function authorizationServerHandler(config, kind) {
                 ...config.capabilities.codeChallengeMethods,
             ],
             scopes_supported: [...config.scopes[kind]],
-            // The front channel always sends RFC 9207 `iss` on the client callback,
-            // on success and on error redirects alike, so the routed document
-            // advertises it; the root discovery document describes the upstream
-            // authorization server and the generic builder serves no front channel,
-            // so neither sets the member.
-            authorization_response_iss_parameter_supported: true,
+            // The member follows front-channel ownership: it is advertised only while
+            // the framework-owned front channel serves the authorization responses,
+            // because only then does the facade send RFC 9207 `iss` on the client
+            // callback, on success and on error redirects alike. An application-owned
+            // AuthorizeHandler/TokenHandler pair (no front channel) leaves it absent,
+            // as do the root discovery document, whose fixed endpoints belong to the
+            // upstream authorization server, and the generic builder, which serves no
+            // front channel.
+            ...(config.frontChannel === null
+                ? {}
+                : { authorization_response_iss_parameter_supported: true }),
         };
         return withMetadataHeaders(authorizationServerMetadataHandler(metadata))(ctx);
     });

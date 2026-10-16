@@ -1019,9 +1019,9 @@ func TestSecureMountRejectsACrossSurfaceCollisionWithoutMountingAnything(t *test
 }
 
 // TestSecureRoutedMetadataAdvertisesRFC9207IssParameterSupported proves the
-// SecureApp registrar serves the same RFC 9207 claim as the plain-App registrar:
-// every routed authorization-server route the SecureApp mounts advertises `iss`
-// support.
+// SecureApp registrar serves the same RFC 9207 claim as the plain-App registrar
+// when the framework owns the front channel: every routed authorization-server
+// route the SecureApp mounts advertises `iss` support.
 func TestSecureRoutedMetadataAdvertisesRFC9207IssParameterSupported(t *testing.T) {
 	t.Parallel()
 	row := secureAppMountCase{
@@ -1030,7 +1030,9 @@ func TestSecureRoutedMetadataAdvertisesRFC9207IssParameterSupported(t *testing.T
 		Scenario:         "inventory_parity",
 		TransportPosture: string(TransportPostureIAM),
 		IssuerMode:       string(mcproutes.IssuerModeRoute),
-		ExpectEqual:      true,
+		// The row owns the front channel, the only posture that advertises `iss`.
+		FrontChannel: true,
+		ExpectEqual:  true,
 	}
 	secure, inventory := newSecureMountApp(t, row)
 	for _, route := range inventory.Routes {
