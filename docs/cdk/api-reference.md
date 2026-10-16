@@ -9,13 +9,18 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 
 ## Core API constructs
 
-- `AppTheoryHttpApi`: API Gateway HTTP API v2 plus Lambda proxy routes
+- `AppTheoryHttpApi`: API Gateway HTTP API v2 plus Lambda proxy routes; explicit, semantically identified `routes` with
+  an `AppTheoryHttpApiRouteAuthorizer` posture (`IAM` or `NONE`) added alongside the greedy routes, route-keyed
+  `routeSettings` throttling, and a configurable `stage.accessLogFormat` (default: the AppTheory JSON format)
 - `AppTheoryRestApi`: API Gateway REST API v1 plus single-Lambda proxy routes
 - `AppTheoryRestApiRouter`: REST API v1 multi-Lambda routing with streaming support
 - `AppTheoryMcpServer`: attach-first HTTP API v2 route-family facade with authenticated MCP `POST`/`GET`/`DELETE`
   transport routes (IAM by default, or a configured JWT authorizer), public RFC 9728 and canonical/suffix RFC 8414
   discovery, and application-owned authorize/token routes; owned API, session state, logging, and throttling are the
-  standalone specialization with production defaults
+  standalone specialization with production defaults. `routeModel` (`AppTheoryMcpRouteModel`) selects the
+  route-emission model: `EXPLICIT` (the default) keeps one gateway route per derived route key, while `CONSOLIDATED`
+  emits exactly `ANY /` + `ANY /{proxy+}` with one shared integration and is valid only for the `runtime-bearer` and
+  `none-public` postures; `cors` configures preflight on a construct-owned API
 - `AppTheoryMcpRouteAlgebra`: versioned MCP patterns and every protected-resource, discovery, authorize, and token
   derivation consumed by the construct and mirrored Go runtime helper
 - `AppTheoryMcpPaths`: canonical MCP and OAuth discovery route paths
@@ -150,7 +155,8 @@ CloudFormation generates the physical names for all six groups, none can hit the
 
 ## Selection guide
 
-- Use `AppTheoryHttpApi` for the simplest HTTP API v2 deployment
+- Use `AppTheoryHttpApi` for the simplest HTTP API v2 deployment; add `routes` for explicit per-path postures (a full
+  method+path match outranks the greedy routes) and `routeSettings` for route-level throttling
 - Use `AppTheoryRestApi` when you need REST API v1 but not multi-Lambda routing
 - Use `AppTheoryRestApiRouter` when you need SSE or response streaming
 - Use `AppTheoryMcpServer` for the route-algebra MCP facade. Supply `api` for a shared front door or omit it for the
@@ -161,7 +167,10 @@ CloudFormation generates the physical names for all six groups, none can hit the
   scopes, capabilities, and handlers. A deliberately public MCP server must select
   `transportPosture: AppTheoryMcpTransportPosture.NONE_PUBLIC` and carry the mandatory `originReachability` and
   throttling floor; `runtime-bearer` additionally requires `FacadeConfig.RequireBearerToken` on the runtime side and a
-  `denialSignal` declaration.
+  `denialSignal` declaration. `routeModel` defaults to `AppTheoryMcpRouteModel.EXPLICIT`; set
+  `AppTheoryMcpRouteModel.CONSOLIDATED` to emit only `ANY /` + `ANY /{proxy+}` for the runtime router to dispatch,
+  which is valid only for the `runtime-bearer` and `none-public` postures. See
+  [MCP Server Facade Construct](../features/mcp-server-construct.md).
 - Use `AppTheoryRemoteMcpServer` when REST API v1 response streaming and resumable Remote MCP transport are required;
   do not start new namespace applications on the URL-valued `AppTheoryMcpProtectedResource` compatibility construct.
 - Use `AppTheorySsrSite` when you need the canonical FaceTheory-first SSR/SSG/ISR deployment story

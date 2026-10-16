@@ -56,6 +56,52 @@ handlers for every entry in `routeInventory` and must not assume `RegisterMCPFac
 patterns. This boundary keeps the shipped helper and the deployed routes congruent instead of presenting a facade
 that returns 404 for every configured path.
 
+## Route model: explicit and consolidated
+
+`routeModel` selects how the derived route inventory reaches API Gateway. The `AppTheoryMcpRouteModel` enum has two
+members and defaults to `explicit`:
+
+- `explicit` (default) wires one HTTP API v2 route per derived route key. This is the construct's historical inventory
+  and stays byte-stable, so a deployed stack upgrades in place with no change.
+- `consolidated` wires exactly two routes, `ANY /` and `ANY /{proxy+}`, backed by one shared integration. The AppTheory
+  runtime router performs method and path dispatch, path-parameter capture, and denial instead of the gateway
+  enumerating the derived inventory.
+
+```ts
+new AppTheoryMcpServer(this, "ConsolidatedMcp", {
+  handler,
+  transportPosture: AppTheoryMcpTransportPosture.RUNTIME_BEARER,
+  runtimePosture: { requireBearerToken: true },
+  originReachability: AppTheoryMcpOriginReachability.LOCKED,
+  denialSignal: {},
+  ownedApi: { stage: { throttlingEnabled: true } },
+  routeModel: AppTheoryMcpRouteModel.CONSOLIDATED,
+});
+```
+
+Consolidation never changes gateway admission, so it is valid only where every gateway route is `NONE`: the
+`runtime-bearer` and `none-public` postures. `iam` and `jwt` keep the explicit model and are refused at synthesis with
+`AppTheoryMcpServer: routeModel consolidated is only valid for transportPosture RUNTIME_BEARER or NONE_PUBLIC`; the
+message names the offending posture and the admission reason.
+
+Consolidated mode is allowed on a construct-owned API, or on an attached API that has no routes at attach time.
+Attaching it to an API that already has routes fails synthesis with `AppTheoryMcpServer: routeModel consolidated may
+attach only to an API that has no routes at attach time`. A consumer may afterwards add explicit, more specific routes
+with a stricter authorizer on the same API: a full method+path match beats the greedy routes by API Gateway precedence,
+and a wrong-method hit on such a path falls to the runtime's fail-closed 404/405.
+
+`routeModel` changes only the API Gateway route resources. The runtime contract is unchanged: `routeInventory`,
+`mcpPaths`, `protectedResourceMetadataPaths`, and `endpoints` carry the same derived values in both models, the runtime
+still registers every entry in `routeInventory`, and the `apptheory:mcp-transport-posture` metadata `route_count` still
+records the MCP pattern count. The two consolidated routes use the semantic construct ids `RouteAnyRoot` and
+`RouteAnyProxy` rather than the explicit model's positional `Route0`, `Route1`, ... ids.
+
+Both greedy routes share one integration, so `scopePermissionToRoute` (default `true`) grants two route-scoped invoke
+permissions, one per greedy route, instead of one permission per derived route key; `scopePermissionToRoute: false`
+keeps the single API-scoped permission. See the migration recipe in
+[UPGRADING.md](../../UPGRADING.md#scalable-mcp-route-model-and-the-new-api-migration-recipe) before moving a deployed
+server to the consolidated model.
+
 ## Stage-global upstream callback
 
 The upstream OAuth callback is installed once per deployment rather than once per MCP kind: the callback is correlated
