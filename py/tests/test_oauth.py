@@ -128,6 +128,33 @@ class OAuthRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             new_authorization_server_metadata("not-a-url")
 
+    def test_authorization_server_metadata_emits_iss_parameter_support_only_while_true(self) -> None:
+        # The generic builder never advertises the RFC 9207 member, so an absent
+        # member means false and every pre-existing document stays byte-identical.
+        default = new_authorization_server_metadata("https://auth.example.com")
+        self.assertFalse(default.authorization_response_iss_parameter_supported)
+        self.assertNotIn("authorization_response_iss_parameter_supported", default.to_json())
+
+        document = authorization_server_metadata_handler(default)(_ctx())
+        self.assertNotIn("authorization_response_iss_parameter_supported", document.body.decode())
+
+        # True is the only state that emits the member.
+        advertised = AuthorizationServerMetadata(
+            issuer="https://auth.example.com",
+            authorization_response_iss_parameter_supported=True,
+        )
+        self.assertEqual(
+            advertised.to_json(),
+            {
+                "issuer": "https://auth.example.com",
+                "authorization_response_iss_parameter_supported": True,
+            },
+        )
+        self.assertEqual(
+            json.loads(authorization_server_metadata_handler(advertised)(_ctx()).body)["authorization_response_iss_parameter_supported"],
+            True,
+        )
+
     def test_authorization_server_metadata_endpoint_options(self) -> None:
         default = new_authorization_server_metadata("https://auth.example.com/base/path")
         self.assertNotIn("revocation_endpoint", default.to_json())

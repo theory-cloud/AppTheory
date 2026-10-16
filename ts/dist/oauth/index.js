@@ -75,7 +75,21 @@ export function protectedResourceMetadataHandler(metadata) {
     return () => metadataJSON(200, metadata);
 }
 export function authorizationServerMetadataHandler(metadata) {
-    return () => metadataJSON(200, metadata);
+    return () => metadataJSON(200, withoutFalseIssParameterSupport(metadata));
+}
+/**
+ * Applies the RFC 8414 "absent means false" rule to the RFC 9207 member: an
+ * explicit `false` is dropped so Go (omitempty), TypeScript, and Python emit
+ * the same document for the same input, and any other value passes through
+ * unchanged.
+ */
+function withoutFalseIssParameterSupport(metadata) {
+    if (metadata.authorization_response_iss_parameter_supported !== false) {
+        return metadata;
+    }
+    const copy = { ...metadata };
+    delete copy.authorization_response_iss_parameter_supported;
+    return copy;
 }
 export function protectedResourceWWWAuthenticate(resourceMetadataURL) {
     const value = String(resourceMetadataURL ?? "").trim();

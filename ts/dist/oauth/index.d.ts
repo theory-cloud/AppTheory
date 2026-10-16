@@ -31,6 +31,13 @@ export interface AuthorizationServerMetadata {
     scopes_supported?: string[];
     subject_types_supported?: string[];
     id_token_signing_alg_values_supported?: string[];
+    /**
+     * RFC 9207 `iss` authorization-response advertisement (RFC 8414
+     * `authorization_response_iss_parameter_supported`). Optional and absent by
+     * default, so an unset member keeps the document byte-identical and means
+     * false; only a surface that provably sends `iss` sets it.
+     */
+    authorization_response_iss_parameter_supported?: boolean;
 }
 export interface AuthorizationServerMetadataOptions {
     /**

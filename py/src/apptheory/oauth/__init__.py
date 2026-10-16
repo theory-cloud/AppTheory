@@ -71,6 +71,11 @@ class AuthorizationServerMetadata:
     scopes_supported: list[str] = dataclasses.field(default_factory=list)
     subject_types_supported: list[str] = dataclasses.field(default_factory=list)
     id_token_signing_alg_values_supported: list[str] = dataclasses.field(default_factory=list)
+    # RFC 9207 `iss` authorization-response advertisement (RFC 8414
+    # `authorization_response_iss_parameter_supported`). Optional and false by
+    # default, so an unset member keeps the document byte-identical and means
+    # false; only a surface that provably sends `iss` sets it.
+    authorization_response_iss_parameter_supported: bool = False
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"issuer": self.issuer}
@@ -97,6 +102,8 @@ class AuthorizationServerMetadata:
             value = getattr(self, key)
             if value:
                 out[key] = list(value)
+        if self.authorization_response_iss_parameter_supported:
+            out["authorization_response_iss_parameter_supported"] = True
         return out
 
 

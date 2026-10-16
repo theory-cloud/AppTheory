@@ -40,6 +40,13 @@ export interface AuthorizationServerMetadata {
   scopes_supported?: string[];
   subject_types_supported?: string[];
   id_token_signing_alg_values_supported?: string[];
+  /**
+   * RFC 9207 `iss` authorization-response advertisement (RFC 8414
+   * `authorization_response_iss_parameter_supported`). Optional and absent by
+   * default, so an unset member keeps the document byte-identical and means
+   * false; only a surface that provably sends `iss` sets it.
+   */
+  authorization_response_iss_parameter_supported?: boolean;
 }
 
 export interface AuthorizationServerMetadataOptions {
@@ -243,7 +250,24 @@ export function protectedResourceMetadataHandler(
 export function authorizationServerMetadataHandler(
   metadata: AuthorizationServerMetadata,
 ): Handler {
-  return () => metadataJSON(200, metadata);
+  return () => metadataJSON(200, withoutFalseIssParameterSupport(metadata));
+}
+
+/**
+ * Applies the RFC 8414 "absent means false" rule to the RFC 9207 member: an
+ * explicit `false` is dropped so Go (omitempty), TypeScript, and Python emit
+ * the same document for the same input, and any other value passes through
+ * unchanged.
+ */
+function withoutFalseIssParameterSupport(
+  metadata: AuthorizationServerMetadata,
+): AuthorizationServerMetadata {
+  if (metadata.authorization_response_iss_parameter_supported !== false) {
+    return metadata;
+  }
+  const copy: AuthorizationServerMetadata = { ...metadata };
+  delete copy.authorization_response_iss_parameter_supported;
+  return copy;
 }
 
 export function protectedResourceWWWAuthenticate(

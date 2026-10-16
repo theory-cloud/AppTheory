@@ -5130,6 +5130,8 @@ type AuthorizationServerMetadata struct {
 	ScopesSupported                   []string `json:"scopes_supported,omitempty"`
 	SubjectTypesSupported             []string `json:"subject_types_supported,omitempty"`
 	IDTokenSigningAlgValuesSupported  []string `json:"id_token_signing_alg_values_supported,omitempty"`
+
+	AuthorizationResponseIssParameterSupported bool `json:"authorization_response_iss_parameter_supported,omitempty"`
 }
 
 type AuthorizationServerMetadataOption func(*AuthorizationServerMetadata, *url.URL) error

@@ -5,6 +5,7 @@ import {
   ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE,
   ERR_BEARER_TOKEN_INVALID_AUDIENCE,
   OAuthBearerError,
+  authorizationServerMetadataHandler,
   bearerTokenClaimsFromContext,
   insufficientScopeWWWAuthenticate,
   newAuthorizationServerMetadata,
@@ -354,6 +355,38 @@ test("OAuth authorization server metadata supports opt-in revocation/device endp
         deviceAuthorizationEndpoint: "/device",
       }),
     /invalid url/,
+  );
+});
+
+test("OAuth authorization server metadata emits RFC 9207 iss parameter support only while true", async () => {
+  const plain = newAuthorizationServerMetadata("https://auth.example.com");
+  assert.equal(
+    JSON.stringify(plain).includes("authorization_response_iss_parameter_supported"),
+    false,
+  );
+
+  const bodyOf = async (metadata) =>
+    Buffer.from((await authorizationServerMetadataHandler(metadata)()).body).toString(
+      "utf8",
+    );
+
+  // An explicit false is omitted, matching Go's omitempty and Python's
+  // truthiness rule, so all three runtimes emit the same document.
+  assert.equal(
+    await bodyOf({
+      issuer: "https://auth.example.com",
+      authorization_response_iss_parameter_supported: false,
+    }),
+    `{"issuer":"https://auth.example.com"}`,
+  );
+
+  // True is the only state that emits the member.
+  assert.equal(
+    await bodyOf({
+      issuer: "https://auth.example.com",
+      authorization_response_iss_parameter_supported: true,
+    }),
+    `{"issuer":"https://auth.example.com","authorization_response_iss_parameter_supported":true}`,
   );
 });
 
