@@ -211,8 +211,47 @@ function fallbackHTTPErrorBody(format: HTTPErrorFormat): Buffer {
 // Flat-legacy is deliberately left in insertion order to stay byte-identical.
 function sortKeysDeep(
   value: unknown,
+  key: string = "",
   ancestors: WeakSet<object> = new WeakSet(),
 ): unknown {
+  // JSON.stringify resolves a value's `toJSON` hook — own or inherited — before it
+  // serializes that value, and passes the property key. Sorting has to resolve it
+  // first for the same reason: copying keys alone finds no own enumerable property
+  // on a Date, or on any class keeping the hook on its prototype, and would
+  // silently replace a real value with `{}`. The hook runs at most once per value,
+  // exactly as in JSON.stringify, so its result is copied without another lookup.
+  if (
+    typeof value === "bigint" ||
+    (value !== null && typeof value === "object")
+  ) {
+    const toJSON = (value as { toJSON?: unknown }).toJSON;
+    if (typeof toJSON === "function") {
+      return sortKeysDeepValue(
+        (toJSON as (this: unknown, key: string) => unknown).call(value, key),
+        ancestors,
+      );
+    }
+  }
+  return sortKeysDeepValue(value, ancestors);
+}
+
+// sortKeysDeep's per-node rules, for a value whose `toJSON` hook (if any) has
+// already been resolved.
+function sortKeysDeepValue(
+  value: unknown,
+  ancestors: WeakSet<object>,
+): unknown {
+  // JSON.stringify renders a boxed Number, String, or Boolean as the primitive it
+  // wraps, and a Map or Set as `{}` — neither collection has own enumerable
+  // properties. Copying keys alone yields `{}` for every one of them, which is
+  // right only for the collections.
+  if (
+    value instanceof Number ||
+    value instanceof String ||
+    value instanceof Boolean
+  ) {
+    return value.valueOf();
+  }
   if (Array.isArray(value)) {
     if (ancestors.has(value)) {
       throw new HTTPErrorBodySerializationError(
@@ -220,7 +259,9 @@ function sortKeysDeep(
       );
     }
     ancestors.add(value);
-    const sorted = value.map((item) => sortKeysDeep(item, ancestors));
+    const sorted = value.map((item, index) =>
+      sortKeysDeep(item, String(index), ancestors),
+    );
     ancestors.delete(value);
     return sorted;
   }
@@ -233,8 +274,8 @@ function sortKeysDeep(
     ancestors.add(value);
     const source = value as Record<string, unknown>;
     const sorted: Record<string, unknown> = {};
-    for (const key of Object.keys(source).sort()) {
-      sorted[key] = sortKeysDeep(source[key], ancestors);
+    for (const name of Object.keys(source).sort()) {
+      sorted[name] = sortKeysDeep(source[name], name, ancestors);
     }
     ancestors.delete(value);
     return sorted;
@@ -256,7 +297,7 @@ function serializeHTTPErrorBody(
   const payload =
     normalizeHTTPErrorFormat(format) === HTTP_ERROR_FORMAT_FLAT_LEGACY
       ? error
-      : { error: sortKeysDeep(error) };
+      : { error: sortKeysDeep(error, "error") };
   return Buffer.from(JSON.stringify(payload), "utf8");
 }
 
