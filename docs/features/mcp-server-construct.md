@@ -85,10 +85,19 @@ Consolidation never changes gateway admission, so it is valid only where every g
 message names the offending posture and the admission reason.
 
 Consolidated mode is allowed on a construct-owned API, or on an attached API that has no routes at attach time.
-Attaching it to an API that already has routes fails synthesis with `AppTheoryMcpServer: routeModel consolidated may
-attach only to an API that has no routes at attach time`. A consumer may afterwards add explicit, more specific routes
-with a stricter authorizer on the same API: a full method+path match beats the greedy routes by API Gateway precedence,
-and a wrong-method hit on such a path falls to the runtime's fail-closed 404/405.
+"no routes" is enforced over the whole stack rather than over the API's own construct children: a route wired onto the
+attached API from a sibling construct scope — the common front-door shape, for example stack-level
+`OAuthFacadeRoute0`, `OAuthFacadeRoute1`, ... constructs — holds a route key the greedy routes would collide with and is
+refused with `AppTheoryMcpServer: routeModel consolidated may attach only to an API that has no routes at attach time`
+followed by the offending construct paths. Attaching a consolidated server only inspects the API it attaches to, so a
+route on a different API in the same stack is unaffected.
+
+A consumer may still add explicit, more specific routes to the API *after* attach with a stricter authorizer: a full
+method+path match beats the greedy routes by API Gateway precedence, and a wrong-method hit on such a path falls to the
+runtime's fail-closed 404/405. That exception is validated at synthesis and is allowed only when the added route carries
+a non-`NONE` authorizer and does not redeclare the greedy `ANY /` or `ANY /{proxy+}` route key. Either violation fails
+synthesis with `AppTheoryMcpServer: a route added to a consolidated API after attach must carry a non-NONE authorizer`
+or `AppTheoryMcpServer: routeModel consolidated already owns the greedy API Gateway route key "ANY /{proxy+}"`.
 
 `routeModel` changes only the API Gateway route resources. The runtime contract is unchanged: `routeInventory`,
 `mcpPaths`, `protectedResourceMetadataPaths`, and `endpoints` carry the same derived values in both models, the runtime
@@ -101,6 +110,36 @@ permissions, one per greedy route, instead of one permission per derived route k
 keeps the single API-scoped permission. See the migration recipe in
 [UPGRADING.md](../../UPGRADING.md#scalable-mcp-route-model-and-the-new-api-migration-recipe) before moving a deployed
 server to the consolidated model.
+
+## Route identity: `routeIdMode`
+
+On the `explicit` model, `routeIdMode` (`AppTheoryMcpRouteIdMode`) selects how construct ids are assigned. It defaults
+to `legacy`:
+
+- `legacy` (default) assigns positional ids in emission order — `Route0`, `Route1`, ... — and is byte-stable for every
+  deployed stack. A stack that does not set `routeIdMode` synthesizes byte-identically.
+- `semantic` derives each id from the route method and pattern, for example `RoutePOSTClientNamespaceMcp` for
+  `POST /{client_namespace}/mcp`. Inserting, removing, or reordering a route family never renames an unrelated route,
+  which is what lets an in-place update add or move a route without a create-before-delete route-key collision.
+  Deriving a duplicate id fails synthesis.
+
+`semantic` is intended for **newly created** explicit APIs. Switching an existing deployed explicit API from `legacy`
+to `semantic` in place renames every route in a single update, which is itself the create-before-delete collision the
+model exists to avoid; adopt it on an existing stack only through the new-API swap in
+[UPGRADING.md](../../UPGRADING.md#scalable-mcp-route-model-and-the-new-api-migration-recipe). The `consolidated` model
+ignores `routeIdMode`: it always emits the fixed semantic ids `RouteAnyRoot` and `RouteAnyProxy`.
+
+```ts
+new AppTheoryMcpServer(this, "McpServer", {
+  handler,
+  ownedApi: { stage: { throttlingEnabled: true } },
+  routeIdMode: AppTheoryMcpRouteIdMode.SEMANTIC,
+});
+```
+
+The construct does not emit a synthesis warning on the default `legacy` mode: `legacy` is the documented byte-stable
+default for deployed stacks, so warning on it would fire for every existing consumer deploy, and the choice between
+`legacy` and `semantic` is a migration decision the recipe above already records.
 
 ## Stage-global upstream callback
 

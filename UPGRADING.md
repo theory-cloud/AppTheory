@@ -70,6 +70,19 @@ default is unchanged in both constructs.
   NONE_PUBLIC ...`). Consolidated mode may also attach only to an API that has no routes at attach time.
 - **Unchanged runtime contract** — `routeInventory`, `mcpPaths`, `protectedResourceMetadataPaths`, and `endpoints`
   carry the same derived values in both models, and the runtime still registers every entry in `routeInventory`.
+- **Whole-stack attach guard** — "no routes at attach time" is checked across the whole stack, not just the API's
+  construct children, so a route wired onto the attached API from a sibling construct scope (for example stack-level
+  `OAuthFacadeRoute0`, `OAuthFacadeRoute1`, ... constructs) now fails the attach. Routes added *after* attach remain
+  allowed only when they carry a non-`NONE` authorizer and do not redeclare `ANY /` or `ANY /{proxy+}`; both rules are
+  enforced at synthesis.
+- **`routeSettings` is validated** — `AppTheoryHttpApi` now rejects a `routeSettings` key that matches no route the
+  construct emits, naming the emitted keys, instead of letting API Gateway silently ignore the entry. Keys are the
+  greedy `ANY /` and `ANY /{proxy+}` plus one `<METHOD> <path>` per `routes` entry.
+- **Consumer `OPTIONS` vs `cors`** — when `cors` is set, `buildCorsPreflight` includes `OPTIONS` in its default
+  `allowMethods`, and the API-level CORS configuration answers matching preflight requests before any route
+  integration runs, so a declared `OPTIONS` route on the same path is shadowed. Setting `cors.allowMethods` without
+  `OPTIONS` removes gateway preflight handling entirely, leaving a declared `OPTIONS` route as the only responder for a
+  preflight request — declare the methods you need in `cors.allowMethods` instead of relying on a declared route.
 
 ```ts
 new AppTheoryMcpServer(this, "ConsolidatedMcp", {
@@ -102,6 +115,26 @@ propagation, avoids that window.
 with no action; consolidation is opt-in and, in this release, limited to the `runtime-bearer` and `none-public`
 postures. See the
 [MCP server facade guide](docs/features/mcp-server-construct.md#route-model-explicit-and-consolidated).
+
+#### Explicit route identity: `routeIdMode`
+
+`AppTheoryMcpServer` also gains `routeIdMode` (`AppTheoryMcpRouteIdMode`) for the explicit model. The default is
+`legacy`, which keeps the positional `Route0`, `Route1`, ... construct ids byte-identical, so an existing stack deploys
+in place with no action. `semantic` derives each id from the route method and pattern (for example
+`RoutePOSTClientNamespaceMcp`), so inserting, removing, or reordering a route family never renames an unrelated route.
+
+`semantic` is intended for **newly created** explicit APIs. Switching an existing deployed explicit API from `legacy`
+to `semantic` in place renames every route in one update, which is itself the create-before-delete collision described
+above, so adopt it on an existing stack only through the same new-API swap: create the new explicit API with
+`routeIdMode: AppTheoryMcpRouteIdMode.SEMANTIC`, move the origin, then delete the old positional API. The
+`consolidated` model ignores `routeIdMode` and always emits the fixed ids `RouteAnyRoot` and `RouteAnyProxy`.
+
+A `legacy` to `semantic` move can be checked before deploying: synthesize the before-template and the after-template of
+the same stack and run the reusable transition helper shipped in `cdk/lib/route-transition` — it fails closed on any
+route key held by two logical ids in the same API across the transition.
+
+**Additive; no breaking change.** `routeIdMode` defaults to `legacy`, so omitting it is byte-identical to the previous
+release.
 
 ### Server-issued HTTP request IDs
 

@@ -11,7 +11,8 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 
 - `AppTheoryHttpApi`: API Gateway HTTP API v2 plus Lambda proxy routes; explicit, semantically identified `routes` with
   an `AppTheoryHttpApiRouteAuthorizer` posture (`IAM` or `NONE`) added alongside the greedy routes, route-keyed
-  `routeSettings` throttling, and a configurable `stage.accessLogFormat` (default: the AppTheory JSON format)
+  `routeSettings` throttling validated against the emitted route keys (an unknown key fails synthesis naming the keys
+  the construct emits), and a configurable `stage.accessLogFormat` (default: the AppTheory JSON format)
 - `AppTheoryRestApi`: API Gateway REST API v1 plus single-Lambda proxy routes
 - `AppTheoryRestApiRouter`: REST API v1 multi-Lambda routing with streaming support
 - `AppTheoryMcpServer`: attach-first HTTP API v2 route-family facade with authenticated MCP `POST`/`GET`/`DELETE`
@@ -20,7 +21,10 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
   standalone specialization with production defaults. `routeModel` (`AppTheoryMcpRouteModel`) selects the
   route-emission model: `EXPLICIT` (the default) keeps one gateway route per derived route key, while `CONSOLIDATED`
   emits exactly `ANY /` + `ANY /{proxy+}` with one shared integration and is valid only for the `runtime-bearer` and
-  `none-public` postures; `cors` configures preflight on a construct-owned API
+  `none-public` postures. `routeIdMode` (`AppTheoryMcpRouteIdMode`) selects construct-id derivation on the explicit
+  model: `LEGACY` (the default) keeps the positional `Route0`, `Route1`, ... ids byte-stable, and `SEMANTIC` derives
+  each id from the route method and pattern so a move or insertion does not rename unrelated routes; `cors` configures
+  preflight on a construct-owned API
 - `AppTheoryMcpRouteAlgebra`: versioned MCP patterns and every protected-resource, discovery, authorize, and token
   derivation consumed by the construct and mirrored Go runtime helper
 - `AppTheoryMcpPaths`: canonical MCP and OAuth discovery route paths
@@ -169,7 +173,10 @@ CloudFormation generates the physical names for all six groups, none can hit the
   throttling floor; `runtime-bearer` additionally requires `FacadeConfig.RequireBearerToken` on the runtime side and a
   `denialSignal` declaration. `routeModel` defaults to `AppTheoryMcpRouteModel.EXPLICIT`; set
   `AppTheoryMcpRouteModel.CONSOLIDATED` to emit only `ANY /` + `ANY /{proxy+}` for the runtime router to dispatch,
-  which is valid only for the `runtime-bearer` and `none-public` postures. See
+  which is valid only for the `runtime-bearer` and `none-public` postures. `routeIdMode` defaults to
+  `AppTheoryMcpRouteIdMode.LEGACY`; `AppTheoryMcpRouteIdMode.SEMANTIC` derives explicit route ids from method and
+  pattern and is for newly created explicit APIs, because an in-place `legacy` to `semantic` switch is itself a
+  create-before-delete route-key collision. See
   [MCP Server Facade Construct](../features/mcp-server-construct.md).
 - Use `AppTheoryRemoteMcpServer` when REST API v1 response streaming and resumable Remote MCP transport are required;
   do not start new namespace applications on the URL-valued `AppTheoryMcpProtectedResource` compatibility construct.
