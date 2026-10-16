@@ -10,6 +10,10 @@ from apptheory.util import canonicalize_headers
 HTTP_ERROR_FORMAT_NESTED = "nested"
 HTTP_ERROR_FORMAT_FLAT_LEGACY = "flat_legacy"
 
+_FALLBACK_HTTP_ERROR_STATUS = 500
+_FALLBACK_HTTP_ERROR_BODY_NESTED = b'{"error":{"code":"app.internal","message":"internal error","status_code":500}}'
+_FALLBACK_HTTP_ERROR_BODY_FLAT_LEGACY = b'{"code":"app.internal","message":"internal error"}'
+
 
 def normalize_http_error_format(value: str | None) -> str:
     if str(value or "").strip() == HTTP_ERROR_FORMAT_FLAT_LEGACY:
@@ -169,7 +173,7 @@ def error_response_with_format(
     error: dict[str, Any] = {"code": body_code, "message": body_message}
     if normalize_http_error_format(error_format) != HTTP_ERROR_FORMAT_FLAT_LEGACY:
         error["status_code"] = status
-    body = _serialize_http_error_body(error_format, error)
+    status, body = _serialize_error_response_body(error_format, status, error)
 
     return normalize_response(
         Response(
@@ -239,7 +243,7 @@ def error_response_with_request_id_trace_id_and_format(
         if resolved_trace_id:
             error["trace_id"] = resolved_trace_id
 
-    body = _serialize_http_error_body(error_format, error)
+    status, body = _serialize_error_response_body(error_format, status, error)
 
     return normalize_response(
         Response(
@@ -300,7 +304,7 @@ def error_response_from_app_theory_error_with_format(
         if str(exc.stack_trace or "").strip():
             error["stack_trace"] = str(exc.stack_trace)
 
-    body = _serialize_http_error_body(error_format, error)
+    status, body = _serialize_error_response_body(error_format, status, error)
 
     return normalize_response(
         Response(
@@ -367,3 +371,32 @@ def response_for_error_with_request_id_trace_id_and_format(
 def _serialize_http_error_body(error_format: str, error: dict[str, Any]) -> bytes:
     payload = error if normalize_http_error_format(error_format) == HTTP_ERROR_FORMAT_FLAT_LEGACY else {"error": error}
     return json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+
+
+def _fallback_http_error_body(error_format: str) -> bytes:
+    """The internal-error envelope sent when the intended envelope cannot be serialized.
+
+    It carries no request id, trace id, timestamp, or stack trace: a response that failed
+    to serialize reports the internal error and nothing about the original error.
+    """
+    if normalize_http_error_format(error_format) == HTTP_ERROR_FORMAT_FLAT_LEGACY:
+        return _FALLBACK_HTTP_ERROR_BODY_FLAT_LEGACY
+    return _FALLBACK_HTTP_ERROR_BODY_NESTED
+
+
+def _serialize_error_response_body(
+    error_format: str,
+    status: int,
+    error: dict[str, Any],
+) -> tuple[int, bytes]:
+    """Render the error envelope, or the internal-error fallback sent with status 500.
+
+    A serialization failure — for example ``details`` carrying a value ``json`` cannot
+    represent, which raises ``TypeError``, or a circular reference, which raises
+    ``ValueError`` — never escapes the renderer. The fallback status keeps the nested body's
+    ``status_code`` equal to the status on the wire.
+    """
+    try:
+        return status, _serialize_http_error_body(error_format, error)
+    except (TypeError, ValueError):
+        return _FALLBACK_HTTP_ERROR_STATUS, _fallback_http_error_body(error_format)
