@@ -20,6 +20,35 @@ range from the v5 line also carries other breaking runtime, CDK, TypeScript, and
 the v6 release notes for the commit-level detail, and treat the import-path move below as the mechanical part of the
 upgrade.
 
+### Server-issued HTTP request IDs
+
+The HTTP runtime now lets an application choose where the request ID comes from. The default is unchanged: a non-empty
+client `x-request-id` header is honored, and the runtime falls back to the invocation request ID where the surface
+supplies one, then to a generated ID.
+
+An application whose contract requires a request ID that a caller cannot choose or forge opts into the server-issued
+source:
+
+- **Go**: `apptheory.New(apptheory.WithRequestIDSource(apptheory.RequestIDSourceServer))`, or
+  `apptheory.NewSecure(apptheory.SecureOptions{RequestIDSource: apptheory.RequestIDSourceServer})`
+- **TypeScript**: `createApp({ requestIdSource: REQUEST_ID_SOURCE_SERVER })`, or
+  `new SecureApp({ requestIdSource: REQUEST_ID_SOURCE_SERVER })`
+- **Python**: `create_app(request_id_source=REQUEST_ID_SOURCE_SERVER)`, or
+  `SecureApp(request_id_source=REQUEST_ID_SOURCE_SERVER)`
+
+**Additive; no breaking change.** Existing applications keep the historical resolution order, so nothing changes
+unless you opt in. In server-issued mode a client `x-request-id` is never used as the request identity; the handler
+context, the nested `error.request_id` field, the `x-request-id` response header, and the P2 observability records all
+carry the server-issued value. The client value is not preserved in another field, and client values are neither
+validated nor normalized — a caller that sends a forged ID simply does not influence the request identity.
+
+Two boundaries are worth knowing before you adopt it:
+
+- The setting covers every surface that resolves a request ID from the request: the HTTP path and the AppSync path
+  (AppSync forwards `event.request.headers`), in every runtime. WebSocket and the non-HTTP event sources never read a
+  client request ID and are unaffected.
+- `SecureApp` accepts the same option through its closed options surface and applies no different default.
+
 ### Nested HTTP error envelope always carries `error.status_code`
 
 The default nested HTTP error envelope now always includes `error.status_code`: the HTTP status of the response that was

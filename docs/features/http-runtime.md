@@ -41,7 +41,7 @@ its defense-in-depth pairing; the [MCP facade helper](mcp-facade-helper.md) stat
 
 P0 plus:
 
-- **Request-id propagation** — `x-request-id` echoed on the response, generated when absent, and surfaced on the runtime context (`ctx.RequestID` in Go, `ctx.requestId` in TypeScript, `ctx.request_id` in Python).
+- **Request-id propagation** — `x-request-id` echoed on the response, generated when absent, and surfaced on the runtime context (`ctx.RequestID` in Go, `ctx.requestId` in TypeScript, `ctx.request_id` in Python). The ID's source is selectable; see **Request ID** below.
 - **Tenant extraction** — convention-based tenant resolution from headers or the auth identity, available on the runtime context (`TenantID` / `tenantId` / `tenant_id`).
 - **Auth hooks** — pluggable identity resolvers; the resolved identity is exposed on the runtime context (`AuthIdentity` / `authIdentity` / `auth_identity`) or the request fails closed.
 - **CORS** — opt-in preflight handling and response header rewrites.
@@ -59,6 +59,26 @@ P1 plus:
 - **Multi-window limiter cancellation classification** — the DynamoDB-backed multi-window limiter in all three runtimes classifies a cancelled `TransactWrite` by its **first genuine cancellation reason** (TableTheory 5.2.0 semantics; see [Upgrading](../UPGRADING.md#tabletheory-520-dependency-and-multi-window-rate-limit-error-classification)). A genuine `ConditionalCheckFailed` — the request exceeded a window budget — is a **soft denial**: `allowed=false` with a retry-after, in every runtime and under either fail-open policy. A DynamoDB throttle (`ThrottledError` / `ErrThrottled`), a transaction conflict (`TransactionConflictError` / `ErrTransactionConflict`), an unknown code, an all-`None` or empty reason list, or a cancellation whose message merely mentions `ConditionalCheckFailed` is **not** a condition failure and follows the configured fail-open policy exactly as Go always has: `failOpen: true` (the AppTheory default) admits the request, `failOpen: false` returns an `internal_error`. Set `failOpen` to `false` (Go `limited.Config.FailOpen`, TypeScript `config.failOpen`, Python `config.fail_open`) if a throttle must deny rather than admit. The shared table `contract-tests/fixtures/routing/limiter/multi-window-cancellation.v1.json` pins every class in Go, TypeScript and Python.
 
 P2 is what production applications use unless they have a reason not to. The default is P2 because most consumers should not be assembling these pieces from scratch.
+
+## Request ID
+
+Every P1+ request carries a request ID on the runtime context (`ctx.RequestID` / `ctx.requestId` / `ctx.request_id`), in the `x-request-id` response header, and — on error responses — as `error.request_id` in the nested envelope. The same value flows into the P2 observability log, span, and metric records.
+
+By default the runtime honors a client-supplied `x-request-id` header exactly as it always has. When the header is absent, resolution falls back to the invocation request ID where the surface supplies one (the Lambda request ID on the AppSync path), and otherwise generates an ID. That order is unchanged.
+
+Some API contracts require a request ID that a caller cannot choose or forge — a correlation ID for audit and support flows. Those applications opt into a server-issued ID:
+
+| Runtime | Default | Server-issued |
+| --- | --- | --- |
+| Go | `apptheory.New()` | `apptheory.New(apptheory.WithRequestIDSource(apptheory.RequestIDSourceServer))`, or `apptheory.NewSecure(apptheory.SecureOptions{RequestIDSource: apptheory.RequestIDSourceServer})` |
+| TypeScript | `createApp()` | `createApp({ requestIdSource: REQUEST_ID_SOURCE_SERVER })`, or `new SecureApp({ requestIdSource: REQUEST_ID_SOURCE_SERVER })` |
+| Python | `create_app()` | `create_app(request_id_source=REQUEST_ID_SOURCE_SERVER)`, or `SecureApp(request_id_source=REQUEST_ID_SOURCE_SERVER)` |
+
+In server-issued mode the client `x-request-id` header is never used as the request identity: resolution drops straight to the fallback request ID, then to a generated ID. The handler context, the error envelope, the response header, and the log/observability fields all carry the server-issued value.
+
+The option is additive. The default is the historical behavior, the client value is not preserved in another field, and client values are neither validated nor normalized. `SecureApp` accepts the same option through its closed options surface and applies no different default.
+
+The setting applies to every surface that resolves a request ID from the request: the HTTP path and the AppSync path (which forwards `event.request.headers`), in all three runtimes. Surfaces that never read a client request ID are unchanged — WebSocket and the non-HTTP event sources derive their ID from the API Gateway request-context ID or the Lambda request ID.
 
 ## Route registration
 

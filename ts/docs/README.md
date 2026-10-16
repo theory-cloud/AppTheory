@@ -93,7 +93,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/ts.txt`.
 
 <details>
-<summary>854 exported top-level symbols</summary>
+<summary>858 exported top-level symbols</summary>
 
 ```text
 AcquireLeaseInput, AcquireSemaphoreSlotInput, AGENT_MCP_PATTERN, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest, APIGatewayProxyResponse,
@@ -182,7 +182,7 @@ microVMSessionRegistrySortKey, microVMSessionRegistryTableName, MicroVMSessionSp
 microVMSessionTokenMetadataFromProviderToken, MicroVMState, MicroVMTableTheoryClient, MicroVMTenantBindingRule, MicroVMTokenIssuanceContract, Middleware, min, minLength,
 MultiWindowStrategy, NAMESPACE_MCP_PATTERN, newAutheoryProvider, newAuthorizationServerMetadata, newError, newFakeOAuthProvider, newJobLedgerError, newJwksValidator,
 newMemoryBearerTokenValidator, newPKCECodeVerifier, newProtectedResourceMetadata, normalizeCallbackPath, normalizeDynamoDBStreamRecord,
-normalizeEventBridgeScheduledWorkload, normalizeEventBridgeWorkloadEnvelope, normalizeHTTPErrorFormat, normalizeRequestOrigin, normalizeStage, normalizeTopK,
+normalizeEventBridgeScheduledWorkload, normalizeEventBridgeWorkloadEnvelope, normalizeHTTPErrorFormat, normalizeRequestIdSource, normalizeRequestOrigin, normalizeStage, normalizeTopK,
 oauthAuthorizationServerPath, oauthAuthorizationServerSuffixPath, oauthAuthorizePath, OAuthBearerError, OAuthDiscoveryTemplate, OAuthFacadeTemplate, oauthRegisterPath,
 oauthTokenPath, ObjectRef, ObjectStore, OBJECTSTORE_ERROR_INVALID_ENCRYPTION_CONFIG, OBJECTSTORE_ERROR_INVALID_GET_LIMIT, OBJECTSTORE_ERROR_INVALID_PRESIGN_PUT,
 OBJECTSTORE_ERROR_INVALID_REF, OBJECTSTORE_ERROR_INVALID_STORE_CONFIG, OBJECTSTORE_ERROR_NOT_FOUND, OBJECTSTORE_ERROR_OBJECT_TOO_LARGE,
@@ -196,7 +196,7 @@ protectedResourcePathForResourcePath, protectedResourcePathFromMcpPath, protecte
 Public, PutVectorsInput, Query, QueryHit, QueryVectorsInput, RandomIdGenerator, rapidConnectXMLPatterns, RateLimitBucketKey, RateLimitEntry, RateLimiter, RateLimiterError,
 RateLimitKey, RateLimitResult, RateLimitStore, RateLimitStrategy, rateLimitTableName, RateLimitWindow, RealClock, ReconstructingMicroVMSessionRegistry,
 ReconstructingMicroVMSessionRegistryOptions, reconstructMicroVMSessionRecord, RecordStatus, RefreshLeaseInput, RefreshRequest, RefreshSemaphoreSlotInput,
-registerControllerRoutes, registerMcpFacade, registerMcpFacadeSecure, registerMicroVMControllerRoutes, ReleaseLeaseInput, ReleaseSemaphoreSlotInput, reportKinesisPutRecordsFailures, Request,
+registerControllerRoutes, registerMcpFacade, registerMcpFacadeSecure, registerMicroVMControllerRoutes, ReleaseLeaseInput, ReleaseSemaphoreSlotInput, reportKinesisPutRecordsFailures, Request, REQUEST_ID_SOURCE_DEFAULT, REQUEST_ID_SOURCE_SERVER, RequestIdSource,
 requireBearerTokenMiddleware, RequireBearerTokenOptions, required, requiredForbiddenMicroVMOperationFields, requireEventBridgeWorkloadEnvelope, ResolvedCapabilities,
 resourceIndicatorMatches, resourceMetadataURLFromMcpEndpoint, resourceName, resourcePathFromProtectedResourcePath, Response, rfc9728ResourceMetadataURL,
 RootDiscoveryConfig, RouteInventory, RouteOptions, RouteRefreshBrokerRecord, RouteRefreshBrokerSeeder, RouteRefreshBrokerStatus, RouteRefreshBrokerStore, runStoreConformance, S3Encryption,

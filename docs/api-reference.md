@@ -103,6 +103,24 @@ HTTP error compatibility:
   - Python: `create_app(http_error_format=HTTP_ERROR_FORMAT_FLAT_LEGACY)`
 - This setting applies to HTTP serialization only. AppSync and WebSocket error payloads keep their existing shapes.
 
+Request ID source:
+
+- By default the HTTP runtime honors a client-supplied `x-request-id` header, falls back to the invocation request
+  ID where the surface supplies one, and otherwise generates an ID. The resolved value reaches the handler context,
+  the nested `error.request_id` envelope field, the `x-request-id` response header, and the P2 observability records.
+- Applications whose contract requires a server-issued (caller-cannot-choose) request ID opt in:
+  - Go: `apptheory.WithRequestIDSource(apptheory.RequestIDSourceServer)` or
+    `apptheory.NewSecure(apptheory.SecureOptions{RequestIDSource: apptheory.RequestIDSourceServer})`
+  - TypeScript: `createApp({ requestIdSource: REQUEST_ID_SOURCE_SERVER })` or
+    `new SecureApp({ requestIdSource: REQUEST_ID_SOURCE_SERVER })`
+  - Python: `create_app(request_id_source=REQUEST_ID_SOURCE_SERVER)` or
+    `SecureApp(request_id_source=REQUEST_ID_SOURCE_SERVER)`
+- In server-issued mode the client `x-request-id` header is never used as the request identity; resolution uses the
+  fallback request ID, else a generated ID. The option is additive: the default is unchanged, the client value is
+  not preserved elsewhere, and client values are neither validated nor normalized.
+- The setting covers the HTTP and AppSync resolution sites (AppSync forwards `event.request.headers`) in all three
+  runtimes. WebSocket and the non-HTTP event sources never read a client request ID and are unchanged.
+
 ## HTTP source provenance
 
 `SourceProvenance` is the portable, structured source-IP contract for HTTP requests. It is available in every HTTP
@@ -591,7 +609,7 @@ they should not be treated as the canonical external root.
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/go.txt`.
 
 <details>
-<summary>1166 exported top-level symbols</summary>
+<summary>1170 exported top-level symbols</summary>
 
 ```text
 AccountAssertion, AccountAssertionAssumeFailed, AccountAssertionMismatch, AccountAssertionNotConfigured, AccountAssertionState, AccountAssertionUnavailable,
@@ -700,7 +718,7 @@ RateLimiter, RateLimitKey, RateLimitLimited, RateLimitMiddleware, RateLimitResul
 ReadResourceRequest, ReadSSEMessage, RealClock, ReconstructingSessionRegistry, ReconstructSessionRecord, RecordStatus, RecordStatusFailed, RecordStatusPending,
 RecordStatusProcessing, RecordStatusSkipped, RecordStatusSucceeded, RefreshLeaseInput, RefreshRequest, RefreshSemaphoreSlotInput, RefreshStage, RefreshTokenRecord, RefreshTokenStore,
 RegisterControllerRoutes, RegisterMCPFacade, RegisterMCPFacadeSecure, RegisterMCPServer, RegisterMicroVMControllerRoutes, RegistryClient, RegistryClientOption, RelatedTaskMetadata,
-ReleaseLeaseInput, ReleaseSemaphoreSlotInput, ReportKinesisPutRecordsFailures, Request, RequireAnyScope, RequireAuth, RequireBearerTokenMiddleware,
+ReleaseLeaseInput, ReleaseSemaphoreSlotInput, ReportKinesisPutRecordsFailures, Request, RequestIDSource, RequestIDSourceDefault, RequestIDSourceServer, RequireAnyScope, RequireAuth, RequireBearerTokenMiddleware,
 RequireBearerTokenOptions, RequiredForbiddenOperationFields, RequiredOperations, RequireEventBridgeWorkloadEnvelope, RequireScope, ResourceContent, ResourceDef,
 ResourceHandler, ResourceMetadataURLFromMcpEndpoint, ResourceName, ResourcePathFromProtectedResourcePath, ResourceRegistry, ResourceSubscription, ResourceSubscriptionHook,
 ResourceTemplateDef, Response, ResultType, ResultTypeComplete, ResultTypeInputRequired, RFC9728ResourceMetadataURL, RootDiscoveryConfig, Route, RouteInventory,
@@ -738,7 +756,7 @@ WithClock, WithCompletionHooks, WithControllerClock, WithControllerDeploymentDef
 WithControllerLogging, WithControllerProviderID, WithControllerSessionTTL, WithCORS, WithDeviceAuthorizationEndpoint, WithDynamoStreamSpillEncryption, WithEMFClock,
 WithEMFNamespace, WithEMFService, WithEMFWriter, WithEnvironmentErrorNotifications, WithErrorNotifier, WithExtensionCapabilities, WithHTTPErrorFormat, WithIdentifier,
 WithIDGenerator, WithInitialSessionListenerBudget, WithLegacyHTTPErrorShape, WithLifecycleContract, WithLifecycleHandler, WithLimits, WithLogger, WithLoggingLevelHook,
-WithObservability, WithOriginValidator, WithPolicyHook, WithProfileClock, WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter, WithRegistryClientTTL,
+WithObservability, WithOriginValidator, WithPolicyHook, WithProfileClock, WithProfileEnvironment, WithProfileSanitizer, WithProfileWriter, WithRegistryClientTTL, WithRequestIDSource,
 WithResourceSubscriptionHooks, WithRevocationEndpoint, WithSanitizer, WithServerIDGenerator, WithServerInfoMetadata, WithSessionReconstructionClock,
 WithSessionReconstructionStaleAfter, WithSessionStore, WithStreamIDGenerator, WithStreamStore, WithTaskRuntime, WithTenantClaim, WithTier, WithToolContextHook,
 WithWebSocketClientFactory, WithWebSocketSupport, WithZapLogger, WrapError, XMLSanitizationPattern
