@@ -129,29 +129,87 @@ function errorBodyFromAppTheoryError(format, err, status, requestId, traceId = "
     }
     return error;
 }
+// An error envelope value that has no faithful JSON representation — a
+// function, a symbol, a bigint, `undefined`, or a cycle — fails the envelope
+// instead of being silently dropped, so a caller never receives a body that
+// quietly lost a field.
+class HTTPErrorBodySerializationError extends Error {
+}
+const FALLBACK_HTTP_ERROR_STATUS = 500;
+const FALLBACK_HTTP_ERROR_BODY_NESTED = '{"error":{"code":"app.internal","message":"internal error","status_code":500}}';
+const FALLBACK_HTTP_ERROR_BODY_FLAT_LEGACY = '{"code":"app.internal","message":"internal error"}';
+// The internal-error envelope sent when the intended envelope cannot be
+// serialized. It carries no request id, trace id, timestamp, or stack trace: a
+// response that failed to serialize reports the internal error and nothing
+// about the original error.
+function fallbackHTTPErrorBody(format) {
+    return Buffer.from(normalizeHTTPErrorFormat(format) === HTTP_ERROR_FORMAT_FLAT_LEGACY
+        ? FALLBACK_HTTP_ERROR_BODY_FLAT_LEGACY
+        : FALLBACK_HTTP_ERROR_BODY_NESTED, "utf8");
+}
 // The Go and Python renderers marshal the error object through a key-sorted map
 // (encoding/json map ordering; json.dumps(sort_keys=True)), so the nested envelope
 // is byte-identical across runtimes only if TypeScript emits the same key order.
 // Flat-legacy is deliberately left in insertion order to stay byte-identical.
-function sortKeysDeep(value) {
+function sortKeysDeep(value, ancestors = new WeakSet()) {
     if (Array.isArray(value)) {
-        return value.map(sortKeysDeep);
+        if (ancestors.has(value)) {
+            throw new HTTPErrorBodySerializationError("error envelope contains a cycle");
+        }
+        ancestors.add(value);
+        const sorted = value.map((item) => sortKeysDeep(item, ancestors));
+        ancestors.delete(value);
+        return sorted;
     }
     if (value && typeof value === "object") {
+        if (ancestors.has(value)) {
+            throw new HTTPErrorBodySerializationError("error envelope contains a cycle");
+        }
+        ancestors.add(value);
         const source = value;
         const sorted = {};
         for (const key of Object.keys(source).sort()) {
-            sorted[key] = sortKeysDeep(source[key]);
+            sorted[key] = sortKeysDeep(source[key], ancestors);
         }
+        ancestors.delete(value);
         return sorted;
     }
     return value;
 }
+// JSON.stringify drops a function, symbol, or `undefined` property and throws on
+// a bigint, so a replacer that refuses all four keeps the envelope faithful: an
+// error that cannot be rendered in full is reported as the internal-error
+// fallback rather than truncated without notice.
+function strictJSONStringify(payload) {
+    return JSON.stringify(payload, (_key, value) => {
+        if (value === undefined ||
+            typeof value === "function" ||
+            typeof value === "symbol" ||
+            typeof value === "bigint") {
+            throw new HTTPErrorBodySerializationError("error envelope contains a value with no JSON representation");
+        }
+        return value;
+    });
+}
 function serializeHTTPErrorBody(format, error) {
-    if (normalizeHTTPErrorFormat(format) === HTTP_ERROR_FORMAT_FLAT_LEGACY) {
-        return Buffer.from(JSON.stringify(error), "utf8");
+    const payload = normalizeHTTPErrorFormat(format) === HTTP_ERROR_FORMAT_FLAT_LEGACY
+        ? error
+        : { error: sortKeysDeep(error) };
+    return Buffer.from(strictJSONStringify(payload), "utf8");
+}
+// Renders the error envelope, falling back to the internal-error body sent with
+// status 500 when it cannot be serialized, so the status_code in the body never
+// disagrees with the status on the wire.
+function serializeErrorResponseBody(format, status, error) {
+    try {
+        return { status, body: serializeHTTPErrorBody(format, error) };
     }
-    return Buffer.from(JSON.stringify({ error: sortKeysDeep(error) }), "utf8");
+    catch {
+        return {
+            status: FALLBACK_HTTP_ERROR_STATUS,
+            body: fallbackHTTPErrorBody(format),
+        };
+    }
 }
 function errorResponseFromAppTheoryErrorWithFormat(format, err, headers = {}, requestId = "", traceId = "") {
     const outHeaders = { ...canonicalizeHeaders(headers) };
@@ -161,11 +219,12 @@ function errorResponseFromAppTheoryErrorWithFormat(format, err, headers = {}, re
     const status = typeof err.statusCode === "number" && err.statusCode > 0
         ? err.statusCode
         : statusForErrorCode(canonical.code);
+    const serialized = serializeErrorResponseBody(format, status, errorBodyFromAppTheoryError(format, err, status, requestId, traceId));
     return normalizeResponse({
-        status,
+        status: serialized.status,
         headers: outHeaders,
         cookies: [],
-        body: serializeHTTPErrorBody(format, errorBodyFromAppTheoryError(format, err, status, requestId, traceId)),
+        body: serialized.body,
         isBase64: false,
     });
 }
@@ -184,11 +243,12 @@ export function errorResponseWithFormat(format, code, message, headers = {}) {
     if (normalizeHTTPErrorFormat(format) !== HTTP_ERROR_FORMAT_FLAT_LEGACY) {
         error["status_code"] = status;
     }
+    const serialized = serializeErrorResponseBody(format, status, error);
     return normalizeResponse({
-        status,
+        status: serialized.status,
         headers: outHeaders,
         cookies: [],
-        body: serializeHTTPErrorBody(format, error),
+        body: serialized.body,
         isBase64: false,
     });
 }
@@ -216,11 +276,12 @@ export function errorResponseWithRequestIdTraceIdAndFormat(format, code, message
         if (resolvedTraceId)
             error["trace_id"] = resolvedTraceId;
     }
+    const serialized = serializeErrorResponseBody(format, status, error);
     return normalizeResponse({
-        status,
+        status: serialized.status,
         headers: outHeaders,
         cookies: [],
-        body: serializeHTTPErrorBody(format, error),
+        body: serialized.body,
         isBase64: false,
     });
 }
