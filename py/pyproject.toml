@@ -11,7 +11,7 @@ readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
-  "tabletheory-py @ https://github.com/theory-cloud/TableTheory/releases/download/v5.2.0/tabletheory_py-5.2.0-py3-none-any.whl#sha256=bce361b931b5d44dc2d229ed18a2befa2f508d29e27ef649381ba61e9c23c359",
+  "tabletheory-py @ https://github.com/theory-cloud/TableTheory/releases/download/v6.0.0/tabletheory_py-6.0.0-py3-none-any.whl#sha256=89e73ad4fd49cdb39b46cd4b564c39210140160282ef4121bf8ec434b7767897",
 ]
 
 [tool.setuptools]
