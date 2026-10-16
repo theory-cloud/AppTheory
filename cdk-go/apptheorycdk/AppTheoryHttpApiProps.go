@@ -30,12 +30,30 @@ type AppTheoryHttpApiProps struct {
 	// full method+path match outranks the greedy route by API Gateway precedence,
 	// and a wrong-method request on such a path is denied by the runtime with the
 	// fail-closed 404/405 envelope.
+	//
+	// Route construct ids are derived from the method and path, so inserting,
+	// removing, or reordering an entry never renames an unrelated route.
+	//
+	// A declared `OPTIONS` route coexists with, and can be shadowed by, the
+	// API-level CORS configuration `cors` installs. `buildCorsPreflight` includes
+	// `OPTIONS` in its default `allowMethods`, and while `OPTIONS` is in that
+	// list API Gateway answers matching preflight requests itself before the
+	// route integration runs, so a declared `OPTIONS` route on the same path is
+	// never reached. Setting `cors.allowMethods` without `OPTIONS` removes gateway
+	// preflight handling entirely; a declared `OPTIONS` route is then the only
+	// thing that answers a preflight request, and it is subject to that route's
+	// own authorizer. Declare the methods you need in `cors.allowMethods` rather
+	// than depending on a declared `OPTIONS` route.
 	// Default: undefined.
 	//
 	Routes *[]*AppTheoryHttpApiRouteOptions `field:"optional" json:"routes" yaml:"routes"`
-	// Route-level throttling keyed by API Gateway route key (for example `"ANY /{proxy+}"`).
+	// Route-level throttling keyed by API Gateway route key (for example `"ANY /{proxy+}"`). Applied to the stage's route settings.
 	//
-	// Applied to the stage's route settings.
+	// Every key is validated at synthesis time against the route keys this
+	// construct emits — the greedy `ANY /` and `ANY /{proxy+}` routes plus one
+	// `<METHOD> <path>` key per `routes` entry. A key that matches no emitted
+	// route fails synthesis with a named error listing the emitted keys, rather
+	// than being silently ignored by API Gateway.
 	// Default: undefined.
 	//
 	RouteSettings *map[string]*AppTheoryHttpApiRouteThrottling `field:"optional" json:"routeSettings" yaml:"routeSettings"`

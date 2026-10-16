@@ -697,6 +697,14 @@ func init() {
 		reflect.TypeOf((*AppTheoryMcpRouteFamily)(nil)).Elem(),
 	)
 	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteIdMode",
+		reflect.TypeOf((*AppTheoryMcpRouteIdMode)(nil)).Elem(),
+		map[string]interface{}{
+			"LEGACY":   AppTheoryMcpRouteIdMode_LEGACY,
+			"SEMANTIC": AppTheoryMcpRouteIdMode_SEMANTIC,
+		},
+	)
+	_jsii_.RegisterEnum(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpRouteModel",
 		reflect.TypeOf((*AppTheoryMcpRouteModel)(nil)).Elem(),
 		map[string]interface{}{

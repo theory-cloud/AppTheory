@@ -101,7 +101,7 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `cdk/.jsii`.
 
 <details>
-<summary>168 exported top-level symbols</summary>
+<summary>169 exported top-level symbols</summary>
 
 ```text
 ApiBypassConfig, AppTheoryApiDomain, AppTheoryApiDomainProps, AppTheoryApp, AppTheoryAppProps
@@ -117,7 +117,7 @@ AppTheoryHttpIngestionEndpoint, AppTheoryHttpIngestionEndpointDomainOptions, App
 AppTheoryJobsTableProps, AppTheoryKinesisStream, AppTheoryKinesisStreamMapping, AppTheoryKinesisStreamMappingProps, AppTheoryKinesisStreamProps, AppTheoryKmsKey
 AppTheoryKmsKeyProps, AppTheoryLambdaRole, AppTheoryLambdaRoleProps, AppTheoryLambdaTrafficShiftType, AppTheoryMcpDenialSignalOptions, AppTheoryMcpFacadeAttachment
 AppTheoryMcpOriginReachability, AppTheoryMcpOwningApiDefenseOptions, AppTheoryMcpOwningApiThrottlingOptions, AppTheoryMcpPaths, AppTheoryMcpProtectedResource, AppTheoryMcpProtectedResourceProps
-AppTheoryMcpRouteFamily, AppTheoryMcpRouteModel, AppTheoryMcpRuntimePostureOptions, AppTheoryMcpServer, AppTheoryMcpServerDomainOptions, AppTheoryMcpServerFacadeRoute
+AppTheoryMcpRouteFamily, AppTheoryMcpRouteIdMode, AppTheoryMcpRouteModel, AppTheoryMcpRuntimePostureOptions, AppTheoryMcpServer, AppTheoryMcpServerDomainOptions, AppTheoryMcpServerFacadeRoute
 AppTheoryMcpServerOwnedApiOptions, AppTheoryMcpServerProps, AppTheoryMcpServerRouteInventory, AppTheoryMcpServerStageOptions, AppTheoryMcpSessionStateOptions
 AppTheoryMcpTransportAuthorizerOptions, AppTheoryMcpTransportPosture, AppTheoryMediaCdn
 AppTheoryMediaCdnProps, AppTheoryMicrovmController, AppTheoryMicrovmControllerFunctionProps, AppTheoryMicrovmControllerProps, AppTheoryMicrovmControllerStageOptions
