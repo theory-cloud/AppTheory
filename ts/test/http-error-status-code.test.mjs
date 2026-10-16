@@ -408,3 +408,65 @@ test("a flat-legacy envelope renders a Date in details exactly as JSON.stringify
     }),
   );
 });
+
+// Sharing a reference is not a cycle: the same object as two siblings, again one
+// level deeper, and the same array twice are all ordinary JSON. The cycle detector
+// remembers only the path currently being copied, so every entry has to leave it
+// when that subtree is done; a detector that never forgot an entry would reject the
+// second occurrence and turn a serializable envelope into the 500 fallback.
+test("a value referenced more than once in nested details renders normally with the original status", async () => {
+  const shared = { zeta: 1, alpha: "a" };
+  const sharedArray = ["b", "a"];
+  const response = await serveTeapotWithDetails(null, {
+    first: shared,
+    second: shared,
+    nested: { deeper: shared },
+    list: [sharedArray, sharedArray],
+  });
+  assert.equal(response.status, 418);
+  assert.equal(
+    bodyText(response),
+    '{"error":{"code":"teapot","details":{"first":{"alpha":"a","zeta":1},"list":[["b","a"],["b","a"]],"nested":{"deeper":{"alpha":"a","zeta":1}},"second":{"alpha":"a","zeta":1}},"message":"I am a teapot","status_code":418}}',
+  );
+  const body = JSON.parse(bodyText(response));
+  assert.equal(body.error.status_code, response.status);
+});
+
+// JSON.stringify passes each value's property key to its `toJSON` hook — the
+// property name for an object member, String(index) for an array element — so a hook
+// that depends on that key must see the same one through the sort. The parity
+// assertion against the reference serializer pins the agreement instead of
+// restating the implementation.
+class KeyEcho {
+  constructor(label) {
+    this.label = label;
+  }
+
+  toJSON(key) {
+    return { seen_key: key };
+  }
+}
+
+test("a toJSON hook receives the property key and array index JSON.stringify passes", async () => {
+  const details = {
+    member: new KeyEcho("member"),
+    items: [new KeyEcho("first"), new KeyEcho("second")],
+  };
+  const response = await serveTeapotWithDetails(null, details);
+  assert.equal(response.status, 418);
+  assert.equal(
+    bodyText(response),
+    '{"error":{"code":"teapot","details":{"items":[{"seen_key":"0"},{"seen_key":"1"}],"member":{"seen_key":"member"}},"message":"I am a teapot","status_code":418}}',
+  );
+  assert.equal(
+    bodyText(response),
+    canonicalJSON({
+      error: {
+        code: "teapot",
+        message: "I am a teapot",
+        status_code: 418,
+        details,
+      },
+    }),
+  );
+});
