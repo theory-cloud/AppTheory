@@ -20,6 +20,46 @@ range from the v5 line also carries other breaking runtime, CDK, TypeScript, and
 the v6 release notes for the commit-level detail, and treat the import-path move below as the mechanical part of the
 upgrade.
 
+### TableTheory v6 dependency (Go module path) with TypeScript and Python assets
+
+AppTheory now requires TableTheory v6 in all three runtimes: `github.com/theory-cloud/tabletheory/v6 v6.0.0` in Go,
+`theory-cloud-tabletheory-ts-6.0.0.tgz` in TypeScript and `tabletheory_py-6.0.0-py3-none-any.whl` in Python. Both non-Go
+assets keep your existing integrity discipline — immutable GitHub Release pins at SHA-512
+`sJafPYwl9o6ZvMkSxGVpwq7F/pbexq168Vxo8vlIjR2t+D7n+1+gdzWEoOFTplMg8N+r8KIt9flAjADIyNwsDA==` for the TypeScript tarball
+and SHA-256 `89e73ad4fd49cdb39b46cd4b564c39210140160282ef4121bf8ec434b7767897` for the Python wheel. TableTheory v6
+changes no TypeScript or Python API, so those two runtimes change version only.
+
+**Go consumers must move their own TableTheory to v6 in the same change.** The Go module path moves from
+`github.com/theory-cloud/tabletheory/v5` to `/v6`, and the `/v5` and `/v6` `core.DB` are distinct interface types:
+neither implements the other. AppTheory's DynamoDB seam is typed with TableTheory's `core.DB`, so a `/v6` handle cannot
+be passed into an AppTheory constructor that still requires `/v5`, and no consumer-side edit fixes it — the module
+requirement and every import must move together:
+
+```bash
+go get github.com/theory-cloud/tabletheory/v6@v6.0.0
+go mod tidy
+```
+
+Passing a `/v6` handle into a parameter whose type prints a `/v5` path fails to compile:
+
+```
+./main.go:10:44: cannot use db (variable of interface type "github.com/theory-cloud/tabletheory/v6/pkg/core".DB) as "github.com/theory-cloud/tabletheory/v5/pkg/core".DB value in argument to apptheoryservices.NewDynamoDBEventBus: "github.com/theory-cloud/tabletheory/v6/pkg/core".DB does not implement "github.com/theory-cloud/tabletheory/v5/pkg/core".DB (wrong type for method Model)
+        have Model(any) "github.com/theory-cloud/tabletheory/v6/pkg/core".Query
+        want Model(any) "github.com/theory-cloud/tabletheory/v5/pkg/core".Query
+```
+
+**No AppTheory API symbol changes.** The five DynamoDB-backed constructors —
+`services.NewDynamoDBEventBus`, `limited.NewDynamoRateLimiter`, `mcpruntime.NewDynamoSessionStore`,
+`mcpruntime.NewDynamoStreamStore` and `mcpruntime.NewDynamoTaskStore` — keep their names and shapes; only the
+TableTheory major behind their `core.DB` parameter moves. As a benefit of TableTheory v6, a `tabletheory.LambdaInit`
+handle now satisfies `core.ExtendedDB` (v6 changed `LambdaDB.WithLambdaTimeout` to return `core.DB`), so a Lambda
+consumer can assert the handle to that interface instead of the concrete `*LambdaDB`.
+
+TableTheory's own [v6 migration guide](https://github.com/theory-cloud/TableTheory/blob/v6.0.0/docs/migration/v6.md)
+carries the `WithLambdaTimeout` return-type change, the consumer checklist, and the
+[transitive-dependency](https://github.com/theory-cloud/TableTheory/blob/v6.0.0/docs/migration/v6.md#transitive-dependencies)
+wave order that makes AppTheory the dependency a consumer must wait for.
+
 ### Routed MCP facade metadata advertises RFC 9207 `iss` support
 
 The MCP auth facade's routed authorization-server document now carries
