@@ -2656,7 +2656,9 @@ function compareMCPStep(expected, actual) {
     if (!deepEqual(expected.body_json, actualJson)) {
       return { ok: false, reason: "body_json mismatch", actual, expected };
     }
-    return { ok: true };
+    if (!expected.body) {
+      return { ok: true };
+    }
   }
   const expectedBody = expected.body ? decodeFixtureBody(expected.body) : Buffer.alloc(0);
   if (!expectedBody.equals(actual.body)) {
@@ -2951,7 +2953,9 @@ function compareOAuthStep(expected, actual) {
     if (!deepEqual(expected.body_json, actualJson)) {
       return { ok: false, reason: "body_json mismatch", actual, expected };
     }
-    return { ok: true };
+    if (!expected.body) {
+      return { ok: true };
+    }
   }
   const expectedBody = expected.body ? decodeFixtureBody(expected.body) : Buffer.alloc(0);
   if (!expectedBody.equals(actual.body)) {
@@ -3472,7 +3476,8 @@ function secureResponseMatches(expected, actual) {
       return false;
     }
     if (!deepEqual(expected.body_json, actualJson)) return false;
-  } else {
+  }
+  if (expected.body || !Object.prototype.hasOwnProperty.call(expected, "body_json")) {
     const expectedBody = expected.body ? decodeFixtureBody(expected.body) : Buffer.alloc(0);
     if (!Buffer.from(actual.body ?? []).equals(Buffer.from(expectedBody))) return false;
   }
@@ -3816,6 +3821,12 @@ function compareFixture(fixture, actual, effects) {
     }
     if (!deepEqual(expected.body_json, actualJson)) {
       return { ok: false, reason: "body_json mismatch", actual, expected };
+    }
+    if (expected.body) {
+      const expectedBytes = decodeFixtureBody(expected.body);
+      if (!expectedBytes.equals(actual.body)) {
+        return { ok: false, reason: "body mismatch", actual, expected };
+      }
     }
     const expectedLogs = fixture.expect?.logs ?? [];
     const expectedMetrics = fixture.expect?.metrics ?? [];

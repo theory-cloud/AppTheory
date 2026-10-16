@@ -737,12 +737,14 @@ class App:
                     fallback_request_id,
                 )
             if allowed:
-                return self._http_error_response(
-                    "app.method_not_allowed",
-                    "method not allowed",
-                    headers={"allow": [self._router.format_allow_header(allowed)]},
+                return self._canonicalize_secure_error_response(
+                    self._http_error_response(
+                        "app.method_not_allowed",
+                        "method not allowed",
+                        headers={"allow": [self._router.format_allow_header(allowed)]},
+                    )
                 )
-            return self._http_error_response("app.not_found", "not found")
+            return self._canonicalize_secure_error_response(self._http_error_response("app.not_found", "not found"))
 
         request_ctx = Context(
             request=normalized,
@@ -1084,21 +1086,25 @@ class App:
                 )
             if allowed:
                 return finish(
-                    self._http_error_response_with_request_id_trace_id(
-                        "app.method_not_allowed",
-                        "method not allowed",
-                        headers={"allow": [self._router.format_allow_header(allowed)]},
-                        request_id=request_id,
-                        trace_id=trace_id,
+                    self._canonicalize_secure_error_response(
+                        self._http_error_response_with_request_id_trace_id(
+                            "app.method_not_allowed",
+                            "method not allowed",
+                            headers={"allow": [self._router.format_allow_header(allowed)]},
+                            request_id=request_id,
+                            trace_id=trace_id,
+                        )
                     ),
                     "app.method_not_allowed",
                 )
             return finish(
-                self._http_error_response_with_request_id_trace_id(
-                    "app.not_found",
-                    "not found",
-                    request_id=request_id,
-                    trace_id=trace_id,
+                self._canonicalize_secure_error_response(
+                    self._http_error_response_with_request_id_trace_id(
+                        "app.not_found",
+                        "not found",
+                        request_id=request_id,
+                        trace_id=trace_id,
+                    )
                 ),
                 "app.not_found",
             )

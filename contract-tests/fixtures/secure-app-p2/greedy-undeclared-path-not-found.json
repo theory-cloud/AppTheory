@@ -71,6 +71,10 @@
             ]
           },
           "cookies": [],
+          "body": {
+            "encoding": "utf8",
+            "value": "{\"error\":{\"code\":\"app.not_found\",\"message\":\"not found\",\"request_id\":\"req_test_123\",\"status_code\":404}}"
+          },
           "is_base64": false,
           "body_json": {
             "error": {

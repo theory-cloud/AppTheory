@@ -33,6 +33,10 @@
         ]
       },
       "cookies": [],
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"error\":{\"code\":\"app.not_found\",\"message\":\"not found\",\"status_code\":404}}"
+      },
       "body_json": {
         "error": {
           "code": "app.not_found",

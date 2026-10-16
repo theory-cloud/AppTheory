@@ -2733,6 +2733,7 @@ def _compare_mcp_step(
             return False, "body_json mismatch"
         if expected.get("body_json") != actual_json:
             return False, "body_json mismatch"
+    if "body_json" in expected and expected.get("body") is None:
         return True, ""
     expected_body = (
         decode_fixture_body(expected.get("body"))
@@ -3092,6 +3093,7 @@ def _compare_oauth_step(
             return False, "body_json mismatch"
         if expected.get("body_json") != actual_json:
             return False, "body_json mismatch"
+    if "body_json" in expected and expected.get("body") is None:
         return True, ""
     expected_body = (
         decode_fixture_body(expected.get("body"))
@@ -3684,7 +3686,7 @@ def _secure_response_matches(expected: dict[str, Any], actual: Any) -> bool:
             return False
         if expected["body_json"] != actual_json:
             return False
-    else:
+    if expected.get("body") is not None or "body_json" not in expected:
         expected_body = decode_fixture_body(expected.get("body")) if expected.get("body") else b""
         if expected_body != bytes(actual.body):
             return False
@@ -4091,6 +4093,11 @@ def run_fixture(
             return False, "body_json mismatch", actual, expected, app
         if expected["body_json"] != actual_json:
             return False, "body_json mismatch", actual, expected, app
+
+        if expected.get("body") is not None:
+            expected_bytes = decode_fixture_body(expected.get("body"))
+            if expected_bytes != actual.body:
+                return False, "body mismatch", actual, expected, app
 
         if (fixture.get("expect", {}).get("logs") or []) != app.logs:
             return False, "logs mismatch", actual, expected, app
@@ -7044,6 +7051,11 @@ def run_fixture_compare(
             return False, "body_json mismatch", actual, expected, app
         if expected["body_json"] != actual_json:
             return False, "body_json mismatch", actual, expected, app
+
+        if expected.get("body") is not None:
+            expected_bytes = decode_fixture_body(expected.get("body"))
+            if expected_bytes != actual.body:
+                return False, "body mismatch", actual, expected, app
 
         if (fixture.get("expect", {}).get("logs") or []) != app.logs:
             return False, "logs mismatch", actual, expected, app

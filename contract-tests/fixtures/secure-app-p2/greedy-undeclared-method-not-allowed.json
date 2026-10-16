@@ -81,6 +81,10 @@
             ]
           },
           "cookies": [],
+          "body": {
+            "encoding": "utf8",
+            "value": "{\"error\":{\"code\":\"app.method_not_allowed\",\"message\":\"method not allowed\",\"request_id\":\"req_test_123\",\"status_code\":405}}"
+          },
           "is_base64": false,
           "body_json": {
             "error": {

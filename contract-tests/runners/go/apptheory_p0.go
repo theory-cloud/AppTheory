@@ -1065,7 +1065,9 @@ func compareFixtureResponseBody(expected FixtureResponse, actual apptheory.Respo
 		if !jsonEqual(expectedJSON, actualJSON) {
 			return fmt.Errorf("body_json mismatch")
 		}
-		return nil
+		if expected.Body == nil {
+			return nil
+		}
 	}
 
 	var expectedBodyBytes []byte

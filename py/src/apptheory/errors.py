@@ -370,7 +370,7 @@ def response_for_error_with_request_id_trace_id_and_format(
 
 def _serialize_http_error_body(error_format: str, error: dict[str, Any]) -> bytes:
     payload = error if normalize_http_error_format(error_format) == HTTP_ERROR_FORMAT_FLAT_LEGACY else {"error": error}
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 def _fallback_http_error_body(error_format: str) -> bytes:
