@@ -244,10 +244,12 @@ Protected-resource documents advertise the absolute concrete MCP resource, `auth
 kind's configured scopes, and `JWKSURI`. Routed authorization-server documents advertise the configured issuer,
 registration endpoint and JWKS URI plus public-origin authorize/token URLs derived from the route algebra.
 The routed authorization-server document also advertises `authorization_response_iss_parameter_supported: true`
-(RFC 8414 / RFC 9207), because the front channel always sends the route issuer as `iss` on the client callback, on
-success and on error redirects alike. That member is deliberately not configurable and not inherited anywhere else:
-the root discovery document, whose fixed endpoints belong to the upstream authorization server, and
-`oauth.NewAuthorizationServerMetadata` both leave it absent, and an absent member means false.
+(RFC 8414 / RFC 9207) whenever the facade owns the front channel, because only then does it send the route issuer as
+`iss` on the client callback, on success and on error redirects alike. The member follows front-channel ownership and
+is not a separate option: it is not configurable and is not inherited anywhere else. An application-owned
+`AuthorizeHandler`/`TokenHandler` pair (`Provider` unset), the root discovery document, whose fixed endpoints belong to
+the upstream authorization server, and `oauth.NewAuthorizationServerMetadata` all leave it absent, and an absent member
+means false.
 Every protected-resource, routed canonical/suffix, and opt-in root metadata response sets `Cache-Control: no-store`.
 It also sets `Vary` over every header consulted by request-origin reconstruction: `Host`, `X-Forwarded-Host`,
 `X-AppTheory-Original-Host`, `X-FaceTheory-Original-Host`, `Forwarded`, `CloudFront-Forwarded-Proto`, and
