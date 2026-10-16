@@ -74,6 +74,11 @@ func TestNewAuthorizationServerMetadataOmitsIssParameterSupported(t *testing.T) 
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(b, &decoded))
 	require.Equal(t, true, decoded["authorization_response_iss_parameter_supported"])
+	// The field is a typed bool, so the emitted value is always the JSON boolean
+	// `true` while present: unlike the TypeScript and Python ports, which accept
+	// an untyped document and so need an identity check against `true`, no
+	// non-boolean state can reach the encoder here.
+	require.Contains(t, string(b), `"authorization_response_iss_parameter_supported":true`)
 
 	// A document without the member decodes to the zero value, so absent and
 	// false are the same document.

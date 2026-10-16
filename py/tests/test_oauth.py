@@ -155,6 +155,26 @@ class OAuthRuntimeTests(unittest.TestCase):
             True,
         )
 
+        # A truthy non-boolean must never leak into the document: the member is
+        # emitted only for the boolean ``True``, so this is an identity rule and
+        # not a truthiness rule. Note the string "false" is truthy, and
+        # ``1 == True`` but ``1 is not True``.
+        for value in ("true", "false", 1):
+            with self.subTest(value=value):
+                non_boolean = AuthorizationServerMetadata(
+                    issuer="https://auth.example.com",
+                    authorization_response_iss_parameter_supported=value,
+                )
+                self.assertEqual(
+                    non_boolean.to_json(),
+                    {"issuer": "https://auth.example.com"},
+                    f"non-boolean {value!r} must be omitted",
+                )
+                self.assertNotIn(
+                    "authorization_response_iss_parameter_supported",
+                    authorization_server_metadata_handler(non_boolean)(_ctx()).body.decode(),
+                )
+
     def test_authorization_server_metadata_endpoint_options(self) -> None:
         default = new_authorization_server_metadata("https://auth.example.com/base/path")
         self.assertNotIn("revocation_endpoint", default.to_json())

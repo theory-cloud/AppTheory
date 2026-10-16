@@ -35,7 +35,9 @@ export interface AuthorizationServerMetadata {
      * RFC 9207 `iss` authorization-response advertisement (RFC 8414
      * `authorization_response_iss_parameter_supported`). Optional and absent by
      * default, so an unset member keeps the document byte-identical and means
-     * false; only a surface that provably sends `iss` sets it.
+     * false; only a surface that provably sends `iss` sets it. The handler emits
+     * the member only while the value is the boolean `true`: an explicit `false`,
+     * an absent member, and any non-boolean value all leave it out.
      */
     authorization_response_iss_parameter_supported?: boolean;
 }

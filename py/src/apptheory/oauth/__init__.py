@@ -74,7 +74,9 @@ class AuthorizationServerMetadata:
     # RFC 9207 `iss` authorization-response advertisement (RFC 8414
     # `authorization_response_iss_parameter_supported`). Optional and false by
     # default, so an unset member keeps the document byte-identical and means
-    # false; only a surface that provably sends `iss` sets it.
+    # false; only a surface that provably sends `iss` sets it. `to_json` emits
+    # the member only while the value is the boolean ``True``: ``False``, the
+    # default, and any non-boolean value all leave it out.
     authorization_response_iss_parameter_supported: bool = False
 
     def to_json(self) -> dict[str, Any]:
@@ -102,7 +104,11 @@ class AuthorizationServerMetadata:
             value = getattr(self, key)
             if value:
                 out[key] = list(value)
-        if self.authorization_response_iss_parameter_supported:
+        # The member is emitted only for the boolean ``True``; a truthy
+        # non-boolean (the string ``"true"``, the integer ``1``) must never
+        # reach the document, so this is an identity check, not a truthiness
+        # check.
+        if self.authorization_response_iss_parameter_supported is True:
             out["authorization_response_iss_parameter_supported"] = True
         return out
 

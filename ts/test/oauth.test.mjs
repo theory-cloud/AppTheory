@@ -371,7 +371,7 @@ test("OAuth authorization server metadata emits RFC 9207 iss parameter support o
     );
 
   // An explicit false is omitted, matching Go's omitempty and Python's
-  // truthiness rule, so all three runtimes emit the same document.
+  // identity rule, so all three runtimes emit the same document.
   assert.equal(
     await bodyOf({
       issuer: "https://auth.example.com",
@@ -388,6 +388,20 @@ test("OAuth authorization server metadata emits RFC 9207 iss parameter support o
     }),
     `{"issuer":"https://auth.example.com","authorization_response_iss_parameter_supported":true}`,
   );
+
+  // A truthy non-boolean must never leak into the document: the member is
+  // emitted only for the boolean `true`, so this is an identity rule and not a
+  // truthiness rule. Note the string "false" is truthy.
+  for (const value of ["true", "false", 1]) {
+    assert.equal(
+      await bodyOf({
+        issuer: "https://auth.example.com",
+        authorization_response_iss_parameter_supported: value,
+      }),
+      `{"issuer":"https://auth.example.com"}`,
+      `non-boolean ${JSON.stringify(value)} must be omitted`,
+    );
+  }
 });
 
 test("OAuth DCR policy and PKCE verifier are pinned", () => {

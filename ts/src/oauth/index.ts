@@ -44,7 +44,9 @@ export interface AuthorizationServerMetadata {
    * RFC 9207 `iss` authorization-response advertisement (RFC 8414
    * `authorization_response_iss_parameter_supported`). Optional and absent by
    * default, so an unset member keeps the document byte-identical and means
-   * false; only a surface that provably sends `iss` sets it.
+   * false; only a surface that provably sends `iss` sets it. The handler emits
+   * the member only while the value is the boolean `true`: an explicit `false`,
+   * an absent member, and any non-boolean value all leave it out.
    */
   authorization_response_iss_parameter_supported?: boolean;
 }
@@ -250,19 +252,22 @@ export function protectedResourceMetadataHandler(
 export function authorizationServerMetadataHandler(
   metadata: AuthorizationServerMetadata,
 ): Handler {
-  return () => metadataJSON(200, withoutFalseIssParameterSupport(metadata));
+  return () => metadataJSON(200, normalizeIssParameterSupport(metadata));
 }
 
 /**
- * Applies the RFC 8414 "absent means false" rule to the RFC 9207 member: an
- * explicit `false` is dropped so Go (omitempty), TypeScript, and Python emit
- * the same document for the same input, and any other value passes through
- * unchanged.
+ * Applies the RFC 8414 "absent means false" rule to the RFC 9207 member: the
+ * member is emitted only while it is the boolean `true`, so Go (a typed bool
+ * with `omitempty`), TypeScript, and Python emit the same document for the same
+ * input. An explicit `false`, an absent member, and any non-boolean value (a
+ * string such as `"true"`, a number) all drop the member, so a value that is
+ * not the boolean `true` never reaches the document.
  */
-function withoutFalseIssParameterSupport(
+function normalizeIssParameterSupport(
   metadata: AuthorizationServerMetadata,
 ): AuthorizationServerMetadata {
-  if (metadata.authorization_response_iss_parameter_supported !== false) {
+  const value = metadata.authorization_response_iss_parameter_supported;
+  if (value === undefined || value === true) {
     return metadata;
   }
   const copy: AuthorizationServerMetadata = { ...metadata };

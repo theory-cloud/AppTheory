@@ -30,7 +30,9 @@ type AuthorizationServerMetadata struct {
 	// authorization responses. It is opt-in and false by default: omitempty
 	// keeps every document that does not set it byte-identical to its pre-RFC
 	// 9207 shape (an absent member means false, RFC 8414 section 2), so only a
-	// surface that provably sends `iss` sets it.
+	// surface that provably sends `iss` sets it. The field is a typed bool, so
+	// the wire value is always the JSON boolean `true` while present: no
+	// non-boolean state can reach the document.
 	AuthorizationResponseIssParameterSupported bool `json:"authorization_response_iss_parameter_supported,omitempty"`
 }
 

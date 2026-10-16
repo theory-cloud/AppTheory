@@ -75,16 +75,19 @@ export function protectedResourceMetadataHandler(metadata) {
     return () => metadataJSON(200, metadata);
 }
 export function authorizationServerMetadataHandler(metadata) {
-    return () => metadataJSON(200, withoutFalseIssParameterSupport(metadata));
+    return () => metadataJSON(200, normalizeIssParameterSupport(metadata));
 }
 /**
- * Applies the RFC 8414 "absent means false" rule to the RFC 9207 member: an
- * explicit `false` is dropped so Go (omitempty), TypeScript, and Python emit
- * the same document for the same input, and any other value passes through
- * unchanged.
+ * Applies the RFC 8414 "absent means false" rule to the RFC 9207 member: the
+ * member is emitted only while it is the boolean `true`, so Go (a typed bool
+ * with `omitempty`), TypeScript, and Python emit the same document for the same
+ * input. An explicit `false`, an absent member, and any non-boolean value (a
+ * string such as `"true"`, a number) all drop the member, so a value that is
+ * not the boolean `true` never reaches the document.
  */
-function withoutFalseIssParameterSupport(metadata) {
-    if (metadata.authorization_response_iss_parameter_supported !== false) {
+function normalizeIssParameterSupport(metadata) {
+    const value = metadata.authorization_response_iss_parameter_supported;
+    if (value === undefined || value === true) {
         return metadata;
     }
     const copy = { ...metadata };
