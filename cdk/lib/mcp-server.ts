@@ -10,7 +10,11 @@ import * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
 
 import { AppTheoryMcpRouteAlgebra } from "./mcp-route-algebra";
+import { buildCorsPreflight } from "./cors";
+import type { AppTheoryHttpApiCorsOptions } from "./http-api";
 
+const CONSOLIDATED_ROOT_ROUTE_ID = "RouteAnyRoot";
+const CONSOLIDATED_PROXY_ROUTE_ID = "RouteAnyProxy";
 const DEFAULT_THROTTLING_RATE_LIMIT = 100;
 const DEFAULT_THROTTLING_BURST_LIMIT = 200;
 const DEFAULT_SESSION_TTL_MINUTES = 60;
@@ -19,6 +23,25 @@ const MCP_TRANSPORT_POSTURE_METADATA_KEY = "apptheory:mcp-transport-posture";
 const MCP_TRANSPORT_POSTURE_CONTRACT_ID = "m17.mcp-transport-posture/v1";
 const MCP_DENIAL_METRIC_NAME = "apptheory.mcp.auth_denied";
 const MCP_DENIAL_DIMENSIONS = ["outcome", "route_family"];
+
+/** Route-emission model for AppTheoryMcpServer. */
+export enum AppTheoryMcpRouteModel {
+  /**
+   * One API Gateway HTTP API v2 route per derived route key. This is the
+   * construct's historical inventory and stays byte-identical for deployed
+   * stacks, so a `routeModel: explicit` upgrade deploys in place. The default.
+   */
+  EXPLICIT = "explicit",
+  /**
+   * Two greedy routes, `ANY /` and `ANY /{proxy+}`, backed by one shared
+   * integration. The AppTheory runtime router performs method and path
+   * dispatch, path-parameter capture, and denial. Consolidation never changes
+   * gateway admission, so it is valid only when every gateway route is `NONE`:
+   * the `runtime-bearer` and `none-public` transport postures. `iam` and `jwt`
+   * are refused at synthesis time.
+   */
+  CONSOLIDATED = "consolidated",
+}
 
 /** Transport-route authorization posture for AppTheoryMcpServer. */
 export enum AppTheoryMcpTransportPosture {
@@ -237,6 +260,33 @@ export interface AppTheoryMcpServerProps {
    * @default true
    */
   readonly scopePermissionToRoute?: boolean;
+
+  /**
+   * Route-emission model.
+   *
+   * `explicit` (the default) wires the full derived route inventory as one HTTP
+   * API v2 route per route key and is byte-stable for deployed stacks.
+   * `consolidated` wires exactly two greedy routes, `ANY /` and `ANY /{proxy+}`,
+   * and is valid only for the `runtime-bearer` and `none-public` transport
+   * postures; `iam` and `jwt` are refused at synthesis.
+   *
+   * Consolidated mode is allowed on a construct-owned API, or on an attached
+   * API that has no routes at attach time. A consumer may add explicit, more
+   * specific routes with a stricter authorizer on the same API afterwards; a
+   * full method+path match beats the greedy routes by API Gateway precedence,
+   * and a wrong-method hit on such a path falls to the runtime's fail-closed
+   * 404/405.
+   * @default AppTheoryMcpRouteModel.EXPLICIT
+   */
+  readonly routeModel?: AppTheoryMcpRouteModel;
+
+  /**
+   * CORS preflight for a construct-owned API. Set to `true` for AppTheory
+   * defaults or supply an `AppTheoryHttpApiCorsOptions` object. Invalid in
+   * attach mode, where the owning API configures CORS.
+   * @default undefined
+   */
+  readonly cors?: boolean | AppTheoryHttpApiCorsOptions;
 
   /**
    * Existing HTTP API to attach to. Attach mode is the primary front-door
@@ -472,6 +522,11 @@ export class AppTheoryMcpServer extends Construct {
     validateFacadeAttachment(props.facade);
     validatePostureGuards(props, routeFamily, posture);
     validateDefenseInDepth(props, posture);
+    const routeModel = resolveRouteModel(props);
+    validateRouteModelPosture(routeModel, posture);
+    if (routeModel === AppTheoryMcpRouteModel.CONSOLIDATED && props.api !== undefined) {
+      assertConsolidatedAttachAllowed(props.api);
+    }
     const authorizationRoutesAttached = posture !== AppTheoryMcpTransportPosture.NONE_PUBLIC;
     const upstreamCallbackPath = resolveUpstreamCallbackPath(props);
 
@@ -500,6 +555,7 @@ export class AppTheoryMcpServer extends Construct {
       ownedStageName = stageOptions.stageName;
       const api = new apigwv2.HttpApi(this, "Api", {
         apiName: ownedOptions.apiName,
+        corsPreflight: buildCorsPreflight(props.cors),
         createDefaultStage: false,
       });
       (this as { ownedApi?: apigwv2.HttpApi }).ownedApi = api;
@@ -540,43 +596,58 @@ export class AppTheoryMcpServer extends Construct {
       },
     );
     const transportAuthorizer = resolveTransportAuthorizer(props, posture);
-    const runtimeOwnedAuth = new apigwv2.HttpNoneAuthorizer();
     let firstTransportRoute: apigwv2.HttpRoute | undefined;
-    for (const route of this.routeInventory.routes) {
-      for (const method of route.mcpMethods) {
-        const created = this.addRuntimeRoute(
-          route.mcpPattern,
-          toHttpMethod(method),
-          integration,
-          transportAuthorizer,
-        );
-        firstTransportRoute = firstTransportRoute ?? created;
+    if (routeModel === AppTheoryMcpRouteModel.CONSOLIDATED) {
+      firstTransportRoute = this.addConsolidatedRoute(
+        CONSOLIDATED_ROOT_ROUTE_ID,
+        "/",
+        integration,
+        transportAuthorizer,
+      );
+      this.addConsolidatedRoute(
+        CONSOLIDATED_PROXY_ROUTE_ID,
+        "/{proxy+}",
+        integration,
+        transportAuthorizer,
+      );
+    } else {
+      const runtimeOwnedAuth = new apigwv2.HttpNoneAuthorizer();
+      for (const route of this.routeInventory.routes) {
+        for (const method of route.mcpMethods) {
+          const created = this.addRuntimeRoute(
+            route.mcpPattern,
+            toHttpMethod(method),
+            integration,
+            transportAuthorizer,
+          );
+          firstTransportRoute = firstTransportRoute ?? created;
+        }
+        if (authorizationRoutesAttached) {
+          this.addRuntimeRoute(route.protectedResourcePattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
+          this.addRuntimeRoute(route.discoveryCanonicalPattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
+          this.addRuntimeRoute(route.discoverySuffixPattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
+          this.addRuntimeRoute(route.authorizePattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
+          this.addRuntimeRoute(route.tokenPattern, apigwv2.HttpMethod.POST, integration, runtimeOwnedAuth);
+          this.addRuntimeRoute(route.registerPattern, apigwv2.HttpMethod.POST, integration, runtimeOwnedAuth);
+        }
       }
+      // The upstream callback is stage-global, not per kind: wire it exactly once.
       if (authorizationRoutesAttached) {
-        this.addRuntimeRoute(route.protectedResourcePattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
-        this.addRuntimeRoute(route.discoveryCanonicalPattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
-        this.addRuntimeRoute(route.discoverySuffixPattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
-        this.addRuntimeRoute(route.authorizePattern, apigwv2.HttpMethod.GET, integration, runtimeOwnedAuth);
-        this.addRuntimeRoute(route.tokenPattern, apigwv2.HttpMethod.POST, integration, runtimeOwnedAuth);
-        this.addRuntimeRoute(route.registerPattern, apigwv2.HttpMethod.POST, integration, runtimeOwnedAuth);
+        this.addRuntimeRoute(
+          this.routeInventory.callbackPattern,
+          apigwv2.HttpMethod.GET,
+          integration,
+          runtimeOwnedAuth,
+        );
       }
-    }
-    // The upstream callback is stage-global, not per kind: wire it exactly once.
-    if (authorizationRoutesAttached) {
-      this.addRuntimeRoute(
-        this.routeInventory.callbackPattern,
-        apigwv2.HttpMethod.GET,
-        integration,
-        runtimeOwnedAuth,
-      );
-    }
-    if (this.routeInventory.rootAuthorizationServerAttached) {
-      this.addRuntimeRoute(
-        this.routeInventory.rootAuthorizationServerPattern,
-        apigwv2.HttpMethod.GET,
-        integration,
-        runtimeOwnedAuth,
-      );
+      if (this.routeInventory.rootAuthorizationServerAttached) {
+        this.addRuntimeRoute(
+          this.routeInventory.rootAuthorizationServerPattern,
+          apigwv2.HttpMethod.GET,
+          integration,
+          runtimeOwnedAuth,
+        );
+      }
     }
 
     const postureMarkerTarget = (this.ownedApi?.node.defaultChild
@@ -638,6 +709,20 @@ export class AppTheoryMcpServer extends Construct {
     return new apigwv2.HttpRoute(this, `Route${this.routeSequence++}`, {
       httpApi: this.api,
       routeKey: apigwv2.HttpRouteKey.with(path, method),
+      integration,
+      authorizer,
+    });
+  }
+
+  private addConsolidatedRoute(
+    id: string,
+    path: string,
+    integration: apigwv2Integrations.HttpLambdaIntegration,
+    authorizer: apigwv2.IHttpRouteAuthorizer,
+  ): apigwv2.HttpRoute {
+    return new apigwv2.HttpRoute(this, id, {
+      httpApi: this.api,
+      routeKey: apigwv2.HttpRouteKey.with(path, apigwv2.HttpMethod.ANY),
       integration,
       authorizer,
     });
@@ -879,6 +964,7 @@ function validateOwningMode(props: AppTheoryMcpServerProps): void {
   const invalid: string[] = [];
   if (props.ownedApi !== undefined) invalid.push("ownedApi");
   if (props.apiName !== undefined) invalid.push("apiName");
+  if (props.cors !== undefined) invalid.push("cors");
   if (props.domain !== undefined) invalid.push("domain");
   if (props.stage !== undefined) invalid.push("stage");
   if (invalid.length !== 0) {
@@ -1077,6 +1163,46 @@ function validateTransportPosture(posture: AppTheoryMcpTransportPosture): void {
       throw new Error(
         "AppTheoryMcpServer: transportPosture must be AppTheoryMcpTransportPosture.IAM, .JWT, .RUNTIME_BEARER, or .NONE_PUBLIC",
       );
+  }
+}
+
+function resolveRouteModel(props: AppTheoryMcpServerProps): AppTheoryMcpRouteModel {
+  const configured = props.routeModel;
+  if (configured === undefined) {
+    return AppTheoryMcpRouteModel.EXPLICIT;
+  }
+  if (
+    configured === AppTheoryMcpRouteModel.EXPLICIT
+    || configured === AppTheoryMcpRouteModel.CONSOLIDATED
+  ) {
+    return configured;
+  }
+  throw new Error(
+    "AppTheoryMcpServer: routeModel must be AppTheoryMcpRouteModel.EXPLICIT or .CONSOLIDATED",
+  );
+}
+
+function validateRouteModelPosture(
+  routeModel: AppTheoryMcpRouteModel,
+  posture: AppTheoryMcpTransportPosture,
+): void {
+  if (
+    routeModel === AppTheoryMcpRouteModel.CONSOLIDATED
+    && posture !== AppTheoryMcpTransportPosture.RUNTIME_BEARER
+    && posture !== AppTheoryMcpTransportPosture.NONE_PUBLIC
+  ) {
+    throw new Error(
+      `AppTheoryMcpServer: routeModel consolidated is only valid for transportPosture RUNTIME_BEARER or NONE_PUBLIC; transportPosture ${postureLabel(posture)} keeps the explicit route model because consolidation must never change gateway admission`,
+    );
+  }
+}
+
+function assertConsolidatedAttachAllowed(api: apigwv2.IHttpApi): void {
+  const existingRoutes = api.node.children.filter((child) => child instanceof apigwv2.HttpRoute);
+  if (existingRoutes.length > 0) {
+    throw new Error(
+      "AppTheoryMcpServer: routeModel consolidated may attach only to an API that has no routes at attach time; attach to a new or empty API, or use routeModel explicit",
+    );
   }
 }
 

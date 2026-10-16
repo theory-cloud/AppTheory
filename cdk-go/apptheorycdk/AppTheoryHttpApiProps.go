@@ -23,6 +23,22 @@ type AppTheoryHttpApiProps struct {
 	// Default: undefined.
 	//
 	Domain *AppTheoryHttpApiDomainOptions `field:"optional" json:"domain" yaml:"domain"`
+	// Explicit, semantically identified routes added alongside the construct's greedy `ANY /` and `ANY /{proxy+}` routes.
+	//
+	// Use this where a stricter per-path gateway posture (for example
+	// `AppTheoryHttpApiRouteAuthorizer.IAM`) must win over the greedy routes: a
+	// full method+path match outranks the greedy route by API Gateway precedence,
+	// and a wrong-method request on such a path is denied by the runtime with the
+	// fail-closed 404/405 envelope.
+	// Default: undefined.
+	//
+	Routes *[]*AppTheoryHttpApiRouteOptions `field:"optional" json:"routes" yaml:"routes"`
+	// Route-level throttling keyed by API Gateway route key (for example `"ANY /{proxy+}"`).
+	//
+	// Applied to the stage's route settings.
+	// Default: undefined.
+	//
+	RouteSettings *map[string]*AppTheoryHttpApiRouteThrottling `field:"optional" json:"routeSettings" yaml:"routeSettings"`
 	// Whether Lambda invoke permissions should be scoped to individual HTTP API v2 routes.
 	//
 	// When false, the construct grants one API-scoped invoke permission per Lambda instead of

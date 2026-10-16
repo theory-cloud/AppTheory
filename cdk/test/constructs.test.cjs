@@ -833,6 +833,113 @@ test("AppTheoryHttpApi can use API-scoped invoke permissions", () => {
   assert.equal(lambdaPermissionSourceArnResourceName(permission.sourceArn), "/*/*/*");
 });
 
+test("AppTheoryHttpApi adds semantically identified explicit routes, access-log format, and route settings", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryHttpApi(stack, "HttpApi", {
+    handler: fn,
+    apiName: "apptheory-test",
+    routes: [
+      {
+        path: "/v1/internal/knowledge-reconcile",
+        methods: ["POST"],
+        authorizer: apptheory.AppTheoryHttpApiRouteAuthorizer.IAM,
+      },
+      { path: "/v1/public/ping", methods: ["GET", "HEAD"] },
+    ],
+    stage: { accessLogging: true, accessLogFormat: "{\"requestId\":\"$context.requestId\"}" },
+    routeSettings: { "ANY /{proxy+}": { rateLimit: 25, burstLimit: 50 } },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const routes = resourcesOfType(template, "AWS::ApiGatewayV2::Route");
+  assert.equal(routes.length, 5, "two greedy routes plus three explicit routes");
+  const authorizations = new Map(
+    routes.map((route) => [route.Properties.RouteKey, route.Properties.AuthorizationType ?? "NONE"]),
+  );
+  assert.equal(authorizations.get("POST /v1/internal/knowledge-reconcile"), "AWS_IAM");
+  assert.equal(authorizations.get("GET /v1/public/ping"), "NONE");
+  assert.equal(authorizations.get("HEAD /v1/public/ping"), "NONE");
+  assert.equal(authorizations.get("ANY /"), "NONE");
+  assert.equal(authorizations.get("ANY /{proxy+}"), "NONE");
+
+  const routeIds = Object.entries(template.Resources)
+    .filter(([, resource]) => resource.Type === "AWS::ApiGatewayV2::Route")
+    .map(([id]) => id)
+    .sort();
+  assert.ok(
+    routeIds.some((id) => id.startsWith("HttpApiRoutePOSTV1InternalKnowledgeReconcile")),
+    "an explicit route id must be semantic (method + path)",
+  );
+  assert.ok(
+    !routeIds.some((id) => /Route\d/.test(id)),
+    "explicit route ids must never be positional counters",
+  );
+
+  const [cfnStage] = resourcesOfType(template, "AWS::ApiGatewayV2::Stage");
+  assert.deepEqual(cfnStage.Properties.RouteSettings, {
+    "ANY /{proxy+}": { ThrottlingRateLimit: 25, ThrottlingBurstLimit: 50 },
+  });
+  assert.equal(cfnStage.Properties.AccessLogSettings.Format, "{\"requestId\":\"$context.requestId\"}");
+  assert.deepEqual(
+    resourcesOfType(template, "AWS::ApiGatewayV2::Authorizer"),
+    [],
+    "IAM route authorization must not synthesize an authorizer resource",
+  );
+});
+
+test("AppTheoryHttpApi refuses invalid explicit-route and stage configuration", () => {
+  const fnFor = (stack) => new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const cases = [
+    {
+      name: "accessLogFormat without accessLogging",
+      props: { stage: { accessLogFormat: "{}" } },
+      error: /stage\.accessLogFormat requires stage\.accessLogging/,
+    },
+    {
+      name: "explicit route without methods",
+      props: { routes: [{ path: "/v1/ping", methods: [] }] },
+      error: /routes entry for "\/v1\/ping" requires at least one method/,
+    },
+    {
+      name: "explicit route with a bad method",
+      props: { routes: [{ path: "/v1/ping", methods: ["FROB"] }] },
+      error: /routes method must be one of/,
+    },
+    {
+      name: "explicit route without a leading slash",
+      props: { routes: [{ path: "v1/ping", methods: ["GET"] }] },
+      error: /routes path must be an absolute path/,
+    },
+    {
+      name: "route settings without throttling",
+      props: { routeSettings: { "ANY /{proxy+}": {} } },
+      error: /routeSettings\["ANY \/\{proxy\+}"\] requires rateLimit or burstLimit/,
+    },
+  ];
+  for (const [index, item] of cases.entries()) {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, `HttpApiInvalid${index}`);
+    assert.throws(
+      () => new apptheory.AppTheoryHttpApi(stack, "HttpApi", { handler: fnFor(stack), ...item.props }),
+      item.error,
+      item.name,
+    );
+  }
+});
+
 test("AppTheoryHttpApi exposes custom domain, CORS, and access logs", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");

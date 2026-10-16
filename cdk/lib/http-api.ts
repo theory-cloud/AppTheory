@@ -1,5 +1,6 @@
 import { Duration } from "aws-cdk-lib";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
+import * as apigwv2Authorizers from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
@@ -8,6 +9,7 @@ import type * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
 
 import { AppTheoryApiDomain } from "./api-domain";
+import { buildCorsPreflight } from "./cors";
 import type { AppTheoryRegionalWafOptions } from "./regional-waf";
 
 export interface AppTheoryHttpApiCorsOptions {
@@ -129,6 +131,13 @@ export interface AppTheoryHttpApiStageOptions {
   readonly accessLogRetention?: logs.RetentionDays;
 
   /**
+   * API Gateway v2 access-log format. Defaults to the AppTheory JSON format.
+   * Valid only when `accessLogging` is enabled.
+   * @default the AppTheory JSON access-log format
+   */
+  readonly accessLogFormat?: string;
+
+  /**
    * Throttling rate limit.
    * @default undefined
    */
@@ -147,6 +156,44 @@ export interface AppTheoryHttpApiStageOptions {
  * AppTheoryRegionalWafOptions for WAF-protected REST API stages.
  */
 export interface AppTheoryHttpApiWafOptions extends AppTheoryRegionalWafOptions {}
+
+/** Gateway authorization posture for an explicit AppTheoryHttpApi route. */
+export enum AppTheoryHttpApiRouteAuthorizer {
+  /** AWS IAM (SigV4) on the route. */
+  IAM = "iam",
+  /** No gateway authorizer; the runtime owns admission. */
+  NONE = "none",
+}
+
+/**
+ * One explicit, semantically identified route added alongside the construct's
+ * greedy `ANY /` and `ANY /{proxy+}` routes.
+ *
+ * API Gateway precedence gives a full method+path match priority over the
+ * greedy routes, so a more specific route with a stricter authorizer (for
+ * example `AWS_IAM`) wins for its own path. A wrong-method request on such a
+ * path falls through to the runtime's fail-closed 404/405 when the runtime does
+ * not declare it.
+ */
+export interface AppTheoryHttpApiRouteOptions {
+  /** Absolute route path. Segments are literals, `{parameter}`, or `{proxy+}` segments. */
+  readonly path: string;
+  /** HTTP methods wired for the route, for example `["GET"]` or `["ANY"]`. */
+  readonly methods: string[];
+  /**
+   * Gateway authorization posture for the route.
+   * @default AppTheoryHttpApiRouteAuthorizer.NONE
+   */
+  readonly authorizer?: AppTheoryHttpApiRouteAuthorizer;
+}
+
+/** Route-level throttling applied to one API Gateway route key. */
+export interface AppTheoryHttpApiRouteThrottling {
+  /** Requests per second for the route key. @default the stage default */
+  readonly rateLimit?: number;
+  /** Burst limit for the route key. @default the stage default */
+  readonly burstLimit?: number;
+}
 
 export interface AppTheoryHttpApiProps {
   readonly handler: lambda.IFunction;
@@ -171,6 +218,26 @@ export interface AppTheoryHttpApiProps {
    * @default undefined
    */
   readonly cors?: boolean | AppTheoryHttpApiCorsOptions;
+
+  /**
+   * Explicit, semantically identified routes added alongside the construct's
+   * greedy `ANY /` and `ANY /{proxy+}` routes.
+   *
+   * Use this where a stricter per-path gateway posture (for example
+   * `AppTheoryHttpApiRouteAuthorizer.IAM`) must win over the greedy routes: a
+   * full method+path match outranks the greedy route by API Gateway precedence,
+   * and a wrong-method request on such a path is denied by the runtime with the
+   * fail-closed 404/405 envelope.
+   * @default undefined
+   */
+  readonly routes?: AppTheoryHttpApiRouteOptions[];
+
+  /**
+   * Route-level throttling keyed by API Gateway route key (for example
+   * `"ANY /{proxy+}"`). Applied to the stage's route settings.
+   * @default undefined
+   */
+  readonly routeSettings?: { [routeKey: string]: AppTheoryHttpApiRouteThrottling };
 
   /**
    * Custom domain configuration.
@@ -221,6 +288,9 @@ export class AppTheoryHttpApi extends Construct {
 
     const stageOpts = props.stage ?? {};
     const stageName = stageOpts.stageName ?? "$default";
+    if (stageOpts.accessLogFormat !== undefined && !stageOpts.accessLogging) {
+      throw new Error("AppTheoryHttpApi: stage.accessLogFormat requires stage.accessLogging");
+    }
     const needsExplicitStage = stageName !== "$default"
       || stageOpts.accessLogging
       || stageOpts.throttlingRateLimit !== undefined
@@ -270,8 +340,58 @@ export class AppTheoryHttpApi extends Construct {
       }),
     });
 
+    const explicitRoutes = props.routes ?? [];
+    if (explicitRoutes.length > 0) {
+      this.addExplicitRoutes(explicitRoutes, props.handler, props.scopePermissionToRoute ?? true);
+    }
+    if (props.routeSettings !== undefined) {
+      configureRouteSettings(stage, props.routeSettings);
+    }
+
     if (props.domain) {
       this.configureDomain(props.domain);
+    }
+  }
+
+  private addExplicitRoutes(
+    routes: AppTheoryHttpApiRouteOptions[],
+    routeHandler: lambda.IFunction,
+    scopePermissionToRoute: boolean,
+  ): void {
+    const integration = new apigwv2Integrations.HttpLambdaIntegration("Explicit", routeHandler, {
+      payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_2_0,
+      scopePermissionToRoute,
+    });
+    const seen = new Set<string>();
+    for (const route of routes) {
+      const routePath = normalizeExplicitRoutePath(route.path);
+      const configuredMethods = route.methods ?? [];
+      if (configuredMethods.length === 0) {
+        throw new Error(
+          `AppTheoryHttpApi: routes entry for ${JSON.stringify(routePath)} requires at least one method`,
+        );
+      }
+      for (const rawMethod of configuredMethods) {
+        const method = String(rawMethod).trim().toUpperCase();
+        if (!EXPLICIT_ROUTE_METHODS.has(method)) {
+          throw new Error(
+            `AppTheoryHttpApi: routes method must be one of ${[...EXPLICIT_ROUTE_METHODS].join(", ")} (got ${JSON.stringify(rawMethod)})`,
+          );
+        }
+        const routeId = explicitRouteConstructId(method, routePath);
+        if (seen.has(routeId)) {
+          throw new Error(
+            `AppTheoryHttpApi: routes contains the duplicate route ${method} ${routePath}`,
+          );
+        }
+        seen.add(routeId);
+        new apigwv2.HttpRoute(this, routeId, {
+          httpApi: this.api,
+          routeKey: apigwv2.HttpRouteKey.with(routePath, method as apigwv2.HttpMethod),
+          integration,
+          authorizer: explicitRouteAuthorizer(route.authorizer),
+        });
+      }
     }
   }
 
@@ -290,17 +410,7 @@ export class AppTheoryHttpApi extends Construct {
     const cfnStage = stage.node.defaultChild as apigwv2.CfnStage;
     cfnStage.accessLogSettings = {
       destinationArn: logGroup.logGroupArn,
-      format: JSON.stringify({
-        requestId: "$context.requestId",
-        ip: "$context.identity.sourceIp",
-        requestTime: "$context.requestTime",
-        httpMethod: "$context.httpMethod",
-        routeKey: "$context.routeKey",
-        status: "$context.status",
-        protocol: "$context.protocol",
-        responseLength: "$context.responseLength",
-        integrationLatency: "$context.integrationLatency",
-      }),
+      format: stageOpts.accessLogFormat ?? defaultAccessLogFormat(),
     };
   }
 
@@ -328,19 +438,94 @@ export class AppTheoryHttpApi extends Construct {
   }
 }
 
-function buildCorsPreflight(input?: boolean | AppTheoryHttpApiCorsOptions): apigwv2.CorsPreflightOptions | undefined {
-  if (!input) {
-    return undefined;
+const EXPLICIT_ROUTE_METHODS = new Set([
+  "ANY",
+  "DELETE",
+  "GET",
+  "HEAD",
+  "OPTIONS",
+  "PATCH",
+  "POST",
+  "PUT",
+]);
+
+function normalizeExplicitRoutePath(value: string): string {
+  const routePath = String(value ?? "").trim();
+  if (routePath === "" || !routePath.startsWith("/") || (routePath.length > 1 && routePath.endsWith("/"))) {
+    throw new Error(
+      `AppTheoryHttpApi: routes path must be an absolute path with no trailing slash (got ${JSON.stringify(value)})`,
+    );
   }
-  const options = input === true ? {} : input;
-  return {
-    allowOrigins: options.allowOrigins ?? ["*"],
-    allowMethods: (options.allowMethods ?? ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
-      .map((method) => String(method).trim().toUpperCase())
-      .filter((method) => method) as apigwv2.CorsHttpMethod[],
-    allowHeaders: options.allowHeaders ?? ["content-type", "authorization", "x-request-id", "x-tenant-id"],
-    exposeHeaders: options.exposeHeaders ?? ["x-request-id"],
-    allowCredentials: options.allowCredentials ?? false,
-    maxAge: options.maxAge ?? Duration.minutes(10),
-  };
+  for (const segment of routePath.slice(1).split("/")) {
+    if (segment === "" || segment === "." || segment === "..") {
+      throw new Error(
+        `AppTheoryHttpApi: routes path must not contain empty or dot segments (got ${JSON.stringify(value)})`,
+      );
+    }
+  }
+  return routePath;
+}
+
+function explicitRouteConstructId(method: string, routePath: string): string {
+  return `Route${semanticRouteToken(method)}${semanticRouteToken(routePath)}`;
+}
+
+function semanticRouteToken(value: string): string {
+  const parts = String(value).split(/[^A-Za-z0-9]+/).filter((part) => part !== "");
+  if (parts.length === 0) {
+    return "Root";
+  }
+  return parts.map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join("");
+}
+
+function explicitRouteAuthorizer(posture?: AppTheoryHttpApiRouteAuthorizer): apigwv2.IHttpRouteAuthorizer {
+  return posture === AppTheoryHttpApiRouteAuthorizer.IAM
+    ? new apigwv2Authorizers.HttpIamAuthorizer()
+    : new apigwv2.HttpNoneAuthorizer();
+}
+
+function configureRouteSettings(
+  stage: apigwv2.IStage,
+  settings: { [routeKey: string]: AppTheoryHttpApiRouteThrottling },
+): void {
+  const cfnStage = stage.node.defaultChild as apigwv2.CfnStage;
+  const mapped: { [routeKey: string]: { [property: string]: number } } = {};
+  for (const [routeKey, value] of Object.entries(settings)) {
+    const rateLimit = value.rateLimit;
+    const burstLimit = value.burstLimit;
+    if (rateLimit === undefined && burstLimit === undefined) {
+      throw new Error(
+        `AppTheoryHttpApi: routeSettings[${JSON.stringify(routeKey)}] requires rateLimit or burstLimit`,
+      );
+    }
+    if (rateLimit !== undefined && (!Number.isFinite(rateLimit) || rateLimit <= 0)) {
+      throw new Error(
+        `AppTheoryHttpApi: routeSettings[${JSON.stringify(routeKey)}].rateLimit must be a positive finite number`,
+      );
+    }
+    if (burstLimit !== undefined && (!Number.isFinite(burstLimit) || burstLimit <= 0)) {
+      throw new Error(
+        `AppTheoryHttpApi: routeSettings[${JSON.stringify(routeKey)}].burstLimit must be a positive finite number`,
+      );
+    }
+    const entry: { [property: string]: number } = {};
+    if (rateLimit !== undefined) entry["ThrottlingRateLimit"] = rateLimit;
+    if (burstLimit !== undefined) entry["ThrottlingBurstLimit"] = burstLimit;
+    mapped[routeKey] = entry;
+  }
+  cfnStage.routeSettings = mapped;
+}
+
+function defaultAccessLogFormat(): string {
+  return JSON.stringify({
+    requestId: "$context.requestId",
+    ip: "$context.identity.sourceIp",
+    requestTime: "$context.requestTime",
+    httpMethod: "$context.httpMethod",
+    routeKey: "$context.routeKey",
+    status: "$context.status",
+    protocol: "$context.protocol",
+    responseLength: "$context.responseLength",
+    integrationLatency: "$context.integrationLatency",
+  });
 }

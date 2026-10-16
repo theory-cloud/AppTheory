@@ -107,6 +107,12 @@ export interface AppTheoryHttpApiStageOptions {
      */
     readonly accessLogRetention?: logs.RetentionDays;
     /**
+     * API Gateway v2 access-log format. Defaults to the AppTheory JSON format.
+     * Valid only when `accessLogging` is enabled.
+     * @default the AppTheory JSON access-log format
+     */
+    readonly accessLogFormat?: string;
+    /**
      * Throttling rate limit.
      * @default undefined
      */
@@ -123,6 +129,41 @@ export interface AppTheoryHttpApiStageOptions {
  * AppTheoryRegionalWafOptions for WAF-protected REST API stages.
  */
 export interface AppTheoryHttpApiWafOptions extends AppTheoryRegionalWafOptions {
+}
+/** Gateway authorization posture for an explicit AppTheoryHttpApi route. */
+export declare enum AppTheoryHttpApiRouteAuthorizer {
+    /** AWS IAM (SigV4) on the route. */
+    IAM = "iam",
+    /** No gateway authorizer; the runtime owns admission. */
+    NONE = "none"
+}
+/**
+ * One explicit, semantically identified route added alongside the construct's
+ * greedy `ANY /` and `ANY /{proxy+}` routes.
+ *
+ * API Gateway precedence gives a full method+path match priority over the
+ * greedy routes, so a more specific route with a stricter authorizer (for
+ * example `AWS_IAM`) wins for its own path. A wrong-method request on such a
+ * path falls through to the runtime's fail-closed 404/405 when the runtime does
+ * not declare it.
+ */
+export interface AppTheoryHttpApiRouteOptions {
+    /** Absolute route path. Segments are literals, `{parameter}`, or `{proxy+}` segments. */
+    readonly path: string;
+    /** HTTP methods wired for the route, for example `["GET"]` or `["ANY"]`. */
+    readonly methods: string[];
+    /**
+     * Gateway authorization posture for the route.
+     * @default AppTheoryHttpApiRouteAuthorizer.NONE
+     */
+    readonly authorizer?: AppTheoryHttpApiRouteAuthorizer;
+}
+/** Route-level throttling applied to one API Gateway route key. */
+export interface AppTheoryHttpApiRouteThrottling {
+    /** Requests per second for the route key. @default the stage default */
+    readonly rateLimit?: number;
+    /** Burst limit for the route key. @default the stage default */
+    readonly burstLimit?: number;
 }
 export interface AppTheoryHttpApiProps {
     readonly handler: lambda.IFunction;
@@ -146,6 +187,26 @@ export interface AppTheoryHttpApiProps {
      * @default undefined
      */
     readonly cors?: boolean | AppTheoryHttpApiCorsOptions;
+    /**
+     * Explicit, semantically identified routes added alongside the construct's
+     * greedy `ANY /` and `ANY /{proxy+}` routes.
+     *
+     * Use this where a stricter per-path gateway posture (for example
+     * `AppTheoryHttpApiRouteAuthorizer.IAM`) must win over the greedy routes: a
+     * full method+path match outranks the greedy route by API Gateway precedence,
+     * and a wrong-method request on such a path is denied by the runtime with the
+     * fail-closed 404/405 envelope.
+     * @default undefined
+     */
+    readonly routes?: AppTheoryHttpApiRouteOptions[];
+    /**
+     * Route-level throttling keyed by API Gateway route key (for example
+     * `"ANY /{proxy+}"`). Applied to the stage's route settings.
+     * @default undefined
+     */
+    readonly routeSettings?: {
+        [routeKey: string]: AppTheoryHttpApiRouteThrottling;
+    };
     /**
      * Custom domain configuration.
      *
@@ -181,6 +242,7 @@ export declare class AppTheoryHttpApi extends Construct {
     readonly accessLogGroup?: logs.ILogGroup;
     readonly domain?: AppTheoryApiDomain;
     constructor(scope: Construct, id: string, props: AppTheoryHttpApiProps);
+    private addExplicitRoutes;
     private configureAccessLogging;
     private configureDomain;
 }

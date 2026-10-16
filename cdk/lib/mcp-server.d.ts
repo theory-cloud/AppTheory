@@ -6,6 +6,25 @@ import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
+import type { AppTheoryHttpApiCorsOptions } from "./http-api";
+/** Route-emission model for AppTheoryMcpServer. */
+export declare enum AppTheoryMcpRouteModel {
+    /**
+     * One API Gateway HTTP API v2 route per derived route key. This is the
+     * construct's historical inventory and stays byte-identical for deployed
+     * stacks, so a `routeModel: explicit` upgrade deploys in place. The default.
+     */
+    EXPLICIT = "explicit",
+    /**
+     * Two greedy routes, `ANY /` and `ANY /{proxy+}`, backed by one shared
+     * integration. The AppTheory runtime router performs method and path
+     * dispatch, path-parameter capture, and denial. Consolidation never changes
+     * gateway admission, so it is valid only when every gateway route is `NONE`:
+     * the `runtime-bearer` and `none-public` transport postures. `iam` and `jwt`
+     * are refused at synthesis time.
+     */
+    CONSOLIDATED = "consolidated"
+}
 /** Transport-route authorization posture for AppTheoryMcpServer. */
 export declare enum AppTheoryMcpTransportPosture {
     /** AWS IAM (SigV4) on the transport routes. The default for a server with no facade attachment. */
@@ -193,6 +212,31 @@ export interface AppTheoryMcpServerProps {
      * @default true
      */
     readonly scopePermissionToRoute?: boolean;
+    /**
+     * Route-emission model.
+     *
+     * `explicit` (the default) wires the full derived route inventory as one HTTP
+     * API v2 route per route key and is byte-stable for deployed stacks.
+     * `consolidated` wires exactly two greedy routes, `ANY /` and `ANY /{proxy+}`,
+     * and is valid only for the `runtime-bearer` and `none-public` transport
+     * postures; `iam` and `jwt` are refused at synthesis.
+     *
+     * Consolidated mode is allowed on a construct-owned API, or on an attached
+     * API that has no routes at attach time. A consumer may add explicit, more
+     * specific routes with a stricter authorizer on the same API afterwards; a
+     * full method+path match beats the greedy routes by API Gateway precedence,
+     * and a wrong-method hit on such a path falls to the runtime's fail-closed
+     * 404/405.
+     * @default AppTheoryMcpRouteModel.EXPLICIT
+     */
+    readonly routeModel?: AppTheoryMcpRouteModel;
+    /**
+     * CORS preflight for a construct-owned API. Set to `true` for AppTheory
+     * defaults or supply an `AppTheoryHttpApiCorsOptions` object. Invalid in
+     * attach mode, where the owning API configures CORS.
+     * @default undefined
+     */
+    readonly cors?: boolean | AppTheoryHttpApiCorsOptions;
     /**
      * Existing HTTP API to attach to. Attach mode is the primary front-door
      * topology and never creates an `AWS::ApiGatewayV2::Api` resource.
@@ -386,6 +430,7 @@ export declare class AppTheoryMcpServer extends Construct {
     readonly accessLogGroup?: logs.ILogGroup;
     constructor(scope: Construct, id: string, props: AppTheoryMcpServerProps);
     private addRuntimeRoute;
+    private addConsolidatedRoute;
     private addEnvironment;
     private setupCustomDomain;
 }

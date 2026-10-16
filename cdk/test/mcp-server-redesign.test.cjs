@@ -177,6 +177,7 @@ test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL author
       "apiName",
       "attachedApiStageName",
       "authorizationServerIssuer",
+      "cors",
       "denialSignal",
       "domain",
       "enableSessionTable",
@@ -188,6 +189,7 @@ test("AppTheoryMcpServer input surfaces exclude undeclared origin and URL author
       "ownedApi",
       "owningApiDefense",
       "routeFamily",
+      "routeModel",
       "runtimePosture",
       "scopePermissionToRoute",
       "sessionState",
@@ -1315,5 +1317,226 @@ test("AppTheoryMcpServer rejects invalid transport authorizer configuration", ()
       item.error,
       item.name,
     );
+  }
+});
+
+test("AppTheoryMcpServer consolidated mode emits two greedy NONE routes with semantic ids", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "ConsolidatedStack");
+  const server = new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack),
+    transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
+    runtimePosture: { requireBearerToken: true },
+    originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+    denialSignal: {},
+    sessionState: { enabled: false },
+    ownedApi: { stage: { throttlingEnabled: true } },
+    routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const routes = resourcesOfType(template, "AWS::ApiGatewayV2::Route");
+  assert.equal(routes.length, 2, "consolidated mode must emit exactly two routes");
+  assert.deepEqual(routeKeys(template), ["ANY /", "ANY /{proxy+}"].sort());
+  for (const route of routes) {
+    assert.equal(route.Properties.AuthorizationType ?? "NONE", "NONE", "every consolidated route must be NONE");
+  }
+  const routeIds = Object.entries(template.Resources)
+    .filter(([, resource]) => resource.Type === "AWS::ApiGatewayV2::Route")
+    .map(([id]) => id)
+    .sort();
+  assert.ok(
+    routeIds.some((id) => id.startsWith("McpServerRouteAnyRoot")),
+    "the root route construct id must be semantic (method + prefix), not positional",
+  );
+  assert.ok(
+    routeIds.some((id) => id.startsWith("McpServerRouteAnyProxy")),
+    "the proxy route construct id must be semantic (method + prefix), not positional",
+  );
+  assert.ok(
+    !routeIds.some((id) => /Route\d/.test(id)),
+    "consolidated route ids must never be positional counters",
+  );
+  assert.equal(server.routeInventory.routes.length, fixture.routes.length, "the runtime inventory is unchanged");
+});
+
+test("AppTheoryMcpServer consolidated ids are stable across route-family changes", () => {
+  const idsFor = (patterns) => {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "ConsolidatedStableStack");
+    new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+      handler: handler(stack),
+      routeFamily: { patterns, rootAuthorizationServerDiscovery: patterns.length === 1 },
+      transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
+      runtimePosture: { requireBearerToken: true },
+      originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+      denialSignal: {},
+      sessionState: { enabled: false },
+      ownedApi: { stage: { throttlingEnabled: true } },
+      routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
+    });
+    return Object.entries(assertions.Template.fromStack(stack).toJSON().Resources)
+      .filter(([, resource]) => resource.Type === "AWS::ApiGatewayV2::Route")
+      .map(([id]) => id.replace(/[0-9A-F]{8}$/, ""))
+      .sort();
+  };
+
+  const single = idsFor(["/mcp"]);
+  const quartet = idsFor([
+    "/{client_namespace}/mcp",
+    "/{client_namespace}/partners/{partner_id}/mcp",
+    "/{client_namespace}/agents/{agent_id}/mcp",
+    "/{client_namespace}/partners/{partner_id}/agents/{agent_id}/mcp",
+  ]);
+  assert.deepEqual(single, quartet, "adding or reordering the route family must not rename consolidated routes");
+});
+
+test("AppTheoryMcpServer consolidated mode grants one API-scoped permission when unscoped", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "ConsolidatedScopedStack");
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack),
+    transportPosture: apptheory.AppTheoryMcpTransportPosture.NONE_PUBLIC,
+    originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
+    sessionState: { enabled: false },
+    ownedApi: { stage: { throttlingEnabled: true } },
+    routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
+    scopePermissionToRoute: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(resourcesOfType(template, "AWS::ApiGatewayV2::Route").length, 2);
+  assert.equal(lambdaPermissionEntries(template).length, 1, "unscoped permission collapses to one");
+  assert.equal(apiScopedLambdaPermissions(template).length, 1);
+});
+
+test("AppTheoryMcpServer consolidated attaches to an empty API and keeps the runtime inventory", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "ConsolidatedAttachStack");
+  const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
+    httpApiId: "api-consolidated",
+    apiEndpoint: "https://api.example.com",
+  });
+  const server = new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack),
+    api: importedApi,
+    transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
+    runtimePosture: { requireBearerToken: true },
+    originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+    denialSignal: {},
+    owningApiDefense: { accessLogging: true, throttling: { rateLimit: 50, burstLimit: 100 } },
+    sessionState: { enabled: false },
+    routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.deepEqual(routeKeys(template), ["ANY /", "ANY /{proxy+}"].sort());
+  assert.equal(resourcesOfType(template, "AWS::ApiGatewayV2::Api").length, 0, "attach mode owns no API");
+  assert.equal(server.routeInventory.routes.length, fixture.routes.length);
+  assert.equal(server.routeInventory.callbackPattern, fixture.callback_pattern);
+});
+
+test("AppTheoryMcpServer refuses consolidated with iam or jwt and on an API that already has routes", () => {
+  const refused = [
+    {
+      name: "iam",
+      props: { transportPosture: apptheory.AppTheoryMcpTransportPosture.IAM },
+      error: /routeModel consolidated is only valid for transportPosture RUNTIME_BEARER or NONE_PUBLIC/,
+    },
+    {
+      name: "jwt",
+      props: {
+        transportPosture: apptheory.AppTheoryMcpTransportPosture.JWT,
+        transportAuthorizer: { issuer: "https://accounts.example.com", audience: ["https://mcp.example.com"] },
+      },
+      error: /routeModel consolidated is only valid for transportPosture RUNTIME_BEARER or NONE_PUBLIC/,
+    },
+  ];
+  for (const [index, item] of refused.entries()) {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, `ConsolidatedRefused${index}`);
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        sessionState: { enabled: false },
+        routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
+        ...item.props,
+      }),
+      item.error,
+      item.name,
+    );
+  }
+
+  {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "ConsolidatedAttachRefused");
+    const httpApi = new apptheory.AppTheoryHttpApi(stack, "HttpApi", { handler: handler(stack) });
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack, "Fn2"),
+        api: httpApi.api,
+        transportPosture: apptheory.AppTheoryMcpTransportPosture.RUNTIME_BEARER,
+        runtimePosture: { requireBearerToken: true },
+        originReachability: apptheory.AppTheoryMcpOriginReachability.LOCKED,
+        denialSignal: {},
+        owningApiDefense: { accessLogging: true, throttling: { rateLimit: 50, burstLimit: 100 } },
+        sessionState: { enabled: false },
+        routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
+      }),
+      /routeModel consolidated may attach only to an API that has no routes at attach time/,
+    );
+  }
+});
+
+test("AppTheoryMcpServer applies CORS preflight to a construct-owned API and refuses it in attach mode", () => {
+  {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "ConsolidatedCorsStack");
+    new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+      handler: handler(stack),
+      cors: { allowOrigins: ["https://app.example.com"], allowMethods: ["get", "post"] },
+      sessionState: { enabled: false },
+    });
+    const [api] = resourcesOfType(assertions.Template.fromStack(stack).toJSON(), "AWS::ApiGatewayV2::Api");
+    assert.deepEqual(api.Properties.CorsConfiguration.AllowOrigins, ["https://app.example.com"]);
+    assert.deepEqual(api.Properties.CorsConfiguration.AllowMethods, ["GET", "POST"]);
+  }
+
+  {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "ConsolidatedCorsAttachStack");
+    const importedApi = apigwv2.HttpApi.fromHttpApiAttributes(stack, "Frontdoor", {
+      httpApiId: "api-cors-attach",
+      apiEndpoint: "https://api.example.com",
+    });
+    assert.throws(
+      () => new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+        handler: handler(stack),
+        api: importedApi,
+        cors: true,
+        sessionState: { enabled: false },
+      }),
+      /attach mode with api cannot configure owned-API props: cors/,
+    );
+  }
+});
+
+test("AppTheoryMcpServer consolidated template is stable", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "ConsolidatedSnapshotStack");
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: handler(stack),
+    transportPosture: apptheory.AppTheoryMcpTransportPosture.NONE_PUBLIC,
+    originReachability: apptheory.AppTheoryMcpOriginReachability.DISABLED,
+    sessionState: { enabled: false },
+    ownedApi: { stage: { throttlingEnabled: true } },
+    routeModel: apptheory.AppTheoryMcpRouteModel.CONSOLIDATED,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("mcp-server-consolidated", template);
+  } else {
+    expectSnapshot("mcp-server-consolidated", template);
   }
 });

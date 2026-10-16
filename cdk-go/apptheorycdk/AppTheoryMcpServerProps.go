@@ -30,6 +30,14 @@ type AppTheoryMcpServerProps struct {
 	// Deprecated: Configure `runtime/mcpfacade.FacadeConfig.IssuerURL` in the
 	// application. The construct no longer injects issuer environment values.
 	AuthorizationServerIssuer *string `field:"optional" json:"authorizationServerIssuer" yaml:"authorizationServerIssuer"`
+	// CORS preflight for a construct-owned API.
+	//
+	// Set to `true` for AppTheory
+	// defaults or supply an `AppTheoryHttpApiCorsOptions` object. Invalid in
+	// attach mode, where the owning API configures CORS.
+	// Default: undefined.
+	//
+	Cors interface{} `field:"optional" json:"cors" yaml:"cors"`
 	// Denial-telemetry declaration required under RUNTIME_BEARER only.
 	// Default: undefined.
 	//
@@ -77,6 +85,23 @@ type AppTheoryMcpServerProps struct {
 	// Default: AppTheoryMcpRouteAlgebra.supportedEndpointTemplates()
 	//
 	RouteFamily *AppTheoryMcpRouteFamily `field:"optional" json:"routeFamily" yaml:"routeFamily"`
+	// Route-emission model.
+	//
+	// `explicit` (the default) wires the full derived route inventory as one HTTP
+	// API v2 route per route key and is byte-stable for deployed stacks.
+	// `consolidated` wires exactly two greedy routes, `ANY /` and `ANY /{proxy+}`,
+	// and is valid only for the `runtime-bearer` and `none-public` transport
+	// postures; `iam` and `jwt` are refused at synthesis.
+	//
+	// Consolidated mode is allowed on a construct-owned API, or on an attached
+	// API that has no routes at attach time. A consumer may add explicit, more
+	// specific routes with a stricter authorizer on the same API afterwards; a
+	// full method+path match beats the greedy routes by API Gateway precedence,
+	// and a wrong-method hit on such a path falls to the runtime's fail-closed
+	// 404/405.
+	// Default: AppTheoryMcpRouteModel.EXPLICIT
+	//
+	RouteModel AppTheoryMcpRouteModel `field:"optional" json:"routeModel" yaml:"routeModel"`
 	// Runtime-side RFC 9728 bearer validation declaration.
 	//
 	// Required by `transportPosture: RUNTIME_BEARER` and refused under every
