@@ -89,10 +89,13 @@ are worth checking:
   unknown keys) needs no change.
 - The opt-in **flat-legacy** HTTP error format is untouched: its bodies carry no `status_code` and stay byte-identical.
 
-An envelope that cannot be serialized — an `AppTheoryError` whose `Details` are not JSON-serializable, which already
-violates the error contract's precondition that details be JSON-serializable — is now reported as the internal-error
-fallback sent with status `500` rather than as a body whose `status_code` disagreed with the status on the wire, which
-changes the response only for those already-invalid inputs and leaves the flat-legacy fallback body byte-identical.
+An envelope that cannot be serialized — an `AppTheoryError` whose `Details` hold a value the runtime's JSON encoder
+refuses, such as a cycle in any runtime or a bigint in TypeScript, which already violates the error contract's
+precondition that details be JSON-serializable — is now reported as the internal-error fallback sent with status `500`
+rather than as a body whose `status_code` disagreed with the status on the wire, which changes the response only for
+those already-invalid inputs and leaves the flat-legacy fallback body byte-identical. In TypeScript an `undefined`,
+function, or symbol property is not such a value: it keeps its standard JSON encoding (omitted from an object, `null` in
+an array) and the envelope is sent normally.
 
 ### Go module import paths
 
