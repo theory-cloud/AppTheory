@@ -6596,6 +6596,12 @@ function builtInAppTheoryHandler(runtime, name, effects) {
           auth_identity: ctx.authIdentity ?? "",
           remaining_ms: Number(ctx.remainingMs ?? 0),
         });
+    case "echo_request_ids":
+      return (ctx) =>
+        runtime.json(200, {
+          request_id: ctx.requestId ?? "",
+          client_request_id: ctx.clientRequestId ?? "",
+        });
     case "echo_middleware_trace":
       return (ctx) => runtime.json(200, { trace: ctx.middlewareTrace ?? [] });
     case "echo_ctx_value_and_trace":

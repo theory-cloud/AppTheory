@@ -4679,6 +4679,19 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
 
         return handler
 
+    if name == "echo_request_ids":
+
+        def handler(ctx):
+            return runtime.json(
+                200,
+                {
+                    "request_id": getattr(ctx, "request_id", ""),
+                    "client_request_id": getattr(ctx, "client_request_id", ""),
+                },
+            )
+
+        return handler
+
     if name == "echo_middleware_trace":
 
         def handler(ctx):
