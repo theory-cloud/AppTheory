@@ -7,9 +7,11 @@ import (
 	tabletheory "github.com/theory-cloud/tabletheory/v6"
 	tablecore "github.com/theory-cloud/tabletheory/v6/pkg/core"
 
+	"github.com/theory-cloud/apptheory/v6/pkg/jobs"
 	"github.com/theory-cloud/apptheory/v6/pkg/limited"
 	"github.com/theory-cloud/apptheory/v6/pkg/services"
 	mcpruntime "github.com/theory-cloud/apptheory/v6/runtime/mcp"
+	"github.com/theory-cloud/apptheory/v6/runtime/microvm"
 )
 
 // A TableTheory v6 *LambdaDB must satisfy core.ExtendedDB. In v5 the declared
@@ -37,4 +39,8 @@ func TestLambdaInitHandleFlowsIntoEveryDynamoSeam(t *testing.T) {
 	_ = mcpruntime.NewDynamoSessionStore(db)
 	_ = mcpruntime.NewDynamoStreamStore(db)
 	_ = mcpruntime.NewDynamoTaskStore(db)
+	_ = jobs.NewDynamoJobLedger(db, jobs.DefaultConfig())
+	if _, err := microvm.NewTableTheorySessionRegistry(db); err != nil {
+		t.Fatalf("microvm.NewTableTheorySessionRegistry: %v", err)
+	}
 }
